@@ -277,7 +277,7 @@ export default function ProfilesView() {
                           <span className="ml-auto font-medium">
                             {profile.dataQuotaMb === 0
                               ? t("profiles.unlimited")
-                              : formatBytes(profile.dataQuotaMb * 1048576)}
+                              : formatBytes(profile.dataQuotaMb * 1048576, lang)}
                           </span>
                         </div>
                         <div className="flex min-h-6 items-center gap-2 text-sm sm:col-span-2">

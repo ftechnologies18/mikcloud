@@ -443,10 +443,10 @@ function TrafficTab({ router }: { router: RouterDevice }) {
                       <TableCell className="text-right tabular-nums">{formatBitsPerSec(it.rxBps)}</TableCell>
                       <TableCell className="text-right tabular-nums">{formatBitsPerSec(it.txBps)}</TableCell>
                       <TableCell className="hidden text-right tabular-nums text-muted-foreground sm:table-cell">
-                        {formatBytes(it.rxBytes)}
+                        {formatBytes(it.rxBytes, lang)}
                       </TableCell>
                       <TableCell className="hidden pr-4 text-right tabular-nums text-muted-foreground sm:table-cell">
-                        {formatBytes(it.txBytes)}
+                        {formatBytes(it.txBytes, lang)}
                       </TableCell>
                     </TableRow>
                   ))}

@@ -47,7 +47,7 @@ const REFRESH_OPTIONS = [
 ];
 
 export default function SessionsView() {
-  const { t, tf } = useI18n();
+  const { t, tf, lang } = useI18n();
   const queryClient = useQueryClient();
   const [refreshMs, setRefreshMs] = useState(5000);
   const [now, setNow] = useState(() => Date.now());
@@ -121,11 +121,11 @@ export default function SessionsView() {
         <StatCard title={t("sessions.kpi.sessions")} value={String(sessions.length)} sub={t("sessions.kpi.sessionsSub")} icon={Radio} live />
         <StatCard
           title={t("sessions.kpi.download")}
-          value={formatBytes(totalIn)}
+          value={formatBytes(totalIn, lang)}
           sub={t("sessions.kpi.downloadSub")}
           icon={ArrowDownCircle}
         />
-        <StatCard title={t("sessions.kpi.upload")} value={formatBytes(totalOut)} sub={t("sessions.kpi.uploadSub")} icon={ArrowUpCircle} />
+        <StatCard title={t("sessions.kpi.upload")} value={formatBytes(totalOut, lang)} sub={t("sessions.kpi.uploadSub")} icon={ArrowUpCircle} />
       </div>
 
       <Card className="gap-0 py-0">
@@ -183,11 +183,11 @@ export default function SessionsView() {
                       <div className="flex items-center gap-3 text-muted-foreground">
                         <span className="inline-flex items-center gap-1 tabular-nums">
                           <ArrowDown className="size-3 opacity-60" aria-hidden />
-                          {formatBytes(session.bytesIn)}
+                          {formatBytes(session.bytesIn, lang)}
                         </span>
                         <span className="inline-flex items-center gap-1 tabular-nums">
                           <ArrowUp className="size-3 opacity-60" aria-hidden />
-                          {formatBytes(session.bytesOut)}
+                          {formatBytes(session.bytesOut, lang)}
                         </span>
                       </div>
                     </TableCell>

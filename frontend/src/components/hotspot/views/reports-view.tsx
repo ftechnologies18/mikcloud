@@ -444,11 +444,11 @@ function ActivityTab({ visible }: { visible: boolean }) {
                       axisLine={false}
                       tickLine={false}
                       width={56}
-                      tickFormatter={(value: number) => formatBytes(value)}
+                      tickFormatter={(value: number) => formatBytes(value, lang)}
                     />
                     <Tooltip
                       cursor={{ stroke: "#3f3f46", strokeDasharray: "4 4" }}
-                      content={<ChartTooltip formatter={(value) => formatBytes(value)} />}
+                      content={<ChartTooltip formatter={(value) => formatBytes(value, lang)} />}
                     />
                     <Legend
                       iconType="circle"

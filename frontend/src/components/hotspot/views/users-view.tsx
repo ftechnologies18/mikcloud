@@ -494,7 +494,7 @@ export default function UsersView() {
                         <StatusBadge status={user.status} dot />
                       </TableCell>
                       <TableCell className="tabular-nums text-muted-foreground">
-                        {formatBytes(user.bytesIn + user.bytesOut)}
+                        {formatBytes(user.bytesIn + user.bytesOut, lang)}
                       </TableCell>
                       <TableCell className="hidden tabular-nums text-muted-foreground sm:table-cell">
                         {formatDate(user.expiresAt, lang)}

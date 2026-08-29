@@ -6,12 +6,14 @@ function intlLocale(lang: Lang): string {
   return lang === "fr" ? "fr-FR" : "en-GB";
 }
 
-export function formatBytes(bytes: number): string {
-  if (!bytes || bytes <= 0) return "0 o";
-  const units = ["o", "Ko", "Mo", "Go", "To"];
+export function formatBytes(bytes: number, lang: Lang = "fr"): string {
+  const units = lang === "en" ? ["B", "KB", "MB", "GB", "TB"] : ["o", "Ko", "Mo", "Go", "To"];
+  if (!bytes || bytes <= 0) return `0 ${units[0]}`;
   const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
   const v = bytes / Math.pow(1024, i);
-  return `${v >= 100 ? Math.round(v) : v.toFixed(1).replace(".", ",")} ${units[i]}`;
+  const num = v >= 100 ? String(Math.round(v)) : v.toFixed(1);
+  // Séparateur décimal localisé : « 12,5 Mo » / « 12.5 MB ».
+  return `${lang === "en" ? num : num.replace(".", ",")} ${units[i]}`;
 }
 
 export function formatCurrency(amount: number, currency = "FCFA", lang: Lang = "fr"): string {

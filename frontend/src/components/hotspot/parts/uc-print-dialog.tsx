@@ -231,7 +231,7 @@ export function UcPrintDialog({
                         {voucher.profileName}
                         {validityDays ? ` · ${tf("print.validity", { n: validityDays })}` : ""}
                         {(voucher.dataQuotaMb ?? 0) > 0
-                          ? ` · ${formatBytes(voucher.dataQuotaMb * 1048576)}`
+                          ? ` · ${formatBytes(voucher.dataQuotaMb * 1048576, lang)}`
                           : ""}
                       </p>
                       <p className="text-xs font-semibold">

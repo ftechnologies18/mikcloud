@@ -48,6 +48,7 @@ import { LoadingCards, LoadingRows } from "@/components/hotspot/loading";
 import { PageHeader } from "@/components/hotspot/page-header";
 import { api, ApiError } from "@/lib/hotspot/api";
 import { formatDateTime } from "@/lib/hotspot/format";
+import { useI18n } from "@/lib/hotspot/i18n";
 import type { NotifChannel, NotifLogEntry, NotifSettings } from "@/lib/hotspot/types";
 import { cn } from "@/lib/utils";
 
@@ -101,6 +102,7 @@ function toPayload(form: NotifForm) {
 }
 
 export default function NotificationsView() {
+  const { t } = useI18n();
   const { data, isLoading, isError, error, refetch, isRefetching } = useQuery({
     queryKey: ["/api/notifications"],
     queryFn: () => api<NotifSettings>("/api/notifications"),
@@ -109,10 +111,7 @@ export default function NotificationsView() {
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      <PageHeader
-        title="Notifications"
-        description="Recevez les alertes routeur hors ligne, stock bas et le rapport quotidien — un gérant ne doit pas découvrir une panne par ses clients."
-      />
+      <PageHeader title={t("notif.title")} description={t("notif.description")} />
 
       {isLoading ? (
         <LoadingCards cards={3} />
@@ -139,11 +138,10 @@ function NotifErrorCard({
   onRetry: () => void;
   retrying: boolean;
 }) {
+  const { t } = useI18n();
   const status = error instanceof ApiError ? error.status : undefined;
   const unavailable = status === 404 || status === 501;
-  const message = unavailable
-    ? "Le module Notifications n'est pas encore disponible sur le serveur (déploiement du backend en cours)."
-    : (error?.message ?? "Impossible de charger les réglages des notifications.");
+  const message = unavailable ? t("notif.errorModule") : (error?.message ?? t("notif.errorLoad"));
 
   return (
     <Card className="border-destructive/30">
@@ -152,12 +150,12 @@ function NotifErrorCard({
           <TriangleAlert className="size-6" />
         </span>
         <div>
-          <p className="text-sm font-medium">Notifications indisponibles</p>
+          <p className="text-sm font-medium">{t("notif.errorTitle")}</p>
           <p className="mt-1 max-w-md text-xs text-muted-foreground">{message}</p>
         </div>
         <Button variant="outline" className="min-h-10" onClick={onRetry} disabled={retrying}>
           <RefreshCw className={cn("size-4", retrying && "animate-spin")} />
-          Réessayer
+          {t("common.retry")}
         </Button>
       </CardContent>
     </Card>
@@ -167,13 +165,14 @@ function NotifErrorCard({
 /* ─────────────────────────── Réglages + canaux ─────────────────────────── */
 
 function NotificationsForm({ initial }: { initial: NotifSettings }) {
+  const { t } = useI18n();
   const queryClient = useQueryClient();
   const [form, setForm] = useState<NotifForm>(() => toForm(initial));
 
   const saveMutation = useMutation({
     mutationFn: () => api<NotifSettings>("/api/notifications", { method: "PUT", body: toPayload(form) }),
     onSuccess: (saved) => {
-      toast.success("Réglages des notifications enregistrés");
+      toast.success(t("notif.saved"));
       setForm(toForm(saved));
       void queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
     },
@@ -183,8 +182,8 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
   const testMutation = useMutation({
     mutationFn: (channel: NotifChannel) =>
       api<{ ok: boolean }>("/api/notifications/test", { method: "POST", body: { channel } }),
-    onSuccess: () => toast.success("Message de test envoyé"),
-    onError: (err: Error) => toast.error(err.message || "Test impossible"),
+    onSuccess: () => toast.success(t("notif.testSent")),
+    onError: (err: Error) => toast.error(err.message || t("notif.testFailed")),
   });
 
   // Un canal est « configurable pour test » si activé, renseigné et prêt.
@@ -207,11 +206,9 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
               <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
                 <BellRing className="size-4" />
               </span>
-              Alertes
+              {t("notif.alerts")}
             </CardTitle>
-            <CardDescription>
-              Surveillance de vos routeurs et de votre stock de vouchers, rapport quotidien de l&apos;activité.
-            </CardDescription>
+            <CardDescription>{t("notif.alertsDesc")}</CardDescription>
           </div>
           <Button
             className="min-h-10 shrink-0"
@@ -219,7 +216,7 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
             disabled={saveMutation.isPending}
           >
             {saveMutation.isPending && <Loader2 className="size-4 animate-spin" />}
-            Enregistrer
+            {t("common.save")}
           </Button>
         </CardHeader>
 
@@ -228,11 +225,9 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
           <div className="flex items-center justify-between gap-4 rounded-lg border p-3 sm:col-span-2">
             <div className="min-w-0">
               <Label htmlFor="notif-enabled" className="font-medium">
-                Activer les notifications
+                {t("notif.enable")}
               </Label>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                Interrupteur général : aucune alerte n&apos;est envoyée s&apos;il est désactivé.
-              </p>
+              <p className="mt-0.5 text-xs text-muted-foreground">{t("notif.enableHint")}</p>
             </div>
             <Switch
               id="notif-enabled"
@@ -243,7 +238,7 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
 
           {/* Seuil routeur hors ligne */}
           <div className="grid gap-2">
-            <Label htmlFor="notif-offline">Routeur hors ligne après (secondes sans check-in)</Label>
+            <Label htmlFor="notif-offline">{t("notif.offlineAfter")}</Label>
             <Input
               id="notif-offline"
               type="number"
@@ -254,12 +249,12 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
                 setForm((f) => ({ ...f, offlineAfterSec: e.target.value === "" ? 0 : Number(e.target.value) }))
               }
             />
-            <p className="text-xs text-muted-foreground">3 × 45 s = 135 s recommandé.</p>
+            <p className="text-xs text-muted-foreground">{t("notif.offlineHint")}</p>
           </div>
 
           {/* Seuil stock vouchers */}
           <div className="grid gap-2">
-            <Label htmlFor="notif-stock">Seuil de stock de vouchers</Label>
+            <Label htmlFor="notif-stock">{t("notif.lowStock")}</Label>
             <Input
               id="notif-stock"
               type="number"
@@ -270,21 +265,16 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
                 setForm((f) => ({ ...f, lowStockThreshold: e.target.value === "" ? 0 : Number(e.target.value) }))
               }
             />
-            <p className="text-xs text-muted-foreground">
-              Alerte quand il reste moins de ce nombre de vouchers actifs (défaut 25).
-            </p>
+            <p className="text-xs text-muted-foreground">{t("notif.lowStockHint")}</p>
           </div>
 
           {/* Rapport quotidien */}
           <div className="flex flex-wrap items-center justify-between gap-4 rounded-lg border p-3 sm:col-span-2">
             <div className="min-w-0">
               <Label htmlFor="notif-daily" className="font-medium">
-                Rapport quotidien
+                {t("notif.daily")}
               </Label>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                Envoyé à l&apos;heure d&apos;Abidjan (UTC+0) — ventes du jour, nouveaux utilisateurs, routeurs en
-                ligne, stock restant.
-              </p>
+              <p className="mt-0.5 text-xs text-muted-foreground">{t("notif.dailyHint")}</p>
             </div>
             <div className="flex shrink-0 items-center gap-3">
               <Select
@@ -292,7 +282,7 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
                 onValueChange={(v) => setForm((f) => ({ ...f, reportHour: Number(v) }))}
                 disabled={!form.dailyReport}
               >
-                <SelectTrigger className="h-10 w-28" aria-label="Heure d'envoi du rapport quotidien">
+                <SelectTrigger className="h-10 w-28" aria-label={t("notif.dailyHour")}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -319,7 +309,7 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
         <ChannelCard
           icon={Send}
           title="Telegram"
-          description="Alertes instantanées sur votre téléphone via un bot Telegram."
+          description={t("notif.tgDesc")}
           enabled={form.telegramEnabled}
           onEnabledChange={(v) => setForm((f) => ({ ...f, telegramEnabled: v }))}
           canTest={telegramConfigured}
@@ -327,32 +317,30 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
           onTest={() => testMutation.mutate("telegram")}
         >
           <div className="grid gap-2">
-            <Label htmlFor="tg-token">Bot token</Label>
+            <Label htmlFor="tg-token">{t("notif.botToken")}</Label>
             <Input
               id="tg-token"
               type="password"
               autoComplete="off"
-              placeholder={
-                form.telegramBotTokenSet ? "••••• configuré — laissez vide pour conserver" : "123456789:AA…"
-              }
+              placeholder={form.telegramBotTokenSet ? t("notif.secretConfigured") : "123456789:AA…"}
               value={form.telegramBotToken}
               onChange={(e) => setForm((f) => ({ ...f, telegramBotToken: e.target.value }))}
             />
           </div>
           <div className="grid gap-2">
-            <Label htmlFor="tg-chat">Chat ID</Label>
+            <Label htmlFor="tg-chat">{t("notif.chatId")}</Label>
             <Input
               id="tg-chat"
               inputMode="numeric"
-              placeholder="ex. 123456789"
+              placeholder={t("notif.chatIdPlaceholder")}
               value={form.telegramChatId}
               onChange={(e) => setForm((f) => ({ ...f, telegramChatId: e.target.value }))}
             />
           </div>
           <div className="rounded-lg bg-muted/50 p-3 text-[11px] leading-relaxed text-muted-foreground">
-            <p>1. Créez un bot avec @BotFather → copiez le token.</p>
-            <p>2. Envoyez un message à votre bot.</p>
-            <p>3. Récupérez votre chat ID via @userinfobot.</p>
+            <p>{t("notif.tgHelp1")}</p>
+            <p>{t("notif.tgHelp2")}</p>
+            <p>{t("notif.tgHelp3")}</p>
           </div>
         </ChannelCard>
 
@@ -360,7 +348,7 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
         <ChannelCard
           icon={MessageCircle}
           title="WhatsApp Cloud API"
-          description="Envoi via l'API Cloud WhatsApp de Meta (compte Business)."
+          description={t("notif.waDesc")}
           enabled={form.whatsappEnabled}
           onEnabledChange={(v) => setForm((f) => ({ ...f, whatsappEnabled: v }))}
           canTest={whatsappConfigured}
@@ -368,30 +356,28 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
           onTest={() => testMutation.mutate("whatsapp")}
         >
           <div className="grid gap-2">
-            <Label htmlFor="wa-token">Access token Meta</Label>
+            <Label htmlFor="wa-token">{t("notif.waToken")}</Label>
             <Input
               id="wa-token"
               type="password"
               autoComplete="off"
-              placeholder={
-                form.whatsappTokenSet ? "••••• configuré — laissez vide pour conserver" : "EAAG… (token permanent)"
-              }
+              placeholder={form.whatsappTokenSet ? t("notif.secretConfigured") : "EAAG…"}
               value={form.whatsappToken}
               onChange={(e) => setForm((f) => ({ ...f, whatsappToken: e.target.value }))}
             />
           </div>
           <div className="grid gap-2">
-            <Label htmlFor="wa-phone-id">Phone Number ID</Label>
+            <Label htmlFor="wa-phone-id">{t("notif.waPhoneId")}</Label>
             <Input
               id="wa-phone-id"
-              placeholder="ex. 123456789012345"
+              placeholder={t("notif.waPhonePlaceholder")}
               value={form.whatsappPhoneId}
               onChange={(e) => setForm((f) => ({ ...f, whatsappPhoneId: e.target.value }))}
             />
-            <p className="text-xs text-muted-foreground">Meta → WhatsApp → API Setup → Phone number ID.</p>
+            <p className="text-xs text-muted-foreground">{t("notif.waPhoneHint")}</p>
           </div>
           <div className="grid gap-2">
-            <Label htmlFor="wa-to">Numéro destinataire</Label>
+            <Label htmlFor="wa-to">{t("notif.waTo")}</Label>
             <Input
               id="wa-to"
               inputMode="numeric"
@@ -399,9 +385,7 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
               value={form.whatsappTo}
               onChange={(e) => setForm((f) => ({ ...f, whatsappTo: e.target.value }))}
             />
-            <p className="text-xs text-muted-foreground">
-              Format international sans + ni espaces, ex. 2250701020304.
-            </p>
+            <p className="text-xs text-muted-foreground">{t("notif.waToHint")}</p>
           </div>
         </ChannelCard>
 
@@ -409,7 +393,7 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
         <ChannelCard
           icon={Mail}
           title="Email SMTP"
-          description="Alertes et rapports par e-mail via votre serveur SMTP."
+          description={t("notif.emailDesc")}
           enabled={form.emailEnabled}
           onEnabledChange={(v) => setForm((f) => ({ ...f, emailEnabled: v }))}
           canTest={emailConfigured}
@@ -418,7 +402,7 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
         >
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_100px]">
             <div className="grid gap-2">
-              <Label htmlFor="smtp-host">Serveur SMTP</Label>
+              <Label htmlFor="smtp-host">{t("notif.smtpHost")}</Label>
               <Input
                 id="smtp-host"
                 placeholder="smtp.gmail.com"
@@ -427,7 +411,7 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="smtp-port">Port</Label>
+              <Label htmlFor="smtp-port">{t("notif.smtpPort")}</Label>
               <Input
                 id="smtp-port"
                 type="number"
@@ -443,7 +427,7 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
             </div>
           </div>
           <div className="grid gap-2">
-            <Label htmlFor="smtp-user">Utilisateur</Label>
+            <Label htmlFor="smtp-user">{t("notif.smtpUser")}</Label>
             <Input
               id="smtp-user"
               autoComplete="off"
@@ -453,20 +437,18 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
             />
           </div>
           <div className="grid gap-2">
-            <Label htmlFor="smtp-pass">Mot de passe</Label>
+            <Label htmlFor="smtp-pass">{t("notif.smtpPass")}</Label>
             <Input
               id="smtp-pass"
               type="password"
               autoComplete="new-password"
-              placeholder={
-                form.smtpPassSet ? "••••• configuré — laissez vide pour conserver" : "••••••••"
-              }
+              placeholder={form.smtpPassSet ? t("notif.secretConfigured") : "••••••••"}
               value={form.smtpPass}
               onChange={(e) => setForm((f) => ({ ...f, smtpPass: e.target.value }))}
             />
           </div>
           <div className="grid gap-2">
-            <Label htmlFor="smtp-to">Destinataire</Label>
+            <Label htmlFor="smtp-to">{t("notif.recipient")}</Label>
             <Input
               id="smtp-to"
               type="email"
@@ -504,6 +486,7 @@ function ChannelCard({
   onTest: () => void;
   testing: boolean;
 }) {
+  const { t, tf } = useI18n();
   return (
     <Card className="gap-4 py-4 sm:py-6">
       <CardHeader className="px-4 sm:px-6">
@@ -514,7 +497,7 @@ function ChannelCard({
             </span>
             <span className="truncate">{title}</span>
           </span>
-          <Switch checked={enabled} onCheckedChange={onEnabledChange} aria-label={`Activer ${title}`} />
+          <Switch checked={enabled} onCheckedChange={onEnabledChange} aria-label={tf("notif.enableChannel", { title })} />
         </CardTitle>
         <CardDescription>{description}</CardDescription>
       </CardHeader>
@@ -527,7 +510,7 @@ function ChannelCard({
           onClick={onTest}
         >
           {testing ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
-          Envoyer un test
+          {t("notif.sendTest")}
         </Button>
       </CardFooter>
     </Card>
@@ -536,23 +519,25 @@ function ChannelCard({
 
 /* ─────────────────────────── Historique des notifications ─────────────────────────── */
 
-const CHANNEL_LABELS: Record<NotifLogEntry["channel"], string> = {
-  telegram: "Telegram",
-  whatsapp: "WhatsApp",
-  email: "E-mail",
-  system: "Système",
+// Libellés des canaux/types : clés i18n, la valeur brute reste en repli.
+const CHANNEL_KEYS: Record<NotifLogEntry["channel"], string> = {
+  telegram: "notif.channel.telegram",
+  whatsapp: "notif.channel.whatsapp",
+  email: "notif.channel.email",
+  system: "notif.channel.system",
 };
 
-const KIND_LABELS: Record<NotifLogEntry["kind"], string> = {
-  router_offline: "Routeur hors ligne",
-  router_back: "Routeur de retour",
-  low_stock: "Stock bas",
-  daily_report: "Rapport quotidien",
-  test: "Test",
-  settings: "Réglages",
+const KIND_KEYS: Record<NotifLogEntry["kind"], string> = {
+  router_offline: "notif.kind.router_offline",
+  router_back: "notif.kind.router_back",
+  low_stock: "notif.kind.low_stock",
+  daily_report: "notif.kind.daily_report",
+  test: "notif.kind.test",
+  settings: "notif.kind.settings",
 };
 
 function NotifLogCard() {
+  const { t, tf } = useI18n();
   const { data, isLoading, isError, error, refetch, isRefetching } = useQuery({
     queryKey: ["/api/notifications/log"],
     queryFn: () => api<NotifLogEntry[]>("/api/notifications/log"),
@@ -567,9 +552,9 @@ function NotifLogCard() {
           <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
             <History className="size-4" />
           </span>
-          Historique des notifications
+          {t("notif.logTitle")}
         </CardTitle>
-        <CardDescription>Les 50 derniers envois — alertes, rapports et tests.</CardDescription>
+        <CardDescription>{t("notif.logDesc")}</CardDescription>
       </CardHeader>
       <CardContent className="p-0">
         {isLoading ? (
@@ -577,29 +562,31 @@ function NotifLogCard() {
         ) : isError ? (
           <div className="flex flex-col items-center gap-3 px-6 py-10 text-center">
             <p className="text-sm text-muted-foreground">
-              Historique indisponible : {error instanceof Error ? error.message : "erreur inconnue"}
+              {tf("notif.logUnavailable", {
+                error: error instanceof Error ? error.message : t("notif.unknownError"),
+              })}
             </p>
             <Button variant="outline" className="min-h-10" onClick={() => void refetch()} disabled={isRefetching}>
               <RefreshCw className={cn("size-4", isRefetching && "animate-spin")} />
-              Réessayer
+              {t("common.retry")}
             </Button>
           </div>
         ) : entries.length === 0 ? (
           <EmptyState
             icon={BellOff}
-            title="Aucune notification envoyée pour le moment"
-            description="Les alertes, rapports et tests envoyés apparaîtront ici."
+            title={t("notif.logEmptyTitle")}
+            description={t("notif.logEmptyDesc")}
           />
         ) : (
           <div className="max-h-96 overflow-auto">
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
-                  <TableHead className="pl-4 text-muted-foreground sm:pl-6">Heure</TableHead>
-                  <TableHead className="text-muted-foreground">Canal</TableHead>
-                  <TableHead className="text-muted-foreground">Type</TableHead>
-                  <TableHead className="text-muted-foreground">Titre</TableHead>
-                  <TableHead className="pr-4 text-right text-muted-foreground sm:pr-6">Statut</TableHead>
+                  <TableHead className="pl-4 text-muted-foreground sm:pl-6">{t("notif.logTime")}</TableHead>
+                  <TableHead className="text-muted-foreground">{t("notif.logChannel")}</TableHead>
+                  <TableHead className="text-muted-foreground">{t("notif.logKind")}</TableHead>
+                  <TableHead className="text-muted-foreground">{t("notif.logTitleCol")}</TableHead>
+                  <TableHead className="pr-4 text-right text-muted-foreground sm:pr-6">{t("notif.logStatus")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -610,11 +597,11 @@ function NotifLogCard() {
                     </TableCell>
                     <TableCell>
                       <Badge variant="outline" className="max-w-28 truncate">
-                        {CHANNEL_LABELS[entry.channel] ?? entry.channel}
+                        {t(CHANNEL_KEYS[entry.channel] ?? "", entry.channel)}
                       </Badge>
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-muted-foreground">
-                      {KIND_LABELS[entry.kind] ?? entry.kind}
+                      {t(KIND_KEYS[entry.kind] ?? "", entry.kind)}
                     </TableCell>
                     <TableCell className="max-w-64">
                       <span className="line-clamp-1" title={entry.title}>
@@ -627,18 +614,18 @@ function NotifLogCard() {
                           variant="outline"
                           className="border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
                         >
-                          Envoyé
+                          {t("notif.sent")}
                         </Badge>
                       ) : (
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <Badge variant="destructive" className="cursor-help">
-                              Échec
+                              {t("notif.failed")}
                             </Badge>
                           </TooltipTrigger>
                           <TooltipContent className="max-w-64">
                             <p className="whitespace-pre-wrap break-words">
-                              {entry.error || "Erreur inconnue"}
+                              {entry.error || t("notif.unknownError")}
                             </p>
                           </TooltipContent>
                         </Tooltip>

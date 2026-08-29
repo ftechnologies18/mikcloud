@@ -80,7 +80,7 @@ import { PasswordCell } from "@/components/hotspot/parts/uc-password-cell";
 import { LAST_BATCH_STORAGE_KEY, UcPrintDialog } from "@/components/hotspot/parts/uc-print-dialog";
 import { VoucherA4PrintDialog } from "@/components/hotspot/parts/voucher-a4-print-dialog";
 import { api } from "@/lib/hotspot/api";
-import { useI18n } from "@/lib/hotspot/i18n";
+import { useI18n, localeOf } from "@/lib/hotspot/i18n";
 import { formatBytes, formatCurrency, formatDate, formatDuration } from "@/lib/hotspot/format";
 import type {
   BatchWithStats,
@@ -106,34 +106,36 @@ const CODE_LENGTHS = [4, 5, 6, 7, 8, 9, 10];
 // « aBcD », « 5ab2c34d », « 5AB2C34D », « 5aB2c34D »). Le serveur exclut
 // toujours 0/1/I/L/O : les codes restent lisibles sur un ticket imprimé.
 const CHARSET_OPTIONS = [
-  { value: "mikcloud", label: "MikCloud (recommandé)" },
-  { value: "abc", label: "abcd — minuscules" },
-  { value: "ABC", label: "ABCD — majuscules" },
-  { value: "aBc", label: "aBcD — lettres (min + maj)" },
-  { value: "5ab", label: "5ab2c34d — chiffres + minuscules" },
-  { value: "5AB", label: "5AB2C34D — chiffres + majuscules" },
-  { value: "5aB", label: "5aB2c34D — chiffres + lettres" },
+  { value: "mikcloud", labelKey: "vouchers.gen.charset.mikcloud" },
+  { value: "abc", labelKey: "vouchers.gen.charset.abc" },
+  { value: "ABC", labelKey: "vouchers.gen.charset.ABC" },
+  { value: "aBc", labelKey: "vouchers.gen.charset.aBc" },
+  { value: "5ab", labelKey: "vouchers.gen.charset.5ab" },
+  { value: "5AB", labelKey: "vouchers.gen.charset.5AB" },
+  { value: "5aB", labelKey: "vouchers.gen.charset.5aB" },
 ];
 
 // Quotas courants (1 Go = 1024 Mo) — l'argument « 5 Go = 500 F ».
+// Le libellé (Mo/GB selon la langue) est construit au rendu via fmtQuota().
 const QUOTA_OPTIONS = [
-  { value: "0", label: "Illimité (pas de plafond data)" },
-  { value: "512", label: "512 Mo" },
-  { value: "1024", label: "1 Go" },
-  { value: "2048", label: "2 Go" },
-  { value: "5120", label: "5 Go" },
-  { value: "10240", label: "10 Go" },
-  { value: "20480", label: "20 Go" },
-  { value: "51200", label: "50 Go" },
+  { value: "0", mb: 0 },
+  { value: "512", mb: 512 },
+  { value: "1024", mb: 1024 },
+  { value: "2048", mb: 2048 },
+  { value: "5120", mb: 5120 },
+  { value: "10240", mb: 10240 },
+  { value: "20480", mb: 20480 },
+  { value: "51200", mb: 51200 },
 ];
 
-// Repères de prix FCFA pour vendre au quota (le prix réel reste celui du profil).
-const QUOTA_PRICE_HINTS: [string, string][] = [
-  ["1 Go", "100 F"],
-  ["2 Go", "200 F"],
-  ["5 Go", "500 F"],
-  ["10 Go", "1 000 F"],
-  ["30 Go", "3 000 F"],
+// Repères de prix FCFA pour vendre au quota (le prix réel reste celui du profil) :
+// paires [quota en Mo, prix en F CFA] — libellés localisés au rendu.
+const QUOTA_PRICE_HINTS: [number, number][] = [
+  [1024, 100],
+  [2048, 200],
+  [5120, 500],
+  [10240, 1000],
+  [30720, 3000],
 ];
 
 const STATUS_OPTIONS = [
@@ -154,6 +156,12 @@ export default function VouchersView() {
   const { data: settings } = useSettings();
   const tenantName = settings?.tenant.name || "MikCloud";
   const queryClient = useQueryClient();
+
+  // Libellé localisé d'un quota : « 512 Mo » / « 5 GB » selon la langue.
+  const fmtQuota = (mb: number) =>
+    mb < 1024 ? tf("vouchers.gen.quota.mb", { n: mb }) : tf("vouchers.gen.quota.gb", { n: mb / 1024 });
+  // Prix F CFA avec séparateur de milliers localisé (1 000 F / 1,000 F).
+  const fmtFcfa = (amount: number) => `${new Intl.NumberFormat(localeOf(lang)).format(amount)} F`;
 
   // Onglet actif : liste des vouchers ou traçabilité des lots
   const [tab, setTab] = useState<"vouchers" | "batches">("vouchers");
@@ -319,10 +327,10 @@ export default function VouchersView() {
     genQuotaMb === "inherit" ? (selectedGenProfile?.dataQuotaMb ?? 0) : Number(genQuotaMb);
   const quotaLabel =
     effectiveQuotaMb > 0
-      ? formatBytes(effectiveQuotaMb * 1048576)
+      ? formatBytes(effectiveQuotaMb * 1048576, lang)
       : genQuotaMb === "inherit" && !selectedGenProfile
-        ? "Héritera du profil"
-        : "Illimité";
+        ? t("vouchers.quotaWillInherit")
+        : t("vouchers.quotaUnlimitedShort");
   const creditAfter = selectedReseller ? selectedReseller.credit - totalCost : null;
   const insufficient = creditAfter !== null && creditAfter < 0;
 
@@ -689,7 +697,7 @@ export default function VouchersView() {
                       <TableCell className="hidden md:table-cell">
                         {voucher.dataQuotaMb > 0 ? (
                           <span className="text-sm tabular-nums">
-                            {formatBytes(voucher.dataQuotaMb * 1048576)}
+                            {formatBytes(voucher.dataQuotaMb * 1048576, lang)}
                           </span>
                         ) : (
                           <span className="text-sm text-muted-foreground">—</span>
@@ -897,7 +905,7 @@ export default function VouchersView() {
                               </Badge>
                               {batch.dataQuotaMb > 0 && (
                                 <p className="mt-0.5 text-xs text-muted-foreground">
-                                  {formatBytes(batch.dataQuotaMb * 1048576)} / voucher
+                                  {formatBytes(batch.dataQuotaMb * 1048576, lang)} / voucher
                                 </p>
                               )}
                             </TableCell>
@@ -937,8 +945,8 @@ export default function VouchersView() {
                                   className="h-10 gap-1.5 px-2.5"
                                   disabled={a4BatchId === batch.id}
                                   onClick={() => void printBatchA4(batch)}
-                                  aria-label={`Imprimer A4 + QR les vouchers actifs du lot ${batch.id}`}
-                                  title="Imprimer A4 + QR — vouchers actifs à vendre (20 par page)"
+                                  aria-label={tf("vouchers.batches.printA4Aria", { batch: batch.id })}
+                                  title={t("vouchers.batches.printA4Title")}
                                 >
                                   {a4BatchId === batch.id ? (
                                     <Loader2 className="size-4 animate-spin" />
@@ -953,7 +961,7 @@ export default function VouchersView() {
                                       variant="ghost"
                                       size="icon"
                                       className="size-10 text-muted-foreground hover:text-foreground"
-                                      aria-label={`Actions pour le lot ${batch.id}`}
+                                      aria-label={tf("vouchers.batches.actionsFor", { batch: batch.id })}
                                     >
                                       <MoreHorizontal className="size-4" />
                                     </Button>
@@ -969,11 +977,11 @@ export default function VouchersView() {
                                       ) : (
                                         <QrCode className="size-4" />
                                       )}
-                                      Imprimer A4 + QR
+                                      {t("vouchers.batches.printA4")}
                                     </DropdownMenuItem>
                                     <DropdownMenuItem className="min-h-10" onClick={() => viewBatchVouchers(batch)}>
                                       <Eye className="size-4" />
-                                      Voir les vouchers
+                                      {t("vouchers.batches.view")}
                                     </DropdownMenuItem>
                                     <DropdownMenuItem
                                       className="min-h-10"
@@ -985,7 +993,7 @@ export default function VouchersView() {
                                       ) : (
                                         <Printer className="size-4" />
                                       )}
-                                      Imprimer (liste simple)
+                                      {t("vouchers.batches.printSimple")}
                                     </DropdownMenuItem>
                                     <DropdownMenuSeparator />
                                     <DropdownMenuItem
@@ -994,7 +1002,7 @@ export default function VouchersView() {
                                       onClick={() => setDeletingBatch(batch)}
                                     >
                                       <Trash2 className="size-4" />
-                                      Supprimer le lot
+                                      {t("common.deleteBatch")}
                                     </DropdownMenuItem>
                                   </DropdownMenuContent>
                                 </DropdownMenu>
@@ -1063,18 +1071,18 @@ export default function VouchersView() {
               <TabsList className="grid w-full grid-cols-2">
                 <TabsTrigger value="general" className="gap-1.5">
                   <SlidersHorizontal className="size-3.5" aria-hidden />
-                  Général
+                  {t("vouchers.gen.tabGeneral")}
                 </TabsTrigger>
                 <TabsTrigger value="limits" className="gap-1.5">
                   <Gauge className="size-3.5" aria-hidden />
-                  Limites
+                  {t("vouchers.gen.tabLimits")}
                 </TabsTrigger>
               </TabsList>
 
               <TabsContent value="general" className="mt-4 grid gap-4">
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="grid gap-2">
-                    <Label htmlFor="gen-count">Nombre de vouchers</Label>
+                    <Label htmlFor="gen-count">{t("vouchers.count")}</Label>
                     <Input
                       id="gen-count"
                       type="number"
@@ -1085,17 +1093,17 @@ export default function VouchersView() {
                       disabled={generateMutation.isPending}
                       aria-invalid={!countValid}
                     />
-                    <p className="text-xs text-muted-foreground">Entre 1 et 500 tickets.</p>
+                    <p className="text-xs text-muted-foreground">{t("vouchers.countHint")}</p>
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="gen-profile">Profil (prix de vente)</Label>
+                    <Label htmlFor="gen-profile">{t("vouchers.gen.profileLabel")}</Label>
                     <Select
                       value={genProfileId}
                       onValueChange={setGenProfileId}
                       disabled={generateMutation.isPending}
                     >
                       <SelectTrigger id="gen-profile" className="h-10 w-full">
-                        <SelectValue placeholder="Sélectionner un profil" />
+                        <SelectValue placeholder={t("common.selectProfile")} />
                       </SelectTrigger>
                       <SelectContent>
                         {profiles?.map((profile) => (
@@ -1111,14 +1119,14 @@ export default function VouchersView() {
 
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="grid gap-2">
-                    <Label htmlFor="gen-router">Routeur (serveur hotspot)</Label>
+                    <Label htmlFor="gen-router">{t("vouchers.gen.routerLabel")}</Label>
                     <Select
                       value={genRouterId}
                       onValueChange={setGenRouterId}
                       disabled={generateMutation.isPending}
                     >
                       <SelectTrigger id="gen-router" className="h-10 w-full">
-                        <SelectValue placeholder="Sélectionner un routeur" />
+                        <SelectValue placeholder={t("common.selectRouter")} />
                       </SelectTrigger>
                       <SelectContent>
                         {routers?.map((router) => (
@@ -1130,7 +1138,7 @@ export default function VouchersView() {
                     </Select>
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="gen-code-length">Longueur du code</Label>
+                    <Label htmlFor="gen-code-length">{t("vouchers.codeLength")}</Label>
                     <Select
                       value={genCodeLength}
                       onValueChange={setGenCodeLength}
@@ -1142,7 +1150,7 @@ export default function VouchersView() {
                       <SelectContent>
                         {CODE_LENGTHS.map((length) => (
                           <SelectItem key={length} value={String(length)}>
-                            {length} caractères
+                            {tf("vouchers.codeLengthUnit", { n: length })}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -1188,7 +1196,7 @@ export default function VouchersView() {
 
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="grid gap-2">
-                    <Label htmlFor="gen-user-mode">Mode utilisateur</Label>
+                    <Label htmlFor="gen-user-mode">{t("vouchers.gen.userMode")}</Label>
                     <Select
                       value={genUserMode}
                       onValueChange={(value) => setGenUserMode(value as "userpass" | "same")}
@@ -1198,13 +1206,13 @@ export default function VouchersView() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="userpass">Nom d'utilisateur & mot de passe</SelectItem>
-                        <SelectItem value="same">Mot de passe = nom d'utilisateur</SelectItem>
+                        <SelectItem value="userpass">{t("vouchers.gen.userModeUserpass")}</SelectItem>
+                        <SelectItem value="same">{t("vouchers.gen.userModeSame")}</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="gen-charset">Jeu de caractères</Label>
+                    <Label htmlFor="gen-charset">{t("vouchers.gen.charset")}</Label>
                     <Select
                       value={genCharset}
                       onValueChange={setGenCharset}
@@ -1216,7 +1224,7 @@ export default function VouchersView() {
                       <SelectContent>
                         {CHARSET_OPTIONS.map((option) => (
                           <SelectItem key={option.value} value={option.value}>
-                            {option.label}
+                            {t(option.labelKey)}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -1224,58 +1232,24 @@ export default function VouchersView() {
                   </div>
                 </div>
 
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="grid gap-2">
-                    <Label htmlFor="gen-prefix">Préfixe (optionnel)</Label>
-                    <Input
-                      id="gen-prefix"
-                      placeholder="SC-"
-                      value={genPrefix}
-                      onChange={(event) => setGenPrefix(event.target.value)}
-                      disabled={generateMutation.isPending}
-                    />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="gen-reseller">Revendeur</Label>
-                    <Select
-                      value={genResellerId}
-                      onValueChange={setGenResellerId}
-                      disabled={generateMutation.isPending}
-                    >
-                      <SelectTrigger id="gen-reseller" className="h-10 w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">Aucun (vente directe)</SelectItem>
-                        {resellers?.map((reseller) => (
-                          <SelectItem key={reseller.id} value={reseller.id}>
-                            {reseller.name} — crédit {formatCurrency(reseller.credit, currency)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
 
                 <div className="grid gap-2">
-                  <Label htmlFor="gen-comment">Commentaire (optionnel)</Label>
+                  <Label htmlFor="gen-comment">{t("vouchers.gen.comment")}</Label>
                   <Input
                     id="gen-comment"
-                    placeholder="Ex. kiosque gare, lot revendeur…"
+                    placeholder={t("vouchers.gen.commentPlaceholder")}
                     value={genComment}
                     onChange={(event) => setGenComment(event.target.value)}
                     disabled={generateMutation.isPending}
                     maxLength={64}
                   />
-                  <p className="text-xs text-muted-foreground">
-                    Inscrit sur le routeur avec le n° de lot (64 caractères max).
-                  </p>
+                  <p className="text-xs text-muted-foreground">{t("vouchers.gen.commentHint")}</p>
                 </div>
               </TabsContent>
 
               <TabsContent value="limits" className="mt-4 grid gap-4">
                 <div className="grid gap-2">
-                  <Label htmlFor="gen-quota">Quota de données par voucher</Label>
+                  <Label htmlFor="gen-quota">{t("vouchers.gen.quotaLabel")}</Label>
                   <Select
                     value={genQuotaMb}
                     onValueChange={setGenQuotaMb}
@@ -1286,40 +1260,36 @@ export default function VouchersView() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="inherit">
-                        Hériter du profil
+                        {t("vouchers.gen.quotaInherit")}
                         {selectedGenProfile
                           ? ` (${
                               selectedGenProfile.dataQuotaMb > 0
-                                ? formatBytes(selectedGenProfile.dataQuotaMb * 1048576)
-                                : "illimité"
+                                ? formatBytes(selectedGenProfile.dataQuotaMb * 1048576, lang)
+                                : t("vouchers.quotaUnlimitedShort")
                             })`
                           : ""}
                       </SelectItem>
                       {QUOTA_OPTIONS.map((quota) => (
                         <SelectItem key={quota.value} value={quota.value}>
-                          {quota.label}
+                          {quota.mb === 0 ? t("vouchers.gen.quotaUnlimited") : fmtQuota(quota.mb)}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                  <p className="text-xs text-muted-foreground">
-                    Le routeur coupe la connexion quand le quota est épuisé (limit-bytes-total).
-                  </p>
+                  <p className="text-xs text-muted-foreground">{t("vouchers.gen.quotaHint")}</p>
                 </div>
 
                 {/* Repères FCFA — l'argument « 5 Go = 500 F », lisible d'un coup d'œil */}
                 <div className="rounded-lg border bg-background p-3">
-                  <p className="text-sm font-medium">Repères FCFA du marché</p>
+                  <p className="text-sm font-medium">{t("vouchers.gen.priceHintsTitle")}</p>
                   <div className="mt-2 flex flex-wrap gap-1.5">
-                    {QUOTA_PRICE_HINTS.map(([quota, price]) => (
-                      <Badge key={quota} variant="secondary" className="font-mono text-xs">
-                        {quota} = {price}
+                    {QUOTA_PRICE_HINTS.map(([quotaMb, price]) => (
+                      <Badge key={quotaMb} variant="secondary" className="font-mono text-xs">
+                        {fmtQuota(quotaMb)} = {fmtFcfa(price)}
                       </Badge>
                     ))}
                   </div>
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    Le prix de vente reste celui du profil — alignez-le sur le quota choisi.
-                  </p>
+                  <p className="mt-2 text-xs text-muted-foreground">{t("vouchers.gen.priceHintsHint")}</p>
                 </div>
               </TabsContent>
             </Tabs>
@@ -1337,9 +1307,9 @@ export default function VouchersView() {
                 </span>
               </p>
               <p className="mt-1 text-muted-foreground">
-                Quota par voucher :{" "}
+                {t("vouchers.gen.quotaPerVoucher")}{" "}
                 <span className="font-medium text-foreground">{quotaLabel}</span>
-                {selectedGenProfile && ` · Profil : ${selectedGenProfile.name}`}
+                {selectedGenProfile && tf("vouchers.gen.profileSuffix", { name: selectedGenProfile.name })}
               </p>
               {selectedReseller && (
                 <p

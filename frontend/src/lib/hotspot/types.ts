@@ -161,7 +161,61 @@ export interface Sale {
   count: number;
   channel: SaleChannel;
   resellerName: string;
+  routerId: string;
+  routerName: string;
+  batchId: string;
   at: string;
+}
+
+export interface Batch {
+  id: string;
+  profileId: string;
+  profileName: string;
+  routerId: string;
+  routerName: string;
+  count: number;
+  unitPrice: number;
+  totalCost: number;
+  channel: SaleChannel;
+  resellerId: string;
+  resellerName: string;
+  createdAt: string;
+}
+
+export interface BatchWithStats extends Batch {
+  remaining: number;
+  active: number;
+  used: number;
+  expired: number;
+  disabled: number;
+}
+
+export interface PagedBatches {
+  data: BatchWithStats[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface SiteOverview {
+  routerId: string;
+  routerName: string;
+  status: RouterStatus;
+  activeSessions: number;
+  hotspotUsers: number;
+  activeVouchers: number;
+  salesToday: number;
+  revenue30d: number;
+}
+
+export type AccountingPeriod = "day" | "week" | "month";
+
+export interface AccountingData {
+  period: AccountingPeriod;
+  routerId: string;
+  series: { label: string; revenue: number; sales: number }[];
+  byRouter: { routerId: string; routerName: string; revenue: number; sales: number; share: number }[];
+  totals: { revenue: number; sales: number; avgTicket: number };
 }
 
 export interface DashboardData {
@@ -175,6 +229,7 @@ export interface DashboardData {
     routersTotal: number;
     onlineNow: number;
   };
+  sites: SiteOverview[];
   sessionsTimeline: { t: string; value: number }[];
   revenueByDay: { day: string; value: number }[];
   topProfiles: { name: string; users: number; total: number }[];

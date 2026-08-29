@@ -33,9 +33,10 @@ import { EmptyState } from "@/components/hotspot/empty-state";
 import { LoadingCards, LoadingRows } from "@/components/hotspot/loading";
 import { PageHeader } from "@/components/hotspot/page-header";
 import { StatCard } from "@/components/hotspot/stat-card";
+import { StatusBadge } from "@/components/hotspot/status-badge";
 import { api } from "@/lib/hotspot/api";
 import { formatCurrency, timeAgo } from "@/lib/hotspot/format";
-import type { Activity as ActivityItem, AppSettings, DashboardData } from "@/lib/hotspot/types";
+import type { Activity as ActivityItem, AppSettings, DashboardData, SiteOverview } from "@/lib/hotspot/types";
 
 const GRID_STROKE = "#27272a";
 const AXIS_TICK = { fill: "#71717a", fontSize: 12 };
@@ -84,6 +85,58 @@ const ACTIVITY_ICONS: Record<ActivityItem["type"], LucideIcon> = {
   session: Radio,
   system: Cog,
 };
+
+// SiteCard — carte de vue d'ensemble d'un site (routeur) : le multi-sites
+// est au cœur du modèle SaaS (1 compte = N hotspots).
+function SiteCard({ site, currency }: { site: SiteOverview; currency: string }) {
+  const online = site.status === "online";
+  return (
+    <Card className="gap-0 py-0">
+      <CardContent className="p-4 sm:p-5">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <RouterIcon className="size-4" />
+            </span>
+            <span className="truncate font-medium" title={site.routerName}>
+              {site.routerName}
+            </span>
+          </div>
+          <StatusBadge status={online ? "online" : "offline"} dot />
+        </div>
+
+        <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3">
+          <div>
+            <dt className="text-xs text-muted-foreground">Sessions</dt>
+            <dd className="mt-0.5 flex items-center gap-1.5 font-semibold tabular-nums">
+              {nf(site.activeSessions)}
+              {online && <span className="live-dot" aria-label="en direct" />}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted-foreground">Ventes du jour</dt>
+            <dd className="mt-0.5 font-semibold tabular-nums">{nf(site.salesToday)}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted-foreground">Utilisateurs actifs</dt>
+            <dd className="mt-0.5 font-semibold tabular-nums">{nf(site.hotspotUsers)}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted-foreground">Vouchers actifs</dt>
+            <dd className="mt-0.5 font-semibold tabular-nums">{nf(site.activeVouchers)}</dd>
+          </div>
+        </dl>
+
+        <div className="mt-4 flex items-center justify-between gap-2 border-t pt-3">
+          <span className="text-xs text-muted-foreground">Revenu 30 jours</span>
+          <span className="text-sm font-semibold text-primary tabular-nums">
+            {formatCurrency(site.revenue30d, currency)}
+          </span>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 export default function DashboardView() {
   const { data, isLoading, isError, refetch } = useQuery({
@@ -161,6 +214,26 @@ export default function DashboardView() {
           sub="en ligne"
         />
       </div>
+
+      {/* Vue d'ensemble multi-sites — 1 compte = N hotspots */}
+      {data.sites.length > 0 && (
+        <section aria-label="Vue d'ensemble multi-sites" className="space-y-3">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="text-sm font-semibold tracking-wide text-muted-foreground uppercase">
+              Vue d'ensemble multi-sites
+            </h2>
+            <p className="text-xs text-muted-foreground">
+              {data.sites.length} hotspot{data.sites.length > 1 ? "s" : ""} rattaché
+              {data.sites.length > 1 ? "s" : ""} à votre compte
+            </p>
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {data.sites.map((site) => (
+              <SiteCard key={site.routerId} site={site} currency={currency} />
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Graphiques */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">

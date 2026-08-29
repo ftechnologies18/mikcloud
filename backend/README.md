@@ -32,13 +32,16 @@ Compte démo (seed) : **admin / admin123**. `POST /api/admin/reset` régénère 
 | Méthode | Chemin                              | Description                          |
 | ------- | ----------------------------------- | ------------------------------------ |
 | POST    | `/api/auth/login`                   | Connexion (JWT Bearer)               |
-| GET     | `/api/dashboard`                    | KPIs, chronologies, activité         |
+| GET     | `/api/dashboard`                    | KPIs, **vue multi-sites**, chronologies, activité |
 | GET/POST/PUT/DELETE | `/api/routers` (+ `/:id/test`, `/:id/stats`) | Routeurs MikroTik |
 | GET/POST/PUT/DELETE | `/api/profiles`    | Forfaits hotspot                     |
 | GET/POST/PUT/DELETE | `/api/users` (+ enable/disable) | Utilisateurs & vouchers |
-| POST    | `/api/vouchers/generate`            | Génération en lot (débit revendeur)  |
+| POST    | `/api/vouchers/generate`            | Génération en lot (débit revendeur, lot tracé) |
+| GET     | `/api/vouchers/batches`             | **Lots tracés** (stats live par statut) |
+| POST    | `/api/vouchers/batch/:batchId/delete` | Suppression d'un lot entier        |
 | GET     | `/api/sessions` / DELETE `/:id`     | Sessions actives / kick              |
 | GET/POST/PUT/DELETE | `/api/resellers` (+ `/:id/credit`) | Revendeurs & portefeuille |
+| GET     | `/api/accounting?period=day\|week\|month&routerId=` | **Comptabilité multi-sites** (ventes/CA par jour, semaine, mois et par routeur) |
 | GET     | `/api/reports?days=7\|14\|30`       | Rapports commerciaux & trafic        |
 | GET/PUT | `/api/settings`                     | Organisation, devise, fuseau         |
 | POST    | `/api/admin/reset`                  | Réinitialisation des données démo    |

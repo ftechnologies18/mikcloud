@@ -156,7 +156,7 @@ type Activity struct {
 	At      string `json:"at"`
 }
 
-// Sale — vente de vouchers (par lot).
+// Sale — vente de vouchers (par lot), attribuée au routeur (site) émetteur.
 type Sale struct {
 	ID           string `json:"id"`
 	Amount       int    `json:"amount"`
@@ -164,7 +164,26 @@ type Sale struct {
 	Count        int    `json:"count"`
 	Channel      string `json:"channel"` // direct | reseller
 	ResellerName string `json:"resellerName"`
+	RouterID     string `json:"routerId"`
+	RouterName   string `json:"routerName"`
+	BatchID      string `json:"batchId"`
 	At           string `json:"at"`
+}
+
+// Batch — lot de vouchers générés en une fois (traçabilité complète).
+type Batch struct {
+	ID           string `json:"id"`
+	ProfileID    string `json:"profileId"`
+	ProfileName  string `json:"profileName"`
+	RouterID     string `json:"routerId"`
+	RouterName   string `json:"routerName"`
+	Count        int    `json:"count"`
+	UnitPrice    int    `json:"unitPrice"`
+	TotalCost    int    `json:"totalCost"`
+	Channel      string `json:"channel"` // direct | reseller
+	ResellerID   string `json:"resellerId"`
+	ResellerName string `json:"resellerName"`
+	CreatedAt    string `json:"createdAt"`
 }
 
 // Tenant — infos du tenant.
@@ -205,6 +224,7 @@ type DB struct {
 	Routers      []Router      `json:"routers"`
 	Profiles     []Profile     `json:"profiles"`
 	HotspotUsers []HotspotUser `json:"hotspotUsers"`
+	Batches      []Batch       `json:"batches"`
 	Resellers    []Reseller    `json:"resellers"`
 	Transactions []Transaction `json:"transactions"`
 	Sessions     []Session     `json:"sessions"`

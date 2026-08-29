@@ -1,6 +1,7 @@
 "use client";
 
-// Vue Vouchers (kind=voucher) — générateur en série, impression de tickets, suivi des statuts.
+// Vue Vouchers (kind=voucher) — générateur en série, impression de tickets,
+// suivi des statuts et traçabilité des lots (onglet Lots).
 
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -10,6 +11,8 @@ import {
   ChevronRight,
   Clock,
   Copy,
+  Eye,
+  Layers,
   Loader2,
   MoreHorizontal,
   Printer,
@@ -59,6 +62,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/hotspot/empty-state";
 import { LoadingCards, LoadingRows } from "@/components/hotspot/loading";
 import { PageHeader } from "@/components/hotspot/page-header";
@@ -71,9 +75,11 @@ import { UcPrintDialog } from "@/components/hotspot/parts/uc-print-dialog";
 import { api } from "@/lib/hotspot/api";
 import { formatCurrency, formatDate, formatDuration } from "@/lib/hotspot/format";
 import type {
+  BatchWithStats,
   GenerateVouchersRequest,
   GenerateVouchersResponse,
   HotspotUser,
+  PagedBatches,
   PagedUsers,
   Profile,
   Reseller,
@@ -82,6 +88,7 @@ import type {
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 12;
+const BATCH_PAGE_SIZE = 10;
 const CODE_LENGTHS = [5, 6, 8, 10];
 
 const STATUS_OPTIONS = [
@@ -102,12 +109,29 @@ export default function VouchersView() {
   const tenantName = settings?.tenant.name || "MikCloud";
   const queryClient = useQueryClient();
 
+  // Onglet actif : liste des vouchers ou traçabilité des lots
+  const [tab, setTab] = useState<"vouchers" | "batches">("vouchers");
+
   // Filtres de la table (recherche avec debounce ~400 ms)
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [profileFilter, setProfileFilter] = useState("all");
   const [page, setPage] = useState(1);
+
+  // Filtres des lots
+  const [batchSearchInput, setBatchSearchInput] = useState("");
+  const [batchSearch, setBatchSearch] = useState("");
+  const [batchRouterFilter, setBatchRouterFilter] = useState("all");
+  const [batchPage, setBatchPage] = useState(1);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setBatchSearch(batchSearchInput.trim());
+      setBatchPage(1);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [batchSearchInput]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -252,6 +276,71 @@ export default function VouchersView() {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  // --- Traçabilité des lots ---
+  const batchRouterParam = batchRouterFilter === "all" ? undefined : batchRouterFilter;
+
+  const { data: batchData, isLoading: batchesLoading, isFetching: batchesFetching } = useQuery({
+    queryKey: ["/api/vouchers", "batches", { search: batchSearch, routerId: batchRouterParam, page: batchPage }],
+    queryFn: () =>
+      api<PagedBatches>("/api/vouchers/batches", {
+        params: { search: batchSearch, routerId: batchRouterParam, page: batchPage, pageSize: BATCH_PAGE_SIZE },
+      }),
+    refetchInterval: 30_000,
+    placeholderData: (previous) => previous,
+  });
+
+  const batches = batchData?.data ?? [];
+  const batchTotal = batchData?.total ?? 0;
+  const batchMaxPage = Math.max(1, Math.ceil(batchTotal / BATCH_PAGE_SIZE));
+  const batchSafePage = Math.min(batchPage, batchMaxPage);
+  const batchRangeStart = batchTotal === 0 ? 0 : (batchSafePage - 1) * BATCH_PAGE_SIZE + 1;
+  const batchRangeEnd = Math.min(batchSafePage * BATCH_PAGE_SIZE, batchTotal);
+
+  const [deletingBatch, setDeletingBatch] = useState<BatchWithStats | null>(null);
+  const [printingBatchId, setPrintingBatchId] = useState<string | null>(null);
+
+  const batchDeleteMutation = useMutation({
+    mutationFn: (batch: BatchWithStats) =>
+      api<{ ok: boolean; deleted: number }>(`/api/vouchers/batch/${batch.id}/delete`, { method: "POST" }),
+    onSuccess: (res, batch) => {
+      toast.success(`Lot #${shortBatch(batch.id)} supprimé (${res.deleted} vouchers)`);
+      setDeletingBatch(null);
+      invalidateVouchers();
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  // « Voir les vouchers » : bascule sur l'onglet vouchers filtré par le lot.
+  function viewBatchVouchers(batch: BatchWithStats) {
+    setSearchInput(batch.id);
+    setSearch(batch.id);
+    setStatusFilter("all");
+    setProfileFilter("all");
+    setPage(1);
+    setTab("vouchers");
+  }
+
+  // « Imprimer le lot » : charge les vouchers restants du lot puis ouvre l'impression.
+  async function printBatch(batch: BatchWithStats) {
+    setPrintingBatchId(batch.id);
+    try {
+      const res = await api<PagedUsers>("/api/vouchers", {
+        params: { search: batch.id, page: 1, pageSize: 500 },
+      });
+      if (res.data.length === 0) {
+        toast.info(`Lot #${shortBatch(batch.id)} : plus aucun voucher en base (purgé).`);
+        return;
+      }
+      setPrintVouchers(res.data);
+      setPrintTitle(`Imprimer le lot #${shortBatch(batch.id)} — ${res.data.length} tickets`);
+      setPrintOpen(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Impression impossible");
+    } finally {
+      setPrintingBatchId(null);
+    }
+  }
+
   const genValid = countValid && genProfileId !== "" && genRouterId !== "" && !insufficient;
 
   function submitGenerate() {
@@ -281,6 +370,22 @@ export default function VouchersView() {
         }
       />
 
+      {/* Onglets Vouchers / Lots (traçabilité) */}
+      <Tabs value={tab} onValueChange={(value) => setTab(value as "vouchers" | "batches")}>
+        <TabsList>
+          <TabsTrigger value="vouchers" className="gap-1.5">
+            <Ticket className="size-3.5" aria-hidden />
+            Vouchers
+          </TabsTrigger>
+          <TabsTrigger value="batches" className="gap-1.5">
+            <Layers className="size-3.5" aria-hidden />
+            Lots
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
+
+      {tab === "vouchers" && (
+        <>
       {/* Statistiques du stock */}
       {statsLoading ? (
         <LoadingCards cards={4} />
@@ -387,6 +492,7 @@ export default function VouchersView() {
                     <TableHead className="text-right text-muted-foreground">Prix</TableHead>
                     <TableHead className="text-muted-foreground">Statut</TableHead>
                     <TableHead className="hidden text-muted-foreground md:table-cell">Revendeur</TableHead>
+                    <TableHead className="hidden text-muted-foreground md:table-cell">Lot</TableHead>
                     <TableHead className="hidden text-muted-foreground lg:table-cell">Créé</TableHead>
                     <TableHead className="pr-4 text-right text-muted-foreground sm:pr-6">Actions</TableHead>
                   </TableRow>
@@ -434,6 +540,26 @@ export default function VouchersView() {
                       </TableCell>
                       <TableCell className="hidden max-w-40 truncate text-muted-foreground md:table-cell">
                         {voucher.resellerName || "—"}
+                      </TableCell>
+                      <TableCell className="hidden md:table-cell">
+                        {voucher.batchId ? (
+                          <button
+                            type="button"
+                            className="font-mono text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                            onClick={() => {
+                              setSearchInput(voucher.batchId);
+                              setSearch(voucher.batchId);
+                              setStatusFilter("all");
+                              setProfileFilter("all");
+                              setPage(1);
+                            }}
+                            title={`Filtrer le lot ${voucher.batchId}`}
+                          >
+                            #{shortBatch(voucher.batchId)}
+                          </button>
+                        ) : (
+                          "—"
+                        )}
                       </TableCell>
                       <TableCell className="hidden tabular-nums text-muted-foreground lg:table-cell">
                         {formatDate(voucher.createdAt)}
@@ -504,6 +630,218 @@ export default function VouchersView() {
           </>
         )}
       </Card>
+        </>
+      )}
+
+      {/* ----------------------------------------------------------------- */}
+      {/* Onglet Lots — traçabilité complète des générations de vouchers     */}
+      {/* ----------------------------------------------------------------- */}
+      {tab === "batches" && (
+        <>
+          {/* Filtres des lots */}
+          <Card className="gap-0 py-0">
+            <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center">
+              <div className="relative w-full sm:max-w-xs sm:flex-1">
+                <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+                <Input
+                  className="h-10 pl-9"
+                  placeholder="Rechercher un lot, un profil, un revendeur…"
+                  value={batchSearchInput}
+                  onChange={(event) => setBatchSearchInput(event.target.value)}
+                  aria-label="Rechercher un lot"
+                />
+              </div>
+              <div className="flex flex-1 flex-wrap gap-3 sm:justify-end">
+                <Select
+                  value={batchRouterFilter}
+                  onValueChange={(value) => {
+                    setBatchRouterFilter(value);
+                    setBatchPage(1);
+                  }}
+                >
+                  <SelectTrigger className="h-10 w-full sm:w-52" aria-label="Filtrer les lots par site">
+                    <SelectValue placeholder="Site" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Tous les sites</SelectItem>
+                    {routers?.map((router) => (
+                      <SelectItem key={router.id} value={router.id}>
+                        {router.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Table des lots */}
+          <Card className="gap-0 py-0">
+            {batchesLoading && !batchData ? (
+              <LoadingRows rows={8} />
+            ) : batches.length === 0 ? (
+              <EmptyState
+                icon={Layers}
+                title="Aucun lot"
+                description={
+                  batchSearch !== "" || batchRouterFilter !== "all"
+                    ? "Aucun lot ne correspond à ces filtres."
+                    : "Générez votre premier lot de tickets WiFi."
+                }
+                action={
+                  batchSearch === "" && batchRouterFilter === "all" && (
+                    <Button onClick={() => setGenOpen(true)}>
+                      <TicketPlus className="size-4" />
+                      Générer des vouchers
+                    </Button>
+                  )
+                }
+              />
+            ) : (
+              <>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="hover:bg-transparent">
+                        <TableHead className="pl-4 text-muted-foreground sm:pl-6">Lot</TableHead>
+                        <TableHead className="text-muted-foreground">Profil</TableHead>
+                        <TableHead className="hidden text-muted-foreground md:table-cell">Site</TableHead>
+                        <TableHead className="hidden text-muted-foreground lg:table-cell">Canal</TableHead>
+                        <TableHead className="text-right text-muted-foreground">Vouchers</TableHead>
+                        <TableHead className="text-right text-muted-foreground">Actifs</TableHead>
+                        <TableHead className="hidden text-right text-muted-foreground xl:table-cell">
+                          Utilisés · Expirés
+                        </TableHead>
+                        <TableHead className="hidden text-right text-muted-foreground md:table-cell">Coût</TableHead>
+                        <TableHead className="pr-4 text-right text-muted-foreground sm:pr-6">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {batches.map((batch) => {
+                        const purged =
+                          batch.active === 0 && batch.used === 0 && batch.expired === 0 && batch.disabled === 0;
+                        return (
+                          <TableRow key={batch.id}>
+                            <TableCell className="pl-4 sm:pl-6">
+                              <p className="font-mono text-sm font-medium">#{shortBatch(batch.id)}</p>
+                              <p className="text-xs text-muted-foreground">{formatDate(batch.createdAt)}</p>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="max-w-36 truncate">
+                                {batch.profileName}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="hidden max-w-40 truncate text-muted-foreground md:table-cell">
+                              {batch.routerName}
+                            </TableCell>
+                            <TableCell className="hidden lg:table-cell">
+                              {batch.channel === "reseller" ? (
+                                <span className="text-muted-foreground">
+                                  Revendeur · <span className="text-foreground">{batch.resellerName || "—"}</span>
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground">Direct</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right font-medium tabular-nums">{batch.count}</TableCell>
+                            <TableCell className="text-right tabular-nums">
+                              {purged ? (
+                                <span className="text-xs text-muted-foreground">Purgé</span>
+                              ) : (
+                                <span className={cn("font-medium", batch.active > 0 ? "text-primary" : "text-muted-foreground")}>
+                                  {batch.active}
+                                </span>
+                              )}
+                            </TableCell>
+                            <TableCell className="hidden text-right text-xs text-muted-foreground tabular-nums xl:table-cell">
+                              {batch.used} · {batch.expired}
+                            </TableCell>
+                            <TableCell className="hidden text-right tabular-nums text-muted-foreground md:table-cell">
+                              {formatCurrency(batch.totalCost, currency)}
+                            </TableCell>
+                            <TableCell className="pr-4 text-right sm:pr-6">
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="size-10 text-muted-foreground hover:text-foreground"
+                                    aria-label={`Actions pour le lot ${batch.id}`}
+                                  >
+                                    <MoreHorizontal className="size-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-60">
+                                  <DropdownMenuItem className="min-h-10" onClick={() => viewBatchVouchers(batch)}>
+                                    <Eye className="size-4" />
+                                    Voir les vouchers
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    className="min-h-10"
+                                    disabled={printingBatchId === batch.id}
+                                    onClick={() => void printBatch(batch)}
+                                  >
+                                    {printingBatchId === batch.id ? (
+                                      <Loader2 className="size-4 animate-spin" />
+                                    ) : (
+                                      <Printer className="size-4" />
+                                    )}
+                                    Imprimer le lot
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem
+                                    variant="destructive"
+                                    className="min-h-10"
+                                    onClick={() => setDeletingBatch(batch)}
+                                  >
+                                    <Trash2 className="size-4" />
+                                    Supprimer le lot
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+
+                {/* Pagination des lots */}
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3 sm:px-6">
+                  <p className="text-xs text-muted-foreground">
+                    {batchesFetching
+                      ? "Actualisation…"
+                      : `${batchRangeStart}–${batchRangeEnd} sur ${batchTotal} lots tracés`}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-10"
+                      onClick={() => setBatchPage((p) => Math.max(1, p - 1))}
+                      disabled={batchSafePage <= 1}
+                    >
+                      <ChevronLeft className="size-4" />
+                      Précédent
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-10"
+                      onClick={() => setBatchPage((p) => Math.min(batchMaxPage, p + 1))}
+                      disabled={batchSafePage >= batchMaxPage}
+                    >
+                      Suivant
+                      <ChevronRight className="size-4" />
+                    </Button>
+                  </div>
+                </div>
+              </>
+            )}
+          </Card>
+        </>
+      )}
 
       {/* Dialogue générateur */}
       <Dialog open={genOpen} onOpenChange={setGenOpen}>
@@ -690,7 +1028,7 @@ export default function VouchersView() {
         profiles={profiles ?? []}
       />
 
-      {/* Confirmation suppression */}
+      {/* Confirmation suppression voucher */}
       <AlertDialog open={deleting !== null} onOpenChange={(open) => !open && setDeleting(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -711,6 +1049,33 @@ export default function VouchersView() {
             >
               {deleteMutation.isPending && <Loader2 className="size-4 animate-spin" />}
               Supprimer
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Confirmation suppression d'un lot entier */}
+      <AlertDialog open={deletingBatch !== null} onOpenChange={(open) => !open && setDeletingBatch(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Supprimer le lot #{deletingBatch && shortBatch(deletingBatch.id)} ?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deletingBatch &&
+                `Les ${deletingBatch.count} vouchers de ce lot (${deletingBatch.profileName} — ${deletingBatch.routerName}) seront retirés du routeur et de la base. Cette action est irréversible.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={batchDeleteMutation.isPending}>Annuler</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
+              disabled={batchDeleteMutation.isPending}
+              onClick={(event) => {
+                event.preventDefault();
+                if (deletingBatch) batchDeleteMutation.mutate(deletingBatch);
+              }}
+            >
+              {batchDeleteMutation.isPending && <Loader2 className="size-4 animate-spin" />}
+              Supprimer le lot
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

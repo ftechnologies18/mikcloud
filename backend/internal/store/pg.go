@@ -401,6 +401,13 @@ func (p *PG) ensureSchema() error {
 		// Quota de données par voucher (« 5 Go = 500 F ») : Mo, 0 = illimité.
 		`ALTER TABLE hotspot_users ADD COLUMN IF NOT EXISTS data_quota_mb BIGINT NOT NULL DEFAULT 0`,
 		`ALTER TABLE batches       ADD COLUMN IF NOT EXISTS data_quota_mb BIGINT NOT NULL DEFAULT 0`,
+		// Abonnement SaaS (formules Essentiel 1 250 F/mois/routeur et
+		// Illimité 12 000 F/an, routeurs illimités) : état par compte dans settings.
+		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS sub_plan_id      TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS sub_status       TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS sub_period_start TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS sub_period_end   TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS sub_last_amount  INTEGER NOT NULL DEFAULT 0`,
 		// Migrations multi-tenant : colonne account_id sur toutes les tables métier.
 		`ALTER TABLE admin_users   ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''`,
 		// Changement de mot de passe par l'utilisateur (POST /api/auth/password) :
@@ -554,7 +561,8 @@ func (p *PG) loadNotifSettings(db *model.DB) error {
 func (p *PG) loadSettings(db *model.DB) error {
 	rows, err := p.db.Query(
 		`SELECT account_id, tenant_name, tenant_currency, tenant_timezone, plan_name, plan_max_routers, plan_max_users, wave_link,
-                        dns_name, logo_url, expiry_policy_mode, expiry_policy_after_days, last_tick
+                        dns_name, logo_url, expiry_policy_mode, expiry_policy_after_days,
+                        sub_plan_id, sub_status, sub_period_start, sub_period_end, sub_last_amount, last_tick
                  FROM settings`)
 	if err != nil {
 		return err
@@ -568,11 +576,15 @@ func (p *PG) loadSettings(db *model.DB) error {
 			waveLink, dnsName, logoURL                 string
 			expiryMode                                 string
 			expiryAfterDays                            int
+			subPlanID, subStatus                       string
+			subPeriodStart, subPeriodEnd               string
+			subLastAmount                              int
 			lastTick                                   sql.NullTime
 		)
 		if err := rows.Scan(&accID, &tenantName, &tenantCurrency, &tenantTimezone,
 			&planName, &planMaxRouters, &planMaxUsers, &waveLink,
-			&dnsName, &logoURL, &expiryMode, &expiryAfterDays, &lastTick); err != nil {
+			&dnsName, &logoURL, &expiryMode, &expiryAfterDays,
+			&subPlanID, &subStatus, &subPeriodStart, &subPeriodEnd, &subLastAmount, &lastTick); err != nil {
 			return err
 		}
 		if accID == "" {
@@ -585,6 +597,10 @@ func (p *PG) loadSettings(db *model.DB) error {
 				ExpiryPolicyMode: expiryMode, ExpiryPolicyAfterDays: expiryAfterDays,
 			},
 			Plan: model.Plan{Name: planName, MaxRouters: planMaxRouters, MaxUsers: planMaxUsers},
+			Subscription: model.Subscription{
+				PlanID: subPlanID, Status: subStatus,
+				PeriodStart: subPeriodStart, PeriodEnd: subPeriodEnd, LastAmountFcfa: subLastAmount,
+			},
 		}
 		if lastTick.Valid && db.LastTick.IsZero() {
 			db.LastTick = lastTick.Time
@@ -687,8 +703,9 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
 	for accID, s := range db.SettingsByAccount {
 		_, err := tx.Exec(
 			`INSERT INTO settings (id, account_id, tenant_name, tenant_currency, tenant_timezone, plan_name, plan_max_routers, plan_max_users, wave_link,
-                                dns_name, logo_url, expiry_policy_mode, expiry_policy_after_days, last_tick)
-                         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                               dns_name, logo_url, expiry_policy_mode, expiry_policy_after_days,
+                               sub_plan_id, sub_status, sub_period_start, sub_period_end, sub_last_amount, last_tick)
+                         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
                          ON CONFLICT (id) DO UPDATE SET
                            account_id                = EXCLUDED.account_id,
                            tenant_name               = EXCLUDED.tenant_name,
@@ -702,11 +719,18 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
                            logo_url                  = EXCLUDED.logo_url,
                            expiry_policy_mode        = EXCLUDED.expiry_policy_mode,
                            expiry_policy_after_days  = EXCLUDED.expiry_policy_after_days,
+                           sub_plan_id               = EXCLUDED.sub_plan_id,
+                           sub_status                = EXCLUDED.sub_status,
+                           sub_period_start          = EXCLUDED.sub_period_start,
+                           sub_period_end            = EXCLUDED.sub_period_end,
+                           sub_last_amount           = EXCLUDED.sub_last_amount,
                            last_tick                 = EXCLUDED.last_tick`,
 			accID, s.Tenant.Name, s.Tenant.Currency, s.Tenant.Timezone,
 			s.Plan.Name, s.Plan.MaxRouters, s.Plan.MaxUsers,
 			s.Tenant.WaveLink, s.Tenant.DNSName, s.Tenant.LogoURL,
-			s.Tenant.ExpiryPolicyMode, s.Tenant.ExpiryPolicyAfterDays, lastTick)
+			s.Tenant.ExpiryPolicyMode, s.Tenant.ExpiryPolicyAfterDays,
+			s.Subscription.PlanID, s.Subscription.Status, s.Subscription.PeriodStart,
+			s.Subscription.PeriodEnd, s.Subscription.LastAmountFcfa, lastTick)
 		if err != nil {
 			return fmt.Errorf("pg sync settings (%s) : %w", accID, err)
 		}

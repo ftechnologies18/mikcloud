@@ -521,6 +521,52 @@ export interface AppSettings {
     maxRouters: string;
     maxUsers: string;
   };
+  /** État d'abonnement SaaS (optionnel : absents des réponses d'avant la facturation). */
+  subscription?: Subscription;
+}
+
+/** Formule d'abonnement MikCloud (catalogue GET /api/plans). */
+export interface SaasPlan {
+  id: "essentiel" | "illimite" | string;
+  name: string;
+  priceFcfa: number;
+  period: "mois" | "an";
+  /** true : prix × nombre de routeurs enregistrés (formule Essentiel). */
+  perRouter: boolean;
+  /** true : routeurs illimités (formule Illimité). */
+  unlimited: boolean;
+  tagline: string;
+  badge?: string;
+}
+
+/** État d'abonnement SaaS d'un compte. planId vide = ère bêta. */
+export interface Subscription {
+  planId: string;
+  status: "active" | "expired" | "";
+  periodStart: string; // RFC3339
+  periodEnd: string; // RFC3339, "" = non expirant
+  lastAmountFcfa: number;
+}
+
+/** Réponse GET /api/subscription — état + catalogue + assiette de facturation. */
+export interface SubscriptionView {
+  subscription: Subscription;
+  /** Statut effectif calculé serveur : une période échue passe en « expired ». */
+  status: "active" | "expired" | "none";
+  routerCount: number;
+  currentAmountFcfa: number;
+  plans: SaasPlan[];
+  waveConfigured: boolean;
+}
+
+/** Réponse POST /api/subscription — souscription / renouvellement / changement. */
+export interface SubscribeResponse {
+  subscription: Subscription;
+  amountFcfa: number;
+  routerCount: number;
+  periodLabel: string;
+  /** Lien Wave pré-composé avec le montant ("" si aucun lien marchand configuré). */
+  waveLink: string;
 }
 
 // ─── F6 — Trafic temps réel ───

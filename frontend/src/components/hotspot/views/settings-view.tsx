@@ -9,8 +9,6 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Building2,
   CalendarClock,
-  Check,
-  Crown,
   Database,
   Eye,
   EyeOff,
@@ -32,6 +30,7 @@ import type { AppSettings, ExpiryPolicyMode } from "@/lib/hotspot/types";
 import { useHotspotStore } from "@/lib/hotspot/store";
 import { PageHeader } from "@/components/hotspot/page-header";
 import { SETTINGS_QUERY_KEY, useSettings } from "@/components/hotspot/parts/sd-currency";
+import { SubscriptionCard } from "@/components/hotspot/parts/sa-subscription-card";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -54,8 +53,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 const CURRENCIES = ["FCFA", "EUR", "USD", "MAD", "XOF", "GBP", "CDF", "GNF"];
 const TIMEZONES = ["UTC", "Africa/Abidjan", "Africa/Dakar", "Africa/Casablanca", "Europe/Paris", "Europe/Brussels"];
-
-const PLAN_FEATURE_KEYS = ["settings.planRouters", "settings.planUsers", "settings.planResellers", "settings.planSupport"];
 
 const MIKROTIK_STEPS = [
   { titleKey: "settings.guide.step1", textKey: "settings.guide.step1Text" },
@@ -136,32 +133,9 @@ export default function SettingsView() {
         {/* Organisation */}
         <OrganizationCard settings={data} />
 
-        {/* Abonnement */}
-        <Card className="gap-4 py-4 sm:py-6">
-          <CardHeader className="px-4 sm:px-6">
-            <CardTitle className="flex items-center justify-between gap-2 text-base">
-              {t("settings.subscription")}
-              <Badge className="gap-1 border-primary/25 bg-primary/15 text-primary" variant="outline">
-                <Crown className="size-3" />
-                PRO
-              </Badge>
-            </CardTitle>
-            <CardDescription>{t("settings.subscriptionDesc")}</CardDescription>
-          </CardHeader>
-          <CardContent className="px-4 sm:px-6">
-            <ul className="space-y-3">
-              {PLAN_FEATURE_KEYS.map((featureKey) => (
-                <li key={featureKey} className="flex items-center gap-2.5 text-sm">
-                  <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary">
-                    <Check className="size-3" />
-                  </span>
-                  {t(featureKey)}
-                </li>
-              ))}
-            </ul>
-            <p className="mt-5 text-xs text-muted-foreground">{t("settings.planCurrent")}</p>
-          </CardContent>
-        </Card>
+        {/* Abonnement SaaS — formules Essentiel (1 250 F/mois/routeur) et
+            Illimité (12 000 F/an, routeurs illimités), paiement via Wave. */}
+        <SubscriptionCard />
 
         {/* Expiration des vouchers (F1/F5) — politique de nettoyage cloud */}
         <ExpiryCard settings={data} />

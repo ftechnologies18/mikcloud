@@ -127,6 +127,11 @@ func InstallScript(baseURL, token, routerName string) string {
 # MikCloud — Installation agent  (routeur: ` + safeName + `)
 # Coller CE fichier entier dans Terminal (Winbox) — 1 seule fois.
 # ============================================================
+# NB : check-certificate=no est requis sur RouterOS < 7.19 (ces versions
+# n'embarquent aucun certificat racine → la validation Let's Encrypt échoue).
+# Pour durcir : importez ISRG Root X1 (/certificate import) puis retirez
+# le paramètre des /tool fetch ci-dessous.
+# ============================================================
 :global mikcloudToken "` + rosEscape(token) + `"
 :global mikcloudUrl   "` + strings.TrimRight(baseURL, "/") + `"
 
@@ -138,7 +143,7 @@ func InstallScript(baseURL, token, routerName string) string {
 :local up [:tostr ($res->"uptime")]
 :do {
   /tool fetch url=("$mikcloudUrl/agent/register?token=$mikcloudToken") http-method=post \
-    http-data=("identity=". [:tostr $ident] ."&model=". [:tostr $mod] ."&version=". $ver ."&uptime=". $up) output=none
+    http-data=("identity=". [:tostr $ident] ."&model=". [:tostr $mod] ."&version=". $ver ."&uptime=". $up) check-certificate=no output=none
 } on-error={ :log warning "MikCloud: inscription impossible (reseau?)" }
 
 # --- 2) Reinstallation propre : suppression d'un ancien agent ---
@@ -148,7 +153,7 @@ func InstallScript(baseURL, token, routerName string) string {
 /system scheduler add name="` + SchedulerName + `" interval=45s start-time=startup on-event={
   :do {
     /tool fetch url=($mikcloudUrl . "/agent/cmd?token=" . $mikcloudToken) \
-      dst-path="` + ScriptFilename + `" keep-result=yes output=none
+      dst-path="` + ScriptFilename + `" keep-result=yes check-certificate=no output=none
     :delay 1s
     /import file-name="` + ScriptFilename + `"
   } on-error={ :log warning "MikCloud agent: check-in echoue (reseau?)" }
@@ -208,7 +213,7 @@ func (b Builder) reportLine(cmdID string, ok bool, extra map[string]string) stri
                 data += "&" + k + "=" + urlEscape(v)
         }
         return `/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
-                `" http-method=post http-data=("` + data + `") output=none`
+                `" http-method=post http-data=("` + data + `") check-certificate=no output=none`
 }
 
 // urlEscape — encodage minimal sûr pour les valeurs d'URL (http-data).
@@ -281,7 +286,7 @@ func (b Builder) buildReadState(cmd model.Command) string {
 `)
         sb.WriteString(`/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
                 `" http-method=post http-data=("cmd=` + cmd.ID +
-                `&status=ok&version=". $rver ."&uptime=". $rup ."&cpu=". $rcpu ."&freemem=". $rmem ."&totalmem=". $rmemb ."&users=". $rusr ."&sessions=". $rsess) output=none` + "\n")
+                `&status=ok&version=". $rver ."&uptime=". $rup ."&cpu=". $rcpu ."&freemem=". $rmem ."&totalmem=". $rmemb ."&users=". $rusr ."&sessions=". $rsess) check-certificate=no output=none` + "\n")
         return sb.String()
 }
 

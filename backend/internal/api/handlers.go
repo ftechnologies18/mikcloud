@@ -103,6 +103,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/accounting", a.handleAccounting)
 	mux.HandleFunc("GET /api/accounting/export", a.handleAccountingExport)
 	mux.HandleFunc("GET /api/wave/link", a.handleWaveLink)
+	mux.HandleFunc("GET /api/stats/hourly", a.handleStatsHourly)
+
 	mux.HandleFunc("GET /api/activity", a.handleActivityList)
 	mux.HandleFunc("GET /api/settings", a.handleSettingsGet)
 	mux.HandleFunc("PUT /api/settings", a.handleSettingsPut)
@@ -879,46 +881,21 @@ func (a *API) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 		recent = append(recent, act)
 	}
+	loc := accountTimezone(db, acc)
+	timeline := buildHourlyLogins(db, acc, now, loc)
 	a.store.Unlock()
 
-	// La courbe synthétique 24 h est mise à l'échelle du compte : un compte
-	// sans session affiche une courbe à zéro (~24 sessions = courbe nominale).
-	sessionsScale := float64(len(accSessions)) / 24.0
+	// N°10 — courbe 24 h RÉELLE : connexions/heure agrégées depuis les
+	// UserLogs (simulation + agent), dans le fuseau du compte. Un compte
+	// sans activité affiche zéro — honnête par construction.
 	writeJSON(w, http.StatusOK, map[string]any{
 		"kpis":             kpis,
 		"sites":            sites,
-		"sessionsTimeline": buildSessionsTimeline(now, sessionsScale),
+		"sessionsTimeline": timeline,
 		"revenueByDay":     revenueByDay,
 		"topProfiles":      top,
 		"recentActivity":   recent,
 	})
-}
-
-// buildSessionsTimeline — 24 points horaires, heure courante en dernier,
-// valeurs crédibles (pic en soirée). La courbe synthétique est mise à l'échelle
-// du compte (scale = sessions actives / 24) : un compte vide affiche zéro.
-func buildSessionsTimeline(now time.Time, scale float64) []timelinePoint {
-	base := [24]int{14, 10, 7, 5, 4, 5, 7, 9, 11, 13, 15, 16, 17, 18, 19, 21, 24, 28, 33, 38, 42, 40, 33, 24}
-	hour := now.UTC().Hour()
-	pts := make([]timelinePoint, 0, 24)
-	for i := 23; i >= 0; i-- {
-		h := (hour - i + 24) % 24
-		rnd := rand.New(rand.NewSource(now.Unix()/3600 + int64(h)*7919))
-		v := base[h] + rnd.Intn(9) - 4
-		if scale <= 0 {
-			v = 0
-		} else {
-			v = int(math.Round(float64(v) * scale))
-			if v < 0 {
-				v = 0
-			}
-			if v > 96 {
-				v = 96
-			}
-		}
-		pts = append(pts, timelinePoint{T: fmt.Sprintf("%02d:00", h), Value: v})
-	}
-	return pts
 }
 
 func buildRevenueByDay(db *model.DB, acc string, now time.Time, days int) []dayValue {

@@ -376,6 +376,28 @@ export interface DashboardData {
   recentActivity: Activity[];
 }
 
+/* ─── N°10 : affluence par tranche horaire (GET /api/stats/hourly?days=7|14|30) ─── */
+
+/** Une ligne de la heatmap : un jour local, 24 compteurs de connexions. */
+export interface HourlyStatsRow {
+  date: string; // "YYYY-MM-DD" (fuseau du compte)
+  hours: number[]; // 24 valeurs
+}
+
+/** Agrégats horaires réels — connexions depuis les UserLogs, CA depuis les Sales. */
+export interface HourlyStats {
+  timezone: string;
+  days: number;
+  rows: HourlyStatsRow[]; // oldest → today
+  loginsByHour: number[]; // total connexions/heure sur la fenêtre (24)
+  salesByHour: number[]; // CA cumulé/heure sur la fenêtre (24)
+  maxCell: number;
+  totalLogins: number;
+  totalSales: number;
+  peakHour: number; // 0-23, heure locale de pic
+  generatedAt: string;
+}
+
 export interface ReportsData {
   revenueByDay: { day: string; value: number }[];
   salesByProfile: { name: string; count: number; revenue: number }[];

@@ -146,8 +146,8 @@ const fr: Record<string, string> = {
   "dashboard.site.vouchers": "Vouchers actifs",
   "dashboard.site.revenue30": "Revenu 30 jours",
   "dashboard.live": "en direct",
-  "dashboard.sessionsChart": "Sessions — dernières 24h",
-  "dashboard.sessionUnit": "{n} session{p}",
+  "dashboard.sessionsChart": "Connexions / heure — dernières 24 h",
+  "dashboard.sessionUnit": "{n} connexion{p}",
   "dashboard.revenueChart": "Revenus — 14 derniers jours",
   "dashboard.topProfiles": "Profils les plus vendus",
   "dashboard.topProfilesEmpty": "Aucune vente enregistrée",
@@ -1047,6 +1047,23 @@ const fr: Record<string, string> = {
   "badge.reseller": "Revendeur",
   "badge.credit": "Crédit",
   "badge.sale": "Vente",
+
+  // — N°10 : affluence par tranche horaire —
+  "hourly.title": "Affluence par tranche horaire",
+  "hourly.subtitleLogins": "{n} connexion{p} sur {d} jours",
+  "hourly.subtitleSales": "CA horaire cumulé sur {d} jours",
+  "hourly.subtitleLoginsN": "{n} connexions sur {d} jours",
+  "hourly.peak": "Pic à {h}h",
+  "hourly.metricLabel": "Métrique horaire",
+  "hourly.metricLogins": "Connexions",
+  "hourly.metricSales": "Ventes",
+  "hourly.byHour": "Cumul par heure (tous jours confondus)",
+  "hourly.loginsUnit": "{n} connexion{p}",
+  "hourly.legend": "Moins → plus de connexions",
+  "hourly.today": "Auj.",
+  "hourly.yesterday": "Hier",
+  "hourly.cellTip": "{d} {h}h — {n} connexion{p}",
+  "hourly.subtitleSalesMoney": "CA horaire cumulé sur {d} jours",
 };
 
 // ─── Dictionnaire EN (traduction opérateur télécom, simple et pro) ───
@@ -1179,8 +1196,8 @@ const en: Record<string, string> = {
   "dashboard.site.vouchers": "Active vouchers",
   "dashboard.site.revenue30": "30-day revenue",
   "dashboard.live": "live",
-  "dashboard.sessionsChart": "Sessions — last 24 hours",
-  "dashboard.sessionUnit": "{n} session{p}",
+  "dashboard.sessionsChart": "Logins per hour — last 24 hours",
+  "dashboard.sessionUnit": "{n} login{p}",
   "dashboard.revenueChart": "Revenue — last 14 days",
   "dashboard.topProfiles": "Top-selling profiles",
   "dashboard.topProfilesEmpty": "No sales recorded yet",
@@ -2080,6 +2097,23 @@ const en: Record<string, string> = {
   "badge.reseller": "Reseller",
   "badge.credit": "Credit",
   "badge.sale": "Sale",
+
+  // — N°10 : affluence par tranche horaire —
+  "hourly.title": "Peak hours by time slot",
+  "hourly.subtitleLogins": "{n} login{p} over {d} days",
+  "hourly.subtitleSales": "Hourly revenue over {d} days",
+  "hourly.subtitleLoginsN": "{n} logins over {d} days",
+  "hourly.peak": "Peak at {h}:00",
+  "hourly.metricLabel": "Hourly metric",
+  "hourly.metricLogins": "Logins",
+  "hourly.metricSales": "Sales",
+  "hourly.byHour": "Total by hour (all days)",
+  "hourly.loginsUnit": "{n} login{p}",
+  "hourly.legend": "Fewer → more logins",
+  "hourly.today": "Today",
+  "hourly.yesterday": "Yest.",
+  "hourly.cellTip": "{d} {h}:00 — {n} login{p}",
+  "hourly.subtitleSalesMoney": "Hourly revenue over {d} days",
 };
 
 // ─── Résolution ───

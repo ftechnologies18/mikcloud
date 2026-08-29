@@ -30,6 +30,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/hotspot/empty-state";
+import { HourlyHeatmap } from "@/components/hotspot/parts/hourly-heatmap";
 import { LoadingCards, LoadingRows } from "@/components/hotspot/loading";
 import { PageHeader } from "@/components/hotspot/page-header";
 import { StatCard } from "@/components/hotspot/stat-card";
@@ -310,6 +311,9 @@ export default function DashboardView() {
           </CardContent>
         </Card>
       </div>
+
+      {/* N°10 — affluence réelle par tranche horaire (heatmap 7 jours) */}
+      <HourlyHeatmap days={7} currency={currency} />
 
       {/* Profils + activité */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">

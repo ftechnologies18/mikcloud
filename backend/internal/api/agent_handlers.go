@@ -14,6 +14,7 @@
 package api
 
 import (
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -244,6 +245,7 @@ func (a *API) handleAgentRegister(w http.ResponseWriter, r *http.Request) {
 	router := routerByToken(db, token)
 	if router == nil {
 		a.store.Unlock()
+		log.Printf("agent/register: token inconnu (préfixe %s…) — identité déclarée %q", agent.Preview(token), vals.Get("identity"))
 		writeErr(w, http.StatusNotFound, "Token agent inconnu")
 		return
 	}
@@ -258,6 +260,7 @@ func (a *API) handleAgentRegister(w http.ResponseWriter, r *http.Request) {
 	a.store.Save()
 	name := router.Name
 	a.store.Unlock()
+	log.Printf("agent/register: routeur « %s » inscrit (identity=%q version=%q)", name, vals.Get("identity"), vals.Get("version"))
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "router": name, "intervalSec": 45, "script": agent.ScriptFilename,
@@ -283,6 +286,7 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 	router := routerByToken(db, token)
 	if router == nil {
 		a.store.Unlock()
+		log.Printf("agent/cmd: token inconnu (préfixe %s…) — 404 renvoyé à %s", agent.Preview(token), r.RemoteAddr)
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte("# mikcloud: token inconnu\n"))
 		return

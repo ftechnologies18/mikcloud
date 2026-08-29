@@ -248,7 +248,7 @@ func (p *PG) ensureSchema() error {
                         name       TEXT NOT NULL,
                         status     TEXT NOT NULL DEFAULT 'active',
                         created_at TEXT NOT NULL
-		)`,
+                )`,
 		`CREATE INDEX IF NOT EXISTS idx_accounts_status ON accounts (status)`,
 		`CREATE TABLE IF NOT EXISTS settings (
                         id               TEXT PRIMARY KEY, -- = account_id : une ligne par compte SaaS
@@ -270,6 +270,12 @@ func (p *PG) ensureSchema() error {
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS wave_link TEXT NOT NULL DEFAULT ''`,
 		// Migrations multi-tenant : colonne account_id sur toutes les tables métier.
 		`ALTER TABLE admin_users   ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''`,
+		// Changement de mot de passe par l'utilisateur (POST /api/auth/password) :
+		// password_set_by_user protège le mot de passe contre l'override ADMIN_PASSWORD
+		// tant que la variable ne change pas ; env_password_hash mémorise le dernier
+		// mot de passe env appliqué pour détecter un changement d'intention opérateur.
+		`ALTER TABLE admin_users   ADD COLUMN IF NOT EXISTS password_set_by_user BOOLEAN NOT NULL DEFAULT FALSE`,
+		`ALTER TABLE admin_users   ADD COLUMN IF NOT EXISTS env_password_hash TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE routers       ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE profiles      ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE hotspot_users ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''`,
@@ -386,7 +392,7 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 func (p *PG) loadSettings(db *model.DB) error {
 	rows, err := p.db.Query(
 		`SELECT account_id, tenant_name, tenant_currency, tenant_timezone, plan_name, plan_max_routers, plan_max_users, wave_link, last_tick
-		 FROM settings`)
+                 FROM settings`)
 	if err != nil {
 		return err
 	}
@@ -486,17 +492,17 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
 	for accID, s := range db.SettingsByAccount {
 		_, err := tx.Exec(
 			`INSERT INTO settings (id, account_id, tenant_name, tenant_currency, tenant_timezone, plan_name, plan_max_routers, plan_max_users, wave_link, last_tick)
-			 VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9)
-			 ON CONFLICT (id) DO UPDATE SET
-			   account_id       = EXCLUDED.account_id,
-			   tenant_name      = EXCLUDED.tenant_name,
-			   tenant_currency  = EXCLUDED.tenant_currency,
-			   tenant_timezone  = EXCLUDED.tenant_timezone,
-			   plan_name        = EXCLUDED.plan_name,
-			   plan_max_routers = EXCLUDED.plan_max_routers,
-			   plan_max_users   = EXCLUDED.plan_max_users,
-			   wave_link        = EXCLUDED.wave_link,
-			   last_tick        = EXCLUDED.last_tick`,
+                         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9)
+                         ON CONFLICT (id) DO UPDATE SET
+                           account_id       = EXCLUDED.account_id,
+                           tenant_name      = EXCLUDED.tenant_name,
+                           tenant_currency  = EXCLUDED.tenant_currency,
+                           tenant_timezone  = EXCLUDED.tenant_timezone,
+                           plan_name        = EXCLUDED.plan_name,
+                           plan_max_routers = EXCLUDED.plan_max_routers,
+                           plan_max_users   = EXCLUDED.plan_max_users,
+                           wave_link        = EXCLUDED.wave_link,
+                           last_tick        = EXCLUDED.last_tick`,
 			accID, s.Tenant.Name, s.Tenant.Currency, s.Tenant.Timezone,
 			s.Plan.Name, s.Plan.MaxRouters, s.Plan.MaxUsers,
 			s.Tenant.WaveLink, lastTick)
@@ -687,15 +693,15 @@ var accountSpec = entitySpec[model.Account]{
 
 var adminSpec = entitySpec[model.AdminUser]{
 	table: "admin_users",
-	cols:  []string{"id", "name", "username", "role", "password_hash", "salt", "created_at", "account_id"},
+	cols:  []string{"id", "name", "username", "role", "password_hash", "salt", "created_at", "account_id", "password_set_by_user", "env_password_hash"},
 	idOf:  func(u *model.AdminUser) string { return u.ID },
 	scan: func(r *sql.Rows) (model.AdminUser, error) {
 		var u model.AdminUser
-		err := r.Scan(&u.ID, &u.Name, &u.Username, &u.Role, &u.PasswordHash, &u.Salt, &u.CreatedAt, &u.AccountID)
+		err := r.Scan(&u.ID, &u.Name, &u.Username, &u.Role, &u.PasswordHash, &u.Salt, &u.CreatedAt, &u.AccountID, &u.PasswordSetByUser, &u.EnvPasswordHash)
 		return u, err
 	},
 	args: func(u *model.AdminUser) []any {
-		return []any{u.ID, u.Name, u.Username, u.Role, u.PasswordHash, u.Salt, u.CreatedAt, u.AccountID}
+		return []any{u.ID, u.Name, u.Username, u.Role, u.PasswordHash, u.Salt, u.CreatedAt, u.AccountID, u.PasswordSetByUser, u.EnvPasswordHash}
 	},
 	hashOf: hashEntity[model.AdminUser],
 }

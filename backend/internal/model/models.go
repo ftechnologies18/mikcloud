@@ -246,6 +246,15 @@ type AdminUser struct {
 	PasswordHash string `json:"passwordHash"`
 	Salt         string `json:"salt"`
 	CreatedAt    string `json:"createdAt"`
+	// PasswordSetByUser — true quand le mot de passe a été modifié par
+	// l'utilisateur via POST /api/auth/password : applyAdminOverride ne
+	// l'écrase alors PAS (sauf si la variable ADMIN_PASSWORD change).
+	PasswordSetByUser bool `json:"passwordSetByUser,omitempty"`
+	// EnvPasswordHash — hash du DERNIER mot de passe appliqué par la
+	// variable d'environnement ADMIN_PASSWORD. Sert à détecter un
+	// changement d'intention de l'opérateur (env modifiée) par rapport à
+	// un mot de passe changé par l'utilisateur depuis la console.
+	EnvPasswordHash string `json:"envPasswordHash,omitempty"`
 }
 
 // Kinds de commandes agent (routeur -> cloud en HTTP-poll).

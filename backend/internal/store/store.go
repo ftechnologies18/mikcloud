@@ -100,11 +100,21 @@ func New(dir string) (*Store, error) {
 				s.Save()
 				s.Unlock()
 			}
+			// Override admin (variables d'environnement) — même garantie
+			// qu'en mode PostgreSQL : appliqué à chaque démarrage.
+			if applyAdminOverride(s.db) {
+				s.Lock()
+				s.Save()
+				s.Unlock()
+			}
 			return s, nil
 		}
 	} else {
 		s.db = BuildSeed()
 	}
+	// Seed frais : l'override admin remplace aussi le compte démo (admin123)
+	// par les identifiants de production si ADMIN_PASSWORD est définie.
+	applyAdminOverride(s.db)
 	s.Lock()
 	s.Save()
 	s.Unlock()
@@ -247,6 +257,13 @@ func migrateMultiTenant(db *model.DB) bool {
 // intact est supprimé, le compte ADMIN_USERNAME est créé ou mis à jour.
 // Variables : ADMIN_USERNAME (défaut « admin »), ADMIN_PASSWORD, ADMIN_NAME.
 // Retourne true si l'état a été modifié (à persister par l'appelant).
+//
+// MOT DE PASSE CHANGÉ PAR L'UTILISATEUR : si l'admin a modifié son mot de
+// passe depuis la console (POST /api/auth/password, PasswordSetByUser=true)
+// et que la variable ADMIN_PASSWORD n'a pas changé depuis la dernière
+// application (EnvPasswordHash), le mot de passe utilisateur est PRÉSERVÉ —
+// l'override ne s'applique que si l'opérateur modifie la variable (chemin de
+// récupération documenté : Render → Environment → ADMIN_PASSWORD).
 func applyAdminOverride(db *model.DB) bool {
 	password := os.Getenv("ADMIN_PASSWORD")
 	if password == "" {
@@ -273,17 +290,32 @@ func applyAdminOverride(db *model.DB) bool {
 	}
 	db.Users = kept
 
+	envHash := auth.HashPassword(password, "")
+
 	// 2. Crée ou met à jour le compte administrateur déclaré par l'environnement.
 	// L'admin plateforme est toujours rattaché au compte principal.
 	salt := auth.NewSalt()
 	for i := range db.Users {
 		if db.Users[i].Username == username {
-			db.Users[i].Name = name
-			db.Users[i].Role = "admin"
-			db.Users[i].AccountID = model.AccountMainID
-			db.Users[i].Salt = salt
-			db.Users[i].PasswordHash = auth.HashPassword(password, salt)
-			log.Printf("store: compte admin « %s » mis à jour depuis l'environnement", username)
+			u := &db.Users[i]
+			u.Name = name
+			u.Role = "admin"
+			u.AccountID = model.AccountMainID
+			// Mot de passe conservé si l'utilisateur l'a changé lui-même
+			// ET que la variable d'environnement n'a pas changé d'intention.
+			userPreserved := u.PasswordSetByUser && u.EnvPasswordHash != "" &&
+				auth.CheckPassword(password, "", u.EnvPasswordHash)
+			if !userPreserved {
+				u.Salt = salt
+				u.PasswordHash = auth.HashPassword(password, salt)
+				u.PasswordSetByUser = false
+			}
+			u.EnvPasswordHash = envHash
+			if userPreserved {
+				log.Printf("store: mot de passe de « %s » conservé (modifié par l'utilisateur, ADMIN_PASSWORD inchangée)", username)
+			} else {
+				log.Printf("store: compte admin « %s » mis à jour depuis l'environnement", username)
+			}
 			if removedDemo {
 				log.Println("store: compte démo admin/admin123 supprimé")
 			}
@@ -291,14 +323,15 @@ func applyAdminOverride(db *model.DB) bool {
 		}
 	}
 	db.Users = append(db.Users, model.AdminUser{
-		ID:           model.NewID("adm-"),
-		AccountID:    model.AccountMainID,
-		Name:         name,
-		Username:     username,
-		Role:         "admin",
-		PasswordHash: auth.HashPassword(password, salt),
-		Salt:         salt,
-		CreatedAt:    model.NowISO(),
+		ID:              model.NewID("adm-"),
+		AccountID:       model.AccountMainID,
+		Name:            name,
+		Username:        username,
+		Role:            "admin",
+		PasswordHash:    auth.HashPassword(password, salt),
+		Salt:            salt,
+		CreatedAt:       model.NowISO(),
+		EnvPasswordHash: envHash,
 	})
 	log.Printf("store: compte admin « %s » créé depuis l'environnement", username)
 	if removedDemo {

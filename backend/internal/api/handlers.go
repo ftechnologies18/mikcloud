@@ -48,6 +48,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/auth/login", a.handleLogin)
 	mux.HandleFunc("POST /api/auth/register", a.handleRegister)
 	mux.HandleFunc("GET /api/auth/me", a.handleMe)
+	mux.HandleFunc("POST /api/auth/password", a.handlePasswordChange)
 
 	// Dashboard
 	mux.HandleFunc("GET /api/dashboard", a.handleDashboard)
@@ -425,6 +426,62 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 			"accountId": accID, "accountName": accName,
 		},
 	})
+}
+
+// handlePasswordChange — POST /api/auth/password : l'utilisateur connecté
+// modifie SON PROPRE mot de passe. Exige le mot de passe actuel (une session
+// laissée ouverte ne suffit pas), 8 caractères minimum, différent de l'actuel.
+// Le flag PasswordSetByUser protège le nouveau mot de passe contre l'override
+// ADMIN_PASSWORD au prochain démarrage/reload (tant que l'opérateur ne change
+// pas la variable). Le token en cours reste valide jusqu'à son expiration.
+func (a *API) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
+	claims := claimsFrom(r)
+	if claims == nil {
+		writeErr(w, http.StatusUnauthorized, "Token invalide ou expiré")
+		return
+	}
+	var req struct {
+		CurrentPassword string `json:"currentPassword"`
+		NewPassword     string `json:"newPassword"`
+	}
+	if err := decodeBody(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
+		return
+	}
+	if req.CurrentPassword == "" || req.NewPassword == "" {
+		writeErr(w, http.StatusBadRequest, "Mot de passe actuel et nouveau mot de passe requis")
+		return
+	}
+	if len(req.NewPassword) < 8 {
+		writeErr(w, http.StatusBadRequest, "Le nouveau mot de passe doit faire au moins 8 caractères")
+		return
+	}
+	if req.NewPassword == req.CurrentPassword {
+		writeErr(w, http.StatusBadRequest, "Le nouveau mot de passe doit être différent de l'actuel")
+		return
+	}
+	a.store.Lock()
+	db := a.store.Data()
+	var user *model.AdminUser
+	for i := range db.Users {
+		if db.Users[i].ID == claims.Sub {
+			user = &db.Users[i]
+			break
+		}
+	}
+	// Message unique pour utilisateur inconnu et mot de passe incorrect (pas d'oracle).
+	if user == nil || !auth.CheckPassword(req.CurrentPassword, user.Salt, user.PasswordHash) {
+		a.store.Unlock()
+		writeErr(w, http.StatusBadRequest, "Mot de passe actuel incorrect")
+		return
+	}
+	user.PasswordHash = auth.HashPassword(req.NewPassword, "") // bcrypt : sel intégré
+	user.Salt = ""
+	user.PasswordSetByUser = true
+	a.logActivity(db, user.AccountID, "system", "Mot de passe modifié par "+user.Username)
+	a.store.Save()
+	a.store.Unlock()
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // handleRegister — inscription SaaS : crée un COMPTE isolé (Account), son

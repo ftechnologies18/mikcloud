@@ -106,6 +106,22 @@ const fr: Record<string, string> = {
   "shell.refreshed": "Actualisé",
   "shell.logoAlt": "Logo MikCloud",
 
+  // — topbar : recherche, cloche, horloge —
+  "topbar.search": "Rechercher",
+  "topbar.searchPlaceholder": "Rechercher une vue, une action…",
+  "topbar.searchNavigation": "Navigation",
+  "topbar.searchActions": "Actions",
+  "topbar.searchEmpty": "Aucun résultat",
+  "topbar.actionRefresh": "Actualiser les données",
+  "topbar.actionTheme": "Basculer Jour / Nuit",
+  "topbar.actionLanguage": "Changer de langue",
+  "topbar.actionLogout": "Se déconnecter",
+  "topbar.bell": "Notifications",
+  "topbar.bellTitle": "Activité récente",
+  "topbar.bellEmpty": "Aucune activité pour le moment",
+  "topbar.bellViewAll": "Tout voir",
+  "topbar.bellMarkRead": "Tout marquer comme lu",
+
   // — login —
   "login.username": "Identifiant",
   "login.password": "Mot de passe",
@@ -1303,6 +1319,22 @@ const en: Record<string, string> = {
   "shell.logout": "Sign out",
   "shell.refreshed": "Refreshed",
   "shell.logoAlt": "MikCloud logo",
+
+  // — topbar : recherche, cloche, horloge —
+  "topbar.search": "Search",
+  "topbar.searchPlaceholder": "Search a view, an action…",
+  "topbar.searchNavigation": "Navigation",
+  "topbar.searchActions": "Actions",
+  "topbar.searchEmpty": "No results",
+  "topbar.actionRefresh": "Refresh data",
+  "topbar.actionTheme": "Toggle Day / Night",
+  "topbar.actionLanguage": "Switch language",
+  "topbar.actionLogout": "Sign out",
+  "topbar.bell": "Notifications",
+  "topbar.bellTitle": "Recent activity",
+  "topbar.bellEmpty": "No activity yet",
+  "topbar.bellViewAll": "View all",
+  "topbar.bellMarkRead": "Mark all as read",
 
   // — login —
   "login.username": "Username",

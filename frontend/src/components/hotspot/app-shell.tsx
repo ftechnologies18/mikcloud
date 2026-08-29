@@ -1,33 +1,19 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import Image from "next/image";
-import { useIsFetching, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  BarChart3,
-  Bell,
-  Building2,
   ChevronsUpDown,
-  Gauge,
   Languages,
-  LayoutDashboard,
   LogOut,
   Menu,
-  Printer,
-  Radio,
   RefreshCw,
-  Router as RouterIcon,
-  ScrollText,
   Settings,
-  Store,
-  Ticket,
   UserRound,
-  Users,
-  UsersRound,
 } from "lucide-react";
 import { toast } from "sonner";
-import type { LucideIcon } from "lucide-react";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -43,13 +29,15 @@ import {
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/hotspot/api";
-import { localeOf, useI18n } from "@/lib/hotspot/i18n";
+import { useI18n } from "@/lib/hotspot/i18n";
+import { NAV_SECTIONS } from "@/lib/hotspot/nav";
 import { roleLabel, userInitials } from "@/lib/hotspot/format";
 import { canView } from "@/lib/hotspot/roles";
 import { useHotspotStore } from "@/lib/hotspot/store";
 import type { HotspotSession, ViewId } from "@/lib/hotspot/types";
 import { ThemeToggle } from "./theme-toggle";
 import { UserProfileDialog } from "./parts/user-profile-dialog";
+import { ActivityBell, LiveClock, SearchPalette } from "./parts/topbar-widgets";
 
 import AccountsView from "./views/accounts-view";
 import DashboardView from "./views/dashboard-view";
@@ -86,50 +74,6 @@ function viewTitle(view: ViewId, t: (key: string) => string): string {
   };
   return t(keys[view]);
 }
-
-interface NavItem {
-  id: ViewId;
-  labelKey: string;
-  icon: LucideIcon;
-}
-
-const NAV_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
-  {
-    labelKey: "nav.section.general",
-    items: [
-      { id: "dashboard", labelKey: "nav.dashboard", icon: LayoutDashboard },
-      { id: "sessions", labelKey: "nav.sessions", icon: Radio },
-    ],
-  },
-  {
-    labelKey: "nav.section.hotspot",
-    items: [
-      { id: "users", labelKey: "nav.users", icon: Users },
-      { id: "vouchers", labelKey: "nav.vouchers", icon: Ticket },
-      { id: "templates", labelKey: "nav.templates", icon: Printer },
-      { id: "profiles", labelKey: "nav.profiles", icon: Gauge },
-    ],
-  },
-  { labelKey: "nav.section.distribution", items: [{ id: "resellers", labelKey: "nav.resellers", icon: Store }] },
-  { labelKey: "nav.section.infrastructure", items: [{ id: "routers", labelKey: "nav.routers", icon: RouterIcon }] },
-  {
-    labelKey: "nav.section.analysis",
-    items: [
-      { id: "reports", labelKey: "nav.reports", icon: BarChart3 },
-      { id: "logs", labelKey: "nav.logs", icon: ScrollText },
-    ],
-  },
-  {
-    labelKey: "nav.section.system",
-    items: [
-      // « Comptes » n'est visible que de l'admin plateforme (rôle admin) — filtré dans NavList.
-      { id: "accounts", labelKey: "nav.accounts", icon: Building2 },
-      { id: "team", labelKey: "nav.team", icon: UsersRound },
-      { id: "notifications", labelKey: "nav.notifications", icon: Bell },
-      { id: "settings", labelKey: "nav.settings", icon: Settings },
-    ],
-  },
-];
 
 const VIEWS: Record<ViewId, React.ComponentType> = {
   dashboard: DashboardView,
@@ -264,7 +208,6 @@ function NavList() {
     refetchInterval: 10_000,
   });
   const sessionsCount = sessions?.length ?? 0;
-
   return (
     <nav className="flex-1 space-y-5 overflow-y-auto px-3 pb-4" aria-label={t("nav.main")}>
       {NAV_SECTIONS.map((section) => {
@@ -323,24 +266,14 @@ function NavList() {
 }
 
 function Topbar() {
-  const { t, lang } = useI18n();
+  const { t } = useI18n();
   const view = useHotspotStore((s) => s.view);
   const setView = useHotspotStore((s) => s.setView);
   const setSidebarOpen = useHotspotStore((s) => s.setSidebarOpen);
   const user = useHotspotStore((s) => s.user);
   const logout = useHotspotStore((s) => s.logout);
   const queryClient = useQueryClient();
-  const fetchingCount = useIsFetching();
   const [profileOpen, setProfileOpen] = useState(false);
-
-  const dateLabel = useMemo(() => {
-    const raw = new Intl.DateTimeFormat(localeOf(lang), {
-      weekday: "long",
-      day: "numeric",
-      month: "long",
-    }).format(new Date());
-    return raw.charAt(0).toUpperCase() + raw.slice(1);
-  }, [lang]);
 
   function handleRefresh() {
     void queryClient.invalidateQueries();
@@ -367,17 +300,19 @@ function Topbar() {
           <Menu className="size-5" />
         </Button>
         <h2 className="truncate text-base font-semibold tracking-tight">{viewTitle(view, t)}</h2>
-        <div className="ml-auto flex items-center gap-1 sm:gap-2">
-          <span className="hidden text-xs text-muted-foreground md:inline">{dateLabel}</span>
+        <div className="ml-auto flex items-center gap-1 sm:gap-1.5">
+          <SearchPalette />
+          <LiveClock />
+          <ActivityBell />
           <ThemeToggle />
           <Button
             variant="ghost"
             size="icon"
-            className="size-10 text-muted-foreground hover:text-foreground"
+            className="hidden size-10 text-muted-foreground hover:text-foreground sm:inline-flex"
             onClick={handleRefresh}
             aria-label={t("common.refresh")}
           >
-            <RefreshCw className={cn("size-4.5", fetchingCount > 0 && "animate-spin")} />
+            <RefreshCw className="size-4.5" />
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

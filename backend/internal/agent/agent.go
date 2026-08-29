@@ -128,6 +128,11 @@ func InstallScript(baseURL, token, routerName string) string {
 # MikCloud — Installation agent  (routeur: ` + safeName + `)
 # Coller CE fichier entier dans Terminal (Winbox) — 1 seule fois.
 # ============================================================
+# NB : les fetch essaient D'ABORD avec validation TLS, puis réessaient avec
+# check-certificate=no. RouterOS < 7.19 n'embarque aucun certificat racine
+# (la validation Let's Encrypt échoue) — le repli garantit la compatibilité
+# 6.44 → 7.19+. Sur 7.19+ la validation réussit : trafic authentifié.
+# ============================================================
 :global mikcloudToken "` + rosEscape(token) + `"
 :global mikcloudUrl   "` + strings.TrimRight(baseURL, "/") + `"
 
@@ -140,19 +145,32 @@ func InstallScript(baseURL, token, routerName string) string {
 :do {
   /tool fetch url=("$mikcloudUrl/agent/register?token=$mikcloudToken") http-method=post \
     http-data=("identity=". [:tostr $ident] ."&model=". [:tostr $mod] ."&version=". $ver ."&uptime=". $up) output=none
-} on-error={ :log warning "MikCloud: inscription impossible (reseau?)" }
+} on-error={
+  :do {
+    /tool fetch url=("$mikcloudUrl/agent/register?token=$mikcloudToken") http-method=post \
+      http-data=("identity=". [:tostr $ident] ."&model=". [:tostr $mod] ."&version=". $ver ."&uptime=". $up) check-certificate=no output=none
+  } on-error={ :log warning "MikCloud: inscription impossible (reseau?)" }
+}
 
 # --- 2) Reinstallation propre : suppression d'un ancien agent ---
 /system scheduler remove [find name="` + SchedulerName + `"]
 
 # --- 3) L'agent permanent : check-in toutes les 45 s (survit aux reboots) ---
 /system scheduler add name="` + SchedulerName + `" interval=45s start-time=startup on-event={
+  :local fetched true
   :do {
     /tool fetch url=($mikcloudUrl . "/agent/cmd?token=" . $mikcloudToken) \
       dst-path="` + ScriptFilename + `" keep-result=yes output=none
+  } on-error={
+    :do {
+      /tool fetch url=($mikcloudUrl . "/agent/cmd?token=" . $mikcloudToken) check-certificate=no \
+        dst-path="` + ScriptFilename + `" keep-result=yes output=none
+    } on-error={ :set fetched false; :log warning "MikCloud agent: check-in echoue (reseau?)" }
+  }
+  :if ($fetched) do={
     :delay 1s
     /import file-name="` + ScriptFilename + `"
-  } on-error={ :log warning "MikCloud agent: check-in echoue (reseau?)" }
+  }
 }
 
 :log info "MikCloud: agent installe, check-in dans 45s"
@@ -240,7 +258,7 @@ func (b Builder) reportLine(cmdID string, ok bool, extra map[string]string) stri
 		data += "&" + k + "=" + urlEscape(v)
 	}
 	return `/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
-		`" http-method=post http-data=("` + data + `") output=none`
+		`" http-method=post http-data=("` + data + `") check-certificate=no output=none`
 }
 
 // urlEscape — encodage minimal sûr pour les valeurs d'URL (http-data).
@@ -342,7 +360,7 @@ func (b Builder) buildReadState(cmd model.Command) string {
 	sb.WriteString(`/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
 		`" http-method=post http-data=("cmd=` + cmd.ID +
 		`&status=ok&version=". $rver ."&uptime=". $rup ."&cpu=". $rcpu ."&freemem=". $rmem ."&totalmem=". $rmemb` +
-		` ."&board=". $rboard ."&freehdd=". $rfreehdd ."&totalhdd=". $rtotalhdd ."&users=". $rusr ."&sessions=". $rsess ."&ifaces=". $rif) output=none` + "\n")
+		` ."&board=". $rboard ."&freehdd=". $rfreehdd ."&totalhdd=". $rtotalhdd ."&users=". $rusr ."&sessions=". $rsess ."&ifaces=". $rif) check-certificate=no output=none` + "\n")
 	return sb.String()
 }
 
@@ -477,7 +495,7 @@ func (b Builder) buildUserReset(cmd model.Command) string {
 // commandes read_* (ok transporte $rdata, calculé côté routeur).
 func (b Builder) fetchResultData(cmdID, okVar string) string {
 	ok := `/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
-		`" http-method=post http-data=("cmd=` + cmdID + `&status=ok&data=". $rdata) output=none`
+		`" http-method=post http-data=("cmd=` + cmdID + `&status=ok&data=". $rdata) check-certificate=no output=none`
 	ko := b.reportLine(cmdID, false, map[string]string{"message": "lecture impossible sur le routeur"})
 	return ":if ($" + okVar + ") do={\n  " + ok + "\n} else={\n  " + ko + "\n}\n"
 }
@@ -529,7 +547,7 @@ func (b Builder) buildPing(cmd model.Command) string {
 	// Rapport dynamique (valeurs calculées côté routeur, pas d'escape possible).
 	ok := `/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
 		`" http-method=post http-data=("cmd=` + cmd.ID +
-		`&status=ok&sent=". $psent ."&received=". $precv ."&minMs=". $pmin ."&avgMs=". $pavg ."&maxMs=". $pmax) output=none`
+		`&status=ok&sent=". $psent ."&received=". $precv ."&minMs=". $pmin ."&avgMs=". $pavg ."&maxMs=". $pmax) check-certificate=no output=none`
 	ko := b.reportLine(cmd.ID, false, map[string]string{"message": "ping impossible sur le routeur"})
 	sb.WriteString(":if ($" + okVar + ") do={\n  " + ok + "\n} else={\n  " + ko + "\n}\n")
 	return sb.String()

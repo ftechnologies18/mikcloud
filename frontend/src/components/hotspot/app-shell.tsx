@@ -103,13 +103,13 @@ function BrandHeader() {
         alt={t("shell.logoAlt")}
         width={36}
         height={36}
-        className="size-9 shrink-0 rounded-xl shadow-md shadow-primary/20"
+        className="sidebar-logo size-9 shrink-0 rounded-xl shadow-md shadow-primary/20"
       />
       <div className="flex min-w-0 items-center gap-2">
         <span className="text-aurora truncate text-base font-semibold tracking-tight">MikCloud</span>
         <Badge
           variant="outline"
-          className="border-primary/25 bg-primary/10 px-1.5 py-0 text-[10px] font-semibold tracking-wide text-primary"
+          className="badge-pro border-primary/25 bg-primary/10 px-1.5 py-0 text-[10px] font-semibold tracking-wide text-primary"
         >
           PRO
         </Badge>
@@ -150,10 +150,10 @@ function UserCard() {
           <button
             type="button"
             aria-label={t("shell.profileMenu")}
-            className="flex w-full items-center gap-3 rounded-lg border border-border/70 bg-card/60 px-3 py-3 text-left outline-none transition-colors hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-accent/60 data-[state=open]:text-accent-foreground"
+            className="sidebar-usercard flex w-full items-center gap-3 rounded-lg border border-border/70 bg-card/60 px-3 py-3 text-left outline-none transition-colors hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-accent/60 data-[state=open]:text-accent-foreground"
           >
             <Avatar className="size-9 shrink-0">
-              <AvatarFallback className="bg-primary/15 text-xs font-semibold text-primary">
+              <AvatarFallback className="sidebar-avatar bg-primary/15 text-xs font-semibold text-primary">
                 {userInitials(name)}
               </AvatarFallback>
             </Avatar>
@@ -220,7 +220,7 @@ function NavList() {
         if (items.length === 0) return null;
         return (
           <div key={section.labelKey}>
-            <p className="px-2.5 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+            <p className="nav-section-label px-2.5 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
               {t(section.labelKey)}
             </p>
             <ul className="space-y-0.5">
@@ -233,7 +233,7 @@ function NavList() {
                       onClick={() => setView(item.id)}
                       aria-current={active ? "page" : undefined}
                       className={cn(
-                        "relative flex min-h-11 w-full items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium transition-all duration-200",
+                        "sidebar-nav-item relative flex min-h-11 w-full items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium transition-all duration-200",
                         active
                           ? "nav-active"
                           : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
@@ -249,7 +249,7 @@ function NavList() {
                       {item.id === "sessions" && sessionsCount > 0 && (
                         <Badge
                           variant="outline"
-                          className="border-border bg-muted px-1.5 py-0 text-[10px] font-semibold tabular-nums text-foreground"
+                          className="sidebar-count border-border bg-muted px-1.5 py-0 text-[10px] font-semibold tabular-nums text-foreground"
                         >
                           {sessionsCount}
                         </Badge>

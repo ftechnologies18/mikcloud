@@ -229,11 +229,30 @@
     radial-gradient(ellipse 60% 35% at -8% 100%, oklch(0.6 0.12 190 / 0.07), transparent 55%),
     linear-gradient(180deg, oklch(0.948 0.038 163), oklch(0.895 0.046 165));
 }
+/* Nuit « Lime Aurora » : identité vert lime affirmée — fond vert profond
+   teinté lime, halos lumineux, grille technique, pilule active néon et liseré
+   luminescent (règles dédiées plus bas). Le Jour reste menthe/émeraude. */
 .dark .sidebar-aurora {
+  --sidebar-border: oklch(0.84 0.19 130 / 0.22);
   background:
-    radial-gradient(ellipse 90% 26% at 10% 0%, oklch(0.75 0.16 163 / 0.2), transparent 62%),
-    radial-gradient(ellipse 65% 40% at -10% 100%, oklch(0.7 0.12 190 / 0.09), transparent 55%),
-    linear-gradient(180deg, oklch(0.178 0.042 173), oklch(0.104 0.026 171));
+    radial-gradient(ellipse 110% 32% at 14% 0%, oklch(0.84 0.2 130 / 0.18), transparent 62%),
+    radial-gradient(ellipse 75% 42% at -12% 100%, oklch(0.76 0.18 135 / 0.12), transparent 55%),
+    linear-gradient(180deg, oklch(0.196 0.056 144), oklch(0.098 0.034 148));
+}
+/* Grille technique lime en surimpression, estompée vers le pied (z -1 :
+   peinte après le fond de la colonne, sous le contenu). */
+.dark .sidebar-aurora::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image:
+    linear-gradient(to right, oklch(0.85 0.2 130 / 0.055) 1px, transparent 1px),
+    linear-gradient(to bottom, oklch(0.85 0.2 130 / 0.055) 1px, transparent 1px);
+  background-size: 30px 30px;
+  -webkit-mask-image: linear-gradient(180deg, black 0%, transparent 76%);
+  mask-image: linear-gradient(180deg, black 0%, transparent 76%);
+  pointer-events: none;
 }
 .sidebar-aurora::after {
   content: "";
@@ -250,15 +269,108 @@
   );
   pointer-events: none;
 }
+/* Liseré droit luminescent lime — son glow diffuse doucement dans le contenu. */
 .dark .sidebar-aurora::after {
   width: 2px;
   background: linear-gradient(
     180deg,
     transparent,
-    color-mix(in oklab, var(--primary) 70%, transparent) 25%,
-    color-mix(in oklab, var(--grad-b) 70%, transparent) 70%,
+    oklch(0.87 0.2 128 / 0.9) 22%,
+    oklch(0.78 0.19 134 / 0.65) 68%,
     transparent
   );
+  box-shadow: 0 0 18px 1px oklch(0.83 0.2 130 / 0.35);
+}
+
+/* ─── Accents « Lime Aurora » (Nuit, scopés à la sidebar) ───
+   Tout passe par des classes-marque posées dans app-shell.tsx : le reste de
+   l'app garde l'émeraude, seul le rail latéral devient lime. ⚠️ CSS non-layeré :
+   ces règles écrasent les utilitaires Tailwind équivalents — volontaire. */
+
+/* Pilule de navigation active : dégradé lime néon + texte encre profonde. */
+.dark .sidebar-aurora .nav-active {
+  background-image: linear-gradient(135deg, oklch(0.914 0.208 128), oklch(0.77 0.194 132));
+  color: oklch(0.17 0.05 148);
+  box-shadow:
+    0 10px 30px -8px oklch(0.8 0.2 130 / 0.6),
+    inset 0 1px 0 oklch(1 0 0 / 0.35);
+}
+.dark .sidebar-aurora .nav-active svg {
+  color: oklch(0.17 0.05 148);
+}
+
+/* Survol des items inactifs : voile lime translucide, label presque blanc. */
+.dark .sidebar-aurora .sidebar-nav-item:not(.nav-active):hover {
+  background-color: oklch(0.82 0.19 130 / 0.1);
+  color: oklch(0.95 0.05 125);
+}
+
+/* Intitulés de sections : vert lime délavé. */
+.dark .sidebar-aurora .nav-section-label {
+  color: oklch(0.78 0.09 135 / 0.62);
+}
+
+/* Compteur de sessions : chip lime (sombre dans la pilule active). */
+.dark .sidebar-aurora .sidebar-count {
+  border-color: oklch(0.84 0.19 130 / 0.32);
+  background-color: oklch(0.8 0.19 130 / 0.13);
+  color: oklch(0.9 0.16 130);
+}
+.dark .sidebar-aurora .nav-active .sidebar-count {
+  border-color: oklch(0.17 0.05 148 / 0.4);
+  background-color: oklch(0.17 0.05 148 / 0.85);
+  color: oklch(0.9 0.16 130);
+}
+
+/* Wordmark MikCloud + badge PRO : dégradé lime. */
+.dark .sidebar-aurora .text-aurora {
+  background-image: linear-gradient(135deg, oklch(0.93 0.19 127), oklch(0.79 0.19 134));
+}
+.dark .sidebar-aurora .badge-pro {
+  border-color: oklch(0.84 0.19 130 / 0.4);
+  background-color: oklch(0.84 0.19 130 / 0.14);
+  color: oklch(0.89 0.17 128);
+}
+
+/* Logo : halo lime. Carte utilisateur : verre teinté lime. */
+.dark .sidebar-aurora .sidebar-logo {
+  box-shadow:
+    0 6px 20px -6px oklch(0.82 0.2 130 / 0.55),
+    0 0 0 1px oklch(0.84 0.19 130 / 0.25);
+}
+.dark .sidebar-aurora .sidebar-usercard {
+  border-color: oklch(0.84 0.19 130 / 0.25);
+  background-color: oklch(0.8 0.19 130 / 0.07);
+}
+.dark .sidebar-aurora .sidebar-usercard:hover,
+.dark .sidebar-aurora .sidebar-usercard[data-state="open"] {
+  border-color: oklch(0.84 0.19 130 / 0.4);
+  background-color: oklch(0.8 0.19 130 / 0.14);
+}
+.dark .sidebar-aurora .sidebar-avatar {
+  background-color: oklch(0.8 0.19 130 / 0.16);
+  color: oklch(0.88 0.17 128);
+}
+
+/* Point « live » lime dans le rail (le topbar garde l'émeraude). */
+.dark .sidebar-aurora .live-dot {
+  background-color: oklch(0.85 0.21 128);
+  animation-name: pulse-dot-lime;
+}
+@keyframes pulse-dot-lime {
+  0%, 100% { box-shadow: 0 0 0 0 oklch(0.85 0.21 128 / 0.55); }
+  50% { box-shadow: 0 0 0 5px oklch(0.85 0.21 128 / 0); }
+}
+
+/* Scrollbar du rail en lime. */
+.dark .sidebar-aurora nav {
+  scrollbar-color: oklch(0.8 0.19 130 / 0.5) transparent;
+}
+.dark .sidebar-aurora ::-webkit-scrollbar-thumb {
+  background-color: oklch(0.8 0.19 130 / 0.5);
+}
+.dark .sidebar-aurora ::-webkit-scrollbar-thumb:hover {
+  background-color: oklch(0.86 0.2 130 / 0.75);
 }
 
 /* Topbar : surface surélevée distincte du fond + filet aurora signature.

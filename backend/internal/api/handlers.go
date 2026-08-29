@@ -5,6 +5,7 @@ import (
         "context"
         "encoding/json"
         "fmt"
+        "math"
         "math/rand"
         "net/http"
         "sort"
@@ -74,6 +75,7 @@ func (a *API) Handler() http.Handler {
         // Vouchers
         mux.HandleFunc("POST /api/vouchers/generate", a.handleVouchersGenerate)
         mux.HandleFunc("GET /api/vouchers", a.handleVouchersList)
+        mux.HandleFunc("GET /api/vouchers/batches", a.handleBatchesList)
         mux.HandleFunc("DELETE /api/vouchers/{id}", a.handleUserDelete)
         mux.HandleFunc("POST /api/vouchers/batch/{batchId}/delete", a.handleVouchersBatchDelete)
 
@@ -91,6 +93,7 @@ func (a *API) Handler() http.Handler {
         // Divers
         mux.HandleFunc("GET /api/transactions", a.handleTransactionsList)
         mux.HandleFunc("GET /api/reports", a.handleReports)
+        mux.HandleFunc("GET /api/accounting", a.handleAccounting)
         mux.HandleFunc("GET /api/activity", a.handleActivityList)
         mux.HandleFunc("GET /api/settings", a.handleSettingsGet)
         mux.HandleFunc("PUT /api/settings", a.handleSettingsPut)
@@ -363,91 +366,147 @@ type topProfilePoint struct {
 }
 
 func (a *API) handleDashboard(w http.ResponseWriter, r *http.Request) {
-        now := time.Now().UTC()
-        a.store.Lock()
-        db := a.store.Data()
+	now := time.Now().UTC()
+	a.store.Lock()
+	db := a.store.Data()
 
-        activeVouchers := 0
-        for i := range db.HotspotUsers {
-                if db.HotspotUsers[i].Kind == "voucher" && model.EffectiveStatus(&db.HotspotUsers[i], now) == "active" {
-                        activeVouchers++
-                }
-        }
-        todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-        salesToday := 0
-        cutoff30 := now.AddDate(0, 0, -30)
-        revenue30d := 0
-        for _, s := range db.Sales {
-                at, err := time.Parse(time.RFC3339, s.At)
-                if err != nil {
-                        continue
-                }
-                if !at.Before(todayStart) {
-                        salesToday += s.Count
-                }
-                if at.After(cutoff30) {
-                        revenue30d += s.Amount
-                }
-        }
-        routersOnline := 0
-        for _, rr := range db.Routers {
-                if rr.Status == "online" {
-                        routersOnline++
-                }
-        }
-        onlineNow := map[string]bool{}
-        for _, s := range db.Sessions {
-                onlineNow[s.Username] = true
-        }
-        kpis := map[string]any{
-                "activeSessions": len(db.Sessions),
-                "totalUsers":     len(db.HotspotUsers),
-                "activeVouchers": activeVouchers,
-                "salesToday":     salesToday,
-                "revenue30d":     revenue30d,
-                "routersOnline":  routersOnline,
-                "routersTotal":   len(db.Routers),
-                "onlineNow":      len(onlineNow),
-        }
+	activeVouchers := 0
+	for i := range db.HotspotUsers {
+		if db.HotspotUsers[i].Kind == "voucher" && model.EffectiveStatus(&db.HotspotUsers[i], now) == "active" {
+			activeVouchers++
+		}
+	}
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	salesToday := 0
+	cutoff30 := now.AddDate(0, 0, -30)
+	revenue30d := 0
+	for _, s := range db.Sales {
+		at, err := time.Parse(time.RFC3339, s.At)
+		if err != nil {
+			continue
+		}
+		if !at.Before(todayStart) {
+			salesToday += s.Count
+		}
+		if at.After(cutoff30) {
+			revenue30d += s.Amount
+		}
+	}
+	routersOnline := 0
+	for _, rr := range db.Routers {
+		if rr.Status == "online" {
+			routersOnline++
+		}
+	}
+	onlineNow := map[string]bool{}
+	for _, s := range db.Sessions {
+		onlineNow[s.Username] = true
+	}
 
-        revenueByDay := buildRevenueByDay(db, now, 14)
+	// Vue d'ensemble multi-sites : 1 compte = N hotspots.
+	type siteOverview struct {
+		RouterID       string `json:"routerId"`
+		RouterName     string `json:"routerName"`
+		Status         string `json:"status"`
+		ActiveSessions int    `json:"activeSessions"`
+		HotspotUsers   int    `json:"hotspotUsers"`
+		ActiveVouchers int    `json:"activeVouchers"`
+		SalesToday     int    `json:"salesToday"`
+		Revenue30d     int    `json:"revenue30d"`
+	}
+	sessionsByRouter := map[string]int{}
+	for _, s := range db.Sessions {
+		sessionsByRouter[s.RouterID]++
+	}
+	usersByRouter := map[string]int{}
+	vouchersByRouter := map[string]int{}
+	for i := range db.HotspotUsers {
+		u := &db.HotspotUsers[i]
+		if model.EffectiveStatus(u, now) != "active" {
+			continue
+		}
+		usersByRouter[u.RouterID]++
+		if u.Kind == "voucher" {
+			vouchersByRouter[u.RouterID]++
+		}
+	}
+	salesTodayByRouter := map[string]int{}
+	revenue30dByRouter := map[string]int{}
+	for _, s := range db.Sales {
+		at, err := time.Parse(time.RFC3339, s.At)
+		if err != nil {
+			continue
+		}
+		if !at.Before(todayStart) {
+			salesTodayByRouter[s.RouterID] += s.Count
+		}
+		if at.After(cutoff30) {
+			revenue30dByRouter[s.RouterID] += s.Amount
+		}
+	}
+	sites := []siteOverview{}
+	for _, rr := range db.Routers {
+		sites = append(sites, siteOverview{
+			RouterID:       rr.ID,
+			RouterName:     rr.Name,
+			Status:         rr.Status,
+			ActiveSessions: sessionsByRouter[rr.ID],
+			HotspotUsers:   usersByRouter[rr.ID],
+			ActiveVouchers: vouchersByRouter[rr.ID],
+			SalesToday:     salesTodayByRouter[rr.ID],
+			Revenue30d:     revenue30dByRouter[rr.ID],
+		})
+	}
+	kpis := map[string]any{
+		"activeSessions": len(db.Sessions),
+		"totalUsers":     len(db.HotspotUsers),
+		"activeVouchers": activeVouchers,
+		"salesToday":     salesToday,
+		"revenue30d":     revenue30d,
+		"routersOnline":  routersOnline,
+		"routersTotal":   len(db.Routers),
+		"onlineNow":      len(onlineNow),
+	}
 
-        counts := map[string]int{}
-        totals := map[string]int{}
-        for _, u := range db.HotspotUsers {
-                counts[u.ProfileName]++
-                totals[u.ProfileName] += u.Price
-        }
-        top := []topProfilePoint{}
-        for name, c := range counts {
-                top = append(top, topProfilePoint{Name: name, Users: c, Total: totals[name]})
-        }
-        sort.Slice(top, func(i, j int) bool {
-                if top[i].Users != top[j].Users {
-                        return top[i].Users > top[j].Users
-                }
-                return top[i].Total > top[j].Total
-        })
-        if len(top) > 5 {
-                top = top[:5]
-        }
+	revenueByDay := buildRevenueByDay(db, now, 14)
 
-        recent := []model.Activity{}
-        for i, act := range db.Activity {
-                if i >= 12 {
-                        break
-                }
-                recent = append(recent, act)
-        }
-        a.store.Unlock()
+	counts := map[string]int{}
+	totals := map[string]int{}
+	for _, u := range db.HotspotUsers {
+		counts[u.ProfileName]++
+		totals[u.ProfileName] += u.Price
+	}
+	top := []topProfilePoint{}
+	for name, c := range counts {
+		top = append(top, topProfilePoint{Name: name, Users: c, Total: totals[name]})
+	}
+	sort.Slice(top, func(i, j int) bool {
+		if top[i].Users != top[j].Users {
+			return top[i].Users > top[j].Users
+		}
+		return top[i].Total > top[j].Total
+	})
+	if len(top) > 5 {
+		top = top[:5]
+	}
 
-        writeJSON(w, http.StatusOK, map[string]any{
-                "kpis":             kpis,
-                "sessionsTimeline": buildSessionsTimeline(now),
-                "revenueByDay":     revenueByDay,
-                "topProfiles":      top,
-                "recentActivity":   recent,
-        })
+	recent := []model.Activity{}
+	for i, act := range db.Activity {
+		if i >= 12 {
+			break
+		}
+		recent = append(recent, act)
+	}
+	a.store.Unlock()
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"kpis":             kpis,
+		"sites":            sites,
+		"sessionsTimeline": buildSessionsTimeline(now),
+		"revenueByDay":     revenueByDay,
+		"topProfiles":      top,
+		"recentActivity":   recent,
+	})
 }
 
 // buildSessionsTimeline — 24 points horaires, heure courante en dernier,
@@ -1680,8 +1739,21 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
                 }
                 db.Sales = append(db.Sales, model.Sale{
                         ID: model.NewID("sale-"), Amount: cost, ProfileName: profile.Name, Count: req.Count,
-                        Channel: channel, ResellerName: resName, At: model.NowISO(),
+                        Channel: channel, ResellerName: resName,
+                        RouterID: routerCopy.ID, RouterName: routerCopy.Name, BatchID: batchID,
+                        At: model.NowISO(),
                 })
+                batchResellerID := ""
+                if resellerCopy != nil {
+                        batchResellerID = resellerCopy.ID
+                }
+                db.Batches = append([]model.Batch{{
+                        ID: batchID, ProfileID: profile.ID, ProfileName: profile.Name,
+                        RouterID: routerCopy.ID, RouterName: routerCopy.Name,
+                        Count: req.Count, UnitPrice: profile.Price, TotalCost: cost,
+                        Channel: channel, ResellerID: batchResellerID, ResellerName: resName,
+                        CreatedAt: model.NowISO(),
+                }}, db.Batches...)
                 a.store.Save()
                 cmdID := cmd.ID
                 a.store.Unlock()
@@ -1723,8 +1795,21 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
         }
         db.Sales = append(db.Sales, model.Sale{
                 ID: model.NewID("sale-"), Amount: cost, ProfileName: profile.Name, Count: req.Count,
-                Channel: channel, ResellerName: resName, At: model.NowISO(),
+                Channel: channel, ResellerName: resName,
+                RouterID: routerCopy.ID, RouterName: routerCopy.Name, BatchID: batchID,
+                At: model.NowISO(),
         })
+        batchResellerID := ""
+        if resellerCopy != nil {
+                batchResellerID = resellerCopy.ID
+        }
+        db.Batches = append([]model.Batch{{
+                ID: batchID, ProfileID: profile.ID, ProfileName: profile.Name,
+                RouterID: routerCopy.ID, RouterName: routerCopy.Name,
+                Count: req.Count, UnitPrice: profile.Price, TotalCost: cost,
+                Channel: channel, ResellerID: batchResellerID, ResellerName: resName,
+                CreatedAt: model.NowISO(),
+        }}, db.Batches...)
         msg := fmt.Sprintf("Génération de %d vouchers (%s)", req.Count, profile.Name)
         if resName != "" {
                 msg += " pour " + resName
@@ -1813,6 +1898,15 @@ func (a *API) handleVouchersBatchDelete(w http.ResponseWriter, r *http.Request) 
                 remaining = append(remaining, u)
         }
         db.HotspotUsers = remaining
+        // retire aussi l'enregistrement du lot (traçabilité)
+        batches := db.Batches[:0]
+        for _, b := range db.Batches {
+                if b.ID == batchID {
+                        continue
+                }
+                batches = append(batches, b)
+        }
+        db.Batches = batches
         a.logActivity(db, fmt.Sprintf("voucher"), fmt.Sprintf("Lot %s supprimé (%d vouchers)", batchID, deleted))
         a.store.Save()
         a.store.Unlock()
@@ -2240,6 +2334,247 @@ func (a *API) handleReports(w http.ResponseWriter, r *http.Request) {
                         "sales":     totals.sales,
                         "avgTicket": avgTicket,
                 },
+        })
+}
+
+// ---------------------------------------------------------------------------
+// Comptabilité — ventes par jour / semaine / mois, par routeur (multi-sites)
+// ---------------------------------------------------------------------------
+
+// frenchMonth — noms de mois français pour les libellés du graphe mensuel.
+var frenchMonth = [...]string{"janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."}
+
+func (a *API) handleAccounting(w http.ResponseWriter, r *http.Request) {
+        q := r.URL.Query()
+        period := q.Get("period")
+        if period == "" {
+                period = "day"
+        }
+        if period != "day" && period != "week" && period != "month" {
+                writeErr(w, http.StatusBadRequest, "period doit valoir day, week ou month")
+                return
+        }
+        routerID := strings.TrimSpace(q.Get("routerId")) // "" ou "all" = tous les sites
+
+        now := time.Now().UTC()
+        a.store.Lock()
+        db := a.store.Data()
+
+        // Découpage en buckets + fenêtre d'analyse.
+        var buckets []time.Time
+        var labels []string
+        var windowStart time.Time
+
+        switch period {
+        case "day": // 30 derniers jours
+                today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+                windowStart = today.AddDate(0, 0, -29)
+                for i := 29; i >= 0; i-- {
+                        d := today.AddDate(0, 0, -i)
+                        buckets = append(buckets, d)
+                        labels = append(labels, fmt.Sprintf("%02d/%02d", d.Day(), int(d.Month())))
+                }
+        case "week": // 12 dernières semaines (lundi → dimanche)
+                wd := int(now.Weekday())
+                if wd == 0 {
+                        wd = 7
+                }
+                thisMonday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -(wd - 1))
+                for i := 11; i >= 0; i-- {
+                        monday := thisMonday.AddDate(0, 0, -7*i)
+                        buckets = append(buckets, monday)
+                        labels = append(labels, fmt.Sprintf("%02d/%02d", monday.Day(), int(monday.Month())))
+                }
+                windowStart = thisMonday.AddDate(0, 0, -77)
+        case "month": // 12 derniers mois
+                firstOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+                windowStart = firstOfMonth.AddDate(0, -11, 0)
+                for i := 11; i >= 0; i-- {
+                        m := firstOfMonth.AddDate(0, -i, 0)
+                        buckets = append(buckets, m)
+                        labels = append(labels, fmt.Sprintf("%s %02d", frenchMonth[int(m.Month())-1], m.Year()%100))
+                }
+        }
+
+        type seriesPoint struct {
+                Label   string `json:"label"`
+                Revenue int    `json:"revenue"`
+                Sales   int    `json:"sales"`
+        }
+        revSeries := make([]seriesPoint, len(buckets))
+        for i := range labels {
+                revSeries[i] = seriesPoint{Label: labels[i]}
+        }
+
+        routerNames := map[string]string{}
+        for _, rr := range db.Routers {
+                routerNames[rr.ID] = rr.Name
+        }
+
+        totalsRevenue, totalsSales := 0, 0
+        byRouterRevenue := map[string]int{}
+        byRouterSales := map[string]int{}
+
+        for _, s := range db.Sales {
+                at, err := time.Parse(time.RFC3339, s.At)
+                if err != nil || at.Before(windowStart) {
+                        continue
+                }
+                // répartition par routeur (toujours tous sites, pour comparaison)
+                rid := s.RouterID
+                if rid == "" {
+                        rid = "unknown"
+                        routerNames["unknown"] = "(inconnu)"
+                }
+                byRouterRevenue[rid] += s.Amount
+                byRouterSales[rid] += s.Count
+
+                // filtre routeur : la série et les totaux ne comptent que le site choisi
+                if routerID != "" && routerID != "all" && s.RouterID != routerID {
+                        continue
+                }
+                totalsRevenue += s.Amount
+                totalsSales += s.Count
+
+                idx := sort.Search(len(buckets), func(i int) bool { return at.Before(buckets[i]) }) - 1
+                if idx >= 0 && idx < len(revSeries) {
+                        revSeries[idx].Revenue += s.Amount
+                        revSeries[idx].Sales += s.Count
+                }
+        }
+        a.store.Unlock()
+
+        type routerAgg struct {
+                RouterID   string  `json:"routerId"`
+                RouterName string  `json:"routerName"`
+                Revenue    int     `json:"revenue"`
+                Sales      int     `json:"sales"`
+                Share      float64 `json:"share"`
+        }
+        byRouter := []routerAgg{}
+        allSum := 0
+        for _, rev := range byRouterRevenue {
+                allSum += rev
+        }
+        for rid, rev := range byRouterRevenue {
+                share := 0.0
+                if allSum > 0 {
+                        share = math.Round(float64(rev)/float64(allSum)*1000) / 10
+                }
+                byRouter = append(byRouter, routerAgg{
+                        RouterID: rid, RouterName: routerNames[rid],
+                        Revenue: rev, Sales: byRouterSales[rid], Share: share,
+                })
+        }
+        sort.Slice(byRouter, func(i, j int) bool { return byRouter[i].Revenue > byRouter[j].Revenue })
+
+        avgTicket := 0
+        if totalsSales > 0 {
+                avgTicket = totalsRevenue / totalsSales
+        }
+
+        writeJSON(w, http.StatusOK, map[string]any{
+                "period":   period,
+                "routerId": routerID,
+                "series":   revSeries,
+                "byRouter": byRouter,
+                "totals": map[string]any{
+                        "revenue":   totalsRevenue,
+                        "sales":     totalsSales,
+                        "avgTicket": avgTicket,
+                },
+        })
+}
+
+// ---------------------------------------------------------------------------
+// Lots de vouchers — traçabilité complète
+// ---------------------------------------------------------------------------
+
+func (a *API) handleBatchesList(w http.ResponseWriter, r *http.Request) {
+        q := r.URL.Query()
+        search := strings.ToLower(strings.TrimSpace(q.Get("search")))
+        routerID := strings.TrimSpace(q.Get("routerId"))
+        page := queryInt(r, "page", 1, 1, 1_000_000)
+        pageSize := queryInt(r, "pageSize", 15, 1, 100)
+
+        now := time.Now().UTC()
+        a.store.Lock()
+        db := a.store.Data()
+
+        // Statuts live des vouchers, agrégés par lot.
+        type liveStats struct {
+                Remaining, Active, Used, Expired, Disabled int
+        }
+        stats := map[string]*liveStats{}
+        for i := range db.HotspotUsers {
+                u := &db.HotspotUsers[i]
+                if u.Kind != "voucher" || u.BatchID == "" {
+                        continue
+                }
+                st, ok := stats[u.BatchID]
+                if !ok {
+                        st = &liveStats{}
+                        stats[u.BatchID] = st
+                }
+                switch model.EffectiveStatus(u, now) {
+                case "active":
+                        st.Active++
+                        st.Remaining++
+                case "used":
+                        st.Used++
+                case "expired":
+                        st.Expired++
+                case "disabled":
+                        st.Disabled++
+                }
+        }
+
+        type batchRow struct {
+                model.Batch
+                Remaining int `json:"remaining"`
+                Active    int `json:"active"`
+                Used      int `json:"used"`
+                Expired   int `json:"expired"`
+                Disabled  int `json:"disabled"`
+        }
+        filtered := []batchRow{}
+        for _, b := range db.Batches {
+                if routerID != "" && routerID != "all" && b.RouterID != routerID {
+                        continue
+                }
+                if search != "" {
+                        hay := strings.ToLower(b.ID + " " + b.ProfileName + " " + b.RouterName + " " + b.ResellerName + " " + b.Channel)
+                        if !strings.Contains(hay, search) {
+                                continue
+                        }
+                }
+                row := batchRow{Batch: b}
+                if st, ok := stats[b.ID]; ok {
+                        row.Remaining = st.Remaining
+                        row.Active = st.Active
+                        row.Used = st.Used
+                        row.Expired = st.Expired
+                        row.Disabled = st.Disabled
+                }
+                filtered = append(filtered, row)
+        }
+        a.store.Unlock()
+
+        sort.Slice(filtered, func(i, j int) bool { return filtered[i].CreatedAt > filtered[j].CreatedAt })
+        total := len(filtered)
+        start := (page - 1) * pageSize
+        if start > total {
+                start = total
+        }
+        end := start + pageSize
+        if end > total {
+                end = total
+        }
+        writeJSON(w, http.StatusOK, map[string]any{
+                "data":     filtered[start:end],
+                "total":    total,
+                "page":     page,
+                "pageSize": pageSize,
         })
 }
 

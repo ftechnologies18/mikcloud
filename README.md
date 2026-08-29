@@ -64,14 +64,14 @@ intégré permet de démontrer toute la plateforme sans matériel.
 
 | Module | Détail |
 | --- | --- |
-| Tableau de bord | KPIs live, sessions 24 h, revenus 14 j, top profils, activité |
+| Tableau de bord | KPIs live, **vue d'ensemble multi-sites** (1 compte = N hotspots : sessions, ventes, revenus par site), sessions 24 h, revenus 14 j, top profils, activité |
 | Sessions actives | Table temps réel (poll 5 s), déconnexion (kick) instantanée |
 | Utilisateurs | CRUD, filtres, pagination, activation/désactivation, copie identifiants |
-| Vouchers | Génération en lot (1–500), préfixe/longueur de code, débit auto du portefeuille revendeur, impression tickets prédécoupés |
+| Vouchers | Génération en lot (1–500), préfixe/longueur de code, débit auto du portefeuille revendeur, impression tickets prédécoupés, **traçabilité des lots** (onglet Lots : site émetteur, canal, revendeur, statuts voucher par voucher) |
 | Profils | Forfaits : débit (format RouterOS), durée session, validité, quota, prix |
 | Revendeurs | Portefeuille de crédits, rechargements, journal des transactions |
 | Routeurs | Statut/CPU/uptime, test de connexion, mode simulé ou réel |
-| Rapports | Revenus, ventes par profil, trafic réseau, statut vouchers (7/14/30 j) |
+| Rapports | **Comptabilité multi-sites** : ventes par jour/semaine/mois et par routeur (part de CA, panier moyen) + activité (revenus, ventes par profil, trafic, statut vouchers) |
 | Paramètres | Organisation, devise (FCFA, EUR, USD…), fuseau, réinitialisation démo |
 
 Documentation détaillée du backend : [`backend/README.md`](backend/README.md).

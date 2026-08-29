@@ -55,6 +55,7 @@ func BuildSeed() *model.DB {
 		Routers:      []model.Router{},
 		Profiles:     []model.Profile{},
 		HotspotUsers: []model.HotspotUser{},
+		Batches:      []model.Batch{},
 		Resellers:    []model.Reseller{},
 		Transactions: []model.Transaction{},
 		Sessions:     []model.Session{},
@@ -165,7 +166,7 @@ func BuildSeed() *model.DB {
 	}
 
 	// --- Vouchers (~380) sur 14 jours, par lots, avec ventes et transactions ---
-	voucherProfiles := []int{2, 2, 2, 2, 0, 0, 0, 1, 1, 1, 3, 4, 5} // 24h dominante
+	voucherProfiles := []int{2, 2, 2, 2, 2, 0, 0, 0, 1, 1, 1, 3, 4, 5} // 24h dominante
 	takenUsernames := map[string]bool{}
 	seq := 0
 	for d := 13; d >= 0; d-- {
@@ -176,7 +177,7 @@ func BuildSeed() *model.DB {
 		}
 		remaining := base
 		for remaining > 0 {
-			size := 5 + rnd.Intn(26) // lots de 5 à 50 vouchers
+			size := 5 + rnd.Intn(11) // lots de 5 à 15 (plusieurs lots/jour → mix crédible)
 			if size > remaining {
 				size = remaining
 			}
@@ -191,14 +192,23 @@ func BuildSeed() *model.DB {
 				resID, resName = res.ID, res.Name
 			}
 
-			// horaire du lot (jamais dans le futur)
-			maxMinutes := int(now.Sub(dayStart).Minutes())
+			// horaire du lot : dans SA journée, jamais dans le futur
+			maxMinutes := 1440
+			if toNow := int(now.Sub(dayStart).Minutes()); toNow < maxMinutes {
+				maxMinutes = toNow
+			}
 			if maxMinutes < 1 {
 				maxMinutes = 1
 			}
 			at := dayStart.Add(time.Duration(rnd.Intn(maxMinutes)) * time.Minute)
 			seq++
 			batchID := fmt.Sprintf("B%s-%03d", at.Format("20060102"), seq)
+
+			// un lot est émis par UN seul site (routeur) — site principal dominant
+			router := r1
+			if rnd.Float64() > 0.65 {
+				router = r2
+			}
 
 			for j := 0; j < size; j++ {
 				c := code(5)
@@ -209,10 +219,6 @@ func BuildSeed() *model.DB {
 				pw := code(5)
 				for pw == c {
 					pw = code(5)
-				}
-				router := r1
-				if rnd.Float64() > 0.55 {
-					router = r2
 				}
 				createdAt := at.Add(time.Duration(rnd.Intn(60)) * time.Second)
 				db.HotspotUsers = append(db.HotspotUsers, model.HotspotUser{
@@ -227,9 +233,18 @@ func BuildSeed() *model.DB {
 			}
 
 			cost := size * p.Price
+			db.Batches = append(db.Batches, model.Batch{
+				ID: batchID, ProfileID: p.ID, ProfileName: p.Name,
+				RouterID: router.ID, RouterName: router.Name,
+				Count: size, UnitPrice: p.Price, TotalCost: cost,
+				Channel: channel, ResellerID: resID, ResellerName: resName,
+				CreatedAt: at.Format(time.RFC3339),
+			})
 			db.Sales = append(db.Sales, model.Sale{
 				ID: model.NewID("sale-"), Amount: cost, ProfileName: p.Name, Count: size,
-				Channel: channel, ResellerName: resName, At: at.Format(time.RFC3339),
+				Channel: channel, ResellerName: resName,
+				RouterID: router.ID, RouterName: router.Name, BatchID: batchID,
+				At: at.Format(time.RFC3339),
 			})
 			if channel == "reseller" {
 				db.Transactions = append(db.Transactions, model.Transaction{
@@ -238,6 +253,71 @@ func BuildSeed() *model.DB {
 					At: at.Format(time.RFC3339),
 				})
 			}
+		}
+	}
+
+	// --- Historique comptable 12 mois : lots tracés + ventes, vouchers purgés ---
+	// Au-delà de 14 jours, les vouchers consommés/expirés ont été purgés des
+	// routeurs (pratique standard d'un hotspot), mais chaque lot reste tracé
+	// dans les registres (comptabilité + traçabilité).
+	eligibleResellers := func(dayStart time.Time) []model.Reseller {
+		out := []model.Reseller{}
+		for _, res := range db.Resellers {
+			ct, err := time.Parse(time.RFC3339, res.CreatedAt)
+			if err == nil && !ct.After(dayStart) {
+				out = append(out, res)
+			}
+		}
+		return out
+	}
+	for d := 364; d >= 14; d-- {
+		dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -d)
+		// croissance douce : +15 % sur l'année
+		growth := 0.85 + 0.15*float64(364-d)/350.0
+		base := int(float64(18+rnd.Intn(15)) * growth)
+		if wd := dayStart.Weekday(); wd == time.Saturday || wd == time.Sunday {
+			base = int(float64(base) * 1.35)
+		}
+		remaining := base
+		for remaining > 0 {
+			size := 8 + rnd.Intn(18) // lots de 8 à 25
+			if size > remaining {
+				size = remaining
+			}
+			remaining -= size
+			p := db.Profiles[voucherProfiles[rnd.Intn(len(voucherProfiles))]]
+
+			// site émetteur : r2 (hAP-Lounge) ouvert il y a ~60 jours
+			router := r1
+			if d <= 60 && rnd.Float64() > 0.65 {
+				router = r2
+			}
+
+			channel := "direct"
+			var resID, resName string
+			if elig := eligibleResellers(dayStart); len(elig) > 0 && rnd.Float64() < 0.45 {
+				channel = "reseller"
+				res := elig[rnd.Intn(len(elig))]
+				resID, resName = res.ID, res.Name
+			}
+
+			at := dayStart.Add(time.Duration(8+rnd.Intn(12)) * time.Hour)
+			seq++
+			batchID := fmt.Sprintf("B%s-%03d", at.Format("20060102"), seq)
+			cost := size * p.Price
+			db.Batches = append(db.Batches, model.Batch{
+				ID: batchID, ProfileID: p.ID, ProfileName: p.Name,
+				RouterID: router.ID, RouterName: router.Name,
+				Count: size, UnitPrice: p.Price, TotalCost: cost,
+				Channel: channel, ResellerID: resID, ResellerName: resName,
+				CreatedAt: at.Format(time.RFC3339),
+			})
+			db.Sales = append(db.Sales, model.Sale{
+				ID: model.NewID("sale-"), Amount: cost, ProfileName: p.Name, Count: size,
+				Channel: channel, ResellerName: resName,
+				RouterID: router.ID, RouterName: router.Name, BatchID: batchID,
+				At: at.Format(time.RFC3339),
+			})
 		}
 	}
 

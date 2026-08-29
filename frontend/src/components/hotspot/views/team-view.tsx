@@ -2,9 +2,9 @@
 
 // N°7 — Vue Équipe : gestion des membres du compte et de leurs rôles
 // (owner uniquement — la route GET /api/team est requireRole(3) côté serveur).
-// Matrice : Propriétaire (tout) > Gérant (tout sauf équipe/réglages) >
-// Opérateur (ventes, vouchers, sessions). Chaque mutation est auditée avec
-// l'acteur (visible dans le journal d'activité).
+// Matrice : Propriétaire (tout) > Gérant (tout sauf équipe/réglages).
+// Le rôle « operator » a été retiré du produit. Chaque mutation est auditée
+// avec l'acteur (visible dans le journal d'activité).
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -59,9 +59,7 @@ function RoleBadge({ role }: { role: string }) {
       ? "bg-primary/15 text-primary border-primary/30"
       : role === "manager"
         ? "bg-emerald-500/15 text-emerald-500 border-emerald-500/30"
-        : role === "operator"
-          ? "bg-amber-500/15 text-amber-600 border-amber-500/30 dark:text-amber-400"
-          : "bg-muted text-muted-foreground border-border";
+        : "bg-muted text-muted-foreground border-border";
   return (
     <Badge variant="outline" className={`shrink-0 ${cls}`}>
       {roleLabel(role, lang)}
@@ -82,13 +80,13 @@ function MemberDialog({ open, onClose, member }: MemberDialogProps) {
   const [name, setName] = useState(member?.name ?? "");
   const [username, setUsername] = useState(member?.username ?? "");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState<string>(member?.role === "owner" || member?.role === "manager" || member?.role === "operator" ? member.role : "operator");
+  const [role, setRole] = useState<string>(member?.role === "owner" || member?.role === "manager" ? member.role : "manager");
 
   const reset = () => {
     setName(member?.name ?? "");
     setUsername(member?.username ?? "");
     setPassword("");
-    setRole(member?.role ?? "operator");
+    setRole(member?.role ?? "manager");
   };
 
   const mutation = useMutation({
@@ -173,12 +171,6 @@ function MemberDialog({ open, onClose, member }: MemberDialogProps) {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="operator">
-                  <div className="flex flex-col items-start py-0.5">
-                    <span className="font-medium">{t("team.role.operator")}</span>
-                    <span className="text-xs text-muted-foreground">{t("team.role.operatorDesc")}</span>
-                  </div>
-                </SelectItem>
                 <SelectItem value="manager">
                   <div className="flex flex-col items-start py-0.5">
                     <span className="font-medium">{t("team.role.manager")}</span>

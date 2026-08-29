@@ -216,12 +216,12 @@ func isPlatformAdmin(r *http.Request) bool {
 }
 
 // roleRank — hiérarchie des rôles d'équipe (N°7) :
-// operator(1) < manager(2) < owner(3). Le super-admin plateforme est traité
+// manager(2) < owner(3). Le super-admin plateforme est traité
 // comme owner sur le compte consulté. Rôle inconnu → 0 (aucun droit, défensif).
+// Le rôle « operator » a été retiré du produit : les comptes existants sont
+// promus manager au démarrage (store.migrateRemoveOperator).
 func roleRank(role string) int {
         switch role {
-        case model.RoleOperator:
-                return 1
         case model.RoleManager:
                 return 2
         case model.RoleOwner, model.RolePlatformAdmin, "admin":

@@ -121,7 +121,6 @@ export function userInitials(name: string): string {
 // N°7 — libellés des rôles d'équipe (+ super-admin plateforme historique).
 export function roleLabel(role: string, lang: Lang = "fr"): string {
   const labels: Record<string, [string, string]> = {
-    operator: ["Opérateur", "Operator"],
     manager: ["Gérant", "Manager"],
     owner: ["Propriétaire", "Owner"],
     platform_admin: ["Admin plateforme", "Platform admin"],

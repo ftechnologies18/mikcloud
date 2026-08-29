@@ -2,13 +2,13 @@
 // L'UI masque ce que le serveur refuserait de toute façon (403) — le masquage
 // est purement du confort, l'autorisation réelle vit côté Go.
 
-export type TeamRole = "operator" | "manager" | "owner" | "platform_admin" | "admin";
+export type TeamRole = "manager" | "owner" | "platform_admin" | "admin";
 
-/** Rang : operator(1) < manager(2) < owner(3) ≈ platform admin(3). Inconnu → 0. */
+/** Rang : manager(2) < owner(3) ≈ platform admin(3). Inconnu → 0.
+ * Le rôle « operator » a été retiré du produit (les comptes existants sont
+ * promus manager par la migration store.migrateRemoveOperator côté serveur). */
 export function roleRank(role: string): number {
   switch (role) {
-    case "operator":
-      return 1;
     case "manager":
       return 2;
     case "owner":

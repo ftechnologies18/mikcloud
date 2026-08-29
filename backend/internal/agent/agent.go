@@ -115,8 +115,16 @@ func rosMinutes(m int) string {
 
 // InstallScript — le script de provisionning complet (1 collage dans Winbox).
 func InstallScript(baseURL, token, routerName string) string {
+        // Le nom n'apparaît que dans un commentaire .rsc : interdire tout retour à
+        // la ligne ou caractère de contrôle (anti-injection dans le fichier).
+        safeName := strings.Map(func(c rune) rune {
+                if c == '\n' || c == '\r' || c == '\t' || c < 0x20 {
+                        return ' '
+                }
+                return c
+        }, routerName)
         return `# ============================================================
-# MikCloud — Installation agent  (routeur: ` + routerName + `)
+# MikCloud — Installation agent  (routeur: ` + safeName + `)
 # Coller CE fichier entier dans Terminal (Winbox) — 1 seule fois.
 # ============================================================
 :global mikcloudToken "` + rosEscape(token) + `"
@@ -432,29 +440,45 @@ type VoucherRef struct {
 }
 
 func plUserList(p map[string]any, k string) []VoucherRef {
-        raw, ok := p[k].([]any)
-        if !ok {
-                return nil
-        }
-        out := make([]VoucherRef, 0, len(raw))
-        for _, it := range raw {
-                if m, ok := it.(map[string]any); ok {
-                        out = append(out, VoucherRef{Name: plStr(m, "name"), Password: plStr(m, "password")})
+        // Le payload peut venir de la mémoire (types concrets Go : []map[string]any)
+        // ou d'une relecture JSON ([]any) — accepter les deux formes.
+        collect := func(items []any) []VoucherRef {
+                out := make([]VoucherRef, 0, len(items))
+                for _, it := range items {
+                        if m, ok := it.(map[string]any); ok {
+                                out = append(out, VoucherRef{Name: plStr(m, "name"), Password: plStr(m, "password")})
+                        }
                 }
+                return out
         }
-        return out
+        if raw, ok := p[k].([]any); ok {
+                return collect(raw)
+        }
+        if raw2, ok := p[k].([]map[string]any); ok {
+                items := make([]any, 0, len(raw2))
+                for _, it := range raw2 {
+                        items = append(items, it)
+                }
+                return collect(items)
+        }
+        return nil
 }
 
 func plStrList(p map[string]any, k string) []string {
-        raw, ok := p[k].([]any)
-        if !ok {
-                return nil
-        }
-        out := make([]string, 0, len(raw))
-        for _, it := range raw {
-                if s, ok := it.(string); ok {
-                        out = append(out, s)
+        // Même tolérance que plUserList : []any (JSON) ou []string (mémoire).
+        if raw, ok := p[k].([]any); ok {
+                out := make([]string, 0, len(raw))
+                for _, it := range raw {
+                        if s, ok := it.(string); ok {
+                                out = append(out, s)
+                        }
                 }
+                return out
         }
-        return out
+        if raw2, ok := p[k].([]string); ok {
+                out := make([]string, len(raw2))
+                copy(out, raw2)
+                return out
+        }
+        return nil
 }

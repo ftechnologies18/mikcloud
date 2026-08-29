@@ -12,6 +12,7 @@ export type BadgeStatus =
   | "offline"
   | "simulated"
   | "real"
+  | "agent"
   | "direct"
   | "reseller"
   | "credit"
@@ -26,6 +27,7 @@ const LABELS: Record<BadgeStatus, string> = {
   offline: "Hors ligne",
   simulated: "Simulé",
   real: "Réel",
+  agent: "Agent",
   direct: "Direct",
   reseller: "Revendeur",
   credit: "Crédit",
@@ -43,6 +45,7 @@ const STYLES: Record<BadgeStatus, string> = {
   offline: "bg-destructive/15 text-destructive border-destructive/25",
   simulated: "bg-chart-2/15 text-chart-2 border-chart-2/25",
   real: "bg-chart-5/15 text-chart-5 border-chart-5/25",
+  agent: "bg-chart-4/15 text-chart-4 border-chart-4/25",
   direct: "bg-chart-5/15 text-chart-5 border-chart-5/25",
   credit: "bg-primary/15 text-primary border-primary/25",
 };

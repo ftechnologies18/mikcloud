@@ -256,6 +256,8 @@ func findReseller(db *model.DB, id string) *model.Reseller {
 
 func sanitizeRouter(r model.Router) model.Router {
         r.Password = ""
+        // Le hash du token agent n'est jamais exposé à l'interface (secret serveur).
+        r.AgentTokenHash = ""
         return r
 }
 
@@ -366,147 +368,147 @@ type topProfilePoint struct {
 }
 
 func (a *API) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	now := time.Now().UTC()
-	a.store.Lock()
-	db := a.store.Data()
+        now := time.Now().UTC()
+        a.store.Lock()
+        db := a.store.Data()
 
-	activeVouchers := 0
-	for i := range db.HotspotUsers {
-		if db.HotspotUsers[i].Kind == "voucher" && model.EffectiveStatus(&db.HotspotUsers[i], now) == "active" {
-			activeVouchers++
-		}
-	}
-	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	salesToday := 0
-	cutoff30 := now.AddDate(0, 0, -30)
-	revenue30d := 0
-	for _, s := range db.Sales {
-		at, err := time.Parse(time.RFC3339, s.At)
-		if err != nil {
-			continue
-		}
-		if !at.Before(todayStart) {
-			salesToday += s.Count
-		}
-		if at.After(cutoff30) {
-			revenue30d += s.Amount
-		}
-	}
-	routersOnline := 0
-	for _, rr := range db.Routers {
-		if rr.Status == "online" {
-			routersOnline++
-		}
-	}
-	onlineNow := map[string]bool{}
-	for _, s := range db.Sessions {
-		onlineNow[s.Username] = true
-	}
+        activeVouchers := 0
+        for i := range db.HotspotUsers {
+                if db.HotspotUsers[i].Kind == "voucher" && model.EffectiveStatus(&db.HotspotUsers[i], now) == "active" {
+                        activeVouchers++
+                }
+        }
+        todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+        salesToday := 0
+        cutoff30 := now.AddDate(0, 0, -30)
+        revenue30d := 0
+        for _, s := range db.Sales {
+                at, err := time.Parse(time.RFC3339, s.At)
+                if err != nil {
+                        continue
+                }
+                if !at.Before(todayStart) {
+                        salesToday += s.Count
+                }
+                if at.After(cutoff30) {
+                        revenue30d += s.Amount
+                }
+        }
+        routersOnline := 0
+        for _, rr := range db.Routers {
+                if rr.Status == "online" {
+                        routersOnline++
+                }
+        }
+        onlineNow := map[string]bool{}
+        for _, s := range db.Sessions {
+                onlineNow[s.Username] = true
+        }
 
-	// Vue d'ensemble multi-sites : 1 compte = N hotspots.
-	type siteOverview struct {
-		RouterID       string `json:"routerId"`
-		RouterName     string `json:"routerName"`
-		Status         string `json:"status"`
-		ActiveSessions int    `json:"activeSessions"`
-		HotspotUsers   int    `json:"hotspotUsers"`
-		ActiveVouchers int    `json:"activeVouchers"`
-		SalesToday     int    `json:"salesToday"`
-		Revenue30d     int    `json:"revenue30d"`
-	}
-	sessionsByRouter := map[string]int{}
-	for _, s := range db.Sessions {
-		sessionsByRouter[s.RouterID]++
-	}
-	usersByRouter := map[string]int{}
-	vouchersByRouter := map[string]int{}
-	for i := range db.HotspotUsers {
-		u := &db.HotspotUsers[i]
-		if model.EffectiveStatus(u, now) != "active" {
-			continue
-		}
-		usersByRouter[u.RouterID]++
-		if u.Kind == "voucher" {
-			vouchersByRouter[u.RouterID]++
-		}
-	}
-	salesTodayByRouter := map[string]int{}
-	revenue30dByRouter := map[string]int{}
-	for _, s := range db.Sales {
-		at, err := time.Parse(time.RFC3339, s.At)
-		if err != nil {
-			continue
-		}
-		if !at.Before(todayStart) {
-			salesTodayByRouter[s.RouterID] += s.Count
-		}
-		if at.After(cutoff30) {
-			revenue30dByRouter[s.RouterID] += s.Amount
-		}
-	}
-	sites := []siteOverview{}
-	for _, rr := range db.Routers {
-		sites = append(sites, siteOverview{
-			RouterID:       rr.ID,
-			RouterName:     rr.Name,
-			Status:         rr.Status,
-			ActiveSessions: sessionsByRouter[rr.ID],
-			HotspotUsers:   usersByRouter[rr.ID],
-			ActiveVouchers: vouchersByRouter[rr.ID],
-			SalesToday:     salesTodayByRouter[rr.ID],
-			Revenue30d:     revenue30dByRouter[rr.ID],
-		})
-	}
-	kpis := map[string]any{
-		"activeSessions": len(db.Sessions),
-		"totalUsers":     len(db.HotspotUsers),
-		"activeVouchers": activeVouchers,
-		"salesToday":     salesToday,
-		"revenue30d":     revenue30d,
-		"routersOnline":  routersOnline,
-		"routersTotal":   len(db.Routers),
-		"onlineNow":      len(onlineNow),
-	}
+        // Vue d'ensemble multi-sites : 1 compte = N hotspots.
+        type siteOverview struct {
+                RouterID       string `json:"routerId"`
+                RouterName     string `json:"routerName"`
+                Status         string `json:"status"`
+                ActiveSessions int    `json:"activeSessions"`
+                HotspotUsers   int    `json:"hotspotUsers"`
+                ActiveVouchers int    `json:"activeVouchers"`
+                SalesToday     int    `json:"salesToday"`
+                Revenue30d     int    `json:"revenue30d"`
+        }
+        sessionsByRouter := map[string]int{}
+        for _, s := range db.Sessions {
+                sessionsByRouter[s.RouterID]++
+        }
+        usersByRouter := map[string]int{}
+        vouchersByRouter := map[string]int{}
+        for i := range db.HotspotUsers {
+                u := &db.HotspotUsers[i]
+                if model.EffectiveStatus(u, now) != "active" {
+                        continue
+                }
+                usersByRouter[u.RouterID]++
+                if u.Kind == "voucher" {
+                        vouchersByRouter[u.RouterID]++
+                }
+        }
+        salesTodayByRouter := map[string]int{}
+        revenue30dByRouter := map[string]int{}
+        for _, s := range db.Sales {
+                at, err := time.Parse(time.RFC3339, s.At)
+                if err != nil {
+                        continue
+                }
+                if !at.Before(todayStart) {
+                        salesTodayByRouter[s.RouterID] += s.Count
+                }
+                if at.After(cutoff30) {
+                        revenue30dByRouter[s.RouterID] += s.Amount
+                }
+        }
+        sites := []siteOverview{}
+        for _, rr := range db.Routers {
+                sites = append(sites, siteOverview{
+                        RouterID:       rr.ID,
+                        RouterName:     rr.Name,
+                        Status:         rr.Status,
+                        ActiveSessions: sessionsByRouter[rr.ID],
+                        HotspotUsers:   usersByRouter[rr.ID],
+                        ActiveVouchers: vouchersByRouter[rr.ID],
+                        SalesToday:     salesTodayByRouter[rr.ID],
+                        Revenue30d:     revenue30dByRouter[rr.ID],
+                })
+        }
+        kpis := map[string]any{
+                "activeSessions": len(db.Sessions),
+                "totalUsers":     len(db.HotspotUsers),
+                "activeVouchers": activeVouchers,
+                "salesToday":     salesToday,
+                "revenue30d":     revenue30d,
+                "routersOnline":  routersOnline,
+                "routersTotal":   len(db.Routers),
+                "onlineNow":      len(onlineNow),
+        }
 
-	revenueByDay := buildRevenueByDay(db, now, 14)
+        revenueByDay := buildRevenueByDay(db, now, 14)
 
-	counts := map[string]int{}
-	totals := map[string]int{}
-	for _, u := range db.HotspotUsers {
-		counts[u.ProfileName]++
-		totals[u.ProfileName] += u.Price
-	}
-	top := []topProfilePoint{}
-	for name, c := range counts {
-		top = append(top, topProfilePoint{Name: name, Users: c, Total: totals[name]})
-	}
-	sort.Slice(top, func(i, j int) bool {
-		if top[i].Users != top[j].Users {
-			return top[i].Users > top[j].Users
-		}
-		return top[i].Total > top[j].Total
-	})
-	if len(top) > 5 {
-		top = top[:5]
-	}
+        counts := map[string]int{}
+        totals := map[string]int{}
+        for _, u := range db.HotspotUsers {
+                counts[u.ProfileName]++
+                totals[u.ProfileName] += u.Price
+        }
+        top := []topProfilePoint{}
+        for name, c := range counts {
+                top = append(top, topProfilePoint{Name: name, Users: c, Total: totals[name]})
+        }
+        sort.Slice(top, func(i, j int) bool {
+                if top[i].Users != top[j].Users {
+                        return top[i].Users > top[j].Users
+                }
+                return top[i].Total > top[j].Total
+        })
+        if len(top) > 5 {
+                top = top[:5]
+        }
 
-	recent := []model.Activity{}
-	for i, act := range db.Activity {
-		if i >= 12 {
-			break
-		}
-		recent = append(recent, act)
-	}
-	a.store.Unlock()
+        recent := []model.Activity{}
+        for i, act := range db.Activity {
+                if i >= 12 {
+                        break
+                }
+                recent = append(recent, act)
+        }
+        a.store.Unlock()
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"kpis":             kpis,
-		"sites":            sites,
-		"sessionsTimeline": buildSessionsTimeline(now),
-		"revenueByDay":     revenueByDay,
-		"topProfiles":      top,
-		"recentActivity":   recent,
-	})
+        writeJSON(w, http.StatusOK, map[string]any{
+                "kpis":             kpis,
+                "sites":            sites,
+                "sessionsTimeline": buildSessionsTimeline(now),
+                "revenueByDay":     revenueByDay,
+                "topProfiles":      top,
+                "recentActivity":   recent,
+        })
 }
 
 // buildSessionsTimeline — 24 points horaires, heure courante en dernier,

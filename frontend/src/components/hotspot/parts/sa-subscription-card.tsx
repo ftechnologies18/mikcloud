@@ -65,7 +65,7 @@ function planAmount(plan: SaasPlan, routerCount: number): number {
 }
 
 export function SubscriptionCard() {
-  const { data: view, isLoading } = useSubscription();
+  const { data: view, isLoading, isError, error, refetch } = useSubscription();
   const queryClient = useQueryClient();
   const [confirmPlan, setConfirmPlan] = useState<SaasPlan | null>(null);
 
@@ -84,6 +84,27 @@ export function SubscriptionCard() {
     },
     onError: (error: Error) => toast.error(error.message),
   });
+
+  if (isError) {
+    // État d'erreur explicite (API injoignable / backend pas encore à jour) —
+    // jamais de squelette infini silencieux.
+    return (
+      <Card className="gap-4 py-4 sm:py-6 lg:col-span-2">
+        <CardHeader className="px-4 sm:px-6">
+          <CardTitle className="text-base">Abonnement</CardTitle>
+          <CardDescription role="alert">
+            Impossible de charger l&apos;abonnement ({error?.message ?? "erreur réseau"}). Le service est peut-être en
+            cours de mise à jour — réessayez dans un instant.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="px-4 sm:px-6">
+          <Button variant="outline" size="sm" onClick={() => refetch()}>
+            Réessayer
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
 
   if (isLoading || !view) {
     return (

@@ -1,5 +1,16 @@
 # Déploiement Render — MikCloud Hotspot API
 # https://render.com/docs/deploy-go
+#
+# PERSISTANCE (important) : le plan gratuit Render a un système de fichiers
+# ÉPHÉMÈRE — sans base externe, les données sont perdues à chaque déploiement.
+# Avec DATABASE_URL (Postgres Neon gratuit, 0,5 Go, sans expiration), l'API
+# persiste tout son état dans Neon et survit aux redéploiements.
+#
+# Créer la base Neon (porte G2 du plan d'action) :
+#   1. https://neon.tech → nouveau projet « mikcloud » (région la plus proche)
+#   2. Copier la « Connection string » (postgres://…sslmode=require)
+#   3. La coller ici via le Dashboard Render → Environment → DATABASE_URL
+#      (ou décommenter sync: false ci-dessous pour la saisir dans Render)
 services:
   - type: web
     name: mikcloud-api
@@ -13,10 +24,7 @@ services:
         generateValue: true
       - key: DATA_DIR
         value: /opt/render/project/src/data
-    # Note : le plan gratuit Render a un système de fichiers éphémère.
-    # Les données (db.json) sont réinitialisées à chaque redéploiement.
-    # Pour la production, montez un disque persistant (plan payant) :
-    # disk:
-    #   name: mikcloud-data
-    #   mountPath: /opt/render/project/src/data
-    #   sizeGB: 1
+      # Neon Postgres — durabilité des données (ventes, lots, revendeurs).
+      # Créer le projet sur https://neon.tech puis coller la connection string.
+      - key: DATABASE_URL
+        sync: false

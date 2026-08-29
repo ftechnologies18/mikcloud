@@ -2,6 +2,7 @@
 package store
 
 import (
+        "database/sql"
         "encoding/json"
         "log"
         "math/rand"
@@ -16,19 +17,53 @@ import (
 )
 
 // Store — base de données en mémoire protégée par un mutex global,
-// sauvegardée en JSON de façon atomique (écriture tmp + rename).
+// sauvegardée en JSON de façon atomique (écriture tmp + rename),
+// ou persistée dans PostgreSQL/Neon si DATABASE_URL est définie (pgstore.go).
 type Store struct {
         mu   sync.Mutex
         db   *model.DB
         path string
+
+        // Persistance Neon (nil si absente — fallback JSON local).
+        pg      *sql.DB
+        pgDirty chan struct{} // coalescing : capacity 1, les Save() rapprochés fusionnent
+        pgStop  chan struct{}
+        pgDone  chan struct{}
 }
 
-// New charge data/db.json (ou crée le seed démo si absent).
+// New charge l'état (Neon si DATABASE_URL, sinon data/db.json) ou crée le seed démo.
 func New(dir string) (*Store, error) {
         if err := os.MkdirAll(dir, 0o755); err != nil {
                 return nil, err
         }
-        s := &Store{path: filepath.Join(dir, "db.json")}
+        s := &Store{
+                path:    filepath.Join(dir, "db.json"),
+                pgDirty: make(chan struct{}, 1),
+                pgStop:  make(chan struct{}),
+                pgDone:  make(chan struct{}),
+        }
+
+        // --- Persistance PostgreSQL/Neon (production Render) ---
+        if pgEnabled() {
+                loaded, err := s.initPostgres(os.Getenv("DATABASE_URL"))
+                if err != nil {
+                        log.Printf("store: Neon indisponible (%v) — fallback JSON local (DONNÉES NON DURABLES)", err)
+                } else {
+                        if !loaded {
+                                // Premier lancement : seed démo + snapshot initial immédiat.
+                                s.db = BuildSeed()
+                                s.ensureSlices()
+                                s.pgFlushOnce()
+                                log.Printf("store: Neon initialisé avec les données démo")
+                        } else {
+                                log.Printf("store: état restauré depuis Neon")
+                        }
+                        s.startPgWorker()
+                        return s, nil
+                }
+        }
+
+        // --- Fallback JSON local (dev / tests / hors-ligne) ---
         if data, err := os.ReadFile(s.path); err == nil && len(data) > 0 {
                 var db model.DB
                 if err := json.Unmarshal(data, &db); err != nil {
@@ -88,8 +123,17 @@ func (s *Store) Unlock() { s.mu.Unlock() }
 // Data retourne la base courante (à n'utiliser que sous verrou).
 func (s *Store) Data() *model.DB { return s.db }
 
-// Save écrit la base de façon atomique (à appeler sous verrou).
+// Save persiste la base. En mode Neon : écriture coalescée asynchrone
+// (non bloquante, appelable sous verrou — le worker reprendra le verrou lui-même).
+// En mode local : écriture JSON atomique synchrone (à appeler sous verrou).
 func (s *Store) Save() {
+        if s.pg != nil {
+                select {
+                case s.pgDirty <- struct{}{}:
+                default:
+                }
+                return
+        }
         data, err := json.MarshalIndent(s.db, "", "  ")
         if err != nil {
                 log.Printf("store: sérialisation impossible : %v", err)

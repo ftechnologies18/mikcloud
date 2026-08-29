@@ -84,6 +84,11 @@ type Router struct {
 	HotspotUsers   int    `json:"hotspotUsers"`
 	ActiveSessions int    `json:"activeSessions"`
 	CreatedAt      string `json:"createdAt"`
+	// HotspotLoginUrl — page de login du portail captive MikroTik (ex.
+	// http://10.5.50.1/login). Utilisée par les QR codes des vouchers imprimés :
+	// le QR encode {url}?username=CODE&password=PASS → connexion en 1 scan.
+	// Vide → le QR contient simplement « CODE / PASS ».
+	HotspotLoginUrl string `json:"hotspotLoginUrl,omitempty"`
 	// Mode agent (HTTP-poll sortant) : le token n'est JAMAIS stocké en clair.
 	AgentTokenHash string `json:"agentTokenHash,omitempty"`
 	TokenPreview   string `json:"tokenPreview,omitempty"`
@@ -257,6 +262,69 @@ type AdminUser struct {
 	EnvPasswordHash string `json:"envPasswordHash,omitempty"`
 }
 
+// NotificationSettings — canaux et règles d'alerte d'un compte SaaS. Les
+// secrets (tokens, mot de passe SMTP) sont stockés mais JAMAIS renvoyés par
+// l'API (l'API expose uniquement des booléens « …Set ») ; un PUT avec un
+// champ secret vide conserve la valeur existante.
+type NotificationSettings struct {
+	AccountID string `json:"accountId"`
+	Enabled   bool   `json:"enabled"` // interrupteur général des alertes automatiques
+	// Telegram — bot API (https://core.telegram.org/bots)
+	TelegramEnabled  bool   `json:"telegramEnabled"`
+	TelegramBotToken string `json:"telegramBotToken,omitempty"`
+	TelegramChatID   string `json:"telegramChatId,omitempty"`
+	// WhatsApp Cloud API (Meta Graph)
+	WhatsAppEnabled bool   `json:"whatsappEnabled"`
+	WhatsAppToken   string `json:"whatsappToken,omitempty"`
+	WhatsAppPhoneID string `json:"whatsappPhoneId,omitempty"`
+	WhatsAppTo      string `json:"whatsappTo,omitempty"`
+	// Email — SMTP direct (STARTTLS 587 / TLS implicite 465)
+	EmailEnabled bool   `json:"emailEnabled"`
+	SMTPHost     string `json:"smtpHost,omitempty"`
+	SMTPPort     int    `json:"smtpPort,omitempty"`
+	SMTPUser     string `json:"smtpUser,omitempty"`
+	SMTPPass     string `json:"smtpPass,omitempty"`
+	EmailTo      string `json:"emailTo,omitempty"`
+	// Règles d'alerte
+	OfflineAfterSec   int  `json:"offlineAfterSec"`   // sans check-in depuis X s → hors ligne (défaut 135 = 3 × 45 s)
+	LowStockThreshold int  `json:"lowStockThreshold"` // vouchers actifs restants < X → alerte stock (défaut 25)
+	DailyReport       bool `json:"dailyReport"`       // rapport quotidien
+	ReportHour        int  `json:"reportHour"`        // heure d'envoi (UTC = Abidjan GMT+0), défaut 20
+	// État interne anti-spam : dernier jour de rapport envoyé (YYYY-MM-DD)
+	LastReportDate string `json:"lastReportDate,omitempty"`
+	// État anti-spam stock : routerID → "low" | "empty" (dernier état notifié)
+	StockAlertState map[string]string `json:"stockAlertState,omitempty"`
+}
+
+// Normalize applique les défauts et bornes (appelé avant chaque lecture/écriture).
+func (s *NotificationSettings) Normalize() {
+	switch {
+	case s.OfflineAfterSec == 0:
+		s.OfflineAfterSec = 135
+	case s.OfflineAfterSec < 60:
+		s.OfflineAfterSec = 60
+	}
+	if s.LowStockThreshold == 0 {
+		s.LowStockThreshold = 25
+	}
+	if s.ReportHour < 0 || s.ReportHour > 23 {
+		s.ReportHour = 20
+	}
+}
+
+// NotificationLog — trace d'un envoi de notification (historique console).
+type NotificationLog struct {
+	ID        string `json:"id"`
+	AccountID string `json:"accountId"`
+	Channel   string `json:"channel"` // telegram | whatsapp | email | system
+	Kind      string `json:"kind"`    // router_offline | router_back | low_stock | daily_report | test | settings
+	Title     string `json:"title"`
+	Body      string `json:"body,omitempty"`
+	Status    string `json:"status"` // sent | error
+	Error     string `json:"error,omitempty"`
+	At        string `json:"at"`
+}
+
 // Kinds de commandes agent (routeur -> cloud en HTTP-poll).
 const (
 	CmdReadState    = "read_state"    // télémétrie + users + sessions actives
@@ -286,22 +354,24 @@ type Command struct {
 //   - Tenant/Settings : champs LEGACY mono-tenant, uniquement lus pour migrer
 //     un ancien db.json — vidés après migration puis ignorés.
 type DB struct {
-	Accounts          []Account           `json:"accounts"`
-	SettingsByAccount map[string]Settings `json:"settingsByAccount"`
-	Users             []AdminUser         `json:"users"`
-	Routers           []Router            `json:"routers"`
-	Profiles          []Profile           `json:"profiles"`
-	HotspotUsers      []HotspotUser       `json:"hotspotUsers"`
-	Batches           []Batch             `json:"batches"`
-	Resellers         []Reseller          `json:"resellers"`
-	Transactions      []Transaction       `json:"transactions"`
-	Sessions          []Session           `json:"sessions"`
-	Activity          []Activity          `json:"activity"`
-	Sales             []Sale              `json:"sales"`
-	Commands          []Command           `json:"commands"`
-	Tenant            Tenant              `json:"tenant"`   // legacy mono-tenant
-	Settings          Settings            `json:"settings"` // legacy mono-tenant
-	LastTick          time.Time           `json:"lastTick"`
+	Accounts          []Account                       `json:"accounts"`
+	SettingsByAccount map[string]Settings             `json:"settingsByAccount"`
+	Users             []AdminUser                     `json:"users"`
+	Routers           []Router                        `json:"routers"`
+	Profiles          []Profile                       `json:"profiles"`
+	HotspotUsers      []HotspotUser                   `json:"hotspotUsers"`
+	Batches           []Batch                         `json:"batches"`
+	Resellers         []Reseller                      `json:"resellers"`
+	Transactions      []Transaction                   `json:"transactions"`
+	Sessions          []Session                       `json:"sessions"`
+	Activity          []Activity                      `json:"activity"`
+	Sales             []Sale                          `json:"sales"`
+	Commands          []Command                       `json:"commands"`
+	NotifSettings     map[string]NotificationSettings `json:"notifSettings"` // accountId → réglages
+	NotifLog          []NotificationLog               `json:"notifLog"`
+	Tenant            Tenant                          `json:"tenant"`   // legacy mono-tenant
+	Settings          Settings                        `json:"settings"` // legacy mono-tenant
+	LastTick          time.Time                       `json:"lastTick"`
 }
 
 // EffectiveStatus retourne le statut réel d'un utilisateur : un voucher encore

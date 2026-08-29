@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"mikcloud/hotspot-api/internal/api"
+	"mikcloud/hotspot-api/internal/notify"
 	"mikcloud/hotspot-api/internal/store"
 )
 
@@ -48,6 +49,12 @@ func main() {
 		st.Close()
 		os.Exit(0)
 	}()
+
+	// Moniteur de surveillance (goroutine) : auto-mark offline des routeurs
+	// agents (3 × 45 s sans check-in), alertes stock de vouchers bas et
+	// rapport journalier — via les canaux configurés (Telegram/WhatsApp/Email).
+	monitor := notify.NewService(st)
+	go monitor.Run()
 
 	handler := logRequests(corsMiddleware(authRateLimit(api.New(st, jwtSecret).Handler())))
 	srv := &http.Server{

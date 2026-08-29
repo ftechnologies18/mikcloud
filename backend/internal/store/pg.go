@@ -262,6 +262,45 @@ func (p *PG) ensureSchema() error {
                         wave_link        TEXT NOT NULL DEFAULT '',
                         last_tick        TIMESTAMPTZ
                 )`,
+		`CREATE TABLE IF NOT EXISTS notif_settings (
+                        id                  TEXT PRIMARY KEY, -- = account_id : une ligne par compte SaaS
+                        enabled             BOOLEAN NOT NULL DEFAULT FALSE,
+                        telegram_enabled    BOOLEAN NOT NULL DEFAULT FALSE,
+                        telegram_bot_token  TEXT NOT NULL DEFAULT '',
+                        telegram_chat_id    TEXT NOT NULL DEFAULT '',
+                        whatsapp_enabled    BOOLEAN NOT NULL DEFAULT FALSE,
+                        whatsapp_token      TEXT NOT NULL DEFAULT '',
+                        whatsapp_phone_id   TEXT NOT NULL DEFAULT '',
+                        whatsapp_to         TEXT NOT NULL DEFAULT '',
+                        email_enabled       BOOLEAN NOT NULL DEFAULT FALSE,
+                        smtp_host           TEXT NOT NULL DEFAULT '',
+                        smtp_port           INTEGER NOT NULL DEFAULT 0,
+                        smtp_user           TEXT NOT NULL DEFAULT '',
+                        smtp_pass           TEXT NOT NULL DEFAULT '',
+                        email_to            TEXT NOT NULL DEFAULT '',
+                        offline_after_sec   INTEGER NOT NULL DEFAULT 135,
+                        low_stock_threshold INTEGER NOT NULL DEFAULT 25,
+                        daily_report        BOOLEAN NOT NULL DEFAULT FALSE,
+                        report_hour         INTEGER NOT NULL DEFAULT 20,
+                        last_report_date    TEXT NOT NULL DEFAULT '',
+                        stock_alert_state   TEXT NOT NULL DEFAULT '', -- JSON sérialisé ('' = absent)
+                        account_id          TEXT NOT NULL DEFAULT ''
+                )`,
+		`CREATE TABLE IF NOT EXISTS notif_log (
+                        id         TEXT PRIMARY KEY,
+                        channel    TEXT NOT NULL,
+                        kind       TEXT NOT NULL,
+                        title      TEXT NOT NULL,
+                        body       TEXT NOT NULL DEFAULT '',
+                        status     TEXT NOT NULL,
+                        error      TEXT NOT NULL DEFAULT '',
+                        at         TEXT NOT NULL,
+                        account_id TEXT NOT NULL DEFAULT ''
+                )`,
+		`CREATE INDEX IF NOT EXISTS idx_notif_log_account ON notif_log (account_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_notif_log_at      ON notif_log (at)`,
+		// QR vouchers : page de login du portail captive du routeur.
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS hotspot_login_url TEXT NOT NULL DEFAULT ''`,
 		// Migrations douces pour les bases créées avant l'ajout des champs
 		// agent/Wave/commandes (idempotentes, donc sans risque au premier déploiement).
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS agent_token_hash TEXT NOT NULL DEFAULT ''`,
@@ -346,6 +385,8 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 		Activity:          []model.Activity{},
 		Sales:             []model.Sale{},
 		Commands:          []model.Command{},
+		NotifSettings:     map[string]model.NotificationSettings{},
+		NotifLog:          []model.NotificationLog{},
 	}
 
 	steps := []struct {
@@ -364,6 +405,8 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 		{"activity", func() error { return loadInto(p, &db.Activity, activitySpec) }},
 		{"sales", func() error { return loadInto(p, &db.Sales, saleSpec) }},
 		{"commands", func() error { return loadInto(p, &db.Commands, commandSpec) }},
+		{"notif_settings", func() error { return p.loadNotifSettings(db) }},
+		{"notif_log", func() error { return loadInto(p, &db.NotifLog, notifLogSpec) }},
 		{"settings", func() error { return p.loadSettings(db) }},
 	}
 	for _, st := range steps {
@@ -384,6 +427,21 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 	// Le cache d'empreintes reflète l'état chargé.
 	p.rebuildHashes(db)
 	return db, true, nil
+}
+
+// loadNotifSettings lit TOUTES les lignes notif_settings (une par compte SaaS)
+// et remplit db.NotifSettings. stock_alert_state (TEXT) est désérialisé en map
+// par le spec (pattern commandSpec).
+func (p *PG) loadNotifSettings(db *model.DB) error {
+	var rows []model.NotificationSettings
+	if err := loadInto(p, &rows, notifSettingsSpec); err != nil {
+		return err
+	}
+	db.NotifSettings = map[string]model.NotificationSettings{}
+	for _, s := range rows {
+		db.NotifSettings[s.AccountID] = s
+	}
+	return nil
 }
 
 // loadSettings lit TOUTES les lignes settings (une par compte SaaS) et remplit
@@ -471,6 +529,16 @@ func (p *PG) Sync(db *model.DB) error {
 		return err
 	}
 	if err := syncTable(tx, p.hashes, commandSpec, db.Commands); err != nil {
+		return err
+	}
+	notifRows := make([]model.NotificationSettings, 0, len(db.NotifSettings))
+	for _, v := range db.NotifSettings {
+		notifRows = append(notifRows, v)
+	}
+	if err := syncTable(tx, p.hashes, notifSettingsSpec, notifRows); err != nil {
+		return err
+	}
+	if err := syncTable(tx, p.hashes, notifLogSpec, db.NotifLog); err != nil {
 		return err
 	}
 	if err := p.syncSettings(tx, db); err != nil {
@@ -710,19 +778,19 @@ var routerSpec = entitySpec[model.Router]{
 	table: "routers",
 	cols: []string{"id", "name", "host", "port", "username", "password", "mode", "status",
 		"version", "uptime_sec", "cpu_load", "hotspot_users", "active_sessions", "created_at",
-		"agent_token_hash", "token_preview", "last_seen", "account_id"},
+		"hotspot_login_url", "agent_token_hash", "token_preview", "last_seen", "account_id"},
 	idOf: func(x *model.Router) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Router, error) {
 		var x model.Router
 		err := r.Scan(&x.ID, &x.Name, &x.Host, &x.Port, &x.Username, &x.Password, &x.Mode, &x.Status,
 			&x.Version, &x.UptimeSec, &x.CPULoad, &x.HotspotUsers, &x.ActiveSessions, &x.CreatedAt,
-			&x.AgentTokenHash, &x.TokenPreview, &x.LastSeen, &x.AccountID)
+			&x.HotspotLoginUrl, &x.AgentTokenHash, &x.TokenPreview, &x.LastSeen, &x.AccountID)
 		return x, err
 	},
 	args: func(x *model.Router) []any {
 		return []any{x.ID, x.Name, x.Host, x.Port, x.Username, x.Password, x.Mode, x.Status,
 			x.Version, x.UptimeSec, x.CPULoad, x.HotspotUsers, x.ActiveSessions, x.CreatedAt,
-			x.AgentTokenHash, x.TokenPreview, x.LastSeen, x.AccountID}
+			x.HotspotLoginUrl, x.AgentTokenHash, x.TokenPreview, x.LastSeen, x.AccountID}
 	},
 	hashOf: hashEntity[model.Router],
 }
@@ -900,6 +968,64 @@ var commandSpec = entitySpec[model.Command]{
 	hashOf: hashEntity[model.Command],
 }
 
+// notifSettingsSpec — réglages de notification par compte. id = account_id.
+// stock_alert_state est sérialisé en JSON dans une colonne TEXT (” = nil).
+var notifSettingsSpec = entitySpec[model.NotificationSettings]{
+	table: "notif_settings",
+	cols: []string{"id", "enabled", "telegram_enabled", "telegram_bot_token", "telegram_chat_id",
+		"whatsapp_enabled", "whatsapp_token", "whatsapp_phone_id", "whatsapp_to",
+		"email_enabled", "smtp_host", "smtp_port", "smtp_user", "smtp_pass", "email_to",
+		"offline_after_sec", "low_stock_threshold", "daily_report", "report_hour",
+		"last_report_date", "stock_alert_state", "account_id"},
+	idOf: func(x *model.NotificationSettings) string { return x.AccountID },
+	scan: func(r *sql.Rows) (model.NotificationSettings, error) {
+		var x model.NotificationSettings
+		var stockState string
+		err := r.Scan(&x.AccountID, &x.Enabled, &x.TelegramEnabled, &x.TelegramBotToken, &x.TelegramChatID,
+			&x.WhatsAppEnabled, &x.WhatsAppToken, &x.WhatsAppPhoneID, &x.WhatsAppTo,
+			&x.EmailEnabled, &x.SMTPHost, &x.SMTPPort, &x.SMTPUser, &x.SMTPPass, &x.EmailTo,
+			&x.OfflineAfterSec, &x.LowStockThreshold, &x.DailyReport, &x.ReportHour,
+			&x.LastReportDate, &stockState, &x.AccountID)
+		if err != nil {
+			return x, err
+		}
+		if stockState != "" {
+			_ = json.Unmarshal([]byte(stockState), &x.StockAlertState)
+		}
+		return x, nil
+	},
+	args: func(x *model.NotificationSettings) []any {
+		stockState := ""
+		if x.StockAlertState != nil {
+			if b, err := json.Marshal(x.StockAlertState); err == nil {
+				stockState = string(b)
+			}
+		}
+		return []any{x.AccountID, x.Enabled, x.TelegramEnabled, x.TelegramBotToken, x.TelegramChatID,
+			x.WhatsAppEnabled, x.WhatsAppToken, x.WhatsAppPhoneID, x.WhatsAppTo,
+			x.EmailEnabled, x.SMTPHost, x.SMTPPort, x.SMTPUser, x.SMTPPass, x.EmailTo,
+			x.OfflineAfterSec, x.LowStockThreshold, x.DailyReport, x.ReportHour,
+			x.LastReportDate, stockState, x.AccountID}
+	},
+	hashOf: hashEntity[model.NotificationSettings],
+}
+
+// notifLogSpec — historique des notifications envoyées (par compte).
+var notifLogSpec = entitySpec[model.NotificationLog]{
+	table: "notif_log",
+	cols:  []string{"id", "channel", "kind", "title", "body", "status", "error", "at", "account_id"},
+	idOf:  func(x *model.NotificationLog) string { return x.ID },
+	scan: func(r *sql.Rows) (model.NotificationLog, error) {
+		var x model.NotificationLog
+		err := r.Scan(&x.ID, &x.Channel, &x.Kind, &x.Title, &x.Body, &x.Status, &x.Error, &x.At, &x.AccountID)
+		return x, err
+	},
+	args: func(x *model.NotificationLog) []any {
+		return []any{x.ID, x.Channel, x.Kind, x.Title, x.Body, x.Status, x.Error, x.At, x.AccountID}
+	},
+	hashOf: hashEntity[model.NotificationLog],
+}
+
 // rebuildHashes — reconstruit le cache d'empreintes à partir d'un état mémoire
 // (après un Load ou un seed initial).
 func (p *PG) rebuildHashes(db *model.DB) {
@@ -916,7 +1042,13 @@ func (p *PG) rebuildHashes(db *model.DB) {
 		activitySpec.table:    hashRows(db.Activity, activitySpec),
 		saleSpec.table:        hashRows(db.Sales, saleSpec),
 		commandSpec.table:     hashRows(db.Commands, commandSpec),
+		notifLogSpec.table:    hashRows(db.NotifLog, notifLogSpec),
 	}
+	notifRows := make([]model.NotificationSettings, 0, len(db.NotifSettings))
+	for _, v := range db.NotifSettings {
+		notifRows = append(notifRows, v)
+	}
+	p.hashes[notifSettingsSpec.table] = hashRows(notifRows, notifSettingsSpec)
 }
 
 // hashRows — empreintes indexées par id.

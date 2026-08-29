@@ -6,6 +6,7 @@ import { useIsFetching, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   BarChart3,
+  Bell,
   Building2,
   ChevronsUpDown,
   Gauge,
@@ -45,6 +46,7 @@ import { ProfileDialog } from "./parts/profile-dialog";
 
 import AccountsView from "./views/accounts-view";
 import DashboardView from "./views/dashboard-view";
+import NotificationsView from "./views/notifications-view";
 import ProfilesView from "./views/profiles-view";
 import ReportsView from "./views/reports-view";
 import ResellersView from "./views/resellers-view";
@@ -64,6 +66,7 @@ const VIEW_TITLES: Record<ViewId, string> = {
   routers: "Routeurs",
   reports: "Rapports",
   accounts: "Comptes",
+  notifications: "Notifications",
   settings: "Paramètres",
 };
 
@@ -97,6 +100,7 @@ const NAV_SECTIONS: { label: string; items: NavItem[] }[] = [
     items: [
       // « Comptes » n'est visible que de l'admin plateforme (rôle admin) — filtré dans NavList.
       { id: "accounts", label: "Comptes", icon: Building2 },
+      { id: "notifications", label: "Notifications", icon: Bell },
       { id: "settings", label: "Paramètres", icon: Settings },
     ],
   },
@@ -112,6 +116,7 @@ const VIEWS: Record<ViewId, React.ComponentType> = {
   routers: RoutersView,
   reports: ReportsView,
   accounts: AccountsView,
+  notifications: NotificationsView,
   settings: SettingsView,
 };
 

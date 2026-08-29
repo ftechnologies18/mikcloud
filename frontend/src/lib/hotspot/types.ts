@@ -73,6 +73,8 @@ export interface RouterDevice {
   tokenPreview?: string;
   /** Mode agent : dernier check-in (RFC3339, vide si jamais vu). */
   lastSeen?: string;
+  /** Page de login du hotspot (optionnel) — cible des QR codes imprimés sur les vouchers. */
+  hotspotLoginUrl?: string;
 }
 
 /** Réponse de création d'un routeur en mode agent (script + token à copier). */
@@ -308,6 +310,55 @@ export interface ReportsData {
   totals: { revenue: number; sales: number; avgTicket: number };
 }
 
+/* ─── Notifications (GET/PUT /api/notifications, POST /api/notifications/test) ─── */
+
+/** Réglages du module Notifications. Les secrets ne sont jamais renvoyés : les
+ * champs « *Set » indiquent uniquement qu'une valeur est déjà configurée côté serveur. */
+export interface NotifSettings {
+  /** Interrupteur général : aucune notification n'est envoyée s'il est désactivé. */
+  enabled: boolean;
+  // Telegram
+  telegramEnabled: boolean;
+  telegramBotTokenSet: boolean;
+  telegramChatId: string;
+  // WhatsApp Cloud API (Meta)
+  whatsappEnabled: boolean;
+  whatsappTokenSet: boolean;
+  whatsappPhoneId: string;
+  /** Numéro destinataire, format international sans « + » ni espaces (ex. 2250700000000). */
+  whatsappTo: string;
+  // Email SMTP
+  emailEnabled: boolean;
+  smtpHost: string;
+  smtpPort: number;
+  smtpUser: string;
+  smtpPassSet: boolean;
+  emailTo: string;
+  // Règles d'alerte
+  /** Routeur considéré hors ligne après N secondes sans check-in (défaut 135 = 3 × 45 s). */
+  offlineAfterSec: number;
+  /** Alerte quand le stock de vouchers actifs passe sous ce seuil (défaut 25). */
+  lowStockThreshold: number;
+  /** Rapport quotidien — ventes du jour, nouveaux utilisateurs, routeurs en ligne, stock restant. */
+  dailyReport: boolean;
+  /** Heure d'envoi du rapport, 0-23 UTC (= heure d'Abidjan, GMT+0). */
+  reportHour: number;
+}
+
+/** Canal de notification (corps de POST /api/notifications/test). */
+export type NotifChannel = "telegram" | "whatsapp" | "email";
+
+/** Entrée d'historique (GET /api/notifications/log — 50 plus récentes d'abord). */
+export interface NotifLogEntry {
+  id: string;
+  channel: NotifChannel | "system";
+  kind: "router_offline" | "router_back" | "low_stock" | "daily_report" | "test" | "settings";
+  title: string;
+  status: "sent" | "error";
+  error: string;
+  at: string; // RFC3339
+}
+
 export interface AppSettings {
   tenant: {
     name: string;
@@ -333,4 +384,5 @@ export type ViewId =
   | "routers"
   | "reports"
   | "accounts"
+  | "notifications"
   | "settings";

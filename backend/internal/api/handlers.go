@@ -8,6 +8,7 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strconv"
@@ -43,6 +44,9 @@ func (a *API) Handler() http.Handler {
 
 	// Agent MikCloud (routeur -> cloud, HTTP-poll sortant) + provisionning console
 	a.registerAgentRoutes(mux)
+
+	// Notifications (réglages canaux, test, historique)
+	a.registerNotifRoutes(mux)
 
 	// Auth
 	mux.HandleFunc("POST /api/auth/login", a.handleLogin)
@@ -317,6 +321,31 @@ func usernameTaken(db *model.DB, acc, username string) bool {
 		}
 	}
 	return false
+}
+
+// normalizeHotspotLoginUrl — nettoie l'URL de connexion hotspot utilisée par
+// les QR codes des vouchers. Vide → "" (QR texte). Sinon : schéma http(s)
+// obligatoire (new URL complète → découpe pour retirer "?query"/"#fragment"
+// accidentels : les paramètres username/password sont ajoutés à l'impression).
+func normalizeHotspotLoginUrl(raw string) (string, bool) {
+	u := strings.TrimSpace(raw)
+	if u == "" {
+		return "", true
+	}
+	if !strings.Contains(u, "://") {
+		u = "http://" + u
+	}
+	parsed, err := url.Parse(u)
+	if err != nil {
+		return "", false
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", false
+	}
+	if parsed.Host == "" {
+		return "", false
+	}
+	return parsed.Scheme + "://" + parsed.Host + parsed.Path, true
 }
 
 // ensureSettings — réglages du compte, créés avec les défauts FCFA si absents
@@ -872,12 +901,13 @@ func (a *API) handleRoutersList(w http.ResponseWriter, r *http.Request) {
 func (a *API) handleRouterCreate(w http.ResponseWriter, r *http.Request) {
 	acc := accountScope(r)
 	var req struct {
-		Name     string `json:"name"`
-		Host     string `json:"host"`
-		Port     int    `json:"port"`
-		Username string `json:"username"`
-		Password string `json:"password"`
-		Mode     string `json:"mode"`
+		Name            string `json:"name"`
+		Host            string `json:"host"`
+		Port            int    `json:"port"`
+		Username        string `json:"username"`
+		Password        string `json:"password"`
+		Mode            string `json:"mode"`
+		HotspotLoginUrl string `json:"hotspotLoginUrl"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
@@ -887,6 +917,11 @@ func (a *API) handleRouterCreate(w http.ResponseWriter, r *http.Request) {
 	host := strings.TrimSpace(req.Host)
 	if name == "" {
 		writeErr(w, http.StatusBadRequest, "Nom du routeur requis")
+		return
+	}
+	hotspotLoginUrl, ok := normalizeHotspotLoginUrl(req.HotspotLoginUrl)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "URL de connexion hotspot invalide (http(s) attendu)")
 		return
 	}
 	mode := req.Mode
@@ -900,7 +935,8 @@ func (a *API) handleRouterCreate(w http.ResponseWriter, r *http.Request) {
 	router := model.Router{
 		ID: model.NewID("r-"), AccountID: acc, Name: name, Host: host, Mode: mode,
 		Username: strings.TrimSpace(req.Username), Password: req.Password,
-		Status: "online", CreatedAt: model.NowISO(),
+		HotspotLoginUrl: hotspotLoginUrl,
+		Status:          "online", CreatedAt: model.NowISO(),
 	}
 
 	var agentToken string
@@ -994,12 +1030,13 @@ func (a *API) handleRouterUpdate(w http.ResponseWriter, r *http.Request) {
 	acc := accountScope(r)
 	id := r.PathValue("id")
 	var req struct {
-		Name     *string `json:"name"`
-		Host     *string `json:"host"`
-		Port     *int    `json:"port"`
-		Username *string `json:"username"`
-		Password *string `json:"password"`
-		Mode     *string `json:"mode"`
+		Name            *string `json:"name"`
+		Host            *string `json:"host"`
+		Port            *int    `json:"port"`
+		Username        *string `json:"username"`
+		Password        *string `json:"password"`
+		Mode            *string `json:"mode"`
+		HotspotLoginUrl *string `json:"hotspotLoginUrl"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
@@ -1021,6 +1058,14 @@ func (a *API) handleRouterUpdate(w http.ResponseWriter, r *http.Request) {
 	if updated.Name == "" {
 		writeErr(w, http.StatusBadRequest, "Nom du routeur requis")
 		return
+	}
+	if req.HotspotLoginUrl != nil {
+		hlu, ok := normalizeHotspotLoginUrl(*req.HotspotLoginUrl)
+		if !ok {
+			writeErr(w, http.StatusBadRequest, "URL de connexion hotspot invalide (http(s) attendu)")
+			return
+		}
+		updated.HotspotLoginUrl = hlu
 	}
 	if req.Host != nil {
 		updated.Host = strings.TrimSpace(*req.Host)

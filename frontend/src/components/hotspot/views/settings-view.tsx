@@ -82,6 +82,7 @@ export default function SettingsView() {
   const queryClient = useQueryClient();
   const { data, isLoading } = useSettings();
   const [resetOpen, setResetOpen] = useState(false);
+  const [wipeOpen, setWipeOpen] = useState(false);
   const user = useHotspotStore((s) => s.user);
   // La réinitialisation des données devient admin-only côté serveur.
   const isAdmin = user?.role === "admin";
@@ -91,6 +92,19 @@ export default function SettingsView() {
     onSuccess: () => {
       toast.success(t("settings.resetToast"));
       setResetOpen(false);
+      queryClient.invalidateQueries();
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  // Purge totale des données de test (routeurs, forfaits, vouchers…) — le
+  // système finit VIDE, prêt pour un vrai routeur. Comptes/équipe/réglages
+  // conservés. Contrairement au reset, rien n'est régénéré.
+  const wipeMutation = useMutation({
+    mutationFn: () => api<{ ok: boolean }>("/api/admin/wipe", { method: "POST" }),
+    onSuccess: () => {
+      toast.success(t("settings.wipeToast"));
+      setWipeOpen(false);
       queryClient.invalidateQueries();
     },
     onError: (error: Error) => toast.error(error.message),
@@ -213,14 +227,39 @@ export default function SettingsView() {
               </CardTitle>
               <CardDescription>{t("settings.dangerZoneDesc")}</CardDescription>
             </CardHeader>
-            <CardFooter className="px-4 sm:px-6">
-              <Button variant="destructive" className="h-10" onClick={() => setResetOpen(true)}>
+            <CardFooter className="flex-wrap gap-3 px-4 sm:px-6">
+              <Button variant="destructive" className="h-10" onClick={() => setWipeOpen(true)}>
+                {t("settings.wipe")}
+              </Button>
+              <Button variant="outline" className="h-10 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => setResetOpen(true)}>
                 {t("settings.reset")}
               </Button>
             </CardFooter>
           </Card>
         )}
       </div>
+
+      {/* Confirmation de purge totale (test réel) */}
+      <AlertDialog open={wipeOpen} onOpenChange={setWipeOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("settings.wipeTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("settings.wipeDesc")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
+              onClick={(event) => {
+                event.preventDefault();
+                wipeMutation.mutate();
+              }}
+            >
+              {wipeMutation.isPending ? t("settings.wiping") : t("settings.wipeConfirm")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Double confirmation de réinitialisation */}
       <AlertDialog open={resetOpen} onOpenChange={setResetOpen}>

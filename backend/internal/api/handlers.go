@@ -131,6 +131,7 @@ func (a *API) Handler() http.Handler {
         mux.HandleFunc("GET /api/subscription", a.handleSubscriptionGet)
         mux.HandleFunc("POST /api/subscription", a.requireRole(3, a.handleSubscriptionPost))
         mux.HandleFunc("POST /api/admin/reset", a.requireRole(3, a.handleReset))
+        mux.HandleFunc("POST /api/admin/wipe", a.requireRole(3, a.handleWipe))
         mux.HandleFunc("POST /api/admin/reload", a.requireRole(3, a.handleReload))
 
         // Administration plateforme (rôle admin uniquement)
@@ -3793,6 +3794,42 @@ func (a *API) handleReset(w http.ResponseWriter, r *http.Request) {
         a.store.Reset()
         a.store.Lock()
         a.logActivityBy(r, a.store.Data(), accountScope(r), "system", "Données de démonstration réinitialisées")
+        a.store.Save()
+        a.store.Unlock()
+        a.clearGateways()
+        writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleWipe — POST /api/admin/wipe : purge TOUTES les données métier (test/
+// démo) sans toucher aux comptes, à l'équipe ni aux réglages. Différence avec
+// /api/admin/reset (qui régénère le seed démo) : ici le système finit VIDE,
+// prêt pour une mise en service réelle (routeur physique, vrais forfaits).
+// Les slices sont réaffectées vides (non-nil) pour que l'API serve [] et que
+// la synchro différentielle PostgreSQL supprime les lignes correspondantes.
+func (a *API) handleWipe(w http.ResponseWriter, r *http.Request) {
+        if !isPlatformAdmin(r) {
+                writeErr(w, http.StatusForbidden, "Réservé aux administrateurs de la plateforme")
+                return
+        }
+        a.store.Lock()
+        db := a.store.Data()
+        db.Routers = []model.Router{}
+        db.Profiles = []model.Profile{}
+        db.HotspotUsers = []model.HotspotUser{}
+        db.Batches = []model.Batch{}
+        db.Resellers = []model.Reseller{}
+        db.Transactions = []model.Transaction{}
+        db.Sessions = []model.Session{}
+        db.Sales = []model.Sale{}
+        db.Commands = []model.Command{}
+        db.Templates = []model.VoucherTemplate{}
+        db.UserLogs = []model.UserLog{}
+        db.IPBindings = []model.IPBinding{}
+        db.SchedulerTasks = []model.SchedulerTask{}
+        db.Traffic = []model.RouterTraffic{}
+        db.NotifLog = []model.NotificationLog{}
+        db.Activity = []model.Activity{}
+        a.logActivityBy(r, db, accountScope(r), "system", "Données de test supprimées — système prêt pour un démarrage réel")
         a.store.Save()
         a.store.Unlock()
         a.clearGateways()

@@ -285,17 +285,72 @@ type Tenant struct {
 	WaveLink string `json:"waveLink,omitempty"`
 }
 
-// Plan — plan d'abonnement SaaS.
+// Plan — plan d'abonnement SaaS (libellé hérité de l'ère pré-facturation ;
+// maintenu pour compatibilité d'affichage, l'état réel vit dans Subscription).
 type Plan struct {
 	Name       string `json:"name"`
 	MaxRouters string `json:"maxRouters"`
 	MaxUsers   string `json:"maxUsers"`
 }
 
-// Settings — paramètres du tenant (tenant + plan).
+// Subscription — état d'abonnement SaaS d'un compte. PlanID vide = ère bêta
+// (aucune formule souscrite). PeriodEnd vide = non expirant.
+type Subscription struct {
+	PlanID      string `json:"planId"`      // "" (bêta) | essentiel | illimite
+	Status      string `json:"status"`      // active | expired
+	PeriodStart string `json:"periodStart"` // RFC3339
+	PeriodEnd   string `json:"periodEnd"`   // RFC3339 — "" = non expirant
+	// LastAmountFcfa — montant de la période en cours : Essentiel =
+	// 1 250 F × routeurs enregistrés au moment de la souscription, Illimité = forfait.
+	LastAmountFcfa int `json:"lastAmountFcfa"`
+}
+
+// SaasPlan — formule d'abonnement MikCloud (catalogue public de la console).
+type SaasPlan struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	PriceFcfa int    `json:"priceFcfa"`
+	Period    string `json:"period"`    // mois | an
+	PerRouter bool   `json:"perRouter"` // true : prix × routeurs enregistrés
+	Unlimited bool   `json:"unlimited"` // routeurs illimités
+	Tagline   string `json:"tagline"`
+	Badge     string `json:"badge,omitempty"`
+}
+
+// SaasPlans — catalogue des formules MikCloud (marché FCFA concurrentiel).
+//   - Essentiel : 1 250 F/mois/routeur — acquisition, sans engagement, le gérant
+//     paie au fil de sa croissance (remboursé par 4-5 tickets 24 h vendus).
+//   - Illimité : 12 000 F/an, routeurs illimités — arme de conquête :
+//     1 000 F/mois équivalent, 2 mois offerts vs Essentiel (−20 % à 1 routeur,
+//     −92 % à 10 routeurs), verrouille 12 mois et fait consolider tous les sites.
+var SaasPlans = []SaasPlan{
+	{
+		ID: "essentiel", Name: "Essentiel", PriceFcfa: 1250, Period: "mois",
+		PerRouter: true, Tagline: "Payez au fil de votre croissance",
+		Badge: "Sans engagement",
+	},
+	{
+		ID: "illimite", Name: "Illimité", PriceFcfa: 12000, Period: "an",
+		Unlimited: true, Tagline: "Tous vos routeurs, un seul prix",
+		Badge: "2 mois offerts · −20 %",
+	},
+}
+
+// PlanByID — retrouve une formule du catalogue par son identifiant.
+func PlanByID(id string) (SaasPlan, bool) {
+	for _, p := range SaasPlans {
+		if p.ID == id {
+			return p, true
+		}
+	}
+	return SaasPlan{}, false
+}
+
+// Settings — paramètres du tenant (tenant + plan + abonnement).
 type Settings struct {
-	Tenant Tenant `json:"tenant"`
-	Plan   Plan   `json:"plan"`
+	Tenant       Tenant       `json:"tenant"`
+	Plan         Plan         `json:"plan"`
+	Subscription Subscription `json:"subscription"`
 }
 
 // AdminUser — compte d'accès à la console (login), rattaché à un compte SaaS.

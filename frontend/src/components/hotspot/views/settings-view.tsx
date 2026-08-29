@@ -4,7 +4,7 @@
 
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Building2, Check, Crown, Database, Eye, EyeOff, KeyRound, Router as RouterIcon, TriangleAlert } from "lucide-react";
+import { Building2, Database, Eye, EyeOff, KeyRound, Router as RouterIcon, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 
 import { api } from "@/lib/hotspot/api";
@@ -12,6 +12,7 @@ import type { AppSettings } from "@/lib/hotspot/types";
 import { useHotspotStore } from "@/lib/hotspot/store";
 import { PageHeader } from "@/components/hotspot/page-header";
 import { SETTINGS_QUERY_KEY, useSettings } from "@/components/hotspot/parts/sd-currency";
+import { SubscriptionCard } from "@/components/hotspot/parts/sa-subscription-card";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -22,7 +23,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -32,8 +32,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 const CURRENCIES = ["FCFA", "EUR", "USD", "MAD", "XOF", "GBP", "CDF", "GNF"];
 const TIMEZONES = ["UTC", "Africa/Abidjan", "Africa/Dakar", "Africa/Casablanca", "Europe/Paris", "Europe/Brussels"];
-
-const PLAN_FEATURES = ["Routeurs illimités", "Utilisateurs illimités", "Revendeurs illimités", "Support prioritaire"];
 
 const MIKROTIK_STEPS = [
   {
@@ -118,32 +116,9 @@ export default function SettingsView() {
         {/* Organisation */}
         <OrganizationCard settings={data} />
 
-        {/* Abonnement */}
-        <Card className="gap-4 py-4 sm:py-6">
-          <CardHeader className="px-4 sm:px-6">
-            <CardTitle className="flex items-center justify-between gap-2 text-base">
-              Abonnement
-              <Badge className="gap-1 border-primary/25 bg-primary/15 text-primary" variant="outline">
-                <Crown className="size-3" />
-                PRO
-              </Badge>
-            </CardTitle>
-            <CardDescription>Toutes les fonctionnalités, sans limite.</CardDescription>
-          </CardHeader>
-          <CardContent className="px-4 sm:px-6">
-            <ul className="space-y-3">
-              {PLAN_FEATURES.map((feature) => (
-                <li key={feature} className="flex items-center gap-2.5 text-sm">
-                  <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary">
-                    <Check className="size-3" />
-                  </span>
-                  {feature}
-                </li>
-              ))}
-            </ul>
-            <p className="mt-5 text-xs text-muted-foreground">Plan actuel — MikCloud Pro</p>
-          </CardContent>
-        </Card>
+        {/* Abonnement SaaS — formules Essentiel (1 250 F/mois/routeur) et
+            Illimité (12 000 F/an, routeurs illimités), paiement via Wave. */}
+        <SubscriptionCard />
 
         {/* Guide connexion routeur réel */}
         <Card className="gap-4 border-primary/20 bg-primary/5 py-4 sm:py-6 lg:col-span-2">

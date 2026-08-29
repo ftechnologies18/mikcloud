@@ -312,6 +312,13 @@ func (p *PG) ensureSchema() error {
 		// Quota de données par voucher (« 5 Go = 500 F ») : Mo, 0 = illimité.
 		`ALTER TABLE hotspot_users ADD COLUMN IF NOT EXISTS data_quota_mb BIGINT NOT NULL DEFAULT 0`,
 		`ALTER TABLE batches       ADD COLUMN IF NOT EXISTS data_quota_mb BIGINT NOT NULL DEFAULT 0`,
+		// Abonnement SaaS (formules Essentiel 1 250 F/mois/routeur et
+		// Illimité 12 000 F/an, routeurs illimités) : état par compte dans settings.
+		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS sub_plan_id      TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS sub_status       TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS sub_period_start TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS sub_period_end   TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS sub_last_amount  INTEGER NOT NULL DEFAULT 0`,
 		// Migrations multi-tenant : colonne account_id sur toutes les tables métier.
 		`ALTER TABLE admin_users   ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''`,
 		// Changement de mot de passe par l'utilisateur (POST /api/auth/password) :
@@ -454,7 +461,8 @@ func (p *PG) loadNotifSettings(db *model.DB) error {
 // last_tick (global, moteur de simulation) est repris de la première ligne non vide.
 func (p *PG) loadSettings(db *model.DB) error {
 	rows, err := p.db.Query(
-		`SELECT account_id, tenant_name, tenant_currency, tenant_timezone, plan_name, plan_max_routers, plan_max_users, wave_link, last_tick
+		`SELECT account_id, tenant_name, tenant_currency, tenant_timezone, plan_name, plan_max_routers, plan_max_users, wave_link,
+                        sub_plan_id, sub_status, sub_period_start, sub_period_end, sub_last_amount, last_tick
                  FROM settings`)
 	if err != nil {
 		return err
@@ -466,10 +474,14 @@ func (p *PG) loadSettings(db *model.DB) error {
 			tenantName, tenantCurrency, tenantTimezone string
 			planName, planMaxRouters, planMaxUsers     string
 			waveLink                                   string
+			subPlanID, subStatus                       string
+			subPeriodStart, subPeriodEnd               string
+			subLastAmount                              int
 			lastTick                                   sql.NullTime
 		)
 		if err := rows.Scan(&accID, &tenantName, &tenantCurrency, &tenantTimezone,
-			&planName, &planMaxRouters, &planMaxUsers, &waveLink, &lastTick); err != nil {
+			&planName, &planMaxRouters, &planMaxUsers, &waveLink,
+			&subPlanID, &subStatus, &subPeriodStart, &subPeriodEnd, &subLastAmount, &lastTick); err != nil {
 			return err
 		}
 		if accID == "" {
@@ -478,6 +490,10 @@ func (p *PG) loadSettings(db *model.DB) error {
 		db.SettingsByAccount[accID] = model.Settings{
 			Tenant: model.Tenant{Name: tenantName, Currency: tenantCurrency, Timezone: tenantTimezone, WaveLink: waveLink},
 			Plan:   model.Plan{Name: planName, MaxRouters: planMaxRouters, MaxUsers: planMaxUsers},
+			Subscription: model.Subscription{
+				PlanID: subPlanID, Status: subStatus,
+				PeriodStart: subPeriodStart, PeriodEnd: subPeriodEnd, LastAmountFcfa: subLastAmount,
+			},
 		}
 		if lastTick.Valid && db.LastTick.IsZero() {
 			db.LastTick = lastTick.Time
@@ -564,21 +580,29 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
 	lastTick := sql.NullTime{Time: db.LastTick, Valid: !db.LastTick.IsZero()}
 	for accID, s := range db.SettingsByAccount {
 		_, err := tx.Exec(
-			`INSERT INTO settings (id, account_id, tenant_name, tenant_currency, tenant_timezone, plan_name, plan_max_routers, plan_max_users, wave_link, last_tick)
-                         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9)
-                         ON CONFLICT (id) DO UPDATE SET
-                           account_id       = EXCLUDED.account_id,
-                           tenant_name      = EXCLUDED.tenant_name,
-                           tenant_currency  = EXCLUDED.tenant_currency,
-                           tenant_timezone  = EXCLUDED.tenant_timezone,
-                           plan_name        = EXCLUDED.plan_name,
-                           plan_max_routers = EXCLUDED.plan_max_routers,
-                           plan_max_users   = EXCLUDED.plan_max_users,
-                           wave_link        = EXCLUDED.wave_link,
-                           last_tick        = EXCLUDED.last_tick`,
+			`INSERT INTO settings (id, account_id, tenant_name, tenant_currency, tenant_timezone, plan_name, plan_max_routers, plan_max_users, wave_link,
+                                               sub_plan_id, sub_status, sub_period_start, sub_period_end, sub_last_amount, last_tick)
+                                 VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                                 ON CONFLICT (id) DO UPDATE SET
+                                   account_id       = EXCLUDED.account_id,
+                                   tenant_name      = EXCLUDED.tenant_name,
+                                   tenant_currency  = EXCLUDED.tenant_currency,
+                                   tenant_timezone  = EXCLUDED.tenant_timezone,
+                                   plan_name        = EXCLUDED.plan_name,
+                                   plan_max_routers = EXCLUDED.plan_max_routers,
+                                   plan_max_users   = EXCLUDED.plan_max_users,
+                                   wave_link        = EXCLUDED.wave_link,
+                                   sub_plan_id      = EXCLUDED.sub_plan_id,
+                                   sub_status       = EXCLUDED.sub_status,
+                                   sub_period_start = EXCLUDED.sub_period_start,
+                                   sub_period_end   = EXCLUDED.sub_period_end,
+                                   sub_last_amount  = EXCLUDED.sub_last_amount,
+                                   last_tick        = EXCLUDED.last_tick`,
 			accID, s.Tenant.Name, s.Tenant.Currency, s.Tenant.Timezone,
 			s.Plan.Name, s.Plan.MaxRouters, s.Plan.MaxUsers,
-			s.Tenant.WaveLink, lastTick)
+			s.Tenant.WaveLink,
+			s.Subscription.PlanID, s.Subscription.Status, s.Subscription.PeriodStart,
+			s.Subscription.PeriodEnd, s.Subscription.LastAmountFcfa, lastTick)
 		if err != nil {
 			return fmt.Errorf("pg sync settings (%s) : %w", accID, err)
 		}

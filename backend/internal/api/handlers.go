@@ -106,6 +106,12 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/activity", a.handleActivityList)
 	mux.HandleFunc("GET /api/settings", a.handleSettingsGet)
 	mux.HandleFunc("PUT /api/settings", a.handleSettingsPut)
+
+	// Abonnement SaaS — formules FCFA (Essentiel 1 250 F/mois/routeur,
+	// Illimité 12 000 F/an routeurs illimités).
+	mux.HandleFunc("GET /api/plans", a.handlePlansList)
+	mux.HandleFunc("GET /api/subscription", a.handleSubscriptionGet)
+	mux.HandleFunc("POST /api/subscription", a.handleSubscriptionPost)
 	mux.HandleFunc("POST /api/admin/reset", a.handleReset)
 	mux.HandleFunc("POST /api/admin/reload", a.handleReload)
 
@@ -3221,6 +3227,168 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, settings)
+}
+
+// ---------------------------------------------------------------------------
+// Abonnement SaaS — formules Essentiel (1 250 F/mois/routeur) et Illimité
+// (12 000 F/an, routeurs illimités). Wave CI n'a pas d'API publique : le
+// paiement passe par le lien marchand composé par montant (comme les vouchers).
+// ---------------------------------------------------------------------------
+
+// subscriptionView — état complet de l'abonnement renvoyé à la console.
+type subscriptionView struct {
+	Subscription      model.Subscription `json:"subscription"`
+	Status            string             `json:"status"` // none | active | expired (effectif)
+	RouterCount       int                `json:"routerCount"`
+	CurrentAmountFcfa int                `json:"currentAmountFcfa"` // montant de la période en cours
+	Plans             []model.SaasPlan   `json:"plans"`
+	WaveConfigured    bool               `json:"waveConfigured"`
+}
+
+// subscriptionStatus — statut effectif : une période échue passe en « expired »
+// (calculé à la lecture, sans muter le stockage — le renouvellement réactive).
+func subscriptionStatus(sub model.Subscription, now time.Time) string {
+	if sub.PlanID == "" {
+		return "none"
+	}
+	if sub.PeriodEnd != "" {
+		if end, err := time.Parse(time.RFC3339, sub.PeriodEnd); err == nil && now.After(end) {
+			return "expired"
+		}
+	}
+	return "active"
+}
+
+// planAmount — montant de la période pour une formule : Essentiel =
+// prix × routeurs enregistrés (minimum 1) ; Illimité = forfait 12 000 F.
+func planAmount(p model.SaasPlan, routerCount int) int {
+	if p.PerRouter {
+		rc := routerCount
+		if rc < 1 {
+			rc = 1
+		}
+		return p.PriceFcfa * rc
+	}
+	return p.PriceFcfa
+}
+
+// accountRouterCount — nombre de routeurs enregistrés du compte (tous modes :
+// simulé, réel, agent). C'est l'assiette de facturation de la formule Essentiel.
+func accountRouterCount(db *model.DB, acc string) int {
+	n := 0
+	for _, rt := range db.Routers {
+		if rt.AccountID == acc {
+			n++
+		}
+	}
+	return n
+}
+
+// handlePlansList — catalogue public des formules (console → panneau Abonnement).
+func (a *API) handlePlansList(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, model.SaasPlans)
+}
+
+// handleSubscriptionGet — état de l'abonnement du compte + catalogue + assiette.
+func (a *API) handleSubscriptionGet(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
+	a.store.Lock()
+	db := a.store.Data()
+	settings := ensureSettings(db, acc)
+	view := subscriptionView{
+		Subscription: settings.Subscription,
+		RouterCount:  accountRouterCount(db, acc),
+		Plans:        model.SaasPlans,
+	}
+	view.WaveConfigured = strings.TrimSpace(settings.Tenant.WaveLink) != ""
+	if p, ok := model.PlanByID(settings.Subscription.PlanID); ok {
+		view.CurrentAmountFcfa = planAmount(p, view.RouterCount)
+	}
+	view.Status = subscriptionStatus(settings.Subscription, time.Now().UTC())
+	a.store.Unlock()
+	writeJSON(w, http.StatusOK, view)
+}
+
+// handleSubscriptionPost — souscrire, renouveler ou changer de formule.
+// Corps : {"planId":"essentiel"|"illimite"}. Réponse : état + montant + lien
+// Wave pré-composé (s'il est configuré) pour payer la période entamée.
+func (a *API) handleSubscriptionPost(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
+	var req struct {
+		PlanID string `json:"planId"`
+	}
+	if err := decodeBody(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
+		return
+	}
+	plan, ok := model.PlanByID(strings.TrimSpace(req.PlanID))
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "Formule inconnue (essentiel | illimite)")
+		return
+	}
+	now := time.Now().UTC()
+	period := 30 * 24 * time.Hour // « 1 mois »
+	if plan.Period == "an" {
+		period = 365 * 24 * time.Hour
+	}
+
+	a.store.Lock()
+	db := a.store.Data()
+	settings := ensureSettings(db, acc)
+	routerCount := accountRouterCount(db, acc)
+	amount := planAmount(plan, routerCount)
+	sub := settings.Subscription
+	renouvellement := sub.PlanID == plan.ID && subscriptionStatus(sub, now) == "active"
+	if renouvellement {
+		// Renouvellement : la nouvelle période s'empile à la fin de la période en cours.
+		start := now
+		if end, err := time.Parse(time.RFC3339, sub.PeriodEnd); err == nil && now.Before(end) {
+			start = end
+		}
+		sub.PeriodStart = start.Format(time.RFC3339)
+		sub.PeriodEnd = start.Add(period).Format(time.RFC3339)
+	} else {
+		// Souscription ou changement de formule : nouvelle période immédiate.
+		sub.PlanID = plan.ID
+		sub.Status = "active"
+		sub.PeriodStart = now.Format(time.RFC3339)
+		sub.PeriodEnd = now.Add(period).Format(time.RFC3339)
+	}
+	sub.LastAmountFcfa = amount
+	settings.Subscription = sub
+	// Compatibilité d'affichage avec l'ancien contrat (libellé Plan).
+	maxRouters := "Par routeur"
+	if plan.Unlimited {
+		maxRouters = "Illimité"
+	}
+	settings.Plan = model.Plan{Name: "MikCloud " + plan.Name, MaxRouters: maxRouters, MaxUsers: "Illimité"}
+	db.SettingsByAccount[acc] = settings
+
+	periodLabel := "1 mois"
+	if plan.Period == "an" {
+		periodLabel = "1 an"
+	}
+	verb := "souscrit"
+	if renouvellement {
+		verb = "renouvelé"
+	}
+	a.logActivity(db, acc, "system",
+		fmt.Sprintf("Abonnement %s %s — %d FCFA / %s · %d routeur(s) enregistré(s)",
+			plan.Name, verb, amount, periodLabel, routerCount))
+	a.store.Save()
+	a.store.Unlock()
+
+	waveLink := ""
+	if strings.TrimSpace(settings.Tenant.WaveLink) != "" {
+		waveLink = strings.TrimRight(settings.Tenant.WaveLink, "/") + "/amount/" + strconv.Itoa(amount) + "/"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"subscription": sub,
+		"amountFcfa":   amount,
+		"routerCount":  routerCount,
+		"periodLabel":  periodLabel,
+		"waveLink":     waveLink,
+	})
 }
 
 func (a *API) handleReset(w http.ResponseWriter, r *http.Request) {

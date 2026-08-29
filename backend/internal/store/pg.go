@@ -243,8 +243,16 @@ func (p *PG) ensureSchema() error {
                 )`,
 		`CREATE INDEX IF NOT EXISTS idx_commands_router  ON commands (router_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_commands_status  ON commands (status)`,
+		`CREATE TABLE IF NOT EXISTS accounts (
+                        id         TEXT PRIMARY KEY,
+                        name       TEXT NOT NULL,
+                        status     TEXT NOT NULL DEFAULT 'active',
+                        created_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_accounts_status ON accounts (status)`,
 		`CREATE TABLE IF NOT EXISTS settings (
-                        id               INTEGER PRIMARY KEY, -- toujours 1 (singleton)
+                        id               TEXT PRIMARY KEY, -- = account_id : une ligne par compte SaaS
+                        account_id       TEXT NOT NULL DEFAULT '',
                         tenant_name      TEXT NOT NULL,
                         tenant_currency  TEXT NOT NULL,
                         tenant_timezone  TEXT NOT NULL,
@@ -260,6 +268,48 @@ func (p *PG) ensureSchema() error {
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS token_preview TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS last_seen TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS wave_link TEXT NOT NULL DEFAULT ''`,
+		// Migrations multi-tenant : colonne account_id sur toutes les tables métier.
+		`ALTER TABLE admin_users   ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE routers       ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE profiles      ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE hotspot_users ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE batches       ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE resellers     ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE transactions  ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE sessions      ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE activity      ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE sales         ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE commands      ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE settings      ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''`,
+		// La ligne singleton settings historique (id INTEGER 1) devient la ligne du
+		// compte principal : id = account_id, une ligne par compte.
+		`ALTER TABLE settings ALTER COLUMN id TYPE TEXT`,
+		// Backfill : toutes les données de l'ère mono-tenant vont au compte principal.
+		`UPDATE admin_users   SET account_id = 'acc-main' WHERE account_id = ''`,
+		`UPDATE routers       SET account_id = 'acc-main' WHERE account_id = ''`,
+		`UPDATE profiles      SET account_id = 'acc-main' WHERE account_id = ''`,
+		`UPDATE hotspot_users SET account_id = 'acc-main' WHERE account_id = ''`,
+		`UPDATE batches       SET account_id = 'acc-main' WHERE account_id = ''`,
+		`UPDATE resellers     SET account_id = 'acc-main' WHERE account_id = ''`,
+		`UPDATE transactions  SET account_id = 'acc-main' WHERE account_id = ''`,
+		`UPDATE sessions      SET account_id = 'acc-main' WHERE account_id = ''`,
+		`UPDATE activity      SET account_id = 'acc-main' WHERE account_id = ''`,
+		`UPDATE sales         SET account_id = 'acc-main' WHERE account_id = ''`,
+		`UPDATE commands      SET account_id = 'acc-main' WHERE account_id = ''`,
+		`UPDATE settings SET account_id = 'acc-main', id = 'acc-main' WHERE account_id = ''`,
+		// Index par compte (filtre d'isolation systématique).
+		`CREATE INDEX IF NOT EXISTS idx_admin_users_account   ON admin_users (account_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_routers_account       ON routers (account_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_profiles_account      ON profiles (account_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_hotspot_users_account ON hotspot_users (account_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_batches_account       ON batches (account_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_resellers_account     ON resellers (account_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_transactions_account  ON transactions (account_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_account      ON sessions (account_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_activity_account      ON activity (account_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_sales_account         ON sales (account_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_commands_account      ON commands (account_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_settings_account      ON settings (account_id)`,
 	}
 	for _, q := range stmts {
 		if _, err := p.db.Exec(q); err != nil {
@@ -277,23 +327,26 @@ func (p *PG) ensureSchema() error {
 // base est vide (l'appelant déclenchera le seed démo + synchronisation initiale).
 func (p *PG) Load() (db *model.DB, found bool, err error) {
 	db = &model.DB{
-		Users:        []model.AdminUser{},
-		Routers:      []model.Router{},
-		Profiles:     []model.Profile{},
-		HotspotUsers: []model.HotspotUser{},
-		Batches:      []model.Batch{},
-		Resellers:    []model.Reseller{},
-		Transactions: []model.Transaction{},
-		Sessions:     []model.Session{},
-		Activity:     []model.Activity{},
-		Sales:        []model.Sale{},
-		Commands:     []model.Command{},
+		Accounts:          []model.Account{},
+		SettingsByAccount: map[string]model.Settings{},
+		Users:             []model.AdminUser{},
+		Routers:           []model.Router{},
+		Profiles:          []model.Profile{},
+		HotspotUsers:      []model.HotspotUser{},
+		Batches:           []model.Batch{},
+		Resellers:         []model.Reseller{},
+		Transactions:      []model.Transaction{},
+		Sessions:          []model.Session{},
+		Activity:          []model.Activity{},
+		Sales:             []model.Sale{},
+		Commands:          []model.Command{},
 	}
 
 	steps := []struct {
 		name  string
 		query func() error
 	}{
+		{"accounts", func() error { return loadInto(p, &db.Accounts, accountSpec) }},
 		{"admin_users", func() error { return loadInto(p, &db.Users, adminSpec) }},
 		{"routers", func() error { return loadInto(p, &db.Routers, routerSpec) }},
 		{"profiles", func() error { return loadInto(p, &db.Profiles, profileSpec) }},
@@ -316,8 +369,8 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 	// Les tris applicatifs sont faits en Go (sort.Slice dans les handlers),
 	// l'ordre de lecture n'a donc aucune importance.
 
-	found = len(db.Users) > 0 || len(db.Routers) > 0 || len(db.Profiles) > 0 ||
-		len(db.HotspotUsers) > 0 || len(db.Resellers) > 0 || len(db.Sales) > 0
+	found = len(db.Users) > 0 || len(db.Accounts) > 0 || len(db.Routers) > 0 ||
+		len(db.Profiles) > 0 || len(db.HotspotUsers) > 0 || len(db.Resellers) > 0 || len(db.Sales) > 0
 	if !found {
 		return nil, false, nil
 	}
@@ -327,34 +380,41 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 	return db, true, nil
 }
 
-// loadSettings lit la ligne singleton settings (id=1).
+// loadSettings lit TOUTES les lignes settings (une par compte SaaS) et remplit
+// db.SettingsByAccount ; les lignes sans account_id (non migrées) sont ignorées.
+// last_tick (global, moteur de simulation) est repris de la première ligne non vide.
 func (p *PG) loadSettings(db *model.DB) error {
-	var (
-		tenantName, tenantCurrency, tenantTimezone string
-		planName, planMaxRouters, planMaxUsers     string
-		waveLink                                   string
-		lastTick                                   sql.NullTime
-	)
-	err := p.db.QueryRow(
-		`SELECT tenant_name, tenant_currency, tenant_timezone, plan_name, plan_max_routers, plan_max_users, wave_link, last_tick
-                 FROM settings WHERE id = 1`).Scan(
-		&tenantName, &tenantCurrency, &tenantTimezone,
-		&planName, &planMaxRouters, &planMaxUsers, &waveLink, &lastTick)
-	if err == sql.ErrNoRows {
-		return nil // pas encore de réglages → valeurs par défaut du modèle
-	}
+	rows, err := p.db.Query(
+		`SELECT account_id, tenant_name, tenant_currency, tenant_timezone, plan_name, plan_max_routers, plan_max_users, wave_link, last_tick
+		 FROM settings`)
 	if err != nil {
 		return err
 	}
-	db.Tenant = model.Tenant{Name: tenantName, Currency: tenantCurrency, Timezone: tenantTimezone, WaveLink: waveLink}
-	db.Settings = model.Settings{
-		Tenant: db.Tenant,
-		Plan:   model.Plan{Name: planName, MaxRouters: planMaxRouters, MaxUsers: planMaxUsers},
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			accID                                      string
+			tenantName, tenantCurrency, tenantTimezone string
+			planName, planMaxRouters, planMaxUsers     string
+			waveLink                                   string
+			lastTick                                   sql.NullTime
+		)
+		if err := rows.Scan(&accID, &tenantName, &tenantCurrency, &tenantTimezone,
+			&planName, &planMaxRouters, &planMaxUsers, &waveLink, &lastTick); err != nil {
+			return err
+		}
+		if accID == "" {
+			continue // ligne historique non rattachée à un compte → ignorée
+		}
+		db.SettingsByAccount[accID] = model.Settings{
+			Tenant: model.Tenant{Name: tenantName, Currency: tenantCurrency, Timezone: tenantTimezone, WaveLink: waveLink},
+			Plan:   model.Plan{Name: planName, MaxRouters: planMaxRouters, MaxUsers: planMaxUsers},
+		}
+		if lastTick.Valid && db.LastTick.IsZero() {
+			db.LastTick = lastTick.Time
+		}
 	}
-	if lastTick.Valid {
-		db.LastTick = lastTick.Time
-	}
-	return nil
+	return rows.Err()
 }
 
 // ---------------------------------------------------------------------------
@@ -371,6 +431,9 @@ func (p *PG) Sync(db *model.DB) error {
 	}
 	defer tx.Rollback() // no-op si Commit réussit
 
+	if err := syncTable(tx, p.hashes, accountSpec, db.Accounts); err != nil {
+		return err
+	}
 	if err := syncTable(tx, p.hashes, adminSpec, db.Users); err != nil {
 		return err
 	}
@@ -413,26 +476,33 @@ func (p *PG) Sync(db *model.DB) error {
 	return nil
 }
 
-// syncSettings écrit le singleton (upsert id=1).
+// syncSettings écrit une ligne par compte de SettingsByAccount (upsert par
+// id = account_id). Les lignes settings ne sont JAMAIS supprimées ici : elles
+// suivent le cycle de vie des comptes (spec accounts) et une ligne orpheline
+// est tolérée. last_tick (valeur globale du moteur de simulation) est répliquée
+// sur chaque ligne.
 func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
 	lastTick := sql.NullTime{Time: db.LastTick, Valid: !db.LastTick.IsZero()}
-	_, err := tx.Exec(
-		`INSERT INTO settings (id, tenant_name, tenant_currency, tenant_timezone, plan_name, plan_max_routers, plan_max_users, wave_link, last_tick)
-                 VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8)
-                 ON CONFLICT (id) DO UPDATE SET
-                   tenant_name      = EXCLUDED.tenant_name,
-                   tenant_currency  = EXCLUDED.tenant_currency,
-                   tenant_timezone  = EXCLUDED.tenant_timezone,
-                   plan_name        = EXCLUDED.plan_name,
-                   plan_max_routers = EXCLUDED.plan_max_routers,
-                   plan_max_users   = EXCLUDED.plan_max_users,
-                   wave_link        = EXCLUDED.wave_link,
-                   last_tick        = EXCLUDED.last_tick`,
-		db.Tenant.Name, db.Tenant.Currency, db.Tenant.Timezone,
-		db.Settings.Plan.Name, db.Settings.Plan.MaxRouters, db.Settings.Plan.MaxUsers,
-		db.Tenant.WaveLink, lastTick)
-	if err != nil {
-		return fmt.Errorf("pg sync settings : %w", err)
+	for accID, s := range db.SettingsByAccount {
+		_, err := tx.Exec(
+			`INSERT INTO settings (id, account_id, tenant_name, tenant_currency, tenant_timezone, plan_name, plan_max_routers, plan_max_users, wave_link, last_tick)
+			 VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9)
+			 ON CONFLICT (id) DO UPDATE SET
+			   account_id       = EXCLUDED.account_id,
+			   tenant_name      = EXCLUDED.tenant_name,
+			   tenant_currency  = EXCLUDED.tenant_currency,
+			   tenant_timezone  = EXCLUDED.tenant_timezone,
+			   plan_name        = EXCLUDED.plan_name,
+			   plan_max_routers = EXCLUDED.plan_max_routers,
+			   plan_max_users   = EXCLUDED.plan_max_users,
+			   wave_link        = EXCLUDED.wave_link,
+			   last_tick        = EXCLUDED.last_tick`,
+			accID, s.Tenant.Name, s.Tenant.Currency, s.Tenant.Timezone,
+			s.Plan.Name, s.Plan.MaxRouters, s.Plan.MaxUsers,
+			s.Tenant.WaveLink, lastTick)
+		if err != nil {
+			return fmt.Errorf("pg sync settings (%s) : %w", accID, err)
+		}
 	}
 	return nil
 }
@@ -599,17 +669,33 @@ func upsertRows[T any](tx *sql.Tx, spec entitySpec[T], rows []T) error {
 // cols, scan et args.
 // ---------------------------------------------------------------------------
 
+// accountSpec — comptes clients SaaS (isolation multi-tenant).
+var accountSpec = entitySpec[model.Account]{
+	table: "accounts",
+	cols:  []string{"id", "name", "status", "created_at"},
+	idOf:  func(x *model.Account) string { return x.ID },
+	scan: func(r *sql.Rows) (model.Account, error) {
+		var x model.Account
+		err := r.Scan(&x.ID, &x.Name, &x.Status, &x.CreatedAt)
+		return x, err
+	},
+	args: func(x *model.Account) []any {
+		return []any{x.ID, x.Name, x.Status, x.CreatedAt}
+	},
+	hashOf: hashEntity[model.Account],
+}
+
 var adminSpec = entitySpec[model.AdminUser]{
 	table: "admin_users",
-	cols:  []string{"id", "name", "username", "role", "password_hash", "salt", "created_at"},
+	cols:  []string{"id", "name", "username", "role", "password_hash", "salt", "created_at", "account_id"},
 	idOf:  func(u *model.AdminUser) string { return u.ID },
 	scan: func(r *sql.Rows) (model.AdminUser, error) {
 		var u model.AdminUser
-		err := r.Scan(&u.ID, &u.Name, &u.Username, &u.Role, &u.PasswordHash, &u.Salt, &u.CreatedAt)
+		err := r.Scan(&u.ID, &u.Name, &u.Username, &u.Role, &u.PasswordHash, &u.Salt, &u.CreatedAt, &u.AccountID)
 		return u, err
 	},
 	args: func(u *model.AdminUser) []any {
-		return []any{u.ID, u.Name, u.Username, u.Role, u.PasswordHash, u.Salt, u.CreatedAt}
+		return []any{u.ID, u.Name, u.Username, u.Role, u.PasswordHash, u.Salt, u.CreatedAt, u.AccountID}
 	},
 	hashOf: hashEntity[model.AdminUser],
 }
@@ -618,36 +704,36 @@ var routerSpec = entitySpec[model.Router]{
 	table: "routers",
 	cols: []string{"id", "name", "host", "port", "username", "password", "mode", "status",
 		"version", "uptime_sec", "cpu_load", "hotspot_users", "active_sessions", "created_at",
-		"agent_token_hash", "token_preview", "last_seen"},
+		"agent_token_hash", "token_preview", "last_seen", "account_id"},
 	idOf: func(x *model.Router) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Router, error) {
 		var x model.Router
 		err := r.Scan(&x.ID, &x.Name, &x.Host, &x.Port, &x.Username, &x.Password, &x.Mode, &x.Status,
 			&x.Version, &x.UptimeSec, &x.CPULoad, &x.HotspotUsers, &x.ActiveSessions, &x.CreatedAt,
-			&x.AgentTokenHash, &x.TokenPreview, &x.LastSeen)
+			&x.AgentTokenHash, &x.TokenPreview, &x.LastSeen, &x.AccountID)
 		return x, err
 	},
 	args: func(x *model.Router) []any {
 		return []any{x.ID, x.Name, x.Host, x.Port, x.Username, x.Password, x.Mode, x.Status,
 			x.Version, x.UptimeSec, x.CPULoad, x.HotspotUsers, x.ActiveSessions, x.CreatedAt,
-			x.AgentTokenHash, x.TokenPreview, x.LastSeen}
+			x.AgentTokenHash, x.TokenPreview, x.LastSeen, x.AccountID}
 	},
 	hashOf: hashEntity[model.Router],
 }
 
 var profileSpec = entitySpec[model.Profile]{
 	table: "profiles",
-	cols:  []string{"id", "name", "rate_limit", "session_timeout_min", "shared_users", "validity_days", "price", "data_quota_mb", "created_at"},
+	cols:  []string{"id", "name", "rate_limit", "session_timeout_min", "shared_users", "validity_days", "price", "data_quota_mb", "created_at", "account_id"},
 	idOf:  func(x *model.Profile) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Profile, error) {
 		var x model.Profile
 		err := r.Scan(&x.ID, &x.Name, &x.RateLimit, &x.SessionTimeoutMin, &x.SharedUsers,
-			&x.ValidityDays, &x.Price, &x.DataQuotaMb, &x.CreatedAt)
+			&x.ValidityDays, &x.Price, &x.DataQuotaMb, &x.CreatedAt, &x.AccountID)
 		return x, err
 	},
 	args: func(x *model.Profile) []any {
 		return []any{x.ID, x.Name, x.RateLimit, x.SessionTimeoutMin, x.SharedUsers,
-			x.ValidityDays, x.Price, x.DataQuotaMb, x.CreatedAt}
+			x.ValidityDays, x.Price, x.DataQuotaMb, x.CreatedAt, x.AccountID}
 	},
 	hashOf: hashEntity[model.Profile],
 }
@@ -656,115 +742,115 @@ var hotspotUserSpec = entitySpec[model.HotspotUser]{
 	table: "hotspot_users",
 	cols: []string{"id", "kind", "username", "password", "profile_id", "profile_name",
 		"router_id", "router_name", "status", "batch_id", "reseller_id", "reseller_name",
-		"comment", "bytes_in", "bytes_out", "uptime_used_sec", "created_at", "expires_at", "used_at", "price"},
+		"comment", "bytes_in", "bytes_out", "uptime_used_sec", "created_at", "expires_at", "used_at", "price", "account_id"},
 	idOf: func(x *model.HotspotUser) string { return x.ID },
 	scan: func(r *sql.Rows) (model.HotspotUser, error) {
 		var x model.HotspotUser
 		err := r.Scan(&x.ID, &x.Kind, &x.Username, &x.Password, &x.ProfileID, &x.ProfileName,
 			&x.RouterID, &x.RouterName, &x.Status, &x.BatchID, &x.ResellerID, &x.ResellerName,
-			&x.Comment, &x.BytesIn, &x.BytesOut, &x.UptimeUsedSec, &x.CreatedAt, &x.ExpiresAt, &x.UsedAt, &x.Price)
+			&x.Comment, &x.BytesIn, &x.BytesOut, &x.UptimeUsedSec, &x.CreatedAt, &x.ExpiresAt, &x.UsedAt, &x.Price, &x.AccountID)
 		return x, err
 	},
 	args: func(x *model.HotspotUser) []any {
 		return []any{x.ID, x.Kind, x.Username, x.Password, x.ProfileID, x.ProfileName,
 			x.RouterID, x.RouterName, x.Status, x.BatchID, x.ResellerID, x.ResellerName,
-			x.Comment, x.BytesIn, x.BytesOut, x.UptimeUsedSec, x.CreatedAt, x.ExpiresAt, x.UsedAt, x.Price}
+			x.Comment, x.BytesIn, x.BytesOut, x.UptimeUsedSec, x.CreatedAt, x.ExpiresAt, x.UsedAt, x.Price, x.AccountID}
 	},
 	hashOf: hashEntity[model.HotspotUser],
 }
 
 var batchSpec = entitySpec[model.Batch]{
 	table: "batches",
-	cols:  []string{"id", "profile_id", "profile_name", "router_id", "router_name", "count", "unit_price", "total_cost", "channel", "reseller_id", "reseller_name", "created_at"},
+	cols:  []string{"id", "profile_id", "profile_name", "router_id", "router_name", "count", "unit_price", "total_cost", "channel", "reseller_id", "reseller_name", "created_at", "account_id"},
 	idOf:  func(x *model.Batch) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Batch, error) {
 		var x model.Batch
 		err := r.Scan(&x.ID, &x.ProfileID, &x.ProfileName, &x.RouterID, &x.RouterName,
-			&x.Count, &x.UnitPrice, &x.TotalCost, &x.Channel, &x.ResellerID, &x.ResellerName, &x.CreatedAt)
+			&x.Count, &x.UnitPrice, &x.TotalCost, &x.Channel, &x.ResellerID, &x.ResellerName, &x.CreatedAt, &x.AccountID)
 		return x, err
 	},
 	args: func(x *model.Batch) []any {
 		return []any{x.ID, x.ProfileID, x.ProfileName, x.RouterID, x.RouterName,
-			x.Count, x.UnitPrice, x.TotalCost, x.Channel, x.ResellerID, x.ResellerName, x.CreatedAt}
+			x.Count, x.UnitPrice, x.TotalCost, x.Channel, x.ResellerID, x.ResellerName, x.CreatedAt, x.AccountID}
 	},
 	hashOf: hashEntity[model.Batch],
 }
 
 var resellerSpec = entitySpec[model.Reseller]{
 	table: "resellers",
-	cols:  []string{"id", "name", "username", "phone", "credit", "vouchers_sold", "revenue", "status", "created_at"},
+	cols:  []string{"id", "name", "username", "phone", "credit", "vouchers_sold", "revenue", "status", "created_at", "account_id"},
 	idOf:  func(x *model.Reseller) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Reseller, error) {
 		var x model.Reseller
-		err := r.Scan(&x.ID, &x.Name, &x.Username, &x.Phone, &x.Credit, &x.VouchersSold, &x.Revenue, &x.Status, &x.CreatedAt)
+		err := r.Scan(&x.ID, &x.Name, &x.Username, &x.Phone, &x.Credit, &x.VouchersSold, &x.Revenue, &x.Status, &x.CreatedAt, &x.AccountID)
 		return x, err
 	},
 	args: func(x *model.Reseller) []any {
-		return []any{x.ID, x.Name, x.Username, x.Phone, x.Credit, x.VouchersSold, x.Revenue, x.Status, x.CreatedAt}
+		return []any{x.ID, x.Name, x.Username, x.Phone, x.Credit, x.VouchersSold, x.Revenue, x.Status, x.CreatedAt, x.AccountID}
 	},
 	hashOf: hashEntity[model.Reseller],
 }
 
 var transactionSpec = entitySpec[model.Transaction]{
 	table: "transactions",
-	cols:  []string{"id", "type", "reseller_id", "reseller_name", "amount", "note", "at"},
+	cols:  []string{"id", "type", "reseller_id", "reseller_name", "amount", "note", "at", "account_id"},
 	idOf:  func(x *model.Transaction) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Transaction, error) {
 		var x model.Transaction
-		err := r.Scan(&x.ID, &x.Type, &x.ResellerID, &x.ResellerName, &x.Amount, &x.Note, &x.At)
+		err := r.Scan(&x.ID, &x.Type, &x.ResellerID, &x.ResellerName, &x.Amount, &x.Note, &x.At, &x.AccountID)
 		return x, err
 	},
 	args: func(x *model.Transaction) []any {
-		return []any{x.ID, x.Type, x.ResellerID, x.ResellerName, x.Amount, x.Note, x.At}
+		return []any{x.ID, x.Type, x.ResellerID, x.ResellerName, x.Amount, x.Note, x.At, x.AccountID}
 	},
 	hashOf: hashEntity[model.Transaction],
 }
 
 var sessionSpec = entitySpec[model.Session]{
 	table: "sessions",
-	cols:  []string{"id", "user_id", "username", "profile_name", "router_id", "router_name", "ip", "mac", "started_at", "uptime_sec", "bytes_in", "bytes_out"},
+	cols:  []string{"id", "user_id", "username", "profile_name", "router_id", "router_name", "ip", "mac", "started_at", "uptime_sec", "bytes_in", "bytes_out", "account_id"},
 	idOf:  func(x *model.Session) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Session, error) {
 		var x model.Session
 		err := r.Scan(&x.ID, &x.UserID, &x.Username, &x.ProfileName, &x.RouterID, &x.RouterName,
-			&x.IP, &x.MAC, &x.StartedAt, &x.UptimeSec, &x.BytesIn, &x.BytesOut)
+			&x.IP, &x.MAC, &x.StartedAt, &x.UptimeSec, &x.BytesIn, &x.BytesOut, &x.AccountID)
 		return x, err
 	},
 	args: func(x *model.Session) []any {
 		return []any{x.ID, x.UserID, x.Username, x.ProfileName, x.RouterID, x.RouterName,
-			x.IP, x.MAC, x.StartedAt, x.UptimeSec, x.BytesIn, x.BytesOut}
+			x.IP, x.MAC, x.StartedAt, x.UptimeSec, x.BytesIn, x.BytesOut, x.AccountID}
 	},
 	hashOf: hashEntity[model.Session],
 }
 
 var activitySpec = entitySpec[model.Activity]{
 	table: "activity",
-	cols:  []string{"id", "type", "message", "at"},
+	cols:  []string{"id", "type", "message", "at", "account_id"},
 	idOf:  func(x *model.Activity) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Activity, error) {
 		var x model.Activity
-		err := r.Scan(&x.ID, &x.Type, &x.Message, &x.At)
+		err := r.Scan(&x.ID, &x.Type, &x.Message, &x.At, &x.AccountID)
 		return x, err
 	},
 	args: func(x *model.Activity) []any {
-		return []any{x.ID, x.Type, x.Message, x.At}
+		return []any{x.ID, x.Type, x.Message, x.At, x.AccountID}
 	},
 	hashOf: hashEntity[model.Activity],
 }
 
 var saleSpec = entitySpec[model.Sale]{
 	table: "sales",
-	cols:  []string{"id", "amount", "profile_name", "count", "channel", "reseller_name", "router_id", "router_name", "batch_id", "at"},
+	cols:  []string{"id", "amount", "profile_name", "count", "channel", "reseller_name", "router_id", "router_name", "batch_id", "at", "account_id"},
 	idOf:  func(x *model.Sale) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Sale, error) {
 		var x model.Sale
 		err := r.Scan(&x.ID, &x.Amount, &x.ProfileName, &x.Count, &x.Channel, &x.ResellerName,
-			&x.RouterID, &x.RouterName, &x.BatchID, &x.At)
+			&x.RouterID, &x.RouterName, &x.BatchID, &x.At, &x.AccountID)
 		return x, err
 	},
 	args: func(x *model.Sale) []any {
 		return []any{x.ID, x.Amount, x.ProfileName, x.Count, x.Channel, x.ResellerName,
-			x.RouterID, x.RouterName, x.BatchID, x.At}
+			x.RouterID, x.RouterName, x.BatchID, x.At, x.AccountID}
 	},
 	hashOf: hashEntity[model.Sale],
 }
@@ -774,12 +860,12 @@ var saleSpec = entitySpec[model.Sale]{
 // forme JSON (clés triées), les empreintes restent donc cohérentes.
 var commandSpec = entitySpec[model.Command]{
 	table: "commands",
-	cols:  []string{"id", "router_id", "kind", "payload", "status", "result", "created_at", "sent_at", "done_at"},
+	cols:  []string{"id", "router_id", "kind", "payload", "status", "result", "created_at", "sent_at", "done_at", "account_id"},
 	idOf:  func(x *model.Command) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Command, error) {
 		var x model.Command
 		var payload, result string
-		err := r.Scan(&x.ID, &x.RouterID, &x.Kind, &payload, &x.Status, &result, &x.CreatedAt, &x.SentAt, &x.DoneAt)
+		err := r.Scan(&x.ID, &x.RouterID, &x.Kind, &payload, &x.Status, &result, &x.CreatedAt, &x.SentAt, &x.DoneAt, &x.AccountID)
 		if err != nil {
 			return x, err
 		}
@@ -803,7 +889,7 @@ var commandSpec = entitySpec[model.Command]{
 				result = string(b)
 			}
 		}
-		return []any{x.ID, x.RouterID, x.Kind, payload, x.Status, result, x.CreatedAt, x.SentAt, x.DoneAt}
+		return []any{x.ID, x.RouterID, x.Kind, payload, x.Status, result, x.CreatedAt, x.SentAt, x.DoneAt, x.AccountID}
 	},
 	hashOf: hashEntity[model.Command],
 }
@@ -812,6 +898,7 @@ var commandSpec = entitySpec[model.Command]{
 // (après un Load ou un seed initial).
 func (p *PG) rebuildHashes(db *model.DB) {
 	p.hashes = map[string]map[string]uint64{
+		accountSpec.table:     hashRows(db.Accounts, accountSpec),
 		adminSpec.table:       hashRows(db.Users, adminSpec),
 		routerSpec.table:      hashRows(db.Routers, routerSpec),
 		profileSpec.table:     hashRows(db.Profiles, profileSpec),

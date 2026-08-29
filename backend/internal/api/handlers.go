@@ -103,6 +103,10 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/settings", a.handleSettingsPut)
 	mux.HandleFunc("POST /api/admin/reset", a.handleReset)
 
+	// Administration plateforme (rôle admin uniquement)
+	mux.HandleFunc("GET /api/admin/accounts", a.handleAdminAccounts)
+	mux.HandleFunc("POST /api/admin/accounts/{id}/status", a.handleAdminAccountStatus)
+
 	// Fallback API -> 404 JSON
 	mux.HandleFunc("/api/", a.handleAPINotFound)
 
@@ -122,6 +126,25 @@ func claimsFrom(r *http.Request) *auth.Claims {
 	return nil
 }
 
+// accountScope — identifiant du compte SaaS du porteur du token. Les tokens
+// émis avant la migration multi-tenant ne portent pas de compte : ils ne
+// peuvent provenir que de l'unique tenant historique → compte principal.
+func accountScope(r *http.Request) string {
+	if c := claimsFrom(r); c != nil && c.Acc != "" {
+		return c.Acc
+	}
+	return model.AccountMainID
+}
+
+// isPlatformAdmin — true si le porteur du token a le rôle « admin »
+// (super-administrateur de la plateforme MikCloud).
+func isPlatformAdmin(r *http.Request) bool {
+	if c := claimsFrom(r); c != nil {
+		return c.Role == "admin"
+	}
+	return false
+}
+
 func (a *API) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
@@ -139,6 +162,23 @@ func (a *API) authMiddleware(next http.Handler) http.Handler {
 		if err != nil {
 			writeErr(w, http.StatusUnauthorized, "Token invalide ou expiré")
 			return
+		}
+		// Compte désactivé ou supprimé : le token reste signé mais n'autorise plus
+		// aucun accès (effet immédiat de POST /api/admin/accounts/{id}/status).
+		if claims.Acc != "" {
+			a.store.Lock()
+			active := false
+			for i := range a.store.Data().Accounts {
+				if acc := &a.store.Data().Accounts[i]; acc.ID == claims.Acc && acc.Status == "active" {
+					active = true
+					break
+				}
+			}
+			a.store.Unlock()
+			if !active {
+				writeErr(w, http.StatusUnauthorized, "Compte désactivé — contactez le support")
+				return
+			}
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), claimsCtxKey{}, claims)))
 	})
@@ -177,10 +217,10 @@ func queryInt(r *http.Request, key string, def, min, max int) int {
 func ptrString(s string) *string { return &s }
 func ptrInt(i int) *int          { return &i }
 
-// logActivity ajoute une entrée en tête du journal (sous verrou).
-func (a *API) logActivity(db *model.DB, typ, message string) {
+// logActivity ajoute une entrée en tête du journal DU COMPTE (sous verrou).
+func (a *API) logActivity(db *model.DB, acc, typ, message string) {
 	db.Activity = append([]model.Activity{{
-		ID: model.NewID("act-"), Type: typ, Message: message, At: model.NowISO(),
+		ID: model.NewID("act-"), AccountID: acc, Type: typ, Message: message, At: model.NowISO(),
 	}}, db.Activity...)
 	if len(db.Activity) > 500 {
 		db.Activity = db.Activity[:500]
@@ -221,37 +261,38 @@ func (a *API) clearGateways() {
 	}
 }
 
-// findX helpers (sous verrou)
-func findRouter(db *model.DB, id string) *model.Router {
+// findX helpers — TOUJOURS scopés au compte demandeur : une ressource d'un
+// autre compte est invisible (404, sans fuiter son existence).
+func findRouterScoped(db *model.DB, id, acc string) *model.Router {
 	for i := range db.Routers {
-		if db.Routers[i].ID == id {
+		if db.Routers[i].ID == id && db.Routers[i].AccountID == acc {
 			return &db.Routers[i]
 		}
 	}
 	return nil
 }
 
-func findProfile(db *model.DB, id string) *model.Profile {
+func findProfileScoped(db *model.DB, id, acc string) *model.Profile {
 	for i := range db.Profiles {
-		if db.Profiles[i].ID == id {
+		if db.Profiles[i].ID == id && db.Profiles[i].AccountID == acc {
 			return &db.Profiles[i]
 		}
 	}
 	return nil
 }
 
-func findUser(db *model.DB, id string) *model.HotspotUser {
+func findUserScoped(db *model.DB, id, acc string) *model.HotspotUser {
 	for i := range db.HotspotUsers {
-		if db.HotspotUsers[i].ID == id {
+		if db.HotspotUsers[i].ID == id && db.HotspotUsers[i].AccountID == acc {
 			return &db.HotspotUsers[i]
 		}
 	}
 	return nil
 }
 
-func findReseller(db *model.DB, id string) *model.Reseller {
+func findResellerScoped(db *model.DB, id, acc string) *model.Reseller {
 	for i := range db.Resellers {
-		if db.Resellers[i].ID == id {
+		if db.Resellers[i].ID == id && db.Resellers[i].AccountID == acc {
 			return &db.Resellers[i]
 		}
 	}
@@ -265,13 +306,39 @@ func sanitizeRouter(r model.Router) model.Router {
 	return r
 }
 
-func usernameTaken(db *model.DB, username string) bool {
+// usernameTaken — unicité des usernames hotspot PAR COMPTE : deux comptes
+// peuvent chacun avoir un voucher « SC-ABCDE ».
+func usernameTaken(db *model.DB, acc, username string) bool {
 	for i := range db.HotspotUsers {
-		if db.HotspotUsers[i].Username == username {
+		if db.HotspotUsers[i].AccountID == acc && db.HotspotUsers[i].Username == username {
 			return true
 		}
 	}
 	return false
+}
+
+// ensureSettings — réglages du compte, créés avec les défauts FCFA si absents
+// (à appeler sous verrou ; la création est persistée par le Save de l'appelant).
+func ensureSettings(db *model.DB, acc string) model.Settings {
+	if s, ok := db.SettingsByAccount[acc]; ok {
+		return s
+	}
+	name := "MikCloud"
+	for i := range db.Accounts {
+		if db.Accounts[i].ID == acc {
+			name = db.Accounts[i].Name
+			break
+		}
+	}
+	s := model.Settings{
+		Tenant: model.Tenant{Name: name, Currency: "XOF", Timezone: "Africa/Abidjan"},
+		Plan:   model.Plan{Name: "Bêta", MaxRouters: "Illimité", MaxUsers: "Illimité"},
+	}
+	if db.SettingsByAccount == nil {
+		db.SettingsByAccount = map[string]model.Settings{}
+	}
+	db.SettingsByAccount[acc] = s
+	return s
 }
 
 // ---------------------------------------------------------------------------
@@ -310,19 +377,35 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.store.Lock()
-	var id, name, username, role, salt, hash string
+	var id, name, username, role, salt, hash, accID string
+	var accName, accStatus string
 	var user *model.AdminUser
 	for i := range a.store.Data().Users {
 		u := &a.store.Data().Users[i]
 		if strings.EqualFold(u.Username, req.Username) {
 			id, name, username, role, salt, hash = u.ID, u.Name, u.Username, u.Role, u.Salt, u.PasswordHash
+			accID = u.AccountID
 			user = u
 			break
+		}
+	}
+	if accID != "" {
+		for i := range a.store.Data().Accounts {
+			acc := &a.store.Data().Accounts[i]
+			if acc.ID == accID {
+				accName, accStatus = acc.Name, acc.Status
+				break
+			}
 		}
 	}
 	a.store.Unlock()
 	if id == "" || !auth.CheckPassword(req.Password, salt, hash) {
 		writeErr(w, http.StatusBadRequest, "Identifiants invalides")
+		return
+	}
+	// Compte désactivé : le login est refusé même avec des identifiants valides.
+	if accID != "" && accStatus == "disabled" {
+		writeErr(w, http.StatusForbidden, "Compte désactivé — contactez le support")
 		return
 	}
 	// Migration transparente : ancien hash SHA-256 → bcrypt au premier login.
@@ -333,16 +416,20 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 		a.store.Save()
 		a.store.Unlock()
 	}
-	token := auth.Sign(a.secret, auth.NewClaims(id, name, role))
+	token := auth.Sign(a.secret, auth.NewClaims(id, name, role, accID))
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token": token,
-		"user":  map[string]any{"id": id, "name": name, "username": username, "role": role},
+		"user": map[string]any{
+			"id": id, "name": name, "username": username, "role": role,
+			"accountId": accID, "accountName": accName,
+		},
 	})
 }
 
-// handleRegister — inscription SaaS : crée un compte « owner » et connecte
-// immédiatement. Si REGISTER_KEY est définie (bêta privée), la clé doit être
-// fournie. La récupération et l'isolation multi-comptes viennent en phase 4.
+// handleRegister — inscription SaaS : crée un COMPTE isolé (Account), son
+// propriétaire (owner) et ses réglages par défaut, puis connecte immédiatement.
+// Si REGISTER_KEY est définie (bêta privée), la clé doit être fournie. Le
+// nouveau compte démarre vide : il ne voit aucune donnée des autres comptes.
 func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name     string `json:"name"`
@@ -380,30 +467,50 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.store.Lock()
-	for i := range a.store.Data().Users {
-		if strings.EqualFold(a.store.Data().Users[i].Username, username) {
+	db := a.store.Data()
+	// Unicité GLOBALE des usernames console (toutes consoles confondues).
+	for i := range db.Users {
+		if strings.EqualFold(db.Users[i].Username, username) {
 			a.store.Unlock()
 			writeErr(w, http.StatusConflict, "Ce nom d'utilisateur est déjà pris")
 			return
 		}
 	}
+	acc := model.Account{
+		ID:        model.NewID("acc-"),
+		Name:      name,
+		Status:    "active",
+		CreatedAt: model.NowISO(),
+	}
+	db.Accounts = append(db.Accounts, acc)
 	u := model.AdminUser{
-		ID:           model.NewID("acc-"),
+		ID:           model.NewID("usr-"),
+		AccountID:    acc.ID,
 		Name:         name,
 		Username:     username,
 		Role:         "owner",
 		PasswordHash: auth.HashPassword(req.Password, ""),
 		CreatedAt:    model.NowISO(),
 	}
-	a.store.Data().Users = append(a.store.Data().Users, u)
-	a.logActivity(a.store.Data(), "compte", "Nouveau compte créé : "+u.Name)
+	db.Users = append(db.Users, u)
+	if db.SettingsByAccount == nil {
+		db.SettingsByAccount = map[string]model.Settings{}
+	}
+	db.SettingsByAccount[acc.ID] = model.Settings{
+		Tenant: model.Tenant{Name: name, Currency: "XOF", Timezone: "Africa/Abidjan"},
+		Plan:   model.Plan{Name: "Bêta", MaxRouters: "Illimité", MaxUsers: "Illimité"},
+	}
+	a.logActivity(db, acc.ID, "compte", "Nouveau compte créé : "+acc.Name)
 	a.store.Save()
 	a.store.Unlock()
 
-	token := auth.Sign(a.secret, auth.NewClaims(u.ID, u.Name, u.Role))
+	token := auth.Sign(a.secret, auth.NewClaims(u.ID, u.Name, u.Role, acc.ID))
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"token": token,
-		"user":  map[string]any{"id": u.ID, "name": u.Name, "username": u.Username, "role": u.Role},
+		"user": map[string]any{
+			"id": u.ID, "name": u.Name, "username": u.Username, "role": u.Role,
+			"accountId": acc.ID, "accountName": acc.Name,
+		},
 	})
 }
 
@@ -414,17 +521,32 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.store.Lock()
+	db := a.store.Data()
 	id, name, username, role := claims.Sub, claims.Name, claims.Sub, claims.Role
-	for i := range a.store.Data().Users {
-		u := &a.store.Data().Users[i]
+	accID := accountScope(r)
+	for i := range db.Users {
+		u := &db.Users[i]
 		if u.ID == claims.Sub {
-			id, name, username, role = u.ID, u.Name, u.Username, u.Role
+			id, name, username, role, accID = u.ID, u.Name, u.Username, u.Role, u.AccountID
+			if accID == "" {
+				accID = model.AccountMainID // token émis avant la migration multi-tenant
+			}
+			break
+		}
+	}
+	accName := ""
+	for i := range db.Accounts {
+		if db.Accounts[i].ID == accID {
+			accName = db.Accounts[i].Name
 			break
 		}
 	}
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"user": map[string]any{"id": id, "name": name, "username": username, "role": role},
+		"user": map[string]any{
+			"id": id, "name": name, "username": username, "role": role,
+			"accountId": accID, "accountName": accName,
+		},
 	})
 }
 
@@ -449,44 +571,13 @@ type topProfilePoint struct {
 }
 
 func (a *API) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	now := time.Now().UTC()
 	a.store.Lock()
 	db := a.store.Data()
 
-	activeVouchers := 0
-	for i := range db.HotspotUsers {
-		if db.HotspotUsers[i].Kind == "voucher" && model.EffectiveStatus(&db.HotspotUsers[i], now) == "active" {
-			activeVouchers++
-		}
-	}
-	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	salesToday := 0
-	cutoff30 := now.AddDate(0, 0, -30)
-	revenue30d := 0
-	for _, s := range db.Sales {
-		at, err := time.Parse(time.RFC3339, s.At)
-		if err != nil {
-			continue
-		}
-		if !at.Before(todayStart) {
-			salesToday += s.Count
-		}
-		if at.After(cutoff30) {
-			revenue30d += s.Amount
-		}
-	}
-	routersOnline := 0
-	for _, rr := range db.Routers {
-		if rr.Status == "online" {
-			routersOnline++
-		}
-	}
-	onlineNow := map[string]bool{}
-	for _, s := range db.Sessions {
-		onlineNow[s.Username] = true
-	}
-
-	// Vue d'ensemble multi-sites : 1 compte = N hotspots.
+	// Vue d'ensemble multi-sites : 1 compte = N hotspots. Tous les agrégats
+	// ci-dessous sont calculés DANS le compte demandeur (isolation stricte).
 	type siteOverview struct {
 		RouterID       string `json:"routerId"`
 		RouterName     string `json:"routerName"`
@@ -497,38 +588,82 @@ func (a *API) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		SalesToday     int    `json:"salesToday"`
 		Revenue30d     int    `json:"revenue30d"`
 	}
+
+	accSessions := []model.Session{}
+	onlineNow := map[string]bool{}
 	sessionsByRouter := map[string]int{}
-	for _, s := range db.Sessions {
+	for i := range db.Sessions {
+		s := db.Sessions[i]
+		if s.AccountID != acc {
+			continue
+		}
+		accSessions = append(accSessions, s)
+		onlineNow[s.Username] = true
 		sessionsByRouter[s.RouterID]++
 	}
+
+	totalUsers, activeVouchers := 0, 0
 	usersByRouter := map[string]int{}
 	vouchersByRouter := map[string]int{}
+	counts := map[string]int{}
+	totals := map[string]int{}
 	for i := range db.HotspotUsers {
 		u := &db.HotspotUsers[i]
+		if u.AccountID != acc {
+			continue
+		}
+		totalUsers++
+		counts[u.ProfileName]++
+		totals[u.ProfileName] += u.Price
 		if model.EffectiveStatus(u, now) != "active" {
 			continue
 		}
 		usersByRouter[u.RouterID]++
 		if u.Kind == "voucher" {
 			vouchersByRouter[u.RouterID]++
+			activeVouchers++
 		}
 	}
+
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	cutoff30 := now.AddDate(0, 0, -30)
+	salesToday, revenue30d := 0, 0
 	salesTodayByRouter := map[string]int{}
 	revenue30dByRouter := map[string]int{}
-	for _, s := range db.Sales {
+	for i := range db.Sales {
+		s := db.Sales[i]
+		if s.AccountID != acc {
+			continue
+		}
 		at, err := time.Parse(time.RFC3339, s.At)
 		if err != nil {
 			continue
 		}
 		if !at.Before(todayStart) {
+			salesToday += s.Count
 			salesTodayByRouter[s.RouterID] += s.Count
 		}
 		if at.After(cutoff30) {
+			revenue30d += s.Amount
 			revenue30dByRouter[s.RouterID] += s.Amount
 		}
 	}
+
+	accRouters := []model.Router{}
+	routersOnline := 0
+	for i := range db.Routers {
+		rr := db.Routers[i]
+		if rr.AccountID != acc {
+			continue
+		}
+		accRouters = append(accRouters, rr)
+		if rr.Status == "online" {
+			routersOnline++
+		}
+	}
+
 	sites := []siteOverview{}
-	for _, rr := range db.Routers {
+	for _, rr := range accRouters {
 		sites = append(sites, siteOverview{
 			RouterID:       rr.ID,
 			RouterName:     rr.Name,
@@ -541,24 +676,18 @@ func (a *API) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	kpis := map[string]any{
-		"activeSessions": len(db.Sessions),
-		"totalUsers":     len(db.HotspotUsers),
+		"activeSessions": len(accSessions),
+		"totalUsers":     totalUsers,
 		"activeVouchers": activeVouchers,
 		"salesToday":     salesToday,
 		"revenue30d":     revenue30d,
 		"routersOnline":  routersOnline,
-		"routersTotal":   len(db.Routers),
+		"routersTotal":   len(accRouters),
 		"onlineNow":      len(onlineNow),
 	}
 
-	revenueByDay := buildRevenueByDay(db, now, 14)
+	revenueByDay := buildRevenueByDay(db, acc, now, 14)
 
-	counts := map[string]int{}
-	totals := map[string]int{}
-	for _, u := range db.HotspotUsers {
-		counts[u.ProfileName]++
-		totals[u.ProfileName] += u.Price
-	}
 	top := []topProfilePoint{}
 	for name, c := range counts {
 		top = append(top, topProfilePoint{Name: name, Users: c, Total: totals[name]})
@@ -574,18 +703,24 @@ func (a *API) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	recent := []model.Activity{}
-	for i, act := range db.Activity {
-		if i >= 12 {
+	for _, act := range db.Activity {
+		if act.AccountID != acc {
+			continue
+		}
+		if len(recent) >= 12 {
 			break
 		}
 		recent = append(recent, act)
 	}
 	a.store.Unlock()
 
+	// La courbe synthétique 24 h est mise à l'échelle du compte : un compte
+	// sans session affiche une courbe à zéro (~24 sessions = courbe nominale).
+	sessionsScale := float64(len(accSessions)) / 24.0
 	writeJSON(w, http.StatusOK, map[string]any{
 		"kpis":             kpis,
 		"sites":            sites,
-		"sessionsTimeline": buildSessionsTimeline(now),
+		"sessionsTimeline": buildSessionsTimeline(now, sessionsScale),
 		"revenueByDay":     revenueByDay,
 		"topProfiles":      top,
 		"recentActivity":   recent,
@@ -593,8 +728,9 @@ func (a *API) handleDashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 // buildSessionsTimeline — 24 points horaires, heure courante en dernier,
-// valeurs crédibles (pic en soirée).
-func buildSessionsTimeline(now time.Time) []timelinePoint {
+// valeurs crédibles (pic en soirée). La courbe synthétique est mise à l'échelle
+// du compte (scale = sessions actives / 24) : un compte vide affiche zéro.
+func buildSessionsTimeline(now time.Time, scale float64) []timelinePoint {
 	base := [24]int{14, 10, 7, 5, 4, 5, 7, 9, 11, 13, 15, 16, 17, 18, 19, 21, 24, 28, 33, 38, 42, 40, 33, 24}
 	hour := now.UTC().Hour()
 	pts := make([]timelinePoint, 0, 24)
@@ -602,18 +738,23 @@ func buildSessionsTimeline(now time.Time) []timelinePoint {
 		h := (hour - i + 24) % 24
 		rnd := rand.New(rand.NewSource(now.Unix()/3600 + int64(h)*7919))
 		v := base[h] + rnd.Intn(9) - 4
-		if v < 3 {
-			v = 3
-		}
-		if v > 48 {
-			v = 48
+		if scale <= 0 {
+			v = 0
+		} else {
+			v = int(math.Round(float64(v) * scale))
+			if v < 0 {
+				v = 0
+			}
+			if v > 96 {
+				v = 96
+			}
 		}
 		pts = append(pts, timelinePoint{T: fmt.Sprintf("%02d:00", h), Value: v})
 	}
 	return pts
 }
 
-func buildRevenueByDay(db *model.DB, now time.Time, days int) []dayValue {
+func buildRevenueByDay(db *model.DB, acc string, now time.Time, days int) []dayValue {
 	out := make([]dayValue, 0, days)
 	for i := days - 1; i >= 0; i-- {
 		day := now.AddDate(0, 0, -i)
@@ -621,6 +762,9 @@ func buildRevenueByDay(db *model.DB, now time.Time, days int) []dayValue {
 		end := start.Add(24 * time.Hour)
 		sum := 0
 		for _, s := range db.Sales {
+			if s.AccountID != acc {
+				continue
+			}
 			if at, err := time.Parse(time.RFC3339, s.At); err == nil && !at.Before(start) && at.Before(end) {
 				sum += s.Amount
 			}
@@ -635,16 +779,26 @@ func buildRevenueByDay(db *model.DB, now time.Time, days int) []dayValue {
 // ---------------------------------------------------------------------------
 
 func (a *API) handleRoutersList(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	a.store.Lock()
 	db := a.store.Data()
-	rs := append([]model.Router{}, db.Routers...)
+	rs := []model.Router{}
 	userCount := map[string]int{}
 	for _, u := range db.HotspotUsers {
-		userCount[u.RouterID]++
+		if u.AccountID == acc {
+			userCount[u.RouterID]++
+		}
 	}
 	sessCount := map[string]int{}
 	for _, s := range db.Sessions {
-		sessCount[s.RouterID]++
+		if s.AccountID == acc {
+			sessCount[s.RouterID]++
+		}
+	}
+	for _, rr := range db.Routers {
+		if rr.AccountID == acc {
+			rs = append(rs, rr)
+		}
 	}
 	a.store.Unlock()
 	sort.Slice(rs, func(i, j int) bool { return rs[i].CreatedAt > rs[j].CreatedAt })
@@ -658,6 +812,7 @@ func (a *API) handleRoutersList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleRouterCreate(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	var req struct {
 		Name     string `json:"name"`
 		Host     string `json:"host"`
@@ -685,7 +840,7 @@ func (a *API) handleRouterCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	router := model.Router{
-		ID: model.NewID("r-"), Name: name, Host: host, Mode: mode,
+		ID: model.NewID("r-"), AccountID: acc, Name: name, Host: host, Mode: mode,
 		Username: strings.TrimSpace(req.Username), Password: req.Password,
 		Status: "online", CreatedAt: model.NowISO(),
 	}
@@ -750,12 +905,19 @@ func (a *API) handleRouterCreate(w http.ResponseWriter, r *http.Request) {
 		router.CPULoad = 5 + rand.Intn(30)
 	}
 	a.store.Lock()
+	for _, rr := range a.store.Data().Routers {
+		if rr.AccountID == acc && strings.EqualFold(rr.Name, name) {
+			a.store.Unlock()
+			writeErr(w, http.StatusBadRequest, "Ce nom de routeur existe déjà")
+			return
+		}
+	}
 	a.store.Data().Routers = append(a.store.Data().Routers, router)
 	msg := "Routeur " + router.Name + " ajouté"
 	if mode == "agent" {
 		msg += " (mode agent — en ligne au premier check-in)"
 	}
-	a.logActivity(a.store.Data(), "router", msg)
+	a.logActivity(a.store.Data(), acc, "router", msg)
 	a.store.Save()
 	a.store.Unlock()
 
@@ -771,6 +933,7 @@ func (a *API) handleRouterCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleRouterUpdate(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	id := r.PathValue("id")
 	var req struct {
 		Name     *string `json:"name"`
@@ -785,7 +948,7 @@ func (a *API) handleRouterUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.store.Lock()
-	cur := findRouter(a.store.Data(), id)
+	cur := findRouterScoped(a.store.Data(), id, acc)
 	if cur == nil {
 		a.store.Unlock()
 		writeErr(w, http.StatusNotFound, "Routeur introuvable")
@@ -865,14 +1028,21 @@ func (a *API) handleRouterUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.store.Lock()
-	cur = findRouter(a.store.Data(), id)
+	cur = findRouterScoped(a.store.Data(), id, acc)
 	if cur == nil {
 		a.store.Unlock()
 		writeErr(w, http.StatusNotFound, "Routeur introuvable")
 		return
 	}
+	for _, rr := range a.store.Data().Routers {
+		if rr.ID != id && rr.AccountID == acc && strings.EqualFold(rr.Name, updated.Name) {
+			a.store.Unlock()
+			writeErr(w, http.StatusBadRequest, "Ce nom de routeur existe déjà")
+			return
+		}
+	}
 	*cur = updated
-	a.logActivity(a.store.Data(), "router", "Routeur "+updated.Name+" modifié")
+	a.logActivity(a.store.Data(), acc, "router", "Routeur "+updated.Name+" modifié")
 	a.store.Save()
 	a.store.Unlock()
 	a.invalidateGateway(id)
@@ -888,10 +1058,11 @@ func (a *API) handleRouterUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleRouterDelete(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	id := r.PathValue("id")
 	a.store.Lock()
 	db := a.store.Data()
-	cur := findRouter(db, id)
+	cur := findRouterScoped(db, id, acc)
 	if cur == nil {
 		a.store.Unlock()
 		writeErr(w, http.StatusNotFound, "Routeur introuvable")
@@ -926,7 +1097,7 @@ func (a *API) handleRouterDelete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	db.Commands = commands
-	a.logActivity(db, "router", "Routeur "+name+" supprimé")
+	a.logActivity(db, acc, "router", "Routeur "+name+" supprimé")
 	a.store.Save()
 	a.store.Unlock()
 	a.invalidateGateway(id)
@@ -934,9 +1105,10 @@ func (a *API) handleRouterDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleRouterTest(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	id := r.PathValue("id")
 	a.store.Lock()
-	cur := findRouter(a.store.Data(), id)
+	cur := findRouterScoped(a.store.Data(), id, acc)
 	if cur == nil {
 		a.store.Unlock()
 		writeErr(w, http.StatusNotFound, "Routeur introuvable")
@@ -966,7 +1138,7 @@ func (a *API) handleRouterTest(w http.ResponseWriter, r *http.Request) {
 	res, err := gw.TestConnection()
 	if err != nil {
 		a.store.Lock()
-		if rr := findRouter(a.store.Data(), id); rr != nil {
+		if rr := findRouterScoped(a.store.Data(), id, acc); rr != nil {
 			rr.Status = "offline"
 		}
 		a.store.Save()
@@ -977,7 +1149,7 @@ func (a *API) handleRouterTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.store.Lock()
-	if rr := findRouter(a.store.Data(), id); rr != nil {
+	if rr := findRouterScoped(a.store.Data(), id, acc); rr != nil {
 		rr.Status = "online"
 		if routerCopy.Mode == "real" && res.Version != "" {
 			rr.Version = res.Version
@@ -995,9 +1167,10 @@ func (a *API) handleRouterTest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleRouterStats(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	id := r.PathValue("id")
 	a.store.Lock()
-	cur := findRouter(a.store.Data(), id)
+	cur := findRouterScoped(a.store.Data(), id, acc)
 	if cur == nil {
 		a.store.Unlock()
 		writeErr(w, http.StatusNotFound, "Routeur introuvable")
@@ -1011,7 +1184,7 @@ func (a *API) handleRouterStats(w http.ResponseWriter, r *http.Request) {
 		a.store.Lock()
 		active := 0
 		for _, s := range a.store.Data().Sessions {
-			if s.RouterID == id {
+			if s.RouterID == id && s.AccountID == acc {
 				active++
 			}
 		}
@@ -1039,7 +1212,7 @@ func (a *API) handleRouterStats(w http.ResponseWriter, r *http.Request) {
 	} else {
 		a.store.Lock()
 		for _, s := range a.store.Data().Sessions {
-			if s.RouterID == id {
+			if s.RouterID == id && s.AccountID == acc {
 				activeSessions++
 			}
 		}
@@ -1062,14 +1235,21 @@ func (a *API) handleRouterStats(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 func (a *API) handleProfilesList(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	a.store.Lock()
-	ps := append([]model.Profile{}, a.store.Data().Profiles...)
+	ps := []model.Profile{}
+	for _, p := range a.store.Data().Profiles {
+		if p.AccountID == acc {
+			ps = append(ps, p)
+		}
+	}
 	a.store.Unlock()
 	sort.Slice(ps, func(i, j int) bool { return ps[i].CreatedAt > ps[j].CreatedAt })
 	writeJSON(w, http.StatusOK, ps)
 }
 
 func (a *API) handleProfileCreate(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	var req struct {
 		Name              string `json:"name"`
 		RateLimit         string `json:"rateLimit"`
@@ -1090,7 +1270,7 @@ func (a *API) handleProfileCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	a.store.Lock()
 	for _, p := range a.store.Data().Profiles {
-		if strings.EqualFold(p.Name, name) {
+		if p.AccountID == acc && strings.EqualFold(p.Name, name) {
 			a.store.Unlock()
 			writeErr(w, http.StatusBadRequest, "Ce profil existe déjà")
 			return
@@ -1102,7 +1282,7 @@ func (a *API) handleProfileCreate(w http.ResponseWriter, r *http.Request) {
 		rateLimit = "1M/1M"
 	}
 	profile := model.Profile{
-		ID: model.NewID("p-"), Name: name, RateLimit: rateLimit,
+		ID: model.NewID("p-"), AccountID: acc, Name: name, RateLimit: rateLimit,
 		SessionTimeoutMin: defaultPositive(req.SessionTimeoutMin, 60),
 		SharedUsers:       defaultPositive(req.SharedUsers, 1),
 		ValidityDays:      defaultPositive(req.ValidityDays, 1),
@@ -1112,10 +1292,10 @@ func (a *API) handleProfileCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	a.store.Lock()
 	a.store.Data().Profiles = append(a.store.Data().Profiles, profile)
-	a.logActivity(a.store.Data(), "user", "Profil "+profile.Name+" créé")
+	a.logActivity(a.store.Data(), acc, "user", "Profil "+profile.Name+" créé")
 	a.store.Save()
 	a.store.Unlock()
-	writeJSON(w, http.StatusOK, profile)
+	writeJSON(w, http.StatusCreated, profile)
 }
 
 func defaultPositive(v, def int) int {
@@ -1133,6 +1313,7 @@ func defaultMinZero(v int) int {
 }
 
 func (a *API) handleProfileUpdate(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	id := r.PathValue("id")
 	var req struct {
 		Name              *string `json:"name"`
@@ -1149,7 +1330,7 @@ func (a *API) handleProfileUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	a.store.Lock()
 	db := a.store.Data()
-	p := findProfile(db, id)
+	p := findProfileScoped(db, id, acc)
 	if p == nil {
 		a.store.Unlock()
 		writeErr(w, http.StatusNotFound, "Profil introuvable")
@@ -1163,7 +1344,7 @@ func (a *API) handleProfileUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, other := range db.Profiles {
-			if other.ID != id && strings.EqualFold(other.Name, name) {
+			if other.ID != id && other.AccountID == acc && strings.EqualFold(other.Name, name) {
 				a.store.Unlock()
 				writeErr(w, http.StatusBadRequest, "Ce profil existe déjà")
 				return
@@ -1190,19 +1371,20 @@ func (a *API) handleProfileUpdate(w http.ResponseWriter, r *http.Request) {
 		p.DataQuotaMb = *req.DataQuotaMb
 	}
 	updated := *p
-	a.logActivity(db, "user", "Profil "+updated.Name+" modifié")
+	a.logActivity(db, acc, "user", "Profil "+updated.Name+" modifié")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, updated)
 }
 
 func (a *API) handleProfileDelete(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	id := r.PathValue("id")
 	a.store.Lock()
 	db := a.store.Data()
 	idx := -1
 	for i := range db.Profiles {
-		if db.Profiles[i].ID == id {
+		if db.Profiles[i].ID == id && db.Profiles[i].AccountID == acc {
 			idx = i
 			break
 		}
@@ -1214,7 +1396,7 @@ func (a *API) handleProfileDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	name := db.Profiles[idx].Name
 	db.Profiles = append(db.Profiles[:idx], db.Profiles[idx+1:]...)
-	a.logActivity(db, "user", "Profil "+name+" supprimé")
+	a.logActivity(db, acc, "user", "Profil "+name+" supprimé")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -1233,6 +1415,7 @@ func (a *API) handleVouchersList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) usersList(w http.ResponseWriter, r *http.Request, kindOverride string) {
+	acc := accountScope(r)
 	q := r.URL.Query()
 	kind := q.Get("kind")
 	if kindOverride != "" {
@@ -1250,6 +1433,9 @@ func (a *API) usersList(w http.ResponseWriter, r *http.Request, kindOverride str
 	filtered := []model.HotspotUser{}
 	for i := range db.HotspotUsers {
 		u := &db.HotspotUsers[i]
+		if u.AccountID != acc {
+			continue
+		}
 		if kind != "" && u.Kind != kind {
 			continue
 		}
@@ -1291,6 +1477,7 @@ func (a *API) usersList(w http.ResponseWriter, r *http.Request, kindOverride str
 }
 
 func (a *API) handleUserCreate(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	var req struct {
 		Username  string `json:"username"`
 		Password  string `json:"password"`
@@ -1309,13 +1496,13 @@ func (a *API) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 	// Validation + construction (sous verrou)
 	a.store.Lock()
 	db := a.store.Data()
-	profile := findProfile(db, strings.TrimSpace(req.ProfileID))
+	profile := findProfileScoped(db, strings.TrimSpace(req.ProfileID), acc)
 	if profile == nil {
 		a.store.Unlock()
 		writeErr(w, http.StatusBadRequest, "Profil introuvable")
 		return
 	}
-	router := findRouter(db, strings.TrimSpace(req.RouterID))
+	router := findRouterScoped(db, strings.TrimSpace(req.RouterID), acc)
 	if router == nil {
 		a.store.Unlock()
 		writeErr(w, http.StatusBadRequest, "Routeur introuvable")
@@ -1335,12 +1522,12 @@ func (a *API) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 	if username == "" {
 		for i := 0; i < 50; i++ {
 			candidate := "user-" + model.RandomCode(5)
-			if !usernameTaken(db, candidate) {
+			if !usernameTaken(db, acc, candidate) {
 				username = candidate
 				break
 			}
 		}
-	} else if usernameTaken(db, username) {
+	} else if usernameTaken(db, acc, username) {
 		a.store.Unlock()
 		writeErr(w, http.StatusBadRequest, "Ce nom d'utilisateur existe déjà")
 		return
@@ -1350,7 +1537,7 @@ func (a *API) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 		password = model.RandomCode(6)
 	}
 	u := model.HotspotUser{
-		ID: model.NewID("u-"), Kind: kind, Username: username, Password: password,
+		ID: model.NewID("u-"), AccountID: acc, Kind: kind, Username: username, Password: password,
 		ProfileID: profile.ID, ProfileName: profile.Name,
 		RouterID: routerCopy.ID, RouterName: routerCopy.Name,
 		Status: "active", BatchID: "", ResellerID: "", ResellerName: "",
@@ -1368,11 +1555,11 @@ func (a *API) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 		a.store.Lock()
 		db = a.store.Data()
 		db.HotspotUsers = append(db.HotspotUsers, u)
-		cmd := queueCommandLocked(db, routerCopy.ID, model.CmdUserAdd, map[string]any{
+		cmd := queueCommandLocked(db, routerCopy.AccountID, routerCopy.ID, model.CmdUserAdd, map[string]any{
 			"name": u.Username, "password": u.Password,
 			"profile": profileRef(*profile), "comment": u.Comment,
 		})
-		a.logActivity(db, "user", "Utilisateur "+u.Username+" créé (en attente du routeur, commande "+cmd.ID+")")
+		a.logActivity(db, acc, "user", "Utilisateur "+u.Username+" créé (en attente du routeur, commande "+cmd.ID+")")
 		a.store.Save()
 		cmdID := cmd.ID
 		a.store.Unlock()
@@ -1392,13 +1579,14 @@ func (a *API) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.store.Lock()
-	a.logActivity(a.store.Data(), "user", "Utilisateur "+u.Username+" créé")
+	a.logActivity(a.store.Data(), acc, "user", "Utilisateur "+u.Username+" créé")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, u)
 }
 
 func (a *API) handleUserUpdate(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	id := r.PathValue("id")
 	var req struct {
 		Username  *string `json:"username"`
@@ -1414,7 +1602,7 @@ func (a *API) handleUserUpdate(w http.ResponseWriter, r *http.Request) {
 
 	a.store.Lock()
 	db := a.store.Data()
-	cur := findUser(db, id)
+	cur := findUserScoped(db, id, acc)
 	if cur == nil {
 		a.store.Unlock()
 		writeErr(w, http.StatusNotFound, "Utilisateur introuvable")
@@ -1422,7 +1610,7 @@ func (a *API) handleUserUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	u := *cur
 	oldUsername := cur.Username
-	router := findRouter(db, u.RouterID)
+	router := findRouterScoped(db, u.RouterID, acc)
 	var routerCopy *model.Router
 	if router != nil {
 		c := *router
@@ -1440,7 +1628,7 @@ func (a *API) handleUserUpdate(w http.ResponseWriter, r *http.Request) {
 		taken := false
 		for i := range a.store.Data().HotspotUsers {
 			other := &a.store.Data().HotspotUsers[i]
-			if other.ID != id && other.Username == username {
+			if other.AccountID == acc && other.ID != id && other.Username == username {
 				taken = true
 				break
 			}
@@ -1459,7 +1647,7 @@ func (a *API) handleUserUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ProfileID != nil && strings.TrimSpace(*req.ProfileID) != "" {
 		a.store.Lock()
-		p := findProfile(a.store.Data(), strings.TrimSpace(*req.ProfileID))
+		p := findProfileScoped(a.store.Data(), strings.TrimSpace(*req.ProfileID), acc)
 		a.store.Unlock()
 		if p == nil {
 			writeErr(w, http.StatusBadRequest, "Profil introuvable")
@@ -1484,14 +1672,14 @@ func (a *API) handleUserUpdate(w http.ResponseWriter, r *http.Request) {
 		if passwordChanged {
 			payload["password"] = u.Password
 		}
-		if p := findProfile(a.store.Data(), u.ProfileID); p != nil {
+		if p := findProfileScoped(a.store.Data(), u.ProfileID, acc); p != nil {
 			payload["profile"] = profileRef(*p)
 		}
-		if existing := findUser(a.store.Data(), id); existing != nil {
+		if existing := findUserScoped(a.store.Data(), id, acc); existing != nil {
 			*existing = u
 		}
-		cmd := queueCommandLocked(a.store.Data(), routerCopy.ID, model.CmdUserSet, payload)
-		a.logActivity(a.store.Data(), "user", "Utilisateur "+u.Username+" modifié (en attente du routeur, commande "+cmd.ID+")")
+		cmd := queueCommandLocked(a.store.Data(), routerCopy.AccountID, routerCopy.ID, model.CmdUserSet, payload)
+		a.logActivity(a.store.Data(), acc, "user", "Utilisateur "+u.Username+" modifié (en attente du routeur, commande "+cmd.ID+")")
 		a.store.Save()
 		a.store.Unlock()
 		writeJSON(w, http.StatusOK, u)
@@ -1506,14 +1694,14 @@ func (a *API) handleUserUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		a.store.Lock()
-		if existing := findUser(a.store.Data(), id); existing != nil {
+		if existing := findUserScoped(a.store.Data(), id, acc); existing != nil {
 			*existing = u
 		}
 		a.store.Unlock()
 	}
 
 	a.store.Lock()
-	a.logActivity(a.store.Data(), "user", "Utilisateur "+u.Username+" modifié")
+	a.logActivity(a.store.Data(), acc, "user", "Utilisateur "+u.Username+" modifié")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, u)
@@ -1528,17 +1716,18 @@ func (a *API) handleUserDisable(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) userSetStatus(w http.ResponseWriter, r *http.Request, action string) {
+	acc := accountScope(r)
 	id := r.PathValue("id")
 	a.store.Lock()
 	db := a.store.Data()
-	cur := findUser(db, id)
+	cur := findUserScoped(db, id, acc)
 	if cur == nil {
 		a.store.Unlock()
 		writeErr(w, http.StatusNotFound, "Utilisateur introuvable")
 		return
 	}
 	username := cur.Username
-	router := findRouter(db, cur.RouterID)
+	router := findRouterScoped(db, cur.RouterID, acc)
 	var routerCopy *model.Router
 	if router != nil {
 		c := *router
@@ -1550,7 +1739,7 @@ func (a *API) userSetStatus(w http.ResponseWriter, r *http.Request, action strin
 	if routerCopy != nil && routerCopy.Mode == "agent" {
 		// Mode agent : persistance + commande user_set (disabled) en file.
 		a.store.Lock()
-		if u := findUser(a.store.Data(), id); u != nil {
+		if u := findUserScoped(a.store.Data(), id, acc); u != nil {
 			if action == "enable" {
 				u.Status = "active"
 			} else {
@@ -1560,7 +1749,7 @@ func (a *API) userSetStatus(w http.ResponseWriter, r *http.Request, action strin
 			updated = &c
 		}
 		if updated != nil {
-			queueCommandLocked(a.store.Data(), routerCopy.ID, model.CmdUserSet, map[string]any{
+			queueCommandLocked(a.store.Data(), routerCopy.AccountID, routerCopy.ID, model.CmdUserSet, map[string]any{
 				"oldName":  agent.SanitizeName(username),
 				"name":     agent.SanitizeName(username),
 				"disabled": action == "disable",
@@ -1569,7 +1758,7 @@ func (a *API) userSetStatus(w http.ResponseWriter, r *http.Request, action strin
 			if action == "disable" {
 				verb = "désactivé"
 			}
-			a.logActivity(a.store.Data(), "user", "Utilisateur "+username+" "+verb+" (en attente du routeur)")
+			a.logActivity(a.store.Data(), acc, "user", "Utilisateur "+username+" "+verb+" (en attente du routeur)")
 			a.store.Save()
 		}
 		a.store.Unlock()
@@ -1594,7 +1783,7 @@ func (a *API) userSetStatus(w http.ResponseWriter, r *http.Request, action strin
 		}
 	} else {
 		a.store.Lock()
-		if u := findUser(a.store.Data(), id); u != nil {
+		if u := findUserScoped(a.store.Data(), id, acc); u != nil {
 			if action == "enable" {
 				u.Status = "active"
 			} else {
@@ -1615,24 +1804,25 @@ func (a *API) userSetStatus(w http.ResponseWriter, r *http.Request, action strin
 	if action == "disable" {
 		verb = "désactivé"
 	}
-	a.logActivity(a.store.Data(), "user", "Utilisateur "+username+" "+verb)
+	a.logActivity(a.store.Data(), acc, "user", "Utilisateur "+username+" "+verb)
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, updated)
 }
 
 func (a *API) handleUserDelete(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	id := r.PathValue("id")
 	a.store.Lock()
 	db := a.store.Data()
-	cur := findUser(db, id)
+	cur := findUserScoped(db, id, acc)
 	if cur == nil {
 		a.store.Unlock()
 		writeErr(w, http.StatusNotFound, "Utilisateur introuvable")
 		return
 	}
 	username := cur.Username
-	router := findRouter(db, cur.RouterID)
+	router := findRouterScoped(db, cur.RouterID, acc)
 	var routerCopy *model.Router
 	if router != nil {
 		c := *router
@@ -1644,9 +1834,9 @@ func (a *API) handleUserDelete(w http.ResponseWriter, r *http.Request) {
 		// Mode agent : suppression immédiate côté cloud + commande user_remove en file.
 		a.store.Lock()
 		a.removeUserByID(id)
-		queueCommandLocked(a.store.Data(), routerCopy.ID, model.CmdUserRemove,
+		queueCommandLocked(a.store.Data(), routerCopy.AccountID, routerCopy.ID, model.CmdUserRemove,
 			map[string]any{"names": []string{agent.SanitizeName(username)}})
-		a.logActivity(a.store.Data(), "user", "Utilisateur "+username+" supprimé (en attente du routeur)")
+		a.logActivity(a.store.Data(), acc, "user", "Utilisateur "+username+" supprimé (en attente du routeur)")
 		a.store.Save()
 		a.store.Unlock()
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -1674,7 +1864,7 @@ func (a *API) handleUserDelete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	db.Sessions = sessions
-	a.logActivity(db, "user", "Utilisateur "+username+" supprimé")
+	a.logActivity(db, acc, "user", "Utilisateur "+username+" supprimé")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -1695,6 +1885,7 @@ func (a *API) removeUserByID(id string) {
 // ---------------------------------------------------------------------------
 
 func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	var req struct {
 		Count      int    `json:"count"`
 		ProfileID  string `json:"profileId"`
@@ -1728,13 +1919,13 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 	// Validation + génération des vouchers (sous verrou)
 	a.store.Lock()
 	db := a.store.Data()
-	profile := findProfile(db, strings.TrimSpace(req.ProfileID))
+	profile := findProfileScoped(db, strings.TrimSpace(req.ProfileID), acc)
 	if profile == nil {
 		a.store.Unlock()
 		writeErr(w, http.StatusBadRequest, "Profil introuvable")
 		return
 	}
-	router := findRouter(db, strings.TrimSpace(req.RouterID))
+	router := findRouterScoped(db, strings.TrimSpace(req.RouterID), acc)
 	if router == nil {
 		a.store.Unlock()
 		writeErr(w, http.StatusBadRequest, "Routeur introuvable")
@@ -1743,7 +1934,7 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 	routerCopy := *router
 	var resellerCopy *model.Reseller
 	if strings.TrimSpace(req.ResellerID) != "" {
-		res := findReseller(db, strings.TrimSpace(req.ResellerID))
+		res := findResellerScoped(db, strings.TrimSpace(req.ResellerID), acc)
 		if res == nil {
 			a.store.Unlock()
 			writeErr(w, http.StatusBadRequest, "Revendeur introuvable")
@@ -1764,7 +1955,7 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 	vouchers := make([]model.HotspotUser, 0, req.Count)
 	for i := 0; i < req.Count; i++ {
 		code := model.RandomCode(codeLength)
-		for j := 0; j < 50 && usernameTaken(db, prefix+code); j++ {
+		for j := 0; j < 50 && usernameTaken(db, acc, prefix+code); j++ {
 			code = model.RandomCode(codeLength)
 		}
 		password := model.RandomCode(codeLength)
@@ -1772,7 +1963,7 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 			password = model.RandomCode(codeLength)
 		}
 		u := model.HotspotUser{
-			ID: model.NewID("v-"), Kind: "voucher", Username: prefix + code, Password: password,
+			ID: model.NewID("v-"), AccountID: acc, Kind: "voucher", Username: prefix + code, Password: password,
 			ProfileID: profile.ID, ProfileName: profile.Name,
 			RouterID: routerCopy.ID, RouterName: routerCopy.Name,
 			Status: "active", BatchID: batchID,
@@ -1798,27 +1989,27 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 		a.store.Lock()
 		db = a.store.Data()
 		db.HotspotUsers = append(db.HotspotUsers, vouchers...)
-		cmd := queueCommandLocked(db, routerCopy.ID, model.CmdVoucherBatch, map[string]any{
+		cmd := queueCommandLocked(db, routerCopy.AccountID, routerCopy.ID, model.CmdVoucherBatch, map[string]any{
 			"profile": profileRef(*profile), "users": names, "batch": batchID,
 		})
-		a.logActivity(db, "voucher", fmt.Sprintf("Lot %s : %d vouchers en file pour «%s» (commande %s)", batchID, req.Count, routerCopy.Name, cmd.ID))
+		a.logActivity(db, acc, "voucher", fmt.Sprintf("Lot %s : %d vouchers en file pour «%s» (commande %s)", batchID, req.Count, routerCopy.Name, cmd.ID))
 		// Bookkeeping : vente, transaction, portefeuille revendeur
 		channel := "direct"
 		resName := ""
 		if resellerCopy != nil {
 			channel = "reseller"
 			resName = resellerCopy.Name
-			if res := findReseller(db, resellerCopy.ID); res != nil {
+			if res := findResellerScoped(db, resellerCopy.ID, acc); res != nil {
 				res.Credit -= cost
 			}
 			db.Transactions = append([]model.Transaction{{
-				ID: model.NewID("tx-"), Type: "sale", ResellerID: resellerCopy.ID, ResellerName: resName,
+				ID: model.NewID("tx-"), AccountID: acc, Type: "sale", ResellerID: resellerCopy.ID, ResellerName: resName,
 				Amount: cost, Note: fmt.Sprintf("Achat de %d vouchers (%s)", req.Count, profile.Name),
 				At: model.NowISO(),
 			}}, db.Transactions...)
 		}
 		db.Sales = append(db.Sales, model.Sale{
-			ID: model.NewID("sale-"), Amount: cost, ProfileName: profile.Name, Count: req.Count,
+			ID: model.NewID("sale-"), AccountID: acc, Amount: cost, ProfileName: profile.Name, Count: req.Count,
 			Channel: channel, ResellerName: resName,
 			RouterID: routerCopy.ID, RouterName: routerCopy.Name, BatchID: batchID,
 			At: model.NowISO(),
@@ -1828,7 +2019,7 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 			batchResellerID = resellerCopy.ID
 		}
 		db.Batches = append([]model.Batch{{
-			ID: batchID, ProfileID: profile.ID, ProfileName: profile.Name,
+			ID: batchID, AccountID: acc, ProfileID: profile.ID, ProfileName: profile.Name,
 			RouterID: routerCopy.ID, RouterName: routerCopy.Name,
 			Count: req.Count, UnitPrice: profile.Price, TotalCost: cost,
 			Channel: channel, ResellerID: batchResellerID, ResellerName: resName,
@@ -1864,17 +2055,17 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 	if resellerCopy != nil {
 		channel = "reseller"
 		resName = resellerCopy.Name
-		if res := findReseller(db, resellerCopy.ID); res != nil {
+		if res := findResellerScoped(db, resellerCopy.ID, acc); res != nil {
 			res.Credit -= cost
 		}
 		db.Transactions = append([]model.Transaction{{
-			ID: model.NewID("tx-"), Type: "sale", ResellerID: resellerCopy.ID, ResellerName: resName,
+			ID: model.NewID("tx-"), AccountID: acc, Type: "sale", ResellerID: resellerCopy.ID, ResellerName: resName,
 			Amount: cost, Note: fmt.Sprintf("Achat de %d vouchers (%s)", req.Count, profile.Name),
 			At: model.NowISO(),
 		}}, db.Transactions...)
 	}
 	db.Sales = append(db.Sales, model.Sale{
-		ID: model.NewID("sale-"), Amount: cost, ProfileName: profile.Name, Count: req.Count,
+		ID: model.NewID("sale-"), AccountID: acc, Amount: cost, ProfileName: profile.Name, Count: req.Count,
 		Channel: channel, ResellerName: resName,
 		RouterID: routerCopy.ID, RouterName: routerCopy.Name, BatchID: batchID,
 		At: model.NowISO(),
@@ -1884,7 +2075,7 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 		batchResellerID = resellerCopy.ID
 	}
 	db.Batches = append([]model.Batch{{
-		ID: batchID, ProfileID: profile.ID, ProfileName: profile.Name,
+		ID: batchID, AccountID: acc, ProfileID: profile.ID, ProfileName: profile.Name,
 		RouterID: routerCopy.ID, RouterName: routerCopy.Name,
 		Count: req.Count, UnitPrice: profile.Price, TotalCost: cost,
 		Channel: channel, ResellerID: batchResellerID, ResellerName: resName,
@@ -1894,7 +2085,7 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 	if resName != "" {
 		msg += " pour " + resName
 	}
-	a.logActivity(db, "voucher", msg)
+	a.logActivity(db, acc, "voucher", msg)
 	a.store.Save()
 	a.store.Unlock()
 
@@ -1906,18 +2097,19 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleVouchersBatchDelete(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	batchID := r.PathValue("batchId")
 	a.store.Lock()
 	db := a.store.Data()
 	targets := []model.HotspotUser{}
 	for _, u := range db.HotspotUsers {
-		if u.Kind == "voucher" && u.BatchID == batchID {
+		if u.AccountID == acc && u.Kind == "voucher" && u.BatchID == batchID {
 			targets = append(targets, u)
 		}
 	}
 	routerCopies := map[string]model.Router{}
 	for _, u := range targets {
-		if rr := findRouter(db, u.RouterID); rr != nil {
+		if rr := findRouterScoped(db, u.RouterID, acc); rr != nil {
 			if _, ok := routerCopies[rr.ID]; !ok {
 				routerCopies[rr.ID] = *rr
 			}
@@ -1945,7 +2137,7 @@ func (a *API) handleVouchersBatchDelete(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 		a.store.Lock()
-		queueCommandLocked(a.store.Data(), rid, model.CmdUserRemove, map[string]any{"names": names})
+		queueCommandLocked(a.store.Data(), rc.AccountID, rid, model.CmdUserRemove, map[string]any{"names": names})
 		a.store.Save()
 		a.store.Unlock()
 	}
@@ -1971,23 +2163,23 @@ func (a *API) handleVouchersBatchDelete(w http.ResponseWriter, r *http.Request) 
 	db = a.store.Data()
 	remaining := db.HotspotUsers[:0]
 	for _, u := range db.HotspotUsers {
-		if u.Kind == "voucher" && u.BatchID == batchID {
+		if u.AccountID == acc && u.Kind == "voucher" && u.BatchID == batchID {
 			deleted++
 			continue
 		}
 		remaining = append(remaining, u)
 	}
 	db.HotspotUsers = remaining
-	// retire aussi l'enregistrement du lot (traçabilité)
+	// retire aussi l'enregistrement du lot (traçabilité) — du compte seul
 	batches := db.Batches[:0]
 	for _, b := range db.Batches {
-		if b.ID == batchID {
+		if b.AccountID == acc && b.ID == batchID {
 			continue
 		}
 		batches = append(batches, b)
 	}
 	db.Batches = batches
-	a.logActivity(db, fmt.Sprintf("voucher"), fmt.Sprintf("Lot %s supprimé (%d vouchers)", batchID, deleted))
+	a.logActivity(db, acc, "voucher", fmt.Sprintf("Lot %s supprimé (%d vouchers)", batchID, deleted))
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "deleted": deleted})
@@ -1998,14 +2190,20 @@ func (a *API) handleVouchersBatchDelete(w http.ResponseWriter, r *http.Request) 
 // ---------------------------------------------------------------------------
 
 func (a *API) handleSessionsList(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	now := time.Now().UTC()
 	a.store.Lock()
 	db := a.store.Data()
-	store.Tick(db, now) // fait vivre la simulation
-	sessions := append([]model.Session{}, db.Sessions...)
+	store.Tick(db, now) // fait vivre la simulation (tous comptes)
+	sessions := []model.Session{}
+	for _, s := range db.Sessions {
+		if s.AccountID == acc {
+			sessions = append(sessions, s)
+		}
+	}
 	realRouters := []model.Router{}
 	for _, rr := range db.Routers {
-		if rr.Mode == "real" {
+		if rr.Mode == "real" && rr.AccountID == acc {
 			realRouters = append(realRouters, rr)
 		}
 	}
@@ -2024,12 +2222,13 @@ func (a *API) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleSessionKick(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	id := r.PathValue("id")
 	a.store.Lock()
 	db := a.store.Data()
 	idx := -1
 	for i := range db.Sessions {
-		if db.Sessions[i].ID == id {
+		if db.Sessions[i].ID == id && db.Sessions[i].AccountID == acc {
 			idx = i
 			break
 		}
@@ -2038,14 +2237,14 @@ func (a *API) handleSessionKick(w http.ResponseWriter, r *http.Request) {
 	var routerCopy *model.Router
 	if idx >= 0 {
 		username = db.Sessions[idx].Username
-		if rr := findRouter(db, db.Sessions[idx].RouterID); rr != nil {
+		if rr := findRouterScoped(db, db.Sessions[idx].RouterID, acc); rr != nil {
 			c := *rr
 			routerCopy = &c
 		}
 	}
 	realRouters := []model.Router{}
 	for _, rr := range db.Routers {
-		if rr.Mode == "real" {
+		if rr.Mode == "real" && rr.AccountID == acc {
 			realRouters = append(realRouters, rr)
 		}
 	}
@@ -2063,8 +2262,8 @@ func (a *API) handleSessionKick(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			db.Sessions = sessions
-			queueCommandLocked(db, routerCopy.ID, model.CmdKick, map[string]any{"user": agent.SanitizeName(username)})
-			a.logActivity(db, "session", "Session de "+username+" fermée (kick, en attente du routeur)")
+			queueCommandLocked(db, routerCopy.AccountID, routerCopy.ID, model.CmdKick, map[string]any{"user": agent.SanitizeName(username)})
+			a.logActivity(db, acc, "session", "Session de "+username+" fermée (kick, en attente du routeur)")
 			a.store.Save()
 			a.store.Unlock()
 		}
@@ -2110,7 +2309,7 @@ func (a *API) handleSessionKick(w http.ResponseWriter, r *http.Request) {
 	if username != "" {
 		msg = "Session de " + username + " fermée (kick)"
 	}
-	a.logActivity(a.store.Data(), "session", msg)
+	a.logActivity(a.store.Data(), acc, "session", msg)
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -2121,14 +2320,21 @@ func (a *API) handleSessionKick(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 func (a *API) handleResellersList(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	a.store.Lock()
-	rs := append([]model.Reseller{}, a.store.Data().Resellers...)
+	rs := []model.Reseller{}
+	for _, res := range a.store.Data().Resellers {
+		if res.AccountID == acc {
+			rs = append(rs, res)
+		}
+	}
 	a.store.Unlock()
 	sort.Slice(rs, func(i, j int) bool { return rs[i].CreatedAt > rs[j].CreatedAt })
 	writeJSON(w, http.StatusOK, rs)
 }
 
 func (a *API) handleResellerCreate(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	var req struct {
 		Name     string `json:"name"`
 		Username string `json:"username"`
@@ -2152,24 +2358,25 @@ func (a *API) handleResellerCreate(w http.ResponseWriter, r *http.Request) {
 	a.store.Lock()
 	db := a.store.Data()
 	for _, res := range db.Resellers {
-		if strings.EqualFold(res.Username, username) {
+		if res.AccountID == acc && strings.EqualFold(res.Username, username) {
 			a.store.Unlock()
 			writeErr(w, http.StatusBadRequest, "Ce nom d'utilisateur revendeur existe déjà")
 			return
 		}
 	}
 	reseller := model.Reseller{
-		ID: model.NewID("res-"), Name: name, Username: username, Phone: strings.TrimSpace(req.Phone),
+		ID: model.NewID("res-"), AccountID: acc, Name: name, Username: username, Phone: strings.TrimSpace(req.Phone),
 		Credit: req.Credit, VouchersSold: 0, Revenue: 0, Status: "active", CreatedAt: model.NowISO(),
 	}
 	db.Resellers = append(db.Resellers, reseller)
-	a.logActivity(db, "reseller", "Revendeur "+reseller.Name+" créé")
+	a.logActivity(db, acc, "reseller", "Revendeur "+reseller.Name+" créé")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, reseller)
 }
 
 func (a *API) handleResellerUpdate(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	id := r.PathValue("id")
 	var req struct {
 		Name   *string `json:"name"`
@@ -2182,7 +2389,7 @@ func (a *API) handleResellerUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	a.store.Lock()
 	db := a.store.Data()
-	res := findReseller(db, id)
+	res := findResellerScoped(db, id, acc)
 	if res == nil {
 		a.store.Unlock()
 		writeErr(w, http.StatusNotFound, "Revendeur introuvable")
@@ -2209,19 +2416,20 @@ func (a *API) handleResellerUpdate(w http.ResponseWriter, r *http.Request) {
 		res.Status = *req.Status
 	}
 	updated := *res
-	a.logActivity(db, "reseller", "Revendeur "+updated.Name+" modifié")
+	a.logActivity(db, acc, "reseller", "Revendeur "+updated.Name+" modifié")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, updated)
 }
 
 func (a *API) handleResellerDelete(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	id := r.PathValue("id")
 	a.store.Lock()
 	db := a.store.Data()
 	idx := -1
 	for i := range db.Resellers {
-		if db.Resellers[i].ID == id {
+		if db.Resellers[i].ID == id && db.Resellers[i].AccountID == acc {
 			idx = i
 			break
 		}
@@ -2233,13 +2441,14 @@ func (a *API) handleResellerDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	name := db.Resellers[idx].Name
 	db.Resellers = append(db.Resellers[:idx], db.Resellers[idx+1:]...)
-	a.logActivity(db, "reseller", "Revendeur "+name+" supprimé")
+	a.logActivity(db, acc, "reseller", "Revendeur "+name+" supprimé")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (a *API) handleResellerCredit(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	id := r.PathValue("id")
 	var req struct {
 		Amount int    `json:"amount"`
@@ -2255,7 +2464,7 @@ func (a *API) handleResellerCredit(w http.ResponseWriter, r *http.Request) {
 	}
 	a.store.Lock()
 	db := a.store.Data()
-	res := findReseller(db, id)
+	res := findResellerScoped(db, id, acc)
 	if res == nil {
 		a.store.Unlock()
 		writeErr(w, http.StatusNotFound, "Revendeur introuvable")
@@ -2277,14 +2486,14 @@ func (a *API) handleResellerCredit(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	tx := model.Transaction{
-		ID: model.NewID("tx-"), Type: "credit", ResellerID: res.ID, ResellerName: res.Name,
+		ID: model.NewID("tx-"), AccountID: acc, Type: "credit", ResellerID: res.ID, ResellerName: res.Name,
 		Amount: req.Amount, Note: note, At: model.NowISO(),
 	}
 	db.Transactions = append([]model.Transaction{tx}, db.Transactions...)
 	if req.Amount > 0 {
-		a.logActivity(db, "reseller", fmt.Sprintf("Crédit de %d FCFA ajouté à %s", req.Amount, res.Name))
+		a.logActivity(db, acc, "reseller", fmt.Sprintf("Crédit de %d FCFA ajouté à %s", req.Amount, res.Name))
 	} else {
-		a.logActivity(db, "reseller", fmt.Sprintf("Débit de %d FCFA sur %s", -req.Amount, res.Name))
+		a.logActivity(db, acc, "reseller", fmt.Sprintf("Débit de %d FCFA sur %s", -req.Amount, res.Name))
 	}
 	updated := *res
 	a.store.Save()
@@ -2297,9 +2506,15 @@ func (a *API) handleResellerCredit(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 func (a *API) handleTransactionsList(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	limit := queryInt(r, "limit", 20, 1, 200)
 	a.store.Lock()
-	txs := append([]model.Transaction{}, a.store.Data().Transactions...)
+	txs := []model.Transaction{}
+	for _, tx := range a.store.Data().Transactions {
+		if tx.AccountID == acc {
+			txs = append(txs, tx)
+		}
+	}
 	a.store.Unlock()
 	sort.Slice(txs, func(i, j int) bool { return txs[i].At > txs[j].At })
 	if len(txs) > limit {
@@ -2309,10 +2524,16 @@ func (a *API) handleTransactionsList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleActivityList(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	limit := queryInt(r, "limit", 20, 1, 200)
 	a.store.Lock()
 	db := a.store.Data()
-	acts := append([]model.Activity{}, db.Activity...)
+	acts := []model.Activity{}
+	for _, act := range db.Activity {
+		if act.AccountID == acc {
+			acts = append(acts, act)
+		}
+	}
 	a.store.Unlock()
 	sort.Slice(acts, func(i, j int) bool { return acts[i].At > acts[j].At })
 	if len(acts) > limit {
@@ -2322,6 +2543,7 @@ func (a *API) handleActivityList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleReports(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	days := 7
 	if raw := r.URL.Query().Get("days"); raw != "" {
 		v, err := strconv.Atoi(raw)
@@ -2335,7 +2557,7 @@ func (a *API) handleReports(w http.ResponseWriter, r *http.Request) {
 	a.store.Lock()
 	db := a.store.Data()
 
-	revenueByDay := buildRevenueByDay(db, now, days)
+	revenueByDay := buildRevenueByDay(db, acc, now, days)
 
 	since := now.AddDate(0, 0, -days)
 	profCount := map[string]int{}
@@ -2345,6 +2567,9 @@ func (a *API) handleReports(w http.ResponseWriter, r *http.Request) {
 		sales   int
 	}{}
 	for _, s := range db.Sales {
+		if s.AccountID != acc {
+			continue
+		}
 		at, err := time.Parse(time.RFC3339, s.At)
 		if err != nil || at.Before(since) {
 			continue
@@ -2373,15 +2598,25 @@ func (a *API) handleReports(w http.ResponseWriter, r *http.Request) {
 	trafficByDay := []trafficPoint{}
 	todayKey := now.Format("2006-01-02")
 	var todayIn, todayOut int64
+	accSessions := 0
 	for _, s := range db.Sessions {
+		if s.AccountID != acc {
+			continue
+		}
+		accSessions++
 		todayIn += s.BytesIn
 		todayOut += s.BytesOut
 	}
+	// La courbe synthétique de trafic est mise à l'échelle du compte
+	// (~24 sessions = trafic nominal ; compte vide → trafic nul).
+	trafficScale := float64(accSessions) / 24.0
 	for i := days - 1; i >= 0; i-- {
 		day := now.AddDate(0, 0, -i)
 		rnd := rand.New(rand.NewSource(day.Unix()))
 		bIn := int64(120_000_000_000) + rnd.Int63n(300_000_000_000)
 		bOut := int64(15_000_000_000) + rnd.Int63n(55_000_000_000)
+		bIn = int64(math.Round(float64(bIn) * trafficScale))
+		bOut = int64(math.Round(float64(bOut) * trafficScale))
 		if day.Format("2006-01-02") == todayKey {
 			bIn += todayIn
 			bOut += todayOut
@@ -2394,6 +2629,9 @@ func (a *API) handleReports(w http.ResponseWriter, r *http.Request) {
 	voucherStatus := map[string]int{"active": 0, "used": 0, "expired": 0, "disabled": 0}
 	for i := range db.HotspotUsers {
 		u := &db.HotspotUsers[i]
+		if u.AccountID != acc {
+			continue
+		}
 		if u.Kind == "voucher" {
 			voucherStatus[model.EffectiveStatus(u, now)]++
 		}
@@ -2435,7 +2673,11 @@ func (a *API) handleWaveLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.store.Lock()
-	waveLink := a.store.Data().Settings.Tenant.WaveLink
+	acc := accountScope(r)
+	waveLink := ""
+	if s, ok := a.store.Data().SettingsByAccount[acc]; ok {
+		waveLink = s.Tenant.WaveLink
+	}
 	a.store.Unlock()
 	if strings.TrimSpace(waveLink) == "" {
 		writeErr(w, http.StatusConflict, "Lien marchand Wave non configuré (Settings → Lien Wave)")
@@ -2451,6 +2693,7 @@ func (a *API) handleWaveLink(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleAccounting(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	q := r.URL.Query()
 	period := q.Get("period")
 	if period == "" {
@@ -2463,7 +2706,7 @@ func (a *API) handleAccounting(w http.ResponseWriter, r *http.Request) {
 	routerID := strings.TrimSpace(q.Get("routerId")) // "" ou "all" = tous les sites
 
 	a.store.Lock()
-	result := buildAccounting(a.store.Data(), period, routerID, time.Now().UTC())
+	result := buildAccounting(a.store.Data(), acc, period, routerID, time.Now().UTC())
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, result)
 }
@@ -2471,6 +2714,7 @@ func (a *API) handleAccounting(w http.ResponseWriter, r *http.Request) {
 // handleAccountingExport — export CSV (séparateur « ; », BOM UTF-8 pour Excel)
 // de la comptabilité : une ligne par période + totaux + répartition par site.
 func (a *API) handleAccountingExport(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	q := r.URL.Query()
 	period := q.Get("period")
 	if period == "" {
@@ -2483,8 +2727,8 @@ func (a *API) handleAccountingExport(w http.ResponseWriter, r *http.Request) {
 	routerID := strings.TrimSpace(q.Get("routerId"))
 
 	a.store.Lock()
-	result := buildAccounting(a.store.Data(), period, routerID, time.Now().UTC())
-	tenantName := a.store.Data().Settings.Tenant.Name
+	result := buildAccounting(a.store.Data(), acc, period, routerID, time.Now().UTC())
+	tenantName := ensureSettings(a.store.Data(), acc).Tenant.Name
 	a.store.Unlock()
 
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
@@ -2536,7 +2780,7 @@ func csvField(s string) string {
 
 // buildAccounting — cœur de calcul partagé entre la réponse JSON et l'export CSV
 // (l'appelant tient le verrou du store).
-func buildAccounting(db *model.DB, period, routerID string, now time.Time) map[string]any {
+func buildAccounting(db *model.DB, acc, period, routerID string, now time.Time) map[string]any {
 	// Découpage en buckets + fenêtre d'analyse.
 	var buckets []time.Time
 	var labels []string
@@ -2585,7 +2829,9 @@ func buildAccounting(db *model.DB, period, routerID string, now time.Time) map[s
 
 	routerNames := map[string]string{}
 	for _, rr := range db.Routers {
-		routerNames[rr.ID] = rr.Name
+		if rr.AccountID == acc {
+			routerNames[rr.ID] = rr.Name
+		}
 	}
 
 	totalsRevenue, totalsSales := 0, 0
@@ -2593,6 +2839,9 @@ func buildAccounting(db *model.DB, period, routerID string, now time.Time) map[s
 	byRouterSales := map[string]int{}
 
 	for _, s := range db.Sales {
+		if s.AccountID != acc {
+			continue
+		}
 		at, err := time.Parse(time.RFC3339, s.At)
 		if err != nil || at.Before(windowStart) {
 			continue
@@ -2667,6 +2916,7 @@ func buildAccounting(db *model.DB, period, routerID string, now time.Time) map[s
 // ---------------------------------------------------------------------------
 
 func (a *API) handleBatchesList(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	q := r.URL.Query()
 	search := strings.ToLower(strings.TrimSpace(q.Get("search")))
 	routerID := strings.TrimSpace(q.Get("routerId"))
@@ -2684,7 +2934,7 @@ func (a *API) handleBatchesList(w http.ResponseWriter, r *http.Request) {
 	stats := map[string]*liveStats{}
 	for i := range db.HotspotUsers {
 		u := &db.HotspotUsers[i]
-		if u.Kind != "voucher" || u.BatchID == "" {
+		if u.AccountID != acc || u.Kind != "voucher" || u.BatchID == "" {
 			continue
 		}
 		st, ok := stats[u.BatchID]
@@ -2715,6 +2965,9 @@ func (a *API) handleBatchesList(w http.ResponseWriter, r *http.Request) {
 	}
 	filtered := []batchRow{}
 	for _, b := range db.Batches {
+		if b.AccountID != acc {
+			continue
+		}
 		if routerID != "" && routerID != "all" && b.RouterID != routerID {
 			continue
 		}
@@ -2755,14 +3008,15 @@ func (a *API) handleBatchesList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleSettingsGet(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	a.store.Lock()
-	db := a.store.Data()
-	settings := model.Settings{Tenant: db.Tenant, Plan: db.Settings.Plan}
+	settings := ensureSettings(a.store.Data(), acc)
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, settings)
 }
 
 func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	var req struct {
 		Name     *string `json:"name"`
 		Currency *string `json:"currency"`
@@ -2775,32 +3029,176 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	}
 	a.store.Lock()
 	db := a.store.Data()
+	settings := ensureSettings(db, acc) // créés avec les défauts FCFA si absents
 	if req.Name != nil && strings.TrimSpace(*req.Name) != "" {
-		db.Tenant.Name = strings.TrimSpace(*req.Name)
+		settings.Tenant.Name = strings.TrimSpace(*req.Name)
 	}
 	if req.Currency != nil && strings.TrimSpace(*req.Currency) != "" {
-		db.Tenant.Currency = strings.TrimSpace(*req.Currency)
+		settings.Tenant.Currency = strings.TrimSpace(*req.Currency)
 	}
 	if req.Timezone != nil && strings.TrimSpace(*req.Timezone) != "" {
-		db.Tenant.Timezone = strings.TrimSpace(*req.Timezone)
+		settings.Tenant.Timezone = strings.TrimSpace(*req.Timezone)
 	}
 	if req.WaveLink != nil {
-		db.Tenant.WaveLink = strings.TrimSpace(*req.WaveLink) // vide = désactivé
+		settings.Tenant.WaveLink = strings.TrimSpace(*req.WaveLink) // vide = désactivé
 	}
-	db.Settings.Tenant = db.Tenant
-	settings := model.Settings{Tenant: db.Tenant, Plan: db.Settings.Plan}
-	a.logActivity(db, "system", "Paramètres du tenant mis à jour")
+	db.SettingsByAccount[acc] = settings
+	a.logActivity(db, acc, "system", "Paramètres du tenant mis à jour")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, settings)
 }
 
 func (a *API) handleReset(w http.ResponseWriter, r *http.Request) {
+	if !isPlatformAdmin(r) {
+		writeErr(w, http.StatusForbidden, "Réservé aux administrateurs de la plateforme")
+		return
+	}
 	a.store.Reset()
 	a.store.Lock()
-	a.logActivity(a.store.Data(), "system", "Données de démonstration réinitialisées")
+	a.logActivity(a.store.Data(), accountScope(r), "system", "Données de démonstration réinitialisées")
 	a.store.Save()
 	a.store.Unlock()
 	a.clearGateways()
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// ---------------------------------------------------------------------------
+// Administration plateforme (rôle admin) — gestion des comptes SaaS
+// ---------------------------------------------------------------------------
+
+// handleAdminAccounts — liste tous les comptes SaaS (triés par création
+// décroissante) avec le login de leur propriétaire et des statistiques d'usage.
+// Réservé au rôle « admin » (super-administrateur MikCloud).
+func (a *API) handleAdminAccounts(w http.ResponseWriter, r *http.Request) {
+	if !isPlatformAdmin(r) {
+		writeErr(w, http.StatusForbidden, "Réservé aux administrateurs de la plateforme")
+		return
+	}
+	now := time.Now().UTC()
+	cutoff30 := now.AddDate(0, 0, -30)
+	a.store.Lock()
+	db := a.store.Data()
+
+	type accountStats struct {
+		Users      int `json:"users"`
+		Routers    int `json:"routers"`
+		Sessions   int `json:"sessions"`
+		Sales30d   int `json:"sales30d"`
+		Revenue30d int `json:"revenue30d"`
+	}
+	type accountRow struct {
+		ID        string       `json:"id"`
+		Name      string       `json:"name"`
+		Status    string       `json:"status"`
+		CreatedAt string       `json:"createdAt"`
+		Owner     string       `json:"owner"`
+		Stats     accountStats `json:"stats"`
+	}
+
+	stats := map[string]*accountStats{}
+	for i := range db.Accounts {
+		stats[db.Accounts[i].ID] = &accountStats{}
+	}
+	// Propriétaire = premier utilisateur (owner ou admin) du compte.
+	owners := map[string]string{}
+	for i := range db.Users {
+		u := &db.Users[i]
+		if _, ok := stats[u.AccountID]; !ok {
+			continue
+		}
+		if u.Role == "owner" || u.Role == "admin" {
+			if _, seen := owners[u.AccountID]; !seen {
+				owners[u.AccountID] = u.Username
+			}
+		}
+	}
+	for i := range db.HotspotUsers {
+		if st, ok := stats[db.HotspotUsers[i].AccountID]; ok {
+			st.Users++
+		}
+	}
+	for i := range db.Routers {
+		if st, ok := stats[db.Routers[i].AccountID]; ok {
+			st.Routers++
+		}
+	}
+	for i := range db.Sessions {
+		if st, ok := stats[db.Sessions[i].AccountID]; ok {
+			st.Sessions++
+		}
+	}
+	for i := range db.Sales {
+		s := db.Sales[i]
+		st, ok := stats[s.AccountID]
+		if !ok {
+			continue
+		}
+		if at, err := time.Parse(time.RFC3339, s.At); err == nil && at.After(cutoff30) {
+			st.Sales30d++
+			st.Revenue30d += s.Amount
+		}
+	}
+	rows := make([]accountRow, 0, len(db.Accounts))
+	for i := range db.Accounts {
+		acc := db.Accounts[i]
+		rows = append(rows, accountRow{
+			ID: acc.ID, Name: acc.Name, Status: acc.Status, CreatedAt: acc.CreatedAt,
+			Owner: owners[acc.ID], Stats: *stats[acc.ID],
+		})
+	}
+	a.store.Unlock()
+
+	sort.Slice(rows, func(i, j int) bool { return rows[i].CreatedAt > rows[j].CreatedAt })
+	writeJSON(w, http.StatusOK, rows)
+}
+
+// handleAdminAccountStatus — active ou désactive un compte SaaS. Effet immédiat :
+// les tokens du compte sont bloqués par le middleware (401) et le login est
+// refusé (403). Le compte principal ne peut pas être désactivé.
+func (a *API) handleAdminAccountStatus(w http.ResponseWriter, r *http.Request) {
+	if !isPlatformAdmin(r) {
+		writeErr(w, http.StatusForbidden, "Réservé aux administrateurs de la plateforme")
+		return
+	}
+	id := r.PathValue("id")
+	var req struct {
+		Status string `json:"status"`
+	}
+	if err := decodeBody(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
+		return
+	}
+	if req.Status != "active" && req.Status != "disabled" {
+		writeErr(w, http.StatusBadRequest, "Statut invalide (active ou disabled)")
+		return
+	}
+	a.store.Lock()
+	db := a.store.Data()
+	var acc *model.Account
+	for i := range db.Accounts {
+		if db.Accounts[i].ID == id {
+			acc = &db.Accounts[i]
+			break
+		}
+	}
+	if acc == nil {
+		a.store.Unlock()
+		writeErr(w, http.StatusNotFound, "Compte introuvable")
+		return
+	}
+	if id == model.AccountMainID {
+		a.store.Unlock()
+		writeErr(w, http.StatusBadRequest, "Le compte principal ne peut pas être désactivé")
+		return
+	}
+	acc.Status = req.Status
+	verb := "activé"
+	if req.Status == "disabled" {
+		verb = "désactivé"
+	}
+	a.logActivity(db, accountScope(r), "system", "Compte «"+acc.Name+"» "+verb)
+	a.store.Save()
+	a.store.Unlock()
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

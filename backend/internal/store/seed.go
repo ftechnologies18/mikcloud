@@ -17,7 +17,8 @@ import (
 // seedRandomSource — source déterministe : la structure du seed est stable.
 const seedRandomSource = 20240601
 
-// BuildSeed construit la base de démonstration :
+// BuildSeed construit la base de démonstration (nativement multi-tenant : un
+// seul compte, le compte principal {AccountMainID}) :
 //   - tenant "ProMax Wifi — Freelance Technologies (FTCI)" (FCFA, Africa/Abidjan), admin admin/admin123
 //   - 2 routeurs simulés online, 6 profils
 //   - ~60 utilisateurs réguliers, ~380 vouchers sur 14 jours (lots + statuts variés)
@@ -51,8 +52,15 @@ func BuildSeed() *model.DB {
 		WaveLink: "https://pay.wave.com/m/M_22FTCI01/c/ci/",
 	}
 	db := &model.DB{
-		Tenant:       tenant,
-		Settings:     model.Settings{Tenant: tenant, Plan: model.Plan{Name: "Pro", MaxRouters: "illimité", MaxUsers: "illimité"}},
+		Accounts: []model.Account{{
+			ID:        model.AccountMainID,
+			Name:      tenant.Name,
+			Status:    "active",
+			CreatedAt: now.Format(time.RFC3339),
+		}},
+		SettingsByAccount: map[string]model.Settings{
+			model.AccountMainID: {Tenant: tenant, Plan: model.Plan{Name: "Pro", MaxRouters: "illimité", MaxUsers: "illimité"}},
+		},
 		LastTick:     now,
 		Users:        []model.AdminUser{},
 		Routers:      []model.Router{},
@@ -69,6 +77,7 @@ func BuildSeed() *model.DB {
 	// --- Compte admin (admin / admin123) — hash bcrypt depuis la migration ---
 	db.Users = append(db.Users, model.AdminUser{
 		ID:           "admin-1",
+		AccountID:    model.AccountMainID,
 		Name:         "Freelance Technologies (FTCI)",
 		Username:     "admin",
 		Role:         "admin",
@@ -78,13 +87,13 @@ func BuildSeed() *model.DB {
 
 	// --- Routeurs simulés ---
 	r1 := model.Router{
-		ID: "router-main", Name: "ProMax-Centre", Host: "10.10.10.1", Port: 8728,
+		ID: "router-main", AccountID: model.AccountMainID, Name: "ProMax-Centre", Host: "10.10.10.1", Port: 8728,
 		Username: "admin", Mode: "simulated", Status: "online", Version: "7.14.3",
 		UptimeSec: int64(45*24*3600 + rnd.Intn(36000)), CPULoad: 12 + rnd.Intn(18),
 		CreatedAt: ago(90 * 24 * time.Hour),
 	}
 	r2 := model.Router{
-		ID: "router-lounge", Name: "ProMax-Yopougon", Host: "10.10.20.1", Port: 8728,
+		ID: "router-lounge", AccountID: model.AccountMainID, Name: "ProMax-Yopougon", Host: "10.10.20.1", Port: 8728,
 		Username: "admin", Mode: "simulated", Status: "online", Version: "7.15.2",
 		UptimeSec: int64(12*24*3600 + rnd.Intn(36000)), CPULoad: 20 + rnd.Intn(18),
 		CreatedAt: ago(60 * 24 * time.Hour),
@@ -103,6 +112,7 @@ func BuildSeed() *model.DB {
 		{ID: "p-essai", Name: "Essai Gratuit", RateLimit: "512k/512k", SessionTimeoutMin: 15, SharedUsers: 1, ValidityDays: 1, Price: 0, DataQuotaMb: 0},
 	}
 	for i := range profiles {
+		profiles[i].AccountID = model.AccountMainID
 		profiles[i].CreatedAt = ago(time.Duration(115+i) * 24 * time.Hour)
 	}
 	db.Profiles = profiles
@@ -122,7 +132,7 @@ func BuildSeed() *model.DB {
 	}
 	for i, rd := range resellerDefs {
 		db.Resellers = append(db.Resellers, model.Reseller{
-			ID: "res-" + strconv.Itoa(i+1), Name: rd.name, Username: rd.username, Phone: rd.phone,
+			ID: "res-" + strconv.Itoa(i+1), AccountID: model.AccountMainID, Name: rd.name, Username: rd.username, Phone: rd.phone,
 			Credit: rd.credit, VouchersSold: 0, Revenue: 0, Status: "active",
 			CreatedAt: ago(time.Duration(95-i*12) * 24 * time.Hour),
 		})
@@ -157,7 +167,7 @@ func BuildSeed() *model.DB {
 		bytesIn := int64(rnd.Intn(40)) * 1_000_000_000
 		bytesOut := bytesIn/6 + int64(rnd.Intn(1_500_000_000))
 		db.HotspotUsers = append(db.HotspotUsers, model.HotspotUser{
-			ID: model.NewID("u-"), Kind: "regular", Username: username, Password: code(8),
+			ID: model.NewID("u-"), AccountID: model.AccountMainID, Kind: "regular", Username: username, Password: code(8),
 			ProfileID: p.ID, ProfileName: p.Name, RouterID: router.ID, RouterName: router.Name,
 			Status: status, BatchID: "", ResellerID: "", ResellerName: "",
 			Comment: comments[rnd.Intn(len(comments))],
@@ -225,7 +235,7 @@ func BuildSeed() *model.DB {
 				}
 				createdAt := at.Add(time.Duration(rnd.Intn(60)) * time.Second)
 				db.HotspotUsers = append(db.HotspotUsers, model.HotspotUser{
-					ID: model.NewID("v-"), Kind: "voucher", Username: "SC-" + c, Password: pw,
+					ID: model.NewID("v-"), AccountID: model.AccountMainID, Kind: "voucher", Username: "SC-" + c, Password: pw,
 					ProfileID: p.ID, ProfileName: p.Name, RouterID: router.ID, RouterName: router.Name,
 					Status: "active", BatchID: batchID, ResellerID: resID, ResellerName: resName,
 					Comment: "", BytesIn: 0, BytesOut: 0, UptimeUsedSec: 0,
@@ -237,21 +247,21 @@ func BuildSeed() *model.DB {
 
 			cost := size * p.Price
 			db.Batches = append(db.Batches, model.Batch{
-				ID: batchID, ProfileID: p.ID, ProfileName: p.Name,
+				ID: batchID, AccountID: model.AccountMainID, ProfileID: p.ID, ProfileName: p.Name,
 				RouterID: router.ID, RouterName: router.Name,
 				Count: size, UnitPrice: p.Price, TotalCost: cost,
 				Channel: channel, ResellerID: resID, ResellerName: resName,
 				CreatedAt: at.Format(time.RFC3339),
 			})
 			db.Sales = append(db.Sales, model.Sale{
-				ID: model.NewID("sale-"), Amount: cost, ProfileName: p.Name, Count: size,
+				ID: model.NewID("sale-"), AccountID: model.AccountMainID, Amount: cost, ProfileName: p.Name, Count: size,
 				Channel: channel, ResellerName: resName,
 				RouterID: router.ID, RouterName: router.Name, BatchID: batchID,
 				At: at.Format(time.RFC3339),
 			})
 			if channel == "reseller" {
 				db.Transactions = append(db.Transactions, model.Transaction{
-					ID: model.NewID("tx-"), Type: "sale", ResellerID: resID, ResellerName: resName,
+					ID: model.NewID("tx-"), AccountID: model.AccountMainID, Type: "sale", ResellerID: resID, ResellerName: resName,
 					Amount: cost, Note: fmt.Sprintf("Achat de %d vouchers (%s)", size, p.Name),
 					At: at.Format(time.RFC3339),
 				})
@@ -309,14 +319,14 @@ func BuildSeed() *model.DB {
 			batchID := fmt.Sprintf("B%s-%03d", at.Format("20060102"), seq)
 			cost := size * p.Price
 			db.Batches = append(db.Batches, model.Batch{
-				ID: batchID, ProfileID: p.ID, ProfileName: p.Name,
+				ID: batchID, AccountID: model.AccountMainID, ProfileID: p.ID, ProfileName: p.Name,
 				RouterID: router.ID, RouterName: router.Name,
 				Count: size, UnitPrice: p.Price, TotalCost: cost,
 				Channel: channel, ResellerID: resID, ResellerName: resName,
 				CreatedAt: at.Format(time.RFC3339),
 			})
 			db.Sales = append(db.Sales, model.Sale{
-				ID: model.NewID("sale-"), Amount: cost, ProfileName: p.Name, Count: size,
+				ID: model.NewID("sale-"), AccountID: model.AccountMainID, Amount: cost, ProfileName: p.Name, Count: size,
 				Channel: channel, ResellerName: resName,
 				RouterID: router.ID, RouterName: router.Name, BatchID: batchID,
 				At: at.Format(time.RFC3339),
@@ -441,7 +451,7 @@ func BuildSeed() *model.DB {
 		started := now.Add(-time.Duration(uptime) * time.Second)
 		ip := router.Host[:strings.LastIndexByte(router.Host, '.')+1] + strconv.Itoa(2+rnd.Intn(200))
 		db.Sessions = append(db.Sessions, model.Session{
-			ID: model.NewID("s-"), UserID: u.ID, Username: u.Username, ProfileName: u.ProfileName,
+			ID: model.NewID("s-"), AccountID: model.AccountMainID, UserID: u.ID, Username: u.Username, ProfileName: u.ProfileName,
 			RouterID: router.ID, RouterName: router.Name, IP: ip, MAC: mac(),
 			StartedAt: started.Format(time.RFC3339),
 			UptimeSec: uptime,
@@ -495,7 +505,7 @@ func BuildSeed() *model.DB {
 			at := now.Add(-time.Duration(rnd.Intn(40*24)) * time.Hour)
 			amount := (1 + rnd.Intn(5)) * 10000 // 10 000 à 50 000 FCFA
 			db.Transactions = append(db.Transactions, model.Transaction{
-				ID: model.NewID("tx-"), Type: "credit", ResellerID: db.Resellers[i].ID,
+				ID: model.NewID("tx-"), AccountID: model.AccountMainID, Type: "credit", ResellerID: db.Resellers[i].ID,
 				ResellerName: db.Resellers[i].Name, Amount: amount,
 				Note: creditNotes[rnd.Intn(len(creditNotes))], At: at.Format(time.RFC3339),
 			})
@@ -536,7 +546,7 @@ func BuildSeed() *model.DB {
 	acts := []model.Activity{}
 	addAct := func(typ, msg string, minutesAgo int) {
 		acts = append(acts, model.Activity{
-			ID: model.NewID("act-"), Type: typ, Message: msg,
+			ID: model.NewID("act-"), AccountID: model.AccountMainID, Type: typ, Message: msg,
 			At: now.Add(-time.Duration(minutesAgo) * time.Minute).Format(time.RFC3339),
 		})
 	}

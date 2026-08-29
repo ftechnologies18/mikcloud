@@ -52,12 +52,19 @@ func New(dir string) (*Store, error) {
 			return nil, err
 		}
 		if found {
-			log.Printf("store: état chargé depuis PostgreSQL (%d utilisateurs hotspot, %d routeurs)",
-				len(db.HotspotUsers), len(db.Routers))
+			log.Printf("store: état chargé depuis PostgreSQL (%d utilisateurs hotspot, %d routeurs, %d comptes)",
+				len(db.HotspotUsers), len(db.Routers), len(db.Accounts))
 			s.db = db
 		} else {
 			log.Println("store: base PostgreSQL vide — initialisation des données démo")
-			s.db = BuildSeed()
+			s.db = BuildSeed() // seed déjà multi-tenant
+		}
+		// Migration mono-tenant → multi-tenant (avant l'override admin), puis
+		// persistance immédiate si l'état a changé.
+		if migrateMultiTenant(s.db) {
+			s.Lock()
+			s.Save()
+			s.Unlock()
 		}
 		// L'override admin (variables d'environnement) s'applique à chaque
 		// démarrage et doit être persisté aussitôt.
@@ -84,6 +91,13 @@ func New(dir string) (*Store, error) {
 		} else {
 			s.db = &db
 			s.ensureSlices()
+			// Un ancien db.json mono-tenant (champs legacy tenant/settings, sans
+			// accounts) est migré ici vers le modèle multi-comptes puis re-sauvegardé.
+			if migrateMultiTenant(s.db) {
+				s.Lock()
+				s.Save()
+				s.Unlock()
+			}
 			return s, nil
 		}
 	} else {
@@ -94,6 +108,136 @@ func New(dir string) (*Store, error) {
 	s.Unlock()
 	log.Printf("store: persistance JSON active (%s)", s.path)
 	return s, nil
+}
+
+// migrateMultiTenant — fait passer un état mono-tenant (ancien db.json ou base
+// PostgreSQL d'avant la migration) au modèle multi-comptes :
+//   - crée le compte principal {AccountMainID} s'il n'existe aucun compte ;
+//   - backfill AccountID == "" → AccountMainID sur toutes les entités ;
+//   - initialise SettingsByAccount (réglages legacy migrés, sinon défauts FCFA) ;
+//   - vide les champs legacy db.Tenant / db.Settings.
+//
+// Idempotent : retourne true uniquement si l'état a été modifié (à persister
+// par l'appelant). Le seed démo est déjà multi-tenant : cette fonction n'y
+// change rien.
+func migrateMultiTenant(db *model.DB) bool {
+	changed := false
+
+	if len(db.Accounts) == 0 {
+		name := db.Tenant.Name
+		if name == "" {
+			// Mode PostgreSQL : loadSettings remplit directement SettingsByAccount.
+			if s, ok := db.SettingsByAccount[model.AccountMainID]; ok && s.Tenant.Name != "" {
+				name = s.Tenant.Name
+			}
+		}
+		if name == "" {
+			name = "MikCloud"
+		}
+		db.Accounts = append(db.Accounts, model.Account{
+			ID:        model.AccountMainID,
+			Name:      name,
+			Status:    "active",
+			CreatedAt: model.NowISO(),
+		})
+		changed = true
+	}
+
+	backfill := func(n int, set func(i int)) {
+		for i := 0; i < n; i++ {
+			set(i)
+		}
+	}
+	backfill(len(db.Users), func(i int) {
+		if db.Users[i].AccountID == "" {
+			db.Users[i].AccountID = model.AccountMainID
+			changed = true
+		}
+	})
+	backfill(len(db.Routers), func(i int) {
+		if db.Routers[i].AccountID == "" {
+			db.Routers[i].AccountID = model.AccountMainID
+			changed = true
+		}
+	})
+	backfill(len(db.Profiles), func(i int) {
+		if db.Profiles[i].AccountID == "" {
+			db.Profiles[i].AccountID = model.AccountMainID
+			changed = true
+		}
+	})
+	backfill(len(db.HotspotUsers), func(i int) {
+		if db.HotspotUsers[i].AccountID == "" {
+			db.HotspotUsers[i].AccountID = model.AccountMainID
+			changed = true
+		}
+	})
+	backfill(len(db.Batches), func(i int) {
+		if db.Batches[i].AccountID == "" {
+			db.Batches[i].AccountID = model.AccountMainID
+			changed = true
+		}
+	})
+	backfill(len(db.Resellers), func(i int) {
+		if db.Resellers[i].AccountID == "" {
+			db.Resellers[i].AccountID = model.AccountMainID
+			changed = true
+		}
+	})
+	backfill(len(db.Transactions), func(i int) {
+		if db.Transactions[i].AccountID == "" {
+			db.Transactions[i].AccountID = model.AccountMainID
+			changed = true
+		}
+	})
+	backfill(len(db.Sessions), func(i int) {
+		if db.Sessions[i].AccountID == "" {
+			db.Sessions[i].AccountID = model.AccountMainID
+			changed = true
+		}
+	})
+	backfill(len(db.Activity), func(i int) {
+		if db.Activity[i].AccountID == "" {
+			db.Activity[i].AccountID = model.AccountMainID
+			changed = true
+		}
+	})
+	backfill(len(db.Sales), func(i int) {
+		if db.Sales[i].AccountID == "" {
+			db.Sales[i].AccountID = model.AccountMainID
+			changed = true
+		}
+	})
+	backfill(len(db.Commands), func(i int) {
+		if db.Commands[i].AccountID == "" {
+			db.Commands[i].AccountID = model.AccountMainID
+			changed = true
+		}
+	})
+
+	if db.SettingsByAccount == nil {
+		db.SettingsByAccount = map[string]model.Settings{}
+	}
+	if _, ok := db.SettingsByAccount[model.AccountMainID]; !ok {
+		if db.Settings != (model.Settings{}) {
+			db.SettingsByAccount[model.AccountMainID] = db.Settings // réglages legacy migrés
+		} else {
+			db.SettingsByAccount[model.AccountMainID] = model.Settings{
+				Tenant: model.Tenant{Name: "MikCloud", Currency: "XOF", Timezone: "Africa/Abidjan"},
+				Plan:   model.Plan{Name: "PRO", MaxRouters: "Illimité", MaxUsers: "Illimité"},
+			}
+		}
+		changed = true
+	}
+
+	// Les champs legacy sont vidés : le modèle multi-comptes devient la seule
+	// source de vérité (ils seront omis du prochain JSON non nuls → à zéro).
+	if db.Tenant != (model.Tenant{}) || db.Settings != (model.Settings{}) {
+		db.Tenant = model.Tenant{}
+		db.Settings = model.Settings{}
+		changed = true
+	}
+	return changed
 }
 
 // applyAdminOverride — si ADMIN_PASSWORD est défini, remplace le compte démo
@@ -128,11 +272,13 @@ func applyAdminOverride(db *model.DB) bool {
 	db.Users = kept
 
 	// 2. Crée ou met à jour le compte administrateur déclaré par l'environnement.
+	// L'admin plateforme est toujours rattaché au compte principal.
 	salt := auth.NewSalt()
 	for i := range db.Users {
 		if db.Users[i].Username == username {
 			db.Users[i].Name = name
 			db.Users[i].Role = "admin"
+			db.Users[i].AccountID = model.AccountMainID
 			db.Users[i].Salt = salt
 			db.Users[i].PasswordHash = auth.HashPassword(password, salt)
 			log.Printf("store: compte admin « %s » mis à jour depuis l'environnement", username)
@@ -144,6 +290,7 @@ func applyAdminOverride(db *model.DB) bool {
 	}
 	db.Users = append(db.Users, model.AdminUser{
 		ID:           model.NewID("adm-"),
+		AccountID:    model.AccountMainID,
 		Name:         name,
 		Username:     username,
 		Role:         "admin",
@@ -159,6 +306,12 @@ func applyAdminOverride(db *model.DB) bool {
 }
 
 func (s *Store) ensureSlices() {
+	if s.db.Accounts == nil {
+		s.db.Accounts = []model.Account{}
+	}
+	if s.db.SettingsByAccount == nil {
+		s.db.SettingsByAccount = map[string]model.Settings{}
+	}
 	if s.db.Users == nil {
 		s.db.Users = []model.AdminUser{}
 	}
@@ -330,6 +483,7 @@ func Tick(db *model.DB, now time.Time) {
 			nowISO := model.NowISO()
 			db.Sessions = append(db.Sessions, model.Session{
 				ID:          model.NewID("s-"),
+				AccountID:   u.AccountID, // la session vit dans le compte de l'utilisateur source
 				UserID:      u.ID,
 				Username:    u.Username,
 				ProfileName: u.ProfileName,

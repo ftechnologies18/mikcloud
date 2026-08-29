@@ -5,6 +5,7 @@
 // - Dans la sandbox : même origine + query param XTransformPort=4000 (passerelle Caddy).
 
 import { useHotspotStore } from "./store";
+import type { AccountStatus, AccountSummary, AuthResponse, RegisterPayload } from "./types";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || "").replace(/\/$/, "");
 const GATEWAY_PORT = "4000";
@@ -97,4 +98,27 @@ export async function apiDownload(path: string, filename: string, params?: ApiOp
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+/** register — inscription SaaS (rôle owner). Renvoie token + utilisateur comme le login. */
+export async function register(payload: RegisterPayload): Promise<AuthResponse> {
+  return api<AuthResponse>("/api/auth/register", {
+    method: "POST",
+    body: {
+      name: payload.name,
+      username: payload.username,
+      password: payload.password,
+      key: payload.key || undefined,
+    },
+  });
+}
+
+/** fetchAccounts — liste des comptes clients SaaS (admin plateforme uniquement, 403 sinon). */
+export async function fetchAccounts(): Promise<AccountSummary[]> {
+  return api<AccountSummary[]>("/api/admin/accounts");
+}
+
+/** setAccountStatus — active ou désactive un compte SaaS. Le compte principal ne peut pas être désactivé (400). */
+export async function setAccountStatus(id: string, status: AccountStatus): Promise<{ ok: boolean }> {
+  return api<{ ok: boolean }>(`/api/admin/accounts/${id}/status`, { method: "POST", body: { status } });
 }

@@ -9,6 +9,7 @@ import { toast } from "sonner";
 
 import { api } from "@/lib/hotspot/api";
 import type { AppSettings } from "@/lib/hotspot/types";
+import { useHotspotStore } from "@/lib/hotspot/store";
 import { PageHeader } from "@/components/hotspot/page-header";
 import { SETTINGS_QUERY_KEY, useSettings } from "@/components/hotspot/parts/sd-currency";
 import {
@@ -60,6 +61,9 @@ export default function SettingsView() {
   const queryClient = useQueryClient();
   const { data, isLoading } = useSettings();
   const [resetOpen, setResetOpen] = useState(false);
+  const user = useHotspotStore((s) => s.user);
+  // La réinitialisation des données devient admin-only côté serveur.
+  const isAdmin = user?.role === "admin";
 
   const resetMutation = useMutation({
     mutationFn: () => api<{ ok: boolean }>("/api/admin/reset", { method: "POST" }),
@@ -151,24 +155,26 @@ export default function SettingsView() {
           </CardContent>
         </Card>
 
-        {/* Zone sensible */}
-        <Card className="gap-4 border-destructive/30 py-4 sm:py-6">
-          <CardHeader className="px-4 sm:px-6">
-            <CardTitle className="flex items-center gap-2 text-base text-destructive">
-              <TriangleAlert className="size-4" />
-              Zone sensible
-            </CardTitle>
-            <CardDescription>
-              Réinitialiser toutes les données de démonstration (utilisateurs, vouchers, sessions, revendeurs seront
-              régénérés).
-            </CardDescription>
-          </CardHeader>
-          <CardFooter className="px-4 sm:px-6">
-            <Button variant="destructive" className="h-10" onClick={() => setResetOpen(true)}>
-              Réinitialiser les données
-            </Button>
-          </CardFooter>
-        </Card>
+        {/* Zone sensible — admin plateforme uniquement (endpoint /api/admin/reset admin-only) */}
+        {isAdmin && (
+          <Card className="gap-4 border-destructive/30 py-4 sm:py-6">
+            <CardHeader className="px-4 sm:px-6">
+              <CardTitle className="flex items-center gap-2 text-base text-destructive">
+                <TriangleAlert className="size-4" />
+                Zone sensible
+              </CardTitle>
+              <CardDescription>
+                Réinitialiser toutes les données de démonstration (utilisateurs, vouchers, sessions, revendeurs seront
+                régénérés).
+              </CardDescription>
+            </CardHeader>
+            <CardFooter className="px-4 sm:px-6">
+              <Button variant="destructive" className="h-10" onClick={() => setResetOpen(true)}>
+                Réinitialiser les données
+              </Button>
+            </CardFooter>
+          </Card>
+        )}
       </div>
 
       {/* Double confirmation de réinitialisation */}

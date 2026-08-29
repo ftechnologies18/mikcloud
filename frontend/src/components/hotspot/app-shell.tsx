@@ -5,6 +5,7 @@ import { useIsFetching, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   BarChart3,
+  Building2,
   Gauge,
   LayoutDashboard,
   LogOut,
@@ -38,6 +39,7 @@ import { api } from "@/lib/hotspot/api";
 import { useHotspotStore } from "@/lib/hotspot/store";
 import type { HotspotSession, ViewId } from "@/lib/hotspot/types";
 
+import AccountsView from "./views/accounts-view";
 import DashboardView from "./views/dashboard-view";
 import ProfilesView from "./views/profiles-view";
 import ReportsView from "./views/reports-view";
@@ -57,6 +59,7 @@ const VIEW_TITLES: Record<ViewId, string> = {
   resellers: "Revendeurs",
   routers: "Routeurs",
   reports: "Rapports",
+  accounts: "Comptes",
   settings: "Paramètres",
 };
 
@@ -85,7 +88,14 @@ const NAV_SECTIONS: { label: string; items: NavItem[] }[] = [
   { label: "Distribution", items: [{ id: "resellers", label: "Revendeurs", icon: Store }] },
   { label: "Infrastructure", items: [{ id: "routers", label: "Routeurs", icon: RouterIcon }] },
   { label: "Analyse", items: [{ id: "reports", label: "Rapports", icon: BarChart3 }] },
-  { label: "Système", items: [{ id: "settings", label: "Paramètres", icon: Settings }] },
+  {
+    label: "Système",
+    items: [
+      // « Comptes » n'est visible que de l'admin plateforme (rôle admin) — filtré dans NavList.
+      { id: "accounts", label: "Comptes", icon: Building2 },
+      { id: "settings", label: "Paramètres", icon: Settings },
+    ],
+  },
 ];
 
 const VIEWS: Record<ViewId, React.ComponentType> = {
@@ -97,6 +107,7 @@ const VIEWS: Record<ViewId, React.ComponentType> = {
   resellers: ResellersView,
   routers: RoutersView,
   reports: ReportsView,
+  accounts: AccountsView,
   settings: SettingsView,
 };
 
@@ -170,6 +181,8 @@ function UserCard() {
 function NavList() {
   const view = useHotspotStore((s) => s.view);
   const setView = useHotspotStore((s) => s.setView);
+  const user = useHotspotStore((s) => s.user);
+  const isAdmin = user?.role === "admin";
 
   const { data: sessions } = useQuery({
     queryKey: ["/api/sessions"],
@@ -180,55 +193,59 @@ function NavList() {
 
   return (
     <nav className="flex-1 space-y-5 overflow-y-auto px-3 pb-4" aria-label="Navigation principale">
-      {NAV_SECTIONS.map((section) => (
-        <div key={section.label}>
-          <p className="px-2.5 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
-            {section.label}
-          </p>
-          <ul className="space-y-0.5">
-            {section.items.map((item) => {
-              const active = view === item.id;
-              return (
-                <li key={item.id}>
-                  <button
-                    type="button"
-                    onClick={() => setView(item.id)}
-                    aria-current={active ? "page" : undefined}
-                    className={cn(
-                      "relative flex min-h-11 w-full items-center gap-3 rounded-md px-2.5 py-2 text-sm font-medium transition-colors",
-                      active
-                        ? "bg-primary/10 text-primary"
-                        : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
-                    )}
-                  >
-                    {active && (
-                      <span
-                        className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-full bg-primary"
-                        aria-hidden
-                      />
-                    )}
-                    <span className="relative flex shrink-0 items-center">
-                      <item.icon className="size-4.5" />
-                      {item.id === "sessions" && sessionsCount > 0 && (
-                        <span className="live-dot absolute -right-1 -top-1 block size-2 rounded-full bg-primary" aria-hidden />
+      {NAV_SECTIONS.map((section) => {
+        const items = section.items.filter((item) => item.id !== "accounts" || isAdmin);
+        if (items.length === 0) return null;
+        return (
+          <div key={section.label}>
+            <p className="px-2.5 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+              {section.label}
+            </p>
+            <ul className="space-y-0.5">
+              {items.map((item) => {
+                const active = view === item.id;
+                return (
+                  <li key={item.id}>
+                    <button
+                      type="button"
+                      onClick={() => setView(item.id)}
+                      aria-current={active ? "page" : undefined}
+                      className={cn(
+                        "relative flex min-h-11 w-full items-center gap-3 rounded-md px-2.5 py-2 text-sm font-medium transition-colors",
+                        active
+                          ? "bg-primary/10 text-primary"
+                          : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                       )}
-                    </span>
-                    <span className="flex-1 truncate text-left">{item.label}</span>
-                    {item.id === "sessions" && sessionsCount > 0 && (
-                      <Badge
-                        variant="outline"
-                        className="border-border bg-muted px-1.5 py-0 text-[10px] font-semibold tabular-nums text-foreground"
-                      >
-                        {sessionsCount}
-                      </Badge>
-                    )}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      ))}
+                    >
+                      {active && (
+                        <span
+                          className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-full bg-primary"
+                          aria-hidden
+                        />
+                      )}
+                      <span className="relative flex shrink-0 items-center">
+                        <item.icon className="size-4.5" />
+                        {item.id === "sessions" && sessionsCount > 0 && (
+                          <span className="live-dot absolute -right-1 -top-1 block size-2 rounded-full bg-primary" aria-hidden />
+                        )}
+                      </span>
+                      <span className="flex-1 truncate text-left">{item.label}</span>
+                      {item.id === "sessions" && sessionsCount > 0 && (
+                        <Badge
+                          variant="outline"
+                          className="border-border bg-muted px-1.5 py-0 text-[10px] font-semibold tabular-nums text-foreground"
+                        >
+                          {sessionsCount}
+                        </Badge>
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        );
+      })}
     </nav>
   );
 }
@@ -320,8 +337,11 @@ export default function AppShell() {
   const view = useHotspotStore((s) => s.view);
   const sidebarOpen = useHotspotStore((s) => s.sidebarOpen);
   const setSidebarOpen = useHotspotStore((s) => s.setSidebarOpen);
+  const user = useHotspotStore((s) => s.user);
+  const isAdmin = user?.role === "admin";
 
-  const ActiveView = VIEWS[view] ?? DashboardView;
+  // Garde-fou : la vue Comptes est réservée à l'admin plateforme.
+  const ActiveView = view === "accounts" && !isAdmin ? DashboardView : (VIEWS[view] ?? DashboardView);
 
   return (
     <div className="flex min-h-screen">

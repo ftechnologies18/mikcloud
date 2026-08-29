@@ -16,11 +16,13 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// Claims — revendications du token : {sub, name, role, iat, exp}.
+// Claims — revendications du token : {sub, name, role, acc, iat, exp}.
+// Acc porte l'identifiant du compte SaaS du porteur (isolation multi-tenant).
 type Claims struct {
 	Sub  string `json:"sub"`
 	Name string `json:"name"`
 	Role string `json:"role"`
+	Acc  string `json:"acc,omitempty"`
 	Iat  int64  `json:"iat"`
 	Exp  int64  `json:"exp"`
 }
@@ -28,10 +30,10 @@ type Claims struct {
 // TokenTTL — durée de validité du token (24 h).
 const TokenTTL = 24 * time.Hour
 
-// NewClaims construit des claims frais.
-func NewClaims(sub, name, role string) Claims {
+// NewClaims construit des claims frais (acc = identifiant du compte SaaS).
+func NewClaims(sub, name, role, acc string) Claims {
 	now := time.Now().Unix()
-	return Claims{Sub: sub, Name: name, Role: role, Iat: now, Exp: now + int64(TokenTTL.Seconds())}
+	return Claims{Sub: sub, Name: name, Role: role, Acc: acc, Iat: now, Exp: now + int64(TokenTTL.Seconds())}
 }
 
 // Sign produit un JWT HS256 : base64url(header).base64url(payload).base64url(hmac).

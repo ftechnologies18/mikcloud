@@ -53,6 +53,7 @@ interface SettingsForm {
   name: string;
   currency: string;
   timezone: string;
+  waveLink?: string;
 }
 
 export default function SettingsView() {
@@ -205,13 +206,19 @@ function OrganizationCard({ settings }: { settings: AppSettings }) {
     name: settings.tenant.name,
     currency: settings.tenant.currency,
     timezone: settings.tenant.timezone,
+    waveLink: settings.tenant.waveLink ?? "",
   }));
 
   const saveMutation = useMutation({
     mutationFn: (payload: SettingsForm) =>
       api<AppSettings>("/api/settings", {
         method: "PUT",
-        body: { name: payload.name, currency: payload.currency, timezone: payload.timezone },
+        body: {
+          name: payload.name,
+          currency: payload.currency,
+          timezone: payload.timezone,
+          waveLink: payload.waveLink?.trim() ?? "",
+        },
       }),
     onSuccess: () => {
       toast.success("Paramètres enregistrés");
@@ -246,8 +253,21 @@ function OrganizationCard({ settings }: { settings: AppSettings }) {
             id="org-name"
             value={form.name}
             onChange={(event) => setForm((f) => ({ ...f, name: event.target.value }))}
-            placeholder="Ex. SpotNet WiFi"
+            placeholder="Ex. ProMax Wifi"
           />
+        </div>
+        <div className="grid gap-2 sm:col-span-2">
+          <Label htmlFor="org-wave">Lien marchand Wave (paiement mobile)</Label>
+          <Input
+            id="org-wave"
+            value={form.waveLink ?? ""}
+            onChange={(event) => setForm((f) => ({ ...f, waveLink: event.target.value }))}
+            placeholder="https://pay.wave.com/m/M_xxxxx/c/ci/"
+          />
+          <p className="text-xs text-muted-foreground">
+            Collez l'adresse de votre boutique Wave : MikCloud compose les demandes de
+            paiement par montant (Wave CI n'a pas d'API publique). Vide = désactivé.
+          </p>
         </div>
         <div className="grid gap-2">
           <Label htmlFor="org-currency">Devise</Label>

@@ -278,6 +278,8 @@ export interface AppSettings {
     name: string;
     currency: string;
     timezone: string;
+    /** Lien marchand Wave CI (pay.wave.com) — composé avec /amount/<montant>/. */
+    waveLink?: string;
   };
   plan: {
     name: string;

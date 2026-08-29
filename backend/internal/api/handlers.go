@@ -96,6 +96,8 @@ func (a *API) Handler() http.Handler {
         mux.HandleFunc("GET /api/transactions", a.handleTransactionsList)
         mux.HandleFunc("GET /api/reports", a.handleReports)
         mux.HandleFunc("GET /api/accounting", a.handleAccounting)
+        mux.HandleFunc("GET /api/accounting/export", a.handleAccountingExport)
+        mux.HandleFunc("GET /api/wave/link", a.handleWaveLink)
         mux.HandleFunc("GET /api/activity", a.handleActivityList)
         mux.HandleFunc("GET /api/settings", a.handleSettingsGet)
         mux.HandleFunc("PUT /api/settings", a.handleSettingsPut)
@@ -1383,7 +1385,6 @@ func (a *API) handleUserCreate(w http.ResponseWriter, r *http.Request) {
                 return
         }
 
-
         gw := a.gatewayFor(routerCopy)
         if err := gw.AddUser(&u); err != nil {
                 writeErr(w, http.StatusBadRequest, "Création impossible : "+err.Error())
@@ -1496,7 +1497,6 @@ func (a *API) handleUserUpdate(w http.ResponseWriter, r *http.Request) {
                 writeJSON(w, http.StatusOK, u)
                 return
         }
-
 
         if routerCopy != nil {
                 gw := a.gatewayFor(*routerCopy)
@@ -1652,7 +1652,6 @@ func (a *API) handleUserDelete(w http.ResponseWriter, r *http.Request) {
                 writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
                 return
         }
-
 
         if routerCopy != nil {
                 gw := a.gatewayFor(*routerCopy)
@@ -2425,6 +2424,32 @@ func (a *API) handleReports(w http.ResponseWriter, r *http.Request) {
 // frenchMonth — noms de mois français pour les libellés du graphe mensuel.
 var frenchMonth = [...]string{"janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."}
 
+// handleWaveLink — deep link Wave Côte d'Ivoire par montant.
+// Wave CI n'a pas d'API publique : le marchand configure son lien
+// pay.wave.com dans Settings (Tenant.WaveLink) et MikCloud compose
+// l'URL de paiement avec le montant demandé (ex. pour un lot de vouchers).
+func (a *API) handleWaveLink(w http.ResponseWriter, r *http.Request) {
+        amount, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("amount")))
+        if err != nil || amount <= 0 {
+                writeErr(w, http.StatusBadRequest, "Montant invalide")
+                return
+        }
+        a.store.Lock()
+        waveLink := a.store.Data().Settings.Tenant.WaveLink
+        a.store.Unlock()
+        if strings.TrimSpace(waveLink) == "" {
+                writeErr(w, http.StatusConflict, "Lien marchand Wave non configuré (Settings → Lien Wave)")
+                return
+        }
+        ref := strings.TrimSpace(r.URL.Query().Get("ref"))
+        link := strings.TrimRight(waveLink, "/") + "/amount/" + strconv.Itoa(amount) + "/"
+        resp := map[string]any{"amount": amount, "link": link, "currency": "FCFA"}
+        if ref != "" {
+                resp["ref"] = ref
+        }
+        writeJSON(w, http.StatusOK, resp)
+}
+
 func (a *API) handleAccounting(w http.ResponseWriter, r *http.Request) {
         q := r.URL.Query()
         period := q.Get("period")
@@ -2437,10 +2462,81 @@ func (a *API) handleAccounting(w http.ResponseWriter, r *http.Request) {
         }
         routerID := strings.TrimSpace(q.Get("routerId")) // "" ou "all" = tous les sites
 
-        now := time.Now().UTC()
         a.store.Lock()
-        db := a.store.Data()
+        result := buildAccounting(a.store.Data(), period, routerID, time.Now().UTC())
+        a.store.Unlock()
+        writeJSON(w, http.StatusOK, result)
+}
 
+// handleAccountingExport — export CSV (séparateur « ; », BOM UTF-8 pour Excel)
+// de la comptabilité : une ligne par période + totaux + répartition par site.
+func (a *API) handleAccountingExport(w http.ResponseWriter, r *http.Request) {
+        q := r.URL.Query()
+        period := q.Get("period")
+        if period == "" {
+                period = "day"
+        }
+        if period != "day" && period != "week" && period != "month" {
+                writeErr(w, http.StatusBadRequest, "period doit valoir day, week ou month")
+                return
+        }
+        routerID := strings.TrimSpace(q.Get("routerId"))
+
+        a.store.Lock()
+        result := buildAccounting(a.store.Data(), period, routerID, time.Now().UTC())
+        tenantName := a.store.Data().Settings.Tenant.Name
+        a.store.Unlock()
+
+        w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+        w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"mikcloud-comptabilite-%s.csv\"", period))
+        // BOM UTF-8 : Excel reconnaît l'encodage.
+        _, _ = w.Write([]byte{0xEF, 0xBB, 0xBF})
+        _, _ = w.Write([]byte(fmt.Sprintf("MikCloud ; Comptabilite ;%s ;periode=%s\r\n", csvField(tenantName), period)))
+        _, _ = w.Write([]byte("Periode ;Ventes ;Chiffre d'affaires (FCFA)\r\n"))
+        type seriesRow struct {
+                Label   string `json:"label"`
+                Revenue int    `json:"revenue"`
+                Sales   int    `json:"sales"`
+        }
+        if raw, err := json.Marshal(result["series"]); err == nil {
+                var rows []seriesRow
+                if json.Unmarshal(raw, &rows) == nil {
+                        for _, row := range rows {
+                                _, _ = w.Write([]byte(fmt.Sprintf("%s ;%d ;%d\r\n", csvField(row.Label), row.Sales, row.Revenue)))
+                        }
+                }
+        }
+        if totals, ok := result["totals"].(map[string]any); ok {
+                _, _ = w.Write([]byte(fmt.Sprintf("TOTAL ;%v ;%v\r\n", totals["sales"], totals["revenue"])))
+        }
+        _, _ = w.Write([]byte("\r\nSite ;Ventes ;Chiffre d'affaires (FCFA) ;Part (% )\r\n"))
+        type routerRow struct {
+                RouterName string  `json:"routerName"`
+                Revenue    int     `json:"revenue"`
+                Sales      int     `json:"sales"`
+                Share      float64 `json:"share"`
+        }
+        if raw, err := json.Marshal(result["byRouter"]); err == nil {
+                var rows []routerRow
+                if json.Unmarshal(raw, &rows) == nil {
+                        for _, row := range rows {
+                                _, _ = w.Write([]byte(fmt.Sprintf("%s ;%d ;%d ;%v\r\n", csvField(row.RouterName), row.Sales, row.Revenue, row.Share)))
+                        }
+                }
+        }
+}
+
+// csvField — neutralise les séparateurs/retours à la ligne dans une cellule CSV.
+func csvField(s string) string {
+        if strings.ContainsAny(s, ";\"\n\r") {
+                return "\"" + strings.NewReplacer("\"", "\"\"", "\n", " ", "\r", "").Replace(s) + "\""
+        }
+        return s
+}
+
+// buildAccounting — cœur de calcul partagé entre la réponse JSON et l'export CSV
+// (l'appelant tient le verrou du store).
+func buildAccounting(db *model.DB, period, routerID string, now time.Time) map[string]any {
         // Découpage en buckets + fenêtre d'analyse.
         var buckets []time.Time
         var labels []string
@@ -2523,7 +2619,6 @@ func (a *API) handleAccounting(w http.ResponseWriter, r *http.Request) {
                         revSeries[idx].Sales += s.Count
                 }
         }
-        a.store.Unlock()
 
         type routerAgg struct {
                 RouterID   string  `json:"routerId"`
@@ -2554,7 +2649,7 @@ func (a *API) handleAccounting(w http.ResponseWriter, r *http.Request) {
                 avgTicket = totalsRevenue / totalsSales
         }
 
-        writeJSON(w, http.StatusOK, map[string]any{
+        return map[string]any{
                 "period":   period,
                 "routerId": routerID,
                 "series":   revSeries,
@@ -2564,7 +2659,7 @@ func (a *API) handleAccounting(w http.ResponseWriter, r *http.Request) {
                         "sales":     totalsSales,
                         "avgTicket": avgTicket,
                 },
-        })
+        }
 }
 
 // ---------------------------------------------------------------------------
@@ -2672,6 +2767,7 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
                 Name     *string `json:"name"`
                 Currency *string `json:"currency"`
                 Timezone *string `json:"timezone"`
+                WaveLink *string `json:"waveLink"`
         }
         if err := decodeBody(r, &req); err != nil {
                 writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
@@ -2687,6 +2783,9 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
         }
         if req.Timezone != nil && strings.TrimSpace(*req.Timezone) != "" {
                 db.Tenant.Timezone = strings.TrimSpace(*req.Timezone)
+        }
+        if req.WaveLink != nil {
+                db.Tenant.WaveLink = strings.TrimSpace(*req.WaveLink) // vide = désactivé
         }
         db.Settings.Tenant = db.Tenant
         settings := model.Settings{Tenant: db.Tenant, Plan: db.Settings.Plan}

@@ -1,14 +1,16 @@
 // Package api — endpoints de l'agent MikCloud (routeur -> cloud, HTTP-poll sortant).
 //
 // Contrat :
-//   POST /agent/register?token=…  (identity, model, version, uptime)  → inscription
-//   GET  /agent/cmd?token=…                                            → script .rsc ou "# mikcloud nop"
-//   POST /agent/result?token=…    (cmd, status, …)                     → rapport d'exécution
+//
+//	POST /agent/register?token=…  (identity, model, version, uptime)  → inscription
+//	GET  /agent/cmd?token=…                                            → script .rsc ou "# mikcloud nop"
+//	POST /agent/result?token=…    (cmd, status, …)                     → rapport d'exécution
 //
 // Côté console (auth JWT) :
-//   GET  /api/routers/{id}/provision     → état du provisionning (token stocké haché)
-//   POST /api/routers/{id}/rotate-token  → nouveau token + script complet
-//   POST /api/routers/{id}/refresh       → file une commande read_state
+//
+//	GET  /api/routers/{id}/provision     → état du provisionning (token stocké haché)
+//	POST /api/routers/{id}/rotate-token  → nouveau token + script complet
+//	POST /api/routers/{id}/refresh       → file une commande read_state
 package api
 
 import (

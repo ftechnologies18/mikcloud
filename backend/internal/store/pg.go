@@ -112,7 +112,10 @@ func (p *PG) ensureSchema() error {
                         cpu_load        INTEGER NOT NULL,
                         hotspot_users   INTEGER NOT NULL,
                         active_sessions INTEGER NOT NULL,
-                        created_at      TEXT NOT NULL
+                        created_at      TEXT NOT NULL,
+                        agent_token_hash TEXT NOT NULL DEFAULT '',
+                        token_preview   TEXT NOT NULL DEFAULT '',
+                        last_seen       TEXT NOT NULL DEFAULT ''
                 )`,
 		`CREATE TABLE IF NOT EXISTS profiles (
                         id                  TEXT PRIMARY KEY,
@@ -227,6 +230,19 @@ func (p *PG) ensureSchema() error {
                 )`,
 		`CREATE INDEX IF NOT EXISTS idx_sales_at     ON sales (at)`,
 		`CREATE INDEX IF NOT EXISTS idx_sales_router ON sales (router_id)`,
+		`CREATE TABLE IF NOT EXISTS commands (
+                        id         TEXT PRIMARY KEY,
+                        router_id  TEXT NOT NULL,
+                        kind       TEXT NOT NULL,
+                        payload    TEXT NOT NULL DEFAULT '', -- JSON sérialisé ('' = absent)
+                        status     TEXT NOT NULL,
+                        result     TEXT NOT NULL DEFAULT '', -- JSON sérialisé ('' = absent)
+                        created_at TEXT NOT NULL,
+                        sent_at    TEXT NOT NULL DEFAULT '',
+                        done_at    TEXT NOT NULL DEFAULT ''
+                )`,
+		`CREATE INDEX IF NOT EXISTS idx_commands_router  ON commands (router_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_commands_status  ON commands (status)`,
 		`CREATE TABLE IF NOT EXISTS settings (
                         id               INTEGER PRIMARY KEY, -- toujours 1 (singleton)
                         tenant_name      TEXT NOT NULL,
@@ -235,8 +251,15 @@ func (p *PG) ensureSchema() error {
                         plan_name        TEXT NOT NULL,
                         plan_max_routers TEXT NOT NULL,
                         plan_max_users   TEXT NOT NULL,
+                        wave_link        TEXT NOT NULL DEFAULT '',
                         last_tick        TIMESTAMPTZ
                 )`,
+		// Migrations douces pour les bases créées avant l'ajout des champs
+		// agent/Wave/commandes (idempotentes, donc sans risque au premier déploiement).
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS agent_token_hash TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS token_preview TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS last_seen TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS wave_link TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, q := range stmts {
 		if _, err := p.db.Exec(q); err != nil {
@@ -264,6 +287,7 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 		Sessions:     []model.Session{},
 		Activity:     []model.Activity{},
 		Sales:        []model.Sale{},
+		Commands:     []model.Command{},
 	}
 
 	steps := []struct {
@@ -280,6 +304,7 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 		{"sessions", func() error { return loadInto(p, &db.Sessions, sessionSpec) }},
 		{"activity", func() error { return loadInto(p, &db.Activity, activitySpec) }},
 		{"sales", func() error { return loadInto(p, &db.Sales, saleSpec) }},
+		{"commands", func() error { return loadInto(p, &db.Commands, commandSpec) }},
 		{"settings", func() error { return p.loadSettings(db) }},
 	}
 	for _, st := range steps {
@@ -307,20 +332,21 @@ func (p *PG) loadSettings(db *model.DB) error {
 	var (
 		tenantName, tenantCurrency, tenantTimezone string
 		planName, planMaxRouters, planMaxUsers     string
+		waveLink                                   string
 		lastTick                                   sql.NullTime
 	)
 	err := p.db.QueryRow(
-		`SELECT tenant_name, tenant_currency, tenant_timezone, plan_name, plan_max_routers, plan_max_users, last_tick
+		`SELECT tenant_name, tenant_currency, tenant_timezone, plan_name, plan_max_routers, plan_max_users, wave_link, last_tick
                  FROM settings WHERE id = 1`).Scan(
 		&tenantName, &tenantCurrency, &tenantTimezone,
-		&planName, &planMaxRouters, &planMaxUsers, &lastTick)
+		&planName, &planMaxRouters, &planMaxUsers, &waveLink, &lastTick)
 	if err == sql.ErrNoRows {
 		return nil // pas encore de réglages → valeurs par défaut du modèle
 	}
 	if err != nil {
 		return err
 	}
-	db.Tenant = model.Tenant{Name: tenantName, Currency: tenantCurrency, Timezone: tenantTimezone}
+	db.Tenant = model.Tenant{Name: tenantName, Currency: tenantCurrency, Timezone: tenantTimezone, WaveLink: waveLink}
 	db.Settings = model.Settings{
 		Tenant: db.Tenant,
 		Plan:   model.Plan{Name: planName, MaxRouters: planMaxRouters, MaxUsers: planMaxUsers},
@@ -375,6 +401,9 @@ func (p *PG) Sync(db *model.DB) error {
 	if err := syncTable(tx, p.hashes, saleSpec, db.Sales); err != nil {
 		return err
 	}
+	if err := syncTable(tx, p.hashes, commandSpec, db.Commands); err != nil {
+		return err
+	}
 	if err := p.syncSettings(tx, db); err != nil {
 		return err
 	}
@@ -388,8 +417,8 @@ func (p *PG) Sync(db *model.DB) error {
 func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
 	lastTick := sql.NullTime{Time: db.LastTick, Valid: !db.LastTick.IsZero()}
 	_, err := tx.Exec(
-		`INSERT INTO settings (id, tenant_name, tenant_currency, tenant_timezone, plan_name, plan_max_routers, plan_max_users, last_tick)
-                 VALUES (1, $1, $2, $3, $4, $5, $6, $7)
+		`INSERT INTO settings (id, tenant_name, tenant_currency, tenant_timezone, plan_name, plan_max_routers, plan_max_users, wave_link, last_tick)
+                 VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8)
                  ON CONFLICT (id) DO UPDATE SET
                    tenant_name      = EXCLUDED.tenant_name,
                    tenant_currency  = EXCLUDED.tenant_currency,
@@ -397,10 +426,11 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
                    plan_name        = EXCLUDED.plan_name,
                    plan_max_routers = EXCLUDED.plan_max_routers,
                    plan_max_users   = EXCLUDED.plan_max_users,
+                   wave_link        = EXCLUDED.wave_link,
                    last_tick        = EXCLUDED.last_tick`,
 		db.Tenant.Name, db.Tenant.Currency, db.Tenant.Timezone,
 		db.Settings.Plan.Name, db.Settings.Plan.MaxRouters, db.Settings.Plan.MaxUsers,
-		lastTick)
+		db.Tenant.WaveLink, lastTick)
 	if err != nil {
 		return fmt.Errorf("pg sync settings : %w", err)
 	}
@@ -587,17 +617,20 @@ var adminSpec = entitySpec[model.AdminUser]{
 var routerSpec = entitySpec[model.Router]{
 	table: "routers",
 	cols: []string{"id", "name", "host", "port", "username", "password", "mode", "status",
-		"version", "uptime_sec", "cpu_load", "hotspot_users", "active_sessions", "created_at"},
+		"version", "uptime_sec", "cpu_load", "hotspot_users", "active_sessions", "created_at",
+		"agent_token_hash", "token_preview", "last_seen"},
 	idOf: func(x *model.Router) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Router, error) {
 		var x model.Router
 		err := r.Scan(&x.ID, &x.Name, &x.Host, &x.Port, &x.Username, &x.Password, &x.Mode, &x.Status,
-			&x.Version, &x.UptimeSec, &x.CPULoad, &x.HotspotUsers, &x.ActiveSessions, &x.CreatedAt)
+			&x.Version, &x.UptimeSec, &x.CPULoad, &x.HotspotUsers, &x.ActiveSessions, &x.CreatedAt,
+			&x.AgentTokenHash, &x.TokenPreview, &x.LastSeen)
 		return x, err
 	},
 	args: func(x *model.Router) []any {
 		return []any{x.ID, x.Name, x.Host, x.Port, x.Username, x.Password, x.Mode, x.Status,
-			x.Version, x.UptimeSec, x.CPULoad, x.HotspotUsers, x.ActiveSessions, x.CreatedAt}
+			x.Version, x.UptimeSec, x.CPULoad, x.HotspotUsers, x.ActiveSessions, x.CreatedAt,
+			x.AgentTokenHash, x.TokenPreview, x.LastSeen}
 	},
 	hashOf: hashEntity[model.Router],
 }
@@ -736,6 +769,45 @@ var saleSpec = entitySpec[model.Sale]{
 	hashOf: hashEntity[model.Sale],
 }
 
+// commandSpec — payload et result sont sérialisés en JSON dans des colonnes
+// TEXT (” = absent/nil). Les maps Go rechargées reprennent exactement la même
+// forme JSON (clés triées), les empreintes restent donc cohérentes.
+var commandSpec = entitySpec[model.Command]{
+	table: "commands",
+	cols:  []string{"id", "router_id", "kind", "payload", "status", "result", "created_at", "sent_at", "done_at"},
+	idOf:  func(x *model.Command) string { return x.ID },
+	scan: func(r *sql.Rows) (model.Command, error) {
+		var x model.Command
+		var payload, result string
+		err := r.Scan(&x.ID, &x.RouterID, &x.Kind, &payload, &x.Status, &result, &x.CreatedAt, &x.SentAt, &x.DoneAt)
+		if err != nil {
+			return x, err
+		}
+		if payload != "" {
+			_ = json.Unmarshal([]byte(payload), &x.Payload)
+		}
+		if result != "" {
+			_ = json.Unmarshal([]byte(result), &x.Result)
+		}
+		return x, nil
+	},
+	args: func(x *model.Command) []any {
+		payload, result := "", ""
+		if x.Payload != nil {
+			if b, err := json.Marshal(x.Payload); err == nil {
+				payload = string(b)
+			}
+		}
+		if x.Result != nil {
+			if b, err := json.Marshal(x.Result); err == nil {
+				result = string(b)
+			}
+		}
+		return []any{x.ID, x.RouterID, x.Kind, payload, x.Status, result, x.CreatedAt, x.SentAt, x.DoneAt}
+	},
+	hashOf: hashEntity[model.Command],
+}
+
 // rebuildHashes — reconstruit le cache d'empreintes à partir d'un état mémoire
 // (après un Load ou un seed initial).
 func (p *PG) rebuildHashes(db *model.DB) {
@@ -750,6 +822,7 @@ func (p *PG) rebuildHashes(db *model.DB) {
 		sessionSpec.table:     hashRows(db.Sessions, sessionSpec),
 		activitySpec.table:    hashRows(db.Activity, activitySpec),
 		saleSpec.table:        hashRows(db.Sales, saleSpec),
+		commandSpec.table:     hashRows(db.Commands, commandSpec),
 	}
 }
 

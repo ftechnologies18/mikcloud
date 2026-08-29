@@ -152,7 +152,6 @@ function AgentInstallDialog({
         description: "L'agent MikCloud communique avec le routeur (check-in toutes les 45 s).",
       });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [online]);
 
   return (

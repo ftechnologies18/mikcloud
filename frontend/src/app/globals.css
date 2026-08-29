@@ -74,12 +74,12 @@
   --chart-3: oklch(0.7 0.15 70);
   --chart-4: oklch(0.6 0.2 15);
   --chart-5: oklch(0.62 0.16 130);
-  --sidebar: oklch(0.993 0.005 155);
-  --sidebar-foreground: oklch(0.225 0.025 165);
+  --sidebar: oklch(0.934 0.03 163);
+  --sidebar-foreground: oklch(0.235 0.035 165);
   --sidebar-primary: oklch(0.55 0.15 163);
   --sidebar-primary-foreground: oklch(0.985 0.01 160);
-  --sidebar-accent: oklch(0.93 0.02 163);
-  --sidebar-accent-foreground: oklch(0.28 0.05 163);
+  --sidebar-accent: oklch(0.885 0.038 164);
+  --sidebar-accent-foreground: oklch(0.26 0.045 163);
   --sidebar-border: oklch(0.35 0.05 165 / 12%);
   --sidebar-ring: oklch(0.55 0.15 163);
   --grad-a: oklch(0.58 0.16 160);
@@ -111,11 +111,11 @@
   --chart-3: oklch(0.785 0.16 80);
   --chart-4: oklch(0.66 0.2 15);
   --chart-5: oklch(0.82 0.17 130);
-  --sidebar: oklch(0.152 0.016 170);
+  --sidebar: oklch(0.124 0.02 171);
   --sidebar-foreground: oklch(0.975 0.005 160);
   --sidebar-primary: oklch(0.72 0.155 163);
   --sidebar-primary-foreground: oklch(0.13 0.03 165);
-  --sidebar-accent: oklch(0.235 0.02 168);
+  --sidebar-accent: oklch(0.22 0.028 170);
   --sidebar-accent-foreground: oklch(0.975 0.005 160);
   --sidebar-border: oklch(0.72 0.09 165 / 13%);
   --sidebar-ring: oklch(0.72 0.155 163);
@@ -219,17 +219,19 @@
   box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.25), 0 6px 16px -8px color-mix(in oklab, var(--grad-a) 60%, transparent);
 }
 
-/* Colonne de marque : dégradé vertical + liseré lumineux signature */
+/* Colonne de marque : dégradé vertical + liseré lumineux signature.
+   ⚠️ Pas de `position` ici : ce bloc est du CSS non-layeré et écraserait les
+   utilitaires Tailwind (`fixed` de l'aside et du Sheet). Le ::after s'ancre
+   dans le containing block créé par `position: fixed` des composants. */
 .sidebar-aurora {
-  position: relative;
   background:
-    radial-gradient(ellipse 90% 28% at 8% 0%, oklch(0.55 0.15 163 / 0.06), transparent 60%),
-    linear-gradient(180deg, oklch(0.995 0.004 156), oklch(0.976 0.008 158));
+    radial-gradient(ellipse 90% 28% at 8% 0%, oklch(0.55 0.15 163 / 0.1), transparent 60%),
+    linear-gradient(180deg, oklch(0.958 0.026 162), oklch(0.912 0.034 164));
 }
 .dark .sidebar-aurora {
   background:
-    radial-gradient(ellipse 90% 30% at 8% 0%, oklch(0.72 0.155 163 / 0.1), transparent 62%),
-    linear-gradient(180deg, oklch(0.168 0.02 170), oklch(0.128 0.013 170));
+    radial-gradient(ellipse 90% 30% at 8% 0%, oklch(0.72 0.155 163 / 0.13), transparent 62%),
+    linear-gradient(180deg, oklch(0.152 0.024 172), oklch(0.097 0.016 170));
 }
 .sidebar-aurora::after {
   content: "";

@@ -3,10 +3,13 @@ package main
 
 import (
         "log"
+        "net"
         "net/http"
         "os"
         "os/signal"
         "strconv"
+        "strings"
+        "sync"
         "syscall"
         "time"
 
@@ -46,7 +49,7 @@ func main() {
                 os.Exit(0)
         }()
 
-        handler := logRequests(corsMiddleware(api.New(st, jwtSecret).Handler()))
+        handler := logRequests(corsMiddleware(authRateLimit(api.New(st, jwtSecret).Handler())))
         srv := &http.Server{
                 Addr:              ":" + port,
                 Handler:           handler,
@@ -58,10 +61,26 @@ func main() {
         }
 }
 
-// corsMiddleware — CORS ouvert (déploiement Vercel -> Render).
+// corsMiddleware — CORS restreint : ALLOWED_ORIGIN liste d'origines autorisées
+// (ex. https://mikcloud.vercel.app,https://mikcloud-ftci.vercel.app). Vide ou *
+// → ouvert (dev local). L'origine demandée est réfléchie si elle est autorisée.
 func corsMiddleware(next http.Handler) http.Handler {
+        allowed := map[string]bool{}
+        for _, o := range strings.Split(os.Getenv("ALLOWED_ORIGIN"), ",") {
+                if o = strings.TrimSpace(o); o != "" {
+                        allowed[o] = true
+                }
+        }
+        open := len(allowed) == 0 // dev : aucune origine configurée
         return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-                w.Header().Set("Access-Control-Allow-Origin", "*")
+                origin := r.Header.Get("Origin")
+                switch {
+                case open:
+                        w.Header().Set("Access-Control-Allow-Origin", "*")
+                case origin != "" && allowed[origin]:
+                        w.Header().Set("Access-Control-Allow-Origin", origin)
+                        w.Header().Add("Vary", "Origin")
+                }
                 w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
                 w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
                 if r.Method == http.MethodOptions {
@@ -70,6 +89,68 @@ func corsMiddleware(next http.Handler) http.Handler {
                 }
                 next.ServeHTTP(w, r)
         })
+}
+
+// authRateLimit — 12 requêtes/minute/IP sur /api/auth/* (anti brute-force).
+// Derrière la passerelle (Render/Caddy), l'IP client vient de X-Forwarded-For.
+func authRateLimit(next http.Handler) http.Handler {
+        type bucket struct {
+                count int
+                reset time.Time
+        }
+        const limit = 12
+        var mu sync.Mutex
+        buckets := map[string]*bucket{}
+        go func() { // purge des fenêtres expirées
+                for range time.Tick(time.Minute) {
+                        mu.Lock()
+                        for ip, b := range buckets {
+                                if time.Now().After(b.reset) {
+                                        delete(buckets, ip)
+                                }
+                        }
+                        mu.Unlock()
+                }
+        }()
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+                if strings.HasPrefix(r.URL.Path, "/api/auth/") {
+                        ip := clientIP(r)
+                        mu.Lock()
+                        now := time.Now()
+                        b := buckets[ip]
+                        if b == nil || now.After(b.reset) {
+                                b = &bucket{reset: now.Add(time.Minute)}
+                                buckets[ip] = b
+                        }
+                        b.count++
+                        ok := b.count <= limit
+                        mu.Unlock()
+                        if !ok {
+                                w.Header().Set("Retry-After", "60")
+                                w.Header().Set("Content-Type", "application/json; charset=utf-8")
+                                w.WriteHeader(http.StatusTooManyRequests)
+                                _, _ = w.Write([]byte(`{"error":"Trop de tentatives — réessayez dans une minute"}`))
+                                return
+                        }
+                }
+                next.ServeHTTP(w, r)
+        })
+}
+
+// clientIP — l'adresse client réelle (X-Forwarded-For derrière un reverse proxy,
+// sinon l'host de RemoteAddr sans le port source).
+func clientIP(r *http.Request) string {
+        if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+                // premier IP de la chaîne = client d'origine
+                if i := strings.IndexByte(xff, ','); i > 0 {
+                        return strings.TrimSpace(xff[:i])
+                }
+                return strings.TrimSpace(xff)
+        }
+        if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+                return host
+        }
+        return r.RemoteAddr
 }
 
 // statusRecorder — capture le code de statut pour le log.

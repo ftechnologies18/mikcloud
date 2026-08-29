@@ -8,6 +8,7 @@ import (
         "math"
         "math/rand"
         "net/http"
+        "os"
         "sort"
         "strconv"
         "strings"
@@ -45,6 +46,7 @@ func (a *API) Handler() http.Handler {
 
         // Auth
         mux.HandleFunc("POST /api/auth/login", a.handleLogin)
+        mux.HandleFunc("POST /api/auth/register", a.handleRegister)
         mux.HandleFunc("GET /api/auth/me", a.handleMe)
 
         // Dashboard
@@ -121,7 +123,7 @@ func claimsFrom(r *http.Request) *auth.Claims {
 func (a *API) authMiddleware(next http.Handler) http.Handler {
         return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
                 path := r.URL.Path
-                if path == "/api/auth/login" || !strings.HasPrefix(path, "/api/") {
+                if path == "/api/auth/login" || path == "/api/auth/register" || !strings.HasPrefix(path, "/api/") {
                         next.ServeHTTP(w, r)
                         return
                 }
@@ -307,10 +309,12 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
         }
         a.store.Lock()
         var id, name, username, role, salt, hash string
+        var user *model.AdminUser
         for i := range a.store.Data().Users {
                 u := &a.store.Data().Users[i]
                 if strings.EqualFold(u.Username, req.Username) {
                         id, name, username, role, salt, hash = u.ID, u.Name, u.Username, u.Role, u.Salt, u.PasswordHash
+                        user = u
                         break
                 }
         }
@@ -319,10 +323,85 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
                 writeErr(w, http.StatusBadRequest, "Identifiants invalides")
                 return
         }
+        // Migration transparente : ancien hash SHA-256 → bcrypt au premier login.
+        if user != nil && auth.IsLegacyHash(hash) {
+                a.store.Lock()
+                user.PasswordHash = auth.HashPassword(req.Password, "")
+                user.Salt = ""
+                a.store.Save()
+                a.store.Unlock()
+        }
         token := auth.Sign(a.secret, auth.NewClaims(id, name, role))
         writeJSON(w, http.StatusOK, map[string]any{
                 "token": token,
                 "user":  map[string]any{"id": id, "name": name, "username": username, "role": role},
+        })
+}
+
+// handleRegister — inscription SaaS : crée un compte « owner » et connecte
+// immédiatement. Si REGISTER_KEY est définie (bêta privée), la clé doit être
+// fournie. La récupération et l'isolation multi-comptes viennent en phase 4.
+func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
+        var req struct {
+                Name     string `json:"name"`
+                Username string `json:"username"`
+                Password string `json:"password"`
+                Key      string `json:"key"`
+        }
+        if err := decodeBody(r, &req); err != nil {
+                writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
+                return
+        }
+        // Clé d'invitation (optionnelle) : limite l'inscription sur une bêta privée.
+        if inviteKey := os.Getenv("REGISTER_KEY"); inviteKey != "" && req.Key != inviteKey {
+                writeErr(w, http.StatusForbidden, "Inscription fermée — clé d'invitation requise")
+                return
+        }
+        username := strings.ToLower(strings.TrimSpace(req.Username))
+        if len(username) < 3 || len(username) > 32 {
+                writeErr(w, http.StatusBadRequest, "Le nom d'utilisateur doit faire entre 3 et 32 caractères")
+                return
+        }
+        for _, c := range username {
+                if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+                        writeErr(w, http.StatusBadRequest, "Le nom d'utilisateur n'accepte que a-z, 0-9, tirets et tirets bas")
+                        return
+                }
+        }
+        if len(req.Password) < 8 {
+                writeErr(w, http.StatusBadRequest, "Le mot de passe doit faire au moins 8 caractères")
+                return
+        }
+        name := strings.TrimSpace(req.Name)
+        if name == "" {
+                name = username
+        }
+
+        a.store.Lock()
+        for i := range a.store.Data().Users {
+                if strings.EqualFold(a.store.Data().Users[i].Username, username) {
+                        a.store.Unlock()
+                        writeErr(w, http.StatusConflict, "Ce nom d'utilisateur est déjà pris")
+                        return
+                }
+        }
+        u := model.AdminUser{
+                ID:           model.NewID("acc-"),
+                Name:         name,
+                Username:     username,
+                Role:         "owner",
+                PasswordHash: auth.HashPassword(req.Password, ""),
+                CreatedAt:    model.NowISO(),
+        }
+        a.store.Data().Users = append(a.store.Data().Users, u)
+        a.logActivity(a.store.Data(), "compte", "Nouveau compte créé : "+u.Name)
+        a.store.Save()
+        a.store.Unlock()
+
+        token := auth.Sign(a.secret, auth.NewClaims(u.ID, u.Name, u.Role))
+        writeJSON(w, http.StatusCreated, map[string]any{
+                "token": token,
+                "user":  map[string]any{"id": u.ID, "name": u.Name, "username": u.Username, "role": u.Role},
         })
 }
 

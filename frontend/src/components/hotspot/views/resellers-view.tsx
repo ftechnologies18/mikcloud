@@ -16,6 +16,7 @@ import {
 import { toast } from "sonner";
 
 import { api } from "@/lib/hotspot/api";
+import { useI18n } from "@/lib/hotspot/i18n";
 import type { Reseller, Transaction } from "@/lib/hotspot/types";
 import { formatCurrency, formatDateTime } from "@/lib/hotspot/format";
 import { EmptyState } from "@/components/hotspot/empty-state";
@@ -82,6 +83,7 @@ function creditClass(credit: number): string {
 }
 
 export default function ResellersView() {
+  const { t, tf, lang } = useI18n();
   const currency = useCurrency();
   const queryClient = useQueryClient();
 
@@ -114,7 +116,7 @@ export default function ResellersView() {
     mutationFn: (payload: { name: string; username: string; phone: string; credit: number }) =>
       api<Reseller>("/api/resellers", { method: "POST", body: payload }),
     onSuccess: (reseller) => {
-      toast.success(`Revendeur ${reseller.name} créé`);
+      toast.success(tf("resellers.createdToast", { name: reseller.name }));
       setCreateOpen(false);
       setForm(EMPTY_FORM);
       invalidateResellers();
@@ -126,7 +128,7 @@ export default function ResellersView() {
     mutationFn: (payload: { id: string; name: string; phone: string }) =>
       api<Reseller>(`/api/resellers/${payload.id}`, { method: "PUT", body: { name: payload.name, phone: payload.phone } }),
     onSuccess: (reseller) => {
-      toast.success("Revendeur modifié");
+      toast.success(t("resellers.updatedToast"));
       setEditTarget(null);
       setForm(EMPTY_FORM);
       invalidateResellers();
@@ -141,7 +143,11 @@ export default function ResellersView() {
         body: { status: reseller.status === "active" ? "disabled" : "active" },
       }),
     onSuccess: (reseller) => {
-      toast.success(reseller.status === "active" ? `Revendeur ${reseller.name} activé` : `Revendeur ${reseller.name} désactivé`);
+      toast.success(
+        reseller.status === "active"
+          ? tf("resellers.activatedToast", { name: reseller.name })
+          : tf("resellers.deactivatedToast", { name: reseller.name }),
+      );
       invalidateResellers();
     },
     onError: (error: Error) => toast.error(error.message),
@@ -150,7 +156,7 @@ export default function ResellersView() {
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api<{ ok: boolean }>(`/api/resellers/${id}`, { method: "DELETE" }),
     onSuccess: () => {
-      toast.success("Revendeur supprimé");
+      toast.success(t("resellers.deletedToast"));
       setDeleteTarget(null);
       invalidateResellers();
     },
@@ -164,7 +170,7 @@ export default function ResellersView() {
         body: { amount: payload.amount, note: payload.note || undefined },
       }),
     onSuccess: () => {
-      toast.success("Crédit mis à jour");
+      toast.success(t("resellers.rechargedToast"));
       setCreditTarget(null);
       setCreditAmount("");
       setCreditNote("");
@@ -192,7 +198,7 @@ export default function ResellersView() {
   const submitReseller = () => {
     const name = form.name.trim();
     if (!name) {
-      toast.error("Le nom est obligatoire.");
+      toast.error(t("common.nameRequired"));
       return;
     }
     if (editTarget) {
@@ -201,7 +207,7 @@ export default function ResellersView() {
     }
     const username = form.username.trim();
     if (!username) {
-      toast.error("L'identifiant est obligatoire.");
+      toast.error(t("common.usernameRequired"));
       return;
     }
     const credit = Number(form.credit);
@@ -219,12 +225,12 @@ export default function ResellersView() {
   return (
     <div className="space-y-4 sm:space-y-6">
       <PageHeader
-        title="Revendeurs"
-        description="Votre réseau de distribution : crédits, ventes et performance"
+        title={t("resellers.title")}
+        description={t("resellers.description")}
         actions={
           <Button className="h-10" onClick={openCreate}>
             <UserPlus className="size-4" />
-            Nouveau revendeur
+            {t("resellers.new")}
           </Button>
         }
       />
@@ -239,12 +245,12 @@ export default function ResellersView() {
         <Card className="gap-0 py-0">
           <EmptyState
             icon={Store}
-            title="Aucun revendeur"
-            description="Ajoutez des revendeurs pour distribuer vos vouchers contre crédits."
+            title={t("resellers.empty")}
+            description={t("resellers.emptyDesc")}
             action={
               <Button onClick={openCreate}>
                 <UserPlus className="size-4" />
-                Nouveau revendeur
+                {t("resellers.new")}
               </Button>
             }
           />
@@ -268,39 +274,42 @@ export default function ResellersView() {
                 </div>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon" className="size-10 text-muted-foreground" aria-label={`Actions pour ${reseller.name}`}>
+                    <Button variant="ghost" size="icon" className="size-10 text-muted-foreground" aria-label={tf("common.actionsFor", { name: reseller.name })}>
                       <MoreVertical className="size-4" />
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-52">
                     <DropdownMenuItem onClick={() => openCredit(reseller)}>
                       <Wallet className="size-4" />
-                      Recharger le crédit
+                      {t("resellers.recharge")}
                     </DropdownMenuItem>
                     <DropdownMenuItem onClick={() => openEdit(reseller)}>
                       <Pencil className="size-4" />
-                      Modifier
+                      {t("common.edit")}
                     </DropdownMenuItem>
                     <DropdownMenuItem onClick={() => toggleMutation.mutate(reseller)}>
                       <Power className="size-4" />
-                      {reseller.status === "active" ? "Désactiver" : "Activer"}
+                      {reseller.status === "active" ? t("common.deactivate") : t("common.activate")}
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem variant="destructive" onClick={() => setDeleteTarget(reseller)}>
                       <Trash2 className="size-4" />
-                      Supprimer
+                      {t("common.delete")}
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
               </CardContent>
               <CardContent className="px-4 sm:px-5">
                 <div className="rounded-lg border bg-muted/30 p-3">
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Crédit disponible</p>
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">{t("resellers.creditAvailable")}</p>
                   <p className={cn("mt-1 text-xl font-semibold tabular-nums", creditClass(reseller.credit))}>
-                    {formatCurrency(reseller.credit, currency)}
+                    {formatCurrency(reseller.credit, currency, lang)}
                   </p>
                   <p className="mt-2 text-xs text-muted-foreground">
-                    {reseller.vouchersSold} vouchers vendus · {formatCurrency(reseller.revenue, currency)} générés en revenu
+                    {tf("resellers.soldStats", {
+                      n: reseller.vouchersSold,
+                      revenue: formatCurrency(reseller.revenue, currency, lang),
+                    })}
                   </p>
                 </div>
               </CardContent>
@@ -312,27 +321,27 @@ export default function ResellersView() {
       <Card className="gap-0 py-0">
         <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-4 sm:px-6 sm:pt-5">
           <div>
-            <h2 className="text-base font-semibold">Transactions récentes</h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">Derniers mouvements de crédits et ventes des revendeurs</p>
+            <h2 className="text-base font-semibold">{t("resellers.transactions")}</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">{t("resellers.transactionsDesc")}</p>
           </div>
-          <span className="text-xs text-muted-foreground">20 dernières</span>
+          <span className="text-xs text-muted-foreground">{t("resellers.last20")}</span>
         </div>
         <div className="mt-2 max-h-96 overflow-y-auto">
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
-                <TableHead className="pl-4 text-muted-foreground sm:pl-6">Type</TableHead>
-                <TableHead className="text-muted-foreground">Revendeur</TableHead>
-                <TableHead className="text-right text-muted-foreground">Montant</TableHead>
-                <TableHead className="max-w-48 text-muted-foreground">Note</TableHead>
-                <TableHead className="pr-4 text-right text-muted-foreground sm:pr-6">Date</TableHead>
+                <TableHead className="pl-4 text-muted-foreground sm:pl-6">{t("common.type")}</TableHead>
+                <TableHead className="text-muted-foreground">{t("common.reseller")}</TableHead>
+                <TableHead className="text-right text-muted-foreground">{t("resellers.amount")}</TableHead>
+                <TableHead className="max-w-48 text-muted-foreground">{t("resellers.note")}</TableHead>
+                <TableHead className="pr-4 text-right text-muted-foreground sm:pr-6">{t("common.date")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {!transactions || transactions.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
-                    Aucune transaction pour le moment.
+                    {t("resellers.noTransactions")}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -349,11 +358,11 @@ export default function ResellersView() {
                       )}
                     >
                       {transaction.type === "credit" ? "+" : "−"}
-                      {formatCurrency(Math.abs(transaction.amount), currency)}
+                      {formatCurrency(Math.abs(transaction.amount), currency, lang)}
                     </TableCell>
                     <TableCell className="max-w-48 truncate text-muted-foreground">{transaction.note || "—"}</TableCell>
                     <TableCell className="pr-4 text-right text-muted-foreground sm:pr-6">
-                      {formatDateTime(transaction.at)}
+                      {formatDateTime(transaction.at, lang)}
                     </TableCell>
                   </TableRow>
                 ))
@@ -375,45 +384,43 @@ export default function ResellersView() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{editTarget ? "Modifier le revendeur" : "Nouveau revendeur"}</DialogTitle>
+            <DialogTitle>{editTarget ? t("resellers.editTitle") : t("resellers.newTitle")}</DialogTitle>
             <DialogDescription>
-              {editTarget
-                ? "Mettez à jour les informations de contact du revendeur."
-                : "Le revendeur pourra vendre vos vouchers contre son crédit."}
+              {editTarget ? t("resellers.editDesc") : t("resellers.newDesc")}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4">
             <div className="grid gap-2">
-              <Label htmlFor="reseller-name">Nom</Label>
+              <Label htmlFor="reseller-name">{t("resellers.name")}</Label>
               <Input
                 id="reseller-name"
                 value={form.name}
                 onChange={(event) => setForm((f) => ({ ...f, name: event.target.value }))}
-                placeholder="Ex. Awa Diallo"
+                placeholder={t("resellers.namePlaceholder")}
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="reseller-username">Identifiant</Label>
+              <Label htmlFor="reseller-username">{t("login.username")}</Label>
               <Input
                 id="reseller-username"
                 value={form.username}
                 disabled={!!editTarget}
                 onChange={(event) => setForm((f) => ({ ...f, username: event.target.value }))}
-                placeholder="Ex. awa.d"
+                placeholder={t("resellers.usernamePlaceholder")}
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="reseller-phone">Téléphone</Label>
+              <Label htmlFor="reseller-phone">{t("resellers.phone")}</Label>
               <Input
                 id="reseller-phone"
                 value={form.phone}
                 onChange={(event) => setForm((f) => ({ ...f, phone: event.target.value }))}
-                placeholder="+221 77 000 00 00"
+                placeholder={t("resellers.phonePlaceholder")}
               />
             </div>
             {!editTarget && (
               <div className="grid gap-2">
-                <Label htmlFor="reseller-credit">Crédit initial ({currency})</Label>
+                <Label htmlFor="reseller-credit">{tf("resellers.initialCredit", { currency })}</Label>
                 <Input
                   id="reseller-credit"
                   type="number"
@@ -433,13 +440,13 @@ export default function ResellersView() {
                 setEditTarget(null);
               }}
             >
-              Annuler
+              {t("common.cancel")}
             </Button>
             <Button
               onClick={submitReseller}
               disabled={createMutation.isPending || updateMutation.isPending || !form.name.trim() || (!editTarget && !form.username.trim())}
             >
-              {editTarget ? "Enregistrer" : "Créer le revendeur"}
+              {editTarget ? t("common.save") : t("resellers.createSubmit")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -449,14 +456,19 @@ export default function ResellersView() {
       <Dialog open={!!creditTarget} onOpenChange={(open) => !open && setCreditTarget(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Recharger le crédit</DialogTitle>
+            <DialogTitle>{t("resellers.recharge")}</DialogTitle>
             <DialogDescription>
-              {creditTarget ? `${creditTarget.name} — crédit actuel : ${formatCurrency(creditTarget.credit, currency)}` : null}
+              {creditTarget
+                ? tf("resellers.rechargeDesc", {
+                    name: creditTarget.name,
+                    credit: formatCurrency(creditTarget.credit, currency, lang),
+                  })
+                : null}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4">
             <div className="grid gap-2">
-              <Label htmlFor="credit-amount">Montant ({currency})</Label>
+              <Label htmlFor="credit-amount">{tf("resellers.rechargeAmount", { currency })}</Label>
               <Input
                 id="credit-amount"
                 type="number"
@@ -467,29 +479,29 @@ export default function ResellersView() {
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="credit-note">Note (optionnelle)</Label>
+              <Label htmlFor="credit-note">{t("resellers.rechargeNote")}</Label>
               <Input
                 id="credit-note"
                 value={creditNote}
                 onChange={(event) => setCreditNote(event.target.value)}
-                placeholder="Ex. recharge hebdomadaire"
+                placeholder={t("resellers.rechargeNotePlaceholder")}
               />
             </div>
             {creditTarget && amountValid && (
               <p className="rounded-lg border bg-muted/40 px-3 py-2 text-sm">
-                Nouveau crédit :{" "}
+                {t("resellers.newCredit")}{" "}
                 <span className="font-semibold text-primary">
-                  {formatCurrency(creditTarget.credit + Math.round(parsedAmount), currency)}
+                  {formatCurrency(creditTarget.credit + Math.round(parsedAmount), currency, lang)}
                 </span>
               </p>
             )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreditTarget(null)}>
-              Annuler
+              {t("common.cancel")}
             </Button>
             <Button onClick={submitCredit} disabled={!amountValid || creditMutation.isPending}>
-              {creditMutation.isPending ? "Rechargement…" : "Recharger"}
+              {creditMutation.isPending ? t("resellers.recharging") : t("resellers.rechargeSubmit")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -499,13 +511,11 @@ export default function ResellersView() {
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Supprimer {deleteTarget?.name} ?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Cette action est irréversible. Le crédit restant et l'accès à la revente seront perdus.
-            </AlertDialogDescription>
+            <AlertDialogTitle>{tf("resellers.deleteTitle", { name: deleteTarget?.name ?? "" })}</AlertDialogTitle>
+            <AlertDialogDescription>{t("resellers.deleteDesc")}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Annuler</AlertDialogCancel>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-white hover:bg-destructive/90"
               onClick={(event) => {
@@ -513,7 +523,7 @@ export default function ResellersView() {
                 if (deleteTarget) deleteMutation.mutate(deleteTarget.id);
               }}
             >
-              {deleteMutation.isPending ? "Suppression…" : "Supprimer"}
+              {deleteMutation.isPending ? t("common.deleting") : t("common.delete")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

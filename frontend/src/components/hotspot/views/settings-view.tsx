@@ -1,14 +1,32 @@
 "use client";
 
-// Vue Paramètres — organisation, abonnement, connexion routeur réel, zone sensible.
+// Vue Paramètres — organisation, abonnement, expiration des vouchers, branding
+// voucher (DNS + logo, F2), langue de l'interface (F11), connexion routeur réel,
+// sécurité, zone sensible.
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Building2, Database, Eye, EyeOff, KeyRound, Router as RouterIcon, TriangleAlert } from "lucide-react";
+import {
+  Building2,
+  CalendarClock,
+  Database,
+  Eye,
+  EyeOff,
+  Globe,
+  ImagePlus,
+  Image as ImageIcon,
+  KeyRound,
+  Languages,
+  Router as RouterIcon,
+  Ticket,
+  TriangleAlert,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { api } from "@/lib/hotspot/api";
-import type { AppSettings } from "@/lib/hotspot/types";
+import { useI18n } from "@/lib/hotspot/i18n";
+import type { AppSettings, ExpiryPolicyMode } from "@/lib/hotspot/types";
 import { useHotspotStore } from "@/lib/hotspot/store";
 import { PageHeader } from "@/components/hotspot/page-header";
 import { SETTINGS_QUERY_KEY, useSettings } from "@/components/hotspot/parts/sd-currency";
@@ -23,10 +41,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -34,18 +55,9 @@ const CURRENCIES = ["FCFA", "EUR", "USD", "MAD", "XOF", "GBP", "CDF", "GNF"];
 const TIMEZONES = ["UTC", "Africa/Abidjan", "Africa/Dakar", "Africa/Casablanca", "Europe/Paris", "Europe/Brussels"];
 
 const MIKROTIK_STEPS = [
-  {
-    title: "Activez le service API",
-    text: "Ouvrez Winbox → IP → Services, puis activez « api » (port 8728).",
-  },
-  {
-    title: "Créez un utilisateur API",
-    text: "Dans Système → Utilisateurs → Groupes, créez un compte API en lecture/écriture (groupe full).",
-  },
-  {
-    title: "Ajoutez le routeur",
-    text: "Ajoutez le routeur dans la vue Routeurs avec son IP, le port 8728, ses identifiants API et le mode « Réel ».",
-  },
+  { titleKey: "settings.guide.step1", textKey: "settings.guide.step1Text" },
+  { titleKey: "settings.guide.step2", textKey: "settings.guide.step2Text" },
+  { titleKey: "settings.guide.step3", textKey: "settings.guide.step3Text" },
 ];
 
 interface SettingsForm {
@@ -66,6 +78,7 @@ interface ReloadStats {
 }
 
 export default function SettingsView() {
+  const { t, tf } = useI18n();
   const queryClient = useQueryClient();
   const { data, isLoading } = useSettings();
   const [resetOpen, setResetOpen] = useState(false);
@@ -76,7 +89,7 @@ export default function SettingsView() {
   const resetMutation = useMutation({
     mutationFn: () => api<{ ok: boolean }>("/api/admin/reset", { method: "POST" }),
     onSuccess: () => {
-      toast.success("Données réinitialisées");
+      toast.success(t("settings.resetToast"));
       setResetOpen(false);
       queryClient.invalidateQueries();
     },
@@ -87,7 +100,11 @@ export default function SettingsView() {
     mutationFn: () => api<ReloadStats>("/api/admin/reload", { method: "POST" }),
     onSuccess: (stats) => {
       toast.success(
-        `Données rechargées — ${stats.accounts} compte(s), ${stats.hotspotUsers} utilisateurs hotspot, ${stats.routers} routeur(s)`,
+        tf("settings.reloadedToast", {
+          accounts: stats.accounts,
+          users: stats.hotspotUsers,
+          routers: stats.routers,
+        }),
       );
       queryClient.invalidateQueries();
     },
@@ -97,7 +114,7 @@ export default function SettingsView() {
   if (isLoading || !data) {
     return (
       <div className="space-y-4 sm:space-y-6">
-        <PageHeader title="Paramètres" description="Configuration de votre espace MikCloud" />
+        <PageHeader title={t("settings.title")} description={t("settings.description")} />
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3 lg:gap-6">
           <Skeleton className="h-96 rounded-xl lg:col-span-2" />
           <Skeleton className="h-96 rounded-xl" />
@@ -110,7 +127,7 @@ export default function SettingsView() {
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      <PageHeader title="Paramètres" description="Configuration de votre espace MikCloud" />
+      <PageHeader title={t("settings.title")} description={t("settings.description")} />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3 lg:gap-6">
         {/* Organisation */}
@@ -120,6 +137,15 @@ export default function SettingsView() {
             Illimité (12 000 F/an, routeurs illimités), paiement via Wave. */}
         <SubscriptionCard />
 
+        {/* Expiration des vouchers (F1/F5) — politique de nettoyage cloud */}
+        <ExpiryCard settings={data} />
+
+        {/* Vouchers — DNS + logo (F2) */}
+        <VoucherCard settings={data} />
+
+        {/* Langue de l'interface (F11) */}
+        <LanguageCard />
+
         {/* Guide connexion routeur réel */}
         <Card className="gap-4 border-primary/20 bg-primary/5 py-4 sm:py-6 lg:col-span-2">
           <CardHeader className="px-4 sm:px-6">
@@ -127,27 +153,25 @@ export default function SettingsView() {
               <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
                 <RouterIcon className="size-4" />
               </span>
-              Connecter un vrai routeur MikroTik
+              {t("settings.guide.title")}
             </CardTitle>
-            <CardDescription>Trois étapes pour brancher MikCloud sur votre matériel.</CardDescription>
+            <CardDescription>{t("settings.guide.desc")}</CardDescription>
           </CardHeader>
           <CardContent className="px-4 sm:px-6">
             <ol className="grid gap-4 sm:grid-cols-3">
               {MIKROTIK_STEPS.map((step, index) => (
-                <li key={step.title} className="rounded-lg border bg-card p-3">
+                <li key={step.titleKey} className="rounded-lg border bg-card p-3">
                   <p className="flex items-center gap-2 text-sm font-medium">
                     <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
                       {index + 1}
                     </span>
-                    {step.title}
+                    {t(step.titleKey)}
                   </p>
-                  <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{step.text}</p>
+                  <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{t(step.textKey)}</p>
                 </li>
               ))}
             </ol>
-            <p className="mt-4 text-xs text-muted-foreground">
-              Le mode Simulé permet de découvrir MikCloud sans matériel.
-            </p>
+            <p className="mt-4 text-xs text-muted-foreground">{t("settings.guide.simulatedNote")}</p>
           </CardContent>
         </Card>
 
@@ -162,12 +186,9 @@ export default function SettingsView() {
                 <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
                   <Database className="size-4" />
                 </span>
-                Base de données
+                {t("settings.database")}
               </CardTitle>
-              <CardDescription>
-                Réimporte l'intégralité des données depuis la base persistée sans redémarrer le service — utile
-                après une modification SQL directe ou un changement de mot de passe admin.
-              </CardDescription>
+              <CardDescription>{t("settings.databaseDesc")}</CardDescription>
             </CardHeader>
             <CardFooter className="px-4 sm:px-6">
               <Button
@@ -176,7 +197,7 @@ export default function SettingsView() {
                 onClick={() => reloadMutation.mutate()}
                 disabled={reloadMutation.isPending}
               >
-                {reloadMutation.isPending ? "Rechargement…" : "Recharger depuis la base"}
+                {reloadMutation.isPending ? t("settings.reloading") : t("settings.reload")}
               </Button>
             </CardFooter>
           </Card>
@@ -188,16 +209,13 @@ export default function SettingsView() {
             <CardHeader className="px-4 sm:px-6">
               <CardTitle className="flex items-center gap-2 text-base text-destructive">
                 <TriangleAlert className="size-4" />
-                Zone sensible
+                {t("settings.dangerZone")}
               </CardTitle>
-              <CardDescription>
-                Réinitialiser toutes les données de démonstration (utilisateurs, vouchers, sessions, revendeurs seront
-                régénérés).
-              </CardDescription>
+              <CardDescription>{t("settings.dangerZoneDesc")}</CardDescription>
             </CardHeader>
             <CardFooter className="px-4 sm:px-6">
               <Button variant="destructive" className="h-10" onClick={() => setResetOpen(true)}>
-                Réinitialiser les données
+                {t("settings.reset")}
               </Button>
             </CardFooter>
           </Card>
@@ -208,14 +226,11 @@ export default function SettingsView() {
       <AlertDialog open={resetOpen} onOpenChange={setResetOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Réinitialiser toutes les données ?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Utilisateurs, vouchers, sessions, revendeurs et transactions seront régénérés à partir du jeu de
-              démonstration. Cette action est irréversible.
-            </AlertDialogDescription>
+            <AlertDialogTitle>{t("settings.resetTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("settings.resetDesc")}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Annuler</AlertDialogCancel>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-white hover:bg-destructive/90"
               onClick={(event) => {
@@ -223,12 +238,53 @@ export default function SettingsView() {
                 resetMutation.mutate();
               }}
             >
-              {resetMutation.isPending ? "Réinitialisation…" : "Réinitialiser les données"}
+              {resetMutation.isPending ? t("settings.resetting") : t("settings.reset")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+// Carte Langue (F11) — bascule FR/EN, appliquée immédiatement (store zustand).
+// La carte est bilingue par nature : titre affiché dans les deux langues.
+function LanguageCard() {
+  const { t, lang, setLang } = useI18n();
+  return (
+    <Card className="gap-4 py-4 sm:py-6">
+      <CardHeader className="px-4 sm:px-6">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
+            <Languages className="size-4" />
+          </span>
+          {t("settings.language.title")}
+        </CardTitle>
+        <CardDescription>{t("settings.language.desc")}</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-4 px-4 sm:px-6">
+        <RadioGroup
+          value={lang}
+          onValueChange={(value) => setLang(value === "en" ? "en" : "fr")}
+          className="grid gap-3"
+        >
+          <label className="flex min-h-14 cursor-pointer items-center gap-3 rounded-lg border p-3 transition-colors has-[[data-state=checked]]:border-primary/50">
+            <RadioGroupItem value="fr" className="mt-1" />
+            <span className="text-sm">
+              {t("settings.language.french")}
+              <span className="block text-xs font-normal text-muted-foreground">FR</span>
+            </span>
+          </label>
+          <label className="flex min-h-14 cursor-pointer items-center gap-3 rounded-lg border p-3 transition-colors has-[[data-state=checked]]:border-primary/50">
+            <RadioGroupItem value="en" className="mt-1" />
+            <span className="text-sm">
+              {t("settings.language.english")}
+              <span className="block text-xs font-normal text-muted-foreground">EN</span>
+            </span>
+          </label>
+        </RadioGroup>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -246,6 +302,7 @@ function PasswordInput({
   placeholder?: string;
   autoComplete?: string;
 }) {
+  const { t } = useI18n();
   const [visible, setVisible] = useState(false);
   return (
     <div className="relative">
@@ -261,7 +318,7 @@ function PasswordInput({
       <button
         type="button"
         onClick={() => setVisible((v) => !v)}
-        aria-label={visible ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+        aria-label={visible ? t("settings.passwordHide") : t("settings.passwordShow")}
         className="absolute right-1.5 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
       >
         {visible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
@@ -273,6 +330,7 @@ function PasswordInput({
 // Carte Sécurité — changement du mot de passe de connexion de l'utilisateur courant.
 // Le backend exige le mot de passe actuel (une session ouverte ne suffit pas).
 function SecurityCard() {
+  const { t } = useI18n();
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -284,8 +342,8 @@ function SecurityCard() {
         body: { currentPassword, newPassword },
       }),
     onSuccess: () => {
-      toast.success("Mot de passe modifié", {
-        description: "Utilisez-le à votre prochaine connexion.",
+      toast.success(t("settings.passwordChangedToast"), {
+        description: t("settings.passwordChangedToastDesc"),
       });
       setCurrentPassword("");
       setNewPassword("");
@@ -299,15 +357,15 @@ function SecurityCard() {
 
   function submitPassword() {
     if (newPassword.length < 8) {
-      toast.error("Le nouveau mot de passe doit faire au moins 8 caractères.");
+      toast.error(t("settings.passwordTooShort"));
       return;
     }
     if (newPassword === currentPassword) {
-      toast.error("Le nouveau mot de passe doit être différent de l'actuel.");
+      toast.error(t("settings.passwordSame"));
       return;
     }
     if (newPassword !== confirmPassword) {
-      toast.error("Les deux nouveaux mots de passe ne correspondent pas.");
+      toast.error(t("settings.passwordMismatch"));
       return;
     }
     changeMutation.mutate();
@@ -320,13 +378,13 @@ function SecurityCard() {
           <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
             <KeyRound className="size-4" />
           </span>
-          Sécurité
+          {t("settings.security")}
         </CardTitle>
-        <CardDescription>Modifier le mot de passe de votre compte MikCloud.</CardDescription>
+        <CardDescription>{t("settings.securityDesc")}</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4 px-4 sm:px-6">
         <div className="grid gap-2">
-          <Label htmlFor="pwd-current">Mot de passe actuel</Label>
+          <Label htmlFor="pwd-current">{t("settings.currentPassword")}</Label>
           <PasswordInput
             id="pwd-current"
             value={currentPassword}
@@ -335,17 +393,17 @@ function SecurityCard() {
           />
         </div>
         <div className="grid gap-2">
-          <Label htmlFor="pwd-new">Nouveau mot de passe</Label>
+          <Label htmlFor="pwd-new">{t("settings.newPassword")}</Label>
           <PasswordInput
             id="pwd-new"
             value={newPassword}
             onChange={setNewPassword}
             autoComplete="new-password"
           />
-          <p className="text-xs text-muted-foreground">8 caractères minimum, différent de l'actuel.</p>
+          <p className="text-xs text-muted-foreground">{t("settings.passwordHint")}</p>
         </div>
         <div className="grid gap-2">
-          <Label htmlFor="pwd-confirm">Confirmer le nouveau mot de passe</Label>
+          <Label htmlFor="pwd-confirm">{t("settings.confirmPassword")}</Label>
           <PasswordInput
             id="pwd-confirm"
             value={confirmPassword}
@@ -356,7 +414,7 @@ function SecurityCard() {
       </CardContent>
       <CardFooter className="px-4 sm:px-6">
         <Button className="h-10" onClick={submitPassword} disabled={!canSubmit}>
-          {changeMutation.isPending ? "Modification…" : "Modifier le mot de passe"}
+          {changeMutation.isPending ? t("settings.passwordChanging") : t("settings.passwordSubmit")}
         </Button>
       </CardFooter>
     </Card>
@@ -365,6 +423,7 @@ function SecurityCard() {
 
 // Formulaire Organisation — état local initialisé depuis les paramètres serveur.
 function OrganizationCard({ settings }: { settings: AppSettings }) {
+  const { t } = useI18n();
   const queryClient = useQueryClient();
   const [form, setForm] = useState<SettingsForm>(() => ({
     name: settings.tenant.name,
@@ -385,7 +444,7 @@ function OrganizationCard({ settings }: { settings: AppSettings }) {
         },
       }),
     onSuccess: () => {
-      toast.success("Paramètres enregistrés");
+      toast.success(t("settings.savedToast"));
       queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
       // La devise se propage sur toutes les vues (dashboard, revendeurs, rapports…).
       queryClient.invalidateQueries();
@@ -395,7 +454,7 @@ function OrganizationCard({ settings }: { settings: AppSettings }) {
 
   const submitSettings = () => {
     if (!form.name.trim()) {
-      toast.error("Le nom de l'organisation est obligatoire.");
+      toast.error(t("settings.orgNameRequired"));
       return;
     }
     saveMutation.mutate({ ...form, name: form.name.trim() });
@@ -406,35 +465,32 @@ function OrganizationCard({ settings }: { settings: AppSettings }) {
       <CardHeader className="px-4 sm:px-6">
         <CardTitle className="flex items-center gap-2 text-base">
           <Building2 className="size-4 text-primary" />
-          Organisation
+          {t("settings.organization")}
         </CardTitle>
-        <CardDescription>Nom affiché, devise et fuseau horaire de votre espace.</CardDescription>
+        <CardDescription>{t("settings.organizationDesc")}</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4 px-4 sm:grid-cols-2 sm:px-6">
         <div className="grid gap-2 sm:col-span-2">
-          <Label htmlFor="org-name">Nom de l'organisation</Label>
+          <Label htmlFor="org-name">{t("settings.orgName")}</Label>
           <Input
             id="org-name"
             value={form.name}
             onChange={(event) => setForm((f) => ({ ...f, name: event.target.value }))}
-            placeholder="Ex. ProMax Wifi"
+            placeholder={t("settings.orgNamePlaceholder")}
           />
         </div>
         <div className="grid gap-2 sm:col-span-2">
-          <Label htmlFor="org-wave">Lien marchand Wave (paiement mobile)</Label>
+          <Label htmlFor="org-wave">{t("settings.waveLink")}</Label>
           <Input
             id="org-wave"
             value={form.waveLink ?? ""}
             onChange={(event) => setForm((f) => ({ ...f, waveLink: event.target.value }))}
-            placeholder="https://pay.wave.com/m/M_xxxxx/c/ci/"
+            placeholder={t("settings.waveLinkPlaceholder")}
           />
-          <p className="text-xs text-muted-foreground">
-            Collez l'adresse de votre boutique Wave : MikCloud compose les demandes de
-            paiement par montant (Wave CI n'a pas d'API publique). Vide = désactivé.
-          </p>
+          <p className="text-xs text-muted-foreground">{t("settings.waveLinkDesc")}</p>
         </div>
         <div className="grid gap-2">
-          <Label htmlFor="org-currency">Devise</Label>
+          <Label htmlFor="org-currency">{t("settings.currency")}</Label>
           <Select value={form.currency} onValueChange={(value) => setForm((f) => ({ ...f, currency: value }))}>
             <SelectTrigger id="org-currency" className="h-10 w-full">
               <SelectValue />
@@ -449,7 +505,7 @@ function OrganizationCard({ settings }: { settings: AppSettings }) {
           </Select>
         </div>
         <div className="grid gap-2">
-          <Label htmlFor="org-timezone">Fuseau horaire</Label>
+          <Label htmlFor="org-timezone">{t("settings.timezone")}</Label>
           <Select value={form.timezone} onValueChange={(value) => setForm((f) => ({ ...f, timezone: value }))}>
             <SelectTrigger id="org-timezone" className="h-10 w-full">
               <SelectValue />
@@ -466,7 +522,253 @@ function OrganizationCard({ settings }: { settings: AppSettings }) {
       </CardContent>
       <CardFooter className="justify-end px-4 sm:px-6">
         <Button className="h-10" onClick={submitSettings} disabled={saveMutation.isPending || !form.name.trim()}>
-          {saveMutation.isPending ? "Enregistrement…" : "Enregistrer"}
+          {saveMutation.isPending ? t("common.saving") : t("common.save")}
+        </Button>
+      </CardFooter>
+    </Card>
+  );
+}
+
+// Carte Expiration des vouchers (F1/F5) — politique de nettoyage des expirés.
+// Le moteur d'expiration du cloud (Tick) applique la politique automatiquement.
+function ExpiryCard({ settings }: { settings: AppSettings }) {
+  const { t } = useI18n();
+  const queryClient = useQueryClient();
+  const [mode, setMode] = useState<ExpiryPolicyMode>(
+    settings.tenant.expiryPolicyMode === "remove" ? "remove" : "keep",
+  );
+  const [days, setDays] = useState(String(settings.tenant.expiryPolicyAfterDays ?? 30));
+
+  const daysNum = parseInt(days, 10);
+  const daysValid = Number.isInteger(daysNum) && daysNum >= 1 && daysNum <= 365;
+
+  const saveMutation = useMutation({
+    mutationFn: () => {
+      const afterDays = mode === "remove" && daysValid ? daysNum : undefined;
+      return api<AppSettings>("/api/settings", {
+        method: "PUT",
+        // Corps défensif : champs plats (forme du handler actuel) + forme imbriquée
+        // « tenant » du contrat — le décodeur Go ignore les champs inconnus.
+        body: {
+          expiryPolicyMode: mode,
+          expiryPolicyAfterDays: afterDays,
+          tenant: { expiryPolicyMode: mode, expiryPolicyAfterDays: afterDays },
+        },
+      });
+    },
+    onSuccess: () => {
+      toast.success(t("settings.expirySavedToast"));
+      void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return (
+    <Card className="gap-4 py-4 sm:py-6">
+      <CardHeader className="px-4 sm:px-6">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
+            <CalendarClock className="size-4" />
+          </span>
+          {t("settings.expiryCard")}
+        </CardTitle>
+        <CardDescription>{t("settings.expiryCardDesc")}</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-4 px-4 sm:px-6">
+        <RadioGroup
+          value={mode}
+          onValueChange={(value) => setMode(value as ExpiryPolicyMode)}
+          className="grid gap-3"
+        >
+          <label className="flex min-h-14 cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors has-[[data-state=checked]]:border-primary/50">
+            <RadioGroupItem value="keep" className="mt-1" />
+            <span className="text-sm">
+              {t("settings.expiryKeep")}
+              <span className="block text-xs font-normal text-muted-foreground">
+                {t("settings.expiryKeepDesc")}
+              </span>
+            </span>
+          </label>
+          <label className="flex min-h-14 cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors has-[[data-state=checked]]:border-primary/50">
+            <RadioGroupItem value="remove" className="mt-1" />
+            <span className="text-sm">
+              {t("settings.expiryRemove")}
+              <span className="block text-xs font-normal text-muted-foreground">
+                {t("settings.expiryRemoveDesc")}
+              </span>
+            </span>
+          </label>
+        </RadioGroup>
+
+        {mode === "remove" && (
+          <div className="grid gap-2">
+            <Label htmlFor="expiry-days">{t("settings.expiryDays")}</Label>
+            <Input
+              id="expiry-days"
+              type="number"
+              min={1}
+              max={365}
+              value={days}
+              onChange={(event) => setDays(event.target.value)}
+              className="h-10"
+              aria-invalid={!daysValid}
+            />
+            <p className={daysValid ? "text-xs text-muted-foreground" : "text-xs text-destructive"}>
+              {daysValid ? t("settings.expiryDaysHint") : t("settings.expiryDaysInvalid")}
+            </p>
+          </div>
+        )}
+      </CardContent>
+      <CardFooter className="justify-end px-4 sm:px-6">
+        <Button
+          className="h-10"
+          onClick={() => saveMutation.mutate()}
+          disabled={saveMutation.isPending || (mode === "remove" && !daysValid)}
+        >
+          {saveMutation.isPending ? t("common.saving") : t("common.save")}
+        </Button>
+      </CardFooter>
+    </Card>
+  );
+}
+
+// Carte Vouchers (F2) — nom DNS du hotspot + logo affichés sur les tickets
+// (variables {{dnsName}} et {{logo}} des modèles).
+function VoucherCard({ settings }: { settings: AppSettings }) {
+  const { t } = useI18n();
+  const queryClient = useQueryClient();
+  const [dnsName, setDnsName] = useState(settings.tenant.dnsName ?? "");
+  const [logoUrl, setLogoUrl] = useState(settings.tenant.logoUrl ?? "");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Logo : image ≤ 300 Ko encodée en data URL (contrat F2).
+  function handleLogoFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    // Permet de re-sélectionner le même fichier après une erreur.
+    event.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error(t("settings.logoNotImage"));
+      return;
+    }
+    if (file.size > 300 * 1024) {
+      toast.error(t("settings.logoTooBig"));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") setLogoUrl(reader.result);
+    };
+    reader.onerror = () => toast.error(t("settings.logoReadError"));
+    reader.readAsDataURL(file);
+  }
+
+  const saveMutation = useMutation({
+    mutationFn: () =>
+      api<AppSettings>("/api/settings", {
+        method: "PUT",
+        // Corps défensif : champs plats + forme imbriquée « tenant » (cf. ExpiryCard).
+        body: {
+          dnsName: dnsName.trim(),
+          logoUrl,
+          tenant: { dnsName: dnsName.trim(), logoUrl },
+        },
+      }),
+    onSuccess: () => {
+      toast.success(t("settings.voucherSavedToast"));
+      void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return (
+    <Card className="gap-4 py-4 sm:py-6 lg:col-span-2">
+      <CardHeader className="px-4 sm:px-6">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
+            <Ticket className="size-4" />
+          </span>
+          {t("settings.voucherCard")}
+        </CardTitle>
+        <CardDescription>{t("settings.voucherCardDesc")}</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-4 px-4 sm:px-6 sm:grid-cols-2">
+        <div className="grid gap-2">
+          <Label htmlFor="voucher-dns">{t("settings.dnsName")}</Label>
+          <div className="relative">
+            <Globe className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+            <Input
+              id="voucher-dns"
+              className="h-10 pl-9"
+              placeholder="wifi.mondomaine.ci"
+              value={dnsName}
+              onChange={(event) => setDnsName(event.target.value)}
+              maxLength={100}
+            />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {t("settings.dnsNameHintPre")}
+            <code className="font-mono text-[11px]">{"{{dnsName}}"}</code>
+            {t("settings.dnsNameHintPost")}
+          </p>
+        </div>
+
+        <div className="grid gap-2">
+          <Label>{t("settings.logo")}</Label>
+          <div className="flex items-center gap-3">
+            <Avatar className="size-14 rounded-xl border bg-white">
+              {logoUrl ? (
+                <AvatarImage src={logoUrl} alt={t("settings.logoAlt")} className="object-contain" />
+              ) : null}
+              <AvatarFallback className="rounded-xl bg-muted text-muted-foreground">
+                <ImageIcon className="size-5" aria-hidden />
+              </AvatarFallback>
+            </Avatar>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-10"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <ImagePlus className="size-4" />
+                {logoUrl ? t("settings.change") : t("settings.upload")}
+              </Button>
+              {logoUrl && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="h-10 text-destructive hover:text-destructive"
+                  onClick={() => setLogoUrl("")}
+                >
+                  <X className="size-4" />
+                  {t("settings.remove")}
+                </Button>
+              )}
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="sr-only"
+              onChange={handleLogoFile}
+              aria-label={t("settings.logoInputAria")}
+            />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {t("settings.logoHintPre")}
+            <code className="font-mono text-[11px]">{"{{logo}}"}</code>
+            {t("settings.logoHintPost")}
+          </p>
+        </div>
+      </CardContent>
+      <CardFooter className="justify-end px-4 sm:px-6">
+        <Button
+          className="h-10"
+          onClick={() => saveMutation.mutate()}
+          disabled={saveMutation.isPending || dnsName.trim().length > 100}
+        >
+          {saveMutation.isPending ? t("common.saving") : t("common.save")}
         </Button>
       </CardFooter>
     </Card>

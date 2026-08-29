@@ -73,6 +73,12 @@ export interface RouterDevice {
   tokenPreview?: string;
   /** Mode agent : dernier check-in (RFC3339, vide si jamais vu). */
   lastSeen?: string;
+  /** F8 : modèle de la carte (ex. « RB2011UiAS ») — vide si non rapporté. */
+  boardName?: string;
+  /** F8 : espace disque libre en Mo (0 = inconnu). */
+  freeHddMb?: number;
+  /** F8 : espace disque total en Mo (0 = inconnu). */
+  totalHddMb?: number;
   /** Page de login du hotspot (optionnel) — cible des QR codes imprimés sur les vouchers. */
   hotspotLoginUrl?: string;
 }
@@ -119,6 +125,9 @@ export interface RouterTestResult {
   version: string;
 }
 
+/** Mode d'expiration cloud (F1) : « notify » désactive au routeur, « remove » supprime. */
+export type ProfileExpiryMode = "notify" | "remove";
+
 export interface Profile {
   id: string;
   name: string;
@@ -129,6 +138,14 @@ export interface Profile {
   price: number;
   dataQuotaMb: number;
   createdAt: string;
+  /** F1 : comportement à l'expiration (défaut « notify »). */
+  expMode: ProfileExpiryMode;
+  /** F1 : période de grâce en minutes avant expiration effective (0 = immédiat, max 43200). */
+  gracePeriodMin: number;
+  /** F1 : verrouiller l'utilisateur à 1 session à la fois. */
+  lockUser: boolean;
+  /** F13 : prix de vente affiché sur le voucher (0 = même prix que price). */
+  sellingPrice: number;
 }
 
 export interface HotspotUser {
@@ -152,6 +169,8 @@ export interface HotspotUser {
   expiresAt: string;
   usedAt: string;
   price: number;
+  /** F13 : prix de vente copié du profil à la génération ({{price}} du voucher = sellingPrice || price). */
+  sellingPrice?: number;
   /** Quota data appliqué sur le routeur (limit-bytes-total, en Mo ; 0 = illimité). */
   dataQuotaMb: number;
 }
@@ -163,6 +182,42 @@ export interface PagedUsers {
   pageSize: number;
 }
 
+// ─── F2 — Modèles (templates) de vouchers ───
+
+export type VoucherFormat = "a4" | "58mm" | "80mm";
+
+/** Modèle de voucher — le bodyHtml est rendu côté client à l'impression (F2). */
+export interface VoucherTemplate {
+  id: string;
+  name: string;
+  format: VoucherFormat;
+  bodyHtml: string;
+  isDefault: boolean;
+  createdAt: string;
+}
+
+// ─── F3 — Journal utilisateurs ───
+
+export type UserLogAction = "login" | "logout" | "expire" | "kick";
+
+export interface UserLog {
+  id: string;
+  userId: string;
+  username: string;
+  action: UserLogAction;
+  routerId: string;
+  routerName: string;
+  ip: string;
+  mac: string;
+  at: string;
+}
+
+export interface PagedUserLogs {
+  data: UserLog[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
 /** Mode utilisateur des vouchers généré (« User Mode » du User Manager MikroTik). */
 export type VoucherUserMode = "userpass" | "same";
 
@@ -244,6 +299,10 @@ export interface Sale {
   routerName: string;
   batchId: string;
   at: string;
+  /** F13 : coût (= price × count) — Amount conserve sa sémantique de coût d'origine. */
+  cost?: number;
+  /** F13 : total vente (= (sellingPrice || price) × count). */
+  sellingTotal?: number;
 }
 
 export interface Batch {
@@ -323,7 +382,29 @@ export interface ReportsData {
   trafficByDay: { day: string; bytesIn: number; bytesOut: number }[];
   voucherStatus: { active: number; used: number; expired: number; disabled: number };
   totals: { revenue: number; sales: number; avgTicket: number };
+  /** F13 : bloc marge (30 jours glissants) — optionnel tant que le backend P2 n'est pas déployé. */
+  margin?: ReportsMargin;
 }
+
+/** Marge par profil (F13). */
+export interface ReportsMarginByProfile {
+  name: string;
+  sold: number;
+  revenue: number;
+  cost: number;
+  margin: number;
+}
+
+/** Bloc marge des rapports (F13) : prix de vente vs coût. */
+export interface ReportsMargin {
+  revenue: number;
+  cost: number;
+  margin: number;
+  marginPct: number;
+  byProfile: ReportsMarginByProfile[];
+}
+
+export type ExpiryPolicyMode = "keep" | "remove";
 
 /* ─── Notifications (GET/PUT /api/notifications, POST /api/notifications/test) ─── */
 
@@ -381,6 +462,14 @@ export interface AppSettings {
     timezone: string;
     /** Lien marchand Wave CI (pay.wave.com) — composé avec /amount/<montant>/. */
     waveLink?: string;
+    /** F2 : nom DNS du hotspot affiché sur les vouchers (ex. wifi.mondomaine.ci). */
+    dnsName?: string;
+    /** F2 : logo du tenant (data URL image ≤ 300 Ko) affiché sur les vouchers. */
+    logoUrl?: string;
+    /** F1/F5 : politique de nettoyage des utilisateurs expirés (défaut « keep »). */
+    expiryPolicyMode?: ExpiryPolicyMode;
+    /** F1/F5 : suppression après N jours (1-365, défaut 30) quand mode = remove. */
+    expiryPolicyAfterDays?: number;
   };
   plan: {
     name: string;
@@ -435,15 +524,157 @@ export interface SubscribeResponse {
   waveLink: string;
 }
 
+// ─── F6 — Trafic temps réel ───
+
+export interface IfaceTraffic {
+  name: string;
+  /** Compteurs cumulés. */
+  rxBytes: number;
+  txBytes: number;
+  /** Débit calculé. */
+  rxBps: number;
+  txBps: number;
+}
+
+export interface TrafficPoint {
+  /** RFC3339. */
+  t: string;
+  rxBps: number;
+  txBps: number;
+}
+
+export interface RouterTraffic {
+  routerId: string;
+  accountId: string;
+  updatedAt: string;
+  interfaces: IfaceTraffic[];
+  /** 60 derniers points (somme toutes interfaces). */
+  history: TrafficPoint[];
+}
+
+// ─── F7 — IP Bindings ───
+
+export type IPBindingType = "bypassed" | "blocked";
+
+export interface IPBinding {
+  id: string;
+  routerId: string;
+  mac: string;
+  address: string;
+  comment: string;
+  type: IPBindingType;
+  disabled: boolean;
+  createdAt: string;
+}
+
+// ─── F8 — Status étendu + ping ───
+
+export interface PingResult {
+  queued: boolean;
+  /** Résultat direct (simulated) — absent si queued. */
+  ok?: boolean;
+  target?: string;
+  sent?: number;
+  received?: number;
+  lossPct?: number;
+  minMs?: number;
+  avgMs?: number;
+  maxMs?: number;
+  /** Résultat différé (agent) : identifiant de commande à poller via GET /api/commands/{id}. */
+  commandId?: string;
+}
+
+export interface CommandStatus {
+  id: string;
+  kind: string;
+  status: string;
+  result: unknown;
+}
+
+// ─── F9 — Outils routeur (DHCP / hôtes / cookies / journal) ───
+
+export interface DhcpLeaseRow {
+  ip: string;
+  mac: string;
+  host: string;
+  expires: string;
+  status: string;
+}
+
+export interface HotspotHostRow {
+  mac: string;
+  ip: string;
+  server: string;
+  /** Durée de connexion en secondes. */
+  uptime: number;
+  authorized: boolean;
+}
+
+export interface HotspotCookieRow {
+  user: string;
+  mac: string;
+  expires: string;
+}
+
+export interface RouterLogRow {
+  time: string;
+  topics: string;
+  message: string;
+}
+
+/** Enveloppe commune des outils routeur (F9/F10) : queued=true tant que la commande agent n'est pas done. */
+export interface ToolEnvelope<T> {
+  queued: boolean;
+  data: T[];
+  updatedAt: string;
+}
+
+/** Lignes des 4 outils F9. */
+export interface ToolRows {
+  dhcp: DhcpLeaseRow[];
+  hosts: HotspotHostRow[];
+  cookies: HotspotCookieRow[];
+  log: RouterLogRow[];
+}
+
+// ─── F10 — Scheduler ───
+
+export interface SchedulerTask {
+  id: string;
+  routerId: string;
+  name: string;
+  /** Affichage humain à la RouterOS, ex. « 45s », « 1d ». */
+  interval: string;
+  onEvent: string;
+  disabled: boolean;
+  createdAt: string;
+}
+
+/**
+ * Ligne scheduler unifiée (F10) : simulated renvoie des SchedulerTask complètes,
+ * l'agent renvoie {name, interval, onEvent, disabled} — les deux partagent ces
+ * quatre champs d'affichage.
+ */
+export interface SchedulerRow {
+  id?: string;
+  name: string;
+  interval: string;
+  onEvent: string;
+  disabled: boolean;
+  createdAt?: string;
+}
+
 export type ViewId =
   | "dashboard"
   | "sessions"
   | "users"
   | "vouchers"
+  | "templates"
   | "profiles"
   | "resellers"
   | "routers"
   | "reports"
+  | "logs"
   | "accounts"
   | "notifications"
   | "settings";

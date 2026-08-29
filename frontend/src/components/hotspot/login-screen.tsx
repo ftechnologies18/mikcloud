@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api, register } from "@/lib/hotspot/api";
+import { useI18n } from "@/lib/hotspot/i18n";
 import { useHotspotStore } from "@/lib/hotspot/store";
 import type { AuthResponse } from "@/lib/hotspot/types";
 
@@ -21,6 +22,7 @@ import type { AuthResponse } from "@/lib/hotspot/types";
 const SHOW_DEMO = !process.env.NEXT_PUBLIC_API_BASE;
 
 export default function LoginScreen() {
+  const { t, tf } = useI18n();
   const setAuth = useHotspotStore((s) => s.setAuth);
 
   // Connexion
@@ -40,7 +42,7 @@ export default function LoginScreen() {
 
   function applyAuth(res: AuthResponse) {
     setAuth(res.token, res.user);
-    toast.success(`Bienvenue, ${res.user.name}`);
+    toast.success(tf("login.welcome", { name: res.user.name }));
   }
 
   async function handleLogin(e: React.FormEvent) {
@@ -54,7 +56,7 @@ export default function LoginScreen() {
       });
       applyAuth(res);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Connexion impossible");
+      toast.error(err instanceof Error ? err.message : t("login.failed"));
     } finally {
       setLoginLoading(false);
     }
@@ -74,7 +76,7 @@ export default function LoginScreen() {
       applyAuth(res);
     } catch (err) {
       // 403 inscription fermée / clé requise, 409 identifiant pris, 400 validations.
-      toast.error(err instanceof Error ? err.message : "Inscription impossible");
+      toast.error(err instanceof Error ? err.message : t("login.registerFailed"));
     } finally {
       setRegLoading(false);
     }
@@ -93,29 +95,29 @@ export default function LoginScreen() {
             <div className="flex flex-col items-center text-center">
               <Image
                 src="/logo.png"
-                alt="Logo MikCloud — nuage, signal WiFi et routeur MikroTik"
+                alt={t("login.logoAlt")}
                 width={112}
                 height={112}
                 priority
                 className="rounded-2xl shadow-lg shadow-primary/20"
               />
               <h1 className="mt-4 text-2xl font-semibold tracking-tight">MikCloud</h1>
-              <p className="mt-1 text-sm text-muted-foreground">Gestion Hotspot Cloud MikroTik</p>
+              <p className="mt-1 text-sm text-muted-foreground">{t("login.tagline")}</p>
             </div>
 
             <Tabs defaultValue="login" className="mt-8 gap-5">
               <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="login">Se connecter</TabsTrigger>
+                <TabsTrigger value="login">{t("login.tabLogin")}</TabsTrigger>
                 <TabsTrigger value="register">
                   <UserPlus className="size-4" />
-                  Créer un compte
+                  {t("login.tabRegister")}
                 </TabsTrigger>
               </TabsList>
 
               <TabsContent value="login">
                 <form onSubmit={handleLogin} className="space-y-4">
                   <div className="space-y-2">
-                    <Label htmlFor="login-username">Identifiant</Label>
+                    <Label htmlFor="login-username">{t("login.username")}</Label>
                     <Input
                       id="login-username"
                       autoComplete="username"
@@ -126,7 +128,7 @@ export default function LoginScreen() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="login-password">Mot de passe</Label>
+                    <Label htmlFor="login-password">{t("login.password")}</Label>
                     <Input
                       id="login-password"
                       type="password"
@@ -139,7 +141,7 @@ export default function LoginScreen() {
                   </div>
                   <Button type="submit" className="w-full" disabled={!canLogin}>
                     {loginLoading && <Loader2 className="size-4 animate-spin" />}
-                    Se connecter
+                    {t("login.tabLogin")}
                   </Button>
                 </form>
               </TabsContent>
@@ -147,18 +149,18 @@ export default function LoginScreen() {
               <TabsContent value="register">
                 <form onSubmit={handleRegister} className="space-y-4">
                   <div className="space-y-2">
-                    <Label htmlFor="register-name">Nom complet / entreprise</Label>
+                    <Label htmlFor="register-name">{t("login.register.name")}</Label>
                     <Input
                       id="register-name"
                       autoComplete="organization"
-                      placeholder="Ex. ProMax Wifi"
+                      placeholder="ProMax Wifi"
                       value={regName}
                       onChange={(e) => setRegName(e.target.value)}
                       disabled={regLoading}
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="register-username">Identifiant</Label>
+                    <Label htmlFor="register-username">{t("login.username")}</Label>
                     <Input
                       id="register-username"
                       autoComplete="username"
@@ -169,7 +171,7 @@ export default function LoginScreen() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="register-password">Mot de passe</Label>
+                    <Label htmlFor="register-password">{t("login.password")}</Label>
                     <Input
                       id="register-password"
                       type="password"
@@ -181,7 +183,7 @@ export default function LoginScreen() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="register-key">Clé d&apos;invitation (si requise)</Label>
+                    <Label htmlFor="register-key">{t("login.register.key")}</Label>
                     <div className="relative">
                       <KeyRound className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                       <Input
@@ -189,7 +191,7 @@ export default function LoginScreen() {
                         type="password"
                         autoComplete="off"
                         className="pl-8"
-                        placeholder="Optionnelle"
+                        placeholder={t("login.register.keyPlaceholder")}
                         value={regKey}
                         onChange={(e) => setRegKey(e.target.value)}
                         disabled={regLoading}
@@ -198,7 +200,7 @@ export default function LoginScreen() {
                   </div>
                   <Button type="submit" className="w-full" disabled={!canRegister}>
                     {regLoading && <Loader2 className="size-4 animate-spin" />}
-                    Créer mon compte
+                    {t("login.register.submit")}
                   </Button>
                 </form>
               </TabsContent>
@@ -209,7 +211,8 @@ export default function LoginScreen() {
                 <Separator className="my-6" />
                 <div className="flex items-center justify-between gap-3 rounded-lg bg-muted/50 px-3 py-2.5">
                   <p className="text-xs text-muted-foreground">
-                    Démo : <span className="font-medium text-foreground">admin / admin123</span>
+                    {t("login.demoPrefix")}
+                    <span className="font-medium text-foreground">admin / admin123</span>
                   </p>
                   <Button
                     type="button"
@@ -222,7 +225,7 @@ export default function LoginScreen() {
                     }}
                     disabled={loginLoading}
                   >
-                    Utiliser le compte démo
+                    {t("login.useDemo")}
                   </Button>
                 </div>
               </>
@@ -230,9 +233,7 @@ export default function LoginScreen() {
           </CardContent>
         </Card>
 
-        <p className="mt-6 text-center text-xs text-muted-foreground">
-          © 2025 MikCloud — Connectez vos routeurs MikroTik en toute simplicité
-        </p>
+        <p className="mt-6 text-center text-xs text-muted-foreground">{t("login.footer")}</p>
       </motion.div>
     </div>
   );

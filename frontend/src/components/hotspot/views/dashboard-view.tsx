@@ -35,19 +35,13 @@ import { PageHeader } from "@/components/hotspot/page-header";
 import { StatCard } from "@/components/hotspot/stat-card";
 import { StatusBadge } from "@/components/hotspot/status-badge";
 import { api } from "@/lib/hotspot/api";
+import { localeOf, useI18n } from "@/lib/hotspot/i18n";
 import { formatCurrency, timeAgo } from "@/lib/hotspot/format";
+import type { Lang } from "@/lib/hotspot/i18n";
 import type { Activity as ActivityItem, AppSettings, DashboardData, SiteOverview } from "@/lib/hotspot/types";
 
 const GRID_STROKE = "#27272a";
 const AXIS_TICK = { fill: "#71717a", fontSize: 12 };
-
-function nf(value: number): string {
-  return new Intl.NumberFormat("fr-FR").format(value);
-}
-
-function compactFr(value: number): string {
-  return new Intl.NumberFormat("fr-FR", { notation: "compact", maximumFractionDigits: 1 }).format(value);
-}
 
 interface TooltipItem {
   value?: number | string;
@@ -71,7 +65,7 @@ function ChartTooltip({
     <div className="rounded-lg border border-border bg-popover px-3 py-2 text-xs shadow-lg">
       <p className="text-muted-foreground">{label}</p>
       <p className="mt-0.5 font-semibold text-white">
-        {formatter ? formatter(value) : nf(value)}
+        {formatter ? formatter(value) : String(value)}
       </p>
     </div>
   );
@@ -88,8 +82,10 @@ const ACTIVITY_ICONS: Record<ActivityItem["type"], LucideIcon> = {
 
 // SiteCard — carte de vue d'ensemble d'un site (routeur) : le multi-sites
 // est au cœur du modèle SaaS (1 compte = N hotspots).
-function SiteCard({ site, currency }: { site: SiteOverview; currency: string }) {
+function SiteCard({ site, currency, lang }: { site: SiteOverview; currency: string; lang: Lang }) {
+  const { t } = useI18n();
   const online = site.status === "online";
+  const nf = (value: number): string => new Intl.NumberFormat(localeOf(lang)).format(value);
   return (
     <Card className="gap-0 py-0">
       <CardContent className="p-4 sm:p-5">
@@ -107,30 +103,30 @@ function SiteCard({ site, currency }: { site: SiteOverview; currency: string }) 
 
         <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3">
           <div>
-            <dt className="text-xs text-muted-foreground">Sessions</dt>
+            <dt className="text-xs text-muted-foreground">{t("dashboard.site.sessions")}</dt>
             <dd className="mt-0.5 flex items-center gap-1.5 font-semibold tabular-nums">
               {nf(site.activeSessions)}
-              {online && <span className="live-dot" aria-label="en direct" />}
+              {online && <span className="live-dot" aria-label={t("dashboard.live")} />}
             </dd>
           </div>
           <div>
-            <dt className="text-xs text-muted-foreground">Ventes du jour</dt>
+            <dt className="text-xs text-muted-foreground">{t("dashboard.site.salesToday")}</dt>
             <dd className="mt-0.5 font-semibold tabular-nums">{nf(site.salesToday)}</dd>
           </div>
           <div>
-            <dt className="text-xs text-muted-foreground">Utilisateurs actifs</dt>
+            <dt className="text-xs text-muted-foreground">{t("dashboard.site.users")}</dt>
             <dd className="mt-0.5 font-semibold tabular-nums">{nf(site.hotspotUsers)}</dd>
           </div>
           <div>
-            <dt className="text-xs text-muted-foreground">Vouchers actifs</dt>
+            <dt className="text-xs text-muted-foreground">{t("dashboard.site.vouchers")}</dt>
             <dd className="mt-0.5 font-semibold tabular-nums">{nf(site.activeVouchers)}</dd>
           </div>
         </dl>
 
         <div className="mt-4 flex items-center justify-between gap-2 border-t pt-3">
-          <span className="text-xs text-muted-foreground">Revenu 30 jours</span>
+          <span className="text-xs text-muted-foreground">{t("dashboard.site.revenue30")}</span>
           <span className="text-sm font-semibold text-primary tabular-nums">
-            {formatCurrency(site.revenue30d, currency)}
+            {formatCurrency(site.revenue30d, currency, lang)}
           </span>
         </div>
       </CardContent>
@@ -139,6 +135,7 @@ function SiteCard({ site, currency }: { site: SiteOverview; currency: string }) 
 }
 
 export default function DashboardView() {
+  const { t, tf, lang } = useI18n();
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["/api/dashboard"],
     queryFn: () => api<DashboardData>("/api/dashboard"),
@@ -151,10 +148,14 @@ export default function DashboardView() {
   });
   const currency = settings?.tenant.currency ?? "FCFA";
 
+  const nf = (value: number): string => new Intl.NumberFormat(localeOf(lang)).format(value);
+  const compact = (value: number): string =>
+    new Intl.NumberFormat(localeOf(lang), { notation: "compact", maximumFractionDigits: 1 }).format(value);
+
   if (isLoading) {
     return (
       <div className="space-y-6">
-        <PageHeader title="Tableau de bord" description="Vue d'ensemble de votre réseau hotspot en temps réel" />
+        <PageHeader title={t("dashboard.title")} description={t("dashboard.description")} />
         <LoadingCards cards={6} />
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           <Card>
@@ -180,12 +181,12 @@ export default function DashboardView() {
       <Card>
         <EmptyState
           icon={Activity}
-          title="Impossible de charger le tableau de bord"
-          description="Le serveur est peut-être momentanément indisponible. Réessayez dans un instant."
+          title={t("dashboard.loadError")}
+          description={t("dashboard.loadErrorDesc")}
           action={
             <Button variant="outline" onClick={() => void refetch()}>
               <Clock className="size-4" />
-              Réessayer
+              {t("common.retry")}
             </Button>
           }
         />
@@ -198,38 +199,44 @@ export default function DashboardView() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Tableau de bord" description="Vue d'ensemble de votre réseau hotspot en temps réel" />
+      <PageHeader title={t("dashboard.title")} description={t("dashboard.description")} />
 
       {/* KPIs */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <StatCard title="Sessions actives" value={nf(kpis.activeSessions)} icon={Radio} live />
-        <StatCard title="Utilisateurs" value={nf(kpis.totalUsers)} icon={Users} sub="clients hotspot" />
-        <StatCard title="Vouchers actifs" value={nf(kpis.activeVouchers)} icon={Ticket} />
-        <StatCard title="Ventes du jour" value={nf(kpis.salesToday)} icon={ShoppingCart} sub="tickets vendus" />
-        <StatCard title="Revenu 30 jours" value={formatCurrency(kpis.revenue30d, currency)} icon={Wallet} />
+        <StatCard title={t("dashboard.kpi.activeSessions")} value={nf(kpis.activeSessions)} icon={Radio} live />
+        <StatCard title={t("dashboard.kpi.users")} value={nf(kpis.totalUsers)} icon={Users} sub={t("dashboard.kpi.usersSub")} />
+        <StatCard title={t("dashboard.kpi.activeVouchers")} value={nf(kpis.activeVouchers)} icon={Ticket} />
+        <StatCard title={t("dashboard.kpi.salesToday")} value={nf(kpis.salesToday)} icon={ShoppingCart} sub={t("dashboard.kpi.salesTodaySub")} />
         <StatCard
-          title="Routeurs"
+          title={t("dashboard.kpi.revenue30")}
+          value={formatCurrency(kpis.revenue30d, currency, lang)}
+          icon={Wallet}
+        />
+        <StatCard
+          title={t("dashboard.kpi.routers")}
           value={`${kpis.routersOnline}/${kpis.routersTotal}`}
           icon={RouterIcon}
-          sub="en ligne"
+          sub={t("dashboard.kpi.routersSub")}
         />
       </div>
 
       {/* Vue d'ensemble multi-sites — 1 compte = N hotspots */}
       {data.sites.length > 0 && (
-        <section aria-label="Vue d'ensemble multi-sites" className="space-y-3">
+        <section aria-label={t("dashboard.sites")} className="space-y-3">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <h2 className="text-sm font-semibold tracking-wide text-muted-foreground uppercase">
-              Vue d'ensemble multi-sites
+              {t("dashboard.sites")}
             </h2>
             <p className="text-xs text-muted-foreground">
-              {data.sites.length} hotspot{data.sites.length > 1 ? "s" : ""} rattaché
-              {data.sites.length > 1 ? "s" : ""} à votre compte
+              {tf("dashboard.sitesCount", {
+                n: data.sites.length,
+                p: data.sites.length > 1 ? "s" : "",
+              })}
             </p>
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {data.sites.map((site) => (
-              <SiteCard key={site.routerId} site={site} currency={currency} />
+              <SiteCard key={site.routerId} site={site} currency={currency} lang={lang} />
             ))}
           </div>
         </section>
@@ -239,7 +246,7 @@ export default function DashboardView() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader className="px-4 sm:px-6">
-            <CardTitle className="text-base">Sessions — dernières 24h</CardTitle>
+            <CardTitle className="text-base">{t("dashboard.sessionsChart")}</CardTitle>
           </CardHeader>
           <CardContent className="px-2 pb-2 sm:px-4 sm:pb-4">
             <div className="h-64 w-full sm:h-72">
@@ -257,7 +264,9 @@ export default function DashboardView() {
                   <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} width={32} allowDecimals={false} />
                   <Tooltip
                     cursor={{ stroke: GRID_STROKE }}
-                    content={<ChartTooltip formatter={(v) => `${nf(v)} session${v > 1 ? "s" : ""}`} />}
+                    content={
+                      <ChartTooltip formatter={(v) => tf("dashboard.sessionUnit", { n: nf(v), p: v > 1 ? "s" : "" })} />
+                    }
                   />
                   <Area
                     type="monotone"
@@ -275,7 +284,7 @@ export default function DashboardView() {
 
         <Card>
           <CardHeader className="px-4 sm:px-6">
-            <CardTitle className="text-base">Revenus — 14 derniers jours</CardTitle>
+            <CardTitle className="text-base">{t("dashboard.revenueChart")}</CardTitle>
           </CardHeader>
           <CardContent className="px-2 pb-2 sm:px-4 sm:pb-4">
             <div className="h-64 w-full sm:h-72">
@@ -288,11 +297,11 @@ export default function DashboardView() {
                     axisLine={false}
                     tickLine={false}
                     width={44}
-                    tickFormatter={(v: number) => compactFr(v)}
+                    tickFormatter={(v: number) => compact(v)}
                   />
                   <Tooltip
                     cursor={{ fill: "#10b981", fillOpacity: 0.08 }}
-                    content={<ChartTooltip formatter={(v) => formatCurrency(v, currency)} />}
+                    content={<ChartTooltip formatter={(v) => formatCurrency(v, currency, lang)} />}
                   />
                   <Bar dataKey="value" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={36} />
                 </BarChart>
@@ -306,14 +315,14 @@ export default function DashboardView() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader className="px-4 sm:px-6">
-            <CardTitle className="text-base">Profils les plus vendus</CardTitle>
+            <CardTitle className="text-base">{t("dashboard.topProfiles")}</CardTitle>
           </CardHeader>
           <CardContent className="px-4 pb-4 sm:px-6 sm:pb-6">
             {data.topProfiles.length === 0 ? (
               <EmptyState
                 icon={Ticket}
-                title="Aucune vente enregistrée"
-                description="Les profils les plus vendus apparaîtront ici."
+                title={t("dashboard.topProfilesEmpty")}
+                description={t("dashboard.topProfilesEmptyDesc")}
               />
             ) : (
               <div className="space-y-4">
@@ -322,7 +331,8 @@ export default function DashboardView() {
                     <div className="flex items-baseline justify-between gap-3">
                       <span className="truncate text-sm font-medium">{p.name}</span>
                       <span className="shrink-0 text-xs text-muted-foreground">
-                        {nf(p.users)} utilisateur{p.users > 1 ? "s" : ""} · {formatCurrency(p.total, currency)}
+                        {tf("dashboard.usersCount", { n: nf(p.users), p: p.users > 1 ? "s" : "" })} ·{" "}
+                        {formatCurrency(p.total, currency, lang)}
                       </span>
                     </div>
                     <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-primary/20">
@@ -340,11 +350,11 @@ export default function DashboardView() {
 
         <Card>
           <CardHeader className="px-4 sm:px-6">
-            <CardTitle className="text-base">Activité récente</CardTitle>
+            <CardTitle className="text-base">{t("dashboard.activity")}</CardTitle>
           </CardHeader>
           <CardContent className="px-4 pb-4 sm:px-6 sm:pb-6">
             {data.recentActivity.length === 0 ? (
-              <EmptyState icon={Activity} title="Aucune activité récente" />
+              <EmptyState icon={Activity} title={t("dashboard.activityEmpty")} />
             ) : (
               <ul className="max-h-96 space-y-1 overflow-y-auto pr-1">
                 {data.recentActivity.map((a) => {
@@ -356,7 +366,7 @@ export default function DashboardView() {
                       </span>
                       <div className="min-w-0 flex-1">
                         <p className="text-sm leading-snug">{a.message}</p>
-                        <p className="mt-0.5 text-xs text-muted-foreground">{timeAgo(a.at)}</p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">{timeAgo(a.at, lang)}</p>
                       </div>
                     </li>
                   );

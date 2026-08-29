@@ -154,6 +154,28 @@
   }
 }
 
+/* ─── Impression via modèles de vouchers (F2) ─── */
+.tpl-ticket {
+  break-inside: avoid;
+}
+.tpl-format-58mm .tpl-ticket,
+.tpl-format-80mm .tpl-ticket {
+  page-break-after: always;
+}
+/* Pas de page blanche après le dernier ticket thermique. */
+.tpl-format-58mm .tpl-ticket:last-child,
+.tpl-format-80mm .tpl-ticket:last-child {
+  page-break-after: auto;
+}
+@media print {
+  .tpl-format-58mm {
+    width: 58mm;
+  }
+  .tpl-format-80mm {
+    width: 80mm;
+  }
+}
+
 /* ─── Impression A4 + QR des lots de vouchers (dialog VoucherA4PrintDialog) ───
    Pendant l'impression, le dialog A4 devient tout le document : les pages .a4-page
    (196 × 283 mm = zone imprimable après marge @page de 7 mm ; + 3 mm de padding

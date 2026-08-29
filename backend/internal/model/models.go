@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"math/big"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -143,6 +144,11 @@ type Router struct {
 	AgentTokenHash string `json:"agentTokenHash,omitempty"`
 	TokenPreview   string `json:"tokenPreview,omitempty"`
 	LastSeen       string `json:"lastSeen,omitempty"`
+	// P1 (audit Mikhmon) — F8 : status étendu (board, disque). Colonnes
+	// créées dès la vague P0 (migrations idempotentes pg.go).
+	BoardName  string `json:"boardName,omitempty"`
+	FreeHddMb  int    `json:"freeHddMb,omitempty"`
+	TotalHddMb int    `json:"totalHddMb,omitempty"`
 }
 
 // Profile — profil hotspot (débit, durée, prix, validité).
@@ -157,6 +163,12 @@ type Profile struct {
 	Price             int    `json:"price"`
 	DataQuotaMb       int    `json:"dataQuotaMb"`
 	CreatedAt         string `json:"createdAt"`
+	// P0 (audit Mikhmon) — expiration cloud (F1).
+	ExpMode        string `json:"expMode"`        // "notify" (défaut) | "remove"
+	GracePeriodMin int    `json:"gracePeriodMin"` // 0 = immédiat (borne 43200)
+	LockUser       bool   `json:"lockUser"`       // verrouiller : 1 session à la fois
+	// P2 (audit Mikhmon) — marge (F13) : prix de vente affiché (0 = même prix que Price).
+	SellingPrice int `json:"sellingPrice"`
 }
 
 // HotspotUser — utilisateur hotspot régulier ou voucher.
@@ -182,6 +194,12 @@ type HotspotUser struct {
 	ExpiresAt     string `json:"expiresAt"`
 	UsedAt        string `json:"usedAt"`
 	Price         int    `json:"price"`
+	// P0/P2 (audit Mikhmon) — marge (F13) : prix de vente copié du profil à la
+	// génération ({{price}} du voucher = sellingPrice || price).
+	SellingPrice int `json:"sellingPrice"`
+	// P0 (audit Mikhmon) — F1 : false tant que l'expiration n'a pas été
+	// appliquée au routeur (user_remove / user_set disabled — voir enforceExpired).
+	Enforced bool `json:"enforced"`
 	// DataQuotaMb — quota de données par voucher appliqué sur le routeur
 	// (/ip hotspot user add limit-bytes-total=…, exprimé en Mo ; 0 = illimité
 	// dans la limite de la validité). Ex. « 5 Go = 500 F » → DataQuotaMb 5120.
@@ -244,7 +262,7 @@ type Activity struct {
 type Sale struct {
 	ID           string `json:"id"`
 	AccountID    string `json:"accountId"`
-	Amount       int    `json:"amount"`
+	Amount       int    `json:"amount"` // conserve sa sémantique : price × count
 	ProfileName  string `json:"profileName"`
 	Count        int    `json:"count"`
 	Channel      string `json:"channel"` // direct | reseller
@@ -253,6 +271,10 @@ type Sale struct {
 	RouterName   string `json:"routerName"`
 	BatchID      string `json:"batchId"`
 	At           string `json:"at"`
+	// P2 (audit Mikhmon) — marge (F13) : Cost = price×count,
+	// SellingTotal = (sellingPrice || price)×count.
+	Cost         int `json:"cost"`
+	SellingTotal int `json:"selling"`
 }
 
 // Batch — lot de vouchers générés en une fois (traçabilité complète).
@@ -283,6 +305,12 @@ type Tenant struct {
 	// Wave CI — lien marchand pay.wave.com (ex. https://pay.wave.com/m/M_xxx/c/ci/)
 	// composé avec /amount/<montant>/ pour les demandes de paiement.
 	WaveLink string `json:"waveLink,omitempty"`
+	// P0 (audit Mikhmon) — F2 : personnalisation voucher.
+	DNSName string `json:"dnsName,omitempty"` // ex. wifi.mondomaine.ci
+	LogoURL string `json:"logoUrl,omitempty"` // data URL image ≤ 300 Ko
+	// P0 (audit Mikhmon) — F5 : politique de nettoyage des expirés.
+	ExpiryPolicyMode      string `json:"expiryPolicyMode"`      // "keep" (défaut) | "remove"
+	ExpiryPolicyAfterDays int    `json:"expiryPolicyAfterDays"` // défaut 30
 }
 
 // Plan — plan d'abonnement SaaS (libellé hérité de l'ère pré-facturation ;
@@ -445,7 +473,123 @@ const (
 	CmdUserRemove   = "user_remove"   // supprimer un/des utilisateurs
 	CmdUserSet      = "user_set"      // modifier (nom/profil/password/disabled)
 	CmdKick         = "kick"          // fermer une session active
+	CmdUserReset    = "user_reset"    // remettre à zéro les compteurs d'un utilisateur (F4)
 )
+
+// P1 (audit Mikhmon) — kinds de commandes agent des vagues F6-F10.
+// Le résultat de chaque commande est rapporté via POST /agent/result et stocké
+// dans Command.Result (les outils F9/F10 mettent en cache leurs lignes dans la
+// clé "data" — relue tant que la commande est done depuis < 120 s).
+const (
+	CmdPing            = "ping"             // F8 : test de latence (/ping count=4 as-value)
+	CmdIpbindingAdd    = "ipbinding_add"    // F7 : /ip hotspot ip-binding add
+	CmdIpbindingSet    = "ipbinding_set"    // F7 : /ip hotspot ip-binding set
+	CmdIpbindingRemove = "ipbinding_remove" // F7 : /ip hotspot ip-binding remove
+	CmdReadDhcp        = "read_dhcp"        // F9 : /ip dhcp-server lease print
+	CmdReadHosts       = "read_hosts"       // F9 : /ip hotspot host print
+	CmdReadCookies     = "read_cookies"     // F9 : /ip hotspot cookie print
+	CmdReadLog         = "read_log"         // F9 : /log print where topics~"hotspot"
+	CmdReadScheduler   = "read_scheduler"   // F10 : /system scheduler print
+	CmdSchedulerAdd    = "scheduler_add"    // F10 : /system scheduler add
+	CmdSchedulerSet    = "scheduler_set"    // F10 : /system scheduler set (disabled)
+	CmdSchedulerRemove = "scheduler_remove" // F10 : /system scheduler remove
+	CmdReboot          = "reboot"           // F10 : /system reboot
+	CmdShutdown        = "shutdown"         // F10 : /system shutdown
+)
+
+// ---------------------------------------------------------------------------
+// P0/P1 (audit Mikhmon) — nouveaux types (contrat V2 : F2/F3/F6/F7/F10)
+// ---------------------------------------------------------------------------
+
+// VoucherTemplate — modèle d'impression de vouchers (F2). Le rendu des
+// variables {{…}} se fait côté CLIENT à l'impression ; le corps est stocké
+// tel quel (scripts retirés à la sauvegarde — voir SanitizeTemplateHTML).
+type VoucherTemplate struct {
+	ID        string `json:"id"`
+	AccountID string `json:"accountId"`
+	Name      string `json:"name"`     // 1-60 caractères
+	Format    string `json:"format"`   // "a4" | "58mm" | "80mm"
+	BodyHTML  string `json:"bodyHtml"` // ≤ 20 000 caractères, styles inline
+	IsDefault bool   `json:"isDefault"`
+	CreatedAt string `json:"createdAt"`
+}
+
+// UserLog — journal utilisateurs (F3) : login / logout / expire / kick.
+type UserLog struct {
+	ID         string `json:"id"`
+	AccountID  string `json:"accountId"`
+	UserID     string `json:"userId"`
+	Username   string `json:"username"`
+	Action     string `json:"action"` // "login" | "logout" | "expire" | "kick"
+	RouterID   string `json:"routerId"`
+	RouterName string `json:"routerName"`
+	IP         string `json:"ip"`
+	MAC        string `json:"mac"`
+	At         string `json:"at"`
+}
+
+// IfaceTraffic — compteur cumulé et débit instantané d'une interface (F6).
+type IfaceTraffic struct {
+	Name    string `json:"name"`
+	RxBytes int64  `json:"rxBytes"` // compteurs cumulés
+	TxBytes int64  `json:"txBytes"`
+	RxBps   int64  `json:"rxBps"` // débit calculé
+	TxBps   int64  `json:"txBps"`
+}
+
+// TrafficPoint — point d'historique de trafic, somme toutes interfaces (F6).
+type TrafficPoint struct {
+	T     string `json:"t"` // RFC3339
+	RxBps int64  `json:"rxBps"`
+	TxBps int64  `json:"txBps"`
+}
+
+// RouterTraffic — trafic temps réel d'un routeur (F6). Une entrée par
+// routeur : ID = RouterID (pattern de persistance : clé primaire "id").
+type RouterTraffic struct {
+	ID         string         `json:"id"` // = RouterID
+	RouterID   string         `json:"routerId"`
+	AccountID  string         `json:"accountId"`
+	UpdatedAt  string         `json:"updatedAt"`
+	Interfaces []IfaceTraffic `json:"interfaces"` // détail courant par interface
+	History    []TrafficPoint `json:"history"`    // 60 derniers points (somme interfaces)
+}
+
+// IPBinding — règle hotspot IP binding (F7) : bypass ou blocage par MAC.
+type IPBinding struct {
+	ID        string `json:"id"`
+	AccountID string `json:"accountId"`
+	RouterID  string `json:"routerId"`
+	MAC       string `json:"mac"`     // "AA:BB:CC:DD:EE:FF"
+	Address   string `json:"address"` // IP optionnelle
+	Comment   string `json:"comment"`
+	Type      string `json:"type"` // "bypassed" | "blocked"
+	Disabled  bool   `json:"disabled"`
+	CreatedAt string `json:"createdAt"`
+}
+
+// SchedulerTask — tâche planifiée du routeur (F10), source cloud.
+type SchedulerTask struct {
+	ID        string `json:"id"`
+	AccountID string `json:"accountId"`
+	RouterID  string `json:"routerId"`
+	Name      string `json:"name"`
+	Interval  string `json:"interval"` // affichage RouterOS ex. "45s", "1d"
+	OnEvent   string `json:"onEvent"`
+	Disabled  bool   `json:"disabled"`
+	CreatedAt string `json:"createdAt"`
+}
+
+// scriptTagPattern — blocs <script>…</script> (insensible à la casse,
+// multi-lignes) retirés des corps de templates à la sauvegarde.
+var scriptTagPattern = regexp.MustCompile(`(?is)<script\b[^>]*>.*?(</script\s*>|$)`)
+
+// SanitizeTemplateHTML retire les blocs <script>…</script> (y compris un
+// bloc non fermé, jusqu'à la fin) du corps d'un modèle de voucher : le rendu
+// se fait côté client à l'impression, aucune exécution de script n'est attendue.
+func SanitizeTemplateHTML(s string) string {
+	return strings.TrimSpace(scriptTagPattern.ReplaceAllString(s, ""))
+}
 
 // Command — ordre déposé par le cloud, récupéré puis exécuté par l'agent.
 type Command struct {
@@ -466,24 +610,31 @@ type Command struct {
 //   - Tenant/Settings : champs LEGACY mono-tenant, uniquement lus pour migrer
 //     un ancien db.json — vidés après migration puis ignorés.
 type DB struct {
-	Accounts          []Account                       `json:"accounts"`
-	SettingsByAccount map[string]Settings             `json:"settingsByAccount"`
-	Users             []AdminUser                     `json:"users"`
-	Routers           []Router                        `json:"routers"`
-	Profiles          []Profile                       `json:"profiles"`
-	HotspotUsers      []HotspotUser                   `json:"hotspotUsers"`
-	Batches           []Batch                         `json:"batches"`
-	Resellers         []Reseller                      `json:"resellers"`
-	Transactions      []Transaction                   `json:"transactions"`
-	Sessions          []Session                       `json:"sessions"`
-	Activity          []Activity                      `json:"activity"`
-	Sales             []Sale                          `json:"sales"`
-	Commands          []Command                       `json:"commands"`
-	NotifSettings     map[string]NotificationSettings `json:"notifSettings"` // accountId → réglages
-	NotifLog          []NotificationLog               `json:"notifLog"`
-	Tenant            Tenant                          `json:"tenant"`   // legacy mono-tenant
-	Settings          Settings                        `json:"settings"` // legacy mono-tenant
-	LastTick          time.Time                       `json:"lastTick"`
+	Accounts          []Account           `json:"accounts"`
+	SettingsByAccount map[string]Settings `json:"settingsByAccount"`
+	Users             []AdminUser         `json:"users"`
+	Routers           []Router            `json:"routers"`
+	Profiles          []Profile           `json:"profiles"`
+	HotspotUsers      []HotspotUser       `json:"hotspotUsers"`
+	Batches           []Batch             `json:"batches"`
+	Resellers         []Reseller          `json:"resellers"`
+	Transactions      []Transaction       `json:"transactions"`
+	Sessions          []Session           `json:"sessions"`
+	Activity          []Activity          `json:"activity"`
+	Sales             []Sale              `json:"sales"`
+	Commands          []Command           `json:"commands"`
+	// P0/P1 (audit Mikhmon) — nouvelles collections.
+	Templates      []VoucherTemplate `json:"templates"`      // F2
+	UserLogs       []UserLog         `json:"userLogs"`       // F3
+	IPBindings     []IPBinding       `json:"ipBindings"`     // F7
+	SchedulerTasks []SchedulerTask   `json:"schedulerTasks"` // F10
+	Traffic        []RouterTraffic   `json:"traffic"`        // F6
+	// Tier 1 — notifications multi-canaux.
+	NotifSettings map[string]NotificationSettings `json:"notifSettings"` // accountId → réglages
+	NotifLog      []NotificationLog               `json:"notifLog"`
+	Tenant        Tenant                          `json:"tenant"`   // legacy mono-tenant
+	Settings      Settings                        `json:"settings"` // legacy mono-tenant
+	LastTick      time.Time                       `json:"lastTick"`
 }
 
 // EffectiveStatus retourne le statut réel d'un utilisateur : un voucher encore

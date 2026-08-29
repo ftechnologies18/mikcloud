@@ -14,6 +14,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -226,6 +227,67 @@ func migrateMultiTenant(db *model.DB) bool {
 			changed = true
 		}
 	})
+	backfill(len(db.Templates), func(i int) {
+		if db.Templates[i].AccountID == "" {
+			db.Templates[i].AccountID = model.AccountMainID
+			changed = true
+		}
+	})
+	backfill(len(db.UserLogs), func(i int) {
+		if db.UserLogs[i].AccountID == "" {
+			db.UserLogs[i].AccountID = model.AccountMainID
+			changed = true
+		}
+	})
+	backfill(len(db.IPBindings), func(i int) {
+		if db.IPBindings[i].AccountID == "" {
+			db.IPBindings[i].AccountID = model.AccountMainID
+			changed = true
+		}
+	})
+	backfill(len(db.SchedulerTasks), func(i int) {
+		if db.SchedulerTasks[i].AccountID == "" {
+			db.SchedulerTasks[i].AccountID = model.AccountMainID
+			changed = true
+		}
+	})
+	backfill(len(db.Traffic), func(i int) {
+		if db.Traffic[i].AccountID == "" {
+			db.Traffic[i].AccountID = model.AccountMainID
+			changed = true
+		}
+	})
+
+	// P0 (audit Mikhmon) — ventes antérieures à la marge (F13) : les champs
+	// Cost/SellingTotal n'existaient pas ; Amount (= price×count) servait de
+	// base → cost = amount, selling = amount (sellingPrice n'existait pas).
+	for i := range db.Sales {
+		s := &db.Sales[i]
+		if s.Cost == 0 && s.SellingTotal == 0 && s.Amount > 0 {
+			s.Cost = s.Amount
+			s.SellingTotal = s.Amount
+			changed = true
+		}
+	}
+
+	// P0 (audit Mikhmon) — comptes créés avant la vague P0 : chaque compte sans
+	// AUCUN modèle de voucher reçoit les 3 gabarits par défaut (contrat F2).
+	// Idempotent : la suppression du dernier modèle étant interdite par l'API,
+	// ce rattrapage ne se joue qu'une fois par compte pré-P0.
+	if len(db.Templates) > 0 || len(db.Accounts) > 0 {
+		accHasTemplates := map[string]bool{}
+		for i := range db.Templates {
+			accHasTemplates[db.Templates[i].AccountID] = true
+		}
+		for i := range db.Accounts {
+			accID := db.Accounts[i].ID
+			if accHasTemplates[accID] {
+				continue
+			}
+			db.Templates = append(db.Templates, SeedTemplatesFor(accID)...)
+			changed = true
+		}
+	}
 
 	if db.SettingsByAccount == nil {
 		db.SettingsByAccount = map[string]model.Settings{}
@@ -240,6 +302,15 @@ func migrateMultiTenant(db *model.DB) bool {
 			}
 		}
 		changed = true
+	}
+
+	// P0 (audit Mikhmon) — défauts des politiques d'expiration (F5) sur les
+	// réglages existants (données créées avant la vague P0 : mode vide).
+	for accID, s := range db.SettingsByAccount {
+		if normalizeSettingsDefaults(&s) {
+			db.SettingsByAccount[accID] = s
+			changed = true
+		}
 	}
 
 	// Les champs legacy sont vidés : le modèle multi-comptes devient la seule
@@ -340,6 +411,21 @@ func applyAdminOverride(db *model.DB) bool {
 	return true
 }
 
+// normalizeSettingsDefaults — défauts P0 (audit Mikhmon) des politiques
+// d'expiration d'un compte : un mode vide (données antérieures) devient
+// "keep" ; les jours restent à 30 par défaut dans ce cas uniquement (un mode
+// explicitement configuré — même avec 0 jour — est respecté tel quel).
+func normalizeSettingsDefaults(s *model.Settings) bool {
+	if s.Tenant.ExpiryPolicyMode != "" {
+		return false
+	}
+	s.Tenant.ExpiryPolicyMode = "keep"
+	if s.Tenant.ExpiryPolicyAfterDays == 0 {
+		s.Tenant.ExpiryPolicyAfterDays = 30
+	}
+	return true
+}
+
 func (s *Store) ensureSlices() {
 	if s.db.Accounts == nil {
 		s.db.Accounts = []model.Account{}
@@ -373,6 +459,21 @@ func (s *Store) ensureSlices() {
 	}
 	if s.db.Sales == nil {
 		s.db.Sales = []model.Sale{}
+	}
+	if s.db.Templates == nil {
+		s.db.Templates = []model.VoucherTemplate{}
+	}
+	if s.db.UserLogs == nil {
+		s.db.UserLogs = []model.UserLog{}
+	}
+	if s.db.IPBindings == nil {
+		s.db.IPBindings = []model.IPBinding{}
+	}
+	if s.db.SchedulerTasks == nil {
+		s.db.SchedulerTasks = []model.SchedulerTask{}
+	}
+	if s.db.Traffic == nil {
+		s.db.Traffic = []model.RouterTraffic{}
 	}
 	if s.db.NotifSettings == nil {
 		s.db.NotifSettings = map[string]model.NotificationSettings{}
@@ -539,15 +640,29 @@ func (s *Store) Reload() (ReloadStats, error) {
 // À appeler sous verrou, au maximum toutes les 2 secondes.
 // ---------------------------------------------------------------------------
 
+// Rétention et volumétrie du journal utilisateurs (F3).
+const (
+	userLogRetention = 90 * 24 * time.Hour // purge au-delà de 90 jours
+	maxUserLogs      = 5000                // garde-fou volumétrie (mode JSON)
+)
+
 // Tick — progression du temps simulé :
+//   - moteur d'expiration cloud (applyExpiry, F1/F5) AVANT tout ;
 //   - uptime/octet des sessions actives (1-3 Mo/s descendant, 0,2-0,8 Mo/s montant)
 //   - télémétrie des routeurs (uptime croissant, CPU random walk 5-45 %)
 //   - ~30 % de chance de créer une session depuis un user actif (voucher -> used)
 //   - ~12 % de chance de terminer une session aléatoire
+//   - P0 : journalisation login/logout (F3) + verrouillage LockUser (F1)
 func Tick(db *model.DB, now time.Time) {
 	if !db.LastTick.IsZero() && now.Sub(db.LastTick) <= 2*time.Second {
 		return
 	}
+
+	// P0 (audit Mikhmon) — moteur d'expiration cloud en TÊTE : les lectures
+	// suivantes voient des statuts à jour. L'enforcement routeur (commandes
+	// agent) est réalisé par les handlers via enforceExpired.
+	applyExpiry(db, now)
+
 	var dt int64
 	if db.LastTick.IsZero() {
 		dt = 0
@@ -568,23 +683,36 @@ func Tick(db *model.DB, now time.Time) {
 		db.Routers[i].CPULoad = clamp(db.Routers[i].CPULoad+rand.Intn(13)-6, 5, 45)
 	}
 
-	// Index utilisateurs par nom
+	// P1 (audit Mikhmon) — F6 : marche aléatoire du trafic des routeurs
+	// simulés (débits lissés 0,5-50 Mbps, compteurs cumulés, point
+	// d'historique toutes les ~5 s). Vérrouillé + rapide par construction
+	// (quelques interfaces par routeur, aucune allocation lourde).
+	tickTraffic(db, now, dt)
+
+	// Index utilisateurs par nom + profils par id (F1)
 	userIdx := make(map[string]int, len(db.HotspotUsers))
+	profileIdx := make(map[string]int, len(db.Profiles))
 	for i := range db.HotspotUsers {
 		userIdx[db.HotspotUsers[i].Username] = i
 	}
+	for i := range db.Profiles {
+		profileIdx[db.Profiles[i].ID] = i
+	}
 
-	// Progression (et purge) des sessions
+	// Progression (et purge) des sessions — P0 : chaque session coupée
+	// (utilisateur supprimé/désactivé) produit un UserLog "logout" (F3).
 	kept := db.Sessions[:0]
 	for i := range db.Sessions {
 		s := db.Sessions[i]
 		idx, ok := userIdx[s.Username]
 		if !ok {
-			continue // utilisateur supprimé -> session abandonnée
+			logUserEvent(db, s, "logout", now) // utilisateur supprimé -> session abandonnée
+			continue
 		}
 		u := &db.HotspotUsers[idx]
 		if u.Status == "disabled" {
-			continue // utilisateur désactivé -> session coupée
+			logUserEvent(db, s, "logout", now) // utilisateur désactivé -> session coupée
+			continue
 		}
 		s.UptimeSec += dt
 		dIn := dt * int64(1_000_000+rand.Intn(2_000_000)) // 1-3 Mo/s
@@ -624,7 +752,7 @@ func Tick(db *model.DB, now time.Time) {
 			u := &db.HotspotUsers[i]
 			r := findRouterByID(db, u.RouterID)
 			nowISO := model.NowISO()
-			db.Sessions = append(db.Sessions, model.Session{
+			sess := model.Session{
 				ID:          model.NewID("s-"),
 				AccountID:   u.AccountID, // la session vit dans le compte de l'utilisateur source
 				UserID:      u.ID,
@@ -638,7 +766,9 @@ func Tick(db *model.DB, now time.Time) {
 				UptimeSec:   0,
 				BytesIn:     0,
 				BytesOut:    0,
-			})
+			}
+			db.Sessions = append(db.Sessions, sess)
+			logUserEvent(db, sess, "login", now) // P0 : F3 — session créée
 			if u.Kind == "voucher" {
 				u.Status = "used"
 				u.UsedAt = nowISO
@@ -654,10 +784,305 @@ func Tick(db *model.DB, now time.Time) {
 		}
 	}
 
-	// Fin de session aléatoire (~12 %)
+	// Fin de session aléatoire (~12 %) — P0 : le username est capturé AVANT
+	// la suppression pour journaliser le logout (F3).
 	if len(db.Sessions) > 0 && rand.Float64() < 0.12 {
 		i := rand.Intn(len(db.Sessions))
+		logUserEvent(db, db.Sessions[i], "logout", now)
 		db.Sessions = append(db.Sessions[:i], db.Sessions[i+1:]...)
+	}
+
+	// P0 (audit Mikhmon) — LockUser (F1) : un utilisateur dont le profil
+	// verrouille les sessions n'en garde qu'une — les plus anciennes sont
+	// fermées (kick) et journalisées.
+	kickLockedUsers(db, userIdx, profileIdx, now)
+}
+
+// logUserEvent ajoute une entrée au journal utilisateurs (F3), sous verrou.
+func logUserEvent(db *model.DB, s model.Session, action string, now time.Time) {
+	if db.UserLogs == nil {
+		db.UserLogs = []model.UserLog{}
+	}
+	db.UserLogs = append(db.UserLogs, model.UserLog{
+		ID:         model.NewID("ul-"),
+		AccountID:  s.AccountID,
+		UserID:     s.UserID,
+		Username:   s.Username,
+		Action:     action, // login | logout | expire | kick
+		RouterID:   s.RouterID,
+		RouterName: s.RouterName,
+		IP:         s.IP,
+		MAC:        s.MAC,
+		At:         now.UTC().Format(time.RFC3339),
+	})
+}
+
+// kickLockedUsers — F1 LockUser : pour chaque utilisateur dont le profil a
+// lockUser et qui possède plus d'une session active, les plus anciennes sont
+// fermées (UserLog "kick"). La session la plus récente est conservée.
+func kickLockedUsers(db *model.DB, userIdx, profileIdx map[string]int, now time.Time) {
+	sessByUser := map[string][]model.Session{}
+	for _, s := range db.Sessions {
+		sessByUser[s.Username] = append(sessByUser[s.Username], s)
+	}
+	kicked := map[string]bool{}
+	for username, list := range sessByUser {
+		if len(list) <= 1 {
+			continue
+		}
+		idx, ok := userIdx[username]
+		if !ok {
+			continue
+		}
+		u := &db.HotspotUsers[idx]
+		pIdx, ok := profileIdx[u.ProfileID]
+		if !ok || !db.Profiles[pIdx].LockUser {
+			continue
+		}
+		// La plus récente (StartedAt max) est conservée.
+		sort.Slice(list, func(i, j int) bool { return list[i].StartedAt < list[j].StartedAt })
+		for _, v := range list[:len(list)-1] {
+			kicked[v.ID] = true
+		}
+	}
+	if len(kicked) == 0 {
+		return
+	}
+	kept := db.Sessions[:0]
+	for _, s := range db.Sessions {
+		if kicked[s.ID] {
+			logUserEvent(db, s, "kick", now)
+			continue
+		}
+		kept = append(kept, s)
+	}
+	db.Sessions = kept
+}
+
+// applyExpiry — moteur d'expiration cloud (F1 + nettoyage F5), appelé en tête
+// de Tick sous verrou :
+//
+//  1. chaque utilisateur (voucher) « active » dont ExpiresAt + grâce du profil
+//     est dépassé passe « expired » (Enforced=false) + UserLog {action:"expire"} ;
+//  2. politique de nettoyage du compte (expiryPolicyMode == "remove") :
+//     les utilisateurs « expired » dont l'expiration date de plus de
+//     expiryPolicyAfterDays jours sont supprimés du cloud (+ Activity résumé) ;
+//  3. purge des UserLogs de plus de 90 jours (rétention F3).
+//
+// Retour : accountID → usernames dont l'expiration vient d'être appliquée
+// (information disponible pour l'enforcement routeur — cf. enforceExpired).
+func applyExpiry(db *model.DB, now time.Time) map[string][]string {
+	applied := map[string][]string{}
+	if db.UserLogs == nil {
+		db.UserLogs = []model.UserLog{}
+	}
+
+	// 1. Passage « expired » (grâce du profil prise en compte). Comme
+	// EffectiveStatus, l'expiration cloud ne s'applique qu'aux vouchers : le
+	// statut des utilisateurs réguliers reste géré manuellement
+	// (active/disabled) — leur date d'expiration est informative.
+	grace := make(map[string]int, len(db.Profiles))
+	for _, p := range db.Profiles {
+		g := p.GracePeriodMin
+		if g < 0 {
+			g = 0
+		}
+		grace[p.ID] = g
+	}
+	for i := range db.HotspotUsers {
+		u := &db.HotspotUsers[i]
+		if u.Kind != "voucher" || u.Status != "active" || u.ExpiresAt == "" {
+			continue
+		}
+		exp, err := time.Parse(time.RFC3339, u.ExpiresAt)
+		if err != nil {
+			continue
+		}
+		if !now.After(exp.Add(time.Duration(grace[u.ProfileID]) * time.Minute)) {
+			continue
+		}
+		u.Status = "expired"
+		u.Enforced = false // à appliquer au routeur par enforceExpired
+		logUserEvent(db, model.Session{
+			AccountID: u.AccountID, UserID: u.ID, Username: u.Username,
+			RouterID: u.RouterID, RouterName: u.RouterName,
+		}, "expire", now)
+		applied[u.AccountID] = append(applied[u.AccountID], u.Username)
+	}
+
+	// 2. Nettoyage cloud (F5) : politique « remove » par compte.
+	removed := map[string]int{}
+	for accID, s := range db.SettingsByAccount {
+		if s.Tenant.ExpiryPolicyMode != "remove" {
+			continue
+		}
+		days := s.Tenant.ExpiryPolicyAfterDays
+		if days < 0 {
+			days = 0
+		}
+		deadline := now.AddDate(0, 0, -days)
+		kept := db.HotspotUsers[:0]
+		for _, u := range db.HotspotUsers {
+			if u.AccountID == accID && u.Status == "expired" && u.ExpiresAt != "" {
+				if exp, err := time.Parse(time.RFC3339, u.ExpiresAt); err == nil && exp.Before(deadline) {
+					removed[accID]++
+					continue // supprimé du cloud
+				}
+			}
+			kept = append(kept, u)
+		}
+		db.HotspotUsers = kept
+	}
+	for accID, n := range removed {
+		days := 0
+		if s, ok := db.SettingsByAccount[accID]; ok {
+			days = s.Tenant.ExpiryPolicyAfterDays
+		}
+		db.Activity = append([]model.Activity{{
+			ID:        model.NewID("act-"),
+			AccountID: accID,
+			Type:      "user",
+			Message:   fmt.Sprintf("Nettoyage : %d utilisateurs expirés supprimés (politique %d j)", n, days),
+			At:        model.NowISO(),
+		}}, db.Activity...)
+		if len(db.Activity) > 500 {
+			db.Activity = db.Activity[:500]
+		}
+	}
+
+	// 3. Rétention du journal utilisateurs (90 jours) + garde-fou volumétrie.
+	lim := now.Add(-userLogRetention).Format(time.RFC3339)
+	keptLogs := db.UserLogs[:0]
+	for _, l := range db.UserLogs {
+		if l.At < lim {
+			continue
+		}
+		keptLogs = append(keptLogs, l)
+	}
+	if len(keptLogs) > maxUserLogs {
+		keptLogs = keptLogs[len(keptLogs)-maxUserLogs:]
+	}
+	db.UserLogs = keptLogs
+
+	return applied
+}
+
+// ---------------------------------------------------------------------------
+// F6 (P1) — Trafic temps réel des routeurs simulés
+// ---------------------------------------------------------------------------
+
+// Bornes de la marche aléatoire des débits simulés (0,5-50 Mbps, contrat F6).
+const (
+	simMinRxBps = int64(500_000)    // 0,5 Mbps
+	simMaxRxBps = int64(50_000_000) // 50 Mbps
+	trafficCap  = 60                // historique : 60 derniers points
+)
+
+// tickTraffic — F6 : fait vivre le trafic des routeurs SIMULÉS :
+//   - init à la volée (routeur créé sans seed) : 3 interfaces ether1/wlan1/
+//     hotspot, compteurs cumulés plausibles + historique backfillé (12 points
+//     de 5 s, comme le seed) pour un graphique immédiatement lisible ;
+//   - tick suivant : marche aléatoire LISSÉE (bps = ¾ ancien + ¼ cible,
+//     cible uniforme 0,5-50 Mbps ; tx ≈ 10-28 % de rx), compteurs cumulés
+//     avancés de bps×dt/8 ;
+//   - TrafficPoint (somme des interfaces) si le dernier point date de ≥ 5 s.
+//
+// Tick reste rapide : 3 interfaces par routeur, aucune allocation au-delà des
+// points d'historique (1 toutes les 5 s).
+func tickTraffic(db *model.DB, now time.Time, dt int64) {
+	if db.Traffic == nil {
+		db.Traffic = []model.RouterTraffic{}
+	}
+	for i := range db.Routers {
+		rr := &db.Routers[i]
+		if rr.Mode != "simulated" {
+			continue
+		}
+		var tr *model.RouterTraffic
+		for j := range db.Traffic {
+			if db.Traffic[j].RouterID == rr.ID {
+				tr = &db.Traffic[j]
+				break
+			}
+		}
+		if tr == nil {
+			db.Traffic = append(db.Traffic, newSimTraffic(rr))
+			continue
+		}
+		var sumRx, sumTx int64
+		for j := range tr.Interfaces {
+			it := &tr.Interfaces[j]
+			target := simMinRxBps + rand.Int63n(simMaxRxBps-simMinRxBps)
+			nb := it.RxBps*3/4 + target/4
+			if nb < simMinRxBps {
+				nb = simMinRxBps
+			}
+			if nb > simMaxRxBps {
+				nb = simMaxRxBps
+			}
+			it.RxBps = nb
+			it.TxBps = nb * int64(10+rand.Intn(19)) / 100 // tx ≈ 10-28 % de rx
+			it.RxBytes += it.RxBps / 8 * dt
+			it.TxBytes += it.TxBps / 8 * dt
+			sumRx += it.RxBps
+			sumTx += it.TxBps
+		}
+		if len(tr.Interfaces) > 0 && historyStale(tr, now, 5*time.Second) {
+			tr.History = append(tr.History, model.TrafficPoint{
+				T: now.UTC().Format(time.RFC3339), RxBps: sumRx, TxBps: sumTx,
+			})
+			if len(tr.History) > trafficCap {
+				tr.History = tr.History[len(tr.History)-trafficCap:]
+			}
+		}
+		tr.UpdatedAt = now.UTC().Format(time.RFC3339Nano)
+	}
+}
+
+// historyStale — true si le dernier point d'historique est plus vieux que d.
+func historyStale(tr *model.RouterTraffic, now time.Time, d time.Duration) bool {
+	if len(tr.History) == 0 {
+		return true
+	}
+	last, err := time.Parse(time.RFC3339, tr.History[len(tr.History)-1].T)
+	if err != nil {
+		return true
+	}
+	return now.Sub(last) >= d
+}
+
+// newSimTraffic — état de trafic initial d'un routeur simulé (3 interfaces,
+// compteurs cumulés fonction de l'uptime, 12 points d'historique sur 1 min).
+func newSimTraffic(rr *model.Router) model.RouterTraffic {
+	rxBps := func() int64 { return simMinRxBps + rand.Int63n(simMaxRxBps-simMinRxBps) }
+	txBps := func() int64 { return rxBps() * int64(10+rand.Intn(19)) / 100 }
+	now := time.Now().UTC()
+	cumul := func(avg int64) int64 { return rr.UptimeSec * avg / 8 }
+	avgRx := int64(6_000_000) // ~6 Mbps de moyenne cumulée
+	ifaces := []model.IfaceTraffic{
+		{Name: "ether1", RxBytes: cumul(avgRx), TxBytes: cumul(avgRx / 3), RxBps: rxBps(), TxBps: txBps()},
+		{Name: "wlan1", RxBytes: cumul(avgRx * 2 / 3), TxBytes: cumul(avgRx / 2), RxBps: rxBps(), TxBps: txBps()},
+		{Name: "hotspot", RxBytes: cumul(avgRx / 2), TxBytes: cumul(avgRx * 2 / 3), RxBps: rxBps(), TxBps: txBps()},
+	}
+	var sumRx, sumTx int64
+	history := make([]model.TrafficPoint, 0, 12)
+	for i := 11; i >= 0; i-- {
+		sumRx, sumTx = 0, 0
+		for range ifaces {
+			rx, tx := rxBps(), txBps()
+			sumRx += rx
+			sumTx += tx
+		}
+		history = append(history, model.TrafficPoint{
+			T:     now.Add(-time.Duration(i) * 5 * time.Second).UTC().Format(time.RFC3339),
+			RxBps: sumRx, TxBps: sumTx,
+		})
+	}
+	return model.RouterTraffic{
+		ID: rr.ID, RouterID: rr.ID, AccountID: rr.AccountID,
+		UpdatedAt:  now.Format(time.RFC3339Nano),
+		Interfaces: ifaces,
+		History:    history,
 	}
 }
 

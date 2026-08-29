@@ -289,6 +289,11 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 	}
 	touchAgent(router)
 
+	// P0 (audit Mikhmon) — F1 : l'agent reçoit l'enforcement des
+	// expirations à son check-in (les commandes déposées ici sont servies
+	// dans le MÊME check-in, juste après).
+	a.enforceExpired(db)
+
 	// File FIFO : commandes en attente (max 10 par check-in)
 	queued := []model.Command{}
 	for i := range db.Commands {
@@ -387,12 +392,22 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	cmd.Result = res
+	// P1 (audit Mikhmon) — F8 : le rapport ping arrive en valeurs formulaire
+	// (chaînes) ; le front attend des nombres + lossPct → normalisation ici.
+	if ok && cmd.Kind == model.CmdPing {
+		normalizePingResult(cmd.Result)
+	}
 
 	switch {
 	case cmd.Kind == model.CmdReadState && ok:
 		a.applyReadState(db, router, vals)
 		a.logActivity(db, router.AccountID, "router", "Routeur «"+router.Name+"» synchronisé ("+
 			strconv.Itoa(router.ActiveSessions)+" session(s) active(s), "+strconv.Itoa(router.HotspotUsers)+" utilisateur(s))")
+		// P1 (audit Mikhmon) — F6/F8 : télémétrie CONTINUE. Le read_state
+		// suivant est enfilé dès maintenant (dédupliqué par
+		// queueCommandLocked) : chaque check-in (≤ 45 s) rapporte un état
+		// frais — trafic, carte, disque, sessions.
+		queueCommandLocked(db, router.AccountID, router.ID, model.CmdReadState, map[string]any{})
 	case ok:
 		a.logActivity(db, router.AccountID, "router", "Commande "+cmd.Kind+" exécutée sur «"+router.Name+"»")
 		queueCommandLocked(db, router.AccountID, router.ID, model.CmdReadState, map[string]any{})
@@ -407,6 +422,14 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 }
 
 // applyReadState — applique la télémétrie + sync users/sessions d'un routeur agent.
+//
+// P1 (audit Mikhmon) :
+//   - F8 : board / freehdd / totalhdd (Mo, divisés côté script) →
+//     Router.BoardName / FreeHddMb / TotalHddMb ;
+//   - F6 : ifaces=name:rx:tx;… → diff des compteurs cumulés avec l'état
+//     précédent (db.Traffic) → débits par interface + point d'historique ;
+//   - F3 : diff des sessions avant/après remplacement → UserLogs login/logout
+//     (un utilisateur déjà présent n'est pas re-journalisé).
 func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values) {
 	if v := strings.TrimSpace(vals.Get("version")); v != "" {
 		if len(v) > 32 {
@@ -419,6 +442,16 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 	}
 	if cpu, err := strconv.Atoi(vals.Get("cpu")); err == nil && cpu >= 0 && cpu <= 100 {
 		router.CPULoad = cpu
+	}
+	// F8 — carte + disque (Mo ; division octets→Mo faite côté script).
+	if v := strings.TrimSpace(vals.Get("board")); v != "" && len(v) <= 64 {
+		router.BoardName = v
+	}
+	if v, err := strconv.Atoi(strings.TrimSpace(vals.Get("freehdd"))); err == nil && v >= 0 && v <= 1<<20 {
+		router.FreeHddMb = v
+	}
+	if v, err := strconv.Atoi(strings.TrimSpace(vals.Get("totalhdd"))); err == nil && v >= 0 && v <= 1<<20 {
+		router.TotalHddMb = v
 	}
 
 	// Users : "name|profile|disabled;…"
@@ -462,6 +495,17 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 			userIDs[strings.ToLower(db.HotspotUsers[i].Username)] = db.HotspotUsers[i].ID
 		}
 	}
+
+	// F3 — capture des usernames présents AVANT remplacement (diff).
+	prevByUser := map[string]model.Session{}
+	for _, s := range db.Sessions {
+		if s.RouterID == router.ID {
+			if _, ok := prevByUser[s.Username]; !ok {
+				prevByUser[s.Username] = s
+			}
+		}
+	}
+
 	live := []model.Session{}
 	for _, e := range sessEntries {
 		s := model.Session{ID: model.NewID("s-"), AccountID: router.AccountID, Username: e[0], RouterID: router.ID, RouterName: router.Name}
@@ -483,6 +527,22 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 		s.StartedAt = model.NowISO()
 		live = append(live, s)
 	}
+
+	// F3 — nouvelles sessions → login ; disparues → logout.
+	now := time.Now().UTC()
+	liveNames := map[string]bool{}
+	for i := range live {
+		liveNames[live[i].Username] = true
+		if _, ok := prevByUser[live[i].Username]; !ok {
+			logRouterUserEvent(db, router, live[i], "login", now)
+		}
+	}
+	for _, s := range prevByUser {
+		if !liveNames[s.Username] {
+			logRouterUserEvent(db, router, s, "logout", now)
+		}
+	}
+
 	kept := db.Sessions[:0]
 	for _, s := range db.Sessions {
 		if s.RouterID != router.ID {
@@ -490,6 +550,159 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 		}
 	}
 	db.Sessions = append(kept, live...)
+
+	// F6 — trafic : diff des compteurs cumulés par interface.
+	applyAgentTraffic(db, router, vals.Get("ifaces"), now)
+}
+
+// logRouterUserEvent — journalise un login/logout détecté par diff de sessions
+// (F3, applyReadState — mode agent). MAC inconnue du rapport : laissée vide.
+func logRouterUserEvent(db *model.DB, router *model.Router, s model.Session, action string, now time.Time) {
+	if db.UserLogs == nil {
+		db.UserLogs = []model.UserLog{}
+	}
+	db.UserLogs = append(db.UserLogs, model.UserLog{
+		ID:         model.NewID("ul-"),
+		AccountID:  router.AccountID,
+		UserID:     s.UserID,
+		Username:   s.Username,
+		Action:     action,
+		RouterID:   router.ID,
+		RouterName: router.Name,
+		IP:         s.IP,
+		MAC:        s.MAC,
+		At:         now.UTC().Format(time.RFC3339),
+	})
+}
+
+// parseIfaceCounters — décode « name:rx:tx;… » (compteurs cumulés en octets,
+// rapport read_state v2). Les entrées malformées sont ignorées.
+func parseIfaceCounters(raw string) []model.IfaceTraffic {
+	out := []model.IfaceTraffic{}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return out
+	}
+	for _, item := range strings.Split(raw, ";") {
+		if strings.TrimSpace(item) == "" {
+			continue
+		}
+		parts := strings.Split(item, ":")
+		if len(parts) != 3 || strings.TrimSpace(parts[0]) == "" {
+			continue
+		}
+		rx, err1 := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
+		tx, err2 := strconv.ParseInt(strings.TrimSpace(parts[2]), 10, 64)
+		if err1 != nil || err2 != nil || rx < 0 || tx < 0 {
+			continue
+		}
+		out = append(out, model.IfaceTraffic{Name: strings.TrimSpace(parts[0]), RxBytes: rx, TxBytes: tx})
+	}
+	return out
+}
+
+// applyAgentTraffic — F6 : calcule les débits par interface à partir du diff
+// des compteurs cumulés (« delta octets × 8 / delta temps », RxBps/TxBps sont
+// en bits/s — aligné sur le seed et formatBitsPerSec du front) :
+//   - première mesure  → compteurs stockés, débits 0 (pas de référence) ;
+//   - interface inconnue ou compteur décroissant (reboot) → débit 0 ;
+//   - sinon            → RxBps/TxBps + TrafficPoint (somme des interfaces)
+//     ajouté à History (cap 60).
+//
+// UpdatedAt est stocké en RFC3339Nano : deux read_state peuvent être très
+// rapprochés (test/poll rapide) — la précision sub-seconde évite un delta nul.
+func applyAgentTraffic(db *model.DB, router *model.Router, raw string, now time.Time) {
+	ifaces := parseIfaceCounters(raw)
+	if len(ifaces) == 0 {
+		return
+	}
+	var tr *model.RouterTraffic
+	for i := range db.Traffic {
+		if db.Traffic[i].RouterID == router.ID {
+			tr = &db.Traffic[i]
+			break
+		}
+	}
+	if tr == nil {
+		if db.Traffic == nil {
+			db.Traffic = []model.RouterTraffic{}
+		}
+		db.Traffic = append(db.Traffic, model.RouterTraffic{
+			ID: router.ID, RouterID: router.ID, AccountID: router.AccountID,
+			UpdatedAt:  now.UTC().Format(time.RFC3339Nano),
+			Interfaces: ifaces,
+			History:    []model.TrafficPoint{},
+		})
+		return // première mesure : référence posée, débits à 0
+	}
+
+	dt := 0.0
+	if prev, err := time.Parse(time.RFC3339, tr.UpdatedAt); err == nil {
+		if d := now.Sub(prev).Seconds(); d > 0 {
+			dt = d
+		}
+	}
+	prevIface := make(map[string]model.IfaceTraffic, len(tr.Interfaces))
+	for _, it := range tr.Interfaces {
+		prevIface[it.Name] = it
+	}
+	out := make([]model.IfaceTraffic, 0, len(ifaces))
+	var sumRx, sumTx int64
+	for _, it := range ifaces {
+		rxBps, txBps := int64(0), int64(0)
+		if dt > 0 {
+			if p, ok := prevIface[it.Name]; ok {
+				if it.RxBytes > p.RxBytes {
+					rxBps = int64(float64(it.RxBytes-p.RxBytes) * 8 / dt)
+				}
+				if it.TxBytes > p.TxBytes {
+					txBps = int64(float64(it.TxBytes-p.TxBytes) * 8 / dt)
+				}
+			}
+		}
+		out = append(out, model.IfaceTraffic{
+			Name: it.Name, RxBytes: it.RxBytes, TxBytes: it.TxBytes, RxBps: rxBps, TxBps: txBps,
+		})
+		sumRx += rxBps
+		sumTx += txBps
+	}
+	tr.Interfaces = out
+	tr.History = append(tr.History, model.TrafficPoint{
+		T: now.UTC().Format(time.RFC3339), RxBps: sumRx, TxBps: sumTx,
+	})
+	if len(tr.History) > 60 {
+		tr.History = tr.History[len(tr.History)-60:]
+	}
+	tr.UpdatedAt = now.UTC().Format(time.RFC3339Nano)
+}
+
+// normalizePingResult — F8 : le rapport agent arrive en valeurs formulaire
+// (chaînes « sent=4&received=4&minMs=12… ») ; le front (toPingStats) attend
+// des NOMBRES + lossPct. Conversion ici, à l'arrivée du rapport, pour que
+// GET /api/commands/{id} serve un result directement consommable.
+func normalizePingResult(res map[string]any) {
+	if res == nil {
+		return
+	}
+	for _, k := range []string{"sent", "received", "minMs", "avgMs", "maxMs"} {
+		switch v := res[k].(type) {
+		case string:
+			if n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64); err == nil {
+				res[k] = n
+			}
+		case float64:
+			res[k] = int64(v)
+		}
+	}
+	sent, okSent := res["sent"].(int64)
+	recv, okRecv := res["received"].(int64)
+	if okSent && okRecv && sent > 0 {
+		loss := (sent - recv) * 100 / sent
+		if loss < 0 {
+			loss = 0
+		}
+		res["lossPct"] = loss
+	}
 }
 
 // splitAgentList — découpe "a|b|c;d|e|f;…" en entrées.

@@ -6,15 +6,17 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  CalendarPlus,
   ChevronLeft,
   ChevronRight,
   ClipboardCopy,
-  Eye,
-  EyeOff,
+  Download,
+  Eraser,
   Loader2,
   MoreHorizontal,
   Pencil,
   Power,
+  RotateCcw,
   Search,
   Trash2,
   UserPlus,
@@ -68,18 +70,19 @@ import { StatusBadge } from "@/components/hotspot/status-badge";
 import { useCurrency } from "@/components/hotspot/parts/sd-currency";
 import { copyToClipboard } from "@/components/hotspot/parts/uc-clipboard";
 import { PasswordCell } from "@/components/hotspot/parts/uc-password-cell";
-import { api } from "@/lib/hotspot/api";
+import { api, apiDownload } from "@/lib/hotspot/api";
+import { useI18n } from "@/lib/hotspot/i18n";
 import { formatBytes, formatCurrency, formatDate } from "@/lib/hotspot/format";
 import type { HotspotUser, PagedUsers, Profile, RouterDevice } from "@/lib/hotspot/types";
 
 const PAGE_SIZE = 10;
 
 const STATUS_OPTIONS = [
-  { value: "all", label: "Tous les statuts" },
-  { value: "active", label: "Actifs" },
-  { value: "disabled", label: "Désactivés" },
-  { value: "used", label: "Utilisés" },
-  { value: "expired", label: "Expirés" },
+  { value: "all", labelKey: "common.allStatuses" },
+  { value: "active", labelKey: "common.statusActive" },
+  { value: "disabled", labelKey: "common.statusDisabled" },
+  { value: "used", labelKey: "common.statusUsed" },
+  { value: "expired", labelKey: "common.statusExpired" },
 ];
 
 interface UserForm {
@@ -93,6 +96,7 @@ interface UserForm {
 const EMPTY_FORM: UserForm = { username: "", password: "", profileId: "", routerId: "", comment: "" };
 
 export default function UsersView() {
+  const { t, tf, lang } = useI18n();
   const currency = useCurrency();
   const queryClient = useQueryClient();
 
@@ -119,6 +123,12 @@ export default function UsersView() {
   const [editing, setEditing] = useState<HotspotUser | null>(null);
   const [form, setForm] = useState<UserForm>(EMPTY_FORM);
   const [deleting, setDeleting] = useState<HotspotUser | null>(null);
+
+  // Actions globales P0 (F4/F5) : export CSV, nettoyage des expirés, prolongation
+  const [exporting, setExporting] = useState(false);
+  const [cleanupOpen, setCleanupOpen] = useState(false);
+  const [extending, setExtending] = useState<HotspotUser | null>(null);
+  const [extendDays, setExtendDays] = useState("7");
 
   const { data: profiles } = useQuery({
     queryKey: ["/api/profiles"],
@@ -189,8 +199,8 @@ export default function UsersView() {
 
   async function copyCredentials(user: HotspotUser) {
     const ok = await copyToClipboard(`${user.username} / ${user.password}`);
-    if (ok) toast.success("Identifiants copiés");
-    else toast.error("Copie impossible dans le presse-papiers");
+    if (ok) toast.success(t("users.credentialsCopied"));
+    else toast.error(t("common.copyImpossible"));
   }
 
   const saveMutation = useMutation({
@@ -218,7 +228,9 @@ export default function UsersView() {
       });
     },
     onSuccess: (user, variables) => {
-      toast.success(variables.id ? `Utilisateur ${user.username} modifié` : `Utilisateur ${user.username} créé`);
+      toast.success(
+        variables.id ? tf("users.updatedToast", { name: user.username }) : tf("users.createdToast", { name: user.username }),
+      );
       closeDialog(false);
       invalidateUsers();
     },
@@ -231,7 +243,11 @@ export default function UsersView() {
         method: "POST",
       }),
     onSuccess: (user) => {
-      toast.success(user.status === "disabled" ? `Utilisateur ${user.username} désactivé` : `Utilisateur ${user.username} activé`);
+      toast.success(
+        user.status === "disabled"
+          ? tf("users.deactivatedToast", { name: user.username })
+          : tf("users.activatedToast", { name: user.username }),
+      );
       invalidateUsers();
     },
     onError: (error: Error) => toast.error(error.message),
@@ -240,12 +256,78 @@ export default function UsersView() {
   const deleteMutation = useMutation({
     mutationFn: (user: HotspotUser) => api<{ ok: boolean }>(`/api/users/${user.id}`, { method: "DELETE" }),
     onSuccess: (_res, user) => {
-      toast.success(`Utilisateur ${user.username} supprimé`);
+      toast.success(tf("users.deletedToast", { name: user.username }));
       setDeleting(null);
       invalidateUsers();
     },
     onError: (error: Error) => toast.error(error.message),
   });
+
+  // Nettoyage cloud des utilisateurs expirés (F5) — POST /api/users/cleanup.
+  const cleanupMutation = useMutation({
+    mutationFn: () =>
+      api<{ ok: boolean; removed: number }>("/api/users/cleanup", {
+        method: "POST",
+        body: { mode: "expired" },
+      }),
+    onSuccess: (res) => {
+      toast.success(
+        res.removed > 0
+          ? tf("users.cleanupDone", { n: res.removed, p: res.removed > 1 ? "s" : "" })
+          : t("users.cleanupNone"),
+      );
+      setCleanupOpen(false);
+      invalidateUsers();
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  // Prolongation d'expiration (F4) — POST /api/users/{id}/extend.
+  const extendMutation = useMutation({
+    mutationFn: (payload: { user: HotspotUser; days: number }) =>
+      api<HotspotUser>(`/api/users/${payload.user.id}/extend`, {
+        method: "POST",
+        body: { days: payload.days },
+      }),
+    onSuccess: (user, variables) => {
+      toast.success(tf("users.extendedToast", { name: user.username, n: variables.days }), {
+        description: user.expiresAt ? tf("users.newExpiry", { date: formatDate(user.expiresAt, lang) }) : undefined,
+      });
+      setExtending(null);
+      invalidateUsers();
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  // Remise à zéro des compteurs (F4) — POST /api/users/{id}/reset-stats.
+  const resetStatsMutation = useMutation({
+    mutationFn: (user: HotspotUser) =>
+      api<{ ok: boolean }>(`/api/users/${user.id}/reset-stats`, { method: "POST" }),
+    onSuccess: (_res, user) => {
+      toast.success(tf("users.resetStatsToast", { name: user.username }));
+      invalidateUsers();
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  // Export CSV (F4) — GET /api/users/export avec les filtres courants.
+  async function handleExportCsv() {
+    try {
+      setExporting(true);
+      const date = new Date().toISOString().slice(0, 10);
+      await apiDownload("/api/users/export", `${lang === "fr" ? "utilisateurs" : "users"}-${date}.csv`, {
+        kind: "regular",
+        search,
+        status: statusParam,
+        profileId: profileParam,
+      });
+      toast.success(t("common.exportDownloaded"));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("common.exportFailed"));
+    } finally {
+      setExporting(false);
+    }
+  }
 
   const selectedProfile = profiles?.find((p) => p.id === form.profileId);
   const formValid = form.profileId !== "" && (editing !== null || form.routerId !== "");
@@ -255,18 +337,41 @@ export default function UsersView() {
     saveMutation.mutate({ id: editing?.id ?? null, form });
   }
 
+  const extendNum = parseInt(extendDays, 10);
+  const extendValid = Number.isInteger(extendNum) && extendNum >= 1 && extendNum <= 3650;
+
+  function submitExtend() {
+    if (!extendValid || extendMutation.isPending || !extending) return;
+    extendMutation.mutate({ user: extending, days: extendNum });
+  }
+
   const hasFilters = search !== "" || profileFilter !== "all" || statusFilter !== "all";
 
   return (
     <div className="space-y-4 sm:space-y-6">
       <PageHeader
-        title="Utilisateurs"
-        description="Comptes hotspot personnalisés (abonnés, staff, illimités)"
+        title={t("users.title")}
+        description={t("users.description")}
         actions={
-          <Button className="h-10" onClick={openCreate}>
-            <UserPlus className="size-4" />
-            Nouvel utilisateur
-          </Button>
+          <>
+            <Button
+              variant="outline"
+              className="h-10"
+              onClick={() => void handleExportCsv()}
+              disabled={exporting}
+            >
+              {exporting ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
+              {t("common.exportCsv")}
+            </Button>
+            <Button variant="outline" className="h-10" onClick={() => setCleanupOpen(true)}>
+              <Eraser className="size-4" />
+              {t("users.cleanup")}
+            </Button>
+            <Button className="h-10" onClick={openCreate}>
+              <UserPlus className="size-4" />
+              {t("users.new")}
+            </Button>
+          </>
         }
       />
 
@@ -277,10 +382,10 @@ export default function UsersView() {
             <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
             <Input
               className="h-10 pl-9"
-              placeholder="Rechercher un utilisateur…"
+              placeholder={t("users.searchPlaceholder")}
               value={searchInput}
               onChange={(event) => setSearchInput(event.target.value)}
-              aria-label="Rechercher un utilisateur"
+              aria-label={t("users.searchLabel")}
             />
           </div>
           <div className="flex flex-1 flex-wrap gap-3 sm:justify-end">
@@ -291,11 +396,11 @@ export default function UsersView() {
                 setPage(1);
               }}
             >
-              <SelectTrigger className="h-10 w-full sm:w-48" aria-label="Filtrer par profil">
-                <SelectValue placeholder="Profil" />
+              <SelectTrigger className="h-10 w-full sm:w-48" aria-label={t("common.filterByProfile")}>
+                <SelectValue placeholder={t("common.profile")} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">Tous les profils</SelectItem>
+                <SelectItem value="all">{t("common.allProfiles")}</SelectItem>
                 {profiles?.map((profile) => (
                   <SelectItem key={profile.id} value={profile.id}>
                     {profile.name}
@@ -310,13 +415,13 @@ export default function UsersView() {
                 setPage(1);
               }}
             >
-              <SelectTrigger className="h-10 w-full sm:w-44" aria-label="Filtrer par statut">
-                <SelectValue placeholder="Statut" />
+              <SelectTrigger className="h-10 w-full sm:w-44" aria-label={t("common.filterByStatus")}>
+                <SelectValue placeholder={t("common.status")} />
               </SelectTrigger>
               <SelectContent>
                 {STATUS_OPTIONS.map((option) => (
                   <SelectItem key={option.value} value={option.value}>
-                    {option.label}
+                    {t(option.labelKey)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -332,17 +437,13 @@ export default function UsersView() {
         ) : users.length === 0 ? (
           <EmptyState
             icon={Users}
-            title="Aucun utilisateur"
-            description={
-              hasFilters
-                ? "Aucun compte ne correspond à ces filtres."
-                : "Créez votre premier compte hotspot personnalisé."
-            }
+            title={t("users.empty")}
+            description={hasFilters ? t("users.emptyFiltered") : t("users.emptyDesc")}
             action={
               !hasFilters && (
                 <Button onClick={openCreate}>
                   <UserPlus className="size-4" />
-                  Nouvel utilisateur
+                  {t("users.new")}
                 </Button>
               )
             }
@@ -353,14 +454,14 @@ export default function UsersView() {
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
-                    <TableHead className="pl-4 text-muted-foreground sm:pl-6">Utilisateur</TableHead>
-                    <TableHead className="text-muted-foreground">Profil</TableHead>
-                    <TableHead className="hidden text-muted-foreground md:table-cell">Routeur</TableHead>
-                    <TableHead className="text-muted-foreground">Statut</TableHead>
-                    <TableHead className="text-muted-foreground">Données</TableHead>
-                    <TableHead className="hidden text-muted-foreground sm:table-cell">Expire le</TableHead>
-                    <TableHead className="hidden text-muted-foreground lg:table-cell">Créé</TableHead>
-                    <TableHead className="pr-4 text-right text-muted-foreground sm:pr-6">Actions</TableHead>
+                    <TableHead className="pl-4 text-muted-foreground sm:pl-6">{t("common.user")}</TableHead>
+                    <TableHead className="text-muted-foreground">{t("common.profile")}</TableHead>
+                    <TableHead className="hidden text-muted-foreground md:table-cell">{t("common.router")}</TableHead>
+                    <TableHead className="text-muted-foreground">{t("common.status")}</TableHead>
+                    <TableHead className="text-muted-foreground">{t("users.data")}</TableHead>
+                    <TableHead className="hidden text-muted-foreground sm:table-cell">{t("users.expires")}</TableHead>
+                    <TableHead className="hidden text-muted-foreground lg:table-cell">{t("common.created")}</TableHead>
+                    <TableHead className="pr-4 text-right text-muted-foreground sm:pr-6">{t("common.actions")}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -375,8 +476,8 @@ export default function UsersView() {
                             onToggle={() => toggleReveal(user.id)}
                             label={
                               revealed.has(user.id)
-                                ? `Masquer le mot de passe de ${user.username}`
-                                : `Afficher le mot de passe de ${user.username}`
+                                ? tf("vouchers.hidePassword", { name: user.username })
+                                : tf("vouchers.showPassword", { name: user.username })
                             }
                           />
                         </div>
@@ -393,13 +494,13 @@ export default function UsersView() {
                         <StatusBadge status={user.status} dot />
                       </TableCell>
                       <TableCell className="tabular-nums text-muted-foreground">
-                        {formatBytes(user.bytesIn + user.bytesOut)}
+                        {formatBytes(user.bytesIn + user.bytesOut, lang)}
                       </TableCell>
                       <TableCell className="hidden tabular-nums text-muted-foreground sm:table-cell">
-                        {formatDate(user.expiresAt)}
+                        {formatDate(user.expiresAt, lang)}
                       </TableCell>
                       <TableCell className="hidden tabular-nums text-muted-foreground lg:table-cell">
-                        {formatDate(user.createdAt)}
+                        {formatDate(user.createdAt, lang)}
                       </TableCell>
                       <TableCell className="pr-4 text-right sm:pr-6">
                         <DropdownMenu>
@@ -408,7 +509,7 @@ export default function UsersView() {
                               variant="ghost"
                               size="icon"
                               className="size-10 text-muted-foreground hover:text-foreground"
-                              aria-label={`Actions pour ${user.username}`}
+                              aria-label={tf("common.actionsFor", { name: user.username })}
                             >
                               <MoreHorizontal className="size-4" />
                             </Button>
@@ -416,7 +517,7 @@ export default function UsersView() {
                           <DropdownMenuContent align="end" className="w-56">
                             <DropdownMenuItem className="min-h-10" onClick={() => openEdit(user)}>
                               <Pencil className="size-4" />
-                              Modifier
+                              {t("common.edit")}
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               className="min-h-10"
@@ -428,11 +529,33 @@ export default function UsersView() {
                               ) : (
                                 <Power className="size-4" />
                               )}
-                              {user.status === "disabled" ? "Activer" : "Désactiver"}
+                              {user.status === "disabled" ? t("common.activate") : t("common.deactivate")}
                             </DropdownMenuItem>
                             <DropdownMenuItem className="min-h-10" onClick={() => void copyCredentials(user)}>
                               <ClipboardCopy className="size-4" />
-                              Copier identifiants
+                              {t("users.copyCredentials")}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              className="min-h-10"
+                              onClick={() => {
+                                setExtendDays("7");
+                                setExtending(user);
+                              }}
+                            >
+                              <CalendarPlus className="size-4" />
+                              {t("users.extend")}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              className="min-h-10"
+                              disabled={resetStatsMutation.isPending && resetStatsMutation.variables?.id === user.id}
+                              onClick={() => resetStatsMutation.mutate(user)}
+                            >
+                              {resetStatsMutation.isPending && resetStatsMutation.variables?.id === user.id ? (
+                                <Loader2 className="size-4 animate-spin" />
+                              ) : (
+                                <RotateCcw className="size-4" />
+                              )}
+                              {t("users.resetStats")}
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
@@ -441,7 +564,7 @@ export default function UsersView() {
                               onClick={() => setDeleting(user)}
                             >
                               <Trash2 className="size-4" />
-                              Supprimer
+                              {t("common.delete")}
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -455,7 +578,9 @@ export default function UsersView() {
             {/* Pagination */}
             <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3 sm:px-6">
               <p className="text-xs text-muted-foreground">
-                {isFetching ? "Actualisation…" : `${rangeStart}–${rangeEnd} sur ${totalCount}`}
+                {isFetching
+                  ? t("common.refreshing")
+                  : tf("common.range", { start: rangeStart, end: rangeEnd, total: totalCount })}
               </p>
               <div className="flex items-center gap-2">
                 <Button
@@ -466,7 +591,7 @@ export default function UsersView() {
                   disabled={safePage <= 1}
                 >
                   <ChevronLeft className="size-4" />
-                  Précédent
+                  {t("common.previous")}
                 </Button>
                 <Button
                   variant="outline"
@@ -475,7 +600,7 @@ export default function UsersView() {
                   onClick={() => setPage((p) => Math.min(maxPage, p + 1))}
                   disabled={safePage >= maxPage}
                 >
-                  Suivant
+                  {t("common.next")}
                   <ChevronRight className="size-4" />
                 </Button>
               </div>
@@ -488,11 +613,11 @@ export default function UsersView() {
       <Dialog open={dialogOpen} onOpenChange={closeDialog}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>{editing ? `Modifier ${editing.username}` : "Nouvel utilisateur"}</DialogTitle>
+            <DialogTitle>
+              {editing ? tf("users.editTitle", { name: editing.username }) : t("users.new")}
+            </DialogTitle>
             <DialogDescription>
-              {editing
-                ? "Ajustez le compte hotspot. Laissez le mot de passe vide pour le conserver."
-                : "Laissez l'identifiant et le mot de passe vides pour les générer automatiquement."}
+              {editing ? t("users.editDesc") : t("users.createDesc")}
             </DialogDescription>
           </DialogHeader>
 
@@ -505,22 +630,22 @@ export default function UsersView() {
           >
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="grid gap-2">
-                <Label htmlFor="user-username">Utilisateur</Label>
+                <Label htmlFor="user-username">{t("common.user")}</Label>
                 <Input
                   id="user-username"
-                  placeholder="Auto-généré si vide"
+                  placeholder={t("users.autoGenerated")}
                   value={form.username}
                   onChange={(event) => setForm((f) => ({ ...f, username: event.target.value }))}
                   disabled={saveMutation.isPending}
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="user-password">Mot de passe</Label>
+                <Label htmlFor="user-password">{t("common.password")}</Label>
                 <Input
                   id="user-password"
                   type="text"
                   autoComplete="new-password"
-                  placeholder={editing ? "Inchangé si vide" : "Auto-généré si vide"}
+                  placeholder={editing ? t("users.unchangedIfEmpty") : t("users.autoGenerated")}
                   value={form.password}
                   onChange={(event) => setForm((f) => ({ ...f, password: event.target.value }))}
                   disabled={saveMutation.isPending}
@@ -530,33 +655,33 @@ export default function UsersView() {
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="grid gap-2">
-                <Label htmlFor="user-profile">Profil</Label>
+                <Label htmlFor="user-profile">{t("common.profile")}</Label>
                 <Select
                   value={form.profileId}
                   onValueChange={(value) => setForm((f) => ({ ...f, profileId: value }))}
                   disabled={saveMutation.isPending}
                 >
                   <SelectTrigger id="user-profile" className="h-10 w-full">
-                    <SelectValue placeholder="Sélectionner un profil" />
+                    <SelectValue placeholder={t("common.selectProfile")} />
                   </SelectTrigger>
                   <SelectContent>
                     {profiles?.map((profile) => (
                       <SelectItem key={profile.id} value={profile.id}>
-                        {profile.name} — {formatCurrency(profile.price, currency)}
+                        {profile.name} — {formatCurrency(profile.price, currency, lang)}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="user-router">Routeur</Label>
+                <Label htmlFor="user-router">{t("common.router")}</Label>
                 <Select
                   value={form.routerId}
                   onValueChange={(value) => setForm((f) => ({ ...f, routerId: value }))}
                   disabled={saveMutation.isPending || editing !== null}
                 >
                   <SelectTrigger id="user-router" className="h-10 w-full">
-                    <SelectValue placeholder="Sélectionner un routeur" />
+                    <SelectValue placeholder={t("common.selectRouter")} />
                   </SelectTrigger>
                   <SelectContent>
                     {routers?.map((router) => (
@@ -566,15 +691,15 @@ export default function UsersView() {
                     ))}
                   </SelectContent>
                 </Select>
-                {editing && <p className="text-xs text-muted-foreground">Le routeur n'est pas modifiable.</p>}
+                {editing && <p className="text-xs text-muted-foreground">{t("users.routerLocked")}</p>}
               </div>
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="user-comment">Commentaire (optionnel)</Label>
+              <Label htmlFor="user-comment">{t("users.commentLabel")}</Label>
               <Textarea
                 id="user-comment"
-                placeholder="Ex. Abonnement mensuel — paiement Mobile Money"
+                placeholder={t("users.commentPlaceholder")}
                 value={form.comment}
                 onChange={(event) => setForm((f) => ({ ...f, comment: event.target.value }))}
                 disabled={saveMutation.isPending}
@@ -583,8 +708,9 @@ export default function UsersView() {
 
             {selectedProfile && (
               <p className="rounded-lg border bg-muted/40 px-3 py-2 text-sm">
-                Forfait : <span className="font-semibold text-primary">{selectedProfile.name}</span> —{" "}
-                {formatCurrency(selectedProfile.price, currency)} · validité {selectedProfile.validityDays} j
+                {t("users.plan")} : <span className="font-semibold text-primary">{selectedProfile.name}</span> —{" "}
+                {formatCurrency(selectedProfile.price, currency, lang)} ·{" "}
+                {tf("users.validity", { n: selectedProfile.validityDays })}
               </p>
             )}
 
@@ -596,11 +722,11 @@ export default function UsersView() {
 
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => closeDialog(false)} disabled={saveMutation.isPending}>
-                Annuler
+                {t("common.cancel")}
               </Button>
               <Button type="submit" disabled={!formValid || saveMutation.isPending}>
                 {saveMutation.isPending && <Loader2 className="size-4 animate-spin" />}
-                {editing ? "Enregistrer" : "Créer l'utilisateur"}
+                {editing ? t("common.save") : t("users.createSubmit")}
               </Button>
             </DialogFooter>
           </form>
@@ -611,13 +737,11 @@ export default function UsersView() {
       <AlertDialog open={deleting !== null} onOpenChange={(open) => !open && setDeleting(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Supprimer {deleting?.username} ?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Cette action est irréversible. Le compte hotspot sera retiré du routeur.
-            </AlertDialogDescription>
+            <AlertDialogTitle>{tf("users.deleteTitle", { name: deleting?.username ?? "" })}</AlertDialogTitle>
+            <AlertDialogDescription>{t("users.deleteDesc")}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleteMutation.isPending}>Annuler</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleteMutation.isPending}>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-white hover:bg-destructive/90"
               disabled={deleteMutation.isPending}
@@ -627,7 +751,103 @@ export default function UsersView() {
               }}
             >
               {deleteMutation.isPending && <Loader2 className="size-4 animate-spin" />}
-              Supprimer
+              {t("common.delete")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Prolongation d'expiration (F4) */}
+      <Dialog open={extending !== null} onOpenChange={(open) => !open && setExtending(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{tf("users.extendTitle", { name: extending?.username ?? "" })}</DialogTitle>
+            <DialogDescription>
+              {extending?.expiresAt
+                ? tf("users.extendCurrent", { date: formatDate(extending.expiresAt, lang) })
+                : t("users.extendNoDate")}{" "}
+              {t("users.extendAuto")}
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            className="grid gap-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              submitExtend();
+            }}
+          >
+            <div className="grid gap-2">
+              <Label htmlFor="extend-days">{t("users.extendDays")}</Label>
+              <div className="flex gap-2">
+                {[1, 7, 30].map((preset) => (
+                  <Button
+                    key={preset}
+                    type="button"
+                    variant={extendDays === String(preset) ? "secondary" : "outline"}
+                    className="h-10 flex-1"
+                    disabled={extendMutation.isPending}
+                    onClick={() => setExtendDays(String(preset))}
+                  >
+                    {tf("users.daysUnit", { n: preset })}
+                  </Button>
+                ))}
+              </div>
+              <Input
+                id="extend-days"
+                type="number"
+                min={1}
+                max={3650}
+                value={extendDays}
+                onChange={(event) => setExtendDays(event.target.value)}
+                disabled={extendMutation.isPending}
+                aria-invalid={!extendValid}
+              />
+              <p className="text-xs text-muted-foreground">{t("users.extendDaysHint")}</p>
+            </div>
+
+            {extendMutation.isError && (
+              <p className="text-sm text-destructive" role="alert">
+                {extendMutation.error.message}
+              </p>
+            )}
+
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setExtending(null)}
+                disabled={extendMutation.isPending}
+              >
+                {t("common.cancel")}
+              </Button>
+              <Button type="submit" disabled={!extendValid || extendMutation.isPending}>
+                {extendMutation.isPending && <Loader2 className="size-4 animate-spin" />}
+                {t("users.extendSubmit")}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Nettoyage des expirés (F5) */}
+      <AlertDialog open={cleanupOpen} onOpenChange={setCleanupOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("users.cleanupTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("users.cleanupDesc")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={cleanupMutation.isPending}>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
+              disabled={cleanupMutation.isPending}
+              onClick={(event) => {
+                event.preventDefault();
+                cleanupMutation.mutate();
+              }}
+            >
+              {cleanupMutation.isPending && <Loader2 className="size-4 animate-spin" />}
+              {t("users.cleanupSubmit")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

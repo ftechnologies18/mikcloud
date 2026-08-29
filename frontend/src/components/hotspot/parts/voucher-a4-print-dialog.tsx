@@ -13,6 +13,7 @@ import { Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { useCurrency } from "@/components/hotspot/parts/sd-currency";
+import { useI18n } from "@/lib/hotspot/i18n";
 import { formatBytes, formatCurrency } from "@/lib/hotspot/format";
 import type { HotspotUser } from "@/lib/hotspot/types";
 
@@ -49,6 +50,7 @@ export function VoucherA4PrintDialog({
   tenantName,
   hotspotLoginUrl,
 }: VoucherA4PrintDialogProps) {
+  const { t, tf } = useI18n();
   const currency = useCurrency();
 
   // Marque le document pendant l'impression A4 : globals.css n'imprime alors
@@ -75,20 +77,20 @@ export function VoucherA4PrintDialog({
           <div className="min-w-0">
             <DialogTitle className="truncate">{title}</DialogTitle>
             <DialogDescription>
-              {vouchers.length} ticket{vouchers.length > 1 ? "s" : ""} — 20 par page A4 (4 × 5)
-              {pages.length > 1 ? ` · ${pages.length} pages` : ""}
-              {hotspotLoginUrl
-                ? " · QR vers la page de connexion"
-                : " · QR en texte (URL hotspot non configurée)"}
+              {vouchers.length > 1
+                ? tf("a4.ticketsMany", { n: vouchers.length })
+                : tf("a4.ticketsOne", { n: vouchers.length })}
+              {pages.length > 1 ? tf("a4.pages", { n: pages.length }) : ""}
+              {hotspotLoginUrl ? t("a4.qrLogin") : t("a4.qrText")}
             </DialogDescription>
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <Button variant="outline" className="min-h-10" onClick={() => onOpenChange(false)}>
-              Fermer
+              {t("a4.close")}
             </Button>
             <Button className="min-h-10" onClick={() => window.print()}>
               <Printer className="size-4" />
-              Imprimer
+              {t("a4.print")}
             </Button>
           </div>
         </div>
@@ -97,7 +99,7 @@ export function VoucherA4PrintDialog({
         <div className="a4-scroll max-h-[70vh] overflow-auto rounded-lg p-4">
           <div className="print-area a4-print mx-auto flex w-[794px] flex-col gap-6 bg-white text-black">
             {pages.length === 0 && (
-              <p className="py-12 text-center text-sm text-neutral-500">Aucun ticket à imprimer.</p>
+              <p className="py-12 text-center text-sm text-neutral-500">{t("a4.empty")}</p>
             )}
             {pages.map((pageVouchers, pageIndex) => (
               <div
@@ -108,7 +110,7 @@ export function VoucherA4PrintDialog({
                 <div className="mb-1.5 flex items-center justify-between gap-4 text-[9px] uppercase tracking-wider text-neutral-400">
                   <span className="truncate">{tenantName || "MikCloud"}</span>
                   <span className="shrink-0">
-                    {title} · page {pageIndex + 1}/{pages.length}
+                    {title} · {tf("a4.pageStamp", { n: pageIndex + 1, total: pages.length })}
                   </span>
                 </div>
                 {/* Grille 4 × 5 — les tickets remplissent exactement la page */}
@@ -145,6 +147,7 @@ function A4Ticket({
   currency: string;
   hotspotLoginUrl?: string;
 }) {
+  const { t, tf, lang } = useI18n();
   return (
     <div className="a4-ticket flex min-h-0 flex-col items-center justify-between gap-1 rounded-md border border-dashed border-black p-2 text-center break-inside-avoid">
       <div className="w-full">
@@ -155,19 +158,17 @@ function A4Ticket({
         value={qrValue(voucher, hotspotLoginUrl)}
         size={QR_SIZE}
         className="shrink-0"
-        aria-label={`QR code du voucher ${voucher.username}`}
+        aria-label={tf("a4.qrAria", { code: voucher.username })}
       />
       <div className="w-full">
         <p className="truncate font-mono text-[15px] font-bold leading-tight">{voucher.username}</p>
-        <p className="font-mono text-[10px] leading-tight">MDP : {voucher.password}</p>
+        <p className="font-mono text-[10px] leading-tight">{t("a4.password")} {voucher.password}</p>
         <p className="mt-0.5 text-[10px] leading-tight">
           {voucher.profileName}
-          {voucher.dataQuotaMb > 0 && ` · ${formatBytes(voucher.dataQuotaMb * 1048576)}`} ·{" "}
+          {voucher.dataQuotaMb > 0 && ` · ${formatBytes(voucher.dataQuotaMb * 1048576, lang)}`} ·{" "}
           <span className="font-semibold">{formatCurrency(voucher.price, currency)}</span>
         </p>
-        <p className="mt-0.5 text-[8px] leading-tight text-neutral-500">
-          Scannez le QR ou saisissez le code
-        </p>
+        <p className="mt-0.5 text-[8px] leading-tight text-neutral-500">{t("a4.scanHint")}</p>
       </div>
     </div>
   );

@@ -119,6 +119,45 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/admin/accounts", a.handleAdminAccounts)
 	mux.HandleFunc("POST /api/admin/accounts/{id}/status", a.handleAdminAccountStatus)
 
+	// P0 (audit Mikhmon) — voir docs/CONTRACT-V2.md
+	// Modèles de vouchers (F2)
+	mux.HandleFunc("GET /api/templates", a.handleTemplatesList)
+	mux.HandleFunc("POST /api/templates", a.handleTemplateCreate)
+	mux.HandleFunc("PUT /api/templates/{id}", a.handleTemplateUpdate)
+	mux.HandleFunc("DELETE /api/templates/{id}", a.handleTemplateDelete)
+	// Journal utilisateurs (F3)
+	mux.HandleFunc("GET /api/user-logs", a.handleUserLogsList)
+	mux.HandleFunc("GET /api/user-logs/export", a.handleUserLogsExport)
+	// Actions utilisateurs (F4/F5)
+	mux.HandleFunc("POST /api/users/{id}/reset-stats", a.handleUserResetStats)
+	mux.HandleFunc("POST /api/users/{id}/extend", a.handleUserExtend)
+	mux.HandleFunc("GET /api/users/export", a.handleUsersExport)
+	mux.HandleFunc("POST /api/users/cleanup", a.handleUsersCleanup)
+
+	// P1 (audit Mikhmon) — voir docs/CONTRACT-V2.md (handlers_p1.go)
+	// Trafic temps réel (F6)
+	mux.HandleFunc("GET /api/routers/{id}/traffic", a.handleRouterTraffic)
+	// IP bindings (F7)
+	mux.HandleFunc("GET /api/routers/{id}/ipbindings", a.handleIPBindingsList)
+	mux.HandleFunc("POST /api/routers/{id}/ipbindings", a.handleIPBindingCreate)
+	mux.HandleFunc("PUT /api/ipbindings/{id}", a.handleIPBindingUpdate)
+	mux.HandleFunc("DELETE /api/ipbindings/{id}", a.handleIPBindingDelete)
+	// Ping + statut de commande (F8)
+	mux.HandleFunc("POST /api/routers/{id}/ping", a.handleRouterPing)
+	mux.HandleFunc("GET /api/commands/{id}", a.handleCommandStatus)
+	// Outils routeur (F9)
+	mux.HandleFunc("GET /api/routers/{id}/dhcp", a.handleRouterDhcp)
+	mux.HandleFunc("GET /api/routers/{id}/hosts", a.handleRouterHosts)
+	mux.HandleFunc("GET /api/routers/{id}/cookies", a.handleRouterCookies)
+	mux.HandleFunc("GET /api/routers/{id}/log", a.handleRouterLog)
+	// Scheduler + alimentation (F10)
+	mux.HandleFunc("GET /api/routers/{id}/scheduler", a.handleSchedulerGet)
+	mux.HandleFunc("POST /api/routers/{id}/scheduler", a.handleSchedulerCreate)
+	mux.HandleFunc("POST /api/routers/{id}/scheduler-toggle", a.handleSchedulerToggle)
+	mux.HandleFunc("POST /api/routers/{id}/scheduler-remove", a.handleSchedulerRemove)
+	mux.HandleFunc("POST /api/routers/{id}/reboot", a.handleRouterReboot)
+	mux.HandleFunc("POST /api/routers/{id}/shutdown", a.handleRouterShutdown)
+
 	// Fallback API -> 404 JSON
 	mux.HandleFunc("/api/", a.handleAPINotFound)
 
@@ -395,8 +434,11 @@ func ensureSettings(db *model.DB, acc string) model.Settings {
 		}
 	}
 	s := model.Settings{
-		Tenant: model.Tenant{Name: name, Currency: "XOF", Timezone: "Africa/Abidjan"},
-		Plan:   model.Plan{Name: "Bêta", MaxRouters: "Illimité", MaxUsers: "Illimité"},
+		Tenant: model.Tenant{
+			Name: name, Currency: "XOF", Timezone: "Africa/Abidjan",
+			ExpiryPolicyMode: "keep", ExpiryPolicyAfterDays: 30,
+		},
+		Plan: model.Plan{Name: "Bêta", MaxRouters: "Illimité", MaxUsers: "Illimité"},
 	}
 	if db.SettingsByAccount == nil {
 		db.SettingsByAccount = map[string]model.Settings{}
@@ -617,9 +659,15 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 		db.SettingsByAccount = map[string]model.Settings{}
 	}
 	db.SettingsByAccount[acc.ID] = model.Settings{
-		Tenant: model.Tenant{Name: name, Currency: "XOF", Timezone: "Africa/Abidjan"},
-		Plan:   model.Plan{Name: "Bêta", MaxRouters: "Illimité", MaxUsers: "Illimité"},
+		Tenant: model.Tenant{
+			Name: name, Currency: "XOF", Timezone: "Africa/Abidjan",
+			ExpiryPolicyMode: "keep", ExpiryPolicyAfterDays: 30,
+		},
+		Plan: model.Plan{Name: "Bêta", MaxRouters: "Illimité", MaxUsers: "Illimité"},
 	}
+	// P0 (audit Mikhmon) — chaque nouveau compte démarre avec les 3 modèles
+	// de vouchers par défaut (contrat F2).
+	db.Templates = append(db.Templates, store.SeedTemplatesFor(acc.ID)...)
 	a.logActivity(db, acc.ID, "compte", "Nouveau compte créé : "+acc.Name)
 	a.store.Save()
 	a.store.Unlock()
@@ -695,6 +743,11 @@ func (a *API) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	a.store.Lock()
 	db := a.store.Data()
+	// P0 (audit Mikhmon) : simulation vivante + expiration à jour +
+	// enforcement routeur (F1), comme handleSessionsList/handleUsersList.
+	store.Tick(db, now)
+	a.enforceExpired(db)
+	a.store.Save()
 
 	// Vue d'ensemble multi-sites : 1 compte = N hotspots. Tous les agrégats
 	// ci-dessous sont calculés DANS le compte demandeur (isolation stricte).
@@ -1043,6 +1096,11 @@ func (a *API) handleRouterCreate(w http.ResponseWriter, r *http.Request) {
 	msg := "Routeur " + router.Name + " ajouté"
 	if mode == "agent" {
 		msg += " (mode agent — en ligne au premier check-in)"
+		// P1 (audit Mikhmon) — F6/F8 : le premier read_state est enfilé
+		// dès la création : le premier check-in rapporte télémétrie,
+		// carte/disque, interfaces et sessions. Chaque résultat en
+		// enfile un suivant (handleAgentResult) → télémétrie continue.
+		queueCommandLocked(a.store.Data(), acc, router.ID, model.CmdReadState, map[string]any{})
 	}
 	a.logActivity(a.store.Data(), acc, "router", msg)
 	a.store.Save()
@@ -1394,6 +1452,11 @@ func (a *API) handleProfileCreate(w http.ResponseWriter, r *http.Request) {
 		ValidityDays      int    `json:"validityDays"`
 		Price             int    `json:"price"`
 		DataQuotaMb       int    `json:"dataQuotaMb"`
+		// P0/P2 (audit Mikhmon) — expiration cloud (F1) + marge (F13).
+		ExpMode        string `json:"expMode"`
+		GracePeriodMin int    `json:"gracePeriodMin"`
+		LockUser       bool   `json:"lockUser"`
+		SellingPrice   int    `json:"sellingPrice"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
@@ -1402,6 +1465,23 @@ func (a *API) handleProfileCreate(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		writeErr(w, http.StatusBadRequest, "Nom du profil requis")
+		return
+	}
+	// Bornes contrat F1/F13.
+	expMode := strings.TrimSpace(req.ExpMode)
+	if expMode == "" {
+		expMode = "notify"
+	}
+	if expMode != "notify" && expMode != "remove" {
+		writeErr(w, http.StatusBadRequest, "Mode d'expiration invalide (notify ou remove)")
+		return
+	}
+	if req.GracePeriodMin < 0 || req.GracePeriodMin > 43200 {
+		writeErr(w, http.StatusBadRequest, "La période de grâce doit être comprise entre 0 et 43200 minutes")
+		return
+	}
+	if req.SellingPrice < 0 {
+		writeErr(w, http.StatusBadRequest, "Le prix de vente doit être positif")
 		return
 	}
 	a.store.Lock()
@@ -1425,6 +1505,8 @@ func (a *API) handleProfileCreate(w http.ResponseWriter, r *http.Request) {
 		Price:             defaultMinZero(req.Price),
 		DataQuotaMb:       defaultMinZero(req.DataQuotaMb),
 		CreatedAt:         model.NowISO(),
+		ExpMode:           expMode, GracePeriodMin: req.GracePeriodMin,
+		LockUser: req.LockUser, SellingPrice: defaultMinZero(req.SellingPrice),
 	}
 	a.store.Lock()
 	a.store.Data().Profiles = append(a.store.Data().Profiles, profile)
@@ -1459,9 +1541,30 @@ func (a *API) handleProfileUpdate(w http.ResponseWriter, r *http.Request) {
 		ValidityDays      *int    `json:"validityDays"`
 		Price             *int    `json:"price"`
 		DataQuotaMb       *int    `json:"dataQuotaMb"`
+		// P0/P2 (audit Mikhmon) — expiration cloud (F1) + marge (F13).
+		ExpMode        *string `json:"expMode"`
+		GracePeriodMin *int    `json:"gracePeriodMin"`
+		LockUser       *bool   `json:"lockUser"`
+		SellingPrice   *int    `json:"sellingPrice"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
+		return
+	}
+	// Bornes contrat F1/F13 (validées avant verrou).
+	if req.ExpMode != nil {
+		m := strings.TrimSpace(*req.ExpMode)
+		if m != "" && m != "notify" && m != "remove" {
+			writeErr(w, http.StatusBadRequest, "Mode d'expiration invalide (notify ou remove)")
+			return
+		}
+	}
+	if req.GracePeriodMin != nil && (*req.GracePeriodMin < 0 || *req.GracePeriodMin > 43200) {
+		writeErr(w, http.StatusBadRequest, "La période de grâce doit être comprise entre 0 et 43200 minutes")
+		return
+	}
+	if req.SellingPrice != nil && *req.SellingPrice < 0 {
+		writeErr(w, http.StatusBadRequest, "Le prix de vente doit être positif")
 		return
 	}
 	a.store.Lock()
@@ -1505,6 +1608,19 @@ func (a *API) handleProfileUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.DataQuotaMb != nil && *req.DataQuotaMb >= 0 {
 		p.DataQuotaMb = *req.DataQuotaMb
+	}
+	// P0/P2 (audit Mikhmon).
+	if req.ExpMode != nil && strings.TrimSpace(*req.ExpMode) != "" {
+		p.ExpMode = strings.TrimSpace(*req.ExpMode)
+	}
+	if req.GracePeriodMin != nil {
+		p.GracePeriodMin = *req.GracePeriodMin
+	}
+	if req.LockUser != nil {
+		p.LockUser = *req.LockUser
+	}
+	if req.SellingPrice != nil && *req.SellingPrice >= 0 {
+		p.SellingPrice = *req.SellingPrice
 	}
 	updated := *p
 	a.logActivity(db, acc, "user", "Profil "+updated.Name+" modifié")
@@ -1553,48 +1669,23 @@ func (a *API) handleVouchersList(w http.ResponseWriter, r *http.Request) {
 func (a *API) usersList(w http.ResponseWriter, r *http.Request, kindOverride string) {
 	acc := accountScope(r)
 	q := r.URL.Query()
-	kind := q.Get("kind")
 	if kindOverride != "" {
-		kind = kindOverride
+		q.Set("kind", kindOverride)
 	}
-	search := strings.ToLower(strings.TrimSpace(q.Get("search")))
-	status := q.Get("status")
-	profileID := q.Get("profileId")
 	page := queryInt(r, "page", 1, 1, 1_000_000)
 	pageSize := queryInt(r, "pageSize", 15, 1, 200)
 
 	now := time.Now().UTC()
 	a.store.Lock()
 	db := a.store.Data()
-	filtered := []model.HotspotUser{}
-	for i := range db.HotspotUsers {
-		u := &db.HotspotUsers[i]
-		if u.AccountID != acc {
-			continue
-		}
-		if kind != "" && u.Kind != kind {
-			continue
-		}
-		if profileID != "" && u.ProfileID != profileID {
-			continue
-		}
-		st := model.EffectiveStatus(u, now)
-		if status != "" && st != status {
-			continue
-		}
-		if search != "" {
-			hay := strings.ToLower(u.Username + " " + u.Comment + " " + u.ResellerName + " " + u.ProfileName + " " + u.BatchID)
-			if !strings.Contains(hay, search) {
-				continue
-			}
-		}
-		uc := *u
-		uc.Status = st
-		filtered = append(filtered, uc)
-	}
+	// P0 (audit Mikhmon) : fait vivre la simulation (statuts d'expiration à
+	// jour via applyExpiry) puis applique l'enforcement routeur (F1).
+	store.Tick(db, now)
+	a.enforceExpired(db)
+	filtered := filterUsers(db, acc, q, now)
+	a.store.Save()
 	a.store.Unlock()
 
-	sort.Slice(filtered, func(i, j int) bool { return filtered[i].CreatedAt > filtered[j].CreatedAt })
 	total := len(filtered)
 	start := (page - 1) * pageSize
 	if start > total {
@@ -2116,6 +2207,12 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, fmt.Sprintf("Crédit insuffisant (disponible: %d, requis: %d)", resellerCopy.Credit, cost))
 		return
 	}
+	// P0 (F13) : prix de vente (0 = même prix que le coût) et totaux marge.
+	selling := profile.Price
+	if profile.SellingPrice > 0 {
+		selling = profile.SellingPrice
+	}
+	sellingTotal := selling * req.Count
 
 	batchID := fmt.Sprintf("B%s-%04d", now.Format("20060102"), now.Nanosecond()%10000)
 	expiresAt := now.Add(time.Duration(profile.ValidityDays) * 24 * time.Hour).Format(time.RFC3339)
@@ -2140,7 +2237,7 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 			RouterID: routerCopy.ID, RouterName: routerCopy.Name,
 			Status: "active", BatchID: batchID,
 			CreatedAt: model.NowISO(), ExpiresAt: expiresAt, UsedAt: "",
-			Price: profile.Price, DataQuotaMb: int64(quotaMb),
+			Price: profile.Price, SellingPrice: profile.SellingPrice, DataQuotaMb: int64(quotaMb),
 		}
 		if resellerCopy != nil {
 			u.ResellerID = resellerCopy.ID
@@ -2192,7 +2289,7 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 			ID: model.NewID("sale-"), AccountID: acc, Amount: cost, ProfileName: profile.Name, Count: req.Count,
 			Channel: channel, ResellerName: resName,
 			RouterID: routerCopy.ID, RouterName: routerCopy.Name, BatchID: batchID,
-			At: model.NowISO(),
+			At: model.NowISO(), Cost: cost, SellingTotal: sellingTotal,
 		})
 		batchResellerID := ""
 		if resellerCopy != nil {
@@ -2248,7 +2345,7 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 		ID: model.NewID("sale-"), AccountID: acc, Amount: cost, ProfileName: profile.Name, Count: req.Count,
 		Channel: channel, ResellerName: resName,
 		RouterID: routerCopy.ID, RouterName: routerCopy.Name, BatchID: batchID,
-		At: model.NowISO(),
+		At: model.NowISO(), Cost: cost, SellingTotal: sellingTotal,
 	})
 	batchResellerID := ""
 	if resellerCopy != nil {
@@ -2820,6 +2917,9 @@ func (a *API) handleReports(w http.ResponseWriter, r *http.Request) {
 	if totals.sales > 0 {
 		avgTicket = totals.revenue / totals.sales
 	}
+	// P0 (audit Mikhmon) — bloc marge (F13) : prix de vente vs coût sur
+	// 30 jours glissants, par profil + totaux (cohérent avec les ventes).
+	margin := buildMarginReport(db, acc, now)
 	a.store.Unlock()
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -2827,12 +2927,82 @@ func (a *API) handleReports(w http.ResponseWriter, r *http.Request) {
 		"salesByProfile": salesByProfile,
 		"trafficByDay":   trafficByDay,
 		"voucherStatus":  voucherStatus,
+		"margin":         margin,
 		"totals": map[string]any{
 			"revenue":   totals.revenue,
 			"sales":     totals.sales,
 			"avgTicket": avgTicket,
 		},
 	})
+}
+
+// buildMarginReport — marge par profil (F13) sur 30 jours glissants :
+// revenue = total vente (SellingTotal), cost = coût (Cost), margin = écart.
+// À appeler sous verrou.
+func buildMarginReport(db *model.DB, acc string, now time.Time) map[string]any {
+	since := now.AddDate(0, 0, -30)
+	type profileMargin struct {
+		Name    string `json:"name"`
+		Sold    int    `json:"sold"`
+		Revenue int    `json:"revenue"`
+		Cost    int    `json:"cost"`
+		Margin  int    `json:"margin"`
+	}
+	byProfile := map[string]*profileMargin{}
+	totalRevenue, totalCost := 0, 0
+	for i := range db.Sales {
+		s := &db.Sales[i]
+		if s.AccountID != acc {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339, s.At)
+		if err != nil || at.Before(since) {
+			continue
+		}
+		// Ventes antérieures à la marge : SellingTotal = 0 → base = Amount
+		// (équivalent prix coût, cf. migration migrateMultiTenant).
+		selling := s.SellingTotal
+		if selling == 0 {
+			selling = s.Amount
+		}
+		cost := s.Cost
+		if cost == 0 {
+			cost = s.Amount
+		}
+		pm, ok := byProfile[s.ProfileName]
+		if !ok {
+			pm = &profileMargin{Name: s.ProfileName}
+			byProfile[s.ProfileName] = pm
+		}
+		pm.Sold += s.Count
+		pm.Revenue += selling
+		pm.Cost += cost
+		pm.Margin += selling - cost
+		totalRevenue += selling
+		totalCost += cost
+	}
+	rows := make([]profileMargin, 0, len(byProfile))
+	for _, pm := range byProfile {
+		rows = append(rows, *pm)
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Revenue != rows[j].Revenue {
+			return rows[i].Revenue > rows[j].Revenue
+		}
+		return rows[i].Name < rows[j].Name
+	})
+	totalMargin := totalRevenue - totalCost
+	marginPct := 0.0
+	if totalRevenue > 0 {
+		marginPct = math.Round(float64(totalMargin)/float64(totalRevenue)*1000) / 10
+	}
+	return map[string]any{
+		"revenue":   totalRevenue,
+		"cost":      totalCost,
+		"margin":    totalMargin,
+		"marginPct": marginPct,
+		"byProfile": rows,
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -2916,35 +3086,43 @@ func (a *API) handleAccountingExport(w http.ResponseWriter, r *http.Request) {
 	// BOM UTF-8 : Excel reconnaît l'encodage.
 	_, _ = w.Write([]byte{0xEF, 0xBB, 0xBF})
 	_, _ = w.Write([]byte(fmt.Sprintf("MikCloud ; Comptabilite ;%s ;periode=%s\r\n", csvField(tenantName), period)))
-	_, _ = w.Write([]byte("Periode ;Ventes ;Chiffre d'affaires (FCFA)\r\n"))
+	_, _ = w.Write([]byte("Periode ;Ventes ;Chiffre d'affaires (FCFA) ;Coût (FCFA) ;Marge (FCFA)\r\n"))
 	type seriesRow struct {
 		Label   string `json:"label"`
 		Revenue int    `json:"revenue"`
 		Sales   int    `json:"sales"`
+		Cost    int    `json:"cost"`
+		Selling int    `json:"selling"`
 	}
 	if raw, err := json.Marshal(result["series"]); err == nil {
 		var rows []seriesRow
 		if json.Unmarshal(raw, &rows) == nil {
 			for _, row := range rows {
-				_, _ = w.Write([]byte(fmt.Sprintf("%s ;%d ;%d\r\n", csvField(row.Label), row.Sales, row.Revenue)))
+				_, _ = w.Write([]byte(fmt.Sprintf("%s ;%d ;%d ;%d ;%d\r\n",
+					csvField(row.Label), row.Sales, row.Revenue, row.Cost, row.Selling-row.Cost)))
 			}
 		}
 	}
 	if totals, ok := result["totals"].(map[string]any); ok {
-		_, _ = w.Write([]byte(fmt.Sprintf("TOTAL ;%v ;%v\r\n", totals["sales"], totals["revenue"])))
+		cost, _ := totals["cost"].(int)
+		selling, _ := totals["selling"].(int)
+		_, _ = w.Write([]byte(fmt.Sprintf("TOTAL ;%v ;%v ;%d ;%d\r\n", totals["sales"], totals["revenue"], cost, selling-cost)))
 	}
-	_, _ = w.Write([]byte("\r\nSite ;Ventes ;Chiffre d'affaires (FCFA) ;Part (% )\r\n"))
+	_, _ = w.Write([]byte("\r\nSite ;Ventes ;Chiffre d'affaires (FCFA) ;Coût (FCFA) ;Marge (FCFA) ;Part (% )\r\n"))
 	type routerRow struct {
 		RouterName string  `json:"routerName"`
 		Revenue    int     `json:"revenue"`
 		Sales      int     `json:"sales"`
+		Cost       int     `json:"cost"`
+		Selling    int     `json:"selling"`
 		Share      float64 `json:"share"`
 	}
 	if raw, err := json.Marshal(result["byRouter"]); err == nil {
 		var rows []routerRow
 		if json.Unmarshal(raw, &rows) == nil {
 			for _, row := range rows {
-				_, _ = w.Write([]byte(fmt.Sprintf("%s ;%d ;%d ;%v\r\n", csvField(row.RouterName), row.Sales, row.Revenue, row.Share)))
+				_, _ = w.Write([]byte(fmt.Sprintf("%s ;%d ;%d ;%d ;%d ;%v\r\n",
+					csvField(row.RouterName), row.Sales, row.Revenue, row.Cost, row.Selling-row.Cost, row.Share)))
 			}
 		}
 	}
@@ -3001,6 +3179,8 @@ func buildAccounting(db *model.DB, acc, period, routerID string, now time.Time) 
 		Label   string `json:"label"`
 		Revenue int    `json:"revenue"`
 		Sales   int    `json:"sales"`
+		Cost    int    `json:"cost"`    // F13 : coût agrégé
+		Selling int    `json:"selling"` // F13 : total vente agrégé
 	}
 	revSeries := make([]seriesPoint, len(buckets))
 	for i := range labels {
@@ -3014,9 +3194,11 @@ func buildAccounting(db *model.DB, acc, period, routerID string, now time.Time) 
 		}
 	}
 
-	totalsRevenue, totalsSales := 0, 0
+	totalsRevenue, totalsSales, totalsCost, totalsSelling := 0, 0, 0, 0
 	byRouterRevenue := map[string]int{}
 	byRouterSales := map[string]int{}
+	byRouterCost := map[string]int{}
+	byRouterSelling := map[string]int{}
 
 	for _, s := range db.Sales {
 		if s.AccountID != acc {
@@ -3026,6 +3208,16 @@ func buildAccounting(db *model.DB, acc, period, routerID string, now time.Time) 
 		if err != nil || at.Before(windowStart) {
 			continue
 		}
+		// F13 : ventes antérieures à la marge → base = Amount.
+		cost := s.Cost
+		if cost == 0 {
+			cost = s.Amount
+		}
+		selling := s.SellingTotal
+		if selling == 0 {
+			selling = s.Amount
+		}
+
 		// répartition par routeur (toujours tous sites, pour comparaison)
 		rid := s.RouterID
 		if rid == "" {
@@ -3034,6 +3226,8 @@ func buildAccounting(db *model.DB, acc, period, routerID string, now time.Time) 
 		}
 		byRouterRevenue[rid] += s.Amount
 		byRouterSales[rid] += s.Count
+		byRouterCost[rid] += cost
+		byRouterSelling[rid] += selling
 
 		// filtre routeur : la série et les totaux ne comptent que le site choisi
 		if routerID != "" && routerID != "all" && s.RouterID != routerID {
@@ -3041,11 +3235,15 @@ func buildAccounting(db *model.DB, acc, period, routerID string, now time.Time) 
 		}
 		totalsRevenue += s.Amount
 		totalsSales += s.Count
+		totalsCost += cost
+		totalsSelling += selling
 
 		idx := sort.Search(len(buckets), func(i int) bool { return at.Before(buckets[i]) }) - 1
 		if idx >= 0 && idx < len(revSeries) {
 			revSeries[idx].Revenue += s.Amount
 			revSeries[idx].Sales += s.Count
+			revSeries[idx].Cost += cost
+			revSeries[idx].Selling += selling
 		}
 	}
 
@@ -3054,6 +3252,8 @@ func buildAccounting(db *model.DB, acc, period, routerID string, now time.Time) 
 		RouterName string  `json:"routerName"`
 		Revenue    int     `json:"revenue"`
 		Sales      int     `json:"sales"`
+		Cost       int     `json:"cost"`    // F13
+		Selling    int     `json:"selling"` // F13
 		Share      float64 `json:"share"`
 	}
 	byRouter := []routerAgg{}
@@ -3068,7 +3268,8 @@ func buildAccounting(db *model.DB, acc, period, routerID string, now time.Time) 
 		}
 		byRouter = append(byRouter, routerAgg{
 			RouterID: rid, RouterName: routerNames[rid],
-			Revenue: rev, Sales: byRouterSales[rid], Share: share,
+			Revenue: rev, Sales: byRouterSales[rid],
+			Cost: byRouterCost[rid], Selling: byRouterSelling[rid], Share: share,
 		})
 	}
 	sort.Slice(byRouter, func(i, j int) bool { return byRouter[i].Revenue > byRouter[j].Revenue })
@@ -3087,6 +3288,10 @@ func buildAccounting(db *model.DB, acc, period, routerID string, now time.Time) 
 			"revenue":   totalsRevenue,
 			"sales":     totalsSales,
 			"avgTicket": avgTicket,
+			// F13 : coût, total vente et marge (selling − cost).
+			"cost":    totalsCost,
+			"selling": totalsSelling,
+			"margin":  totalsSelling - totalsCost,
 		},
 	}
 }
@@ -3106,6 +3311,7 @@ func (a *API) handleBatchesList(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	a.store.Lock()
 	db := a.store.Data()
+	a.enforceExpired(db) // P0 (audit Mikhmon) : expiration appliquée au passage
 
 	// Statuts live des vouchers, agrégés par lot.
 	type liveStats struct {
@@ -3167,6 +3373,7 @@ func (a *API) handleBatchesList(w http.ResponseWriter, r *http.Request) {
 		}
 		filtered = append(filtered, row)
 	}
+	a.store.Save() // P0 : persiste les flags Enforced déposés par enforceExpired
 	a.store.Unlock()
 
 	sort.Slice(filtered, func(i, j int) bool { return filtered[i].CreatedAt > filtered[j].CreatedAt })
@@ -3195,6 +3402,20 @@ func (a *API) handleSettingsGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, settings)
 }
 
+// tenantPut — forme imbriquée « tenant { … } » de PUT /api/settings. Le
+// frontend P0 envoie les nouveaux champs À LA FOIS plats et imbriqués : les
+// deux formes sont acceptées (le plat prime, le nested sert de repli).
+type tenantPut struct {
+	Name                  *string `json:"name"`
+	Currency              *string `json:"currency"`
+	Timezone              *string `json:"timezone"`
+	WaveLink              *string `json:"waveLink"`
+	DNSName               *string `json:"dnsName"`
+	LogoURL               *string `json:"logoUrl"`
+	ExpiryPolicyMode      *string `json:"expiryPolicyMode"`
+	ExpiryPolicyAfterDays *int    `json:"expiryPolicyAfterDays"`
+}
+
 func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	acc := accountScope(r)
 	var req struct {
@@ -3202,25 +3423,100 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		Currency *string `json:"currency"`
 		Timezone *string `json:"timezone"`
 		WaveLink *string `json:"waveLink"`
+		// P0 (audit Mikhmon) — champs plats…
+		DNSName               *string `json:"dnsName"`
+		LogoURL               *string `json:"logoUrl"`
+		ExpiryPolicyMode      *string `json:"expiryPolicyMode"`
+		ExpiryPolicyAfterDays *int    `json:"expiryPolicyAfterDays"`
+		// …et forme imbriquée tenant{…}.
+		Tenant *tenantPut `json:"tenant"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
 		return
 	}
+	// Résolution plat > imbriqué : le corps défensif du front P0 envoie les
+	// nouveaux champs À LA FOIS plats et dans tenant{…} — le plat prime.
+	name, currency, timezone, waveLink := req.Name, req.Currency, req.Timezone, req.WaveLink
+	dnsName, logoURL, expiryMode, expiryAfterDays := req.DNSName, req.LogoURL, req.ExpiryPolicyMode, req.ExpiryPolicyAfterDays
+	if req.Tenant != nil {
+		if name == nil {
+			name = req.Tenant.Name
+		}
+		if currency == nil {
+			currency = req.Tenant.Currency
+		}
+		if timezone == nil {
+			timezone = req.Tenant.Timezone
+		}
+		if waveLink == nil {
+			waveLink = req.Tenant.WaveLink
+		}
+		if dnsName == nil {
+			dnsName = req.Tenant.DNSName
+		}
+		if logoURL == nil {
+			logoURL = req.Tenant.LogoURL
+		}
+		if expiryMode == nil {
+			expiryMode = req.Tenant.ExpiryPolicyMode
+		}
+		if expiryAfterDays == nil {
+			expiryAfterDays = req.Tenant.ExpiryPolicyAfterDays
+		}
+	}
+
+	// Validations P0 (contrat F2/F5).
+	if dnsName != nil && len(*dnsName) > 100 {
+		writeErr(w, http.StatusBadRequest, "Le nom DNS doit faire au plus 100 caractères")
+		return
+	}
+	if logoURL != nil && *logoURL != "" {
+		if !strings.HasPrefix(*logoURL, "data:image/") {
+			writeErr(w, http.StatusBadRequest, "Logo invalide : image intégrée (data:image/…) requise")
+			return
+		}
+		if len(*logoURL) > 300*1024 {
+			writeErr(w, http.StatusBadRequest, "Logo trop volumineux (300 Ko max)")
+			return
+		}
+	}
+	if expiryMode != nil && *expiryMode != "keep" && *expiryMode != "remove" {
+		writeErr(w, http.StatusBadRequest, "Politique d'expiration invalide (keep ou remove)")
+		return
+	}
+	if expiryAfterDays != nil && (*expiryAfterDays < 0 || *expiryAfterDays > 365) {
+		writeErr(w, http.StatusBadRequest, "Le nombre de jours doit être compris entre 0 et 365")
+		return
+	}
+
 	a.store.Lock()
 	db := a.store.Data()
 	settings := ensureSettings(db, acc) // créés avec les défauts FCFA si absents
-	if req.Name != nil && strings.TrimSpace(*req.Name) != "" {
-		settings.Tenant.Name = strings.TrimSpace(*req.Name)
+	if name != nil && strings.TrimSpace(*name) != "" {
+		settings.Tenant.Name = strings.TrimSpace(*name)
 	}
-	if req.Currency != nil && strings.TrimSpace(*req.Currency) != "" {
-		settings.Tenant.Currency = strings.TrimSpace(*req.Currency)
+	if currency != nil && strings.TrimSpace(*currency) != "" {
+		settings.Tenant.Currency = strings.TrimSpace(*currency)
 	}
-	if req.Timezone != nil && strings.TrimSpace(*req.Timezone) != "" {
-		settings.Tenant.Timezone = strings.TrimSpace(*req.Timezone)
+	if timezone != nil && strings.TrimSpace(*timezone) != "" {
+		settings.Tenant.Timezone = strings.TrimSpace(*timezone)
 	}
-	if req.WaveLink != nil {
-		settings.Tenant.WaveLink = strings.TrimSpace(*req.WaveLink) // vide = désactivé
+	if waveLink != nil {
+		settings.Tenant.WaveLink = strings.TrimSpace(*waveLink) // vide = désactivé
+	}
+	// P0 (audit Mikhmon).
+	if dnsName != nil {
+		settings.Tenant.DNSName = strings.TrimSpace(*dnsName)
+	}
+	if logoURL != nil {
+		settings.Tenant.LogoURL = strings.TrimSpace(*logoURL) // vide = logo retiré
+	}
+	if expiryMode != nil {
+		settings.Tenant.ExpiryPolicyMode = *expiryMode
+	}
+	if expiryAfterDays != nil {
+		settings.Tenant.ExpiryPolicyAfterDays = *expiryAfterDays
 	}
 	db.SettingsByAccount[acc] = settings
 	a.logActivity(db, acc, "system", "Paramètres du tenant mis à jour")

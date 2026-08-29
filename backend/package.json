@@ -1,0 +1,6 @@
+{
+  "name": "hotspot-api",
+  "scripts": {
+    "dev": "go run ."
+  }
+}

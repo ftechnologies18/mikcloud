@@ -1,0 +1,25 @@
+# Dépendances / build
+node_modules/
+.next/
+out/
+dist/
+
+# Environnement
+.env
+.env*.local
+
+# Logs
+*.log
+
+# Bases de données locales
+db/
+*.db
+*.sqlite
+
+# Backend Go (voir aussi backend/.gitignore)
+backend/server
+backend/data/
+
+# Système
+.DS_Store
+Thumbs.db

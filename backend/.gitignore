@@ -1,0 +1,5 @@
+data/db.json
+data/*.tmp
+server
+server.exe
+*.log

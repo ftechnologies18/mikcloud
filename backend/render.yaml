@@ -1,0 +1,22 @@
+# Déploiement Render — SpotCloud Hotspot API
+# https://render.com/docs/deploy-go
+services:
+  - type: web
+    name: spotcloud-api
+    runtime: go
+    plan: free
+    buildCommand: go build -o server .
+    startCommand: ./server
+    healthCheckPath: /
+    envVars:
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATA_DIR
+        value: /opt/render/project/src/data
+    # Note : le plan gratuit Render a un système de fichiers éphémère.
+    # Les données (db.json) sont réinitialisées à chaque redéploiement.
+    # Pour la production, montez un disque persistant (plan payant) :
+    # disk:
+    #   name: spotcloud-data
+    #   mountPath: /opt/render/project/src/data
+    #   sizeGB: 1

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import Image from "next/image";
 import { useIsFetching, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -17,7 +18,6 @@ import {
   Store,
   Ticket,
   Users,
-  Wifi,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { LucideIcon } from "lucide-react";
@@ -127,9 +127,13 @@ function roleLabel(role: string): string {
 function BrandHeader() {
   return (
     <div className="flex items-center gap-3 px-5 py-5">
-      <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-chart-2 shadow-md shadow-primary/20">
-        <Wifi className="size-5 text-white" />
-      </div>
+      <Image
+        src="/logo.png"
+        alt="Logo MikCloud"
+        width={36}
+        height={36}
+        className="size-9 shrink-0 rounded-xl shadow-md shadow-primary/20"
+      />
       <div className="flex min-w-0 items-center gap-2">
         <span className="truncate text-base font-semibold tracking-tight">MikCloud</span>
         <Badge

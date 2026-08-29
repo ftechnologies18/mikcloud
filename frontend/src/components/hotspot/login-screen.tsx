@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import { motion } from "framer-motion";
-import { KeyRound, Loader2, UserPlus, Wifi } from "lucide-react";
+import { KeyRound, Loader2, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -90,9 +91,14 @@ export default function LoginScreen() {
         <Card className="border-border/70 shadow-xl shadow-black/20">
           <CardContent className="p-6 sm:p-8">
             <div className="flex flex-col items-center text-center">
-              <div className="flex size-14 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-chart-2 shadow-lg shadow-primary/20">
-                <Wifi className="size-7 text-white" />
-              </div>
+              <Image
+                src="/logo.png"
+                alt="Logo MikCloud — nuage, signal WiFi et routeur MikroTik"
+                width={112}
+                height={112}
+                priority
+                className="rounded-2xl shadow-lg shadow-primary/20"
+              />
               <h1 className="mt-4 text-2xl font-semibold tracking-tight">MikCloud</h1>
               <p className="mt-1 text-sm text-muted-foreground">Gestion Hotspot Cloud MikroTik</p>
             </div>

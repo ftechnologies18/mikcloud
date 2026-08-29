@@ -8,7 +8,7 @@ import { Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { useCurrency } from "@/components/hotspot/parts/sd-currency";
-import { formatCurrency } from "@/lib/hotspot/format";
+import { formatBytes, formatCurrency } from "@/lib/hotspot/format";
 import type { HotspotUser, Profile } from "@/lib/hotspot/types";
 
 interface UcPrintDialogProps {
@@ -72,6 +72,9 @@ export function UcPrintDialog({
                     <p className="text-xs text-neutral-700">
                       {voucher.profileName}
                       {validityDays ? ` · validité ${validityDays} j` : ""}
+                      {voucher.dataQuotaMb > 0
+                        ? ` · ${formatBytes(voucher.dataQuotaMb * 1048576)}`
+                        : ""}
                     </p>
                     <p className="text-xs font-semibold">{formatCurrency(voucher.price, currency)}</p>
                     <p className="mt-1 w-full border-t border-neutral-300 pt-1 text-[10px] text-neutral-500">

@@ -148,7 +148,8 @@ func (p *PG) ensureSchema() error {
                         created_at      TEXT NOT NULL,
                         expires_at      TEXT NOT NULL,
                         used_at         TEXT NOT NULL,
-                        price           INTEGER NOT NULL
+                        price           INTEGER NOT NULL,
+                        data_quota_mb   BIGINT NOT NULL DEFAULT 0
                 )`,
 		`CREATE INDEX IF NOT EXISTS idx_hotspot_users_batch    ON hotspot_users (batch_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_hotspot_users_router   ON hotspot_users (router_id)`,
@@ -164,6 +165,7 @@ func (p *PG) ensureSchema() error {
                         count         INTEGER NOT NULL,
                         unit_price    INTEGER NOT NULL,
                         total_cost    INTEGER NOT NULL,
+                        data_quota_mb BIGINT NOT NULL DEFAULT 0,
                         channel       TEXT NOT NULL,
                         reseller_id   TEXT NOT NULL,
                         reseller_name TEXT NOT NULL,
@@ -307,6 +309,9 @@ func (p *PG) ensureSchema() error {
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS token_preview TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS last_seen TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS wave_link TEXT NOT NULL DEFAULT ''`,
+		// Quota de données par voucher (« 5 Go = 500 F ») : Mo, 0 = illimité.
+		`ALTER TABLE hotspot_users ADD COLUMN IF NOT EXISTS data_quota_mb BIGINT NOT NULL DEFAULT 0`,
+		`ALTER TABLE batches       ADD COLUMN IF NOT EXISTS data_quota_mb BIGINT NOT NULL DEFAULT 0`,
 		// Migrations multi-tenant : colonne account_id sur toutes les tables métier.
 		`ALTER TABLE admin_users   ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''`,
 		// Changement de mot de passe par l'utilisateur (POST /api/auth/password) :
@@ -816,36 +821,36 @@ var hotspotUserSpec = entitySpec[model.HotspotUser]{
 	table: "hotspot_users",
 	cols: []string{"id", "kind", "username", "password", "profile_id", "profile_name",
 		"router_id", "router_name", "status", "batch_id", "reseller_id", "reseller_name",
-		"comment", "bytes_in", "bytes_out", "uptime_used_sec", "created_at", "expires_at", "used_at", "price", "account_id"},
+		"comment", "bytes_in", "bytes_out", "uptime_used_sec", "created_at", "expires_at", "used_at", "price", "data_quota_mb", "account_id"},
 	idOf: func(x *model.HotspotUser) string { return x.ID },
 	scan: func(r *sql.Rows) (model.HotspotUser, error) {
 		var x model.HotspotUser
 		err := r.Scan(&x.ID, &x.Kind, &x.Username, &x.Password, &x.ProfileID, &x.ProfileName,
 			&x.RouterID, &x.RouterName, &x.Status, &x.BatchID, &x.ResellerID, &x.ResellerName,
-			&x.Comment, &x.BytesIn, &x.BytesOut, &x.UptimeUsedSec, &x.CreatedAt, &x.ExpiresAt, &x.UsedAt, &x.Price, &x.AccountID)
+			&x.Comment, &x.BytesIn, &x.BytesOut, &x.UptimeUsedSec, &x.CreatedAt, &x.ExpiresAt, &x.UsedAt, &x.Price, &x.DataQuotaMb, &x.AccountID)
 		return x, err
 	},
 	args: func(x *model.HotspotUser) []any {
 		return []any{x.ID, x.Kind, x.Username, x.Password, x.ProfileID, x.ProfileName,
 			x.RouterID, x.RouterName, x.Status, x.BatchID, x.ResellerID, x.ResellerName,
-			x.Comment, x.BytesIn, x.BytesOut, x.UptimeUsedSec, x.CreatedAt, x.ExpiresAt, x.UsedAt, x.Price, x.AccountID}
+			x.Comment, x.BytesIn, x.BytesOut, x.UptimeUsedSec, x.CreatedAt, x.ExpiresAt, x.UsedAt, x.Price, x.DataQuotaMb, x.AccountID}
 	},
 	hashOf: hashEntity[model.HotspotUser],
 }
 
 var batchSpec = entitySpec[model.Batch]{
 	table: "batches",
-	cols:  []string{"id", "profile_id", "profile_name", "router_id", "router_name", "count", "unit_price", "total_cost", "channel", "reseller_id", "reseller_name", "created_at", "account_id"},
+	cols:  []string{"id", "profile_id", "profile_name", "router_id", "router_name", "count", "unit_price", "total_cost", "data_quota_mb", "channel", "reseller_id", "reseller_name", "created_at", "account_id"},
 	idOf:  func(x *model.Batch) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Batch, error) {
 		var x model.Batch
 		err := r.Scan(&x.ID, &x.ProfileID, &x.ProfileName, &x.RouterID, &x.RouterName,
-			&x.Count, &x.UnitPrice, &x.TotalCost, &x.Channel, &x.ResellerID, &x.ResellerName, &x.CreatedAt, &x.AccountID)
+			&x.Count, &x.UnitPrice, &x.TotalCost, &x.DataQuotaMb, &x.Channel, &x.ResellerID, &x.ResellerName, &x.CreatedAt, &x.AccountID)
 		return x, err
 	},
 	args: func(x *model.Batch) []any {
 		return []any{x.ID, x.ProfileID, x.ProfileName, x.RouterID, x.RouterName,
-			x.Count, x.UnitPrice, x.TotalCost, x.Channel, x.ResellerID, x.ResellerName, x.CreatedAt, x.AccountID}
+			x.Count, x.UnitPrice, x.TotalCost, x.DataQuotaMb, x.Channel, x.ResellerID, x.ResellerName, x.CreatedAt, x.AccountID}
 	},
 	hashOf: hashEntity[model.Batch],
 }

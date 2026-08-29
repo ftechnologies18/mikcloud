@@ -13,7 +13,7 @@ import { Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { useCurrency } from "@/components/hotspot/parts/sd-currency";
-import { formatCurrency } from "@/lib/hotspot/format";
+import { formatBytes, formatCurrency } from "@/lib/hotspot/format";
 import type { HotspotUser } from "@/lib/hotspot/types";
 
 // 20 tickets par page : 4 colonnes × 5 lignes.
@@ -161,7 +161,8 @@ function A4Ticket({
         <p className="truncate font-mono text-[15px] font-bold leading-tight">{voucher.username}</p>
         <p className="font-mono text-[10px] leading-tight">MDP : {voucher.password}</p>
         <p className="mt-0.5 text-[10px] leading-tight">
-          {voucher.profileName} ·{" "}
+          {voucher.profileName}
+          {voucher.dataQuotaMb > 0 && ` · ${formatBytes(voucher.dataQuotaMb * 1048576)}`} ·{" "}
           <span className="font-semibold">{formatCurrency(voucher.price, currency)}</span>
         </p>
         <p className="mt-0.5 text-[8px] leading-tight text-neutral-500">

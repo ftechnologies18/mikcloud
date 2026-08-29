@@ -403,6 +403,9 @@ func (g *RealGateway) ListUsers() ([]model.HotspotUser, error) {
 // AddUser pousse /ip/hotspot/user/add puis enregistre le miroir local.
 func (g *RealGateway) AddUser(u *model.HotspotUser) error {
 	words := []string{"/ip/hotspot/user/add", "=name=" + u.Username, "=password=" + u.Password, "=profile=" + u.ProfileName}
+	if u.DataQuotaMb > 0 {
+		words = append(words, fmt.Sprintf("=limit-bytes-total=%d", u.DataQuotaMb*1048576))
+	}
 	if u.Comment != "" {
 		words = append(words, "=comment="+u.Comment)
 	}
@@ -426,6 +429,8 @@ func (g *RealGateway) SetUser(u *model.HotspotUser, oldUsername string, password
 			return fmt.Errorf("utilisateur %s introuvable sur le routeur", oldUsername)
 		}
 		words := []string{"/ip/hotspot/user/set", "=.id=" + rows[0][".id"], "=name=" + u.Username, "=profile=" + u.ProfileName}
+		// Quota toujours transmis : 0 remet l'utilisateur en illimité.
+		words = append(words, fmt.Sprintf("=limit-bytes-total=%d", u.DataQuotaMb*1048576))
 		if u.Comment != "" {
 			words = append(words, "=comment="+u.Comment)
 		}

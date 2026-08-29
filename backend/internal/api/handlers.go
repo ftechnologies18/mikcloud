@@ -278,6 +278,33 @@ func findRouterScoped(db *model.DB, id, acc string) *model.Router {
 	return nil
 }
 
+// sanitizeVoucherComment nettoie un commentaire libre de voucher avant envoi
+// au routeur : une seule ligne, 64 caractères max (lisible dans Winbox).
+func sanitizeVoucherComment(s string) string {
+	s = strings.Map(func(c rune) rune {
+		if c == '\n' || c == '\r' || c == '\t' || c < 0x20 {
+			return ' '
+		}
+		return c
+	}, strings.TrimSpace(s))
+	r := []rune(s)
+	if len(r) > 64 {
+		r = r[:64]
+	}
+	return strings.TrimSpace(string(r))
+}
+
+// quotaNote — suffixe de journal (ex. « — quota 5 Go ») pour un quota en Mo.
+func quotaNote(mb int) string {
+	if mb <= 0 {
+		return ""
+	}
+	if mb >= 1024 && mb%1024 == 0 {
+		return fmt.Sprintf(" — quota %d Go", mb/1024)
+	}
+	return fmt.Sprintf(" — quota %d Mo", mb)
+}
+
 func findProfileScoped(db *model.DB, id, acc string) *model.Profile {
 	for i := range db.Profiles {
 		if db.Profiles[i].ID == id && db.Profiles[i].AccountID == acc {
@@ -1647,7 +1674,7 @@ func (a *API) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 		Comment:   strings.TrimSpace(req.Comment),
 		CreatedAt: nowISO,
 		ExpiresAt: now.Add(time.Duration(profile.ValidityDays) * 24 * time.Hour).Format(time.RFC3339),
-		UsedAt:    "", Price: profile.Price,
+		UsedAt:    "", Price: profile.Price, DataQuotaMb: int64(profile.DataQuotaMb),
 	}
 	a.store.Unlock()
 
@@ -1658,10 +1685,14 @@ func (a *API) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 		a.store.Lock()
 		db = a.store.Data()
 		db.HotspotUsers = append(db.HotspotUsers, u)
-		cmd := queueCommandLocked(db, routerCopy.AccountID, routerCopy.ID, model.CmdUserAdd, map[string]any{
+		userPayload := map[string]any{
 			"name": u.Username, "password": u.Password,
 			"profile": profileRef(*profile), "comment": u.Comment,
-		})
+		}
+		if profile.DataQuotaMb > 0 {
+			userPayload["limitBytesTotal"] = profile.DataQuotaMb * 1048576
+		}
+		cmd := queueCommandLocked(db, routerCopy.AccountID, routerCopy.ID, model.CmdUserAdd, userPayload)
 		a.logActivity(db, acc, "user", "Utilisateur "+u.Username+" créé (en attente du routeur, commande "+cmd.ID+")")
 		a.store.Save()
 		cmdID := cmd.ID
@@ -1990,12 +2021,16 @@ func (a *API) removeUserByID(id string) {
 func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 	acc := accountScope(r)
 	var req struct {
-		Count      int    `json:"count"`
-		ProfileID  string `json:"profileId"`
-		RouterID   string `json:"routerId"`
-		Prefix     string `json:"prefix"`
-		CodeLength int    `json:"codeLength"`
-		ResellerID string `json:"resellerId"`
+		Count       int    `json:"count"`
+		ProfileID   string `json:"profileId"`
+		RouterID    string `json:"routerId"`
+		Prefix      string `json:"prefix"`
+		CodeLength  int    `json:"codeLength"`
+		ResellerID  string `json:"resellerId"`
+		UserMode    string `json:"userMode"`    // "" | "userpass" | "same" (mot de passe = nom)
+		Charset     string `json:"charset"`     // preset model.Charset* ("" = MikCloud sûr)
+		Comment     string `json:"comment"`     // commentaire libre inscrit sur le routeur
+		DataQuotaMb *int   `json:"dataQuotaMb"` // nil = hériter du profil · 0 = illimité · >0 = Mo
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
@@ -2009,14 +2044,22 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 	if codeLength == 0 {
 		codeLength = 5
 	}
-	if codeLength < 5 || codeLength > 10 {
-		writeErr(w, http.StatusBadRequest, "La longueur du code doit être comprise entre 5 et 10")
+	// 4 caractères comme le User Manager MikroTik, jusqu'à 10 pour les codes
+	// personnalisés ; l'alphabet choisi exclut toujours les caractères ambigus.
+	if codeLength < 4 || codeLength > 10 {
+		writeErr(w, http.StatusBadRequest, "La longueur du code doit être comprise entre 4 et 10")
 		return
 	}
 	prefix := req.Prefix
 	if prefix == "" {
 		prefix = "SC-"
 	}
+	if req.UserMode != "" && req.UserMode != "userpass" && req.UserMode != "same" {
+		writeErr(w, http.StatusBadRequest, "Mode utilisateur invalide (userpass ou same)")
+		return
+	}
+	samePassword := req.UserMode == "same"
+	voucherComment := sanitizeVoucherComment(req.Comment)
 	now := time.Now().UTC()
 
 	// Validation + génération des vouchers (sous verrou)
@@ -2046,6 +2089,21 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 		c := *res
 		resellerCopy = &c
 	}
+	// Quota de données (l'argument « 5 Go = 500 F ») : par défaut le voucher
+	// hérite du quota du profil ; le gérant surcharge par lot (0 = illimité
+	// explicite, > 0 = Mo par voucher, plafonné à 1 Po).
+	quotaMb := profile.DataQuotaMb
+	if req.DataQuotaMb != nil {
+		quotaMb = *req.DataQuotaMb
+	}
+	if quotaMb < 0 {
+		a.store.Unlock()
+		writeErr(w, http.StatusBadRequest, "Le quota de données ne peut pas être négatif")
+		return
+	}
+	if quotaMb > 1_073_741_824 {
+		quotaMb = 1_073_741_824
+	}
 	cost := req.Count * profile.Price
 	if resellerCopy != nil && resellerCopy.Credit < cost {
 		a.store.Unlock()
@@ -2057,13 +2115,18 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 	expiresAt := now.Add(time.Duration(profile.ValidityDays) * 24 * time.Hour).Format(time.RFC3339)
 	vouchers := make([]model.HotspotUser, 0, req.Count)
 	for i := 0; i < req.Count; i++ {
-		code := model.RandomCode(codeLength)
+		code := model.RandomCodeFrom(codeLength, req.Charset)
 		for j := 0; j < 50 && usernameTaken(db, acc, prefix+code); j++ {
-			code = model.RandomCode(codeLength)
+			code = model.RandomCodeFrom(codeLength, req.Charset)
 		}
-		password := model.RandomCode(codeLength)
-		for password == code {
-			password = model.RandomCode(codeLength)
+		// Mode « same » : le mot de passe = le nom d'utilisateur COMPLET (avec préfixe).
+		password := prefix + code
+		if !samePassword {
+			// Mode « Username & Password » (défaut) : le mot de passe diffère du code.
+			password = model.RandomCodeFrom(codeLength, req.Charset)
+			for password == code {
+				password = model.RandomCodeFrom(codeLength, req.Charset)
+			}
 		}
 		u := model.HotspotUser{
 			ID: model.NewID("v-"), AccountID: acc, Kind: "voucher", Username: prefix + code, Password: password,
@@ -2071,7 +2134,7 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 			RouterID: routerCopy.ID, RouterName: routerCopy.Name,
 			Status: "active", BatchID: batchID,
 			CreatedAt: model.NowISO(), ExpiresAt: expiresAt, UsedAt: "",
-			Price: profile.Price,
+			Price: profile.Price, DataQuotaMb: int64(quotaMb),
 		}
 		if resellerCopy != nil {
 			u.ResellerID = resellerCopy.ID
@@ -2092,10 +2155,18 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 		a.store.Lock()
 		db = a.store.Data()
 		db.HotspotUsers = append(db.HotspotUsers, vouchers...)
-		cmd := queueCommandLocked(db, routerCopy.AccountID, routerCopy.ID, model.CmdVoucherBatch, map[string]any{
+		batchPayload := map[string]any{
 			"profile": profileRef(*profile), "users": names, "batch": batchID,
-		})
-		a.logActivity(db, acc, "voucher", fmt.Sprintf("Lot %s : %d vouchers en file pour «%s» (commande %s)", batchID, req.Count, routerCopy.Name, cmd.ID))
+		}
+		if quotaMb > 0 {
+			// limit-bytes-total s'exprime en octets sur le routeur (Mo × 1 048 576).
+			batchPayload["limitBytesTotal"] = quotaMb * 1048576
+		}
+		if voucherComment != "" {
+			batchPayload["comment"] = voucherComment
+		}
+		cmd := queueCommandLocked(db, routerCopy.AccountID, routerCopy.ID, model.CmdVoucherBatch, batchPayload)
+		a.logActivity(db, acc, "voucher", fmt.Sprintf("Lot %s : %d vouchers en file pour «%s»%s (commande %s)", batchID, req.Count, routerCopy.Name, quotaNote(quotaMb), cmd.ID))
 		// Bookkeeping : vente, transaction, portefeuille revendeur
 		channel := "direct"
 		resName := ""
@@ -2124,7 +2195,7 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 		db.Batches = append([]model.Batch{{
 			ID: batchID, AccountID: acc, ProfileID: profile.ID, ProfileName: profile.Name,
 			RouterID: routerCopy.ID, RouterName: routerCopy.Name,
-			Count: req.Count, UnitPrice: profile.Price, TotalCost: cost,
+			Count: req.Count, UnitPrice: profile.Price, TotalCost: cost, DataQuotaMb: int64(quotaMb),
 			Channel: channel, ResellerID: batchResellerID, ResellerName: resName,
 			CreatedAt: model.NowISO(),
 		}}, db.Batches...)
@@ -2180,7 +2251,7 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 	db.Batches = append([]model.Batch{{
 		ID: batchID, AccountID: acc, ProfileID: profile.ID, ProfileName: profile.Name,
 		RouterID: routerCopy.ID, RouterName: routerCopy.Name,
-		Count: req.Count, UnitPrice: profile.Price, TotalCost: cost,
+		Count: req.Count, UnitPrice: profile.Price, TotalCost: cost, DataQuotaMb: int64(quotaMb),
 		Channel: channel, ResellerID: batchResellerID, ResellerName: resName,
 		CreatedAt: model.NowISO(),
 	}}, db.Batches...)

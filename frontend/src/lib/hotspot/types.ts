@@ -152,6 +152,8 @@ export interface HotspotUser {
   expiresAt: string;
   usedAt: string;
   price: number;
+  /** Quota data appliqué sur le routeur (limit-bytes-total, en Mo ; 0 = illimité). */
+  dataQuotaMb: number;
 }
 
 export interface PagedUsers {
@@ -161,6 +163,9 @@ export interface PagedUsers {
   pageSize: number;
 }
 
+/** Mode utilisateur des vouchers généré (« User Mode » du User Manager MikroTik). */
+export type VoucherUserMode = "userpass" | "same";
+
 export interface GenerateVouchersRequest {
   count: number;
   profileId: string;
@@ -168,6 +173,14 @@ export interface GenerateVouchersRequest {
   prefix?: string;
   codeLength?: number;
   resellerId?: string;
+  /** « userpass » (défaut) ou « same » : mot de passe = nom d'utilisateur. */
+  userMode?: VoucherUserMode;
+  /** Preset de caractères : "" (MikCloud sûr) | abc | ABC | aBc | 5ab | 5AB | 5aB. */
+  charset?: string;
+  /** Commentaire libre inscrit sur le routeur avec le n° de lot (64 car. max). */
+  comment?: string;
+  /** Quota data par voucher en Mo : undefined = hériter du profil, 0 = illimité, >0 = plafond. */
+  dataQuotaMb?: number;
 }
 
 export interface GenerateVouchersResponse {
@@ -242,6 +255,8 @@ export interface Batch {
   count: number;
   unitPrice: number;
   totalCost: number;
+  /** Quota data porté par chaque voucher du lot (Mo, 0 = illimité). */
+  dataQuotaMb: number;
   channel: SaleChannel;
   resellerId: string;
   resellerName: string;

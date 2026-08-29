@@ -70,7 +70,14 @@ interface ProfileForm {
   validityDays: string;
   sharedUsers: string;
   price: string;
-  dataQuotaMb: string;
+  /** Quota saisi en Go (converti en Mo à l'enregistrement — 1 Go = 1024 Mo). */
+  dataQuotaGb: string;
+}
+
+/** Convertit un quota en Mo vers une saisie lisible en Go (5120 → "5", 1536 → "1.5"). */
+function mbToGbStr(mb: number): string {
+  if (!mb || mb <= 0) return "0";
+  return String(parseFloat((mb / 1024).toFixed(2)));
 }
 
 const DEFAULT_FORM: ProfileForm = {
@@ -80,7 +87,7 @@ const DEFAULT_FORM: ProfileForm = {
   validityDays: "1",
   sharedUsers: "1",
   price: "0",
-  dataQuotaMb: "0",
+  dataQuotaGb: "0",
 };
 
 export default function ProfilesView() {
@@ -118,7 +125,7 @@ export default function ProfilesView() {
       validityDays: String(profile.validityDays),
       sharedUsers: String(profile.sharedUsers),
       price: String(profile.price),
-      dataQuotaMb: String(profile.dataQuotaMb),
+      dataQuotaGb: mbToGbStr(profile.dataQuotaMb),
     });
     setDialogOpen(true);
   }
@@ -157,7 +164,8 @@ export default function ProfilesView() {
   const validityNum = parseInt(form.validityDays, 10);
   const devicesNum = parseInt(form.sharedUsers, 10);
   const priceNum = Number(form.price);
-  const quotaNum = parseInt(form.dataQuotaMb, 10);
+  const quotaGb = parseFloat(form.dataQuotaGb);
+  const quotaMb = Number.isFinite(quotaGb) && quotaGb >= 0 ? Math.round(quotaGb * 1024) : -1;
 
   const formValid =
     form.name.trim() !== "" &&
@@ -172,8 +180,7 @@ export default function ProfilesView() {
     devicesNum <= 10 &&
     Number.isFinite(priceNum) &&
     priceNum >= 0 &&
-    Number.isInteger(quotaNum) &&
-    quotaNum >= 0;
+    quotaMb >= 0;
 
   function submitProfile() {
     if (!formValid || saveMutation.isPending) {
@@ -185,7 +192,7 @@ export default function ProfilesView() {
       else if (!Number.isInteger(devicesNum) || devicesNum < 1 || devicesNum > 10)
         toast.error("Appareils simultanés : entre 1 et 10.");
       else if (!Number.isFinite(priceNum) || priceNum < 0) toast.error("Prix invalide.");
-      else if (!Number.isInteger(quotaNum) || quotaNum < 0) toast.error("Quota invalide.");
+      else if (quotaMb < 0) toast.error("Quota invalide.");
       return;
     }
     saveMutation.mutate({
@@ -197,7 +204,7 @@ export default function ProfilesView() {
         sharedUsers: devicesNum,
         validityDays: validityNum,
         price: Math.round(priceNum),
-        dataQuotaMb: quotaNum,
+        dataQuotaMb: quotaMb,
       },
     });
   }
@@ -437,16 +444,20 @@ export default function ProfilesView() {
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="profile-quota">Quota de données (Mo)</Label>
+              <Label htmlFor="profile-quota">Quota de données (Go)</Label>
               <Input
                 id="profile-quota"
                 type="number"
                 min={0}
-                value={form.dataQuotaMb}
-                onChange={(event) => setForm((f) => ({ ...f, dataQuotaMb: event.target.value }))}
+                step="0.5"
+                value={form.dataQuotaGb}
+                onChange={(event) => setForm((f) => ({ ...f, dataQuotaGb: event.target.value }))}
                 disabled={saveMutation.isPending}
               />
-              <p className="text-xs text-muted-foreground">0 = illimité</p>
+              <p className="text-xs text-muted-foreground">
+                0 = illimité · ex. 5 Go pour un forfait vendu 500 F — le quota est appliqué sur
+                chaque voucher (limit-bytes-total).
+              </p>
             </div>
 
             {saveMutation.isError && (

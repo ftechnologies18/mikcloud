@@ -308,6 +308,7 @@ func (b Builder) buildUserAdd(cmd model.Command) string {
 	pass := plStr(cmd.Payload, "password")
 	prof := plProfile(cmd.Payload, "profile")
 	comment := plStr(cmd.Payload, "comment")
+	quota := plInt64(cmd.Payload, "limitBytesTotal")
 	okVar := "ok" + idSafe(cmd.ID)
 	var sb strings.Builder
 	sb.WriteString(header(cmd))
@@ -318,6 +319,10 @@ func (b Builder) buildUserAdd(cmd model.Command) string {
 		line += ` password="` + rosEscape(pass) + `"`
 	}
 	line += ` profile="` + rosEscape(prof.Name) + `"`
+	if quota > 0 {
+		// Quota de données : limit-bytes-total (in + out cumulés, in/out laissés à 0).
+		line += fmt.Sprintf(" limit-bytes-total=%d", quota)
+	}
 	if comment != "" {
 		line += ` comment="` + rosEscape(comment) + `"`
 	}
@@ -330,7 +335,20 @@ func (b Builder) buildVoucherBatch(cmd model.Command) string {
 	prof := plProfile(cmd.Payload, "profile")
 	users := plUserList(cmd.Payload, "users")
 	batch := plStr(cmd.Payload, "batch")
+	custom := plStr(cmd.Payload, "comment")
+	quota := plInt64(cmd.Payload, "limitBytesTotal")
 	okVar := "ok" + idSafe(cmd.ID)
+	// Commentaire router : la traçabilité MikCloud (lot) reste toujours présente ;
+	// le commentaire libre du gérant est préfixé devant s'il existe.
+	comment := ""
+	switch {
+	case custom != "" && batch != "":
+		comment = custom + " · mikcloud:" + batch
+	case custom != "":
+		comment = custom
+	case batch != "":
+		comment = "mikcloud:" + batch
+	}
 	var sb strings.Builder
 	sb.WriteString(header(cmd))
 	sb.WriteString(":local " + okVar + " true\n")
@@ -338,8 +356,13 @@ func (b Builder) buildVoucherBatch(cmd model.Command) string {
 	for _, u := range users {
 		line := `/ip hotspot user add name="` + rosEscape(SanitizeName(u.Name)) + `" password="` + rosEscape(u.Password) +
 			`" profile="` + rosEscape(prof.Name) + `"`
-		if batch != "" {
-			line += ` comment="mikcloud:` + rosEscape(batch) + `"`
+		if quota > 0 {
+			// Quota de données du lot (ex. « 5 Go = 500 F ») : limit-bytes-total
+			// en octets — le routeur déconnecte le voucher une fois épuisé.
+			line += fmt.Sprintf(" limit-bytes-total=%d", quota)
+		}
+		if comment != "" {
+			line += ` comment="` + rosEscape(comment) + `"`
 		}
 		sb.WriteString(":do { " + line + " } on-error={ :log warning \"mikcloud: add voucher echoue\" }\n")
 	}
@@ -426,6 +449,19 @@ func plBool(p map[string]any, k string) bool {
 func plHas(p map[string]any, k string) bool {
 	_, ok := p[k]
 	return ok
+}
+
+// plInt64 lit un entier du payload (JSON → float64, mémoire → int / int64).
+func plInt64(p map[string]any, k string) int64 {
+	switch v := p[k].(type) {
+	case float64:
+		return int64(v)
+	case int64:
+		return v
+	case int:
+		return int64(v)
+	}
+	return 0
 }
 
 // ProfileRef — référence compacte d'un profil pour les scripts.

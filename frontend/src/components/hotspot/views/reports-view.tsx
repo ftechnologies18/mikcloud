@@ -17,9 +17,11 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { CalendarRange, Router as RouterIcon, ShoppingCart, TrendingUp, Wallet } from "lucide-react";
+import { CalendarRange, Download, Router as RouterIcon, ShoppingCart, TrendingUp, Wallet } from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 
-import { api } from "@/lib/hotspot/api";
+import { api, apiDownload } from "@/lib/hotspot/api";
 import type { AccountingData, AccountingPeriod, ReportsData, RouterDevice } from "@/lib/hotspot/types";
 import { formatBytes, formatCurrency } from "@/lib/hotspot/format";
 import { EmptyState } from "@/components/hotspot/empty-state";
@@ -142,6 +144,21 @@ function AccountingTab({ visible }: { visible: boolean }) {
               ))}
             </SelectContent>
           </Select>
+          <Button
+            variant="outline"
+            className="h-10"
+            onClick={() =>
+              apiDownload(`/api/accounting/export`, `mikcloud-comptabilite-${period}.csv`, {
+                period,
+                routerId: routerFilter,
+              })
+                .then(() => toast.success("Export CSV téléchargé"))
+                .catch((err: Error) => toast.error(err.message))
+            }
+          >
+            <Download className="size-4" />
+            <span className="hidden sm:inline">Exporter CSV</span>
+          </Button>
         </div>
       </div>
 

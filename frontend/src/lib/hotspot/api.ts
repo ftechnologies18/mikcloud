@@ -71,3 +71,30 @@ export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
 
   return data as T;
 }
+
+/** apiDownload — télécharge un fichier (CSV, PDF…) renvoyé par l'API, avec token. */
+export async function apiDownload(path: string, filename: string, params?: ApiOptions["params"]): Promise<void> {
+  const token = useHotspotStore.getState().token;
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(buildUrl(path, params), { headers, cache: "no-store" });
+  if (!res.ok) {
+    let message = `Erreur ${res.status}`;
+    try {
+      const body = (await res.json()) as { error?: string };
+      if (body.error) message = body.error;
+    } catch {
+      /* non JSON */
+    }
+    throw new ApiError(message, res.status);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}

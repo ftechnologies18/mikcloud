@@ -1,11 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Activity,
+  Check,
   Clock,
+  Copy,
   Cpu,
   Loader2,
   MoreHorizontal,
@@ -13,6 +15,8 @@ import {
   Plus,
   Radio,
   Router as RouterIcon,
+  ShieldCheck,
+  Terminal,
   Trash2,
   Users,
   Zap,
@@ -56,8 +60,8 @@ import { LoadingCards } from "@/components/hotspot/loading";
 import { PageHeader } from "@/components/hotspot/page-header";
 import { StatusBadge } from "@/components/hotspot/status-badge";
 import { api } from "@/lib/hotspot/api";
-import { formatDuration } from "@/lib/hotspot/format";
-import type { RouterDevice, RouterMode, RouterStats, RouterTestResult } from "@/lib/hotspot/types";
+import { formatDuration, timeAgo } from "@/lib/hotspot/format";
+import type { RouterDevice, RouterMode, RouterRotateTokenResponse, RouterStats, RouterTestResult } from "@/lib/hotspot/types";
 
 interface RouterForm {
   name: string;
@@ -74,8 +78,149 @@ const DEFAULT_FORM: RouterForm = {
   port: "8728",
   username: "",
   password: "",
-  mode: "simulated",
+  mode: "agent",
 };
+
+/** Routeur en attente d'installation de l'agent (étape 2 du wizard). */
+interface AgentWizard {
+  routerId: string;
+  name: string;
+  script: string;
+}
+
+/** Bloc script .rsc copiable — utilisé par le wizard et la réinstallation. */
+function ScriptBox({ script }: { script: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(script);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = script;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      setCopied(true);
+      toast.success("Script copié", { description: "Collez-le dans Winbox → Terminal" });
+      window.setTimeout(() => setCopied(false), 2500);
+    } catch {
+      toast.error("Copie impossible — sélectionnez le script manuellement");
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="max-h-80 overflow-y-auto rounded-lg border bg-zinc-950 p-4 text-left scroll-smooth dark:border-zinc-800">
+        <pre className="whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-emerald-300 sm:text-xs">
+          {script}
+        </pre>
+      </div>
+      <Button type="button" onClick={copy} className={cn("w-full", copied && "bg-emerald-600 hover:bg-emerald-600")}>
+        {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+        {copied ? "Script copié !" : "Copier le script"}
+      </Button>
+    </div>
+  );
+}
+
+/** Étape 2 du wizard : instructions + script + statut live du premier check-in. */
+function AgentInstallDialog({
+  wizard,
+  onClose,
+}: {
+  wizard: AgentWizard | null;
+  onClose: () => void;
+}) {
+  const { data: routers } = useQuery({
+    queryKey: ["/api/routers"],
+    queryFn: () => api<RouterDevice[]>("/api/routers"),
+    enabled: wizard !== null,
+    refetchInterval: wizard ? 8_000 : false,
+  });
+  const router = routers?.find((r) => r.id === wizard?.routerId);
+  const online = router?.status === "online";
+
+  useEffect(() => {
+    if (online && wizard) {
+      toast.success(`« ${wizard.name} » est en ligne !`, {
+        description: "L'agent MikCloud communique avec le routeur (check-in toutes les 45 s).",
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [online]);
+
+  return (
+    <Dialog open={wizard !== null} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <ShieldCheck className="size-5 text-emerald-600" />
+            Installez l&apos;agent sur « {wizard?.name} »
+          </DialogTitle>
+          <DialogDescription>
+            Une seule fois, 30 secondes — le routeur restera connecté pour toujours, même derrière
+            l&apos;Internet d&apos;Orange, en CGNAT ou via Starlink.
+          </DialogDescription>
+        </DialogHeader>
+
+        <ol className="space-y-2 text-sm">
+          {[
+            "Ouvrez Winbox et connectez-vous au routeur (adresse MAC ou IP locale).",
+            "Cliquez sur « New Terminal » dans le menu de gauche.",
+            "Collez le script ci-dessous dans le terminal puis appuyez sur Entrée.",
+          ].map((step, i) => (
+            <li key={i} className="flex gap-3">
+              <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary font-semibold text-primary-foreground text-xs">
+                {i + 1}
+              </span>
+              <span className="leading-relaxed">{step}</span>
+            </li>
+          ))}
+        </ol>
+
+        {wizard && <ScriptBox script={wizard.script} />}
+
+        <div
+          className={cn(
+            "flex items-center gap-2.5 rounded-lg border p-3 text-sm",
+            online
+              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+              : "border-amber-500/40 bg-amber-500/10",
+          )}
+          role="status"
+          aria-live="polite"
+        >
+          {online ? (
+            <Check className="size-4 shrink-0 text-emerald-600" />
+          ) : (
+            <Loader2 className="size-4 shrink-0 animate-spin text-amber-600" />
+          )}
+          {online ? (
+            <span className="font-medium text-emerald-700 dark:text-emerald-400">
+              Routeur en ligne — agent installé avec succès !
+            </span>
+          ) : (
+            <span className="text-amber-700 dark:text-amber-400">
+              En attente du premier check-in… (jusqu&apos;à 45 s après le collage du script)
+            </span>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button type="button" onClick={onClose} className={cn(online && "bg-emerald-600 hover:bg-emerald-700")}>
+            {online ? "Terminé" : "Fermer — j'installerai plus tard"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function parsePort(raw: string): number {
   const port = parseInt(raw, 10);
@@ -92,6 +237,9 @@ export default function RoutersView() {
   const [editing, setEditing] = useState<RouterDevice | null>(null);
   const [form, setForm] = useState<RouterForm>(DEFAULT_FORM);
   const [deleting, setDeleting] = useState<RouterDevice | null>(null);
+  const [wizard, setWizard] = useState<AgentWizard | null>(null);
+  const [reinstall, setReinstall] = useState<RouterDevice | null>(null);
+  const [reinstallScript, setReinstallScript] = useState<string | null>(null);
 
   const { data: routers, isLoading } = useQuery({
     queryKey: ["/api/routers"],
@@ -130,24 +278,48 @@ export default function RoutersView() {
 
   const saveMutation = useMutation({
     mutationFn: async (payload: { id: string | null; form: RouterForm }) => {
+      const isAgent = payload.form.mode === "agent";
       const body: Record<string, unknown> = {
         name: payload.form.name.trim(),
-        host: payload.form.host.trim(),
-        port: parsePort(payload.form.port),
-        username: payload.form.username.trim(),
         mode: payload.form.mode,
       };
-      if (payload.form.password.length > 0 || !payload.id) body.password = payload.form.password;
-      if (payload.id) {
-        return api<RouterDevice>(`/api/routers/${payload.id}`, { method: "PUT", body });
+      if (!isAgent) {
+        body.host = payload.form.host.trim();
+        body.port = parsePort(payload.form.port);
+        body.username = payload.form.username.trim();
+        if (payload.form.password.length > 0 || !payload.id) body.password = payload.form.password;
       }
-      return api<RouterDevice>("/api/routers", { method: "POST", body });
+      if (payload.id) {
+        return api<RouterDevice & { installScript?: string }>(`/api/routers/${payload.id}`, {
+          method: "PUT",
+          body,
+        });
+      }
+      return api<RouterDevice & { installScript?: string }>("/api/routers", { method: "POST", body });
     },
     onSuccess: (router, variables) => {
+      invalidateRouters();
+      if (router.installScript && !variables.id) {
+        // Mode agent : étape 2 — afficher le script d'installation.
+        closeDialog(false);
+        setWizard({ routerId: router.id, name: router.name, script: router.installScript });
+        return;
+      }
       toast.success(
         variables.id ? `Routeur ${router.name} mis à jour` : `Routeur ${router.name} connecté`,
       );
       closeDialog(false);
+    },
+    onError: (err: Error) => {
+      toast.error(err.message);
+    },
+  });
+
+  const rotateMutation = useMutation({
+    mutationFn: (routerId: string) =>
+      api<RouterRotateTokenResponse>(`/api/routers/${routerId}/rotate-token`, { method: "POST" }),
+    onSuccess: (res) => {
+      setReinstallScript(res.installScript);
       invalidateRouters();
     },
     onError: (err: Error) => {
@@ -193,7 +365,8 @@ export default function RoutersView() {
     },
   });
 
-  const formValid = form.name.trim().length > 0 && form.host.trim().length > 0;
+  const formValid =
+    form.name.trim().length > 0 && (form.mode === "agent" || form.host.trim().length > 0);
   const busyId = testMutation.isPending
     ? testMutation.variables?.id ?? null
     : statsMutation.isPending
@@ -247,7 +420,11 @@ export default function RoutersView() {
                       <div className="min-w-0">
                         <p className="truncate font-semibold leading-tight">{router.name}</p>
                         <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
-                          {router.host}:{router.port}
+                          {router.mode === "agent"
+                            ? router.lastSeen
+                              ? `agent · vu ${timeAgo(router.lastSeen)}`
+                              : "agent · jamais vu"
+                            : `${router.host}:${router.port}`}
                         </p>
                       </div>
                       <div className="flex shrink-0 items-center gap-1">
@@ -264,26 +441,41 @@ export default function RoutersView() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-52">
-                            <DropdownMenuItem
-                              className="min-h-10"
-                              disabled={busyId === router.id}
-                              onClick={() => testMutation.mutate(router)}
-                            >
-                              {busyId === router.id ? (
-                                <Loader2 className="size-4 animate-spin" />
-                              ) : (
-                                <Zap className="size-4" />
-                              )}
-                              Tester la connexion
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              className="min-h-10"
-                              disabled={busyId === router.id}
-                              onClick={() => statsMutation.mutate(router)}
-                            >
-                              <Activity className="size-4" />
-                              Statistiques
-                            </DropdownMenuItem>
+                            {router.mode === "agent" ? (
+                              <DropdownMenuItem
+                                className="min-h-10"
+                                onClick={() => {
+                                  setReinstall(router);
+                                  setReinstallScript(null);
+                                }}
+                              >
+                                <Terminal className="size-4" />
+                                Script d&apos;installation
+                              </DropdownMenuItem>
+                            ) : (
+                              <>
+                                <DropdownMenuItem
+                                  className="min-h-10"
+                                  disabled={busyId === router.id}
+                                  onClick={() => testMutation.mutate(router)}
+                                >
+                                  {busyId === router.id ? (
+                                    <Loader2 className="size-4 animate-spin" />
+                                  ) : (
+                                    <Zap className="size-4" />
+                                  )}
+                                  Tester la connexion
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  className="min-h-10"
+                                  disabled={busyId === router.id}
+                                  onClick={() => statsMutation.mutate(router)}
+                                >
+                                  <Activity className="size-4" />
+                                  Statistiques
+                                </DropdownMenuItem>
+                              </>
+                            )}
                             <DropdownMenuItem className="min-h-10" onClick={() => openEdit(router)}>
                               <Pencil className="size-4" />
                               Modifier
@@ -385,61 +577,65 @@ export default function RoutersView() {
               />
             </div>
 
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_130px]">
-              <div className="space-y-2">
-                <Label htmlFor="router-host">Adresse IP / hôte</Label>
-                <Input
-                  id="router-host"
-                  placeholder="10.10.10.1"
-                  value={form.host}
-                  onChange={(e) => setForm((f) => ({ ...f, host: e.target.value }))}
-                  disabled={saveMutation.isPending}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="router-port">Port API</Label>
-                <Input
-                  id="router-port"
-                  type="number"
-                  inputMode="numeric"
-                  min={1}
-                  max={65535}
-                  placeholder="8728"
-                  value={form.port}
-                  onChange={(e) => setForm((f) => ({ ...f, port: e.target.value }))}
-                  disabled={saveMutation.isPending}
-                />
-              </div>
-            </div>
+            {form.mode !== "agent" && (
+              <>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_130px]">
+                  <div className="space-y-2">
+                    <Label htmlFor="router-host">Adresse IP / hôte</Label>
+                    <Input
+                      id="router-host"
+                      placeholder="10.10.10.1"
+                      value={form.host}
+                      onChange={(e) => setForm((f) => ({ ...f, host: e.target.value }))}
+                      disabled={saveMutation.isPending}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="router-port">Port API</Label>
+                    <Input
+                      id="router-port"
+                      type="number"
+                      inputMode="numeric"
+                      min={1}
+                      max={65535}
+                      placeholder="8728"
+                      value={form.port}
+                      onChange={(e) => setForm((f) => ({ ...f, port: e.target.value }))}
+                      disabled={saveMutation.isPending}
+                    />
+                  </div>
+                </div>
 
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="router-username">Utilisateur API</Label>
-                <Input
-                  id="router-username"
-                  placeholder="admin"
-                  autoComplete="off"
-                  value={form.username}
-                  onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
-                  disabled={saveMutation.isPending}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="router-password">Mot de passe API</Label>
-                <Input
-                  id="router-password"
-                  type="password"
-                  placeholder={editing ? "Inchangé" : "••••••••"}
-                  autoComplete="new-password"
-                  value={form.password}
-                  onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
-                  disabled={saveMutation.isPending}
-                />
-              </div>
-            </div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="router-username">Utilisateur API</Label>
+                    <Input
+                      id="router-username"
+                      placeholder="admin"
+                      autoComplete="off"
+                      value={form.username}
+                      onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
+                      disabled={saveMutation.isPending}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="router-password">Mot de passe API</Label>
+                    <Input
+                      id="router-password"
+                      type="password"
+                      placeholder={editing ? "Inchangé" : "••••••••"}
+                      autoComplete="new-password"
+                      value={form.password}
+                      onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+                      disabled={saveMutation.isPending}
+                    />
+                  </div>
+                </div>
+              </>
+            )}
 
             <div className="space-y-2">
-              <Label htmlFor="router-mode">Mode</Label>
+              <Label htmlFor="router-mode">Mode de connexion</Label>
               <Select
                 value={form.mode}
                 onValueChange={(v) => setForm((f) => ({ ...f, mode: v as RouterMode }))}
@@ -449,13 +645,29 @@ export default function RoutersView() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="agent">Agent MikCloud (recommandé)</SelectItem>
                   <SelectItem value="simulated">Simulé (démo)</SelectItem>
-                  <SelectItem value="real">Réel (RouterOS)</SelectItem>
+                  <SelectItem value="real">Réel — connexion directe (LAN)</SelectItem>
                 </SelectContent>
               </Select>
+              {form.mode === "agent" && (
+                <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs">
+                  <p className="flex items-center gap-1.5 font-medium text-emerald-700 dark:text-emerald-400">
+                    <ShieldCheck className="size-3.5" />
+                    Aucune configuration réseau requise — juste un nom
+                  </p>
+                  <p className="mt-1 leading-relaxed text-muted-foreground">
+                    Le routeur se connecte lui-même à MikCloud toutes les 45 s. Fonctionne derrière
+                    l&apos;Internet Orange CI, en CGNAT et via Starlink : pas d&apos;IP publique, pas de
+                    port-forward, pas d&apos;identifiants à stocker. Après création, vous copierez un
+                    script et le collerez dans Winbox → Terminal (30 s).
+                  </p>
+                </div>
+              )}
               {form.mode === "real" && (
                 <p className="text-xs text-muted-foreground">
-                  Activez le service API sur votre MikroTik : IP → Services → api (port 8728)
+                  Connexion directe depuis ce serveur (réseau local / VPN). Activez le service API
+                  sur le MikroTik : IP → Services → api (port 8728).
                 </p>
               )}
             </div>
@@ -472,7 +684,11 @@ export default function RoutersView() {
               </Button>
               <Button type="submit" disabled={!formValid || saveMutation.isPending}>
                 {saveMutation.isPending && <Loader2 className="size-4 animate-spin" />}
-                {editing ? "Enregistrer" : "Ajouter le routeur"}
+                {editing
+                  ? "Enregistrer"
+                  : form.mode === "agent"
+                    ? "Créer et générer le script"
+                    : "Ajouter le routeur"}
               </Button>
             </DialogFooter>
           </form>
@@ -508,6 +724,85 @@ export default function RoutersView() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Wizard agent — étape 2 : script + attente du premier check-in */}
+      <AgentInstallDialog wizard={wizard} onClose={() => setWizard(null)} />
+
+      {/* Réinstallation / rotation du token pour un routeur agent existant */}
+      <Dialog
+        open={reinstall !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setReinstall(null);
+            setReinstallScript(null);
+          }
+        }}
+      >
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Terminal className="size-5" />
+              Script d&apos;installation — {reinstall?.name}
+            </DialogTitle>
+            <DialogDescription>
+              {reinstallScript
+                ? "Copiez ce script et collez-le dans Winbox → Terminal. Il remplace l'ancien agent."
+                : "Le token de l'agent n'est jamais stocké en clair : régénérez le script pour l'afficher."}
+            </DialogDescription>
+          </DialogHeader>
+
+          {reinstallScript ? (
+            <ScriptBox script={reinstallScript} />
+          ) : (
+            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+              <p className="font-medium text-amber-700 dark:text-amber-400">
+                Attention — régénérer le script crée un nouveau token.
+              </p>
+              <p className="mt-1 leading-relaxed text-muted-foreground">
+                L&apos;agent actuellement installé sur « {reinstall?.name} » cessera de fonctionner
+                dès la régénération. À n&apos;utiliser que si vous avez perdu le script d&apos;origine
+                ou si vous voulez révoquer un ancien agent.
+              </p>
+            </div>
+          )}
+
+          <DialogFooter>
+            {reinstallScript ? (
+              <Button
+                type="button"
+                onClick={() => {
+                  setReinstall(null);
+                  setReinstallScript(null);
+                }}
+              >
+                Terminé
+              </Button>
+            ) : (
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={rotateMutation.isPending}
+                  onClick={() => {
+                    setReinstall(null);
+                    setReinstallScript(null);
+                  }}
+                >
+                  Annuler
+                </Button>
+                <Button
+                  type="button"
+                  disabled={rotateMutation.isPending || reinstall === null}
+                  onClick={() => reinstall && rotateMutation.mutate(reinstall.id)}
+                >
+                  {rotateMutation.isPending && <Loader2 className="size-4 animate-spin" />}
+                  Régénérer et afficher le script
+                </Button>
+              </>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

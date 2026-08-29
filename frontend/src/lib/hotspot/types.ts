@@ -1,6 +1,6 @@
 // Types partagés MikCloud — alignés sur le contrat API Go (voir worklog.md)
 
-export type RouterMode = "simulated" | "real";
+export type RouterMode = "simulated" | "real" | "agent";
 export type RouterStatus = "online" | "offline";
 export type VoucherStatus = "active" | "used" | "expired" | "disabled";
 export type UserKind = "regular" | "voucher";
@@ -34,6 +34,35 @@ export interface RouterDevice {
   hotspotUsers: number;
   activeSessions: number;
   createdAt: string;
+  /** Mode agent uniquement : aperçu du token (4 caractères). */
+  tokenPreview?: string;
+  /** Mode agent : dernier check-in (RFC3339, vide si jamais vu). */
+  lastSeen?: string;
+}
+
+/** Réponse de création d'un routeur en mode agent (script + token à copier). */
+export interface RouterAgentCreateResponse extends RouterDevice {
+  agentToken: string;
+  installScript: string;
+  message: string;
+}
+
+/** État de provisionning d'un routeur agent (GET /api/routers/{id}/provision). */
+export interface RouterProvisionInfo {
+  mode: string;
+  tokenPreview: string;
+  provisioned: boolean;
+  lastSeen: string;
+  online: boolean;
+  scheduler: string;
+  scriptFile: string;
+  note: string;
+}
+
+/** Réponse de rotation du token agent (POST /api/routers/{id}/rotate-token). */
+export interface RouterRotateTokenResponse {
+  agentToken: string;
+  installScript: string;
 }
 
 export interface RouterStats {
@@ -249,6 +278,8 @@ export interface AppSettings {
     name: string;
     currency: string;
     timezone: string;
+    /** Lien marchand Wave CI (pay.wave.com) — composé avec /amount/<montant>/. */
+    waveLink?: string;
   };
   plan: {
     name: string;

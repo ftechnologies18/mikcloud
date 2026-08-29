@@ -4,8 +4,10 @@ Backend de la plateforme **MikCloud** : gestion professionnelle de hotspot Mikro
 (vouchers, utilisateurs, profils, sessions temps réel, revendeurs avec portefeuille).
 
 - **Go stdlib + pgx uniquement** → binaire unique, déploiement trivial.
+- **Agent HTTP-poll natif** : le routeur se connecte LUI-MÊME au cloud toutes les 45 s
+  (connexions 100 % sortantes — Orange CI, CGNAT, Starlink : aucune IP publique requise).
 - **Client RouterOS natif** : protocole binaire MikroTik (port 8728) implémenté à la main,
-  login RouterOS v6.43+ et fallback challenge MD5 pour les anciens firmwares.
+  login RouterOS v6.43+ et fallback challenge MD5 pour les anciens firmwares (mode direct LAN).
 - **Mode Simulé** intégré : toute la plateforme est testable sans matériel MikroTik.
 - **Persistance double** :
   - `DATABASE_URL` défini (production) → **PostgreSQL/Neon** : schéma relationnel
@@ -34,6 +36,16 @@ Variables d'environnement :
 | `ADMIN_NAME` | `Administrateur MikCloud` | Nom affiché du compte admin |
 
 Compte démo (seed) : **admin / admin123**. `POST /api/admin/reset` régénère les données de démo.
+
+### Neon (production, gratuit)
+
+1. https://neon.tech → projet « mikcloud » (le plan Free 0,5 Go n'expire jamais)
+2. Copier la connection string (`postgres://…sslmode=require`)
+3. Render → Service mikcloud-api → Environment → `DATABASE_URL`
+
+Au premier démarrage, le seed démo est écrit dans Neon. Ensuite l'état réel est
+restauré à chaque redéploiement/sleep-wake. Vérifier dans les logs Render :
+`store: état restauré depuis Neon`.
 
 ## Endpoints principaux
 

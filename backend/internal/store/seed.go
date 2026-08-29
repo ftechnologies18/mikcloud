@@ -18,7 +18,7 @@ import (
 const seedRandomSource = 20240601
 
 // BuildSeed construit la base de démonstration :
-//   - tenant "SpotNet WiFi" (FCFA, UTC), admin admin/admin123
+//   - tenant "ProMax Wifi — Freelance Technologies (FTCI)" (FCFA, Africa/Abidjan), admin admin/admin123
 //   - 2 routeurs simulés online, 6 profils
 //   - ~60 utilisateurs réguliers, ~380 vouchers sur 14 jours (lots + statuts variés)
 //   - 5 revendeurs, ~30 transactions, ventes 14 jours (week-ends plus forts)
@@ -46,7 +46,10 @@ func BuildSeed() *model.DB {
 		return strings.Join(parts, ":")
 	}
 
-	tenant := model.Tenant{Name: "SpotNet WiFi", Currency: "FCFA", Timezone: "UTC"}
+	tenant := model.Tenant{
+		Name: "ProMax Wifi — Freelance Technologies (FTCI)", Currency: "FCFA", Timezone: "Africa/Abidjan",
+		WaveLink: "https://pay.wave.com/m/M_22FTCI01/c/ci/",
+	}
 	db := &model.DB{
 		Tenant:       tenant,
 		Settings:     model.Settings{Tenant: tenant, Plan: model.Plan{Name: "Pro", MaxRouters: "illimité", MaxUsers: "illimité"}},
@@ -63,40 +66,40 @@ func BuildSeed() *model.DB {
 		Sales:        []model.Sale{},
 	}
 
-	// --- Compte admin (admin / admin123) ---
-	salt := auth.NewSalt()
+	// --- Compte admin (admin / admin123) — hash bcrypt depuis la migration ---
 	db.Users = append(db.Users, model.AdminUser{
 		ID:           "admin-1",
-		Name:         "Administrateur SpotNet",
+		Name:         "Freelance Technologies (FTCI)",
 		Username:     "admin",
 		Role:         "admin",
-		PasswordHash: auth.HashPassword("admin123", salt),
-		Salt:         salt,
+		PasswordHash: auth.HashPassword("admin123", ""),
 		CreatedAt:    ago(120 * 24 * time.Hour),
 	})
 
 	// --- Routeurs simulés ---
 	r1 := model.Router{
-		ID: "router-main", Name: "RB-Main-Centre", Host: "10.10.10.1", Port: 8728,
+		ID: "router-main", Name: "ProMax-Centre", Host: "10.10.10.1", Port: 8728,
 		Username: "admin", Mode: "simulated", Status: "online", Version: "7.14.3",
 		UptimeSec: int64(45*24*3600 + rnd.Intn(36000)), CPULoad: 12 + rnd.Intn(18),
 		CreatedAt: ago(90 * 24 * time.Hour),
 	}
 	r2 := model.Router{
-		ID: "router-lounge", Name: "hAP-Lounge", Host: "10.10.20.1", Port: 8728,
+		ID: "router-lounge", Name: "ProMax-Yopougon", Host: "10.10.20.1", Port: 8728,
 		Username: "admin", Mode: "simulated", Status: "online", Version: "7.15.2",
 		UptimeSec: int64(12*24*3600 + rnd.Intn(36000)), CPULoad: 20 + rnd.Intn(18),
 		CreatedAt: ago(60 * 24 * time.Hour),
 	}
 	db.Routers = []model.Router{r1, r2}
 
-	// --- Profils (du plus récent au plus ancien : "1 Heure" d'abord) ---
+	// --- Profils : les 7 tarifs FCFA validés (modèles pré-remplis, modifiables par le client) ---
 	profiles := []model.Profile{
-		{ID: "p-1h", Name: "1 Heure", RateLimit: "1M/1M", SessionTimeoutMin: 60, SharedUsers: 1, ValidityDays: 1, Price: 500, DataQuotaMb: 0},
-		{ID: "p-6h", Name: "6 Heures", RateLimit: "2M/2M", SessionTimeoutMin: 360, SharedUsers: 1, ValidityDays: 1, Price: 1000, DataQuotaMb: 0},
-		{ID: "p-24h", Name: "24 Heures", RateLimit: "3M/3M", SessionTimeoutMin: 1440, SharedUsers: 1, ValidityDays: 1, Price: 1500, DataQuotaMb: 0},
-		{ID: "p-7j", Name: "7 Jours", RateLimit: "4M/4M", SessionTimeoutMin: 1440, SharedUsers: 1, ValidityDays: 7, Price: 5000, DataQuotaMb: 0},
-		{ID: "p-30j", Name: "30 Jours Illimité", RateLimit: "5M/5M", SessionTimeoutMin: 1440, SharedUsers: 2, ValidityDays: 30, Price: 10000, DataQuotaMb: 0},
+		{ID: "p-1h", Name: "1 Heure", RateLimit: "1M/1M", SessionTimeoutMin: 60, SharedUsers: 1, ValidityDays: 1, Price: 100, DataQuotaMb: 0},
+		{ID: "p-3h", Name: "3 Heures", RateLimit: "2M/2M", SessionTimeoutMin: 180, SharedUsers: 1, ValidityDays: 1, Price: 200, DataQuotaMb: 0},
+		{ID: "p-24h", Name: "24 Heures", RateLimit: "2M/2M", SessionTimeoutMin: 1440, SharedUsers: 1, ValidityDays: 1, Price: 300, DataQuotaMb: 0},
+		{ID: "p-3j", Name: "3 Jours", RateLimit: "3M/3M", SessionTimeoutMin: 1440, SharedUsers: 1, ValidityDays: 3, Price: 500, DataQuotaMb: 0},
+		{ID: "p-7j", Name: "7 Jours", RateLimit: "3M/3M", SessionTimeoutMin: 1440, SharedUsers: 2, ValidityDays: 7, Price: 1000, DataQuotaMb: 0},
+		{ID: "p-15j", Name: "15 Jours", RateLimit: "4M/4M", SessionTimeoutMin: 1440, SharedUsers: 2, ValidityDays: 15, Price: 1500, DataQuotaMb: 0},
+		{ID: "p-30j", Name: "30 Jours", RateLimit: "5M/5M", SessionTimeoutMin: 1440, SharedUsers: 3, ValidityDays: 30, Price: 3000, DataQuotaMb: 0},
 		{ID: "p-essai", Name: "Essai Gratuit", RateLimit: "512k/512k", SessionTimeoutMin: 15, SharedUsers: 1, ValidityDays: 1, Price: 0, DataQuotaMb: 0},
 	}
 	for i := range profiles {
@@ -111,11 +114,11 @@ func BuildSeed() *model.DB {
 		phone    string
 		credit   int
 	}{
-		{"Awa Diallo", "awa.diallo", "+221 77 412 55 08", 45000},
-		{"Moussa Traoré", "moussa.traore", "+221 76 830 22 47", 80000},
-		{"Fatou Ndiaye", "fatou.ndiaye", "+221 78 655 90 13", 12500},
-		{"Ibrahima Sow", "ibrahima.sow", "+221 70 233 41 96", 5000},
-		{"Khadija Benali", "khadija.benali", "+212 6 61 78 42 30", 23000},
+		{"Aya Koné", "aya.kone", "+225 07 07 12 34 56", 45000},
+		{"Kouassi Kouamé", "kouassi.kouame", "+225 05 05 87 65 43", 80000},
+		{"Mariam Sylla", "mariam.sylla", "+225 01 01 44 55 66", 12500},
+		{"Adama Ouattara", "adama.ouattara", "+225 07 08 22 33 44", 5000},
+		{"Ange Kessié", "ange.kessie", "+225 05 04 66 77 88", 23000},
 	}
 	for i, rd := range resellerDefs {
 		db.Resellers = append(db.Resellers, model.Reseller{
@@ -126,11 +129,11 @@ func BuildSeed() *model.DB {
 	}
 
 	// --- ~60 utilisateurs réguliers ---
-	firstNames := []string{"Moussa", "Awa", "Fatou", "Ibrahima", "Khadija", "Mamadou", "Aminata", "Ousmane", "Mariama", "Cheikh", "Rokhaya", "Souleymane", "Aliou", "Bineta", "Modou", "Ndèye", "Assane", "Coumba", "Maguette", "Sérigne"}
-	lastNames := []string{"Diop", "Ndiaye", "Diallo", "Traoré", "Sow", "Benali", "Fall", "Sy", "Ba", "Guèye", "Camara", "Kane", "Mbaye", "Faye", "Sarr", "Cissé", "Diatta", "Thiam", "Seck", "Sagna"}
-	comments := []string{"", "", "", "Client fidèle", "Paiement Mobile Money", "Paiement espèces", "Abonnement mensuel", "Boutique voisine", "", ""}
+	firstNames := []string{"Kouassi", "Aya", "Koffi", "Affoué", "Konan", "Yao", "Awa", "Mamadou", "Bintou", "Bamba", "Fatoumata", "Jean-Marc", "Aboubacar", "Mariam", "Serge", "Désiré", "Brigitte", "Arnaud", "Ramata", "Georges"}
+	lastNames := []string{"Koné", "Kouamé", "Kouassi", "N'Guessan", "Bamba", "Cissé", "Traoré", "Ouattara", "Konaté", "Doumbia", "Yao", "Gnahoré", "Assi", "Tanoh", "Adjoua", "Bakayoko", "Sangaré", "Coulibaly", "Diabaté", "Doukouré"}
+	comments := []string{"", "", "", "Client fidèle", "Paiement Wave", "Paiement espèces", "Abonnement mensuel", "Boutique voisine", "", ""}
 	// pondération des profils pour les réguliers (30j et 24h populaires)
-	regularProfiles := []int{4, 4, 4, 3, 3, 2, 2, 1, 1, 0}
+	regularProfiles := []int{2, 2, 2, 0, 0, 0, 6, 5, 4, 3}
 	seenUsernames := map[string]bool{}
 	for i := 0; i < 60; i++ {
 		f := firstNames[rnd.Intn(len(firstNames))]
@@ -166,7 +169,7 @@ func BuildSeed() *model.DB {
 	}
 
 	// --- Vouchers (~380) sur 14 jours, par lots, avec ventes et transactions ---
-	voucherProfiles := []int{2, 2, 2, 2, 2, 0, 0, 0, 1, 1, 1, 3, 4, 5} // 24h dominante
+	voucherProfiles := []int{0, 0, 0, 0, 2, 2, 2, 2, 1, 3, 4, 5, 6, 7} // 1h/24h dominantes
 	takenUsernames := map[string]bool{}
 	seq := 0
 	for d := 13; d >= 0; d-- {

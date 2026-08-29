@@ -53,7 +53,7 @@ func NowISO() string { return time.Now().UTC().Format(time.RFC3339) }
 // Types métier (réponses JSON strictement conformes au contrat TS)
 // ---------------------------------------------------------------------------
 
-// Router — équipement MikroTik géré (simulé ou réel). Password non exposé dans l'API.
+// Router — équipement MikroTik géré (simulé, réel ou agent). Password non exposé dans l'API.
 type Router struct {
 	ID             string `json:"id"`
 	Name           string `json:"name"`
@@ -61,7 +61,7 @@ type Router struct {
 	Port           int    `json:"port"`
 	Username       string `json:"username"`
 	Password       string `json:"password,omitempty"`
-	Mode           string `json:"mode"`   // simulated | real
+	Mode           string `json:"mode"`   // simulated | real | agent
 	Status         string `json:"status"` // online | offline
 	Version        string `json:"version"`
 	UptimeSec      int64  `json:"uptimeSec"`
@@ -69,6 +69,10 @@ type Router struct {
 	HotspotUsers   int    `json:"hotspotUsers"`
 	ActiveSessions int    `json:"activeSessions"`
 	CreatedAt      string `json:"createdAt"`
+	// Mode agent (HTTP-poll sortant) : le token n'est JAMAIS stocké en clair.
+	AgentTokenHash string `json:"agentTokenHash,omitempty"`
+	TokenPreview   string `json:"tokenPreview,omitempty"`
+	LastSeen       string `json:"lastSeen,omitempty"`
 }
 
 // Profile — profil hotspot (débit, durée, prix, validité).
@@ -191,6 +195,9 @@ type Tenant struct {
 	Name     string `json:"name"`
 	Currency string `json:"currency"`
 	Timezone string `json:"timezone"`
+	// Wave CI — lien marchand pay.wave.com (ex. https://pay.wave.com/m/M_xxx/c/ci/)
+	// composé avec /amount/<montant>/ pour les demandes de paiement.
+	WaveLink string `json:"waveLink,omitempty"`
 }
 
 // Plan — plan d'abonnement SaaS.
@@ -217,6 +224,29 @@ type AdminUser struct {
 	CreatedAt    string `json:"createdAt"`
 }
 
+// Kinds de commandes agent (routeur -> cloud en HTTP-poll).
+const (
+	CmdReadState    = "read_state"    // télémétrie + users + sessions actives
+	CmdUserAdd      = "user_add"      // créer un utilisateur hotspot
+	CmdVoucherBatch = "voucher_batch" // créer un lot de vouchers
+	CmdUserRemove   = "user_remove"   // supprimer un/des utilisateurs
+	CmdUserSet      = "user_set"      // modifier (nom/profil/password/disabled)
+	CmdKick         = "kick"          // fermer une session active
+)
+
+// Command — ordre déposé par le cloud, récupéré puis exécuté par l'agent.
+type Command struct {
+	ID        string         `json:"id"`
+	RouterID  string         `json:"routerId"`
+	Kind      string         `json:"kind"`
+	Payload   map[string]any `json:"payload,omitempty"`
+	Status    string         `json:"status"` // queued | sent | done | error
+	Result    map[string]any `json:"result,omitempty"`
+	CreatedAt string         `json:"createdAt"`
+	SentAt    string         `json:"sentAt,omitempty"`
+	DoneAt    string         `json:"doneAt,omitempty"`
+}
+
 // DB — base de données persistée en JSON.
 type DB struct {
 	Tenant       Tenant        `json:"tenant"`
@@ -230,6 +260,7 @@ type DB struct {
 	Sessions     []Session     `json:"sessions"`
 	Activity     []Activity    `json:"activity"`
 	Sales        []Sale        `json:"sales"`
+	Commands     []Command     `json:"commands"`
 	Settings     Settings      `json:"settings"`
 	LastTick     time.Time     `json:"lastTick"`
 }

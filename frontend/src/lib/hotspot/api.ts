@@ -1,8 +1,11 @@
 "use client";
 
 // Client API MikCloud.
-// - En production (Vercel → Render) : NEXT_PUBLIC_API_BASE=https://xxx.onrender.com
-// - Dans la sandbox : même origine + query param XTransformPort=4000 (passerelle Caddy).
+// - Production (Vercel · mikcloud.ftci.fr) : URLs relatives /api/* — le proxy
+//   vercel.json (rewrites) transfère vers l'API Render. Zéro CORS, zéro réglage.
+// - Alternative directe : NEXT_PUBLIC_API_BASE=https://xxx.onrender.com
+//   (+ ALLOWED_ORIGIN=https://mikcloud.ftci.fr côté Render).
+// - Sandbox : même origine + query param XTransformPort=4000 (passerelle Caddy).
 
 import { useHotspotStore } from "./store";
 import type { AccountStatus, AccountSummary, AuthResponse, RegisterPayload } from "./types";
@@ -32,7 +35,13 @@ function buildUrl(path: string, params?: ApiOptions["params"]): string {
       if (v !== undefined && v !== "" && v !== null) merged[k] = String(v);
     }
   }
-  if (!API_BASE) merged["XTransformPort"] = GATEWAY_PORT; // mode passerelle sandbox
+  // Mode passerelle sandbox uniquement (localhost) — en prod Vercel, les URLs
+  // relatives passent par le rewrite vercel.json : ce paramètre n'a pas lieu
+  // d'être et ne doit pas fuiter vers Render.
+  const isSandbox =
+    typeof window !== "undefined" &&
+    (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
+  if (!API_BASE && isSandbox) merged["XTransformPort"] = GATEWAY_PORT;
   for (const [k, v] of Object.entries(merged)) url.searchParams.set(k, v);
   return url.toString();
 }

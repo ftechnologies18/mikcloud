@@ -23,6 +23,12 @@ services:
         value: admin
       - key: ADMIN_PASSWORD
         sync: false
+      # CORS — origines autorisées, séparées par des virgules. Requis UNIQUEMENT
+      # en mode direct (NEXT_PUBLIC_API_BASE côté Vercel). Avec le proxy
+      # vercel.json (recommandé), laisser vide.
+      # Ex. : https://mikcloud.ftci.fr,https://mikcloud.vercel.app
+      - key: ALLOWED_ORIGIN
+        sync: false
 # Les données vivent dans Neon (PostgreSQL) : le disque éphémère du plan
 # gratuit Render n'est plus un problème — l'état est rechargé à chaque
 # démarrage et synchronisé à chaque modification.

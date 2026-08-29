@@ -14,18 +14,22 @@ bun run lint
 
 ## Configuration
 
-Copier `.env.example` → `.env.local` et définir l'URL du backend Go :
+Le proxy `vercel.json` (rewrites `/api/*` → Render) fait tout le travail en
+production : **aucune variable n'est requise**. Deux modes :
 
-```
-NEXT_PUBLIC_API_BASE=https://votre-service.onrender.com
-```
+| Mode | Réglage | Quand l'utiliser |
+| --- | --- | --- |
+| **Proxy (défaut)** | rien — `vercel.json` transfère `/api/*` vers Render | Production `mikcloud.ftci.fr` (zéro CORS) |
+| **Direct** | `.env.local` : `NEXT_PUBLIC_API_BASE=https://votre-service.onrender.com` + `ALLOWED_ORIGIN` côté Render | Si vous préférez contourner le proxy |
 
-Sans cette variable, l'app appelle `/api/...` en relatif (mode passerelle).
+En local sans variable, l'app appelle `/api/...` en relatif (mode passerelle).
 
 ## Déploiement Vercel
 
-Root Directory : `frontend` · Variable : `NEXT_PUBLIC_API_BASE` (Production +
-Preview). Détails dans le [README racine](../README.md).
+Root Directory : `frontend` · Domaine : `mikcloud.ftci.fr` · Aucune variable
+requise (proxy `vercel.json` auto-détecté). Vérifier l'URL Render dans le
+`rewrites → destination` de `vercel.json` si votre service porte un autre nom.
+Détails dans le [README racine](../README.md).
 
 ## Architecture
 

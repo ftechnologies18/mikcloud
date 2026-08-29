@@ -56,11 +56,28 @@ Le frontend appelle le backend via `NEXT_PUBLIC_API_BASE` si défini
 > éphémère du plan gratuit Render n'est plus un problème. En local sans
 > `DATABASE_URL`, le backend utilise le fichier JSON `data/db.json`.
 
-### 3. Frontend → Vercel
+### 3. Frontend → Vercel (mikcloud.ftci.fr)
+
+Le proxy `frontend/vercel.json` est **auto-détecté** au déploiement : toutes les
+requêtes `/api/*` sont transférées vers l'API Render — **zéro variable
+   d'environnement, zéro CORS**.
+
 1. **Add New → Project** → ce repo, *Root Directory* : `frontend`.
-2. Variable d'environnement (Production + Preview) :
-   `NEXT_PUBLIC_API_BASE=https://<service>.onrender.com`
-3. Déployer — le CORS est déjà ouvert côté Go.
+2. **Domaine** : ajouter `mikcloud.ftci.fr` (Settings → Domains) — déjà fait ✅.
+3. Vérifier l'URL Render dans `frontend/vercel.json` (`rewrites → destination`)
+   et l'ajuster si votre service Render porte un autre nom :
+   `"destination": "https://<votre-service>.onrender.com/api/:path*"`.
+
+**Mode direct (alternative)** — le frontend appelle Render en absolu :
+1. Vercel → Settings → Environment Variables :
+   `NEXT_PUBLIC_API_BASE=https://<service>.onrender.com` (Production + Preview).
+2. Render → Environment → `ALLOWED_ORIGIN=https://mikcloud.ftci.fr`
+   (+ `https://<projet>.vercel.app` pour les previews, séparés par des virgules).
+
+> Récapitulatif des paramètres — **Vercel** : rien (mode proxy) ou
+> `NEXT_PUBLIC_API_BASE` (mode direct) · **Render** : `DATABASE_URL` (Neon),
+> `JWT_SECRET` (auto), `ADMIN_USERNAME`/`ADMIN_PASSWORD`, et
+> `ALLOWED_ORIGIN` en mode direct uniquement.
 
 ### Connecter un vrai routeur MikroTik
 1. Winbox → **IP → Services** → activer **api** (port 8728).

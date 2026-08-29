@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -60,6 +61,12 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/team", a.requireRole(3, a.handleTeamCreate))
 	mux.HandleFunc("PUT /api/team/{id}", a.requireRole(3, a.handleTeamUpdate))
 	mux.HandleFunc("DELETE /api/team/{id}", a.requireRole(3, a.handleTeamDelete))
+
+	// N°8 — Mode Vente (PWA revendeur, token scopé role=reseller).
+	mux.HandleFunc("POST /api/reseller/login", a.handleResellerLogin)
+	mux.HandleFunc("GET /api/sell/me", a.requireReseller(a.handleSellMe))
+	mux.HandleFunc("GET /api/sell/stock", a.requireReseller(a.handleSellStock))
+	mux.HandleFunc("POST /api/sell/{id}/sold", a.requireReseller(a.handleSellSold))
 
 	// Dashboard
 	mux.HandleFunc("GET /api/dashboard", a.handleDashboard)
@@ -231,7 +238,7 @@ func (a *API) requireRole(min int, next http.HandlerFunc) http.HandlerFunc {
 func (a *API) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
-		if path == "/api/auth/login" || path == "/api/auth/register" || !strings.HasPrefix(path, "/api/") {
+		if path == "/api/auth/login" || path == "/api/auth/register" || path == "/api/reseller/login" || !strings.HasPrefix(path, "/api/") {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -2625,6 +2632,18 @@ func (a *API) handleSessionKick(w http.ResponseWriter, r *http.Request) {
 // Revendeurs
 // ---------------------------------------------------------------------------
 
+// sanitizeReseller — copie SANS le hash du PIN (jamais exposé par l'API).
+// pinSet informe l'UI qu'un PIN Mode Vente est actif (N°8).
+func sanitizeReseller(res model.Reseller) map[string]any {
+	pinSet := res.PinHash != ""
+	return map[string]any{
+		"id": res.ID, "accountId": res.AccountID, "name": res.Name,
+		"username": res.Username, "phone": res.Phone, "credit": res.Credit,
+		"vouchersSold": res.VouchersSold, "revenue": res.Revenue,
+		"status": res.Status, "createdAt": res.CreatedAt, "pinSet": pinSet,
+	}
+}
+
 func (a *API) handleResellersList(w http.ResponseWriter, r *http.Request) {
 	acc := accountScope(r)
 	a.store.Lock()
@@ -2636,7 +2655,22 @@ func (a *API) handleResellersList(w http.ResponseWriter, r *http.Request) {
 	}
 	a.store.Unlock()
 	sort.Slice(rs, func(i, j int) bool { return rs[i].CreatedAt > rs[j].CreatedAt })
-	writeJSON(w, http.StatusOK, rs)
+	out := make([]map[string]any, len(rs))
+	for i := range rs {
+		out[i] = sanitizeReseller(rs[i])
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// resellerPinPattern — PIN Mode Vente : 4 à 6 chiffres (N°8).
+var resellerPinPattern = regexp.MustCompile(`^[0-9]{4,6}$`)
+
+// pinNote — mention d'audit quand un PIN Mode Vente est défini.
+func pinNote(pin string) string {
+	if pin == "" {
+		return ""
+	}
+	return " (PIN Mode Vente défini)"
 }
 
 func (a *API) handleResellerCreate(w http.ResponseWriter, r *http.Request) {
@@ -2646,6 +2680,7 @@ func (a *API) handleResellerCreate(w http.ResponseWriter, r *http.Request) {
 		Username string `json:"username"`
 		Phone    string `json:"phone"`
 		Credit   int    `json:"credit"`
+		Pin      string `json:"pin"` // N°8 — PIN Mode Vente (4-6 chiffres, optionnel)
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
@@ -2655,6 +2690,11 @@ func (a *API) handleResellerCreate(w http.ResponseWriter, r *http.Request) {
 	username := strings.TrimSpace(req.Username)
 	if name == "" || username == "" {
 		writeErr(w, http.StatusBadRequest, "Nom et nom d'utilisateur du revendeur requis")
+		return
+	}
+	pin := strings.TrimSpace(req.Pin)
+	if pin != "" && !resellerPinPattern.MatchString(pin) {
+		writeErr(w, http.StatusBadRequest, "PIN invalide : 4 à 6 chiffres")
 		return
 	}
 	if req.Credit < 0 {
@@ -2674,11 +2714,15 @@ func (a *API) handleResellerCreate(w http.ResponseWriter, r *http.Request) {
 		ID: model.NewID("res-"), AccountID: acc, Name: name, Username: username, Phone: strings.TrimSpace(req.Phone),
 		Credit: req.Credit, VouchersSold: 0, Revenue: 0, Status: "active", CreatedAt: model.NowISO(),
 	}
+	if pin != "" {
+		reseller.PinHash = auth.HashPassword(pin, "")
+	}
 	db.Resellers = append(db.Resellers, reseller)
-	a.logActivityBy(r, db, acc, "reseller", "Revendeur "+reseller.Name+" créé")
+	a.logActivityBy(r, db, acc, "reseller", "Revendeur "+reseller.Name+" créé"+pinNote(pin))
 	a.store.Save()
+	sanitized := sanitizeReseller(reseller)
 	a.store.Unlock()
-	writeJSON(w, http.StatusOK, reseller)
+	writeJSON(w, http.StatusOK, sanitized)
 }
 
 func (a *API) handleResellerUpdate(w http.ResponseWriter, r *http.Request) {
@@ -2688,10 +2732,18 @@ func (a *API) handleResellerUpdate(w http.ResponseWriter, r *http.Request) {
 		Name   *string `json:"name"`
 		Phone  *string `json:"phone"`
 		Status *string `json:"status"`
+		Pin    *string `json:"pin"` // N°8 — définir/remplacer ; "" = retirer
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
 		return
+	}
+	if req.Pin != nil {
+		p := strings.TrimSpace(*req.Pin)
+		if p != "" && !resellerPinPattern.MatchString(p) {
+			writeErr(w, http.StatusBadRequest, "PIN invalide : 4 à 6 chiffres")
+			return
+		}
 	}
 	a.store.Lock()
 	db := a.store.Data()
@@ -2721,11 +2773,20 @@ func (a *API) handleResellerUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		res.Status = *req.Status
 	}
+	if req.Pin != nil {
+		p := strings.TrimSpace(*req.Pin)
+		if p == "" {
+			res.PinHash = "" // retrait explicite : Mode Vente désactivé
+		} else {
+			res.PinHash = auth.HashPassword(p, "")
+		}
+	}
 	updated := *res
 	a.logActivityBy(r, db, acc, "reseller", "Revendeur "+updated.Name+" modifié")
 	a.store.Save()
+	sanitized := sanitizeReseller(updated)
 	a.store.Unlock()
-	writeJSON(w, http.StatusOK, updated)
+	writeJSON(w, http.StatusOK, sanitized)
 }
 
 func (a *API) handleResellerDelete(w http.ResponseWriter, r *http.Request) {

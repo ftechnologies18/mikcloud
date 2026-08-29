@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Image from "next/image";
 import { motion } from "framer-motion";
-import { KeyRound, Loader2, UserPlus } from "lucide-react";
+import { KeyRound, Loader2, Store, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -30,6 +30,11 @@ export default function LoginScreen() {
   const [password, setPassword] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
 
+  // N°8 — Mode Vente (revendeur, identifiant + PIN)
+  const [sellUsername, setSellUsername] = useState("");
+  const [sellPin, setSellPin] = useState("");
+  const [sellLoading, setSellLoading] = useState(false);
+
   // Inscription
   const [regName, setRegName] = useState("");
   const [regUsername, setRegUsername] = useState("");
@@ -39,6 +44,31 @@ export default function LoginScreen() {
 
   const canLogin = username.trim().length > 0 && password.trim().length > 0 && !loginLoading;
   const canRegister = regName.trim().length > 0 && regUsername.trim().length > 0 && regPassword.length > 0 && !regLoading;
+  const canSell = sellUsername.trim().length > 0 && sellPin.length >= 4 && !sellLoading;
+
+  // N°8 — connexion revendeur par PIN : token scopé role=reseller → SellShell.
+  async function handleSellLogin(e: React.FormEvent) {
+    e.preventDefault();
+    if (!canSell) return;
+    setSellLoading(true);
+    try {
+      const res = await api<{ token: string; reseller: { id: string; name: string; username: string } }>(
+        "/api/reseller/login",
+        { method: "POST", body: { username: sellUsername.trim(), pin: sellPin } },
+      );
+      setAuth(res.token, {
+        id: res.reseller.id,
+        name: res.reseller.name,
+        username: res.reseller.username,
+        role: "reseller",
+      });
+      toast.success(tf("login.welcome", { name: res.reseller.name }));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("login.failed"));
+    } finally {
+      setSellLoading(false);
+    }
+  }
 
   function applyAuth(res: AuthResponse) {
     setAuth(res.token, res.user);
@@ -106,11 +136,15 @@ export default function LoginScreen() {
             </div>
 
             <Tabs defaultValue="login" className="mt-8 gap-5">
-              <TabsList className="grid w-full grid-cols-2">
+              <TabsList className="grid w-full grid-cols-3">
                 <TabsTrigger value="login">{t("login.tabLogin")}</TabsTrigger>
                 <TabsTrigger value="register">
                   <UserPlus className="size-4" />
                   {t("login.tabRegister")}
+                </TabsTrigger>
+                <TabsTrigger value="sell">
+                  <Store className="size-4" />
+                  {t("login.tabSell")}
                 </TabsTrigger>
               </TabsList>
 
@@ -201,6 +235,44 @@ export default function LoginScreen() {
                   <Button type="submit" className="w-full" disabled={!canRegister}>
                     {regLoading && <Loader2 className="size-4 animate-spin" />}
                     {t("login.register.submit")}
+                  </Button>
+                </form>
+              </TabsContent>
+              <TabsContent value="sell">
+                <form onSubmit={handleSellLogin} className="space-y-4">
+                  <p className="rounded-lg bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
+                    {t("login.sellHint")}
+                  </p>
+                  <div className="space-y-2">
+                    <Label htmlFor="sell-username">{t("login.sellUsername")}</Label>
+                    <Input
+                      id="sell-username"
+                      autoComplete="username"
+                      placeholder="ange.kessie"
+                      value={sellUsername}
+                      onChange={(e) => setSellUsername(e.target.value)}
+                      disabled={sellLoading}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="sell-pin">{t("login.sellPin")}</Label>
+                    <Input
+                      id="sell-pin"
+                      type="password"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      maxLength={6}
+                      autoComplete="one-time-code"
+                      placeholder="••••"
+                      value={sellPin}
+                      onChange={(e) => setSellPin(e.target.value.replace(/\D/g, ""))}
+                      disabled={sellLoading}
+                    />
+                  </div>
+                  <Button type="submit" className="w-full" disabled={!canSell}>
+                    {sellLoading && <Loader2 className="size-4 animate-spin" />}
+                    <Store className="size-4" />
+                    {t("login.sellSubmit")}
                   </Button>
                 </form>
               </TabsContent>

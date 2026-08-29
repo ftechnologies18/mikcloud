@@ -62,9 +62,10 @@ interface ResellerForm {
   username: string;
   phone: string;
   credit: string;
+  pin: string; // N°8 — PIN Mode Vente (4-6 chiffres ; vide en édition = inchangé)
 }
 
-const EMPTY_FORM: ResellerForm = { name: "", username: "", phone: "", credit: "" };
+const EMPTY_FORM: ResellerForm = { name: "", username: "", phone: "", credit: "", pin: "" };
 
 function initialsOf(name: string): string {
   return name
@@ -113,7 +114,7 @@ export default function ResellersView() {
   };
 
   const createMutation = useMutation({
-    mutationFn: (payload: { name: string; username: string; phone: string; credit: number }) =>
+    mutationFn: (payload: { name: string; username: string; phone: string; credit: number; pin?: string }) =>
       api<Reseller>("/api/resellers", { method: "POST", body: payload }),
     onSuccess: (reseller) => {
       toast.success(tf("resellers.createdToast", { name: reseller.name }));
@@ -125,8 +126,11 @@ export default function ResellersView() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: (payload: { id: string; name: string; phone: string }) =>
-      api<Reseller>(`/api/resellers/${payload.id}`, { method: "PUT", body: { name: payload.name, phone: payload.phone } }),
+    mutationFn: (payload: { id: string; name: string; phone: string; pin?: string }) =>
+      api<Reseller>(`/api/resellers/${payload.id}`, {
+        method: "PUT",
+        body: payload.pin !== undefined ? { name: payload.name, phone: payload.phone, pin: payload.pin } : { name: payload.name, phone: payload.phone },
+      }),
     onSuccess: (reseller) => {
       toast.success(t("resellers.updatedToast"));
       setEditTarget(null);
@@ -185,7 +189,7 @@ export default function ResellersView() {
   };
 
   const openEdit = (reseller: Reseller) => {
-    setForm({ name: reseller.name, username: reseller.username, phone: reseller.phone, credit: String(reseller.credit) });
+    setForm({ name: reseller.name, username: reseller.username, phone: reseller.phone, credit: String(reseller.credit), pin: "" });
     setEditTarget(reseller);
   };
 
@@ -202,7 +206,13 @@ export default function ResellersView() {
       return;
     }
     if (editTarget) {
-      updateMutation.mutate({ id: editTarget.id, name, phone: form.phone.trim() });
+      const pin = form.pin.trim();
+      updateMutation.mutate({
+        id: editTarget.id,
+        name,
+        phone: form.phone.trim(),
+        ...(pin ? { pin } : {}),
+      });
       return;
     }
     const username = form.username.trim();
@@ -211,7 +221,18 @@ export default function ResellersView() {
       return;
     }
     const credit = Number(form.credit);
-    createMutation.mutate({ name, username, phone: form.phone.trim(), credit: Number.isFinite(credit) && credit > 0 ? credit : 0 });
+    const pin = form.pin.trim();
+    if (pin && !/^[0-9]{4,6}$/.test(pin)) {
+      toast.error(t("resellers.pinInvalid"));
+      return;
+    }
+    createMutation.mutate({
+      name,
+      username,
+      phone: form.phone.trim(),
+      credit: Number.isFinite(credit) && credit > 0 ? credit : 0,
+      ...(pin ? { pin } : {}),
+    });
   };
 
   const parsedAmount = Number(creditAmount);
@@ -417,6 +438,25 @@ export default function ResellersView() {
                 onChange={(event) => setForm((f) => ({ ...f, phone: event.target.value }))}
                 placeholder={t("resellers.phonePlaceholder")}
               />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="reseller-pin">
+                {editTarget ? t("resellers.pinEdit") : t("resellers.pinCreate")}
+              </Label>
+              <Input
+                id="reseller-pin"
+                type="password"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={6}
+                autoComplete="new-password"
+                value={form.pin}
+                onChange={(event) => setForm((f) => ({ ...f, pin: event.target.value.replace(/\D/g, "") }))}
+                placeholder="••••"
+              />
+              <p className="text-xs text-muted-foreground">
+                {editTarget ? t("resellers.pinEditHint") : t("resellers.pinCreateHint")}
+              </p>
             </div>
             {!editTarget && (
               <div className="grid gap-2">

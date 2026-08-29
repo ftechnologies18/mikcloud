@@ -320,40 +320,57 @@ function Topbar() {
           >
             <RefreshCw className="size-4.5" />
           </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="size-10 rounded-full p-0" aria-label={t("shell.userMenu")}>
-                <Avatar className="size-9">
-                  <AvatarFallback className="bg-primary/15 text-xs font-semibold text-primary">
-                    {userInitials(name)}
-                  </AvatarFallback>
-                </Avatar>
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuLabel>
-                <p className="truncate text-sm font-medium">{name}</p>
-                <p className="truncate text-xs font-normal text-muted-foreground">
-                  @{user?.username ?? "—"}
-                </p>
-              </DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => setProfileOpen(true)} className="min-h-10">
-                <UserRound className="size-4" />
-                {t("shell.profile")}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setView("settings")} className="min-h-10">
-                <Settings className="size-4" />
-                {t("shell.settings")}
-              </DropdownMenuItem>
-              <LanguageMenuItem />
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={handleLogout} className="min-h-10 text-destructive focus:text-destructive">
-                <LogOut className="size-4" />
-                {t("shell.logout")}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          {/* Profil — mobile/tablette uniquement : la sidebar mobile n'a plus
+              de carte utilisateur, ce menu est le seul accès au profil.
+              Sur desktop, le profil vit dans la sidebar → simple bouton
+              déconnexion à la place (ci-dessous). */}
+          <div className="lg:hidden">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" className="size-10 rounded-full p-0" aria-label={t("shell.userMenu")}>
+                  <Avatar className="size-9">
+                    <AvatarFallback className="bg-primary/15 text-xs font-semibold text-primary">
+                      {userInitials(name)}
+                    </AvatarFallback>
+                  </Avatar>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel>
+                  <p className="truncate text-sm font-medium">{name}</p>
+                  <p className="truncate text-xs font-normal text-muted-foreground">
+                    @{user?.username ?? "—"}
+                  </p>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => setProfileOpen(true)} className="min-h-10">
+                  <UserRound className="size-4" />
+                  {t("shell.profile")}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setView("settings")} className="min-h-10">
+                  <Settings className="size-4" />
+                  {t("shell.settings")}
+                </DropdownMenuItem>
+                <LanguageMenuItem />
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={handleLogout} className="min-h-10 text-destructive focus:text-destructive">
+                  <LogOut className="size-4" />
+                  {t("shell.logout")}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+          {/* Desktop : déconnexion directe — le menu profil complet reste
+              dans la carte utilisateur de la sidebar. */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="hidden size-10 text-muted-foreground hover:bg-destructive/10 hover:text-destructive lg:inline-flex"
+            onClick={handleLogout}
+            aria-label={t("shell.logout")}
+          >
+            <LogOut className="size-4.5" />
+          </Button>
           <UserProfileDialog open={profileOpen} onOpenChange={setProfileOpen} />
         </div>
       </div>
@@ -385,7 +402,8 @@ export default function AppShell() {
         </div>
       </aside>
 
-      {/* Sidebar mobile (Sheet) */}
+      {/* Sidebar mobile (Sheet) — pas de carte utilisateur : le profil
+          reste accessible via l'avatar du header sur mobile. */}
       <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
         <SheetContent side="left" className="sidebar-aurora flex w-72 flex-col gap-0 p-0">
           <SheetHeader className="border-b border-sidebar-border pb-0">
@@ -393,9 +411,6 @@ export default function AppShell() {
             <BrandHeader />
           </SheetHeader>
           <NavList />
-          <div className="px-3 pb-4">
-            <UserCard />
-          </div>
         </SheetContent>
       </Sheet>
 

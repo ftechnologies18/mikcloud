@@ -28,7 +28,7 @@ import {
 import { useCurrency, useSettings } from "@/components/hotspot/parts/sd-currency";
 import { renderBatch } from "@/components/hotspot/parts/template-render";
 import { useI18n } from "@/lib/hotspot/i18n";
-import { formatCurrency } from "@/lib/hotspot/format";
+import { formatBytes, formatCurrency } from "@/lib/hotspot/format";
 import type { HotspotUser, Profile, VoucherTemplate } from "@/lib/hotspot/types";
 
 /** Clé localStorage du dernier modèle choisi pour l'impression. */
@@ -230,6 +230,9 @@ export function UcPrintDialog({
                       <p className="text-xs text-neutral-700">
                         {voucher.profileName}
                         {validityDays ? ` · ${tf("print.validity", { n: validityDays })}` : ""}
+                        {(voucher.dataQuotaMb ?? 0) > 0
+                          ? ` · ${formatBytes(voucher.dataQuotaMb * 1048576)}`
+                          : ""}
                       </p>
                       <p className="text-xs font-semibold">
                         {formatCurrency(voucher.price, currency, lang)}

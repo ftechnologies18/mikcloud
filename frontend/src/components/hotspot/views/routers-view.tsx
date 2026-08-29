@@ -13,6 +13,7 @@ import {
   MoreHorizontal,
   Pencil,
   Plus,
+  QrCode,
   Radio,
   Router as RouterIcon,
   ShieldCheck,
@@ -73,6 +74,7 @@ interface RouterForm {
   username: string;
   password: string;
   mode: RouterMode;
+  hotspotLoginUrl: string;
 }
 
 const DEFAULT_FORM: RouterForm = {
@@ -82,6 +84,7 @@ const DEFAULT_FORM: RouterForm = {
   username: "",
   password: "",
   mode: "agent",
+  hotspotLoginUrl: "",
 };
 
 /** Routeur en attente d'installation de l'agent (étape 2 du wizard). */
@@ -224,6 +227,22 @@ function parsePort(raw: string): number {
   return Number.isFinite(port) && port > 0 && port <= 65535 ? port : 8728;
 }
 
+/** Valide l'URL de connexion hotspot : vide autorisé, sinon http(s) absolu. */
+function isValidHotspotUrl(raw: string): boolean {
+  const value = raw.trim();
+  if (!value) return true;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function nf(value: number): string {
+  return new Intl.NumberFormat("fr-FR").format(value);
+}
+
 export default function RoutersView() {
   const { t, tf, lang } = useI18n();
   const queryClient = useQueryClient();
@@ -264,6 +283,7 @@ export default function RoutersView() {
       username: router.username,
       password: "",
       mode: router.mode,
+      hotspotLoginUrl: router.hotspotLoginUrl ?? "",
     });
     setDialogOpen(true);
   }
@@ -286,6 +306,8 @@ export default function RoutersView() {
         body.username = payload.form.username.trim();
         if (payload.form.password.length > 0 || !payload.id) body.password = payload.form.password;
       }
+      // URL de login hotspot (QR des vouchers) — tous modes ; chaîne vide = effacer.
+      body.hotspotLoginUrl = payload.form.hotspotLoginUrl.trim();
       if (payload.id) {
         return api<RouterDevice & { installScript?: string }>(`/api/routers/${payload.id}`, {
           method: "PUT",
@@ -367,7 +389,10 @@ export default function RoutersView() {
   });
 
   const formValid =
-    form.name.trim().length > 0 && (form.mode === "agent" || form.host.trim().length > 0);
+    form.name.trim().length > 0 &&
+    (form.mode === "agent" || form.host.trim().length > 0) &&
+    isValidHotspotUrl(form.hotspotLoginUrl);
+  const hotspotUrlInvalid = !isValidHotspotUrl(form.hotspotLoginUrl);
   const busyId = testMutation.isPending
     ? testMutation.variables?.id ?? null
     : statsMutation.isPending
@@ -531,6 +556,17 @@ export default function RoutersView() {
                       </div>
                     </div>
 
+                    {router.hotspotLoginUrl && (
+                      <div
+                        className="flex min-h-6 items-center gap-2 text-xs text-muted-foreground"
+                        title={`QR des vouchers → ${router.hotspotLoginUrl}`}
+                      >
+                        <QrCode className="size-3.5 shrink-0" />
+                        <span className="shrink-0">Hotspot</span>
+                        <span className="truncate font-mono">{router.hotspotLoginUrl}</span>
+                      </div>
+                    )}
+
                     <div className="mt-auto">
                       <div className="mb-1.5 flex items-center justify-between text-xs">
                         <span className="text-muted-foreground">{t("routers.cpuLoad")}</span>
@@ -670,6 +706,31 @@ export default function RoutersView() {
               )}
               {form.mode === "real" && (
                 <p className="text-xs text-muted-foreground">{t("routers.realDesc")}</p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="router-hotspot-url">URL de connexion hotspot (QR codes)</Label>
+              <Input
+                id="router-hotspot-url"
+                type="url"
+                inputMode="url"
+                placeholder="http://10.5.50.1/login ou https://wifi.mondomaine.ci/login"
+                value={form.hotspotLoginUrl}
+                onChange={(e) => setForm((f) => ({ ...f, hotspotLoginUrl: e.target.value }))}
+                disabled={saveMutation.isPending}
+                aria-invalid={hotspotUrlInvalid}
+              />
+              {hotspotUrlInvalid ? (
+                <p className="text-xs text-destructive" role="alert">
+                  URL invalide — utilisez une adresse commençant par http:// ou https://.
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Page de login MikroTik du hotspot. Le QR de chaque voucher ouvrira cette page avec
+                  le code pré-rempli (connexion en 1 scan). Laissez vide : le QR contiendra le code
+                  en texte.
+                </p>
               )}
             </div>
 

@@ -36,6 +36,56 @@ func RandomCode(n int) string {
 	return sb.String()
 }
 
+// Presets de charset pour les codes de vouchers — inspirés du User Manager
+// MikroTik (« abcd », « ABCD », « aBcD », « 5ab2C34d », « 5AB2C34D », « 5aB2c34D »).
+// Tous les alphabets excluent les caractères ambigus (0/1/I/L/O) : les codes
+// restent lisibles sur un ticket imprimé ou lus à voix haute par un revendeur.
+const (
+	CharsetDefault = ""    // chiffres + majuscules sûres (CodeCharset, recommandé)
+	CharsetLower   = "abc" // minuscules            — preset « abcd »
+	CharsetUpper   = "ABC" // majuscules            — preset « ABCD »
+	CharsetLetters = "aBc" // lettres min + maj     — preset « aBcD »
+	CharsetDigLow  = "5ab" // chiffres + minuscules — preset « 5ab2c34d »
+	CharsetDigUp   = "5AB" // chiffres + majuscules — preset « 5AB2C34D »
+	CharsetDigMix  = "5aB" // chiffres + lettres    — preset « 5aB2c34D »
+)
+
+const (
+	lowerSafe = "abcdefghijkmnpqrstuvwxyz" // sans l, o
+	upperSafe = "ABCDEFGHJKMNPQRSTUVWXYZ"  // sans I, L, O
+	digitSafe = "23456789"                 // sans 0, 1
+)
+
+// CharsetAlphabets associe chaque preset à son alphabet (sans ambiguïtés).
+var CharsetAlphabets = map[string]string{
+	CharsetDefault: digitSafe + upperSafe,
+	CharsetLower:   lowerSafe,
+	CharsetUpper:   upperSafe,
+	CharsetLetters: lowerSafe + upperSafe,
+	CharsetDigLow:  digitSafe + lowerSafe,
+	CharsetDigUp:   digitSafe + upperSafe,
+	CharsetDigMix:  digitSafe + lowerSafe + upperSafe,
+}
+
+// RandomCodeFrom génère un code de n caractères dans l'alphabet du preset
+// demandé (charset vide ou inconnu → alphabet MikCloud par défaut).
+func RandomCodeFrom(n int, charset string) string {
+	alphabet, ok := CharsetAlphabets[charset]
+	if !ok || alphabet == "" {
+		alphabet = CodeCharset
+	}
+	var sb strings.Builder
+	max := big.NewInt(int64(len(alphabet)))
+	for i := 0; i < n; i++ {
+		idx, err := rand.Int(rand.Reader, max)
+		if err != nil {
+			idx = big.NewInt(0)
+		}
+		sb.WriteByte(alphabet[idx.Int64()])
+	}
+	return sb.String()
+}
+
 // RandomMAC génère une adresse MAC aléatoire "AA:BB:CC:DD:EE:FF".
 func RandomMAC() string {
 	b := make([]byte, 6)
@@ -85,6 +135,11 @@ type Router struct {
 	HotspotUsers   int    `json:"hotspotUsers"`
 	ActiveSessions int    `json:"activeSessions"`
 	CreatedAt      string `json:"createdAt"`
+	// HotspotLoginUrl — page de login du portail captive MikroTik (ex.
+	// http://10.5.50.1/login). Utilisée par les QR codes des vouchers imprimés :
+	// le QR encode {url}?username=CODE&password=PASS → connexion en 1 scan.
+	// Vide → le QR contient simplement « CODE / PASS ».
+	HotspotLoginUrl string `json:"hotspotLoginUrl,omitempty"`
 	// Mode agent (HTTP-poll sortant) : le token n'est JAMAIS stocké en clair.
 	AgentTokenHash string `json:"agentTokenHash,omitempty"`
 	TokenPreview   string `json:"tokenPreview,omitempty"`
@@ -145,6 +200,10 @@ type HotspotUser struct {
 	// P0 (audit Mikhmon) — F1 : false tant que l'expiration n'a pas été
 	// appliquée au routeur (user_remove / user_set disabled — voir enforceExpired).
 	Enforced bool `json:"enforced"`
+	// DataQuotaMb — quota de données par voucher appliqué sur le routeur
+	// (/ip hotspot user add limit-bytes-total=…, exprimé en Mo ; 0 = illimité
+	// dans la limite de la validité). Ex. « 5 Go = 500 F » → DataQuotaMb 5120.
+	DataQuotaMb int64 `json:"dataQuotaMb"`
 }
 
 // Session — session hotspot active.
@@ -220,15 +279,18 @@ type Sale struct {
 
 // Batch — lot de vouchers générés en une fois (traçabilité complète).
 type Batch struct {
-	ID           string `json:"id"`
-	AccountID    string `json:"accountId"`
-	ProfileID    string `json:"profileId"`
-	ProfileName  string `json:"profileName"`
-	RouterID     string `json:"routerId"`
-	RouterName   string `json:"routerName"`
-	Count        int    `json:"count"`
-	UnitPrice    int    `json:"unitPrice"`
-	TotalCost    int    `json:"totalCost"`
+	ID          string `json:"id"`
+	AccountID   string `json:"accountId"`
+	ProfileID   string `json:"profileId"`
+	ProfileName string `json:"profileName"`
+	RouterID    string `json:"routerId"`
+	RouterName  string `json:"routerName"`
+	Count       int    `json:"count"`
+	UnitPrice   int    `json:"unitPrice"`
+	TotalCost   int    `json:"totalCost"`
+	// DataQuotaMb — quota de données (Mo) porté par chaque voucher du lot
+	// (0 = illimité). Tracé pour l'affichage et la comptabilité.
+	DataQuotaMb  int64  `json:"dataQuotaMb"`
 	Channel      string `json:"channel"` // direct | reseller
 	ResellerID   string `json:"resellerId"`
 	ResellerName string `json:"resellerName"`
@@ -283,6 +345,69 @@ type AdminUser struct {
 	// changement d'intention de l'opérateur (env modifiée) par rapport à
 	// un mot de passe changé par l'utilisateur depuis la console.
 	EnvPasswordHash string `json:"envPasswordHash,omitempty"`
+}
+
+// NotificationSettings — canaux et règles d'alerte d'un compte SaaS. Les
+// secrets (tokens, mot de passe SMTP) sont stockés mais JAMAIS renvoyés par
+// l'API (l'API expose uniquement des booléens « …Set ») ; un PUT avec un
+// champ secret vide conserve la valeur existante.
+type NotificationSettings struct {
+	AccountID string `json:"accountId"`
+	Enabled   bool   `json:"enabled"` // interrupteur général des alertes automatiques
+	// Telegram — bot API (https://core.telegram.org/bots)
+	TelegramEnabled  bool   `json:"telegramEnabled"`
+	TelegramBotToken string `json:"telegramBotToken,omitempty"`
+	TelegramChatID   string `json:"telegramChatId,omitempty"`
+	// WhatsApp Cloud API (Meta Graph)
+	WhatsAppEnabled bool   `json:"whatsappEnabled"`
+	WhatsAppToken   string `json:"whatsappToken,omitempty"`
+	WhatsAppPhoneID string `json:"whatsappPhoneId,omitempty"`
+	WhatsAppTo      string `json:"whatsappTo,omitempty"`
+	// Email — SMTP direct (STARTTLS 587 / TLS implicite 465)
+	EmailEnabled bool   `json:"emailEnabled"`
+	SMTPHost     string `json:"smtpHost,omitempty"`
+	SMTPPort     int    `json:"smtpPort,omitempty"`
+	SMTPUser     string `json:"smtpUser,omitempty"`
+	SMTPPass     string `json:"smtpPass,omitempty"`
+	EmailTo      string `json:"emailTo,omitempty"`
+	// Règles d'alerte
+	OfflineAfterSec   int  `json:"offlineAfterSec"`   // sans check-in depuis X s → hors ligne (défaut 135 = 3 × 45 s)
+	LowStockThreshold int  `json:"lowStockThreshold"` // vouchers actifs restants < X → alerte stock (défaut 25)
+	DailyReport       bool `json:"dailyReport"`       // rapport quotidien
+	ReportHour        int  `json:"reportHour"`        // heure d'envoi (UTC = Abidjan GMT+0), défaut 20
+	// État interne anti-spam : dernier jour de rapport envoyé (YYYY-MM-DD)
+	LastReportDate string `json:"lastReportDate,omitempty"`
+	// État anti-spam stock : routerID → "low" | "empty" (dernier état notifié)
+	StockAlertState map[string]string `json:"stockAlertState,omitempty"`
+}
+
+// Normalize applique les défauts et bornes (appelé avant chaque lecture/écriture).
+func (s *NotificationSettings) Normalize() {
+	switch {
+	case s.OfflineAfterSec == 0:
+		s.OfflineAfterSec = 135
+	case s.OfflineAfterSec < 60:
+		s.OfflineAfterSec = 60
+	}
+	if s.LowStockThreshold == 0 {
+		s.LowStockThreshold = 25
+	}
+	if s.ReportHour < 0 || s.ReportHour > 23 {
+		s.ReportHour = 20
+	}
+}
+
+// NotificationLog — trace d'un envoi de notification (historique console).
+type NotificationLog struct {
+	ID        string `json:"id"`
+	AccountID string `json:"accountId"`
+	Channel   string `json:"channel"` // telegram | whatsapp | email | system
+	Kind      string `json:"kind"`    // router_offline | router_back | low_stock | daily_report | test | settings
+	Title     string `json:"title"`
+	Body      string `json:"body,omitempty"`
+	Status    string `json:"status"` // sent | error
+	Error     string `json:"error,omitempty"`
+	At        string `json:"at"`
 }
 
 // Kinds de commandes agent (routeur -> cloud en HTTP-poll).
@@ -449,9 +574,12 @@ type DB struct {
 	IPBindings     []IPBinding       `json:"ipBindings"`     // F7
 	SchedulerTasks []SchedulerTask   `json:"schedulerTasks"` // F10
 	Traffic        []RouterTraffic   `json:"traffic"`        // F6
-	Tenant         Tenant            `json:"tenant"`         // legacy mono-tenant
-	Settings       Settings          `json:"settings"`       // legacy mono-tenant
-	LastTick       time.Time         `json:"lastTick"`
+	// Tier 1 — notifications multi-canaux.
+	NotifSettings map[string]NotificationSettings `json:"notifSettings"` // accountId → réglages
+	NotifLog      []NotificationLog               `json:"notifLog"`
+	Tenant        Tenant                          `json:"tenant"`   // legacy mono-tenant
+	Settings      Settings                        `json:"settings"` // legacy mono-tenant
+	LastTick      time.Time                       `json:"lastTick"`
 }
 
 // EffectiveStatus retourne le statut réel d'un utilisateur : un voucher encore

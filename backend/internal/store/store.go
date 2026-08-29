@@ -475,6 +475,44 @@ func (s *Store) ensureSlices() {
 	if s.db.Traffic == nil {
 		s.db.Traffic = []model.RouterTraffic{}
 	}
+	if s.db.NotifSettings == nil {
+		s.db.NotifSettings = map[string]model.NotificationSettings{}
+	}
+	if s.db.NotifLog == nil {
+		s.db.NotifLog = []model.NotificationLog{}
+	}
+}
+
+// GetOrCreateNotifSettings — réglages de notification d'un compte, créés avec
+// les défauts si absents (à appeler sous verrou ; persistés par le Save de
+// l'appelant). Retourne une COPIE : modifier puis réécrire avec SetNotifSettings.
+func GetOrCreateNotifSettings(db *model.DB, acc string) model.NotificationSettings {
+	if db.NotifSettings != nil {
+		if s, ok := db.NotifSettings[acc]; ok {
+			s.Normalize()
+			return s
+		}
+	}
+	s := model.NotificationSettings{
+		AccountID:         acc,
+		OfflineAfterSec:   135,
+		LowStockThreshold: 25,
+		ReportHour:        20,
+	}
+	if db.NotifSettings == nil {
+		db.NotifSettings = map[string]model.NotificationSettings{}
+	}
+	db.NotifSettings[acc] = s
+	return s
+}
+
+// SetNotifSettings réécrit les réglages de notification d'un compte (sous verrou).
+func SetNotifSettings(db *model.DB, s model.NotificationSettings) {
+	s.Normalize()
+	if db.NotifSettings == nil {
+		db.NotifSettings = map[string]model.NotificationSettings{}
+	}
+	db.NotifSettings[s.AccountID] = s
 }
 
 // Lock / Unlock — verrou global du store (à tenir lors de chaque accès à Data()).

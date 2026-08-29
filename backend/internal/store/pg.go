@@ -148,7 +148,8 @@ func (p *PG) ensureSchema() error {
                         created_at      TEXT NOT NULL,
                         expires_at      TEXT NOT NULL,
                         used_at         TEXT NOT NULL,
-                        price           INTEGER NOT NULL
+                        price           INTEGER NOT NULL,
+                        data_quota_mb   BIGINT NOT NULL DEFAULT 0
                 )`,
 		`CREATE INDEX IF NOT EXISTS idx_hotspot_users_batch    ON hotspot_users (batch_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_hotspot_users_router   ON hotspot_users (router_id)`,
@@ -164,6 +165,7 @@ func (p *PG) ensureSchema() error {
                         count         INTEGER NOT NULL,
                         unit_price    INTEGER NOT NULL,
                         total_cost    INTEGER NOT NULL,
+                        data_quota_mb BIGINT NOT NULL DEFAULT 0,
                         channel       TEXT NOT NULL,
                         reseller_id   TEXT NOT NULL,
                         reseller_name TEXT NOT NULL,
@@ -322,6 +324,45 @@ func (p *PG) ensureSchema() error {
                         wave_link        TEXT NOT NULL DEFAULT '',
                         last_tick        TIMESTAMPTZ
                 )`,
+		`CREATE TABLE IF NOT EXISTS notif_settings (
+                        id                  TEXT PRIMARY KEY, -- = account_id : une ligne par compte SaaS
+                        enabled             BOOLEAN NOT NULL DEFAULT FALSE,
+                        telegram_enabled    BOOLEAN NOT NULL DEFAULT FALSE,
+                        telegram_bot_token  TEXT NOT NULL DEFAULT '',
+                        telegram_chat_id    TEXT NOT NULL DEFAULT '',
+                        whatsapp_enabled    BOOLEAN NOT NULL DEFAULT FALSE,
+                        whatsapp_token      TEXT NOT NULL DEFAULT '',
+                        whatsapp_phone_id   TEXT NOT NULL DEFAULT '',
+                        whatsapp_to         TEXT NOT NULL DEFAULT '',
+                        email_enabled       BOOLEAN NOT NULL DEFAULT FALSE,
+                        smtp_host           TEXT NOT NULL DEFAULT '',
+                        smtp_port           INTEGER NOT NULL DEFAULT 0,
+                        smtp_user           TEXT NOT NULL DEFAULT '',
+                        smtp_pass           TEXT NOT NULL DEFAULT '',
+                        email_to            TEXT NOT NULL DEFAULT '',
+                        offline_after_sec   INTEGER NOT NULL DEFAULT 135,
+                        low_stock_threshold INTEGER NOT NULL DEFAULT 25,
+                        daily_report        BOOLEAN NOT NULL DEFAULT FALSE,
+                        report_hour         INTEGER NOT NULL DEFAULT 20,
+                        last_report_date    TEXT NOT NULL DEFAULT '',
+                        stock_alert_state   TEXT NOT NULL DEFAULT '', -- JSON sérialisé ('' = absent)
+                        account_id          TEXT NOT NULL DEFAULT ''
+                )`,
+		`CREATE TABLE IF NOT EXISTS notif_log (
+                        id         TEXT PRIMARY KEY,
+                        channel    TEXT NOT NULL,
+                        kind       TEXT NOT NULL,
+                        title      TEXT NOT NULL,
+                        body       TEXT NOT NULL DEFAULT '',
+                        status     TEXT NOT NULL,
+                        error      TEXT NOT NULL DEFAULT '',
+                        at         TEXT NOT NULL,
+                        account_id TEXT NOT NULL DEFAULT ''
+                )`,
+		`CREATE INDEX IF NOT EXISTS idx_notif_log_account ON notif_log (account_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_notif_log_at      ON notif_log (at)`,
+		// QR vouchers : page de login du portail captive du routeur.
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS hotspot_login_url TEXT NOT NULL DEFAULT ''`,
 		// Migrations douces pour les bases créées avant l'ajout des champs
 		// agent/Wave/commandes (idempotentes, donc sans risque au premier déploiement).
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS agent_token_hash TEXT NOT NULL DEFAULT ''`,
@@ -344,6 +385,9 @@ func (p *PG) ensureSchema() error {
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS board_name TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS free_hdd_mb INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS total_hdd_mb INTEGER NOT NULL DEFAULT 0`,
+		// Quota de données par voucher (« 5 Go = 500 F ») : Mo, 0 = illimité.
+		`ALTER TABLE hotspot_users ADD COLUMN IF NOT EXISTS data_quota_mb BIGINT NOT NULL DEFAULT 0`,
+		`ALTER TABLE batches       ADD COLUMN IF NOT EXISTS data_quota_mb BIGINT NOT NULL DEFAULT 0`,
 		// Migrations multi-tenant : colonne account_id sur toutes les tables métier.
 		`ALTER TABLE admin_users   ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''`,
 		// Changement de mot de passe par l'utilisateur (POST /api/auth/password) :
@@ -427,6 +471,8 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 		IPBindings:        []model.IPBinding{},
 		SchedulerTasks:    []model.SchedulerTask{},
 		Traffic:           []model.RouterTraffic{},
+		NotifSettings:     map[string]model.NotificationSettings{},
+		NotifLog:          []model.NotificationLog{},
 	}
 
 	steps := []struct {
@@ -450,6 +496,8 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 		{"ip_bindings", func() error { return loadInto(p, &db.IPBindings, ipBindingSpec) }},
 		{"scheduler_tasks", func() error { return loadInto(p, &db.SchedulerTasks, schedulerTaskSpec) }},
 		{"traffic", func() error { return loadInto(p, &db.Traffic, trafficSpec) }},
+		{"notif_settings", func() error { return p.loadNotifSettings(db) }},
+		{"notif_log", func() error { return loadInto(p, &db.NotifLog, notifLogSpec) }},
 		{"settings", func() error { return p.loadSettings(db) }},
 	}
 	for _, st := range steps {
@@ -470,6 +518,21 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 	// Le cache d'empreintes reflète l'état chargé.
 	p.rebuildHashes(db)
 	return db, true, nil
+}
+
+// loadNotifSettings lit TOUTES les lignes notif_settings (une par compte SaaS)
+// et remplit db.NotifSettings. stock_alert_state (TEXT) est désérialisé en map
+// par le spec (pattern commandSpec).
+func (p *PG) loadNotifSettings(db *model.DB) error {
+	var rows []model.NotificationSettings
+	if err := loadInto(p, &rows, notifSettingsSpec); err != nil {
+		return err
+	}
+	db.NotifSettings = map[string]model.NotificationSettings{}
+	for _, s := range rows {
+		db.NotifSettings[s.AccountID] = s
+	}
+	return nil
 }
 
 // loadSettings lit TOUTES les lignes settings (une par compte SaaS) et remplit
@@ -580,6 +643,16 @@ func (p *PG) Sync(db *model.DB) error {
 		return err
 	}
 	if err := syncTable(tx, p.hashes, trafficSpec, db.Traffic); err != nil {
+		return err
+	}
+	notifRows := make([]model.NotificationSettings, 0, len(db.NotifSettings))
+	for _, v := range db.NotifSettings {
+		notifRows = append(notifRows, v)
+	}
+	if err := syncTable(tx, p.hashes, notifSettingsSpec, notifRows); err != nil {
+		return err
+	}
+	if err := syncTable(tx, p.hashes, notifLogSpec, db.NotifLog); err != nil {
 		return err
 	}
 	if err := p.syncSettings(tx, db); err != nil {
@@ -825,21 +898,21 @@ var routerSpec = entitySpec[model.Router]{
 	table: "routers",
 	cols: []string{"id", "name", "host", "port", "username", "password", "mode", "status",
 		"version", "uptime_sec", "cpu_load", "hotspot_users", "active_sessions", "created_at",
-		"agent_token_hash", "token_preview", "last_seen", "account_id",
+		"hotspot_login_url", "agent_token_hash", "token_preview", "last_seen", "account_id",
 		"board_name", "free_hdd_mb", "total_hdd_mb"},
 	idOf: func(x *model.Router) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Router, error) {
 		var x model.Router
 		err := r.Scan(&x.ID, &x.Name, &x.Host, &x.Port, &x.Username, &x.Password, &x.Mode, &x.Status,
 			&x.Version, &x.UptimeSec, &x.CPULoad, &x.HotspotUsers, &x.ActiveSessions, &x.CreatedAt,
-			&x.AgentTokenHash, &x.TokenPreview, &x.LastSeen, &x.AccountID,
+			&x.HotspotLoginUrl, &x.AgentTokenHash, &x.TokenPreview, &x.LastSeen, &x.AccountID,
 			&x.BoardName, &x.FreeHddMb, &x.TotalHddMb)
 		return x, err
 	},
 	args: func(x *model.Router) []any {
 		return []any{x.ID, x.Name, x.Host, x.Port, x.Username, x.Password, x.Mode, x.Status,
 			x.Version, x.UptimeSec, x.CPULoad, x.HotspotUsers, x.ActiveSessions, x.CreatedAt,
-			x.AgentTokenHash, x.TokenPreview, x.LastSeen, x.AccountID,
+			x.HotspotLoginUrl, x.AgentTokenHash, x.TokenPreview, x.LastSeen, x.AccountID,
 			x.BoardName, x.FreeHddMb, x.TotalHddMb}
 	},
 	hashOf: hashEntity[model.Router],
@@ -868,21 +941,21 @@ var hotspotUserSpec = entitySpec[model.HotspotUser]{
 	table: "hotspot_users",
 	cols: []string{"id", "kind", "username", "password", "profile_id", "profile_name",
 		"router_id", "router_name", "status", "batch_id", "reseller_id", "reseller_name",
-		"comment", "bytes_in", "bytes_out", "uptime_used_sec", "created_at", "expires_at", "used_at", "price", "account_id",
+		"comment", "bytes_in", "bytes_out", "uptime_used_sec", "created_at", "expires_at", "used_at", "price", "data_quota_mb", "account_id",
 		"selling_price", "enforced"},
 	idOf: func(x *model.HotspotUser) string { return x.ID },
 	scan: func(r *sql.Rows) (model.HotspotUser, error) {
 		var x model.HotspotUser
 		err := r.Scan(&x.ID, &x.Kind, &x.Username, &x.Password, &x.ProfileID, &x.ProfileName,
 			&x.RouterID, &x.RouterName, &x.Status, &x.BatchID, &x.ResellerID, &x.ResellerName,
-			&x.Comment, &x.BytesIn, &x.BytesOut, &x.UptimeUsedSec, &x.CreatedAt, &x.ExpiresAt, &x.UsedAt, &x.Price, &x.AccountID,
+			&x.Comment, &x.BytesIn, &x.BytesOut, &x.UptimeUsedSec, &x.CreatedAt, &x.ExpiresAt, &x.UsedAt, &x.Price, &x.DataQuotaMb, &x.AccountID,
 			&x.SellingPrice, &x.Enforced)
 		return x, err
 	},
 	args: func(x *model.HotspotUser) []any {
 		return []any{x.ID, x.Kind, x.Username, x.Password, x.ProfileID, x.ProfileName,
 			x.RouterID, x.RouterName, x.Status, x.BatchID, x.ResellerID, x.ResellerName,
-			x.Comment, x.BytesIn, x.BytesOut, x.UptimeUsedSec, x.CreatedAt, x.ExpiresAt, x.UsedAt, x.Price, x.AccountID,
+			x.Comment, x.BytesIn, x.BytesOut, x.UptimeUsedSec, x.CreatedAt, x.ExpiresAt, x.UsedAt, x.Price, x.DataQuotaMb, x.AccountID,
 			x.SellingPrice, x.Enforced}
 	},
 	hashOf: hashEntity[model.HotspotUser],
@@ -890,17 +963,17 @@ var hotspotUserSpec = entitySpec[model.HotspotUser]{
 
 var batchSpec = entitySpec[model.Batch]{
 	table: "batches",
-	cols:  []string{"id", "profile_id", "profile_name", "router_id", "router_name", "count", "unit_price", "total_cost", "channel", "reseller_id", "reseller_name", "created_at", "account_id"},
+	cols:  []string{"id", "profile_id", "profile_name", "router_id", "router_name", "count", "unit_price", "total_cost", "data_quota_mb", "channel", "reseller_id", "reseller_name", "created_at", "account_id"},
 	idOf:  func(x *model.Batch) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Batch, error) {
 		var x model.Batch
 		err := r.Scan(&x.ID, &x.ProfileID, &x.ProfileName, &x.RouterID, &x.RouterName,
-			&x.Count, &x.UnitPrice, &x.TotalCost, &x.Channel, &x.ResellerID, &x.ResellerName, &x.CreatedAt, &x.AccountID)
+			&x.Count, &x.UnitPrice, &x.TotalCost, &x.DataQuotaMb, &x.Channel, &x.ResellerID, &x.ResellerName, &x.CreatedAt, &x.AccountID)
 		return x, err
 	},
 	args: func(x *model.Batch) []any {
 		return []any{x.ID, x.ProfileID, x.ProfileName, x.RouterID, x.RouterName,
-			x.Count, x.UnitPrice, x.TotalCost, x.Channel, x.ResellerID, x.ResellerName, x.CreatedAt, x.AccountID}
+			x.Count, x.UnitPrice, x.TotalCost, x.DataQuotaMb, x.Channel, x.ResellerID, x.ResellerName, x.CreatedAt, x.AccountID}
 	},
 	hashOf: hashEntity[model.Batch],
 }
@@ -1130,6 +1203,64 @@ var trafficSpec = entitySpec[model.RouterTraffic]{
 	hashOf: hashEntity[model.RouterTraffic],
 }
 
+// notifSettingsSpec — réglages de notification par compte. id = account_id.
+// stock_alert_state est sérialisé en JSON dans une colonne TEXT (” = nil).
+var notifSettingsSpec = entitySpec[model.NotificationSettings]{
+	table: "notif_settings",
+	cols: []string{"id", "enabled", "telegram_enabled", "telegram_bot_token", "telegram_chat_id",
+		"whatsapp_enabled", "whatsapp_token", "whatsapp_phone_id", "whatsapp_to",
+		"email_enabled", "smtp_host", "smtp_port", "smtp_user", "smtp_pass", "email_to",
+		"offline_after_sec", "low_stock_threshold", "daily_report", "report_hour",
+		"last_report_date", "stock_alert_state", "account_id"},
+	idOf: func(x *model.NotificationSettings) string { return x.AccountID },
+	scan: func(r *sql.Rows) (model.NotificationSettings, error) {
+		var x model.NotificationSettings
+		var stockState string
+		err := r.Scan(&x.AccountID, &x.Enabled, &x.TelegramEnabled, &x.TelegramBotToken, &x.TelegramChatID,
+			&x.WhatsAppEnabled, &x.WhatsAppToken, &x.WhatsAppPhoneID, &x.WhatsAppTo,
+			&x.EmailEnabled, &x.SMTPHost, &x.SMTPPort, &x.SMTPUser, &x.SMTPPass, &x.EmailTo,
+			&x.OfflineAfterSec, &x.LowStockThreshold, &x.DailyReport, &x.ReportHour,
+			&x.LastReportDate, &stockState, &x.AccountID)
+		if err != nil {
+			return x, err
+		}
+		if stockState != "" {
+			_ = json.Unmarshal([]byte(stockState), &x.StockAlertState)
+		}
+		return x, nil
+	},
+	args: func(x *model.NotificationSettings) []any {
+		stockState := ""
+		if x.StockAlertState != nil {
+			if b, err := json.Marshal(x.StockAlertState); err == nil {
+				stockState = string(b)
+			}
+		}
+		return []any{x.AccountID, x.Enabled, x.TelegramEnabled, x.TelegramBotToken, x.TelegramChatID,
+			x.WhatsAppEnabled, x.WhatsAppToken, x.WhatsAppPhoneID, x.WhatsAppTo,
+			x.EmailEnabled, x.SMTPHost, x.SMTPPort, x.SMTPUser, x.SMTPPass, x.EmailTo,
+			x.OfflineAfterSec, x.LowStockThreshold, x.DailyReport, x.ReportHour,
+			x.LastReportDate, stockState, x.AccountID}
+	},
+	hashOf: hashEntity[model.NotificationSettings],
+}
+
+// notifLogSpec — historique des notifications envoyées (par compte).
+var notifLogSpec = entitySpec[model.NotificationLog]{
+	table: "notif_log",
+	cols:  []string{"id", "channel", "kind", "title", "body", "status", "error", "at", "account_id"},
+	idOf:  func(x *model.NotificationLog) string { return x.ID },
+	scan: func(r *sql.Rows) (model.NotificationLog, error) {
+		var x model.NotificationLog
+		err := r.Scan(&x.ID, &x.Channel, &x.Kind, &x.Title, &x.Body, &x.Status, &x.Error, &x.At, &x.AccountID)
+		return x, err
+	},
+	args: func(x *model.NotificationLog) []any {
+		return []any{x.ID, x.Channel, x.Kind, x.Title, x.Body, x.Status, x.Error, x.At, x.AccountID}
+	},
+	hashOf: hashEntity[model.NotificationLog],
+}
+
 // rebuildHashes — reconstruit le cache d'empreintes à partir d'un état mémoire
 // (après un Load ou un seed initial).
 func (p *PG) rebuildHashes(db *model.DB) {
@@ -1151,7 +1282,13 @@ func (p *PG) rebuildHashes(db *model.DB) {
 		ipBindingSpec.table:     hashRows(db.IPBindings, ipBindingSpec),
 		schedulerTaskSpec.table: hashRows(db.SchedulerTasks, schedulerTaskSpec),
 		trafficSpec.table:       hashRows(db.Traffic, trafficSpec),
+		notifLogSpec.table:      hashRows(db.NotifLog, notifLogSpec),
 	}
+	notifRows := make([]model.NotificationSettings, 0, len(db.NotifSettings))
+	for _, v := range db.NotifSettings {
+		notifRows = append(notifRows, v)
+	}
+	p.hashes[notifSettingsSpec.table] = hashRows(notifRows, notifSettingsSpec)
 }
 
 // hashRows — empreintes indexées par id.

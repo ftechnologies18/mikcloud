@@ -79,6 +79,8 @@ export interface RouterDevice {
   freeHddMb?: number;
   /** F8 : espace disque total en Mo (0 = inconnu). */
   totalHddMb?: number;
+  /** Page de login du hotspot (optionnel) — cible des QR codes imprimés sur les vouchers. */
+  hotspotLoginUrl?: string;
 }
 
 /** Réponse de création d'un routeur en mode agent (script + token à copier). */
@@ -169,6 +171,8 @@ export interface HotspotUser {
   price: number;
   /** F13 : prix de vente copié du profil à la génération ({{price}} du voucher = sellingPrice || price). */
   sellingPrice?: number;
+  /** Quota data appliqué sur le routeur (limit-bytes-total, en Mo ; 0 = illimité). */
+  dataQuotaMb: number;
 }
 
 export interface PagedUsers {
@@ -214,6 +218,8 @@ export interface PagedUserLogs {
   page: number;
   pageSize: number;
 }
+/** Mode utilisateur des vouchers généré (« User Mode » du User Manager MikroTik). */
+export type VoucherUserMode = "userpass" | "same";
 
 export interface GenerateVouchersRequest {
   count: number;
@@ -222,6 +228,14 @@ export interface GenerateVouchersRequest {
   prefix?: string;
   codeLength?: number;
   resellerId?: string;
+  /** « userpass » (défaut) ou « same » : mot de passe = nom d'utilisateur. */
+  userMode?: VoucherUserMode;
+  /** Preset de caractères : "" (MikCloud sûr) | abc | ABC | aBc | 5ab | 5AB | 5aB. */
+  charset?: string;
+  /** Commentaire libre inscrit sur le routeur avec le n° de lot (64 car. max). */
+  comment?: string;
+  /** Quota data par voucher en Mo : undefined = hériter du profil, 0 = illimité, >0 = plafond. */
+  dataQuotaMb?: number;
 }
 
 export interface GenerateVouchersResponse {
@@ -300,6 +314,8 @@ export interface Batch {
   count: number;
   unitPrice: number;
   totalCost: number;
+  /** Quota data porté par chaque voucher du lot (Mo, 0 = illimité). */
+  dataQuotaMb: number;
   channel: SaleChannel;
   resellerId: string;
   resellerName: string;
@@ -389,6 +405,55 @@ export interface ReportsMargin {
 }
 
 export type ExpiryPolicyMode = "keep" | "remove";
+
+/* ─── Notifications (GET/PUT /api/notifications, POST /api/notifications/test) ─── */
+
+/** Réglages du module Notifications. Les secrets ne sont jamais renvoyés : les
+ * champs « *Set » indiquent uniquement qu'une valeur est déjà configurée côté serveur. */
+export interface NotifSettings {
+  /** Interrupteur général : aucune notification n'est envoyée s'il est désactivé. */
+  enabled: boolean;
+  // Telegram
+  telegramEnabled: boolean;
+  telegramBotTokenSet: boolean;
+  telegramChatId: string;
+  // WhatsApp Cloud API (Meta)
+  whatsappEnabled: boolean;
+  whatsappTokenSet: boolean;
+  whatsappPhoneId: string;
+  /** Numéro destinataire, format international sans « + » ni espaces (ex. 2250700000000). */
+  whatsappTo: string;
+  // Email SMTP
+  emailEnabled: boolean;
+  smtpHost: string;
+  smtpPort: number;
+  smtpUser: string;
+  smtpPassSet: boolean;
+  emailTo: string;
+  // Règles d'alerte
+  /** Routeur considéré hors ligne après N secondes sans check-in (défaut 135 = 3 × 45 s). */
+  offlineAfterSec: number;
+  /** Alerte quand le stock de vouchers actifs passe sous ce seuil (défaut 25). */
+  lowStockThreshold: number;
+  /** Rapport quotidien — ventes du jour, nouveaux utilisateurs, routeurs en ligne, stock restant. */
+  dailyReport: boolean;
+  /** Heure d'envoi du rapport, 0-23 UTC (= heure d'Abidjan, GMT+0). */
+  reportHour: number;
+}
+
+/** Canal de notification (corps de POST /api/notifications/test). */
+export type NotifChannel = "telegram" | "whatsapp" | "email";
+
+/** Entrée d'historique (GET /api/notifications/log — 50 plus récentes d'abord). */
+export interface NotifLogEntry {
+  id: string;
+  channel: NotifChannel | "system";
+  kind: "router_offline" | "router_back" | "low_stock" | "daily_report" | "test" | "settings";
+  title: string;
+  status: "sent" | "error";
+  error: string;
+  at: string; // RFC3339
+}
 
 export interface AppSettings {
   tenant: {
@@ -565,4 +630,5 @@ export type ViewId =
   | "reports"
   | "logs"
   | "accounts"
+  | "notifications"
   | "settings";

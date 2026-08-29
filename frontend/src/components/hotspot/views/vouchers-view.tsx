@@ -14,11 +14,14 @@ import {
   Clock,
   Copy,
   Eye,
+  Gauge,
   Layers,
   Loader2,
   MoreHorizontal,
   Printer,
+  QrCode,
   Search,
+  SlidersHorizontal,
   Ticket,
   TicketPlus,
   Trash2,
@@ -65,7 +68,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/hotspot/empty-state";
 import { LoadingCards, LoadingRows } from "@/components/hotspot/loading";
 import { PageHeader } from "@/components/hotspot/page-header";
@@ -75,9 +78,10 @@ import { useCurrency, useSettings } from "@/components/hotspot/parts/sd-currency
 import { copyToClipboard } from "@/components/hotspot/parts/uc-clipboard";
 import { PasswordCell } from "@/components/hotspot/parts/uc-password-cell";
 import { LAST_BATCH_STORAGE_KEY, UcPrintDialog } from "@/components/hotspot/parts/uc-print-dialog";
+import { VoucherA4PrintDialog } from "@/components/hotspot/parts/voucher-a4-print-dialog";
 import { api } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
-import { formatCurrency, formatDate, formatDuration } from "@/lib/hotspot/format";
+import { formatBytes, formatCurrency, formatDate, formatDuration } from "@/lib/hotspot/format";
 import type {
   BatchWithStats,
   GenerateVouchersRequest,
@@ -94,7 +98,43 @@ import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 12;
 const BATCH_PAGE_SIZE = 10;
-const CODE_LENGTHS = [5, 6, 8, 10];
+// 4 caractères comme le User Manager MikroTik, jusqu'à 10 (alphabets sans
+// caractères ambigus côté serveur).
+const CODE_LENGTHS = [4, 5, 6, 7, 8, 9, 10];
+
+// Jeux de caractères — presets du User Manager MikroTik (« abcd », « ABCD »,
+// « aBcD », « 5ab2c34d », « 5AB2C34D », « 5aB2c34D »). Le serveur exclut
+// toujours 0/1/I/L/O : les codes restent lisibles sur un ticket imprimé.
+const CHARSET_OPTIONS = [
+  { value: "mikcloud", label: "MikCloud (recommandé)" },
+  { value: "abc", label: "abcd — minuscules" },
+  { value: "ABC", label: "ABCD — majuscules" },
+  { value: "aBc", label: "aBcD — lettres (min + maj)" },
+  { value: "5ab", label: "5ab2c34d — chiffres + minuscules" },
+  { value: "5AB", label: "5AB2C34D — chiffres + majuscules" },
+  { value: "5aB", label: "5aB2c34D — chiffres + lettres" },
+];
+
+// Quotas courants (1 Go = 1024 Mo) — l'argument « 5 Go = 500 F ».
+const QUOTA_OPTIONS = [
+  { value: "0", label: "Illimité (pas de plafond data)" },
+  { value: "512", label: "512 Mo" },
+  { value: "1024", label: "1 Go" },
+  { value: "2048", label: "2 Go" },
+  { value: "5120", label: "5 Go" },
+  { value: "10240", label: "10 Go" },
+  { value: "20480", label: "20 Go" },
+  { value: "51200", label: "50 Go" },
+];
+
+// Repères de prix FCFA pour vendre au quota (le prix réel reste celui du profil).
+const QUOTA_PRICE_HINTS: [string, string][] = [
+  ["1 Go", "100 F"],
+  ["2 Go", "200 F"],
+  ["5 Go", "500 F"],
+  ["10 Go", "1 000 F"],
+  ["30 Go", "3 000 F"],
+];
 
 const STATUS_OPTIONS = [
   { value: "all", labelKey: "common.allStatuses" },
@@ -158,13 +198,25 @@ export default function VouchersView() {
   const [genPrefix, setGenPrefix] = useState("");
   const [genCodeLength, setGenCodeLength] = useState("6");
   const [genResellerId, setGenResellerId] = useState("none");
+  // Génération avancée (style User Manager MikroTik) : mode utilisateur, jeu de
+  // caractères, commentaire libre et quota data (« 5 Go = 500 F »).
+  const [genUserMode, setGenUserMode] = useState<"userpass" | "same">("userpass");
+  const [genCharset, setGenCharset] = useState("mikcloud");
+  const [genComment, setGenComment] = useState("");
+  const [genQuotaMb, setGenQuotaMb] = useState("inherit");
 
-  // Impression
+  // Impression (liste simple — ancien dialog)
   const [printOpen, setPrintOpen] = useState(false);
   const [printVouchers, setPrintVouchers] = useState<HotspotUser[]>([]);
   const [printTitle, setPrintTitle] = useState("");
   /** Lot en cours d'impression (F12) — mémorisé à l'impression par le dialog. */
   const [printBatchId, setPrintBatchId] = useState<string | undefined>(undefined);
+
+  // Impression A4 + QR (flux revendeur « imprimer → vendre »)
+  const [a4Open, setA4Open] = useState(false);
+  const [a4Vouchers, setA4Vouchers] = useState<HotspotUser[]>([]);
+  const [a4Title, setA4Title] = useState("");
+  const [a4HotspotUrl, setA4HotspotUrl] = useState<string | undefined>(undefined);
 
   // Suppression
   const [deleting, setDeleting] = useState<HotspotUser | null>(null);
@@ -255,13 +307,22 @@ export default function VouchersView() {
     setPrintOpen(true);
   }
 
-  // Aperçu coût du générateur
+  // Aperçu coût + quota du générateur
   const countNum = parseInt(genCount, 10);
   const countValid = Number.isInteger(countNum) && countNum >= 1 && countNum <= 500;
   const selectedGenProfile = profiles?.find((p) => p.id === genProfileId);
   const selectedReseller = resellers?.find((r) => r.id === genResellerId);
   const unitPrice = selectedGenProfile?.price ?? 0;
   const totalCost = (countValid ? countNum : 0) * unitPrice;
+  // Quota effectif affiché : hérité du profil ou choisi dans l'onglet Limites.
+  const effectiveQuotaMb =
+    genQuotaMb === "inherit" ? (selectedGenProfile?.dataQuotaMb ?? 0) : Number(genQuotaMb);
+  const quotaLabel =
+    effectiveQuotaMb > 0
+      ? formatBytes(effectiveQuotaMb * 1048576)
+      : genQuotaMb === "inherit" && !selectedGenProfile
+        ? "Héritera du profil"
+        : "Illimité";
   const creditAfter = selectedReseller ? selectedReseller.credit - totalCost : null;
   const insufficient = creditAfter !== null && creditAfter < 0;
 
@@ -318,6 +379,7 @@ export default function VouchersView() {
 
   const [deletingBatch, setDeletingBatch] = useState<BatchWithStats | null>(null);
   const [printingBatchId, setPrintingBatchId] = useState<string | null>(null);
+  const [a4BatchId, setA4BatchId] = useState<string | null>(null);
 
   const batchDeleteMutation = useMutation({
     mutationFn: (batch: BatchWithStats) =>
@@ -342,7 +404,7 @@ export default function VouchersView() {
     setTab("vouchers");
   }
 
-  // « Imprimer le lot » : charge les vouchers restants du lot puis ouvre l'impression.
+  // « Imprimer le lot » (liste simple) : charge les vouchers restants du lot puis ouvre l'ancien dialog.
   async function printBatch(batch: BatchWithStats) {
     setPrintingBatchId(batch.id);
     try {
@@ -402,6 +464,30 @@ export default function VouchersView() {
     }
   }
 
+  // « Imprimer A4 + QR » : charge les vouchers ACTIFS (invendus, prêts à la vente) du lot
+  // puis ouvre le dialog A4 (20 tickets/page, QR vers la page de login du hotspot).
+  async function printBatchA4(batch: BatchWithStats) {
+    setA4BatchId(batch.id);
+    try {
+      const res = await api<PagedUsers>("/api/vouchers", {
+        params: { search: batch.id, page: 1, pageSize: 500 },
+      });
+      const printable = res.data.filter((v) => v.status === "active");
+      if (printable.length === 0) {
+        toast.info(`Lot #${shortBatch(batch.id)} : plus aucun voucher disponible à imprimer dans ce lot.`);
+        return;
+      }
+      setA4Vouchers(printable);
+      setA4Title(`Lot #${shortBatch(batch.id)} — ${printable.length} tickets`);
+      setA4HotspotUrl(routers?.find((r) => r.id === batch.routerId)?.hotspotLoginUrl);
+      setA4Open(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Impression impossible");
+    } finally {
+      setA4BatchId(null);
+    }
+  }
+
   const genValid = countValid && genProfileId !== "" && genRouterId !== "" && !insufficient;
 
   function submitGenerate() {
@@ -413,6 +499,10 @@ export default function VouchersView() {
       prefix: genPrefix.trim() || undefined,
       codeLength: Number(genCodeLength),
       resellerId: genResellerId === "none" ? undefined : genResellerId,
+      userMode: genUserMode === "same" ? "same" : undefined,
+      charset: genCharset && genCharset !== "mikcloud" ? genCharset : undefined,
+      comment: genComment.trim() || undefined,
+      dataQuotaMb: genQuotaMb === "inherit" ? undefined : Number(genQuotaMb),
     });
   }
 
@@ -552,6 +642,7 @@ export default function VouchersView() {
                     <TableHead className="pl-4 text-muted-foreground sm:pl-6">{t("vouchers.code")}</TableHead>
                     <TableHead className="text-muted-foreground">{t("common.password")}</TableHead>
                     <TableHead className="text-muted-foreground">{t("common.profile")}</TableHead>
+                    <TableHead className="hidden text-muted-foreground md:table-cell">{t("vouchers.quota")}</TableHead>
                     <TableHead className="text-right text-muted-foreground">{t("common.price")}</TableHead>
                     <TableHead className="text-muted-foreground">{t("common.status")}</TableHead>
                     <TableHead className="hidden text-muted-foreground md:table-cell">{t("common.reseller")}</TableHead>
@@ -594,6 +685,15 @@ export default function VouchersView() {
                         <Badge variant="outline" className="max-w-36 truncate">
                           {voucher.profileName}
                         </Badge>
+                      </TableCell>
+                      <TableCell className="hidden md:table-cell">
+                        {voucher.dataQuotaMb > 0 ? (
+                          <span className="text-sm tabular-nums">
+                            {formatBytes(voucher.dataQuotaMb * 1048576)}
+                          </span>
+                        ) : (
+                          <span className="text-sm text-muted-foreground">—</span>
+                        )}
                       </TableCell>
                       <TableCell className="text-right font-medium tabular-nums">
                         {formatCurrency(voucher.price, currency, lang)}
@@ -795,6 +895,11 @@ export default function VouchersView() {
                               <Badge variant="outline" className="max-w-36 truncate">
                                 {batch.profileName}
                               </Badge>
+                              {batch.dataQuotaMb > 0 && (
+                                <p className="mt-0.5 text-xs text-muted-foreground">
+                                  {formatBytes(batch.dataQuotaMb * 1048576)} / voucher
+                                </p>
+                              )}
                             </TableCell>
                             <TableCell className="hidden max-w-40 truncate text-muted-foreground md:table-cell">
                               {batch.routerName}
@@ -825,45 +930,75 @@ export default function VouchersView() {
                               {formatCurrency(batch.totalCost, currency, lang)}
                             </TableCell>
                             <TableCell className="pr-4 text-right sm:pr-6">
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="size-10 text-muted-foreground hover:text-foreground"
-                                    aria-label={tf("vouchers.batches.actionsFor", { batch: batch.id })}
-                                  >
-                                    <MoreHorizontal className="size-4" />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end" className="w-60">
-                                  <DropdownMenuItem className="min-h-10" onClick={() => viewBatchVouchers(batch)}>
-                                    <Eye className="size-4" />
-                                    {t("vouchers.batches.view")}
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    className="min-h-10"
-                                    disabled={printingBatchId === batch.id}
-                                    onClick={() => void printBatch(batch)}
-                                  >
-                                    {printingBatchId === batch.id ? (
-                                      <Loader2 className="size-4 animate-spin" />
-                                    ) : (
-                                      <Printer className="size-4" />
-                                    )}
-                                    {t("vouchers.batches.print")}
-                                  </DropdownMenuItem>
-                                  <DropdownMenuSeparator />
-                                  <DropdownMenuItem
-                                    variant="destructive"
-                                    className="min-h-10"
-                                    onClick={() => setDeletingBatch(batch)}
-                                  >
-                                    <Trash2 className="size-4" />
-                                    {t("common.deleteBatch")}
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
+                              <div className="flex items-center justify-end gap-1.5">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-10 gap-1.5 px-2.5"
+                                  disabled={a4BatchId === batch.id}
+                                  onClick={() => void printBatchA4(batch)}
+                                  aria-label={`Imprimer A4 + QR les vouchers actifs du lot ${batch.id}`}
+                                  title="Imprimer A4 + QR — vouchers actifs à vendre (20 par page)"
+                                >
+                                  {a4BatchId === batch.id ? (
+                                    <Loader2 className="size-4 animate-spin" />
+                                  ) : (
+                                    <QrCode className="size-4" />
+                                  )}
+                                  <span className="hidden sm:inline">A4 + QR</span>
+                                </Button>
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="size-10 text-muted-foreground hover:text-foreground"
+                                      aria-label={`Actions pour le lot ${batch.id}`}
+                                    >
+                                      <MoreHorizontal className="size-4" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end" className="w-60">
+                                    <DropdownMenuItem
+                                      className="min-h-10"
+                                      disabled={a4BatchId === batch.id}
+                                      onClick={() => void printBatchA4(batch)}
+                                    >
+                                      {a4BatchId === batch.id ? (
+                                        <Loader2 className="size-4 animate-spin" />
+                                      ) : (
+                                        <QrCode className="size-4" />
+                                      )}
+                                      Imprimer A4 + QR
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem className="min-h-10" onClick={() => viewBatchVouchers(batch)}>
+                                      <Eye className="size-4" />
+                                      Voir les vouchers
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      className="min-h-10"
+                                      disabled={printingBatchId === batch.id}
+                                      onClick={() => void printBatch(batch)}
+                                    >
+                                      {printingBatchId === batch.id ? (
+                                        <Loader2 className="size-4 animate-spin" />
+                                      ) : (
+                                        <Printer className="size-4" />
+                                      )}
+                                      Imprimer (liste simple)
+                                    </DropdownMenuItem>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem
+                                      variant="destructive"
+                                      className="min-h-10"
+                                      onClick={() => setDeletingBatch(batch)}
+                                    >
+                                      <Trash2 className="size-4" />
+                                      Supprimer le lot
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </div>
                             </TableCell>
                           </TableRow>
                         );
@@ -910,7 +1045,7 @@ export default function VouchersView() {
 
       {/* Dialogue générateur */}
       <Dialog open={genOpen} onOpenChange={setGenOpen}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>{t("vouchers.generateTitle")}</DialogTitle>
             <DialogDescription>{t("vouchers.generateDesc")}</DialogDescription>
@@ -923,83 +1058,97 @@ export default function VouchersView() {
               submitGenerate();
             }}
           >
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="grid gap-2">
-                <Label htmlFor="gen-count">{t("vouchers.count")}</Label>
-                <Input
-                  id="gen-count"
-                  type="number"
-                  min={1}
-                  max={500}
-                  value={genCount}
-                  onChange={(event) => setGenCount(event.target.value)}
-                  disabled={generateMutation.isPending}
-                  aria-invalid={!countValid}
-                />
-                <p className="text-xs text-muted-foreground">{t("vouchers.countHint")}</p>
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="gen-profile">{t("common.profile")}</Label>
-                <Select
-                  value={genProfileId}
-                  onValueChange={setGenProfileId}
-                  disabled={generateMutation.isPending}
-                >
-                  <SelectTrigger id="gen-profile" className="h-10 w-full">
-                    <SelectValue placeholder={t("common.selectProfile")} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {profiles?.map((profile) => (
-                      <SelectItem key={profile.id} value={profile.id}>
-                        {profile.name} — {formatCurrency(profile.price, currency, lang)} ·{" "}
-                        {formatDuration(profile.sessionTimeoutMin * 60)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
+            {/* Deux onglets comme le User Manager MikroTik : Général / Limites */}
+            <Tabs defaultValue="general">
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="general" className="gap-1.5">
+                  <SlidersHorizontal className="size-3.5" aria-hidden />
+                  Général
+                </TabsTrigger>
+                <TabsTrigger value="limits" className="gap-1.5">
+                  <Gauge className="size-3.5" aria-hidden />
+                  Limites
+                </TabsTrigger>
+              </TabsList>
 
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="grid gap-2">
-                <Label htmlFor="gen-router">{t("common.router")}</Label>
-                <Select
-                  value={genRouterId}
-                  onValueChange={setGenRouterId}
-                  disabled={generateMutation.isPending}
-                >
-                  <SelectTrigger id="gen-router" className="h-10 w-full">
-                    <SelectValue placeholder={t("common.selectRouter")} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {routers?.map((router) => (
-                      <SelectItem key={router.id} value={router.id}>
-                        {router.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="gen-code-length">{t("vouchers.codeLength")}</Label>
-                <Select
-                  value={genCodeLength}
-                  onValueChange={setGenCodeLength}
-                  disabled={generateMutation.isPending}
-                >
-                  <SelectTrigger id="gen-code-length" className="h-10 w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {CODE_LENGTHS.map((length) => (
-                      <SelectItem key={length} value={String(length)}>
-                        {tf("vouchers.codeLengthUnit", { n: length })}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
+              <TabsContent value="general" className="mt-4 grid gap-4">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="grid gap-2">
+                    <Label htmlFor="gen-count">Nombre de vouchers</Label>
+                    <Input
+                      id="gen-count"
+                      type="number"
+                      min={1}
+                      max={500}
+                      value={genCount}
+                      onChange={(event) => setGenCount(event.target.value)}
+                      disabled={generateMutation.isPending}
+                      aria-invalid={!countValid}
+                    />
+                    <p className="text-xs text-muted-foreground">Entre 1 et 500 tickets.</p>
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="gen-profile">Profil (prix de vente)</Label>
+                    <Select
+                      value={genProfileId}
+                      onValueChange={setGenProfileId}
+                      disabled={generateMutation.isPending}
+                    >
+                      <SelectTrigger id="gen-profile" className="h-10 w-full">
+                        <SelectValue placeholder="Sélectionner un profil" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {profiles?.map((profile) => (
+                          <SelectItem key={profile.id} value={profile.id}>
+                            {profile.name} — {formatCurrency(profile.price, currency)} ·{" "}
+                            {formatDuration(profile.sessionTimeoutMin * 60)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="grid gap-2">
+                    <Label htmlFor="gen-router">Routeur (serveur hotspot)</Label>
+                    <Select
+                      value={genRouterId}
+                      onValueChange={setGenRouterId}
+                      disabled={generateMutation.isPending}
+                    >
+                      <SelectTrigger id="gen-router" className="h-10 w-full">
+                        <SelectValue placeholder="Sélectionner un routeur" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {routers?.map((router) => (
+                          <SelectItem key={router.id} value={router.id}>
+                            {router.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="gen-code-length">Longueur du code</Label>
+                    <Select
+                      value={genCodeLength}
+                      onValueChange={setGenCodeLength}
+                      disabled={generateMutation.isPending}
+                    >
+                      <SelectTrigger id="gen-code-length" className="h-10 w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {CODE_LENGTHS.map((length) => (
+                          <SelectItem key={length} value={String(length)}>
+                            {length} caractères
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="grid gap-2">
@@ -1037,7 +1186,145 @@ export default function VouchersView() {
               </div>
             </div>
 
-            {/* Aperçu du coût en temps réel */}
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="grid gap-2">
+                    <Label htmlFor="gen-user-mode">Mode utilisateur</Label>
+                    <Select
+                      value={genUserMode}
+                      onValueChange={(value) => setGenUserMode(value as "userpass" | "same")}
+                      disabled={generateMutation.isPending}
+                    >
+                      <SelectTrigger id="gen-user-mode" className="h-10 w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="userpass">Nom d'utilisateur & mot de passe</SelectItem>
+                        <SelectItem value="same">Mot de passe = nom d'utilisateur</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="gen-charset">Jeu de caractères</Label>
+                    <Select
+                      value={genCharset}
+                      onValueChange={setGenCharset}
+                      disabled={generateMutation.isPending}
+                    >
+                      <SelectTrigger id="gen-charset" className="h-10 w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {CHARSET_OPTIONS.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="grid gap-2">
+                    <Label htmlFor="gen-prefix">Préfixe (optionnel)</Label>
+                    <Input
+                      id="gen-prefix"
+                      placeholder="SC-"
+                      value={genPrefix}
+                      onChange={(event) => setGenPrefix(event.target.value)}
+                      disabled={generateMutation.isPending}
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="gen-reseller">Revendeur</Label>
+                    <Select
+                      value={genResellerId}
+                      onValueChange={setGenResellerId}
+                      disabled={generateMutation.isPending}
+                    >
+                      <SelectTrigger id="gen-reseller" className="h-10 w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Aucun (vente directe)</SelectItem>
+                        {resellers?.map((reseller) => (
+                          <SelectItem key={reseller.id} value={reseller.id}>
+                            {reseller.name} — crédit {formatCurrency(reseller.credit, currency)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="grid gap-2">
+                  <Label htmlFor="gen-comment">Commentaire (optionnel)</Label>
+                  <Input
+                    id="gen-comment"
+                    placeholder="Ex. kiosque gare, lot revendeur…"
+                    value={genComment}
+                    onChange={(event) => setGenComment(event.target.value)}
+                    disabled={generateMutation.isPending}
+                    maxLength={64}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Inscrit sur le routeur avec le n° de lot (64 caractères max).
+                  </p>
+                </div>
+              </TabsContent>
+
+              <TabsContent value="limits" className="mt-4 grid gap-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="gen-quota">Quota de données par voucher</Label>
+                  <Select
+                    value={genQuotaMb}
+                    onValueChange={setGenQuotaMb}
+                    disabled={generateMutation.isPending}
+                  >
+                    <SelectTrigger id="gen-quota" className="h-10 w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="inherit">
+                        Hériter du profil
+                        {selectedGenProfile
+                          ? ` (${
+                              selectedGenProfile.dataQuotaMb > 0
+                                ? formatBytes(selectedGenProfile.dataQuotaMb * 1048576)
+                                : "illimité"
+                            })`
+                          : ""}
+                      </SelectItem>
+                      {QUOTA_OPTIONS.map((quota) => (
+                        <SelectItem key={quota.value} value={quota.value}>
+                          {quota.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Le routeur coupe la connexion quand le quota est épuisé (limit-bytes-total).
+                  </p>
+                </div>
+
+                {/* Repères FCFA — l'argument « 5 Go = 500 F », lisible d'un coup d'œil */}
+                <div className="rounded-lg border bg-background p-3">
+                  <p className="text-sm font-medium">Repères FCFA du marché</p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {QUOTA_PRICE_HINTS.map(([quota, price]) => (
+                      <Badge key={quota} variant="secondary" className="font-mono text-xs">
+                        {quota} = {price}
+                      </Badge>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Le prix de vente reste celui du profil — alignez-le sur le quota choisi.
+                  </p>
+                </div>
+              </TabsContent>
+            </Tabs>
+
+            {/* Aperçu du coût et du quota en temps réel */}
             <div className="rounded-lg bg-muted/50 p-3 text-sm">
               <p>
                 {t("vouchers.totalCost")}{" "}
@@ -1048,6 +1335,11 @@ export default function VouchersView() {
                     price: formatCurrency(unitPrice, currency, lang),
                   })}
                 </span>
+              </p>
+              <p className="mt-1 text-muted-foreground">
+                Quota par voucher :{" "}
+                <span className="font-medium text-foreground">{quotaLabel}</span>
+                {selectedGenProfile && ` · Profil : ${selectedGenProfile.name}`}
               </p>
               {selectedReseller && (
                 <p
@@ -1099,6 +1391,16 @@ export default function VouchersView() {
         profiles={profiles ?? []}
         templates={templates ?? []}
         batchId={printBatchId}
+      />
+
+      {/* Dialogue d'impression A4 + QR (flux revendeur — lots) */}
+      <VoucherA4PrintDialog
+        open={a4Open}
+        onOpenChange={setA4Open}
+        vouchers={a4Vouchers}
+        title={a4Title}
+        tenantName={tenantName}
+        hotspotLoginUrl={a4HotspotUrl}
       />
 
       {/* Confirmation suppression voucher */}

@@ -106,6 +106,7 @@ function buildSampleVoucher(num: number, profile: Profile | undefined): HotspotU
     routerId: "",
     routerName: "Routeur principal",
     status: "active",
+    dataQuotaMb: profile?.dataQuotaMb ?? 0,
     batchId: "",
     resellerId: "",
     resellerName: "",

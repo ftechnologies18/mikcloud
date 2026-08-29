@@ -1,6 +1,6 @@
-# SpotCloud — Hotspot API (backend Go)
+# MikCloud — Hotspot API (backend Go)
 
-Backend de la plateforme **SpotCloud** : gestion professionnelle de hotspot MikroTik
+Backend de la plateforme **MikCloud** : gestion professionnelle de hotspot MikroTik
 (vouchers, utilisateurs, profils, sessions temps réel, revendeurs avec portefeuille).
 
 - **100 % stdlib Go** (zéro dépendance externe) → binaire unique, déploiement trivial.
@@ -23,7 +23,7 @@ Variables d'environnement :
 | ----------- | -------------------- | ---------------------------------- |
 | `PORT`      | `4000`               | Port d'écoute HTTP                 |
 | `DATA_DIR`  | `data`               | Dossier du fichier `db.json`       |
-| `JWT_SECRET`| `spotcloud-dev-secret` | Secret de signature des tokens   |
+| `JWT_SECRET`| `mikcloud-dev-secret` | Secret de signature des tokens   |
 
 Compte démo (seed) : **admin / admin123**. `POST /api/admin/reset` régénère les données de démo.
 
@@ -47,7 +47,7 @@ Compte démo (seed) : **admin / admin123**. `POST /api/admin/reset` régénère 
 
 1. Winbox → **IP → Services** → activer **api** (port 8728).
 2. **System → Users** → créer un utilisateur API avec le groupe **full**.
-3. Dans SpotCloud → Routeurs → *Ajouter* : IP du routeur, port 8728, identifiants, mode **Réel**.
+3. Dans MikCloud → Routeurs → *Ajouter* : IP du routeur, port 8728, identifiants, mode **Réel**.
 
 Le client dialogue alors en direct avec le routeur : création/suppression d'utilisateurs
 hotspot, activation/désactivation, sessions actives et déconnexion, supervision CPU/mémoire.
@@ -69,6 +69,6 @@ hotspot, activation/désactivation, sessions actives et déconnexion, supervisio
 ## Docker
 
 ```bash
-docker build -t spotcloud-api .
-docker run -d -p 4000:4000 -v spotcloud-data:/app/data spotcloud-api
+docker build -t mikcloud-api .
+docker run -d -p 4000:4000 -v mikcloud-data:/app/data mikcloud-api
 ```

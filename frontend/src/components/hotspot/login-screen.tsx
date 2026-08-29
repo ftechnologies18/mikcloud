@@ -54,7 +54,7 @@ export default function LoginScreen() {
               <div className="flex size-14 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-chart-2 shadow-lg shadow-primary/20">
                 <Wifi className="size-7 text-white" />
               </div>
-              <h1 className="mt-4 text-2xl font-semibold tracking-tight">SpotCloud</h1>
+              <h1 className="mt-4 text-2xl font-semibold tracking-tight">MikCloud</h1>
               <p className="mt-1 text-sm text-muted-foreground">Gestion Hotspot Cloud MikroTik</p>
             </div>
 
@@ -112,7 +112,7 @@ export default function LoginScreen() {
         </Card>
 
         <p className="mt-6 text-center text-xs text-muted-foreground">
-          © 2025 SpotCloud — Connectez vos routeurs MikroTik en toute simplicité
+          © 2025 MikCloud — Connectez vos routeurs MikroTik en toute simplicité
         </p>
       </motion.div>
     </div>

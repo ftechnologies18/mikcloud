@@ -99,7 +99,7 @@ function shortBatch(batchId: string): string {
 export default function VouchersView() {
   const currency = useCurrency();
   const { data: settings } = useSettings();
-  const tenantName = settings?.tenant.name || "SpotCloud";
+  const tenantName = settings?.tenant.name || "MikCloud";
   const queryClient = useQueryClient();
 
   // Filtres de la table (recherche avec debounce ~400 ms)

@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"spotcloud/hotspot-api/internal/model"
-	"spotcloud/hotspot-api/internal/store"
+	"mikcloud/hotspot-api/internal/model"
+	"mikcloud/hotspot-api/internal/store"
 )
 
 // TestResult — résultat d'un test de connexion (latence + version).

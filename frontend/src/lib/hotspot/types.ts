@@ -1,4 +1,4 @@
-// Types partagés SpotCloud — alignés sur le contrat API Go (voir worklog.md)
+// Types partagés MikCloud — alignés sur le contrat API Go (voir worklog.md)
 
 export type RouterMode = "simulated" | "real";
 export type RouterStatus = "online" | "offline";

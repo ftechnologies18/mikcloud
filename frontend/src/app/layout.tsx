@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "SpotCloud — Gestion Hotspot MikroTik",
+  title: "MikCloud — Gestion Hotspot MikroTik",
   description:
     "Plateforme cloud de gestion professionnelle de hotspot MikroTik : vouchers, utilisateurs, profils, sessions temps réel et revendeurs.",
   keywords: ["MikroTik", "hotspot", "RouterOS", "vouchers", "wifi", "billing"],

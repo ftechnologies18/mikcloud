@@ -73,7 +73,7 @@ export default function SettingsView() {
   if (isLoading || !data) {
     return (
       <div className="space-y-4 sm:space-y-6">
-        <PageHeader title="Paramètres" description="Configuration de votre espace SpotCloud" />
+        <PageHeader title="Paramètres" description="Configuration de votre espace MikCloud" />
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3 lg:gap-6">
           <Skeleton className="h-96 rounded-xl lg:col-span-2" />
           <Skeleton className="h-96 rounded-xl" />
@@ -86,7 +86,7 @@ export default function SettingsView() {
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      <PageHeader title="Paramètres" description="Configuration de votre espace SpotCloud" />
+      <PageHeader title="Paramètres" description="Configuration de votre espace MikCloud" />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3 lg:gap-6">
         {/* Organisation */}
@@ -115,7 +115,7 @@ export default function SettingsView() {
                 </li>
               ))}
             </ul>
-            <p className="mt-5 text-xs text-muted-foreground">Plan actuel — SpotCloud Pro</p>
+            <p className="mt-5 text-xs text-muted-foreground">Plan actuel — MikCloud Pro</p>
           </CardContent>
         </Card>
 
@@ -128,7 +128,7 @@ export default function SettingsView() {
               </span>
               Connecter un vrai routeur MikroTik
             </CardTitle>
-            <CardDescription>Trois étapes pour brancher SpotCloud sur votre matériel.</CardDescription>
+            <CardDescription>Trois étapes pour brancher MikCloud sur votre matériel.</CardDescription>
           </CardHeader>
           <CardContent className="px-4 sm:px-6">
             <ol className="grid gap-4 sm:grid-cols-3">
@@ -145,7 +145,7 @@ export default function SettingsView() {
               ))}
             </ol>
             <p className="mt-4 text-xs text-muted-foreground">
-              Le mode Simulé permet de découvrir SpotCloud sans matériel.
+              Le mode Simulé permet de découvrir MikCloud sans matériel.
             </p>
           </CardContent>
         </Card>

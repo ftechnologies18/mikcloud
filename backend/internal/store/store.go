@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"spotcloud/hotspot-api/internal/model"
+	"mikcloud/hotspot-api/internal/model"
 )
 
 // Store — base de données en mémoire protégée par un mutex global,

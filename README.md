@@ -1,11 +1,11 @@
-# SpotCloud — Monorepo
+# MikCloud — Monorepo
 
 **Plateforme SaaS de gestion professionnelle de hotspot MikroTik** (alternative
 moderne à Mikhmon) : cloud multi-routeurs, revendeurs avec portefeuille de crédits,
 vouchers imprimables et supervision temps réel.
 
 ```
-spotcloud/
+mikcloud/
 ├── backend/    → API Go (100 % stdlib) — à déployer sur Render
 └── frontend/   → Next.js 16 + Tailwind 4 + shadcn/ui — à déployer sur Vercel
 ```
@@ -54,7 +54,7 @@ Le frontend appelle le backend via `NEXT_PUBLIC_API_BASE` si défini
 ### Connecter un vrai routeur MikroTik
 1. Winbox → **IP → Services** → activer **api** (port 8728).
 2. **System → Users** → créer un utilisateur API (groupe *full*).
-3. SpotCloud → **Routeurs → Ajouter** : IP, port 8728, identifiants, mode **Réel**.
+3. MikCloud → **Routeurs → Ajouter** : IP, port 8728, identifiants, mode **Réel**.
 
 Le client RouterOS parle le **protocole binaire natif** (login v6.43+ et fallback
 challenge MD5) — aucun agent à installer sur le routeur. Un **mode Simulé**
@@ -78,4 +78,4 @@ Documentation détaillée du backend : [`backend/README.md`](backend/README.md).
 
 ## Licence
 
-© 2025 SpotCloud — ftechnologies18
+© 2025 MikCloud — ftechnologies18

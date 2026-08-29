@@ -13,10 +13,10 @@ import (
 	"sync"
 	"time"
 
-	"spotcloud/hotspot-api/internal/auth"
-	"spotcloud/hotspot-api/internal/model"
-	"spotcloud/hotspot-api/internal/routeros"
-	"spotcloud/hotspot-api/internal/store"
+	"mikcloud/hotspot-api/internal/auth"
+	"mikcloud/hotspot-api/internal/model"
+	"mikcloud/hotspot-api/internal/routeros"
+	"mikcloud/hotspot-api/internal/store"
 )
 
 // API — registre des routes + dépendances.
@@ -268,7 +268,7 @@ func usernameTaken(db *model.DB, username string) bool {
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":      true,
-		"service": "spotcloud-hotspot-api",
+		"service": "mikcloud-hotspot-api",
 		"version": "1.0.0",
 		"time":    model.NowISO(),
 	})

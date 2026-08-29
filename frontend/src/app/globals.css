@@ -43,7 +43,7 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
-/* ─── SpotCloud : thème sombre zinc + émeraude (unique) ─── */
+/* ─── MikCloud : thème sombre zinc + émeraude (unique) ─── */
 :root,
 .dark {
   --radius: 0.625rem;

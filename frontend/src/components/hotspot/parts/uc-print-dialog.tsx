@@ -65,7 +65,7 @@ export function UcPrintDialog({
                     key={voucher.id}
                     className="flex flex-col items-center gap-1 rounded-lg border-2 border-dashed border-black p-3 text-center break-inside-avoid"
                   >
-                    <p className="text-sm font-bold leading-tight">{tenantName || "SpotCloud"}</p>
+                    <p className="text-sm font-bold leading-tight">{tenantName || "MikCloud"}</p>
                     <p className="text-[10px] uppercase tracking-widest text-neutral-500">WiFi Hotspot</p>
                     <p className="mt-1 text-lg font-bold font-mono tracking-wider">{voucher.username}</p>
                     <p className="font-mono text-sm">Mot de passe : {voucher.password}</p>

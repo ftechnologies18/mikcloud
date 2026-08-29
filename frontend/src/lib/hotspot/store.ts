@@ -28,7 +28,7 @@ export const useHotspotStore = create<HotspotState>()(
       setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
     }),
     {
-      name: "spotcloud-auth",
+      name: "mikcloud-auth",
       partialize: (s) => ({ token: s.token, user: s.user }),
     },
   ),

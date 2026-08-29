@@ -486,7 +486,7 @@ export default function RoutersView() {
             <AlertDialogTitle>Supprimer le routeur ?</AlertDialogTitle>
             <AlertDialogDescription>
               {deleting
-                ? `Le routeur « ${deleting.name} » sera retiré de SpotCloud. Ses utilisateurs hotspot seront conservés.`
+                ? `Le routeur « ${deleting.name} » sera retiré de MikCloud. Ses utilisateurs hotspot seront conservés.`
                 : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>

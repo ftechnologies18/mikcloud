@@ -1,8 +1,8 @@
-# Déploiement Render — SpotCloud Hotspot API
+# Déploiement Render — MikCloud Hotspot API
 # https://render.com/docs/deploy-go
 services:
   - type: web
-    name: spotcloud-api
+    name: mikcloud-api
     runtime: go
     plan: free
     buildCommand: go build -o server .
@@ -17,6 +17,6 @@ services:
     # Les données (db.json) sont réinitialisées à chaque redéploiement.
     # Pour la production, montez un disque persistant (plan payant) :
     # disk:
-    #   name: spotcloud-data
+    #   name: mikcloud-data
     #   mountPath: /opt/render/project/src/data
     #   sizeGB: 1

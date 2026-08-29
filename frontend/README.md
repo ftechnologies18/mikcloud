@@ -1,4 +1,4 @@
-# SpotCloud — Frontend
+# MikCloud — Frontend
 
 Application Next.js 16 (App Router, React 19, TypeScript strict) — interface de
 gestion hotspot MikroTik : dashboard temps réel, vouchers imprimables,

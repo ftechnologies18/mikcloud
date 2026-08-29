@@ -1,4 +1,4 @@
-// Package model — types partagés SpotCloud, alignés sur le contrat API (voir worklog.md).
+// Package model — types partagés MikCloud, alignés sur le contrat API (voir worklog.md).
 package model
 
 import (

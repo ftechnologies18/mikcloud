@@ -120,7 +120,7 @@ function BrandHeader() {
         <Wifi className="size-5 text-white" />
       </div>
       <div className="flex min-w-0 items-center gap-2">
-        <span className="truncate text-base font-semibold tracking-tight">SpotCloud</span>
+        <span className="truncate text-base font-semibold tracking-tight">MikCloud</span>
         <Badge
           variant="outline"
           className="border-primary/25 bg-primary/10 px-1.5 py-0 text-[10px] font-semibold tracking-wide text-primary"
@@ -338,7 +338,7 @@ export default function AppShell() {
       <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
         <SheetContent side="left" className="flex w-72 flex-col gap-0 bg-sidebar p-0">
           <SheetHeader className="border-b border-sidebar-border pb-0">
-            <SheetTitle className="sr-only">SpotCloud</SheetTitle>
+            <SheetTitle className="sr-only">MikCloud</SheetTitle>
             <BrandHeader />
           </SheetHeader>
           <NavList />

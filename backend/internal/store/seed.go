@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"spotcloud/hotspot-api/internal/auth"
-	"spotcloud/hotspot-api/internal/model"
+	"mikcloud/hotspot-api/internal/auth"
+	"mikcloud/hotspot-api/internal/model"
 )
 
 // seedRandomSource — source déterministe : la structure du seed est stable.
@@ -457,7 +457,7 @@ func BuildSeed() *model.DB {
 			At: now.Add(-time.Duration(minutesAgo) * time.Minute).Format(time.RFC3339),
 		})
 	}
-	addAct("system", "Service SpotCloud démarré", 2)
+	addAct("system", "Service MikCloud démarré", 2)
 	addAct("session", "Nouvelle session : "+pick(0), 5+rnd.Intn(4))
 	addAct("voucher", fmt.Sprintf("Génération de %d vouchers (%s)", lastSale.Count, lastSale.ProfileName), 22)
 	addAct("session", "Session de "+pick(1)+" terminée", 38)

@@ -1,6 +1,6 @@
 "use client";
 
-// Client API SpotCloud.
+// Client API MikCloud.
 // - En production (Vercel → Render) : NEXT_PUBLIC_API_BASE=https://xxx.onrender.com
 // - Dans la sandbox : même origine + query param XTransformPort=4000 (passerelle Caddy).
 

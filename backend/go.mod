@@ -1,3 +1,3 @@
-module spotcloud/hotspot-api
+module mikcloud/hotspot-api
 
 go 1.22

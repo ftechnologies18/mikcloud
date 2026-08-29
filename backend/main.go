@@ -1,4 +1,4 @@
-// SpotCloud Hotspot API — service backend Go (port 4000 par défaut, stdlib uniquement).
+// MikCloud Hotspot API — service backend Go (port 4000 par défaut, stdlib uniquement).
 package main
 
 import (
@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"time"
 
-	"spotcloud/hotspot-api/internal/api"
-	"spotcloud/hotspot-api/internal/store"
+	"mikcloud/hotspot-api/internal/api"
+	"mikcloud/hotspot-api/internal/store"
 )
 
 // defaultPort — port d'écoute par défaut (overridable via PORT, ex. Render).
@@ -26,7 +26,7 @@ func main() {
 	}
 	jwtSecret := os.Getenv("JWT_SECRET")
 	if jwtSecret == "" {
-		jwtSecret = "spotcloud-dev-secret" // secret de dev ; en prod, définir JWT_SECRET
+		jwtSecret = "mikcloud-dev-secret" // secret de dev ; en prod, définir JWT_SECRET
 	}
 
 	st, err := store.New(dataDir)
@@ -40,7 +40,7 @@ func main() {
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	log.Printf("SpotCloud Hotspot API en écoute sur le port %s (données : %s)", port, dataDir)
+	log.Printf("MikCloud Hotspot API en écoute sur le port %s (données : %s)", port, dataDir)
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("serveur : %v", err)
 	}

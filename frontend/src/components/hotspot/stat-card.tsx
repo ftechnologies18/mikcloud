@@ -18,8 +18,13 @@ interface StatCardProps {
 
 export function StatCard({ title, value, sub, icon: Icon, live, trend, valueClassName, className }: StatCardProps) {
   return (
-    <Card className={cn("relative overflow-hidden", className)}>
-      <CardContent className="p-4 sm:p-5">
+    <Card className={cn("relative overflow-hidden transition-colors duration-300 hover:border-primary/35", className)}>
+      {/* Halo aurora en coin — signature MikCloud */}
+      <span
+        aria-hidden
+        className="pointer-events-none absolute -right-8 -top-8 size-28 rounded-full bg-primary/10 blur-2xl"
+      />
+      <CardContent className="relative p-4 sm:p-5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{title}</p>
@@ -37,7 +42,7 @@ export function StatCard({ title, value, sub, icon: Icon, live, trend, valueClas
                 {trend.up ? "▲" : "▼"} {trend.value}
               </span>
             )}
-            <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <div className="tile-aurora flex size-9 items-center justify-center rounded-lg">
               <Icon className="size-4.5" />
             </div>
           </div>

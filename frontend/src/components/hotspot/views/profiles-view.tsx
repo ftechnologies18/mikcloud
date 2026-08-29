@@ -53,9 +53,7 @@ import { api } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { formatBytes, formatCurrency, formatDuration, formatRateLimit } from "@/lib/hotspot/format";
 import type { Profile } from "@/lib/hotspot/types";
-
-// Palette fixe (pastille par index de carte) — pas d'indigo/bleu.
-const PALETTE = ["#10b981", "#14b8a6", "#f59e0b", "#f43f5e", "#84cc16", "#a78bfa"];
+import { useChartPalette } from "@/lib/hotspot/chart-theme";
 
 /** Badge du mode d'expiration (F1) : cloche = notification, poubelle = suppression. */
 function ExpiryBadge({ profile }: { profile: Profile }) {
@@ -87,6 +85,8 @@ function ExpiryBadge({ profile }: { profile: Profile }) {
 export default function ProfilesView() {
   const { t, tf, lang } = useI18n();
   const currency = useCurrency();
+  // Pastille par index de carte — palette thématée nuit/jour, 5 teintes aurora.
+  const PALETTE = useChartPalette().series;
   const queryClient = useQueryClient();
 
   const [dialogOpen, setDialogOpen] = useState(false);

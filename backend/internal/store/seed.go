@@ -495,6 +495,63 @@ func BuildSeed() *model.DB {
 	}
 	sort.Slice(db.Sessions, func(i, j int) bool { return db.Sessions[i].StartedAt > db.Sessions[j].StartedAt })
 
+	// --- N°10 : historique UserLogs (7 jours) — alimente la courbe 24 h et la
+	// heatmap d'affluence avec des données RÉELLES d'entrée de gamme. Profil
+	// horaire crédible d'un hotspot ivoirien : creux nocturne, montée en
+	// journée, pic 19h-22h ; week-end légèrement plus chargé en journée.
+	{
+		// Poids horaires (0h..23h) — somme ≈ 100.
+		hourWeights := [24]int{1, 1, 0, 0, 0, 1, 2, 3, 4, 5, 5, 6, 6, 6, 6, 7, 7, 8, 9, 10, 10, 9, 6, 3}
+		weightedHours := []int{}
+		for h, w := range hourWeights {
+			for k := 0; k < w; k++ {
+				weightedHours = append(weightedHours, h)
+			}
+		}
+		byRouter := map[string]model.Router{r1.ID: r1, r2.ID: r2}
+		for d := 6; d >= 0; d-- {
+			day := now.AddDate(0, 0, -d)
+			dayStart := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, now.Location())
+			if d == 0 && now.Sub(dayStart) < time.Hour {
+				break // journée à peine commencée : rien à journaliser
+			}
+			weekend := day.Weekday() == time.Saturday || day.Weekday() == time.Sunday
+			n := 55 + rnd.Intn(40) // 55-94 connexions/jour
+			if weekend {
+				n = n * 115 / 100
+			}
+			if d == 0 {
+				// aujourd'hui : ne générer que les heures déjà écoulées
+				elapsed := int(now.Sub(dayStart).Hours())
+				n = n * (elapsed + 1) / 24
+			}
+			for k := 0; k < n; k++ {
+				h := weightedHours[rnd.Intn(len(weightedHours))]
+				if d == 0 && h > now.Hour() {
+					continue
+				}
+				at := dayStart.Add(time.Duration(h)*time.Hour + time.Duration(rnd.Intn(3600))*time.Second)
+				if at.After(now) {
+					at = now.Add(-time.Duration(rnd.Intn(1800)) * time.Second)
+				}
+				u := db.HotspotUsers[rnd.Intn(len(db.HotspotUsers))]
+				router := r1
+				if r, ok := byRouter[u.RouterID]; ok {
+					router = r
+				}
+				db.UserLogs = append(db.UserLogs, model.UserLog{
+					ID: model.NewID("ul-"), AccountID: model.AccountMainID,
+					UserID: u.ID, Username: u.Username, Action: "login",
+					RouterID: router.ID, RouterName: router.Name,
+					IP: router.Host, MAC: mac(),
+					At: at.Format(time.RFC3339),
+				})
+			}
+		}
+		// Les plus récents d'abord (cohérent avec l'ordre des autres journaux).
+		sort.Slice(db.UserLogs, func(i, j int) bool { return db.UserLogs[i].At > db.UserLogs[j].At })
+	}
+
 	// --- Statistiques revendeurs (cohérentes avec les vouchers utilisés) ---
 	for i := range db.Resellers {
 		sold, revenue := 0, 0

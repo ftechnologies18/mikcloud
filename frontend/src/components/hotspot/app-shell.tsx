@@ -24,6 +24,7 @@ import {
   Ticket,
   UserRound,
   Users,
+  UsersRound,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { LucideIcon } from "lucide-react";
@@ -44,8 +45,10 @@ import { cn } from "@/lib/utils";
 import { api } from "@/lib/hotspot/api";
 import { localeOf, useI18n } from "@/lib/hotspot/i18n";
 import { roleLabel, userInitials } from "@/lib/hotspot/format";
+import { canView } from "@/lib/hotspot/roles";
 import { useHotspotStore } from "@/lib/hotspot/store";
 import type { HotspotSession, ViewId } from "@/lib/hotspot/types";
+import { ThemeToggle } from "./theme-toggle";
 import { UserProfileDialog } from "./parts/user-profile-dialog";
 
 import AccountsView from "./views/accounts-view";
@@ -58,6 +61,7 @@ import ResellersView from "./views/resellers-view";
 import RoutersView from "./views/routers-view";
 import SessionsView from "./views/sessions-view";
 import SettingsView from "./views/settings-view";
+import TeamView from "./views/team-view";
 import TemplatesView from "./views/templates-view";
 import UsersView from "./views/users-view";
 import VouchersView from "./views/vouchers-view";
@@ -78,6 +82,7 @@ function viewTitle(view: ViewId, t: (key: string) => string): string {
     accounts: "nav.accounts",
     notifications: "nav.notifications",
     settings: "nav.settings",
+    team: "nav.team",
   };
   return t(keys[view]);
 }
@@ -119,6 +124,7 @@ const NAV_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
     items: [
       // « Comptes » n'est visible que de l'admin plateforme (rôle admin) — filtré dans NavList.
       { id: "accounts", labelKey: "nav.accounts", icon: Building2 },
+      { id: "team", labelKey: "nav.team", icon: UsersRound },
       { id: "notifications", labelKey: "nav.notifications", icon: Bell },
       { id: "settings", labelKey: "nav.settings", icon: Settings },
     ],
@@ -139,6 +145,7 @@ const VIEWS: Record<ViewId, React.ComponentType> = {
   accounts: AccountsView,
   notifications: NotificationsView,
   settings: SettingsView,
+  team: TeamView,
 };
 
 /** En-tête de marque — logo + nom MikCloud. */
@@ -154,7 +161,7 @@ function BrandHeader() {
         className="size-9 shrink-0 rounded-xl shadow-md shadow-primary/20"
       />
       <div className="flex min-w-0 items-center gap-2">
-        <span className="truncate text-base font-semibold tracking-tight">MikCloud</span>
+        <span className="text-aurora truncate text-base font-semibold tracking-tight">MikCloud</span>
         <Badge
           variant="outline"
           className="border-primary/25 bg-primary/10 px-1.5 py-0 text-[10px] font-semibold tracking-wide text-primary"
@@ -249,7 +256,7 @@ function NavList() {
   const view = useHotspotStore((s) => s.view);
   const setView = useHotspotStore((s) => s.setView);
   const user = useHotspotStore((s) => s.user);
-  const isAdmin = user?.role === "admin";
+  const isAdmin = user?.role === "admin" || user?.role === "platform_admin";
 
   const { data: sessions } = useQuery({
     queryKey: ["/api/sessions"],
@@ -261,7 +268,11 @@ function NavList() {
   return (
     <nav className="flex-1 space-y-5 overflow-y-auto px-3 pb-4" aria-label={t("nav.main")}>
       {NAV_SECTIONS.map((section) => {
-        const items = section.items.filter((item) => item.id !== "accounts" || isAdmin);
+        // N°7 — chaque vue n'apparaît que si le rôle peut l'ouvrir
+        // (miroir client des requireRole serveur ; comptes = admin plateforme).
+        const items = section.items.filter(
+          (item) => (item.id !== "accounts" || isAdmin) && canView(user?.role, item.id),
+        );
         if (items.length === 0) return null;
         return (
           <div key={section.labelKey}>
@@ -278,18 +289,12 @@ function NavList() {
                       onClick={() => setView(item.id)}
                       aria-current={active ? "page" : undefined}
                       className={cn(
-                        "relative flex min-h-11 w-full items-center gap-3 rounded-md px-2.5 py-2 text-sm font-medium transition-colors",
+                        "relative flex min-h-11 w-full items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium transition-all duration-200",
                         active
-                          ? "bg-primary/10 text-primary"
+                          ? "nav-active"
                           : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                       )}
                     >
-                      {active && (
-                        <span
-                          className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-full bg-primary"
-                          aria-hidden
-                        />
-                      )}
                       <span className="relative flex shrink-0 items-center">
                         <item.icon className="size-4.5" />
                         {item.id === "sessions" && sessionsCount > 0 && (
@@ -350,7 +355,7 @@ function Topbar() {
   const name = user?.name ?? t("profile.defaultUser");
 
   return (
-    <header className="sticky top-0 z-20 border-b bg-background/80 backdrop-blur">
+    <header className="sticky top-0 z-20 border-b border-border/60 bg-background/70 backdrop-blur-xl">
       <div className="flex h-14 items-center gap-2 px-4 sm:gap-3 sm:px-6">
         <Button
           variant="ghost"
@@ -362,8 +367,9 @@ function Topbar() {
           <Menu className="size-5" />
         </Button>
         <h2 className="truncate text-base font-semibold tracking-tight">{viewTitle(view, t)}</h2>
-        <div className="ml-auto flex items-center gap-1 sm:gap-3">
+        <div className="ml-auto flex items-center gap-1 sm:gap-2">
           <span className="hidden text-xs text-muted-foreground md:inline">{dateLabel}</span>
+          <ThemeToggle />
           <Button
             variant="ghost"
             size="icon"
@@ -419,15 +425,17 @@ export default function AppShell() {
   const sidebarOpen = useHotspotStore((s) => s.sidebarOpen);
   const setSidebarOpen = useHotspotStore((s) => s.setSidebarOpen);
   const user = useHotspotStore((s) => s.user);
-  const isAdmin = user?.role === "admin";
+  const isAdmin = user?.role === "admin" || user?.role === "platform_admin";
 
-  // Garde-fou : la vue Comptes est réservée à l'admin plateforme.
-  const ActiveView = view === "accounts" && !isAdmin ? DashboardView : (VIEWS[view] ?? DashboardView);
+  // Garde-fou N°7 : une vue interdite au rôle (p.ex. un lien direct restant
+  // après un changement de rôle) retombe sur le dashboard — le serveur
+  // refuserait les appels de toute façon (403).
+  const ActiveView = canView(user?.role, view) ? (VIEWS[view] ?? DashboardView) : DashboardView;
 
   return (
     <div className="flex min-h-screen">
-      {/* Sidebar desktop */}
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col border-r bg-sidebar lg:flex">
+      {/* Sidebar desktop — colonne de marque Aurora */}
+      <aside className="sidebar-aurora fixed inset-y-0 left-0 z-30 hidden w-64 flex-col lg:flex">
         <BrandHeader />
         <NavList />
         <div className="px-3 pb-4">
@@ -437,7 +445,7 @@ export default function AppShell() {
 
       {/* Sidebar mobile (Sheet) */}
       <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
-        <SheetContent side="left" className="flex w-72 flex-col gap-0 bg-sidebar p-0">
+        <SheetContent side="left" className="sidebar-aurora flex w-72 flex-col gap-0 p-0">
           <SheetHeader className="border-b border-sidebar-border pb-0">
             <SheetTitle className="sr-only">MikCloud</SheetTitle>
             <BrandHeader />

@@ -118,9 +118,18 @@ export function userInitials(name: string): string {
 }
 
 /** Libellé lisible d'un rôle brut (admin → Administrateur / Administrator). */
+// N°7 — libellés des rôles d'équipe (+ super-admin plateforme historique).
 export function roleLabel(role: string, lang: Lang = "fr"): string {
-  const isAdmin = role.toLowerCase() === "admin" || role.toLowerCase() === "administrator";
+  const labels: Record<string, [string, string]> = {
+    operator: ["Opérateur", "Operator"],
+    manager: ["Gérant", "Manager"],
+    owner: ["Propriétaire", "Owner"],
+    platform_admin: ["Admin plateforme", "Platform admin"],
+    admin: ["Admin plateforme", "Platform admin"],
+    administrator: ["Admin plateforme", "Platform admin"],
+  };
+  const hit = labels[role.toLowerCase()];
+  if (hit) return lang === "en" ? hit[1] : hit[0];
   if (!role) return lang === "en" ? "User" : "Utilisateur";
-  if (isAdmin) return lang === "en" ? "Administrator" : "Administrateur";
   return role.charAt(0).toUpperCase() + role.slice(1);
 }

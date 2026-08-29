@@ -182,7 +182,8 @@ func (p *PG) ensureSchema() error {
                         vouchers_sold INTEGER NOT NULL,
                         revenue       INTEGER NOT NULL,
                         status        TEXT NOT NULL,
-                        created_at    TEXT NOT NULL
+                        created_at    TEXT NOT NULL,
+                        pin_hash      TEXT NOT NULL DEFAULT ''
                 )`,
 		`CREATE TABLE IF NOT EXISTS transactions (
                         id            TEXT PRIMARY KEY,
@@ -212,10 +213,12 @@ func (p *PG) ensureSchema() error {
 		`CREATE INDEX IF NOT EXISTS idx_sessions_router ON sessions (router_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_user   ON sessions (user_id)`,
 		`CREATE TABLE IF NOT EXISTS activity (
-                        id      TEXT PRIMARY KEY,
-                        type    TEXT NOT NULL,
-                        message TEXT NOT NULL,
-                        at      TEXT NOT NULL
+                        id         TEXT PRIMARY KEY,
+                        type       TEXT NOT NULL,
+                        message    TEXT NOT NULL,
+                        at         TEXT NOT NULL,
+                        actor_id   TEXT NOT NULL DEFAULT '',
+                        actor_name TEXT NOT NULL DEFAULT ''
                 )`,
 		`CREATE INDEX IF NOT EXISTS idx_activity_at ON activity (at)`,
 		`CREATE TABLE IF NOT EXISTS sales (
@@ -361,6 +364,16 @@ func (p *PG) ensureSchema() error {
                 )`,
 		`CREATE INDEX IF NOT EXISTS idx_notif_log_account ON notif_log (account_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_notif_log_at      ON notif_log (at)`,
+		// N°7 — rôles équipe + audit : acteur des actions du journal, et
+		// renommage du rôle historique « admin » → « platform_admin » (les
+		// tokens existants portant « admin » restent acceptés côté API).
+		`ALTER TABLE activity ADD COLUMN IF NOT EXISTS actor_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE activity ADD COLUMN IF NOT EXISTS actor_name TEXT NOT NULL DEFAULT ''`,
+		`UPDATE admin_users SET role = 'platform_admin' WHERE role = 'admin'`,
+		// N°8 — Mode Vente : PIN revendeur + traçabilité des remises.
+		`ALTER TABLE resellers     ADD COLUMN IF NOT EXISTS pin_hash TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE hotspot_users ADD COLUMN IF NOT EXISTS sold_at TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE hotspot_users ADD COLUMN IF NOT EXISTS sold_via TEXT NOT NULL DEFAULT ''`,
 		// QR vouchers : page de login du portail captive du routeur.
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS hotspot_login_url TEXT NOT NULL DEFAULT ''`,
 		// Migrations douces pour les bases créées avant l'ajout des champs
@@ -966,21 +979,21 @@ var hotspotUserSpec = entitySpec[model.HotspotUser]{
 	cols: []string{"id", "kind", "username", "password", "profile_id", "profile_name",
 		"router_id", "router_name", "status", "batch_id", "reseller_id", "reseller_name",
 		"comment", "bytes_in", "bytes_out", "uptime_used_sec", "created_at", "expires_at", "used_at", "price", "data_quota_mb", "account_id",
-		"selling_price", "enforced"},
+		"selling_price", "enforced", "sold_at", "sold_via"},
 	idOf: func(x *model.HotspotUser) string { return x.ID },
 	scan: func(r *sql.Rows) (model.HotspotUser, error) {
 		var x model.HotspotUser
 		err := r.Scan(&x.ID, &x.Kind, &x.Username, &x.Password, &x.ProfileID, &x.ProfileName,
 			&x.RouterID, &x.RouterName, &x.Status, &x.BatchID, &x.ResellerID, &x.ResellerName,
 			&x.Comment, &x.BytesIn, &x.BytesOut, &x.UptimeUsedSec, &x.CreatedAt, &x.ExpiresAt, &x.UsedAt, &x.Price, &x.DataQuotaMb, &x.AccountID,
-			&x.SellingPrice, &x.Enforced)
+			&x.SellingPrice, &x.Enforced, &x.SoldAt, &x.SoldVia)
 		return x, err
 	},
 	args: func(x *model.HotspotUser) []any {
 		return []any{x.ID, x.Kind, x.Username, x.Password, x.ProfileID, x.ProfileName,
 			x.RouterID, x.RouterName, x.Status, x.BatchID, x.ResellerID, x.ResellerName,
 			x.Comment, x.BytesIn, x.BytesOut, x.UptimeUsedSec, x.CreatedAt, x.ExpiresAt, x.UsedAt, x.Price, x.DataQuotaMb, x.AccountID,
-			x.SellingPrice, x.Enforced}
+			x.SellingPrice, x.Enforced, x.SoldAt, x.SoldVia}
 	},
 	hashOf: hashEntity[model.HotspotUser],
 }
@@ -1004,15 +1017,15 @@ var batchSpec = entitySpec[model.Batch]{
 
 var resellerSpec = entitySpec[model.Reseller]{
 	table: "resellers",
-	cols:  []string{"id", "name", "username", "phone", "credit", "vouchers_sold", "revenue", "status", "created_at", "account_id"},
+	cols:  []string{"id", "name", "username", "phone", "credit", "vouchers_sold", "revenue", "status", "created_at", "account_id", "pin_hash"},
 	idOf:  func(x *model.Reseller) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Reseller, error) {
 		var x model.Reseller
-		err := r.Scan(&x.ID, &x.Name, &x.Username, &x.Phone, &x.Credit, &x.VouchersSold, &x.Revenue, &x.Status, &x.CreatedAt, &x.AccountID)
+		err := r.Scan(&x.ID, &x.Name, &x.Username, &x.Phone, &x.Credit, &x.VouchersSold, &x.Revenue, &x.Status, &x.CreatedAt, &x.AccountID, &x.PinHash)
 		return x, err
 	},
 	args: func(x *model.Reseller) []any {
-		return []any{x.ID, x.Name, x.Username, x.Phone, x.Credit, x.VouchersSold, x.Revenue, x.Status, x.CreatedAt, x.AccountID}
+		return []any{x.ID, x.Name, x.Username, x.Phone, x.Credit, x.VouchersSold, x.Revenue, x.Status, x.CreatedAt, x.AccountID, x.PinHash}
 	},
 	hashOf: hashEntity[model.Reseller],
 }
@@ -1051,15 +1064,15 @@ var sessionSpec = entitySpec[model.Session]{
 
 var activitySpec = entitySpec[model.Activity]{
 	table: "activity",
-	cols:  []string{"id", "type", "message", "at", "account_id"},
+	cols:  []string{"id", "type", "message", "at", "account_id", "actor_id", "actor_name"},
 	idOf:  func(x *model.Activity) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Activity, error) {
 		var x model.Activity
-		err := r.Scan(&x.ID, &x.Type, &x.Message, &x.At, &x.AccountID)
+		err := r.Scan(&x.ID, &x.Type, &x.Message, &x.At, &x.AccountID, &x.ActorID, &x.ActorName)
 		return x, err
 	},
 	args: func(x *model.Activity) []any {
-		return []any{x.ID, x.Type, x.Message, x.At, x.AccountID}
+		return []any{x.ID, x.Type, x.Message, x.At, x.AccountID, x.ActorID, x.ActorName}
 	},
 	hashOf: hashEntity[model.Activity],
 }

@@ -789,7 +789,7 @@ func (a *API) handleRouterRotateToken(w http.ResponseWriter, r *http.Request) {
 	cur.TokenPreview = agent.Preview(token)
 	cur.LastSeen = ""
 	cur.Status = "offline" // l'ancien agent (token périmé) ne check-inera plus
-	a.logActivity(a.store.Data(), cur.AccountID, "router", "Token agent régénéré pour «"+cur.Name+"»")
+	a.logActivityBy(r, a.store.Data(), cur.AccountID, "router", "Token agent régénéré pour «"+cur.Name+"»")
 	a.store.Save()
 	name := cur.Name
 	a.store.Unlock()

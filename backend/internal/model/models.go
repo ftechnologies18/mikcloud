@@ -204,6 +204,10 @@ type HotspotUser struct {
 	// (/ip hotspot user add limit-bytes-total=…, exprimé en Mo ; 0 = illimité
 	// dans la limite de la validité). Ex. « 5 Go = 500 F » → DataQuotaMb 5120.
 	DataQuotaMb int64 `json:"dataQuotaMb"`
+	// N°8 — Mode Vente : remise effective du voucher au client par le
+	// revendeur (traçabilité anti-vol). Vide = encore en stock.
+	SoldAt  string `json:"soldAt,omitempty"`  // RFC3339
+	SoldVia string `json:"soldVia,omitempty"` // "sell_mode" (app revendeur)
 }
 
 // Session — session hotspot active.
@@ -235,6 +239,11 @@ type Reseller struct {
 	Revenue      int    `json:"revenue"`
 	Status       string `json:"status"` // active | disabled
 	CreatedAt    string `json:"createdAt"`
+	// N°8 — Mode Vente : PIN (4-6 chiffres) pour l'app PWA du revendeur.
+	// Bcrypt ; vide = connexion Mode Vente interdite. Persisté dans db.json
+	// (le store sérialise via ces mêmes tags) mais TOUJOURS vidé par
+	// sanitizeReseller avant toute réponse API.
+	PinHash string `json:"pinHash,omitempty"`
 }
 
 // Transaction — mouvement de portefeuille revendeur (credit | sale).
@@ -249,13 +258,27 @@ type Transaction struct {
 	At           string `json:"at"`
 }
 
-// Activity — journal d'activité.
+// Rôles d'équipe (N°7) — hiérarchie de privilèges croissante. Le rôle
+// « admin » historique (= super-admin plateforme) devient RolePlatformAdmin ;
+// « admin » reste accepté en lecture pour les tokens/JWT existants.
+const (
+	RoleOperator      = "operator"       // vendeur : ventes, vouchers, sessions — lecture seule sur le reste
+	RoleManager       = "manager"        // gérant : tout le compte SAUF équipe et réglages/billing
+	RoleOwner         = "owner"          // propriétaire du compte : tout, y compris équipe
+	RolePlatformAdmin = "platform_admin" // super-admin MikCloud (multi-comptes)
+)
+
+// Activity — journal d'activité/audit (N°7 : trace QUI a agi, pas seulement quoi).
 type Activity struct {
 	ID        string `json:"id"`
 	AccountID string `json:"accountId"`
-	Type      string `json:"type"` // router | user | voucher | reseller | session | system
+	Type      string `json:"type"` // router | user | voucher | reseller | session | system | team
 	Message   string `json:"message"`
 	At        string `json:"at"`
+	// N°7 — acteur authentifié à l'origine de l'action (vide = moteur interne :
+	// simulation, agent routeur, notifications automatiques).
+	ActorID   string `json:"actorId,omitempty"`
+	ActorName string `json:"actorName,omitempty"`
 }
 
 // Sale — vente de vouchers (par lot), attribuée au routeur (site) émetteur.

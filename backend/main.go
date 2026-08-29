@@ -13,6 +13,10 @@ import (
 	"syscall"
 	"time"
 
+	// N°10 — fuseaux horaires IANA embarqués (Tenant.Timezone fiable même
+	// sur une image minimale de conteneur sans /usr/share/zoneinfo).
+	_ "time/tzdata"
+
 	"mikcloud/hotspot-api/internal/api"
 	"mikcloud/hotspot-api/internal/notify"
 	"mikcloud/hotspot-api/internal/store"

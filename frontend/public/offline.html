@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MikCloud — Hors ligne</title>
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        margin: 0;
+        min-height: 100dvh;
+        display: grid;
+        place-items: center;
+        background: #101012;
+        color: #fafafa;
+        font-family: system-ui, -apple-system, sans-serif;
+        text-align: center;
+        padding: 24px;
+      }
+      .logo { width: 64px; height: 64px; border-radius: 16px; margin-bottom: 16px; }
+      h1 { font-size: 20px; margin: 0 0 8px; }
+      p { color: #a1a1aa; font-size: 14px; line-height: 1.5; margin: 0 0 24px; }
+      button {
+        background: #10b981; color: #052e22; border: 0; border-radius: 12px;
+        padding: 12px 24px; font-size: 15px; font-weight: 600; cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <img class="logo" src="/logo.png" alt="MikCloud" />
+      <h1>Hors ligne</h1>
+      <p>
+        MikCloud est hors ligne. Les ventes reprendront dès le retour du réseau —
+        les vouchers remis restent enregistrés sur le serveur.
+      </p>
+      <button onclick="location.reload()">Réessayer</button>
+    </main>
+  </body>
+</html>

@@ -84,6 +84,7 @@ import { cn } from "@/lib/utils";
 import { api, ApiError } from "@/lib/hotspot/api";
 import { localeOf, t as translate, useI18n } from "@/lib/hotspot/i18n";
 import type { Lang } from "@/lib/hotspot/i18n";
+import { useChartPalette } from "@/lib/hotspot/chart-theme";
 import { formatBitsPerSec, formatBytes, formatDuration, formatMb, timeAgo } from "@/lib/hotspot/format";
 import type {
   CommandStatus,
@@ -103,10 +104,7 @@ import type {
 
 // ─── Constantes ───
 
-const RX_COLOR = "#10b981"; // émeraude — réception (descendant)
-const TX_COLOR = "#f59e0b"; // ambre — émission (montant)
-const GRID_STROKE = "#27272a";
-const AXIS_TICK = { fill: "#71717a", fontSize: 11 };
+// Palette thématée (nuit/jour) — injectée par TrafficTab via useChartPalette().
 
 const MAC_RE = /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/;
 const INTERVAL_RE = /^\d+[smhdw]$/; // format RouterOS : 45s, 5m, 1h, 2d, 1w
@@ -223,6 +221,11 @@ interface TrafficSample {
 
 function TrafficTab({ router }: { router: RouterDevice }) {
   const { t, tf, lang } = useI18n();
+  const charts = useChartPalette();
+  const RX_COLOR = charts.series[0]; // émeraude — réception (descendant)
+  const TX_COLOR = charts.series[2]; // ambre — émission (montant)
+  const GRID_STROKE = charts.grid;
+  const AXIS_TICK = { fill: charts.axis, fontSize: 11 };
   const queryClient = useQueryClient();
   const [iface, setIface] = useState("all");
 

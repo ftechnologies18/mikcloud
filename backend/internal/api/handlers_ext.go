@@ -189,7 +189,7 @@ func (a *API) handleTemplateCreate(w http.ResponseWriter, r *http.Request) {
 		BodyHTML: body, IsDefault: req.IsDefault, CreatedAt: model.NowISO(),
 	}
 	db.Templates = append(db.Templates, tpl)
-	a.logActivity(db, acc, "voucher", "Modèle de voucher «"+name+"» créé")
+	a.logActivityBy(r, db, acc, "voucher", "Modèle de voucher «"+name+"» créé")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusCreated, tpl)
@@ -255,7 +255,7 @@ func (a *API) handleTemplateUpdate(w http.ResponseWriter, r *http.Request) {
 		tpl.IsDefault = *req.IsDefault
 	}
 	updated := *tpl
-	a.logActivity(db, acc, "voucher", "Modèle de voucher «"+updated.Name+"» modifié")
+	a.logActivityBy(r, db, acc, "voucher", "Modèle de voucher «"+updated.Name+"» modifié")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, updated)
@@ -289,7 +289,7 @@ func (a *API) handleTemplateDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	name := db.Templates[idx].Name
 	db.Templates = append(db.Templates[:idx], db.Templates[idx+1:]...)
-	a.logActivity(db, acc, "voucher", "Modèle de voucher «"+name+"» supprimé")
+	a.logActivityBy(r, db, acc, "voucher", "Modèle de voucher «"+name+"» supprimé")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -405,7 +405,7 @@ func (a *API) handleUserResetStats(w http.ResponseWriter, r *http.Request) {
 			"name": agent.SanitizeName(username),
 		})
 	}
-	a.logActivity(db, acc, "user", "Statistiques de "+username+" réinitialisées")
+	a.logActivityBy(r, db, acc, "user", "Statistiques de "+username+" réinitialisées")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -467,7 +467,7 @@ func (a *API) handleUserExtend(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	updated := *u
-	a.logActivity(db, acc, "user", fmt.Sprintf("Utilisateur %s prolongé de %d j", u.Username, req.Days))
+	a.logActivityBy(r, db, acc, "user", fmt.Sprintf("Utilisateur %s prolongé de %d j", u.Username, req.Days))
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, updated)
@@ -588,7 +588,7 @@ func (a *API) handleUsersCleanup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	removed := len(targets)
-	a.logActivity(db, acc, "user", fmt.Sprintf("Nettoyage manuel : %d utilisateurs expirés supprimés", removed))
+	a.logActivityBy(r, db, acc, "user", fmt.Sprintf("Nettoyage manuel : %d utilisateurs expirés supprimés", removed))
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "removed": removed})

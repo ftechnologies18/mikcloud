@@ -23,10 +23,10 @@ import (
 
 // registerNotifRoutes — endpoints console (auth JWT via middleware /api/).
 func (a *API) registerNotifRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/notifications", a.handleNotifGet)
-	mux.HandleFunc("PUT /api/notifications", a.handleNotifPut)
-	mux.HandleFunc("POST /api/notifications/test", a.handleNotifTest)
-	mux.HandleFunc("GET /api/notifications/log", a.handleNotifLog)
+	mux.HandleFunc("GET /api/notifications", a.requireRole(2, a.handleNotifGet))
+	mux.HandleFunc("PUT /api/notifications", a.requireRole(2, a.handleNotifPut))
+	mux.HandleFunc("POST /api/notifications/test", a.requireRole(2, a.handleNotifTest))
+	mux.HandleFunc("GET /api/notifications/log", a.requireRole(2, a.handleNotifLog))
 }
 
 // notifView — réglages exposés à la console : les secrets ne partent JAMAIS,
@@ -138,7 +138,7 @@ func (a *API) handleNotifPut(w http.ResponseWriter, r *http.Request) {
 	cfg.AccountID = acc
 	applyNotifPut(&cfg, &req)
 	store.SetNotifSettings(db, cfg)
-	a.logActivity(db, acc, "system", "Configuration des notifications mise à jour")
+	a.logActivityBy(r, db, acc, "system", "Configuration des notifications mise à jour")
 	a.store.Save()
 	a.store.Unlock()
 

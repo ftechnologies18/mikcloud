@@ -249,13 +249,27 @@ type Transaction struct {
 	At           string `json:"at"`
 }
 
-// Activity — journal d'activité.
+// Rôles d'équipe (N°7) — hiérarchie de privilèges croissante. Le rôle
+// « admin » historique (= super-admin plateforme) devient RolePlatformAdmin ;
+// « admin » reste accepté en lecture pour les tokens/JWT existants.
+const (
+	RoleOperator      = "operator"       // vendeur : ventes, vouchers, sessions — lecture seule sur le reste
+	RoleManager       = "manager"        // gérant : tout le compte SAUF équipe et réglages/billing
+	RoleOwner         = "owner"          // propriétaire du compte : tout, y compris équipe
+	RolePlatformAdmin = "platform_admin" // super-admin MikCloud (multi-comptes)
+)
+
+// Activity — journal d'activité/audit (N°7 : trace QUI a agi, pas seulement quoi).
 type Activity struct {
 	ID        string `json:"id"`
 	AccountID string `json:"accountId"`
-	Type      string `json:"type"` // router | user | voucher | reseller | session | system
+	Type      string `json:"type"` // router | user | voucher | reseller | session | system | team
 	Message   string `json:"message"`
 	At        string `json:"at"`
+	// N°7 — acteur authentifié à l'origine de l'action (vide = moteur interne :
+	// simulation, agent routeur, notifications automatiques).
+	ActorID   string `json:"actorId,omitempty"`
+	ActorName string `json:"actorName,omitempty"`
 }
 
 // Sale — vente de vouchers (par lot), attribuée au routeur (site) émetteur.

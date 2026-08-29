@@ -212,10 +212,12 @@ func (p *PG) ensureSchema() error {
 		`CREATE INDEX IF NOT EXISTS idx_sessions_router ON sessions (router_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_user   ON sessions (user_id)`,
 		`CREATE TABLE IF NOT EXISTS activity (
-                        id      TEXT PRIMARY KEY,
-                        type    TEXT NOT NULL,
-                        message TEXT NOT NULL,
-                        at      TEXT NOT NULL
+                        id         TEXT PRIMARY KEY,
+                        type       TEXT NOT NULL,
+                        message    TEXT NOT NULL,
+                        at         TEXT NOT NULL,
+                        actor_id   TEXT NOT NULL DEFAULT '',
+                        actor_name TEXT NOT NULL DEFAULT ''
                 )`,
 		`CREATE INDEX IF NOT EXISTS idx_activity_at ON activity (at)`,
 		`CREATE TABLE IF NOT EXISTS sales (
@@ -361,6 +363,12 @@ func (p *PG) ensureSchema() error {
                 )`,
 		`CREATE INDEX IF NOT EXISTS idx_notif_log_account ON notif_log (account_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_notif_log_at      ON notif_log (at)`,
+		// N°7 — rôles équipe + audit : acteur des actions du journal, et
+		// renommage du rôle historique « admin » → « platform_admin » (les
+		// tokens existants portant « admin » restent acceptés côté API).
+		`ALTER TABLE activity ADD COLUMN IF NOT EXISTS actor_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE activity ADD COLUMN IF NOT EXISTS actor_name TEXT NOT NULL DEFAULT ''`,
+		`UPDATE admin_users SET role = 'platform_admin' WHERE role = 'admin'`,
 		// QR vouchers : page de login du portail captive du routeur.
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS hotspot_login_url TEXT NOT NULL DEFAULT ''`,
 		// Migrations douces pour les bases créées avant l'ajout des champs
@@ -1027,15 +1035,15 @@ var sessionSpec = entitySpec[model.Session]{
 
 var activitySpec = entitySpec[model.Activity]{
 	table: "activity",
-	cols:  []string{"id", "type", "message", "at", "account_id"},
+	cols:  []string{"id", "type", "message", "at", "account_id", "actor_id", "actor_name"},
 	idOf:  func(x *model.Activity) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Activity, error) {
 		var x model.Activity
-		err := r.Scan(&x.ID, &x.Type, &x.Message, &x.At, &x.AccountID)
+		err := r.Scan(&x.ID, &x.Type, &x.Message, &x.At, &x.AccountID, &x.ActorID, &x.ActorName)
 		return x, err
 	},
 	args: func(x *model.Activity) []any {
-		return []any{x.ID, x.Type, x.Message, x.At, x.AccountID}
+		return []any{x.ID, x.Type, x.Message, x.At, x.AccountID, x.ActorID, x.ActorName}
 	},
 	hashOf: hashEntity[model.Activity],
 }

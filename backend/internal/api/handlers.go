@@ -54,28 +54,35 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/auth/me", a.handleMe)
 	mux.HandleFunc("POST /api/auth/password", a.handlePasswordChange)
 
+	// N°7 — équipe & rôles (owner uniquement ; le super-admin plateforme est
+	// traité owner sur le compte consulté).
+	mux.HandleFunc("GET /api/team", a.requireRole(3, a.handleTeamList))
+	mux.HandleFunc("POST /api/team", a.requireRole(3, a.handleTeamCreate))
+	mux.HandleFunc("PUT /api/team/{id}", a.requireRole(3, a.handleTeamUpdate))
+	mux.HandleFunc("DELETE /api/team/{id}", a.requireRole(3, a.handleTeamDelete))
+
 	// Dashboard
 	mux.HandleFunc("GET /api/dashboard", a.handleDashboard)
 
 	// Routeurs
 	mux.HandleFunc("GET /api/routers", a.handleRoutersList)
-	mux.HandleFunc("POST /api/routers", a.handleRouterCreate)
-	mux.HandleFunc("PUT /api/routers/{id}", a.handleRouterUpdate)
-	mux.HandleFunc("DELETE /api/routers/{id}", a.handleRouterDelete)
-	mux.HandleFunc("POST /api/routers/{id}/test", a.handleRouterTest)
+	mux.HandleFunc("POST /api/routers", a.requireRole(2, a.handleRouterCreate))
+	mux.HandleFunc("PUT /api/routers/{id}", a.requireRole(2, a.handleRouterUpdate))
+	mux.HandleFunc("DELETE /api/routers/{id}", a.requireRole(2, a.handleRouterDelete))
+	mux.HandleFunc("POST /api/routers/{id}/test", a.requireRole(2, a.handleRouterTest))
 	mux.HandleFunc("GET /api/routers/{id}/stats", a.handleRouterStats)
 
 	// Profils
 	mux.HandleFunc("GET /api/profiles", a.handleProfilesList)
-	mux.HandleFunc("POST /api/profiles", a.handleProfileCreate)
-	mux.HandleFunc("PUT /api/profiles/{id}", a.handleProfileUpdate)
-	mux.HandleFunc("DELETE /api/profiles/{id}", a.handleProfileDelete)
+	mux.HandleFunc("POST /api/profiles", a.requireRole(2, a.handleProfileCreate))
+	mux.HandleFunc("PUT /api/profiles/{id}", a.requireRole(2, a.handleProfileUpdate))
+	mux.HandleFunc("DELETE /api/profiles/{id}", a.requireRole(2, a.handleProfileDelete))
 
 	// Utilisateurs hotspot
 	mux.HandleFunc("GET /api/users", a.handleUsersList)
 	mux.HandleFunc("POST /api/users", a.handleUserCreate)
 	mux.HandleFunc("PUT /api/users/{id}", a.handleUserUpdate)
-	mux.HandleFunc("DELETE /api/users/{id}", a.handleUserDelete)
+	mux.HandleFunc("DELETE /api/users/{id}", a.requireRole(2, a.handleUserDelete))
 	mux.HandleFunc("POST /api/users/{id}/enable", a.handleUserEnable)
 	mux.HandleFunc("POST /api/users/{id}/disable", a.handleUserDisable)
 
@@ -83,33 +90,33 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/vouchers/generate", a.handleVouchersGenerate)
 	mux.HandleFunc("GET /api/vouchers", a.handleVouchersList)
 	mux.HandleFunc("GET /api/vouchers/batches", a.handleBatchesList)
-	mux.HandleFunc("DELETE /api/vouchers/{id}", a.handleUserDelete)
-	mux.HandleFunc("POST /api/vouchers/batch/{batchId}/delete", a.handleVouchersBatchDelete)
+	mux.HandleFunc("DELETE /api/vouchers/{id}", a.requireRole(2, a.handleUserDelete))
+	mux.HandleFunc("POST /api/vouchers/batch/{batchId}/delete", a.requireRole(2, a.handleVouchersBatchDelete))
 
 	// Sessions
 	mux.HandleFunc("GET /api/sessions", a.handleSessionsList)
 	mux.HandleFunc("DELETE /api/sessions/{id}", a.handleSessionKick)
 
 	// Revendeurs
-	mux.HandleFunc("GET /api/resellers", a.handleResellersList)
-	mux.HandleFunc("POST /api/resellers", a.handleResellerCreate)
-	mux.HandleFunc("PUT /api/resellers/{id}", a.handleResellerUpdate)
-	mux.HandleFunc("DELETE /api/resellers/{id}", a.handleResellerDelete)
-	mux.HandleFunc("POST /api/resellers/{id}/credit", a.handleResellerCredit)
+	mux.HandleFunc("GET /api/resellers", a.requireRole(2, a.handleResellersList))
+	mux.HandleFunc("POST /api/resellers", a.requireRole(2, a.handleResellerCreate))
+	mux.HandleFunc("PUT /api/resellers/{id}", a.requireRole(2, a.handleResellerUpdate))
+	mux.HandleFunc("DELETE /api/resellers/{id}", a.requireRole(2, a.handleResellerDelete))
+	mux.HandleFunc("POST /api/resellers/{id}/credit", a.requireRole(2, a.handleResellerCredit))
 
 	// Divers
-	mux.HandleFunc("GET /api/transactions", a.handleTransactionsList)
-	mux.HandleFunc("GET /api/reports", a.handleReports)
-	mux.HandleFunc("GET /api/accounting", a.handleAccounting)
-	mux.HandleFunc("GET /api/accounting/export", a.handleAccountingExport)
-	mux.HandleFunc("GET /api/wave/link", a.handleWaveLink)
+	mux.HandleFunc("GET /api/transactions", a.requireRole(2, a.handleTransactionsList))
+	mux.HandleFunc("GET /api/reports", a.requireRole(2, a.handleReports))
+	mux.HandleFunc("GET /api/accounting", a.requireRole(2, a.handleAccounting))
+	mux.HandleFunc("GET /api/accounting/export", a.requireRole(2, a.handleAccountingExport))
+	mux.HandleFunc("GET /api/wave/link", a.requireRole(2, a.handleWaveLink))
 	mux.HandleFunc("GET /api/stats/hourly", a.handleStatsHourly)
 
-	mux.HandleFunc("GET /api/activity", a.handleActivityList)
+	mux.HandleFunc("GET /api/activity", a.requireRole(2, a.handleActivityList))
 	mux.HandleFunc("GET /api/settings", a.handleSettingsGet)
-	mux.HandleFunc("PUT /api/settings", a.handleSettingsPut)
-	mux.HandleFunc("POST /api/admin/reset", a.handleReset)
-	mux.HandleFunc("POST /api/admin/reload", a.handleReload)
+	mux.HandleFunc("PUT /api/settings", a.requireRole(3, a.handleSettingsPut))
+	mux.HandleFunc("POST /api/admin/reset", a.requireRole(3, a.handleReset))
+	mux.HandleFunc("POST /api/admin/reload", a.requireRole(3, a.handleReload))
 
 	// Administration plateforme (rôle admin uniquement)
 	mux.HandleFunc("GET /api/admin/accounts", a.handleAdminAccounts)
@@ -118,41 +125,41 @@ func (a *API) Handler() http.Handler {
 	// P0 (audit Mikhmon) — voir docs/CONTRACT-V2.md
 	// Modèles de vouchers (F2)
 	mux.HandleFunc("GET /api/templates", a.handleTemplatesList)
-	mux.HandleFunc("POST /api/templates", a.handleTemplateCreate)
-	mux.HandleFunc("PUT /api/templates/{id}", a.handleTemplateUpdate)
-	mux.HandleFunc("DELETE /api/templates/{id}", a.handleTemplateDelete)
+	mux.HandleFunc("POST /api/templates", a.requireRole(2, a.handleTemplateCreate))
+	mux.HandleFunc("PUT /api/templates/{id}", a.requireRole(2, a.handleTemplateUpdate))
+	mux.HandleFunc("DELETE /api/templates/{id}", a.requireRole(2, a.handleTemplateDelete))
 	// Journal utilisateurs (F3)
-	mux.HandleFunc("GET /api/user-logs", a.handleUserLogsList)
-	mux.HandleFunc("GET /api/user-logs/export", a.handleUserLogsExport)
+	mux.HandleFunc("GET /api/user-logs", a.requireRole(2, a.handleUserLogsList))
+	mux.HandleFunc("GET /api/user-logs/export", a.requireRole(2, a.handleUserLogsExport))
 	// Actions utilisateurs (F4/F5)
 	mux.HandleFunc("POST /api/users/{id}/reset-stats", a.handleUserResetStats)
 	mux.HandleFunc("POST /api/users/{id}/extend", a.handleUserExtend)
-	mux.HandleFunc("GET /api/users/export", a.handleUsersExport)
-	mux.HandleFunc("POST /api/users/cleanup", a.handleUsersCleanup)
+	mux.HandleFunc("GET /api/users/export", a.requireRole(2, a.handleUsersExport))
+	mux.HandleFunc("POST /api/users/cleanup", a.requireRole(2, a.handleUsersCleanup))
 
 	// P1 (audit Mikhmon) — voir docs/CONTRACT-V2.md (handlers_p1.go)
 	// Trafic temps réel (F6)
 	mux.HandleFunc("GET /api/routers/{id}/traffic", a.handleRouterTraffic)
 	// IP bindings (F7)
-	mux.HandleFunc("GET /api/routers/{id}/ipbindings", a.handleIPBindingsList)
-	mux.HandleFunc("POST /api/routers/{id}/ipbindings", a.handleIPBindingCreate)
-	mux.HandleFunc("PUT /api/ipbindings/{id}", a.handleIPBindingUpdate)
-	mux.HandleFunc("DELETE /api/ipbindings/{id}", a.handleIPBindingDelete)
+	mux.HandleFunc("GET /api/routers/{id}/ipbindings", a.requireRole(2, a.handleIPBindingsList))
+	mux.HandleFunc("POST /api/routers/{id}/ipbindings", a.requireRole(2, a.handleIPBindingCreate))
+	mux.HandleFunc("PUT /api/ipbindings/{id}", a.requireRole(2, a.handleIPBindingUpdate))
+	mux.HandleFunc("DELETE /api/ipbindings/{id}", a.requireRole(2, a.handleIPBindingDelete))
 	// Ping + statut de commande (F8)
-	mux.HandleFunc("POST /api/routers/{id}/ping", a.handleRouterPing)
+	mux.HandleFunc("POST /api/routers/{id}/ping", a.requireRole(2, a.handleRouterPing))
 	mux.HandleFunc("GET /api/commands/{id}", a.handleCommandStatus)
 	// Outils routeur (F9)
-	mux.HandleFunc("GET /api/routers/{id}/dhcp", a.handleRouterDhcp)
-	mux.HandleFunc("GET /api/routers/{id}/hosts", a.handleRouterHosts)
-	mux.HandleFunc("GET /api/routers/{id}/cookies", a.handleRouterCookies)
-	mux.HandleFunc("GET /api/routers/{id}/log", a.handleRouterLog)
+	mux.HandleFunc("GET /api/routers/{id}/dhcp", a.requireRole(2, a.handleRouterDhcp))
+	mux.HandleFunc("GET /api/routers/{id}/hosts", a.requireRole(2, a.handleRouterHosts))
+	mux.HandleFunc("GET /api/routers/{id}/cookies", a.requireRole(2, a.handleRouterCookies))
+	mux.HandleFunc("GET /api/routers/{id}/log", a.requireRole(2, a.handleRouterLog))
 	// Scheduler + alimentation (F10)
-	mux.HandleFunc("GET /api/routers/{id}/scheduler", a.handleSchedulerGet)
-	mux.HandleFunc("POST /api/routers/{id}/scheduler", a.handleSchedulerCreate)
-	mux.HandleFunc("POST /api/routers/{id}/scheduler-toggle", a.handleSchedulerToggle)
-	mux.HandleFunc("POST /api/routers/{id}/scheduler-remove", a.handleSchedulerRemove)
-	mux.HandleFunc("POST /api/routers/{id}/reboot", a.handleRouterReboot)
-	mux.HandleFunc("POST /api/routers/{id}/shutdown", a.handleRouterShutdown)
+	mux.HandleFunc("GET /api/routers/{id}/scheduler", a.requireRole(2, a.handleSchedulerGet))
+	mux.HandleFunc("POST /api/routers/{id}/scheduler", a.requireRole(2, a.handleSchedulerCreate))
+	mux.HandleFunc("POST /api/routers/{id}/scheduler-toggle", a.requireRole(2, a.handleSchedulerToggle))
+	mux.HandleFunc("POST /api/routers/{id}/scheduler-remove", a.requireRole(2, a.handleSchedulerRemove))
+	mux.HandleFunc("POST /api/routers/{id}/reboot", a.requireRole(2, a.handleRouterReboot))
+	mux.HandleFunc("POST /api/routers/{id}/shutdown", a.requireRole(2, a.handleRouterShutdown))
 
 	// Fallback API -> 404 JSON
 	mux.HandleFunc("/api/", a.handleAPINotFound)
@@ -183,13 +190,42 @@ func accountScope(r *http.Request) string {
 	return model.AccountMainID
 }
 
-// isPlatformAdmin — true si le porteur du token a le rôle « admin »
-// (super-administrateur de la plateforme MikCloud).
+// isPlatformAdmin — true si le porteur du token a le rôle super-admin
+// plateforme MikCloud (RolePlatformAdmin ; « admin » historique accepté pour
+// les tokens émis avant le renommage N°7).
 func isPlatformAdmin(r *http.Request) bool {
 	if c := claimsFrom(r); c != nil {
-		return c.Role == "admin"
+		return c.Role == model.RolePlatformAdmin || c.Role == "admin"
 	}
 	return false
+}
+
+// roleRank — hiérarchie des rôles d'équipe (N°7) :
+// operator(1) < manager(2) < owner(3). Le super-admin plateforme est traité
+// comme owner sur le compte consulté. Rôle inconnu → 0 (aucun droit, défensif).
+func roleRank(role string) int {
+	switch role {
+	case model.RoleOperator:
+		return 1
+	case model.RoleManager:
+		return 2
+	case model.RoleOwner, model.RolePlatformAdmin, "admin":
+		return 3
+	}
+	return 0
+}
+
+// requireRole — autorisation SERVEUR (défense en profondeur : l'UI masque,
+// le serveur refuse). Le porteur du token doit avoir un rang ≥ min pour
+// accéder au handler. Ex. : PUT /api/settings → requireRole(3, …).
+func (a *API) requireRole(min int, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if c := claimsFrom(r); c != nil && roleRank(c.Role) >= min {
+			next(w, r)
+			return
+		}
+		writeErr(w, http.StatusForbidden, "Accès refusé — rôle insuffisant pour cette action")
+	}
 }
 
 func (a *API) authMiddleware(next http.Handler) http.Handler {
@@ -265,9 +301,26 @@ func ptrString(s string) *string { return &s }
 func ptrInt(i int) *int          { return &i }
 
 // logActivity ajoute une entrée en tête du journal DU COMPTE (sous verrou).
+// Acteur vide = moteur interne (simulation, agent, notifications).
 func (a *API) logActivity(db *model.DB, acc, typ, message string) {
 	db.Activity = append([]model.Activity{{
 		ID: model.NewID("act-"), AccountID: acc, Type: typ, Message: message, At: model.NowISO(),
+	}}, db.Activity...)
+	if len(db.Activity) > 500 {
+		db.Activity = db.Activity[:500]
+	}
+}
+
+// logActivityBy — journal d'AUDIT (N°7) : trace l'acteur authentifié à
+// l'origine de l'action (claims du token). Repli « système » si sans token.
+func (a *API) logActivityBy(r *http.Request, db *model.DB, acc, typ, message string) {
+	actorID, actorName := "", ""
+	if c := claimsFrom(r); c != nil {
+		actorID, actorName = c.Sub, c.Name
+	}
+	db.Activity = append([]model.Activity{{
+		ID: model.NewID("act-"), AccountID: acc, Type: typ, Message: message, At: model.NowISO(),
+		ActorID: actorID, ActorName: actorName,
 	}}, db.Activity...)
 	if len(db.Activity) > 500 {
 		db.Activity = db.Activity[:500]
@@ -518,6 +571,11 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 		a.store.Save()
 		a.store.Unlock()
 	}
+	// N°7 — audit : trace la connexion réussie (acteur = qui se connecte).
+	a.store.Lock()
+	a.logActivityBy(r, a.store.Data(), accID, "system", "Connexion de "+username+" («"+role+"»)")
+	a.store.Save()
+	a.store.Unlock()
 	token := auth.Sign(a.secret, auth.NewClaims(id, name, role, accID))
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token": token,
@@ -578,7 +636,7 @@ func (a *API) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 	user.PasswordHash = auth.HashPassword(req.NewPassword, "") // bcrypt : sel intégré
 	user.Salt = ""
 	user.PasswordSetByUser = true
-	a.logActivity(db, user.AccountID, "system", "Mot de passe modifié par "+user.Username)
+	a.logActivityBy(r, db, user.AccountID, "system", "Mot de passe modifié par "+user.Username)
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -664,7 +722,7 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 	// P0 (audit Mikhmon) — chaque nouveau compte démarre avec les 3 modèles
 	// de vouchers par défaut (contrat F2).
 	db.Templates = append(db.Templates, store.SeedTemplatesFor(acc.ID)...)
-	a.logActivity(db, acc.ID, "compte", "Nouveau compte créé : "+acc.Name)
+	a.logActivityBy(r, db, acc.ID, "compte", "Nouveau compte créé : "+acc.Name)
 	a.store.Save()
 	a.store.Unlock()
 
@@ -1073,7 +1131,7 @@ func (a *API) handleRouterCreate(w http.ResponseWriter, r *http.Request) {
 		// enfile un suivant (handleAgentResult) → télémétrie continue.
 		queueCommandLocked(a.store.Data(), acc, router.ID, model.CmdReadState, map[string]any{})
 	}
-	a.logActivity(a.store.Data(), acc, "router", msg)
+	a.logActivityBy(r, a.store.Data(), acc, "router", msg)
 	a.store.Save()
 	a.store.Unlock()
 
@@ -1207,7 +1265,7 @@ func (a *API) handleRouterUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	*cur = updated
-	a.logActivity(a.store.Data(), acc, "router", "Routeur "+updated.Name+" modifié")
+	a.logActivityBy(r, a.store.Data(), acc, "router", "Routeur "+updated.Name+" modifié")
 	a.store.Save()
 	a.store.Unlock()
 	a.invalidateGateway(id)
@@ -1262,7 +1320,7 @@ func (a *API) handleRouterDelete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	db.Commands = commands
-	a.logActivity(db, acc, "router", "Routeur "+name+" supprimé")
+	a.logActivityBy(r, db, acc, "router", "Routeur "+name+" supprimé")
 	a.store.Save()
 	a.store.Unlock()
 	a.invalidateGateway(id)
@@ -1481,7 +1539,7 @@ func (a *API) handleProfileCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	a.store.Lock()
 	a.store.Data().Profiles = append(a.store.Data().Profiles, profile)
-	a.logActivity(a.store.Data(), acc, "user", "Profil "+profile.Name+" créé")
+	a.logActivityBy(r, a.store.Data(), acc, "user", "Profil "+profile.Name+" créé")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusCreated, profile)
@@ -1594,7 +1652,7 @@ func (a *API) handleProfileUpdate(w http.ResponseWriter, r *http.Request) {
 		p.SellingPrice = *req.SellingPrice
 	}
 	updated := *p
-	a.logActivity(db, acc, "user", "Profil "+updated.Name+" modifié")
+	a.logActivityBy(r, db, acc, "user", "Profil "+updated.Name+" modifié")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, updated)
@@ -1619,7 +1677,7 @@ func (a *API) handleProfileDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	name := db.Profiles[idx].Name
 	db.Profiles = append(db.Profiles[:idx], db.Profiles[idx+1:]...)
-	a.logActivity(db, acc, "user", "Profil "+name+" supprimé")
+	a.logActivityBy(r, db, acc, "user", "Profil "+name+" supprimé")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -1761,7 +1819,7 @@ func (a *API) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 			userPayload["limitBytesTotal"] = profile.DataQuotaMb * 1048576
 		}
 		cmd := queueCommandLocked(db, routerCopy.AccountID, routerCopy.ID, model.CmdUserAdd, userPayload)
-		a.logActivity(db, acc, "user", "Utilisateur "+u.Username+" créé (en attente du routeur, commande "+cmd.ID+")")
+		a.logActivityBy(r, db, acc, "user", "Utilisateur "+u.Username+" créé (en attente du routeur, commande "+cmd.ID+")")
 		a.store.Save()
 		cmdID := cmd.ID
 		a.store.Unlock()
@@ -1781,7 +1839,7 @@ func (a *API) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.store.Lock()
-	a.logActivity(a.store.Data(), acc, "user", "Utilisateur "+u.Username+" créé")
+	a.logActivityBy(r, a.store.Data(), acc, "user", "Utilisateur "+u.Username+" créé")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, u)
@@ -1881,7 +1939,7 @@ func (a *API) handleUserUpdate(w http.ResponseWriter, r *http.Request) {
 			*existing = u
 		}
 		cmd := queueCommandLocked(a.store.Data(), routerCopy.AccountID, routerCopy.ID, model.CmdUserSet, payload)
-		a.logActivity(a.store.Data(), acc, "user", "Utilisateur "+u.Username+" modifié (en attente du routeur, commande "+cmd.ID+")")
+		a.logActivityBy(r, a.store.Data(), acc, "user", "Utilisateur "+u.Username+" modifié (en attente du routeur, commande "+cmd.ID+")")
 		a.store.Save()
 		a.store.Unlock()
 		writeJSON(w, http.StatusOK, u)
@@ -1903,7 +1961,7 @@ func (a *API) handleUserUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.store.Lock()
-	a.logActivity(a.store.Data(), acc, "user", "Utilisateur "+u.Username+" modifié")
+	a.logActivityBy(r, a.store.Data(), acc, "user", "Utilisateur "+u.Username+" modifié")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, u)
@@ -1960,7 +2018,7 @@ func (a *API) userSetStatus(w http.ResponseWriter, r *http.Request, action strin
 			if action == "disable" {
 				verb = "désactivé"
 			}
-			a.logActivity(a.store.Data(), acc, "user", "Utilisateur "+username+" "+verb+" (en attente du routeur)")
+			a.logActivityBy(r, a.store.Data(), acc, "user", "Utilisateur "+username+" "+verb+" (en attente du routeur)")
 			a.store.Save()
 		}
 		a.store.Unlock()
@@ -2006,7 +2064,7 @@ func (a *API) userSetStatus(w http.ResponseWriter, r *http.Request, action strin
 	if action == "disable" {
 		verb = "désactivé"
 	}
-	a.logActivity(a.store.Data(), acc, "user", "Utilisateur "+username+" "+verb)
+	a.logActivityBy(r, a.store.Data(), acc, "user", "Utilisateur "+username+" "+verb)
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, updated)
@@ -2038,7 +2096,7 @@ func (a *API) handleUserDelete(w http.ResponseWriter, r *http.Request) {
 		a.removeUserByID(id)
 		queueCommandLocked(a.store.Data(), routerCopy.AccountID, routerCopy.ID, model.CmdUserRemove,
 			map[string]any{"names": []string{agent.SanitizeName(username)}})
-		a.logActivity(a.store.Data(), acc, "user", "Utilisateur "+username+" supprimé (en attente du routeur)")
+		a.logActivityBy(r, a.store.Data(), acc, "user", "Utilisateur "+username+" supprimé (en attente du routeur)")
 		a.store.Save()
 		a.store.Unlock()
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -2066,7 +2124,7 @@ func (a *API) handleUserDelete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	db.Sessions = sessions
-	a.logActivity(db, acc, "user", "Utilisateur "+username+" supprimé")
+	a.logActivityBy(r, db, acc, "user", "Utilisateur "+username+" supprimé")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -2240,7 +2298,7 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 			batchPayload["comment"] = voucherComment
 		}
 		cmd := queueCommandLocked(db, routerCopy.AccountID, routerCopy.ID, model.CmdVoucherBatch, batchPayload)
-		a.logActivity(db, acc, "voucher", fmt.Sprintf("Lot %s : %d vouchers en file pour «%s»%s (commande %s)", batchID, req.Count, routerCopy.Name, quotaNote(quotaMb), cmd.ID))
+		a.logActivityBy(r, db, acc, "voucher", fmt.Sprintf("Lot %s : %d vouchers en file pour «%s»%s (commande %s)", batchID, req.Count, routerCopy.Name, quotaNote(quotaMb), cmd.ID))
 		// Bookkeeping : vente, transaction, portefeuille revendeur
 		channel := "direct"
 		resName := ""
@@ -2333,7 +2391,7 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 	if resName != "" {
 		msg += " pour " + resName
 	}
-	a.logActivity(db, acc, "voucher", msg)
+	a.logActivityBy(r, db, acc, "voucher", msg)
 	a.store.Save()
 	a.store.Unlock()
 
@@ -2427,7 +2485,7 @@ func (a *API) handleVouchersBatchDelete(w http.ResponseWriter, r *http.Request) 
 		batches = append(batches, b)
 	}
 	db.Batches = batches
-	a.logActivity(db, acc, "voucher", fmt.Sprintf("Lot %s supprimé (%d vouchers)", batchID, deleted))
+	a.logActivityBy(r, db, acc, "voucher", fmt.Sprintf("Lot %s supprimé (%d vouchers)", batchID, deleted))
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "deleted": deleted})
@@ -2511,7 +2569,7 @@ func (a *API) handleSessionKick(w http.ResponseWriter, r *http.Request) {
 			}
 			db.Sessions = sessions
 			queueCommandLocked(db, routerCopy.AccountID, routerCopy.ID, model.CmdKick, map[string]any{"user": agent.SanitizeName(username)})
-			a.logActivity(db, acc, "session", "Session de "+username+" fermée (kick, en attente du routeur)")
+			a.logActivityBy(r, db, acc, "session", "Session de "+username+" fermée (kick, en attente du routeur)")
 			a.store.Save()
 			a.store.Unlock()
 		}
@@ -2557,7 +2615,7 @@ func (a *API) handleSessionKick(w http.ResponseWriter, r *http.Request) {
 	if username != "" {
 		msg = "Session de " + username + " fermée (kick)"
 	}
-	a.logActivity(a.store.Data(), acc, "session", msg)
+	a.logActivityBy(r, a.store.Data(), acc, "session", msg)
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -2617,7 +2675,7 @@ func (a *API) handleResellerCreate(w http.ResponseWriter, r *http.Request) {
 		Credit: req.Credit, VouchersSold: 0, Revenue: 0, Status: "active", CreatedAt: model.NowISO(),
 	}
 	db.Resellers = append(db.Resellers, reseller)
-	a.logActivity(db, acc, "reseller", "Revendeur "+reseller.Name+" créé")
+	a.logActivityBy(r, db, acc, "reseller", "Revendeur "+reseller.Name+" créé")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, reseller)
@@ -2664,7 +2722,7 @@ func (a *API) handleResellerUpdate(w http.ResponseWriter, r *http.Request) {
 		res.Status = *req.Status
 	}
 	updated := *res
-	a.logActivity(db, acc, "reseller", "Revendeur "+updated.Name+" modifié")
+	a.logActivityBy(r, db, acc, "reseller", "Revendeur "+updated.Name+" modifié")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, updated)
@@ -2689,7 +2747,7 @@ func (a *API) handleResellerDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	name := db.Resellers[idx].Name
 	db.Resellers = append(db.Resellers[:idx], db.Resellers[idx+1:]...)
-	a.logActivity(db, acc, "reseller", "Revendeur "+name+" supprimé")
+	a.logActivityBy(r, db, acc, "reseller", "Revendeur "+name+" supprimé")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -2739,9 +2797,9 @@ func (a *API) handleResellerCredit(w http.ResponseWriter, r *http.Request) {
 	}
 	db.Transactions = append([]model.Transaction{tx}, db.Transactions...)
 	if req.Amount > 0 {
-		a.logActivity(db, acc, "reseller", fmt.Sprintf("Crédit de %d FCFA ajouté à %s", req.Amount, res.Name))
+		a.logActivityBy(r, db, acc, "reseller", fmt.Sprintf("Crédit de %d FCFA ajouté à %s", req.Amount, res.Name))
 	} else {
-		a.logActivity(db, acc, "reseller", fmt.Sprintf("Débit de %d FCFA sur %s", -req.Amount, res.Name))
+		a.logActivityBy(r, db, acc, "reseller", fmt.Sprintf("Débit de %d FCFA sur %s", -req.Amount, res.Name))
 	}
 	updated := *res
 	a.store.Save()
@@ -3490,7 +3548,7 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		settings.Tenant.ExpiryPolicyAfterDays = *expiryAfterDays
 	}
 	db.SettingsByAccount[acc] = settings
-	a.logActivity(db, acc, "system", "Paramètres du tenant mis à jour")
+	a.logActivityBy(r, db, acc, "system", "Paramètres du tenant mis à jour")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, settings)
@@ -3503,7 +3561,7 @@ func (a *API) handleReset(w http.ResponseWriter, r *http.Request) {
 	}
 	a.store.Reset()
 	a.store.Lock()
-	a.logActivity(a.store.Data(), accountScope(r), "system", "Données de démonstration réinitialisées")
+	a.logActivityBy(r, a.store.Data(), accountScope(r), "system", "Données de démonstration réinitialisées")
 	a.store.Save()
 	a.store.Unlock()
 	a.clearGateways()
@@ -3525,7 +3583,7 @@ func (a *API) handleReload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.store.Lock()
-	a.logActivity(a.store.Data(), accountScope(r), "system", "Données rechargées depuis la base persistée")
+	a.logActivityBy(r, a.store.Data(), accountScope(r), "system", "Données rechargées depuis la base persistée")
 	a.store.Save()
 	a.store.Unlock()
 	// Les connexions routeurs en cache peuvent référencer des routeurs
@@ -3668,7 +3726,7 @@ func (a *API) handleAdminAccountStatus(w http.ResponseWriter, r *http.Request) {
 	if req.Status == "disabled" {
 		verb = "désactivé"
 	}
-	a.logActivity(db, accountScope(r), "system", "Compte «"+acc.Name+"» "+verb)
+	a.logActivityBy(r, db, accountScope(r), "system", "Compte «"+acc.Name+"» "+verb)
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})

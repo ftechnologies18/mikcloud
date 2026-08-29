@@ -24,6 +24,7 @@ import {
   Ticket,
   UserRound,
   Users,
+  UsersRound,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { LucideIcon } from "lucide-react";
@@ -44,6 +45,7 @@ import { cn } from "@/lib/utils";
 import { api } from "@/lib/hotspot/api";
 import { localeOf, useI18n } from "@/lib/hotspot/i18n";
 import { roleLabel, userInitials } from "@/lib/hotspot/format";
+import { canView } from "@/lib/hotspot/roles";
 import { useHotspotStore } from "@/lib/hotspot/store";
 import type { HotspotSession, ViewId } from "@/lib/hotspot/types";
 import { UserProfileDialog } from "./parts/user-profile-dialog";
@@ -58,6 +60,7 @@ import ResellersView from "./views/resellers-view";
 import RoutersView from "./views/routers-view";
 import SessionsView from "./views/sessions-view";
 import SettingsView from "./views/settings-view";
+import TeamView from "./views/team-view";
 import TemplatesView from "./views/templates-view";
 import UsersView from "./views/users-view";
 import VouchersView from "./views/vouchers-view";
@@ -78,6 +81,7 @@ function viewTitle(view: ViewId, t: (key: string) => string): string {
     accounts: "nav.accounts",
     notifications: "nav.notifications",
     settings: "nav.settings",
+    team: "nav.team",
   };
   return t(keys[view]);
 }
@@ -119,6 +123,7 @@ const NAV_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
     items: [
       // « Comptes » n'est visible que de l'admin plateforme (rôle admin) — filtré dans NavList.
       { id: "accounts", labelKey: "nav.accounts", icon: Building2 },
+      { id: "team", labelKey: "nav.team", icon: UsersRound },
       { id: "notifications", labelKey: "nav.notifications", icon: Bell },
       { id: "settings", labelKey: "nav.settings", icon: Settings },
     ],
@@ -139,6 +144,7 @@ const VIEWS: Record<ViewId, React.ComponentType> = {
   accounts: AccountsView,
   notifications: NotificationsView,
   settings: SettingsView,
+  team: TeamView,
 };
 
 /** En-tête de marque — logo + nom MikCloud. */
@@ -249,7 +255,7 @@ function NavList() {
   const view = useHotspotStore((s) => s.view);
   const setView = useHotspotStore((s) => s.setView);
   const user = useHotspotStore((s) => s.user);
-  const isAdmin = user?.role === "admin";
+  const isAdmin = user?.role === "admin" || user?.role === "platform_admin";
 
   const { data: sessions } = useQuery({
     queryKey: ["/api/sessions"],
@@ -261,7 +267,11 @@ function NavList() {
   return (
     <nav className="flex-1 space-y-5 overflow-y-auto px-3 pb-4" aria-label={t("nav.main")}>
       {NAV_SECTIONS.map((section) => {
-        const items = section.items.filter((item) => item.id !== "accounts" || isAdmin);
+        // N°7 — chaque vue n'apparaît que si le rôle peut l'ouvrir
+        // (miroir client des requireRole serveur ; comptes = admin plateforme).
+        const items = section.items.filter(
+          (item) => (item.id !== "accounts" || isAdmin) && canView(user?.role, item.id),
+        );
         if (items.length === 0) return null;
         return (
           <div key={section.labelKey}>
@@ -419,10 +429,12 @@ export default function AppShell() {
   const sidebarOpen = useHotspotStore((s) => s.sidebarOpen);
   const setSidebarOpen = useHotspotStore((s) => s.setSidebarOpen);
   const user = useHotspotStore((s) => s.user);
-  const isAdmin = user?.role === "admin";
+  const isAdmin = user?.role === "admin" || user?.role === "platform_admin";
 
-  // Garde-fou : la vue Comptes est réservée à l'admin plateforme.
-  const ActiveView = view === "accounts" && !isAdmin ? DashboardView : (VIEWS[view] ?? DashboardView);
+  // Garde-fou N°7 : une vue interdite au rôle (p.ex. un lien direct restant
+  // après un changement de rôle) retombe sur le dashboard — le serveur
+  // refuserait les appels de toute façon (403).
+  const ActiveView = canView(user?.role, view) ? (VIEWS[view] ?? DashboardView) : DashboardView;
 
   return (
     <div className="flex min-h-screen">

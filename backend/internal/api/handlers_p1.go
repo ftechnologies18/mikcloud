@@ -205,7 +205,7 @@ func (a *API) handleIPBindingCreate(w http.ResponseWriter, r *http.Request) {
 		})
 		cmdID = cmd.ID
 	}
-	a.logActivity(db, acc, "router", "IP binding "+binding.MAC+" ("+typ+") ajouté sur «"+rr.Name+"»")
+	a.logActivityBy(r, db, acc, "router", "IP binding "+binding.MAC+" ("+typ+") ajouté sur «"+rr.Name+"»")
 	a.store.Save()
 	a.store.Unlock()
 
@@ -290,7 +290,7 @@ func (a *API) handleIPBindingUpdate(w http.ResponseWriter, r *http.Request) {
 		queueCommandLocked(db, acc, rr.ID, model.CmdIpbindingSet, payload)
 	}
 	updated := *b
-	a.logActivity(db, acc, "router", "IP binding "+updated.MAC+" modifié sur «"+rr.Name+"»")
+	a.logActivityBy(r, db, acc, "router", "IP binding "+updated.MAC+" modifié sur «"+rr.Name+"»")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, updated)
@@ -332,7 +332,7 @@ func (a *API) handleIPBindingDelete(w http.ResponseWriter, r *http.Request) {
 	if rr.Mode == "agent" {
 		queueCommandLocked(db, acc, rr.ID, model.CmdIpbindingRemove, map[string]any{"mac": b.MAC})
 	}
-	a.logActivity(db, acc, "router", "IP binding "+b.MAC+" supprimé de «"+rr.Name+"»")
+	a.logActivityBy(r, db, acc, "router", "IP binding "+b.MAC+" supprimé de «"+rr.Name+"»")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -905,7 +905,7 @@ func (a *API) handleSchedulerCreate(w http.ResponseWriter, r *http.Request) {
 		Disabled: false, CreatedAt: model.NowISO(),
 	}
 	db.SchedulerTasks = append(db.SchedulerTasks, task)
-	a.logActivity(db, acc, "router", "Tâche planifiée «"+name+"» ("+interval+") créée sur «"+rr.Name+"»")
+	a.logActivityBy(r, db, acc, "router", "Tâche planifiée «"+name+"» ("+interval+") créée sur «"+rr.Name+"»")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusCreated, task)
@@ -1027,7 +1027,7 @@ func (a *API) handleSchedulerRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	db.SchedulerTasks = append(db.SchedulerTasks[:idx], db.SchedulerTasks[idx+1:]...)
-	a.logActivity(db, acc, "router", "Tâche planifiée «"+name+"» supprimée de «"+rr.Name+"»")
+	a.logActivityBy(r, db, acc, "router", "Tâche planifiée «"+name+"» supprimée de «"+rr.Name+"»")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -1098,7 +1098,7 @@ func (a *API) handleRouterPower(w http.ResponseWriter, r *http.Request, action s
 	if action == "shutdown" {
 		verb = "éteint"
 	}
-	a.logActivity(db, acc, "router", "Routeur "+rr.Name+" "+verb+" (commande console)")
+	a.logActivityBy(r, db, acc, "router", "Routeur "+rr.Name+" "+verb+" (commande console)")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})

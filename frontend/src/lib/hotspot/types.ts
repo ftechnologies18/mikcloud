@@ -1,5 +1,9 @@
 // Types partagés MikCloud — alignés sur le contrat API Go (voir worklog.md)
 
+import type { TeamRole } from "./roles";
+
+export type { TeamRole } from "./roles";
+
 export type RouterMode = "simulated" | "real" | "agent";
 export type RouterStatus = "online" | "offline";
 export type VoucherStatus = "active" | "used" | "expired" | "disabled";
@@ -17,6 +21,25 @@ export interface AuthUser {
   /** Compte SaaS auquel l'utilisateur est rattaché (multi-tenant). */
   accountId?: string;
   accountName?: string;
+}
+
+/* ─── N°7 : équipe & rôles (GET/POST /api/team, PUT/DELETE /api/team/{id}) ─── */
+
+/** Membre d'équipe (vue publique — jamais de hash). */
+export interface TeamMember {
+  id: string;
+  name: string;
+  username: string;
+  role: TeamRole | string;
+  createdAt: string;
+}
+
+/** Payload de création d'un membre (owner uniquement). */
+export interface TeamMemberPayload {
+  name: string;
+  username: string;
+  password?: string;
+  role: string;
 }
 
 export interface LoginResponse {
@@ -653,4 +676,5 @@ export type ViewId =
   | "logs"
   | "accounts"
   | "notifications"
-  | "settings";
+  | "settings"
+  | "team";

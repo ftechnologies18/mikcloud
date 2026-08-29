@@ -18,6 +18,7 @@ import {
   Router as RouterIcon,
   ShieldCheck,
   Terminal,
+  TriangleAlert,
   Trash2,
   Users,
   Wrench,
@@ -185,6 +186,14 @@ function AgentInstallDialog({
             </li>
           ))}
         </ol>
+
+        <div
+          className="flex items-start gap-2.5 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs leading-relaxed"
+          role="note"
+        >
+          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden="true" />
+          <span className="text-amber-700 dark:text-amber-400">{t("routers.wizard.deviceMode")}</span>
+        </div>
 
         {wizard && <ScriptBox script={wizard.script} />}
 

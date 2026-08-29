@@ -132,9 +132,38 @@ func InstallScript(baseURL, token, routerName string) string {
 # check-certificate=no. RouterOS < 7.19 n'embarque aucun certificat racine
 # (la validation Let's Encrypt échoue) — le repli garantit la compatibilité
 # 6.44 → 7.19+. Sur 7.19+ la validation réussit : trafic authentifié.
+#
+# ROUTEURS NEUFS (RouterOS 7.17+) : d'usine, fetch / scheduler / hotspot
+# sont DÉSACTIVÉS par le « device-mode » restreint (protection anti-malware).
+# Le pré-vol ci-dessous le détecte et affiche la marche à suivre au lieu
+# d'échouer avec « not allowed by device-mode ».
 # ============================================================
 :global mikcloudToken "` + rosEscape(token) + `"
 :global mikcloudUrl   "` + strings.TrimRight(baseURL, "/") + `"
+
+# --- 0) Pre-vol : device-mode (RouterOS 7.13+ ; ignoré sur versions antérieures) ---
+:local mikReady true
+:do {
+  :local dmS [/system device-mode get scheduler]
+  :local dmF [/system device-mode get fetch]
+  :if ((!$dmS) || (!$dmF)) do={ :set mikReady false }
+  :do {
+    :local dmH [/system device-mode get hotspot]
+    :if (!$dmH) do={ :set mikReady false }
+  } on-error={}
+} on-error={}
+:if (!$mikReady) do={
+  :put ""
+  :put "MIKCLOUD : installation bloquee par le device-mode de ce routeur."
+  :put "1) Executez une seule fois :"
+  :put "   /system/device-mode/update scheduler=yes fetch=yes hotspot=yes"
+  :put "2) Confirmez PHYSIQUEMENT dans les 5 minutes : appuyez une fois sur"
+  :put "   le bouton reset du routeur, OU debranchez puis rebranchez"
+  :put "   l'alimentation (cold reboot). Le routeur redemarre alors."
+  :put "3) Apres redemarrage, recollez CE script complet."
+  :put ""
+  :log error "MikCloud: device-mode restreint - /system/device-mode/update scheduler=yes fetch=yes hotspot=yes puis confirmation physique (bouton reset ou cold reboot)"
+} else={
 
 # --- 1) Inscription immediate : le cloud decouvre ce routeur ---
 :local ident [/system identity get name]
@@ -153,27 +182,38 @@ func InstallScript(baseURL, token, routerName string) string {
 }
 
 # --- 2) Reinstallation propre : suppression d'un ancien agent ---
-/system scheduler remove [find name="` + SchedulerName + `"]
+:do { /system scheduler remove [find name="` + SchedulerName + `"] } on-error={}
 
 # --- 3) L'agent permanent : check-in toutes les 45 s (survit aux reboots) ---
-/system scheduler add name="` + SchedulerName + `" interval=45s start-time=startup on-event={
-  :local fetched true
-  :do {
-    /tool fetch url=($mikcloudUrl . "/agent/cmd?token=" . $mikcloudToken) \
-      dst-path="` + ScriptFilename + `" keep-result=yes output=none
-  } on-error={
+:local mikAdded false
+:do {
+  /system scheduler add name="` + SchedulerName + `" interval=45s start-time=startup on-event={
+    :local fetched true
     :do {
-      /tool fetch url=($mikcloudUrl . "/agent/cmd?token=" . $mikcloudToken) check-certificate=no \
+      /tool fetch url=($mikcloudUrl . "/agent/cmd?token=" . $mikcloudToken) \
         dst-path="` + ScriptFilename + `" keep-result=yes output=none
-    } on-error={ :set fetched false; :log warning "MikCloud agent: check-in echoue (reseau?)" }
+    } on-error={
+      :do {
+        /tool fetch url=($mikcloudUrl . "/agent/cmd?token=" . $mikcloudToken) check-certificate=no \
+          dst-path="` + ScriptFilename + `" keep-result=yes output=none
+      } on-error={ :set fetched false; :log warning "MikCloud agent: check-in echoue (reseau?)" }
+    }
+    :if ($fetched) do={
+      :delay 1s
+      /import file-name="` + ScriptFilename + `"
+    }
   }
-  :if ($fetched) do={
-    :delay 1s
-    /import file-name="` + ScriptFilename + `"
-  }
+  :set mikAdded true
+} on-error={
+  :put "MIKCLOUD : echec de la creation du scheduler."
+  :put "Si le message d'erreur est 'not allowed by device-mode', executez :"
+  :put "  /system/device-mode/update scheduler=yes fetch=yes hotspot=yes"
+  :put "puis confirmez physiquement (bouton reset ou coupure d'alimentation)."
+  :log error "MikCloud: creation scheduler echouee (device-mode ?)"
 }
+:if ($mikAdded) do={ :log info "MikCloud: agent installe, check-in dans 45s" }
 
-:log info "MikCloud: agent installe, check-in dans 45s"
+}
 `
 }
 

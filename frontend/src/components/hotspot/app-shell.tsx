@@ -54,7 +54,8 @@ import TemplatesView from "./views/templates-view";
 import UsersView from "./views/users-view";
 import VouchersView from "./views/vouchers-view";
 
-/** Titre dynamique de la vue active (topbar) — dépend de la langue. */
+/** Libellé dynamique de la vue active — utilisé pour l'aria du conteneur
+ *  principal (le titre visible vit dans chaque vue via PageHeader). */
 function viewTitle(view: ViewId, t: (key: string) => string): string {
   const keys: Record<ViewId, string> = {
     dashboard: "nav.dashboard",
@@ -267,7 +268,6 @@ function NavList() {
 
 function Topbar() {
   const { t } = useI18n();
-  const view = useHotspotStore((s) => s.view);
   const setView = useHotspotStore((s) => s.setView);
   const setSidebarOpen = useHotspotStore((s) => s.setSidebarOpen);
   const user = useHotspotStore((s) => s.user);
@@ -288,20 +288,26 @@ function Topbar() {
   const name = user?.name ?? t("profile.defaultUser");
 
   return (
-    <header className="sticky top-0 z-20 border-b border-border/60 bg-background/70 backdrop-blur-xl">
+    <header className="topbar-surface sticky top-0 z-20 border-b border-border/60">
       <div className="flex h-14 items-center gap-2 px-4 sm:gap-3 sm:px-6">
         <Button
           variant="ghost"
           size="icon"
-          className="size-10 lg:hidden"
+          className="size-10 shrink-0 lg:hidden"
           onClick={() => setSidebarOpen(true)}
           aria-label={t("nav.openMenu")}
         >
           <Menu className="size-5" />
         </Button>
-        <h2 className="truncate text-base font-semibold tracking-tight">{viewTitle(view, t)}</h2>
-        <div className="ml-auto flex items-center gap-1 sm:gap-1.5">
+        {/* Respiration gauche — équilibre la zone d'actions pour centrer la
+            recherche. Le titre de la vue vit dans la page elle-même
+            (PageHeader h1) : l'afficher aussi ici était redondant. */}
+        <div className="hidden flex-1 lg:block" aria-hidden />
+        {/* Recherche : accolée au burger < lg, parfaitement centrée ≥ lg */}
+        <div className="flex min-w-0 justify-start lg:justify-center">
           <SearchPalette />
+        </div>
+        <div className="ml-auto flex flex-1 items-center justify-end gap-1 sm:gap-1.5">
           <LiveClock />
           <ActivityBell />
           <ThemeToggle />
@@ -356,6 +362,7 @@ function Topbar() {
 }
 
 export default function AppShell() {
+  const { t } = useI18n();
   const view = useHotspotStore((s) => s.view);
   const sidebarOpen = useHotspotStore((s) => s.sidebarOpen);
   const setSidebarOpen = useHotspotStore((s) => s.setSidebarOpen);
@@ -395,7 +402,7 @@ export default function AppShell() {
       {/* Contenu principal */}
       <div className="flex min-w-0 flex-1 flex-col lg:pl-64">
         <Topbar />
-        <main className="flex-1">
+        <main className="flex-1" aria-label={viewTitle(view, t)}>
           <div className="mx-auto max-w-7xl space-y-6 p-4 sm:p-6">
             <AnimatePresence mode="wait">
               <motion.div

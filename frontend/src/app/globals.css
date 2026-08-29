@@ -225,13 +225,15 @@
    dans le containing block créé par `position: fixed` des composants. */
 .sidebar-aurora {
   background:
-    radial-gradient(ellipse 90% 28% at 8% 0%, oklch(0.55 0.15 163 / 0.1), transparent 60%),
-    linear-gradient(180deg, oklch(0.958 0.026 162), oklch(0.912 0.034 164));
+    radial-gradient(ellipse 90% 28% at 8% 0%, oklch(0.55 0.15 163 / 0.12), transparent 60%),
+    radial-gradient(ellipse 60% 35% at -8% 100%, oklch(0.6 0.12 190 / 0.07), transparent 55%),
+    linear-gradient(180deg, oklch(0.948 0.038 163), oklch(0.895 0.046 165));
 }
 .dark .sidebar-aurora {
   background:
-    radial-gradient(ellipse 90% 30% at 8% 0%, oklch(0.72 0.155 163 / 0.13), transparent 62%),
-    linear-gradient(180deg, oklch(0.152 0.024 172), oklch(0.097 0.016 170));
+    radial-gradient(ellipse 90% 26% at 10% 0%, oklch(0.75 0.16 163 / 0.2), transparent 62%),
+    radial-gradient(ellipse 65% 40% at -10% 100%, oklch(0.7 0.12 190 / 0.09), transparent 55%),
+    linear-gradient(180deg, oklch(0.178 0.042 173), oklch(0.104 0.026 171));
 }
 .sidebar-aurora::after {
   content: "";
@@ -245,6 +247,41 @@
     color-mix(in oklab, var(--primary) 45%, transparent) 30%,
     color-mix(in oklab, var(--grad-b) 45%, transparent) 70%,
     transparent
+  );
+  pointer-events: none;
+}
+.dark .sidebar-aurora::after {
+  width: 2px;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    color-mix(in oklab, var(--primary) 70%, transparent) 25%,
+    color-mix(in oklab, var(--grad-b) 70%, transparent) 70%,
+    transparent
+  );
+}
+
+/* Topbar : surface surélevée distincte du fond + filet aurora signature.
+   En sombre, la bar était invisible (bg-background/70 sur fond background) —
+   désormais un panneau plus clair que le contenu, avec liseré dégradé bas. */
+.topbar-surface {
+  background-color: color-mix(in oklab, var(--card) 90%, var(--background));
+  backdrop-filter: blur(20px) saturate(1.25);
+  -webkit-backdrop-filter: blur(20px) saturate(1.25);
+}
+.topbar-surface::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklab, var(--grad-a) 55%, transparent) 22%,
+    color-mix(in oklab, var(--grad-b) 55%, transparent) 58%,
+    transparent 88%
   );
   pointer-events: none;
 }

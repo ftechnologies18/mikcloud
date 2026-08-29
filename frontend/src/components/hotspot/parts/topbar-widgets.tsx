@@ -137,12 +137,12 @@ export function SearchPalette() {
 
   return (
     <>
-      {/* Pilule de recherche (sm+) */}
+      {/* Pilule de recherche (sm+) — centrée dans le header */}
       <button
         type="button"
         onClick={() => setOpen(true)}
         aria-label={t("topbar.search")}
-        className="hidden h-9 w-44 items-center gap-2 rounded-full border border-border/70 bg-card/60 px-3.5 text-sm text-muted-foreground outline-none transition-all hover:border-primary/40 hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring sm:flex lg:w-56"
+        className="hidden h-9 w-52 items-center gap-2 rounded-full border border-border/70 bg-background/60 px-4 text-sm text-muted-foreground outline-none transition-all hover:border-primary/40 hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring sm:flex lg:w-80"
       >
         <Search className="size-4 shrink-0" aria-hidden />
         <span className="flex-1 truncate text-left">{t("topbar.search")}</span>

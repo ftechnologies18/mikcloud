@@ -115,6 +115,25 @@ func rosMinutes(m int) string {
 // ---------------------------------------------------------------------------
 
 // InstallScript — le script de provisionning complet (1 collage dans Winbox).
+//
+// Le script est collé dans la console (Terminal Winbox), pas importé comme
+// fichier .rsc : le parseur console y est nettement plus fragile. Règles
+// respectées ici (issues d'incidents réels) :
+//   - les :local top-level meurent entre deux commandes collées → TOUT le
+//     corps est enveloppé dans UN SEUL bloc :do { … } exécuté comme une
+//     commande unique (les :local y survivent) ;
+//   - les corps de bloc one-line « do={ :set x y } » sont rejetés par le
+//     parseur console de certaines versions (« syntax error ») → tous les
+//     corps sont multi-lignes ;
+//   - « :set v false » (booléen nu) est fragile → drapeaux en "yes"/"no" ;
+//   - [/system device-mode get …] renvoie un booléen OU une chaîne
+//     ("yes"/"no") selon la version : comparer explicitement à false/"no"/
+//     "false" (un « ! » sur "no" — chaîne non vide — serait faux) ;
+//   - « output=none » ne sauvegarde PAS le fichier téléchargé (doc MikroTik
+//     : « none - do not store downloaded data ») → le check-in utilise
+//     dst-path seul (output par défaut = file), sinon l'import échoue ;
+//   - les :global RouterOS ne survivent pas à coup sûr à un reboot → URL et
+//     token sont INLINÉS dans l'on-event : le scheduler est auto-suffisant.
 func InstallScript(baseURL, token, routerName string) string {
 	// Le nom n'apparaît que dans un commentaire .rsc : interdire tout retour à
 	// la ligne ou caractère de contrôle (anti-injection dans le fichier).
@@ -124,9 +143,12 @@ func InstallScript(baseURL, token, routerName string) string {
 		}
 		return c
 	}, routerName)
+	urlEsc := rosEscape(strings.TrimRight(baseURL, "/"))
+	tokEsc := rosEscape(token)
 	return `# ============================================================
 # MikCloud — Installation agent  (routeur: ` + safeName + `)
-# Coller CE fichier entier dans Terminal (Winbox) — 1 seule fois.
+# Coller CE fichier ENTIER dans Terminal (Winbox) — 1 seule fois.
+# Le script s'exécute comme UN SEUL bloc : ne pas le lancer ligne par ligne.
 # ============================================================
 # NB : les fetch essaient D'ABORD avec validation TLS, puis réessaient avec
 # check-certificate=no. RouterOS < 7.19 n'embarque aucun certificat racine
@@ -137,85 +159,102 @@ func InstallScript(baseURL, token, routerName string) string {
 # sont DÉSACTIVÉS par le « device-mode » restreint (protection anti-malware).
 # Le pré-vol ci-dessous le détecte et affiche la marche à suivre au lieu
 # d'échouer avec « not allowed by device-mode ».
+# État vérifiable à tout moment : /system device-mode print
 # ============================================================
-:global mikcloudToken "` + rosEscape(token) + `"
-:global mikcloudUrl   "` + strings.TrimRight(baseURL, "/") + `"
+:global mikcloudToken "` + tokEsc + `"
+:global mikcloudUrl   "` + urlEsc + `"
 
-# --- 0) Pre-vol : device-mode (RouterOS 7.13+ ; ignoré sur versions antérieures) ---
-:local mikReady true
 :do {
-  :local dmS [/system device-mode get scheduler]
-  :local dmF [/system device-mode get fetch]
-  # NB : selon la version, get renvoie un booléen OU une chaîne ("yes"/"no") —
-  # comparer explicitement, sinon "no" (chaîne non vide) serait considéré vrai.
-  :if ($dmS = false || $dmS = "no" || $dmS = "false" || $dmF = false || $dmF = "no" || $dmF = "false") do={ :set mikReady false }
+
+  :local mikReady "yes"
+
   :do {
-    :local dmH [/system device-mode get hotspot]
-    :if ($dmH = false || $dmH = "no" || $dmH = "false") do={ :set mikReady false }
-  } on-error={}
-} on-error={}
-:if (!$mikReady) do={
-  :put ""
-  :put "MIKCLOUD : installation bloquee par le device-mode de ce routeur."
-  :put "1) Executez une seule fois :"
-  :put "   /system/device-mode/update scheduler=yes fetch=yes hotspot=yes"
-  :put "2) Confirmez PHYSIQUEMENT dans les 5 minutes : appuyez une fois sur"
-  :put "   le bouton reset du routeur, OU debranchez puis rebranchez"
-  :put "   l'alimentation (cold reboot). Le routeur redemarre alors."
-  :put "3) Apres redemarrage, recollez CE script complet."
-  :put ""
-  :log error "MikCloud: device-mode restreint - /system/device-mode/update scheduler=yes fetch=yes hotspot=yes puis confirmation physique (bouton reset ou cold reboot)"
-} else={
-
-# --- 1) Inscription immediate : le cloud decouvre ce routeur ---
-:local ident [/system identity get name]
-:local mod [/system resource get board-name]
-:local res [/system resource get]
-:local ver [:tostr ($res->"version")]
-:local up [:tostr ($res->"uptime")]
-:do {
-  /tool fetch url=("$mikcloudUrl/agent/register?token=$mikcloudToken") http-method=post \
-    http-data=("identity=". [:tostr $ident] ."&model=". [:tostr $mod] ."&version=". $ver ."&uptime=". $up) output=none
-} on-error={
-  :do {
-    /tool fetch url=("$mikcloudUrl/agent/register?token=$mikcloudToken") http-method=post \
-      http-data=("identity=". [:tostr $ident] ."&model=". [:tostr $mod] ."&version=". $ver ."&uptime=". $up) check-certificate=no output=none
-  } on-error={ :log warning "MikCloud: inscription impossible (reseau?)" }
-}
-
-# --- 2) Reinstallation propre : suppression d'un ancien agent ---
-:do { /system scheduler remove [find name="` + SchedulerName + `"] } on-error={}
-
-# --- 3) L'agent permanent : check-in toutes les 45 s (survit aux reboots) ---
-:local mikAdded false
-:do {
-  /system scheduler add name="` + SchedulerName + `" interval=45s start-time=startup on-event={
-    :local fetched true
+    :local dmS [/system device-mode get scheduler]
+    :local dmF [/system device-mode get fetch]
+    :if ($dmS = false || $dmS = "no" || $dmS = "false") do={
+      :set mikReady "no"
+    }
+    :if ($dmF = false || $dmF = "no" || $dmF = "false") do={
+      :set mikReady "no"
+    }
     :do {
-      /tool fetch url=($mikcloudUrl . "/agent/cmd?token=" . $mikcloudToken) \
-        dst-path="` + ScriptFilename + `" keep-result=yes output=none
+      :local dmH [/system device-mode get hotspot]
+      :if ($dmH = false || $dmH = "no" || $dmH = "false") do={
+        :set mikReady "no"
+      }
+    } on-error={}
+  } on-error={}
+
+  :if ($mikReady = "no") do={
+    :put ""
+    :put "MIKCLOUD : installation bloquee par le device-mode de ce routeur."
+    :put "1) Executez une seule fois :"
+    :put "   /system/device-mode/update scheduler=yes fetch=yes hotspot=yes"
+    :put "2) Confirmez PHYSIQUEMENT dans les 5 minutes : appuyez une fois sur"
+    :put "   le bouton reset du routeur, OU debranchez puis rebranchez"
+    :put "   l'alimentation (cold reboot). Le routeur redemarre alors."
+    :put "3) Apres redemarrage, recollez CE script complet."
+    :put ""
+    :log error "MikCloud: device-mode restreint - /system/device-mode/update scheduler=yes fetch=yes hotspot=yes puis confirmation physique (bouton reset ou cold reboot)"
+  } else={
+
+    :local ident [/system identity get name]
+    :local mod [/system resource get board-name]
+    :local ver [/system resource get version]
+    :local up [/system resource get uptime]
+
+    :do {
+      /tool fetch url="` + urlEsc + `/agent/register?token=` + tokEsc + `" http-method=post http-data=("identity=" . [:tostr $ident] . "&model=" . [:tostr $mod] . "&version=" . [:tostr $ver] . "&uptime=" . [:tostr $up]) output=none
     } on-error={
       :do {
-        /tool fetch url=($mikcloudUrl . "/agent/cmd?token=" . $mikcloudToken) check-certificate=no \
-          dst-path="` + ScriptFilename + `" keep-result=yes output=none
-      } on-error={ :set fetched false; :log warning "MikCloud agent: check-in echoue (reseau?)" }
+        /tool fetch url="` + urlEsc + `/agent/register?token=` + tokEsc + `" http-method=post http-data=("identity=" . [:tostr $ident] . "&model=" . [:tostr $mod] . "&version=" . [:tostr $ver] . "&uptime=" . [:tostr $up]) check-certificate=no output=none
+      } on-error={
+        :log warning "MikCloud: inscription impossible (reseau?)"
+      }
     }
-    :if ($fetched) do={
-      :delay 1s
-      /import file-name="` + ScriptFilename + `"
+
+    :do {
+      /system scheduler remove [find name="` + SchedulerName + `"]
+    } on-error={}
+
+    :local mikAdded "no"
+    :do {
+      /system scheduler add name="` + SchedulerName + `" interval=45s start-time=startup on-event={
+        :local fetched "yes"
+        :do {
+          /tool fetch url="` + urlEsc + `/agent/cmd?token=` + tokEsc + `" dst-path="` + ScriptFilename + `"
+        } on-error={
+          :do {
+            /tool fetch url="` + urlEsc + `/agent/cmd?token=` + tokEsc + `" check-certificate=no dst-path="` + ScriptFilename + `"
+          } on-error={
+            :set fetched "no"
+            :log warning "MikCloud agent: check-in echoue (reseau?)"
+          }
+        }
+        :if ($fetched = "yes") do={
+          :delay 2s
+          /import file-name="` + ScriptFilename + `"
+        }
+      }
+      :set mikAdded "yes"
+    } on-error={
+      :put "MIKCLOUD : echec de la creation du scheduler."
+      :do {
+        :put (" scheduler flag lu a l'instant : " . [/system device-mode get scheduler])
+      } on-error={}
+      :put "Si l'erreur ci-dessus est 'not allowed by device-mode', executez :"
+      :put "  /system/device-mode/update scheduler=yes fetch=yes hotspot=yes"
+      :put "puis confirmez physiquement (bouton reset ou coupure d'alimentation)."
+      :log error "MikCloud: creation scheduler echouee (device-mode ?)"
+    }
+
+    :if ($mikAdded = "yes") do={
+      :put "MIKCLOUD : agent installe. Prochaine connexion au cloud dans 45 s max."
+      :log info "MikCloud: agent installe, check-in dans 45s"
     }
   }
-  :set mikAdded true
 } on-error={
-  :put "MIKCLOUD : echec de la creation du scheduler."
-  :do { :put (" scheduler flag lu a l'instant : " . [/system device-mode get scheduler]) } on-error={}
-  :put "Si l'erreur ci-dessus est 'not allowed by device-mode', executez :"
-  :put "  /system/device-mode/update scheduler=yes fetch=yes hotspot=yes"
-  :put "puis confirmez physiquement (bouton reset ou coupure d'alimentation 10 s)."
-  :log error "MikCloud: creation scheduler echouee (device-mode ?)"
-}
-:if ($mikAdded) do={ :log info "MikCloud: agent installe, check-in dans 45s" }
-
+  :log error "MikCloud: erreur pendant l'installation de l'agent"
 }
 `
 }

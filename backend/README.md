@@ -3,11 +3,15 @@
 Backend de la plateforme **MikCloud** : gestion professionnelle de hotspot MikroTik
 (vouchers, utilisateurs, profils, sessions temps réel, revendeurs avec portefeuille).
 
-- **100 % stdlib Go** (zéro dépendance externe) → binaire unique, déploiement trivial.
+- **Go stdlib + pgx uniquement** → binaire unique, déploiement trivial.
 - **Client RouterOS natif** : protocole binaire MikroTik (port 8728) implémenté à la main,
   login RouterOS v6.43+ et fallback challenge MD5 pour les anciens firmwares.
 - **Mode Simulé** intégré : toute la plateforme est testable sans matériel MikroTik.
-- **Persistance** : fichier JSON (`data/db.json`, sauvegarde atomique).
+- **Persistance double** :
+  - `DATABASE_URL` défini (production) → **PostgreSQL/Neon** : schéma relationnel
+    (10 tables + index), chargement au démarrage, **synchro différentielle** à chaque
+    sauvegarde (seules les lignes modifiées sont écrites, une transaction par Save) ;
+  - sinon (développement) → fichier JSON (`data/db.json`, sauvegarde atomique).
 
 ## Démarrage local
 
@@ -22,8 +26,12 @@ Variables d'environnement :
 | Variable    | Défaut               | Description                        |
 | ----------- | -------------------- | ---------------------------------- |
 | `PORT`      | `4000`               | Port d'écoute HTTP                 |
-| `DATA_DIR`  | `data`               | Dossier du fichier `db.json`       |
+| `DATA_DIR`  | `data`               | Dossier du fichier `db.json` (mode JSON uniquement) |
 | `JWT_SECRET`| `mikcloud-dev-secret` | Secret de signature des tokens   |
+| `DATABASE_URL` | — | URL `postgresql://…` → active la persistance PostgreSQL (Neon) |
+| `ADMIN_USERNAME` | `admin` | Compte admin de production (avec `ADMIN_PASSWORD`) |
+| `ADMIN_PASSWORD` | — | Mot de passe admin de production ; supprime le compte démo si défini |
+| `ADMIN_NAME` | `Administrateur MikCloud` | Nom affiché du compte admin |
 
 Compte démo (seed) : **admin / admin123**. `POST /api/admin/reset` régénère les données de démo.
 
@@ -60,14 +68,20 @@ hotspot, activation/désactivation, sessions actives et déconnexion, supervisio
 1. Pousser ce dossier sur GitHub/GitLab.
 2. Render → **New → Web Service** → connecter le dépôt.
    Render détecte `render.yaml` (runtime Go, plan gratuit).
-3. Définir `JWT_SECRET` (généré automatiquement par `render.yaml`).
+3. Définir `DATABASE_URL` (connexion string Neon) et, recommandé,
+   `ADMIN_USERNAME` / `ADMIN_PASSWORD`.
 4. L'API sera servie sur `https://<votre-service>.onrender.com`.
 
-> ⚠️ Le plan gratuit Render a un **système de fichiers éphèmère** : `db.json` est
-> réinitialisé à chaque redéploiement. Pour la production : monter un disque persistant
-> (décommenter `disk:` dans `render.yaml`, plan payant) ou brancher PostgreSQL
-> (remplacer `internal/store` par un driver `pgx` — l'architecture est isolée derrière
-> le package store).
+> Les données vivent dans **Neon** (PostgreSQL serverless) : l'état est
+> rechargé à chaque démarrage et synchronisé à chaque modification — le
+> disque éphémère du plan gratuit Render n'est plus un problème.
+>
+> Détail du fonctionnement (`internal/store/pg.go`) : la mémoire reste le
+> moteur de calcul (handlers inchangés), PostgreSQL est la source de vérité
+> durable. Chaque `Save()` compare des empreintes par ligne (FNV-1a) et
+> n'écrit que les différences en une transaction (upserts multi-lignes
+> groupés, suppressions par lots) — suffisamment léger pour le polling 5 s
+> du tableau de bord.
 
 ## Docker
 

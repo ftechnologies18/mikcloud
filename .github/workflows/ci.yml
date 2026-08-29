@@ -1,0 +1,63 @@
+# CI MikCloud — qualité de code sur chaque push / pull request.
+# Backend Go : gofmt + go vet + build. Frontend : ESLint + build Next.js.
+# (Le déploiement Render/Vercel est déclenché par Render/Vercel eux-mêmes
+# à chaque push sur main — aucun secret n'est nécessaire ici.)
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend Go (vet + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Vérification du formatage (gofmt)
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+
+      - name: Analyse statique (go vet)
+        run: go vet ./...
+
+      - name: Compilation
+        run: go build -o /tmp/mikcloud-server .
+
+  frontend:
+    name: Frontend Next.js (lint + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Installation des dépendances
+        run: bun install --frozen-lockfile
+
+      - name: Lint (ESLint)
+        run: bun run lint
+
+      - name: Build (Next.js)
+        run: bun run build
+        env:
+          # Build générique : la vraie URL du backend est injectée par Vercel.
+          NEXT_TELEMETRY_DISABLED: 1

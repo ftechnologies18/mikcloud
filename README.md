@@ -6,14 +6,16 @@ vouchers imprimables et supervision temps réel.
 
 ```
 mikcloud/
-├── backend/    → API Go (100 % stdlib) — à déployer sur Render
+├── .github/workflows/  → CI (gofmt/vet/build Go + ESLint/build Next.js)
+├── backend/    → API Go + PostgreSQL (pgx) — à déployer sur Render
 └── frontend/   → Next.js 16 + Tailwind 4 + shadcn/ui — à déployer sur Vercel
 ```
 
 | | Stack | Hébergement |
 |---|---|---|
-| **Backend** | Go (net/http uniquement), JWT HS256, persistance JSON atomique, client natif RouterOS | [Render](https://render.com) (`backend/render.yaml` auto-détecté) |
+| **Backend** | Go 1.22 (net/http), JWT HS256, **PostgreSQL via pgx** (Neon), client natif RouterOS | [Render](https://render.com) (`backend/render.yaml` auto-détecté) |
 | **Frontend** | Next.js 16 App Router, React 19, TypeScript strict, TanStack Query, Recharts | [Vercel](https://vercel.com) (1 variable d'env) |
+| **Base de données** | PostgreSQL serverless ([Neon](https://neon.tech)) — schéma relationnel, synchro différentielle | — |
 
 ## Démarrage local
 
@@ -34,18 +36,27 @@ Le frontend appelle le backend via `NEXT_PUBLIC_API_BASE` si défini
 
 ## Déploiement
 
-### Backend → Render
+### 1. Base de données → Neon
+1. Créer un compte sur [neon.tech](https://neon.tech) → **New Project**.
+2. Copier la **Connection string** (`postgresql://…?sslmode=require`).
+
+### 2. Backend → Render
 1. **New → Web Service** → ce repo, *Root Directory* : `backend`
    (le fichier `backend/render.yaml` est auto-détecté : runtime Go, build
    `go build -o server .`, start `./server`).
 2. `JWT_SECRET` est générée automatiquement.
-3. URL obtenue : `https://<service>.onrender.com`.
+3. Ajouter la variable d'environnement `DATABASE_URL` (secret) avec la
+   connexion string Neon.
+4. Recommandé : définir `ADMIN_USERNAME` / `ADMIN_PASSWORD` (sinon le compte
+   démo `admin/admin123` reste actif).
+5. URL obtenue : `https://<service>.onrender.com`.
 
-> Plan gratuit Render = disque éphémère (données réinitialisées à chaque
-> redéploiement). Production : monter un disque persistant ou brancher
-> PostgreSQL (accès données isolé dans `backend/internal/store`).
+> Les données vivent dans Neon : l'état est rechargé à chaque démarrage et
+> synchronisé à chaque modification (synchro différentielle) — le disque
+> éphémère du plan gratuit Render n'est plus un problème. En local sans
+> `DATABASE_URL`, le backend utilise le fichier JSON `data/db.json`.
 
-### Frontend → Vercel
+### 3. Frontend → Vercel
 1. **Add New → Project** → ce repo, *Root Directory* : `frontend`.
 2. Variable d'environnement (Production + Preview) :
    `NEXT_PUBLIC_API_BASE=https://<service>.onrender.com`

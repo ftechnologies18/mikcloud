@@ -3,7 +3,7 @@
 # run   : docker run -p 4000:4000 -v mikcloud-data:/app/data mikcloud-api
 FROM golang:1.23-alpine AS builder
 WORKDIR /app
-COPY go.mod ./
+COPY go.mod go.sum ./
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o server .
 

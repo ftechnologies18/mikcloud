@@ -9,14 +9,20 @@ services:
     startCommand: ./server
     healthCheckPath: /
     envVars:
+      - key: GO_VERSION
+        value: 1.23.4
       - key: JWT_SECRET
         generateValue: true
-      - key: DATA_DIR
-        value: /opt/render/project/src/data
-    # Note : le plan gratuit Render a un système de fichiers éphémère.
-    # Les données (db.json) sont réinitialisées à chaque redéploiement.
-    # Pour la production, montez un disque persistant (plan payant) :
-    # disk:
-    #   name: mikcloud-data
-    #   mountPath: /opt/render/project/src/data
-    #   sizeGB: 1
+      # URL de connexion Neon (postgresql://…), à coller dans le dashboard
+      # Render → Environment → Add environment variable (secret, jamais commité).
+      - key: DATABASE_URL
+        sync: false
+      # Identifiants admin de production (optionnel mais vivement conseillé) :
+      # sans eux, le compte démo admin/admin123 reste actif.
+      - key: ADMIN_USERNAME
+        value: admin
+      - key: ADMIN_PASSWORD
+        sync: false
+# Les données vivent dans Neon (PostgreSQL) : le disque éphémère du plan
+# gratuit Render n'est plus un problème — l'état est rechargé à chaque
+# démarrage et synchronisé à chaque modification.

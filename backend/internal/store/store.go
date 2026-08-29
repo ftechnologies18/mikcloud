@@ -1,4 +1,9 @@
-// Package store — persistance JSON atomique + moteur de simulation (tick).
+// Package store — persistance + moteur de simulation (tick).
+//
+// Deux modes de persistance, choisis automatiquement au démarrage :
+//   - DATABASE_URL défini  → PostgreSQL (production : Render + Neon),
+//     schéma relationnel + synchro différentielle (voir pg.go) ;
+//   - sinon                → fichier JSON atomique (développement local).
 package store
 
 import (
@@ -12,23 +17,65 @@ import (
 	"sync"
 	"time"
 
+	"mikcloud/hotspot-api/internal/auth"
 	"mikcloud/hotspot-api/internal/model"
 )
 
-// Store — base de données en mémoire protégée par un mutex global,
-// sauvegardée en JSON de façon atomique (écriture tmp + rename).
+// Store — base de données en mémoire protégée par un mutex global, persistée
+// soit en PostgreSQL (synchro différentielle), soit en JSON atomique
+// (écriture tmp + rename).
 type Store struct {
 	mu   sync.Mutex
 	db   *model.DB
-	path string
+	path string // mode JSON uniquement
+	pg   *PG    // mode PostgreSQL uniquement
 }
 
-// New charge data/db.json (ou crée le seed démo si absent).
+// New charge l'état persisté (PostgreSQL si DATABASE_URL est défini, sinon
+// data/db.json) ou crée le seed démo si la source est vide/absente.
 func New(dir string) (*Store, error) {
+	s := &Store{}
+
+	// Bascule en mode PostgreSQL uniquement pour une URL postgres:// (ou
+	// postgresql://) ; toute autre valeur (ex. sqlite locale) est ignorée
+	// au profit du mode JSON.
+	databaseURL := os.Getenv("DATABASE_URL")
+	if strings.HasPrefix(databaseURL, "postgres://") || strings.HasPrefix(databaseURL, "postgresql://") {
+		pg, err := OpenPG(databaseURL)
+		if err != nil {
+			return nil, err
+		}
+		s.pg = pg
+		db, found, err := pg.Load()
+		if err != nil {
+			pg.Close()
+			return nil, err
+		}
+		if found {
+			log.Printf("store: état chargé depuis PostgreSQL (%d utilisateurs hotspot, %d routeurs)",
+				len(db.HotspotUsers), len(db.Routers))
+			s.db = db
+		} else {
+			log.Println("store: base PostgreSQL vide — initialisation des données démo")
+			s.db = BuildSeed()
+		}
+		// L'override admin (variables d'environnement) s'applique à chaque
+		// démarrage et doit être persisté aussitôt.
+		changed := applyAdminOverride(s.db)
+		if changed || !found {
+			s.Lock()
+			s.Save()
+			s.Unlock()
+		}
+		log.Println("store: persistance PostgreSQL active (DATABASE_URL)")
+		return s, nil
+	}
+
+	// Mode développement : fichier JSON local.
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	s := &Store{path: filepath.Join(dir, "db.json")}
+	s.path = filepath.Join(dir, "db.json")
 	if data, err := os.ReadFile(s.path); err == nil && len(data) > 0 {
 		var db model.DB
 		if err := json.Unmarshal(data, &db); err != nil {
@@ -45,7 +92,70 @@ func New(dir string) (*Store, error) {
 	s.Lock()
 	s.Save()
 	s.Unlock()
+	log.Printf("store: persistance JSON active (%s)", s.path)
 	return s, nil
+}
+
+// applyAdminOverride — si ADMIN_PASSWORD est défini, remplace le compte démo
+// (admin/admin123) par des identifiants de production : le compte démo encore
+// intact est supprimé, le compte ADMIN_USERNAME est créé ou mis à jour.
+// Variables : ADMIN_USERNAME (défaut « admin »), ADMIN_PASSWORD, ADMIN_NAME.
+// Retourne true si l'état a été modifié (à persister par l'appelant).
+func applyAdminOverride(db *model.DB) bool {
+	password := os.Getenv("ADMIN_PASSWORD")
+	if password == "" {
+		return false
+	}
+	username := os.Getenv("ADMIN_USERNAME")
+	if username == "" {
+		username = "admin"
+	}
+	name := os.Getenv("ADMIN_NAME")
+	if name == "" {
+		name = "Administrateur MikCloud"
+	}
+
+	// 1. Retire tout compte démo encore intact (username « admin » + mot de passe « admin123 »).
+	kept := db.Users[:0]
+	removedDemo := false
+	for _, u := range db.Users {
+		if u.Username == "admin" && auth.CheckPassword("admin123", u.Salt, u.PasswordHash) {
+			removedDemo = true
+			continue
+		}
+		kept = append(kept, u)
+	}
+	db.Users = kept
+
+	// 2. Crée ou met à jour le compte administrateur déclaré par l'environnement.
+	salt := auth.NewSalt()
+	for i := range db.Users {
+		if db.Users[i].Username == username {
+			db.Users[i].Name = name
+			db.Users[i].Role = "admin"
+			db.Users[i].Salt = salt
+			db.Users[i].PasswordHash = auth.HashPassword(password, salt)
+			log.Printf("store: compte admin « %s » mis à jour depuis l'environnement", username)
+			if removedDemo {
+				log.Println("store: compte démo admin/admin123 supprimé")
+			}
+			return true
+		}
+	}
+	db.Users = append(db.Users, model.AdminUser{
+		ID:           model.NewID("adm-"),
+		Name:         name,
+		Username:     username,
+		Role:         "admin",
+		PasswordHash: auth.HashPassword(password, salt),
+		Salt:         salt,
+		CreatedAt:    model.NowISO(),
+	})
+	log.Printf("store: compte admin « %s » créé depuis l'environnement", username)
+	if removedDemo {
+		log.Println("store: compte démo admin/admin123 supprimé")
+	}
+	return true
 }
 
 func (s *Store) ensureSlices() {
@@ -85,8 +195,16 @@ func (s *Store) Unlock() { s.mu.Unlock() }
 // Data retourne la base courante (à n'utiliser que sous verrou).
 func (s *Store) Data() *model.DB { return s.db }
 
-// Save écrit la base de façon atomique (à appeler sous verrou).
+// Save persiste la base (à appeler sous verrou) : synchro différentielle
+// PostgreSQL en production, écriture JSON atomique en développement.
 func (s *Store) Save() {
+	if s.pg != nil {
+		if err := s.pg.Sync(s.db); err != nil {
+			// L'état reste en mémoire : la prochaine sauvegarde retentera la synchro.
+			log.Printf("store: synchro PostgreSQL échouée (%v) — nouvelle tentative au prochain Save", err)
+		}
+		return
+	}
 	data, err := json.MarshalIndent(s.db, "", "  ")
 	if err != nil {
 		log.Printf("store: sérialisation impossible : %v", err)

@@ -127,10 +127,10 @@ func InstallScript(baseURL, token, routerName string) string {
 # MikCloud — Installation agent  (routeur: ` + safeName + `)
 # Coller CE fichier entier dans Terminal (Winbox) — 1 seule fois.
 # ============================================================
-# NB : check-certificate=no est requis sur RouterOS < 7.19 (ces versions
-# n'embarquent aucun certificat racine → la validation Let's Encrypt échoue).
-# Pour durcir : importez ISRG Root X1 (/certificate import) puis retirez
-# le paramètre des /tool fetch ci-dessous.
+# NB : les fetch essaient D'ABORD avec validation TLS, puis réessaient avec
+# check-certificate=no. RouterOS < 7.19 n'embarque aucun certificat racine
+# (la validation Let's Encrypt échoue) — le repli garantit la compatibilité
+# 6.44 → 7.19+. Sur 7.19+ la validation réussit : trafic authentifié.
 # ============================================================
 :global mikcloudToken "` + rosEscape(token) + `"
 :global mikcloudUrl   "` + strings.TrimRight(baseURL, "/") + `"
@@ -143,20 +143,33 @@ func InstallScript(baseURL, token, routerName string) string {
 :local up [:tostr ($res->"uptime")]
 :do {
   /tool fetch url=("$mikcloudUrl/agent/register?token=$mikcloudToken") http-method=post \
-    http-data=("identity=". [:tostr $ident] ."&model=". [:tostr $mod] ."&version=". $ver ."&uptime=". $up) check-certificate=no output=none
-} on-error={ :log warning "MikCloud: inscription impossible (reseau?)" }
+    http-data=("identity=". [:tostr $ident] ."&model=". [:tostr $mod] ."&version=". $ver ."&uptime=". $up) output=none
+} on-error={
+  :do {
+    /tool fetch url=("$mikcloudUrl/agent/register?token=$mikcloudToken") http-method=post \
+      http-data=("identity=". [:tostr $ident] ."&model=". [:tostr $mod] ."&version=". $ver ."&uptime=". $up) check-certificate=no output=none
+  } on-error={ :log warning "MikCloud: inscription impossible (reseau?)" }
+}
 
 # --- 2) Reinstallation propre : suppression d'un ancien agent ---
 /system scheduler remove [find name="` + SchedulerName + `"]
 
 # --- 3) L'agent permanent : check-in toutes les 45 s (survit aux reboots) ---
 /system scheduler add name="` + SchedulerName + `" interval=45s start-time=startup on-event={
+  :local fetched true
   :do {
     /tool fetch url=($mikcloudUrl . "/agent/cmd?token=" . $mikcloudToken) \
-      dst-path="` + ScriptFilename + `" keep-result=yes check-certificate=no output=none
+      dst-path="` + ScriptFilename + `" keep-result=yes output=none
+  } on-error={
+    :do {
+      /tool fetch url=($mikcloudUrl . "/agent/cmd?token=" . $mikcloudToken) check-certificate=no \
+        dst-path="` + ScriptFilename + `" keep-result=yes output=none
+    } on-error={ :set fetched false; :log warning "MikCloud agent: check-in echoue (reseau?)" }
+  }
+  :if ($fetched) do={
     :delay 1s
     /import file-name="` + ScriptFilename + `"
-  } on-error={ :log warning "MikCloud agent: check-in echoue (reseau?)" }
+  }
 }
 
 :log info "MikCloud: agent installe, check-in dans 45s"

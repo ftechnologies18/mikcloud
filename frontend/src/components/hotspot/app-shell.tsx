@@ -1,10 +1,13 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import Image from "next/image";
 import { useIsFetching, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   BarChart3,
+  Building2,
+  ChevronsUpDown,
   Gauge,
   LayoutDashboard,
   LogOut,
@@ -15,8 +18,8 @@ import {
   Settings,
   Store,
   Ticket,
+  UserRound,
   Users,
-  Wifi,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { LucideIcon } from "lucide-react";
@@ -35,9 +38,12 @@ import {
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/hotspot/api";
+import { roleLabel, userInitials } from "@/lib/hotspot/format";
 import { useHotspotStore } from "@/lib/hotspot/store";
 import type { HotspotSession, ViewId } from "@/lib/hotspot/types";
+import { ProfileDialog } from "./parts/profile-dialog";
 
+import AccountsView from "./views/accounts-view";
 import DashboardView from "./views/dashboard-view";
 import ProfilesView from "./views/profiles-view";
 import ReportsView from "./views/reports-view";
@@ -57,6 +63,7 @@ const VIEW_TITLES: Record<ViewId, string> = {
   resellers: "Revendeurs",
   routers: "Routeurs",
   reports: "Rapports",
+  accounts: "Comptes",
   settings: "Paramètres",
 };
 
@@ -85,7 +92,14 @@ const NAV_SECTIONS: { label: string; items: NavItem[] }[] = [
   { label: "Distribution", items: [{ id: "resellers", label: "Revendeurs", icon: Store }] },
   { label: "Infrastructure", items: [{ id: "routers", label: "Routeurs", icon: RouterIcon }] },
   { label: "Analyse", items: [{ id: "reports", label: "Rapports", icon: BarChart3 }] },
-  { label: "Système", items: [{ id: "settings", label: "Paramètres", icon: Settings }] },
+  {
+    label: "Système",
+    items: [
+      // « Comptes » n'est visible que de l'admin plateforme (rôle admin) — filtré dans NavList.
+      { id: "accounts", label: "Comptes", icon: Building2 },
+      { id: "settings", label: "Paramètres", icon: Settings },
+    ],
+  },
 ];
 
 const VIEWS: Record<ViewId, React.ComponentType> = {
@@ -97,28 +111,20 @@ const VIEWS: Record<ViewId, React.ComponentType> = {
   resellers: ResellersView,
   routers: RoutersView,
   reports: ReportsView,
+  accounts: AccountsView,
   settings: SettingsView,
 };
-
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "SC";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[1][0]).toUpperCase();
-}
-
-function roleLabel(role: string): string {
-  if (!role) return "Utilisateur";
-  if (role.toLowerCase() === "admin" || role.toLowerCase() === "administrator") return "Administrateur";
-  return role.charAt(0).toUpperCase() + role.slice(1);
-}
 
 function BrandHeader() {
   return (
     <div className="flex items-center gap-3 px-5 py-5">
-      <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-chart-2 shadow-md shadow-primary/20">
-        <Wifi className="size-5 text-white" />
-      </div>
+      <Image
+        src="/logo.png"
+        alt="Logo MikCloud"
+        width={36}
+        height={36}
+        className="size-9 shrink-0 rounded-xl shadow-md shadow-primary/20"
+      />
       <div className="flex min-w-0 items-center gap-2">
         <span className="truncate text-base font-semibold tracking-tight">MikCloud</span>
         <Badge
@@ -135,7 +141,9 @@ function BrandHeader() {
 function UserCard() {
   const user = useHotspotStore((s) => s.user);
   const logout = useHotspotStore((s) => s.logout);
+  const setView = useHotspotStore((s) => s.setView);
   const queryClient = useQueryClient();
+  const [profileOpen, setProfileOpen] = useState(false);
   const name = user?.name ?? "Utilisateur";
 
   function handleLogout() {
@@ -144,32 +152,62 @@ function UserCard() {
   }
 
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-border/70 bg-card/60 px-3 py-3">
-      <Avatar className="size-9 shrink-0">
-        <AvatarFallback className="bg-primary/15 text-xs font-semibold text-primary">
-          {initials(name)}
-        </AvatarFallback>
-      </Avatar>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium">{name}</p>
-        <p className="truncate text-xs text-muted-foreground">{roleLabel(user?.role ?? "")}</p>
-      </div>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="size-9 shrink-0 text-muted-foreground hover:text-foreground"
-        onClick={handleLogout}
-        aria-label="Se déconnecter"
-      >
-        <LogOut className="size-4" />
-      </Button>
-    </div>
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-label="Menu du profil"
+            className="flex w-full items-center gap-3 rounded-lg border border-border/70 bg-card/60 px-3 py-3 text-left outline-none transition-colors hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-accent/60 data-[state=open]:text-accent-foreground"
+          >
+            <Avatar className="size-9 shrink-0">
+              <AvatarFallback className="bg-primary/15 text-xs font-semibold text-primary">
+                {userInitials(name)}
+              </AvatarFallback>
+            </Avatar>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium">{name}</span>
+              <span className="block truncate text-xs text-muted-foreground">
+                {roleLabel(user?.role ?? "")}
+              </span>
+            </span>
+            <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent side="top" align="start" className="w-60">
+          <DropdownMenuLabel>
+            <p className="truncate text-sm font-medium">{name}</p>
+            <p className="truncate text-xs font-normal text-muted-foreground">@{user?.username ?? "—"}</p>
+          </DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => setProfileOpen(true)} className="min-h-10">
+            <UserRound className="size-4" />
+            Profil
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setView("settings")} className="min-h-10">
+            <Settings className="size-4" />
+            Paramètres
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onClick={handleLogout}
+            className="min-h-10 text-destructive focus:text-destructive"
+          >
+            <LogOut className="size-4" />
+            Se déconnecter
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <ProfileDialog open={profileOpen} onOpenChange={setProfileOpen} />
+    </>
   );
 }
 
 function NavList() {
   const view = useHotspotStore((s) => s.view);
   const setView = useHotspotStore((s) => s.setView);
+  const user = useHotspotStore((s) => s.user);
+  const isAdmin = user?.role === "admin";
 
   const { data: sessions } = useQuery({
     queryKey: ["/api/sessions"],
@@ -180,66 +218,72 @@ function NavList() {
 
   return (
     <nav className="flex-1 space-y-5 overflow-y-auto px-3 pb-4" aria-label="Navigation principale">
-      {NAV_SECTIONS.map((section) => (
-        <div key={section.label}>
-          <p className="px-2.5 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
-            {section.label}
-          </p>
-          <ul className="space-y-0.5">
-            {section.items.map((item) => {
-              const active = view === item.id;
-              return (
-                <li key={item.id}>
-                  <button
-                    type="button"
-                    onClick={() => setView(item.id)}
-                    aria-current={active ? "page" : undefined}
-                    className={cn(
-                      "relative flex min-h-11 w-full items-center gap-3 rounded-md px-2.5 py-2 text-sm font-medium transition-colors",
-                      active
-                        ? "bg-primary/10 text-primary"
-                        : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
-                    )}
-                  >
-                    {active && (
-                      <span
-                        className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-full bg-primary"
-                        aria-hidden
-                      />
-                    )}
-                    <span className="relative flex shrink-0 items-center">
-                      <item.icon className="size-4.5" />
-                      {item.id === "sessions" && sessionsCount > 0 && (
-                        <span className="live-dot absolute -right-1 -top-1 block size-2 rounded-full bg-primary" aria-hidden />
+      {NAV_SECTIONS.map((section) => {
+        const items = section.items.filter((item) => item.id !== "accounts" || isAdmin);
+        if (items.length === 0) return null;
+        return (
+          <div key={section.label}>
+            <p className="px-2.5 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+              {section.label}
+            </p>
+            <ul className="space-y-0.5">
+              {items.map((item) => {
+                const active = view === item.id;
+                return (
+                  <li key={item.id}>
+                    <button
+                      type="button"
+                      onClick={() => setView(item.id)}
+                      aria-current={active ? "page" : undefined}
+                      className={cn(
+                        "relative flex min-h-11 w-full items-center gap-3 rounded-md px-2.5 py-2 text-sm font-medium transition-colors",
+                        active
+                          ? "bg-primary/10 text-primary"
+                          : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                       )}
-                    </span>
-                    <span className="flex-1 truncate text-left">{item.label}</span>
-                    {item.id === "sessions" && sessionsCount > 0 && (
-                      <Badge
-                        variant="outline"
-                        className="border-border bg-muted px-1.5 py-0 text-[10px] font-semibold tabular-nums text-foreground"
-                      >
-                        {sessionsCount}
-                      </Badge>
-                    )}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      ))}
+                    >
+                      {active && (
+                        <span
+                          className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-full bg-primary"
+                          aria-hidden
+                        />
+                      )}
+                      <span className="relative flex shrink-0 items-center">
+                        <item.icon className="size-4.5" />
+                        {item.id === "sessions" && sessionsCount > 0 && (
+                          <span className="live-dot absolute -right-1 -top-1 block size-2 rounded-full bg-primary" aria-hidden />
+                        )}
+                      </span>
+                      <span className="flex-1 truncate text-left">{item.label}</span>
+                      {item.id === "sessions" && sessionsCount > 0 && (
+                        <Badge
+                          variant="outline"
+                          className="border-border bg-muted px-1.5 py-0 text-[10px] font-semibold tabular-nums text-foreground"
+                        >
+                          {sessionsCount}
+                        </Badge>
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        );
+      })}
     </nav>
   );
 }
 
 function Topbar() {
   const view = useHotspotStore((s) => s.view);
+  const setView = useHotspotStore((s) => s.setView);
   const setSidebarOpen = useHotspotStore((s) => s.setSidebarOpen);
   const user = useHotspotStore((s) => s.user);
   const logout = useHotspotStore((s) => s.logout);
   const queryClient = useQueryClient();
   const fetchingCount = useIsFetching();
+  const [profileOpen, setProfileOpen] = useState(false);
 
   const dateLabel = useMemo(() => {
     const raw = new Intl.DateTimeFormat("fr-FR", {
@@ -291,7 +335,7 @@ function Topbar() {
               <Button variant="ghost" className="size-10 rounded-full p-0" aria-label="Menu utilisateur">
                 <Avatar className="size-9">
                   <AvatarFallback className="bg-primary/15 text-xs font-semibold text-primary">
-                    {initials(name)}
+                    {userInitials(name)}
                   </AvatarFallback>
                 </Avatar>
               </Button>
@@ -304,12 +348,22 @@ function Topbar() {
                 </p>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setProfileOpen(true)} className="min-h-10">
+                <UserRound className="size-4" />
+                Profil
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setView("settings")} className="min-h-10">
+                <Settings className="size-4" />
+                Paramètres
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleLogout} className="min-h-10 text-destructive focus:text-destructive">
                 <LogOut className="size-4" />
                 Se déconnecter
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          <ProfileDialog open={profileOpen} onOpenChange={setProfileOpen} />
         </div>
       </div>
     </header>
@@ -320,8 +374,11 @@ export default function AppShell() {
   const view = useHotspotStore((s) => s.view);
   const sidebarOpen = useHotspotStore((s) => s.sidebarOpen);
   const setSidebarOpen = useHotspotStore((s) => s.setSidebarOpen);
+  const user = useHotspotStore((s) => s.user);
+  const isAdmin = user?.role === "admin";
 
-  const ActiveView = VIEWS[view] ?? DashboardView;
+  // Garde-fou : la vue Comptes est réservée à l'admin plateforme.
+  const ActiveView = view === "accounts" && !isAdmin ? DashboardView : (VIEWS[view] ?? DashboardView);
 
   return (
     <div className="flex min-h-screen">

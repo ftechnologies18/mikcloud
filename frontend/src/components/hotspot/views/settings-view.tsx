@@ -4,11 +4,12 @@
 
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Building2, Check, Crown, Router as RouterIcon, TriangleAlert } from "lucide-react";
+import { Building2, Check, Crown, Database, Eye, EyeOff, KeyRound, Router as RouterIcon, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 
 import { api } from "@/lib/hotspot/api";
 import type { AppSettings } from "@/lib/hotspot/types";
+import { useHotspotStore } from "@/lib/hotspot/store";
 import { PageHeader } from "@/components/hotspot/page-header";
 import { SETTINGS_QUERY_KEY, useSettings } from "@/components/hotspot/parts/sd-currency";
 import {
@@ -56,16 +57,40 @@ interface SettingsForm {
   waveLink?: string;
 }
 
+// Réponse de POST /api/admin/reload — résumé de l'état réimporté.
+interface ReloadStats {
+  ok: boolean;
+  accounts: number;
+  users: number;
+  hotspotUsers: number;
+  routers: number;
+  sessions: number;
+}
+
 export default function SettingsView() {
   const queryClient = useQueryClient();
   const { data, isLoading } = useSettings();
   const [resetOpen, setResetOpen] = useState(false);
+  const user = useHotspotStore((s) => s.user);
+  // La réinitialisation des données devient admin-only côté serveur.
+  const isAdmin = user?.role === "admin";
 
   const resetMutation = useMutation({
     mutationFn: () => api<{ ok: boolean }>("/api/admin/reset", { method: "POST" }),
     onSuccess: () => {
       toast.success("Données réinitialisées");
       setResetOpen(false);
+      queryClient.invalidateQueries();
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const reloadMutation = useMutation({
+    mutationFn: () => api<ReloadStats>("/api/admin/reload", { method: "POST" }),
+    onSuccess: (stats) => {
+      toast.success(
+        `Données rechargées — ${stats.accounts} compte(s), ${stats.hotspotUsers} utilisateurs hotspot, ${stats.routers} routeur(s)`,
+      );
       queryClient.invalidateQueries();
     },
     onError: (error: Error) => toast.error(error.message),
@@ -151,24 +176,57 @@ export default function SettingsView() {
           </CardContent>
         </Card>
 
-        {/* Zone sensible */}
-        <Card className="gap-4 border-destructive/30 py-4 sm:py-6">
-          <CardHeader className="px-4 sm:px-6">
-            <CardTitle className="flex items-center gap-2 text-base text-destructive">
-              <TriangleAlert className="size-4" />
-              Zone sensible
-            </CardTitle>
-            <CardDescription>
-              Réinitialiser toutes les données de démonstration (utilisateurs, vouchers, sessions, revendeurs seront
-              régénérés).
-            </CardDescription>
-          </CardHeader>
-          <CardFooter className="px-4 sm:px-6">
-            <Button variant="destructive" className="h-10" onClick={() => setResetOpen(true)}>
-              Réinitialiser les données
-            </Button>
-          </CardFooter>
-        </Card>
+        {/* Sécurité — changement de mot de passe (POST /api/auth/password, tout utilisateur connecté) */}
+        <SecurityCard />
+
+        {/* Base de données — admin plateforme uniquement (POST /api/admin/reload admin-only) */}
+        {isAdmin && (
+          <Card className="gap-4 py-4 sm:py-6">
+            <CardHeader className="px-4 sm:px-6">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
+                  <Database className="size-4" />
+                </span>
+                Base de données
+              </CardTitle>
+              <CardDescription>
+                Réimporte l'intégralité des données depuis la base persistée sans redémarrer le service — utile
+                après une modification SQL directe ou un changement de mot de passe admin.
+              </CardDescription>
+            </CardHeader>
+            <CardFooter className="px-4 sm:px-6">
+              <Button
+                variant="outline"
+                className="h-10"
+                onClick={() => reloadMutation.mutate()}
+                disabled={reloadMutation.isPending}
+              >
+                {reloadMutation.isPending ? "Rechargement…" : "Recharger depuis la base"}
+              </Button>
+            </CardFooter>
+          </Card>
+        )}
+
+        {/* Zone sensible — admin plateforme uniquement (endpoint /api/admin/reset admin-only) */}
+        {isAdmin && (
+          <Card className="gap-4 border-destructive/30 py-4 sm:py-6">
+            <CardHeader className="px-4 sm:px-6">
+              <CardTitle className="flex items-center gap-2 text-base text-destructive">
+                <TriangleAlert className="size-4" />
+                Zone sensible
+              </CardTitle>
+              <CardDescription>
+                Réinitialiser toutes les données de démonstration (utilisateurs, vouchers, sessions, revendeurs seront
+                régénérés).
+              </CardDescription>
+            </CardHeader>
+            <CardFooter className="px-4 sm:px-6">
+              <Button variant="destructive" className="h-10" onClick={() => setResetOpen(true)}>
+                Réinitialiser les données
+              </Button>
+            </CardFooter>
+          </Card>
+        )}
       </div>
 
       {/* Double confirmation de réinitialisation */}
@@ -196,6 +254,137 @@ export default function SettingsView() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+// Champ mot de passe avec bascule de visibilité.
+function PasswordInput({
+  id,
+  value,
+  onChange,
+  placeholder,
+  autoComplete,
+}: {
+  id: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  autoComplete?: string;
+}) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div className="relative">
+      <Input
+        id={id}
+        type={visible ? "text" : "password"}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        autoComplete={autoComplete}
+        className="h-10 pr-10"
+      />
+      <button
+        type="button"
+        onClick={() => setVisible((v) => !v)}
+        aria-label={visible ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+        className="absolute right-1.5 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+      >
+        {visible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+      </button>
+    </div>
+  );
+}
+
+// Carte Sécurité — changement du mot de passe de connexion de l'utilisateur courant.
+// Le backend exige le mot de passe actuel (une session ouverte ne suffit pas).
+function SecurityCard() {
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+
+  const changeMutation = useMutation({
+    mutationFn: () =>
+      api<{ ok: boolean }>("/api/auth/password", {
+        method: "POST",
+        body: { currentPassword, newPassword },
+      }),
+    onSuccess: () => {
+      toast.success("Mot de passe modifié", {
+        description: "Utilisez-le à votre prochaine connexion.",
+      });
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const canSubmit =
+    currentPassword !== "" && newPassword !== "" && confirmPassword !== "" && !changeMutation.isPending;
+
+  function submitPassword() {
+    if (newPassword.length < 8) {
+      toast.error("Le nouveau mot de passe doit faire au moins 8 caractères.");
+      return;
+    }
+    if (newPassword === currentPassword) {
+      toast.error("Le nouveau mot de passe doit être différent de l'actuel.");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      toast.error("Les deux nouveaux mots de passe ne correspondent pas.");
+      return;
+    }
+    changeMutation.mutate();
+  }
+
+  return (
+    <Card className="gap-4 py-4 sm:py-6">
+      <CardHeader className="px-4 sm:px-6">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
+            <KeyRound className="size-4" />
+          </span>
+          Sécurité
+        </CardTitle>
+        <CardDescription>Modifier le mot de passe de votre compte MikCloud.</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-4 px-4 sm:px-6">
+        <div className="grid gap-2">
+          <Label htmlFor="pwd-current">Mot de passe actuel</Label>
+          <PasswordInput
+            id="pwd-current"
+            value={currentPassword}
+            onChange={setCurrentPassword}
+            autoComplete="current-password"
+          />
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor="pwd-new">Nouveau mot de passe</Label>
+          <PasswordInput
+            id="pwd-new"
+            value={newPassword}
+            onChange={setNewPassword}
+            autoComplete="new-password"
+          />
+          <p className="text-xs text-muted-foreground">8 caractères minimum, différent de l'actuel.</p>
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor="pwd-confirm">Confirmer le nouveau mot de passe</Label>
+          <PasswordInput
+            id="pwd-confirm"
+            value={confirmPassword}
+            onChange={setConfirmPassword}
+            autoComplete="new-password"
+          />
+        </div>
+      </CardContent>
+      <CardFooter className="px-4 sm:px-6">
+        <Button className="h-10" onClick={submitPassword} disabled={!canSubmit}>
+          {changeMutation.isPending ? "Modification…" : "Modifier le mot de passe"}
+        </Button>
+      </CardFooter>
+    </Card>
   );
 }
 

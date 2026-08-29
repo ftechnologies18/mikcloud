@@ -1,7 +1,8 @@
 # CI MikCloud — qualité de code sur chaque push / pull request.
 # Backend Go : gofmt + go vet + build. Frontend : ESLint + build Next.js.
-# (Le déploiement Render/Vercel est déclenché par Render/Vercel eux-mêmes
-# à chaque push sur main — aucun secret n'est nécessaire ici.)
+# Après CI verte sur main : déploiement automatique — Vercel via son propre
+# webhook GitHub (fonctionne), Render via le job « deploy » ci-dessous
+# (le service Render a été créé par API : le webhook Render n'existe pas).
 name: CI
 
 on:
@@ -61,3 +62,29 @@ jobs:
         env:
           # Build générique : la vraie URL du backend est injectée par Vercel.
           NEXT_TELEMETRY_DISABLED: 1
+
+  # Déploiement du backend Render une fois la CI verte (push main uniquement).
+  # Le service Render (srv-da974o142hec73euul60) ne reçoit pas le webhook
+  # GitHub → c'est GitHub Actions qui déclenche le déploiement via l'API.
+  # La clé API Render est stockée dans le secret RENDER_API_KEY du dépôt.
+  deploy-render:
+    name: Déploiement backend Render
+    needs: [backend, frontend]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Déclencher le déploiement Render
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          if [ -z "${RENDER_API_KEY}" ]; then
+            echo "Secret RENDER_API_KEY absent — déploiement Render sauté."
+            exit 0
+          fi
+          resp="$(curl -sS -X POST \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H "Content-Type: application/json" \
+            https://api.render.com/v1/services/srv-da974o142hec73euul60/deploys \
+            -d '{}')"
+          echo "Réponse Render : ${resp}"
+          echo "${resp}" | grep -q '"id"' || { echo "Échec du déclenchement Render"; exit 1; }

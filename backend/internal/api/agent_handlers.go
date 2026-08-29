@@ -1,14 +1,16 @@
 // Package api — endpoints de l'agent MikCloud (routeur -> cloud, HTTP-poll sortant).
 //
 // Contrat :
-//   POST /agent/register?token=…  (identity, model, version, uptime)  → inscription
-//   GET  /agent/cmd?token=…                                            → script .rsc ou "# mikcloud nop"
-//   POST /agent/result?token=…    (cmd, status, …)                     → rapport d'exécution
+//
+//	POST /agent/register?token=…  (identity, model, version, uptime)  → inscription
+//	GET  /agent/cmd?token=…                                            → script .rsc ou "# mikcloud nop"
+//	POST /agent/result?token=…    (cmd, status, …)                     → rapport d'exécution
 //
 // Côté console (auth JWT) :
-//   GET  /api/routers/{id}/provision     → état du provisionning (token stocké haché)
-//   POST /api/routers/{id}/rotate-token  → nouveau token + script complet
-//   POST /api/routers/{id}/refresh       → file une commande read_state
+//
+//	GET  /api/routers/{id}/provision     → état du provisionning (token stocké haché)
+//	POST /api/routers/{id}/rotate-token  → nouveau token + script complet
+//	POST /api/routers/{id}/refresh       → file une commande read_state
 package api
 
 import (
@@ -108,8 +110,9 @@ func touchAgent(r *model.Router) {
 }
 
 // queueCommandLocked — dépose une commande en file (sous verrou ; Save à charge
-// de l'appelant). Déduplique les read_state déjà en attente.
-func queueCommandLocked(db *model.DB, routerID, kind string, payload map[string]any) *model.Command {
+// de l'appelant). Déduplique les read_state déjà en attente. La commande porte
+// l'identifiant du compte du routeur (isolation multi-tenant).
+func queueCommandLocked(db *model.DB, acc, routerID, kind string, payload map[string]any) *model.Command {
 	if kind == model.CmdReadState {
 		for i := range db.Commands {
 			if db.Commands[i].RouterID == routerID && db.Commands[i].Kind == model.CmdReadState && db.Commands[i].Status == "queued" {
@@ -120,6 +123,7 @@ func queueCommandLocked(db *model.DB, routerID, kind string, payload map[string]
 	cmd := model.Command{
 		ID:        model.NewID("c-"),
 		RouterID:  routerID,
+		AccountID: acc,
 		Kind:      kind,
 		Payload:   payload,
 		Status:    "queued",
@@ -250,7 +254,7 @@ func (a *API) handleAgentRegister(w http.ResponseWriter, r *http.Request) {
 	if ident := strings.TrimSpace(vals.Get("identity")); ident != "" && router.Host == "" {
 		router.Host = ident
 	}
-	a.logActivity(db, "router", "Routeur «"+router.Name+"» connecté à MikCloud (agent inscrit)")
+	a.logActivity(db, router.AccountID, "router", "Routeur «"+router.Name+"» connecté à MikCloud (agent inscrit)")
 	a.store.Save()
 	name := router.Name
 	a.store.Unlock()
@@ -387,13 +391,13 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case cmd.Kind == model.CmdReadState && ok:
 		a.applyReadState(db, router, vals)
-		a.logActivity(db, "router", "Routeur «"+router.Name+"» synchronisé ("+
+		a.logActivity(db, router.AccountID, "router", "Routeur «"+router.Name+"» synchronisé ("+
 			strconv.Itoa(router.ActiveSessions)+" session(s) active(s), "+strconv.Itoa(router.HotspotUsers)+" utilisateur(s))")
 	case ok:
-		a.logActivity(db, "router", "Commande "+cmd.Kind+" exécutée sur «"+router.Name+"»")
-		queueCommandLocked(db, router.ID, model.CmdReadState, map[string]any{})
+		a.logActivity(db, router.AccountID, "router", "Commande "+cmd.Kind+" exécutée sur «"+router.Name+"»")
+		queueCommandLocked(db, router.AccountID, router.ID, model.CmdReadState, map[string]any{})
 	default:
-		a.logActivity(db, "router", "Commande "+cmd.Kind+" ÉCHOUÉE sur «"+router.Name+"» ("+vals.Get("message")+")")
+		a.logActivity(db, router.AccountID, "router", "Commande "+cmd.Kind+" ÉCHOUÉE sur «"+router.Name+"» ("+vals.Get("message")+")")
 	}
 	purgeOldCommands(db)
 	a.store.Save()
@@ -442,7 +446,7 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 			disabled = true
 		}
 		db.HotspotUsers = append(db.HotspotUsers, model.HotspotUser{
-			ID: model.NewID("u-"), Kind: "regular", Username: name,
+			ID: model.NewID("u-"), AccountID: router.AccountID, Kind: "regular", Username: name,
 			ProfileName: profName, RouterID: router.ID, RouterName: router.Name,
 			Status:    map[bool]string{true: "disabled", false: "active"}[disabled],
 			CreatedAt: model.NowISO(),
@@ -460,7 +464,7 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 	}
 	live := []model.Session{}
 	for _, e := range sessEntries {
-		s := model.Session{ID: model.NewID("s-"), Username: e[0], RouterID: router.ID, RouterName: router.Name}
+		s := model.Session{ID: model.NewID("s-"), AccountID: router.AccountID, Username: e[0], RouterID: router.ID, RouterName: router.Name}
 		if len(e) > 1 {
 			s.IP = e[1]
 		}
@@ -515,9 +519,10 @@ func splitAgentList(raw string) [][]string {
 // Le token n'est pas stocké en clair : après fermeture de la fenêtre de création,
 // il faut "Régénérer le script" (rotation) pour en obtenir un nouveau.
 func (a *API) handleRouterProvision(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	id := r.PathValue("id")
 	a.store.Lock()
-	cur := findRouter(a.store.Data(), id)
+	cur := findRouterScoped(a.store.Data(), id, acc)
 	if cur == nil {
 		a.store.Unlock()
 		writeErr(w, http.StatusNotFound, "Routeur introuvable")
@@ -548,6 +553,7 @@ func (a *API) handleRouterProvision(w http.ResponseWriter, r *http.Request) {
 
 // handleRouterRotateToken — régénère le token et renvoie le script complet.
 func (a *API) handleRouterRotateToken(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	id := r.PathValue("id")
 	token, err := agent.NewToken()
 	if err != nil {
@@ -555,7 +561,7 @@ func (a *API) handleRouterRotateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.store.Lock()
-	cur := findRouter(a.store.Data(), id)
+	cur := findRouterScoped(a.store.Data(), id, acc)
 	if cur == nil {
 		a.store.Unlock()
 		writeErr(w, http.StatusNotFound, "Routeur introuvable")
@@ -570,7 +576,7 @@ func (a *API) handleRouterRotateToken(w http.ResponseWriter, r *http.Request) {
 	cur.TokenPreview = agent.Preview(token)
 	cur.LastSeen = ""
 	cur.Status = "offline" // l'ancien agent (token périmé) ne check-inera plus
-	a.logActivity(a.store.Data(), "router", "Token agent régénéré pour «"+cur.Name+"»")
+	a.logActivity(a.store.Data(), cur.AccountID, "router", "Token agent régénéré pour «"+cur.Name+"»")
 	a.store.Save()
 	name := cur.Name
 	a.store.Unlock()
@@ -583,10 +589,11 @@ func (a *API) handleRouterRotateToken(w http.ResponseWriter, r *http.Request) {
 
 // handleRouterRefresh — file une commande read_state pour un routeur agent.
 func (a *API) handleRouterRefresh(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
 	id := r.PathValue("id")
 	a.store.Lock()
 	db := a.store.Data()
-	cur := findRouter(db, id)
+	cur := findRouterScoped(db, id, acc)
 	if cur == nil {
 		a.store.Unlock()
 		writeErr(w, http.StatusNotFound, "Routeur introuvable")
@@ -597,7 +604,7 @@ func (a *API) handleRouterRefresh(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Le rafraîchissement agent ne s'applique qu'au mode agent")
 		return
 	}
-	cmd := queueCommandLocked(db, id, model.CmdReadState, map[string]any{})
+	cmd := queueCommandLocked(db, cur.AccountID, id, model.CmdReadState, map[string]any{})
 	a.store.Save()
 	cmdID := cmd.ID
 	a.store.Unlock()

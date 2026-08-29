@@ -7,17 +7,52 @@ export type UserKind = "regular" | "voucher";
 export type ResellerStatus = "active" | "disabled";
 export type TransactionType = "credit" | "sale";
 export type SaleChannel = "direct" | "reseller";
+export type AccountStatus = "active" | "disabled";
 
 export interface AuthUser {
   id: string;
   name: string;
   username: string;
   role: string;
+  /** Compte SaaS auquel l'utilisateur est rattaché (multi-tenant). */
+  accountId?: string;
+  accountName?: string;
 }
 
 export interface LoginResponse {
   token: string;
   user: AuthUser;
+}
+
+/** Charge utile d'inscription SaaS (POST /api/auth/register). */
+export interface RegisterPayload {
+  name: string;
+  username: string;
+  password: string;
+  /** Clé d'invitation — optionnelle, requise si l'inscription est protégée (REGISTER_KEY). */
+  key?: string;
+}
+
+export interface AuthResponse {
+  token: string;
+  user: AuthUser;
+}
+
+/** Compte client SaaS (GET /api/admin/accounts — admin plateforme uniquement). */
+export interface AccountSummary {
+  id: string;
+  name: string;
+  status: AccountStatus;
+  createdAt: string;
+  /** Identifiant du compte propriétaire (login). */
+  owner: string;
+  stats: {
+    users: number;
+    routers: number;
+    sessions: number;
+    sales30d: number;
+    revenue30d: number;
+  };
 }
 
 export interface RouterDevice {
@@ -297,4 +332,5 @@ export type ViewId =
   | "resellers"
   | "routers"
   | "reports"
+  | "accounts"
   | "settings";

@@ -53,9 +53,24 @@ func NowISO() string { return time.Now().UTC().Format(time.RFC3339) }
 // Types métier (réponses JSON strictement conformes au contrat TS)
 // ---------------------------------------------------------------------------
 
+// AccountMainID — identifiant littéral du compte principal (plateforme). Le
+// compte principal porte TOUJOURS cet ID (migrations déterministes) : il hérite
+// des données de l'ère mono-tenant et ne peut pas être désactivé.
+const AccountMainID = "acc-main"
+
+// Account — compte client SaaS (isolation multi-tenant). Chaque entité métier
+// porte un AccountID : un compte ne voit et ne modifie que ses données.
+type Account struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Status    string `json:"status"` // active | disabled
+	CreatedAt string `json:"createdAt"`
+}
+
 // Router — équipement MikroTik géré (simulé, réel ou agent). Password non exposé dans l'API.
 type Router struct {
 	ID             string `json:"id"`
+	AccountID      string `json:"accountId"`
 	Name           string `json:"name"`
 	Host           string `json:"host"`
 	Port           int    `json:"port"`
@@ -78,6 +93,7 @@ type Router struct {
 // Profile — profil hotspot (débit, durée, prix, validité).
 type Profile struct {
 	ID                string `json:"id"`
+	AccountID         string `json:"accountId"`
 	Name              string `json:"name"`
 	RateLimit         string `json:"rateLimit"`
 	SessionTimeoutMin int    `json:"sessionTimeoutMin"`
@@ -91,6 +107,7 @@ type Profile struct {
 // HotspotUser — utilisateur hotspot régulier ou voucher.
 type HotspotUser struct {
 	ID            string `json:"id"`
+	AccountID     string `json:"accountId"`
 	Kind          string `json:"kind"` // regular | voucher
 	Username      string `json:"username"`
 	Password      string `json:"password"`
@@ -115,6 +132,7 @@ type HotspotUser struct {
 // Session — session hotspot active.
 type Session struct {
 	ID          string `json:"id"`
+	AccountID   string `json:"accountId"`
 	UserID      string `json:"userId"`
 	Username    string `json:"username"`
 	ProfileName string `json:"profileName"`
@@ -131,6 +149,7 @@ type Session struct {
 // Reseller — revendeur avec portefeuille.
 type Reseller struct {
 	ID           string `json:"id"`
+	AccountID    string `json:"accountId"`
 	Name         string `json:"name"`
 	Username     string `json:"username"`
 	Phone        string `json:"phone"`
@@ -144,6 +163,7 @@ type Reseller struct {
 // Transaction — mouvement de portefeuille revendeur (credit | sale).
 type Transaction struct {
 	ID           string `json:"id"`
+	AccountID    string `json:"accountId"`
 	Type         string `json:"type"`
 	ResellerID   string `json:"resellerId"`
 	ResellerName string `json:"resellerName"`
@@ -154,15 +174,17 @@ type Transaction struct {
 
 // Activity — journal d'activité.
 type Activity struct {
-	ID      string `json:"id"`
-	Type    string `json:"type"` // router | user | voucher | reseller | session | system
-	Message string `json:"message"`
-	At      string `json:"at"`
+	ID        string `json:"id"`
+	AccountID string `json:"accountId"`
+	Type      string `json:"type"` // router | user | voucher | reseller | session | system
+	Message   string `json:"message"`
+	At        string `json:"at"`
 }
 
 // Sale — vente de vouchers (par lot), attribuée au routeur (site) émetteur.
 type Sale struct {
 	ID           string `json:"id"`
+	AccountID    string `json:"accountId"`
 	Amount       int    `json:"amount"`
 	ProfileName  string `json:"profileName"`
 	Count        int    `json:"count"`
@@ -177,6 +199,7 @@ type Sale struct {
 // Batch — lot de vouchers générés en une fois (traçabilité complète).
 type Batch struct {
 	ID           string `json:"id"`
+	AccountID    string `json:"accountId"`
 	ProfileID    string `json:"profileId"`
 	ProfileName  string `json:"profileName"`
 	RouterID     string `json:"routerId"`
@@ -213,15 +236,25 @@ type Settings struct {
 	Plan   Plan   `json:"plan"`
 }
 
-// AdminUser — compte d'accès à la console (login).
+// AdminUser — compte d'accès à la console (login), rattaché à un compte SaaS.
 type AdminUser struct {
 	ID           string `json:"id"`
+	AccountID    string `json:"accountId"`
 	Name         string `json:"name"`
 	Username     string `json:"username"`
 	Role         string `json:"role"`
 	PasswordHash string `json:"passwordHash"`
 	Salt         string `json:"salt"`
 	CreatedAt    string `json:"createdAt"`
+	// PasswordSetByUser — true quand le mot de passe a été modifié par
+	// l'utilisateur via POST /api/auth/password : applyAdminOverride ne
+	// l'écrase alors PAS (sauf si la variable ADMIN_PASSWORD change).
+	PasswordSetByUser bool `json:"passwordSetByUser,omitempty"`
+	// EnvPasswordHash — hash du DERNIER mot de passe appliqué par la
+	// variable d'environnement ADMIN_PASSWORD. Sert à détecter un
+	// changement d'intention de l'opérateur (env modifiée) par rapport à
+	// un mot de passe changé par l'utilisateur depuis la console.
+	EnvPasswordHash string `json:"envPasswordHash,omitempty"`
 }
 
 // Kinds de commandes agent (routeur -> cloud en HTTP-poll).
@@ -238,6 +271,7 @@ const (
 type Command struct {
 	ID        string         `json:"id"`
 	RouterID  string         `json:"routerId"`
+	AccountID string         `json:"accountId"`
 	Kind      string         `json:"kind"`
 	Payload   map[string]any `json:"payload,omitempty"`
 	Status    string         `json:"status"` // queued | sent | done | error
@@ -248,21 +282,26 @@ type Command struct {
 }
 
 // DB — base de données persistée en JSON.
+//   - Accounts/SettingsByAccount : modèle multi-tenant (source de vérité) ;
+//   - Tenant/Settings : champs LEGACY mono-tenant, uniquement lus pour migrer
+//     un ancien db.json — vidés après migration puis ignorés.
 type DB struct {
-	Tenant       Tenant        `json:"tenant"`
-	Users        []AdminUser   `json:"users"`
-	Routers      []Router      `json:"routers"`
-	Profiles     []Profile     `json:"profiles"`
-	HotspotUsers []HotspotUser `json:"hotspotUsers"`
-	Batches      []Batch       `json:"batches"`
-	Resellers    []Reseller    `json:"resellers"`
-	Transactions []Transaction `json:"transactions"`
-	Sessions     []Session     `json:"sessions"`
-	Activity     []Activity    `json:"activity"`
-	Sales        []Sale        `json:"sales"`
-	Commands     []Command     `json:"commands"`
-	Settings     Settings      `json:"settings"`
-	LastTick     time.Time     `json:"lastTick"`
+	Accounts          []Account           `json:"accounts"`
+	SettingsByAccount map[string]Settings `json:"settingsByAccount"`
+	Users             []AdminUser         `json:"users"`
+	Routers           []Router            `json:"routers"`
+	Profiles          []Profile           `json:"profiles"`
+	HotspotUsers      []HotspotUser       `json:"hotspotUsers"`
+	Batches           []Batch             `json:"batches"`
+	Resellers         []Reseller          `json:"resellers"`
+	Transactions      []Transaction       `json:"transactions"`
+	Sessions          []Session           `json:"sessions"`
+	Activity          []Activity          `json:"activity"`
+	Sales             []Sale              `json:"sales"`
+	Commands          []Command           `json:"commands"`
+	Tenant            Tenant              `json:"tenant"`   // legacy mono-tenant
+	Settings          Settings            `json:"settings"` // legacy mono-tenant
+	LastTick          time.Time           `json:"lastTick"`
 }
 
 // EffectiveStatus retourne le statut réel d'un utilisateur : un voucher encore

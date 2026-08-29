@@ -18,9 +18,7 @@ export const metadata: Metadata = {
   description:
     "Plateforme cloud de gestion professionnelle de hotspot MikroTik : vouchers, utilisateurs, profils, sessions temps réel et revendeurs.",
   keywords: ["MikroTik", "hotspot", "RouterOS", "vouchers", "wifi", "billing"],
-  icons: {
-    icon: "/logo.svg",
-  },
+  // Favicon via conventions fichiers : src/app/icon.png + apple-icon.png.
 };
 
 export const viewport: Viewport = {

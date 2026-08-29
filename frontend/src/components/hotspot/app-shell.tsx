@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import Image from "next/image";
 import { useIsFetching, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   BarChart3,
   Building2,
+  ChevronsUpDown,
   Gauge,
   LayoutDashboard,
   LogOut,
@@ -17,6 +18,7 @@ import {
   Settings,
   Store,
   Ticket,
+  UserRound,
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -36,8 +38,10 @@ import {
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/hotspot/api";
+import { roleLabel, userInitials } from "@/lib/hotspot/format";
 import { useHotspotStore } from "@/lib/hotspot/store";
 import type { HotspotSession, ViewId } from "@/lib/hotspot/types";
+import { ProfileDialog } from "./parts/profile-dialog";
 
 import AccountsView from "./views/accounts-view";
 import DashboardView from "./views/dashboard-view";
@@ -111,19 +115,6 @@ const VIEWS: Record<ViewId, React.ComponentType> = {
   settings: SettingsView,
 };
 
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "SC";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[1][0]).toUpperCase();
-}
-
-function roleLabel(role: string): string {
-  if (!role) return "Utilisateur";
-  if (role.toLowerCase() === "admin" || role.toLowerCase() === "administrator") return "Administrateur";
-  return role.charAt(0).toUpperCase() + role.slice(1);
-}
-
 function BrandHeader() {
   return (
     <div className="flex items-center gap-3 px-5 py-5">
@@ -150,7 +141,9 @@ function BrandHeader() {
 function UserCard() {
   const user = useHotspotStore((s) => s.user);
   const logout = useHotspotStore((s) => s.logout);
+  const setView = useHotspotStore((s) => s.setView);
   const queryClient = useQueryClient();
+  const [profileOpen, setProfileOpen] = useState(false);
   const name = user?.name ?? "Utilisateur";
 
   function handleLogout() {
@@ -159,26 +152,54 @@ function UserCard() {
   }
 
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-border/70 bg-card/60 px-3 py-3">
-      <Avatar className="size-9 shrink-0">
-        <AvatarFallback className="bg-primary/15 text-xs font-semibold text-primary">
-          {initials(name)}
-        </AvatarFallback>
-      </Avatar>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium">{name}</p>
-        <p className="truncate text-xs text-muted-foreground">{roleLabel(user?.role ?? "")}</p>
-      </div>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="size-9 shrink-0 text-muted-foreground hover:text-foreground"
-        onClick={handleLogout}
-        aria-label="Se déconnecter"
-      >
-        <LogOut className="size-4" />
-      </Button>
-    </div>
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-label="Menu du profil"
+            className="flex w-full items-center gap-3 rounded-lg border border-border/70 bg-card/60 px-3 py-3 text-left outline-none transition-colors hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-accent/60 data-[state=open]:text-accent-foreground"
+          >
+            <Avatar className="size-9 shrink-0">
+              <AvatarFallback className="bg-primary/15 text-xs font-semibold text-primary">
+                {userInitials(name)}
+              </AvatarFallback>
+            </Avatar>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium">{name}</span>
+              <span className="block truncate text-xs text-muted-foreground">
+                {roleLabel(user?.role ?? "")}
+              </span>
+            </span>
+            <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent side="top" align="start" className="w-60">
+          <DropdownMenuLabel>
+            <p className="truncate text-sm font-medium">{name}</p>
+            <p className="truncate text-xs font-normal text-muted-foreground">@{user?.username ?? "—"}</p>
+          </DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => setProfileOpen(true)} className="min-h-10">
+            <UserRound className="size-4" />
+            Profil
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setView("settings")} className="min-h-10">
+            <Settings className="size-4" />
+            Paramètres
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onClick={handleLogout}
+            className="min-h-10 text-destructive focus:text-destructive"
+          >
+            <LogOut className="size-4" />
+            Se déconnecter
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <ProfileDialog open={profileOpen} onOpenChange={setProfileOpen} />
+    </>
   );
 }
 
@@ -256,11 +277,13 @@ function NavList() {
 
 function Topbar() {
   const view = useHotspotStore((s) => s.view);
+  const setView = useHotspotStore((s) => s.setView);
   const setSidebarOpen = useHotspotStore((s) => s.setSidebarOpen);
   const user = useHotspotStore((s) => s.user);
   const logout = useHotspotStore((s) => s.logout);
   const queryClient = useQueryClient();
   const fetchingCount = useIsFetching();
+  const [profileOpen, setProfileOpen] = useState(false);
 
   const dateLabel = useMemo(() => {
     const raw = new Intl.DateTimeFormat("fr-FR", {
@@ -312,7 +335,7 @@ function Topbar() {
               <Button variant="ghost" className="size-10 rounded-full p-0" aria-label="Menu utilisateur">
                 <Avatar className="size-9">
                   <AvatarFallback className="bg-primary/15 text-xs font-semibold text-primary">
-                    {initials(name)}
+                    {userInitials(name)}
                   </AvatarFallback>
                 </Avatar>
               </Button>
@@ -325,12 +348,22 @@ function Topbar() {
                 </p>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setProfileOpen(true)} className="min-h-10">
+                <UserRound className="size-4" />
+                Profil
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setView("settings")} className="min-h-10">
+                <Settings className="size-4" />
+                Paramètres
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleLogout} className="min-h-10 text-destructive focus:text-destructive">
                 <LogOut className="size-4" />
                 Se déconnecter
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          <ProfileDialog open={profileOpen} onOpenChange={setProfileOpen} />
         </div>
       </div>
     </header>

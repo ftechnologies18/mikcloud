@@ -4,7 +4,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://mikcloud-api.onrender.com/api/:path*"
+      "destination": "https://mikcloud.onrender.com/api/:path*"
     }
   ]
 }

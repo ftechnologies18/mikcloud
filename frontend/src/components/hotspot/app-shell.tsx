@@ -9,12 +9,15 @@ import {
   Building2,
   ChevronsUpDown,
   Gauge,
+  Languages,
   LayoutDashboard,
   LogOut,
   Menu,
+  Printer,
   Radio,
   RefreshCw,
   Router as RouterIcon,
+  ScrollText,
   Settings,
   Store,
   Ticket,
@@ -38,66 +41,82 @@ import {
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/hotspot/api";
+import { localeOf, useI18n } from "@/lib/hotspot/i18n";
 import { roleLabel, userInitials } from "@/lib/hotspot/format";
 import { useHotspotStore } from "@/lib/hotspot/store";
 import type { HotspotSession, ViewId } from "@/lib/hotspot/types";
-import { ProfileDialog } from "./parts/profile-dialog";
+import { UserProfileDialog } from "./parts/user-profile-dialog";
 
 import AccountsView from "./views/accounts-view";
 import DashboardView from "./views/dashboard-view";
+import LogsView from "./views/logs-view";
 import ProfilesView from "./views/profiles-view";
 import ReportsView from "./views/reports-view";
 import ResellersView from "./views/resellers-view";
 import RoutersView from "./views/routers-view";
 import SessionsView from "./views/sessions-view";
 import SettingsView from "./views/settings-view";
+import TemplatesView from "./views/templates-view";
 import UsersView from "./views/users-view";
 import VouchersView from "./views/vouchers-view";
 
-const VIEW_TITLES: Record<ViewId, string> = {
-  dashboard: "Tableau de bord",
-  sessions: "Sessions actives",
-  users: "Utilisateurs",
-  vouchers: "Vouchers",
-  profiles: "Profils",
-  resellers: "Revendeurs",
-  routers: "Routeurs",
-  reports: "Rapports",
-  accounts: "Comptes",
-  settings: "Paramètres",
-};
+/** Titre dynamique de la vue active (topbar) — dépend de la langue. */
+function viewTitle(view: ViewId, t: (key: string) => string): string {
+  const keys: Record<ViewId, string> = {
+    dashboard: "nav.dashboard",
+    sessions: "nav.sessions",
+    users: "nav.users",
+    vouchers: "nav.vouchers",
+    templates: "templates.title",
+    profiles: "nav.profiles",
+    resellers: "nav.resellers",
+    routers: "nav.routers",
+    reports: "nav.reports",
+    logs: "logs.title",
+    accounts: "nav.accounts",
+    settings: "nav.settings",
+  };
+  return t(keys[view]);
+}
 
 interface NavItem {
   id: ViewId;
-  label: string;
+  labelKey: string;
   icon: LucideIcon;
 }
 
-const NAV_SECTIONS: { label: string; items: NavItem[] }[] = [
+const NAV_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
   {
-    label: "Général",
+    labelKey: "nav.section.general",
     items: [
-      { id: "dashboard", label: "Tableau de bord", icon: LayoutDashboard },
-      { id: "sessions", label: "Sessions actives", icon: Radio },
+      { id: "dashboard", labelKey: "nav.dashboard", icon: LayoutDashboard },
+      { id: "sessions", labelKey: "nav.sessions", icon: Radio },
     ],
   },
   {
-    label: "Hotspot",
+    labelKey: "nav.section.hotspot",
     items: [
-      { id: "users", label: "Utilisateurs", icon: Users },
-      { id: "vouchers", label: "Vouchers", icon: Ticket },
-      { id: "profiles", label: "Profils", icon: Gauge },
+      { id: "users", labelKey: "nav.users", icon: Users },
+      { id: "vouchers", labelKey: "nav.vouchers", icon: Ticket },
+      { id: "templates", labelKey: "nav.templates", icon: Printer },
+      { id: "profiles", labelKey: "nav.profiles", icon: Gauge },
     ],
   },
-  { label: "Distribution", items: [{ id: "resellers", label: "Revendeurs", icon: Store }] },
-  { label: "Infrastructure", items: [{ id: "routers", label: "Routeurs", icon: RouterIcon }] },
-  { label: "Analyse", items: [{ id: "reports", label: "Rapports", icon: BarChart3 }] },
+  { labelKey: "nav.section.distribution", items: [{ id: "resellers", labelKey: "nav.resellers", icon: Store }] },
+  { labelKey: "nav.section.infrastructure", items: [{ id: "routers", labelKey: "nav.routers", icon: RouterIcon }] },
   {
-    label: "Système",
+    labelKey: "nav.section.analysis",
+    items: [
+      { id: "reports", labelKey: "nav.reports", icon: BarChart3 },
+      { id: "logs", labelKey: "nav.logs", icon: ScrollText },
+    ],
+  },
+  {
+    labelKey: "nav.section.system",
     items: [
       // « Comptes » n'est visible que de l'admin plateforme (rôle admin) — filtré dans NavList.
-      { id: "accounts", label: "Comptes", icon: Building2 },
-      { id: "settings", label: "Paramètres", icon: Settings },
+      { id: "accounts", labelKey: "nav.accounts", icon: Building2 },
+      { id: "settings", labelKey: "nav.settings", icon: Settings },
     ],
   },
 ];
@@ -107,20 +126,24 @@ const VIEWS: Record<ViewId, React.ComponentType> = {
   sessions: SessionsView,
   users: UsersView,
   vouchers: VouchersView,
+  templates: TemplatesView,
   profiles: ProfilesView,
   resellers: ResellersView,
   routers: RoutersView,
   reports: ReportsView,
+  logs: LogsView,
   accounts: AccountsView,
   settings: SettingsView,
 };
 
+/** En-tête de marque — logo + nom MikCloud. */
 function BrandHeader() {
+  const { t } = useI18n();
   return (
     <div className="flex items-center gap-3 px-5 py-5">
       <Image
         src="/logo.png"
-        alt="Logo MikCloud"
+        alt={t("shell.logoAlt")}
         width={36}
         height={36}
         className="size-9 shrink-0 rounded-xl shadow-md shadow-primary/20"
@@ -138,13 +161,25 @@ function BrandHeader() {
   );
 }
 
+/** Item « English / Français » — bascule immédiate de la langue (F11). */
+function LanguageMenuItem() {
+  const { lang, setLang } = useI18n();
+  return (
+    <DropdownMenuItem className="min-h-10" onClick={() => setLang(lang === "fr" ? "en" : "fr")}>
+      <Languages className="size-4" />
+      {lang === "fr" ? "English" : "Français"}
+    </DropdownMenuItem>
+  );
+}
+
 function UserCard() {
+  const { t, lang } = useI18n();
   const user = useHotspotStore((s) => s.user);
   const logout = useHotspotStore((s) => s.logout);
   const setView = useHotspotStore((s) => s.setView);
   const queryClient = useQueryClient();
   const [profileOpen, setProfileOpen] = useState(false);
-  const name = user?.name ?? "Utilisateur";
+  const name = user?.name ?? t("profile.defaultUser");
 
   function handleLogout() {
     logout();
@@ -157,7 +192,7 @@ function UserCard() {
         <DropdownMenuTrigger asChild>
           <button
             type="button"
-            aria-label="Menu du profil"
+            aria-label={t("shell.profileMenu")}
             className="flex w-full items-center gap-3 rounded-lg border border-border/70 bg-card/60 px-3 py-3 text-left outline-none transition-colors hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-accent/60 data-[state=open]:text-accent-foreground"
           >
             <Avatar className="size-9 shrink-0">
@@ -168,7 +203,7 @@ function UserCard() {
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium">{name}</span>
               <span className="block truncate text-xs text-muted-foreground">
-                {roleLabel(user?.role ?? "")}
+                {roleLabel(user?.role ?? "", lang)}
               </span>
             </span>
             <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" aria-hidden />
@@ -182,28 +217,30 @@ function UserCard() {
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={() => setProfileOpen(true)} className="min-h-10">
             <UserRound className="size-4" />
-            Profil
+            {t("shell.profile")}
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => setView("settings")} className="min-h-10">
             <Settings className="size-4" />
-            Paramètres
+            {t("shell.settings")}
           </DropdownMenuItem>
+          <LanguageMenuItem />
           <DropdownMenuSeparator />
           <DropdownMenuItem
             onClick={handleLogout}
             className="min-h-10 text-destructive focus:text-destructive"
           >
             <LogOut className="size-4" />
-            Se déconnecter
+            {t("shell.logout")}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      <ProfileDialog open={profileOpen} onOpenChange={setProfileOpen} />
+      <UserProfileDialog open={profileOpen} onOpenChange={setProfileOpen} />
     </>
   );
 }
 
 function NavList() {
+  const { t } = useI18n();
   const view = useHotspotStore((s) => s.view);
   const setView = useHotspotStore((s) => s.setView);
   const user = useHotspotStore((s) => s.user);
@@ -217,14 +254,14 @@ function NavList() {
   const sessionsCount = sessions?.length ?? 0;
 
   return (
-    <nav className="flex-1 space-y-5 overflow-y-auto px-3 pb-4" aria-label="Navigation principale">
+    <nav className="flex-1 space-y-5 overflow-y-auto px-3 pb-4" aria-label={t("nav.main")}>
       {NAV_SECTIONS.map((section) => {
         const items = section.items.filter((item) => item.id !== "accounts" || isAdmin);
         if (items.length === 0) return null;
         return (
-          <div key={section.label}>
+          <div key={section.labelKey}>
             <p className="px-2.5 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
-              {section.label}
+              {t(section.labelKey)}
             </p>
             <ul className="space-y-0.5">
               {items.map((item) => {
@@ -254,7 +291,7 @@ function NavList() {
                           <span className="live-dot absolute -right-1 -top-1 block size-2 rounded-full bg-primary" aria-hidden />
                         )}
                       </span>
-                      <span className="flex-1 truncate text-left">{item.label}</span>
+                      <span className="flex-1 truncate text-left">{t(item.labelKey)}</span>
                       {item.id === "sessions" && sessionsCount > 0 && (
                         <Badge
                           variant="outline"
@@ -276,6 +313,7 @@ function NavList() {
 }
 
 function Topbar() {
+  const { t, lang } = useI18n();
   const view = useHotspotStore((s) => s.view);
   const setView = useHotspotStore((s) => s.setView);
   const setSidebarOpen = useHotspotStore((s) => s.setSidebarOpen);
@@ -286,17 +324,17 @@ function Topbar() {
   const [profileOpen, setProfileOpen] = useState(false);
 
   const dateLabel = useMemo(() => {
-    const raw = new Intl.DateTimeFormat("fr-FR", {
+    const raw = new Intl.DateTimeFormat(localeOf(lang), {
       weekday: "long",
       day: "numeric",
       month: "long",
     }).format(new Date());
     return raw.charAt(0).toUpperCase() + raw.slice(1);
-  }, []);
+  }, [lang]);
 
   function handleRefresh() {
     void queryClient.invalidateQueries();
-    toast.success("Actualisé");
+    toast.success(t("shell.refreshed"));
   }
 
   function handleLogout() {
@@ -304,7 +342,7 @@ function Topbar() {
     void queryClient.clear();
   }
 
-  const name = user?.name ?? "Utilisateur";
+  const name = user?.name ?? t("profile.defaultUser");
 
   return (
     <header className="sticky top-0 z-20 border-b bg-background/80 backdrop-blur">
@@ -314,11 +352,11 @@ function Topbar() {
           size="icon"
           className="size-10 lg:hidden"
           onClick={() => setSidebarOpen(true)}
-          aria-label="Ouvrir le menu"
+          aria-label={t("nav.openMenu")}
         >
           <Menu className="size-5" />
         </Button>
-        <h2 className="truncate text-base font-semibold tracking-tight">{VIEW_TITLES[view]}</h2>
+        <h2 className="truncate text-base font-semibold tracking-tight">{viewTitle(view, t)}</h2>
         <div className="ml-auto flex items-center gap-1 sm:gap-3">
           <span className="hidden text-xs text-muted-foreground md:inline">{dateLabel}</span>
           <Button
@@ -326,13 +364,13 @@ function Topbar() {
             size="icon"
             className="size-10 text-muted-foreground hover:text-foreground"
             onClick={handleRefresh}
-            aria-label="Actualiser"
+            aria-label={t("common.refresh")}
           >
             <RefreshCw className={cn("size-4.5", fetchingCount > 0 && "animate-spin")} />
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="size-10 rounded-full p-0" aria-label="Menu utilisateur">
+              <Button variant="ghost" className="size-10 rounded-full p-0" aria-label={t("shell.userMenu")}>
                 <Avatar className="size-9">
                   <AvatarFallback className="bg-primary/15 text-xs font-semibold text-primary">
                     {userInitials(name)}
@@ -350,20 +388,21 @@ function Topbar() {
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => setProfileOpen(true)} className="min-h-10">
                 <UserRound className="size-4" />
-                Profil
+                {t("shell.profile")}
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setView("settings")} className="min-h-10">
                 <Settings className="size-4" />
-                Paramètres
+                {t("shell.settings")}
               </DropdownMenuItem>
+              <LanguageMenuItem />
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleLogout} className="min-h-10 text-destructive focus:text-destructive">
                 <LogOut className="size-4" />
-                Se déconnecter
+                {t("shell.logout")}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <ProfileDialog open={profileOpen} onOpenChange={setProfileOpen} />
+          <UserProfileDialog open={profileOpen} onOpenChange={setProfileOpen} />
         </div>
       </div>
     </header>

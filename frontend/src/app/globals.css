@@ -153,3 +153,25 @@
     margin: 8mm;
   }
 }
+
+/* ─── Impression via modèles de vouchers (F2) ─── */
+.tpl-ticket {
+  break-inside: avoid;
+}
+.tpl-format-58mm .tpl-ticket,
+.tpl-format-80mm .tpl-ticket {
+  page-break-after: always;
+}
+/* Pas de page blanche après le dernier ticket thermique. */
+.tpl-format-58mm .tpl-ticket:last-child,
+.tpl-format-80mm .tpl-ticket:last-child {
+  page-break-after: auto;
+}
+@media print {
+  .tpl-format-58mm {
+    width: 58mm;
+  }
+  .tpl-format-80mm {
+    width: 80mm;
+  }
+}

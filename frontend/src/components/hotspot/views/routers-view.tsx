@@ -19,6 +19,7 @@ import {
   Terminal,
   Trash2,
   Users,
+  Wrench,
   Zap,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -58,8 +59,10 @@ import { cn } from "@/lib/utils";
 import { EmptyState } from "@/components/hotspot/empty-state";
 import { LoadingCards } from "@/components/hotspot/loading";
 import { PageHeader } from "@/components/hotspot/page-header";
+import { RouterToolsDialog } from "@/components/hotspot/parts/router-tools";
 import { StatusBadge } from "@/components/hotspot/status-badge";
 import { api } from "@/lib/hotspot/api";
+import { localeOf, useI18n } from "@/lib/hotspot/i18n";
 import { formatDuration, timeAgo } from "@/lib/hotspot/format";
 import type { RouterDevice, RouterMode, RouterRotateTokenResponse, RouterStats, RouterTestResult } from "@/lib/hotspot/types";
 
@@ -90,6 +93,7 @@ interface AgentWizard {
 
 /** Bloc script .rsc copiable — utilisé par le wizard et la réinstallation. */
 function ScriptBox({ script }: { script: string }) {
+  const { t } = useI18n();
   const [copied, setCopied] = useState(false);
 
   async function copy() {
@@ -107,10 +111,12 @@ function ScriptBox({ script }: { script: string }) {
         document.body.removeChild(ta);
       }
       setCopied(true);
-      toast.success("Script copié", { description: "Collez-le dans Winbox → Terminal" });
+      toast.success(t("routers.scriptCopiedToast"), {
+        description: t("routers.scriptCopiedToastDesc"),
+      });
       window.setTimeout(() => setCopied(false), 2500);
     } catch {
-      toast.error("Copie impossible — sélectionnez le script manuellement");
+      toast.error(t("routers.copyImpossible"));
     }
   }
 
@@ -123,7 +129,7 @@ function ScriptBox({ script }: { script: string }) {
       </div>
       <Button type="button" onClick={copy} className={cn("w-full", copied && "bg-emerald-600 hover:bg-emerald-600")}>
         {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
-        {copied ? "Script copié !" : "Copier le script"}
+        {copied ? t("routers.scriptCopiedBtn") : t("routers.copyScript")}
       </Button>
     </div>
   );
@@ -137,6 +143,7 @@ function AgentInstallDialog({
   wizard: AgentWizard | null;
   onClose: () => void;
 }) {
+  const { t, tf } = useI18n();
   const { data: routers } = useQuery({
     queryKey: ["/api/routers"],
     queryFn: () => api<RouterDevice[]>("/api/routers"),
@@ -148,8 +155,8 @@ function AgentInstallDialog({
 
   useEffect(() => {
     if (online && wizard) {
-      toast.success(`« ${wizard.name} » est en ligne !`, {
-        description: "L'agent MikCloud communique avec le routeur (check-in toutes les 45 s).",
+      toast.success(tf("routers.wizard.onlineToast", { name: wizard.name }), {
+        description: t("routers.wizard.onlineToastDesc"),
       });
     }
   }, [online]);
@@ -160,20 +167,13 @@ function AgentInstallDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <ShieldCheck className="size-5 text-emerald-600" />
-            Installez l&apos;agent sur « {wizard?.name} »
+            {tf("routers.wizard.title", { name: wizard?.name ?? "" })}
           </DialogTitle>
-          <DialogDescription>
-            Une seule fois, 30 secondes — le routeur restera connecté pour toujours, même derrière
-            l&apos;Internet d&apos;Orange, en CGNAT ou via Starlink.
-          </DialogDescription>
+          <DialogDescription>{t("routers.wizard.desc")}</DialogDescription>
         </DialogHeader>
 
         <ol className="space-y-2 text-sm">
-          {[
-            "Ouvrez Winbox et connectez-vous au routeur (adresse MAC ou IP locale).",
-            "Cliquez sur « New Terminal » dans le menu de gauche.",
-            "Collez le script ci-dessous dans le terminal puis appuyez sur Entrée.",
-          ].map((step, i) => (
+          {[t("routers.wizard.step1"), t("routers.wizard.step2"), t("routers.wizard.step3")].map((step, i) => (
             <li key={i} className="flex gap-3">
               <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary font-semibold text-primary-foreground text-xs">
                 {i + 1}
@@ -202,18 +202,16 @@ function AgentInstallDialog({
           )}
           {online ? (
             <span className="font-medium text-emerald-700 dark:text-emerald-400">
-              Routeur en ligne — agent installé avec succès !
+              {t("routers.wizard.online")}
             </span>
           ) : (
-            <span className="text-amber-700 dark:text-amber-400">
-              En attente du premier check-in… (jusqu&apos;à 45 s après le collage du script)
-            </span>
+            <span className="text-amber-700 dark:text-amber-400">{t("routers.wizard.waiting")}</span>
           )}
         </div>
 
         <DialogFooter>
           <Button type="button" onClick={onClose} className={cn(online && "bg-emerald-600 hover:bg-emerald-700")}>
-            {online ? "Terminé" : "Fermer — j'installerai plus tard"}
+            {online ? t("routers.wizard.done") : t("routers.wizard.later")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -226,11 +224,8 @@ function parsePort(raw: string): number {
   return Number.isFinite(port) && port > 0 && port <= 65535 ? port : 8728;
 }
 
-function nf(value: number): string {
-  return new Intl.NumberFormat("fr-FR").format(value);
-}
-
 export default function RoutersView() {
+  const { t, tf, lang } = useI18n();
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<RouterDevice | null>(null);
@@ -239,6 +234,9 @@ export default function RoutersView() {
   const [wizard, setWizard] = useState<AgentWizard | null>(null);
   const [reinstall, setReinstall] = useState<RouterDevice | null>(null);
   const [reinstallScript, setReinstallScript] = useState<string | null>(null);
+  const [toolsRouter, setToolsRouter] = useState<RouterDevice | null>(null);
+
+  const nf = (value: number): string => new Intl.NumberFormat(localeOf(lang)).format(value);
 
   const { data: routers, isLoading } = useQuery({
     queryKey: ["/api/routers"],
@@ -305,7 +303,7 @@ export default function RoutersView() {
         return;
       }
       toast.success(
-        variables.id ? `Routeur ${router.name} mis à jour` : `Routeur ${router.name} connecté`,
+        variables.id ? tf("routers.updatedToast", { name: router.name }) : tf("routers.connectedToast", { name: router.name }),
       );
       closeDialog(false);
     },
@@ -331,9 +329,9 @@ export default function RoutersView() {
       api<RouterTestResult>(`/api/routers/${router.id}/test`, { method: "POST" }),
     onSuccess: (res) => {
       if (res.ok) {
-        toast.success(`Connecté — latence ${res.latencyMs} ms, RouterOS ${res.version}`);
+        toast.success(tf("routers.testOk", { latency: res.latencyMs, version: res.version }));
       } else {
-        toast.error(res.message || "Connexion impossible");
+        toast.error(res.message || t("routers.testFailed"));
       }
     },
     onError: (err: Error) => {
@@ -344,8 +342,12 @@ export default function RoutersView() {
   const statsMutation = useMutation({
     mutationFn: (router: RouterDevice) => api<RouterStats>(`/api/routers/${router.id}/stats`),
     onSuccess: (stats, router) => {
-      toast.success(`Statistiques — ${router.name}`, {
-        description: `CPU ${stats.cpuLoad} % · Mémoire ${stats.memUsedPct} % · Uptime ${formatDuration(stats.uptimeSec)}`,
+      toast.success(tf("routers.statsToast", { name: router.name }), {
+        description: tf("routers.statsToastDesc", {
+          cpu: stats.cpuLoad,
+          mem: stats.memUsedPct,
+          uptime: formatDuration(stats.uptimeSec),
+        }),
       });
     },
     onError: (err: Error) => {
@@ -356,7 +358,7 @@ export default function RoutersView() {
   const deleteMutation = useMutation({
     mutationFn: (router: RouterDevice) => api<{ ok: boolean }>(`/api/routers/${router.id}`, { method: "DELETE" }),
     onSuccess: (_res, router) => {
-      toast.success(`Routeur ${router.name} supprimé`);
+      toast.success(tf("routers.deletedToast", { name: router.name }));
       invalidateRouters();
     },
     onError: (err: Error) => {
@@ -375,12 +377,12 @@ export default function RoutersView() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Routeurs MikroTik"
-        description="Connectez et surveillez vos routeurs en quelques secondes"
+        title={t("routers.title")}
+        description={t("routers.description")}
         actions={
           <Button onClick={openCreate}>
             <Plus className="size-4" />
-            Ajouter un routeur
+            {t("routers.add")}
           </Button>
         }
       />
@@ -391,12 +393,12 @@ export default function RoutersView() {
         <Card>
           <EmptyState
             icon={RouterIcon}
-            title="Aucun routeur connecté"
-            description="Ajoutez votre premier routeur MikroTik pour gérer vos utilisateurs et vos vouchers hotspot."
+            title={t("routers.empty")}
+            description={t("routers.emptyDesc")}
             action={
               <Button onClick={openCreate}>
                 <Plus className="size-4" />
-                Ajouter votre premier routeur
+                {t("routers.addFirst")}
               </Button>
             }
           />
@@ -421,20 +423,30 @@ export default function RoutersView() {
                         <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
                           {router.mode === "agent"
                             ? router.lastSeen
-                              ? `agent · vu ${timeAgo(router.lastSeen)}`
-                              : "agent · jamais vu"
+                              ? tf("routers.agentSeen", { ago: timeAgo(router.lastSeen, lang) })
+                              : t("routers.agentNever")
                             : `${router.host}:${router.port}`}
                         </p>
                       </div>
                       <div className="flex shrink-0 items-center gap-1">
                         <StatusBadge status={router.status} dot />
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-9 text-muted-foreground hover:text-foreground"
+                          onClick={() => setToolsRouter(router)}
+                          aria-label={tf("routers.toolsAria", { name: router.name })}
+                          title={t("routers.tools")}
+                        >
+                          <Wrench className="size-4" />
+                        </Button>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button
                               variant="ghost"
                               size="icon"
                               className="size-9 text-muted-foreground hover:text-foreground"
-                              aria-label={`Actions pour ${router.name}`}
+                              aria-label={tf("common.actionsFor", { name: router.name })}
                             >
                               <MoreHorizontal className="size-4" />
                             </Button>
@@ -449,7 +461,7 @@ export default function RoutersView() {
                                 }}
                               >
                                 <Terminal className="size-4" />
-                                Script d&apos;installation
+                                {t("routers.installScript")}
                               </DropdownMenuItem>
                             ) : (
                               <>
@@ -463,7 +475,7 @@ export default function RoutersView() {
                                   ) : (
                                     <Zap className="size-4" />
                                   )}
-                                  Tester la connexion
+                                  {t("routers.test")}
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
                                   className="min-h-10"
@@ -471,13 +483,13 @@ export default function RoutersView() {
                                   onClick={() => statsMutation.mutate(router)}
                                 >
                                   <Activity className="size-4" />
-                                  Statistiques
+                                  {t("routers.stats")}
                                 </DropdownMenuItem>
                               </>
                             )}
                             <DropdownMenuItem className="min-h-10" onClick={() => openEdit(router)}>
                               <Pencil className="size-4" />
-                              Modifier
+                              {t("common.edit")}
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
@@ -485,7 +497,7 @@ export default function RoutersView() {
                               onClick={() => setDeleting(router)}
                             >
                               <Trash2 className="size-4" />
-                              Supprimer
+                              {t("common.delete")}
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -499,29 +511,29 @@ export default function RoutersView() {
                     <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
                       <div className="flex min-h-6 items-center gap-2 text-sm">
                         <Cpu className="size-4 shrink-0 text-muted-foreground" />
-                        <span className="text-muted-foreground">RouterOS</span>
+                        <span className="text-muted-foreground">{t("routers.routeros")}</span>
                         <span className="ml-auto font-medium tabular-nums">{router.version || "—"}</span>
                       </div>
                       <div className="flex min-h-6 items-center gap-2 text-sm">
                         <Clock className="size-4 shrink-0 text-muted-foreground" />
-                        <span className="text-muted-foreground">Uptime</span>
+                        <span className="text-muted-foreground">{t("routers.uptime")}</span>
                         <span className="ml-auto font-medium">{formatDuration(router.uptimeSec)}</span>
                       </div>
                       <div className="flex min-h-6 items-center gap-2 text-sm">
                         <Radio className="size-4 shrink-0 text-muted-foreground" />
-                        <span className="text-muted-foreground">Sessions</span>
+                        <span className="text-muted-foreground">{t("routers.sessions")}</span>
                         <span className="ml-auto font-medium tabular-nums">{nf(router.activeSessions)}</span>
                       </div>
                       <div className="flex min-h-6 items-center gap-2 text-sm">
                         <Users className="size-4 shrink-0 text-muted-foreground" />
-                        <span className="text-muted-foreground">Utilisateurs</span>
+                        <span className="text-muted-foreground">{t("routers.users")}</span>
                         <span className="ml-auto font-medium tabular-nums">{nf(router.hotspotUsers)}</span>
                       </div>
                     </div>
 
                     <div className="mt-auto">
                       <div className="mb-1.5 flex items-center justify-between text-xs">
-                        <span className="text-muted-foreground">Charge CPU</span>
+                        <span className="text-muted-foreground">{t("routers.cpuLoad")}</span>
                         <span
                           className={cn(
                             "font-semibold tabular-nums",
@@ -533,7 +545,7 @@ export default function RoutersView() {
                       </div>
                       <Progress
                         value={router.cpuLoad}
-                        aria-label={`Charge CPU de ${router.name}`}
+                        aria-label={tf("routers.cpuLoadAria", { name: router.name })}
                         className={cn("h-2", router.cpuLoad > 85 && "[&_[data-slot=progress-indicator]]:bg-destructive")}
                       />
                     </div>
@@ -549,11 +561,9 @@ export default function RoutersView() {
       <Dialog open={dialogOpen} onOpenChange={closeDialog}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>{editing ? "Modifier le routeur" : "Ajouter un routeur"}</DialogTitle>
+            <DialogTitle>{editing ? t("routers.editTitle") : t("routers.addTitle")}</DialogTitle>
             <DialogDescription>
-              {editing
-                ? "Ajustez la configuration du routeur. Laissez le mot de passe vide pour le conserver."
-                : "Renseignez les accès API de votre MikroTik ou testez en mode simulé."}
+              {editing ? t("routers.editDesc") : t("routers.addDesc")}
             </DialogDescription>
           </DialogHeader>
 
@@ -566,10 +576,10 @@ export default function RoutersView() {
             }}
           >
             <div className="space-y-2">
-              <Label htmlFor="router-name">Nom</Label>
+              <Label htmlFor="router-name">{t("routers.name")}</Label>
               <Input
                 id="router-name"
-                placeholder="RB-Main-Centre"
+                placeholder={t("routers.namePlaceholder")}
                 value={form.name}
                 onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                 disabled={saveMutation.isPending}
@@ -580,7 +590,7 @@ export default function RoutersView() {
               <>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_130px]">
                   <div className="space-y-2">
-                    <Label htmlFor="router-host">Adresse IP / hôte</Label>
+                    <Label htmlFor="router-host">{t("routers.host")}</Label>
                     <Input
                       id="router-host"
                       placeholder="10.10.10.1"
@@ -590,7 +600,7 @@ export default function RoutersView() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="router-port">Port API</Label>
+                    <Label htmlFor="router-port">{t("routers.port")}</Label>
                     <Input
                       id="router-port"
                       type="number"
@@ -607,7 +617,7 @@ export default function RoutersView() {
 
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
-                    <Label htmlFor="router-username">Utilisateur API</Label>
+                    <Label htmlFor="router-username">{t("routers.apiUser")}</Label>
                     <Input
                       id="router-username"
                       placeholder="admin"
@@ -618,11 +628,11 @@ export default function RoutersView() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="router-password">Mot de passe API</Label>
+                    <Label htmlFor="router-password">{t("routers.apiPassword")}</Label>
                     <Input
                       id="router-password"
                       type="password"
-                      placeholder={editing ? "Inchangé" : "••••••••"}
+                      placeholder={editing ? t("routers.passwordUnchanged") : "••••••••"}
                       autoComplete="new-password"
                       value={form.password}
                       onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
@@ -634,7 +644,7 @@ export default function RoutersView() {
             )}
 
             <div className="space-y-2">
-              <Label htmlFor="router-mode">Mode de connexion</Label>
+              <Label htmlFor="router-mode">{t("routers.mode")}</Label>
               <Select
                 value={form.mode}
                 onValueChange={(v) => setForm((f) => ({ ...f, mode: v as RouterMode }))}
@@ -644,30 +654,22 @@ export default function RoutersView() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="agent">Agent MikCloud (recommandé)</SelectItem>
-                  <SelectItem value="simulated">Simulé (démo)</SelectItem>
-                  <SelectItem value="real">Réel — connexion directe (LAN)</SelectItem>
+                  <SelectItem value="agent">{t("routers.modeAgent")}</SelectItem>
+                  <SelectItem value="simulated">{t("routers.modeSimulated")}</SelectItem>
+                  <SelectItem value="real">{t("routers.modeReal")}</SelectItem>
                 </SelectContent>
               </Select>
               {form.mode === "agent" && (
                 <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs">
                   <p className="flex items-center gap-1.5 font-medium text-emerald-700 dark:text-emerald-400">
                     <ShieldCheck className="size-3.5" />
-                    Aucune configuration réseau requise — juste un nom
+                    {t("routers.agentNoConfig")}
                   </p>
-                  <p className="mt-1 leading-relaxed text-muted-foreground">
-                    Le routeur se connecte lui-même à MikCloud toutes les 45 s. Fonctionne derrière
-                    l&apos;Internet Orange CI, en CGNAT et via Starlink : pas d&apos;IP publique, pas de
-                    port-forward, pas d&apos;identifiants à stocker. Après création, vous copierez un
-                    script et le collerez dans Winbox → Terminal (30 s).
-                  </p>
+                  <p className="mt-1 leading-relaxed text-muted-foreground">{t("routers.agentDesc")}</p>
                 </div>
               )}
               {form.mode === "real" && (
-                <p className="text-xs text-muted-foreground">
-                  Connexion directe depuis ce serveur (réseau local / VPN). Activez le service API
-                  sur le MikroTik : IP → Services → api (port 8728).
-                </p>
+                <p className="text-xs text-muted-foreground">{t("routers.realDesc")}</p>
               )}
             </div>
 
@@ -679,15 +681,15 @@ export default function RoutersView() {
 
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => closeDialog(false)} disabled={saveMutation.isPending}>
-                Annuler
+                {t("common.cancel")}
               </Button>
               <Button type="submit" disabled={!formValid || saveMutation.isPending}>
                 {saveMutation.isPending && <Loader2 className="size-4 animate-spin" />}
                 {editing
-                  ? "Enregistrer"
+                  ? t("common.save")
                   : form.mode === "agent"
-                    ? "Créer et générer le script"
-                    : "Ajouter le routeur"}
+                    ? t("routers.createAgent")
+                    : t("routers.addSubmit")}
               </Button>
             </DialogFooter>
           </form>
@@ -698,15 +700,13 @@ export default function RoutersView() {
       <AlertDialog open={deleting !== null} onOpenChange={(open) => !open && setDeleting(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Supprimer le routeur ?</AlertDialogTitle>
+            <AlertDialogTitle>{t("routers.deleteTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
-              {deleting
-                ? `Le routeur « ${deleting.name} » sera retiré de MikCloud. Ses utilisateurs hotspot seront conservés.`
-                : ""}
+              {deleting ? tf("routers.deleteDesc", { name: deleting.name }) : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleteMutation.isPending}>Annuler</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleteMutation.isPending}>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-white hover:bg-destructive/90"
               disabled={deleteMutation.isPending}
@@ -718,7 +718,7 @@ export default function RoutersView() {
               }}
             >
               {deleteMutation.isPending && <Loader2 className="size-4 animate-spin" />}
-              Supprimer
+              {t("common.delete")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -726,6 +726,9 @@ export default function RoutersView() {
 
       {/* Wizard agent — étape 2 : script + attente du premier check-in */}
       <AgentInstallDialog wizard={wizard} onClose={() => setWizard(null)} />
+
+      {/* Outils routeur (P1) : trafic temps réel, IP bindings, DHCP/hôtes/cookies/journal, système */}
+      {toolsRouter && <RouterToolsDialog router={toolsRouter} onClose={() => setToolsRouter(null)} />}
 
       {/* Réinstallation / rotation du token pour un routeur agent existant */}
       <Dialog
@@ -741,12 +744,10 @@ export default function RoutersView() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Terminal className="size-5" />
-              Script d&apos;installation — {reinstall?.name}
+              {tf("routers.reinstall.title", { name: reinstall?.name ?? "" })}
             </DialogTitle>
             <DialogDescription>
-              {reinstallScript
-                ? "Copiez ce script et collez-le dans Winbox → Terminal. Il remplace l'ancien agent."
-                : "Le token de l'agent n'est jamais stocké en clair : régénérez le script pour l'afficher."}
+              {reinstallScript ? t("routers.reinstall.withScript") : t("routers.reinstall.noScript")}
             </DialogDescription>
           </DialogHeader>
 
@@ -755,12 +756,10 @@ export default function RoutersView() {
           ) : (
             <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
               <p className="font-medium text-amber-700 dark:text-amber-400">
-                Attention — régénérer le script crée un nouveau token.
+                {t("routers.reinstall.warning")}
               </p>
               <p className="mt-1 leading-relaxed text-muted-foreground">
-                L&apos;agent actuellement installé sur « {reinstall?.name} » cessera de fonctionner
-                dès la régénération. À n&apos;utiliser que si vous avez perdu le script d&apos;origine
-                ou si vous voulez révoquer un ancien agent.
+                {tf("routers.reinstall.warningDesc", { name: reinstall?.name ?? "" })}
               </p>
             </div>
           )}
@@ -774,7 +773,7 @@ export default function RoutersView() {
                   setReinstallScript(null);
                 }}
               >
-                Terminé
+                {t("routers.wizard.done")}
               </Button>
             ) : (
               <>
@@ -787,7 +786,7 @@ export default function RoutersView() {
                     setReinstallScript(null);
                   }}
                 >
-                  Annuler
+                  {t("common.cancel")}
                 </Button>
                 <Button
                   type="button"
@@ -795,7 +794,7 @@ export default function RoutersView() {
                   onClick={() => reinstall && rotateMutation.mutate(reinstall.id)}
                 >
                   {rotateMutation.isPending && <Loader2 className="size-4 animate-spin" />}
-                  Régénérer et afficher le script
+                  {t("routers.reinstall.regenerate")}
                 </Button>
               </>
             )}

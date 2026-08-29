@@ -1,5 +1,11 @@
 // Formateurs partagés MikCloud
 
+import type { Lang } from "./i18n";
+
+function intlLocale(lang: Lang): string {
+  return lang === "fr" ? "fr-FR" : "en-GB";
+}
+
 export function formatBytes(bytes: number): string {
   if (!bytes || bytes <= 0) return "0 o";
   const units = ["o", "Ko", "Mo", "Go", "To"];
@@ -8,9 +14,9 @@ export function formatBytes(bytes: number): string {
   return `${v >= 100 ? Math.round(v) : v.toFixed(1).replace(".", ",")} ${units[i]}`;
 }
 
-export function formatCurrency(amount: number, currency = "FCFA"): string {
+export function formatCurrency(amount: number, currency = "FCFA", lang: Lang = "fr"): string {
   const rounded = Math.round(amount);
-  const formatted = new Intl.NumberFormat("fr-FR").format(rounded);
+  const formatted = new Intl.NumberFormat(intlLocale(lang)).format(rounded);
   if (currency === "FCFA" || currency === "XOF" || currency === "XAF") return `${formatted} ${currency}`;
   return `${formatted} ${currency}`;
 }
@@ -27,18 +33,18 @@ export function formatDuration(totalSec: number): string {
   return `${s}s`;
 }
 
-export function formatDate(iso: string): string {
+export function formatDate(iso: string, lang: Lang = "fr"): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "—";
-  return new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "short", year: "numeric" }).format(d);
+  return new Intl.DateTimeFormat(intlLocale(lang), { day: "2-digit", month: "short", year: "numeric" }).format(d);
 }
 
-export function formatDateTime(iso: string): string {
+export function formatDateTime(iso: string, lang: Lang = "fr"): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "—";
-  return new Intl.DateTimeFormat("fr-FR", {
+  return new Intl.DateTimeFormat(intlLocale(lang), {
     day: "2-digit",
     month: "2-digit",
     year: "2-digit",
@@ -47,19 +53,50 @@ export function formatDateTime(iso: string): string {
   }).format(d);
 }
 
-export function timeAgo(iso: string): string {
+export function timeAgo(iso: string, lang: Lang = "fr"): string {
   if (!iso) return "—";
   const d = new Date(iso).getTime();
   if (isNaN(d)) return "—";
   const diff = Math.max(0, Date.now() - d);
+  const sec = Math.floor(diff / 1000);
+  if (lang === "en") {
+    if (sec < 5) return "just now";
+    if (sec < 60) return `${sec} s ago`;
+    const min = Math.floor(diff / 60000);
+    if (min < 60) return `${min} min ago`;
+    const h = Math.floor(min / 60);
+    if (h < 24) return `${h} h ago`;
+    const days = Math.floor(h / 24);
+    if (days < 30) return `${days} d ago`;
+    return formatDate(iso, lang);
+  }
+  if (sec < 5) return "à l'instant";
+  if (sec < 60) return `il y a ${sec} s`;
   const min = Math.floor(diff / 60000);
-  if (min < 1) return "à l'instant";
   if (min < 60) return `il y a ${min} min`;
   const h = Math.floor(min / 60);
   if (h < 24) return `il y a ${h} h`;
   const days = Math.floor(h / 24);
   if (days < 30) return `il y a ${days} j`;
-  return formatDate(iso);
+  return formatDate(iso, lang);
+}
+
+/** Débit en bits/s → « 512 Kbps », « 43,5 Mbps », « 1,2 Gbps » (0 → « — »). */
+export function formatBitsPerSec(bps: number): string {
+  if (!bps || bps <= 0) return "—";
+  const fr = (v: number) => v.toFixed(1).replace(".", ",").replace(",0", "");
+  if (bps < 1_000_000) {
+    const kbps = bps / 1_000;
+    return `${kbps < 100 ? fr(kbps) : Math.round(kbps).toLocaleString("fr-FR")} Kbps`;
+  }
+  if (bps < 1_000_000_000) return `${fr(bps / 1_000_000)} Mbps`;
+  return `${fr(bps / 1_000_000_000)} Gbps`;
+}
+
+/** Méga-octets (champs serveur en Mo) → « 128 Mo », « 16,0 Go ». */
+export function formatMb(mb: number | undefined | null): string {
+  if (!mb || mb <= 0) return "—";
+  return formatBytes(mb * 1024 * 1024);
 }
 
 export function formatRateLimit(rate: string): string {
@@ -78,9 +115,10 @@ export function userInitials(name: string): string {
   return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
-/** Libellé francophone lisible d'un rôle brut (admin → Administrateur). */
-export function roleLabel(role: string): string {
-  if (!role) return "Utilisateur";
-  if (role.toLowerCase() === "admin" || role.toLowerCase() === "administrator") return "Administrateur";
+/** Libellé lisible d'un rôle brut (admin → Administrateur / Administrator). */
+export function roleLabel(role: string, lang: Lang = "fr"): string {
+  const isAdmin = role.toLowerCase() === "admin" || role.toLowerCase() === "administrator";
+  if (!role) return lang === "en" ? "User" : "Utilisateur";
+  if (isAdmin) return lang === "en" ? "Administrator" : "Administrateur";
   return role.charAt(0).toUpperCase() + role.slice(1);
 }

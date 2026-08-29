@@ -1,6 +1,7 @@
 "use client";
 
 import { Badge } from "@/components/ui/badge";
+import { useI18n } from "@/lib/hotspot/i18n";
 import { cn } from "@/lib/utils";
 
 export type BadgeStatus =
@@ -18,20 +19,21 @@ export type BadgeStatus =
   | "credit"
   | "sale";
 
-const LABELS: Record<BadgeStatus, string> = {
-  active: "Actif",
-  disabled: "Désactivé",
-  used: "Utilisé",
-  expired: "Expiré",
-  online: "En ligne",
-  offline: "Hors ligne",
-  simulated: "Simulé",
-  real: "Réel",
-  agent: "Agent",
-  direct: "Direct",
-  reseller: "Revendeur",
-  credit: "Crédit",
-  sale: "Vente",
+/** Clés i18n par statut (F11) — le libellé est résolu à chaque rendu. */
+const LABEL_KEYS: Record<BadgeStatus, string> = {
+  active: "badge.active",
+  disabled: "badge.disabled",
+  used: "badge.used",
+  expired: "badge.expired",
+  online: "badge.online",
+  offline: "badge.offline",
+  simulated: "badge.simulated",
+  real: "badge.real",
+  agent: "badge.agent",
+  direct: "badge.direct",
+  reseller: "badge.reseller",
+  credit: "badge.credit",
+  sale: "badge.sale",
 };
 
 const STYLES: Record<BadgeStatus, string> = {
@@ -61,10 +63,11 @@ export function StatusBadge({
   className?: string;
   dot?: boolean;
 }) {
+  const { t } = useI18n();
   return (
     <Badge variant="outline" className={cn("gap-1.5 font-medium", STYLES[status], className)}>
       {dot && <span className="size-1.5 rounded-full bg-current" aria-hidden />}
-      {label ?? LABELS[status]}
+      {label ?? t(LABEL_KEYS[status])}
     </Badge>
   );
 }

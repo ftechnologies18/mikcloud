@@ -2,6 +2,8 @@
 
 // Vue Vouchers (kind=voucher) — générateur en série, impression de tickets,
 // suivi des statuts et traçabilité des lots (onglet Lots).
+// Quick print (F12) : bouton « Réimpression rapide » qui réimprime le dernier
+// lot imprimé (localStorage "mikcloud-last-batch", écrit par uc-print-dialog).
 
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -21,6 +23,7 @@ import {
   TicketPlus,
   Trash2,
   Wallet,
+  Zap,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -71,8 +74,9 @@ import { StatusBadge } from "@/components/hotspot/status-badge";
 import { useCurrency, useSettings } from "@/components/hotspot/parts/sd-currency";
 import { copyToClipboard } from "@/components/hotspot/parts/uc-clipboard";
 import { PasswordCell } from "@/components/hotspot/parts/uc-password-cell";
-import { UcPrintDialog } from "@/components/hotspot/parts/uc-print-dialog";
+import { LAST_BATCH_STORAGE_KEY, UcPrintDialog } from "@/components/hotspot/parts/uc-print-dialog";
 import { api } from "@/lib/hotspot/api";
+import { useI18n } from "@/lib/hotspot/i18n";
 import { formatCurrency, formatDate, formatDuration } from "@/lib/hotspot/format";
 import type {
   BatchWithStats,
@@ -84,6 +88,7 @@ import type {
   Profile,
   Reseller,
   RouterDevice,
+  VoucherTemplate,
 } from "@/lib/hotspot/types";
 import { cn } from "@/lib/utils";
 
@@ -92,11 +97,11 @@ const BATCH_PAGE_SIZE = 10;
 const CODE_LENGTHS = [5, 6, 8, 10];
 
 const STATUS_OPTIONS = [
-  { value: "all", label: "Tous les statuts" },
-  { value: "active", label: "Actifs" },
-  { value: "used", label: "Utilisés" },
-  { value: "expired", label: "Expirés" },
-  { value: "disabled", label: "Désactivés" },
+  { value: "all", labelKey: "common.allStatuses" },
+  { value: "active", labelKey: "common.statusActive" },
+  { value: "used", labelKey: "common.statusUsed" },
+  { value: "expired", labelKey: "common.statusExpired" },
+  { value: "disabled", labelKey: "common.statusDisabled" },
 ];
 
 function shortBatch(batchId: string): string {
@@ -104,6 +109,7 @@ function shortBatch(batchId: string): string {
 }
 
 export default function VouchersView() {
+  const { t, tf, lang } = useI18n();
   const currency = useCurrency();
   const { data: settings } = useSettings();
   const tenantName = settings?.tenant.name || "MikCloud";
@@ -157,6 +163,8 @@ export default function VouchersView() {
   const [printOpen, setPrintOpen] = useState(false);
   const [printVouchers, setPrintVouchers] = useState<HotspotUser[]>([]);
   const [printTitle, setPrintTitle] = useState("");
+  /** Lot en cours d'impression (F12) — mémorisé à l'impression par le dialog. */
+  const [printBatchId, setPrintBatchId] = useState<string | undefined>(undefined);
 
   // Suppression
   const [deleting, setDeleting] = useState<HotspotUser | null>(null);
@@ -174,6 +182,14 @@ export default function VouchersView() {
   const { data: resellers } = useQuery({
     queryKey: ["/api/resellers"],
     queryFn: () => api<Reseller[]>("/api/resellers"),
+  });
+
+  // Modèles de vouchers (F2) pour le dialog d'impression — la query échoue en 404
+  // tant que le backend P0 n'est pas déployé : fallback silencieux sur le ticket standard.
+  const { data: templates } = useQuery({
+    queryKey: ["/api/templates"],
+    queryFn: () => api<VoucherTemplate[]>("/api/templates"),
+    staleTime: 5 * 60_000,
   });
 
   // Statistiques globales (page large sans filtre) — statuts + valeur du stock actif.
@@ -228,13 +244,14 @@ export default function VouchersView() {
 
   async function copyCode(voucher: HotspotUser) {
     const ok = await copyToClipboard(voucher.username);
-    if (ok) toast.success("Code copié");
-    else toast.error("Copie impossible dans le presse-papiers");
+    if (ok) toast.success(t("vouchers.codeCopied"));
+    else toast.error(t("common.copyImpossible"));
   }
 
   function printOne(voucher: HotspotUser) {
     setPrintVouchers([voucher]);
-    setPrintTitle(`Imprimer le voucher — ${voucher.username}`);
+    setPrintTitle(tf("vouchers.printOneTitle", { code: voucher.username }));
+    setPrintBatchId(voucher.batchId || undefined);
     setPrintOpen(true);
   }
 
@@ -252,10 +269,13 @@ export default function VouchersView() {
     mutationFn: (payload: GenerateVouchersRequest) =>
       api<GenerateVouchersResponse>("/api/vouchers/generate", { method: "POST", body: payload }),
     onSuccess: (res) => {
-      toast.success(`${res.vouchers.length} vouchers générés (lot #${shortBatch(res.batchId)})`);
+      toast.success(
+        tf("vouchers.generatedToast", { n: res.vouchers.length, batch: shortBatch(res.batchId) }),
+      );
       setGenOpen(false);
       setPrintVouchers(res.vouchers);
-      setPrintTitle(`Imprimer les vouchers — Lot #${shortBatch(res.batchId)}`);
+      setPrintTitle(tf("vouchers.printBatchTitle", { batch: shortBatch(res.batchId) }));
+      setPrintBatchId(res.batchId);
       setPrintOpen(true);
       void queryClient.invalidateQueries({ queryKey: ["/api/vouchers"] });
       void queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
@@ -269,7 +289,7 @@ export default function VouchersView() {
   const deleteMutation = useMutation({
     mutationFn: (voucher: HotspotUser) => api<{ ok: boolean }>(`/api/vouchers/${voucher.id}`, { method: "DELETE" }),
     onSuccess: (_res, voucher) => {
-      toast.success(`Voucher ${voucher.username} supprimé`);
+      toast.success(tf("vouchers.deletedToast", { code: voucher.username }));
       setDeleting(null);
       invalidateVouchers();
     },
@@ -303,7 +323,9 @@ export default function VouchersView() {
     mutationFn: (batch: BatchWithStats) =>
       api<{ ok: boolean; deleted: number }>(`/api/vouchers/batch/${batch.id}/delete`, { method: "POST" }),
     onSuccess: (res, batch) => {
-      toast.success(`Lot #${shortBatch(batch.id)} supprimé (${res.deleted} vouchers)`);
+      toast.success(
+        tf("vouchers.batches.deletedToast", { batch: shortBatch(batch.id), n: res.deleted }),
+      );
       setDeletingBatch(null);
       invalidateVouchers();
     },
@@ -328,14 +350,53 @@ export default function VouchersView() {
         params: { search: batch.id, page: 1, pageSize: 500 },
       });
       if (res.data.length === 0) {
-        toast.info(`Lot #${shortBatch(batch.id)} : plus aucun voucher en base (purgé).`);
+        toast.info(tf("vouchers.batches.purgedToast", { batch: shortBatch(batch.id) }));
         return;
       }
       setPrintVouchers(res.data);
-      setPrintTitle(`Imprimer le lot #${shortBatch(batch.id)} — ${res.data.length} tickets`);
+      setPrintTitle(
+        tf("vouchers.batches.printTitle", { batch: shortBatch(batch.id), n: res.data.length }),
+      );
+      setPrintBatchId(batch.id);
       setPrintOpen(true);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Impression impossible");
+      toast.error(error instanceof Error ? error.message : t("vouchers.printFailed"));
+    } finally {
+      setPrintingBatchId(null);
+    }
+  }
+
+  // Quick print (F12) : réimprime directement le dernier lot imprimé
+  // (localStorage "mikcloud-last-batch"). Aucun lot récent → toast informatif.
+  async function quickPrint() {
+    let lastBatch: string | null = null;
+    try {
+      lastBatch = window.localStorage.getItem(LAST_BATCH_STORAGE_KEY);
+    } catch {
+      /* localStorage indisponible */
+    }
+    if (!lastBatch) {
+      toast.info(t("vouchers.quickPrintNone"));
+      return;
+    }
+    setPrintingBatchId(lastBatch);
+    try {
+      // Même mécanique que printBatch : recherche par identifiant de lot.
+      const res = await api<PagedUsers>("/api/vouchers", {
+        params: { search: lastBatch, page: 1, pageSize: 500 },
+      });
+      if (res.data.length === 0) {
+        toast.info(tf("vouchers.batches.purgedToast", { batch: shortBatch(lastBatch) }));
+        return;
+      }
+      setPrintVouchers(res.data);
+      setPrintTitle(
+        tf("vouchers.batches.printTitle", { batch: shortBatch(lastBatch), n: res.data.length }),
+      );
+      setPrintBatchId(lastBatch);
+      setPrintOpen(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("vouchers.printFailed"));
     } finally {
       setPrintingBatchId(null);
     }
@@ -360,13 +421,19 @@ export default function VouchersView() {
   return (
     <div className="space-y-4 sm:space-y-6">
       <PageHeader
-        title="Vouchers"
-        description="Générez, imprimez et suivez vos tickets WiFi en série"
+        title={t("vouchers.title")}
+        description={t("vouchers.description")}
         actions={
-          <Button className="h-10" onClick={() => setGenOpen(true)}>
-            <TicketPlus className="size-4" />
-            Générer des vouchers
-          </Button>
+          <>
+            <Button variant="outline" className="h-10" onClick={() => void quickPrint()}>
+              <Zap className="size-4" />
+              {t("vouchers.quickPrint")}
+            </Button>
+            <Button className="h-10" onClick={() => setGenOpen(true)}>
+              <TicketPlus className="size-4" />
+              {t("vouchers.generate")}
+            </Button>
+          </>
         }
       />
 
@@ -375,11 +442,11 @@ export default function VouchersView() {
         <TabsList>
           <TabsTrigger value="vouchers" className="gap-1.5">
             <Ticket className="size-3.5" aria-hidden />
-            Vouchers
+            {t("vouchers.tabVouchers")}
           </TabsTrigger>
           <TabsTrigger value="batches" className="gap-1.5">
             <Layers className="size-3.5" aria-hidden />
-            Lots
+            {t("vouchers.tabBatches")}
           </TabsTrigger>
         </TabsList>
       </Tabs>
@@ -391,13 +458,13 @@ export default function VouchersView() {
         <LoadingCards cards={4} />
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <StatCard title="Vouchers actifs" value={String(activeCount)} sub="prêts à la vente" icon={Ticket} />
-          <StatCard title="Utilisés" value={String(usedCount)} sub="tickets consommés" icon={CheckCircle2} />
-          <StatCard title="Expirés" value={String(expiredCount)} sub="validité dépassée" icon={Clock} />
+          <StatCard title={t("vouchers.kpi.active")} value={String(activeCount)} sub={t("vouchers.kpi.activeSub")} icon={Ticket} />
+          <StatCard title={t("vouchers.kpi.used")} value={String(usedCount)} sub={t("vouchers.kpi.usedSub")} icon={CheckCircle2} />
+          <StatCard title={t("vouchers.kpi.expired")} value={String(expiredCount)} sub={t("vouchers.kpi.expiredSub")} icon={Clock} />
           <StatCard
-            title="Valeur en stock"
-            value={formatCurrency(stockValue, currency)}
-            sub="somme des vouchers actifs"
+            title={t("vouchers.kpi.stockValue")}
+            value={formatCurrency(stockValue, currency, lang)}
+            sub={t("vouchers.kpi.stockValueSub")}
             icon={Wallet}
           />
         </div>
@@ -410,10 +477,10 @@ export default function VouchersView() {
             <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
             <Input
               className="h-10 pl-9"
-              placeholder="Rechercher un code…"
+              placeholder={t("vouchers.searchPlaceholder")}
               value={searchInput}
               onChange={(event) => setSearchInput(event.target.value)}
-              aria-label="Rechercher un code de voucher"
+              aria-label={t("vouchers.searchLabel")}
             />
           </div>
           <div className="flex flex-1 flex-wrap gap-3 sm:justify-end">
@@ -424,13 +491,13 @@ export default function VouchersView() {
                 setPage(1);
               }}
             >
-              <SelectTrigger className="h-10 w-full sm:w-44" aria-label="Filtrer par statut">
-                <SelectValue placeholder="Statut" />
+              <SelectTrigger className="h-10 w-full sm:w-44" aria-label={t("common.filterByStatus")}>
+                <SelectValue placeholder={t("common.status")} />
               </SelectTrigger>
               <SelectContent>
                 {STATUS_OPTIONS.map((option) => (
                   <SelectItem key={option.value} value={option.value}>
-                    {option.label}
+                    {t(option.labelKey)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -442,11 +509,11 @@ export default function VouchersView() {
                 setPage(1);
               }}
             >
-              <SelectTrigger className="h-10 w-full sm:w-48" aria-label="Filtrer par profil">
-                <SelectValue placeholder="Profil" />
+              <SelectTrigger className="h-10 w-full sm:w-48" aria-label={t("common.filterByProfile")}>
+                <SelectValue placeholder={t("common.profile")} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">Tous les profils</SelectItem>
+                <SelectItem value="all">{t("common.allProfiles")}</SelectItem>
                 {profiles?.map((profile) => (
                   <SelectItem key={profile.id} value={profile.id}>
                     {profile.name}
@@ -465,17 +532,13 @@ export default function VouchersView() {
         ) : vouchers.length === 0 ? (
           <EmptyState
             icon={Ticket}
-            title="Aucun voucher"
-            description={
-              hasFilters
-                ? "Aucun ticket ne correspond à ces filtres."
-                : "Générez votre premier lot de tickets WiFi."
-            }
+            title={t("vouchers.empty")}
+            description={hasFilters ? t("vouchers.emptyFiltered") : t("vouchers.emptyDesc")}
             action={
               !hasFilters && (
                 <Button onClick={() => setGenOpen(true)}>
                   <TicketPlus className="size-4" />
-                  Générer des vouchers
+                  {t("vouchers.generate")}
                 </Button>
               )
             }
@@ -486,15 +549,15 @@ export default function VouchersView() {
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
-                    <TableHead className="pl-4 text-muted-foreground sm:pl-6">Code</TableHead>
-                    <TableHead className="text-muted-foreground">Mot de passe</TableHead>
-                    <TableHead className="text-muted-foreground">Profil</TableHead>
-                    <TableHead className="text-right text-muted-foreground">Prix</TableHead>
-                    <TableHead className="text-muted-foreground">Statut</TableHead>
-                    <TableHead className="hidden text-muted-foreground md:table-cell">Revendeur</TableHead>
-                    <TableHead className="hidden text-muted-foreground md:table-cell">Lot</TableHead>
-                    <TableHead className="hidden text-muted-foreground lg:table-cell">Créé</TableHead>
-                    <TableHead className="pr-4 text-right text-muted-foreground sm:pr-6">Actions</TableHead>
+                    <TableHead className="pl-4 text-muted-foreground sm:pl-6">{t("vouchers.code")}</TableHead>
+                    <TableHead className="text-muted-foreground">{t("common.password")}</TableHead>
+                    <TableHead className="text-muted-foreground">{t("common.profile")}</TableHead>
+                    <TableHead className="text-right text-muted-foreground">{t("common.price")}</TableHead>
+                    <TableHead className="text-muted-foreground">{t("common.status")}</TableHead>
+                    <TableHead className="hidden text-muted-foreground md:table-cell">{t("common.reseller")}</TableHead>
+                    <TableHead className="hidden text-muted-foreground md:table-cell">{t("common.batch")}</TableHead>
+                    <TableHead className="hidden text-muted-foreground lg:table-cell">{t("common.created")}</TableHead>
+                    <TableHead className="pr-4 text-right text-muted-foreground sm:pr-6">{t("common.actions")}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -508,8 +571,8 @@ export default function VouchersView() {
                             size="icon"
                             className="size-9 text-muted-foreground hover:text-foreground"
                             onClick={() => void copyCode(voucher)}
-                            aria-label={`Copier le code ${voucher.username}`}
-                            title="Copier le code"
+                            aria-label={tf("vouchers.copyCodeAria", { code: voucher.username })}
+                            title={t("vouchers.copyCode")}
                           >
                             <Copy className="size-4" />
                           </Button>
@@ -522,8 +585,8 @@ export default function VouchersView() {
                           onToggle={() => toggleReveal(voucher.id)}
                           label={
                             revealed.has(voucher.id)
-                              ? `Masquer le mot de passe de ${voucher.username}`
-                              : `Afficher le mot de passe de ${voucher.username}`
+                              ? tf("vouchers.hidePassword", { name: voucher.username })
+                              : tf("vouchers.showPassword", { name: voucher.username })
                           }
                         />
                       </TableCell>
@@ -533,7 +596,7 @@ export default function VouchersView() {
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right font-medium tabular-nums">
-                        {formatCurrency(voucher.price, currency)}
+                        {formatCurrency(voucher.price, currency, lang)}
                       </TableCell>
                       <TableCell>
                         <StatusBadge status={voucher.status} dot />
@@ -553,7 +616,7 @@ export default function VouchersView() {
                               setProfileFilter("all");
                               setPage(1);
                             }}
-                            title={`Filtrer le lot ${voucher.batchId}`}
+                            title={tf("vouchers.batches.filterBatch", { batch: voucher.batchId })}
                           >
                             #{shortBatch(voucher.batchId)}
                           </button>
@@ -562,7 +625,7 @@ export default function VouchersView() {
                         )}
                       </TableCell>
                       <TableCell className="hidden tabular-nums text-muted-foreground lg:table-cell">
-                        {formatDate(voucher.createdAt)}
+                        {formatDate(voucher.createdAt, lang)}
                       </TableCell>
                       <TableCell className="pr-4 text-right sm:pr-6">
                         <DropdownMenu>
@@ -571,7 +634,7 @@ export default function VouchersView() {
                               variant="ghost"
                               size="icon"
                               className="size-10 text-muted-foreground hover:text-foreground"
-                              aria-label={`Actions pour ${voucher.username}`}
+                              aria-label={tf("common.actionsFor", { name: voucher.username })}
                             >
                               <MoreHorizontal className="size-4" />
                             </Button>
@@ -579,7 +642,7 @@ export default function VouchersView() {
                           <DropdownMenuContent align="end" className="w-56">
                             <DropdownMenuItem className="min-h-10" onClick={() => printOne(voucher)}>
                               <Printer className="size-4" />
-                              Imprimer ce voucher
+                              {t("vouchers.printOne")}
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
@@ -588,7 +651,7 @@ export default function VouchersView() {
                               onClick={() => setDeleting(voucher)}
                             >
                               <Trash2 className="size-4" />
-                              Supprimer
+                              {t("common.delete")}
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -602,7 +665,9 @@ export default function VouchersView() {
             {/* Pagination */}
             <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3 sm:px-6">
               <p className="text-xs text-muted-foreground">
-                {isFetching ? "Actualisation…" : `${rangeStart}–${rangeEnd} sur ${totalCount}`}
+                {isFetching
+                  ? t("common.refreshing")
+                  : tf("common.range", { start: rangeStart, end: rangeEnd, total: totalCount })}
               </p>
               <div className="flex items-center gap-2">
                 <Button
@@ -613,7 +678,7 @@ export default function VouchersView() {
                   disabled={safePage <= 1}
                 >
                   <ChevronLeft className="size-4" />
-                  Précédent
+                  {t("common.previous")}
                 </Button>
                 <Button
                   variant="outline"
@@ -622,7 +687,7 @@ export default function VouchersView() {
                   onClick={() => setPage((p) => Math.min(maxPage, p + 1))}
                   disabled={safePage >= maxPage}
                 >
-                  Suivant
+                  {t("common.next")}
                   <ChevronRight className="size-4" />
                 </Button>
               </div>
@@ -645,10 +710,10 @@ export default function VouchersView() {
                 <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
                 <Input
                   className="h-10 pl-9"
-                  placeholder="Rechercher un lot, un profil, un revendeur…"
+                  placeholder={t("vouchers.batches.searchPlaceholder")}
                   value={batchSearchInput}
                   onChange={(event) => setBatchSearchInput(event.target.value)}
-                  aria-label="Rechercher un lot"
+                  aria-label={t("vouchers.batches.searchLabel")}
                 />
               </div>
               <div className="flex flex-1 flex-wrap gap-3 sm:justify-end">
@@ -659,11 +724,11 @@ export default function VouchersView() {
                     setBatchPage(1);
                   }}
                 >
-                  <SelectTrigger className="h-10 w-full sm:w-52" aria-label="Filtrer les lots par site">
-                    <SelectValue placeholder="Site" />
+                  <SelectTrigger className="h-10 w-full sm:w-52" aria-label={t("vouchers.batches.siteFilter")}>
+                    <SelectValue placeholder={t("vouchers.batches.siteFilterLabel")} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">Tous les sites</SelectItem>
+                    <SelectItem value="all">{t("common.allSites")}</SelectItem>
                     {routers?.map((router) => (
                       <SelectItem key={router.id} value={router.id}>
                         {router.name}
@@ -682,17 +747,17 @@ export default function VouchersView() {
             ) : batches.length === 0 ? (
               <EmptyState
                 icon={Layers}
-                title="Aucun lot"
+                title={t("vouchers.batches.empty")}
                 description={
                   batchSearch !== "" || batchRouterFilter !== "all"
-                    ? "Aucun lot ne correspond à ces filtres."
-                    : "Générez votre premier lot de tickets WiFi."
+                    ? t("vouchers.batches.emptyFiltered")
+                    : t("vouchers.emptyDesc")
                 }
                 action={
                   batchSearch === "" && batchRouterFilter === "all" && (
                     <Button onClick={() => setGenOpen(true)}>
                       <TicketPlus className="size-4" />
-                      Générer des vouchers
+                      {t("vouchers.generate")}
                     </Button>
                   )
                 }
@@ -703,17 +768,17 @@ export default function VouchersView() {
                   <Table>
                     <TableHeader>
                       <TableRow className="hover:bg-transparent">
-                        <TableHead className="pl-4 text-muted-foreground sm:pl-6">Lot</TableHead>
-                        <TableHead className="text-muted-foreground">Profil</TableHead>
-                        <TableHead className="hidden text-muted-foreground md:table-cell">Site</TableHead>
-                        <TableHead className="hidden text-muted-foreground lg:table-cell">Canal</TableHead>
-                        <TableHead className="text-right text-muted-foreground">Vouchers</TableHead>
-                        <TableHead className="text-right text-muted-foreground">Actifs</TableHead>
+                        <TableHead className="pl-4 text-muted-foreground sm:pl-6">{t("common.batch")}</TableHead>
+                        <TableHead className="text-muted-foreground">{t("common.profile")}</TableHead>
+                        <TableHead className="hidden text-muted-foreground md:table-cell">{t("vouchers.batches.site")}</TableHead>
+                        <TableHead className="hidden text-muted-foreground lg:table-cell">{t("vouchers.batches.channel")}</TableHead>
+                        <TableHead className="text-right text-muted-foreground">{t("vouchers.batches.vouchers")}</TableHead>
+                        <TableHead className="text-right text-muted-foreground">{t("vouchers.batches.active")}</TableHead>
                         <TableHead className="hidden text-right text-muted-foreground xl:table-cell">
-                          Utilisés · Expirés
+                          {t("vouchers.batches.usedExpired")}
                         </TableHead>
-                        <TableHead className="hidden text-right text-muted-foreground md:table-cell">Coût</TableHead>
-                        <TableHead className="pr-4 text-right text-muted-foreground sm:pr-6">Actions</TableHead>
+                        <TableHead className="hidden text-right text-muted-foreground md:table-cell">{t("vouchers.batches.cost")}</TableHead>
+                        <TableHead className="pr-4 text-right text-muted-foreground sm:pr-6">{t("common.actions")}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -724,7 +789,7 @@ export default function VouchersView() {
                           <TableRow key={batch.id}>
                             <TableCell className="pl-4 sm:pl-6">
                               <p className="font-mono text-sm font-medium">#{shortBatch(batch.id)}</p>
-                              <p className="text-xs text-muted-foreground">{formatDate(batch.createdAt)}</p>
+                              <p className="text-xs text-muted-foreground">{formatDate(batch.createdAt, lang)}</p>
                             </TableCell>
                             <TableCell>
                               <Badge variant="outline" className="max-w-36 truncate">
@@ -737,16 +802,16 @@ export default function VouchersView() {
                             <TableCell className="hidden lg:table-cell">
                               {batch.channel === "reseller" ? (
                                 <span className="text-muted-foreground">
-                                  Revendeur · <span className="text-foreground">{batch.resellerName || "—"}</span>
+                                  {t("common.reseller")} · <span className="text-foreground">{batch.resellerName || "—"}</span>
                                 </span>
                               ) : (
-                                <span className="text-muted-foreground">Direct</span>
+                                <span className="text-muted-foreground">{t("common.direct")}</span>
                               )}
                             </TableCell>
                             <TableCell className="text-right font-medium tabular-nums">{batch.count}</TableCell>
                             <TableCell className="text-right tabular-nums">
                               {purged ? (
-                                <span className="text-xs text-muted-foreground">Purgé</span>
+                                <span className="text-xs text-muted-foreground">{t("vouchers.batches.purged")}</span>
                               ) : (
                                 <span className={cn("font-medium", batch.active > 0 ? "text-primary" : "text-muted-foreground")}>
                                   {batch.active}
@@ -757,7 +822,7 @@ export default function VouchersView() {
                               {batch.used} · {batch.expired}
                             </TableCell>
                             <TableCell className="hidden text-right tabular-nums text-muted-foreground md:table-cell">
-                              {formatCurrency(batch.totalCost, currency)}
+                              {formatCurrency(batch.totalCost, currency, lang)}
                             </TableCell>
                             <TableCell className="pr-4 text-right sm:pr-6">
                               <DropdownMenu>
@@ -766,7 +831,7 @@ export default function VouchersView() {
                                     variant="ghost"
                                     size="icon"
                                     className="size-10 text-muted-foreground hover:text-foreground"
-                                    aria-label={`Actions pour le lot ${batch.id}`}
+                                    aria-label={tf("vouchers.batches.actionsFor", { batch: batch.id })}
                                   >
                                     <MoreHorizontal className="size-4" />
                                   </Button>
@@ -774,7 +839,7 @@ export default function VouchersView() {
                                 <DropdownMenuContent align="end" className="w-60">
                                   <DropdownMenuItem className="min-h-10" onClick={() => viewBatchVouchers(batch)}>
                                     <Eye className="size-4" />
-                                    Voir les vouchers
+                                    {t("vouchers.batches.view")}
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
                                     className="min-h-10"
@@ -786,7 +851,7 @@ export default function VouchersView() {
                                     ) : (
                                       <Printer className="size-4" />
                                     )}
-                                    Imprimer le lot
+                                    {t("vouchers.batches.print")}
                                   </DropdownMenuItem>
                                   <DropdownMenuSeparator />
                                   <DropdownMenuItem
@@ -795,7 +860,7 @@ export default function VouchersView() {
                                     onClick={() => setDeletingBatch(batch)}
                                   >
                                     <Trash2 className="size-4" />
-                                    Supprimer le lot
+                                    {t("common.deleteBatch")}
                                   </DropdownMenuItem>
                                 </DropdownMenuContent>
                               </DropdownMenu>
@@ -811,8 +876,8 @@ export default function VouchersView() {
                 <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3 sm:px-6">
                   <p className="text-xs text-muted-foreground">
                     {batchesFetching
-                      ? "Actualisation…"
-                      : `${batchRangeStart}–${batchRangeEnd} sur ${batchTotal} lots tracés`}
+                      ? t("common.refreshing")
+                      : tf("vouchers.batches.range", { start: batchRangeStart, end: batchRangeEnd, total: batchTotal })}
                   </p>
                   <div className="flex items-center gap-2">
                     <Button
@@ -823,7 +888,7 @@ export default function VouchersView() {
                       disabled={batchSafePage <= 1}
                     >
                       <ChevronLeft className="size-4" />
-                      Précédent
+                      {t("common.previous")}
                     </Button>
                     <Button
                       variant="outline"
@@ -832,7 +897,7 @@ export default function VouchersView() {
                       onClick={() => setBatchPage((p) => Math.min(batchMaxPage, p + 1))}
                       disabled={batchSafePage >= batchMaxPage}
                     >
-                      Suivant
+                      {t("common.next")}
                       <ChevronRight className="size-4" />
                     </Button>
                   </div>
@@ -847,10 +912,8 @@ export default function VouchersView() {
       <Dialog open={genOpen} onOpenChange={setGenOpen}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Générer des vouchers</DialogTitle>
-            <DialogDescription>
-              Créez une série de tickets WiFi imprimables, prêts à être vendus.
-            </DialogDescription>
+            <DialogTitle>{t("vouchers.generateTitle")}</DialogTitle>
+            <DialogDescription>{t("vouchers.generateDesc")}</DialogDescription>
           </DialogHeader>
 
           <form
@@ -862,7 +925,7 @@ export default function VouchersView() {
           >
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="grid gap-2">
-                <Label htmlFor="gen-count">Nombre de vouchers</Label>
+                <Label htmlFor="gen-count">{t("vouchers.count")}</Label>
                 <Input
                   id="gen-count"
                   type="number"
@@ -873,22 +936,22 @@ export default function VouchersView() {
                   disabled={generateMutation.isPending}
                   aria-invalid={!countValid}
                 />
-                <p className="text-xs text-muted-foreground">Entre 1 et 500 tickets.</p>
+                <p className="text-xs text-muted-foreground">{t("vouchers.countHint")}</p>
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="gen-profile">Profil</Label>
+                <Label htmlFor="gen-profile">{t("common.profile")}</Label>
                 <Select
                   value={genProfileId}
                   onValueChange={setGenProfileId}
                   disabled={generateMutation.isPending}
                 >
                   <SelectTrigger id="gen-profile" className="h-10 w-full">
-                    <SelectValue placeholder="Sélectionner un profil" />
+                    <SelectValue placeholder={t("common.selectProfile")} />
                   </SelectTrigger>
                   <SelectContent>
                     {profiles?.map((profile) => (
                       <SelectItem key={profile.id} value={profile.id}>
-                        {profile.name} — {formatCurrency(profile.price, currency)} ·{" "}
+                        {profile.name} — {formatCurrency(profile.price, currency, lang)} ·{" "}
                         {formatDuration(profile.sessionTimeoutMin * 60)}
                       </SelectItem>
                     ))}
@@ -899,14 +962,14 @@ export default function VouchersView() {
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="grid gap-2">
-                <Label htmlFor="gen-router">Routeur</Label>
+                <Label htmlFor="gen-router">{t("common.router")}</Label>
                 <Select
                   value={genRouterId}
                   onValueChange={setGenRouterId}
                   disabled={generateMutation.isPending}
                 >
                   <SelectTrigger id="gen-router" className="h-10 w-full">
-                    <SelectValue placeholder="Sélectionner un routeur" />
+                    <SelectValue placeholder={t("common.selectRouter")} />
                   </SelectTrigger>
                   <SelectContent>
                     {routers?.map((router) => (
@@ -918,7 +981,7 @@ export default function VouchersView() {
                 </Select>
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="gen-code-length">Longueur du code</Label>
+                <Label htmlFor="gen-code-length">{t("vouchers.codeLength")}</Label>
                 <Select
                   value={genCodeLength}
                   onValueChange={setGenCodeLength}
@@ -930,7 +993,7 @@ export default function VouchersView() {
                   <SelectContent>
                     {CODE_LENGTHS.map((length) => (
                       <SelectItem key={length} value={String(length)}>
-                        {length} caractères
+                        {tf("vouchers.codeLengthUnit", { n: length })}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -940,7 +1003,7 @@ export default function VouchersView() {
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="grid gap-2">
-                <Label htmlFor="gen-prefix">Préfixe (optionnel)</Label>
+                <Label htmlFor="gen-prefix">{t("vouchers.prefix")}</Label>
                 <Input
                   id="gen-prefix"
                   placeholder="SC-"
@@ -950,7 +1013,7 @@ export default function VouchersView() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="gen-reseller">Revendeur</Label>
+                <Label htmlFor="gen-reseller">{t("common.reseller")}</Label>
                 <Select
                   value={genResellerId}
                   onValueChange={setGenResellerId}
@@ -960,10 +1023,13 @@ export default function VouchersView() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">Aucun (vente directe)</SelectItem>
+                    <SelectItem value="none">{t("vouchers.noReseller")}</SelectItem>
                     {resellers?.map((reseller) => (
                       <SelectItem key={reseller.id} value={reseller.id}>
-                        {reseller.name} — crédit {formatCurrency(reseller.credit, currency)}
+                        {tf("vouchers.creditLine", {
+                          name: reseller.name,
+                          credit: formatCurrency(reseller.credit, currency, lang),
+                        })}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -974,10 +1040,13 @@ export default function VouchersView() {
             {/* Aperçu du coût en temps réel */}
             <div className="rounded-lg bg-muted/50 p-3 text-sm">
               <p>
-                Coût total :{" "}
-                <span className="font-semibold">{formatCurrency(totalCost, currency)}</span>{" "}
+                {t("vouchers.totalCost")}{" "}
+                <span className="font-semibold">{formatCurrency(totalCost, currency, lang)}</span>{" "}
                 <span className="text-muted-foreground">
-                  ({countValid ? countNum : 0} × {formatCurrency(unitPrice, currency)})
+                  {tf("vouchers.costDetail", {
+                    n: countValid ? countNum : 0,
+                    price: formatCurrency(unitPrice, currency, lang),
+                  })}
                 </span>
               </p>
               {selectedReseller && (
@@ -987,9 +1056,11 @@ export default function VouchersView() {
                     insufficient ? "font-medium text-destructive" : "text-muted-foreground",
                   )}
                 >
-                  Crédit après achat : {formatCurrency(creditAfter ?? 0, currency)}
+                  {tf("vouchers.creditAfter", {
+                    amount: formatCurrency(creditAfter ?? 0, currency, lang),
+                  })}
                   {insufficient &&
-                    ` — crédit insuffisant, rechargez ${selectedReseller.name} avant de générer.`}
+                    tf("vouchers.insufficient", { name: selectedReseller.name })}
                 </p>
               )}
             </div>
@@ -1007,18 +1078,18 @@ export default function VouchersView() {
                 onClick={() => setGenOpen(false)}
                 disabled={generateMutation.isPending}
               >
-                Annuler
+                {t("common.cancel")}
               </Button>
               <Button type="submit" disabled={!genValid || generateMutation.isPending}>
                 {generateMutation.isPending && <Loader2 className="size-4 animate-spin" />}
-                Générer
+                {t("vouchers.generateSubmit")}
               </Button>
             </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
 
-      {/* Dialogue d'impression */}
+      {/* Dialogue d'impression (mode modèle F2 si des templates existent) */}
       <UcPrintDialog
         open={printOpen}
         onOpenChange={setPrintOpen}
@@ -1026,19 +1097,19 @@ export default function VouchersView() {
         title={printTitle}
         tenantName={tenantName}
         profiles={profiles ?? []}
+        templates={templates ?? []}
+        batchId={printBatchId}
       />
 
       {/* Confirmation suppression voucher */}
       <AlertDialog open={deleting !== null} onOpenChange={(open) => !open && setDeleting(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Supprimer le voucher {deleting?.username} ?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Cette action est irréversible. Le ticket ne pourra plus être utilisé.
-            </AlertDialogDescription>
+            <AlertDialogTitle>{tf("vouchers.deleteTitle", { code: deleting?.username ?? "" })}</AlertDialogTitle>
+            <AlertDialogDescription>{t("vouchers.deleteDesc")}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleteMutation.isPending}>Annuler</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleteMutation.isPending}>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-white hover:bg-destructive/90"
               disabled={deleteMutation.isPending}
@@ -1048,7 +1119,7 @@ export default function VouchersView() {
               }}
             >
               {deleteMutation.isPending && <Loader2 className="size-4 animate-spin" />}
-              Supprimer
+              {t("common.delete")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1058,14 +1129,22 @@ export default function VouchersView() {
       <AlertDialog open={deletingBatch !== null} onOpenChange={(open) => !open && setDeletingBatch(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Supprimer le lot #{deletingBatch && shortBatch(deletingBatch.id)} ?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {tf("vouchers.batches.deleteTitle", {
+                batch: deletingBatch ? shortBatch(deletingBatch.id) : "",
+              })}
+            </AlertDialogTitle>
             <AlertDialogDescription>
               {deletingBatch &&
-                `Les ${deletingBatch.count} vouchers de ce lot (${deletingBatch.profileName} — ${deletingBatch.routerName}) seront retirés du routeur et de la base. Cette action est irréversible.`}
+                tf("vouchers.batches.deleteDesc", {
+                  n: deletingBatch.count,
+                  profile: deletingBatch.profileName,
+                  router: deletingBatch.routerName,
+                })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={batchDeleteMutation.isPending}>Annuler</AlertDialogCancel>
+            <AlertDialogCancel disabled={batchDeleteMutation.isPending}>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-white hover:bg-destructive/90"
               disabled={batchDeleteMutation.isPending}
@@ -1075,7 +1154,7 @@ export default function VouchersView() {
               }}
             >
               {batchDeleteMutation.isPending && <Loader2 className="size-4 animate-spin" />}
-              Supprimer le lot
+              {t("common.deleteBatch")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

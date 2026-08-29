@@ -50,6 +50,7 @@ func BuildSeed() *model.DB {
 	tenant := model.Tenant{
 		Name: "ProMax Wifi — Freelance Technologies (FTCI)", Currency: "FCFA", Timezone: "Africa/Abidjan",
 		WaveLink: "https://pay.wave.com/m/M_22FTCI01/c/ci/",
+		DNSName:  "wifi.promax-ci.com", ExpiryPolicyMode: "keep", ExpiryPolicyAfterDays: 30,
 	}
 	db := &model.DB{
 		Accounts: []model.Account{{
@@ -61,17 +62,22 @@ func BuildSeed() *model.DB {
 		SettingsByAccount: map[string]model.Settings{
 			model.AccountMainID: {Tenant: tenant, Plan: model.Plan{Name: "Pro", MaxRouters: "illimité", MaxUsers: "illimité"}},
 		},
-		LastTick:     now,
-		Users:        []model.AdminUser{},
-		Routers:      []model.Router{},
-		Profiles:     []model.Profile{},
-		HotspotUsers: []model.HotspotUser{},
-		Batches:      []model.Batch{},
-		Resellers:    []model.Reseller{},
-		Transactions: []model.Transaction{},
-		Sessions:     []model.Session{},
-		Activity:     []model.Activity{},
-		Sales:        []model.Sale{},
+		LastTick:       now,
+		Users:          []model.AdminUser{},
+		Routers:        []model.Router{},
+		Profiles:       []model.Profile{},
+		HotspotUsers:   []model.HotspotUser{},
+		Batches:        []model.Batch{},
+		Resellers:      []model.Reseller{},
+		Transactions:   []model.Transaction{},
+		Sessions:       []model.Session{},
+		Activity:       []model.Activity{},
+		Sales:          []model.Sale{},
+		Templates:      SeedTemplatesFor(model.AccountMainID),
+		UserLogs:       []model.UserLog{},
+		IPBindings:     []model.IPBinding{},
+		SchedulerTasks: []model.SchedulerTask{},
+		Traffic:        []model.RouterTraffic{},
 	}
 
 	// --- Compte admin (admin / admin123) — hash bcrypt depuis la migration ---
@@ -91,29 +97,33 @@ func BuildSeed() *model.DB {
 		Username: "admin", Mode: "simulated", Status: "online", Version: "7.14.3",
 		UptimeSec: int64(45*24*3600 + rnd.Intn(36000)), CPULoad: 12 + rnd.Intn(18),
 		CreatedAt: ago(90 * 24 * time.Hour),
+		BoardName: "RB2011UiAS-IN", TotalHddMb: 128, FreeHddMb: 61,
 	}
 	r2 := model.Router{
 		ID: "router-lounge", AccountID: model.AccountMainID, Name: "ProMax-Yopougon", Host: "10.10.20.1", Port: 8728,
 		Username: "admin", Mode: "simulated", Status: "online", Version: "7.15.2",
 		UptimeSec: int64(12*24*3600 + rnd.Intn(36000)), CPULoad: 20 + rnd.Intn(18),
 		CreatedAt: ago(60 * 24 * time.Hour),
+		BoardName: "hAP ac²", TotalHddMb: 16, FreeHddMb: 9,
 	}
 	db.Routers = []model.Router{r1, r2}
 
 	// --- Profils : les 7 tarifs FCFA validés (modèles pré-remplis, modifiables par le client) ---
+	// P2 (F13) : SellingPrice = Price par défaut (marge nulle en démo).
 	profiles := []model.Profile{
-		{ID: "p-1h", Name: "1 Heure", RateLimit: "1M/1M", SessionTimeoutMin: 60, SharedUsers: 1, ValidityDays: 1, Price: 100, DataQuotaMb: 0},
-		{ID: "p-3h", Name: "3 Heures", RateLimit: "2M/2M", SessionTimeoutMin: 180, SharedUsers: 1, ValidityDays: 1, Price: 200, DataQuotaMb: 0},
-		{ID: "p-24h", Name: "24 Heures", RateLimit: "2M/2M", SessionTimeoutMin: 1440, SharedUsers: 1, ValidityDays: 1, Price: 300, DataQuotaMb: 0},
-		{ID: "p-3j", Name: "3 Jours", RateLimit: "3M/3M", SessionTimeoutMin: 1440, SharedUsers: 1, ValidityDays: 3, Price: 500, DataQuotaMb: 0},
-		{ID: "p-7j", Name: "7 Jours", RateLimit: "3M/3M", SessionTimeoutMin: 1440, SharedUsers: 2, ValidityDays: 7, Price: 1000, DataQuotaMb: 0},
-		{ID: "p-15j", Name: "15 Jours", RateLimit: "4M/4M", SessionTimeoutMin: 1440, SharedUsers: 2, ValidityDays: 15, Price: 1500, DataQuotaMb: 0},
-		{ID: "p-30j", Name: "30 Jours", RateLimit: "5M/5M", SessionTimeoutMin: 1440, SharedUsers: 3, ValidityDays: 30, Price: 3000, DataQuotaMb: 0},
-		{ID: "p-essai", Name: "Essai Gratuit", RateLimit: "512k/512k", SessionTimeoutMin: 15, SharedUsers: 1, ValidityDays: 1, Price: 0, DataQuotaMb: 0},
+		{ID: "p-1h", Name: "1 Heure", RateLimit: "1M/1M", SessionTimeoutMin: 60, SharedUsers: 1, ValidityDays: 1, Price: 100, DataQuotaMb: 0, SellingPrice: 100},
+		{ID: "p-3h", Name: "3 Heures", RateLimit: "2M/2M", SessionTimeoutMin: 180, SharedUsers: 1, ValidityDays: 1, Price: 200, DataQuotaMb: 0, SellingPrice: 200},
+		{ID: "p-24h", Name: "24 Heures", RateLimit: "2M/2M", SessionTimeoutMin: 1440, SharedUsers: 1, ValidityDays: 1, Price: 300, DataQuotaMb: 0, SellingPrice: 300},
+		{ID: "p-3j", Name: "3 Jours", RateLimit: "3M/3M", SessionTimeoutMin: 1440, SharedUsers: 1, ValidityDays: 3, Price: 500, DataQuotaMb: 0, SellingPrice: 500},
+		{ID: "p-7j", Name: "7 Jours", RateLimit: "3M/3M", SessionTimeoutMin: 1440, SharedUsers: 2, ValidityDays: 7, Price: 1000, DataQuotaMb: 0, SellingPrice: 1000},
+		{ID: "p-15j", Name: "15 Jours", RateLimit: "4M/4M", SessionTimeoutMin: 1440, SharedUsers: 2, ValidityDays: 15, Price: 1500, DataQuotaMb: 0, SellingPrice: 1500},
+		{ID: "p-30j", Name: "30 Jours", RateLimit: "5M/5M", SessionTimeoutMin: 1440, SharedUsers: 3, ValidityDays: 30, Price: 3000, DataQuotaMb: 0, SellingPrice: 3000},
+		{ID: "p-essai", Name: "Essai Gratuit", RateLimit: "512k/512k", SessionTimeoutMin: 15, SharedUsers: 1, ValidityDays: 1, Price: 0, DataQuotaMb: 0, SellingPrice: 0},
 	}
 	for i := range profiles {
 		profiles[i].AccountID = model.AccountMainID
 		profiles[i].CreatedAt = ago(time.Duration(115+i) * 24 * time.Hour)
+		profiles[i].ExpMode = "notify"
 	}
 	db.Profiles = profiles
 
@@ -174,7 +184,7 @@ func BuildSeed() *model.DB {
 			BytesIn: bytesIn, BytesOut: bytesOut, UptimeUsedSec: int64(rnd.Intn(400)) * 3600,
 			CreatedAt: created.Format(time.RFC3339),
 			ExpiresAt: created.Add(time.Duration(p.ValidityDays) * 24 * time.Hour).Format(time.RFC3339),
-			UsedAt:    "", Price: p.Price,
+			UsedAt:    "", Price: p.Price, SellingPrice: p.SellingPrice,
 		})
 	}
 
@@ -241,7 +251,7 @@ func BuildSeed() *model.DB {
 					Comment: "", BytesIn: 0, BytesOut: 0, UptimeUsedSec: 0,
 					CreatedAt: createdAt.Format(time.RFC3339),
 					ExpiresAt: createdAt.Add(time.Duration(p.ValidityDays) * 24 * time.Hour).Format(time.RFC3339),
-					UsedAt:    "", Price: p.Price,
+					UsedAt:    "", Price: p.Price, SellingPrice: p.SellingPrice,
 				})
 			}
 
@@ -257,7 +267,8 @@ func BuildSeed() *model.DB {
 				ID: model.NewID("sale-"), AccountID: model.AccountMainID, Amount: cost, ProfileName: p.Name, Count: size,
 				Channel: channel, ResellerName: resName,
 				RouterID: router.ID, RouterName: router.Name, BatchID: batchID,
-				At: at.Format(time.RFC3339),
+				At:   at.Format(time.RFC3339),
+				Cost: cost, SellingTotal: size * p.SellingPrice,
 			})
 			if channel == "reseller" {
 				db.Transactions = append(db.Transactions, model.Transaction{
@@ -329,7 +340,8 @@ func BuildSeed() *model.DB {
 				ID: model.NewID("sale-"), AccountID: model.AccountMainID, Amount: cost, ProfileName: p.Name, Count: size,
 				Channel: channel, ResellerName: resName,
 				RouterID: router.ID, RouterName: router.Name, BatchID: batchID,
-				At: at.Format(time.RFC3339),
+				At:   at.Format(time.RFC3339),
+				Cost: cost, SellingTotal: size * p.SellingPrice,
 			})
 		}
 	}
@@ -593,5 +605,160 @@ func BuildSeed() *model.DB {
 		db.Routers[i].ActiveSessions = sessionsByRouter[db.Routers[i].ID]
 	}
 
+	// --- P0/P1 (audit Mikhmon) : IP bindings, scheduler, trafic par routeur simulé ---
+	seedRouterTools(db, rnd, now)
+
 	return db
 }
+
+// seedRouterTools — 2 IP bindings (1 bypassed + 1 blocked), 2 tâches scheduler
+// (agent MikCloud + sauvegarde quotidienne) et un état de trafic initial (3
+// interfaces, historique d'une minute) par routeur SIMULÉ.
+func seedRouterTools(db *model.DB, rnd *rand.Rand, now time.Time) {
+	for ri, rr := range db.Routers {
+		if rr.Mode != "simulated" {
+			continue
+		}
+		base := 0x40 + ri*0x10
+		macFor := func(last byte) string {
+			b := []byte{0x48, 0x8F, 0x5A, byte(base), 0x2C, last}
+			parts := make([]string, 6)
+			for i, x := range b {
+				parts[i] = strings.ToUpper(fmt.Sprintf("%02x", x))
+			}
+			return strings.Join(parts, ":")
+		}
+		db.IPBindings = append(db.IPBindings,
+			model.IPBinding{
+				ID: model.NewID("ipb-"), AccountID: rr.AccountID, RouterID: rr.ID,
+				MAC: macFor(0x01), Address: "", Comment: "Imprimante du point (bypass)",
+				Type: "bypassed", Disabled: false, CreatedAt: now.Add(-time.Duration(20+ri*3) * 24 * time.Hour).Format(time.RFC3339),
+			},
+			model.IPBinding{
+				ID: model.NewID("ipb-"), AccountID: rr.AccountID, RouterID: rr.ID,
+				MAC: macFor(0xF9), Address: "", Comment: "Appareil bloqué (usage abusif)",
+				Type: "blocked", Disabled: false, CreatedAt: now.Add(-time.Duration(9+ri*2) * 24 * time.Hour).Format(time.RFC3339),
+			},
+		)
+		db.SchedulerTasks = append(db.SchedulerTasks,
+			model.SchedulerTask{
+				ID: model.NewID("sch-"), AccountID: rr.AccountID, RouterID: rr.ID,
+				Name: "mikcloud-agent", Interval: "45s",
+				OnEvent:  "/tool fetch url=($mikcloudUrl . \"/agent/cmd?token=\" . $mikcloudToken) dst-path=mikcloud-cmd.rsc output=none; /import file-name=mikcloud-cmd.rsc",
+				Disabled: false, CreatedAt: now.Add(-time.Duration(30+ri*5) * 24 * time.Hour).Format(time.RFC3339),
+			},
+			model.SchedulerTask{
+				ID: model.NewID("sch-"), AccountID: rr.AccountID, RouterID: rr.ID,
+				Name: "daily-backup", Interval: "1d",
+				OnEvent:  "/system backup save name=auto-backup",
+				Disabled: false, CreatedAt: now.Add(-time.Duration(28+ri*5) * 24 * time.Hour).Format(time.RFC3339),
+			},
+		)
+
+		// Trafic initial : 3 interfaces (ether1 WAN, wlan1 hotspot, hotspot bridge)
+		// avec compteurs cumulés plausibles + 12 points d'historique (1 min).
+		rxBps := func() int64 { return int64(2_000_000 + rnd.Intn(30_000_000)) } // 2-32 Mbps
+		txBps := func() int64 { return int64(500_000 + rnd.Intn(10_000_000)) }   // 0,5-10,5 Mbps
+		avgRx := int64(6_000_000)                                                // ~6 Mbps de moyenne cumulée
+		cumul := func(avg int64) int64 { return rr.UptimeSec * avg / 8 }         // octets
+		ifaces := []model.IfaceTraffic{
+			{Name: "ether1", RxBytes: cumul(avgRx), TxBytes: cumul(avgRx / 3), RxBps: rxBps(), TxBps: txBps()},
+			{Name: "wlan1", RxBytes: cumul(avgRx * 2 / 3), TxBytes: cumul(avgRx / 2), RxBps: rxBps(), TxBps: txBps()},
+			{Name: "hotspot", RxBytes: cumul(avgRx / 2), TxBytes: cumul(avgRx * 2 / 3), RxBps: rxBps(), TxBps: txBps()},
+		}
+		history := make([]model.TrafficPoint, 0, 12)
+		for i := 11; i >= 0; i-- {
+			history = append(history, model.TrafficPoint{
+				T:     now.Add(-time.Duration(i) * 5 * time.Second).UTC().Format(time.RFC3339),
+				RxBps: rxBps() + 3_000_000,
+				TxBps: txBps() + 800_000,
+			})
+		}
+		db.Traffic = append(db.Traffic, model.RouterTraffic{
+			ID: rr.ID, RouterID: rr.ID, AccountID: rr.AccountID,
+			UpdatedAt:  now.UTC().Format(time.RFC3339),
+			Interfaces: ifaces,
+			History:    history,
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Modèles de vouchers (F2) — 3 gabarits par défaut, fidèles à Mikhmon
+// ---------------------------------------------------------------------------
+
+// SeedTemplatesFor — les 3 modèles de vouchers offerts à chaque compte
+// (compte principal au seed, nouveaux comptes à l'inscription). Styles INLINE
+// uniquement (l'impression est hors app) ; variables substituées côté client.
+func SeedTemplatesFor(accID string) []model.VoucherTemplate {
+	now := model.NowISO()
+	return []model.VoucherTemplate{
+		{
+			ID: model.NewID("tpl-"), AccountID: accID, Name: "Grille A4",
+			Format: "a4", BodyHTML: templateA4Body, IsDefault: true, CreatedAt: now,
+		},
+		{
+			ID: model.NewID("tpl-"), AccountID: accID, Name: "Ticket thermique 58 mm",
+			Format: "58mm", BodyHTML: template58mmBody, IsDefault: false, CreatedAt: now,
+		},
+		{
+			ID: model.NewID("tpl-"), AccountID: accID, Name: "Ticket thermique 80 mm",
+			Format: "80mm", BodyHTML: template80mmBody, IsDefault: false, CreatedAt: now,
+		},
+	}
+}
+
+// templateA4Body — ticket pointillé pour impression grille A4 (3 colonnes).
+const templateA4Body = `<div style="border:2px dashed #16a34a;border-radius:10px;padding:10px 12px;font-family:Arial,Helvetica,sans-serif;background:#ffffff;color:#111827;">
+  <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #d1d5db;padding-bottom:6px;margin-bottom:6px;">
+    <span style="font-size:12px;font-weight:bold;color:#16a34a;letter-spacing:1px;">{{hotspotName}}</span>
+    <span style="font-size:9px;color:#6b7280;">{{dnsName}}</span>
+  </div>
+  <div style="display:flex;gap:10px;align-items:center;">
+    <div style="flex:1;min-width:0;">
+      <div style="font-size:8px;color:#6b7280;margin-bottom:1px;">IDENTIFIANT</div>
+      <div style="font-family:'Courier New',monospace;font-size:14px;font-weight:bold;letter-spacing:1px;">{{username}}</div>
+      <div style="font-size:8px;color:#6b7280;margin:4px 0 1px;">MOT DE PASSE</div>
+      <div style="font-family:'Courier New',monospace;font-size:12px;font-weight:bold;letter-spacing:1px;">{{password}}</div>
+    </div>
+    <img src="{{qrCode}}" alt="QR" style="width:62px;height:62px;flex:none;"/>
+  </div>
+  <div style="display:flex;justify-content:space-between;border-top:1px solid #d1d5db;margin-top:6px;padding-top:5px;font-size:10px;">
+    <span>{{profile}} &middot; {{validity}}</span>
+    <span style="font-weight:bold;color:#16a34a;">{{price}}</span>
+  </div>
+</div>`
+
+// template58mmBody — ticket thermique compact, 58 mm de large (54 mm utiles).
+const template58mmBody = `<div style="width:54mm;border:1px dashed #111827;padding:8px 6px;font-family:Arial,Helvetica,sans-serif;font-size:11px;text-align:center;background:#ffffff;color:#000000;">
+  <div style="font-weight:bold;font-size:12px;letter-spacing:1px;">{{hotspotName}}</div>
+  <div style="font-size:9px;color:#444444;">{{dnsName}}</div>
+  <img src="{{qrCode}}" alt="QR" style="width:22mm;height:22mm;margin:4px auto;"/>
+  <div style="font-family:'Courier New',monospace;font-size:13px;font-weight:bold;">{{username}}</div>
+  <div style="font-family:'Courier New',monospace;font-size:11px;">{{password}}</div>
+  <div style="border-top:1px dashed #999999;margin-top:5px;padding-top:4px;font-size:10px;">
+    {{profile}} &middot; {{validity}}<br/>
+    <span style="font-weight:bold;">{{price}}</span>
+  </div>
+</div>`
+
+// template80mmBody — ticket thermique large 80 mm (76 mm utiles), 2 colonnes.
+const template80mmBody = `<div style="width:76mm;border:1px dashed #111827;padding:10px 8px;font-family:Arial,Helvetica,sans-serif;font-size:12px;background:#ffffff;color:#000000;">
+  <div style="display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid #dddddd;padding-bottom:4px;">
+    <span style="font-weight:bold;font-size:13px;letter-spacing:1px;">{{hotspotName}}</span>
+    <span style="font-size:9px;color:#444444;">{{dnsName}}</span>
+  </div>
+  <div style="display:flex;gap:10px;align-items:center;margin-top:6px;">
+    <img src="{{qrCode}}" alt="QR" style="width:24mm;height:24mm;flex:none;"/>
+    <div style="flex:1;min-width:0;text-align:left;">
+      <div style="font-size:9px;color:#666666;">IDENTIFIANT</div>
+      <div style="font-family:'Courier New',monospace;font-size:15px;font-weight:bold;">{{username}}</div>
+      <div style="font-size:9px;color:#666666;margin-top:4px;">MOT DE PASSE</div>
+      <div style="font-family:'Courier New',monospace;font-size:13px;font-weight:bold;">{{password}}</div>
+    </div>
+  </div>
+  <div style="display:flex;justify-content:space-between;border-top:1px dashed #999999;margin-top:6px;padding-top:4px;font-size:11px;">
+    <span>{{profile}} &middot; {{validity}}</span>
+    <span style="font-weight:bold;">{{price}}</span>
+  </div>
+</div>`

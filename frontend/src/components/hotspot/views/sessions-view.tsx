@@ -17,6 +17,7 @@ import {
 import { toast } from "sonner";
 
 import { api } from "@/lib/hotspot/api";
+import { useI18n } from "@/lib/hotspot/i18n";
 import type { HotspotSession } from "@/lib/hotspot/types";
 import { formatBytes, formatDuration } from "@/lib/hotspot/format";
 import { EmptyState } from "@/components/hotspot/empty-state";
@@ -46,6 +47,7 @@ const REFRESH_OPTIONS = [
 ];
 
 export default function SessionsView() {
+  const { t, tf } = useI18n();
   const queryClient = useQueryClient();
   const [refreshMs, setRefreshMs] = useState(5000);
   const [now, setNow] = useState(() => Date.now());
@@ -76,7 +78,9 @@ export default function SessionsView() {
     mutationFn: (id: string) => api<{ ok: boolean }>(`/api/sessions/${id}`, { method: "DELETE" }),
     onSuccess: (_, id) => {
       const target = sessions.find((s) => s.id === id);
-      toast.success(`Session de ${target?.username ?? "l'utilisateur"} terminée`);
+      toast.success(
+        tf("sessions.kicked", { name: target?.username ?? t("sessions.theUser") }),
+      );
       setKickTarget(null);
       queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
     },
@@ -86,18 +90,18 @@ export default function SessionsView() {
   return (
     <div className="space-y-4 sm:space-y-6">
       <PageHeader
-        title="Sessions actives"
-        description="Clients connectés en direct sur vos points d'accès"
+        title={t("sessions.title")}
+        description={t("sessions.description")}
         actions={
           <>
             <Badge variant="outline" className="gap-2 border-primary/25 bg-primary/10 py-1 text-primary">
               <span className="live-dot size-2 rounded-full bg-primary" aria-hidden />
-              Direct
+              {t("sessions.live")}
             </Badge>
             <div className="flex items-center gap-2">
-              <span className="hidden text-xs text-muted-foreground sm:inline">Actualisation</span>
+              <span className="hidden text-xs text-muted-foreground sm:inline">{t("sessions.refresh")}</span>
               <Select value={String(refreshMs)} onValueChange={(value) => setRefreshMs(Number(value))}>
-                <SelectTrigger size="sm" className="h-10 w-24" aria-label="Période d'actualisation">
+                <SelectTrigger size="sm" className="h-10 w-24" aria-label={t("sessions.refreshLabel")}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -114,14 +118,14 @@ export default function SessionsView() {
       />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatCard title="Sessions" value={String(sessions.length)} sub="clients connectés" icon={Radio} live />
+        <StatCard title={t("sessions.kpi.sessions")} value={String(sessions.length)} sub={t("sessions.kpi.sessionsSub")} icon={Radio} live />
         <StatCard
-          title="Trafic descendant"
+          title={t("sessions.kpi.download")}
           value={formatBytes(totalIn)}
-          sub="cumul téléchargé"
+          sub={t("sessions.kpi.downloadSub")}
           icon={ArrowDownCircle}
         />
-        <StatCard title="Trafic montant" value={formatBytes(totalOut)} sub="cumul envoyé" icon={ArrowUpCircle} />
+        <StatCard title={t("sessions.kpi.upload")} value={formatBytes(totalOut)} sub={t("sessions.kpi.uploadSub")} icon={ArrowUpCircle} />
       </div>
 
       <Card className="gap-0 py-0">
@@ -130,21 +134,21 @@ export default function SessionsView() {
         ) : sessions.length === 0 ? (
           <EmptyState
             icon={WifiOff}
-            title="Aucune session active"
-            description="Les clients connectés apparaîtront ici en temps réel."
+            title={t("sessions.empty")}
+            description={t("sessions.emptyDesc")}
           />
         ) : (
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
-                <TableHead className="pl-4 text-muted-foreground sm:pl-6">Utilisateur</TableHead>
-                <TableHead className="text-muted-foreground">Profil</TableHead>
-                <TableHead className="text-muted-foreground">IP</TableHead>
-                <TableHead className="hidden text-muted-foreground md:table-cell">MAC</TableHead>
-                <TableHead className="hidden text-muted-foreground xl:table-cell">Routeur</TableHead>
-                <TableHead className="text-muted-foreground">Connecté depuis</TableHead>
+                <TableHead className="pl-4 text-muted-foreground sm:pl-6">{t("common.user")}</TableHead>
+                <TableHead className="text-muted-foreground">{t("common.profile")}</TableHead>
+                <TableHead className="text-muted-foreground">{t("common.ip")}</TableHead>
+                <TableHead className="hidden text-muted-foreground md:table-cell">{t("common.mac")}</TableHead>
+                <TableHead className="hidden text-muted-foreground xl:table-cell">{t("common.router")}</TableHead>
+                <TableHead className="text-muted-foreground">{t("sessions.connectedSince")}</TableHead>
                 <TableHead className="text-muted-foreground">↓ / ↑</TableHead>
-                <TableHead className="pr-4 text-right text-muted-foreground sm:pr-6">Actions</TableHead>
+                <TableHead className="pr-4 text-right text-muted-foreground sm:pr-6">{t("common.actions")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -193,8 +197,8 @@ export default function SessionsView() {
                         size="icon"
                         className="size-10 text-destructive hover:bg-destructive/10 hover:text-destructive"
                         onClick={() => setKickTarget(session)}
-                        aria-label={`Déconnecter ${session.username}`}
-                        title="Déconnecter"
+                        aria-label={tf("sessions.kickAria", { name: session.username })}
+                        title={t("sessions.kick")}
                       >
                         <LogOut className="size-4" />
                       </Button>
@@ -210,11 +214,11 @@ export default function SessionsView() {
       <AlertDialog open={!!kickTarget} onOpenChange={(open) => !open && setKickTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Déconnecter {kickTarget?.username} ?</AlertDialogTitle>
-            <AlertDialogDescription>La session sera coupée sur le routeur.</AlertDialogDescription>
+            <AlertDialogTitle>{tf("sessions.kickTitle", { name: kickTarget?.username ?? "" })}</AlertDialogTitle>
+            <AlertDialogDescription>{t("sessions.kickDesc")}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Annuler</AlertDialogCancel>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-white hover:bg-destructive/90"
               onClick={(event) => {
@@ -222,7 +226,7 @@ export default function SessionsView() {
                 if (kickTarget) kickMutation.mutate(kickTarget.id);
               }}
             >
-              {kickMutation.isPending ? "Déconnexion…" : "Déconnecter"}
+              {kickMutation.isPending ? t("sessions.kickPending") : t("sessions.kick")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

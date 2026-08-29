@@ -1,16 +1,20 @@
 "use client";
 
-// Vue Profils / Forfaits — vitesse, durée, quota et prix des offres hotspot.
+// Vue Profils / Forfaits — vitesse, durée, quota, prix et expiration des offres
+// hotspot. Cartes + dialog d'édition (parts/profile-dialog.tsx, champs P0 : mode
+// d'expiration, grâce, verrouillage, prix de vente).
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowDownUp,
+  Bell,
   CalendarClock,
   Database,
   Gauge,
   Loader2,
+  Lock,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -30,16 +34,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -47,49 +44,53 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/hotspot/empty-state";
 import { PageHeader } from "@/components/hotspot/page-header";
+import { ProfileEditDialog } from "@/components/hotspot/parts/profile-dialog";
 import { useCurrency } from "@/components/hotspot/parts/sd-currency";
 import { api } from "@/lib/hotspot/api";
+import { useI18n } from "@/lib/hotspot/i18n";
 import { formatBytes, formatCurrency, formatDuration, formatRateLimit } from "@/lib/hotspot/format";
 import type { Profile } from "@/lib/hotspot/types";
 
 // Palette fixe (pastille par index de carte) — pas d'indigo/bleu.
 const PALETTE = ["#10b981", "#14b8a6", "#f59e0b", "#f43f5e", "#84cc16", "#a78bfa"];
 
-// Format RouterOS : "2M/2M", "512k/512k", "5M" (insensible à la casse pour le seed "512k/512k").
-const RATE_LIMIT_RE = /^\d+[KM](\/\d+[KM])?$/i;
-
-interface ProfileForm {
-  name: string;
-  rateLimit: string;
-  sessionTimeoutMin: string;
-  validityDays: string;
-  sharedUsers: string;
-  price: string;
-  dataQuotaMb: string;
+/** Badge du mode d'expiration (F1) : cloche = notification, poubelle = suppression. */
+function ExpiryBadge({ profile }: { profile: Profile }) {
+  const { t, tf } = useI18n();
+  const remove = profile.expMode === "remove";
+  const grace = profile.gracePeriodMin ?? 0;
+  const graceTitle = grace > 0 ? tf("profiles.expiry.graceTitle", { n: grace }) : t("profiles.expiry.immediateTitle");
+  return (
+    <Badge
+      variant="outline"
+      className={
+        remove
+          ? "gap-1 border-destructive/25 bg-destructive/10 text-destructive"
+          : "gap-1 border-primary/25 bg-primary/10 text-primary"
+      }
+      title={
+        remove
+          ? `${t("profiles.expiry.removeTitle")}${graceTitle}`
+          : `${t("profiles.expiry.notifyTitle")}${graceTitle}`
+      }
+    >
+      {remove ? <Trash2 className="size-3" aria-hidden /> : <Bell className="size-3" aria-hidden />}
+      {remove ? t("profiles.expiry.remove") : t("profiles.expiry.notify")}
+      {grace > 0 ? tf("profiles.expiry.graceShort", { n: grace }) : ""}
+    </Badge>
+  );
 }
 
-const DEFAULT_FORM: ProfileForm = {
-  name: "",
-  rateLimit: "",
-  sessionTimeoutMin: "60",
-  validityDays: "1",
-  sharedUsers: "1",
-  price: "0",
-  dataQuotaMb: "0",
-};
-
 export default function ProfilesView() {
+  const { t, tf, lang } = useI18n();
   const currency = useCurrency();
   const queryClient = useQueryClient();
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Profile | null>(null);
-  const [form, setForm] = useState<ProfileForm>(DEFAULT_FORM);
   const [deleting, setDeleting] = useState<Profile | null>(null);
 
   const { data: profiles, isLoading } = useQuery({
@@ -105,21 +106,11 @@ export default function ProfilesView() {
 
   function openCreate() {
     setEditing(null);
-    setForm(DEFAULT_FORM);
     setDialogOpen(true);
   }
 
   function openEdit(profile: Profile) {
     setEditing(profile);
-    setForm({
-      name: profile.name,
-      rateLimit: profile.rateLimit,
-      sessionTimeoutMin: String(profile.sessionTimeoutMin),
-      validityDays: String(profile.validityDays),
-      sharedUsers: String(profile.sharedUsers),
-      price: String(profile.price),
-      dataQuotaMb: String(profile.dataQuotaMb),
-    });
     setDialogOpen(true);
   }
 
@@ -128,91 +119,27 @@ export default function ProfilesView() {
     if (!open) setEditing(null);
   }
 
-  const saveMutation = useMutation({
-    mutationFn: (payload: { id: string | null; body: Record<string, unknown> }) =>
-      payload.id
-        ? api<Profile>(`/api/profiles/${payload.id}`, { method: "PUT", body: payload.body })
-        : api<Profile>("/api/profiles", { method: "POST", body: payload.body }),
-    onSuccess: (_profile, variables) => {
-      toast.success(variables.id ? "Profil modifié" : "Profil créé");
-      closeDialog(false);
-      invalidateProfiles();
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
   const deleteMutation = useMutation({
     mutationFn: (profile: Profile) => api<{ ok: boolean }>(`/api/profiles/${profile.id}`, { method: "DELETE" }),
     onSuccess: (_res, profile) => {
-      toast.success(`Profil ${profile.name} supprimé`);
+      toast.success(tf("profiles.deletedToast", { name: profile.name }));
       setDeleting(null);
       invalidateProfiles();
     },
     onError: (error: Error) => toast.error(error.message),
   });
 
-  const rateInvalid = form.rateLimit.trim() !== "" && !RATE_LIMIT_RE.test(form.rateLimit.trim());
-
-  const sessionNum = parseInt(form.sessionTimeoutMin, 10);
-  const validityNum = parseInt(form.validityDays, 10);
-  const devicesNum = parseInt(form.sharedUsers, 10);
-  const priceNum = Number(form.price);
-  const quotaNum = parseInt(form.dataQuotaMb, 10);
-
-  const formValid =
-    form.name.trim() !== "" &&
-    !rateInvalid &&
-    form.rateLimit.trim() !== "" &&
-    Number.isInteger(sessionNum) &&
-    sessionNum >= 1 &&
-    Number.isInteger(validityNum) &&
-    validityNum >= 1 &&
-    Number.isInteger(devicesNum) &&
-    devicesNum >= 1 &&
-    devicesNum <= 10 &&
-    Number.isFinite(priceNum) &&
-    priceNum >= 0 &&
-    Number.isInteger(quotaNum) &&
-    quotaNum >= 0;
-
-  function submitProfile() {
-    if (!formValid || saveMutation.isPending) {
-      if (form.name.trim() === "") toast.error("Le nom est obligatoire.");
-      else if (form.rateLimit.trim() === "" || rateInvalid)
-        toast.error("Limite de débit invalide — format RouterOS, ex : 2M/2M.");
-      else if (!Number.isInteger(sessionNum) || sessionNum < 1) toast.error("Durée de session invalide (minimum 1 minute).");
-      else if (!Number.isInteger(validityNum) || validityNum < 1) toast.error("Validité invalide (minimum 1 jour).");
-      else if (!Number.isInteger(devicesNum) || devicesNum < 1 || devicesNum > 10)
-        toast.error("Appareils simultanés : entre 1 et 10.");
-      else if (!Number.isFinite(priceNum) || priceNum < 0) toast.error("Prix invalide.");
-      else if (!Number.isInteger(quotaNum) || quotaNum < 0) toast.error("Quota invalide.");
-      return;
-    }
-    saveMutation.mutate({
-      id: editing?.id ?? null,
-      body: {
-        name: form.name.trim(),
-        rateLimit: form.rateLimit.trim(),
-        sessionTimeoutMin: sessionNum,
-        sharedUsers: devicesNum,
-        validityDays: validityNum,
-        price: Math.round(priceNum),
-        dataQuotaMb: quotaNum,
-      },
-    });
-  }
-
   const list = profiles ?? [];
 
   return (
     <div className="space-y-4 sm:space-y-6">
       <PageHeader
-        title="Profils"
-        description="Forfaits hotspot : vitesse, durée, quota et prix"
+        title={t("profiles.title")}
+        description={t("profiles.description")}
         actions={
           <Button className="h-10" onClick={openCreate}>
             <Plus className="size-4" />
-            Nouveau profil
+            {t("profiles.new")}
           </Button>
         }
       />
@@ -227,12 +154,12 @@ export default function ProfilesView() {
         <Card className="gap-0 py-0">
           <EmptyState
             icon={Gauge}
-            title="Aucun profil"
-            description="Créez votre premier forfait hotspot."
+            title={t("profiles.empty")}
+            description={t("profiles.emptyDesc")}
             action={
               <Button onClick={openCreate}>
                 <Plus className="size-4" />
-                Nouveau profil
+                {t("profiles.new")}
               </Button>
             }
           />
@@ -240,245 +167,148 @@ export default function ProfilesView() {
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
           <AnimatePresence initial={false}>
-            {list.map((profile, index) => (
-              <motion.div
-                key={profile.id}
-                layout
-                initial={{ opacity: 0, y: 14 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.96 }}
-                transition={{ duration: 0.25, delay: Math.min(index * 0.04, 0.3), ease: "easeOut" }}
-              >
-                <Card className="h-full py-0">
-                  <CardContent className="flex h-full flex-col gap-4 p-4 sm:p-6">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex min-w-0 items-center gap-2.5">
-                        <span
-                          className="size-3 shrink-0 rounded-full"
-                          style={{ backgroundColor: PALETTE[index % PALETTE.length] }}
-                          aria-hidden
-                        />
-                        <p className="truncate font-semibold leading-tight">{profile.name}</p>
+            {list.map((profile, index) => {
+              const selling = profile.sellingPrice ?? 0;
+              const hasSelling = selling > 0 && selling !== profile.price;
+              return (
+                <motion.div
+                  key={profile.id}
+                  layout
+                  initial={{ opacity: 0, y: 14 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.96 }}
+                  transition={{ duration: 0.25, delay: Math.min(index * 0.04, 0.3), ease: "easeOut" }}
+                >
+                  <Card className="h-full py-0">
+                    <CardContent className="flex h-full flex-col gap-4 p-4 sm:p-6">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex min-w-0 items-center gap-2.5">
+                          <span
+                            className="size-3 shrink-0 rounded-full"
+                            style={{ backgroundColor: PALETTE[index % PALETTE.length] }}
+                            aria-hidden
+                          />
+                          <p className="truncate font-semibold leading-tight">{profile.name}</p>
+                          {profile.lockUser && (
+                            <span
+                              className="flex size-5 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground"
+                              title={t("profiles.locked")}
+                            >
+                              <Lock className="size-3" aria-hidden />
+                              <span className="sr-only">{t("profiles.locked")}</span>
+                            </span>
+                          )}
+                        </div>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-10 text-muted-foreground hover:text-foreground"
+                              aria-label={tf("common.actionsFor", { name: profile.name })}
+                            >
+                              <MoreHorizontal className="size-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-48">
+                            <DropdownMenuItem className="min-h-10" onClick={() => openEdit(profile)}>
+                              <Pencil className="size-4" />
+                              {t("common.edit")}
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              variant="destructive"
+                              className="min-h-10"
+                              onClick={() => setDeleting(profile)}
+                            >
+                              <Trash2 className="size-4" />
+                              {t("common.delete")}
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </div>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="size-10 text-muted-foreground hover:text-foreground"
-                            aria-label={`Actions pour ${profile.name}`}
-                          >
-                            <MoreHorizontal className="size-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-48">
-                          <DropdownMenuItem className="min-h-10" onClick={() => openEdit(profile)}>
-                            <Pencil className="size-4" />
-                            Modifier
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            variant="destructive"
-                            className="min-h-10"
-                            onClick={() => setDeleting(profile)}
-                          >
-                            <Trash2 className="size-4" />
-                            Supprimer
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
 
-                    <div>
-                      <p className="text-2xl font-semibold tracking-tight tabular-nums">
-                        {formatCurrency(profile.price, currency)}
-                      </p>
-                      <p className="text-xs text-muted-foreground">/ forfait</p>
-                    </div>
+                      <div>
+                        {/* Prix / Vente : coût du forfait + prix de vente affiché voucher (F13). */}
+                        <p className="text-2xl font-semibold tracking-tight tabular-nums">
+                          {formatCurrency(profile.price, currency, lang)}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {hasSelling
+                            ? tf("profiles.saleAt", { price: formatCurrency(selling, currency, lang) })
+                            : t("profiles.perPlan")}
+                        </p>
+                      </div>
 
-                    <div className="mt-auto grid grid-cols-1 gap-x-4 gap-y-2 border-t pt-4 sm:grid-cols-2">
-                      <div className="flex min-h-6 items-center gap-2 text-sm">
-                        <ArrowDownUp className="size-4 shrink-0 text-muted-foreground" />
-                        <span className="text-muted-foreground">Débit</span>
-                        <span className="ml-auto font-medium">{formatRateLimit(profile.rateLimit)}</span>
+                      <div className="mt-auto grid grid-cols-1 gap-x-4 gap-y-2 border-t pt-4 sm:grid-cols-2">
+                        <div className="flex min-h-6 items-center gap-2 text-sm">
+                          <ArrowDownUp className="size-4 shrink-0 text-muted-foreground" />
+                          <span className="text-muted-foreground">{t("profiles.bandwidth")}</span>
+                          <span className="ml-auto font-medium">{formatRateLimit(profile.rateLimit)}</span>
+                        </div>
+                        <div className="flex min-h-6 items-center gap-2 text-sm">
+                          <Timer className="size-4 shrink-0 text-muted-foreground" />
+                          <span className="text-muted-foreground">{t("profiles.session")}</span>
+                          <span className="ml-auto font-medium">
+                            {formatDuration(profile.sessionTimeoutMin * 60)}
+                          </span>
+                        </div>
+                        <div className="flex min-h-6 items-center gap-2 text-sm">
+                          <CalendarClock className="size-4 shrink-0 text-muted-foreground" />
+                          <span className="text-muted-foreground">{t("profiles.validity")}</span>
+                          <span className="ml-auto font-medium">
+                            {tf("profiles.validityDays", { n: profile.validityDays })}
+                          </span>
+                        </div>
+                        <div className="flex min-h-6 items-center gap-2 text-sm">
+                          <Smartphone className="size-4 shrink-0 text-muted-foreground" />
+                          <span className="text-muted-foreground">
+                            {profile.lockUser ? t("profiles.sessionsLabel") : t("profiles.devices")}
+                          </span>
+                          <span className="ml-auto font-medium">
+                            {profile.lockUser
+                              ? t("profiles.oneAtATime")
+                              : tf("profiles.devicesCount", { n: profile.sharedUsers })}
+                          </span>
+                        </div>
+                        <div className="flex min-h-6 items-center gap-2 text-sm sm:col-span-2 sm:max-w-max">
+                          <Database className="size-4 shrink-0 text-muted-foreground" />
+                          <span className="text-muted-foreground">{t("profiles.quota")}</span>
+                          <span className="ml-auto font-medium">
+                            {profile.dataQuotaMb === 0
+                              ? t("profiles.unlimited")
+                              : formatBytes(profile.dataQuotaMb * 1048576)}
+                          </span>
+                        </div>
+                        <div className="flex min-h-6 items-center gap-2 text-sm sm:col-span-2">
+                          <span className="text-muted-foreground">{t("profiles.expiration")}</span>
+                          <span className="ml-auto">
+                            <ExpiryBadge profile={profile} />
+                          </span>
+                        </div>
                       </div>
-                      <div className="flex min-h-6 items-center gap-2 text-sm">
-                        <Timer className="size-4 shrink-0 text-muted-foreground" />
-                        <span className="text-muted-foreground">Session</span>
-                        <span className="ml-auto font-medium">
-                          {formatDuration(profile.sessionTimeoutMin * 60)}
-                        </span>
-                      </div>
-                      <div className="flex min-h-6 items-center gap-2 text-sm">
-                        <CalendarClock className="size-4 shrink-0 text-muted-foreground" />
-                        <span className="text-muted-foreground">Validité</span>
-                        <span className="ml-auto font-medium">{profile.validityDays} j</span>
-                      </div>
-                      <div className="flex min-h-6 items-center gap-2 text-sm">
-                        <Smartphone className="size-4 shrink-0 text-muted-foreground" />
-                        <span className="text-muted-foreground">Appareils</span>
-                        <span className="ml-auto font-medium">×{profile.sharedUsers}</span>
-                      </div>
-                      <div className="flex min-h-6 items-center gap-2 text-sm sm:col-span-2 sm:max-w-max">
-                        <Database className="size-4 shrink-0 text-muted-foreground" />
-                        <span className="text-muted-foreground">Quota</span>
-                        <span className="ml-auto font-medium">
-                          {profile.dataQuotaMb === 0
-                            ? "Illimité"
-                            : formatBytes(profile.dataQuotaMb * 1048576)}
-                        </span>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              </motion.div>
-            ))}
+                    </CardContent>
+                  </Card>
+                </motion.div>
+              );
+            })}
           </AnimatePresence>
         </div>
       )}
 
-      {/* Dialogue création / édition */}
-      <Dialog open={dialogOpen} onOpenChange={closeDialog}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>{editing ? `Modifier ${editing.name}` : "Nouveau profil"}</DialogTitle>
-            <DialogDescription>
-              {editing
-                ? "Ajustez les réglages du forfait. Les vouchers actifs conservent leurs réglages."
-                : "Définissez vitesse, durée, quota et prix de votre forfait hotspot."}
-            </DialogDescription>
-          </DialogHeader>
-
-          <form
-            className="grid gap-4"
-            onSubmit={(event) => {
-              event.preventDefault();
-              submitProfile();
-            }}
-          >
-            <div className="grid gap-2">
-              <Label htmlFor="profile-name">Nom</Label>
-              <Input
-                id="profile-name"
-                placeholder="Ex. 24 Heures"
-                value={form.name}
-                onChange={(event) => setForm((f) => ({ ...f, name: event.target.value }))}
-                disabled={saveMutation.isPending}
-              />
-            </div>
-
-            <div className="grid gap-2">
-              <Label htmlFor="profile-rate">Limite de débit (descendant/montant)</Label>
-              <Input
-                id="profile-rate"
-                placeholder="2M/2M"
-                value={form.rateLimit}
-                onChange={(event) => setForm((f) => ({ ...f, rateLimit: event.target.value }))}
-                disabled={saveMutation.isPending}
-                aria-invalid={rateInvalid}
-                className="font-mono"
-              />
-              <p className={rateInvalid ? "text-xs text-destructive" : "text-xs text-muted-foreground"}>
-                {rateInvalid
-                  ? "Format invalide — attendu : 2M/2M, 512k/512k ou 5M."
-                  : "Format RouterOS, ex : 2M/2M"}
-              </p>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="grid gap-2">
-                <Label htmlFor="profile-session">Durée de session (min)</Label>
-                <Input
-                  id="profile-session"
-                  type="number"
-                  min={1}
-                  value={form.sessionTimeoutMin}
-                  onChange={(event) => setForm((f) => ({ ...f, sessionTimeoutMin: event.target.value }))}
-                  disabled={saveMutation.isPending}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="profile-validity">Validité (jours)</Label>
-                <Input
-                  id="profile-validity"
-                  type="number"
-                  min={1}
-                  value={form.validityDays}
-                  onChange={(event) => setForm((f) => ({ ...f, validityDays: event.target.value }))}
-                  disabled={saveMutation.isPending}
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="grid gap-2">
-                <Label htmlFor="profile-devices">Appareils simultanés</Label>
-                <Input
-                  id="profile-devices"
-                  type="number"
-                  min={1}
-                  max={10}
-                  value={form.sharedUsers}
-                  onChange={(event) => setForm((f) => ({ ...f, sharedUsers: event.target.value }))}
-                  disabled={saveMutation.isPending}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="profile-price">Prix ({currency})</Label>
-                <Input
-                  id="profile-price"
-                  type="number"
-                  min={0}
-                  value={form.price}
-                  onChange={(event) => setForm((f) => ({ ...f, price: event.target.value }))}
-                  disabled={saveMutation.isPending}
-                />
-              </div>
-            </div>
-
-            <div className="grid gap-2">
-              <Label htmlFor="profile-quota">Quota de données (Mo)</Label>
-              <Input
-                id="profile-quota"
-                type="number"
-                min={0}
-                value={form.dataQuotaMb}
-                onChange={(event) => setForm((f) => ({ ...f, dataQuotaMb: event.target.value }))}
-                disabled={saveMutation.isPending}
-              />
-              <p className="text-xs text-muted-foreground">0 = illimité</p>
-            </div>
-
-            {saveMutation.isError && (
-              <p className="text-sm text-destructive" role="alert">
-                {saveMutation.error.message}
-              </p>
-            )}
-
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => closeDialog(false)} disabled={saveMutation.isPending}>
-                Annuler
-              </Button>
-              <Button type="submit" disabled={!formValid || saveMutation.isPending}>
-                {saveMutation.isPending && <Loader2 className="size-4 animate-spin" />}
-                {editing ? "Enregistrer" : "Créer le profil"}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      {/* Dialogue création / édition (parts/profile-dialog.tsx) — monté
+          conditionnellement pour réinitialiser le formulaire à chaque ouverture */}
+      {dialogOpen && <ProfileEditDialog open onOpenChange={closeDialog} profile={editing} />}
 
       {/* Confirmation suppression */}
       <AlertDialog open={deleting !== null} onOpenChange={(open) => !open && setDeleting(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Supprimer le profil {deleting?.name} ?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Les vouchers existants conserveront leurs réglages. Cette action est irréversible.
-            </AlertDialogDescription>
+            <AlertDialogTitle>{tf("profiles.deleteTitle", { name: deleting?.name ?? "" })}</AlertDialogTitle>
+            <AlertDialogDescription>{t("profiles.deleteDesc")}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleteMutation.isPending}>Annuler</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleteMutation.isPending}>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-white hover:bg-destructive/90"
               disabled={deleteMutation.isPending}
@@ -488,7 +318,7 @@ export default function ProfilesView() {
               }}
             >
               {deleteMutation.isPending && <Loader2 className="size-4 animate-spin" />}
-              Supprimer
+              {t("common.delete")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

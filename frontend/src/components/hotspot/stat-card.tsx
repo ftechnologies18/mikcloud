@@ -11,17 +11,19 @@ interface StatCardProps {
   icon: LucideIcon;
   live?: boolean;
   trend?: { value: string; up?: boolean };
+  /** Classe additionnelle pour la valeur (ex. couleur conditionnelle). */
+  valueClassName?: string;
   className?: string;
 }
 
-export function StatCard({ title, value, sub, icon: Icon, live, trend, className }: StatCardProps) {
+export function StatCard({ title, value, sub, icon: Icon, live, trend, valueClassName, className }: StatCardProps) {
   return (
     <Card className={cn("relative overflow-hidden", className)}>
       <CardContent className="p-4 sm:p-5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{title}</p>
-            <p className="mt-1.5 truncate text-2xl font-semibold tracking-tight">{value}</p>
+            <p className={cn("mt-1.5 truncate text-2xl font-semibold tracking-tight", valueClassName)}>{value}</p>
             {sub && <p className="mt-1 text-xs text-muted-foreground">{sub}</p>}
           </div>
           <div className="flex shrink-0 items-center gap-2">

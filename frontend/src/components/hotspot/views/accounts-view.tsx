@@ -9,6 +9,7 @@ import { Building2, Power, ShieldOff } from "lucide-react";
 import { toast } from "sonner";
 
 import { ApiError, fetchAccounts, setAccountStatus } from "@/lib/hotspot/api";
+import { useI18n } from "@/lib/hotspot/i18n";
 import type { AccountStatus, AccountSummary } from "@/lib/hotspot/types";
 import { formatCurrency, formatDate } from "@/lib/hotspot/format";
 import { EmptyState } from "@/components/hotspot/empty-state";
@@ -37,6 +38,7 @@ export const ACCOUNTS_QUERY_KEY = ["/api/admin/accounts"] as const;
 const MAIN_ACCOUNT_ID = "acc-main";
 
 export default function AccountsView() {
+  const { t, tf, lang } = useI18n();
   const currency = useCurrency();
   const queryClient = useQueryClient();
   const [confirmTarget, setConfirmTarget] = useState<AccountSummary | null>(null);
@@ -54,8 +56,8 @@ export default function AccountsView() {
     onSuccess: (_res, payload) => {
       toast.success(
         payload.status === "disabled"
-          ? `Compte ${payload.account.name} désactivé`
-          : `Compte ${payload.account.name} réactivé`,
+          ? tf("accounts.disabledToast", { name: payload.account.name })
+          : tf("accounts.enabledToast", { name: payload.account.name }),
       );
       setConfirmTarget(null);
       queryClient.invalidateQueries({ queryKey: ACCOUNTS_QUERY_KEY });
@@ -72,7 +74,7 @@ export default function AccountsView() {
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      <PageHeader title="Comptes SaaS" description="Gérez les comptes clients de la plateforme" />
+      <PageHeader title={t("accounts.title")} description={t("accounts.description")} />
 
       {isLoading ? (
         <Card className="gap-0 py-0">
@@ -86,15 +88,15 @@ export default function AccountsView() {
         <Card className="gap-0 py-0">
           <EmptyState
             icon={ShieldOff}
-            title="Accès réservé à l'administration"
-            description="Seul l'administrateur de la plateforme peut consulter et gérer les comptes SaaS."
+            title={t("accounts.forbiddenTitle")}
+            description={t("accounts.forbiddenDesc")}
           />
         </Card>
       ) : error ? (
         <Card className="gap-0 py-0">
           <EmptyState
             icon={Building2}
-            title="Impossible de charger les comptes"
+            title={t("accounts.loadError")}
             description={error.message}
           />
         </Card>
@@ -102,8 +104,8 @@ export default function AccountsView() {
         <Card className="gap-0 py-0">
           <EmptyState
             icon={Building2}
-            title="Aucun compte client"
-            description="Les comptes créés via l'écran d'inscription apparaîtront ici."
+            title={t("accounts.empty")}
+            description={t("accounts.emptyDesc")}
           />
         </Card>
       ) : (
@@ -113,15 +115,15 @@ export default function AccountsView() {
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
-                    <TableHead className="pl-4 text-muted-foreground sm:pl-6">Compte</TableHead>
-                    <TableHead className="text-muted-foreground">Propriétaire</TableHead>
-                    <TableHead className="text-muted-foreground">Statut</TableHead>
-                    <TableHead className="text-muted-foreground">Créé le</TableHead>
-                    <TableHead className="text-right text-muted-foreground">Utilisateurs</TableHead>
-                    <TableHead className="text-right text-muted-foreground">Routeurs</TableHead>
-                    <TableHead className="text-right text-muted-foreground">Sessions</TableHead>
-                    <TableHead className="text-right text-muted-foreground">Ventes 30 j</TableHead>
-                    <TableHead className="pr-4 text-right text-muted-foreground sm:pr-6">Actions</TableHead>
+                    <TableHead className="pl-4 text-muted-foreground sm:pl-6">{t("accounts.account")}</TableHead>
+                    <TableHead className="text-muted-foreground">{t("accounts.owner")}</TableHead>
+                    <TableHead className="text-muted-foreground">{t("common.status")}</TableHead>
+                    <TableHead className="text-muted-foreground">{t("accounts.created")}</TableHead>
+                    <TableHead className="text-right text-muted-foreground">{t("accounts.users")}</TableHead>
+                    <TableHead className="text-right text-muted-foreground">{t("accounts.routers")}</TableHead>
+                    <TableHead className="text-right text-muted-foreground">{t("accounts.sessions")}</TableHead>
+                    <TableHead className="text-right text-muted-foreground">{t("accounts.sales30")}</TableHead>
+                    <TableHead className="pr-4 text-right text-muted-foreground sm:pr-6">{t("common.actions")}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -138,7 +140,7 @@ export default function AccountsView() {
                                 variant="outline"
                                 className="border-border bg-muted px-1.5 py-0 text-[10px] font-medium text-muted-foreground"
                               >
-                                Plateforme
+                                {t("accounts.platform")}
                               </Badge>
                             )}
                           </div>
@@ -147,19 +149,19 @@ export default function AccountsView() {
                         <TableCell>
                           <StatusBadge status={account.status} dot />
                         </TableCell>
-                        <TableCell className="text-muted-foreground">{formatDate(account.createdAt)}</TableCell>
+                        <TableCell className="text-muted-foreground">{formatDate(account.createdAt, lang)}</TableCell>
                         <TableCell className="text-right tabular-nums">{account.stats.users}</TableCell>
                         <TableCell className="text-right tabular-nums">{account.stats.routers}</TableCell>
                         <TableCell className="text-right tabular-nums">{account.stats.sessions}</TableCell>
                         <TableCell className="text-right">
                           <span className="tabular-nums">{account.stats.sales30d}</span>
                           <span className="ml-2 text-xs tabular-nums text-muted-foreground">
-                            {formatCurrency(account.stats.revenue30d, currency)}
+                            {formatCurrency(account.stats.revenue30d, currency, lang)}
                           </span>
                         </TableCell>
                         <TableCell className="pr-4 text-right sm:pr-6">
                           {isMain ? (
-                            <span className="text-xs text-muted-foreground" title="Compte principal de la plateforme">
+                            <span className="text-xs text-muted-foreground" title={t("accounts.mainAccount")}>
                               —
                             </span>
                           ) : (
@@ -171,7 +173,7 @@ export default function AccountsView() {
                               disabled={statusMutation.isPending}
                             >
                               <Power className="size-4" />
-                              {disabling ? "Désactiver" : "Réactiver"}
+                              {disabling ? t("accounts.disable") : t("accounts.enable")}
                             </Button>
                           )}
                         </TableCell>
@@ -191,17 +193,17 @@ export default function AccountsView() {
           <AlertDialogHeader>
             <AlertDialogTitle>
               {confirmTarget?.status === "active"
-                ? `Désactiver le compte ${confirmTarget?.name} ?`
-                : `Réactiver le compte ${confirmTarget?.name} ?`}
+                ? tf("accounts.disableTitle", { name: confirmTarget?.name ?? "" })
+                : tf("accounts.enableTitle", { name: confirmTarget?.name ?? "" })}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {confirmTarget?.status === "active"
-                ? "Le propriétaire et les utilisateurs de ce compte ne pourront plus se connecter à MikCloud tant qu'il restera désactivé."
-                : "Le compte retrouvera immédiatement l'accès complet à MikCloud et à ses données."}
+                ? t("accounts.disableDesc")
+                : t("accounts.enableDesc")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Annuler</AlertDialogCancel>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               className={
                 confirmTarget?.status === "active" ? "bg-destructive text-white hover:bg-destructive/90" : undefined
@@ -212,10 +214,10 @@ export default function AccountsView() {
               }}
             >
               {statusMutation.isPending
-                ? "Application…"
+                ? t("accounts.applying")
                 : confirmTarget?.status === "active"
-                  ? "Désactiver"
-                  : "Réactiver"}
+                  ? t("accounts.disable")
+                  : t("accounts.enable")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

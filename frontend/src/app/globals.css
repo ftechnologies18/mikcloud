@@ -128,6 +128,45 @@
     radial-gradient(ellipse 40% 30% at 85% 110%, oklch(0.705 0.12 185 / 0.08), transparent);
 }
 
+/* ─── Écran de connexion : split-screen + glassmorphism ─── */
+
+/* Panneau branding : dégradé zinc profond → émeraude + halos */
+.login-brand {
+  background:
+    radial-gradient(ellipse 85% 60% at 15% 8%, oklch(0.705 0.155 163.225 / 0.18), transparent 62%),
+    radial-gradient(ellipse 65% 55% at 95% 92%, oklch(0.72 0.12 185 / 0.12), transparent 60%),
+    linear-gradient(165deg, oklch(0.205 0.012 285), oklch(0.148 0.006 285) 55%, oklch(0.165 0.035 168));
+}
+
+/* Grille technique en surimpression (masquée sur les bords) */
+.login-grid {
+  background-image:
+    linear-gradient(to right, oklch(1 0 0 / 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, oklch(1 0 0 / 0.05) 1px, transparent 1px);
+  background-size: 44px 44px;
+  -webkit-mask-image: radial-gradient(ellipse 90% 85% at 45% 40%, black 25%, transparent 80%);
+  mask-image: radial-gradient(ellipse 90% 85% at 45% 40%, black 25%, transparent 80%);
+}
+
+/* Carte de verre : flou arrière + liseré lumineux + ombre profonde */
+.glass-card {
+  border: 1px solid oklch(1 0 0 / 0.09);
+  background: oklch(0.185 0.006 285.885 / 0.55);
+  -webkit-backdrop-filter: blur(22px) saturate(1.45);
+  backdrop-filter: blur(22px) saturate(1.45);
+  box-shadow:
+    0 28px 70px -28px oklch(0 0 0 / 0.75),
+    inset 0 1px 0 oklch(1 0 0 / 0.08);
+}
+
+/* Puce de verre : badges, onglets, blocs démo */
+.glass-chip {
+  border: 1px solid oklch(1 0 0 / 0.1);
+  background: oklch(1 0 0 / 0.055);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+
 /* ─── Impression des vouchers ─── */
 @media print {
   body * {

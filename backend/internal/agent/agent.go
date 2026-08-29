@@ -146,10 +146,12 @@ func InstallScript(baseURL, token, routerName string) string {
 :do {
   :local dmS [/system device-mode get scheduler]
   :local dmF [/system device-mode get fetch]
-  :if ((!$dmS) || (!$dmF)) do={ :set mikReady false }
+  # NB : selon la version, get renvoie un booléen OU une chaîne ("yes"/"no") —
+  # comparer explicitement, sinon "no" (chaîne non vide) serait considéré vrai.
+  :if ($dmS = false || $dmS = "no" || $dmS = "false" || $dmF = false || $dmF = "no" || $dmF = "false") do={ :set mikReady false }
   :do {
     :local dmH [/system device-mode get hotspot]
-    :if (!$dmH) do={ :set mikReady false }
+    :if ($dmH = false || $dmH = "no" || $dmH = "false") do={ :set mikReady false }
   } on-error={}
 } on-error={}
 :if (!$mikReady) do={
@@ -206,9 +208,10 @@ func InstallScript(baseURL, token, routerName string) string {
   :set mikAdded true
 } on-error={
   :put "MIKCLOUD : echec de la creation du scheduler."
-  :put "Si le message d'erreur est 'not allowed by device-mode', executez :"
+  :do { :put (" scheduler flag lu a l'instant : " . [/system device-mode get scheduler]) } on-error={}
+  :put "Si l'erreur ci-dessus est 'not allowed by device-mode', executez :"
   :put "  /system/device-mode/update scheduler=yes fetch=yes hotspot=yes"
-  :put "puis confirmez physiquement (bouton reset ou coupure d'alimentation)."
+  :put "puis confirmez physiquement (bouton reset ou coupure d'alimentation 10 s)."
   :log error "MikCloud: creation scheduler echouee (device-mode ?)"
 }
 :if ($mikAdded) do={ :log info "MikCloud: agent installe, check-in dans 45s" }

@@ -102,6 +102,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/settings", a.handleSettingsGet)
 	mux.HandleFunc("PUT /api/settings", a.handleSettingsPut)
 	mux.HandleFunc("POST /api/admin/reset", a.handleReset)
+	mux.HandleFunc("POST /api/admin/reload", a.handleReload)
 
 	// Administration plateforme (rôle admin uniquement)
 	mux.HandleFunc("GET /api/admin/accounts", a.handleAdminAccounts)
@@ -3061,6 +3062,30 @@ func (a *API) handleReset(w http.ResponseWriter, r *http.Request) {
 	a.store.Unlock()
 	a.clearGateways()
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleReload — POST /api/admin/reload : réimporte l'état complet depuis la
+// base persistée (Neon en production) sans redémarrer le service. Réservé à
+// l'admin plateforme. Cas d'usage : après une modification SQL directe de la
+// base, ou pour appliquer immédiatement un changement de ADMIN_PASSWORD.
+func (a *API) handleReload(w http.ResponseWriter, r *http.Request) {
+	if !isPlatformAdmin(r) {
+		writeErr(w, http.StatusForbidden, "Réservé aux administrateurs de la plateforme")
+		return
+	}
+	stats, err := a.store.Reload()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "Rechargement impossible : "+err.Error())
+		return
+	}
+	a.store.Lock()
+	a.logActivity(a.store.Data(), accountScope(r), "system", "Données rechargées depuis la base persistée")
+	a.store.Save()
+	a.store.Unlock()
+	// Les connexions routeurs en cache peuvent référencer des routeurs
+	// modifiés ou supprimés directement en base : on les réinitialise.
+	a.clearGateways()
+	writeJSON(w, http.StatusOK, stats)
 }
 
 // ---------------------------------------------------------------------------

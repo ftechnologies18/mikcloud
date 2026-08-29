@@ -8,6 +8,8 @@ package store
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"math/rand"
 	"os"
@@ -389,6 +391,76 @@ func (s *Store) Reset() {
 	defer s.Unlock()
 	s.db = BuildSeed()
 	s.Save()
+}
+
+// ReloadStats — résumé de l'état réimporté (réponse de POST /api/admin/reload).
+type ReloadStats struct {
+	OK           bool `json:"ok"`
+	Accounts     int  `json:"accounts"`
+	Users        int  `json:"users"`
+	HotspotUsers int  `json:"hotspotUsers"`
+	Routers      int  `json:"routers"`
+	Sessions     int  `json:"sessions"`
+}
+
+// Reload réimporte l'intégralité de l'état depuis la source persistée
+// (PostgreSQL en production, db.json en local) en écrasant l'état mémoire.
+// Cas d'usage : maintenance plateforme après une modification SQL directe de
+// la base — évite un redémarrage complet du service.
+//
+// Les garanties d'un démarrage propre sont réappliquées (migration
+// multi-tenant idempotente + override admin depuis l'environnement) et le
+// cache d'empreintes PG est recalé sur l'état rechargé (PG.Load) : le prochain
+// Save() n'écrira que les vraies différences.
+//
+// L'opération se déroule sous verrou global : les requêtes concurrentes sont
+// simplement mises en attente le temps de la lecture (~1-2 s sur Neon).
+func (s *Store) Reload() (ReloadStats, error) {
+	s.Lock()
+	defer s.Unlock()
+
+	var db *model.DB
+	if s.pg != nil {
+		loaded, found, err := s.pg.Load()
+		if err != nil {
+			return ReloadStats{}, fmt.Errorf("lecture PostgreSQL : %w", err)
+		}
+		if !found {
+			return ReloadStats{}, errors.New("base vide — rechargement refusé, état mémoire conservé")
+		}
+		db = loaded
+	} else {
+		data, err := os.ReadFile(s.path)
+		if err != nil {
+			return ReloadStats{}, fmt.Errorf("lecture %s : %w", s.path, err)
+		}
+		fresh := &model.DB{}
+		if err := json.Unmarshal(data, fresh); err != nil {
+			return ReloadStats{}, fmt.Errorf("fichier illisible : %w", err)
+		}
+		db = fresh
+	}
+
+	s.db = db
+	s.ensureSlices()
+
+	// Garanties identiques à un démarrage propre, persistées si besoin.
+	changed := migrateMultiTenant(s.db)
+	if applyAdminOverride(s.db) {
+		changed = true
+	}
+	if changed {
+		s.Save()
+	}
+
+	return ReloadStats{
+		OK:           true,
+		Accounts:     len(s.db.Accounts),
+		Users:        len(s.db.Users),
+		HotspotUsers: len(s.db.HotspotUsers),
+		Routers:      len(s.db.Routers),
+		Sessions:     len(s.db.Sessions),
+	}, nil
 }
 
 // ---------------------------------------------------------------------------

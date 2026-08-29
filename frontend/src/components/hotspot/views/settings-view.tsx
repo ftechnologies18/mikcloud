@@ -4,7 +4,7 @@
 
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Building2, Check, Crown, Router as RouterIcon, TriangleAlert } from "lucide-react";
+import { Building2, Check, Crown, Database, Router as RouterIcon, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 
 import { api } from "@/lib/hotspot/api";
@@ -57,6 +57,16 @@ interface SettingsForm {
   waveLink?: string;
 }
 
+// Réponse de POST /api/admin/reload — résumé de l'état réimporté.
+interface ReloadStats {
+  ok: boolean;
+  accounts: number;
+  users: number;
+  hotspotUsers: number;
+  routers: number;
+  sessions: number;
+}
+
 export default function SettingsView() {
   const queryClient = useQueryClient();
   const { data, isLoading } = useSettings();
@@ -70,6 +80,17 @@ export default function SettingsView() {
     onSuccess: () => {
       toast.success("Données réinitialisées");
       setResetOpen(false);
+      queryClient.invalidateQueries();
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const reloadMutation = useMutation({
+    mutationFn: () => api<ReloadStats>("/api/admin/reload", { method: "POST" }),
+    onSuccess: (stats) => {
+      toast.success(
+        `Données rechargées — ${stats.accounts} compte(s), ${stats.hotspotUsers} utilisateurs hotspot, ${stats.routers} routeur(s)`,
+      );
       queryClient.invalidateQueries();
     },
     onError: (error: Error) => toast.error(error.message),
@@ -154,6 +175,34 @@ export default function SettingsView() {
             </p>
           </CardContent>
         </Card>
+
+        {/* Base de données — admin plateforme uniquement (POST /api/admin/reload admin-only) */}
+        {isAdmin && (
+          <Card className="gap-4 py-4 sm:py-6">
+            <CardHeader className="px-4 sm:px-6">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
+                  <Database className="size-4" />
+                </span>
+                Base de données
+              </CardTitle>
+              <CardDescription>
+                Réimporte l'intégralité des données depuis la base persistée sans redémarrer le service — utile
+                après une modification SQL directe ou un changement de mot de passe admin.
+              </CardDescription>
+            </CardHeader>
+            <CardFooter className="px-4 sm:px-6">
+              <Button
+                variant="outline"
+                className="h-10"
+                onClick={() => reloadMutation.mutate()}
+                disabled={reloadMutation.isPending}
+              >
+                {reloadMutation.isPending ? "Rechargement…" : "Recharger depuis la base"}
+              </Button>
+            </CardFooter>
+          </Card>
+        )}
 
         {/* Zone sensible — admin plateforme uniquement (endpoint /api/admin/reset admin-only) */}
         {isAdmin && (

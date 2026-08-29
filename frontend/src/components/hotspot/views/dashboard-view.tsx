@@ -34,6 +34,7 @@ import { LoadingCards, LoadingRows } from "@/components/hotspot/loading";
 import { PageHeader } from "@/components/hotspot/page-header";
 import { StatCard } from "@/components/hotspot/stat-card";
 import { StatusBadge } from "@/components/hotspot/status-badge";
+import { SubscriptionBanner } from "@/components/hotspot/parts/sa-subscription-banner";
 import { api } from "@/lib/hotspot/api";
 import { localeOf, useI18n } from "@/lib/hotspot/i18n";
 import { formatCurrency, timeAgo } from "@/lib/hotspot/format";
@@ -200,6 +201,10 @@ export default function DashboardView() {
   return (
     <div className="space-y-6">
       <PageHeader title={t("dashboard.title")} description={t("dashboard.description")} />
+
+      {/* Bannière abonnement (v1 bienveillante) : expiré → rappel persistant,
+          échéance ≤ 7 j → rappel doux. Accès jamais bloqué. */}
+      <SubscriptionBanner />
 
       {/* KPIs */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">

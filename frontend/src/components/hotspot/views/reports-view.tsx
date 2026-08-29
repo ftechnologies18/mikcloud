@@ -35,6 +35,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 
 import { api, apiDownload } from "@/lib/hotspot/api";
 import { localeOf, useI18n } from "@/lib/hotspot/i18n";
+import { useChartPalette, type ChartPalette } from "@/lib/hotspot/chart-theme";
 import type { Lang } from "@/lib/hotspot/i18n";
 import type { AccountingData, AccountingPeriod, ReportsData, RouterDevice } from "@/lib/hotspot/types";
 import { formatBytes, formatCurrency } from "@/lib/hotspot/format";
@@ -67,14 +68,12 @@ const ACCOUNTING_PERIODS: {
   { value: "month", labelKey: "reports.period.month", windowKey: "reports.window.month", barsKey: "reports.bars.month", unitKey: "reports.unit.month" },
 ];
 
-const GRID_STROKE = "#27272a";
-const AXIS_TICK = { fontSize: 11, fill: "#71717a" };
-
-const VOUCHER_STATUS_ROWS = [
-  { key: "active", labelKey: "common.statusActive", color: "#10b981" },
-  { key: "used", labelKey: "common.statusUsed", color: "#f59e0b" },
-  { key: "expired", labelKey: "common.statusExpired", color: "#71717a" },
-  { key: "disabled", labelKey: "common.statusDisabled", color: "#f43f5e" },
+// Palette thématée (nuit/jour) injectée dans chaque onglet à graphiques.
+const voucherStatusRows = (p: ChartPalette) => [
+  { key: "active", labelKey: "common.statusActive", color: p.series[0] },
+  { key: "used", labelKey: "common.statusUsed", color: p.series[2] },
+  { key: "expired", labelKey: "common.statusExpired", color: p.axis },
+  { key: "disabled", labelKey: "common.statusDisabled", color: p.series[3] },
 ] as const;
 
 // Tooltip comptabilité : revenus + ventes du point survolé.
@@ -118,6 +117,8 @@ function AccountingTooltip({
 function AccountingTab({ visible }: { visible: boolean }) {
   const { t, tf, lang } = useI18n();
   const currency = useCurrency();
+  const charts = useChartPalette();
+  const AXIS_TICK = { fontSize: 11, fill: charts.axis };
   const [period, setPeriod] = useState<AccountingPeriod>("day");
   const [routerFilter, setRouterFilter] = useState("all");
 
@@ -232,7 +233,7 @@ function AccountingTab({ visible }: { visible: boolean }) {
               <CardContent className="px-4 sm:px-6">
                 <ResponsiveContainer width="100%" height={280}>
                   <BarChart data={data.series} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                    <CartesianGrid stroke={GRID_STROKE} strokeOpacity={0.6} vertical={false} />
+                    <CartesianGrid stroke={charts.grid} strokeOpacity={0.6} vertical={false} />
                     <XAxis
                       dataKey="label"
                       tick={AXIS_TICK}
@@ -250,7 +251,7 @@ function AccountingTab({ visible }: { visible: boolean }) {
                       }
                     />
                     <Tooltip
-                      cursor={{ fill: "rgba(255,255,255,0.04)" }}
+                      cursor={{ fill: charts.cursorFill, fillOpacity: 0.06 }}
                       content={
                         <AccountingTooltip
                           currency={currency}
@@ -260,7 +261,7 @@ function AccountingTab({ visible }: { visible: boolean }) {
                         />
                       }
                     />
-                    <Bar dataKey="revenue" name={t("reports.revenue")} fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                    <Bar dataKey="revenue" name={t("reports.revenue")} fill={charts.series[0]} radius={[4, 4, 0, 0]} maxBarSize={40} />
                   </BarChart>
                 </ResponsiveContainer>
               </CardContent>
@@ -322,6 +323,8 @@ function AccountingTab({ visible }: { visible: boolean }) {
 function ActivityTab({ visible }: { visible: boolean }) {
   const { t, tf, lang } = useI18n();
   const currency = useCurrency();
+  const charts = useChartPalette();
+  const AXIS_TICK = { fontSize: 11, fill: charts.axis };
   const [days, setDays] = useState(14);
 
   const { data, isLoading } = useQuery({
@@ -336,9 +339,13 @@ function ActivityTab({ visible }: { visible: boolean }) {
     [data],
   );
   const maxProfileRevenue = Math.max(...salesByProfile.map((s) => s.revenue), 1);
-  const maxStatusCount = data
-    ? Math.max(...VOUCHER_STATUS_ROWS.map((row) => data.voucherStatus[row.key]), 1)
-    : 1;
+  const maxStatus = useMemo(
+    () =>
+      data
+        ? Math.max(...voucherStatusRows(charts).map((row) => data.voucherStatus[row.key]), 1)
+        : 1,
+    [data, charts],
+  );
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -396,7 +403,7 @@ function ActivityTab({ visible }: { visible: boolean }) {
               <CardContent className="px-4 sm:px-6">
                 <ResponsiveContainer width="100%" height={260}>
                   <BarChart data={data.revenueByDay} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                    <CartesianGrid stroke={GRID_STROKE} strokeOpacity={0.6} vertical={false} />
+                    <CartesianGrid stroke={charts.grid} strokeOpacity={0.6} vertical={false} />
                     <XAxis
                       dataKey="day"
                       tick={AXIS_TICK}
@@ -414,10 +421,10 @@ function ActivityTab({ visible }: { visible: boolean }) {
                       }
                     />
                     <Tooltip
-                      cursor={{ fill: "rgba(255,255,255,0.04)" }}
+                      cursor={{ fill: charts.cursorFill, fillOpacity: 0.06 }}
                       content={<ChartTooltip formatter={(value) => formatCurrency(value, currency, lang)} />}
                     />
-                    <Bar dataKey="value" name={t("reports.revenue")} fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                    <Bar dataKey="value" name={t("reports.revenue")} fill={charts.series[0]} radius={[4, 4, 0, 0]} maxBarSize={40} />
                   </BarChart>
                 </ResponsiveContainer>
               </CardContent>
@@ -431,7 +438,7 @@ function ActivityTab({ visible }: { visible: boolean }) {
               <CardContent className="px-4 sm:px-6">
                 <ResponsiveContainer width="100%" height={260}>
                   <LineChart data={data.trafficByDay} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                    <CartesianGrid stroke={GRID_STROKE} strokeOpacity={0.6} vertical={false} />
+                    <CartesianGrid stroke={charts.grid} strokeOpacity={0.6} vertical={false} />
                     <XAxis
                       dataKey="day"
                       tick={AXIS_TICK}
@@ -459,7 +466,7 @@ function ActivityTab({ visible }: { visible: boolean }) {
                       dataKey="bytesIn"
                       name={t("reports.inbound")}
                       type="monotone"
-                      stroke="#10b981"
+                      stroke={charts.series[0]}
                       strokeWidth={2}
                       dot={false}
                       activeDot={{ r: 4 }}
@@ -468,7 +475,7 @@ function ActivityTab({ visible }: { visible: boolean }) {
                       dataKey="bytesOut"
                       name={t("reports.outbound")}
                       type="monotone"
-                      stroke="#14b8a6"
+                      stroke={charts.series[1]}
                       strokeWidth={2}
                       dot={false}
                       activeDot={{ r: 4 }}
@@ -522,7 +529,7 @@ function ActivityTab({ visible }: { visible: boolean }) {
               </CardHeader>
               <CardContent className="px-4 sm:px-6">
                 <div className="space-y-4">
-                  {VOUCHER_STATUS_ROWS.map((row) => {
+                  {voucherStatusRows(charts).map((row) => {
                     const count = data.voucherStatus[row.key];
                     return (
                       <div key={row.key}>
@@ -537,7 +544,7 @@ function ActivityTab({ visible }: { visible: boolean }) {
                           <div
                             className="h-full rounded-full"
                             style={{
-                              width: `${Math.max(2, (count / maxStatusCount) * 100)}%`,
+                              width: `${Math.max(2, (count / maxStatus) * 100)}%`,
                               background: row.color,
                             }}
                           />

@@ -38,11 +38,9 @@ import { StatusBadge } from "@/components/hotspot/status-badge";
 import { api } from "@/lib/hotspot/api";
 import { localeOf, useI18n } from "@/lib/hotspot/i18n";
 import { formatCurrency, timeAgo } from "@/lib/hotspot/format";
+import { useChartPalette } from "@/lib/hotspot/chart-theme";
 import type { Lang } from "@/lib/hotspot/i18n";
 import type { Activity as ActivityItem, AppSettings, DashboardData, SiteOverview } from "@/lib/hotspot/types";
-
-const GRID_STROKE = "#27272a";
-const AXIS_TICK = { fill: "#71717a", fontSize: 12 };
 
 interface TooltipItem {
   value?: number | string;
@@ -65,7 +63,7 @@ function ChartTooltip({
   return (
     <div className="rounded-lg border border-border bg-popover px-3 py-2 text-xs shadow-lg">
       <p className="text-muted-foreground">{label}</p>
-      <p className="mt-0.5 font-semibold text-white">
+      <p className="mt-0.5 font-semibold text-foreground">
         {formatter ? formatter(value) : String(value)}
       </p>
     </div>
@@ -137,6 +135,8 @@ function SiteCard({ site, currency, lang }: { site: SiteOverview; currency: stri
 
 export default function DashboardView() {
   const { t, tf, lang } = useI18n();
+  const charts = useChartPalette();
+  const AXIS_TICK = { fill: charts.axis, fontSize: 12 };
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["/api/dashboard"],
     queryFn: () => api<DashboardData>("/api/dashboard"),
@@ -253,7 +253,7 @@ export default function DashboardView() {
             <div className="h-64 w-full sm:h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={data.sessionsTimeline} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                  <CartesianGrid stroke={GRID_STROKE} strokeOpacity={0.6} vertical={false} />
+                  <CartesianGrid stroke={charts.grid} strokeOpacity={0.6} vertical={false} />
                   <XAxis
                     dataKey="t"
                     tick={AXIS_TICK}
@@ -264,7 +264,7 @@ export default function DashboardView() {
                   />
                   <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} width={32} allowDecimals={false} />
                   <Tooltip
-                    cursor={{ stroke: GRID_STROKE }}
+                    cursor={{ stroke: charts.grid }}
                     content={
                       <ChartTooltip formatter={(v) => tf("dashboard.sessionUnit", { n: nf(v), p: v > 1 ? "s" : "" })} />
                     }
@@ -272,9 +272,9 @@ export default function DashboardView() {
                   <Area
                     type="monotone"
                     dataKey="value"
-                    stroke="#10b981"
+                    stroke={charts.series[0]}
                     strokeWidth={2}
-                    fill="#10b98122"
+                    fill={charts.areaFill}
                     fillOpacity={1}
                   />
                 </AreaChart>
@@ -291,7 +291,7 @@ export default function DashboardView() {
             <div className="h-64 w-full sm:h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={data.revenueByDay} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                  <CartesianGrid stroke={GRID_STROKE} strokeOpacity={0.6} vertical={false} />
+                  <CartesianGrid stroke={charts.grid} strokeOpacity={0.6} vertical={false} />
                   <XAxis dataKey="day" tick={AXIS_TICK} axisLine={false} tickLine={false} minTickGap={16} />
                   <YAxis
                     tick={AXIS_TICK}
@@ -301,10 +301,10 @@ export default function DashboardView() {
                     tickFormatter={(v: number) => compact(v)}
                   />
                   <Tooltip
-                    cursor={{ fill: "#10b981", fillOpacity: 0.08 }}
+                    cursor={{ fill: charts.cursorFill, fillOpacity: 0.08 }}
                     content={<ChartTooltip formatter={(v) => formatCurrency(v, currency, lang)} />}
                   />
-                  <Bar dataKey="value" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={36} />
+                  <Bar dataKey="value" fill={charts.series[0]} radius={[4, 4, 0, 0]} maxBarSize={36} />
                 </BarChart>
               </ResponsiveContainer>
             </div>

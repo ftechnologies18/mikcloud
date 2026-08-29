@@ -48,6 +48,7 @@ import { roleLabel, userInitials } from "@/lib/hotspot/format";
 import { canView } from "@/lib/hotspot/roles";
 import { useHotspotStore } from "@/lib/hotspot/store";
 import type { HotspotSession, ViewId } from "@/lib/hotspot/types";
+import { ThemeToggle } from "./theme-toggle";
 import { UserProfileDialog } from "./parts/user-profile-dialog";
 
 import AccountsView from "./views/accounts-view";
@@ -160,7 +161,7 @@ function BrandHeader() {
         className="size-9 shrink-0 rounded-xl shadow-md shadow-primary/20"
       />
       <div className="flex min-w-0 items-center gap-2">
-        <span className="truncate text-base font-semibold tracking-tight">MikCloud</span>
+        <span className="text-aurora truncate text-base font-semibold tracking-tight">MikCloud</span>
         <Badge
           variant="outline"
           className="border-primary/25 bg-primary/10 px-1.5 py-0 text-[10px] font-semibold tracking-wide text-primary"
@@ -288,18 +289,12 @@ function NavList() {
                       onClick={() => setView(item.id)}
                       aria-current={active ? "page" : undefined}
                       className={cn(
-                        "relative flex min-h-11 w-full items-center gap-3 rounded-md px-2.5 py-2 text-sm font-medium transition-colors",
+                        "relative flex min-h-11 w-full items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium transition-all duration-200",
                         active
-                          ? "bg-primary/10 text-primary"
+                          ? "nav-active"
                           : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                       )}
                     >
-                      {active && (
-                        <span
-                          className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-full bg-primary"
-                          aria-hidden
-                        />
-                      )}
                       <span className="relative flex shrink-0 items-center">
                         <item.icon className="size-4.5" />
                         {item.id === "sessions" && sessionsCount > 0 && (
@@ -360,7 +355,7 @@ function Topbar() {
   const name = user?.name ?? t("profile.defaultUser");
 
   return (
-    <header className="sticky top-0 z-20 border-b bg-background/80 backdrop-blur">
+    <header className="sticky top-0 z-20 border-b border-border/60 bg-background/70 backdrop-blur-xl">
       <div className="flex h-14 items-center gap-2 px-4 sm:gap-3 sm:px-6">
         <Button
           variant="ghost"
@@ -372,8 +367,9 @@ function Topbar() {
           <Menu className="size-5" />
         </Button>
         <h2 className="truncate text-base font-semibold tracking-tight">{viewTitle(view, t)}</h2>
-        <div className="ml-auto flex items-center gap-1 sm:gap-3">
+        <div className="ml-auto flex items-center gap-1 sm:gap-2">
           <span className="hidden text-xs text-muted-foreground md:inline">{dateLabel}</span>
+          <ThemeToggle />
           <Button
             variant="ghost"
             size="icon"
@@ -438,8 +434,8 @@ export default function AppShell() {
 
   return (
     <div className="flex min-h-screen">
-      {/* Sidebar desktop */}
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col border-r bg-sidebar lg:flex">
+      {/* Sidebar desktop — colonne de marque Aurora */}
+      <aside className="sidebar-aurora fixed inset-y-0 left-0 z-30 hidden w-64 flex-col lg:flex">
         <BrandHeader />
         <NavList />
         <div className="px-3 pb-4">
@@ -449,7 +445,7 @@ export default function AppShell() {
 
       {/* Sidebar mobile (Sheet) */}
       <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
-        <SheetContent side="left" className="flex w-72 flex-col gap-0 bg-sidebar p-0">
+        <SheetContent side="left" className="sidebar-aurora flex w-72 flex-col gap-0 p-0">
           <SheetHeader className="border-b border-sidebar-border pb-0">
             <SheetTitle className="sr-only">MikCloud</SheetTitle>
             <BrandHeader />

@@ -43,41 +43,84 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
-/* ─── MikCloud : thème sombre zinc + émeraude (unique) ─── */
-:root,
-.dark {
+/* ─── MikCloud « Aurora Emerald » — identité duale Nuit / Jour ───
+   Nuit  : vert-forêt profond (hue ~168°) + émeraude lumineux, halos aurora.
+   Jour  : papier menthe chaud, encre émeraude profonde.
+   Signature : dégradés --grad-a → --grad-b (émeraude → teal) partout
+   (boutons primaires, pilule de nav active, tuiles d'icônes, wordmark). */
+:root {
+  color-scheme: light;
   --radius: 0.625rem;
-  --background: oklch(0.141 0.005 285.823);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.179 0.005 285.885);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.199 0.005 285.885);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.705 0.155 163.225);
-  --primary-foreground: oklch(0.151 0.02 165);
-  --secondary: oklch(0.244 0.006 285.885);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.234 0.005 285.885);
-  --muted-foreground: oklch(0.67 0.01 285.885);
-  --accent: oklch(0.262 0.02 163);
-  --accent-foreground: oklch(0.97 0.01 160);
+  --background: oklch(0.978 0.008 155);
+  --foreground: oklch(0.225 0.025 165);
+  --card: oklch(1 0.002 155);
+  --card-foreground: oklch(0.225 0.025 165);
+  --popover: oklch(1 0.002 155);
+  --popover-foreground: oklch(0.225 0.025 165);
+  --primary: oklch(0.55 0.15 163);
+  --primary-foreground: oklch(0.985 0.01 160);
+  --secondary: oklch(0.945 0.012 160);
+  --secondary-foreground: oklch(0.3 0.04 163);
+  --muted: oklch(0.94 0.012 160);
+  --muted-foreground: oklch(0.487 0.025 165);
+  --accent: oklch(0.92 0.035 163);
+  --accent-foreground: oklch(0.28 0.05 163);
+  --destructive: oklch(0.58 0.21 25);
+  --border: oklch(0.35 0.05 165 / 14%);
+  --input: oklch(0.35 0.05 165 / 20%);
+  --ring: oklch(0.55 0.15 163);
+  --chart-1: oklch(0.55 0.15 163);
+  --chart-2: oklch(0.55 0.12 195);
+  --chart-3: oklch(0.7 0.15 70);
+  --chart-4: oklch(0.6 0.2 15);
+  --chart-5: oklch(0.62 0.16 130);
+  --sidebar: oklch(0.993 0.005 155);
+  --sidebar-foreground: oklch(0.225 0.025 165);
+  --sidebar-primary: oklch(0.55 0.15 163);
+  --sidebar-primary-foreground: oklch(0.985 0.01 160);
+  --sidebar-accent: oklch(0.93 0.02 163);
+  --sidebar-accent-foreground: oklch(0.28 0.05 163);
+  --sidebar-border: oklch(0.35 0.05 165 / 12%);
+  --sidebar-ring: oklch(0.55 0.15 163);
+  --grad-a: oklch(0.58 0.16 160);
+  --grad-b: oklch(0.55 0.12 195);
+}
+
+.dark {
+  color-scheme: dark;
+  --background: oklch(0.132 0.012 170);
+  --foreground: oklch(0.975 0.005 160);
+  --card: oklch(0.172 0.014 168);
+  --card-foreground: oklch(0.975 0.005 160);
+  --popover: oklch(0.205 0.016 168);
+  --popover-foreground: oklch(0.975 0.005 160);
+  --primary: oklch(0.72 0.155 163);
+  --primary-foreground: oklch(0.13 0.03 165);
+  --secondary: oklch(0.235 0.015 168);
+  --secondary-foreground: oklch(0.975 0.005 160);
+  --muted: oklch(0.225 0.012 168);
+  --muted-foreground: oklch(0.685 0.015 168);
+  --accent: oklch(0.25 0.03 165);
+  --accent-foreground: oklch(0.96 0.01 162);
   --destructive: oklch(0.637 0.208 25.45);
-  --border: oklch(1 0 0 / 9%);
-  --input: oklch(1 0 0 / 14%);
-  --ring: oklch(0.705 0.155 163.225);
-  --chart-1: oklch(0.705 0.155 163.225);
+  --border: oklch(0.72 0.09 165 / 15%);
+  --input: oklch(0.72 0.08 165 / 19%);
+  --ring: oklch(0.72 0.155 163);
+  --chart-1: oklch(0.72 0.155 163);
   --chart-2: oklch(0.7 0.12 185);
   --chart-3: oklch(0.785 0.16 80);
   --chart-4: oklch(0.66 0.2 15);
   --chart-5: oklch(0.82 0.17 130);
-  --sidebar: oklch(0.161 0.005 285.823);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.705 0.155 163.225);
-  --sidebar-primary-foreground: oklch(0.151 0.02 165);
-  --sidebar-accent: oklch(0.234 0.01 285.885);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 8%);
-  --sidebar-ring: oklch(0.705 0.155 163.225);
+  --sidebar: oklch(0.152 0.016 170);
+  --sidebar-foreground: oklch(0.975 0.005 160);
+  --sidebar-primary: oklch(0.72 0.155 163);
+  --sidebar-primary-foreground: oklch(0.13 0.03 165);
+  --sidebar-accent: oklch(0.235 0.02 168);
+  --sidebar-accent-foreground: oklch(0.975 0.005 160);
+  --sidebar-border: oklch(0.72 0.09 165 / 13%);
+  --sidebar-ring: oklch(0.72 0.155 163);
+  --grad-a: oklch(0.72 0.16 158);
+  --grad-b: oklch(0.68 0.13 195);
 }
 
 @layer base {
@@ -86,16 +129,31 @@
   }
   body {
     @apply bg-background text-foreground;
+    /* Fond aurora fixe — halos émeraude/teal subtils, signature MikCloud */
+    background-image:
+      radial-gradient(ellipse 55% 40% at 12% -6%, oklch(0.55 0.15 163 / 0.07), transparent 60%),
+      radial-gradient(ellipse 45% 35% at 96% 14%, oklch(0.6 0.12 190 / 0.05), transparent 55%),
+      radial-gradient(ellipse 50% 40% at 50% 112%, oklch(0.55 0.15 163 / 0.05), transparent 60%);
+    background-attachment: fixed;
+  }
+  .dark body {
+    background-image:
+      radial-gradient(ellipse 55% 40% at 12% -6%, oklch(0.72 0.155 163 / 0.11), transparent 60%),
+      radial-gradient(ellipse 45% 35% at 96% 14%, oklch(0.7 0.12 190 / 0.07), transparent 55%),
+      radial-gradient(ellipse 50% 40% at 50% 112%, oklch(0.72 0.155 163 / 0.07), transparent 60%);
   }
   ::selection {
-    background: oklch(0.705 0.155 163.225 / 0.35);
+    background: oklch(0.72 0.155 163 / 0.35);
+  }
+  .dark ::selection {
+    background: oklch(0.72 0.155 163 / 0.4);
   }
 }
 
-/* Scrollbar fine et discrète */
+/* Scrollbar fine teintée émeraude */
 * {
   scrollbar-width: thin;
-  scrollbar-color: oklch(0.35 0.01 285.885) transparent;
+  scrollbar-color: color-mix(in oklab, var(--primary) 38%, transparent) transparent;
 }
 *::-webkit-scrollbar {
   width: 6px;
@@ -105,11 +163,11 @@
   background: transparent;
 }
 *::-webkit-scrollbar-thumb {
-  background: oklch(0.35 0.01 285.885);
+  background: color-mix(in oklab, var(--primary) 38%, transparent);
   border-radius: 999px;
 }
 *::-webkit-scrollbar-thumb:hover {
-  background: oklch(0.45 0.01 285.885);
+  background: color-mix(in oklab, var(--primary) 58%, transparent);
 }
 
 /* Point "live" pulsant (sessions temps réel) */
@@ -124,8 +182,69 @@
 /* Halo émeraude discret pour les écrans d'accueil */
 .bg-glow {
   background:
-    radial-gradient(ellipse 60% 45% at 50% -10%, oklch(0.705 0.155 163.225 / 0.14), transparent),
+    radial-gradient(ellipse 60% 45% at 50% -10%, oklch(0.55 0.15 163 / 0.1), transparent),
+    radial-gradient(ellipse 40% 30% at 85% 110%, oklch(0.6 0.12 185 / 0.06), transparent);
+}
+.dark .bg-glow {
+  background:
+    radial-gradient(ellipse 60% 45% at 50% -10%, oklch(0.705 0.155 163 / 0.14), transparent),
     radial-gradient(ellipse 40% 30% at 85% 110%, oklch(0.705 0.12 185 / 0.08), transparent);
+}
+
+/* ─── Signature « Aurora » : dégradé émeraude → teal ─── */
+.bg-aurora {
+  background-image: linear-gradient(135deg, var(--grad-a), var(--grad-b));
+}
+.text-aurora {
+  background-image: linear-gradient(135deg, var(--grad-a), var(--grad-b));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Pilule de navigation active (sidebar) */
+.nav-active {
+  background-image: linear-gradient(135deg, var(--grad-a), var(--grad-b));
+  color: oklch(0.99 0.01 160);
+  box-shadow: 0 8px 22px -8px color-mix(in oklab, var(--grad-a) 55%, transparent);
+}
+.nav-active svg {
+  color: oklch(0.99 0.01 160);
+}
+
+/* Tuile d'icône dégradée (StatCard, en-têtes de cartes) */
+.tile-aurora {
+  background-image: linear-gradient(135deg, var(--grad-a), var(--grad-b));
+  color: oklch(0.99 0.01 160);
+  box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.25), 0 6px 16px -8px color-mix(in oklab, var(--grad-a) 60%, transparent);
+}
+
+/* Colonne de marque : dégradé vertical + liseré lumineux signature */
+.sidebar-aurora {
+  position: relative;
+  background:
+    radial-gradient(ellipse 90% 28% at 8% 0%, oklch(0.55 0.15 163 / 0.06), transparent 60%),
+    linear-gradient(180deg, oklch(0.995 0.004 156), oklch(0.976 0.008 158));
+}
+.dark .sidebar-aurora {
+  background:
+    radial-gradient(ellipse 90% 30% at 8% 0%, oklch(0.72 0.155 163 / 0.1), transparent 62%),
+    linear-gradient(180deg, oklch(0.168 0.02 170), oklch(0.128 0.013 170));
+}
+.sidebar-aurora::after {
+  content: "";
+  position: absolute;
+  inset-y: 0;
+  right: 0;
+  width: 1px;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    color-mix(in oklab, var(--primary) 45%, transparent) 30%,
+    color-mix(in oklab, var(--grad-b) 45%, transparent) 70%,
+    transparent
+  );
+  pointer-events: none;
 }
 
 /* ─── Écran de connexion : split-screen + glassmorphism ─── */
@@ -133,9 +252,9 @@
 /* Panneau branding : dégradé zinc profond → émeraude + halos */
 .login-brand {
   background:
-    radial-gradient(ellipse 85% 60% at 15% 8%, oklch(0.705 0.155 163.225 / 0.18), transparent 62%),
+    radial-gradient(ellipse 85% 60% at 15% 8%, oklch(0.705 0.155 163 / 0.18), transparent 62%),
     radial-gradient(ellipse 65% 55% at 95% 92%, oklch(0.72 0.12 185 / 0.12), transparent 60%),
-    linear-gradient(165deg, oklch(0.205 0.012 285), oklch(0.148 0.006 285) 55%, oklch(0.165 0.035 168));
+    linear-gradient(165deg, oklch(0.205 0.02 172), oklch(0.146 0.014 170) 55%, oklch(0.165 0.045 166));
 }
 
 /* Grille technique en surimpression (masquée sur les bords) */
@@ -148,23 +267,34 @@
   mask-image: radial-gradient(ellipse 90% 85% at 45% 40%, black 25%, transparent 80%);
 }
 
-/* Carte de verre : flou arrière + liseré lumineux + ombre profonde */
+/* Carte de verre : flou arrière + liseré lumineux + ombre profonde (duale) */
 .glass-card {
+  border: 1px solid oklch(0.35 0.06 165 / 14%);
+  background: oklch(1 0 0 / 0.62);
+  -webkit-backdrop-filter: blur(22px) saturate(1.4);
+  backdrop-filter: blur(22px) saturate(1.4);
+  box-shadow:
+    0 28px 70px -30px oklch(0.45 0.1 163 / 0.35),
+    inset 0 1px 0 oklch(1 0 0 / 0.6);
+}
+.dark .glass-card {
   border: 1px solid oklch(1 0 0 / 0.09);
-  background: oklch(0.185 0.006 285.885 / 0.55);
-  -webkit-backdrop-filter: blur(22px) saturate(1.45);
-  backdrop-filter: blur(22px) saturate(1.45);
+  background: oklch(0.185 0.014 168 / 0.55);
   box-shadow:
     0 28px 70px -28px oklch(0 0 0 / 0.75),
     inset 0 1px 0 oklch(1 0 0 / 0.08);
 }
 
-/* Puce de verre : badges, onglets, blocs démo */
+/* Puce de verre : badges, onglets, blocs démo (duale) */
 .glass-chip {
-  border: 1px solid oklch(1 0 0 / 0.1);
-  background: oklch(1 0 0 / 0.055);
+  border: 1px solid oklch(0.35 0.06 165 / 15%);
+  background: oklch(1 0 0 / 0.5);
   -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
+}
+.dark .glass-chip {
+  border: 1px solid oklch(1 0 0 / 0.1);
+  background: oklch(1 0 0 / 0.055);
 }
 
 /* ─── Impression des vouchers ─── */

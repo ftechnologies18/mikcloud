@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { ThemeProvider } from "next-themes";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 import { PWARegister } from "@/components/pwa-register";
@@ -25,7 +26,10 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#101012",
+  themeColor: [
+    { media: "(prefers-color-scheme: dark)", color: "#101815" },
+    { media: "(prefers-color-scheme: light)", color: "#f6faf7" },
+  ],
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
@@ -37,13 +41,16 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="fr" className="dark" suppressHydrationWarning>
+    // Nuit par défaut (identité MikCloud), bascule Jour via next-themes.
+    <html lang="fr" suppressHydrationWarning>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
-        {children}
-        <Toaster richColors position="top-right" closeButton />
-        <PWARegister />
+        <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} disableTransitionOnChange>
+          {children}
+          <Toaster richColors position="top-right" closeButton />
+          <PWARegister />
+        </ThemeProvider>
       </body>
     </html>
   );

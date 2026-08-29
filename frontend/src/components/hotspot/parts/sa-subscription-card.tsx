@@ -7,15 +7,19 @@
 //   • Illimité — 12 000 F/an, routeurs illimités (prix fondateur : 1 000 F/mois
 //     équivalent, 2 mois offerts vs Essentiel, −92 % à 10 routeurs).
 // Le paiement passe par le lien marchand Wave CI composé par montant.
+// Bilingue FR/EN (F11) : les libellés du catalogue côté serveur (nom, tagline,
+// badge, période) sont traduits par id de formule, avec repli sur la valeur
+// serveur pour toute formule inconnue.
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Crown, Infinity as InfinityIcon, ExternalLink, Router as RouterIcon, Sparkles } from "lucide-react";
+import { Check, Crown, Infinity as InfinityIcon, Router as RouterIcon, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
 import { api } from "@/lib/hotspot/api";
 import type { SaasPlan, SubscribeResponse, SubscriptionView } from "@/lib/hotspot/types";
 import { formatCurrency, formatDate } from "@/lib/hotspot/format";
+import { useI18n } from "@/lib/hotspot/i18n";
 import { SETTINGS_QUERY_KEY } from "@/components/hotspot/parts/sd-currency";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -45,19 +49,9 @@ export function useSubscription() {
 // Comparatif annuel : formule mensuelle (1 250 F × routeurs × 12) vs Illimité.
 const COMPARISON_ROUTERS = [1, 2, 5, 10];
 
-const ESSENTIEL_FEATURES = [
-  "Toutes les fonctionnalités MikCloud",
-  "Notifications Telegram / WhatsApp / Email",
-  "Quotas data (Go) sur les vouchers",
-  "Impression A4 + QR par lot, revendeurs",
-];
-
-const ILLIMITE_FEATURES = [
-  "Tous vos routeurs, actuels et futurs",
-  "Toutes les fonctionnalités MikCloud",
-  "Revendeurs & comptabilité illimités",
-  "Prix fondateur — bloqué à vie",
-];
+// Caractéristiques des formules — clés i18n (traduites FR/EN).
+const ESSENTIEL_FEATURE_KEYS = ["sub.feat.ess1", "sub.feat.ess2", "sub.feat.ess3", "sub.feat.ess4"] as const;
+const ILLIMITE_FEATURE_KEYS = ["sub.feat.ill1", "sub.feat.ill2", "sub.feat.ill3", "sub.feat.ill4"] as const;
 
 // Montant d'une période pour une formule (miroir de planAmount côté Go).
 function planAmount(plan: SaasPlan, routerCount: number): number {
@@ -65,24 +59,33 @@ function planAmount(plan: SaasPlan, routerCount: number): number {
 }
 
 export function SubscriptionCard() {
+  const { t, tf, lang } = useI18n();
   const { data: view, isLoading, isError, error, refetch } = useSubscription();
   const queryClient = useQueryClient();
   const [confirmPlan, setConfirmPlan] = useState<SaasPlan | null>(null);
+
+  // Libellés du catalogue : traduits par id de formule, repli valeur serveur.
+  const nameOf = (plan?: SaasPlan): string => (plan ? t(`sub.plan.${plan.id}.name`, plan.name) : "");
+  const periodOf = (plan: SaasPlan): string => t(`sub.period.${plan.period}`, plan.period);
 
   const subscribeMutation = useMutation({
     mutationFn: (planId: string) =>
       api<SubscribeResponse>("/api/subscription", { method: "POST", body: { planId } }),
     onSuccess: (res) => {
       toast.success(
-        `Formule activée — ${formatCurrency(res.amountFcfa)} / ${res.periodLabel} · ${res.routerCount} routeur(s)`,
-        { description: res.waveLink ? "Le lien de paiement Wave s'est ouvert dans un nouvel onglet." : undefined },
+        tf("sub.toast.activated", {
+          amount: formatCurrency(res.amountFcfa, "FCFA", lang),
+          period: res.periodLabel === "1 an" ? t("sub.periodLabel.an") : t("sub.periodLabel.mois"),
+          n: res.routerCount,
+        }),
+        { description: res.waveLink ? t("sub.toast.waveOpened") : undefined },
       );
       queryClient.invalidateQueries({ queryKey: SUBSCRIPTION_QUERY_KEY });
       queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
       setConfirmPlan(null);
       if (res.waveLink) window.open(res.waveLink, "_blank", "noopener,noreferrer");
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (err: Error) => toast.error(err.message),
   });
 
   if (isError) {
@@ -91,15 +94,14 @@ export function SubscriptionCard() {
     return (
       <Card className="gap-4 py-4 sm:py-6 lg:col-span-2">
         <CardHeader className="px-4 sm:px-6">
-          <CardTitle className="text-base">Abonnement</CardTitle>
+          <CardTitle className="text-base">{t("sub.title")}</CardTitle>
           <CardDescription role="alert">
-            Impossible de charger l&apos;abonnement ({error?.message ?? "erreur réseau"}). Le service est peut-être en
-            cours de mise à jour — réessayez dans un instant.
+            {tf("sub.errorDesc", { msg: error?.message ?? t("sub.errorNetwork") })}
           </CardDescription>
         </CardHeader>
         <CardContent className="px-4 sm:px-6">
           <Button variant="outline" size="sm" onClick={() => refetch()}>
-            Réessayer
+            {t("common.retry")}
           </Button>
         </CardContent>
       </Card>
@@ -127,16 +129,16 @@ export function SubscriptionCard() {
     status === "active" ? (
       <Badge className="gap-1 border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" variant="outline">
         <Check className="size-3" />
-        Actif
+        {t("sub.status.active")}
       </Badge>
     ) : status === "expired" ? (
       <Badge className="gap-1 border-destructive/30 bg-destructive/10 text-destructive" variant="outline">
-        Expiré
+        {t("sub.status.expired")}
       </Badge>
     ) : (
       <Badge className="gap-1 border-primary/25 bg-primary/15 text-primary" variant="outline">
         <Sparkles className="size-3" />
-        Bêta
+        {t("sub.status.beta")}
       </Badge>
     );
 
@@ -144,21 +146,23 @@ export function SubscriptionCard() {
     <Card className="gap-4 py-4 sm:py-6 lg:col-span-2">
       <CardHeader className="px-4 sm:px-6">
         <CardTitle className="flex items-center justify-between gap-2 text-base">
-          Abonnement
+          {t("sub.title")}
           {statusBadge}
         </CardTitle>
         <CardDescription>
           {status === "active" && currentPlan ? (
             <>
-              Formule <strong>{currentPlan.name}</strong> — {formatCurrency(view.currentAmountFcfa)} /{" "}
-              {currentPlan.period} ·{" "}
-              {currentPlan.unlimited ? "routeurs illimités" : `${view.routerCount} routeur(s) enregistré(s)`}
-              {view.subscription.periodEnd ? <> · renouvellement le {formatDate(view.subscription.periodEnd)}</> : null}
+              {t("sub.planWord")} <strong>{nameOf(currentPlan)}</strong> —{" "}
+              {formatCurrency(view.currentAmountFcfa, "FCFA", lang)} / {periodOf(currentPlan)} ·{" "}
+              {currentPlan.unlimited ? t("sub.unlimitedRouters") : tf("sub.routersRegistered", { n: view.routerCount })}
+              {view.subscription.periodEnd ? (
+                <> · {tf("sub.renewalOn", { date: formatDate(view.subscription.periodEnd, lang) })}</>
+              ) : null}
             </>
           ) : status === "expired" ? (
-            <>Votre période est échue — choisissez une formule pour réactiver votre espace.</>
+            <>{t("sub.descExpired")}</>
           ) : (
-            <>Période bêta — choisissez la formule qui accompagne votre croissance.</>
+            <>{t("sub.descBeta")}</>
           )}
         </CardDescription>
       </CardHeader>
@@ -170,7 +174,7 @@ export function SubscriptionCard() {
             plan={view.plans.find((p) => p.id === "essentiel")}
             routerCount={view.routerCount}
             isCurrent={view.subscription.planId === "essentiel" && status === "active"}
-            features={ESSENTIEL_FEATURES}
+            featureKeys={ESSENTIEL_FEATURE_KEYS}
             featured={false}
             onSelect={setConfirmPlan}
           />
@@ -179,7 +183,7 @@ export function SubscriptionCard() {
             plan={view.plans.find((p) => p.id === "illimite")}
             routerCount={view.routerCount}
             isCurrent={view.subscription.planId === "illimite" && status === "active"}
-            features={ILLIMITE_FEATURES}
+            featureKeys={ILLIMITE_FEATURE_KEYS}
             featured
             onSelect={setConfirmPlan}
           />
@@ -188,15 +192,13 @@ export function SubscriptionCard() {
         {/* Comparatif — l'argument qui fait basculer vers l'annuel */}
         <div className="overflow-hidden rounded-lg border">
           <table className="w-full text-sm">
-            <caption className="sr-only">
-              Comparaison du coût annuel entre la formule mensuelle par routeur et la formule annuelle illimitée
-            </caption>
+            <caption className="sr-only">{t("sub.cmp.caption")}</caption>
             <thead>
               <tr className="border-b bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
-                <th scope="col" className="px-3 py-2 font-medium">Routeurs</th>
-                <th scope="col" className="px-3 py-2 font-medium">Essentiel / an</th>
-                <th scope="col" className="px-3 py-2 font-medium">Illimité / an</th>
-                <th scope="col" className="px-3 py-2 font-medium">Vous économisez</th>
+                <th scope="col" className="px-3 py-2 font-medium">{t("sub.cmp.routers")}</th>
+                <th scope="col" className="px-3 py-2 font-medium">{t("sub.cmp.essYear")}</th>
+                <th scope="col" className="px-3 py-2 font-medium">{t("sub.cmp.illYear")}</th>
+                <th scope="col" className="px-3 py-2 font-medium">{t("sub.cmp.save")}</th>
               </tr>
             </thead>
             <tbody>
@@ -206,8 +208,8 @@ export function SubscriptionCard() {
                 return (
                   <tr key={routers} className="border-b last:border-b-0">
                     <td className="px-3 py-2 font-medium">{routers}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{formatCurrency(monthlyAnnual)}</td>
-                    <td className="px-3 py-2">{formatCurrency(12000)}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{formatCurrency(monthlyAnnual, "FCFA", lang)}</td>
+                    <td className="px-3 py-2">{formatCurrency(12000, "FCFA", lang)}</td>
                     <td className="px-3 py-2 font-semibold text-emerald-600 dark:text-emerald-400">−{save} %</td>
                   </tr>
                 );
@@ -216,10 +218,8 @@ export function SubscriptionCard() {
           </table>
         </div>
         <p className="text-xs text-muted-foreground">
-          Essentiel = 1 250 F × routeurs enregistrés × 12 mois. Le renouvellement recalcule automatiquement le montant
-          selon vos routeurs du moment.
-          {!view.waveConfigured &&
-            " Configurez votre lien marchand Wave (carte Organisation) pour régler en un clic."}
+          {t("sub.footnoteCalc")}
+          {!view.waveConfigured ? ` ${t("sub.footnoteWave")}` : ""}
         </p>
       </CardContent>
 
@@ -229,26 +229,31 @@ export function SubscriptionCard() {
           <AlertDialogHeader>
             <AlertDialogTitle>
               {confirmPlan?.id === view.subscription.planId && status === "active"
-                ? "Renouveler la formule"
-                : "Souscrire à la formule"}{" "}
-              {confirmPlan?.name} ?
+                ? t("sub.dialog.renewTitle")
+                : t("sub.dialog.subscribeTitle")}{" "}
+              {nameOf(confirmPlan ?? undefined)} ?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Montant : <strong>{confirmPlan ? formatCurrency(planAmount(confirmPlan, view.routerCount)) : "—"}</strong>{" "}
-              / {confirmPlan?.period}
-              {confirmPlan?.perRouter ? ` (${view.routerCount} routeur(s) enregistré(s))` : " — routeurs illimités"}. La
-              période démarre immédiatement et le paiement se règle via votre lien marchand Wave.
+              {t("sub.dialog.amount")}{" "}
+              <strong>{confirmPlan ? formatCurrency(planAmount(confirmPlan, view.routerCount), "FCFA", lang) : "—"}</strong> /{" "}
+              {confirmPlan ? periodOf(confirmPlan) : "—"}
+              {confirmPlan?.perRouter
+                ? ` ${tf("sub.dialog.scopeRouters", { n: view.routerCount })}`
+                : confirmPlan
+                  ? ` ${t("sub.dialog.scopeUnlimited")}`
+                  : ""}
+              . {t("sub.dialog.note")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Annuler</AlertDialogCancel>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               onClick={(event) => {
                 event.preventDefault();
                 if (confirmPlan) subscribeMutation.mutate(confirmPlan.id);
               }}
             >
-              {subscribeMutation.isPending ? "Activation…" : "Confirmer"}
+              {subscribeMutation.isPending ? t("sub.dialog.pending") : t("sub.dialog.confirm")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -262,26 +267,31 @@ function PlanCard({
   plan,
   routerCount,
   isCurrent,
-  features,
+  featureKeys,
   featured,
   onSelect,
 }: {
   plan?: SaasPlan;
   routerCount: number;
   isCurrent: boolean;
-  features: string[];
+  featureKeys: readonly string[];
   featured: boolean;
   onSelect: (plan: SaasPlan) => void;
 }) {
+  const { t, tf, lang } = useI18n();
   if (!plan) return null;
   const amount = planAmount(plan, routerCount);
+  const name = t(`sub.plan.${plan.id}.name`, plan.name);
+  const tagline = t(`sub.plan.${plan.id}.tagline`, plan.tagline);
+  const badge = plan.badge ? t(`sub.plan.${plan.id}.badge`, plan.badge) : "";
+  const period = t(`sub.period.${plan.period}`, plan.period);
   return (
     <div
       className={`relative flex flex-col rounded-xl border p-4 ${
         featured ? "border-primary/40 bg-primary/5 shadow-sm" : "bg-card"
       }`}
     >
-      {plan.badge ? (
+      {badge ? (
         <Badge
           className={`absolute -top-2.5 left-4 gap-1 ${
             featured ? "bg-primary text-primary-foreground" : "border-muted-foreground/25 bg-muted text-foreground"
@@ -289,42 +299,40 @@ function PlanCard({
           variant={featured ? "default" : "outline"}
         >
           {featured ? <Sparkles className="size-3" /> : null}
-          {plan.badge}
+          {badge}
         </Badge>
       ) : null}
 
       <p className="flex items-center gap-2 font-semibold">
         {featured ? <InfinityIcon className="size-4 text-primary" /> : <RouterIcon className="size-4 text-primary" />}
-        {plan.name}
+        {name}
       </p>
       <p className="mt-2 text-2xl font-bold tracking-tight">
-        {formatCurrency(plan.priceFcfa)}
+        {formatCurrency(plan.priceFcfa, "FCFA", lang)}
         <span className="ml-1 text-sm font-normal text-muted-foreground">
-          / {plan.period}
-          {plan.perRouter ? " / routeur" : ""}
+          / {period}
+          {plan.perRouter ? t("sub.card.perRouterSuffix") : ""}
         </span>
       </p>
-      <p className="mt-0.5 text-xs text-muted-foreground">{plan.tagline}</p>
+      <p className="mt-0.5 text-xs text-muted-foreground">{tagline}</p>
 
       {plan.perRouter ? (
         <p className="mt-2 rounded-md bg-muted/60 px-2.5 py-1.5 text-xs">
-          Votre parc actuel :{" "}
-          <strong>
-            {formatCurrency(amount)} / {plan.period}
-          </strong>{" "}
-          ({routerCount} routeur(s))
+          {tf("sub.card.fleet", {
+            amount: formatCurrency(amount, "FCFA", lang),
+            period,
+            n: routerCount,
+          })}
         </p>
       ) : (
-        <p className="mt-2 rounded-md bg-muted/60 px-2.5 py-1.5 text-xs">
-          Soit <strong>1 000 F / mois</strong> — quel que soit votre nombre de routeurs.
-        </p>
+        <p className="mt-2 rounded-md bg-muted/60 px-2.5 py-1.5 text-xs">{t("sub.card.flat")}</p>
       )}
 
       <ul className="mt-3 flex-1 space-y-2">
-        {features.map((feature) => (
-          <li key={feature} className="flex items-start gap-2 text-xs">
+        {featureKeys.map((key) => (
+          <li key={key} className="flex items-start gap-2 text-xs">
             <Check className="mt-0.5 size-3.5 shrink-0 text-primary" />
-            {feature}
+            {t(key)}
           </li>
         ))}
       </ul>
@@ -336,7 +344,7 @@ function PlanCard({
         onClick={() => onSelect(plan)}
       >
         {featured ? <Crown className="size-4" /> : null}
-        {isCurrent ? "Renouveler" : "Souscrire"}
+        {isCurrent ? t("sub.card.renew") : t("sub.card.subscribe")}
       </Button>
     </div>
   );

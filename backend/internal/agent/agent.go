@@ -262,6 +262,118 @@ func InstallScript(baseURL, token, routerName string) string {
 // NopScript — réponse quand il n'y a rien à faire (l'import ne fait rien).
 func NopScript() string { return "# mikcloud nop\n" }
 
+// ImportChunkSize — nombre d'utilisateurs hotspot lus par commande
+// import_hotspot. L'import est paginé : si le routeur a plus d'utilisateurs,
+// le résultat du chunk en file le suivant (voir applyImportHotspot). La taille
+// garde le corps POST (http-data) loin de la limite RouterOS (~64 Ko).
+const ImportChunkSize = 300
+
+// ImportProfilesMax — nombre de profils hotspot lus par commande (les profils
+// sont peu nombreux en pratique ; 60 couvre très largement).
+const ImportProfilesMax = 60
+
+// buildImportHotspot — lecture paginée des données EXISTANTES du routeur pour
+// les importer dans le cloud (profils + utilisateurs hotspot).
+//
+// Format du rapport (POST /agent/result, form-encodé) :
+//
+//	profiles=name|rate-limit|shared-users|session-timeout;…
+//	users=name|profile|disabled|comment|limit-bytes-total;…
+//	total=<nb total d'utilisateurs sur le routeur>
+//
+// Garde-fous : les champs name/profile contenant un séparateur du protocole
+// (| ; & = %) font sauter l'entrée ; le commentaire est tronqué à 60 caractères
+// et neutralisé s'il contient un séparateur. La pagination (start/count inlinés
+// par Go) découpe les utilisateurs par lots d'ImportChunkSize.
+func (b Builder) buildImportHotspot(cmd model.Command) string {
+	start := int(plInt64(cmd.Payload, "start"))
+	count := int(plInt64(cmd.Payload, "count"))
+	if count <= 0 {
+		count = ImportChunkSize
+	}
+	var sb strings.Builder
+	sb.WriteString(header(cmd))
+	sb.WriteString(`:local mikProf ""
+:do {
+  :local pn 0
+  :foreach p in=[/ip hotspot user profile find] do={
+    :if ($pn < ` + fmt.Sprintf("%d", ImportProfilesMax) + `) do={
+      :local nm [:tostr [/ip hotspot user profile get $p name]]
+      :local rl ""
+      :do {
+        :set rl [:tostr [/ip hotspot user profile get $p rate-limit]]
+      } on-error={}
+      :local sh "1"
+      :do {
+        :set sh [:tostr [/ip hotspot user profile get $p shared-users]]
+      } on-error={}
+      :local st ""
+      :do {
+        :set st [:tostr [/ip hotspot user profile get $p session-timeout]]
+      } on-error={}
+      :if ([:len $nm] > 0) do={
+        :set mikProf ($mikProf . $nm . "|" . $rl . "|" . $sh . "|" . $st . ";")
+      }
+      :set pn ($pn + 1)
+    }
+  }
+} on-error={}
+:local mikIds [/ip hotspot user find]
+:local mikTotal [:len $mikIds]
+:local mikUsr ""
+:local mikOut 0
+:local n 0
+:foreach u in=$mikIds do={
+  :if ($n >= ` + fmt.Sprintf("%d", start) + ` && $n < (` + fmt.Sprintf("%d", start) + ` + ` + fmt.Sprintf("%d", count) + `)) do={
+    :local nm [:tostr [/ip hotspot user get $u name]]
+    :local pf ""
+    :do {
+      :set pf [:tostr [/ip hotspot user get $u profile]]
+    } on-error={}
+    :local ds "false"
+    :do {
+      :set ds [:tostr [/ip hotspot user get $u disabled]]
+    } on-error={}
+    :local cm ""
+    :do {
+      :set cm [:tostr [/ip hotspot user get $u comment]]
+    } on-error={}
+    :local lb "0"
+    :do {
+      :set lb [:tostr [/ip hotspot user get $u limit-bytes-total]]
+    } on-error={}
+    :local bad false
+    :if ([:typeof [:find $nm "|"]] != "nil") do={ :set bad true }
+    :if ([:typeof [:find $nm ";"]] != "nil") do={ :set bad true }
+    :if ([:typeof [:find $nm "&"]] != "nil") do={ :set bad true }
+    :if ([:typeof [:find $nm "="]] != "nil") do={ :set bad true }
+    :if ([:typeof [:find $nm "%"]] != "nil") do={ :set bad true }
+    :if ([:typeof [:find $pf "|"]] != "nil") do={ :set bad true }
+    :if ([:typeof [:find $pf ";"]] != "nil") do={ :set bad true }
+    :if ([:typeof [:find $pf "&"]] != "nil") do={ :set bad true }
+    :if ([:typeof [:find $pf "="]] != "nil") do={ :set bad true }
+    :if ([:typeof [:find $pf "%"]] != "nil") do={ :set bad true }
+    :if ([:len $cm] > 60) do={ :set cm [:pick $cm 0 60] }
+    :if ([:typeof [:find $cm "|"]] != "nil") do={ :set cm "-" }
+    :if ([:typeof [:find $cm ";"]] != "nil") do={ :set cm "-" }
+    :if ([:typeof [:find $cm "&"]] != "nil") do={ :set cm "-" }
+    :if ([:typeof [:find $cm "="]] != "nil") do={ :set cm "-" }
+    :if ([:typeof [:find $cm "%"]] != "nil") do={ :set cm "-" }
+    :if ([:typeof [:find $cm "+"]] != "nil") do={ :set cm "-" }
+    :if (!$bad && [:len $nm] > 0) do={
+      :set mikUsr ($mikUsr . $nm . "|" . $pf . "|" . $ds . "|" . $cm . "|" . $lb . ";")
+      :set mikOut ($mikOut + 1)
+    }
+  }
+  :set n ($n + 1)
+}
+`)
+	sb.WriteString(`/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
+		`" http-method=post http-data=("cmd=` + cmd.ID +
+		`&status=ok&total=". $mikTotal ."&out=". $mikOut ."&profiles=". $mikProf ."&users=". $mikUsr) check-certificate=no output=none` + "\n")
+	return sb.String()
+}
+
 // Builder construit les scripts de commandes pour un routeur donné.
 type Builder struct {
 	BaseURL string
@@ -314,6 +426,8 @@ func (b Builder) ScriptFor(cmd model.Command) (string, error) {
 		return b.buildPower(cmd, "reboot"), nil
 	case model.CmdShutdown:
 		return b.buildPower(cmd, "shutdown"), nil
+	case model.CmdImportHotspot:
+		return b.buildImportHotspot(cmd), nil
 	default:
 		return "", fmt.Errorf("kind de commande inconnu : %s", cmd.Kind)
 	}

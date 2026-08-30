@@ -9,6 +9,7 @@ import {
   Clock,
   Copy,
   Cpu,
+  Download,
   Loader2,
   MoreHorizontal,
   Pencil,
@@ -397,6 +398,26 @@ export default function RoutersView() {
     },
   });
 
+  // Import des données EXISTANTES du routeur (profils + utilisateurs hotspot)
+  // vers le cloud — utile après la première connexion d'un routeur qui
+  // gérait déjà son hotspot via Mikhmon ou à la main. Le résultat est appliqué
+  // côté serveur au check-in suivant (≤ 45 s), paginé par lots de 300.
+  const importMutation = useMutation({
+    mutationFn: (router: RouterDevice) =>
+      api<{ queued?: boolean; message?: string }>(`/api/routers/${router.id}/import`, { method: "POST" }),
+    onSuccess: (res, router) => {
+      toast.success(tf("routers.importToast", { name: router.name }), {
+        description: res.message ?? t("routers.importToastDesc"),
+      });
+      invalidateRouters();
+      void queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      void queryClient.invalidateQueries({ queryKey: ["/api/profiles"] });
+    },
+    onError: (err: Error) => {
+      toast.error(err.message);
+    },
+  });
+
   const formValid =
     form.name.trim().length > 0 &&
     (form.mode === "agent" || form.host.trim().length > 0) &&
@@ -487,16 +508,31 @@ export default function RoutersView() {
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-52">
                             {router.mode === "agent" ? (
-                              <DropdownMenuItem
-                                className="min-h-10"
-                                onClick={() => {
-                                  setReinstall(router);
-                                  setReinstallScript(null);
-                                }}
-                              >
-                                <Terminal className="size-4" />
-                                {t("routers.installScript")}
-                              </DropdownMenuItem>
+                              <>
+                                <DropdownMenuItem
+                                  className="min-h-10"
+                                  onClick={() => {
+                                    setReinstall(router);
+                                    setReinstallScript(null);
+                                  }}
+                                >
+                                  <Terminal className="size-4" />
+                                  {t("routers.installScript")}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  className="min-h-10"
+                                  disabled={importMutation.isPending || router.status !== "online"}
+                                  title={router.status !== "online" ? t("routers.importOffline") : undefined}
+                                  onClick={() => importMutation.mutate(router)}
+                                >
+                                  {importMutation.isPending ? (
+                                    <Loader2 className="size-4 animate-spin" />
+                                  ) : (
+                                    <Download className="size-4" />
+                                  )}
+                                  {t("routers.import")}
+                                </DropdownMenuItem>
+                              </>
                             ) : (
                               <>
                                 <DropdownMenuItem

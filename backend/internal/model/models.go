@@ -517,6 +517,7 @@ const (
 	CmdSchedulerRemove = "scheduler_remove" // F10 : /system scheduler remove
 	CmdReboot          = "reboot"           // F10 : /system reboot
 	CmdShutdown        = "shutdown"         // F10 : /system shutdown
+	CmdImportHotspot   = "import_hotspot"   // import initial : lecture paginée des profils + utilisateurs existants sur le routeur
 )
 
 // ---------------------------------------------------------------------------

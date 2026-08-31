@@ -140,7 +140,7 @@ const fr: LandingCopy = {
     langLabel: "EN",
   },
   hero: {
-    badge: "Prix Fondateur · 100 places seulement",
+    badge: "Essai gratuit 90 jours · sans carte bancaire",
     title1: "Boostez vos revenus",
     titleAccent: "hotspot",
     title2: "depuis un seul cloud",
@@ -354,9 +354,9 @@ const fr: LandingCopy = {
         price: "12 000 FCFA",
         period: "/ an · routeurs illimités",
         tagline: "Pour les multi-sites et ISPs.",
-        cta: "Réserver ma place Fondateur",
+        cta: "Choisir cette formule",
         highlight: true,
-        badge: "Prix Fondateur · bloqué à vie",
+        badge: "Routeurs illimités · 2 mois offerts",
         features: [
           "Routeurs illimités",
           "Revendeurs illimités",
@@ -364,7 +364,7 @@ const fr: LandingCopy = {
           "Alertes Telegram, WhatsApp, email",
           "Rapports comptables multi-sites",
           "Support prioritaire WhatsApp",
-          "Tarif bloqué à vie (Prix Fondateur)",
+          "Tarif annuel — équivalent 1 000 F/mois",
         ],
       },
     ],
@@ -424,7 +424,7 @@ const fr: LandingCopy = {
       },
       {
         q: "Puis-je essayer avant de payer ?",
-        a: "Oui. Créez votre compte gratuitement : votre essai de 90 jours démarre immédiatement, avec 1 routeur inclus et un mode Simulé pour démontrer toute la plateforme sans matériel. Pour connecter un vrai routeur MikroTik et juger par vous-même, souscrivez au forfait Essentiel (1 250 F/mois, sans engagement) — annulable à tout moment. Le forfait Illimité Prix Fondateur est réservé aux 100 premiers.",
+        a: "Oui. Créez votre compte gratuitement : votre essai de 90 jours démarre immédiatement, avec 1 routeur inclus et un mode Simulé pour démontrer toute la plateforme sans matériel. Pour connecter un vrai routeur MikroTik et juger par vous-même, souscrivez au forfait Essentiel (1 250 F/mois, sans engagement) — annulable à tout moment.",
       },
       {
         q: "Mes données sont-elles en sécurité ? Où sont-elles stockées ?",
@@ -437,7 +437,7 @@ const fr: LandingCopy = {
     subtitle:
       "Votre routeur MikroTik en ligne en 45 secondes. Sans IP publique. Sans engagement. Sans installer quoi que ce soit sur votre réseau.",
     primary: "Se connecter à la console",
-    secondary: "Réserver ma place Fondateur",
+    secondary: "Choisir le forfait Illimité",
   },
   footer: {
     tagline:
@@ -492,7 +492,7 @@ const en: LandingCopy = {
     langLabel: "FR",
   },
   hero: {
-    badge: "Founder Price · 100 spots only",
+    badge: "90-day free trial · no credit card",
     title1: "Boost your",
     titleAccent: "hotspot",
     title2: "revenue from one cloud",
@@ -706,9 +706,9 @@ const en: LandingCopy = {
         price: "12,000 FCFA",
         period: "/ year · unlimited routers",
         tagline: "For multi-site and ISPs.",
-        cta: "Claim my Founder spot",
+        cta: "Choose this plan",
         highlight: true,
-        badge: "Founder Price · locked for life",
+        badge: "Unlimited routers · 2 months free",
         features: [
           "Unlimited routers",
           "Unlimited resellers",
@@ -716,7 +716,7 @@ const en: LandingCopy = {
           "Telegram, WhatsApp, email alerts",
           "Multi-site accounting reports",
           "Priority WhatsApp support",
-          "Price locked for life (Founder)",
+          "Annual price — equivalent to 1,000 F/month",
         ],
       },
     ],
@@ -775,7 +775,7 @@ const en: LandingCopy = {
       },
       {
         q: "Can I try before I pay?",
-        a: "Yes. Create your account for free: your 90-day trial starts immediately, with 1 router included and a Simulated mode to demo the whole platform without hardware. To connect a real MikroTik router and judge for yourself, subscribe to the Essential plan (1,250 F/month, no commitment) — cancel anytime. The Founder Unlimited plan is reserved for the first 100.",
+        a: "Yes. Create your account for free: your 90-day trial starts immediately, with 1 router included and a Simulated mode to demo the whole platform without hardware. To connect a real MikroTik router and judge for yourself, subscribe to the Essential plan (1,250 F/month, no commitment) — cancel anytime.",
       },
       {
         q: "Are my data safe? Where are they stored?",
@@ -788,7 +788,7 @@ const en: LandingCopy = {
     subtitle:
       "Your MikroTik router online in 45 seconds. No public IP. No commitment. Nothing to install on your network.",
     primary: "Sign in to console",
-    secondary: "Claim my Founder spot",
+    secondary: "Choose the Unlimited plan",
   },
   footer: {
     tagline:

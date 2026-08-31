@@ -11,6 +11,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -566,12 +567,33 @@ func (a *API) handleAdminAccountDelete(w http.ResponseWriter, r *http.Request) {
 	db.UserLogs = dropByString(db.UserLogs, id, func(l model.UserLog) string { return l.AccountID })
 	db.NotifLog = dropByString(db.NotifLog, id, func(l model.NotificationLog) string { return l.AccountID })
 	db.BillingRequests = dropByString(db.BillingRequests, id, func(b model.BillingRequest) string { return b.AccountID })
+	// Prélèvements automatiques carte (Stripe via GeniusPay) — les fiches
+	// locales sont purgées ; les abonnements encore vivants chez GeniusPay
+	// sont résiliés à distance après libération du verrou (best-effort).
+	gpToCancel := []string{}
+	for i := range db.GeniusPaySubs {
+		g := db.GeniusPaySubs[i]
+		if g.AccountID == id && stripeSubInProgress(g.Status) && !strings.EqualFold(g.Status, "cancelled") {
+			gpToCancel = append(gpToCancel, g.UUID)
+		}
+	}
+	db.GeniusPaySubs = dropByString(db.GeniusPaySubs, id, func(g model.GeniusPaySub) string { return g.AccountID })
 	delete(db.SettingsByAccount, id)
 	delete(db.NotifSettings, id)
 
 	a.logActivityBy(r, db, "", "system", "Compte client supprimé par la plateforme : "+name+" (données effacées)")
 	a.store.Save()
 	a.store.Unlock()
+
+	// Résiliation distante des prélèvements automatiques encore actifs
+	// (hors verrou, best-effort — un échec est journalisé côté serveur).
+	for _, gid := range gpToCancel {
+		go func(gid string) {
+			if _, err := geniusPaySubCancel(gid, true, "Compte MikCloud supprimé"); err != nil {
+				log.Printf("[geniuspay] résiliation de l'abonnement %s après suppression de compte : %v", gid, err)
+			}
+		}(gid)
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

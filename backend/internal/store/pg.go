@@ -710,28 +710,41 @@ func (p *PG) Sync(db *model.DB) error {
 // du compte principal…). last_tick (valeur globale du moteur de simulation)
 // est répliquée sur chaque ligne.
 func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
-	// Orphelins : toute ligne dont le compte n'existe plus dans l'état
-	// mémoire est supprimée (les lignes sont chargées avec un account_id
-	// renseigné — garanti par le backfill du schéma).
+	accExists := map[string]bool{}
+	for i := range db.Accounts {
+		accExists[db.Accounts[i].ID] = true
+	}
+	// Élagage mémoire : les réglages d'un compte disparu (rechargés au boot
+	// par loadSettings depuis des lignes orphelines) sont retirés de l'état —
+	// l'upsert ci-dessous ne doit PAS les réécrire.
+	for accID := range db.SettingsByAccount {
+		if !accExists[accID] {
+			delete(db.SettingsByAccount, accID)
+		}
+	}
+	// Orphelins : toute ligne dont le compte n'existe PLUS dans l'état
+	// mémoire (table accounts) est supprimée — une ligne settings suit le
+	// cycle de vie de son compte (suppression de compte client, retrait du
+	// compte principal…).
 	rows, err := tx.Query(`SELECT DISTINCT account_id FROM settings WHERE account_id <> ''`)
 	if err != nil {
 		return fmt.Errorf("pg sync settings (lecture orphelins) : %w", err)
 	}
-	present := map[string]bool{}
+	present := []string{}
 	for rows.Next() {
 		var acc string
 		if err := rows.Scan(&acc); err != nil {
 			rows.Close()
 			return fmt.Errorf("pg sync settings (scan orphelins) : %w", err)
 		}
-		present[acc] = true
+		present = append(present, acc)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("pg sync settings (orphelins) : %w", err)
 	}
-	for acc := range present {
-		if _, ok := db.SettingsByAccount[acc]; !ok {
+	for _, acc := range present {
+		if !accExists[acc] {
 			if _, err := tx.Exec(`DELETE FROM settings WHERE account_id = $1`, acc); err != nil {
 				return fmt.Errorf("pg sync settings (suppression orphelin %s) : %w", acc, err)
 			}

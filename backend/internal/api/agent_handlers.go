@@ -637,6 +637,13 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 		if len(e) > 2 {
 			s.UptimeSec = parseRosUptime(e[2])
 		}
+		// P — bytes-in/bytes-out rapportés par le script read_state v3.
+		if len(e) > 3 {
+			s.BytesIn = parseInt64(e[3])
+		}
+		if len(e) > 4 {
+			s.BytesOut = parseInt64(e[4])
+		}
 		if id, ok := userIDs[strings.ToLower(e[0])]; ok {
 			s.UserID = id
 			for i := range db.HotspotUsers {
@@ -646,7 +653,16 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 				}
 			}
 		}
-		s.StartedAt = model.NowISO()
+		// P (fix session flip) — si l'utilisateur était DÉJÀ actif (même username + même routeur),
+		// on PRÉSERVE l'ID et le StartedAt de la session existante au lieu d'en créer une nouvelle.
+		// Le read_state met à jour l'uptime et les bytes, mais ne reset PAS l'identité de la session.
+		// C'est ce qui empêche le clignotement « connexion → déconnexion » à chaque poll.
+		if prev, ok := prevByUser[s.Username]; ok {
+			s.ID = prev.ID
+			s.StartedAt = prev.StartedAt
+		} else {
+			s.StartedAt = model.NowISO()
+		}
 		live = append(live, s)
 	}
 
@@ -1184,4 +1200,19 @@ func plPayloadInt(payload map[string]any, key string) int64 {
 	default:
 		return 0
 	}
+}
+
+// parseInt64 — parse tolérant d'un entier 64 bits (bytes-in/bytes-out des sessions).
+func parseInt64(s string) int64 {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "-" {
+		return 0
+	}
+	var n int64
+	for _, c := range s {
+		if c >= '0' && c <= '9' {
+			n = n*10 + int64(c-'0')
+		}
+	}
+	return n
 }

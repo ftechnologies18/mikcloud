@@ -583,7 +583,7 @@ func (b Builder) buildReadState(cmd model.Command) string {
 :local rsn 0
 :foreach a in=[/ip hotspot active find] do={
   :if ($rsn < 100) do={
-    :set rsess ($rsess . [:tostr [/ip hotspot active get $a user]] . "|" . [:tostr [/ip hotspot active get $a address]] . "|" . [:tostr [/ip hotspot active get $a uptime]] . ";")
+    :set rsess ($rsess . [:tostr [/ip hotspot active get $a user]] . "|" . [:tostr [/ip hotspot active get $a address]] . "|" . [:tostr [/ip hotspot active get $a uptime]] . "|" . [:tostr [/ip hotspot active get $a bytes-in]] . "|" . [:tostr [/ip hotspot active get $a bytes-out]] . ";")
     :set rsn ($rsn + 1)
   }
 }

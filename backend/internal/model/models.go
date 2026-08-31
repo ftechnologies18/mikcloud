@@ -500,6 +500,33 @@ type NotificationLog struct {
 	At        string `json:"at"`
 }
 
+// BillingRequest — demande de souscription / renouvellement d'abonnement
+// créée par un compte client (verrou du cycle de facturation, POST
+// /api/subscription). Complète le journal (type billing) par une FILE
+// actionnable dans la console plateforme : chaque demande porte un statut,
+// une référence de paiement (appariement webhook Wave) et sa résolution.
+type BillingRequest struct {
+	ID          string `json:"id"`
+	AccountID   string `json:"accountId"`
+	PlanID      string `json:"planId"`      // essentiel | illimite
+	PlanName    string `json:"planName"`    // libellé figé à la demande
+	AmountFcfa  int    `json:"amountFcfa"`  // montant attendu (plan × routeurs)
+	PeriodLabel string `json:"periodLabel"` // « 1 mois » | « 1 an »
+	RouterCount int    `json:"routerCount"` // assiette au moment de la demande
+	// Ref — référence de paiement publique (MC-XXXXXXXX), renvoyée au client
+	// et attendue dans le webhook Wave pour l'appariement automatique.
+	Ref        string `json:"ref"`
+	Status     string `json:"status"` // pending | done | cancelled
+	CreatedAt  string `json:"createdAt"`
+	ResolvedAt string `json:"resolvedAt,omitempty"`
+	// ResolvedBy — nom de l'admin plateforme ou « webhook Wave ».
+	ResolvedBy string `json:"resolvedBy,omitempty"`
+	Note       string `json:"note,omitempty"`
+	// PaidVia — manual (fiche/file plateforme) | wave (webhook) ; vide sur
+	// les demandes annulées.
+	PaidVia string `json:"paidVia,omitempty"`
+}
+
 // Kinds de commandes agent (routeur -> cloud en HTTP-poll).
 const (
 	CmdReadState    = "read_state"    // télémétrie + users + sessions actives
@@ -668,9 +695,12 @@ type DB struct {
 	// Tier 1 — notifications multi-canaux.
 	NotifSettings map[string]NotificationSettings `json:"notifSettings"` // accountId → réglages
 	NotifLog      []NotificationLog               `json:"notifLog"`
-	Tenant        Tenant                          `json:"tenant"`   // legacy mono-tenant
-	Settings      Settings                        `json:"settings"` // legacy mono-tenant
-	LastTick      time.Time                       `json:"lastTick"`
+	// Facturation (verrou du cycle) — file des demandes de souscription /
+	// renouvellement, actionnable depuis la console plateforme.
+	BillingRequests []BillingRequest `json:"billingRequests"`
+	Tenant          Tenant           `json:"tenant"`   // legacy mono-tenant
+	Settings        Settings         `json:"settings"` // legacy mono-tenant
+	LastTick        time.Time        `json:"lastTick"`
 }
 
 // EffectiveStatus retourne le statut réel d'un utilisateur : un voucher encore

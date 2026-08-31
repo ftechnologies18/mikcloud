@@ -341,15 +341,7 @@ func (a *API) handleAdminAccountSubscription(w http.ResponseWriter, r *http.Requ
 		writeErrCode(w, http.StatusBadRequest, "bad_plan", "Formule inconnue (essentiel | illimite | essai)", nil)
 		return
 	}
-	var plan model.SaasPlan
-	if planID == "essentiel" || planID == "illimite" {
-		p, ok := model.PlanByID(planID)
-		if !ok {
-			writeErrCode(w, http.StatusInternalServerError, "catalogue", "Catalogue des formules indisponible", nil)
-			return
-		}
-		plan = p
-	}
+	// La formule et le montant sont calculés par applySubscriptionLocked.
 	months := req.Months
 	if planID == "illimite" && months <= 0 {
 		months = 12
@@ -381,11 +373,53 @@ func (a *API) handleAdminAccountSubscription(w http.ResponseWriter, r *http.Requ
 		writeErrCode(w, http.StatusNotFound, "not_found", "Compte introuvable", nil)
 		return
 	}
-	settings := ensureSettings(db, id)
 	routerCount := accountRouterCount(db, id)
+	sub, label, planName, amount := applySubscriptionLocked(db, id, planID, months, req.RouterSlots, req.MarkPaid)
+
+	// Journal (transverse + visible du compte).
+	msg := ""
+	switch planID {
+	case "essai":
+		msg = fmt.Sprintf("Essai prolongé par la plateforme — %d mois, 1 routeur couvert", months)
+	default:
+		paid := ""
+		if req.MarkPaid {
+			paid = ", payé"
+		}
+		msg = fmt.Sprintf("Abonnement %s attribué par la plateforme — %d mois, %d routeur(s) couvert(s), %d FCFA%s",
+			planName, months, sub.RouterSlots, amount, paid)
+	}
+	if note := strings.TrimSpace(req.Note); note != "" {
+		msg += " — " + note
+	}
+	a.logActivityBy(r, db, id, "billing", msg)
+	a.store.Save()
+	a.store.Unlock()
+
+	status := subscriptionStatus(sub, time.Now().UTC())
+	writeJSON(w, http.StatusOK, map[string]any{
+		"subscription": map[string]any{
+			"planId": sub.PlanID, "planName": label, "status": status,
+			"periodStart": sub.PeriodStart, "periodEnd": sub.PeriodEnd,
+			"lastAmountFcfa": sub.LastAmountFcfa, "routerSlots": sub.RouterSlots,
+			"lastPaidAt": sub.LastPaidAt, "routerCount": routerCount, "amountFcfa": amount,
+		},
+	})
+}
+
+// applySubscriptionLocked — active / renouvelle la période d'abonnement d'un
+// compte client (verrou POSÉ par l'appelant). Règles partagées par la fiche
+// client (PUT /api/admin/accounts/{id}/subscription), la file des demandes de
+// renouvellement et le webhook Wave : source unique du calcul de période
+// (empilement sur la période active), des quotas Essentiel et du montant.
+// Retourne l'abonnement, le libellé d'affichage (compat contrat historique),
+// le nom court de la formule et le montant appliqué.
+func applySubscriptionLocked(db *model.DB, accID, planID string, months, reqSlots int, markPaid bool) (model.Subscription, string, string, int) {
+	settings := ensureSettings(db, accID)
 	sub := settings.Subscription
 	now := time.Now().UTC()
 
+	var plan model.SaasPlan
 	var amount int
 	var slots int
 	switch planID {
@@ -397,12 +431,13 @@ func (a *API) handleAdminAccountSubscription(w http.ResponseWriter, r *http.Requ
 		slots = 0
 		amount = 1000 * months
 	case "essentiel":
-		slots = req.RouterSlots
+		plan, _ = model.PlanByID(planID)
+		slots = reqSlots
 		if slots <= 0 {
 			slots = sub.RouterSlots // renouvellement : le quota actuel est conservé
 		}
 		if slots <= 0 {
-			slots = routerCount
+			slots = accountRouterCount(db, accID)
 		}
 		if slots < 1 {
 			slots = 1
@@ -435,7 +470,7 @@ func (a *API) handleAdminAccountSubscription(w http.ResponseWriter, r *http.Requ
 		sub.RouterSlots = 0
 		sub.LastAmountFcfa = 0
 	}
-	if req.MarkPaid {
+	if markPaid {
 		sub.LastPaidAt = now.Format(time.RFC3339)
 	} else {
 		sub.LastPaidAt = ""
@@ -454,37 +489,8 @@ func (a *API) handleAdminAccountSubscription(w http.ResponseWriter, r *http.Requ
 		maxRouters = "Illimité"
 	}
 	settings.Plan = model.Plan{Name: label, MaxRouters: maxRouters, MaxUsers: "Illimité"}
-	db.SettingsByAccount[id] = settings
-
-	// Journal (transverse + visible du compte).
-	msg := ""
-	switch planID {
-	case "essai":
-		msg = fmt.Sprintf("Essai prolongé par la plateforme — %d mois, 1 routeur couvert", months)
-	default:
-		paid := ""
-		if req.MarkPaid {
-			paid = ", payé"
-		}
-		msg = fmt.Sprintf("Abonnement %s attribué par la plateforme — %d mois, %d routeur(s) couvert(s), %d FCFA%s",
-			plan.Name, months, slots, amount, paid)
-	}
-	if note := strings.TrimSpace(req.Note); note != "" {
-		msg += " — " + note
-	}
-	a.logActivityBy(r, db, id, "billing", msg)
-	a.store.Save()
-	a.store.Unlock()
-
-	status := subscriptionStatus(sub, time.Now().UTC())
-	writeJSON(w, http.StatusOK, map[string]any{
-		"subscription": map[string]any{
-			"planId": sub.PlanID, "planName": label, "status": status,
-			"periodStart": sub.PeriodStart, "periodEnd": sub.PeriodEnd,
-			"lastAmountFcfa": sub.LastAmountFcfa, "routerSlots": sub.RouterSlots,
-			"lastPaidAt": sub.LastPaidAt, "routerCount": routerCount, "amountFcfa": amount,
-		},
-	})
+	db.SettingsByAccount[accID] = settings
+	return sub, label, plan.Name, amount
 }
 
 // ---------------------------------------------------------------------------
@@ -557,6 +563,7 @@ func (a *API) handleAdminAccountDelete(w http.ResponseWriter, r *http.Request) {
 	db.Templates = dropByString(db.Templates, id, func(t model.VoucherTemplate) string { return t.AccountID })
 	db.UserLogs = dropByString(db.UserLogs, id, func(l model.UserLog) string { return l.AccountID })
 	db.NotifLog = dropByString(db.NotifLog, id, func(l model.NotificationLog) string { return l.AccountID })
+	db.BillingRequests = dropByString(db.BillingRequests, id, func(b model.BillingRequest) string { return b.AccountID })
 	delete(db.SettingsByAccount, id)
 	delete(db.NotifSettings, id)
 

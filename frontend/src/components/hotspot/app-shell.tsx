@@ -33,7 +33,7 @@ import {
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { PaywallOverlay } from "@/components/hotspot/parts/paywall-overlay";
 import { cn } from "@/lib/utils";
-import { api, fetchAccounts, impersonateAccount } from "@/lib/hotspot/api";
+import { api, fetchAccounts, fetchBillingRequests, impersonateAccount } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { NAV_PLATFORM_SECTIONS, NAV_SECTIONS } from "@/lib/hotspot/nav";
 import { roleLabel, userInitials } from "@/lib/hotspot/format";
@@ -46,6 +46,7 @@ import { ActivityBell, LiveClock, SearchPalette } from "./parts/topbar-widgets";
 
 import { ACCOUNTS_QUERY_KEY } from "./views/accounts-view";
 import AccountsView from "./views/accounts-view";
+import BillingRequestsView from "./views/billing-requests-view";
 import DashboardView from "./views/dashboard-view";
 import LogsView from "./views/logs-view";
 import NotificationsView from "./views/notifications-view";
@@ -80,6 +81,7 @@ function viewTitle(view: ViewId, t: (key: string) => string): string {
     platform: "nav.platform",
     platformLogs: "platformLogs.title",
     platformTeam: "platformTeam.title",
+    billingRequests: "billingRequests.title",
     accounts: "nav.accounts",
     notifications: "nav.notifications",
     settings: "nav.settings",
@@ -102,6 +104,7 @@ const VIEWS: Record<ViewId, React.ComponentType> = {
   platform: PlatformOverviewView,
   platformLogs: PlatformLogsView,
   platformTeam: PlatformTeamView,
+  billingRequests: BillingRequestsView,
   accounts: AccountsView,
   notifications: NotificationsView,
   settings: SettingsView,
@@ -394,6 +397,15 @@ function NavList() {
     enabled: !(isAdmin && shellMode === "platform"),
   });
   const sessionsCount = sessions?.length ?? 0;
+  // File de facturation : compteur de demandes EN ATTENTE (console plateforme).
+  const isPlatformMode = isAdmin && shellMode === "platform";
+  const { data: billing } = useQuery({
+    queryKey: ["/api/admin/billing-requests"],
+    queryFn: fetchBillingRequests,
+    refetchInterval: 30_000,
+    enabled: isPlatformMode,
+  });
+  const billingPending = billing?.pending ?? 0;
   return (
     <nav className="flex-1 space-y-5 overflow-y-auto px-3 pb-4" aria-label={t("nav.main")}>
       <ModeSwitch />
@@ -430,8 +442,19 @@ function NavList() {
                         {item.id === "sessions" && sessionsCount > 0 && (
                           <span className="live-dot absolute -right-1 -top-1 block size-2 rounded-full bg-primary" aria-hidden />
                         )}
+                        {item.id === "billingRequests" && billingPending > 0 && (
+                          <span className="live-dot absolute -right-1 -top-1 block size-2 rounded-full bg-primary" aria-hidden />
+                        )}
                       </span>
                       <span className="flex-1 truncate text-left">{t(item.labelKey)}</span>
+                      {item.id === "billingRequests" && billingPending > 0 && (
+                        <Badge
+                          variant="outline"
+                          className="sidebar-count border-primary/30 bg-primary/10 px-1.5 py-0 text-[10px] font-semibold tabular-nums text-primary"
+                        >
+                          {billingPending}
+                        </Badge>
+                      )}
                       {item.id === "sessions" && sessionsCount > 0 && (
                         <Badge
                           variant="outline"

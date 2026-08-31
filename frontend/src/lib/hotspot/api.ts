@@ -14,6 +14,8 @@ import type {
   AccountSummary,
   AuthResponse,
   AuthUser,
+  BillingRequest,
+  BillingRequestsResponse,
   PlatformActivityRow,
   PlatformOverview,
   PlatformTeamMember,
@@ -227,4 +229,19 @@ export async function impersonateAccount(
   return api<{ token: string; user: AuthUser }>(`/api/admin/accounts/${id}/impersonate`, {
     method: "POST",
   });
+}
+
+/** fetchBillingRequests — file des demandes de souscription / renouvellement
+ * (console plateforme) : en attente d'abord, puis historique résolu. */
+export async function fetchBillingRequests(): Promise<BillingRequestsResponse> {
+  return api<BillingRequestsResponse>("/api/admin/billing-requests");
+}
+
+/** resolveBillingRequest — traite une demande en attente : « activate »
+ * (encaisse, défaut, et active la période) ou « cancel » (rejet). */
+export async function resolveBillingRequest(
+  id: string,
+  payload: { action: "activate" | "cancel"; markPaid?: boolean; note?: string },
+): Promise<{ request: BillingRequest }> {
+  return api(`/api/admin/billing-requests/${id}/resolve`, { method: "POST", body: payload });
 }

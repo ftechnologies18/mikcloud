@@ -205,6 +205,38 @@ export interface PlatformActivityRow {
   actorName?: string;
 }
 
+/** Demande de souscription / renouvellement d'abonnement (verrou du cycle de
+ * facturation) — créée par POST /api/subscription côté client. */
+export interface BillingRequest {
+  id: string;
+  accountId: string;
+  planId: string;
+  planName: string;
+  amountFcfa: number;
+  periodLabel: string;
+  routerCount: number;
+  /** Référence de paiement publique (MC-XXXXXXXX) — appariement webhook Wave. */
+  ref: string;
+  status: "pending" | "done" | "cancelled";
+  createdAt: string;
+  resolvedAt?: string;
+  resolvedBy?: string;
+  note?: string;
+  /** manual (plateforme) | wave (webhook) — présent sur les demandes traitées. */
+  paidVia?: string;
+}
+
+/** Demande enrichie du nom/statut du compte client (liste plateforme). */
+export interface BillingRequestRow extends BillingRequest {
+  accountName: string;
+  accountStatus: string;
+}
+
+export interface BillingRequestsResponse {
+  requests: BillingRequestRow[];
+  pending: number;
+}
+
 /** Membre de l'équipe plateforme (super-admins MikCloud). */
 export interface PlatformTeamMember {
   id: string;
@@ -865,6 +897,7 @@ export type ViewId =
   | "platform"
   | "platformLogs"
   | "platformTeam"
+  | "billingRequests"
   | "accounts"
   | "notifications"
   | "settings"

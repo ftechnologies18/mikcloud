@@ -159,6 +159,12 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/admin/team", a.requireRole(3, a.handlePlatformTeamCreate))
 	mux.HandleFunc("DELETE /api/admin/team/{id}", a.requireRole(3, a.handlePlatformTeamDelete))
 
+	// Facturation (verrou du cycle) — file des demandes de renouvellement +
+	// webhook d'encaissement Wave (public, authentifié par secret partagé).
+	mux.HandleFunc("GET /api/admin/billing-requests", a.requireRole(3, a.handleAdminBillingRequests))
+	mux.HandleFunc("POST /api/admin/billing-requests/{id}/resolve", a.requireRole(3, a.handleAdminBillingRequestResolve))
+	mux.HandleFunc("POST /api/webhooks/wave", a.handleWaveWebhook)
+
 	// P0 (audit Mikhmon) — voir docs/CONTRACT-V2.md
 	// Modèles de vouchers (F2)
 	mux.HandleFunc("GET /api/templates", a.handleTemplatesList)
@@ -268,7 +274,7 @@ func (a *API) requireRole(min int, next http.HandlerFunc) http.HandlerFunc {
 func (a *API) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
-		if path == "/api/auth/login" || path == "/api/auth/register" || path == "/api/reseller/login" || !strings.HasPrefix(path, "/api/") {
+		if path == "/api/auth/login" || path == "/api/auth/register" || path == "/api/reseller/login" || path == "/api/webhooks/wave" || !strings.HasPrefix(path, "/api/") {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -3914,7 +3920,7 @@ func (a *API) handleSubscriptionPost(w http.ResponseWriter, r *http.Request) {
 		periodLabel = "1 an"
 	}
 	// Anti-spam : une demande identique de moins de 10 minutes n'encombre pas
-	// le journal (la réponse — montant + lien de paiement — reste identique).
+	// le journal (la réponse — montant + référence — reste identique).
 	prefix := fmt.Sprintf("Demande d'abonnement %s", plan.Name)
 	recent := false
 	for _, act := range db.Activity {
@@ -3925,10 +3931,53 @@ func (a *API) handleSubscriptionPost(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
+	// File de facturation (console plateforme) : une SEULE demande en attente
+	// par compte. Une demande identique en attente est réutilisée (même
+	// référence) ; une demande d'une autre formule est remplacée (l'ancienne
+	// passe « cancelled »). Le journal conserve son anti-spam propre.
+	ref := ""
+	changed := false
+	for i := range db.BillingRequests {
+		if db.BillingRequests[i].AccountID == acc && db.BillingRequests[i].Status == "pending" {
+			if db.BillingRequests[i].PlanID == plan.ID && db.BillingRequests[i].AmountFcfa == amount {
+				ref = db.BillingRequests[i].Ref // réutilisation, aucune écriture
+			} else {
+				db.BillingRequests[i].Status = "cancelled"
+				db.BillingRequests[i].ResolvedAt = model.NowISO()
+				db.BillingRequests[i].ResolvedBy = "client"
+				db.BillingRequests[i].Note = "Remplacée par une nouvelle demande du client"
+				changed = true
+			}
+			break
+		}
+	}
+	if ref == "" {
+		ref = newPayRef(db)
+		db.BillingRequests = append([]model.BillingRequest{{
+			ID: model.NewID("breq-"), AccountID: acc, PlanID: plan.ID, PlanName: plan.Name,
+			AmountFcfa: amount, PeriodLabel: periodLabel, RouterCount: routerCount,
+			Ref: ref, Status: "pending", CreatedAt: model.NowISO(),
+		}}, db.BillingRequests...)
+		changed = true
+		// Historique borné : au-delà de 500 demandes, les plus anciennes déjà
+		// traitées sont élaguées (les EN ATTENTE ne sont jamais retirées).
+		if len(db.BillingRequests) > 500 {
+			kept := make([]model.BillingRequest, 0, len(db.BillingRequests))
+			for i, br := range db.BillingRequests {
+				if i < 500 || br.Status == "pending" {
+					kept = append(kept, br)
+				}
+			}
+			db.BillingRequests = kept
+		}
+	}
 	if !recent {
 		a.logActivityBy(r, db, acc, "billing",
-			fmt.Sprintf("%s — %d FCFA / %s · %d routeur(s) enregistré(s) — en attente d'encaissement",
-				prefix, amount, periodLabel, routerCount))
+			fmt.Sprintf("%s — %d FCFA / %s · %d routeur(s) enregistré(s) — en attente d'encaissement (réf. %s)",
+				prefix, amount, periodLabel, routerCount, ref))
+		changed = true
+	}
+	if changed {
 		a.store.Save()
 	}
 	a.store.Unlock()
@@ -3938,12 +3987,14 @@ func (a *API) handleSubscriptionPost(w http.ResponseWriter, r *http.Request) {
 		waveLink = strings.TrimRight(base, "/") + "/amount/" + strconv.Itoa(amount) + "/"
 	}
 	// subscription RENVOYÉE INCHANGÉE : l'activation est une décision de la
-	// plateforme (après encaissement), jamais du client.
+	// plateforme (après encaissement), jamais du client. La référence sert au
+	// suivi de paiement (file plateforme + webhook Wave).
 	writeJSON(w, http.StatusOK, map[string]any{
 		"subscription": settings.Subscription,
 		"amountFcfa":   amount,
 		"routerCount":  routerCount,
 		"periodLabel":  periodLabel,
+		"ref":          ref,
 		"waveLink":     waveLink,
 		"pending":      true,
 	})

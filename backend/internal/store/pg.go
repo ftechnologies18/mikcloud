@@ -369,6 +369,27 @@ func (p *PG) ensureSchema() error {
                 )`,
 		`CREATE INDEX IF NOT EXISTS idx_notif_log_account ON notif_log (account_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_notif_log_at      ON notif_log (at)`,
+		// Facturation (verrou du cycle) — demandes de souscription /
+		// renouvellement (file actionnable de la console plateforme).
+		`CREATE TABLE IF NOT EXISTS billing_requests (
+                        id           TEXT PRIMARY KEY,
+                        account_id   TEXT NOT NULL DEFAULT '',
+                        plan_id      TEXT NOT NULL DEFAULT '',
+                        plan_name    TEXT NOT NULL DEFAULT '',
+                        amount_fcfa  INTEGER NOT NULL DEFAULT 0,
+                        period_label TEXT NOT NULL DEFAULT '',
+                        router_count INTEGER NOT NULL DEFAULT 0,
+                        ref          TEXT NOT NULL DEFAULT '',
+                        status       TEXT NOT NULL DEFAULT 'pending',
+                        created_at   TEXT NOT NULL,
+                        resolved_at  TEXT NOT NULL DEFAULT '',
+                        resolved_by  TEXT NOT NULL DEFAULT '',
+                        note         TEXT NOT NULL DEFAULT '',
+                        paid_via     TEXT NOT NULL DEFAULT ''
+                )`,
+		`CREATE INDEX IF NOT EXISTS idx_billing_requests_account ON billing_requests (account_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_billing_requests_status  ON billing_requests (status)`,
+		`CREATE INDEX IF NOT EXISTS idx_billing_requests_ref     ON billing_requests (ref)`,
 		// N°7 — rôles équipe + audit : acteur des actions du journal, et
 		// renommage du rôle historique « admin » → « platform_admin » (les
 		// tokens existants portant « admin » restent acceptés côté API).
@@ -504,6 +525,7 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 		Traffic:           []model.RouterTraffic{},
 		NotifSettings:     map[string]model.NotificationSettings{},
 		NotifLog:          []model.NotificationLog{},
+		BillingRequests:   []model.BillingRequest{},
 	}
 
 	steps := []struct {
@@ -529,6 +551,7 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 		{"traffic", func() error { return loadInto(p, &db.Traffic, trafficSpec) }},
 		{"notif_settings", func() error { return p.loadNotifSettings(db) }},
 		{"notif_log", func() error { return loadInto(p, &db.NotifLog, notifLogSpec) }},
+		{"billing_requests", func() error { return loadInto(p, &db.BillingRequests, billingRequestSpec) }},
 		{"settings", func() error { return p.loadSettings(db) }},
 	}
 	for _, st := range steps {
@@ -698,6 +721,9 @@ func (p *PG) Sync(db *model.DB) error {
 		return err
 	}
 	if err := syncTable(tx, p.hashes, notifLogSpec, db.NotifLog); err != nil {
+		return err
+	}
+	if err := syncTable(tx, p.hashes, billingRequestSpec, db.BillingRequests); err != nil {
 		return err
 	}
 	if err := p.syncSettings(tx, db); err != nil {
@@ -1138,6 +1164,24 @@ var activitySpec = entitySpec[model.Activity]{
 	hashOf: hashEntity[model.Activity],
 }
 
+// billingRequestSpec — demandes de souscription / renouvellement (facturation).
+var billingRequestSpec = entitySpec[model.BillingRequest]{
+	table: "billing_requests",
+	cols:  []string{"id", "account_id", "plan_id", "plan_name", "amount_fcfa", "period_label", "router_count", "ref", "status", "created_at", "resolved_at", "resolved_by", "note", "paid_via"},
+	idOf:  func(x *model.BillingRequest) string { return x.ID },
+	scan: func(r *sql.Rows) (model.BillingRequest, error) {
+		var x model.BillingRequest
+		err := r.Scan(&x.ID, &x.AccountID, &x.PlanID, &x.PlanName, &x.AmountFcfa, &x.PeriodLabel,
+			&x.RouterCount, &x.Ref, &x.Status, &x.CreatedAt, &x.ResolvedAt, &x.ResolvedBy, &x.Note, &x.PaidVia)
+		return x, err
+	},
+	args: func(x *model.BillingRequest) []any {
+		return []any{x.ID, x.AccountID, x.PlanID, x.PlanName, x.AmountFcfa, x.PeriodLabel,
+			x.RouterCount, x.Ref, x.Status, x.CreatedAt, x.ResolvedAt, x.ResolvedBy, x.Note, x.PaidVia}
+	},
+	hashOf: hashEntity[model.BillingRequest],
+}
+
 var saleSpec = entitySpec[model.Sale]{
 	table: "sales",
 	cols:  []string{"id", "amount", "profile_name", "count", "channel", "reseller_name", "router_id", "router_name", "batch_id", "at", "account_id", "cost", "selling"},
@@ -1363,24 +1407,25 @@ var notifLogSpec = entitySpec[model.NotificationLog]{
 // (après un Load ou un seed initial).
 func (p *PG) rebuildHashes(db *model.DB) {
 	p.hashes = map[string]map[string]uint64{
-		accountSpec.table:       hashRows(db.Accounts, accountSpec),
-		adminSpec.table:         hashRows(db.Users, adminSpec),
-		routerSpec.table:        hashRows(db.Routers, routerSpec),
-		profileSpec.table:       hashRows(db.Profiles, profileSpec),
-		hotspotUserSpec.table:   hashRows(db.HotspotUsers, hotspotUserSpec),
-		batchSpec.table:         hashRows(db.Batches, batchSpec),
-		resellerSpec.table:      hashRows(db.Resellers, resellerSpec),
-		transactionSpec.table:   hashRows(db.Transactions, transactionSpec),
-		sessionSpec.table:       hashRows(db.Sessions, sessionSpec),
-		activitySpec.table:      hashRows(db.Activity, activitySpec),
-		saleSpec.table:          hashRows(db.Sales, saleSpec),
-		commandSpec.table:       hashRows(db.Commands, commandSpec),
-		templateSpec.table:      hashRows(db.Templates, templateSpec),
-		userLogSpec.table:       hashRows(db.UserLogs, userLogSpec),
-		ipBindingSpec.table:     hashRows(db.IPBindings, ipBindingSpec),
-		schedulerTaskSpec.table: hashRows(db.SchedulerTasks, schedulerTaskSpec),
-		trafficSpec.table:       hashRows(db.Traffic, trafficSpec),
-		notifLogSpec.table:      hashRows(db.NotifLog, notifLogSpec),
+		accountSpec.table:        hashRows(db.Accounts, accountSpec),
+		adminSpec.table:          hashRows(db.Users, adminSpec),
+		routerSpec.table:         hashRows(db.Routers, routerSpec),
+		profileSpec.table:        hashRows(db.Profiles, profileSpec),
+		hotspotUserSpec.table:    hashRows(db.HotspotUsers, hotspotUserSpec),
+		batchSpec.table:          hashRows(db.Batches, batchSpec),
+		resellerSpec.table:       hashRows(db.Resellers, resellerSpec),
+		transactionSpec.table:    hashRows(db.Transactions, transactionSpec),
+		sessionSpec.table:        hashRows(db.Sessions, sessionSpec),
+		activitySpec.table:       hashRows(db.Activity, activitySpec),
+		saleSpec.table:           hashRows(db.Sales, saleSpec),
+		commandSpec.table:        hashRows(db.Commands, commandSpec),
+		templateSpec.table:       hashRows(db.Templates, templateSpec),
+		userLogSpec.table:        hashRows(db.UserLogs, userLogSpec),
+		ipBindingSpec.table:      hashRows(db.IPBindings, ipBindingSpec),
+		schedulerTaskSpec.table:  hashRows(db.SchedulerTasks, schedulerTaskSpec),
+		trafficSpec.table:        hashRows(db.Traffic, trafficSpec),
+		notifLogSpec.table:       hashRows(db.NotifLog, notifLogSpec),
+		billingRequestSpec.table: hashRows(db.BillingRequests, billingRequestSpec),
 	}
 	notifRows := make([]model.NotificationSettings, 0, len(db.NotifSettings))
 	for _, v := range db.NotifSettings {

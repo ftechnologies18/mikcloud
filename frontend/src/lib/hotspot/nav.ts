@@ -10,6 +10,7 @@ import {
   LayoutDashboard,
   Printer,
   Radio,
+  ReceiptText,
   Router as RouterIcon,
   ScrollText,
   Settings,
@@ -91,6 +92,8 @@ export const NAV_PLATFORM_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
     items: [
       { id: "platform", labelKey: "nav.platform", icon: ShieldCheck },
       { id: "accounts", labelKey: "nav.accounts", icon: Building2 },
+      // File des demandes de renouvellement (facturation) — badge en attente.
+      { id: "billingRequests", labelKey: "nav.billingRequests", icon: ReceiptText },
       { id: "platformLogs", labelKey: "nav.platformLogs", icon: ScrollText },
       { id: "platformTeam", labelKey: "nav.platformTeam", icon: UsersRound },
     ],

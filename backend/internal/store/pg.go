@@ -765,6 +765,10 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
 	for i := range db.Accounts {
 		accExists[db.Accounts[i].ID] = true
 	}
+	// Le compte principal est TOUJOURS préservé : il porte la config
+	// plateforme (Settings.Platform — nom du SaaS, inscriptions) même s'il
+	// n'a pas de ligne dans la table accounts (base de mise en service vide).
+	accExists[model.AccountMainID] = true
 	// Élagage mémoire : les réglages d'un compte disparu (rechargés au boot
 	// par loadSettings depuis des lignes orphelines) sont retirés de l'état —
 	// l'upsert ci-dessous ne doit PAS les réécrire.

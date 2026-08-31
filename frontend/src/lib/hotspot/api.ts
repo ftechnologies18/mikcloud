@@ -133,6 +133,11 @@ export async function register(payload: RegisterPayload): Promise<AuthResponse> 
       username: payload.username,
       password: payload.password,
       key: payload.key || undefined,
+      // F (signup enrichi) — contact propriétaire + segmentation géographique.
+      email: payload.email,
+      phone: payload.phone,
+      country: payload.country,
+      city: payload.city,
     },
   });
 }

@@ -255,6 +255,11 @@ func (p *PG) ensureSchema() error {
                         created_at TEXT NOT NULL
                 )`,
 		`CREATE INDEX IF NOT EXISTS idx_accounts_status ON accounts (status)`,
+		// F (signup enrichi) — contact propriétaire + segmentation géographique.
+		`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS email   TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS phone   TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS country TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS city    TEXT NOT NULL DEFAULT ''`,
 		// P0/P1 (audit Mikhmon) — nouvelles collections.
 		`CREATE TABLE IF NOT EXISTS voucher_templates (
                         id         TEXT PRIMARY KEY,
@@ -959,15 +964,15 @@ func upsertRows[T any](tx *sql.Tx, spec entitySpec[T], rows []T) error {
 // accountSpec — comptes clients SaaS (isolation multi-tenant).
 var accountSpec = entitySpec[model.Account]{
 	table: "accounts",
-	cols:  []string{"id", "name", "status", "created_at"},
+	cols:  []string{"id", "name", "status", "created_at", "email", "phone", "country", "city"},
 	idOf:  func(x *model.Account) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Account, error) {
 		var x model.Account
-		err := r.Scan(&x.ID, &x.Name, &x.Status, &x.CreatedAt)
+		err := r.Scan(&x.ID, &x.Name, &x.Status, &x.CreatedAt, &x.Email, &x.Phone, &x.Country, &x.City)
 		return x, err
 	},
 	args: func(x *model.Account) []any {
-		return []any{x.ID, x.Name, x.Status, x.CreatedAt}
+		return []any{x.ID, x.Name, x.Status, x.CreatedAt, x.Email, x.Phone, x.Country, x.City}
 	},
 	hashOf: hashEntity[model.Account],
 }

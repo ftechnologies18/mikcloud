@@ -116,6 +116,12 @@ type Account struct {
 	Name      string `json:"name"`
 	Status    string `json:"status"` // active | disabled
 	CreatedAt string `json:"createdAt"`
+	// Contact propriétaire (signup) — support WhatsApp/email + segmentation
+	// géographique (devise/timezone automatiques, rapports commerciaux).
+	Email   string `json:"email,omitempty"`
+	Phone   string `json:"phone,omitempty"`   // WhatsApp de préférence, format E.164 sans +
+	Country string `json:"country,omitempty"` // code ISO 3166-1 alpha-2 (CI, SN, NG…) ou "other"
+	City    string `json:"city,omitempty"`
 }
 
 // Router — équipement MikroTik géré (simulé, réel ou agent). Password non exposé dans l'API.

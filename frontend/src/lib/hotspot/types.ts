@@ -54,6 +54,14 @@ export interface RegisterPayload {
   password: string;
   /** Clé d'invitation — optionnelle, requise si l'inscription est protégée (REGISTER_KEY). */
   key?: string;
+  /** F (signup enrichi) — contact propriétaire + segmentation géographique. */
+  email: string;
+  /** WhatsApp de préférence, format E.164 sans + (chiffres uniquement). */
+  phone: string;
+  /** Code ISO 3166-1 alpha-2 (CI, SN, NG…) ou "other". */
+  country: string;
+  /** Ville d'activité (texte libre). */
+  city: string;
 }
 
 export interface AuthResponse {
@@ -71,6 +79,11 @@ export interface AccountSummary {
   owner: string;
   /** Santé de l'abonnement SaaS du compte (console plateforme). */
   subscription?: "active" | "expired" | "essai";
+  /** F (signup enrichi) — contact propriétaire + segmentation géographique. */
+  email?: string;
+  phone?: string;
+  country?: string;
+  city?: string;
   stats: {
     users: number;
     routers: number;

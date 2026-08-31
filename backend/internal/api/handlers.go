@@ -706,6 +706,10 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 		Username string `json:"username"`
 		Password string `json:"password"`
 		Key      string `json:"key"`
+		Email    string `json:"email"`
+		Phone    string `json:"phone"`   // WhatsApp de préférence, format E.164 sans +
+		Country  string `json:"country"` // code ISO alpha-2 (CI, SN, NG…) ou "other"
+		City     string `json:"city"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
@@ -736,6 +740,29 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 		name = username
 	}
 
+	// F (signup enrichi) — validation email + WhatsApp + pays.
+	email := strings.TrimSpace(req.Email)
+	if email == "" {
+		writeErr(w, http.StatusBadRequest, "L'email est requis")
+		return
+	}
+	if !emailRegexp.MatchString(email) {
+		writeErr(w, http.StatusBadRequest, "Format d'email invalide")
+		return
+	}
+	// WhatsApp : on garde uniquement les chiffres, 8 à 15 (format E.164 sans +).
+	phone := digitsOnly.ReplaceAllString(req.Phone, "")
+	if len(phone) < 8 || len(phone) > 15 {
+		writeErr(w, http.StatusBadRequest, "Numéro WhatsApp invalide (8 à 15 chiffres)")
+		return
+	}
+	country := strings.ToLower(strings.TrimSpace(req.Country))
+	if country == "" {
+		writeErr(w, http.StatusBadRequest, "Le pays est requis")
+		return
+	}
+	city := strings.TrimSpace(req.City)
+
 	a.store.Lock()
 	db := a.store.Data()
 	// Unicité GLOBALE des usernames console (toutes consoles confondues).
@@ -751,6 +778,10 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 		Name:      name,
 		Status:    "active",
 		CreatedAt: model.NowISO(),
+		Email:     email,
+		Phone:     phone,
+		Country:   country,
+		City:      city,
 	}
 	db.Accounts = append(db.Accounts, acc)
 	u := model.AdminUser{
@@ -2770,6 +2801,12 @@ func (a *API) handleResellersList(w http.ResponseWriter, r *http.Request) {
 
 // resellerPinPattern — PIN Mode Vente : 4 à 6 chiffres (N°8).
 var resellerPinPattern = regexp.MustCompile(`^[0-9]{4,6}$`)
+
+// F (signup enrichi) — validations email + WhatsApp (chiffres uniquement).
+var (
+	emailRegexp = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
+	digitsOnly  = regexp.MustCompile(`[^\d]`)
+)
 
 // pinNote — mention d'audit quand un PIN Mode Vente est défini.
 func pinNote(pin string) string {

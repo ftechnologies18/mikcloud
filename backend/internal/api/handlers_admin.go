@@ -235,6 +235,10 @@ func (a *API) handleAdminAccountCreate(w http.ResponseWriter, r *http.Request) {
 		Name     string `json:"name"`
 		Username string `json:"username"`
 		Password string `json:"password"`
+		Email    string `json:"email"`
+		Phone    string `json:"phone"`
+		Country  string `json:"country"`
+		City     string `json:"city"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
@@ -275,7 +279,16 @@ func (a *API) handleAdminAccountCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	acc := model.Account{ID: model.NewID("acc-"), Name: name, Status: "active", CreatedAt: model.NowISO()}
+	acc := model.Account{
+		ID:        model.NewID("acc-"),
+		Name:      name,
+		Status:    "active",
+		CreatedAt: model.NowISO(),
+		Email:     strings.TrimSpace(req.Email),
+		Phone:     digitsOnly.ReplaceAllString(req.Phone, ""),
+		Country:   strings.ToLower(strings.TrimSpace(req.Country)),
+		City:      strings.TrimSpace(req.City),
+	}
 	db.Accounts = append(db.Accounts, acc)
 	u := model.AdminUser{
 		ID:           model.NewID("usr-"),

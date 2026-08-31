@@ -1,7 +1,7 @@
 # MikCloud Hotspot API — image Docker
 # build : docker build -t mikcloud-api .
 # run   : docker run -p 4000:4000 -v mikcloud-data:/app/data mikcloud-api
-FROM golang:1.23-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /app
 COPY go.mod go.sum ./
 COPY . .

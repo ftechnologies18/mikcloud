@@ -6,6 +6,7 @@ import {
   BarChart3,
   Bell,
   Building2,
+  CreditCard,
   Gauge,
   LayoutDashboard,
   Printer,
@@ -35,6 +36,9 @@ export const NAV_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
     items: [
       { id: "dashboard", labelKey: "nav.dashboard", icon: LayoutDashboard },
       { id: "sessions", labelKey: "nav.sessions", icon: Radio },
+      // M — l'abonnement est une vue DÉDIÉE (pas un onglet des Paramètres) :
+      // échéance, renouvellement anticipé et factures téléchargeables.
+      { id: "subscription", labelKey: "nav.subscription", icon: CreditCard },
     ],
   },
   {

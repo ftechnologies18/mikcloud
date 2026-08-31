@@ -942,6 +942,7 @@ export interface SchedulerRow {
 export type ViewId =
   | "dashboard"
   | "sessions"
+  | "subscription"
   | "users"
   | "vouchers"
   | "templates"
@@ -980,4 +981,21 @@ export interface PlatformSettingsUpdatePayload {
   registerOpen?: boolean;
   /** Nouvelle clé d'invitation — "" supprime la clé. */
   registerKey?: string;
+}
+
+/* ─── M (facturation client) : GET /api/billing/history ─── */
+
+/** Ligne d'historique de facturation (demande résolue du compte). */
+export interface InvoiceRow {
+  id: string;
+  /** Numéro de facture séquentiel annuel (MC-2026-0001). */
+  invoiceNo: string;
+  planName: string;
+  amountFcfa: number;
+  periodLabel: string;
+  routerCount: number;
+  /** Référence de paiement (MC-XXXXXXXX). */
+  ref: string;
+  paidVia: "wave" | "manual" | string;
+  issuedAt: string;
 }

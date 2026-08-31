@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { PaywallOverlay } from "@/components/hotspot/parts/paywall-overlay";
+import { useSubscription } from "@/components/hotspot/parts/sa-subscription-card";
 import { cn } from "@/lib/utils";
 import { api, fetchBillingRequests } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
@@ -56,6 +57,7 @@ import ResellersView from "./views/resellers-view";
 import RoutersView from "./views/routers-view";
 import SessionsView from "./views/sessions-view";
 import SettingsView from "./views/settings-view";
+import SubscriptionView from "./views/subscription-view";
 import TeamView from "./views/team-view";
 import TemplatesView from "./views/templates-view";
 import UsersView from "./views/users-view";
@@ -90,6 +92,7 @@ function viewTitle(view: ViewId, t: (key: string) => string): string {
 const VIEWS: Record<ViewId, React.ComponentType> = {
   dashboard: DashboardView,
   sessions: SessionsView,
+  subscription: SubscriptionView,
   users: UsersView,
   vouchers: VouchersView,
   templates: TemplatesView,
@@ -329,6 +332,19 @@ function NavList() {
     enabled: isPlatformMode,
   });
   const billingPending = billing?.pending ?? 0;
+  // M — statut d'abonnement du client pour le badge « Abonnement » de la
+  // sidebar : point vert (actif), ambre (échéance ≤ 7 j) ou rouge (expiré/
+  // suspendu) — rappel passif anti-churn, visible sans ouvrir la vue.
+  const { data: subView } = useSubscription();
+  let subDot: "ok" | "soon" | "bad" | null = null;
+  if (subView) {
+    if (subView.status === "expired" || subView.status === "suspended") {
+      subDot = "bad";
+    } else if (subView.subscription.periodEnd) {
+      const days = Math.ceil((new Date(subView.subscription.periodEnd).getTime() - Date.now()) / 86_400_000);
+      subDot = days <= 7 ? "soon" : "ok";
+    }
+  }
   return (
     <nav className="flex-1 space-y-5 overflow-y-auto px-3 pb-4" aria-label={t("nav.main")}>
       <ModeSwitch />
@@ -367,6 +383,14 @@ function NavList() {
                         )}
                         {item.id === "billingRequests" && billingPending > 0 && (
                           <span className="live-dot absolute -right-1 -top-1 block size-2 rounded-full bg-primary" aria-hidden />
+                        )}
+                        {item.id === "subscription" && subDot && (
+                          <span
+                            className={`live-dot absolute -right-1 -top-1 block size-2 rounded-full ${
+                              subDot === "bad" ? "bg-destructive" : subDot === "soon" ? "bg-amber-500" : "bg-emerald-500"
+                            }`}
+                            aria-hidden
+                          />
                         )}
                       </span>
                       <span className="flex-1 truncate text-left">{t(item.labelKey)}</span>

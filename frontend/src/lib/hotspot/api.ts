@@ -16,6 +16,7 @@ import type {
   AuthUser,
   BillingRequest,
   BillingRequestsResponse,
+  InvoiceRow,
   PlatformActivityRow,
   PlatformOverview,
   PlatformSettingsResponse,
@@ -264,4 +265,19 @@ export async function updatePlatformSettings(
     method: "PUT",
     body: payload,
   });
+}
+
+/* ─── M (facturation client) : historique + facture imprimable ─── */
+
+/** fetchBillingHistory — factures du compte (demandes résolues, plus récentes d'abord). */
+export async function fetchBillingHistory(): Promise<InvoiceRow[]> {
+  return api<InvoiceRow[]>("/api/billing/history");
+}
+
+/** invoiceURL — lien vers la facture HTML print-friendly (ouvrir dans un nouvel onglet). */
+export function invoiceURL(id: string): string {
+  const base = (process.env.NEXT_PUBLIC_API_BASE || "").replace(/\/$/, "");
+  if (base) return `${base}/api/billing/invoice/${id}`;
+  // Mode passerelle sandbox : le port du backend transite par le proxy local.
+  return `/api/billing/invoice/${id}?XTransformPort=4000`;
 }

@@ -77,6 +77,7 @@ const fr: Record<string, string> = {
   // — nav (app-shell) —
   "nav.dashboard": "Tableau de bord",
   "nav.sessions": "Sessions actives",
+  "nav.subscription": "Abonnement",
   "nav.users": "Utilisateurs",
   "nav.vouchers": "Vouchers",
   "nav.templates": "Modèles",
@@ -1377,6 +1378,17 @@ const fr: Record<string, string> = {
   // traduits ici par id de formule ; t() retombe sur la valeur serveur via le
   // fallback passé à l'appel si la formule est inconnue.
   "sub.title": "Abonnement",
+  "subView.description": "Votre formule, vos échéances et vos factures — gérez votre abonnement MikCloud en un seul endroit.",
+  "subView.statusExpired": "Expiré",
+  "subView.expiresOn": "Échéance le {date} — dans {days} jour(s)",
+  "subView.expiredHint": "Votre abonnement a expiré — renouvelez ci-dessous pour réactiver toutes les fonctionnalités.",
+  "subView.history": "Historique de facturation",
+  "subView.historyDesc": "Toutes vos factures réglées — chacune consultable et téléchargeable en PDF.",
+  "subView.historyEmpty": "Aucune facture pour le moment",
+  "subView.historyEmptyDesc": "Vos factures apparaîtront ici après votre premier paiement.",
+  "subView.paidWave": "Payé via Wave",
+  "subView.paidManual": "Payé via la plateforme",
+  "subView.invoice": "Facture",
   "sub.status.active": "Actif",
   "sub.status.expired": "Expiré",
   "sub.status.suspended": "Suspendu",
@@ -1624,6 +1636,7 @@ const en: Record<string, string> = {
   // — nav —
   "nav.dashboard": "Dashboard",
   "nav.sessions": "Active sessions",
+  "nav.subscription": "Subscription",
   "nav.users": "Users",
   "nav.vouchers": "Vouchers",
   "nav.templates": "Templates",
@@ -2922,6 +2935,17 @@ const en: Record<string, string> = {
   // — SaaS subscription — card + dashboard banner (server catalogue labels are
   // translated by plan id; unknown plans fall back to the server value) —
   "sub.title": "Subscription",
+  "subView.description": "Your plan, due dates and invoices — manage your MikCloud subscription in one place.",
+  "subView.statusExpired": "Expired",
+  "subView.expiresOn": "Due on {date} — in {days} day(s)",
+  "subView.expiredHint": "Your subscription has expired — renew below to reactivate all features.",
+  "subView.history": "Billing history",
+  "subView.historyDesc": "All your paid invoices — each viewable and downloadable as PDF.",
+  "subView.historyEmpty": "No invoice yet",
+  "subView.historyEmptyDesc": "Your invoices will appear here after your first payment.",
+  "subView.paidWave": "Paid via Wave",
+  "subView.paidManual": "Paid via platform",
+  "subView.invoice": "Invoice",
   "sub.status.active": "Active",
   "sub.status.expired": "Expired",
   "sub.status.suspended": "Suspended",

@@ -143,6 +143,10 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/subscription/stripe", a.requireRole(3, a.handleSubscriptionStripeGet))
 	mux.HandleFunc("POST /api/subscription/stripe", a.requireRole(3, a.handleSubscriptionStripePost))
 	mux.HandleFunc("POST /api/subscription/stripe/cancel", a.requireRole(3, a.handleSubscriptionStripeCancel))
+	// M — facturation client : historique des factures + facture imprimable
+	// (HTML print-friendly). Accessibles aux comptes expirés ET suspendus.
+	mux.HandleFunc("GET /api/billing/history", a.handleBillingHistory)
+	mux.HandleFunc("GET /api/billing/invoice/{id}", a.handleBillingInvoice)
 	mux.HandleFunc("POST /api/admin/wipe", a.requireRole(3, a.handleWipe))
 	mux.HandleFunc("POST /api/admin/reload", a.requireRole(3, a.handleReload))
 	// Purge des données par catégories (UI Paramètres) — voir handlers_purge.go.
@@ -330,7 +334,7 @@ func (a *API) authMiddleware(next http.Handler) http.Handler {
 		if claims.Acc != "" && !isPlatformAdmin(r) {
 			view := a.subscriptionGuardState(claims.Acc)
 			if view.Status == "suspended" {
-				allowed := path == "/api/auth/me" || path == "/api/subscription" || path == "/api/settings" || strings.HasPrefix(path, "/api/subscription/pay") || strings.HasPrefix(path, "/api/subscription/stripe")
+				allowed := path == "/api/auth/me" || path == "/api/subscription" || path == "/api/settings" || strings.HasPrefix(path, "/api/subscription/pay") || strings.HasPrefix(path, "/api/subscription/stripe") || strings.HasPrefix(path, "/api/billing")
 				if !allowed {
 					writeErrCode(w, http.StatusPaymentRequired, "account_suspended",
 						"Compte suspendu — réglez votre abonnement pour reprendre l'accès",

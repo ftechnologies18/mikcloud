@@ -14,7 +14,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Building2,
   CalendarClock,
-  CreditCard,
   Database,
   Eye,
   EyeOff,
@@ -39,7 +38,6 @@ import type { AppSettings, ExpiryPolicyMode } from "@/lib/hotspot/types";
 import { useHotspotStore } from "@/lib/hotspot/store";
 import { PageHeader } from "@/components/hotspot/page-header";
 import { SETTINGS_QUERY_KEY, useSettings } from "@/components/hotspot/parts/sd-currency";
-import { SubscriptionCard } from "@/components/hotspot/parts/sa-subscription-card";
 import { AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -173,10 +171,6 @@ export default function SettingsView() {
             <Building2 className="size-3.5" />
             {t("settings.tabGeneral")}
           </TabsTrigger>
-          <TabsTrigger value="subscription" className="gap-1.5 px-3 py-1.5 text-xs sm:px-4 sm:text-sm">
-            <CreditCard className="size-3.5" />
-            {t("settings.tabSubscription")}
-          </TabsTrigger>
           <TabsTrigger value="hotspot" className="gap-1.5 px-3 py-1.5 text-xs sm:px-4 sm:text-sm">
             <Ticket className="size-3.5" />
             {t("settings.tabHotspot")}
@@ -192,15 +186,6 @@ export default function SettingsView() {
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-6">
             <OrganizationCard settings={data} />
             <LanguageCard />
-          </div>
-        </TabsContent>
-
-        {/* ── Onglet ABONNEMENT — facturation SaaS ── */}
-        <TabsContent value="subscription">
-          <div className="grid grid-cols-1 gap-4 lg:gap-6">
-            {/* Formules Essentiel (1 250 F/mois/routeur) et Illimité
-                (12 000 F/an, routeurs illimités), paiement via Wave. */}
-            <SubscriptionCard />
           </div>
         </TabsContent>
 

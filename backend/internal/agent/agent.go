@@ -498,65 +498,89 @@ func rosScriptValue(s string) string {
 	return s
 }
 
-// profileEnsureLine — crée le profil sur le routeur s'il n'existe pas, ou le
-// MET À JOUR s'il existe déjà (P — sans ce set, un profil créé manuellement
-// dans Winbox sans session-timeout restait sans timeout → les vouchers
-// n'expiraient jamais).
+// profileEnsureLine — garantit que le profil du cloud existe sur le routeur
+// avec ses paramètres EXACTS : add (création) puis set (alignement si le
+// profil existait déjà — créé dans Winbox ou par un import). Sans ce set, un
+// profil préexistant sans session-timeout restait sans timeout → les vouchers
+// n'expiraient jamais. Le set est inconditionnel : sur un profil absent,
+// `set [find …]` sans résultat est un no-op silencieux en RouterOS, jamais
+// une erreur. Deux lignes indépendantes plutôt qu'un :do imbriqué : une
+// erreur de l'add n'empêche jamais le set. Renvoie DEUX lignes terminées.
 func profileEnsureLine(p ProfileRef) string {
-	add := `/ip hotspot user profile add name="` + rosEscape(p.Name) + `"`
-	if p.RateLimit != "" {
-		add += ` rate-limit="` + rosEscape(p.RateLimit) + `"`
-	}
-	if st := rosMinutes(p.SessionTimeoutMin); st != "" {
-		add += " session-timeout=" + st
-	}
-	if p.SharedUsers > 0 {
-		add += fmt.Sprintf(" shared-users=%d", p.SharedUsers)
-	}
-	if p.LockFirstDevice {
-		add += ` on-login="` + rosScriptValue(onLoginLockScript) + `"`
-	}
-	// Si l'add échoue (profil déjà présent), on MET À JOUR les paramètres
-	// clés — un profil créé hors MikCloud (Winbox) sans session-timeout
-	// serait sinon un trou de sécurité (vouchers qui n'expirent jamais).
-	set := `/ip hotspot user profile set [find name="` + rosEscape(p.Name) + `"]`
-	if p.RateLimit != "" {
-		set += ` rate-limit="` + rosEscape(p.RateLimit) + `"`
-	} else {
-		set += ` rate-limit=""`
-	}
-	if st := rosMinutes(p.SessionTimeoutMin); st != "" {
-		set += " session-timeout=" + st
-	} else {
-		set += ` session-timeout=0s`
-	}
-	if p.SharedUsers > 0 {
-		set += fmt.Sprintf(" shared-users=%d", p.SharedUsers)
-	}
-	if p.LockFirstDevice {
-		set += ` on-login="` + rosScriptValue(onLoginLockScript) + `"`
-	} else {
-		set += ` on-login=""`
-	}
-	return ":do { " + add + " } on-error={ :do { " + set + " } on-error={ :log info \"mikcloud: profil " + rosEscape(p.Name) + " inaccessible\" } }"
+	add := `/ip hotspot user profile add name="` + rosEscape(p.Name) + `"` +
+		profileAddParams(p)
+	return ":do { " + add + " } on-error={ :log info \"mikcloud: profil " +
+		rosEscape(p.Name) + " deja present, mise a jour\" }\n" +
+		profileSetLine(p.Name, p)
 }
 
-// buildProfileSet — v2 : applique ou retire le verrou « 1er appareil » d'un
-// profil hotspot (on-login de liaison MAC). Profil absent = ignoré proprement
-// (il sera créé AVEC le verrou à la prochaine création d'utilisateur) : la
-// commande reste un succès, l'état du cloud fait foi.
+// profileAddParams — paramètres de CRÉATION d'un profil. Une clé absente du
+// payload n'est pas écrite ; le verrou « 1er appareil » seulement s'il est actif.
+func profileAddParams(p ProfileRef) string {
+	s := ""
+	if p.HasRate && p.RateLimit != "" {
+		s += ` rate-limit="` + rosEscape(p.RateLimit) + `"`
+	}
+	if p.HasTimeout && p.SessionTimeoutMin > 0 {
+		s += " session-timeout=" + rosMinutes(p.SessionTimeoutMin)
+	}
+	if p.HasShared && p.SharedUsers > 0 {
+		s += fmt.Sprintf(" shared-users=%d", p.SharedUsers)
+	}
+	if p.LockFirstDevice {
+		s += ` on-login="` + rosScriptValue(onLoginLockScript) + `"`
+	}
+	return s
+}
+
+// profileSetLine — ligne `set` qui aligne le profil routeur sur le cloud
+// (session-timeout, rate-limit, shared-users, verrou « 1er appareil »).
+// Une clé ABSENTE du payload (commande héritée) n'est JAMAIS effacée : sans
+// ce garde-fou, un set partiel remettrait session-timeout à 0 et les vouchers
+// liés n'expireraient plus.
+func profileSetLine(name string, p ProfileRef) string {
+	s := `/ip hotspot user profile set [find name="` + rosEscape(name) + `"]`
+	if p.HasRate {
+		s += ` rate-limit="` + rosEscape(p.RateLimit) + `"`
+	}
+	if p.HasTimeout {
+		if st := rosMinutes(p.SessionTimeoutMin); st != "" {
+			s += " session-timeout=" + st
+		} else {
+			s += ` session-timeout=0s`
+		}
+	}
+	if p.HasShared && p.SharedUsers > 0 {
+		s += fmt.Sprintf(" shared-users=%d", p.SharedUsers)
+	}
+	if p.LockFirstDevice {
+		s += ` on-login="` + rosScriptValue(onLoginLockScript) + `"`
+	} else {
+		s += ` on-login=""`
+	}
+	return ":do { " + s + " } on-error={ :log info \"mikcloud: profil " + rosEscape(name) + " inaccessible\" }\n"
+}
+
+// buildProfileSet — v2 : synchronise UN profil routeur sur l'état du cloud :
+// verrou « 1er appareil » (on-login), rate-limit, session-timeout et
+// shared-users. Profil absent = no-op silencieux (il sera créé AVEC les bons
+// paramètres à la prochaine création d'utilisateur) : la commande reste un
+// succès, l'état du cloud fait foi.
 func (b Builder) buildProfileSet(cmd model.Command) string {
 	name := SanitizeName(plStr(cmd.Payload, "name"))
-	lock := plBool(cmd.Payload, "lockFirstDevice")
-	set := `/ip hotspot user profile set [find name="` + rosEscape(name) + `"]`
-	if lock {
-		set += ` on-login="` + rosScriptValue(onLoginLockScript) + `"`
-	} else {
-		set += ` on-login=""`
+	p := ProfileRef{
+		Name:              name,
+		RateLimit:         plStr(cmd.Payload, "rateLimit"),
+		SessionTimeoutMin: int(plInt64(cmd.Payload, "sessionTimeoutMin")),
+		SharedUsers:       int(plInt64(cmd.Payload, "sharedUsers")),
+		LockFirstDevice:   plBool(cmd.Payload, "lockFirstDevice"),
+		HasRate:           plHas(cmd.Payload, "rateLimit"),
+		HasTimeout:        plHas(cmd.Payload, "sessionTimeoutMin"),
+		HasShared:         plHas(cmd.Payload, "sharedUsers"),
 	}
 	var sb strings.Builder
 	sb.WriteString(header(cmd))
-	sb.WriteString(":do { " + set + " } on-error={ :log info \"mikcloud: profil absent, verrou ignore\" }\n")
+	sb.WriteString(profileSetLine(name, p))
 	sb.WriteString(b.reportLine(cmd.ID, true, nil) + "\n")
 	return sb.String()
 }
@@ -641,7 +665,7 @@ func (b Builder) buildUserAdd(cmd model.Command) string {
 	var sb strings.Builder
 	sb.WriteString(header(cmd))
 	sb.WriteString(":local " + okVar + " true\n")
-	sb.WriteString(":do { " + profileEnsureLine(prof) + " } on-error={ :log info \"mikcloud: profil deja present\" }\n")
+	sb.WriteString(profileEnsureLine(prof))
 	line := `/ip hotspot user add name="` + rosEscape(name) + `"`
 	if pass != "" {
 		line += ` password="` + rosEscape(pass) + `"`
@@ -680,7 +704,7 @@ func (b Builder) buildVoucherBatch(cmd model.Command) string {
 	var sb strings.Builder
 	sb.WriteString(header(cmd))
 	sb.WriteString(":local " + okVar + " true\n")
-	sb.WriteString(":do { " + profileEnsureLine(prof) + " } on-error={ :log info \"mikcloud: profil deja present\" }\n")
+	sb.WriteString(profileEnsureLine(prof))
 	for _, u := range users {
 		line := `/ip hotspot user add name="` + rosEscape(SanitizeName(u.Name)) + `" password="` + rosEscape(u.Password) +
 			`" profile="` + rosEscape(prof.Name) + `"`
@@ -1133,6 +1157,13 @@ type ProfileRef struct {
 	SessionTimeoutMin int
 	SharedUsers       int
 	LockFirstDevice   bool
+	// Présence des clés dans le payload : une commande héritée peut n'exporter
+	// que le nom (voire le verrou) — dans ce cas le set ne doit PAS toucher au
+	// rate-limit/session-timeout/shared-users du routeur (jamais d'effacement
+	// accidentel d'un paramètre que le payload ne portait pas).
+	HasRate    bool
+	HasTimeout bool
+	HasShared  bool
 }
 
 func plProfile(p map[string]any, k string) ProfileRef {
@@ -1141,11 +1172,20 @@ func plProfile(p map[string]any, k string) ProfileRef {
 		return ProfileRef{}
 	}
 	ref := ProfileRef{Name: plStr(m, "name"), RateLimit: plStr(m, "rateLimit")}
-	if v, ok := m["sessionTimeoutMin"].(float64); ok {
-		ref.SessionTimeoutMin = int(v)
+	// Tolérant aux DEUX formes : payload en mémoire (int Go) ou relu du JSON
+	// (float64). L'assertion float64 seule perdait sessionTimeoutMin sur le
+	// chemin live (payload construit par le handler avec des int) → profils
+	// créés SANS session-timeout, vouchers sans expiration (incident 31/08).
+	if _, ok := m["rateLimit"]; ok {
+		ref.HasRate = true
 	}
-	if v, ok := m["sharedUsers"].(float64); ok {
-		ref.SharedUsers = int(v)
+	if _, ok := m["sessionTimeoutMin"]; ok {
+		ref.HasTimeout = true
+		ref.SessionTimeoutMin = int(plInt64(m, "sessionTimeoutMin"))
+	}
+	if _, ok := m["sharedUsers"]; ok {
+		ref.HasShared = true
+		ref.SharedUsers = int(plInt64(m, "sharedUsers"))
 	}
 	ref.LockFirstDevice = plBool(m, "lockFirstDevice")
 	return ref

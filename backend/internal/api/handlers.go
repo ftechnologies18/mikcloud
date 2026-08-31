@@ -1713,11 +1713,11 @@ func (a *API) handleProfileCreate(w http.ResponseWriter, r *http.Request) {
 	a.store.Lock()
 	db := a.store.Data()
 	db.Profiles = append(db.Profiles, profile)
-	// v2 — propager le verrou « 1er appareil » dès la création (couvre aussi un
-	// profil du même nom déjà présent sur un routeur, ex. importé).
-	if profile.LockFirstDevice {
-		a.queueProfileSetLocked(db, acc, profile.Name, true)
-	}
+	// Synchroniser le profil vers TOUS les routeurs agents dès la création :
+	// si un profil du même nom existe déjà sur un routeur (Winbox/import), le
+	// set aligne session-timeout/rate-limit/shared-users/verrou sur le cloud —
+	// sans quoi les vouchers liés gardaient les ANCIENS paramètres du routeur.
+	a.queueProfileSetLocked(db, acc, profile)
 	a.logActivityBy(r, db, acc, "user", "Profil "+profile.Name+" créé")
 	a.store.Save()
 	a.store.Unlock()
@@ -1841,34 +1841,39 @@ func (a *API) handleProfileUpdate(w http.ResponseWriter, r *http.Request) {
 		lockChanged = true
 	}
 	updated := *p
+	// Toute modification (session-timeout, rate-limit, shared-users, verrou…)
+	// est propagée aux routeurs agents : le cloud est la source de vérité.
+	a.queueProfileSetLocked(db, acc, updated)
 	if lockChanged {
-		a.queueProfileSetLocked(db, acc, updated.Name, updated.LockFirstDevice)
 		state := "désactivé"
 		if updated.LockFirstDevice {
 			state = "activé"
 		}
 		a.logActivityBy(r, db, acc, "user", "Verrou « 1er appareil » "+state+" pour le profil "+updated.Name)
 	} else {
-		a.logActivityBy(r, db, acc, "user", "Profil "+updated.Name+" modifié")
+		a.logActivityBy(r, db, acc, "user", "Profil "+updated.Name+" modifié (synchronisé vers le routeur)")
 	}
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, updated)
 }
 
-// queueProfileSetLocked — propage l'état du verrou « 1er appareil » d'un
-// profil vers TOUS les routeurs en mode agent du compte (une commande
-// profile_set par routeur : le script on-login de liaison MAC est appliqué
-// ou retiré). Les modes real/simulated n'exposent pas les profils hotspot
-// via la gateway : le verrou y est sans effet (mode agent requis).
-func (a *API) queueProfileSetLocked(db *model.DB, acc, profileName string, lock bool) {
-	name := agent.SanitizeName(profileName)
+// queueProfileSetLocked — propage l'état COMPLET d'un profil vers TOUS les
+// routeurs en mode agent du compte (une commande profile_set par routeur :
+// session-timeout, rate-limit, shared-users et verrou « 1er appareil » via
+// on-login). Les modes real/simulated n'exposent pas les profils hotspot via
+// la gateway : la synchro y est sans effet (mode agent requis).
+func (a *API) queueProfileSetLocked(db *model.DB, acc string, p model.Profile) {
+	name := agent.SanitizeName(p.Name)
 	for i := range db.Routers {
 		r := &db.Routers[i]
 		if r.AccountID == acc && r.Mode == "agent" {
 			queueCommandLocked(db, acc, r.ID, model.CmdProfileSet, map[string]any{
-				"name":            name,
-				"lockFirstDevice": lock,
+				"name":              name,
+				"rateLimit":         p.RateLimit,
+				"sessionTimeoutMin": p.SessionTimeoutMin,
+				"sharedUsers":       p.SharedUsers,
+				"lockFirstDevice":   p.LockFirstDevice,
 			})
 		}
 	}

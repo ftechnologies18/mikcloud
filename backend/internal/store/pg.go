@@ -393,24 +393,24 @@ func (p *PG) ensureSchema() error {
 		// Abonnement récurrent par carte (Stripe via GeniusPay) : état local des
 		// prélèvements automatiques (webhook subscription.* / resynchronisation).
 		`CREATE TABLE IF NOT EXISTS geniuspay_subs (
-			uuid            TEXT PRIMARY KEY,
-			account_id      TEXT NOT NULL DEFAULT '',
-			plan_id         TEXT NOT NULL DEFAULT '',
-			plan_name       TEXT NOT NULL DEFAULT '',
-			cycle           TEXT NOT NULL DEFAULT '',
-			amount_fcfa     INTEGER NOT NULL DEFAULT 0,
-			slots           INTEGER NOT NULL DEFAULT 0,
-			status          TEXT NOT NULL DEFAULT 'pending',
-			customer_name   TEXT NOT NULL DEFAULT '',
-			customer_email  TEXT NOT NULL DEFAULT '',
-			phone           TEXT NOT NULL DEFAULT '',
-			next_billing    TEXT NOT NULL DEFAULT '',
-			last_invoice_at TEXT NOT NULL DEFAULT '',
-			last_renewal_at TEXT NOT NULL DEFAULT '',
-			created_at      TEXT NOT NULL,
-			updated_at      TEXT NOT NULL DEFAULT '',
-			cancelled_at    TEXT NOT NULL DEFAULT ''
-		)`,
+                        uuid            TEXT PRIMARY KEY,
+                        account_id      TEXT NOT NULL DEFAULT '',
+                        plan_id         TEXT NOT NULL DEFAULT '',
+                        plan_name       TEXT NOT NULL DEFAULT '',
+                        cycle           TEXT NOT NULL DEFAULT '',
+                        amount_fcfa     INTEGER NOT NULL DEFAULT 0,
+                        slots           INTEGER NOT NULL DEFAULT 0,
+                        status          TEXT NOT NULL DEFAULT 'pending',
+                        customer_name   TEXT NOT NULL DEFAULT '',
+                        customer_email  TEXT NOT NULL DEFAULT '',
+                        phone           TEXT NOT NULL DEFAULT '',
+                        next_billing    TEXT NOT NULL DEFAULT '',
+                        last_invoice_at TEXT NOT NULL DEFAULT '',
+                        last_renewal_at TEXT NOT NULL DEFAULT '',
+                        created_at      TEXT NOT NULL,
+                        updated_at      TEXT NOT NULL DEFAULT '',
+                        cancelled_at    TEXT NOT NULL DEFAULT ''
+                )`,
 		`CREATE INDEX IF NOT EXISTS idx_geniuspay_subs_account ON geniuspay_subs (account_id)`,
 		// N°7 — rôles équipe + audit : acteur des actions du journal, et
 		// renommage du rôle historique « admin » → « platform_admin » (les
@@ -422,6 +422,9 @@ func (p *PG) ensureSchema() error {
 		`ALTER TABLE resellers     ADD COLUMN IF NOT EXISTS pin_hash TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE hotspot_users ADD COLUMN IF NOT EXISTS sold_at TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE hotspot_users ADD COLUMN IF NOT EXISTS sold_via TEXT NOT NULL DEFAULT ''`,
+		// N (rapprochement doux) — utilisateur absent du dernier read_state du
+		// routeur (supprimé dans Winbox) : badge + action de resynchronisation.
+		`ALTER TABLE hotspot_users ADD COLUMN IF NOT EXISTS missing_on_router BOOLEAN NOT NULL DEFAULT FALSE`,
 		// QR vouchers : page de login du portail captive du routeur.
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS hotspot_login_url TEXT NOT NULL DEFAULT ''`,
 		// Migrations douces pour les bases créées avant l'ajout des champs
@@ -1133,21 +1136,21 @@ var hotspotUserSpec = entitySpec[model.HotspotUser]{
 	cols: []string{"id", "kind", "username", "password", "profile_id", "profile_name",
 		"router_id", "router_name", "status", "batch_id", "reseller_id", "reseller_name",
 		"comment", "bytes_in", "bytes_out", "uptime_used_sec", "created_at", "expires_at", "used_at", "price", "data_quota_mb", "account_id",
-		"selling_price", "enforced", "sold_at", "sold_via"},
+		"selling_price", "enforced", "sold_at", "sold_via", "missing_on_router"},
 	idOf: func(x *model.HotspotUser) string { return x.ID },
 	scan: func(r *sql.Rows) (model.HotspotUser, error) {
 		var x model.HotspotUser
 		err := r.Scan(&x.ID, &x.Kind, &x.Username, &x.Password, &x.ProfileID, &x.ProfileName,
 			&x.RouterID, &x.RouterName, &x.Status, &x.BatchID, &x.ResellerID, &x.ResellerName,
 			&x.Comment, &x.BytesIn, &x.BytesOut, &x.UptimeUsedSec, &x.CreatedAt, &x.ExpiresAt, &x.UsedAt, &x.Price, &x.DataQuotaMb, &x.AccountID,
-			&x.SellingPrice, &x.Enforced, &x.SoldAt, &x.SoldVia)
+			&x.SellingPrice, &x.Enforced, &x.SoldAt, &x.SoldVia, &x.MissingOnRouter)
 		return x, err
 	},
 	args: func(x *model.HotspotUser) []any {
 		return []any{x.ID, x.Kind, x.Username, x.Password, x.ProfileID, x.ProfileName,
 			x.RouterID, x.RouterName, x.Status, x.BatchID, x.ResellerID, x.ResellerName,
 			x.Comment, x.BytesIn, x.BytesOut, x.UptimeUsedSec, x.CreatedAt, x.ExpiresAt, x.UsedAt, x.Price, x.DataQuotaMb, x.AccountID,
-			x.SellingPrice, x.Enforced, x.SoldAt, x.SoldVia}
+			x.SellingPrice, x.Enforced, x.SoldAt, x.SoldVia, x.MissingOnRouter}
 	},
 	hashOf: hashEntity[model.HotspotUser],
 }

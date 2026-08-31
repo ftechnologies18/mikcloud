@@ -479,9 +479,13 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 			known[strings.ToLower(db.HotspotUsers[i].Username)] = true
 		}
 	}
+	onRouter := map[string]bool{} // usernames rapportés par CE read_state
 	for _, e := range userEntries {
 		name := agent.SanitizeName(e[0])
 		if name == "" || name == "-" || known[strings.ToLower(name)] {
+			if name != "" && name != "-" {
+				onRouter[strings.ToLower(name)] = true
+			}
 			continue
 		}
 		profName := ""
@@ -498,6 +502,38 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 			Status:    map[bool]string{true: "disabled", false: "active"}[disabled],
 			CreatedAt: model.NowISO(),
 		})
+		onRouter[strings.ToLower(name)] = true
+	}
+
+	// N (rapprochement doux) — utilisateurs du cloud absents de CE read_state :
+	// marqués « absent du routeur » (badge + action de resynchronisation).
+	// Le cloud reste le registre durable : RIEN n'est supprimé automatiquement.
+	// Garde-fous anti-faux-positifs :
+	//   - statut actif ou disabled uniquement (used/expired = absence attendue) ;
+	//   - grâce de 2 minutes après création (commande user_add encore en file) ;
+	//   - le badge se lève tout seul au read_state suivant si l'utilisateur
+	//     réapparaît (recréation manuelle dans Winbox, par exemple).
+	grace := time.Now().UTC().Add(-2 * time.Minute).Format(time.RFC3339)
+	for i := range db.HotspotUsers {
+		u := &db.HotspotUsers[i]
+		if u.RouterID != router.ID {
+			continue
+		}
+		if u.Status != "active" && u.Status != "disabled" {
+			continue
+		}
+		if onRouter[strings.ToLower(u.Username)] {
+			if u.MissingOnRouter {
+				u.MissingOnRouter = false // réapparu — badge levé
+			}
+			continue
+		}
+		if u.CreatedAt > grace {
+			continue // trop récent : la commande d'ajout peut être en file
+		}
+		if !u.MissingOnRouter {
+			u.MissingOnRouter = true
+		}
 	}
 
 	// Sessions actives : "user|ip|uptime;…"

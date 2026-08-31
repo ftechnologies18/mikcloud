@@ -365,6 +365,8 @@ export interface HotspotUser {
   sellingPrice?: number;
   /** Quota data appliqué sur le routeur (limit-bytes-total, en Mo ; 0 = illimité). */
   dataQuotaMb: number;
+  /** N (rapprochement doux) — utilisateur absent du dernier read_state du routeur. */
+  missingOnRouter?: boolean;
 }
 
 export interface PagedUsers {

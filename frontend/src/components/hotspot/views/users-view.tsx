@@ -16,8 +16,10 @@ import {
   MoreHorizontal,
   Pencil,
   Power,
+  RefreshCcw,
   RotateCcw,
   Search,
+  ShieldQuestion,
   Trash2,
   UserPlus,
   Users,
@@ -310,6 +312,25 @@ export default function UsersView() {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  // N (rapprochement doux) — resynchronisation d'un utilisateur « absent du
+  // routeur » : recréer (user_add en file) ou oublier (retrait du cloud).
+  const resyncMutation = useMutation({
+    mutationFn: (vars: { user: HotspotUser; action: "recreate" | "forget" }) =>
+      api<{ ok: boolean }>(`/api/users/${vars.user.id}/resync`, {
+        method: "POST",
+        body: { action: vars.action },
+      }),
+    onSuccess: (_res, vars) => {
+      toast.success(
+        vars.action === "recreate"
+          ? tf("users.resyncRecreateToast", { name: vars.user.username })
+          : tf("users.resyncForgetToast", { name: vars.user.username }),
+      );
+      invalidateUsers();
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   // Export CSV (F4) — GET /api/users/export avec les filtres courants.
   async function handleExportCsv() {
     try {
@@ -491,7 +512,20 @@ export default function UsersView() {
                         {user.routerName}
                       </TableCell>
                       <TableCell>
-                        <StatusBadge status={user.status} dot />
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <StatusBadge status={user.status} dot />
+                          {/* N — rapprochement doux : badge « absent du routeur ». */}
+                          {user.missingOnRouter && (
+                            <Badge
+                              variant="outline"
+                              className="gap-1 border-amber-500/30 bg-amber-500/10 px-1.5 py-0 text-[10px] font-medium text-amber-600 dark:text-amber-400"
+                              title={t("users.missingOnRouterHint")}
+                            >
+                              <ShieldQuestion className="size-3" aria-hidden />
+                              {t("users.missingOnRouter")}
+                            </Badge>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell className="tabular-nums text-muted-foreground">
                         {formatBytes(user.bytesIn + user.bytesOut, lang)}
@@ -557,6 +591,36 @@ export default function UsersView() {
                               )}
                               {t("users.resetStats")}
                             </DropdownMenuItem>
+                            {/* N — resynchronisation (uniquement si absent du routeur). */}
+                            {user.missingOnRouter && (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  className="min-h-10"
+                                  disabled={resyncMutation.isPending && resyncMutation.variables?.user.id === user.id}
+                                  onClick={() => resyncMutation.mutate({ user, action: "recreate" })}
+                                >
+                                  {resyncMutation.isPending && resyncMutation.variables?.user.id === user.id ? (
+                                    <Loader2 className="size-4 animate-spin" />
+                                  ) : (
+                                    <RefreshCcw className="size-4" />
+                                  )}
+                                  {t("users.resyncRecreate")}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  className="min-h-10"
+                                  disabled={resyncMutation.isPending && resyncMutation.variables?.user.id === user.id}
+                                  onClick={() => {
+                                    if (window.confirm(t("users.resyncForgetConfirm"))) {
+                                      resyncMutation.mutate({ user, action: "forget" });
+                                    }
+                                  }}
+                                >
+                                  <Trash2 className="size-4" />
+                                  {t("users.resyncForget")}
+                                </DropdownMenuItem>
+                              </>
+                            )}
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
                               variant="destructive"

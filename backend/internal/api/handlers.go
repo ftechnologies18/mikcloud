@@ -197,6 +197,8 @@ func (a *API) Handler() http.Handler {
 	// Actions utilisateurs (F4/F5)
 	mux.HandleFunc("POST /api/users/{id}/reset-stats", a.handleUserResetStats)
 	mux.HandleFunc("POST /api/users/{id}/extend", a.handleUserExtend)
+	// N — resynchronisation utilisateur « absent du routeur » (rapprochement doux).
+	mux.HandleFunc("POST /api/users/{id}/resync", a.requireRole(2, a.handleUserResync))
 	mux.HandleFunc("GET /api/users/export", a.requireRole(2, a.handleUsersExport))
 	mux.HandleFunc("POST /api/users/cleanup", a.requireRole(2, a.handleUsersCleanup))
 

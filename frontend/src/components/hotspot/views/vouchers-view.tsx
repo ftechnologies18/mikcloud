@@ -20,7 +20,9 @@ import {
   MoreHorizontal,
   Printer,
   QrCode,
+  RefreshCcw,
   Search,
+  ShieldQuestion,
   SlidersHorizontal,
   Ticket,
   TicketPlus,
@@ -292,6 +294,25 @@ export default function VouchersView() {
     void queryClient.invalidateQueries({ queryKey: ["/api/vouchers"] });
     void queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
   }
+
+  // N (rapprochement doux) — resynchronisation d'un voucher « absent du
+  // routeur » : recréer (user_add en file) ou oublier (retrait du cloud).
+  const resyncMutation = useMutation({
+    mutationFn: (vars: { voucher: HotspotUser; action: "recreate" | "forget" }) =>
+      api<{ ok: boolean }>(`/api/users/${vars.voucher.id}/resync`, {
+        method: "POST",
+        body: { action: vars.action },
+      }),
+    onSuccess: (_res, vars) => {
+      toast.success(
+        vars.action === "recreate"
+          ? tf("users.resyncRecreateToast", { name: vars.voucher.username })
+          : tf("users.resyncForgetToast", { name: vars.voucher.username }),
+      );
+      invalidateVouchers();
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
 
   function toggleReveal(id: string) {
     setRevealed((previous) => {
@@ -707,7 +728,20 @@ export default function VouchersView() {
                         {formatCurrency(voucher.price, currency, lang)}
                       </TableCell>
                       <TableCell>
-                        <StatusBadge status={voucher.status} dot />
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <StatusBadge status={voucher.status} dot />
+                          {/* N — rapprochement doux : badge « absent du routeur ». */}
+                          {voucher.missingOnRouter && (
+                            <Badge
+                              variant="outline"
+                              className="gap-1 border-amber-500/30 bg-amber-500/10 px-1.5 py-0 text-[10px] font-medium text-amber-600 dark:text-amber-400"
+                              title={t("users.missingOnRouterHint")}
+                            >
+                              <ShieldQuestion className="size-3" aria-hidden />
+                              {t("users.missingOnRouter")}
+                            </Badge>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell className="hidden max-w-40 truncate text-muted-foreground md:table-cell">
                         {voucher.resellerName || "—"}
@@ -752,6 +786,36 @@ export default function VouchersView() {
                               <Printer className="size-4" />
                               {t("vouchers.printOne")}
                             </DropdownMenuItem>
+                            {/* N — resynchronisation (uniquement si absent du routeur). */}
+                            {voucher.missingOnRouter && (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  className="min-h-10"
+                                  disabled={resyncMutation.isPending && resyncMutation.variables?.voucher.id === voucher.id}
+                                  onClick={() => resyncMutation.mutate({ voucher, action: "recreate" })}
+                                >
+                                  {resyncMutation.isPending && resyncMutation.variables?.voucher.id === voucher.id ? (
+                                    <Loader2 className="size-4 animate-spin" />
+                                  ) : (
+                                    <RefreshCcw className="size-4" />
+                                  )}
+                                  {t("users.resyncRecreate")}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  className="min-h-10"
+                                  disabled={resyncMutation.isPending && resyncMutation.variables?.voucher.id === voucher.id}
+                                  onClick={() => {
+                                    if (window.confirm(t("users.resyncForgetConfirm"))) {
+                                      resyncMutation.mutate({ voucher, action: "forget" });
+                                    }
+                                  }}
+                                >
+                                  <Trash2 className="size-4" />
+                                  {t("users.resyncForget")}
+                                </DropdownMenuItem>
+                              </>
+                            )}
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
                               variant="destructive"

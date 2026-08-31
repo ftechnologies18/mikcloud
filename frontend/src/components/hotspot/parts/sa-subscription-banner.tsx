@@ -101,6 +101,6 @@ export function SubscriptionBanner() {
     }
   }
 
-  // Bêta (aucune formule) ou échéance lointaine : pas de bannière.
+  // Essai (aucune formule) ou échéance lointaine : pas de bannière.
   return null;
 }

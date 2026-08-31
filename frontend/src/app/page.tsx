@@ -7,6 +7,7 @@ import LoginScreen from "@/components/hotspot/login-screen";
 import AppShell from "@/components/hotspot/app-shell";
 import SellShell from "@/components/hotspot/sell-shell";
 import LandingPage from "@/components/landing/landing-page";
+import SignupModal from "@/components/landing/signup-modal";
 
 export default function Home() {
   const token = useHotspotStore((s) => s.token);
@@ -19,7 +20,10 @@ export default function Home() {
   // (utilisateur non connecté). Le CTA « Se connecter » bascule vers l'écran
   // de connexion. Une fois connecté, on atterrit dans la console (ou le
   // shell de vente pour les revendeurs PIN).
-  const [showLogin, setShowLogin] = useState(false);
+  const [view, setView] = useState<"landing" | "login">("landing");
+  const [signupOpen, setSignupOpen] = useState(false);
+
+  const openSignup = () => setSignupOpen(true);
 
   return (
     <QueryProvider>
@@ -30,12 +34,14 @@ export default function Home() {
           ) : (
             <AppShell />
           )
-        ) : showLogin ? (
-          <LoginScreen onBack={() => setShowLogin(false)} />
+        ) : view === "login" ? (
+          <LoginScreen onBack={() => setView("landing")} onSignUp={openSignup} />
         ) : (
-          <LandingPage onSignIn={() => setShowLogin(true)} />
+          <LandingPage onSignIn={() => setView("login")} onSignUp={openSignup} />
         )}
       </main>
+      {/* SignupModal global — ouvrable depuis la landing ou le login. */}
+      <SignupModal open={signupOpen} onOpenChange={setSignupOpen} />
     </QueryProvider>
   );
 }

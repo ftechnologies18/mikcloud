@@ -72,7 +72,7 @@ function randomPassword(): string {
 }
 
 /** Badge santé d'abonnement (console plateforme). */
-function SubscriptionBadge({ state }: { state?: "active" | "expired" | "beta" }) {
+function SubscriptionBadge({ state }: { state?: "active" | "expired" | "essai" }) {
   const { t } = useI18n();
   if (state === "active") {
     return (

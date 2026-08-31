@@ -26,6 +26,7 @@ export interface LandingCopy {
     brand: string;
     nav: { features: string; benefits: string; pricing: string; faq: string };
     signIn: string;
+    signUp: string;
     langLabel: string;
   };
   hero: {
@@ -36,7 +37,9 @@ export interface LandingCopy {
     subtitle: string;
     ctaPrimary: string;
     ctaSecondary: string;
+    ctaSignUp: string;
     ctaDemoHint: string;
+    trialHint: string;
     statBar: { value: string; label: string }[];
   };
   trust: {
@@ -134,6 +137,7 @@ const fr: LandingCopy = {
       faq: "FAQ",
     },
     signIn: "Se connecter",
+    signUp: "Créer mon compte",
     langLabel: "EN",
   },
   hero: {
@@ -145,7 +149,9 @@ const fr: LandingCopy = {
       "MikCloud est la plateforme cloud de gestion de hotspot MikroTik, conçue en Afrique pour les opérateurs africains. Connectez votre premier routeur en 45 secondes.",
     ctaPrimary: "Se connecter à la console",
     ctaSecondary: "Voir la démo",
+    ctaSignUp: "Créer mon compte",
     ctaDemoHint: "Compte démo : admin / admin123",
+    trialHint: "Essai gratuit 90 jours · 1 routeur · sans carte bancaire",
     statBar: [
       { value: "45 s", label: "pour connecter un routeur" },
       { value: "0", label: "IP publique requise" },
@@ -484,6 +490,7 @@ const en: LandingCopy = {
       faq: "FAQ",
     },
     signIn: "Sign in",
+    signUp: "Sign up",
     langLabel: "FR",
   },
   hero: {
@@ -495,7 +502,9 @@ const en: LandingCopy = {
       "MikCloud is the cloud-managed MikroTik hotspot platform built in Africa for African operators. Connect your first router in 45 seconds.",
     ctaPrimary: "Sign in to console",
     ctaSecondary: "Try the demo",
+    ctaSignUp: "Create account",
     ctaDemoHint: "Demo account: admin / admin123",
+    trialHint: "90-day free trial · 1 router · no credit card",
     statBar: [
       { value: "45s", label: "to connect a router" },
       { value: "0", label: "public IP required" },

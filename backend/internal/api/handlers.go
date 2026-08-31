@@ -522,7 +522,7 @@ func ensureSettings(db *model.DB, acc string) model.Settings {
 			Name: name, Currency: "XOF", Timezone: "Africa/Abidjan",
 			ExpiryPolicyMode: "keep", ExpiryPolicyAfterDays: 30,
 		},
-		Plan: model.Plan{Name: "Bêta", MaxRouters: "Illimité", MaxUsers: "Illimité"},
+		Plan: model.Plan{Name: "Essai", MaxRouters: "1", MaxUsers: "Illimité"},
 	}
 	if db.SettingsByAccount == nil {
 		db.SettingsByAccount = map[string]model.Settings{}
@@ -747,12 +747,20 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if db.SettingsByAccount == nil {
 		db.SettingsByAccount = map[string]model.Settings{}
 	}
+	now := time.Now().UTC()
 	db.SettingsByAccount[acc.ID] = model.Settings{
 		Tenant: model.Tenant{
 			Name: name, Currency: "XOF", Timezone: "Africa/Abidjan",
 			ExpiryPolicyMode: "keep", ExpiryPolicyAfterDays: 30,
 		},
-		Plan: model.Plan{Name: "Bêta", MaxRouters: "Illimité", MaxUsers: "Illimité"},
+		Plan: model.Plan{Name: "Essai", MaxRouters: "1", MaxUsers: "Illimité"},
+		Subscription: model.Subscription{
+			PlanID:      "essai",
+			Status:      "active",
+			PeriodStart: now.Format(time.RFC3339),
+			PeriodEnd:   now.AddDate(0, 3, 0).Format(time.RFC3339),
+			RouterSlots: 1,
+		},
 	}
 	// P0 (audit Mikhmon) — chaque nouveau compte démarre avec les 3 modèles
 	// de vouchers par défaut (contrat F2).
@@ -3976,7 +3984,7 @@ func (a *API) handleAdminAccounts(w http.ResponseWriter, r *http.Request) {
 	rows := make([]accountRow, 0, len(db.Accounts))
 	for i := range db.Accounts {
 		acc := db.Accounts[i]
-		sub := "beta"
+		sub := "essai"
 		if settings, ok := db.SettingsByAccount[acc.ID]; ok {
 			switch subscriptionStatus(settings.Subscription, now) {
 			case "active":
@@ -3984,7 +3992,7 @@ func (a *API) handleAdminAccounts(w http.ResponseWriter, r *http.Request) {
 			case "expired":
 				sub = "expired"
 			default:
-				sub = "beta" // « none » : aucun plan souscrit (bêta)
+				sub = "essai" // « none » : aucun plan souscrit (essai)
 			}
 		}
 		rows = append(rows, accountRow{

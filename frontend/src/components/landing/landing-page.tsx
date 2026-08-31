@@ -113,9 +113,11 @@ function Eyebrow({ children }: { children: React.ReactNode }) {
 export interface LandingPageProps {
   /** Déclenche l'écran de connexion (au lieu de la landing). */
   onSignIn: () => void;
+  /** Ouvre la modale d'inscription (SignupModal). */
+  onSignUp: () => void;
 }
 
-export default function LandingPage({ onSignIn }: LandingPageProps) {
+export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
   const lang = useHotspotStore((s) => s.lang) as Lang;
   const setLang = useHotspotStore((s) => s.setLang);
   const copy = landingCopy[lang];
@@ -155,8 +157,11 @@ export default function LandingPage({ onSignIn }: LandingPageProps) {
               <Globe className="size-4" />
               {copy.header.langLabel}
             </Button>
-            <Button size="sm" onClick={onSignIn} className="hidden sm:inline-flex">
+            <Button variant="ghost" size="sm" onClick={onSignIn} className="hidden sm:inline-flex">
               {copy.header.signIn}
+            </Button>
+            <Button size="sm" onClick={onSignUp} className="hidden sm:inline-flex">
+              {copy.header.signUp}
             </Button>
             <Button
               variant="ghost"
@@ -185,8 +190,11 @@ export default function LandingPage({ onSignIn }: LandingPageProps) {
               <Button variant="ghost" size="sm" asChild className="justify-start">
                 <a href="#faq" onClick={() => setMobileOpen(false)}>{copy.header.nav.faq}</a>
               </Button>
-              <Button size="sm" onClick={() => { setMobileOpen(false); onSignIn(); }} className="mt-2">
+              <Button variant="ghost" size="sm" onClick={() => { setMobileOpen(false); onSignIn(); }} className="mt-2">
                 {copy.header.signIn}
+              </Button>
+              <Button size="sm" onClick={() => { setMobileOpen(false); onSignUp(); }} className="mt-2">
+                {copy.header.signUp}
               </Button>
             </Container>
           </div>
@@ -227,17 +235,21 @@ export default function LandingPage({ onSignIn }: LandingPageProps) {
 
           <Reveal delay={0.15}>
             <div className="mt-8 flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
-              <Button size="lg" onClick={onSignIn} className="w-full sm:w-auto">
-                {copy.hero.ctaPrimary}
+              <Button size="lg" onClick={onSignUp} className="w-full sm:w-auto">
+                {copy.hero.ctaSignUp}
               </Button>
               <Button size="lg" variant="outline" onClick={onSignIn} className="w-full sm:w-auto">
-                {copy.hero.ctaSecondary}
+                {copy.hero.ctaPrimary}
               </Button>
             </div>
           </Reveal>
 
           <Reveal delay={0.2}>
-            <p className="mt-3 text-xs text-muted-foreground">{copy.hero.ctaDemoHint}</p>
+            <p className="mt-3 text-xs text-muted-foreground">{copy.hero.trialHint}</p>
+          </Reveal>
+
+          <Reveal delay={0.2}>
+            <p className="mt-1 text-xs text-muted-foreground">{copy.hero.ctaDemoHint}</p>
           </Reveal>
 
           {/* Stat bar */}

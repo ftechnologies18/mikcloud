@@ -3,14 +3,14 @@
 import { useState } from "react";
 import Image from "next/image";
 import { motion, useAnimate, useReducedMotion, type Variants } from "framer-motion";
-import { Eye, EyeOff, KeyRound, Loader2, ShieldCheck, Store, Ticket, Wifi } from "lucide-react";
+import { Eye, EyeOff, Loader2, ShieldCheck, Store, Ticket, Wifi } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { api, register } from "@/lib/hotspot/api";
+import { api } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { useHotspotStore } from "@/lib/hotspot/store";
 import type { AuthResponse } from "@/lib/hotspot/types";
@@ -149,7 +149,7 @@ function BrandPanel() {
   );
 }
 
-export default function LoginScreen({ onBack }: { onBack?: () => void }) {
+export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void; onSignUp?: () => void }) {
   const { t, tf } = useI18n();
   const setAuth = useHotspotStore((s) => s.setAuth);
 
@@ -164,12 +164,6 @@ export default function LoginScreen({ onBack }: { onBack?: () => void }) {
   const [sellPin, setSellPin] = useState("");
   const [sellLoading, setSellLoading] = useState(false);
 
-  // Inscription
-  const [regName, setRegName] = useState("");
-  const [regUsername, setRegUsername] = useState("");
-  const [regPassword, setRegPassword] = useState("");
-  const [regKey, setRegKey] = useState("");
-  const [regLoading, setRegLoading] = useState(false);
 
   // Micro-feedback d'erreur : la carte de verre tremble (sans remonter les onglets).
   const [scope, animate] = useAnimate();
@@ -180,7 +174,6 @@ export default function LoginScreen({ onBack }: { onBack?: () => void }) {
   }
 
   const canLogin = username.trim().length > 0 && password.trim().length > 0 && !loginLoading;
-  const canRegister = regName.trim().length > 0 && regUsername.trim().length > 0 && regPassword.length > 0 && !regLoading;
   const canSell = sellUsername.trim().length > 0 && sellPin.length >= 4 && !sellLoading;
 
   // N°8 — connexion revendeur par PIN : token scopé role=reseller → SellShell.
@@ -228,27 +221,6 @@ export default function LoginScreen({ onBack }: { onBack?: () => void }) {
       toast.error(err instanceof Error ? err.message : t("login.failed"));
     } finally {
       setLoginLoading(false);
-    }
-  }
-
-  async function handleRegister(e: React.FormEvent) {
-    e.preventDefault();
-    if (!canRegister) return;
-    setRegLoading(true);
-    try {
-      const res = await register({
-        name: regName.trim(),
-        username: regUsername.trim(),
-        password: regPassword,
-        key: regKey.trim() || undefined,
-      });
-      applyAuth(res);
-    } catch (err) {
-      // 403 inscription fermée / clé requise, 409 identifiant pris, 400 validations.
-      shakeCard();
-      toast.error(err instanceof Error ? err.message : t("login.registerFailed"));
-    } finally {
-      setRegLoading(false);
     }
   }
 
@@ -313,13 +285,9 @@ export default function LoginScreen({ onBack }: { onBack?: () => void }) {
             </div>
 
             <Tabs defaultValue="login" className="gap-5">
-              <TabsList className="glass-chip grid w-full grid-cols-3">
+              <TabsList className="glass-chip grid w-full grid-cols-2">
                 <TabsTrigger value="login" className="px-1.5 text-xs sm:px-2.5 sm:text-sm">
                   {t("login.tabLogin")}
-                </TabsTrigger>
-                <TabsTrigger value="register" className="px-1.5 text-xs sm:px-2.5 sm:text-sm">
-                  <span className="hidden sm:inline">{t("login.tabRegister")}</span>
-                  <span className="sm:hidden">{t("login.tabRegisterShort")}</span>
                 </TabsTrigger>
                 <TabsTrigger value="sell" className="px-1.5 text-xs sm:px-2.5 sm:text-sm">
                   <span className="hidden sm:inline">{t("login.tabSell")}</span>
@@ -372,66 +340,14 @@ export default function LoginScreen({ onBack }: { onBack?: () => void }) {
                 </motion.form>
               </TabsContent>
 
-              <TabsContent value="register">
-                <motion.form variants={stagger} initial="hidden" animate="show" onSubmit={handleRegister} className="space-y-4">
-                  <motion.div variants={rise} className="space-y-2">
-                    <Label htmlFor="register-name">{t("login.register.name")}</Label>
-                    <Input
-                      id="register-name"
-                      autoComplete="organization"
-                      placeholder="ProMax Wifi"
-                      value={regName}
-                      onChange={(e) => setRegName(e.target.value)}
-                      disabled={regLoading}
-                    />
-                  </motion.div>
-                  <motion.div variants={rise} className="space-y-2">
-                    <Label htmlFor="register-username">{t("login.username")}</Label>
-                    <Input
-                      id="register-username"
-                      autoComplete="username"
-                      placeholder="gerant1"
-                      value={regUsername}
-                      onChange={(e) => setRegUsername(e.target.value)}
-                      disabled={regLoading}
-                    />
-                  </motion.div>
-                  <motion.div variants={rise} className="space-y-2">
-                    <Label htmlFor="register-password">{t("login.password")}</Label>
-                    <Input
-                      id="register-password"
-                      type="password"
-                      autoComplete="new-password"
-                      placeholder="••••••••"
-                      value={regPassword}
-                      onChange={(e) => setRegPassword(e.target.value)}
-                      disabled={regLoading}
-                    />
-                  </motion.div>
-                  <motion.div variants={rise} className="space-y-2">
-                    <Label htmlFor="register-key">{t("login.register.key")}</Label>
-                    <div className="relative">
-                      <KeyRound className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                      <Input
-                        id="register-key"
-                        type="password"
-                        autoComplete="off"
-                        className="pl-8"
-                        placeholder={t("login.register.keyPlaceholder")}
-                        value={regKey}
-                        onChange={(e) => setRegKey(e.target.value)}
-                        disabled={regLoading}
-                      />
-                    </div>
-                  </motion.div>
-                  <motion.div variants={rise} whileHover={{ scale: 1.015 }} whileTap={{ scale: 0.97 }}>
-                    <Button type="submit" className="w-full shadow-lg shadow-primary/25" disabled={!canRegister}>
-                      {regLoading && <Loader2 className="size-4 animate-spin" />}
-                      {t("login.register.submit")}
-                    </Button>
-                  </motion.div>
-                </motion.form>
-              </TabsContent>
+              {onSignUp && (
+                <motion.p variants={rise} className="text-center text-sm text-muted-foreground">
+                  {t("login.noAccount", "Pas encore de compte ?")}{" "}
+                  <button onClick={onSignUp} className="font-medium text-primary hover:underline">
+                    {t("login.createAccount", "Créer mon compte")}
+                  </button>
+                </motion.p>
+              )}
 
               <TabsContent value="sell">
                 <motion.form variants={stagger} initial="hidden" animate="show" onSubmit={handleSellLogin} className="space-y-4">

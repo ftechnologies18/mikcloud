@@ -70,7 +70,7 @@ export interface AccountSummary {
   /** Identifiant du compte propriétaire (login). */
   owner: string;
   /** Santé de l'abonnement SaaS du compte (console plateforme). */
-  subscription?: "active" | "expired" | "beta";
+  subscription?: "active" | "expired" | "essai";
   stats: {
     users: number;
     routers: number;
@@ -146,7 +146,7 @@ export interface AccountDetail {
 
 /** Corps de PUT /api/admin/accounts/{id}/subscription (attribution plateforme). */
 export interface SubscriptionUpdatePayload {
-  planId: "essentiel" | "illimite" | "beta";
+  planId: "essentiel" | "illimite" | "essai";
   /** Durée en mois (défaut : 1 essentiel, 12 illimité). */
   months?: number;
   /** Routeurs couverts (Essentiel ; défaut = quota actuel sinon routeurs enregistrés). */
@@ -165,7 +165,7 @@ export interface PlatformOverview {
   sessions: number;
   sales30d: number;
   revenue30d: number;
-  subscriptions: { active: number; expired: number; beta: number };
+  subscriptions: { active: number; expired: number; essai: number };
   growth: { month: string; accounts: number }[];
   topAccounts: {
     id: string;

@@ -110,7 +110,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 /** Preview locale (indicative) du montant et de l'échéance après attribution. */
 function previewSubscription(
   current: SubscriptionInfo,
-  planId: "essentiel" | "illimite" | "beta",
+  planId: "essentiel" | "illimite" | "essai",
   months: number,
   slots: number,
 ): { amount: number; end: string | null; stacked: boolean } {
@@ -164,7 +164,7 @@ function SubscriptionDialog({
 
   const monthsNum = Math.max(1, Math.min(36, parseInt(months, 10) || 1));
   const slotsNum = Math.max(1, parseInt(slots, 10) || 1);
-  const planKey = planId as "essentiel" | "illimite" | "beta";
+  const planKey = planId as "essentiel" | "illimite" | "essai";
   const preview = useMemo(
     () => previewSubscription(current, planKey, monthsNum, slotsNum),
     [current, planKey, monthsNum, slotsNum],
@@ -207,7 +207,7 @@ function SubscriptionDialog({
               <SelectContent>
                 <SelectItem value="essentiel">{t("accounts.sub.planEssentiel")}</SelectItem>
                 <SelectItem value="illimite">{t("accounts.sub.planIllimite")}</SelectItem>
-                <SelectItem value="beta">{t("accounts.sub.planBeta")}</SelectItem>
+                <SelectItem value="essai">{t("accounts.sub.planBeta")}</SelectItem>
               </SelectContent>
             </Select>
           </div>

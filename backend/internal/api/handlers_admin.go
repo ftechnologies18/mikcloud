@@ -108,7 +108,7 @@ func (a *API) handleAdminOverview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Santé des abonnements + croissance mensuelle des comptes (6 mois).
-	subActive, subExpired, subBeta := 0, 0, 0
+	subActive, subExpired, subEssai := 0, 0, 0
 	// Ancrage sur le 1er du mois : AddDate depuis le 31 d'un mois court
 	// normaliserait (31 juin → 1er juillet) et dupliquerait des clés.
 	monthAnchor := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
@@ -131,13 +131,13 @@ func (a *API) handleAdminOverview(w http.ResponseWriter, r *http.Request) {
 				subExpired++
 				accB.Subscription = "expired"
 			default:
-				// « none » : aucun plan souscrit — ère bêta / compte gratuit.
-				subBeta++
-				accB.Subscription = "beta"
+				// « none » : aucun plan souscrit — essai / compte gratuit.
+				subEssai++
+				accB.Subscription = "essai"
 			}
 		} else {
-			subBeta++
-			accB.Subscription = "beta"
+			subEssai++
+			accB.Subscription = "essai"
 		}
 		if mk := monthKey(acc.CreatedAt); mk != "" {
 			if _, ok := accountsPerMonth[mk]; ok || contains(months, mk) {
@@ -201,7 +201,7 @@ func (a *API) handleAdminOverview(w http.ResponseWriter, r *http.Request) {
 		"sessions":      sessionsActive,
 		"sales30d":      sales30d,
 		"revenue30d":    revenue30d,
-		"subscriptions": map[string]any{"active": subActive, "expired": subExpired, "beta": subBeta},
+		"subscriptions": map[string]any{"active": subActive, "expired": subExpired, "essai": subEssai},
 		"growth":        growth,
 		"topAccounts":   top,
 		"registerOpen":  registerOpen,
@@ -290,12 +290,20 @@ func (a *API) handleAdminAccountCreate(w http.ResponseWriter, r *http.Request) {
 	if db.SettingsByAccount == nil {
 		db.SettingsByAccount = map[string]model.Settings{}
 	}
+	now := time.Now().UTC()
 	db.SettingsByAccount[acc.ID] = model.Settings{
 		Tenant: model.Tenant{
 			Name: name, Currency: "XOF", Timezone: "Africa/Abidjan",
 			ExpiryPolicyMode: "keep", ExpiryPolicyAfterDays: 30,
 		},
-		Plan: model.Plan{Name: "Bêta", MaxRouters: "Illimité", MaxUsers: "Illimité"},
+		Plan: model.Plan{Name: "Essai", MaxRouters: "1", MaxUsers: "Illimité"},
+		Subscription: model.Subscription{
+			PlanID:      "essai",
+			Status:      "active",
+			PeriodStart: now.Format(time.RFC3339),
+			PeriodEnd:   now.AddDate(0, 3, 0).Format(time.RFC3339),
+			RouterSlots: 1,
+		},
 	}
 	// Même contrat que l'auto-inscription : les 3 gabarits de vouchers par défaut.
 	db.Templates = append(db.Templates, store.SeedTemplatesFor(acc.ID)...)

@@ -175,7 +175,7 @@ export default function PlatformOverviewView() {
           </div>
           <div className="flex items-center justify-between rounded-lg border p-3">
             <span className="text-sm text-muted-foreground">{t("platform.sub.beta")}</span>
-            <span className="text-lg font-semibold tabular-nums">{nf(data.subscriptions.beta)}</span>
+            <span className="text-lg font-semibold tabular-nums">{nf(data.subscriptions.essai)}</span>
           </div>
           <p className="text-xs text-muted-foreground sm:col-span-3">
             {data.registerOpen ? t("platform.register.open") : t("platform.register.closed")}

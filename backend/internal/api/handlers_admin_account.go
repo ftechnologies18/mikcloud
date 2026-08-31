@@ -91,12 +91,13 @@ func (a *API) guardAccountWrite(w http.ResponseWriter, r *http.Request) bool {
 // (402, code « plan_router_limit »). À appeler APRÈS guardAccountWrite,
 // sous verrou (routerCount = routeurs déjà enregistrés du compte).
 func guardAccountRouterLimit(w http.ResponseWriter, view subscriptionGuardView, routerCount int) bool {
-	if view.PlanID != "essentiel" || view.RouterSlots <= 0 || routerCount < view.RouterSlots {
+	// Essai : 1 routeur max. Essentiel : quota de routeurs couverts par la période.
+	if (view.PlanID != "essentiel" && view.PlanID != "essai") || view.RouterSlots <= 0 || routerCount < view.RouterSlots {
 		return true
 	}
 	writeErrCode(w, http.StatusPaymentRequired, "plan_router_limit",
-		fmt.Sprintf("Plan Essentiel : la période couvre %d routeur(s) — renouvelez avec plus de routeurs ou passez au plan Illimité", view.RouterSlots),
-		map[string]any{"limit": view.RouterSlots, "current": routerCount})
+		fmt.Sprintf("Votre formule couvre %d routeur(s) — passez au plan Essentiel (plus de routeurs) ou Illimité pour en ajouter", view.RouterSlots),
+		map[string]any{"limit": view.RouterSlots, "current": routerCount, "plan": view.PlanID})
 	return false
 }
 
@@ -171,10 +172,10 @@ func (a *API) handleAdminAccountDetail(w http.ResponseWriter, r *http.Request) {
 	if hasSettings {
 		status = subscriptionStatus(sub, now)
 	}
-	planName := "Bêta"
+	planName := "Essai"
 	switch sub.PlanID {
 	case "":
-		planName = "Bêta"
+		planName = "Essai"
 	default:
 		if p, ok := model.PlanByID(sub.PlanID); ok {
 			planName = p.Name
@@ -336,8 +337,8 @@ func (a *API) handleAdminAccountSubscription(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	planID := strings.ToLower(strings.TrimSpace(req.PlanID))
-	if planID != "essentiel" && planID != "illimite" && planID != "beta" {
-		writeErrCode(w, http.StatusBadRequest, "bad_plan", "Formule inconnue (essentiel | illimite | beta)", nil)
+	if planID != "essentiel" && planID != "illimite" && planID != "essai" && planID != "platform" {
+		writeErrCode(w, http.StatusBadRequest, "bad_plan", "Formule inconnue (essentiel | illimite | essai | platform)", nil)
 		return
 	}
 	var plan model.SaasPlan
@@ -356,7 +357,10 @@ func (a *API) handleAdminAccountSubscription(w http.ResponseWriter, r *http.Requ
 	if planID == "essentiel" && months <= 0 {
 		months = 1
 	}
-	if planID == "essentiel" || planID == "illimite" {
+	if planID == "essai" && months <= 0 {
+		months = 3 // essai par défaut : 3 mois (90 jours)
+	}
+	if planID == "essentiel" || planID == "illimite" || planID == "essai" {
 		if months < 1 || months > 36 {
 			writeErrCode(w, http.StatusBadRequest, "bad_months", "Durée invalide (1 à 36 mois)", nil)
 			return
@@ -385,8 +389,11 @@ func (a *API) handleAdminAccountSubscription(w http.ResponseWriter, r *http.Requ
 	var amount int
 	var slots int
 	switch planID {
-	case "beta":
-		// Bêta : gratuit, non expirant — remise à zéro des attributs payants.
+	case "essai":
+		// Essai : gratuit, 1 routeur, période limitée (prolongeable par la plateforme).
+		slots = 1
+	case "platform":
+		// Plateforme : interne, non expirant, jamais plafonné.
 		slots = 0
 	case "illimite":
 		// 1 000 F/mois équivalent (12 000 F/an) × durée.
@@ -406,7 +413,7 @@ func (a *API) handleAdminAccountSubscription(w http.ResponseWriter, r *http.Requ
 		amount = plan.PriceFcfa * slots * months
 	}
 
-	if planID == "essentiel" || planID == "illimite" {
+	if planID == "essentiel" || planID == "illimite" || planID == "essai" {
 		// Renouvellement du même plan encore actif : la nouvelle période
 		// s'empile à la fin de la période en cours. Sinon : immédiat.
 		start := now
@@ -422,6 +429,7 @@ func (a *API) handleAdminAccountSubscription(w http.ResponseWriter, r *http.Requ
 		sub.RouterSlots = slots
 		sub.LastAmountFcfa = amount
 	} else {
+		// Plateforme : interne, non expirant, jamais plafonné.
 		sub.PlanID = planID
 		sub.Status = "active"
 		sub.PeriodStart = now.Format(time.RFC3339)
@@ -437,14 +445,18 @@ func (a *API) handleAdminAccountSubscription(w http.ResponseWriter, r *http.Requ
 	settings.Subscription = sub
 
 	// Compatibilité d'affichage avec l'ancien contrat (libellé Plan).
-	label := "Bêta"
-	maxRouters := "Illimité"
+	label := "Essai"
+	maxRouters := "1"
 	switch planID {
+	case "platform":
+		label = "Plateforme"
+		maxRouters = "Illimité"
 	case "essentiel":
 		label = "MikCloud Essentiel"
 		maxRouters = "Par routeur"
 	case "illimite":
 		label = "MikCloud Illimité"
+		maxRouters = "Illimité"
 	}
 	settings.Plan = model.Plan{Name: label, MaxRouters: maxRouters, MaxUsers: "Illimité"}
 	db.SettingsByAccount[id] = settings
@@ -452,8 +464,8 @@ func (a *API) handleAdminAccountSubscription(w http.ResponseWriter, r *http.Requ
 	// Journal (transverse + visible du compte).
 	msg := ""
 	switch planID {
-	case "beta":
-		msg = "Abonnement basculé en bêta (gratuit, sans échéance) par la plateforme"
+	case "essai":
+		msg = fmt.Sprintf("Essai prolongé par la plateforme — %d mois, 1 routeur couvert", months)
 	default:
 		paid := ""
 		if req.MarkPaid {

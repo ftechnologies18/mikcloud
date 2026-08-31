@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
@@ -332,6 +332,8 @@ function NavList() {
       return next;
     });
   }
+  // O — état replié explicite de l'utilisateur (localStorage).
+  const lastAutoOpened = useRef<string | null>(null);
   // Console plateforme : navigation dédiée (cockpit opérateur) ; sinon la
   // navigation client habituelle. « accounts » n'est rendu qu'en mode client
   // pour l'admin plateforme (en mode plateforme, il est déjà dans sa section).
@@ -359,6 +361,27 @@ function NavList() {
     enabled: isPlatformMode,
   });
   const billingPending = billing?.pending ?? 0;
+  // O — naviguer vers une vue ROUVRE automatiquement sa section (l'utilisateur
+  // ne perd jamais son contexte) — mais il peut ensuite la replier
+  // volontairement : le toggle manuel reste maître tant que la vue ne change pas.
+  useEffect(() => {
+    const section = sections.find((s) => s.items.some((item) => item.id === view));
+    if (section && lastAutoOpened.current !== section.labelKey) {
+      lastAutoOpened.current = section.labelKey;
+      setCollapsed((prev) => {
+        if (!prev.has(section.labelKey)) return prev; // déjà ouverte
+        const next = new Set(prev);
+        next.delete(section.labelKey);
+        try {
+          localStorage.setItem("mikcloud-nav-collapsed", JSON.stringify([...next]));
+        } catch {
+          /* ignore */
+        }
+        return next;
+      });
+    }
+    if (!section) lastAutoOpened.current = null;
+  }, [view, sections]);
   // M — statut d'abonnement du client pour le badge « Abonnement » de la
   // sidebar : point vert (actif), ambre (échéance ≤ 7 j) ou rouge (expiré/
   // suspendu) — rappel passif anti-churn, visible sans ouvrir la vue.
@@ -382,10 +405,10 @@ function NavList() {
           (item) => (item.id !== "accounts" || isAdmin) && canView(user?.role, item.id),
         );
         if (items.length === 0) return null;
-        // O — la section contenant la vue active est toujours ouverte (l'utilisateur
-        // ne perd jamais son contexte de navigation).
-        const containsActive = items.some((item) => item.id === view);
-        const open = containsActive || !collapsed.has(section.labelKey);
+        // O — état replié explicite de l'utilisateur (localStorage) ; la
+        // section de la vue active s'est auto-ouverte au moment de la
+        // navigation (voir useEffect ci-dessus) mais reste repliable ensuite.
+        const open = !collapsed.has(section.labelKey);
         return (
           <div key={section.labelKey}>
             <button

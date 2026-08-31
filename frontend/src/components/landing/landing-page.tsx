@@ -441,12 +441,6 @@ export default function LandingPage({ onSignIn }: LandingPageProps) {
             <p className="mt-4 text-muted-foreground">{copy.pricing.subtitle}</p>
           </Reveal>
 
-          <Reveal delay={0.05} className="mt-6 text-center">
-            <p className="mx-auto max-w-2xl rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm text-primary">
-              {copy.pricing.founderNote}
-            </p>
-          </Reveal>
-
           <motion.div
             className="mx-auto mt-12 grid max-w-4xl gap-6 md:grid-cols-2"
             initial="hidden"

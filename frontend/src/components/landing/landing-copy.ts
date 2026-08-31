@@ -84,7 +84,6 @@ export interface LandingCopy {
     eyebrow: string;
     title: string;
     subtitle: string;
-    founderNote: string;
     plans: {
       name: string;
       price: string;
@@ -143,7 +142,7 @@ const fr: LandingCopy = {
     titleAccent: "hotspot",
     title2: "depuis un seul cloud",
     subtitle:
-      "MikCloud est la plateforme cloud de gestion de hotspot MikroTik, conçue en Afrique pour les opérateurs africains. Connectez votre premier routeur en 45 secondes — sans IP publique, même derrière Orange, MTN, Moov, Safaricom, Airtel ou 9Mobile.",
+      "MikCloud est la plateforme cloud de gestion de hotspot MikroTik, conçue en Afrique pour les opérateurs africains. Connectez votre premier routeur en 45 secondes.",
     ctaPrimary: "Se connecter à la console",
     ctaSecondary: "Voir la démo",
     ctaDemoHint: "Compte démo : admin / admin123",
@@ -330,8 +329,6 @@ const fr: LandingCopy = {
     title: "Un prix clair, sans surprise",
     subtitle:
       "Tarif en FCFA (UEMOA et CEMAC). Pour NGN, GHS, KES, TZS, UGX, ZAR et autres devises africaines, le montant est converti automatiquement à la souscription.",
-    founderNote:
-      "Prix Fondateur — les 100 premiers abonnés Illimité gardent 12 000 F/an à vie. Ensuite, le prix public passera à 18 000 F/an.",
     plans: [
       {
         name: "Essentiel",
@@ -495,7 +492,7 @@ const en: LandingCopy = {
     titleAccent: "hotspot",
     title2: "revenue from one cloud",
     subtitle:
-      "MikCloud is the cloud-managed MikroTik hotspot platform built in Africa for African operators. Connect your first router in 45 seconds — no public IP needed, works behind Orange, MTN, Moov, Safaricom, Airtel or 9Mobile.",
+      "MikCloud is the cloud-managed MikroTik hotspot platform built in Africa for African operators. Connect your first router in 45 seconds.",
     ctaPrimary: "Sign in to console",
     ctaSecondary: "Try the demo",
     ctaDemoHint: "Demo account: admin / admin123",
@@ -682,8 +679,6 @@ const en: LandingCopy = {
     title: "Clear pricing, no surprise",
     subtitle:
       "Prices in FCFA (UEMOA and CEMAC). For NGN, GHS, KES, TZS, UGX, ZAR and other African currencies, the amount is auto-converted at checkout.",
-    founderNote:
-      "Founder Price — the first 100 Unlimited subscribers keep 12,000 F/year for life. After that, the public price goes up to 18,000 F/year.",
     plans: [
       {
         name: "Essential",

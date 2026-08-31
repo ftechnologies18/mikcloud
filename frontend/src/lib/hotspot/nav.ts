@@ -13,6 +13,7 @@ import {
   Router as RouterIcon,
   ScrollText,
   Settings,
+  ShieldCheck,
   Store,
   Ticket,
   Users,
@@ -66,9 +67,32 @@ export const NAV_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
   },
 ];
 
-/** Liste plate des items de nav visibles pour un rôle donné (miroir canView). */
-export function navItemsFor(role: string | undefined, isAdmin: boolean): NavItem[] {
-  return NAV_SECTIONS.flatMap((s) => s.items).filter(
-    (item) => (item.id !== "accounts" || isAdmin) && canView(role, item.id),
-  );
+/** Liste plate des items de nav pour la console ACTIVE — client par défaut,
+ * plateforme quand l'admin y bascule (miroir canView dans les deux cas). */
+export function navItemsFor(
+  role: string | undefined,
+  isAdmin: boolean,
+  mode: "platform" | "client" = "client",
+): NavItem[] {
+  const sections = mode === "platform" ? NAV_PLATFORM_SECTIONS : NAV_SECTIONS;
+  return sections
+    .flatMap((s) => s.items)
+    .filter((item) => (item.id !== "accounts" || isAdmin) && canView(role, item.id));
 }
+
+/**
+ * Navigation de la CONSOLE PLATEFORME — cockpit du propriétaire du SaaS
+ * (super-admin MikCloud) : pilotage global, comptes clients, journal
+ * transverse, équipe plateforme. Les clients ne la voient jamais.
+ */
+export const NAV_PLATFORM_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
+  {
+    labelKey: "nav.section.platform",
+    items: [
+      { id: "platform", labelKey: "nav.platform", icon: ShieldCheck },
+      { id: "accounts", labelKey: "nav.accounts", icon: Building2 },
+      { id: "platformLogs", labelKey: "nav.platformLogs", icon: ScrollText },
+      { id: "platformTeam", labelKey: "nav.platformTeam", icon: UsersRound },
+    ],
+  },
+];

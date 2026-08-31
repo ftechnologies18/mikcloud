@@ -94,7 +94,12 @@ export function SearchPalette() {
   const user = useHotspotStore((s) => s.user);
   const queryClient = useQueryClient();
   const isAdmin = user?.role === "admin" || user?.role === "platform_admin";
-  const items = useMemo(() => navItemsFor(user?.role, isAdmin), [user?.role, isAdmin]);
+  const shellMode = useHotspotStore((s) => s.shellMode);
+  // La palette propose les vues de la console ACTIVE (plateforme ou client).
+  const items = useMemo(
+    () => navItemsFor(user?.role, isAdmin, isAdmin && shellMode === "platform" ? "platform" : "client"),
+    [user?.role, isAdmin, shellMode],
+  );
 
   // ⌘K / Ctrl+K — ouvre (ou referme) la palette depuis n'importe où.
   useEffect(() => {

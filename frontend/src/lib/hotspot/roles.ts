@@ -39,10 +39,20 @@ const VIEW_MIN_RANK: Record<string, number> = {
   accounts: 3, // + vérification isPlatformAdmin côté vue
 };
 
+/** Vues de la CONSOLE PLATEFORME — réservées au super-admin MikCloud
+ * (platform_admin, ou « admin » historique). Le reste de la navigation
+ * appartient à la console client. */
+const PLATFORM_VIEWS: ReadonlySet<string> = new Set(["platform", "platformLogs", "platformTeam"]);
+
+/** Cette vue appartient-elle à la console plateforme ? */
+export function isPlatformView(view: string): boolean {
+  return PLATFORM_VIEWS.has(view) || view === "accounts";
+}
+
 /** L'utilisateur de ce rôle peut-il ouvrir cette vue ? */
 export function canView(role: string | undefined, view: string): boolean {
   if (!role) return false;
-  if (view === "accounts") return role === "admin" || role === "platform_admin";
+  if (isPlatformView(view)) return role === "admin" || role === "platform_admin";
   const min = VIEW_MIN_RANK[view];
   if (min === undefined) return true;
   return roleRank(role) >= min;

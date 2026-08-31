@@ -69,6 +69,8 @@ export interface AccountSummary {
   createdAt: string;
   /** Identifiant du compte propriétaire (login). */
   owner: string;
+  /** Santé de l'abonnement SaaS du compte (console plateforme). */
+  subscription?: "active" | "expired" | "beta";
   stats: {
     users: number;
     routers: number;
@@ -76,6 +78,51 @@ export interface AccountSummary {
     sales30d: number;
     revenue30d: number;
   };
+}
+
+/** KPIs globaux du SaaS — console plateforme (admin plateforme uniquement). */
+export interface PlatformOverview {
+  accounts: { total: number; active: number; disabled: number; new30d: number };
+  routers: { total: number; online: number };
+  hotspotUsers: number;
+  sessions: number;
+  sales30d: number;
+  revenue30d: number;
+  subscriptions: { active: number; expired: number; beta: number };
+  growth: { month: string; accounts: number }[];
+  topAccounts: {
+    id: string;
+    name: string;
+    status: string;
+    revenue30d: number;
+    sales30d: number;
+    users: number;
+    routers: number;
+    subscription: string;
+  }[];
+  registerOpen: boolean;
+}
+
+/** Entrée du journal d'activité transverse (tous comptes — plateforme). */
+export interface PlatformActivityRow {
+  id: string;
+  accountId: string;
+  accountName: string;
+  type: string;
+  message: string;
+  at: string;
+  actorId?: string;
+  actorName?: string;
+}
+
+/** Membre de l'équipe plateforme (super-admins MikCloud). */
+export interface PlatformTeamMember {
+  id: string;
+  name: string;
+  username: string;
+  role: string;
+  createdAt: string;
+  self: boolean;
 }
 
 export interface RouterDevice {
@@ -720,6 +767,9 @@ export type ViewId =
   | "routers"
   | "reports"
   | "logs"
+  | "platform"
+  | "platformLogs"
+  | "platformTeam"
   | "accounts"
   | "notifications"
   | "settings"

@@ -1,16 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Image from "next/image";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  ArrowLeftRight,
   ChevronsUpDown,
   Languages,
   LogOut,
   Menu,
   RefreshCw,
   Settings,
+  ShieldCheck,
   UserRound,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -30,9 +32,9 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
-import { NAV_SECTIONS } from "@/lib/hotspot/nav";
+import { NAV_PLATFORM_SECTIONS, NAV_SECTIONS } from "@/lib/hotspot/nav";
 import { roleLabel, userInitials } from "@/lib/hotspot/format";
-import { canView } from "@/lib/hotspot/roles";
+import { canView, isPlatformView } from "@/lib/hotspot/roles";
 import { useHotspotStore } from "@/lib/hotspot/store";
 import type { HotspotSession, ViewId } from "@/lib/hotspot/types";
 import { ThemeToggle } from "./theme-toggle";
@@ -43,6 +45,9 @@ import AccountsView from "./views/accounts-view";
 import DashboardView from "./views/dashboard-view";
 import LogsView from "./views/logs-view";
 import NotificationsView from "./views/notifications-view";
+import PlatformLogsView from "./views/platform-logs-view";
+import PlatformOverviewView from "./views/platform-overview-view";
+import PlatformTeamView from "./views/platform-team-view";
 import ProfilesView from "./views/profiles-view";
 import ReportsView from "./views/reports-view";
 import ResellersView from "./views/resellers-view";
@@ -68,6 +73,9 @@ function viewTitle(view: ViewId, t: (key: string) => string): string {
     routers: "nav.routers",
     reports: "nav.reports",
     logs: "logs.title",
+    platform: "nav.platform",
+    platformLogs: "platformLogs.title",
+    platformTeam: "platformTeam.title",
     accounts: "nav.accounts",
     notifications: "nav.notifications",
     settings: "nav.settings",
@@ -87,6 +95,9 @@ const VIEWS: Record<ViewId, React.ComponentType> = {
   routers: RoutersView,
   reports: ReportsView,
   logs: LogsView,
+  platform: PlatformOverviewView,
+  platformLogs: PlatformLogsView,
+  platformTeam: PlatformTeamView,
   accounts: AccountsView,
   notifications: NotificationsView,
   settings: SettingsView,
@@ -196,22 +207,65 @@ function UserCard() {
   );
 }
 
+/** Bascule Plateforme ↔ Ma console — visible uniquement de l'admin plateforme
+ * (propriétaire du SaaS). La console plateforme = cockpit d'opérateur ;
+ * « Ma console » = la console client ordinaire (son propre compte acc-main). */
+function ModeSwitch() {
+  const { t } = useI18n();
+  const user = useHotspotStore((s) => s.user);
+  const shellMode = useHotspotStore((s) => s.shellMode);
+  const setShellMode = useHotspotStore((s) => s.setShellMode);
+  const isPlatformAdmin = user?.role === "admin" || user?.role === "platform_admin";
+  if (!isPlatformAdmin) return null;
+  const toPlatform = shellMode !== "platform";
+  return (
+    <div className="px-3 pb-3">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className={cn(
+          "h-10 w-full justify-start gap-2.5 border-sidebar-border bg-card/50 text-left font-medium",
+          toPlatform && "border-primary/30 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
+        )}
+        onClick={() => setShellMode(toPlatform ? "platform" : "client")}
+      >
+        {toPlatform ? <ShieldCheck className="size-4" /> : <ArrowLeftRight className="size-4" />}
+        {toPlatform ? t("shell.goPlatform") : t("shell.goClient")}
+      </Button>
+    </div>
+  );
+}
+
 function NavList() {
   const { t } = useI18n();
   const view = useHotspotStore((s) => s.view);
   const setView = useHotspotStore((s) => s.setView);
   const user = useHotspotStore((s) => s.user);
+  const shellMode = useHotspotStore((s) => s.shellMode);
   const isAdmin = user?.role === "admin" || user?.role === "platform_admin";
+  // Console plateforme : navigation dédiée (cockpit opérateur) ; sinon la
+  // navigation client habituelle. « accounts » n'est rendu qu'en mode client
+  // pour l'admin plateforme (en mode plateforme, il est déjà dans sa section).
+  const sections =
+    isAdmin && shellMode === "platform"
+      ? NAV_PLATFORM_SECTIONS
+      : NAV_SECTIONS.map((section) => ({
+          ...section,
+          items: section.items.filter((item) => !(isAdmin && shellMode === "client" && item.id === "accounts")),
+        }));
 
   const { data: sessions } = useQuery({
     queryKey: ["/api/sessions"],
     queryFn: () => api<HotspotSession[]>("/api/sessions"),
     refetchInterval: 10_000,
+    enabled: !(isAdmin && shellMode === "platform"),
   });
   const sessionsCount = sessions?.length ?? 0;
   return (
     <nav className="flex-1 space-y-5 overflow-y-auto px-3 pb-4" aria-label={t("nav.main")}>
-      {NAV_SECTIONS.map((section) => {
+      <ModeSwitch />
+      {sections.map((section) => {
         // N°7 — chaque vue n'apparaît que si le rôle peut l'ouvrir
         // (miroir client des requireRole serveur ; comptes = admin plateforme).
         const items = section.items.filter(
@@ -383,13 +437,31 @@ export default function AppShell() {
   const view = useHotspotStore((s) => s.view);
   const sidebarOpen = useHotspotStore((s) => s.sidebarOpen);
   const setSidebarOpen = useHotspotStore((s) => s.setSidebarOpen);
+  const setView = useHotspotStore((s) => s.setView);
   const user = useHotspotStore((s) => s.user);
-  const isAdmin = user?.role === "admin" || user?.role === "platform_admin";
+  const shellMode = useHotspotStore((s) => s.shellMode);
+  const isPlatformAdmin = user?.role === "admin" || user?.role === "platform_admin";
+  const platformMode = isPlatformAdmin && shellMode === "platform";
+
+  // Cohérence mode ↔ vue : en mode plateforme, une vue client résiduelle
+  // (rechargement, palette, lien) retombe sur la vue d'ensemble plateforme —
+  // et inversement en mode client (les vues plateforme y sont interdites).
+  useEffect(() => {
+    if (platformMode && !isPlatformView(view)) {
+      setView("platform");
+    } else if (isPlatformAdmin && !platformMode && isPlatformView(view)) {
+      setView("dashboard");
+    }
+  }, [platformMode, isPlatformAdmin, view, setView]);
 
   // Garde-fou N°7 : une vue interdite au rôle (p.ex. un lien direct restant
   // après un changement de rôle) retombe sur le dashboard — le serveur
   // refuserait les appels de toute façon (403).
-  const ActiveView = canView(user?.role, view) ? (VIEWS[view] ?? DashboardView) : DashboardView;
+  const ActiveView = canView(user?.role, view)
+    ? (VIEWS[view] ?? DashboardView)
+    : platformMode
+      ? PlatformOverviewView
+      : DashboardView;
 
   return (
     <div className="flex min-h-screen">

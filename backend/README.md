@@ -35,7 +35,12 @@ Variables d'environnement :
 | `ADMIN_PASSWORD` | — | Mot de passe admin de production ; supprime le compte démo si défini |
 | `ADMIN_NAME` | `Administrateur MikCloud` | Nom affiché du compte admin |
 
-Compte démo (seed) : **admin / admin123**. `POST /api/admin/reset` régénère les données de démo.
+Démarrage sur base PostgreSQL vide : état de mise en service (compte + admin,
+réglages, 3 gabarits de tickets — **aucune donnée de démonstration**).
+Compte de développement (mode JSON local, seed démo) : **admin / admin123**.
+`POST /api/admin/purge` supprime les données de test par catégories — aucun
+endpoint ne régénère de données démo (l'ancien `/api/admin/reset` a été retiré :
+il écrasait les données réelles, dont les routeurs agents).
 
 ### Neon (production, gratuit)
 
@@ -43,9 +48,10 @@ Compte démo (seed) : **admin / admin123**. `POST /api/admin/reset` régénère 
 2. Copier la connection string (`postgres://…sslmode=require`)
 3. Render → Service mikcloud-api → Environment → `DATABASE_URL`
 
-Au premier démarrage, le seed démo est écrit dans Neon. Ensuite l'état réel est
-restauré à chaque redéploiement/sleep-wake. Vérifier dans les logs Render :
-`store: état restauré depuis Neon`.
+Au premier démarrage sur une base vide, l'état de mise en service (compte,
+admin, réglages, gabarits — zéro démo) est écrit dans Neon. Ensuite l'état réel
+est restauré à chaque redéploiement/sleep-wake. Vérifier dans les logs Render :
+`store: état chargé depuis PostgreSQL`.
 
 ## Endpoints principaux
 
@@ -64,7 +70,10 @@ restauré à chaque redéploiement/sleep-wake. Vérifier dans les logs Render :
 | GET     | `/api/accounting?period=day\|week\|month&routerId=` | **Comptabilité multi-sites** (ventes/CA par jour, semaine, mois et par routeur) |
 | GET     | `/api/reports?days=7\|14\|30`       | Rapports commerciaux & trafic        |
 | GET/PUT | `/api/settings`                     | Organisation, devise, fuseau         |
-| POST    | `/api/admin/reset`                  | Réinitialisation des données démo    |
+| GET     | `/api/admin/purge/stats`            | Compteurs par catégorie de purge     |
+| POST    | `/api/admin/purge`                  | Purge des données par catégories (`{"scopes":[…]}`, `"all"` accepté) |
+| POST    | `/api/admin/wipe`                   | Purge totale (alias scope `all`)     |
+| POST    | `/api/admin/reload`                 | Rechargement de l'état depuis la base |
 
 ## Connecter un vrai routeur MikroTik (mode Réel)
 

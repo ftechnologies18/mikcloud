@@ -5,7 +5,7 @@
 // sécurité, zone sensible.
 
 import { useRef, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Building2,
   CalendarClock,
@@ -17,8 +17,11 @@ import {
   Image as ImageIcon,
   KeyRound,
   Languages,
+  Loader2,
   Router as RouterIcon,
+  ShieldCheck,
   Ticket,
+  Trash2,
   TriangleAlert,
   X,
 } from "lucide-react";
@@ -31,8 +34,7 @@ import { useHotspotStore } from "@/lib/hotspot/store";
 import { PageHeader } from "@/components/hotspot/page-header";
 import { SETTINGS_QUERY_KEY, useSettings } from "@/components/hotspot/parts/sd-currency";
 import { SubscriptionCard } from "@/components/hotspot/parts/sa-subscription-card";
-import {
-  AlertDialog,
+import { AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
@@ -45,6 +47,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -77,38 +80,49 @@ interface ReloadStats {
   sessions: number;
 }
 
+// Réponse de GET /api/admin/purge/stats — compteurs par catégorie de purge.
+// Les routeurs réels (realRouters) sont informatifs : JAMAIS purgés.
+interface PurgeStats {
+  simulatedRouters: number;
+  hotspotUsers: number;
+  profiles: number;
+  batches: number;
+  resellers: number;
+  transactions: number;
+  sales: number;
+  sessions: number;
+  logs: number;
+  templates: number;
+  realRouters: number;
+}
+
+interface PurgeCounts {
+  routers: number;
+  hotspotUsers: number;
+  profiles: number;
+  batches: number;
+  resellers: number;
+  transactions: number;
+  sales: number;
+  sessions: number;
+  logs: number;
+  templates: number;
+}
+
+interface PurgeResult {
+  ok: boolean;
+  summary: string;
+  purged: PurgeCounts;
+}
+
 export default function SettingsView() {
   const { t, tf } = useI18n();
   const queryClient = useQueryClient();
   const { data, isLoading } = useSettings();
-  const [resetOpen, setResetOpen] = useState(false);
-  const [wipeOpen, setWipeOpen] = useState(false);
   const user = useHotspotStore((s) => s.user);
-  // La réinitialisation des données devient admin-only côté serveur.
+  // Administration de la base et purge : réservées à l'admin plateforme
+  // (les endpoints exigent le rôle côté serveur — défense en profondeur).
   const isAdmin = user?.role === "admin";
-
-  const resetMutation = useMutation({
-    mutationFn: () => api<{ ok: boolean }>("/api/admin/reset", { method: "POST" }),
-    onSuccess: () => {
-      toast.success(t("settings.resetToast"));
-      setResetOpen(false);
-      queryClient.invalidateQueries();
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  // Purge totale des données de test (routeurs, forfaits, vouchers…) — le
-  // système finit VIDE, prêt pour un vrai routeur. Comptes/équipe/réglages
-  // conservés. Contrairement au reset, rien n'est régénéré.
-  const wipeMutation = useMutation({
-    mutationFn: () => api<{ ok: boolean }>("/api/admin/wipe", { method: "POST" }),
-    onSuccess: () => {
-      toast.success(t("settings.wipeToast"));
-      setWipeOpen(false);
-      queryClient.invalidateQueries();
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
 
   const reloadMutation = useMutation({
     mutationFn: () => api<ReloadStats>("/api/admin/reload", { method: "POST" }),
@@ -217,73 +231,259 @@ export default function SettingsView() {
           </Card>
         )}
 
-        {/* Zone sensible — admin plateforme uniquement (endpoint /api/admin/reset admin-only) */}
-        {isAdmin && (
-          <Card className="gap-4 border-destructive/30 py-4 sm:py-6">
-            <CardHeader className="px-4 sm:px-6">
-              <CardTitle className="flex items-center gap-2 text-base text-destructive">
-                <TriangleAlert className="size-4" />
-                {t("settings.dangerZone")}
-              </CardTitle>
-              <CardDescription>{t("settings.dangerZoneDesc")}</CardDescription>
-            </CardHeader>
-            <CardFooter className="flex-wrap gap-3 px-4 sm:px-6">
-              <Button variant="destructive" className="h-10" onClick={() => setWipeOpen(true)}>
-                {t("settings.wipe")}
-              </Button>
-              <Button variant="outline" className="h-10 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => setResetOpen(true)}>
-                {t("settings.reset")}
-              </Button>
-            </CardFooter>
-          </Card>
-        )}
+        {/* Purge des données — admin plateforme uniquement ; endpoint purge
+            admin-only. Les routeurs réels (agent), comptes, équipe et réglages
+            ne sont JAMAIS touchés, et rien n'est régénéré. */}
+        {isAdmin && <PurgeCard />}
       </div>
-
-      {/* Confirmation de purge totale (test réel) */}
-      <AlertDialog open={wipeOpen} onOpenChange={setWipeOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t("settings.wipeTitle")}</AlertDialogTitle>
-            <AlertDialogDescription>{t("settings.wipeDesc")}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-white hover:bg-destructive/90"
-              onClick={(event) => {
-                event.preventDefault();
-                wipeMutation.mutate();
-              }}
-            >
-              {wipeMutation.isPending ? t("settings.wiping") : t("settings.wipeConfirm")}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      {/* Double confirmation de réinitialisation */}
-      <AlertDialog open={resetOpen} onOpenChange={setResetOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t("settings.resetTitle")}</AlertDialogTitle>
-            <AlertDialogDescription>{t("settings.resetDesc")}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-white hover:bg-destructive/90"
-              onClick={(event) => {
-                event.preventDefault();
-                resetMutation.mutate();
-              }}
-            >
-              {resetMutation.isPending ? t("settings.resetting") : t("settings.reset")}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
+}
+
+// Carte « Purge des données » — remplace l'ancienne zone sensible (boutons
+// reset/wipe). L'ancien POST /api/admin/reset régénérait le jeu de démo :
+// c'était la cause du retour des données de test et de la disparition des
+// routeurs réels. Désormais : 9 catégories cochables avec compteurs live
+// (GET /api/admin/purge/stats), confirmation avec saisie obligatoire de
+// « PURGER », bilan détaillé en toast, état vide vert quand tout est propre.
+function PurgeCard() {
+  const { t, tf } = useI18n();
+  const queryClient = useQueryClient();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [purgeOpen, setPurgeOpen] = useState(false);
+  const [confirmText, setConfirmText] = useState("");
+
+  const statsQuery = useQuery({
+    queryKey: ["purge-stats"],
+    queryFn: () => api<PurgeStats>("/api/admin/purge/stats"),
+  });
+  const stats = statsQuery.data;
+
+  const purgeMutation = useMutation({
+    mutationFn: (scopes: string[]) =>
+      api<PurgeResult>("/api/admin/purge", { method: "POST", body: { scopes } }),
+    onSuccess: (res) => {
+      toast.success(purgeToast(res, tf));
+      setPurgeOpen(false);
+      setConfirmText("");
+      setSelected(new Set());
+      queryClient.invalidateQueries(); // compteurs + toutes les vues impactées
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const categories: { scope: string; count: number; label: string; hint?: string }[] = stats
+    ? [
+        {
+          scope: "simulated_routers",
+          count: stats.simulatedRouters,
+          label: t("settings.purge.simulatedRouters"),
+          hint: t("settings.purge.simulatedRoutersHint"),
+        },
+        { scope: "hotspot_users", count: stats.hotspotUsers, label: t("settings.purge.hotspotUsers") },
+        { scope: "profiles", count: stats.profiles, label: t("settings.purge.profiles") },
+        { scope: "batches", count: stats.batches, label: t("settings.purge.batches") },
+        {
+          scope: "resellers",
+          count: stats.resellers,
+          label: t("settings.purge.resellers"),
+          hint: stats.transactions > 0 ? tf("settings.purge.resellersHint", { n: stats.transactions }) : undefined,
+        },
+        { scope: "sales", count: stats.sales, label: t("settings.purge.sales") },
+        { scope: "sessions", count: stats.sessions, label: t("settings.purge.sessions") },
+        { scope: "logs", count: stats.logs, label: t("settings.purge.logs") },
+        { scope: "templates", count: stats.templates, label: t("settings.purge.templates") },
+      ]
+    : [];
+
+  const totalPurgeable = categories.reduce((sum, c) => sum + c.count, 0);
+  const clean = stats !== undefined && totalPurgeable === 0;
+
+  const toggle = (scope: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(scope)) {
+        next.delete(scope);
+      } else {
+        next.add(scope);
+      }
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    setSelected((prev) => (prev.size === categories.length ? new Set<string>() : new Set(categories.map((c) => c.scope))));
+  };
+
+  const selectedCategories = categories.filter((c) => selected.has(c.scope));
+  const canConfirm = confirmText.trim() === "PURGER" && selectedCategories.length > 0;
+
+  return (
+    <Card className="gap-4 border-destructive/30 py-4 sm:py-6 lg:col-span-3">
+      <CardHeader className="px-4 sm:px-6">
+        <CardTitle className="flex items-center gap-2 text-base text-destructive">
+          <TriangleAlert className="size-4" />
+          {t("settings.purge.title")}
+        </CardTitle>
+        <CardDescription>{t("settings.purge.desc")}</CardDescription>
+      </CardHeader>
+      <CardContent className="px-4 sm:px-6">
+        {statsQuery.isLoading || !stats ? (
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            {Array.from({ length: 9 }).map((_, i) => (
+              <Skeleton key={i} className="h-12 rounded-lg" />
+            ))}
+          </div>
+        ) : clean ? (
+          <div className="flex items-center gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-700 dark:text-emerald-400">
+            <ShieldCheck className="size-5 shrink-0" />
+            <div>
+              <p className="font-medium">{t("settings.purge.empty")}</p>
+              <p className="mt-0.5 text-xs opacity-80">{t("settings.purge.protected")}</p>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              {categories.map((c) => (
+                <Label
+                  key={c.scope}
+                  htmlFor={`purge-${c.scope}`}
+                  className="flex cursor-pointer items-start gap-2.5 rounded-lg border p-3 transition-colors hover:bg-muted/50 has-[[data-state=checked]]:border-destructive/50 has-[[data-state=checked]]:bg-destructive/5"
+                >
+                  <Checkbox
+                    id={`purge-${c.scope}`}
+                    checked={selected.has(c.scope)}
+                    onCheckedChange={() => toggle(c.scope)}
+                    className="mt-0.5"
+                  />
+                  <span className="flex min-w-0 flex-1 items-start justify-between gap-2">
+                    <span className="min-w-0">
+                      <span className="block text-sm font-medium leading-tight">{c.label}</span>
+                      {c.hint && <span className="mt-0.5 block text-xs leading-snug text-muted-foreground">{c.hint}</span>}
+                    </span>
+                    <Badge
+                      variant="secondary"
+                      className="shrink-0 tabular-nums"
+                    >
+                      {c.count}
+                    </Badge>
+                  </span>
+                </Label>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8"
+                onClick={toggleAll}
+                disabled={selected.size === categories.length}
+              >
+                {selected.size === categories.length ? t("settings.purge.clearAll") : t("settings.purge.selectAll")}
+              </Button>
+              <p className="text-xs text-muted-foreground">{t("settings.purge.protected")}</p>
+            </div>
+          </div>
+        )}
+      </CardContent>
+      {!statsQuery.isLoading && stats && !clean && (
+        <CardFooter className="px-4 sm:px-6">
+          <Button
+            variant="destructive"
+            className="h-10"
+            disabled={selectedCategories.length === 0}
+            onClick={() => {
+              setConfirmText("");
+              setPurgeOpen(true);
+            }}
+          >
+            <Trash2 className="size-4" />
+            {t("settings.purge.purgeButton")}
+            {selectedCategories.length > 0 && ` (${selectedCategories.length})`}
+          </Button>
+        </CardFooter>
+      )}
+
+      {/* Confirmation — récapitulatif + saisie obligatoire de « PURGER » */}
+      <AlertDialog
+        open={purgeOpen}
+        onOpenChange={(open) => {
+          setPurgeOpen(open);
+          if (!open) setConfirmText("");
+        }}
+      >
+        <AlertDialogContent className="max-h-[85vh] overflow-y-auto">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-destructive">{t("settings.purge.confirmTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("settings.purge.confirmDesc")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <ul className="max-h-48 space-y-1.5 overflow-y-auto rounded-lg border bg-muted/40 p-3 text-sm">
+            {selectedCategories.map((c) => (
+              <li
+                key={c.scope}
+                className="flex items-center justify-between gap-3"
+              >
+                <span>{c.label}</span>
+                <span className="shrink-0 font-semibold tabular-nums">{c.count}</span>
+              </li>
+            ))}
+          </ul>
+          <div className="space-y-2">
+            <p className="text-sm font-medium">{t("settings.purge.confirmHint")}</p>
+            <Input
+              value={confirmText}
+              onChange={(e) => setConfirmText(e.target.value)}
+              placeholder={t("settings.purge.confirmPlaceholder")}
+              aria-label={t("settings.purge.confirmPlaceholder")}
+              autoComplete="off"
+              disabled={purgeMutation.isPending}
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={purgeMutation.isPending}>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
+              disabled={!canConfirm || purgeMutation.isPending}
+              onClick={(event) => {
+                event.preventDefault(); // laisse la mutation fermer le dialog
+                purgeMutation.mutate(selectedCategories.map((c) => c.scope));
+              }}
+            >
+              {purgeMutation.isPending ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  {t("settings.purge.purging")}
+                </>
+              ) : (
+                t("settings.purge.purgeButton")
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </Card>
+  );
+}
+
+// purgeToast — bilan du toast construit côté client (i18n) à partir des
+// compteurs renvoyés par l'API.
+function purgeToast(res: PurgeResult, tf: (key: string, vars: Record<string, string | number>) => string): string {
+  const p = res.purged;
+  const parts: string[] = [];
+  if (p.routers > 0) parts.push(tf("settings.purge.cat.routers", { n: p.routers }));
+  if (p.hotspotUsers > 0) parts.push(tf("settings.purge.cat.hotspotUsers", { n: p.hotspotUsers }));
+  if (p.profiles > 0) parts.push(tf("settings.purge.cat.profiles", { n: p.profiles }));
+  if (p.batches > 0) parts.push(tf("settings.purge.cat.batches", { n: p.batches }));
+  if (p.resellers > 0) parts.push(tf("settings.purge.cat.resellers", { n: p.resellers }));
+  if (p.transactions > 0) parts.push(tf("settings.purge.cat.transactions", { n: p.transactions }));
+  if (p.sales > 0) parts.push(tf("settings.purge.cat.sales", { n: p.sales }));
+  if (p.sessions > 0) parts.push(tf("settings.purge.cat.sessions", { n: p.sessions }));
+  if (p.logs > 0) parts.push(tf("settings.purge.cat.logs", { n: p.logs }));
+  if (p.templates > 0) parts.push(tf("settings.purge.cat.templates", { n: p.templates }));
+  if (parts.length === 0) return tf("settings.purge.toastEmpty", {});
+  return tf("settings.purge.toast", { summary: parts.join(" · ") });
 }
 
 // Carte Langue (F11) — bascule FR/EN, appliquée immédiatement (store zustand).

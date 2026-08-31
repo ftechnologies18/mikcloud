@@ -35,7 +35,9 @@ type Store struct {
 }
 
 // New charge l'état persisté (PostgreSQL si DATABASE_URL est défini, sinon
-// data/db.json) ou crée le seed démo si la source est vide/absente.
+// data/db.json) ; une base PostgreSQL vide démarre sur l'état de mise en
+// service (BuildEmptyState — zéro démo), le seed démo n'est plus utilisé
+// qu'en mode développement JSON.
 func New(dir string) (*Store, error) {
 	s := &Store{}
 
@@ -59,8 +61,8 @@ func New(dir string) (*Store, error) {
 				len(db.HotspotUsers), len(db.Routers), len(db.Accounts))
 			s.db = db
 		} else {
-			log.Println("store: base PostgreSQL vide — initialisation des données démo")
-			s.db = BuildSeed() // seed déjà multi-tenant
+			log.Println("store: base PostgreSQL vide — état de mise en service (aucune donnée démo)")
+			s.db = BuildEmptyState()
 		}
 		// Migration mono-tenant → multi-tenant (avant l'override admin), puis
 		// persistance immédiate si l'état a changé.
@@ -578,14 +580,6 @@ func (s *Store) Close() error {
 		return s.pg.Close()
 	}
 	return nil
-}
-
-// Reset régénère entièrement les données démo (POST /api/admin/reset).
-func (s *Store) Reset() {
-	s.Lock()
-	defer s.Unlock()
-	s.db = BuildSeed()
-	s.Save()
 }
 
 // ReloadStats — résumé de l'état réimporté (réponse de POST /api/admin/reload).

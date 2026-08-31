@@ -16,6 +16,7 @@ import {
   KeyRound,
   Languages,
   Radio,
+  ScrollText,
   ShieldAlert,
   ShieldCheck,
   Trash2,
@@ -46,7 +47,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 
@@ -395,7 +395,7 @@ function LanguageCard() {
   );
 }
 
-/* ─── Danger zone (purge globale) ─── */
+/* ─── Danger zone (purge journal + purge globale) ─── */
 function DangerCard() {
   const { t } = useI18n();
 
@@ -412,6 +412,23 @@ function DangerCard() {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  // Purge ciblée du journal (scope « logs » uniquement — activité, journaux
+  // utilisateurs, notifications, commandes agent). K (retour d'expérience
+  // production) : les actions d'administration s'accumulent sur le compte
+  // principal (audit) et polluent le journal plateforme — cet outil permet
+  // de le nettoyer sans toucher aux données métier.
+  const journalMutation = useMutation({
+    mutationFn: () =>
+      api<Record<string, number>>("/api/admin/purge", {
+        method: "POST",
+        body: { scopes: ["logs"] },
+      }),
+    onSuccess: (counts) => {
+      toast.success(t("platformSettings.journalDone", { count: counts.logs ?? 0 }));
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   return (
     <Card className="gap-4 border-destructive/30 py-4 sm:py-6 lg:col-span-2">
       <CardHeader className="px-4 sm:px-6">
@@ -423,7 +440,32 @@ function DangerCard() {
         </CardTitle>
         <CardDescription>{t("platformSettings.dangerDesc")}</CardDescription>
       </CardHeader>
-      <CardContent className="px-4 sm:px-6">
+      <CardContent className="grid gap-3 px-4 sm:px-6">
+        <div className="flex flex-col gap-3 rounded-lg border border-border/60 bg-muted/30 p-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <p className="flex items-center gap-2 text-sm font-medium">
+              <ScrollText className="size-4 text-muted-foreground" />
+              {t("platformSettings.journalTitle")}
+            </p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {t("platformSettings.journalHint")}
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            onClick={() => {
+              if (window.confirm(t("platformSettings.journalConfirm"))) {
+                journalMutation.mutate();
+              }
+            }}
+            disabled={journalMutation.isPending}
+          >
+            {journalMutation.isPending ? t("common.saving") : t("platformSettings.journalButton")}
+          </Button>
+        </div>
+
         <div className="flex flex-col gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <p className="flex items-center gap-2 text-sm font-medium">
@@ -448,7 +490,6 @@ function DangerCard() {
             {purgeMutation.isPending ? t("common.saving") : t("platformSettings.purgeButton")}
           </Button>
         </div>
-        <Separator className="my-4" />
         <p className="text-xs text-muted-foreground">
           <Badge variant="outline" className="mr-1.5 border-border bg-muted px-1.5 py-0 text-[10px] text-muted-foreground">
             {t("platformSettings.protectedBadge")}

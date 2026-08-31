@@ -1281,6 +1281,10 @@ func (a *API) handleRouterCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleRouterUpdate(w http.ResponseWriter, r *http.Request) {
+	// P3 — compte expiré : écritures métier refusées (lecture seule).
+	if !a.guardAccountWrite(w, r) {
+		return
+	}
 	acc := accountScope(r)
 	id := r.PathValue("id")
 	var req struct {
@@ -1992,6 +1996,10 @@ func (a *API) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleUserUpdate(w http.ResponseWriter, r *http.Request) {
+	// P3 — compte expiré : écritures métier refusées (lecture seule).
+	if !a.guardAccountWrite(w, r) {
+		return
+	}
 	acc := accountScope(r)
 	id := r.PathValue("id")
 	var req struct {
@@ -2879,6 +2887,10 @@ func (a *API) handleResellerCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleResellerUpdate(w http.ResponseWriter, r *http.Request) {
+	// P3 — compte expiré : écritures métier refusées (lecture seule).
+	if !a.guardAccountWrite(w, r) {
+		return
+	}
 	acc := accountScope(r)
 	id := r.PathValue("id")
 	var req struct {

@@ -69,9 +69,11 @@ func (a *API) subscriptionGuardState(acc string) subscriptionGuardView {
 // répond 402 et renvoie false.
 //
 // En pratique : un compte expiré repasse en LECTURE SEULE — consultations,
-// exports et suppressions restent possibles, la création de ressources
-// (routeurs, utilisateurs, vouchers, profils, revendeurs) est refusée avec
-// le code machine « subscription_expired ».
+// exports, suppressions et actions de maintenance (activer/désactiver un
+// utilisateur, déconnecter une session, réglages) restent possibles ; la
+// création et la modification de ressources métier (routeurs, utilisateurs
+// hotspot, vouchers, profils, revendeurs, équipe, import agent) est refusée
+// avec le code machine « subscription_expired ».
 func (a *API) guardAccountWrite(w http.ResponseWriter, r *http.Request) bool {
 	if isPlatformAdmin(r) {
 		return true

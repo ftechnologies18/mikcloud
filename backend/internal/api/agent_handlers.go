@@ -847,6 +847,11 @@ func (a *API) handleRouterRefresh(w http.ResponseWriter, r *http.Request) {
 // routeur agent vers le cloud. Utilisé après la première connexion d'un
 // routeur qui gérait déjà son hotspot (Mikhmon, configuration manuelle…).
 func (a *API) handleRouterImport(w http.ResponseWriter, r *http.Request) {
+	// P3 — compte expiré : écritures métier refusées (l'import crée des
+	// utilisateurs hotspot — lecture seule).
+	if !a.guardAccountWrite(w, r) {
+		return
+	}
 	acc := accountScope(r)
 	id := r.PathValue("id")
 	a.store.Lock()

@@ -54,6 +54,10 @@ func (a *API) handleTeamList(w http.ResponseWriter, r *http.Request) {
 
 // handleTeamCreate — POST /api/team {name, username, password, role} (owner).
 func (a *API) handleTeamCreate(w http.ResponseWriter, r *http.Request) {
+	// P3 — compte expiré : écritures métier refusées (lecture seule).
+	if !a.guardAccountWrite(w, r) {
+		return
+	}
 	acc := accountScope(r)
 	var req struct {
 		Name     string `json:"name"`

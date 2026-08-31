@@ -14,13 +14,20 @@
 // badge, période) sont traduits par id de formule, avec repli sur la valeur
 // serveur pour toute formule inconnue.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Crown, Infinity as InfinityIcon, Router as RouterIcon, ShieldAlert, Sparkles } from "lucide-react";
+import { Check, CreditCard, Crown, Infinity as InfinityIcon, Router as RouterIcon, ShieldAlert, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
 import { api } from "@/lib/hotspot/api";
-import type { PayInitiateResponse, SaasPlan, SubscribeResponse, SubscriptionView } from "@/lib/hotspot/types";
+import type {
+  PayInitiateResponse,
+  SaasPlan,
+  StripeCreateResponse,
+  StripeSubView,
+  SubscribeResponse,
+  SubscriptionView,
+} from "@/lib/hotspot/types";
 import { formatCurrency, formatDate } from "@/lib/hotspot/format";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { Badge } from "@/components/ui/badge";
@@ -48,6 +55,21 @@ export function useSubscription() {
   });
 }
 
+// Prélèvement automatique par carte (Stripe via GeniusPay) : interrogation
+// rapprochée tant que la saisie de carte est attendue (retour de Stripe
+// Checkout — l'activation est finalisée côté serveur à la resynchronisation).
+export const STRIPE_QUERY_KEY = ["/api/subscription/stripe"] as const;
+
+export function useStripeSub() {
+  return useQuery({
+    queryKey: STRIPE_QUERY_KEY,
+    queryFn: () => api<StripeSubView>("/api/subscription/stripe"),
+    staleTime: 15_000,
+    refetchInterval: (q) =>
+      (q.state.data as StripeSubView | undefined)?.status === "pending" ? 5_000 : false,
+  });
+}
+
 // Comparatif annuel : formule mensuelle (1 250 F × routeurs × 12) vs Illimité.
 const COMPARISON_ROUTERS = [1, 2, 5, 10];
 
@@ -63,8 +85,22 @@ function planAmount(plan: SaasPlan, routerCount: number): number {
 export function SubscriptionCard() {
   const { t, tf, lang } = useI18n();
   const { data: view, isLoading, isError, error, refetch } = useSubscription();
+  const { data: stripe } = useStripeSub();
   const queryClient = useQueryClient();
   const [confirmPlan, setConfirmPlan] = useState<SaasPlan | null>(null);
+  const [cancelStripeOpen, setCancelStripeOpen] = useState(false);
+
+  // Retour de Stripe Checkout : la facture peut n'être réglée que quelques
+  // secondes après la redirection — on déclenche la resynchronisation, le
+  // polling du hook useStripeSub finalise l'affichage (statut pending).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const sp = new URLSearchParams(window.location.search);
+    if (sp.get("stripe") === "return") {
+      toast.info(t("sub.stripe.returning", "Retour de Stripe — vérification du paiement en cours…"), { duration: 6000 });
+      queryClient.invalidateQueries({ queryKey: STRIPE_QUERY_KEY });
+    }
+  }, []);
 
   // Libellés du catalogue : traduits par id de formule, repli valeur serveur.
   const nameOf = (plan?: SaasPlan): string => (plan ? t(`sub.plan.${plan.id}.name`, plan.name) : "");
@@ -115,6 +151,63 @@ export function SubscriptionCard() {
       toast.info(t("sub.toast.noWaveLink"), { duration: 8000 });
     }
   }
+
+  // Abonnement RÉCURRENT par carte (Stripe via GeniusPay) : création puis
+  // redirection vers la page de paiement sécurisée Stripe ; chaque facture
+  // payée active/empile automatiquement la période (webhook signé).
+  const stripeMutation = useMutation({
+    mutationFn: (planId: string) =>
+      api<StripeCreateResponse>("/api/subscription/stripe", { method: "POST", body: { planId } }),
+    onSuccess: (res) => {
+      setConfirmPlan(null);
+      queryClient.invalidateQueries({ queryKey: STRIPE_QUERY_KEY });
+      // Prélèvement automatique créé. Si GeniusPay renvoie une page de paiement
+      // (Checkout Stripe) ou un lien pour la première période, on y redirige
+      // immédiatement ; sinon la demande reste à régler (bouton Wave).
+      const target = res.redirectUrl || res.paymentUrl;
+      if (target) {
+        toast.info(t("sub.stripe.redirect", "Redirection vers la page de paiement sécurisée (Stripe)…"));
+        window.location.href = target;
+        return;
+      }
+      toast.info(t("sub.stripe.autoOnly", "Prélèvement automatique activé — réglez la première période pour l'activer."), { duration: 8000 });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const cancelStripeMutation = useMutation({
+    mutationFn: () => api<{ status: string }>("/api/subscription/stripe/cancel", { method: "POST", body: {} }),
+    onSuccess: () => {
+      toast.success(t("sub.stripe.cancelled", "Prélèvement automatique résilié — votre accès reste actif jusqu'à la fin de la période payée."));
+      setCancelStripeOpen(false);
+      queryClient.invalidateQueries({ queryKey: STRIPE_QUERY_KEY });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  // Libellé d'état du prélèvement automatique (bandeau de la carte).
+  function stripeStatusText(s: StripeSubView): string {
+    const cycle = s.cycle === "yearly" ? t("sub.periodLabel.an") : t("sub.periodLabel.mois");
+    switch (s.status) {
+      case "active":
+        return tf("sub.stripe.active", {
+          amount: formatCurrency(s.amountFcfa ?? 0, "FCFA", lang),
+          cycle,
+          date: s.nextBilling ? formatDate(s.nextBilling, lang) : "—",
+        });
+      case "trialing":
+        return t("sub.stripe.trialing");
+      case "past_due":
+        return t("sub.stripe.pastDue");
+      case "paused":
+        return t("sub.stripe.paused");
+      default: // pending
+        return t("sub.stripe.pending");
+    }
+  }
+
+  const stripeRunning =
+    !!stripe && !"none|cancelled|expired".split("|").includes(stripe.status);
 
   if (isError) {
     // État d'erreur explicite (API injoignable / backend pas encore à jour) —
@@ -224,6 +317,32 @@ export function SubscriptionCard() {
           />
         </div>
 
+        {/* Prélèvement automatique par carte (Stripe via GeniusPay) */}
+        {stripeRunning && stripe ? (
+          <div
+            className={`flex flex-col gap-2 rounded-lg border px-4 py-3 sm:flex-row sm:items-center sm:justify-between ${
+              stripe.status === "past_due" ? "border-amber-500/40 bg-amber-500/10" : "border-primary/25 bg-primary/5"
+            }`}
+          >
+            <div className="min-w-0">
+              <p className="flex items-center gap-2 text-sm font-medium">
+                <CreditCard className="size-4 shrink-0 text-primary" />
+                {t("sub.stripe.title")}
+              </p>
+              <p className="mt-0.5 text-xs text-muted-foreground">{stripeStatusText(stripe)}</p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              onClick={() => setCancelStripeOpen(true)}
+              disabled={cancelStripeMutation.isPending}
+            >
+              {t("sub.stripe.cancel")}
+            </Button>
+          </div>
+        ) : null}
+
         {/* Comparatif — l'argument qui fait basculer vers l'annuel */}
         <div className="overflow-hidden rounded-lg border">
           <table className="w-full text-sm">
@@ -276,18 +395,54 @@ export function SubscriptionCard() {
                 : confirmPlan
                   ? ` ${t("sub.dialog.scopeUnlimited")}`
                   : ""}
-              . {t("sub.dialog.note")}
+              . {t("sub.dialog.note")} {t("sub.dialog.cardNote")}
             </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            {/* Wave (ponctuel, défaut) */}
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                if (confirmPlan) subscribeMutation.mutate(confirmPlan.id);
+              }}
+              disabled={subscribeMutation.isPending || stripeMutation.isPending}
+            >
+              {subscribeMutation.isPending ? t("sub.dialog.pending") : t("sub.dialog.payWave")}
+            </AlertDialogAction>
+            {/* Carte bancaire — prélèvement automatique (Stripe via GeniusPay) */}
+            <Button
+              variant="outline"
+              onClick={(event) => {
+                event.preventDefault();
+                if (confirmPlan) stripeMutation.mutate(confirmPlan.id);
+              }}
+              disabled={subscribeMutation.isPending || stripeMutation.isPending}
+            >
+              <CreditCard className="size-4" />
+              {stripeMutation.isPending ? t("sub.dialog.pending") : t("sub.dialog.payCard")}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Résiliation du prélèvement automatique — fin de période, accès conservé */}
+      <AlertDialog open={cancelStripeOpen} onOpenChange={setCancelStripeOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("sub.stripe.cancelTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("sub.stripe.cancelDesc")}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               onClick={(event) => {
                 event.preventDefault();
-                if (confirmPlan) subscribeMutation.mutate(confirmPlan.id);
+                cancelStripeMutation.mutate();
               }}
+              disabled={cancelStripeMutation.isPending}
             >
-              {subscribeMutation.isPending ? t("sub.dialog.pending") : t("sub.dialog.confirm")}
+              {cancelStripeMutation.isPending ? t("sub.stripe.cancelling") : t("sub.stripe.cancelConfirm")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -390,6 +390,28 @@ func (p *PG) ensureSchema() error {
 		`CREATE INDEX IF NOT EXISTS idx_billing_requests_account ON billing_requests (account_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_billing_requests_status  ON billing_requests (status)`,
 		`CREATE INDEX IF NOT EXISTS idx_billing_requests_ref     ON billing_requests (ref)`,
+		// Abonnement récurrent par carte (Stripe via GeniusPay) : état local des
+		// prélèvements automatiques (webhook subscription.* / resynchronisation).
+		`CREATE TABLE IF NOT EXISTS geniuspay_subs (
+			uuid            TEXT PRIMARY KEY,
+			account_id      TEXT NOT NULL DEFAULT '',
+			plan_id         TEXT NOT NULL DEFAULT '',
+			plan_name       TEXT NOT NULL DEFAULT '',
+			cycle           TEXT NOT NULL DEFAULT '',
+			amount_fcfa     INTEGER NOT NULL DEFAULT 0,
+			slots           INTEGER NOT NULL DEFAULT 0,
+			status          TEXT NOT NULL DEFAULT 'pending',
+			customer_name   TEXT NOT NULL DEFAULT '',
+			customer_email  TEXT NOT NULL DEFAULT '',
+			phone           TEXT NOT NULL DEFAULT '',
+			next_billing    TEXT NOT NULL DEFAULT '',
+			last_invoice_at TEXT NOT NULL DEFAULT '',
+			last_renewal_at TEXT NOT NULL DEFAULT '',
+			created_at      TEXT NOT NULL,
+			updated_at      TEXT NOT NULL DEFAULT '',
+			cancelled_at    TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_geniuspay_subs_account ON geniuspay_subs (account_id)`,
 		// N°7 — rôles équipe + audit : acteur des actions du journal, et
 		// renommage du rôle historique « admin » → « platform_admin » (les
 		// tokens existants portant « admin » restent acceptés côté API).
@@ -560,6 +582,7 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 		{"notif_settings", func() error { return p.loadNotifSettings(db) }},
 		{"notif_log", func() error { return loadInto(p, &db.NotifLog, notifLogSpec) }},
 		{"billing_requests", func() error { return loadInto(p, &db.BillingRequests, billingRequestSpec) }},
+		{"geniuspay_subs", func() error { return loadInto(p, &db.GeniusPaySubs, geniusPaySubSpec) }},
 		{"settings", func() error { return p.loadSettings(db) }},
 	}
 	for _, st := range steps {
@@ -1220,6 +1243,26 @@ var billingRequestSpec = entitySpec[model.BillingRequest]{
 			x.RouterCount, x.Ref, x.GatewayRef, x.Status, x.CreatedAt, x.ResolvedAt, x.ResolvedBy, x.Note, x.PaidVia}
 	},
 	hashOf: hashEntity[model.BillingRequest],
+}
+
+// geniusPaySubSpec — abonnements récurrents carte (Stripe via GeniusPay).
+var geniusPaySubSpec = entitySpec[model.GeniusPaySub]{
+	table: "geniuspay_subs",
+	cols:  []string{"uuid", "account_id", "plan_id", "plan_name", "cycle", "amount_fcfa", "slots", "status", "customer_name", "customer_email", "phone", "next_billing", "last_invoice_at", "last_renewal_at", "created_at", "updated_at", "cancelled_at"},
+	idOf:  func(x *model.GeniusPaySub) string { return x.UUID },
+	scan: func(r *sql.Rows) (model.GeniusPaySub, error) {
+		var x model.GeniusPaySub
+		err := r.Scan(&x.UUID, &x.AccountID, &x.PlanID, &x.PlanName, &x.Cycle, &x.AmountFcfa, &x.Slots,
+			&x.Status, &x.CustomerName, &x.CustomerEmail, &x.Phone, &x.NextBilling, &x.LastInvoiceAt,
+			&x.LastRenewalAt, &x.CreatedAt, &x.UpdatedAt, &x.CancelledAt)
+		return x, err
+	},
+	args: func(x *model.GeniusPaySub) []any {
+		return []any{x.UUID, x.AccountID, x.PlanID, x.PlanName, x.Cycle, x.AmountFcfa, x.Slots,
+			x.Status, x.CustomerName, x.CustomerEmail, x.Phone, x.NextBilling, x.LastInvoiceAt,
+			x.LastRenewalAt, x.CreatedAt, x.UpdatedAt, x.CancelledAt}
+	},
+	hashOf: hashEntity[model.GeniusPaySub],
 }
 
 var saleSpec = entitySpec[model.Sale]{

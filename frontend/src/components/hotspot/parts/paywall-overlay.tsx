@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Check, Lock, LogOut, ShieldAlert } from "lucide-react";
+import { Check, CreditCard, Lock, LogOut, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import { useI18n } from "@/lib/hotspot/i18n";
 import { useHotspotStore } from "@/lib/hotspot/store";
 import { api } from "@/lib/hotspot/api";
 import { formatCurrency } from "@/lib/hotspot/format";
+import type { StripeCreateResponse } from "@/lib/hotspot/types";
 
 /* ─── PaywallOverlay ───
  * Mur total non refermable : s'affiche par-dessus toute la console quand
@@ -66,6 +67,39 @@ export function PaywallOverlay() {
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t("paywall.failed", "Échec de la souscription"));
+    } finally {
+      setPaying(null);
+    }
+  }
+
+  // Paiement par carte RÉCURRENT (Stripe via GeniusPay) : création de
+  // l'abonnement puis redirection vers la page sécurisée Stripe ; la première
+  // facture payée réactive le compte (webhook signé / resynchronisation).
+  async function subscribeCard(planId: "essentiel" | "illimite") {
+    setPaying(planId);
+    try {
+      const res = await api<StripeCreateResponse>("/api/subscription/stripe", {
+        method: "POST",
+        body: { planId },
+      });
+      const target = res.redirectUrl || res.paymentUrl;
+      if (target) {
+        toast.info(
+          t("sub.stripe.redirect", "Redirection vers la page de paiement sécurisée (Stripe)…"),
+        );
+        window.location.href = target;
+        return;
+      }
+      toast.info(
+        t("sub.stripe.autoOnly", "Prélèvement automatique activé — réglez la première période pour l'activer."),
+        { duration: 8000 },
+      );
+    } catch (err) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : t("sub.stripe.failed", "Échec de l'initiation du paiement par carte."),
+      );
     } finally {
       setPaying(null);
     }
@@ -162,6 +196,16 @@ export function PaywallOverlay() {
                         ) : (
                           t("paywall.subscribe", "Souscrire & payer")
                         )}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="mt-2 w-full"
+                        onClick={() => subscribeCard(plan.id as "essentiel" | "illimite")}
+                        disabled={paying !== null}
+                      >
+                        <CreditCard className="size-4" />
+                        {t("paywall.cardPay", "Payer par carte (prélèvement auto)")}
                       </Button>
                       <ul className="mt-4 space-y-2">
                         {plan.period === "an" && (

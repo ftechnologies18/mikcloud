@@ -14,6 +14,9 @@
 //   - GET /api/subscription/pay/status : filet de sécurité — consulte le
 //     statut réel de la transaction chez GeniusPay et finalise l'activation
 //     si le webhook n'est pas encore arrivé (client de retour de Wave).
+//   - POST /api/subscription/stripe (+ /cancel, GET statut) et webhook
+//     subscription.* : abonnement RÉCURRENT par carte bancaire (Stripe via
+//     GeniusPay) — implémenté dans handlers_geniuspay_stripe.go.
 //
 // Sécurité : la clé secrète (GENIUSPAY_API_SECRET) ne quitte jamais le
 // serveur ; le webhook est vérifié par signature à temps constant ; le
@@ -53,10 +56,12 @@ var geniusPayHTTP = &http.Client{Timeout: 20 * time.Second}
 // Types API marchand GeniusPay
 // ---------------------------------------------------------------------------
 
-// geniusPayCustomer — client du paiement (nom + téléphone international).
+// geniusPayCustomer — client du paiement (nom + téléphone international ;
+// e-mail requis par le module carte/Stripe).
 type geniusPayCustomer struct {
 	Name  string `json:"name,omitempty"`
 	Phone string `json:"phone,omitempty"`
+	Email string `json:"email,omitempty"`
 }
 
 // geniusPayCreateReq — corps POST /payments (mode direct : payment_method=wave).
@@ -98,7 +103,7 @@ type geniusPayEnvelope struct {
 // geniusPayCall — appel authentifié à l'API marchand (headers X-API-Key /
 // X-API-Secret). Renvoie l'enveloppe décodée ou une erreur lisible (réseau,
 // statut HTTP, code marchand). La clé secrète reste côté serveur.
-func geniusPayCall(method, path string, reqBody any) (*geniusPayEnvelope, error) {
+func geniusPayCall(method, path string, reqBody any, extra ...[]string) (*geniusPayEnvelope, error) {
 	key := strings.TrimSpace(os.Getenv("GENIUSPAY_API_KEY"))
 	secret := strings.TrimSpace(os.Getenv("GENIUSPAY_API_SECRET"))
 	if key == "" || secret == "" {
@@ -120,6 +125,11 @@ func geniusPayCall(method, path string, reqBody any) (*geniusPayEnvelope, error)
 	req.Header.Set("X-API-Secret", secret)
 	if reqBody != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	for _, kv := range extra {
+		if len(kv) == 2 {
+			req.Header.Set(kv[0], kv[1])
+		}
 	}
 	res, err := geniusPayHTTP.Do(req)
 	if err != nil {
@@ -462,7 +472,8 @@ func (a *API) finalizeBillingSuccess(db *model.DB, idx int, paidVia, resolvedBy,
 //
 // avec anti-replay (horodatage < 5 min). payment.success → encaisse et active
 // la demande appariée (metadata.ref, repli référence marchande) ;
-// payment.failed → rejette la demande ; autres événements → accusé OK.
+// payment.failed → rejette la demande ; subscription.* → abonnement carte
+// (Stripe via GeniusPay, handlers_geniuspay_stripe.go) ; autres → accusé OK.
 func (a *API) handleGeniusPayWebhook(w http.ResponseWriter, r *http.Request) {
 	whsec := strings.TrimSpace(os.Getenv("GENIUSPAY_WEBHOOK_SECRET"))
 	if whsec == "" {
@@ -485,28 +496,34 @@ func (a *API) handleGeniusPayWebhook(w http.ResponseWriter, r *http.Request) {
 			"Horodatage webhook invalide ou trop ancien", nil)
 		return
 	}
-	// Signature à temps constant sur « <timestamp>.<corps brut> ».
+	// Signature à temps constant sur « <timestamp>.<corps brut> ». Les
+	// PAIEMENTS (montant engagé) exigent une signature valide — absente ou
+	// invalide → rejet. Les événements d'ABONNEMENT carte (module Stripe de
+	// GeniusPay, secrétariat de signature potentiellement distinct) sont
+	// tolérés sans signature valide MAIS ne produisent alors un effet qu'
+	// après re-vérification à la source (factures réelles chez GeniusPay).
+	var peek struct {
+		Event string `json:"event"`
+	}
+	_ = json.Unmarshal(body, &peek)
+	isSubEvent := strings.HasPrefix(strings.TrimSpace(peek.Event), "subscription.")
+
 	mac := hmac.New(sha256.New, []byte(whsec))
 	mac.Write([]byte(tsStr + "."))
 	mac.Write(body)
 	expected := hex.EncodeToString(mac.Sum(nil))
 	sig := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Webhook-Signature")))
-	if sig == "" || subtle.ConstantTimeCompare([]byte(sig), []byte(expected)) != 1 {
+	valid := sig != "" && subtle.ConstantTimeCompare([]byte(sig), []byte(expected)) == 1
+	if sig != "" && !valid && !isSubEvent {
 		writeErrCode(w, http.StatusUnauthorized, "unauthorized", "Signature webhook invalide", nil)
 		return
 	}
 
 	var payload struct {
-		ID          string `json:"id"`
-		Event       string `json:"event"`
-		Environment string `json:"environment"`
-		Data        *struct {
-			Reference string         `json:"reference"`
-			Amount    float64        `json:"amount"`
-			Status    string         `json:"status"`
-			Provider  string         `json:"provider"`
-			Metadata  map[string]any `json:"metadata"`
-		} `json:"data"`
+		ID          string                `json:"id"`
+		Event       string                `json:"event"`
+		Environment string                `json:"environment"`
+		Data        *geniusPayWebhookData `json:"data"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		writeErrCode(w, http.StatusBadRequest, "bad_request", "JSON invalide", nil)
@@ -515,7 +532,26 @@ func (a *API) handleGeniusPayWebhook(w http.ResponseWriter, r *http.Request) {
 	event := strings.TrimSpace(payload.Event)
 	switch event {
 	case "payment.success", "payment.failed":
+		// Paiements : signature OBLIGATOIRE (montant engagé) — déjà exigée
+		// ci-dessus (absente ou invalide → rejet avant parse complet).
+		if !valid {
+			writeErrCode(w, http.StatusUnauthorized, "unauthorized", "Signature webhook manquante", nil)
+			return
+		}
 		// traités ci-dessous
+	case "subscription.payment_succeeded":
+		a.handleStripeWebhookEvent(w, payload.Data, valid, "payment_succeeded")
+		return
+	case "subscription.payment_failed", "subscription.past_due", "subscription.cancelled",
+		"subscription.expired", "subscription.paused", "subscription.created", "subscription.trial_ending":
+		if !valid {
+			// État d'abonnement sans signature valide : aucun effet métier —
+			// accusé de réception pour arrêter les relivraisons.
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "unsigned_ignored": event})
+			return
+		}
+		a.handleStripeWebhookEvent(w, payload.Data, true, strings.TrimPrefix(event, "subscription."))
+		return
 	default:
 		// payment.initiated / refunded / expired / webhook.test… : aucun
 		// effet métier — accusé de réception pour arrêter les relivraisons.

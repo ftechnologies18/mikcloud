@@ -764,6 +764,41 @@ export interface PayStatusResponse {
   gatewayRef?: string;
 }
 
+/** Abonnement RÉCURRENT par carte (Stripe via GeniusPay) — vue GET
+ * /api/subscription/stripe. Statut "none" = aucun prélèvement automatique. */
+export interface StripeSubView {
+  status: "none" | "pending" | "trialing" | "active" | "past_due" | "paused" | "cancelled" | "expired";
+  uuid?: string;
+  planId?: string;
+  planName?: string;
+  /** Cycle de prélèvement : monthly (Essentiel) | yearly (Illimité). */
+  cycle?: "monthly" | "yearly";
+  amountFcfa?: number;
+  /** Prochaine échéance (AAAA-MM-JJ) renseignée par GeniusPay. */
+  nextBilling?: string;
+  lastRenewalAt?: string;
+  /** Abonnement MikCloud du compte (période active). */
+  subscription?: Pick<Subscription, "planId" | "status" | "periodStart" | "periodEnd">;
+}
+
+/** Réponse POST /api/subscription/stripe — abonnement récurrent créé :
+ * paymentUrl = paiement EN LIGNE de la première période (carte si proposé,
+ * sinon Wave) ; redirectUrl = page Stripe Checkout (si GeniusPay la renvoie) ;
+ * les échéances suivantes sont débitées automatiquement par GeniusPay. */
+export interface StripeCreateResponse {
+  uuid: string;
+  status: string;
+  nextBilling?: string;
+  redirectUrl?: string;
+  paymentUrl?: string;
+  /** Référence de la demande de facturation de la première période (MC-…). */
+  ref?: string;
+  planId: string;
+  planName: string;
+  amountFcfa: number;
+  cycle: "monthly" | "yearly";
+}
+
 // ─── F6 — Trafic temps réel ───
 
 export interface IfaceTraffic {

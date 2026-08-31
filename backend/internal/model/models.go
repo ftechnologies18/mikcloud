@@ -550,6 +550,39 @@ type BillingRequest struct {
 	PaidVia string `json:"paidVia,omitempty"`
 }
 
+// GeniusPaySub — abonnement RÉCURRENT par carte bancaire (Stripe via
+// GeniusPay). Créé une fois par le client (POST /api/subscription/stripe),
+// débité automatiquement à chaque échéance par Stripe ; chaque facture payée
+// (webhook subscription.payment_succeeded, ou resynchronisation au retour du
+// client) active/empile la période MikCloud correspondante — la source unique
+// du calcul de période reste applySubscriptionLocked.
+type GeniusPaySub struct {
+	// UUID — identifiant GeniusPay (sub_…), clé primaire locale.
+	UUID      string `json:"uuid"`
+	AccountID string `json:"accountId"`
+	PlanID    string `json:"planId"`   // essentiel | illimite
+	PlanName  string `json:"planName"` // libellé figé à la création
+	Cycle     string `json:"cycle"`    // monthly | yearly
+	// AmountFcfa — montant FIXE débité par cycle (assiette figée à la création :
+	// Essentiel = 1 250 F × routeurs, Illimité = 12 000 F). Slots — routeurs
+	// couverts (essentiel). Status — pending|trialing|active|past_due|paused|
+	// cancelled|expired.
+	AmountFcfa    int    `json:"amountFcfa"`
+	Slots         int    `json:"slots"`
+	Status        string `json:"status"`
+	CustomerName  string `json:"customerName,omitempty"`
+	CustomerEmail string `json:"customerEmail,omitempty"`
+	Phone         string `json:"phone,omitempty"`
+	NextBilling   string `json:"nextBilling,omitempty"` // prochaine échéance (AAAA-MM-JJ)
+	// LastInvoiceAt — paid_at de la DERNIÈRE facture APPLIQUÉE (idempotence du
+	// webhook et des resynchronisations).
+	LastInvoiceAt string `json:"lastInvoiceAt,omitempty"`
+	LastRenewalAt string `json:"lastRenewalAt,omitempty"`
+	CreatedAt     string `json:"createdAt"`
+	UpdatedAt     string `json:"updatedAt,omitempty"`
+	CancelledAt   string `json:"cancelledAt,omitempty"`
+}
+
 // Kinds de commandes agent (routeur -> cloud en HTTP-poll).
 const (
 	CmdReadState    = "read_state"    // télémétrie + users + sessions actives
@@ -721,9 +754,12 @@ type DB struct {
 	// Facturation (verrou du cycle) — file des demandes de souscription /
 	// renouvellement, actionnable depuis la console plateforme.
 	BillingRequests []BillingRequest `json:"billingRequests"`
-	Tenant          Tenant           `json:"tenant"`   // legacy mono-tenant
-	Settings        Settings         `json:"settings"` // legacy mono-tenant
-	LastTick        time.Time        `json:"lastTick"`
+	// Abonnement récurrent par carte (Stripe via GeniusPay) — prélèvements
+	// automatiques, synchronisés avec l'API abonnements GeniusPay.
+	GeniusPaySubs []GeniusPaySub `json:"geniuspaySubs"`
+	Tenant        Tenant         `json:"tenant"`   // legacy mono-tenant
+	Settings      Settings       `json:"settings"` // legacy mono-tenant
+	LastTick      time.Time      `json:"lastTick"`
 }
 
 // EffectiveStatus retourne le statut réel d'un utilisateur : un voucher encore

@@ -85,15 +85,44 @@ func parseAgentForm(r *http.Request) url.Values {
 		}
 	}
 	if len(body) > 0 {
-		if bv, err := url.ParseQuery(string(body)); err == nil {
-			for k, vs := range bv {
-				for _, v := range vs {
-					vals.Add(k, v)
-				}
-			}
-		}
+		parseTolerantQuery(vals, string(body))
 	}
 	return vals
+}
+
+// parseTolerantQuery — parse « k=v&k2=v2 » d'un corps BRUT RouterOS.
+// Contrairement à url.ParseQuery (qui rejette tout le corps dès qu'une
+// valeur contient un « ; » brut — et avale cette paire), on découpe sur « & »
+// uniquement, on coupe sur la PREMIÈRE « = » et on décode le pourcentage de
+// façon tolérante (valeur brute conservée si l'échappement est invalide).
+// Les « ; » et « | » des valeurs sont préservés : ce sont les séparateurs du
+// protocole agent (users=a|b|false;…), relus par splitAgentList côté cloud.
+func parseTolerantQuery(vals url.Values, query string) {
+	for query != "" {
+		pair := query
+		if i := strings.IndexByte(query, '&'); i >= 0 {
+			pair, query = query[:i], query[i+1:]
+		} else {
+			query = ""
+		}
+		if pair == "" {
+			continue
+		}
+		key, value := pair, ""
+		if i := strings.IndexByte(pair, '='); i >= 0 {
+			key, value = pair[:i], pair[i+1:]
+		}
+		if key == "" {
+			continue
+		}
+		if dec, err := url.PathUnescape(key); err == nil {
+			key = dec
+		}
+		if dec, err := url.PathUnescape(value); err == nil {
+			value = dec
+		}
+		vals.Add(key, value)
+	}
 }
 
 // routerByToken — retrouve le routeur agent par token (haché). Sous verrou.
@@ -105,6 +134,42 @@ func routerByToken(db *model.DB, token string) *model.Router {
 		}
 	}
 	return nil
+}
+
+// staleSentReadKinds — kinds de LECTURE dont la re-exécution est sans
+// effet de bord (idempotents) : seuls ceux-là sont repris s'ils restent
+// « sent » sans rapport (les écritures ne sont jamais re-exécutées).
+var staleSentReadKinds = map[string]bool{
+	model.CmdReadState:     true,
+	model.CmdReadDhcp:      true,
+	model.CmdReadHosts:     true,
+	model.CmdReadCookies:   true,
+	model.CmdReadLog:       true,
+	model.CmdReadScheduler: true,
+	model.CmdImportHotspot: true,
+	model.CmdPing:          true,
+}
+
+// staleSentLimit — au-delà de cette ancienneté sans rapport, une commande
+// de lecture « sent » est considérée perdue et repart en file.
+const staleSentLimit = 10 * time.Minute
+
+// requeueStaleReadsLocked — remet en file les lectures « sent » zombies
+// (sous verrou ; Save à charge de l'appelant, comme le reste du flux).
+func requeueStaleReadsLocked(db *model.DB, routerID string) {
+	lim := time.Now().Add(-staleSentLimit).Format(time.RFC3339)
+	changed := false
+	for i := range db.Commands {
+		c := &db.Commands[i]
+		if c.RouterID == routerID && c.Status == "sent" && staleSentReadKinds[c.Kind] && c.SentAt != "" && c.SentAt < lim {
+			c.Status = "queued"
+			c.SentAt = ""
+			changed = true
+		}
+	}
+	if changed {
+		log.Printf("agent/cmd: commandes de lecture « sent » sans rapport reprises en file (routeur %s)", routerID)
+	}
 }
 
 // touchAgent — marque le routeur en ligne (sous verrou).
@@ -300,6 +365,12 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 	// expirations à son check-in (les commandes déposées ici sont servies
 	// dans le MÊME check-in, juste après).
 	a.enforceExpired(db)
+
+	// Reprise : une commande de lecture « sent » sans rapport depuis plus de
+	// 10 min est un zombie (blip réseau, rejet historique du rapport…) —
+	// remise en file pour re-exécution au check-in courant. Lectures
+	// idempotentes uniquement : jamais les écritures (double exécution).
+	requeueStaleReadsLocked(db, router.ID)
 
 	// File FIFO : commandes en attente (max 10 par check-in)
 	queued := []model.Command{}

@@ -16,6 +16,7 @@ import { EmptyState } from "@/components/hotspot/empty-state";
 import { PageHeader } from "@/components/hotspot/page-header";
 import { StatusBadge } from "@/components/hotspot/status-badge";
 import { useCurrency } from "@/components/hotspot/parts/sd-currency";
+import { AccountDetailDialog } from "./account-detail-dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -85,6 +86,7 @@ export default function AccountsView() {
   const currency = useCurrency();
   const queryClient = useQueryClient();
   const [confirmTarget, setConfirmTarget] = useState<AccountSummary | null>(null);
+  const [detailTarget, setDetailTarget] = useState<AccountSummary | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [accName, setAccName] = useState("");
   const [accUsername, setAccUsername] = useState("");
@@ -224,7 +226,14 @@ export default function AccountsView() {
                       <TableRow key={account.id} className={account.status === "disabled" ? "opacity-60" : undefined}>
                         <TableCell className="pl-4 sm:pl-6">
                           <div className="flex items-center gap-2">
-                            <span className="font-medium">{account.name}</span>
+                            <button
+                              type="button"
+                              className="font-medium underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring rounded"
+                              onClick={() => setDetailTarget(account)}
+                              aria-label={t("accounts.openDetail")}
+                            >
+                              {account.name}
+                            </button>
                             {isMain && (
                               <Badge
                                 variant="outline"
@@ -278,6 +287,15 @@ export default function AccountsView() {
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {/* Fiche client — informations, abonnement, usage, suppression */}
+      {detailTarget && (
+        <AccountDetailDialog
+          account={detailTarget}
+          open
+          onOpenChange={(o) => !o && setDetailTarget(null)}
+        />
       )}
 
       {/* Création d'un compte client */}

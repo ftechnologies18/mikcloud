@@ -353,6 +353,13 @@ type Subscription struct {
 	// LastAmountFcfa — montant de la période en cours : Essentiel =
 	// 1 250 F × routeurs enregistrés au moment de la souscription, Illimité = forfait.
 	LastAmountFcfa int `json:"lastAmountFcfa"`
+	// P2/P3 (console plateforme) — RouterSlots : nombre de routeurs couverts
+	// par une période Essentiel (quota réel vérifié côté serveur à la
+	// création de routeur ; 0 = non plafonné : bêta, illimité, plateforme).
+	// LastPaidAt : date RFC3339 du dernier paiement marqué par la plateforme
+	// (vide = période en attente de paiement — indicatif, sans blocage).
+	RouterSlots int    `json:"routerSlots,omitempty"`
+	LastPaidAt  string `json:"lastPaidAt,omitempty"`
 }
 
 // SaasPlan — formule d'abonnement MikCloud (catalogue public de la console).

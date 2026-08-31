@@ -143,6 +143,10 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/admin/accounts", a.requireRole(3, a.handleAdminAccounts))
 	mux.HandleFunc("POST /api/admin/accounts", a.requireRole(3, a.handleAdminAccountCreate))
 	mux.HandleFunc("POST /api/admin/accounts/{id}/status", a.requireRole(3, a.handleAdminAccountStatus))
+	// P2 — fiche client, attribution/renouvellement d'abonnement, suppression.
+	mux.HandleFunc("GET /api/admin/accounts/{id}", a.requireRole(3, a.handleAdminAccountDetail))
+	mux.HandleFunc("PUT /api/admin/accounts/{id}/subscription", a.requireRole(3, a.handleAdminAccountSubscription))
+	mux.HandleFunc("DELETE /api/admin/accounts/{id}", a.requireRole(3, a.handleAdminAccountDelete))
 	// Console plateforme (super-admin MikCloud, multi-comptes).
 	mux.HandleFunc("GET /api/admin/overview", a.requireRole(3, a.handleAdminOverview))
 	mux.HandleFunc("GET /api/admin/activity", a.requireRole(3, a.handleAdminActivity))
@@ -1075,6 +1079,10 @@ func (a *API) handleRouterCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Mode invalide (simulated, real ou agent)")
 		return
 	}
+	// P3 — compte expiré : écritures métier refusées (lecture seule).
+	if !a.guardAccountWrite(w, r) {
+		return
+	}
 	router := model.Router{
 		ID: model.NewID("r-"), AccountID: acc, Name: name, Host: host, Mode: mode,
 		Username: strings.TrimSpace(req.Username), Password: req.Password,
@@ -1148,6 +1156,13 @@ func (a *API) handleRouterCreate(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "Ce nom de routeur existe déjà")
 			return
 		}
+	}
+	// P3 — plafond de routeurs du plan Essentiel : la période couvre
+	// RouterSlots routeurs (0 = non plafonné : bêta, illimité, plateforme).
+	guardView := a.subscriptionGuardStateLocked(acc)
+	if !guardAccountRouterLimit(w, guardView, accountRouterCount(a.store.Data(), acc)) {
+		a.store.Unlock()
+		return
 	}
 	a.store.Data().Routers = append(a.store.Data().Routers, router)
 	msg := "Routeur " + router.Name + " ajouté"
@@ -1500,6 +1515,10 @@ func (a *API) handleProfilesList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleProfileCreate(w http.ResponseWriter, r *http.Request) {
+	// P3 — compte expiré : écritures métier refusées (lecture seule).
+	if !a.guardAccountWrite(w, r) {
+		return
+	}
 	acc := accountScope(r)
 	var req struct {
 		Name              string `json:"name"`
@@ -1588,6 +1607,10 @@ func defaultMinZero(v int) int {
 }
 
 func (a *API) handleProfileUpdate(w http.ResponseWriter, r *http.Request) {
+	// P3 — compte expiré : écritures métier refusées (lecture seule).
+	if !a.guardAccountWrite(w, r) {
+		return
+	}
 	acc := accountScope(r)
 	id := r.PathValue("id")
 	var req struct {
@@ -1761,6 +1784,10 @@ func (a *API) usersList(w http.ResponseWriter, r *http.Request, kindOverride str
 }
 
 func (a *API) handleUserCreate(w http.ResponseWriter, r *http.Request) {
+	// P3 — compte expiré : écritures métier refusées (lecture seule).
+	if !a.guardAccountWrite(w, r) {
+		return
+	}
 	acc := accountScope(r)
 	var req struct {
 		Username  string `json:"username"`
@@ -2173,6 +2200,10 @@ func (a *API) removeUserByID(id string) {
 // ---------------------------------------------------------------------------
 
 func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
+	// P3 — compte expiré : écritures métier refusées (lecture seule).
+	if !a.guardAccountWrite(w, r) {
+		return
+	}
 	acc := accountScope(r)
 	var req struct {
 		Count       int    `json:"count"`
@@ -2695,6 +2726,10 @@ func pinNote(pin string) string {
 }
 
 func (a *API) handleResellerCreate(w http.ResponseWriter, r *http.Request) {
+	// P3 — compte expiré : écritures métier refusées (lecture seule).
+	if !a.guardAccountWrite(w, r) {
+		return
+	}
 	acc := accountScope(r)
 	var req struct {
 		Name     string `json:"name"`
@@ -2836,6 +2871,10 @@ func (a *API) handleResellerDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleResellerCredit(w http.ResponseWriter, r *http.Request) {
+	// P3 — compte expiré : écritures métier refusées (lecture seule).
+	if !a.guardAccountWrite(w, r) {
+		return
+	}
 	acc := accountScope(r)
 	id := r.PathValue("id")
 	var req struct {

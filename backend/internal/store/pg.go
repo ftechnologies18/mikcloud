@@ -408,6 +408,10 @@ func (p *PG) ensureSchema() error {
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS sub_period_start TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS sub_period_end   TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS sub_last_amount  INTEGER NOT NULL DEFAULT 0`,
+		// P2/P3 (console plateforme) — quotas Essentiel (routeurs couverts) et
+		// traçabilité du paiement marqué par la plateforme.
+		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS sub_router_slots INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS sub_last_paid_at TEXT NOT NULL DEFAULT ''`,
 		// Migrations multi-tenant : colonne account_id sur toutes les tables métier.
 		`ALTER TABLE admin_users   ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''`,
 		// Changement de mot de passe par l'utilisateur (POST /api/auth/password) :
@@ -562,7 +566,8 @@ func (p *PG) loadSettings(db *model.DB) error {
 	rows, err := p.db.Query(
 		`SELECT account_id, tenant_name, tenant_currency, tenant_timezone, plan_name, plan_max_routers, plan_max_users, wave_link,
                         dns_name, logo_url, expiry_policy_mode, expiry_policy_after_days,
-                        sub_plan_id, sub_status, sub_period_start, sub_period_end, sub_last_amount, last_tick
+                        sub_plan_id, sub_status, sub_period_start, sub_period_end, sub_last_amount,
+                        sub_router_slots, sub_last_paid_at, last_tick
                  FROM settings`)
 	if err != nil {
 		return err
@@ -579,12 +584,15 @@ func (p *PG) loadSettings(db *model.DB) error {
 			subPlanID, subStatus                       string
 			subPeriodStart, subPeriodEnd               string
 			subLastAmount                              int
+			subRouterSlots                             int
+			subLastPaidAt                              string
 			lastTick                                   sql.NullTime
 		)
 		if err := rows.Scan(&accID, &tenantName, &tenantCurrency, &tenantTimezone,
 			&planName, &planMaxRouters, &planMaxUsers, &waveLink,
 			&dnsName, &logoURL, &expiryMode, &expiryAfterDays,
-			&subPlanID, &subStatus, &subPeriodStart, &subPeriodEnd, &subLastAmount, &lastTick); err != nil {
+			&subPlanID, &subStatus, &subPeriodStart, &subPeriodEnd, &subLastAmount,
+			&subRouterSlots, &subLastPaidAt, &lastTick); err != nil {
 			return err
 		}
 		if accID == "" {
@@ -600,6 +608,7 @@ func (p *PG) loadSettings(db *model.DB) error {
 			Subscription: model.Subscription{
 				PlanID: subPlanID, Status: subStatus,
 				PeriodStart: subPeriodStart, PeriodEnd: subPeriodEnd, LastAmountFcfa: subLastAmount,
+				RouterSlots: subRouterSlots, LastPaidAt: subLastPaidAt,
 			},
 		}
 		if lastTick.Valid && db.LastTick.IsZero() {
@@ -704,8 +713,9 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
 		_, err := tx.Exec(
 			`INSERT INTO settings (id, account_id, tenant_name, tenant_currency, tenant_timezone, plan_name, plan_max_routers, plan_max_users, wave_link,
                                dns_name, logo_url, expiry_policy_mode, expiry_policy_after_days,
-                               sub_plan_id, sub_status, sub_period_start, sub_period_end, sub_last_amount, last_tick)
-                         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+                               sub_plan_id, sub_status, sub_period_start, sub_period_end, sub_last_amount,
+                               sub_router_slots, sub_last_paid_at, last_tick)
+                         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
                          ON CONFLICT (id) DO UPDATE SET
                            account_id                = EXCLUDED.account_id,
                            tenant_name               = EXCLUDED.tenant_name,
@@ -724,13 +734,16 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
                            sub_period_start          = EXCLUDED.sub_period_start,
                            sub_period_end            = EXCLUDED.sub_period_end,
                            sub_last_amount           = EXCLUDED.sub_last_amount,
+                           sub_router_slots          = EXCLUDED.sub_router_slots,
+                           sub_last_paid_at          = EXCLUDED.sub_last_paid_at,
                            last_tick                 = EXCLUDED.last_tick`,
 			accID, s.Tenant.Name, s.Tenant.Currency, s.Tenant.Timezone,
 			s.Plan.Name, s.Plan.MaxRouters, s.Plan.MaxUsers,
 			s.Tenant.WaveLink, s.Tenant.DNSName, s.Tenant.LogoURL,
 			s.Tenant.ExpiryPolicyMode, s.Tenant.ExpiryPolicyAfterDays,
 			s.Subscription.PlanID, s.Subscription.Status, s.Subscription.PeriodStart,
-			s.Subscription.PeriodEnd, s.Subscription.LastAmountFcfa, lastTick)
+			s.Subscription.PeriodEnd, s.Subscription.LastAmountFcfa,
+			s.Subscription.RouterSlots, s.Subscription.LastPaidAt, lastTick)
 		if err != nil {
 			return fmt.Errorf("pg sync settings (%s) : %w", accID, err)
 		}

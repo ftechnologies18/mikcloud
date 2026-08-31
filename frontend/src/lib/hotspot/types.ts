@@ -80,6 +80,85 @@ export interface AccountSummary {
   };
 }
 
+/** Abonnement SaaS d'un compte (état réel, calculé côté serveur). */
+export interface SubscriptionInfo {
+  /** "" (bêta) | essentiel | illimite | platform */
+  planId: string;
+  /** Libellé court (Bêta, Essentiel, Illimité, Plateforme). */
+  planName: string;
+  /** Statut effectif : none | active | expired. */
+  status: "none" | "active" | "expired";
+  periodStart: string;
+  periodEnd: string;
+  lastAmountFcfa: number;
+  /** Routeurs couverts par la période (Essentiel ; 0 = non plafonné). */
+  routerSlots: number;
+  /** Date du dernier paiement marqué par la plateforme (vide = en attente). */
+  lastPaidAt?: string;
+  /** Nombre de routeurs actuellement enregistrés du compte. */
+  routerCount: number;
+  /** Montant indicatif de la période en cours (formules catalogue). */
+  amountFcfa: number;
+}
+
+/** Fiche détaillée d'un compte client (GET /api/admin/accounts/{id}). */
+export interface AccountDetail {
+  id: string;
+  name: string;
+  status: AccountStatus;
+  createdAt: string;
+  /** true pour le compte principal de la plateforme (intouchable). */
+  main: boolean;
+  owner: {
+    id: string;
+    name: string;
+    username: string;
+    role: string;
+    createdAt: string;
+    owner: boolean;
+  } | null;
+  team: {
+    id: string;
+    name: string;
+    username: string;
+    role: string;
+    createdAt: string;
+    owner: boolean;
+  }[];
+  subscription: SubscriptionInfo;
+  stats: {
+    users: number;
+    routers: number;
+    routersOnline: number;
+    sessions: number;
+    sales30d: number;
+    revenue30d: number;
+    vouchersAvailable: number;
+  };
+  routers: {
+    id: string;
+    name: string;
+    mode: string;
+    status: string;
+    users: number;
+    lastSeen: string;
+  }[];
+  activity: PlatformActivityRow[];
+}
+
+/** Corps de PUT /api/admin/accounts/{id}/subscription (attribution plateforme). */
+export interface SubscriptionUpdatePayload {
+  planId: "essentiel" | "illimite" | "beta" | "platform";
+  /** Durée en mois (défaut : 1 essentiel, 12 illimité). */
+  months?: number;
+  /** Routeurs couverts (Essentiel ; défaut = quota actuel sinon routeurs enregistrés). */
+  routerSlots?: number;
+  /** Marquer la période comme payée maintenant. */
+  markPaid?: boolean;
+  /** Note libre tracée dans le journal. */
+  note?: string;
+}
+
 /** KPIs globaux du SaaS — console plateforme (admin plateforme uniquement). */
 export interface PlatformOverview {
   accounts: { total: number; active: number; disabled: number; new30d: number };

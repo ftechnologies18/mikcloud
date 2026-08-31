@@ -9,6 +9,7 @@
 
 import { useHotspotStore } from "./store";
 import type {
+  AccountDetail,
   AccountStatus,
   AccountSummary,
   AuthResponse,
@@ -16,6 +17,8 @@ import type {
   PlatformOverview,
   PlatformTeamMember,
   RegisterPayload,
+  SubscriptionInfo,
+  SubscriptionUpdatePayload,
 } from "./types";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || "").replace(/\/$/, "");
@@ -23,9 +26,12 @@ const GATEWAY_PORT = "4000";
 
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  /** Code machine optionnel renvoyé par le backend (ex. subscription_expired). */
+  code?: string;
+  constructor(message: string, status: number, code?: string) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -80,11 +86,11 @@ export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
   }
 
   if (!res.ok) {
+    const body = data && typeof data === "object" ? (data as { error?: unknown; code?: unknown }) : null;
     const message =
-      (data && typeof data === "object" && "error" in data && typeof (data as { error: unknown }).error === "string"
-        ? (data as { error: string }).error
-        : null) ?? `Erreur ${res.status}`;
-    throw new ApiError(message, res.status);
+      (body && typeof body.error === "string" ? body.error : null) ?? `Erreur ${res.status}`;
+    const code = body && typeof body.code === "string" ? body.code : undefined;
+    throw new ApiError(message, res.status, code);
   }
 
   return data as T;
@@ -185,4 +191,23 @@ export async function createPlatformAdmin(payload: {
 /** deletePlatformAdmin — retire un super-admin (jamais soi-même, jamais le dernier). */
 export async function deletePlatformAdmin(id: string): Promise<{ ok: boolean }> {
   return api<{ ok: boolean }>(`/api/admin/team/${id}`, { method: "DELETE" });
+}
+
+/** fetchAccountDetail — fiche détaillée d'un compte client (console plateforme). */
+export async function fetchAccountDetail(id: string): Promise<AccountDetail> {
+  return api<AccountDetail>(`/api/admin/accounts/${id}`);
+}
+
+/** updateAccountSubscription — attribue / renouvelle le plan d'un compte client.
+ * Codes 402/400 exploitables : subscription_expired, plan_router_limit, bad_plan… */
+export async function updateAccountSubscription(
+  id: string,
+  payload: SubscriptionUpdatePayload,
+): Promise<{ subscription: SubscriptionInfo }> {
+  return api(`/api/admin/accounts/${id}/subscription`, { method: "PUT", body: payload });
+}
+
+/** deleteClientAccount — supprime un compte client ET toutes ses données (cascade). */
+export async function deleteClientAccount(id: string): Promise<{ ok: boolean }> {
+  return api<{ ok: boolean }>(`/api/admin/accounts/${id}`, { method: "DELETE" });
 }

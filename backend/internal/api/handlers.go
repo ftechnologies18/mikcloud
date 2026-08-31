@@ -155,6 +155,9 @@ func (a *API) Handler() http.Handler {
 	// Console plateforme (super-admin MikCloud, multi-comptes).
 	mux.HandleFunc("GET /api/admin/overview", a.requireRole(3, a.handleAdminOverview))
 	mux.HandleFunc("GET /api/admin/activity", a.requireRole(3, a.handleAdminActivity))
+	// I (paramètres plateforme) — config globale du SaaS (nom, inscriptions).
+	mux.HandleFunc("GET /api/admin/platform/settings", a.requireRole(3, a.handlePlatformSettingsGet))
+	mux.HandleFunc("PUT /api/admin/platform/settings", a.requireRole(3, a.handlePlatformSettingsPut))
 	mux.HandleFunc("GET /api/admin/team", a.requireRole(3, a.handlePlatformTeamList))
 	mux.HandleFunc("POST /api/admin/team", a.requireRole(3, a.handlePlatformTeamCreate))
 	mux.HandleFunc("DELETE /api/admin/team/{id}", a.requireRole(3, a.handlePlatformTeamDelete))
@@ -721,10 +724,13 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
 		return
 	}
-	// Clé d'invitation (optionnelle) : limite l'inscription sur une bêta privée.
-	if inviteKey := os.Getenv("REGISTER_KEY"); inviteKey != "" && req.Key != inviteKey {
-		writeErr(w, http.StatusForbidden, "Inscription fermée — clé d'invitation requise")
-		return
+	// Contrôle d'inscription (I — paramètres plateforme) : priorité env
+	// REGISTER_KEY > config DB (registerGate). Ouvert + clé vide = libre.
+	if open, expectedKey := a.registerGate(); !open {
+		if req.Key != expectedKey {
+			writeErr(w, http.StatusForbidden, "Inscription fermée — clé d'invitation requise")
+			return
+		}
 	}
 	username := strings.ToLower(strings.TrimSpace(req.Username))
 	if len(username) < 3 || len(username) > 32 {

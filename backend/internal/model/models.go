@@ -414,6 +414,25 @@ type Settings struct {
 	Tenant       Tenant       `json:"tenant"`
 	Plan         Plan         `json:"plan"`
 	Subscription Subscription `json:"subscription"`
+	// I (paramètres plateforme) — N'EST UTILISÉ QUE SUR LE COMPTE PRINCIPAL
+	// (AccountMainID) : configuration globale du SaaS vue par l'admin
+	// plateforme. Ignoré pour les comptes clients.
+	Platform *PlatformConfig `json:"platform,omitempty"`
+}
+
+// PlatformConfig — configuration globale de la plateforme MikCloud (vivante
+// sur les settings du compte principal). Gérée depuis la console plateforme
+// (vue Paramètres plateforme), persistée en PostgreSQL — plus besoin de
+// redéployer Render pour ouvrir/fermer les inscriptions.
+type PlatformConfig struct {
+	// Nom affiché du SaaS (login, footer) — défaut "MikCloud".
+	Name string `json:"name"`
+	// RegisterOpen : auto-inscription publique autorisée sans clé.
+	// Priorité de handleRegister : env REGISTER_KEY (si définie) > cette clé.
+	RegisterOpen bool `json:"registerOpen"`
+	// RegisterKey : clé d'invitation requise quand RegisterOpen = false
+	// ("" = pas de clé → inscriptions totalement fermées).
+	RegisterKey string `json:"registerKey,omitempty"`
 }
 
 // AdminUser — compte d'accès à la console (login), rattaché à un compte SaaS.

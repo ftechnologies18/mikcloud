@@ -48,6 +48,7 @@ import LogsView from "./views/logs-view";
 import NotificationsView from "./views/notifications-view";
 import PlatformLogsView from "./views/platform-logs-view";
 import PlatformOverviewView from "./views/platform-overview-view";
+import PlatformSettingsView from "./views/platform-settings-view";
 import PlatformTeamView from "./views/platform-team-view";
 import ProfilesView from "./views/profiles-view";
 import ReportsView from "./views/reports-view";
@@ -100,6 +101,7 @@ const VIEWS: Record<ViewId, React.ComponentType> = {
   platform: PlatformOverviewView,
   platformLogs: PlatformLogsView,
   platformTeam: PlatformTeamView,
+  platformSettings: PlatformSettingsView,
   billingRequests: BillingRequestsView,
   accounts: AccountsView,
   notifications: NotificationsView,
@@ -148,9 +150,13 @@ function UserCard() {
   const user = useHotspotStore((s) => s.user);
   const logout = useHotspotStore((s) => s.logout);
   const setView = useHotspotStore((s) => s.setView);
+  const shellMode = useHotspotStore((s) => s.shellMode);
   const queryClient = useQueryClient();
   const [profileOpen, setProfileOpen] = useState(false);
   const name = user?.name ?? t("profile.defaultUser");
+  // I — en mode plateforme, « Paramètres » ouvre les paramètres plateforme
+  // (la vue client serait immédiatement redirigée par le guard platformMode).
+  const isPlatformMode = shellMode === "platform";
 
   function handleLogout() {
     logout();
@@ -190,7 +196,7 @@ function UserCard() {
             <UserRound className="size-4" />
             {t("shell.profile")}
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => setView("settings")} className="min-h-10">
+          <DropdownMenuItem onClick={() => setView(isPlatformMode ? "platformSettings" : "settings")} className="min-h-10">
             <Settings className="size-4" />
             {t("shell.settings")}
           </DropdownMenuItem>
@@ -398,8 +404,11 @@ function Topbar() {
   const setSidebarOpen = useHotspotStore((s) => s.setSidebarOpen);
   const user = useHotspotStore((s) => s.user);
   const logout = useHotspotStore((s) => s.logout);
+  const shellMode = useHotspotStore((s) => s.shellMode);
   const queryClient = useQueryClient();
   const [profileOpen, setProfileOpen] = useState(false);
+  // I — en mode plateforme, « Paramètres » ouvre les paramètres plateforme.
+  const isPlatformMode = shellMode === "platform";
 
   function handleRefresh() {
     void queryClient.invalidateQueries();
@@ -473,7 +482,7 @@ function Topbar() {
                   <UserRound className="size-4" />
                   {t("shell.profile")}
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setView("settings")} className="min-h-10">
+                <DropdownMenuItem onClick={() => setView(isPlatformMode ? "platformSettings" : "settings")} className="min-h-10">
                   <Settings className="size-4" />
                   {t("shell.settings")}
                 </DropdownMenuItem>

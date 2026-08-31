@@ -457,6 +457,11 @@ func (p *PG) ensureSchema() error {
 		`ALTER TABLE sales         ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE commands      ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE settings      ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''`,
+		// I (paramètres plateforme) — config globale du SaaS (compte principal
+		// uniquement) : nom affiché + gestion des inscriptions.
+		`ALTER TABLE settings      ADD COLUMN IF NOT EXISTS platform_name        TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE settings      ADD COLUMN IF NOT EXISTS platform_register_open BOOLEAN NOT NULL DEFAULT TRUE`,
+		`ALTER TABLE settings      ADD COLUMN IF NOT EXISTS platform_register_key  TEXT NOT NULL DEFAULT ''`,
 		// La ligne singleton settings historique (id INTEGER 1) devient la ligne du
 		// compte principal : id = account_id, une ligne par compte.
 		`ALTER TABLE settings ALTER COLUMN id TYPE TEXT`,
@@ -597,7 +602,8 @@ func (p *PG) loadSettings(db *model.DB) error {
 		`SELECT account_id, tenant_name, tenant_currency, tenant_timezone, plan_name, plan_max_routers, plan_max_users, wave_link,
                         dns_name, logo_url, expiry_policy_mode, expiry_policy_after_days,
                         sub_plan_id, sub_status, sub_period_start, sub_period_end, sub_last_amount,
-                        sub_router_slots, sub_last_paid_at, last_tick
+                        sub_router_slots, sub_last_paid_at, last_tick,
+                        platform_name, platform_register_open, platform_register_key
                  FROM settings`)
 	if err != nil {
 		return err
@@ -617,18 +623,23 @@ func (p *PG) loadSettings(db *model.DB) error {
 			subRouterSlots                             int
 			subLastPaidAt                              string
 			lastTick                                   sql.NullTime
+			// I (paramètres plateforme) — uniquement sur le compte principal.
+			platformName         string
+			platformRegisterOpen bool
+			platformRegisterKey  string
 		)
 		if err := rows.Scan(&accID, &tenantName, &tenantCurrency, &tenantTimezone,
 			&planName, &planMaxRouters, &planMaxUsers, &waveLink,
 			&dnsName, &logoURL, &expiryMode, &expiryAfterDays,
 			&subPlanID, &subStatus, &subPeriodStart, &subPeriodEnd, &subLastAmount,
-			&subRouterSlots, &subLastPaidAt, &lastTick); err != nil {
+			&subRouterSlots, &subLastPaidAt, &lastTick,
+			&platformName, &platformRegisterOpen, &platformRegisterKey); err != nil {
 			return err
 		}
 		if accID == "" {
 			continue // ligne historique non rattachée à un compte → ignorée
 		}
-		db.SettingsByAccount[accID] = model.Settings{
+		settings := model.Settings{
 			Tenant: model.Tenant{
 				Name: tenantName, Currency: tenantCurrency, Timezone: tenantTimezone,
 				WaveLink: waveLink, DNSName: dnsName, LogoURL: logoURL,
@@ -641,6 +652,15 @@ func (p *PG) loadSettings(db *model.DB) error {
 				RouterSlots: subRouterSlots, LastPaidAt: subLastPaidAt,
 			},
 		}
+		// I (paramètres plateforme) — la config globale vit sur le compte principal.
+		if accID == model.AccountMainID {
+			settings.Platform = &model.PlatformConfig{
+				Name:         platformName,
+				RegisterOpen: platformRegisterOpen,
+				RegisterKey:  platformRegisterKey,
+			}
+		}
+		db.SettingsByAccount[accID] = settings
 		if lastTick.Valid && db.LastTick.IsZero() {
 			db.LastTick = lastTick.Time
 		}
@@ -784,12 +804,21 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
 
 	lastTick := sql.NullTime{Time: db.LastTick, Valid: !db.LastTick.IsZero()}
 	for accID, s := range db.SettingsByAccount {
+		// I (paramètres plateforme) — la config globale ne vit que sur le
+		// compte principal ; les autres lignes écrivent les valeurs neutres.
+		var platName string
+		var platOpen bool
+		var platKey string
+		if s.Platform != nil {
+			platName, platOpen, platKey = s.Platform.Name, s.Platform.RegisterOpen, s.Platform.RegisterKey
+		}
 		_, err := tx.Exec(
 			`INSERT INTO settings (id, account_id, tenant_name, tenant_currency, tenant_timezone, plan_name, plan_max_routers, plan_max_users, wave_link,
                                dns_name, logo_url, expiry_policy_mode, expiry_policy_after_days,
                                sub_plan_id, sub_status, sub_period_start, sub_period_end, sub_last_amount,
-                               sub_router_slots, sub_last_paid_at, last_tick)
-                         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+                               sub_router_slots, sub_last_paid_at, last_tick,
+                               platform_name, platform_register_open, platform_register_key)
+                         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
                          ON CONFLICT (id) DO UPDATE SET
                            account_id                = EXCLUDED.account_id,
                            tenant_name               = EXCLUDED.tenant_name,
@@ -810,14 +839,18 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
                            sub_last_amount           = EXCLUDED.sub_last_amount,
                            sub_router_slots          = EXCLUDED.sub_router_slots,
                            sub_last_paid_at          = EXCLUDED.sub_last_paid_at,
-                           last_tick                 = EXCLUDED.last_tick`,
+                           last_tick                 = EXCLUDED.last_tick,
+                           platform_name             = EXCLUDED.platform_name,
+                           platform_register_open    = EXCLUDED.platform_register_open,
+                           platform_register_key    = EXCLUDED.platform_register_key`,
 			accID, s.Tenant.Name, s.Tenant.Currency, s.Tenant.Timezone,
 			s.Plan.Name, s.Plan.MaxRouters, s.Plan.MaxUsers,
 			s.Tenant.WaveLink, s.Tenant.DNSName, s.Tenant.LogoURL,
 			s.Tenant.ExpiryPolicyMode, s.Tenant.ExpiryPolicyAfterDays,
 			s.Subscription.PlanID, s.Subscription.Status, s.Subscription.PeriodStart,
 			s.Subscription.PeriodEnd, s.Subscription.LastAmountFcfa,
-			s.Subscription.RouterSlots, s.Subscription.LastPaidAt, lastTick)
+			s.Subscription.RouterSlots, s.Subscription.LastPaidAt, lastTick,
+			platName, platOpen, platKey)
 		if err != nil {
 			return fmt.Errorf("pg sync settings (%s) : %w", accID, err)
 		}

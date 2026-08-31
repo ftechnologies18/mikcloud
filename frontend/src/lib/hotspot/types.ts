@@ -897,8 +897,31 @@ export type ViewId =
   | "platform"
   | "platformLogs"
   | "platformTeam"
+  | "platformSettings"
   | "billingRequests"
   | "accounts"
   | "notifications"
   | "settings"
   | "team";
+
+/* ─── I (paramètres plateforme) : GET/PUT /api/admin/platform/settings ─── */
+
+/** Réponse GET /api/admin/platform/settings. */
+export interface PlatformSettingsResponse {
+  platform: {
+    name: string;
+    registerOpen: boolean;
+    /** true si une clé d'invitation est définie (jamais renvoyée en clair). */
+    registerKeySet: boolean;
+  };
+  /** Source du contrôle des inscriptions : "database" (console) ou "env" (REGISTER_KEY verrouillée). */
+  registerSource: "database" | "env";
+}
+
+/** Corps de PUT /api/admin/platform/settings (tous champs optionnels). */
+export interface PlatformSettingsUpdatePayload {
+  name?: string;
+  registerOpen?: boolean;
+  /** Nouvelle clé d'invitation — "" supprime la clé. */
+  registerKey?: string;
+}

@@ -18,6 +18,8 @@ import type {
   BillingRequestsResponse,
   PlatformActivityRow,
   PlatformOverview,
+  PlatformSettingsResponse,
+  PlatformSettingsUpdatePayload,
   PlatformTeamMember,
   RegisterPayload,
   SubscriptionInfo,
@@ -244,4 +246,22 @@ export async function resolveBillingRequest(
   payload: { action: "activate" | "cancel"; markPaid?: boolean; note?: string },
 ): Promise<{ request: BillingRequest }> {
   return api(`/api/admin/billing-requests/${id}/resolve`, { method: "POST", body: payload });
+}
+
+/* ─── I (paramètres plateforme) : GET/PUT /api/admin/platform/settings ─── */
+
+/** fetchPlatformSettings — config globale du SaaS (nom, inscriptions). */
+export async function fetchPlatformSettings(): Promise<PlatformSettingsResponse> {
+  return api<PlatformSettingsResponse>("/api/admin/platform/settings");
+}
+
+/** updatePlatformSettings — met à jour le nom affiché et/ou la politique
+ * d'inscription (clé d'invitation optionnelle). */
+export async function updatePlatformSettings(
+  payload: PlatformSettingsUpdatePayload,
+): Promise<PlatformSettingsResponse> {
+  return api<PlatformSettingsResponse>("/api/admin/platform/settings", {
+    method: "PUT",
+    body: payload,
+  });
 }

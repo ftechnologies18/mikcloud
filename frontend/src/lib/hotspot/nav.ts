@@ -96,6 +96,9 @@ export const NAV_PLATFORM_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
       { id: "billingRequests", labelKey: "nav.billingRequests", icon: ReceiptText },
       { id: "platformLogs", labelKey: "nav.platformLogs", icon: ScrollText },
       { id: "platformTeam", labelKey: "nav.platformTeam", icon: UsersRound },
+      // I (paramètres plateforme) — config globale du SaaS (nom, inscriptions,
+      // sécurité, langue, purge globale).
+      { id: "platformSettings", labelKey: "nav.platformSettings", icon: Settings },
     ],
   },
 ];

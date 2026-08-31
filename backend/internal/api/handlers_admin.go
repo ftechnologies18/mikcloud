@@ -185,7 +185,14 @@ func (a *API) handleAdminOverview(w http.ResponseWriter, r *http.Request) {
 			activeAccounts++
 		}
 	}
-	registerOpen := strings.TrimSpace(os.Getenv("REGISTER_KEY")) == ""
+	// I (paramètres plateforme) — inscriptions : priorité env REGISTER_KEY
+	// (filet de sécurité) > config DB du compte principal.
+	registerOpen := true
+	if strings.TrimSpace(os.Getenv("REGISTER_KEY")) != "" {
+		registerOpen = false
+	} else if cfg := ensureSettings(db, model.AccountMainID).Platform; cfg != nil {
+		registerOpen = cfg.RegisterOpen
+	}
 
 	a.store.Unlock()
 

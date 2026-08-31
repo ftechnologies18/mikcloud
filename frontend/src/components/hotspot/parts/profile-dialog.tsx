@@ -39,10 +39,26 @@ const RATE_LIMIT_RE = /^\d+[KM](\/\d+[KM])?$/i;
 
 const GRACE_MAX = 43_200; // 30 jours en minutes (contrat F1)
 
+// Unité de saisie de la durée de session — le serveur stocke TOUJOURS des
+// minutes (sessionTimeoutMin) : la conversion se fait ici, à la frappe.
+type SessionUnit = "min" | "hour" | "day";
+
+// Facteur de conversion vers minutes selon l'unité choisie.
+const SESSION_UNIT_MIN: Record<SessionUnit, number> = { min: 1, hour: 60, day: 1440 };
+
+// Déduit l'unité la plus lisible pour afficher une durée stockée en minutes
+// (multiple de 1440 → jours, multiple de 60 → heures, sinon minutes).
+function sessionDisplay(min: number): { sessionTimeoutValue: string; sessionTimeoutUnit: SessionUnit } {
+  if (min > 0 && min % 1440 === 0) return { sessionTimeoutValue: String(min / 1440), sessionTimeoutUnit: "day" };
+  if (min > 0 && min % 60 === 0) return { sessionTimeoutValue: String(min / 60), sessionTimeoutUnit: "hour" };
+  return { sessionTimeoutValue: String(min), sessionTimeoutUnit: "min" };
+}
+
 interface ProfileForm {
   name: string;
   rateLimit: string;
-  sessionTimeoutMin: string;
+  sessionTimeoutValue: string;
+  sessionTimeoutUnit: SessionUnit;
   validityDays: string;
   sharedUsers: string;
   price: string;
@@ -56,7 +72,9 @@ interface ProfileForm {
 const DEFAULT_FORM: ProfileForm = {
   name: "",
   rateLimit: "",
-  sessionTimeoutMin: "60",
+  // Défaut 1 heure (équivalent à l'ancien défaut 60 min, plus lisible).
+  sessionTimeoutValue: "1",
+  sessionTimeoutUnit: "hour",
   validityDays: "1",
   sharedUsers: "1",
   price: "0",
@@ -78,7 +96,7 @@ function formFromProfile(profile: Profile): ProfileForm {
   return {
     name: profile.name,
     rateLimit: profile.rateLimit,
-    sessionTimeoutMin: String(profile.sessionTimeoutMin),
+    ...sessionDisplay(profile.sessionTimeoutMin),
     validityDays: String(profile.validityDays),
     sharedUsers: String(profile.sharedUsers),
     price: String(profile.price),
@@ -117,7 +135,9 @@ export function ProfileEditDialog({ open, onOpenChange, profile }: ProfileEditDi
 
   const rateInvalid = form.rateLimit.trim() !== "" && !RATE_LIMIT_RE.test(form.rateLimit.trim());
 
-  const sessionNum = parseInt(form.sessionTimeoutMin, 10);
+  // Valeur saisie dans l'unité choisie, convertie en minutes (NaN si vide).
+  const sessionNum =
+    parseInt(form.sessionTimeoutValue, 10) * SESSION_UNIT_MIN[form.sessionTimeoutUnit];
   const validityNum = parseInt(form.validityDays, 10);
   const devicesNum = parseInt(form.sharedUsers, 10);
   const priceNum = Number(form.price);
@@ -231,17 +251,43 @@ export function ProfileEditDialog({ open, onOpenChange, profile }: ProfileEditDi
               </p>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid gap-4 sm:grid-cols-2">
               <div className="grid gap-2">
                 <Label htmlFor="profile-session">{t("profiles.dialog.session")}</Label>
-                <Input
-                  id="profile-session"
-                  type="number"
-                  min={1}
-                  value={form.sessionTimeoutMin}
-                  onChange={(event) => setForm((f) => ({ ...f, sessionTimeoutMin: event.target.value }))}
-                  disabled={saveMutation.isPending}
-                />
+                <div className="flex gap-2">
+                  <Input
+                    id="profile-session"
+                    type="number"
+                    min={1}
+                    value={form.sessionTimeoutValue}
+                    onChange={(event) => setForm((f) => ({ ...f, sessionTimeoutValue: event.target.value }))}
+                    disabled={saveMutation.isPending}
+                    className="min-w-0 flex-1"
+                  />
+                  <Select
+                    value={form.sessionTimeoutUnit}
+                    onValueChange={(value) =>
+                      setForm((f) => ({ ...f, sessionTimeoutUnit: value as SessionUnit }))
+                    }
+                  >
+                    <SelectTrigger
+                      className="w-[6.75rem] shrink-0"
+                      aria-label={t("profiles.dialog.session")}
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="min">{t("profiles.dialog.sessionUnitMin")}</SelectItem>
+                      <SelectItem value="hour">{t("profiles.dialog.sessionUnitHour")}</SelectItem>
+                      <SelectItem value="day">{t("profiles.dialog.sessionUnitDay")}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {form.sessionTimeoutUnit !== "min" && Number.isInteger(sessionNum) && (
+                  <p className="text-xs text-muted-foreground">
+                    {tf("profiles.dialog.sessionEq", { n: sessionNum })}
+                  </p>
+                )}
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="profile-validity">{t("profiles.dialog.validity")}</Label>

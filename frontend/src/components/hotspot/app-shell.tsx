@@ -5,6 +5,7 @@ import Image from "next/image";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  ChevronDown,
   ChevronsUpDown,
   Languages,
   LogOut,
@@ -69,6 +70,7 @@ function viewTitle(view: ViewId, t: (key: string) => string): string {
   const keys: Record<ViewId, string> = {
     dashboard: "nav.dashboard",
     sessions: "nav.sessions",
+    subscription: "sub.title",
     users: "nav.users",
     vouchers: "nav.vouchers",
     templates: "templates.title",
@@ -85,6 +87,7 @@ function viewTitle(view: ViewId, t: (key: string) => string): string {
     notifications: "nav.notifications",
     settings: "nav.settings",
     team: "nav.team",
+    platformSettings: "platformSettings.title",
   };
   return t(keys[view]);
 }
@@ -305,6 +308,30 @@ function NavList() {
   const user = useHotspotStore((s) => s.user);
   const shellMode = useHotspotStore((s) => s.shellMode);
   const isAdmin = user?.role === "admin" || user?.role === "platform_admin";
+  // O — sections repliables : état persisté par section (labelKey). Une
+  // section fermée manuellement reste fermée entre les visites ; celle qui
+  // contient la vue active s'ouvre toujours automatiquement.
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem("mikcloud-nav-collapsed");
+      return new Set<string>(raw ? (JSON.parse(raw) as string[]) : []);
+    } catch {
+      return new Set<string>();
+    }
+  });
+  function toggleSection(labelKey: string) {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(labelKey)) next.delete(labelKey);
+      else next.add(labelKey);
+      try {
+        localStorage.setItem("mikcloud-nav-collapsed", JSON.stringify([...next]));
+      } catch {
+        /* stockage indisponible — état de session uniquement */
+      }
+      return next;
+    });
+  }
   // Console plateforme : navigation dédiée (cockpit opérateur) ; sinon la
   // navigation client habituelle. « accounts » n'est rendu qu'en mode client
   // pour l'admin plateforme (en mode plateforme, il est déjà dans sa section).
@@ -346,7 +373,7 @@ function NavList() {
     }
   }
   return (
-    <nav className="flex-1 space-y-5 overflow-y-auto px-3 pb-4" aria-label={t("nav.main")}>
+    <nav className="flex-1 space-y-1 overflow-y-auto px-3 pb-4" aria-label={t("nav.main")}>
       <ModeSwitch />
       {sections.map((section) => {
         // N°7 — chaque vue n'apparaît que si le rôle peut l'ouvrir
@@ -355,14 +382,29 @@ function NavList() {
           (item) => (item.id !== "accounts" || isAdmin) && canView(user?.role, item.id),
         );
         if (items.length === 0) return null;
+        // O — la section contenant la vue active est toujours ouverte (l'utilisateur
+        // ne perd jamais son contexte de navigation).
+        const containsActive = items.some((item) => item.id === view);
+        const open = containsActive || !collapsed.has(section.labelKey);
         return (
           <div key={section.labelKey}>
-            <p className="nav-section-label px-2.5 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+            <button
+              type="button"
+              onClick={() => toggleSection(section.labelKey)}
+              aria-expanded={open}
+              aria-label={t(section.labelKey)}
+              className="flex w-full items-center gap-1.5 rounded-md px-2.5 py-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70 transition-colors hover:bg-accent/40 hover:text-foreground"
+            >
+              <ChevronDown
+                className={`size-3.5 shrink-0 transition-transform duration-200 ${open ? "" : "-rotate-90"}`}
+                aria-hidden
+              />
               {t(section.labelKey)}
-            </p>
-            <ul className="space-y-0.5">
-              {items.map((item) => {
-                const active = view === item.id;
+            </button>
+            {open && (
+              <ul className="space-y-0.5 pb-1">
+                {items.map((item) => {
+                  const active = view === item.id;
                 return (
                   <li key={item.id}>
                     <button
@@ -414,7 +456,8 @@ function NavList() {
                   </li>
                 );
               })}
-            </ul>
+              </ul>
+            )}
           </div>
         );
       })}

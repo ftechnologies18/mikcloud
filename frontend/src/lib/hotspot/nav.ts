@@ -31,37 +31,37 @@ export interface NavItem {
 }
 
 export const NAV_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
+  // O — 4 catégories métier (au lieu de 6 sections plates) : la sidebar est
+  // plus compacte et chaque groupe est repliable (row expandable).
   {
-    labelKey: "nav.section.general",
+    labelKey: "nav.section.exploitation",
     items: [
       { id: "dashboard", labelKey: "nav.dashboard", icon: LayoutDashboard },
       { id: "sessions", labelKey: "nav.sessions", icon: Radio },
-      // M — l'abonnement est une vue DÉDIÉE (pas un onglet des Paramètres) :
-      // échéance, renouvellement anticipé et factures téléchargeables.
-      { id: "subscription", labelKey: "nav.subscription", icon: CreditCard },
-    ],
-  },
-  {
-    labelKey: "nav.section.hotspot",
-    items: [
       { id: "users", labelKey: "nav.users", icon: Users },
       { id: "vouchers", labelKey: "nav.vouchers", icon: Ticket },
       { id: "templates", labelKey: "nav.templates", icon: Printer },
       { id: "profiles", labelKey: "nav.profiles", icon: Gauge },
     ],
   },
-  { labelKey: "nav.section.distribution", items: [{ id: "resellers", labelKey: "nav.resellers", icon: Store }] },
-  { labelKey: "nav.section.infrastructure", items: [{ id: "routers", labelKey: "nav.routers", icon: RouterIcon }] },
+  {
+    labelKey: "nav.section.commercial",
+    items: [
+      // M — l'abonnement est une vue DÉDIÉE (pas un onglet des Paramètres) :
+      // échéance, renouvellement anticipé et factures téléchargeables.
+      { id: "subscription", labelKey: "nav.subscription", icon: CreditCard },
+      { id: "resellers", labelKey: "nav.resellers", icon: Store },
+    ],
+  },
+  {
+    labelKey: "nav.section.infrastructure",
+    items: [{ id: "routers", labelKey: "nav.routers", icon: RouterIcon }],
+  },
   {
     labelKey: "nav.section.analysis",
     items: [
       { id: "reports", labelKey: "nav.reports", icon: BarChart3 },
       { id: "logs", labelKey: "nav.logs", icon: ScrollText },
-    ],
-  },
-  {
-    labelKey: "nav.section.system",
-    items: [
       // « Comptes » n'est visible que de l'admin plateforme (rôle admin) —
       // filtré au rendu (NavList + SearchPalette).
       { id: "accounts", labelKey: "nav.accounts", icon: Building2 },

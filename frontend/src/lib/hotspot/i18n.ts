@@ -1211,6 +1211,10 @@ const fr: Record<string, string> = {
   // — settings —
   "settings.title": "Paramètres",
   "settings.description": "Configuration de votre espace MikCloud",
+  "settings.tabGeneral": "Général",
+  "settings.tabSubscription": "Abonnement",
+  "settings.tabHotspot": "Hotspot",
+  "settings.tabAdvanced": "Avancé",
   "settings.organization": "Organisation",
   "settings.organizationDesc": "Nom affiché, devise et fuseau horaire de votre espace.",
   "settings.orgName": "Nom de l'organisation",
@@ -2724,6 +2728,10 @@ const en: Record<string, string> = {
   // — settings —
   "settings.title": "Settings",
   "settings.description": "Your MikCloud workspace configuration",
+  "settings.tabGeneral": "General",
+  "settings.tabSubscription": "Subscription",
+  "settings.tabHotspot": "Hotspot",
+  "settings.tabAdvanced": "Advanced",
   "settings.organization": "Organization",
   "settings.organizationDesc": "Display name, currency and time zone of your workspace.",
   "settings.orgName": "Organization name",

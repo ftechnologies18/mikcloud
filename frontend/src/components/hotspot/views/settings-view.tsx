@@ -1,14 +1,20 @@
 "use client";
 
-// Vue Paramètres — organisation, abonnement, expiration des vouchers, branding
-// voucher (DNS + logo, F2), langue de l'interface (F11), connexion routeur réel,
-// sécurité, zone sensible.
+// Vue Paramètres — réorganisée en 4 onglets (J), chacun portant UNE
+// préoccupation au lieu d'une grille plate de 9 cartes mélangées :
+//   • Général    — organisation (nom, devise, timezone, Wave) + langue ;
+//   • Abonnement — formules SaaS (Essentiel/Illimité), échéance, Wave ;
+//   • Hotspot    — expiration des vouchers, personnalisation tickets
+//                  (DNS + logo, F2) et guide de connexion routeur réel ;
+//   • Avancé     — sécurité (mot de passe) + maintenance admin plateforme
+//                  (rechargement base, purge par catégories).
 
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Building2,
   CalendarClock,
+  CreditCard,
   Database,
   Eye,
   EyeOff,
@@ -53,6 +59,7 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const CURRENCIES = ["FCFA", "EUR", "USD", "MAD", "XOF", "GBP", "CDF", "GNF"];
 const TIMEZONES = ["UTC", "Africa/Abidjan", "Africa/Dakar", "Africa/Casablanca", "Europe/Paris", "Europe/Brussels"];
@@ -157,85 +164,126 @@ export default function SettingsView() {
     <div className="space-y-4 sm:space-y-6">
       <PageHeader title={t("settings.title")} description={t("settings.description")} />
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3 lg:gap-6">
-        {/* Organisation */}
-        <OrganizationCard settings={data} />
+      {/* J — Paramètres réorganisés en onglets : chaque onglet porte UNE
+          préoccupation (identité, facturation, métier hotspot, maintenance)
+          au lieu d'une grille plate de 9 cartes mélangées. */}
+      <Tabs defaultValue="general" className="gap-4 sm:gap-6">
+        <TabsList className="glass-chip h-auto w-full justify-start overflow-x-auto rounded-xl p-1">
+          <TabsTrigger value="general" className="gap-1.5 px-3 py-1.5 text-xs sm:px-4 sm:text-sm">
+            <Building2 className="size-3.5" />
+            {t("settings.tabGeneral")}
+          </TabsTrigger>
+          <TabsTrigger value="subscription" className="gap-1.5 px-3 py-1.5 text-xs sm:px-4 sm:text-sm">
+            <CreditCard className="size-3.5" />
+            {t("settings.tabSubscription")}
+          </TabsTrigger>
+          <TabsTrigger value="hotspot" className="gap-1.5 px-3 py-1.5 text-xs sm:px-4 sm:text-sm">
+            <Ticket className="size-3.5" />
+            {t("settings.tabHotspot")}
+          </TabsTrigger>
+          <TabsTrigger value="advanced" className="gap-1.5 px-3 py-1.5 text-xs sm:px-4 sm:text-sm">
+            <ShieldCheck className="size-3.5" />
+            {t("settings.tabAdvanced")}
+          </TabsTrigger>
+        </TabsList>
 
-        {/* Abonnement SaaS — formules Essentiel (1 250 F/mois/routeur) et
-            Illimité (12 000 F/an, routeurs illimités), paiement via Wave. */}
-        <SubscriptionCard />
+        {/* ── Onglet GÉNÉRAL — identité métier + préférences ── */}
+        <TabsContent value="general">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-6">
+            <OrganizationCard settings={data} />
+            <LanguageCard />
+          </div>
+        </TabsContent>
 
-        {/* Expiration des vouchers (F1/F5) — politique de nettoyage cloud */}
-        <ExpiryCard settings={data} />
+        {/* ── Onglet ABONNEMENT — facturation SaaS ── */}
+        <TabsContent value="subscription">
+          <div className="grid grid-cols-1 gap-4 lg:gap-6">
+            {/* Formules Essentiel (1 250 F/mois/routeur) et Illimité
+                (12 000 F/an, routeurs illimités), paiement via Wave. */}
+            <SubscriptionCard />
+          </div>
+        </TabsContent>
 
-        {/* Vouchers — DNS + logo (F2) */}
-        <VoucherCard settings={data} />
+        {/* ── Onglet HOTSPOT — règles métier + personnalisation tickets ── */}
+        <TabsContent value="hotspot">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-6">
+            {/* Expiration des vouchers (F1/F5) — politique de nettoyage cloud */}
+            <ExpiryCard settings={data} />
 
-        {/* Langue de l'interface (F11) */}
-        <LanguageCard />
+            {/* Vouchers — DNS + logo (F2) */}
+            <VoucherCard settings={data} />
 
-        {/* Guide connexion routeur réel */}
-        <Card className="gap-4 border-primary/20 bg-primary/5 py-4 sm:py-6 lg:col-span-2">
-          <CardHeader className="px-4 sm:px-6">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
-                <RouterIcon className="size-4" />
-              </span>
-              {t("settings.guide.title")}
-            </CardTitle>
-            <CardDescription>{t("settings.guide.desc")}</CardDescription>
-          </CardHeader>
-          <CardContent className="px-4 sm:px-6">
-            <ol className="grid gap-4 sm:grid-cols-3">
-              {MIKROTIK_STEPS.map((step, index) => (
-                <li key={step.titleKey} className="rounded-lg border bg-card p-3">
-                  <p className="flex items-center gap-2 text-sm font-medium">
-                    <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
-                      {index + 1}
+            {/* Guide connexion routeur réel */}
+            <Card className="gap-4 border-primary/20 bg-primary/5 py-4 sm:py-6 lg:col-span-2">
+              <CardHeader className="px-4 sm:px-6">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
+                    <RouterIcon className="size-4" />
+                  </span>
+                  {t("settings.guide.title")}
+                </CardTitle>
+                <CardDescription>{t("settings.guide.desc")}</CardDescription>
+              </CardHeader>
+              <CardContent className="px-4 sm:px-6">
+                <ol className="grid gap-4 sm:grid-cols-3">
+                  {MIKROTIK_STEPS.map((step, index) => (
+                    <li key={step.titleKey} className="rounded-lg border bg-card p-3">
+                      <p className="flex items-center gap-2 text-sm font-medium">
+                        <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
+                          {index + 1}
+                        </span>
+                        {t(step.titleKey)}
+                      </p>
+                      <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{t(step.textKey)}</p>
+                    </li>
+                  ))}
+                </ol>
+                <p className="mt-4 text-xs text-muted-foreground">{t("settings.guide.simulatedNote")}</p>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        {/* ── Onglet AVANCÉ — sécurité + maintenance admin ── */}
+        <TabsContent value="advanced">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-6">
+            {/* Sécurité — changement de mot de passe (POST /api/auth/password,
+                tout utilisateur connecté) */}
+            <SecurityCard />
+
+            {/* Base de données — admin plateforme uniquement (POST /api/admin/reload
+                admin-only) */}
+            {isAdmin && (
+              <Card className="gap-4 py-4 sm:py-6">
+                <CardHeader className="px-4 sm:px-6">
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
+                      <Database className="size-4" />
                     </span>
-                    {t(step.titleKey)}
-                  </p>
-                  <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{t(step.textKey)}</p>
-                </li>
-              ))}
-            </ol>
-            <p className="mt-4 text-xs text-muted-foreground">{t("settings.guide.simulatedNote")}</p>
-          </CardContent>
-        </Card>
+                    {t("settings.database")}
+                  </CardTitle>
+                  <CardDescription>{t("settings.databaseDesc")}</CardDescription>
+                </CardHeader>
+                <CardFooter className="px-4 sm:px-6">
+                  <Button
+                    variant="outline"
+                    className="h-10"
+                    onClick={() => reloadMutation.mutate()}
+                    disabled={reloadMutation.isPending}
+                  >
+                    {reloadMutation.isPending ? t("settings.reloading") : t("settings.reload")}
+                  </Button>
+                </CardFooter>
+              </Card>
+            )}
 
-        {/* Sécurité — changement de mot de passe (POST /api/auth/password, tout utilisateur connecté) */}
-        <SecurityCard />
-
-        {/* Base de données — admin plateforme uniquement (POST /api/admin/reload admin-only) */}
-        {isAdmin && (
-          <Card className="gap-4 py-4 sm:py-6">
-            <CardHeader className="px-4 sm:px-6">
-              <CardTitle className="flex items-center gap-2 text-base">
-                <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
-                  <Database className="size-4" />
-                </span>
-                {t("settings.database")}
-              </CardTitle>
-              <CardDescription>{t("settings.databaseDesc")}</CardDescription>
-            </CardHeader>
-            <CardFooter className="px-4 sm:px-6">
-              <Button
-                variant="outline"
-                className="h-10"
-                onClick={() => reloadMutation.mutate()}
-                disabled={reloadMutation.isPending}
-              >
-                {reloadMutation.isPending ? t("settings.reloading") : t("settings.reload")}
-              </Button>
-            </CardFooter>
-          </Card>
-        )}
-
-        {/* Purge des données — admin plateforme uniquement ; endpoint purge
-            admin-only. Les routeurs réels (agent), comptes, équipe et réglages
-            ne sont JAMAIS touchés, et rien n'est régénéré. */}
-        {isAdmin && <PurgeCard />}
-      </div>
+            {/* Purge des données — admin plateforme uniquement ; endpoint purge
+                admin-only. Les routeurs réels (agent), comptes, équipe et réglages
+                ne sont JAMAIS touchés, et rien n'est régénéré. */}
+            {isAdmin && <PurgeCard />}
+          </div>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
@@ -319,7 +367,7 @@ function PurgeCard() {
   const canConfirm = confirmText.trim() === "PURGER" && selectedCategories.length > 0;
 
   return (
-    <Card className="gap-4 border-destructive/30 py-4 sm:py-6 lg:col-span-3">
+    <Card className="gap-4 border-destructive/30 py-4 sm:py-6 lg:col-span-2">
       <CardHeader className="px-4 sm:px-6">
         <CardTitle className="flex items-center gap-2 text-base text-destructive">
           <TriangleAlert className="size-4" />
@@ -700,7 +748,7 @@ function OrganizationCard({ settings }: { settings: AppSettings }) {
   };
 
   return (
-    <Card className="gap-4 py-4 sm:py-6 lg:col-span-2">
+    <Card className="gap-4 py-4 sm:py-6">
       <CardHeader className="px-4 sm:px-6">
         <CardTitle className="flex items-center gap-2 text-base">
           <Building2 className="size-4 text-primary" />
@@ -921,7 +969,7 @@ function VoucherCard({ settings }: { settings: AppSettings }) {
   });
 
   return (
-    <Card className="gap-4 py-4 sm:py-6 lg:col-span-2">
+    <Card className="gap-4 py-4 sm:py-6">
       <CardHeader className="px-4 sm:px-6">
         <CardTitle className="flex items-center gap-2 text-base">
           <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">

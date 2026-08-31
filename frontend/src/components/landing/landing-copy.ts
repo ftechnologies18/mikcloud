@@ -38,7 +38,6 @@ export interface LandingCopy {
     ctaPrimary: string;
     ctaSecondary: string;
     ctaSignUp: string;
-    ctaDemoHint: string;
     trialHint: string;
     statBar: { value: string; label: string }[];
   };
@@ -150,7 +149,6 @@ const fr: LandingCopy = {
     ctaPrimary: "Se connecter à la console",
     ctaSecondary: "Voir la démo",
     ctaSignUp: "Créer mon compte",
-    ctaDemoHint: "Compte démo : admin / admin123",
     trialHint: "Essai gratuit 90 jours · 1 routeur · sans carte bancaire",
     statBar: [
       { value: "45 s", label: "pour connecter un routeur" },
@@ -426,7 +424,7 @@ const fr: LandingCopy = {
       },
       {
         q: "Puis-je essayer avant de payer ?",
-        a: "Oui. Le compte démo (admin / admin123) vous donne accès à toute la console avec un routeur simulé. Pour connecter un vrai routeur MikroTik et juger par vous-même, souscrivez au forfait Essentiel (1 250 F/mois, sans engagement) — annulable à tout moment. Le forfait Illimité Prix Fondateur est réservé aux 100 premiers.",
+        a: "Oui. Créez votre compte gratuitement : votre essai de 90 jours démarre immédiatement, avec 1 routeur inclus et un mode Simulé pour démontrer toute la plateforme sans matériel. Pour connecter un vrai routeur MikroTik et juger par vous-même, souscrivez au forfait Essentiel (1 250 F/mois, sans engagement) — annulable à tout moment. Le forfait Illimité Prix Fondateur est réservé aux 100 premiers.",
       },
       {
         q: "Mes données sont-elles en sécurité ? Où sont-elles stockées ?",
@@ -503,7 +501,6 @@ const en: LandingCopy = {
     ctaPrimary: "Sign in to console",
     ctaSecondary: "Try the demo",
     ctaSignUp: "Create account",
-    ctaDemoHint: "Demo account: admin / admin123",
     trialHint: "90-day free trial · 1 router · no credit card",
     statBar: [
       { value: "45s", label: "to connect a router" },
@@ -778,7 +775,7 @@ const en: LandingCopy = {
       },
       {
         q: "Can I try before I pay?",
-        a: "Yes. The demo account (admin / admin123) gives you full console access with a simulated router. To connect a real MikroTik router and judge for yourself, subscribe to the Essential plan (1,250 F/month, no commitment) — cancel anytime. The Founder Unlimited plan is reserved for the first 100.",
+        a: "Yes. Create your account for free: your 90-day trial starts immediately, with 1 router included and a Simulated mode to demo the whole platform without hardware. To connect a real MikroTik router and judge for yourself, subscribe to the Essential plan (1,250 F/month, no commitment) — cancel anytime. The Founder Unlimited plan is reserved for the first 100.",
       },
       {
         q: "Are my data safe? Where are they stored?",

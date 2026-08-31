@@ -248,10 +248,6 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
             <p className="mt-3 text-xs text-muted-foreground">{copy.hero.trialHint}</p>
           </Reveal>
 
-          <Reveal delay={0.2}>
-            <p className="mt-1 text-xs text-muted-foreground">{copy.hero.ctaDemoHint}</p>
-          </Reveal>
-
           {/* Stat bar */}
           <Reveal delay={0.25}>
             <div className="mt-16 grid grid-cols-2 gap-4 sm:grid-cols-4 sm:gap-8">

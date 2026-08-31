@@ -400,7 +400,7 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
               >
                 <p className="text-xs text-muted-foreground">
                   {t("login.demoPrefix")}
-                  <span className="font-medium text-foreground">admin / admin123</span>
+                  <span className="font-medium text-foreground">admin / {t("login.demoPasswordHint", "mot de passe défini par la plateforme")}</span>
                 </p>
                 <Button
                   type="button"
@@ -409,7 +409,6 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
                   className="h-8 text-xs"
                   onClick={() => {
                     setUsername("admin");
-                    setPassword("admin123");
                   }}
                   disabled={loginLoading}
                 >

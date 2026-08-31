@@ -424,7 +424,7 @@ export function SubscriptionCard() {
               ) : (
                 <>
                   {tf("sub.dialog.payWaveAmt", { amount: formatCurrency(confirmedWave, "FCFA", lang) })}
-                  <span className="ml-1.5 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400">
+                  <span className="ml-1.5 rounded bg-white/25 px-1.5 py-0.5 text-[10px] font-bold text-white">
                     {t("sub.dialog.waveBadge")}
                   </span>
                 </>

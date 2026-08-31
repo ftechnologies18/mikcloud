@@ -428,6 +428,8 @@ func (b Builder) ScriptFor(cmd model.Command) (string, error) {
 		return b.buildPower(cmd, "shutdown"), nil
 	case model.CmdImportHotspot:
 		return b.buildImportHotspot(cmd), nil
+	case model.CmdProfileSet:
+		return b.buildProfileSet(cmd), nil
 	default:
 		return "", fmt.Errorf("kind de commande inconnu : %s", cmd.Kind)
 	}
@@ -475,6 +477,27 @@ func urlEscape(s string) string {
 	return sb.String()
 }
 
+// onLoginLockScript — script on-login du verrou « 1er appareil » (v2,
+// anti-partage). À la première connexion d'un utilisateur du profil, l'adresse
+// MAC de l'appareil ($"caller-id") est mémorisée dans le commentaire routeur
+// sous la marque « mikcloud_lock: » (append : le commentaire de traçabilité
+// MikCloud, ex. lot de vouchers, est préservé). Aux connexions suivantes, tout
+// autre appareil est déconnecté immédiatement. Le commentaire routeur n'est
+// JAMAIS relu par le cloud (import = name|profile|disabled) : la liaison MAC
+// reste un état local au routeur. Une seule ligne : les valeurs de propriété
+// RouterOS sont embarquées entre guillemets (voir rosScriptValue).
+const onLoginLockScript = `:do {:local m $"caller-id";:local u $user;:if ([:len $m] > 0) do={:local e [/ip hotspot user find name=$u];:if ([:len $e] > 0) do={:local c [:tostr [/ip hotspot user get $e comment]];:local i [:find $c "mikcloud_lock:"];:if ([:typeof $i] = "nil") do={:if ([:len $c] = 0) do={/ip hotspot user set $e comment=("mikcloud_lock:" . $m)} else={/ip hotspot user set $e comment=($c . " mikcloud_lock:" . $m)}} else={:local lm [:pick $c ($i + 14) [:len $c]];:if ($lm != $m) do={/ip hotspot active remove [find user=$u]}}}}} on-error={ :log info "mikcloud: liaison mac ignoree" }`
+
+// rosScriptValue — échappe un SCRIPT RouterOS pour l'embarquer dans une valeur
+// de propriété entre guillemets (ex. on-login) : le script interne doit
+// survivre au parsing de la ligne externe ($, " et \ protégés).
+func rosScriptValue(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	s = strings.ReplaceAll(s, `$`, `\$`)
+	return s
+}
+
 // profileEnsureLine — crée le profil sur le routeur s'il n'existe pas (idempotent).
 func profileEnsureLine(p ProfileRef) string {
 	line := `/ip hotspot user profile add name="` + rosEscape(p.Name) + `"`
@@ -487,7 +510,31 @@ func profileEnsureLine(p ProfileRef) string {
 	if p.SharedUsers > 0 {
 		line += fmt.Sprintf(" shared-users=%d", p.SharedUsers)
 	}
+	if p.LockFirstDevice {
+		// v2 — verrou « 1er appareil » : liaison MAC via on-login.
+		line += ` on-login="` + rosScriptValue(onLoginLockScript) + `"`
+	}
 	return line
+}
+
+// buildProfileSet — v2 : applique ou retire le verrou « 1er appareil » d'un
+// profil hotspot (on-login de liaison MAC). Profil absent = ignoré proprement
+// (il sera créé AVEC le verrou à la prochaine création d'utilisateur) : la
+// commande reste un succès, l'état du cloud fait foi.
+func (b Builder) buildProfileSet(cmd model.Command) string {
+	name := SanitizeName(plStr(cmd.Payload, "name"))
+	lock := plBool(cmd.Payload, "lockFirstDevice")
+	set := `/ip hotspot user profile set [find name="` + rosEscape(name) + `"]`
+	if lock {
+		set += ` on-login="` + rosScriptValue(onLoginLockScript) + `"`
+	} else {
+		set += ` on-login=""`
+	}
+	var sb strings.Builder
+	sb.WriteString(header(cmd))
+	sb.WriteString(":do { " + set + " } on-error={ :log info \"mikcloud: profil absent, verrou ignore\" }\n")
+	sb.WriteString(b.reportLine(cmd.ID, true, nil) + "\n")
+	return sb.String()
 }
 
 // header — commentaire d'audit d'une commande (parsé aussi par le simulateur).
@@ -1061,6 +1108,7 @@ type ProfileRef struct {
 	RateLimit         string
 	SessionTimeoutMin int
 	SharedUsers       int
+	LockFirstDevice   bool
 }
 
 func plProfile(p map[string]any, k string) ProfileRef {
@@ -1075,6 +1123,7 @@ func plProfile(p map[string]any, k string) ProfileRef {
 	if v, ok := m["sharedUsers"].(float64); ok {
 		ref.SharedUsers = int(v)
 	}
+	ref.LockFirstDevice = plBool(m, "lockFirstDevice")
 	return ref
 }
 

@@ -525,6 +525,21 @@ func (p *PG) ensureSchema() error {
 		`CREATE INDEX IF NOT EXISTS idx_sales_account         ON sales (account_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_commands_account      ON commands (account_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_settings_account      ON settings (account_id)`,
+		// v2 — anti-partage : verrou « 1er appareil » par profil (liaison MAC
+		// appliquée par le script on-login généré côté agent).
+		`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS lock_first_device BOOLEAN NOT NULL DEFAULT FALSE`,
+		// v2 — profil « Staff » par défaut : présent sur CHAQUE compte. La marque
+		// staff_seeded (colonne DB du compte, hors miroir Go) garantit le passage
+		// unique : un Staff supprimé par le client n'est pas ressuscité au boot.
+		`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS staff_seeded BOOLEAN NOT NULL DEFAULT FALSE`,
+		`INSERT INTO profiles (id, name, rate_limit, session_timeout_min, shared_users, validity_days, price, data_quota_mb, created_at, account_id, exp_mode, grace_period_min, lock_user, selling_price, lock_first_device)
+			SELECT 'p-staff-' || a.id, 'Staff', '10M/10M', 43200, 2, 30, 0, 0,
+			       TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+			       a.id, 'notify', 0, FALSE, 0, FALSE
+			FROM accounts a
+			WHERE a.staff_seeded = FALSE
+			  AND NOT EXISTS (SELECT 1 FROM profiles p WHERE p.account_id = a.id AND LOWER(p.name) = 'staff')`,
+		`UPDATE accounts SET staff_seeded = TRUE WHERE staff_seeded = FALSE`,
 	}
 	for _, q := range stmts {
 		if _, err := p.db.Exec(q); err != nil {
@@ -1114,19 +1129,19 @@ var routerSpec = entitySpec[model.Router]{
 
 var profileSpec = entitySpec[model.Profile]{
 	table: "profiles",
-	cols:  []string{"id", "name", "rate_limit", "session_timeout_min", "shared_users", "validity_days", "price", "data_quota_mb", "created_at", "account_id", "exp_mode", "grace_period_min", "lock_user", "selling_price"},
+	cols:  []string{"id", "name", "rate_limit", "session_timeout_min", "shared_users", "validity_days", "price", "data_quota_mb", "created_at", "account_id", "exp_mode", "grace_period_min", "lock_user", "selling_price", "lock_first_device"},
 	idOf:  func(x *model.Profile) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Profile, error) {
 		var x model.Profile
 		err := r.Scan(&x.ID, &x.Name, &x.RateLimit, &x.SessionTimeoutMin, &x.SharedUsers,
 			&x.ValidityDays, &x.Price, &x.DataQuotaMb, &x.CreatedAt, &x.AccountID,
-			&x.ExpMode, &x.GracePeriodMin, &x.LockUser, &x.SellingPrice)
+			&x.ExpMode, &x.GracePeriodMin, &x.LockUser, &x.SellingPrice, &x.LockFirstDevice)
 		return x, err
 	},
 	args: func(x *model.Profile) []any {
 		return []any{x.ID, x.Name, x.RateLimit, x.SessionTimeoutMin, x.SharedUsers,
 			x.ValidityDays, x.Price, x.DataQuotaMb, x.CreatedAt, x.AccountID,
-			x.ExpMode, x.GracePeriodMin, x.LockUser, x.SellingPrice}
+			x.ExpMode, x.GracePeriodMin, x.LockUser, x.SellingPrice, x.LockFirstDevice}
 	},
 	hashOf: hashEntity[model.Profile],
 }

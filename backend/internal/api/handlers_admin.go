@@ -327,6 +327,8 @@ func (a *API) handleAdminAccountCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	// Même contrat que l'auto-inscription : les 3 gabarits de vouchers par défaut.
 	db.Templates = append(db.Templates, store.SeedTemplatesFor(acc.ID)...)
+	// v2 — et le profil « Staff » par défaut.
+	db.Profiles = append(db.Profiles, store.SeedProfilesFor(acc.ID)...)
 	a.logActivityBy(r, db, "", "system", "Compte client créé par la plateforme : "+name+" («"+username+"»)")
 	a.store.Save()
 	a.store.Unlock()

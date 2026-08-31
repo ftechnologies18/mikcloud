@@ -336,6 +336,8 @@ export interface Profile {
   gracePeriodMin: number;
   /** F1 : verrouiller l'utilisateur à 1 session à la fois. */
   lockUser: boolean;
+  /** v2 : verrouiller chaque utilisateur au 1er appareil qui se connecte (liaison MAC, anti-partage). */
+  lockFirstDevice: boolean;
   /** F13 : prix de vente affiché sur le voucher (0 = même prix que price). */
   sellingPrice: number;
 }

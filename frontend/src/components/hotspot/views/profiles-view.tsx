@@ -15,6 +15,7 @@ import {
   Gauge,
   Loader2,
   Lock,
+  MonitorSmartphone,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -196,6 +197,15 @@ export default function ProfilesView() {
                             >
                               <Lock className="size-3" aria-hidden />
                               <span className="sr-only">{t("profiles.locked")}</span>
+                            </span>
+                          )}
+                          {profile.lockFirstDevice && (
+                            <span
+                              className="flex size-5 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary"
+                              title={t("profiles.lockedDevice")}
+                            >
+                              <MonitorSmartphone className="size-3" aria-hidden />
+                              <span className="sr-only">{t("profiles.lockedDevice")}</span>
                             </span>
                           )}
                         </div>

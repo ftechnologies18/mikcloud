@@ -66,6 +66,7 @@ interface ProfileForm {
   expMode: ProfileExpiryMode;
   gracePeriodMin: string;
   lockUser: boolean;
+  lockFirstDevice: boolean;
   sellingPrice: string;
 }
 
@@ -82,6 +83,7 @@ const DEFAULT_FORM: ProfileForm = {
   expMode: "notify",
   gracePeriodMin: "0",
   lockUser: false,
+  lockFirstDevice: false,
   sellingPrice: "0",
 };
 
@@ -104,6 +106,7 @@ function formFromProfile(profile: Profile): ProfileForm {
     expMode: profile.expMode ?? "notify",
     gracePeriodMin: String(profile.gracePeriodMin ?? 0),
     lockUser: profile.lockUser ?? false,
+    lockFirstDevice: profile.lockFirstDevice ?? false,
     sellingPrice: String(profile.sellingPrice ?? 0),
   };
 }
@@ -198,6 +201,7 @@ export function ProfileEditDialog({ open, onOpenChange, profile }: ProfileEditDi
         expMode: form.expMode,
         gracePeriodMin: graceNum,
         lockUser: form.lockUser,
+        lockFirstDevice: form.lockFirstDevice,
         sellingPrice: Math.round(sellingNum),
       },
     });
@@ -414,6 +418,26 @@ export function ProfileEditDialog({ open, onOpenChange, profile }: ProfileEditDi
                 id="profile-lock"
                 checked={form.lockUser}
                 onCheckedChange={(checked) => setForm((f) => ({ ...f, lockUser: checked }))}
+              />
+            </div>
+          </fieldset>
+
+          {/* ─── Sécurité (v2) : verrou « 1er appareil » — anti-partage ─── */}
+          <fieldset className="grid gap-4 rounded-lg border p-4" disabled={saveMutation.isPending}>
+            <legend className="px-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              {t("profiles.dialog.security")}
+            </legend>
+            <div className="flex items-center justify-between gap-4 rounded-md bg-muted/40 px-3 py-2.5">
+              <div className="min-w-0">
+                <Label htmlFor="profile-lock-device" className="text-sm">
+                  {t("profiles.dialog.lockDevice")}
+                </Label>
+                <p className="text-xs text-muted-foreground">{t("profiles.dialog.lockDeviceHint")}</p>
+              </div>
+              <Switch
+                id="profile-lock-device"
+                checked={form.lockFirstDevice}
+                onCheckedChange={(checked) => setForm((f) => ({ ...f, lockFirstDevice: checked }))}
               />
             </div>
           </fieldset>

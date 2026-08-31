@@ -175,6 +175,12 @@ type Profile struct {
 	LockUser       bool   `json:"lockUser"`       // verrouiller : 1 session à la fois
 	// P2 (audit Mikhmon) — marge (F13) : prix de vente affiché (0 = même prix que Price).
 	SellingPrice int `json:"sellingPrice"`
+	// v2 — anti-partage : chaque utilisateur du profil est verrouillé au PREMIER
+	// appareil qui se connecte avec son identifiant (liaison MAC, appliquée par
+	// le script on-login du profil sur le routeur ; le MAC est mémorisé dans le
+	// commentaire routeur sous la marque « mikcloud_lock: », jamais renvoyé au
+	// cloud). Les autres appareils sont déconnectés à la connexion.
+	LockFirstDevice bool `json:"lockFirstDevice"`
 }
 
 // HotspotUser — utilisateur hotspot régulier ou voucher.
@@ -631,6 +637,7 @@ const (
 	CmdReboot          = "reboot"           // F10 : /system reboot
 	CmdShutdown        = "shutdown"         // F10 : /system shutdown
 	CmdImportHotspot   = "import_hotspot"   // import initial : lecture paginée des profils + utilisateurs existants sur le routeur
+	CmdProfileSet      = "profile_set"      // v2 : applique/retire le verrou « 1er appareil » (on-login de liaison MAC) sur un profil
 )
 
 // ---------------------------------------------------------------------------

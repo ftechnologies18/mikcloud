@@ -847,6 +847,8 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 	// P0 (audit Mikhmon) — chaque nouveau compte démarre avec les 3 modèles
 	// de vouchers par défaut (contrat F2).
 	db.Templates = append(db.Templates, store.SeedTemplatesFor(acc.ID)...)
+	// v2 — chaque compte démarre aussi avec le profil « Staff » (accès personnel).
+	db.Profiles = append(db.Profiles, store.SeedProfilesFor(acc.ID)...)
 	a.logActivityBy(r, db, acc.ID, "compte", "Nouveau compte créé : "+acc.Name)
 	a.store.Save()
 	a.store.Unlock()
@@ -1654,6 +1656,8 @@ func (a *API) handleProfileCreate(w http.ResponseWriter, r *http.Request) {
 		GracePeriodMin int    `json:"gracePeriodMin"`
 		LockUser       bool   `json:"lockUser"`
 		SellingPrice   int    `json:"sellingPrice"`
+		// v2 — verrou « 1er appareil » (liaison MAC par on-login).
+		LockFirstDevice bool `json:"lockFirstDevice"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
@@ -1704,10 +1708,17 @@ func (a *API) handleProfileCreate(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:         model.NowISO(),
 		ExpMode:           expMode, GracePeriodMin: req.GracePeriodMin,
 		LockUser: req.LockUser, SellingPrice: defaultMinZero(req.SellingPrice),
+		LockFirstDevice: req.LockFirstDevice,
 	}
 	a.store.Lock()
-	a.store.Data().Profiles = append(a.store.Data().Profiles, profile)
-	a.logActivityBy(r, a.store.Data(), acc, "user", "Profil "+profile.Name+" créé")
+	db := a.store.Data()
+	db.Profiles = append(db.Profiles, profile)
+	// v2 — propager le verrou « 1er appareil » dès la création (couvre aussi un
+	// profil du même nom déjà présent sur un routeur, ex. importé).
+	if profile.LockFirstDevice {
+		a.queueProfileSetLocked(db, acc, profile.Name, true)
+	}
+	a.logActivityBy(r, db, acc, "user", "Profil "+profile.Name+" créé")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusCreated, profile)
@@ -1747,6 +1758,8 @@ func (a *API) handleProfileUpdate(w http.ResponseWriter, r *http.Request) {
 		GracePeriodMin *int    `json:"gracePeriodMin"`
 		LockUser       *bool   `json:"lockUser"`
 		SellingPrice   *int    `json:"sellingPrice"`
+		// v2 — verrou « 1er appareil » (liaison MAC par on-login).
+		LockFirstDevice *bool `json:"lockFirstDevice"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
@@ -1820,14 +1833,45 @@ func (a *API) handleProfileUpdate(w http.ResponseWriter, r *http.Request) {
 	if req.LockUser != nil {
 		p.LockUser = *req.LockUser
 	}
-	if req.SellingPrice != nil && *req.SellingPrice >= 0 {
-		p.SellingPrice = *req.SellingPrice
+	// v2 — verrou « 1er appareil » : un changement d'état est propagé aux
+	// routeurs agents (on-login de liaison MAC appliqué ou retiré).
+	lockChanged := false
+	if req.LockFirstDevice != nil && *req.LockFirstDevice != p.LockFirstDevice {
+		p.LockFirstDevice = *req.LockFirstDevice
+		lockChanged = true
 	}
 	updated := *p
-	a.logActivityBy(r, db, acc, "user", "Profil "+updated.Name+" modifié")
+	if lockChanged {
+		a.queueProfileSetLocked(db, acc, updated.Name, updated.LockFirstDevice)
+		state := "désactivé"
+		if updated.LockFirstDevice {
+			state = "activé"
+		}
+		a.logActivityBy(r, db, acc, "user", "Verrou « 1er appareil » "+state+" pour le profil "+updated.Name)
+	} else {
+		a.logActivityBy(r, db, acc, "user", "Profil "+updated.Name+" modifié")
+	}
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, updated)
+}
+
+// queueProfileSetLocked — propage l'état du verrou « 1er appareil » d'un
+// profil vers TOUS les routeurs en mode agent du compte (une commande
+// profile_set par routeur : le script on-login de liaison MAC est appliqué
+// ou retiré). Les modes real/simulated n'exposent pas les profils hotspot
+// via la gateway : le verrou y est sans effet (mode agent requis).
+func (a *API) queueProfileSetLocked(db *model.DB, acc, profileName string, lock bool) {
+	name := agent.SanitizeName(profileName)
+	for i := range db.Routers {
+		r := &db.Routers[i]
+		if r.AccountID == acc && r.Mode == "agent" {
+			queueCommandLocked(db, acc, r.ID, model.CmdProfileSet, map[string]any{
+				"name":            name,
+				"lockFirstDevice": lock,
+			})
+		}
+	}
 }
 
 func (a *API) handleProfileDelete(w http.ResponseWriter, r *http.Request) {

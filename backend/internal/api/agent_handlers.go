@@ -209,6 +209,7 @@ func profileRef(p model.Profile) map[string]any {
 		"rateLimit":         p.RateLimit,
 		"sessionTimeoutMin": p.SessionTimeoutMin,
 		"sharedUsers":       p.SharedUsers,
+		"lockFirstDevice":   p.LockFirstDevice,
 	}
 }
 

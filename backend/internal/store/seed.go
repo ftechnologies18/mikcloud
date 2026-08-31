@@ -744,6 +744,34 @@ func seedRouterTools(db *model.DB, rnd *rand.Rand, now time.Time) {
 // Modèles de vouchers (F2) — 3 gabarits par défaut, fidèles à Mikhmon
 // ---------------------------------------------------------------------------
 
+// SeedProfilesFor — le profil « Staff » par défaut de chaque compte (v2) :
+// accès longue durée pour le personnel du hotspot (30 jours, 2 appareils,
+// quota illimité, gratuit, sans expiration appliquée aux utilisateurs
+// réguliers). Créé à l'inscription (handleRegister), à la création d'un
+// compte par la plateforme (handlers_admin) et rétro-rempli en base par la
+// migration staff_seeded de pg.go (une seule fois par compte).
+func SeedProfilesFor(accID string) []model.Profile {
+	return []model.Profile{
+		{
+			ID:                model.NewID("p-"),
+			AccountID:         accID,
+			Name:              "Staff",
+			RateLimit:         "10M/10M",
+			SessionTimeoutMin: 43200, // 30 jours
+			SharedUsers:       2,
+			ValidityDays:      30,
+			Price:             0,
+			DataQuotaMb:       0,
+			CreatedAt:         model.NowISO(),
+			ExpMode:           "notify",
+			GracePeriodMin:    0,
+			LockUser:          false,
+			SellingPrice:      0,
+			LockFirstDevice:   false,
+		},
+	}
+}
+
 // SeedTemplatesFor — les 3 modèles de vouchers offerts à chaque compte
 // (compte principal au seed, nouveaux comptes à l'inscription). Styles INLINE
 // uniquement (l'impression est hors app) ; variables substituées côté client.

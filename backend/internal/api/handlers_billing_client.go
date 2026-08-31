@@ -158,6 +158,8 @@ func (a *API) handleBillingInvoice(w http.ResponseWriter, r *http.Request) {
 	paidVia := "Wave"
 	if br.PaidVia == "manual" {
 		paidVia = "Versement plateforme"
+	} else if br.PayMethod == "card" {
+		paidVia = "Carte bancaire"
 	}
 
 	// Facture HTML : styles inline (impression A4), typographie sobre.
@@ -287,7 +289,11 @@ func routersSuffix(n int) string {
 
 // resolverDisplay — libellé du résolveur (« webhook Wave » → Wave).
 func resolverDisplay(by string) string {
-	if strings.Contains(strings.ToLower(by), "wave") || strings.Contains(strings.ToLower(by), "webhook") {
+	l := strings.ToLower(by)
+	if strings.Contains(l, "geniuspay") {
+		return "Paiement en ligne (automatique)"
+	}
+	if strings.Contains(l, "wave") || strings.Contains(l, "webhook") {
 		return "Wave (automatique)"
 	}
 	if by == "" {

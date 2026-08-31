@@ -209,6 +209,17 @@ export function SubscriptionCard() {
   const stripeRunning =
     !!stripe && !"none|cancelled|expired".split("|").includes(stripe.status);
 
+  // Répercussion des frais de paiement (stratégie validée) : montants par
+  // moyen pour la formule confirmée — source de vérité serveur (view.pricing),
+  // repli = prix catalogue si le backend ne l'expose pas encore.
+  const confirmedPricing = confirmPlan
+    ? view?.pricing?.find((p) => p.planId === confirmPlan.id)
+    : undefined;
+  const confirmedBase =
+    confirmedPricing?.baseFcfa ?? (confirmPlan ? planAmount(confirmPlan, view?.routerCount ?? 0) : 0);
+  const confirmedWave = confirmedPricing?.waveFcfa ?? confirmedBase;
+  const confirmedList = confirmedPricing?.listFcfa ?? confirmedBase;
+
   if (isError) {
     // État d'erreur explicite (API injoignable / backend pas encore à jour) —
     // jamais de squelette infini silencieux.
@@ -388,19 +399,19 @@ export function SubscriptionCard() {
             </AlertDialogTitle>
             <AlertDialogDescription>
               {t("sub.dialog.amount")}{" "}
-              <strong>{confirmPlan ? formatCurrency(planAmount(confirmPlan, view.routerCount), "FCFA", lang) : "—"}</strong> /{" "}
+              <strong>{confirmPlan ? formatCurrency(confirmedBase, "FCFA", lang) : "—"}</strong> /{" "}
               {confirmPlan ? periodOf(confirmPlan) : "—"}
               {confirmPlan?.perRouter
                 ? ` ${tf("sub.dialog.scopeRouters", { n: view.routerCount })}`
                 : confirmPlan
                   ? ` ${t("sub.dialog.scopeUnlimited")}`
                   : ""}
-              . {t("sub.dialog.note")} {t("sub.dialog.cardNote")}
+              . {t("sub.dialog.feesNote")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
-            {/* Wave (ponctuel, défaut) */}
+            {/* Wave (ponctuel, défaut) — montant avec remise mobile money −3 % */}
             <AlertDialogAction
               onClick={(event) => {
                 event.preventDefault();
@@ -408,9 +419,18 @@ export function SubscriptionCard() {
               }}
               disabled={subscribeMutation.isPending || stripeMutation.isPending}
             >
-              {subscribeMutation.isPending ? t("sub.dialog.pending") : t("sub.dialog.payWave")}
+              {subscribeMutation.isPending ? (
+                t("sub.dialog.pending")
+              ) : (
+                <>
+                  {tf("sub.dialog.payWaveAmt", { amount: formatCurrency(confirmedWave, "FCFA", lang) })}
+                  <span className="ml-1.5 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400">
+                    {t("sub.dialog.waveBadge")}
+                  </span>
+                </>
+              )}
             </AlertDialogAction>
-            {/* Carte bancaire — prélèvement automatique (Stripe via GeniusPay) */}
+            {/* Carte bancaire — prélèvement automatique (Stripe via GeniusPay) — prix de liste */}
             <Button
               variant="outline"
               onClick={(event) => {
@@ -420,7 +440,7 @@ export function SubscriptionCard() {
               disabled={subscribeMutation.isPending || stripeMutation.isPending}
             >
               <CreditCard className="size-4" />
-              {stripeMutation.isPending ? t("sub.dialog.pending") : t("sub.dialog.payCard")}
+              {stripeMutation.isPending ? t("sub.dialog.pending") : tf("sub.dialog.payCardAmt", { amount: formatCurrency(confirmedList, "FCFA", lang) })}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

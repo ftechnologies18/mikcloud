@@ -718,6 +718,16 @@ export interface Subscription {
 }
 
 /** Réponse GET /api/subscription — état + catalogue + assiette de facturation. */
+/** Répercussion des frais de paiement (stratégie validée) : montants d'une
+ * période par moyen — base (prix catalogue net cible), liste (carte, frais
+ * GeniusPay inclus via gross-up), Wave (remise mobile money −3 % incluse). */
+export interface PlanPricing {
+  planId: string;
+  baseFcfa: number;
+  listFcfa: number;
+  waveFcfa: number;
+}
+
 export interface SubscriptionView {
   subscription: Subscription;
   /** Statut effectif calculé serveur : une période échue passe en « expired », puis « suspended » après 30j de grâce. */
@@ -726,6 +736,8 @@ export interface SubscriptionView {
   currentAmountFcfa: number;
   plans: SaasPlan[];
   waveConfigured: boolean;
+  /** Montants par moyen pour chaque formule (répercussion des frais, serveur). */
+  pricing?: PlanPricing[];
 }
 
 /** Réponse POST /api/subscription — DEMANDE de souscription (verrou facturation) :
@@ -734,7 +746,12 @@ export interface SubscriptionView {
  * après encaissement (PUT /api/admin/accounts/{id}/subscription). */
 export interface SubscribeResponse {
   subscription: Subscription;
+  /** Montant à régler pour le moyen PAR DÉFAUT (Wave — remise mobile money incluse). */
   amountFcfa: number;
+  /** Net cible plateforme (prix catalogue, hors frais) — base du calcul. */
+  baseAmountFcfa?: number;
+  /** Prix de liste carte (frais inclus) — encaissé si le client bascule en carte. */
+  listAmountFcfa?: number;
   routerCount: number;
   periodLabel: string;
   /** Lien de paiement Wave de la PLATEFORME, pré-composé avec le montant ("" si non configuré). */

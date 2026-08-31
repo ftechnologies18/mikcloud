@@ -237,7 +237,17 @@ func (a *API) handleSubscriptionPay(w http.ResponseWriter, r *http.Request) {
 			"Renseignez votre numéro de téléphone (profil) pour payer par Wave", nil)
 		return
 	}
-	ref, amount, planID, planName, periodLabel := br.Ref, br.AmountFcfa, br.PlanID, br.PlanName, br.PeriodLabel
+	ref, planID, planName, periodLabel := br.Ref, br.PlanID, br.PlanName, br.PeriodLabel
+	// Répercussion des frais (stratégie validée) : le paiement Wave est
+	// encaissé au montant WAVE (prix de liste − remise mobile money),
+	// recalculé sur la base de la demande — la demande est basculée sur ce
+	// moyen (une initiation carte précédente est remplacée).
+	amount := wavePriceOfRequest(br)
+	if br.AmountFcfa != amount || br.PayMethod != "wave" {
+		db.BillingRequests[idx].AmountFcfa = amount
+		db.BillingRequests[idx].PayMethod = "wave"
+		a.store.Save()
+	}
 	a.store.Unlock()
 
 	// Transaction GeniusPay — mode direct Wave, metadata = appariement webhook.
@@ -397,9 +407,10 @@ func (a *API) finalizePayRequest(acc, ref, gatewayRef string) bool {
 	db.BillingRequests[idx].GatewayRef = gatewayRef
 	br := db.BillingRequests[idx]
 	_, label, applied := a.finalizeBillingSuccess(db, idx, "geniuspay", "paiement en ligne", "")
+	payLabel := payMethodLabel(br.PayMethod)
 	a.logActivity(db, br.AccountID, "billing",
-		fmt.Sprintf("Paiement Wave confirmé via GeniusPay — demande %s encaissée, abonnement %s activé (%d FCFA / %s)",
-			br.Ref, label, applied, periodLabelOf(br.PlanID)))
+		fmt.Sprintf("Paiement %s confirmé via GeniusPay — demande %s encaissée, abonnement %s activé (%d FCFA / %s)",
+			payLabel, br.Ref, label, applied, periodLabelOf(br.PlanID)))
 	a.store.Save()
 	a.store.Unlock()
 	return true
@@ -608,12 +619,31 @@ func (a *API) handleGeniusPayWebhook(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "ref": br.Ref, "status": br.Status, "idempotent": true})
 		return
 	}
-	// Confrontation du montant reçu au montant attendu de la demande.
-	if amount > 0 && int(amount) != br.AmountFcfa {
+	// Confrontation du montant reçu : la demande accepte le montant du
+	// moyen ACTIF (AmountFcfa) ET, dérivé de la même base, le montant de
+	// l'autre moyen — un lien initié avant une bascule Wave ⇄ carte reste
+	// valable (expire sous 24 h chez GeniusPay). Le moyen effectivement
+	// payé est enregistré sur la demande (traçabilité + facture).
+	expectedAmt := br.AmountFcfa
+	if amount > 0 && int(amount) != expectedAmt && br.BaseAmountFcfa > 0 {
+		pr := payPricingOf(br.BaseAmountFcfa)
+		switch int(amount) {
+		case pr.WaveFcfa:
+			db.BillingRequests[idx].AmountFcfa = pr.WaveFcfa
+			db.BillingRequests[idx].PayMethod = "wave"
+			expectedAmt = pr.WaveFcfa
+		case pr.ListFcfa:
+			db.BillingRequests[idx].AmountFcfa = pr.ListFcfa
+			db.BillingRequests[idx].PayMethod = "card"
+			expectedAmt = pr.ListFcfa
+		}
+		br = db.BillingRequests[idx]
+	}
+	if amount > 0 && int(amount) != expectedAmt {
 		a.store.Unlock()
 		writeErrCode(w, http.StatusConflict, "amount_mismatch",
 			fmt.Sprintf("Montant incohérent : reçu %.0f FCFA, attendu %d FCFA (référence %s)",
-				amount, br.AmountFcfa, br.Ref), nil)
+				amount, expectedAmt, br.Ref), nil)
 		return
 	}
 
@@ -622,10 +652,10 @@ func (a *API) handleGeniusPayWebhook(w http.ResponseWriter, r *http.Request) {
 		db.BillingRequests[idx].Status = "cancelled"
 		db.BillingRequests[idx].ResolvedAt = now.Format(time.RFC3339)
 		db.BillingRequests[idx].ResolvedBy = "webhook GeniusPay"
-		db.BillingRequests[idx].Note = "Paiement Wave échoué (payment.failed)"
+		db.BillingRequests[idx].Note = "Paiement " + payMethodLabel(br.PayMethod) + " échoué (payment.failed)"
 		a.logActivity(db, br.AccountID, "billing",
-			fmt.Sprintf("Paiement Wave échoué — demande de renouvellement %s annulée (%s, %d FCFA)",
-				br.Ref, br.PlanName, br.AmountFcfa))
+			fmt.Sprintf("Paiement %s échoué — demande de renouvellement %s annulée (%s, %d FCFA)",
+				payMethodLabel(br.PayMethod), br.Ref, br.PlanName, br.AmountFcfa))
 		a.store.Save()
 		a.store.Unlock()
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "ref": br.Ref, "status": "cancelled"})
@@ -636,9 +666,10 @@ func (a *API) handleGeniusPayWebhook(w http.ResponseWriter, r *http.Request) {
 	// demande (PaidVia geniuspay — encaissement automatique).
 	db.BillingRequests[idx].GatewayRef = gatewayRef
 	sub, label, applied := a.finalizeBillingSuccess(db, idx, "geniuspay", "webhook GeniusPay", "")
+	payLabel := payMethodLabel(br.PayMethod)
 	a.logActivity(db, br.AccountID, "billing",
-		fmt.Sprintf("Paiement Wave confirmé via GeniusPay — demande %s encaissée, abonnement %s activé (%d FCFA / %s)",
-			br.Ref, label, applied, periodLabelOf(br.PlanID)))
+		fmt.Sprintf("Paiement %s confirmé via GeniusPay — demande %s encaissée, abonnement %s activé (%d FCFA / %s)",
+			payLabel, br.Ref, label, applied, periodLabelOf(br.PlanID)))
 	a.store.Save()
 	a.store.Unlock()
 

@@ -471,6 +471,12 @@ func (a *API) handleSubscriptionStripePost(w http.ResponseWriter, r *http.Reques
 	} else {
 		cycle = "yearly"
 	}
+	// Répercussion des frais (stratégie validée) : la CARTE est encaissée au
+	// PRIX DE LISTE (gross-up des frais carte 6 % + 100 XOF, arrondi 25 XOF
+	// supérieur) — le net cible plateforme est préservé à chaque échéance du
+	// prélèvement automatique.
+	base := amount
+	amount = cardListPriceFcfa(base)
 	periodLabel := "1 mois"
 	if plan.Period == "an" {
 		periodLabel = "1 an"
@@ -529,7 +535,18 @@ func (a *API) handleSubscriptionStripePost(w http.ResponseWriter, r *http.Reques
 		if br.AccountID != acc || br.Status != "pending" {
 			continue
 		}
-		if br.PlanID == planID && br.AmountFcfa == amount {
+		matchBase := br.BaseAmountFcfa
+		if matchBase <= 0 {
+			matchBase = br.AmountFcfa // demande antérieure aux frais : base = net historique
+		}
+		if br.PlanID == planID && matchBase == base {
+			// Réutilisation — bascule sur le moyen carte (prix de liste) : une
+			// initiation Wave précédente devient obsolète.
+			if br.AmountFcfa != amount || br.PayMethod != "card" {
+				db.BillingRequests[i].AmountFcfa = amount
+				db.BillingRequests[i].PayMethod = "card"
+				db.BillingRequests[i].GatewayRef = ""
+			}
 			ref = br.Ref // réutilisation (même référence)
 		} else {
 			db.BillingRequests[i].Status = "cancelled"
@@ -543,7 +560,8 @@ func (a *API) handleSubscriptionStripePost(w http.ResponseWriter, r *http.Reques
 		ref = newPayRef(db)
 		db.BillingRequests = append([]model.BillingRequest{{
 			ID: model.NewID("breq-"), AccountID: acc, PlanID: planID, PlanName: plan.Name,
-			AmountFcfa: amount, PeriodLabel: periodLabel, RouterCount: routerCount,
+			AmountFcfa: amount, BaseAmountFcfa: base, PayMethod: "card",
+			PeriodLabel: periodLabel, RouterCount: routerCount,
 			Ref: ref, Status: "pending", CreatedAt: model.NowISO(),
 		}}, db.BillingRequests...)
 	}

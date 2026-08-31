@@ -3814,6 +3814,14 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 // subscriptionView — état complet de l'abonnement renvoyé à la console.
+// planPricingView — tarification d'une formule pour le compte (assiette
+// routeurs du moment) : montants par moyen de paiement — répercussion des
+// frais GeniusPay validée (handlers_pricing.go).
+type planPricingView struct {
+	PlanID string `json:"planId"`
+	planPricing
+}
+
 type subscriptionView struct {
 	Subscription      model.Subscription `json:"subscription"`
 	Status            string             `json:"status"` // none | active | expired (effectif)
@@ -3821,6 +3829,9 @@ type subscriptionView struct {
 	CurrentAmountFcfa int                `json:"currentAmountFcfa"` // montant de la période en cours
 	Plans             []model.SaasPlan   `json:"plans"`
 	WaveConfigured    bool               `json:"waveConfigured"`
+	// Pricing — montants par moyen pour chaque formule (remise Wave / prix
+	// de liste carte), à l'assiette routeurs du compte.
+	Pricing []planPricingView `json:"pricing,omitempty"`
 }
 
 // subscriptionStatus — statut effectif : une période échue passe en « expired »
@@ -3895,6 +3906,13 @@ func (a *API) handleSubscriptionGet(w http.ResponseWriter, r *http.Request) {
 		RouterCount:  accountRouterCount(db, acc),
 		Plans:        model.SaasPlans,
 	}
+	// Répercussion des frais de paiement (stratégie validée) : montants par
+	// moyen pour chaque formule, à l'assiette routeurs du compte — le client
+	// voit le montant exact AVANT de choisir (remise Wave / prix de liste).
+	for _, p := range model.SaasPlans {
+		pr := planPricingOfPlan(p, view.RouterCount)
+		view.Pricing = append(view.Pricing, planPricingView{PlanID: p.ID, planPricing: pr})
+	}
 	// waveConfigured = lien de paiement Wave de la PLATEFORME (WAVE_PAY_LINK)
 	// configuré — PAS le lien marchand du client (réservé à ses propres vouchers).
 	view.WaveConfigured = wavePayLink() != ""
@@ -3949,7 +3967,14 @@ func (a *API) handleSubscriptionPost(w http.ResponseWriter, r *http.Request) {
 	db := a.store.Data()
 	settings := ensureSettings(db, acc)
 	routerCount := accountRouterCount(db, acc)
-	amount := planAmount(plan, routerCount)
+	// Répercussion des frais de paiement (stratégie validée) : le montant
+	// DEMANDÉ est celui du moyen par défaut (Wave, remise mobile money) ;
+	// la base (net cible) et le prix de liste carte accompagnent la demande —
+	// l'initiation carte bascule le montant (POST /api/subscription/stripe)
+	// et l'activation manuelle plateforme reste au net (exemption admin).
+	payPr := payPricingOf(planAmount(plan, routerCount))
+	base := payPr.BaseFcfa
+	amount := payPr.WaveFcfa
 	periodLabel := "1 mois"
 	if plan.Period == "an" {
 		periodLabel = "1 an"
@@ -3974,13 +3999,26 @@ func (a *API) handleSubscriptionPost(w http.ResponseWriter, r *http.Request) {
 	changed := false
 	for i := range db.BillingRequests {
 		if db.BillingRequests[i].AccountID == acc && db.BillingRequests[i].Status == "pending" {
-			if db.BillingRequests[i].PlanID == plan.ID && db.BillingRequests[i].AmountFcfa == amount {
-				ref = db.BillingRequests[i].Ref // réutilisation, aucune écriture
+			// Appariement sur la BASE (indépendant du moyen) : une demande
+			// basculée carte reste réutilisable, renormalisée sur le moyen
+			// par défaut (Wave).
+			br := &db.BillingRequests[i]
+			baseReq := br.BaseAmountFcfa
+			if baseReq <= 0 {
+				baseReq = br.AmountFcfa // demande antérieure aux frais : base = net historique
+			}
+			if br.PlanID == plan.ID && baseReq == base {
+				if br.AmountFcfa != amount || br.PayMethod != "wave" {
+					br.AmountFcfa = amount
+					br.PayMethod = "wave"
+					changed = true
+				}
+				ref = br.Ref // réutilisation, même référence
 			} else {
-				db.BillingRequests[i].Status = "cancelled"
-				db.BillingRequests[i].ResolvedAt = model.NowISO()
-				db.BillingRequests[i].ResolvedBy = "client"
-				db.BillingRequests[i].Note = "Remplacée par une nouvelle demande du client"
+				br.Status = "cancelled"
+				br.ResolvedAt = model.NowISO()
+				br.ResolvedBy = "client"
+				br.Note = "Remplacée par une nouvelle demande du client"
 				changed = true
 			}
 			break
@@ -3990,7 +4028,8 @@ func (a *API) handleSubscriptionPost(w http.ResponseWriter, r *http.Request) {
 		ref = newPayRef(db)
 		db.BillingRequests = append([]model.BillingRequest{{
 			ID: model.NewID("breq-"), AccountID: acc, PlanID: plan.ID, PlanName: plan.Name,
-			AmountFcfa: amount, PeriodLabel: periodLabel, RouterCount: routerCount,
+			AmountFcfa: amount, BaseAmountFcfa: base, PayMethod: "wave",
+			PeriodLabel: periodLabel, RouterCount: routerCount,
 			Ref: ref, Status: "pending", CreatedAt: model.NowISO(),
 		}}, db.BillingRequests...)
 		changed = true
@@ -4025,13 +4064,15 @@ func (a *API) handleSubscriptionPost(w http.ResponseWriter, r *http.Request) {
 	// plateforme (après encaissement), jamais du client. La référence sert au
 	// suivi de paiement (file plateforme + webhook Wave).
 	writeJSON(w, http.StatusOK, map[string]any{
-		"subscription": settings.Subscription,
-		"amountFcfa":   amount,
-		"routerCount":  routerCount,
-		"periodLabel":  periodLabel,
-		"ref":          ref,
-		"waveLink":     waveLink,
-		"pending":      true,
+		"subscription":   settings.Subscription,
+		"amountFcfa":     amount,
+		"baseAmountFcfa": base,
+		"listAmountFcfa": payPr.ListFcfa,
+		"routerCount":    routerCount,
+		"periodLabel":    periodLabel,
+		"ref":            ref,
+		"waveLink":       waveLink,
+		"pending":        true,
 	})
 }
 

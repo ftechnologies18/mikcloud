@@ -525,11 +525,20 @@ type NotificationLog struct {
 // actionnable dans la console plateforme : chaque demande porte un statut,
 // une référence de paiement (appariement webhook Wave) et sa résolution.
 type BillingRequest struct {
-	ID          string `json:"id"`
-	AccountID   string `json:"accountId"`
-	PlanID      string `json:"planId"`      // essentiel | illimite
-	PlanName    string `json:"planName"`    // libellé figé à la demande
-	AmountFcfa  int    `json:"amountFcfa"`  // montant attendu (plan × routeurs)
+	ID         string `json:"id"`
+	AccountID  string `json:"accountId"`
+	PlanID     string `json:"planId"`     // essentiel | illimite
+	PlanName   string `json:"planName"`   // libellé figé à la demande
+	AmountFcfa int    `json:"amountFcfa"` // montant attendu (moyen actif — wave par défaut)
+	// BaseAmountFcfa — net cible de la PLATEFORME (prix catalogue, hors frais
+	// de paiement). Les montants débités (Wave / carte) en sont dérivés par
+	// répercussion des frais GeniusPay (handlers_pricing.go). 0 = demande
+	// antérieure à la répercussion (montant = net historique).
+	BaseAmountFcfa int `json:"baseAmountFcfa,omitempty"`
+	// PayMethod — moyen de paiement ACTIF de la demande : "wave" (défaut,
+	// remise mobile money) ou "card" (prix de liste). Basculé à chaque
+	// initiation ; le webhook fixe le moyen effectivement payé.
+	PayMethod   string `json:"payMethod,omitempty"`
 	PeriodLabel string `json:"periodLabel"` // « 1 mois » | « 1 an »
 	RouterCount int    `json:"routerCount"` // assiette au moment de la demande
 	// Ref — référence de paiement publique (MC-XXXXXXXX), renvoyée au client

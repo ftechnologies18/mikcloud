@@ -160,6 +160,12 @@ export function PaywallOverlay() {
                 const amount = plan.perRouter
                   ? plan.priceFcfa * Math.max(1, view.routerCount)
                   : plan.priceFcfa;
+                // Répercussion des frais (stratégie validée) : montants par
+                // moyen — source de vérité serveur (view.pricing), repli prix
+                // catalogue si le backend ne l'expose pas encore.
+                const pricing = view.pricing?.find((p) => p.planId === plan.id);
+                const waveAmt = pricing?.waveFcfa ?? amount;
+                const listAmt = pricing?.listFcfa ?? amount;
                 return (
                   <Card
                     key={plan.id}
@@ -180,6 +186,12 @@ export function PaywallOverlay() {
                           / {plan.period}
                         </span>
                       </div>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t(
+                          "paywall.feesNote",
+                          "Frais de paiement inclus — remise mobile money de 3 % sur le prix de liste quand vous payez par Wave.",
+                        )}
+                      </p>
                     </CardHeader>
                     <CardContent>
                       <Button
@@ -194,7 +206,11 @@ export function PaywallOverlay() {
                             {t("paywall.processing", "Traitement…")}
                           </>
                         ) : (
-                          t("paywall.subscribe", "Souscrire & payer")
+                          <>
+                            {t("paywall.subscribe", "Souscrire & payer")}
+                            {" · "}
+                            {formatCurrency(waveAmt, "FCFA", lang)}
+                          </>
                         )}
                       </Button>
                       <Button
@@ -205,7 +221,7 @@ export function PaywallOverlay() {
                         disabled={paying !== null}
                       >
                         <CreditCard className="size-4" />
-                        {t("paywall.cardPay", "Payer par carte (prélèvement auto)")}
+                        {t("paywall.cardPay", "Payer par carte (prélèvement auto)")} · {formatCurrency(listAmt, "FCFA", lang)}
                       </Button>
                       <ul className="mt-4 space-y-2">
                         {plan.period === "an" && (

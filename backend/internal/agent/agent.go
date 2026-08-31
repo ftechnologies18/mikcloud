@@ -498,23 +498,47 @@ func rosScriptValue(s string) string {
 	return s
 }
 
-// profileEnsureLine — crée le profil sur le routeur s'il n'existe pas (idempotent).
+// profileEnsureLine — crée le profil sur le routeur s'il n'existe pas, ou le
+// MET À JOUR s'il existe déjà (P — sans ce set, un profil créé manuellement
+// dans Winbox sans session-timeout restait sans timeout → les vouchers
+// n'expiraient jamais).
 func profileEnsureLine(p ProfileRef) string {
-	line := `/ip hotspot user profile add name="` + rosEscape(p.Name) + `"`
+	add := `/ip hotspot user profile add name="` + rosEscape(p.Name) + `"`
 	if p.RateLimit != "" {
-		line += ` rate-limit="` + rosEscape(p.RateLimit) + `"`
+		add += ` rate-limit="` + rosEscape(p.RateLimit) + `"`
 	}
 	if st := rosMinutes(p.SessionTimeoutMin); st != "" {
-		line += " session-timeout=" + st
+		add += " session-timeout=" + st
 	}
 	if p.SharedUsers > 0 {
-		line += fmt.Sprintf(" shared-users=%d", p.SharedUsers)
+		add += fmt.Sprintf(" shared-users=%d", p.SharedUsers)
 	}
 	if p.LockFirstDevice {
-		// v2 — verrou « 1er appareil » : liaison MAC via on-login.
-		line += ` on-login="` + rosScriptValue(onLoginLockScript) + `"`
+		add += ` on-login="` + rosScriptValue(onLoginLockScript) + `"`
 	}
-	return line
+	// Si l'add échoue (profil déjà présent), on MET À JOUR les paramètres
+	// clés — un profil créé hors MikCloud (Winbox) sans session-timeout
+	// serait sinon un trou de sécurité (vouchers qui n'expirent jamais).
+	set := `/ip hotspot user profile set [find name="` + rosEscape(p.Name) + `"]`
+	if p.RateLimit != "" {
+		set += ` rate-limit="` + rosEscape(p.RateLimit) + `"`
+	} else {
+		set += ` rate-limit=""`
+	}
+	if st := rosMinutes(p.SessionTimeoutMin); st != "" {
+		set += " session-timeout=" + st
+	} else {
+		set += ` session-timeout=0s`
+	}
+	if p.SharedUsers > 0 {
+		set += fmt.Sprintf(" shared-users=%d", p.SharedUsers)
+	}
+	if p.LockFirstDevice {
+		set += ` on-login="` + rosScriptValue(onLoginLockScript) + `"`
+	} else {
+		set += ` on-login=""`
+	}
+	return ":do { " + add + " } on-error={ :do { " + set + " } on-error={ :log info \"mikcloud: profil " + rosEscape(p.Name) + " inaccessible\" } }"
 }
 
 // buildProfileSet — v2 : applique ou retire le verrou « 1er appareil » d'un

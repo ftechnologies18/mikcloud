@@ -473,6 +473,249 @@ func (a *API) handleUserExtend(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, updated)
 }
 
+// handleUsersBulk — POST /api/users/bulk {ids, action, days} : actions
+// groupées sur une sélection d'utilisateurs (sélection multiple côté UI).
+// Actions : enable, disable, delete, extend, reset-stats — sémantique
+// identique aux handlers unitaires (userSetStatus, handleUserDelete,
+// handleUserExtend, handleUserResetStats) :
+//   - routeur agent  : mutation cloud immédiate + commandes en file
+//     (user_remove regroupées par routeur — jusqu'à 200 noms par commande) ;
+//   - real/simulated : appels passerelle directs (le miroir cloud est tenu à
+//     jour par la passerelle elle-même) ;
+//   - orphelin       : mutation cloud seule (routeur introuvable).
+//
+// Réponse {ok, processed, failed} — failed compte les introuvables et échecs.
+func (a *API) handleUsersBulk(w http.ResponseWriter, r *http.Request) {
+	// P3 — compte suspendu/expiré : écritures refusées.
+	if !a.guardAccountWrite(w, r) {
+		return
+	}
+	acc := accountScope(r)
+	var req struct {
+		IDs    []string `json:"ids"`
+		Action string   `json:"action"`
+		Days   int      `json:"days"`
+	}
+	if err := decodeBody(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
+		return
+	}
+	if len(req.IDs) == 0 {
+		writeErr(w, http.StatusBadRequest, "Aucun utilisateur sélectionné")
+		return
+	}
+	if len(req.IDs) > 200 {
+		writeErr(w, http.StatusBadRequest, "Sélection trop importante (200 utilisateurs maximum)")
+		return
+	}
+	switch req.Action {
+	case "enable", "disable", "delete", "extend", "reset-stats":
+	default:
+		writeErr(w, http.StatusBadRequest, "Action inconnue")
+		return
+	}
+	// Cohérent avec DELETE /api/users/{id} : la suppression exige le rôle 2.
+	if req.Action == "delete" {
+		if c := claimsFrom(r); c == nil || roleRank(c.Role) < 2 {
+			writeErr(w, http.StatusForbidden, "Accès refusé — rôle insuffisant pour cette action")
+			return
+		}
+	}
+	if req.Action == "extend" && (req.Days < 1 || req.Days > 3650) {
+		writeErr(w, http.StatusBadRequest, "Le nombre de jours doit être compris entre 1 et 3650")
+		return
+	}
+	now := time.Now().UTC()
+
+	type gwTask struct {
+		id  string
+		rid string
+	}
+	type target struct {
+		user   model.HotspotUser
+		router *model.Router
+	}
+	a.store.Lock()
+	db := a.store.Data()
+	processed, failed := 0, 0
+	gwTasks := []gwTask{}
+	gwRouters := map[string]model.Router{} // copies pour la phase B
+	agentRemove := map[string][]string{}   // routerID -> noms (delete, agent)
+	removedIDs := map[string]bool{}        // sessions à purger (delete)
+
+	// prolonge — même règle que handleUserExtend : base = expiration future
+	// conservée, sinon maintenant ; un expiré repasse « active » (+ user_set
+	// agent pour le réactiver sur le routeur).
+	prolonge := func(u *model.HotspotUser, rc *model.Router) {
+		base := now
+		if u.ExpiresAt != "" {
+			if exp, err := time.Parse(time.RFC3339, u.ExpiresAt); err == nil && exp.After(base) {
+				base = exp
+			}
+		}
+		u.ExpiresAt = base.Add(time.Duration(req.Days) * 24 * time.Hour).Format(time.RFC3339)
+		if u.Status == "expired" {
+			u.Status = "active"
+			u.Enforced = true // rien à pousser : l'utilisateur redevient actif
+			if rc != nil && rc.Mode == "agent" {
+				name := agent.SanitizeName(u.Username)
+				queueCommandLocked(db, rc.AccountID, rc.ID, model.CmdUserSet, map[string]any{
+					"oldName": name, "name": name, "disabled": false,
+				})
+			}
+		}
+	}
+
+	// Phase A — snapshot des cibles + mutations cloud (agents et orphelins).
+	targets := make([]target, 0, len(req.IDs))
+	seen := map[string]bool{}
+	for _, id := range req.IDs {
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		u := findUserScoped(db, id, acc)
+		if u == nil {
+			failed++
+			continue
+		}
+		var rc *model.Router
+		if rr := findRouterScoped(db, u.RouterID, acc); rr != nil {
+			c := *rr
+			rc = &c
+			gwRouters[c.ID] = c
+		}
+		targets = append(targets, target{user: *u, router: rc})
+	}
+	for _, tg := range targets {
+		u := findUserScoped(db, tg.user.ID, acc)
+		if u == nil { // disparu entre-temps (course interne)
+			failed++
+			continue
+		}
+		rc := tg.router
+		switch {
+		case rc != nil && rc.Mode == "agent":
+			name := agent.SanitizeName(u.Username)
+			switch req.Action {
+			case "enable", "disable":
+				if req.Action == "enable" {
+					u.Status = "active"
+				} else {
+					u.Status = "disabled"
+				}
+				queueCommandLocked(db, rc.AccountID, rc.ID, model.CmdUserSet, map[string]any{
+					"oldName": name, "name": name, "disabled": req.Action == "disable",
+				})
+				processed++
+			case "delete":
+				a.removeUserByID(u.ID)
+				agentRemove[rc.ID] = append(agentRemove[rc.ID], name)
+				removedIDs[u.ID] = true
+				processed++
+			case "extend":
+				prolonge(u, rc)
+				processed++
+			case "reset-stats":
+				u.BytesIn, u.BytesOut, u.UptimeUsedSec = 0, 0, 0
+				queueCommandLocked(db, rc.AccountID, rc.ID, model.CmdUserReset, map[string]any{"name": name})
+				processed++
+			}
+		case rc == nil:
+			// Orphelin : mutation cloud seule, comme les handlers unitaires.
+			switch req.Action {
+			case "enable":
+				u.Status = "active"
+			case "disable":
+				u.Status = "disabled"
+			case "delete":
+				a.removeUserByID(u.ID)
+				removedIDs[u.ID] = true
+			case "extend":
+				prolonge(u, nil)
+			case "reset-stats":
+				u.BytesIn, u.BytesOut, u.UptimeUsedSec = 0, 0, 0
+			}
+			processed++
+		default:
+			// real/simulated : la passerelle décide (phase B) — sauf
+			// extend/reset-stats qui ne poussent rien (statut cloud suffit).
+			switch req.Action {
+			case "extend":
+				prolonge(u, rc)
+				processed++
+			case "reset-stats":
+				u.BytesIn, u.BytesOut, u.UptimeUsedSec = 0, 0, 0
+				processed++
+			case "enable", "disable", "delete":
+				gwTasks = append(gwTasks, gwTask{id: u.ID, rid: rc.ID})
+			}
+		}
+	}
+	for rid, names := range agentRemove {
+		if rc := findRouterScoped(db, rid, acc); rc != nil {
+			queueCommandLocked(db, rc.AccountID, rid, model.CmdUserRemove, map[string]any{"names": names})
+		}
+	}
+	names := make([]string, 0, len(targets))
+	for _, tg := range targets {
+		names = append(names, tg.user.Username)
+	}
+	shown, suffix := names, ""
+	if len(names) > 10 {
+		shown, suffix = names[:10], fmt.Sprintf(" … (+%d autres)", len(names)-10)
+	}
+	a.logActivityBy(r, db, acc, "user", fmt.Sprintf("Action groupée « %s » sur %d utilisateur(s) : %s%s",
+		req.Action, len(targets), strings.Join(shown, ", "), suffix))
+	a.store.Save()
+	a.store.Unlock()
+
+	// Phase B — routeurs real/simulated : appels passerelle hors verrou (la
+	// passerelle tient le miroir cloud à jour elle-même).
+	for _, task := range gwTasks {
+		rc, ok := gwRouters[task.rid]
+		if !ok {
+			failed++
+			continue
+		}
+		gw := a.gatewayFor(rc)
+		var err error
+		switch req.Action {
+		case "enable":
+			_, err = gw.EnableUser(task.id)
+		case "disable":
+			_, err = gw.DisableUser(task.id)
+		case "delete":
+			err = gw.RemoveUser(task.id)
+			if err == nil {
+				removedIDs[task.id] = true
+			}
+		}
+		if err != nil {
+			failed++
+			continue
+		}
+		processed++
+	}
+
+	// Phase C — purge des sessions des utilisateurs supprimés.
+	if req.Action == "delete" && len(removedIDs) > 0 {
+		a.store.Lock()
+		db = a.store.Data()
+		sessions := db.Sessions[:0]
+		for _, s := range db.Sessions {
+			if !removedIDs[s.UserID] {
+				sessions = append(sessions, s)
+			}
+		}
+		db.Sessions = sessions
+		a.store.Save()
+		a.store.Unlock()
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "processed": processed, "failed": failed})
+}
+
 // handleUsersExport — GET /api/users/export : CSV de la liste utilisateurs
 // avec les MÊMES filtres que handleUsersList (kind/search/status/profileId).
 func (a *API) handleUsersExport(w http.ResponseWriter, r *http.Request) {

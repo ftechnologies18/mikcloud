@@ -201,6 +201,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/users/{id}/resync", a.requireRole(2, a.handleUserResync))
 	mux.HandleFunc("GET /api/users/export", a.requireRole(2, a.handleUsersExport))
 	mux.HandleFunc("POST /api/users/cleanup", a.requireRole(2, a.handleUsersCleanup))
+	mux.HandleFunc("POST /api/users/bulk", a.handleUsersBulk)
 
 	// P1 (audit Mikhmon) — voir docs/CONTRACT-V2.md (handlers_p1.go)
 	// Trafic temps réel (F6)

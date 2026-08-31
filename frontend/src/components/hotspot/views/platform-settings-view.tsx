@@ -179,7 +179,7 @@ function RegisterCard({ data, onDone }: { data: PlatformSettingsResponse; onDone
     onError: (err: Error) => toast.error(err.message),
   });
 
-  const dirty = open !== data.platform.registerOpen || keyMode !== "keep" || (keyMode === "set" && key.trim() !== "");
+  const dirty = open !== data.platform.registerOpen || keyMode !== "keep";
 
   return (
     <Card className="gap-4 py-4 sm:py-6">
@@ -397,7 +397,7 @@ function LanguageCard() {
 
 /* ─── Danger zone (purge journal + purge globale) ─── */
 function DangerCard() {
-  const { t } = useI18n();
+  const { t, tf } = useI18n();
 
   const purgeMutation = useMutation({
     mutationFn: () =>
@@ -407,7 +407,7 @@ function DangerCard() {
       }),
     onSuccess: (counts) => {
       const total = Object.values(counts).reduce((a, b) => a + b, 0);
-      toast.success(t("platformSettings.purgeDone", { count: total }));
+      toast.success(tf("platformSettings.purgeDone", { count: total }));
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -424,7 +424,7 @@ function DangerCard() {
         body: { scopes: ["logs"] },
       }),
     onSuccess: (counts) => {
-      toast.success(t("platformSettings.journalDone", { count: counts.logs ?? 0 }));
+      toast.success(tf("platformSettings.journalDone", { count: counts.logs ?? 0 }));
     },
     onError: (error: Error) => toast.error(error.message),
   });

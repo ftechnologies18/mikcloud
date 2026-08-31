@@ -298,6 +298,22 @@ func (a *API) authMiddleware(next http.Handler) http.Handler {
 				return
 			}
 		}
+		// Suspension (P5) : au-delà de PeriodEnd + 30 jours de grâce, le compte
+		// est suspendu. Seules les routes d'identification (/api/auth/me) et de
+		// paiement (/api/subscription, /api/settings) restent accessibles — le
+		// reste est bloqué pour forcer le règlement. Exemption : administrateurs plateforme.
+		if claims.Acc != "" && !isPlatformAdmin(r) {
+			view := a.subscriptionGuardState(claims.Acc)
+			if view.Status == "suspended" {
+				allowed := path == "/api/auth/me" || path == "/api/subscription" || path == "/api/settings"
+				if !allowed {
+					writeErrCode(w, http.StatusPaymentRequired, "account_suspended",
+						"Compte suspendu — réglez votre abonnement pour reprendre l'accès",
+						map[string]any{"status": "suspended"})
+					return
+				}
+			}
+		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), claimsCtxKey{}, claims)))
 	})
 }
@@ -3733,12 +3749,23 @@ func subscriptionStatus(sub model.Subscription, now time.Time) string {
 		return "none"
 	}
 	if sub.PeriodEnd != "" {
-		if end, err := time.Parse(time.RFC3339, sub.PeriodEnd); err == nil && now.After(end) {
-			return "expired"
+		if end, err := time.Parse(time.RFC3339, sub.PeriodEnd); err == nil {
+			if now.After(end.Add(suspendGracePeriod)) {
+				return "suspended"
+			}
+			if now.After(end) {
+				return "expired"
+			}
 		}
 	}
 	return "active"
 }
+
+// suspendGracePeriod — durée de grâce en lecture seule avant suspension totale.
+// Au-delà de PeriodEnd + cette durée, le compte passe en "suspended" : plus
+// aucune route métier n'est accessible (même en GET), sauf /api/subscription
+// (pour payer) et /api/auth/me (pour identifier l'utilisateur).
+const suspendGracePeriod = 30 * 24 * time.Hour // 30 jours
 
 // planAmount — montant de la période pour une formule : Essentiel =
 // prix × routeurs enregistrés (minimum 1) ; Illimité = forfait 12 000 F.

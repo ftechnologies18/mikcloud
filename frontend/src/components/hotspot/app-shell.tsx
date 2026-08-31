@@ -31,6 +31,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { PaywallOverlay } from "@/components/hotspot/parts/paywall-overlay";
 import { cn } from "@/lib/utils";
 import { api, fetchAccounts, impersonateAccount } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
@@ -596,6 +597,10 @@ export default function AppShell() {
 
   return (
     <div className="flex min-h-screen">
+      {/* PaywallOverlay (P5) — mur total si compte suspendu (PeriodEnd + 30j).
+          S'affiche par-dessus toute la console, non refermable. */}
+      <PaywallOverlay />
+
       {/* Sidebar desktop — colonne de marque Aurora */}
       <aside className="sidebar-aurora fixed inset-y-0 left-0 z-30 hidden w-64 flex-col lg:flex">
         <BrandHeader />

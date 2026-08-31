@@ -675,8 +675,8 @@ export interface Subscription {
 /** Réponse GET /api/subscription — état + catalogue + assiette de facturation. */
 export interface SubscriptionView {
   subscription: Subscription;
-  /** Statut effectif calculé serveur : une période échue passe en « expired ». */
-  status: "active" | "expired" | "none";
+  /** Statut effectif calculé serveur : une période échue passe en « expired », puis « suspended » après 30j de grâce. */
+  status: "active" | "expired" | "suspended" | "none";
   routerCount: number;
   currentAmountFcfa: number;
   plans: SaasPlan[];

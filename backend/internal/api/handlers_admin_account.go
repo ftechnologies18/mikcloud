@@ -337,8 +337,8 @@ func (a *API) handleAdminAccountSubscription(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	planID := strings.ToLower(strings.TrimSpace(req.PlanID))
-	if planID != "essentiel" && planID != "illimite" && planID != "essai" && planID != "platform" {
-		writeErrCode(w, http.StatusBadRequest, "bad_plan", "Formule inconnue (essentiel | illimite | essai | platform)", nil)
+	if planID != "essentiel" && planID != "illimite" && planID != "essai" {
+		writeErrCode(w, http.StatusBadRequest, "bad_plan", "Formule inconnue (essentiel | illimite | essai)", nil)
 		return
 	}
 	var plan model.SaasPlan
@@ -392,9 +392,6 @@ func (a *API) handleAdminAccountSubscription(w http.ResponseWriter, r *http.Requ
 	case "essai":
 		// Essai : gratuit, 1 routeur, période limitée (prolongeable par la plateforme).
 		slots = 1
-	case "platform":
-		// Plateforme : interne, non expirant, jamais plafonné.
-		slots = 0
 	case "illimite":
 		// 1 000 F/mois équivalent (12 000 F/an) × durée.
 		slots = 0
@@ -429,7 +426,8 @@ func (a *API) handleAdminAccountSubscription(w http.ResponseWriter, r *http.Requ
 		sub.RouterSlots = slots
 		sub.LastAmountFcfa = amount
 	} else {
-		// Plateforme : interne, non expirant, jamais plafonné.
+		// Cas résiduel (jamais atteint avec la validation ci-dessus, mais
+		// conservé pour la sécurité du type) : période immédiate non expirante.
 		sub.PlanID = planID
 		sub.Status = "active"
 		sub.PeriodStart = now.Format(time.RFC3339)
@@ -448,9 +446,6 @@ func (a *API) handleAdminAccountSubscription(w http.ResponseWriter, r *http.Requ
 	label := "Essai"
 	maxRouters := "1"
 	switch planID {
-	case "platform":
-		label = "Plateforme"
-		maxRouters = "Illimité"
 	case "essentiel":
 		label = "MikCloud Essentiel"
 		maxRouters = "Par routeur"

@@ -1331,6 +1331,20 @@ const fr: Record<string, string> = {
   "sub.banner.expiringDesc": "Votre abonnement arrive à échéance le {date}, dans {days} jour(s). Renouvelez dès maintenant pour garder l'esprit tranquille.",
   "sub.banner.renew": "Renouveler l'abonnement",
   "sub.banner.later": "Plus tard",
+
+  // — Paywall (P5) — mur total si compte suspendu (PeriodEnd + 30j) —
+  "paywall.title": "Compte suspendu",
+  "paywall.subtitle": "Votre période d'essai est expirée depuis plus de 30 jours. Choisissez une formule pour réactiver votre accès — vos données sont conservées.",
+  "paywall.warningTitle": "Accès suspendu",
+  "paywall.warningDesc": "Vos routeurs continuent de fonctionner pour vos clients, mais vous ne pouvez plus accéder à la console. Vos données (routeurs, vouchers, sessions, rapports) sont conservées en sécurité.",
+  "paywall.subscribe": "Souscrire",
+  "paywall.processing": "Traitement…",
+  "paywall.success": "Abonnement activé — bienvenue de retour !",
+  "paywall.failed": "Échec de la souscription",
+  "paywall.logout": "Se déconnecter",
+  "paywall.unlimited": "Routeurs illimités",
+  "paywall.perRouter": "Payez au fil de votre croissance",
+
   // — N°10 : affluence par tranche horaire —
   "hourly.title": "Affluence par tranche horaire",
   "hourly.subtitleLogins": "{n} connexion{p} sur {d} jours",
@@ -2731,6 +2745,20 @@ const en: Record<string, string> = {
   "sub.banner.expiringDesc": "Your subscription expires on {date}, in {days} day(s). Renew now and stay worry-free.",
   "sub.banner.renew": "Renew subscription",
   "sub.banner.later": "Later",
+
+  // — Paywall (P5) — full wall if account suspended (PeriodEnd + 30 days) —
+  "paywall.title": "Account suspended",
+  "paywall.subtitle": "Your trial period expired more than 30 days ago. Choose a plan to reactivate your access — your data is preserved.",
+  "paywall.warningTitle": "Access suspended",
+  "paywall.warningDesc": "Your routers keep running for your clients, but you can no longer access the console. Your data (routers, vouchers, sessions, reports) is safely preserved.",
+  "paywall.subscribe": "Subscribe",
+  "paywall.processing": "Processing…",
+  "paywall.success": "Subscription activated — welcome back!",
+  "paywall.failed": "Subscription failed",
+  "paywall.logout": "Sign out",
+  "paywall.unlimited": "Unlimited routers",
+  "paywall.perRouter": "Pay as you grow",
+
   // — N°10 : affluence par tranche horaire —
   "hourly.title": "Peak hours by time slot",
   "hourly.subtitleLogins": "{n} login{p} over {d} days",

@@ -1,13 +1,12 @@
 "use client";
 
-// Bannière d'abonnement du tableau de bord — v1 bienveillante :
-//   • abonnement expiré → bandeau ambre PERSISTANT (non refermable) : le statut
-//     est affiché en toute transparence, l'accès reste maintenu, CTA vers la
-//     carte Abonnement (Paramètres) ;
+// Bannière d'abonnement du tableau de bord :
+//   • abonnement expiré → bandeau ambre PERSISTANT (non refermable) : la
+//     console est en LECTURE SEULE (gardes serveur P3), CTA vers la carte
+//     Abonnement (Paramètres) pour demander le renouvellement ;
 //   • échéance dans ≤ 7 jours → rappel doux refermable pour la session.
-// Aucun blocage fonctionnel : MikCloud reste 100 % utilisable — la gérante ne
-// perd jamais l'accès à ses données (le durcissement de facturation est une
-// décision produit ultérieure, à activer seulement une fois le marché lancé).
+// VERROU FACTURATION : le renouvellement est un flux PAYANT (demande + lien
+// Wave, activation par MikCloud après encaissement) — jamais un clic gratuit.
 
 import { useState } from "react";
 import { CalendarClock, ShieldAlert } from "lucide-react";

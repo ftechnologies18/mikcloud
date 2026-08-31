@@ -18,7 +18,10 @@ import { formatCurrency } from "@/lib/hotspot/format";
  * Mur total non refermable : s'affiche par-dessus toute la console quand
  * le compte est "suspended" (PeriodEnd + 30j dépassé). L'utilisateur peut
  * se déconnecter mais ne peut pas naviguer dans la console sans payer.
- * Réutilise POST /api/subscription (endpoint existant) pour souscrire.
+ * Réutilise POST /api/subscription — VERROU FACTURATION : l'endpoint
+ * enregistre la DEMANDE et renvoie le lien de paiement Wave de la
+ * plateforme ; l'activation du compte est effectuée par MikCloud après
+ * encaissement (jamais côté client).
  */
 export function PaywallOverlay() {
   const { t, lang } = useI18n();
@@ -40,7 +43,10 @@ export function PaywallOverlay() {
       if (res.waveLink) {
         window.location.href = res.waveLink;
       } else {
-        toast.success(t("paywall.success", "Abonnement activé — bienvenue de retour !"));
+        toast.success(
+          t("paywall.requested", "Demande enregistrée — MikCloud activera votre accès dès réception du paiement."),
+          { description: t("paywall.contact", "Une question ? Contactez l'équipe MikCloud.") },
+        );
         await refetch();
       }
     } catch (err) {
@@ -75,7 +81,7 @@ export function PaywallOverlay() {
             <CardDescription className="text-base">
               {t(
                 "paywall.subtitle",
-                "Votre période d'essai est expirée depuis plus de 30 jours. Choisissez une formule pour réactiver votre accès — vos données sont conservées.",
+                "Votre accès est suspendu. Choisissez une formule et réglez le paiement — MikCloud réactivera votre compte dès réception. Vos données sont conservées.",
               )}
             </CardDescription>
           </CardHeader>
@@ -139,7 +145,7 @@ export function PaywallOverlay() {
                             {t("paywall.processing", "Traitement…")}
                           </>
                         ) : (
-                          t("paywall.subscribe", "Souscrire")
+                          t("paywall.subscribe", "Souscrire & payer")
                         )}
                       </Button>
                       <ul className="mt-4 space-y-2">

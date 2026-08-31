@@ -125,8 +125,10 @@ func (a *API) Handler() http.Handler {
 
 	// Abonnement SaaS — formules FCFA (Essentiel 1 250 F/mois/routeur,
 	// Illimité 12 000 F/an routeurs illimités). Catalogue et état lisibles
-	// par toute l'équipe ; souscrire/changer de formule est une décision de
-	// facturation (stockée dans settings) : réservée au propriétaire (N°7).
+	// par toute l'équipe. VERROU FACTURATION : l'activation d'un abonnement
+	// est réservée à la plateforme (PUT /api/admin/accounts/{id}/subscription,
+	// après encaissement) ; le client ne peut que DEMANDER un renouvellement
+	// et obtenir le lien de paiement Wave de la plateforme (POST ci-dessous).
 	mux.HandleFunc("GET /api/plans", a.handlePlansList)
 	mux.HandleFunc("GET /api/subscription", a.handleSubscriptionGet)
 	mux.HandleFunc("POST /api/subscription", a.requireRole(3, a.handleSubscriptionPost))
@@ -300,8 +302,9 @@ func (a *API) authMiddleware(next http.Handler) http.Handler {
 		}
 		// Suspension (P5) : au-delà de PeriodEnd + 30 jours de grâce, le compte
 		// est suspendu. Seules les routes d'identification (/api/auth/me) et de
-		// paiement (/api/subscription, /api/settings) restent accessibles — le
-		// reste est bloqué pour forcer le règlement. Exemption : administrateurs plateforme.
+		// paiement (/api/subscription — DEMANDE de renouvellement, /api/settings)
+		// restent accessibles — le reste est bloqué pour forcer le règlement.
+		// Exemption : administrateurs plateforme.
 		if claims.Acc != "" && !isPlatformAdmin(r) {
 			view := a.subscriptionGuardState(claims.Acc)
 			if view.Status == "suspended" {
@@ -3800,6 +3803,12 @@ func (a *API) handlePlansList(w http.ResponseWriter, r *http.Request) {
 // handleSubscriptionGet — état de l'abonnement du compte + catalogue + assiette.
 func (a *API) handleSubscriptionGet(w http.ResponseWriter, r *http.Request) {
 	acc := accountScope(r)
+	if c := claimsFrom(r); c != nil && c.Acc == "" {
+		// Admin plateforme (sans compte client) ou token legacy sans périmètre :
+		// pas d'état d'abonnement auto-géré — la plateforme consulte chaque client depuis sa console.
+		writeErrCode(w, http.StatusForbidden, "forbidden", "Réservé aux comptes clients — la plateforme gère les abonnements", nil)
+		return
+	}
 	a.store.Lock()
 	db := a.store.Data()
 	settings := ensureSettings(db, acc)
@@ -3808,7 +3817,9 @@ func (a *API) handleSubscriptionGet(w http.ResponseWriter, r *http.Request) {
 		RouterCount:  accountRouterCount(db, acc),
 		Plans:        model.SaasPlans,
 	}
-	view.WaveConfigured = strings.TrimSpace(settings.Tenant.WaveLink) != ""
+	// waveConfigured = lien de paiement Wave de la PLATEFORME (WAVE_PAY_LINK)
+	// configuré — PAS le lien marchand du client (réservé à ses propres vouchers).
+	view.WaveConfigured = wavePayLink() != ""
 	if p, ok := model.PlanByID(settings.Subscription.PlanID); ok {
 		view.CurrentAmountFcfa = planAmount(p, view.RouterCount)
 	}
@@ -3817,11 +3828,32 @@ func (a *API) handleSubscriptionGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, view)
 }
 
-// handleSubscriptionPost — souscrire, renouveler ou changer de formule.
-// Corps : {"planId":"essentiel"|"illimite"}. Réponse : état + montant + lien
-// Wave pré-composé (s'il est configuré) pour payer la période entamée.
+// wavePayLink — lien marchand Wave de la PLATEFORME pour l'encaissement des
+// abonnements SaaS (variable d'environnement WAVE_PAY_LINK, configurée sur
+// Render). ATTENTION : le Tenant.WaveLink du client est son PROPRE lien
+// marchand (vente de vouchers) — il ne doit jamais servir à encaisser
+// l'abonnement MikCloud.
+func wavePayLink() string {
+	return strings.TrimSpace(os.Getenv("WAVE_PAY_LINK"))
+}
+
+// handleSubscriptionPost — DEMANDE de souscription / renouvellement (verrou
+// cycle de facturation). Aucune activation ici : la souscription immédiate
+// permettait à un compte expiré — voire suspendu — de se réabonner sans
+// payer. Désormais : le client choisit une formule, reçoit le montant et le
+// lien de paiement Wave de la plateforme ; la demande est tracée dans le
+// journal (type billing) et l'ACTIVATION reste réservée à la plateforme
+// (PUT /api/admin/accounts/{id}/subscription), après encaissement confirmé.
+// Corps : {"planId":"essentiel"|"illimite"}.
 func (a *API) handleSubscriptionPost(w http.ResponseWriter, r *http.Request) {
 	acc := accountScope(r)
+	if c := claimsFrom(r); c != nil && c.Acc == "" {
+		// Admin plateforme (sans compte client) ou token legacy sans périmètre :
+		// pas d'auto-souscription — la plateforme gère les abonnements via
+		// /api/admin/accounts/{id}/subscription (après encaissement).
+		writeErrCode(w, http.StatusForbidden, "forbidden", "Réservé aux comptes clients — la plateforme gère les abonnements", nil)
+		return
+	}
 	var req struct {
 		PlanID string `json:"planId"`
 	}
@@ -3834,68 +3866,49 @@ func (a *API) handleSubscriptionPost(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Formule inconnue (essentiel | illimite)")
 		return
 	}
-	now := time.Now().UTC()
-	period := 30 * 24 * time.Hour // « 1 mois »
-	if plan.Period == "an" {
-		period = 365 * 24 * time.Hour
-	}
 
 	a.store.Lock()
 	db := a.store.Data()
 	settings := ensureSettings(db, acc)
 	routerCount := accountRouterCount(db, acc)
 	amount := planAmount(plan, routerCount)
-	sub := settings.Subscription
-	renouvellement := sub.PlanID == plan.ID && subscriptionStatus(sub, now) == "active"
-	if renouvellement {
-		// Renouvellement : la nouvelle période s'empile à la fin de la période en cours.
-		start := now
-		if end, err := time.Parse(time.RFC3339, sub.PeriodEnd); err == nil && now.Before(end) {
-			start = end
-		}
-		sub.PeriodStart = start.Format(time.RFC3339)
-		sub.PeriodEnd = start.Add(period).Format(time.RFC3339)
-	} else {
-		// Souscription ou changement de formule : nouvelle période immédiate.
-		sub.PlanID = plan.ID
-		sub.Status = "active"
-		sub.PeriodStart = now.Format(time.RFC3339)
-		sub.PeriodEnd = now.Add(period).Format(time.RFC3339)
-	}
-	sub.LastAmountFcfa = amount
-	settings.Subscription = sub
-	// Compatibilité d'affichage avec l'ancien contrat (libellé Plan).
-	maxRouters := "Par routeur"
-	if plan.Unlimited {
-		maxRouters = "Illimité"
-	}
-	settings.Plan = model.Plan{Name: "MikCloud " + plan.Name, MaxRouters: maxRouters, MaxUsers: "Illimité"}
-	db.SettingsByAccount[acc] = settings
-
 	periodLabel := "1 mois"
 	if plan.Period == "an" {
 		periodLabel = "1 an"
 	}
-	verb := "souscrit"
-	if renouvellement {
-		verb = "renouvelé"
+	// Anti-spam : une demande identique de moins de 10 minutes n'encombre pas
+	// le journal (la réponse — montant + lien de paiement — reste identique).
+	prefix := fmt.Sprintf("Demande d'abonnement %s", plan.Name)
+	recent := false
+	for _, act := range db.Activity {
+		if act.AccountID == acc && act.Type == "billing" && strings.HasPrefix(act.Message, prefix) {
+			if at, err := time.Parse(time.RFC3339, act.At); err == nil && time.Since(at) < 10*time.Minute {
+				recent = true
+			}
+			break
+		}
 	}
-	a.logActivity(db, acc, "system",
-		fmt.Sprintf("Abonnement %s %s — %d FCFA / %s · %d routeur(s) enregistré(s)",
-			plan.Name, verb, amount, periodLabel, routerCount))
-	a.store.Save()
+	if !recent {
+		a.logActivityBy(r, db, acc, "billing",
+			fmt.Sprintf("%s — %d FCFA / %s · %d routeur(s) enregistré(s) — en attente d'encaissement",
+				prefix, amount, periodLabel, routerCount))
+		a.store.Save()
+	}
 	a.store.Unlock()
 
 	waveLink := ""
-	if strings.TrimSpace(settings.Tenant.WaveLink) != "" {
-		waveLink = strings.TrimRight(settings.Tenant.WaveLink, "/") + "/amount/" + strconv.Itoa(amount) + "/"
+	if base := wavePayLink(); base != "" {
+		waveLink = strings.TrimRight(base, "/") + "/amount/" + strconv.Itoa(amount) + "/"
 	}
+	// subscription RENVOYÉE INCHANGÉE : l'activation est une décision de la
+	// plateforme (après encaissement), jamais du client.
 	writeJSON(w, http.StatusOK, map[string]any{
-		"subscription": sub,
+		"subscription": settings.Subscription,
 		"amountFcfa":   amount,
 		"routerCount":  routerCount,
 		"periodLabel":  periodLabel,
 		"waveLink":     waveLink,
+		"pending":      true,
 	})
 }
 

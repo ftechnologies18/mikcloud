@@ -683,14 +683,19 @@ export interface SubscriptionView {
   waveConfigured: boolean;
 }
 
-/** Réponse POST /api/subscription — souscription / renouvellement / changement. */
+/** Réponse POST /api/subscription — DEMANDE de souscription (verrou facturation) :
+ * l'abonnement n'est PAS activé côté client (renvoyé inchangé) ; la demande
+ * est tracée dans le journal et l'activation est effectuée par la plateforme
+ * après encaissement (PUT /api/admin/accounts/{id}/subscription). */
 export interface SubscribeResponse {
   subscription: Subscription;
   amountFcfa: number;
   routerCount: number;
   periodLabel: string;
-  /** Lien Wave pré-composé avec le montant ("" si aucun lien marchand configuré). */
+  /** Lien de paiement Wave de la PLATEFORME, pré-composé avec le montant ("" si non configuré). */
   waveLink: string;
+  /** Toujours true : la demande attend l'encaissement puis l'activation plateforme. */
+  pending: boolean;
 }
 
 // ─── F6 — Trafic temps réel ───

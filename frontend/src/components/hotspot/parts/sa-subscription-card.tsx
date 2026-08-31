@@ -4,23 +4,25 @@
 // concurrentiel :
 //   • Essentiel — 1 250 F/mois/routeur (sans engagement, facturé sur les
 //     routeurs enregistrés : le gérant paie au fil de sa croissance) ;
-//   • Illimité — 12 000 F/an, routeurs illimités (prix fondateur : 1 000 F/mois
-//     équivalent, 2 mois offerts vs Essentiel, −92 % à 10 routeurs).
-// Le paiement passe par le lien marchand Wave CI composé par montant.
+//   • Illimité — 12 000 F/an, routeurs illimités (1 000 F/mois équivalent,
+//     2 mois offerts vs Essentiel, −92 % à 10 routeurs).
+// VERROU FACTURATION : la souscription n'active RIEN côté client — choisir
+// une formule enregistre une demande, renvoie le montant et le lien de
+// paiement Wave de la PLATEFORME (WAVE_PAY_LINK) ; l'activation de la
+// période est effectuée par l'équipe MikCloud après encaissement.
 // Bilingue FR/EN (F11) : les libellés du catalogue côté serveur (nom, tagline,
 // badge, période) sont traduits par id de formule, avec repli sur la valeur
 // serveur pour toute formule inconnue.
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Crown, Infinity as InfinityIcon, Router as RouterIcon, Sparkles } from "lucide-react";
+import { Check, Crown, Infinity as InfinityIcon, Router as RouterIcon, ShieldAlert, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
 import { api } from "@/lib/hotspot/api";
 import type { SaasPlan, SubscribeResponse, SubscriptionView } from "@/lib/hotspot/types";
 import { formatCurrency, formatDate } from "@/lib/hotspot/format";
 import { useI18n } from "@/lib/hotspot/i18n";
-import { SETTINGS_QUERY_KEY } from "@/components/hotspot/parts/sd-currency";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -73,15 +75,18 @@ export function SubscriptionCard() {
       api<SubscribeResponse>("/api/subscription", { method: "POST", body: { planId } }),
     onSuccess: (res) => {
       toast.success(
-        tf("sub.toast.activated", {
+        tf("sub.toast.requested", {
           amount: formatCurrency(res.amountFcfa, "FCFA", lang),
           period: res.periodLabel === "1 an" ? t("sub.periodLabel.an") : t("sub.periodLabel.mois"),
           n: res.routerCount,
         }),
-        { description: res.waveLink ? t("sub.toast.waveOpened") : undefined },
+        {
+          description: res.waveLink
+            ? t("sub.toast.waveOpened")
+            : t("sub.toast.noWaveLink"),
+        },
       );
       queryClient.invalidateQueries({ queryKey: SUBSCRIPTION_QUERY_KEY });
-      queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
       setConfirmPlan(null);
       if (res.waveLink) window.open(res.waveLink, "_blank", "noopener,noreferrer");
     },
@@ -131,6 +136,11 @@ export function SubscriptionCard() {
         <Check className="size-3" />
         {t("sub.status.active")}
       </Badge>
+    ) : status === "suspended" ? (
+      <Badge className="gap-1 border-destructive/40 bg-destructive/15 text-destructive" variant="outline">
+        <ShieldAlert className="size-3" />
+        {t("sub.status.suspended")}
+      </Badge>
     ) : status === "expired" ? (
       <Badge className="gap-1 border-destructive/30 bg-destructive/10 text-destructive" variant="outline">
         {t("sub.status.expired")}
@@ -159,6 +169,8 @@ export function SubscriptionCard() {
                 <> · {tf("sub.renewalOn", { date: formatDate(view.subscription.periodEnd, lang) })}</>
               ) : null}
             </>
+          ) : status === "suspended" ? (
+            <>{t("sub.descSuspended")}</>
           ) : status === "expired" ? (
             <>{t("sub.descExpired")}</>
           ) : (
@@ -218,12 +230,11 @@ export function SubscriptionCard() {
           </table>
         </div>
         <p className="text-xs text-muted-foreground">
-          {t("sub.footnoteCalc")}
-          {!view.waveConfigured ? ` ${t("sub.footnoteWave")}` : ""}
+          {t("sub.footnoteCalc")} {t("sub.footnotePay")}
         </p>
       </CardContent>
 
-      {/* Confirmation avant souscription — le montant est engagé immédiatement */}
+      {/* Confirmation avant demande — rien n'est débité ici : demande + lien de paiement */}
       <AlertDialog open={confirmPlan !== null} onOpenChange={(open) => !open && setConfirmPlan(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>

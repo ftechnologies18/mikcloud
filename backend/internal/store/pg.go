@@ -408,6 +408,9 @@ func (p *PG) ensureSchema() error {
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS token_preview TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS last_seen TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS wave_link TEXT NOT NULL DEFAULT ''`,
+		// Paiement en ligne (GeniusPay -> Wave) : référence de transaction
+		// marchande enregistrée sur la demande pour l'appariement webhook.
+		`ALTER TABLE billing_requests ADD COLUMN IF NOT EXISTS gateway_ref TEXT NOT NULL DEFAULT ''`,
 		// P0/P1 (audit Mikhmon) — migrations des champs des tables existantes.
 		`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS exp_mode TEXT NOT NULL DEFAULT 'notify'`,
 		`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS grace_period_min INTEGER NOT NULL DEFAULT 0`,
@@ -1204,17 +1207,17 @@ var activitySpec = entitySpec[model.Activity]{
 // billingRequestSpec — demandes de souscription / renouvellement (facturation).
 var billingRequestSpec = entitySpec[model.BillingRequest]{
 	table: "billing_requests",
-	cols:  []string{"id", "account_id", "plan_id", "plan_name", "amount_fcfa", "period_label", "router_count", "ref", "status", "created_at", "resolved_at", "resolved_by", "note", "paid_via"},
+	cols:  []string{"id", "account_id", "plan_id", "plan_name", "amount_fcfa", "period_label", "router_count", "ref", "gateway_ref", "status", "created_at", "resolved_at", "resolved_by", "note", "paid_via"},
 	idOf:  func(x *model.BillingRequest) string { return x.ID },
 	scan: func(r *sql.Rows) (model.BillingRequest, error) {
 		var x model.BillingRequest
 		err := r.Scan(&x.ID, &x.AccountID, &x.PlanID, &x.PlanName, &x.AmountFcfa, &x.PeriodLabel,
-			&x.RouterCount, &x.Ref, &x.Status, &x.CreatedAt, &x.ResolvedAt, &x.ResolvedBy, &x.Note, &x.PaidVia)
+			&x.RouterCount, &x.Ref, &x.GatewayRef, &x.Status, &x.CreatedAt, &x.ResolvedAt, &x.ResolvedBy, &x.Note, &x.PaidVia)
 		return x, err
 	},
 	args: func(x *model.BillingRequest) []any {
 		return []any{x.ID, x.AccountID, x.PlanID, x.PlanName, x.AmountFcfa, x.PeriodLabel,
-			x.RouterCount, x.Ref, x.Status, x.CreatedAt, x.ResolvedAt, x.ResolvedBy, x.Note, x.PaidVia}
+			x.RouterCount, x.Ref, x.GatewayRef, x.Status, x.CreatedAt, x.ResolvedAt, x.ResolvedBy, x.Note, x.PaidVia}
 	},
 	hashOf: hashEntity[model.BillingRequest],
 }

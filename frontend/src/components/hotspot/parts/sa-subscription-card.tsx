@@ -20,7 +20,7 @@ import { Check, Crown, Infinity as InfinityIcon, Router as RouterIcon, ShieldAle
 import { toast } from "sonner";
 
 import { api } from "@/lib/hotspot/api";
-import type { SaasPlan, SubscribeResponse, SubscriptionView } from "@/lib/hotspot/types";
+import type { PayInitiateResponse, SaasPlan, SubscribeResponse, SubscriptionView } from "@/lib/hotspot/types";
 import { formatCurrency, formatDate } from "@/lib/hotspot/format";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { Badge } from "@/components/ui/badge";
@@ -81,17 +81,40 @@ export function SubscriptionCard() {
           n: res.routerCount,
         }),
         {
-          description: res.waveLink
-            ? t("sub.toast.waveOpened")
-            : t("sub.toast.noWaveLink"),
+          description: t("sub.pay.initiating", "Ouverture du paiement Wave…"),
         },
       );
       queryClient.invalidateQueries({ queryKey: SUBSCRIPTION_QUERY_KEY });
       setConfirmPlan(null);
-      if (res.waveLink) window.open(res.waveLink, "_blank", "noopener,noreferrer");
+      void openWavePayment(res);
     },
     onError: (err: Error) => toast.error(err.message),
   });
+
+  // openWavePayment — enchaîne le paiement en ligne : initiation GeniusPay
+  // (mode Wave) puis redirection du client vers la page de paiement ; la
+  // confirmation arrive par webhook et active l'abonnement. Repli : lien Wave
+  // manuel de la plateforme, sinon la demande reste enregistrée pour règlement
+  // auprès de MikCloud.
+  async function openWavePayment(res: SubscribeResponse) {
+    try {
+      const pay = await api<PayInitiateResponse>("/api/subscription/pay", { method: "POST" });
+      if (pay.paymentUrl) {
+        toast.info(t("sub.pay.redirect", "Redirection vers Wave pour régler votre abonnement…"));
+        window.location.href = pay.paymentUrl;
+        return;
+      }
+    } catch {
+      // Paiement en ligne indisponible (non configuré, téléphone manquant,
+      // erreur GeniusPay) : la demande reste valable, repli sur lien manuel.
+    }
+    if (res.waveLink) {
+      toast.info(t("sub.toast.waveOpened"), { duration: 8000 });
+      window.open(res.waveLink, "_blank", "noopener,noreferrer");
+    } else {
+      toast.info(t("sub.toast.noWaveLink"), { duration: 8000 });
+    }
+  }
 
   if (isError) {
     // État d'erreur explicite (API injoignable / backend pas encore à jour) —

@@ -743,6 +743,27 @@ export interface SubscribeResponse {
   pending: boolean;
 }
 
+/** Réponse POST /api/subscription/pay — paiement Wave initié via GeniusPay :
+ * le client est redirigé vers paymentUrl, la confirmation arrive par webhook. */
+export interface PayInitiateResponse {
+  /** Référence de la demande de facturation (MC-XXXXXXXX). */
+  ref: string;
+  /** Référence de la transaction marchande GeniusPay (MTX-…). */
+  gatewayRef: string;
+  /** Lien de paiement Wave à ouvrir (checkout GeniusPay en repli). */
+  paymentUrl: string;
+  amountFcfa: number;
+  status: "pending";
+}
+
+/** Réponse GET /api/subscription/pay/status — filet de sécurité : statut réel
+ * de la transaction consulté chez GeniusPay, activation finalisée si besoin. */
+export interface PayStatusResponse {
+  status: "none" | "pending" | "done" | "cancelled";
+  ref?: string;
+  gatewayRef?: string;
+}
+
 // ─── F6 — Trafic temps réel ───
 
 export interface IfaceTraffic {

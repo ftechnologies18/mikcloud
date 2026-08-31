@@ -40,6 +40,21 @@ export function PaywallOverlay() {
         method: "POST",
         body: { planId },
       });
+      // Paiement EN LIGNE (GeniusPay → Wave) : initiation puis redirection du
+      // client vers la page de paiement ; la confirmation arrive par webhook
+      // et l'abonnement est activé automatiquement (dé-suspension immédiate).
+      try {
+        const pay = await api<{ paymentUrl: string }>("/api/subscription/pay", { method: "POST" });
+        if (pay.paymentUrl) {
+          toast.info(
+            t("sub.pay.redirect", "Redirection vers Wave pour régler votre abonnement…"),
+          );
+          window.location.href = pay.paymentUrl;
+          return;
+        }
+      } catch {
+        /* paiement en ligne indisponible — repli sur le lien manuel ci-dessous */
+      }
       if (res.waveLink) {
         window.location.href = res.waveLink;
       } else {

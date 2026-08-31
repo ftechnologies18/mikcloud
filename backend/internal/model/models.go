@@ -534,7 +534,11 @@ type BillingRequest struct {
 	RouterCount int    `json:"routerCount"` // assiette au moment de la demande
 	// Ref — référence de paiement publique (MC-XXXXXXXX), renvoyée au client
 	// et attendue dans le webhook Wave pour l'appariement automatique.
-	Ref        string `json:"ref"`
+	Ref string `json:"ref"`
+	// GatewayRef — référence de la transaction GeniusPay (MTX-…), remplie
+	// quand le client a initié le paiement Wave en ligne (POST
+	// /api/subscription/pay). Repli d'appariement du webhook GeniusPay.
+	GatewayRef string `json:"gatewayRef,omitempty"`
 	Status     string `json:"status"` // pending | done | cancelled
 	CreatedAt  string `json:"createdAt"`
 	ResolvedAt string `json:"resolvedAt,omitempty"`

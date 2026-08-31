@@ -132,6 +132,10 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/plans", a.handlePlansList)
 	mux.HandleFunc("GET /api/subscription", a.handleSubscriptionGet)
 	mux.HandleFunc("POST /api/subscription", a.requireRole(3, a.handleSubscriptionPost))
+	// Paiement EN LIGNE de la demande d'abonnement (GeniusPay -> Wave) :
+	// initiation client + vérification de statut (filet de sécurité).
+	mux.HandleFunc("POST /api/subscription/pay", a.requireRole(3, a.handleSubscriptionPay))
+	mux.HandleFunc("GET /api/subscription/pay/status", a.handleSubscriptionPayStatus)
 	mux.HandleFunc("POST /api/admin/wipe", a.requireRole(3, a.handleWipe))
 	mux.HandleFunc("POST /api/admin/reload", a.requireRole(3, a.handleReload))
 	// Purge des données par catégories (UI Paramètres) — voir handlers_purge.go.
@@ -167,6 +171,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/admin/billing-requests", a.requireRole(3, a.handleAdminBillingRequests))
 	mux.HandleFunc("POST /api/admin/billing-requests/{id}/resolve", a.requireRole(3, a.handleAdminBillingRequestResolve))
 	mux.HandleFunc("POST /api/webhooks/wave", a.handleWaveWebhook)
+	// webhook d'encaissement GeniusPay (public, authentifié par signature HMAC).
+	mux.HandleFunc("POST /api/webhooks/geniuspay", a.handleGeniusPayWebhook)
 
 	// P0 (audit Mikhmon) — voir docs/CONTRACT-V2.md
 	// Modèles de vouchers (F2)
@@ -277,7 +283,7 @@ func (a *API) requireRole(min int, next http.HandlerFunc) http.HandlerFunc {
 func (a *API) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
-		if path == "/api/auth/login" || path == "/api/auth/register" || path == "/api/reseller/login" || path == "/api/webhooks/wave" || !strings.HasPrefix(path, "/api/") {
+		if path == "/api/auth/login" || path == "/api/auth/register" || path == "/api/reseller/login" || path == "/api/webhooks/wave" || path == "/api/webhooks/geniuspay" || !strings.HasPrefix(path, "/api/") {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -317,7 +323,7 @@ func (a *API) authMiddleware(next http.Handler) http.Handler {
 		if claims.Acc != "" && !isPlatformAdmin(r) {
 			view := a.subscriptionGuardState(claims.Acc)
 			if view.Status == "suspended" {
-				allowed := path == "/api/auth/me" || path == "/api/subscription" || path == "/api/settings"
+				allowed := path == "/api/auth/me" || path == "/api/subscription" || path == "/api/settings" || strings.HasPrefix(path, "/api/subscription/pay")
 				if !allowed {
 					writeErrCode(w, http.StatusPaymentRequired, "account_suspended",
 						"Compte suspendu — réglez votre abonnement pour reprendre l'accès",

@@ -81,10 +81,18 @@ jobs:
             echo "Secret RENDER_API_KEY absent — déploiement Render sauté."
             exit 0
           fi
-          resp="$(curl -sS -X POST \
-            -H "Authorization: Bearer ${RENDER_API_KEY}" \
-            -H "Content-Type: application/json" \
-            https://api.render.com/v1/services/srv-da974o142hec73euul60/deploys \
-            -d '{}')"
-          echo "Réponse Render : ${resp}"
-          echo "${resp}" | grep -q '"id"' || { echo "Échec du déclenchement Render"; exit 1; }
+          ok=""
+          for i in 1 2 3 4; do
+            resp="$(curl -sS --max-time 20 -X POST \
+              -H "Authorization: Bearer ${RENDER_API_KEY}" \
+              -H "Content-Type: application/json" \
+              https://api.render.com/v1/services/srv-da974o142hec73euul60/deploys \
+              -d '{}')"
+            echo "Tentative ${i} — Réponse Render : ${resp}"
+            if echo "${resp}" | grep -q '"id"'; then ok=1; break; fi
+            # Réponse vide / refus transitoire (déploiement déjà en cours,
+            # 429…) : on attend puis on réessaie.
+            echo "Refus transitoire — nouvel essai dans $((i * 10)) s…"
+            sleep $((i * 10))
+          done
+          [ -n "${ok}" ] || { echo "Échec du déclenchement Render après 4 tentatives"; exit 1; }

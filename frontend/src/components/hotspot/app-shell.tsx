@@ -5,11 +5,8 @@ import Image from "next/image";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  ArrowLeftRight,
-  Building2,
   ChevronsUpDown,
   Languages,
-  Loader2,
   LogOut,
   Menu,
   RefreshCw,
@@ -33,18 +30,17 @@ import {
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { PaywallOverlay } from "@/components/hotspot/parts/paywall-overlay";
 import { cn } from "@/lib/utils";
-import { api, fetchAccounts, fetchBillingRequests, impersonateAccount } from "@/lib/hotspot/api";
+import { api, fetchBillingRequests } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { NAV_PLATFORM_SECTIONS, NAV_SECTIONS } from "@/lib/hotspot/nav";
 import { roleLabel, userInitials } from "@/lib/hotspot/format";
 import { canView, isPlatformView } from "@/lib/hotspot/roles";
 import { useHotspotStore } from "@/lib/hotspot/store";
-import type { AccountSummary, HotspotSession, ViewId } from "@/lib/hotspot/types";
+import type { HotspotSession, ViewId } from "@/lib/hotspot/types";
 import { ThemeToggle } from "./theme-toggle";
 import { UserProfileDialog } from "./parts/user-profile-dialog";
 import { ActivityBell, LiveClock, SearchPalette } from "./parts/topbar-widgets";
 
-import { ACCOUNTS_QUERY_KEY } from "./views/accounts-view";
 import AccountsView from "./views/accounts-view";
 import BillingRequestsView from "./views/billing-requests-view";
 import DashboardView from "./views/dashboard-view";
@@ -214,41 +210,20 @@ function UserCard() {
   );
 }
 
-/** Bascule Console plateforme ↔ Console client — visible uniquement de l'admin
- * plateforme (propriétaire du SaaS). La console plateforme = cockpit
- * d'opérateur ; « Console client » ouvre une SESSION SUPPORT dans la console
- * de n'importe quel compte client de la plateforme (assistance, configuration,
- * diagnostic) — le retour se fait en un clic depuis la session ouverte. */
+/** ModeSwitch — affiche uniquement le bouton « retour à la console plateforme »
+ * quand l'admin plateforme est en session support (impersonation d'un compte
+ * client). La bascule vers une console client se fait depuis la vue « Comptes
+ * SaaS » (accounts-view) qui dispose d'un bouton « Ouvrir la console » par
+ * compte — le sélecteur de la sidebar était redondant et a été retiré (H). */
 function ModeSwitch() {
-  const { t, tf } = useI18n();
+  const { t } = useI18n();
   const queryClient = useQueryClient();
   const user = useHotspotStore((s) => s.user);
   const impersonating = useHotspotStore((s) => !!s.ownToken);
-  const impersonate = useHotspotStore((s) => s.impersonate);
   const exitImpersonation = useHotspotStore((s) => s.exitImpersonation);
-  const [pickerOpen, setPickerOpen] = useState(false);
   const isPlatformAdmin = user?.role === "admin" || user?.role === "platform_admin";
 
-  const { data: accounts, isLoading: accountsLoading } = useQuery({
-    queryKey: ACCOUNTS_QUERY_KEY,
-    queryFn: fetchAccounts,
-    enabled: isPlatformAdmin && !impersonating && pickerOpen,
-    staleTime: 30_000,
-  });
-
-  if (!isPlatformAdmin) return null;
-
-  function openConsole(account: AccountSummary) {
-    impersonateAccount(account.id)
-      .then((res) => {
-        impersonate(res.token, res.user);
-        queryClient.clear();
-        toast.success(tf("shell.impersonateToast", { name: account.name }));
-      })
-      .catch((err: unknown) => {
-        toast.error(err instanceof Error ? err.message : t("shell.impersonateError"));
-      });
-  }
+  if (!isPlatformAdmin || !impersonating) return null;
 
   function backToPlatform() {
     exitImpersonation();
@@ -256,76 +231,18 @@ function ModeSwitch() {
     toast.success(t("shell.exitImpersonationToast"));
   }
 
-  // Session support en cours → retour à la console plateforme.
-  if (impersonating) {
-    return (
-      <div className="px-3 pb-3">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="h-10 w-full justify-start gap-2.5 border-sidebar-border bg-card/50 text-left font-medium"
-          onClick={backToPlatform}
-        >
-          <ShieldCheck className="size-4" />
-          {t("shell.exitImpersonation")}
-        </Button>
-      </div>
-    );
-  }
-
-  // Console plateforme → sélecteur de console client (tous les comptes).
   return (
     <div className="px-3 pb-3">
-      <DropdownMenu open={pickerOpen} onOpenChange={setPickerOpen}>
-        <DropdownMenuTrigger asChild>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-10 w-full justify-start gap-2.5 border-primary/30 bg-primary/10 text-left font-medium text-primary hover:bg-primary/15 hover:text-primary"
-          >
-            <ArrowLeftRight className="size-4" />
-            {t("shell.goClient")}
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent side="right" align="start" className="w-64">
-          <DropdownMenuLabel>{t("shell.pickAccountTitle")}</DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          {accountsLoading ? (
-            <DropdownMenuItem disabled>
-              <Loader2 className="size-4 animate-spin" />
-              …
-            </DropdownMenuItem>
-          ) : !accounts || accounts.length === 0 ? (
-            <DropdownMenuItem disabled className="text-muted-foreground">
-              {t("shell.pickAccountEmpty")}
-            </DropdownMenuItem>
-          ) : (
-            accounts.map((account) => (
-              <DropdownMenuItem
-                key={account.id}
-                className="min-h-10"
-                disabled={account.status === "disabled"}
-                onClick={() => {
-                  setPickerOpen(false);
-                  openConsole(account);
-                }}
-              >
-                <Building2 className="size-4 shrink-0" />
-                <span className="min-w-0 flex-1 truncate">{account.name}</span>
-                {account.status === "disabled" && (
-                  <Badge variant="outline" className="shrink-0 border-border bg-muted px-1.5 py-0 text-[10px] text-muted-foreground">
-                    {t("badge.disabled")}
-                  </Badge>
-                )}
-              </DropdownMenuItem>
-            ))
-          )}
-          <DropdownMenuSeparator />
-          <p className="px-2 pb-1.5 text-xs leading-snug text-muted-foreground">{t("shell.pickAccountHint")}</p>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="h-10 w-full justify-start gap-2.5 border-sidebar-border bg-card/50 text-left font-medium"
+        onClick={backToPlatform}
+      >
+        <ShieldCheck className="size-4" />
+        {t("shell.exitImpersonation")}
+      </Button>
     </div>
   );
 }

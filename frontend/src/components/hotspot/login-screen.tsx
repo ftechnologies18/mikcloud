@@ -149,7 +149,7 @@ function BrandPanel() {
   );
 }
 
-export default function LoginScreen() {
+export default function LoginScreen({ onBack }: { onBack?: () => void }) {
   const { t, tf } = useI18n();
   const setAuth = useHotspotStore((s) => s.setAuth);
 
@@ -258,6 +258,16 @@ export default function LoginScreen() {
 
       {/* Colonne formulaire */}
       <section className="bg-glow relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-4 py-10 sm:px-8">
+        {/* Lien retour vers la landing page (si appelé depuis la landing) */}
+        {onBack && (
+          <button
+            onClick={onBack}
+            className="absolute left-4 top-4 z-20 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground sm:left-8 sm:top-8"
+          >
+            <span aria-hidden>←</span>
+            {t("common.back", "Retour")}
+          </button>
+        )}
         {/* Orbe discret côté formulaire */}
         <motion.div
           aria-hidden

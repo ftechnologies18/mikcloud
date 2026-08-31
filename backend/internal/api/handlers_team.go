@@ -38,14 +38,22 @@ func toTeamMember(u *model.AdminUser) teamMember {
 }
 
 // handleTeamList — GET /api/team : membres du compte du token (owner).
+// Les administrateurs plateforme (opérateurs SaaS sans compte client) ne
+// sont listés QUE lorsque l'appelant est lui-même un admin plateforme —
+// typiquement en session support (impersonation) pour voir l'équipe du
+// compte consulté. Un client normal ne voit JAMAIS les opérateurs MikCloud
+// dans son équipe (L — sinon « Administrateur MikCloud » s'affichait chez
+// tous les clients).
 func (a *API) handleTeamList(w http.ResponseWriter, r *http.Request) {
 	acc := accountScope(r)
+	callerIsPlatform := isPlatformAdmin(r)
 	a.store.Lock()
 	defer a.store.Unlock()
 	out := []teamMember{}
 	for i := range a.store.Data().Users {
 		u := &a.store.Data().Users[i]
-		if u.AccountID == acc || (u.Role == model.RolePlatformAdmin || u.Role == "admin") {
+		isPlatform := u.Role == model.RolePlatformAdmin || u.Role == "admin"
+		if u.AccountID == acc || (isPlatform && callerIsPlatform) {
 			out = append(out, toTeamMember(u))
 		}
 	}

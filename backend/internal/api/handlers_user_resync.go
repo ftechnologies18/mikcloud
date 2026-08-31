@@ -5,7 +5,7 @@
 // échouée…), il est marqué MissingOnRouter (badge « absent du routeur » dans
 // la console). RIEN n'est supprimé automatiquement — l'opérateur tranche :
 //
-//	POST /api/users/{id}/resync  {action: "recreate" | "forget"}
+//      POST /api/users/{id}/resync  {action: "recreate" | "forget"}
 //
 //   - recreate : renvoie l'utilisateur au routeur (user_add en file pour un
 //     routeur agent, ajout direct pour un routeur réel) avec ses identifiants,
@@ -22,6 +22,7 @@ import (
 
 	"mikcloud/hotspot-api/internal/agent"
 	"mikcloud/hotspot-api/internal/model"
+	"mikcloud/hotspot-api/internal/routeros"
 )
 
 // handleUserResync — POST /api/users/{id}/resync {action: "recreate"|"forget"}.
@@ -133,13 +134,25 @@ func (a *API) handleUserResync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Routeur réel (API directe) : ajout immédiat.
-	routerCopy := *router
+	if routerMode == "simulated" {
+		// Routeur simulé : le « routeur » EST le store — l'utilisateur y figure
+		// déjà (il n'a jamais pu en sortir) ; on lève simplement le badge.
+		// NB : gw.AddUser créerait un DOUBLON (il append au store).
+		user.MissingOnRouter = false
+		a.logActivityBy(r, db, acc, "user", "Utilisateur "+username+" resynchronisé (routeur simulé)")
+		a.store.Save()
+		a.store.Unlock()
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		return
+	}
+
+	userCopy := *user
+	userCopy.Username = agent.SanitizeName(userCopy.Username)
 	a.store.Unlock()
-	gw := a.gatewayFor(routerCopy)
-	uCopy := *user
-	uCopy.Username = agent.SanitizeName(uCopy.Username)
-	if err := gw.AddUser(&uCopy); err != nil {
+	// Routeur réel (API directe) : pousser la commande au routeur SANS le
+	// miroir local (l'utilisateur est déjà dans le store — AddUser l'y
+	// dupliquerait). Le badge sera confirmé par le prochain read_state.
+	if err := routeros.PushUser(router.Host, router.Port, router.Username, router.Password, &userCopy); err != nil {
 		writeErr(w, http.StatusBadRequest, "Recréation impossible : "+err.Error())
 		return
 	}

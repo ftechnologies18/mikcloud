@@ -45,6 +45,25 @@ type Gateway interface {
 	Close() error
 }
 
+// PushUser — pousse /ip/hotspot/user/add au routeur SANS toucher au miroir
+// local (l'utilisateur est déjà dans le store — resynchronisation « recréer »).
+// Utilisé par handleUserResync sur routeur réel : AddUser y dupliquerait.
+func PushUser(host string, port int, routerUser, routerPassword string, u *model.HotspotUser) error {
+	c, err := Dial(host, port, routerUser, routerPassword, 10*time.Second)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	words := []string{"/ip/hotspot/user/add", "=name=" + u.Username, "=password=" + u.Password, "=profile=" + u.ProfileName}
+	if u.DataQuotaMb > 0 {
+		words = append(words, fmt.Sprintf("=limit-bytes-total=%d", u.DataQuotaMb*1048576))
+	}
+	if u.Comment != "" {
+		words = append(words, "=comment="+u.Comment)
+	}
+	return c.Exec(words...)
+}
+
 // TestRouter teste une connexion RouterOS (TCP + login + version), sans gateway persistant.
 func TestRouter(host string, port int, username, password string) (TestResult, error) {
 	start := time.Now()

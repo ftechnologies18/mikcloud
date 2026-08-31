@@ -13,6 +13,7 @@ import type {
   AccountStatus,
   AccountSummary,
   AuthResponse,
+  AuthUser,
   PlatformActivityRow,
   PlatformOverview,
   PlatformTeamMember,
@@ -210,4 +211,15 @@ export async function updateAccountSubscription(
 /** deleteClientAccount — supprime un compte client ET toutes ses données (cascade). */
 export async function deleteClientAccount(id: string): Promise<{ ok: boolean }> {
   return api<{ ok: boolean }>(`/api/admin/accounts/${id}`, { method: "DELETE" });
+}
+
+/** impersonateAccount — ouvre une session support dans la console d'un compte
+ * client (bascule à la demande). Renvoie un token scoping ce compte + l'utilisateur
+ * enrichi du compte consulté. Erreurs : 404 not_found, 409 account_disabled. */
+export async function impersonateAccount(
+  id: string,
+): Promise<{ token: string; user: AuthUser }> {
+  return api<{ token: string; user: AuthUser }>(`/api/admin/accounts/${id}/impersonate`, {
+    method: "POST",
+  });
 }

@@ -5,11 +5,28 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Building2, Check, Copy, KeyRound, Loader2, Power, ShieldOff, UserPlus } from "lucide-react";
+import {
+  Building2,
+  Check,
+  Copy,
+  KeyRound,
+  Loader2,
+  LogIn,
+  Power,
+  ShieldOff,
+  UserPlus,
+} from "lucide-react";
 import { toast } from "sonner";
 
-import { ApiError, createClientAccount, fetchAccounts, setAccountStatus } from "@/lib/hotspot/api";
+import {
+  ApiError,
+  createClientAccount,
+  fetchAccounts,
+  impersonateAccount,
+  setAccountStatus,
+} from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
+import { useHotspotStore } from "@/lib/hotspot/store";
 import type { AccountStatus, AccountSummary } from "@/lib/hotspot/types";
 import { formatCurrency, formatDate } from "@/lib/hotspot/format";
 import { EmptyState } from "@/components/hotspot/empty-state";
@@ -44,9 +61,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 export const ACCOUNTS_QUERY_KEY = ["/api/admin/accounts"] as const;
-
-/** Compte principal de la plateforme — intouchable (ni désactivation, ni suppression). */
-const MAIN_ACCOUNT_ID = "acc-main";
 
 function randomPassword(): string {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
@@ -85,6 +99,7 @@ export default function AccountsView() {
   const { t, tf, lang } = useI18n();
   const currency = useCurrency();
   const queryClient = useQueryClient();
+  const impersonate = useHotspotStore((s) => s.impersonate);
   const [confirmTarget, setConfirmTarget] = useState<AccountSummary | null>(null);
   const [detailTarget, setDetailTarget] = useState<AccountSummary | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -154,6 +169,18 @@ export default function AccountsView() {
     statusMutation.mutate({ account, status });
   };
 
+  const openConsole = (account: AccountSummary) => {
+    impersonateAccount(account.id)
+      .then((res) => {
+        impersonate(res.token, res.user);
+        queryClient.clear();
+        toast.success(tf("shell.impersonateToast", { name: account.name }));
+      })
+      .catch((err: unknown) => {
+        toast.error(err instanceof Error ? err.message : t("shell.impersonateError"));
+      });
+  };
+
   return (
     <div className="space-y-4 sm:space-y-6">
       <PageHeader
@@ -220,29 +247,18 @@ export default function AccountsView() {
                 </TableHeader>
                 <TableBody>
                   {accounts.map((account) => {
-                    const isMain = account.id === MAIN_ACCOUNT_ID;
                     const disabling = account.status === "active";
                     return (
                       <TableRow key={account.id} className={account.status === "disabled" ? "opacity-60" : undefined}>
                         <TableCell className="pl-4 sm:pl-6">
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              className="font-medium underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring rounded"
-                              onClick={() => setDetailTarget(account)}
-                              aria-label={t("accounts.openDetail")}
-                            >
-                              {account.name}
-                            </button>
-                            {isMain && (
-                              <Badge
-                                variant="outline"
-                                className="border-border bg-muted px-1.5 py-0 text-[10px] font-medium text-muted-foreground"
-                              >
-                                {t("accounts.platform")}
-                              </Badge>
-                            )}
-                          </div>
+                          <button
+                            type="button"
+                            className="rounded font-medium underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
+                            onClick={() => setDetailTarget(account)}
+                            aria-label={t("accounts.openDetail")}
+                          >
+                            {account.name}
+                          </button>
                         </TableCell>
                         <TableCell className="text-muted-foreground">{account.owner || "—"}</TableCell>
                         <TableCell>
@@ -262,11 +278,18 @@ export default function AccountsView() {
                           </span>
                         </TableCell>
                         <TableCell className="pr-4 text-right sm:pr-6">
-                          {isMain ? (
-                            <span className="text-xs text-muted-foreground" title={t("accounts.mainAccount")}>
-                              —
-                            </span>
-                          ) : (
+                          <div className="flex items-center justify-end gap-1.5">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-9"
+                              onClick={() => openConsole(account)}
+                              disabled={account.status !== "active"}
+                              aria-label={tf("shell.impersonatingAs", { name: account.name })}
+                            >
+                              <LogIn className="size-4" />
+                              {t("accounts.openConsole")}
+                            </Button>
                             <Button
                               variant={disabling ? "outline" : "default"}
                               size="sm"
@@ -277,7 +300,7 @@ export default function AccountsView() {
                               <Power className="size-4" />
                               {disabling ? t("accounts.disable") : t("accounts.enable")}
                             </Button>
-                          )}
+                          </div>
                         </TableCell>
                       </TableRow>
                     );

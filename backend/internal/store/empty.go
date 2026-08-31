@@ -8,14 +8,17 @@ import (
 	"mikcloud/hotspot-api/internal/model"
 )
 
-// BuildEmptyState construit l'état initial de MISE EN SERVICE : compte
-// principal + administrateur + réglages FCFA + 3 gabarits de tickets prêts à
-// l'emploi — et AUCUNE donnée de démonstration (zéro routeur, zéro profil,
-// zéro utilisateur hotspot, zéro lot, zéro revendeur, zéro vente).
+// BuildEmptyState construit l'état initial de MISE EN SERVICE : administrateur
+// plateforme + AUCUNE donnée — zéro compte client, zéro routeur, zéro profil,
+// zéro utilisateur hotspot, zéro lot, zéro revendeur, zéro vente.
+//
+// L'admin plateforme est un OPÉRATEUR du SaaS : il n'a ni compte client ni
+// abonnement propre (les comptes se créent depuis la console plateforme ou
+// l'inscription sur invitation ; leurs consoles s'ouvrent par session support).
 //
 // Utilisé au démarrage d'une base PostgreSQL vide (production Render/Neon) :
-// le système démarre vide, prêt pour un vrai routeur. Les données de démo ne
-// reviennent JAMAIS d'elles-mêmes — le seed démo (BuildSeed) est désormais
+// le système démarre vide, prêt pour les premiers clients. Les données de démo
+// ne reviennent JAMAIS d'elles-mêmes — le seed démo (BuildSeed) est désormais
 // réservé au mode développement JSON local.
 //
 // Le mot de passe initial admin/admin123 est remplacé au boot par les
@@ -24,34 +27,20 @@ func BuildEmptyState() *model.DB {
 	now := time.Now().UTC()
 	nowISO := now.Format(time.RFC3339)
 	return &model.DB{
-		Accounts: []model.Account{{
-			ID:        model.AccountMainID,
-			Name:      "MikCloud",
-			Status:    "active",
-			CreatedAt: nowISO,
-		}},
-		SettingsByAccount: map[string]model.Settings{
-			model.AccountMainID: {
-				Tenant: model.Tenant{
-					Name: "MikCloud", Currency: "FCFA", Timezone: "Africa/Abidjan",
-					ExpiryPolicyMode: "keep", ExpiryPolicyAfterDays: 30,
-				},
-				Plan: model.Plan{Name: "Bêta", MaxRouters: "Illimité", MaxUsers: "Illimité"},
-			},
-		},
-		LastTick: now,
+		Accounts:          []model.Account{},
+		SettingsByAccount: map[string]model.Settings{},
+		LastTick:          now,
 		Users: []model.AdminUser{{
 			ID:           "admin-1",
-			AccountID:    model.AccountMainID,
+			AccountID:    "", // opérateur plateforme sans compte client
 			Name:         "Administrateur",
 			Username:     "admin",
 			Role:         "admin",
 			PasswordHash: auth.HashPassword("admin123", ""),
 			CreatedAt:    nowISO,
 		}},
-		// Gabarits de tickets prêts à l'emploi — le reste est VIDE (slices
-		// non-nil pour que l'API serve [] et que la synchro différentielle PG
-		// n'insère rien).
+		// Tout le reste est VIDE (slices non-nil pour que l'API serve [] et que
+		// la synchro différentielle PG n'insère rien).
 		Routers:        []model.Router{},
 		Profiles:       []model.Profile{},
 		HotspotUsers:   []model.HotspotUser{},
@@ -61,7 +50,7 @@ func BuildEmptyState() *model.DB {
 		Sessions:       []model.Session{},
 		Activity:       []model.Activity{},
 		Sales:          []model.Sale{},
-		Templates:      SeedTemplatesFor(model.AccountMainID),
+		Templates:      []model.VoucherTemplate{},
 		UserLogs:       []model.UserLog{},
 		IPBindings:     []model.IPBinding{},
 		SchedulerTasks: []model.SchedulerTask{},

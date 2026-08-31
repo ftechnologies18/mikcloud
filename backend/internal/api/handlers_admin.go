@@ -299,7 +299,7 @@ func (a *API) handleAdminAccountCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	// Même contrat que l'auto-inscription : les 3 gabarits de vouchers par défaut.
 	db.Templates = append(db.Templates, store.SeedTemplatesFor(acc.ID)...)
-	a.logActivityBy(r, db, model.AccountMainID, "system", "Compte client créé par la plateforme : "+name+" («"+username+"»)")
+	a.logActivityBy(r, db, "", "system", "Compte client créé par la plateforme : "+name+" («"+username+"»)")
 	a.store.Save()
 	a.store.Unlock()
 
@@ -455,7 +455,7 @@ func (a *API) handlePlatformTeamCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	u := model.AdminUser{
 		ID:           model.NewID("usr-"),
-		AccountID:    model.AccountMainID,
+		AccountID:    "", // l'admin plateforme est un opérateur SANS compte client
 		Name:         name,
 		Username:     username,
 		Role:         model.RolePlatformAdmin,
@@ -463,7 +463,7 @@ func (a *API) handlePlatformTeamCreate(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:    model.NowISO(),
 	}
 	db.Users = append(db.Users, u)
-	a.logActivityBy(r, db, model.AccountMainID, "team", "Administrateur plateforme ajouté : "+name+" («"+username+"»)")
+	a.logActivityBy(r, db, "", "team", "Administrateur plateforme ajouté : "+name+" («"+username+"»)")
 	a.store.Save()
 	a.store.Unlock()
 
@@ -515,7 +515,7 @@ func (a *API) handlePlatformTeamDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	db.Users = append(db.Users[:idx], db.Users[idx+1:]...)
-	a.logActivityBy(r, db, model.AccountMainID, "team", "Administrateur plateforme retiré : "+name)
+	a.logActivityBy(r, db, "", "team", "Administrateur plateforme retiré : "+name)
 	a.store.Save()
 	a.store.Unlock()
 

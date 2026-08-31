@@ -64,9 +64,12 @@ func New(dir string) (*Store, error) {
 			log.Println("store: base PostgreSQL vide — état de mise en service (aucune donnée démo)")
 			s.db = BuildEmptyState()
 		}
-		// Migration mono-tenant → multi-tenant (avant l'override admin), puis
-		// persistance immédiate si l'état a changé.
+		// Migration mono-tenant → multi-tenant (avant l'override admin),
+		// détachement plateforme, puis persistance immédiate si l'état a changé.
 		mtChanged := migrateMultiTenant(s.db)
+		if migrateDetachPlatform(s.db) {
+			mtChanged = true
+		}
 		if migrateRemoveOperator(s.db) {
 			mtChanged = true
 		}
@@ -103,6 +106,9 @@ func New(dir string) (*Store, error) {
 			// Un ancien db.json mono-tenant (champs legacy tenant/settings, sans
 			// accounts) est migré ici vers le modèle multi-comptes puis re-sauvegardé.
 			mtChanged := migrateMultiTenant(s.db)
+			if migrateDetachPlatform(s.db) {
+				mtChanged = true
+			}
 			if migrateRemoveOperator(s.db) {
 				mtChanged = true
 			}
@@ -135,8 +141,9 @@ func New(dir string) (*Store, error) {
 
 // migrateMultiTenant — fait passer un état mono-tenant (ancien db.json ou base
 // PostgreSQL d'avant la migration) au modèle multi-comptes :
-//   - crée le compte principal {AccountMainID} s'il n'existe aucun compte ;
-//   - backfill AccountID == "" → AccountMainID sur toutes les entités ;
+//   - crée le compte principal {AccountMainID} s'il existe des utilisateurs
+//     clients à y rattacher (l'admin plateforme n'a PAS de compte propre) ;
+//   - backfill AccountID == "" → AccountMainID sur les entités métier ;
 //   - initialise SettingsByAccount (réglages legacy migrés, sinon défauts FCFA) ;
 //   - vide les champs legacy db.Tenant / db.Settings.
 //
@@ -147,23 +154,35 @@ func migrateMultiTenant(db *model.DB) bool {
 	changed := false
 
 	if len(db.Accounts) == 0 {
-		name := db.Tenant.Name
-		if name == "" {
-			// Mode PostgreSQL : loadSettings remplit directement SettingsByAccount.
-			if s, ok := db.SettingsByAccount[model.AccountMainID]; ok && s.Tenant.Name != "" {
-				name = s.Tenant.Name
+		// Ne recrée le compte principal QUE si des utilisateurs clients
+		// (ou des réglages legacy) ont besoin d'un foyer — l'admin
+		// plateforme étant un opérateur sans compte client.
+		hasClientUser := false
+		for i := range db.Users {
+			if !isPlatformRole(db.Users[i].Role) {
+				hasClientUser = true
+				break
 			}
 		}
-		if name == "" {
-			name = "MikCloud"
+		if hasClientUser || db.Tenant.Name != "" {
+			name := db.Tenant.Name
+			if name == "" {
+				// Mode PostgreSQL : loadSettings remplit directement SettingsByAccount.
+				if s, ok := db.SettingsByAccount[model.AccountMainID]; ok && s.Tenant.Name != "" {
+					name = s.Tenant.Name
+				}
+			}
+			if name == "" {
+				name = "MikCloud"
+			}
+			db.Accounts = append(db.Accounts, model.Account{
+				ID:        model.AccountMainID,
+				Name:      name,
+				Status:    "active",
+				CreatedAt: model.NowISO(),
+			})
+			changed = true
 		}
-		db.Accounts = append(db.Accounts, model.Account{
-			ID:        model.AccountMainID,
-			Name:      name,
-			Status:    "active",
-			CreatedAt: model.NowISO(),
-		})
-		changed = true
 	}
 
 	backfill := func(n int, set func(i int)) {
@@ -172,7 +191,9 @@ func migrateMultiTenant(db *model.DB) bool {
 		}
 	}
 	backfill(len(db.Users), func(i int) {
-		if db.Users[i].AccountID == "" {
+		// L'admin plateforme n'est PAS rattaché au compte principal :
+		// c'est un opérateur du SaaS, sans compte client propre.
+		if db.Users[i].AccountID == "" && !isPlatformRole(db.Users[i].Role) {
 			db.Users[i].AccountID = model.AccountMainID
 			changed = true
 		}
@@ -219,12 +240,9 @@ func migrateMultiTenant(db *model.DB) bool {
 			changed = true
 		}
 	})
-	backfill(len(db.Activity), func(i int) {
-		if db.Activity[i].AccountID == "" {
-			db.Activity[i].AccountID = model.AccountMainID
-			changed = true
-		}
-	})
+	// NB : les lignes de JOURNAL (activity) ne sont PAS backfillées — les
+	// événements plateforme (création/suppression de compte, équipe,
+	// sessions support) sont transverses (AccountID vide).
 	backfill(len(db.Sales), func(i int) {
 		if db.Sales[i].AccountID == "" {
 			db.Sales[i].AccountID = model.AccountMainID
@@ -303,15 +321,24 @@ func migrateMultiTenant(db *model.DB) bool {
 		db.SettingsByAccount = map[string]model.Settings{}
 	}
 	if _, ok := db.SettingsByAccount[model.AccountMainID]; !ok {
-		if db.Settings != (model.Settings{}) {
-			db.SettingsByAccount[model.AccountMainID] = db.Settings // réglages legacy migrés
-		} else {
-			db.SettingsByAccount[model.AccountMainID] = model.Settings{
-				Tenant: model.Tenant{Name: "MikCloud", Currency: "XOF", Timezone: "Africa/Abidjan"},
-				Plan:   model.Plan{Name: "PRO", MaxRouters: "Illimité", MaxUsers: "Illimité"},
+		hasMainAccount := false
+		for i := range db.Accounts {
+			if db.Accounts[i].ID == model.AccountMainID {
+				hasMainAccount = true
+				break
 			}
 		}
-		changed = true
+		if hasMainAccount {
+			if db.Settings != (model.Settings{}) {
+				db.SettingsByAccount[model.AccountMainID] = db.Settings // réglages legacy migrés
+			} else {
+				db.SettingsByAccount[model.AccountMainID] = model.Settings{
+					Tenant: model.Tenant{Name: "MikCloud", Currency: "XOF", Timezone: "Africa/Abidjan"},
+					Plan:   model.Plan{Name: "PRO", MaxRouters: "Illimité", MaxUsers: "Illimité"},
+				}
+			}
+			changed = true
+		}
 	}
 
 	// P0 (audit Mikhmon) — défauts des politiques d'expiration (F5) sur les
@@ -329,6 +356,59 @@ func migrateMultiTenant(db *model.DB) bool {
 		db.Tenant = model.Tenant{}
 		db.Settings = model.Settings{}
 		changed = true
+	}
+	return changed
+}
+
+// isPlatformRole — true pour les rôles d'opérateur plateforme (sans compte
+// client propre) : « platform_admin » et « admin » historique.
+func isPlatformRole(role string) bool {
+	return role == model.RolePlatformAdmin || role == "admin"
+}
+
+// migrateDetachPlatform — l'admin plateforme est le PROPRIÉTAIRE du SaaS, pas
+// un client : il n'a plus de compte ni d'abonnement propres.
+//   - détache les administrateurs plateforme de tout compte client ;
+//   - supprime le compte principal {AccountMainID} (et ses réglages, gabarits
+//     et notifications) dès qu'il ne porte plus AUCUN utilisateur client.
+//
+// Idempotent, appliqué à chaque démarrage et reload (auto-réparant).
+func migrateDetachPlatform(db *model.DB) bool {
+	changed := false
+	for i := range db.Users {
+		if isPlatformRole(db.Users[i].Role) && db.Users[i].AccountID != "" {
+			db.Users[i].AccountID = ""
+			changed = true
+		}
+	}
+	for i := range db.Accounts {
+		if db.Accounts[i].ID != model.AccountMainID {
+			continue
+		}
+		hasClientUser := false
+		for j := range db.Users {
+			if db.Users[j].AccountID == model.AccountMainID && !isPlatformRole(db.Users[j].Role) {
+				hasClientUser = true
+				break
+			}
+		}
+		if hasClientUser {
+			break
+		}
+		// Suppression du compte principal : compte + réglages + gabarits
+		// + notifications. Le journal (activity) est conservé — audit.
+		db.Accounts = append(db.Accounts[:i], db.Accounts[i+1:]...)
+		delete(db.SettingsByAccount, model.AccountMainID)
+		delete(db.NotifSettings, model.AccountMainID)
+		kept := db.Templates[:0]
+		for _, t := range db.Templates {
+			if t.AccountID != model.AccountMainID {
+				kept = append(kept, t)
+			}
+		}
+		db.Templates = kept
+		changed = true
+		break
 	}
 	return changed
 }
@@ -389,14 +469,15 @@ func applyAdminOverride(db *model.DB) bool {
 	envHash := auth.HashPassword(password, "")
 
 	// 2. Crée ou met à jour le compte administrateur déclaré par l'environnement.
-	// L'admin plateforme est toujours rattaché au compte principal.
+	// L'admin plateforme est un OPÉRATEUR du SaaS : sans compte client propre
+	// (les consoles clients s'ouvrent par session support).
 	salt := auth.NewSalt()
 	for i := range db.Users {
 		if db.Users[i].Username == username {
 			u := &db.Users[i]
 			u.Name = name
 			u.Role = "admin"
-			u.AccountID = model.AccountMainID
+			u.AccountID = ""
 			// Mot de passe conservé si l'utilisateur l'a changé lui-même
 			// ET que la variable d'environnement n'a pas changé d'intention.
 			userPreserved := u.PasswordSetByUser && u.EnvPasswordHash != "" &&
@@ -420,7 +501,7 @@ func applyAdminOverride(db *model.DB) bool {
 	}
 	db.Users = append(db.Users, model.AdminUser{
 		ID:              model.NewID("adm-"),
-		AccountID:       model.AccountMainID,
+		AccountID:       "", // opérateur plateforme sans compte client
 		Name:            name,
 		Username:        username,
 		Role:            "admin",
@@ -635,6 +716,9 @@ func (s *Store) Reload() (ReloadStats, error) {
 
 	// Garanties identiques à un démarrage propre, persistées si besoin.
 	changed := migrateMultiTenant(s.db)
+	if migrateDetachPlatform(s.db) {
+		changed = true
+	}
 	if applyAdminOverride(s.db) {
 		changed = true
 	}

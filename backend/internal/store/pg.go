@@ -435,7 +435,9 @@ func (p *PG) ensureSchema() error {
 		// compte principal : id = account_id, une ligne par compte.
 		`ALTER TABLE settings ALTER COLUMN id TYPE TEXT`,
 		// Backfill : toutes les données de l'ère mono-tenant vont au compte principal.
-		`UPDATE admin_users   SET account_id = 'acc-main' WHERE account_id = ''`,
+		// Les administrateurs plateforme (admin/platform_admin) restent SANS
+		// compte client — opérateurs du SaaS, pas clients.
+		`UPDATE admin_users   SET account_id = 'acc-main' WHERE account_id = '' AND role NOT IN ('platform_admin','admin')`,
 		`UPDATE routers       SET account_id = 'acc-main' WHERE account_id = ''`,
 		`UPDATE profiles      SET account_id = 'acc-main' WHERE account_id = ''`,
 		`UPDATE hotspot_users SET account_id = 'acc-main' WHERE account_id = ''`,

@@ -82,9 +82,9 @@ export interface AccountSummary {
 
 /** Abonnement SaaS d'un compte (état réel, calculé côté serveur). */
 export interface SubscriptionInfo {
-  /** "" (bêta) | essentiel | illimite | platform */
+  /** "" (bêta) | essentiel | illimite */
   planId: string;
-  /** Libellé court (Bêta, Essentiel, Illimité, Plateforme). */
+  /** Libellé court (Bêta, Essentiel, Illimité). */
   planName: string;
   /** Statut effectif : none | active | expired. */
   status: "none" | "active" | "expired";
@@ -107,8 +107,6 @@ export interface AccountDetail {
   name: string;
   status: AccountStatus;
   createdAt: string;
-  /** true pour le compte principal de la plateforme (intouchable). */
-  main: boolean;
   owner: {
     id: string;
     name: string;
@@ -148,7 +146,7 @@ export interface AccountDetail {
 
 /** Corps de PUT /api/admin/accounts/{id}/subscription (attribution plateforme). */
 export interface SubscriptionUpdatePayload {
-  planId: "essentiel" | "illimite" | "beta" | "platform";
+  planId: "essentiel" | "illimite" | "beta";
   /** Durée en mois (défaut : 1 essentiel, 12 illimité). */
   months?: number;
   /** Routeurs couverts (Essentiel ; défaut = quota actuel sinon routeurs enregistrés). */

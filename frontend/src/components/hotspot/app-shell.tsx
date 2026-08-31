@@ -6,8 +6,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowLeftRight,
+  Building2,
   ChevronsUpDown,
   Languages,
+  Loader2,
   LogOut,
   Menu,
   RefreshCw,
@@ -30,17 +32,18 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
-import { api } from "@/lib/hotspot/api";
+import { api, fetchAccounts, impersonateAccount } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { NAV_PLATFORM_SECTIONS, NAV_SECTIONS } from "@/lib/hotspot/nav";
 import { roleLabel, userInitials } from "@/lib/hotspot/format";
 import { canView, isPlatformView } from "@/lib/hotspot/roles";
 import { useHotspotStore } from "@/lib/hotspot/store";
-import type { HotspotSession, ViewId } from "@/lib/hotspot/types";
+import type { AccountSummary, HotspotSession, ViewId } from "@/lib/hotspot/types";
 import { ThemeToggle } from "./theme-toggle";
 import { UserProfileDialog } from "./parts/user-profile-dialog";
 import { ActivityBell, LiveClock, SearchPalette } from "./parts/topbar-widgets";
 
+import { ACCOUNTS_QUERY_KEY } from "./views/accounts-view";
 import AccountsView from "./views/accounts-view";
 import DashboardView from "./views/dashboard-view";
 import LogsView from "./views/logs-view";
@@ -207,32 +210,160 @@ function UserCard() {
   );
 }
 
-/** Bascule Plateforme ↔ Ma console — visible uniquement de l'admin plateforme
- * (propriétaire du SaaS). La console plateforme = cockpit d'opérateur ;
- * « Ma console » = la console client ordinaire (son propre compte acc-main). */
+/** Bascule Console plateforme ↔ Console client — visible uniquement de l'admin
+ * plateforme (propriétaire du SaaS). La console plateforme = cockpit
+ * d'opérateur ; « Console client » ouvre une SESSION SUPPORT dans la console
+ * de n'importe quel compte client de la plateforme (assistance, configuration,
+ * diagnostic) — le retour se fait en un clic depuis la session ouverte. */
 function ModeSwitch() {
-  const { t } = useI18n();
+  const { t, tf } = useI18n();
+  const queryClient = useQueryClient();
   const user = useHotspotStore((s) => s.user);
-  const shellMode = useHotspotStore((s) => s.shellMode);
-  const setShellMode = useHotspotStore((s) => s.setShellMode);
+  const impersonating = useHotspotStore((s) => !!s.ownToken);
+  const impersonate = useHotspotStore((s) => s.impersonate);
+  const exitImpersonation = useHotspotStore((s) => s.exitImpersonation);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const isPlatformAdmin = user?.role === "admin" || user?.role === "platform_admin";
+
+  const { data: accounts, isLoading: accountsLoading } = useQuery({
+    queryKey: ACCOUNTS_QUERY_KEY,
+    queryFn: fetchAccounts,
+    enabled: isPlatformAdmin && !impersonating && pickerOpen,
+    staleTime: 30_000,
+  });
+
   if (!isPlatformAdmin) return null;
-  const toPlatform = shellMode !== "platform";
+
+  function openConsole(account: AccountSummary) {
+    impersonateAccount(account.id)
+      .then((res) => {
+        impersonate(res.token, res.user);
+        queryClient.clear();
+        toast.success(tf("shell.impersonateToast", { name: account.name }));
+      })
+      .catch((err: unknown) => {
+        toast.error(err instanceof Error ? err.message : t("shell.impersonateError"));
+      });
+  }
+
+  function backToPlatform() {
+    exitImpersonation();
+    queryClient.clear();
+    toast.success(t("shell.exitImpersonationToast"));
+  }
+
+  // Session support en cours → retour à la console plateforme.
+  if (impersonating) {
+    return (
+      <div className="px-3 pb-3">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-10 w-full justify-start gap-2.5 border-sidebar-border bg-card/50 text-left font-medium"
+          onClick={backToPlatform}
+        >
+          <ShieldCheck className="size-4" />
+          {t("shell.exitImpersonation")}
+        </Button>
+      </div>
+    );
+  }
+
+  // Console plateforme → sélecteur de console client (tous les comptes).
   return (
     <div className="px-3 pb-3">
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className={cn(
-          "h-10 w-full justify-start gap-2.5 border-sidebar-border bg-card/50 text-left font-medium",
-          toPlatform && "border-primary/30 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
-        )}
-        onClick={() => setShellMode(toPlatform ? "platform" : "client")}
-      >
-        {toPlatform ? <ShieldCheck className="size-4" /> : <ArrowLeftRight className="size-4" />}
-        {toPlatform ? t("shell.goPlatform") : t("shell.goClient")}
-      </Button>
+      <DropdownMenu open={pickerOpen} onOpenChange={setPickerOpen}>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-10 w-full justify-start gap-2.5 border-primary/30 bg-primary/10 text-left font-medium text-primary hover:bg-primary/15 hover:text-primary"
+          >
+            <ArrowLeftRight className="size-4" />
+            {t("shell.goClient")}
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent side="right" align="start" className="w-64">
+          <DropdownMenuLabel>{t("shell.pickAccountTitle")}</DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          {accountsLoading ? (
+            <DropdownMenuItem disabled>
+              <Loader2 className="size-4 animate-spin" />
+              …
+            </DropdownMenuItem>
+          ) : !accounts || accounts.length === 0 ? (
+            <DropdownMenuItem disabled className="text-muted-foreground">
+              {t("shell.pickAccountEmpty")}
+            </DropdownMenuItem>
+          ) : (
+            accounts.map((account) => (
+              <DropdownMenuItem
+                key={account.id}
+                className="min-h-10"
+                disabled={account.status === "disabled"}
+                onClick={() => {
+                  setPickerOpen(false);
+                  openConsole(account);
+                }}
+              >
+                <Building2 className="size-4 shrink-0" />
+                <span className="min-w-0 flex-1 truncate">{account.name}</span>
+                {account.status === "disabled" && (
+                  <Badge variant="outline" className="shrink-0 border-border bg-muted px-1.5 py-0 text-[10px] text-muted-foreground">
+                    {t("badge.disabled")}
+                  </Badge>
+                )}
+              </DropdownMenuItem>
+            ))
+          )}
+          <DropdownMenuSeparator />
+          <p className="px-2 pb-1.5 text-xs leading-snug text-muted-foreground">{t("shell.pickAccountHint")}</p>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
+}
+
+/** Bannière de session support — affichée au-dessus du contenu tant que
+ * l'admin plateforme consulte la console d'un client (contexte explicite,
+ * retour en un clic). */
+function ImpersonationBanner() {
+  const { t, tf } = useI18n();
+  const queryClient = useQueryClient();
+  const user = useHotspotStore((s) => s.user);
+  const impersonating = useHotspotStore((s) => !!s.ownToken);
+  const exitImpersonation = useHotspotStore((s) => s.exitImpersonation);
+  if (!impersonating) return null;
+  return (
+    <div className="border-b border-primary/20 bg-primary/10 px-4 py-2 sm:px-6" role="status">
+      <div className="flex min-h-9 items-center justify-between gap-3">
+        <p className="flex min-w-0 items-center gap-2 text-sm font-medium text-primary">
+          <ShieldCheck className="size-4 shrink-0" aria-hidden />
+          <span className="truncate">{tf("shell.impersonatingAs", { name: user?.accountName ?? "—" })}</span>
+          <Badge
+            variant="outline"
+            className="hidden shrink-0 border-primary/30 px-1.5 py-0 text-[10px] font-semibold uppercase tracking-wide text-primary sm:inline"
+          >
+            {t("shell.impersonatingBadge")}
+          </Badge>
+        </p>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 shrink-0 border-primary/30 text-primary hover:bg-primary/10 hover:text-primary"
+          onClick={() => {
+            exitImpersonation();
+            queryClient.clear();
+            toast.success(t("shell.exitImpersonationToast"));
+          }}
+        >
+          <ShieldCheck className="size-3.5" />
+          <span className="hidden sm:inline">{t("shell.exitImpersonation")}</span>
+        </Button>
+      </div>
     </div>
   );
 }
@@ -489,6 +620,7 @@ export default function AppShell() {
       {/* Contenu principal */}
       <div className="flex min-w-0 flex-1 flex-col lg:pl-64">
         <Topbar />
+        <ImpersonationBanner />
         <main className="flex-1" aria-label={viewTitle(view, t)}>
           <div className="mx-auto max-w-7xl space-y-6 p-4 sm:p-6">
             <AnimatePresence mode="wait">

@@ -147,6 +147,9 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/admin/accounts/{id}", a.requireRole(3, a.handleAdminAccountDetail))
 	mux.HandleFunc("PUT /api/admin/accounts/{id}/subscription", a.requireRole(3, a.handleAdminAccountSubscription))
 	mux.HandleFunc("DELETE /api/admin/accounts/{id}", a.requireRole(3, a.handleAdminAccountDelete))
+	// Bascule support : ouvrir la console d'un compte client à la demande
+	// (token scoping le compte, rôle plateforme conservé, action tracée).
+	mux.HandleFunc("POST /api/admin/accounts/{id}/impersonate", a.requireRole(3, a.handleAdminImpersonate))
 	// Console plateforme (super-admin MikCloud, multi-comptes).
 	mux.HandleFunc("GET /api/admin/overview", a.requireRole(3, a.handleAdminOverview))
 	mux.HandleFunc("GET /api/admin/activity", a.requireRole(3, a.handleAdminActivity))
@@ -777,16 +780,40 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 	a.store.Lock()
 	db := a.store.Data()
 	id, name, username, role := claims.Sub, claims.Name, claims.Sub, claims.Role
+	// Le compte du TOKEN est prioritaire : il porte la session support
+	// (impersonation — le claim « acc » pointe sur le compte consulté,
+	// pas sur le compte d'origine de l'admin plateforme).
 	accID := accountScope(r)
+	isPlatform := role == model.RolePlatformAdmin || role == "admin"
 	for i := range db.Users {
 		u := &db.Users[i]
 		if u.ID == claims.Sub {
-			id, name, username, role, accID = u.ID, u.Name, u.Username, u.Role, u.AccountID
-			if accID == "" {
-				accID = model.AccountMainID // token émis avant la migration multi-tenant
+			id, name, username, role = u.ID, u.Name, u.Username, u.Role
+			isPlatform = role == model.RolePlatformAdmin || role == "admin"
+			if claims.Acc != "" {
+				accID = claims.Acc
+			} else {
+				accID = u.AccountID
 			}
 			break
 		}
+	}
+	// Token émis avant la migration multi-tenant : repli sur le compte
+	// principal pour les utilisateurs CLIENTS uniquement — l'admin
+	// plateforme n'a plus de compte client propre (accountId vide).
+	if accID == model.AccountMainID {
+		found := false
+		for i := range db.Accounts {
+			if db.Accounts[i].ID == model.AccountMainID {
+				found = true
+				break
+			}
+		}
+		if !found && isPlatform {
+			accID = ""
+		}
+	} else if accID == "" && !isPlatform {
+		accID = model.AccountMainID
 	}
 	accName := ""
 	for i := range db.Accounts {
@@ -4005,17 +4032,12 @@ func (a *API) handleAdminAccountStatus(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "Compte introuvable")
 		return
 	}
-	if id == model.AccountMainID {
-		a.store.Unlock()
-		writeErr(w, http.StatusBadRequest, "Le compte principal ne peut pas être désactivé")
-		return
-	}
 	acc.Status = req.Status
 	verb := "activé"
 	if req.Status == "disabled" {
 		verb = "désactivé"
 	}
-	a.logActivityBy(r, db, accountScope(r), "system", "Compte «"+acc.Name+"» "+verb)
+	a.logActivityBy(r, db, id, "system", "Compte «"+acc.Name+"» "+verb+" par la plateforme")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})

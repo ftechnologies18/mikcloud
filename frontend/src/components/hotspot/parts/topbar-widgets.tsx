@@ -96,10 +96,13 @@ export function SearchPalette() {
   const isAdmin = user?.role === "admin" || user?.role === "platform_admin";
   const shellMode = useHotspotStore((s) => s.shellMode);
   // La palette propose les vues de la console ACTIVE (plateforme ou client).
-  const items = useMemo(
-    () => navItemsFor(user?.role, isAdmin, isAdmin && shellMode === "platform" ? "platform" : "client"),
-    [user?.role, isAdmin, shellMode],
-  );
+  const mode: "platform" | "client" = isAdmin && shellMode === "platform" ? "platform" : "client";
+  const items = useMemo(() => {
+    const list = navItemsFor(user?.role, isAdmin, mode);
+    // Session support (console client ouverte) : « Comptes » reste un outil
+    // plateforme — il n'encombre pas la palette du client consulté.
+    return mode === "client" ? list.filter((item) => item.id !== "accounts") : list;
+  }, [user?.role, isAdmin, mode]);
 
   // ⌘K / Ctrl+K — ouvre (ou referme) la palette depuis n'importe où.
   useEffect(() => {

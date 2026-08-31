@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"mikcloud/hotspot-api/internal/auth"
 	"mikcloud/hotspot-api/internal/model"
 )
 
@@ -62,21 +63,21 @@ func (a *API) subscriptionGuardState(acc string) subscriptionGuardView {
 }
 
 // guardAccountWrite — bloque les écritures métier d'un compte expiré (P3).
-// Exemptions : compte principal (le propriétaire du SaaS ne peut pas se
-// verrouiller lui-même) et plan « platform » (interne). Renvoie true si
-// l'écriture est autorisée, sinon répond 402 et renvoie false.
+// Exemption : les administrateurs plateforme (session support ou console) —
+// le guard protège le modèle économique contre les CLIENTS, pas contre
+// l'opérateur du SaaS. Renvoie true si l'écriture est autorisée, sinon
+// répond 402 et renvoie false.
 //
 // En pratique : un compte expiré repasse en LECTURE SEULE — consultations,
 // exports et suppressions restent possibles, la création de ressources
 // (routeurs, utilisateurs, vouchers, profils, revendeurs) est refusée avec
 // le code machine « subscription_expired ».
 func (a *API) guardAccountWrite(w http.ResponseWriter, r *http.Request) bool {
-	acc := accountScope(r)
-	if acc == model.AccountMainID {
+	if isPlatformAdmin(r) {
 		return true
 	}
-	view := a.subscriptionGuardState(acc)
-	if view.PlanID == "platform" || view.Status != "expired" {
+	view := a.subscriptionGuardState(accountScope(r))
+	if view.Status != "expired" {
 		return true
 	}
 	writeErrCode(w, http.StatusPaymentRequired, "subscription_expired",
@@ -172,8 +173,6 @@ func (a *API) handleAdminAccountDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	planName := "Bêta"
 	switch sub.PlanID {
-	case "platform":
-		planName = "Plateforme"
 	case "":
 		planName = "Bêta"
 	default:
@@ -287,7 +286,6 @@ func (a *API) handleAdminAccountDetail(w http.ResponseWriter, r *http.Request) {
 		"name":      acc.Name,
 		"status":    acc.Status,
 		"createdAt": acc.CreatedAt,
-		"main":      acc.ID == model.AccountMainID,
 		"owner":     ownerOut,
 		"team":      team,
 		"subscription": subscriptionOut{
@@ -312,8 +310,7 @@ func (a *API) handleAdminAccountDetail(w http.ResponseWriter, r *http.Request) {
 
 // handleAdminAccountSubscription — la plateforme attribue, renouvelle ou
 // retire un plan pour le compte d'un client :
-//   - planId : « essentiel » | « illimite » | « beta » (gratuit non expirant)
-//     | « platform » (interne — compte du propriétaire, jamais bloqué) ;
+//   - planId : « essentiel » | « illimite » | « beta » (gratuit non expirant) ;
 //   - months : durée en mois (défaut 1 pour Essentiel, 12 pour Illimité ;
 //     1..36) — le renouvellement du MÊME plan actif s'empile après la
 //     période en cours, un changement de plan démarre immédiatement ;
@@ -339,8 +336,8 @@ func (a *API) handleAdminAccountSubscription(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	planID := strings.ToLower(strings.TrimSpace(req.PlanID))
-	if planID != "essentiel" && planID != "illimite" && planID != "beta" && planID != "platform" {
-		writeErrCode(w, http.StatusBadRequest, "bad_plan", "Formule inconnue (essentiel | illimite | beta | platform)", nil)
+	if planID != "essentiel" && planID != "illimite" && planID != "beta" {
+		writeErrCode(w, http.StatusBadRequest, "bad_plan", "Formule inconnue (essentiel | illimite | beta)", nil)
 		return
 	}
 	var plan model.SaasPlan
@@ -390,9 +387,6 @@ func (a *API) handleAdminAccountSubscription(w http.ResponseWriter, r *http.Requ
 	switch planID {
 	case "beta":
 		// Bêta : gratuit, non expirant — remise à zéro des attributs payants.
-		slots = 0
-	case "platform":
-		// Plateforme : interne, non expirant, jamais plafonné.
 		slots = 0
 	case "illimite":
 		// 1 000 F/mois équivalent (12 000 F/an) × durée.
@@ -446,8 +440,6 @@ func (a *API) handleAdminAccountSubscription(w http.ResponseWriter, r *http.Requ
 	label := "Bêta"
 	maxRouters := "Illimité"
 	switch planID {
-	case "platform":
-		label = "Plateforme"
 	case "essentiel":
 		label = "MikCloud Essentiel"
 		maxRouters = "Par routeur"
@@ -462,8 +454,6 @@ func (a *API) handleAdminAccountSubscription(w http.ResponseWriter, r *http.Requ
 	switch planID {
 	case "beta":
 		msg = "Abonnement basculé en bêta (gratuit, sans échéance) par la plateforme"
-	case "platform":
-		msg = "Abonnement basculé en plateforme (interne, sans échéance) par la plateforme"
 	default:
 		paid := ""
 		if req.MarkPaid {
@@ -497,17 +487,15 @@ func (a *API) handleAdminAccountSubscription(w http.ResponseWriter, r *http.Requ
 // handleAdminAccountDelete — supprime un compte client et TOUTES ses données
 // (routeurs + cascade, utilisateurs, lots, ventes, revendeurs, transactions,
 // sessions, trafic, commandes, gabarits, journaux, réglages, notifications).
-// Garde-fou : le compte principal de la plateforme est intouchable.
+// Garde-fou : un compte portant encore un administrateur plateforme n'est pas
+// supprimable (les platform_admin n'ont normalement plus de compte —
+// migration de détachement au démarrage).
 func (a *API) handleAdminAccountDelete(w http.ResponseWriter, r *http.Request) {
 	if !isPlatformAdmin(r) {
 		writeErrCode(w, http.StatusForbidden, "forbidden", "Réservé aux administrateurs de la plateforme", nil)
 		return
 	}
 	id := r.PathValue("id")
-	if id == model.AccountMainID {
-		writeErrCode(w, http.StatusBadRequest, "main_account", "Le compte principal de la plateforme ne peut pas être supprimé", nil)
-		return
-	}
 	a.store.Lock()
 	db := a.store.Data()
 	idx := -1
@@ -521,6 +509,14 @@ func (a *API) handleAdminAccountDelete(w http.ResponseWriter, r *http.Request) {
 		a.store.Unlock()
 		writeErrCode(w, http.StatusNotFound, "not_found", "Compte introuvable", nil)
 		return
+	}
+	for i := range db.Users {
+		if db.Users[i].AccountID == id && (db.Users[i].Role == model.RolePlatformAdmin || db.Users[i].Role == "admin") {
+			a.store.Unlock()
+			writeErrCode(w, http.StatusBadRequest, "platform_account",
+				"Ce compte porte encore un administrateur plateforme — il ne peut pas être supprimé", nil)
+			return
+		}
 	}
 	name := db.Accounts[idx].Name
 
@@ -557,10 +553,72 @@ func (a *API) handleAdminAccountDelete(w http.ResponseWriter, r *http.Request) {
 	delete(db.SettingsByAccount, id)
 	delete(db.NotifSettings, id)
 
-	a.logActivityBy(r, db, model.AccountMainID, "system", "Compte client supprimé par la plateforme : "+name+" (données effacées)")
+	a.logActivityBy(r, db, "", "system", "Compte client supprimé par la plateforme : "+name+" (données effacées)")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// ---------------------------------------------------------------------------
+// Bascule support — POST /api/admin/accounts/{id}/impersonate
+// ---------------------------------------------------------------------------
+
+// handleAdminImpersonate — ouvre une SESSION SUPPORT dans la console du
+// compte client demandé (assistance, configuration, diagnostic). Répond avec
+// un token JWT dont le périmètre (claim « acc ») pointe sur le compte client :
+// TOUTE l'isolation multi-tenant et les garde-fous serveur restent actifs,
+// seul le périmètre de données change. L'action est tracée dans le journal
+// du compte (« Session support ouverte »).
+func (a *API) handleAdminImpersonate(w http.ResponseWriter, r *http.Request) {
+	if !isPlatformAdmin(r) {
+		writeErrCode(w, http.StatusForbidden, "forbidden", "Réservé aux administrateurs de la plateforme", nil)
+		return
+	}
+	claims := claimsFrom(r)
+	if claims == nil {
+		writeErrCode(w, http.StatusUnauthorized, "unauthorized", "Token invalide ou expiré", nil)
+		return
+	}
+	id := r.PathValue("id")
+	a.store.Lock()
+	db := a.store.Data()
+	var acc *model.Account
+	for i := range db.Accounts {
+		if db.Accounts[i].ID == id {
+			acc = &db.Accounts[i]
+			break
+		}
+	}
+	if acc == nil {
+		a.store.Unlock()
+		writeErrCode(w, http.StatusNotFound, "not_found", "Compte introuvable", nil)
+		return
+	}
+	if acc.Status != "active" {
+		a.store.Unlock()
+		writeErrCode(w, http.StatusConflict, "account_disabled", "Compte désactivé — réactivez-le avant d'ouvrir sa console", nil)
+		return
+	}
+	// Nom réel de l'admin (le claim ne porte que l'ID).
+	adminName, adminUsername := claims.Name, ""
+	for i := range db.Users {
+		if db.Users[i].ID == claims.Sub {
+			adminName, adminUsername = db.Users[i].Name, db.Users[i].Username
+			break
+		}
+	}
+	a.logActivityBy(r, db, id, "system", "Session support ouverte — la plateforme consulte la console de ce compte")
+	a.store.Save()
+	a.store.Unlock()
+
+	token := auth.Sign(a.secret, auth.NewClaims(claims.Sub, adminName, model.RolePlatformAdmin, id))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"token": token,
+		"user": map[string]any{
+			"id": claims.Sub, "name": adminName, "username": adminUsername,
+			"role": model.RolePlatformAdmin, "accountId": id, "accountName": acc.Name,
+		},
+	})
 }
 
 // dropByString — retirer d'une slice toutes les entrées dont le champ vaut v

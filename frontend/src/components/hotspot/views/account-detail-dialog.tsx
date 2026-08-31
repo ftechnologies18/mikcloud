@@ -14,6 +14,7 @@ import {
   Copy,
   CreditCard,
   Loader2,
+  LogIn,
   RefreshCcw,
   ShieldAlert,
   Trash2,
@@ -25,9 +26,11 @@ import {
   ApiError,
   deleteClientAccount,
   fetchAccountDetail,
+  impersonateAccount,
   updateAccountSubscription,
 } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
+import { useHotspotStore } from "@/lib/hotspot/store";
 import type { AccountSummary, SubscriptionInfo } from "@/lib/hotspot/types";
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/hotspot/format";
 import { useCurrency } from "@/components/hotspot/parts/sd-currency";
@@ -107,7 +110,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 /** Preview locale (indicative) du montant et de l'échéance après attribution. */
 function previewSubscription(
   current: SubscriptionInfo,
-  planId: "essentiel" | "illimite" | "beta" | "platform",
+  planId: "essentiel" | "illimite" | "beta",
   months: number,
   slots: number,
 ): { amount: number; end: string | null; stacked: boolean } {
@@ -161,7 +164,7 @@ function SubscriptionDialog({
 
   const monthsNum = Math.max(1, Math.min(36, parseInt(months, 10) || 1));
   const slotsNum = Math.max(1, parseInt(slots, 10) || 1);
-  const planKey = planId as "essentiel" | "illimite" | "beta" | "platform";
+  const planKey = planId as "essentiel" | "illimite" | "beta";
   const preview = useMemo(
     () => previewSubscription(current, planKey, monthsNum, slotsNum),
     [current, planKey, monthsNum, slotsNum],
@@ -205,7 +208,6 @@ function SubscriptionDialog({
                 <SelectItem value="essentiel">{t("accounts.sub.planEssentiel")}</SelectItem>
                 <SelectItem value="illimite">{t("accounts.sub.planIllimite")}</SelectItem>
                 <SelectItem value="beta">{t("accounts.sub.planBeta")}</SelectItem>
-                <SelectItem value="platform">{t("accounts.sub.planPlatform")}</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -399,9 +401,12 @@ export function AccountDetailDialog({
 }) {
   const { t, tf, lang } = useI18n();
   const currency = useCurrency();
+  const queryClient = useQueryClient();
+  const impersonate = useHotspotStore((s) => s.impersonate);
   const [subOpen, setSubOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [openingConsole, setOpeningConsole] = useState(false);
 
   const { data, isLoading, error } = useQuery({
     queryKey: accountDetailKey(account.id),
@@ -420,6 +425,21 @@ export function AccountDetailDialog({
     }
   };
 
+  const openConsole = () => {
+    setOpeningConsole(true);
+    impersonateAccount(account.id)
+      .then((res) => {
+        impersonate(res.token, res.user);
+        queryClient.clear();
+        toast.success(tf("shell.impersonateToast", { name: account.name }));
+        onOpenChange(false);
+      })
+      .catch((err: unknown) => {
+        toast.error(err instanceof Error ? err.message : t("shell.impersonateError"));
+      })
+      .finally(() => setOpeningConsole(false));
+  };
+
   const sub = data?.subscription;
 
   return (
@@ -429,11 +449,6 @@ export function AccountDetailDialog({
           <DialogHeader>
             <DialogTitle className="flex flex-wrap items-center gap-2">
               {tf("accounts.detailTitle", { name: account.name })}
-              {data?.main && (
-                <Badge variant="outline" className="border-border bg-muted px-1.5 py-0 text-[10px] font-medium text-muted-foreground">
-                  {t("accounts.platform")}
-                </Badge>
-              )}
             </DialogTitle>
             <DialogDescription>{t("accounts.detailDesc")}</DialogDescription>
           </DialogHeader>
@@ -486,6 +501,16 @@ export function AccountDetailDialog({
                         </span>
                       </Field>
                     </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-9 w-full"
+                      onClick={openConsole}
+                      disabled={data.status !== "active" || openingConsole}
+                    >
+                      {openingConsole ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
+                      {t("accounts.openConsoleFull")}
+                    </Button>
                   </CardContent>
                 </Card>
 
@@ -628,28 +653,26 @@ export function AccountDetailDialog({
               </Card>
 
               {/* Zone sensible */}
-              {!data.main && (
-                <>
-                  <Separator />
-                  <div className="flex flex-col gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="min-w-0">
-                      <p className="flex items-center gap-1.5 text-sm font-medium text-destructive">
-                        <AlertTriangle className="size-4" />
-                        {t("accounts.detail.danger")}
-                      </p>
-                      <p className="text-xs text-muted-foreground">{t("accounts.detail.dangerDesc")}</p>
-                    </div>
-                    <Button
-                      variant="outline"
-                      className="shrink-0 border-destructive/40 text-destructive hover:bg-destructive/10"
-                      onClick={() => setDeleteOpen(true)}
-                    >
-                      <Trash2 className="size-4" />
-                      {t("accounts.detail.delete")}
-                    </Button>
+              <>
+                <Separator />
+                <div className="flex flex-col gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <p className="flex items-center gap-1.5 text-sm font-medium text-destructive">
+                      <AlertTriangle className="size-4" />
+                      {t("accounts.detail.danger")}
+                    </p>
+                    <p className="text-xs text-muted-foreground">{t("accounts.detail.dangerDesc")}</p>
                   </div>
-                </>
-              )}
+                  <Button
+                    variant="outline"
+                    className="shrink-0 border-destructive/40 text-destructive hover:bg-destructive/10"
+                    onClick={() => setDeleteOpen(true)}
+                  >
+                    <Trash2 className="size-4" />
+                    {t("accounts.detail.delete")}
+                  </Button>
+                </div>
+              </>
             </div>
           )}
         </DialogContent>

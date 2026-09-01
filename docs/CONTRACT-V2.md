@@ -421,7 +421,9 @@ Server       string `json:"server"`       // serveur hotspot RouterOS cible (""/
 - `server` : ≤ 64 chars sans guillemets/retours, poussé tel quel (`server=` ; « all »
   = omis au routeur, décision routeur par défaut).
 - Validations alignées Mikhmon : `codeLength` ∈ [3,10] (min abaissé 4→3) ; `prefix`
-  ≤ 6 chars (défaut "SC-") ; charset preset `num` (chiffres purs, alphabet digitSafe
+  ≤ 6 chars, OPTIONNEL — vide = AUCUN préfixe (le ticket porte le code généré seul,
+  pas de valeur par défaut ; correctif post-test live, l'ancien fallback "SC-" est
+  supprimé) ; charset preset `num` (chiffres purs, alphabet digitSafe
   sans 0/1 — plus lisible à l'impression que 0-9 Mikhmon). Pas de confusion avec la
   variable template `{{num}}` (n° de voucher).
 - `{{timeLimit}}` des templates reflète le quota propre du voucher.

@@ -2456,10 +2456,9 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "La longueur du code doit être comprise entre 3 et 10")
 		return
 	}
+	// Préfixe optionnel : vide = AUCUN préfixe (parité Mikhmon) — le code du
+	// ticket est alors le code généré seul, sans valeur par défaut.
 	prefix := strings.TrimSpace(req.Prefix)
-	if prefix == "" {
-		prefix = "SC-"
-	}
 	// Parité Mikhmon : préfixe borné à 6 caractères (maxlength du formulaire
 	// Mikhmon) — les codes restent courts et imprimables sur les tickets.
 	if len(prefix) > 6 {

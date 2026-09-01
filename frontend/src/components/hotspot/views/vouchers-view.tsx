@@ -1331,11 +1331,11 @@ export default function VouchersView() {
                 <Label htmlFor="gen-prefix">{t("vouchers.prefix")}</Label>
                 <Input
                   id="gen-prefix"
-                  placeholder="SC-"
                   value={genPrefix}
                   onChange={(event) => setGenPrefix(event.target.value)}
                   disabled={generateMutation.isPending}
                 />
+                <p className="text-xs text-muted-foreground">{t("vouchers.prefixHint")}</p>
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="gen-reseller">{t("common.reseller")}</Label>

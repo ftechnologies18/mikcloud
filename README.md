@@ -58,26 +58,30 @@ Le frontend appelle le backend via `NEXT_PUBLIC_API_BASE` si défini
 
 ### 3. Frontend → Vercel (mikcloud.ftci.fr)
 
-Le proxy `frontend/vercel.json` est **auto-détecté** au déploiement : toutes les
-requêtes `/api/*` sont transférées vers l'API Render — **zéro variable
-   d'environnement, zéro CORS**.
+Le frontend appelle l'API Render **en absolu** (mode direct actif) :
+`NEXT_PUBLIC_API_BASE=https://<service>.onrender.com` est définie dans
+Vercel → Settings → Environment Variables (Production + Preview), et Render
+liste les origines autorisées dans `ALLOWED_ORIGIN` (CORS).
 
 1. **Add New → Project** → ce repo, *Root Directory* : `frontend`.
 2. **Domaine** : ajouter `mikcloud.ftci.fr` (Settings → Domains) — déjà fait ✅.
-3. Vérifier l'URL Render dans `frontend/vercel.json` (`rewrites → destination`)
-   et l'ajuster si votre service Render porte un autre nom :
-   `"destination": "https://<votre-service>.onrender.com/api/:path*"`.
-
-**Mode direct (alternative)** — le frontend appelle Render en absolu :
-1. Vercel → Settings → Environment Variables :
-   `NEXT_PUBLIC_API_BASE=https://<service>.onrender.com` (Production + Preview).
-2. Render → Environment → `ALLOWED_ORIGIN=https://mikcloud.ftci.fr`
+3. **Variables** Vercel : `NEXT_PUBLIC_API_BASE=https://mikcloud.onrender.com`
+   (Production + Preview).
+4. **CORS** Render : `ALLOWED_ORIGIN=https://mikcloud.ftci.fr`
    (+ `https://<projet>.vercel.app` pour les previews, séparés par des virgules).
 
-> Récapitulatif des paramètres — **Vercel** : rien (mode proxy) ou
-> `NEXT_PUBLIC_API_BASE` (mode direct) · **Render** : `DATABASE_URL` (Neon),
-> `JWT_SECRET` (auto), `ADMIN_USERNAME`/`ADMIN_PASSWORD`, et
-> `ALLOWED_ORIGIN` en mode direct uniquement.
+**Mode proxy (alternative)** — URLs relatives `/api/*` transférées vers Render
+par un rewrite : zéro variable d'environnement, zéro CORS. Pour basculer :
+rétablir le bloc `rewrites` de `frontend/vercel.json`
+(`"destination": "https://<votre-service>.onrender.com/api/:path*"`),
+retirer `NEXT_PUBLIC_API_BASE` de Vercel, vider `ALLOWED_ORIGIN` côté Render
+et ajuster les points conditionnés à `NEXT_PUBLIC_API_BASE` (bloc démo de
+l'écran de connexion, URL des factures imprimables — cf. `api.ts`).
+
+> Récapitulatif des paramètres — **Vercel** : `NEXT_PUBLIC_API_BASE`
+> (mode direct actif) · **Render** : `DATABASE_URL` (Neon), `JWT_SECRET`
+> (auto), `ADMIN_USERNAME`/`ADMIN_PASSWORD`, et `ALLOWED_ORIGIN`
+> (mode direct).
 
 ### Connecter un vrai routeur MikroTik
 1. Winbox → **IP → Services** → activer **api** (port 8728).

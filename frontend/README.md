@@ -14,22 +14,22 @@ bun run lint
 
 ## Configuration
 
-Le proxy `vercel.json` (rewrites `/api/*` → Render) fait tout le travail en
-production : **aucune variable n'est requise**. Deux modes :
+Le frontend appelle l'API Render **en absolu** (mode direct actif en
+production). Deux modes :
 
 | Mode | Réglage | Quand l'utiliser |
 | --- | --- | --- |
-| **Proxy (défaut)** | rien — `vercel.json` transfère `/api/*` vers Render | Production `mikcloud.ftci.fr` (zéro CORS) |
-| **Direct** | `.env.local` : `NEXT_PUBLIC_API_BASE=https://votre-service.onrender.com` + `ALLOWED_ORIGIN` côté Render | Si vous préférez contourner le proxy |
+| **Direct (actif)** | Vercel : `NEXT_PUBLIC_API_BASE=https://votre-service.onrender.com` + `ALLOWED_ORIGIN` côté Render | Production `mikcloud.ftci.fr` |
+| **Proxy (alternative)** | rien — rétablir le `rewrites` dans `vercel.json` (transfère `/api/*` vers Render) | Si vous préférez zéro CORS / zéro variable |
 
 En local sans variable, l'app appelle `/api/...` en relatif (mode passerelle).
 
 ## Déploiement Vercel
 
-Root Directory : `frontend` · Domaine : `mikcloud.ftci.fr` · Aucune variable
-requise (proxy `vercel.json` auto-détecté). Vérifier l'URL Render dans le
-`rewrites → destination` de `vercel.json` si votre service porte un autre nom.
-Détails dans le [README racine](../README.md).
+Root Directory : `frontend` · Domaine : `mikcloud.ftci.fr` · Variable :
+`NEXT_PUBLIC_API_BASE=https://mikcloud.onrender.com` (Production + Preview) —
+paire avec `ALLOWED_ORIGIN` côté Render. Détails dans le
+[README racine](../README.md).
 
 ## Architecture
 

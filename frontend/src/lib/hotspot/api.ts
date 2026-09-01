@@ -1,10 +1,11 @@
 "use client";
 
 // Client API MikCloud.
-// - Production (Vercel · mikcloud.ftci.fr) : URLs relatives /api/* — le proxy
-//   vercel.json (rewrites) transfère vers l'API Render. Zéro CORS, zéro réglage.
-// - Alternative directe : NEXT_PUBLIC_API_BASE=https://xxx.onrender.com
-//   (+ ALLOWED_ORIGIN=https://mikcloud.ftci.fr côté Render).
+// - Production (Vercel · mikcloud.ftci.fr) : mode direct —
+//   NEXT_PUBLIC_API_BASE=https://xxx.onrender.com (build Vercel)
+//   + ALLOWED_ORIGIN côté Render (CORS).
+// - Alternative proxy : URLs relatives /api/* transférées par un rewrite
+//   vercel.json (zéro CORS — cf. README « Déploiement » pour la bascule).
 // - Sandbox : même origine + query param XTransformPort=4000 (passerelle Caddy).
 
 import { useHotspotStore } from "./store";

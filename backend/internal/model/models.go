@@ -827,7 +827,9 @@ type DB struct {
 
 // voucherExpired — expiration « calculée » d'un voucher : validité (ExpiresAt)
 // dépassée OU quota temps cumulé (limit-uptime, reflété au cloud via
-// uptimeUsedSec) épuisé. Indépendant du statut stocké.
+// uptimeUsedSec) épuisé. Indépendant du statut stocké. expiresAt vide =
+// voucher jamais connecté (validité ancrée au 1er login) : pas d'échéance
+// par date.
 func voucherExpired(u *HotspotUser, now time.Time) bool {
 	if u.Kind != "voucher" {
 		return false
@@ -839,6 +841,30 @@ func voucherExpired(u *HotspotUser, now time.Time) bool {
 	}
 	if u.TimeLimitMin > 0 && u.UptimeUsedSec >= u.TimeLimitMin*60 {
 		return true
+	}
+	return false
+}
+
+// AnchorVoucherValidity — ancre la validité d'un voucher à son PREMIER login :
+// expiresAt = 1er login + validité du profil COURANT (parité routeur : le
+// profil est lu à l'authentification). Appelé au 1er login détecté (agent)
+// et à l'ouverture de session simulée. Un ticket jamais connecté n'a pas
+// d'expiresAt (reste « actif » en stock indéfiniment) ; profil introuvable
+// ou validité nulle : expiresAt reste vide (pas d'échéance par date).
+// À appeler sous verrou. Renvoie true si l'ancrage a été posé.
+func AnchorVoucherValidity(db *DB, u *HotspotUser, now time.Time) bool {
+	if u.Kind != "voucher" || u.ExpiresAt != "" {
+		return false
+	}
+	for i := range db.Profiles {
+		p := &db.Profiles[i]
+		if p.ID == u.ProfileID && p.AccountID == u.AccountID {
+			if v := p.ValidityMinutes(); v > 0 {
+				u.ExpiresAt = now.Add(time.Duration(v) * time.Minute).Format(time.RFC3339)
+				return true
+			}
+			return false
+		}
 	}
 	return false
 }

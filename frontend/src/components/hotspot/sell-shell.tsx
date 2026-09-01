@@ -211,11 +211,13 @@ export default function SellShell() {
                         )}
                       </div>
                       <p className="mt-0.5 text-xs text-muted-foreground">
-                        {v.routerName} · {t("sell.expires")}{" "}
-                        {new Date(v.expiresAt).toLocaleDateString(lang === "en" ? "en-GB" : "fr-FR", {
-                          day: "2-digit",
-                          month: "short",
-                        })}
+                        {v.routerName} ·{" "}
+                        {v.expiresAt
+                          ? `${t("sell.expires")} ${new Date(v.expiresAt).toLocaleDateString(
+                              lang === "en" ? "en-GB" : "fr-FR",
+                              { day: "2-digit", month: "short" },
+                            )}`
+                          : t("sell.expiresOnFirstLogin")}
                       </p>
                     </div>
                     <p className="shrink-0 text-lg font-bold text-primary tabular-nums">

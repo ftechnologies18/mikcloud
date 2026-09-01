@@ -469,6 +469,13 @@ func (a *API) handleUserExtend(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "Utilisateur introuvable")
 		return
 	}
+	if u.Kind == "voucher" && u.UsedAt == "" && u.ExpiresAt == "" {
+		// Ancrage 1er login : un ticket jamais connecté n'a pas d'échéance —
+		// la validité du stock se règle via le profil, pas par prolongation.
+		a.store.Unlock()
+		writeErr(w, http.StatusBadRequest, "Ticket jamais connecté : sa validité démarrera au premier login (selon son profil). Pour l'ajuster, modifiez le profil.")
+		return
+	}
 	// Base : l'expiration future est conservée, une expiration passée repart
 	// de maintenant (jamais dans le passé).
 	base := now
@@ -578,6 +585,9 @@ func (a *API) handleUsersBulk(w http.ResponseWriter, r *http.Request) {
 	// conservée, sinon maintenant ; un expiré repasse « active » (+ user_set
 	// agent pour le réactiver sur le routeur).
 	prolonge := func(u *model.HotspotUser, rc *model.Router) {
+		if u.Kind == "voucher" && u.UsedAt == "" && u.ExpiresAt == "" {
+			return // jamais connecté : validité ancrée au 1er login — rien à prolonger
+		}
 		base := now
 		if u.ExpiresAt != "" {
 			if exp, err := time.Parse(time.RFC3339, u.ExpiresAt); err == nil && exp.After(base) {

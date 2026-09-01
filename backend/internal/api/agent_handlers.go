@@ -763,6 +763,7 @@ func markVoucherUsed(db *model.DB, s model.Session, now time.Time) {
 		if u.ID == s.UserID && u.Kind == "voucher" {
 			if u.UsedAt == "" {
 				u.UsedAt = now.UTC().Format(time.RFC3339)
+				model.AnchorVoucherValidity(db, u, now) // validité ancrée au 1er login
 			}
 			if u.Status == "active" {
 				u.Status = "used"

@@ -250,7 +250,9 @@ func BuildSeed() *model.DB {
 					Status: "active", BatchID: batchID, ResellerID: resID, ResellerName: resName,
 					Comment: "", BytesIn: 0, BytesOut: 0, UptimeUsedSec: 0,
 					CreatedAt: createdAt.Format(time.RFC3339),
-					ExpiresAt: createdAt.Add(time.Duration(p.ValidityDays) * 24 * time.Hour).Format(time.RFC3339),
+					// Validité ancrée au 1er login : vide tant que non connecté (les
+					// passes setUsed/setExpired/addSession ci-dessous la posent).
+					ExpiresAt: "",
 					UsedAt:    "", Price: p.Price, SellingPrice: p.SellingPrice,
 				})
 			}
@@ -359,53 +361,54 @@ func BuildSeed() *model.DB {
 	nDisabled := total * 5 / 100
 	nUsed := total * 40 / 100
 
-	validityElapsed := func(u *model.HotspotUser) bool {
-		var validityDays int
+	// profileValidityDays — validité du profil du voucher (jours) pour ancrer
+	// expiresAt au 1er login (modèle « stock » : jamais connecté = pas d'échéance).
+	profileValidityDays := func(u *model.HotspotUser) int {
 		for _, p := range db.Profiles {
 			if p.ID == u.ProfileID {
-				validityDays = p.ValidityDays
-				break
+				return p.ValidityDays
 			}
 		}
-		created, err := time.Parse(time.RFC3339, u.CreatedAt)
-		if err != nil {
-			return false
-		}
-		return created.Add(time.Duration(validityDays) * 24 * time.Hour).Before(now)
+		return 0
 	}
 	marked := map[int]bool{}
+	// setExpired — voucher consommé puis échu : UsedAt + expiresAt = 1er login
+	// + validité, dans le passé.
 	setExpired := func(i int) {
-		db.HotspotUsers[i].Status = "expired"
-		db.HotspotUsers[i].UsedAt = ""
+		u := &db.HotspotUsers[i]
+		u.Status = "expired"
+		v := time.Duration(profileValidityDays(u)) * 24 * time.Hour
+		exp := now.Add(-time.Duration(24+rnd.Intn(30*24)) * time.Hour) // échu depuis 1 j à ~31 j
+		u.ExpiresAt = exp.Format(time.RFC3339)
+		used := exp.Add(-v)
+		if created, err := time.Parse(time.RFC3339, u.CreatedAt); err == nil && used.Before(created) {
+			used = created
+		}
+		u.UsedAt = used.Format(time.RFC3339)
 	}
+	// setUsed — voucher connecté au moins une fois : validité ancrée à ce 1er
+	// login (expiresAt = usedAt + validité du profil), encore courante.
 	setUsed := func(i int) {
 		u := &db.HotspotUsers[i]
 		u.Status = "used"
 		created, _ := time.Parse(time.RFC3339, u.CreatedAt)
 		window := now.Sub(created)
+		used := created
 		if window > time.Minute {
-			u.UsedAt = created.Add(time.Duration(rnd.Int63n(int64(window)))).Format(time.RFC3339)
-		} else {
-			u.UsedAt = u.CreatedAt
+			used = created.Add(time.Duration(rnd.Int63n(int64(window))))
+		}
+		u.UsedAt = used.Format(time.RFC3339)
+		if v := profileValidityDays(u); v > 0 {
+			u.ExpiresAt = used.Add(time.Duration(v) * 24 * time.Hour).Format(time.RFC3339)
 		}
 		u.BytesIn = int64(rnd.Intn(800)) * 1_000_000
 		u.BytesOut = u.BytesIn / 7
 		u.UptimeUsedSec = int64(rnd.Intn(7200))
 	}
 
-	// 1) expired : en priorité les vouchers dont la validité est dépassée
+	// 1) expired : vouchers consommés dont la validité (ancrée au 1er login)
+	// est échue — setExpired pose UsedAt + expiresAt dans le passé.
 	count := 0
-	for _, i := range voucherIdx {
-		if count >= nExpired {
-			break
-		}
-		if marked[i] || !validityElapsed(&db.HotspotUsers[i]) {
-			continue
-		}
-		setExpired(i)
-		marked[i] = true
-		count++
-	}
 	for _, i := range voucherIdx {
 		if count >= nExpired {
 			break
@@ -474,6 +477,9 @@ func BuildSeed() *model.DB {
 		if u.Kind == "voucher" {
 			u.Status = "used"
 			u.UsedAt = started.Format(time.RFC3339)
+			if v := profileValidityDays(u); v > 0 {
+				u.ExpiresAt = started.Add(time.Duration(v) * 24 * time.Hour).Format(time.RFC3339)
+			}
 		}
 	}
 	nSessions := 18 + rnd.Intn(11)

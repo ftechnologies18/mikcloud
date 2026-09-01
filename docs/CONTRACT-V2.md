@@ -174,6 +174,7 @@ statut résolu (model.ResolvedStatus), par priorité décroissante :
 
 1. `expired` — voucher : validité (`expiresAt`) dépassée **OU** quota temps épuisé
    (`uptimeUsedSec >= timeLimitMin` quand `timeLimitMin > 0`) — calculé, gagne sur tout ;
+   `expiresAt` vide = voucher jamais connecté (ancrage au 1er login) → pas d'échéance par date ;
 2. `disabled` — désactivation manuelle (statut stocké) ;
 3. `online` — session live au dernier read_state (≤ 45 s de latence) ; garde : seules les
    sessions des routeurs vus depuis < 3 min sont prises en compte (pas de « en ligne » figé) ;
@@ -183,6 +184,14 @@ statut résolu (model.ResolvedStatus), par priorité décroissante :
 - Persistance dynamique (mode agent) : au 1er login détecté (diff sessions), le voucher passe
   `status="used"` + `usedAt` horodaté ; à chaque logout détecté, l'uptime de session s'ajoute à
   `uptimeUsedSec` (le routeur applique lui-même la coupure limit-uptime ; le cloud reflète).
+- Ancrage de la validité au 1er login (variante opérateur, `model.AnchorVoucherValidity`) :
+  `expiresAt` est posé au PREMIER LOGIN = login + `ValidityMinutes()` du profil courant (agent
+  ET session simulée) ; à la génération (unitaire et par lot) il reste vide — un ticket jamais
+  connecté reste « actif » en stock indéfiniment. Changement de profil : voucher jamais
+  connecté → `expiresAt` reste vide (la nouvelle validité s'appliquera au 1er login) ; voucher
+  connecté → recalcul depuis maintenant (inchangé). `extend` (F4) sur un voucher jamais
+  connecté → 400 explicite en unitaire, no-op en bulk : la validité du stock se règle via le
+  profil. Parité routeur : le profil est lu à l'authentification (comportement MikroTik).
 - Les agrégats (donut dashboard, stats par lot) replient `online` dans `used` (en ligne = consommé
   en cours) — les buckets restent active/used/expired/disabled.
 - La liste ajoute `disabled` (booléen, miroir du statut stocké) : le badge peut afficher
@@ -435,8 +444,10 @@ ValidityMin int    `json:"validityMin"` // validité fine en minutes (0 = hérit
 ```
 - **Source de vérité validité** : `Profile.ValidityMinutes()` = validityMin si > 0,
   sinon validityDays×1440. `expiresAt` (contrat V2) est TOUJOURS calculé via
-  `ValidityMinutes()` (génération, extension F4, resync) ; `validityDays` reste
-  renseigné (arrondi supérieur : (validityMin+1439)/1440) pour rétro-compatibilité.
+  `ValidityMinutes()` — posé au PREMIER LOGIN (ancrage, vide avant), extension F4
+  (voucher déjà connecté), recalcul au changement de profil (voucher connecté) ;
+  `validityDays` reste renseigné (arrondi supérieur : (validityMin+1439)/1440) pour
+  rétro-compatibilité.
 - Validations create/update : validityMin ∈ [0, 2628000] ; addressPool/parentQueue
   = noms RouterOS transmis tels quels (TrimSpace) ; synchronisés sur TOUS les
   routeurs agents à chaque user_add/voucher_batch via profile_set (`none` si vide).

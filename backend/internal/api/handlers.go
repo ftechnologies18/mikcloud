@@ -2087,6 +2087,12 @@ func (a *API) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 	if password == "" {
 		password = model.RandomCode(6)
 	}
+	// Validité ancrée au 1er login (vouchers) : expiresAt reste vide tant que
+	// le ticket n'a jamais été connecté — le stock non vendu n'expire pas.
+	expiresAt := ""
+	if kind != "voucher" {
+		expiresAt = now.Add(time.Duration(profile.ValidityMinutes()) * time.Minute).Format(time.RFC3339)
+	}
 	u := model.HotspotUser{
 		ID: model.NewID("u-"), AccountID: acc, Kind: kind, Username: username, Password: password,
 		ProfileID: profile.ID, ProfileName: profile.Name,
@@ -2094,7 +2100,7 @@ func (a *API) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 		Status: "active", BatchID: "", ResellerID: "", ResellerName: "",
 		Comment:   strings.TrimSpace(req.Comment),
 		CreatedAt: nowISO,
-		ExpiresAt: now.Add(time.Duration(profile.ValidityMinutes()) * time.Minute).Format(time.RFC3339),
+		ExpiresAt: expiresAt,
 		UsedAt:    "", Price: profile.Price, DataQuotaMb: int64(profile.DataQuotaMb),
 	}
 	a.store.Unlock()
@@ -2215,7 +2221,11 @@ func (a *API) handleUserUpdate(w http.ResponseWriter, r *http.Request) {
 		u.ProfileID = p.ID
 		u.ProfileName = p.Name
 		u.Price = p.Price
-		u.ExpiresAt = now.Add(time.Duration(p.ValidityMinutes()) * time.Minute).Format(time.RFC3339)
+		if u.Kind == "voucher" && u.UsedAt == "" {
+			u.ExpiresAt = "" // jamais connecté : la validité du profil s'ancrera au 1er login
+		} else {
+			u.ExpiresAt = now.Add(time.Duration(p.ValidityMinutes()) * time.Minute).Format(time.RFC3339)
+		}
 	}
 	if req.Comment != nil {
 		u.Comment = strings.TrimSpace(*req.Comment)
@@ -2556,7 +2566,7 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 	sellingTotal := selling * req.Count
 
 	batchID := fmt.Sprintf("B%s-%04d", now.Format("20060102"), now.Nanosecond()%10000)
-	expiresAt := now.Add(time.Duration(profile.ValidityMinutes()) * time.Minute).Format(time.RFC3339)
+	expiresAt := "" // validité ancrée au 1er login — vide tant que le ticket n'est pas connecté
 	// Parité Mikhmon : Time Limit (limit-uptime) par lot — 0 = hériter du
 	// sessionTimeoutMin du profil. Résolu une fois, tracé et poussé au routeur.
 	if req.TimeLimitMin < 0 || req.TimeLimitMin > 2628000 {

@@ -511,16 +511,20 @@ export default function UsersView() {
             <ClipboardCopy className="size-4" />
             {t("users.copyCredentials")}
           </DropdownMenuItem>
-          <DropdownMenuItem
-            className="min-h-10"
-            onClick={() => {
-              setExtendDays("7");
-              setExtending(user);
-            }}
-          >
-            <CalendarPlus className="size-4" />
-            {t("users.extend")}
-          </DropdownMenuItem>
+          {/* Prolongation masquée sur un voucher jamais connecté : sa validité
+              s'ancrera au 1er login (elle se règle via le profil). */}
+          {!(user.kind === "voucher" && !user.expiresAt) && (
+            <DropdownMenuItem
+              className="min-h-10"
+              onClick={() => {
+                setExtendDays("7");
+                setExtending(user);
+              }}
+            >
+              <CalendarPlus className="size-4" />
+              {t("users.extend")}
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem
             className="min-h-10"
             disabled={resetStatsMutation.isPending && resetStatsMutation.variables?.id === user.id}
@@ -825,7 +829,11 @@ export default function UsersView() {
                       <dt className="text-muted-foreground">{t("users.data")}</dt>
                       <dd className="tabular-nums text-foreground">{formatBytes(user.bytesIn + user.bytesOut, lang)}</dd>
                       <dt className="text-muted-foreground">{t("users.expires")}</dt>
-                      <dd className="tabular-nums text-foreground">{formatDate(user.expiresAt, lang)}</dd>
+                      <dd className="tabular-nums text-foreground">
+                        {user.kind === "voucher" && !user.expiresAt
+                          ? t("users.firstLoginValidity")
+                          : formatDate(user.expiresAt, lang)}
+                      </dd>
                       <dt className="text-muted-foreground">{t("common.created")}</dt>
                       <dd className="tabular-nums text-foreground">{formatDate(user.createdAt, lang)}</dd>
                     </dl>
@@ -907,7 +915,9 @@ export default function UsersView() {
                         {formatBytes(user.bytesIn + user.bytesOut, lang)}
                       </TableCell>
                       <TableCell className="hidden tabular-nums text-muted-foreground sm:table-cell">
-                        {formatDate(user.expiresAt, lang)}
+                        {user.kind === "voucher" && !user.expiresAt
+                          ? t("users.firstLoginValidity")
+                          : formatDate(user.expiresAt, lang)}
                       </TableCell>
                       <TableCell className="hidden tabular-nums text-muted-foreground lg:table-cell">
                         {formatDate(user.createdAt, lang)}

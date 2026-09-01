@@ -898,6 +898,7 @@ func Tick(db *model.DB, now time.Time) {
 			if u.Kind == "voucher" {
 				u.Status = "used"
 				u.UsedAt = nowISO
+				model.AnchorVoucherValidity(db, u, now) // validité ancrée au 1er login
 				if u.ResellerID != "" {
 					for j := range db.Resellers {
 						if db.Resellers[j].ID == u.ResellerID {

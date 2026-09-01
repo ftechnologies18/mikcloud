@@ -6,8 +6,12 @@
 // en page ne dépend plus du moteur d'impression du navigateur (zoom, marges,
 // en-têtes…). Le QR pointe vers la page de login du hotspot avec le code
 // pré-rempli (connexion en 1 scan) ou, à défaut, porte le code en texte.
+//
+// Design des tickets : bandeau de marque BLEU MARINE (logo circulaire ·
+// tenant · PRIX), QR ORNÉ DU LOGO AU CENTRE (badge circulaire, niveau « H »),
+// code en gros — l'aperçu ci-dessous reprend exactement les blocs du PDF.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { FileDown, Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -16,7 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { isSamePasswordMode } from "@/components/hotspot/parts/template-render";
 import { useCurrency } from "@/components/hotspot/parts/sd-currency";
-import { buildVouchersA4Pdf, downloadBlob, qrValue } from "@/lib/hotspot/a4-pdf";
+import { buildVouchersA4Pdf, circleLogoDataUrl, downloadBlob, qrValue } from "@/lib/hotspot/a4-pdf";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { formatBytes, formatCurrency } from "@/lib/hotspot/format";
 import type { HotspotUser } from "@/lib/hotspot/types";
@@ -49,6 +53,14 @@ export function VoucherA4PrintDialog({
   const { t, tf, lang } = useI18n();
   const currency = useCurrency();
   const [pdfBusy, setPdfBusy] = useState(false);
+  // Logo recadré en cercle (même asset que le PDF) : bandeau du ticket +
+  // badge central du QR — une seule signature visuelle aperçu ↔ PDF.
+  const [qrLogo, setQrLogo] = useState<string | null>(null);
+  useEffect(() => {
+    const img = new Image();
+    img.onload = () => setQrLogo(circleLogoDataUrl(img) || null);
+    img.src = "/logo.png";
+  }, []);
 
   const pages = useMemo(() => {
     const chunks: HotspotUser[][] = [];
@@ -137,6 +149,7 @@ export function VoucherA4PrintDialog({
                       tenantName={tenantName}
                       currency={currency}
                       hotspotLoginUrl={hotspotLoginUrl}
+                      qrLogo={qrLogo}
                     />
                   ))}
                 </div>
@@ -156,37 +169,50 @@ function A4Ticket({
   tenantName,
   currency,
   hotspotLoginUrl,
+  qrLogo,
 }: {
   voucher: HotspotUser;
   tenantName: string;
   currency: string;
   hotspotLoginUrl?: string;
+  qrLogo: string | null;
 }) {
   const { t, tf, lang } = useI18n();
   return (
-    <div className="a4-ticket flex min-h-0 flex-col items-center justify-between gap-0.5 rounded-md border border-dashed border-black p-1.5 text-center break-inside-avoid">
-      <div className="w-full">
-        <p className="truncate text-[10px] font-bold leading-tight">{tenantName || "MikCloud"}</p>
-        <p className="text-[6px] uppercase tracking-[0.3em] text-neutral-500">WIFI</p>
-      </div>
-      <QRCodeSVG
-        value={qrValue(voucher, hotspotLoginUrl)}
-        size={QR_SIZE}
-        className="shrink-0"
-        aria-label={tf("a4.qrAria", { code: voucher.username })}
-      />
-      <div className="w-full">
-        <p className="truncate font-mono text-[12px] font-bold leading-tight">{voucher.username}</p>
-        {/* Mode « mot de passe = identifiant » : le code seul sur le ticket. */}
-        {!isSamePasswordMode(voucher) && (
-          <p className="font-mono text-[9px] leading-tight">{t("a4.password")} {voucher.password}</p>
+    <div className="a4-ticket flex min-h-0 flex-col items-center overflow-hidden rounded-md border border-dashed border-black text-center break-inside-avoid">
+      {/* Bandeau de marque — identique au PDF : logo · tenant · PRIX. */}
+      <div className="flex w-full shrink-0 items-center gap-1 bg-[#02134E] py-[3.5px] pl-1.5 pr-1.5 text-white">
+        {qrLogo ? (
+          <img src={qrLogo} alt="" className="size-[11px] shrink-0" />
+        ) : (
+          <span className="size-[11px] shrink-0" />
         )}
-        <p className="mt-0.5 text-[9px] leading-tight">
-          {voucher.profileName}
-          {voucher.dataQuotaMb > 0 && ` · ${formatBytes(voucher.dataQuotaMb * 1048576, lang)}`} ·{" "}
-          <span className="font-semibold">{formatCurrency(voucher.price, currency)}</span>
+        <p className="min-w-0 flex-1 truncate text-left text-[9px] font-bold leading-none">
+          {tenantName || "MikCloud"}
         </p>
-        <p className="mt-0.5 text-[7px] leading-tight text-neutral-500">{t("a4.scanHint")}</p>
+        <p className="shrink-0 text-[9px] font-bold leading-none">{formatCurrency(voucher.price, currency)}</p>
+      </div>
+      <div className="flex min-h-0 w-full flex-1 flex-col items-center justify-between gap-0.5 px-1.5 pb-1 pt-1">
+        <QRCodeSVG
+          value={qrValue(voucher, hotspotLoginUrl)}
+          size={QR_SIZE}
+          level="H"
+          imageSettings={qrLogo ? { src: qrLogo, height: 11, width: 11, excavate: true } : undefined}
+          className="shrink-0"
+          aria-label={tf("a4.qrAria", { code: voucher.username })}
+        />
+        <div className="w-full">
+          <p className="truncate font-mono text-[12px] font-bold leading-tight text-[#02134E]">{voucher.username}</p>
+          {/* Mode « mot de passe = identifiant » : le code seul sur le ticket. */}
+          {!isSamePasswordMode(voucher) && (
+            <p className="font-mono text-[9px] leading-tight">{t("a4.password")} {voucher.password}</p>
+          )}
+          <p className="mt-0.5 text-[9px] leading-tight text-neutral-600">
+            {voucher.profileName}
+            {voucher.dataQuotaMb > 0 && ` · ${formatBytes(voucher.dataQuotaMb * 1048576, lang)}`}
+          </p>
+          <p className="mt-0.5 text-[7px] leading-tight text-neutral-500">{t("a4.scanHint")}</p>
+        </div>
       </div>
     </div>
   );

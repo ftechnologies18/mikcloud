@@ -28,7 +28,7 @@ import {
 import { useCurrency, useSettings } from "@/components/hotspot/parts/sd-currency";
 import { renderBatch } from "@/components/hotspot/parts/template-render";
 import { useI18n } from "@/lib/hotspot/i18n";
-import { formatBytes, formatCurrency } from "@/lib/hotspot/format";
+import { formatBytes, formatCurrency , fmtRouterDuration } from "@/lib/hotspot/format";
 import type { HotspotUser, Profile, VoucherTemplate } from "@/lib/hotspot/types";
 
 /** Clé localStorage du dernier modèle choisi pour l'impression. */
@@ -213,7 +213,8 @@ export function UcPrintDialog({
             <div className="print-area rounded-lg bg-white p-4 text-black">
               <div className="grid grid-cols-2 gap-5 sm:grid-cols-3">
                 {vouchers.map((voucher) => {
-                  const validityDays = profiles.find((p) => p.id === voucher.profileId)?.validityDays;
+                  const prof = profiles.find((p) => p.id === voucher.profileId);
+                  const validityMin = prof ? (prof.validityMin > 0 ? prof.validityMin : prof.validityDays * 1440) : 0;
                   return (
                     <div
                       key={voucher.id}
@@ -229,7 +230,7 @@ export function UcPrintDialog({
                       </p>
                       <p className="text-xs text-neutral-700">
                         {voucher.profileName}
-                        {validityDays ? ` · ${tf("print.validity", { n: validityDays })}` : ""}
+                        {validityMin ? ` · ${fmtRouterDuration(validityMin)}` : ""}
                         {(voucher.dataQuotaMb ?? 0) > 0
                           ? ` · ${formatBytes(voucher.dataQuotaMb * 1048576, lang)}`
                           : ""}

@@ -6,7 +6,7 @@
 // l'aperçu (fond blanc) et à l'impression (hors app, pas de Tailwind).
 
 import QRCode from "qrcode";
-import { formatCurrency, formatDuration } from "@/lib/hotspot/format";
+import { formatCurrency, formatDuration , fmtRouterDuration } from "@/lib/hotspot/format";
 import type { HotspotUser, Profile, VoucherFormat, VoucherTemplate } from "@/lib/hotspot/types";
 
 /** Contexte de rendu : identité du tenant + correspondance profileId → profil. */
@@ -73,14 +73,15 @@ export async function renderTemplate(
     width: 120,
   });
 
-  const validityDays = profile?.validityDays ?? 0;
+  // Parité Mikhmon : validité affichée au format RouterOS [wdhm] (5h30m, 30d…).
+  const validityMin = profile ? (profile.validityMin > 0 ? profile.validityMin : profile.validityDays * 1440) : 0;
   const selling = voucher.sellingPrice || voucher.price;
 
   let html = bodyHtml;
   html = replaceAllLiteral(html, "{{username}}", escapeHtml(voucher.username));
   html = replaceAllLiteral(html, "{{password}}", escapeHtml(voucher.password));
   html = replaceAllLiteral(html, "{{profile}}", escapeHtml(voucher.profileName));
-  html = replaceAllLiteral(html, "{{validity}}", validityDays > 0 ? `${validityDays} j` : "—");
+  html = replaceAllLiteral(html, "{{validity}}", fmtRouterDuration(validityMin));
   html = replaceAllLiteral(html, "{{price}}", escapeHtml(formatCurrency(selling, ctx.currency)));
   html = replaceAllLiteral(
     html,
@@ -92,10 +93,16 @@ export async function renderTemplate(
     "{{dataLimit}}",
     !profile || profile.dataQuotaMb === 0 ? "Illimité" : `${profile.dataQuotaMb} Mo`,
   );
+  // Parité Mikhmon : le quota temps du voucher (limit-uptime du lot) prime,
+  // sinon héritage du session-timeout du profil.
+  const effectiveTimeLimitMin =
+    voucher.timeLimitMin > 0
+      ? voucher.timeLimitMin
+      : (profile?.sessionTimeoutMin ?? 0);
   html = replaceAllLiteral(
     html,
     "{{timeLimit}}",
-    profile && profile.sessionTimeoutMin > 0 ? formatDuration(profile.sessionTimeoutMin * 60) : "—",
+    effectiveTimeLimitMin > 0 ? formatDuration(effectiveTimeLimitMin * 60) : "—",
   );
   // Data URL : base64 sans caractères spéciaux HTML — injectable telle quelle dans src="".
   html = replaceAllLiteral(html, "{{qrCode}}", qrCode);

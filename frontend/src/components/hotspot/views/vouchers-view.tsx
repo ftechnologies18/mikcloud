@@ -83,7 +83,7 @@ import { LAST_BATCH_STORAGE_KEY, UcPrintDialog } from "@/components/hotspot/part
 import { VoucherA4PrintDialog } from "@/components/hotspot/parts/voucher-a4-print-dialog";
 import { api } from "@/lib/hotspot/api";
 import { useI18n, localeOf } from "@/lib/hotspot/i18n";
-import { formatBytes, formatCurrency, formatDate, formatDuration } from "@/lib/hotspot/format";
+import { formatBytes, formatCurrency, formatDate, formatDuration, fmtRouterDuration } from "@/lib/hotspot/format";
 import type {
   BatchWithStats,
   GenerateVouchersRequest,
@@ -100,9 +100,9 @@ import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 12;
 const BATCH_PAGE_SIZE = 10;
-// 4 caractères comme le User Manager MikroTik, jusqu'à 10 (alphabets sans
+// 3 à 8 caractères comme Mikhmon (parité), jusqu'à 10 (alphabets sans
 // caractères ambigus côté serveur).
-const CODE_LENGTHS = [4, 5, 6, 7, 8, 9, 10];
+const CODE_LENGTHS = [3, 4, 5, 6, 7, 8, 9, 10];
 
 // Jeux de caractères — presets du User Manager MikroTik (« abcd », « ABCD »,
 // « aBcD », « 5ab2c34d », « 5AB2C34D », « 5aB2c34D »). Le serveur exclut
@@ -115,6 +115,7 @@ const CHARSET_OPTIONS = [
   { value: "5ab", labelKey: "vouchers.gen.charset.5ab" },
   { value: "5AB", labelKey: "vouchers.gen.charset.5AB" },
   { value: "5aB", labelKey: "vouchers.gen.charset.5aB" },
+  { value: "num", labelKey: "vouchers.gen.charset.num" },
 ];
 
 // Quotas courants (1 Go = 1024 Mo) — l'argument « 5 Go = 500 F ».
@@ -128,6 +129,23 @@ const QUOTA_OPTIONS = [
   { value: "10240", mb: 10240 },
   { value: "20480", mb: 20480 },
   { value: "51200", mb: 51200 },
+];
+
+// Parité Mikhmon : Time Limit (limit-uptime) par lot — quotas de temps
+// courants en minutes, libellés au format RouterOS via fmtRouterDuration().
+const TIME_LIMIT_OPTIONS = [
+  { value: "0", min: 0 },
+  { value: "30", min: 30 },
+  { value: "60", min: 60 },
+  { value: "120", min: 120 },
+  { value: "180", min: 180 },
+  { value: "300", min: 300 },
+  { value: "720", min: 720 },
+  { value: "1440", min: 1440 },
+  { value: "2880", min: 2880 },
+  { value: "4320", min: 4320 },
+  { value: "10080", min: 10080 },
+  { value: "43200", min: 43200 },
 ];
 
 // Repères de prix FCFA pour vendre au quota (le prix réel reste celui du profil) :
@@ -214,6 +232,8 @@ export default function VouchersView() {
   const [genCharset, setGenCharset] = useState("mikcloud");
   const [genComment, setGenComment] = useState("");
   const [genQuotaMb, setGenQuotaMb] = useState("inherit");
+  // Parité Mikhmon : Time Limit (limit-uptime) par lot — "inherit" = profil.
+  const [genTimeLimit, setGenTimeLimit] = useState("inherit");
 
   // Impression (liste simple — ancien dialog)
   const [printOpen, setPrintOpen] = useState(false);
@@ -532,6 +552,7 @@ export default function VouchersView() {
       charset: genCharset && genCharset !== "mikcloud" ? genCharset : undefined,
       comment: genComment.trim() || undefined,
       dataQuotaMb: genQuotaMb === "inherit" ? undefined : Number(genQuotaMb),
+      timeLimitMin: genTimeLimit === "inherit" ? undefined : Number(genTimeLimit),
     });
   }
 
@@ -1312,6 +1333,40 @@ export default function VouchersView() {
               </TabsContent>
 
               <TabsContent value="limits" className="mt-4 grid gap-4">
+                {/* Parité Mikhmon : Time Limit (limit-uptime) par lot */}
+                <div className="grid gap-2">
+                  <Label htmlFor="gen-timelimit">{t("vouchers.gen.timeLimit")}</Label>
+                  <Select
+                    value={genTimeLimit}
+                    onValueChange={setGenTimeLimit}
+                    disabled={generateMutation.isPending}
+                  >
+                    <SelectTrigger id="gen-timelimit" className="h-10 w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="inherit">
+                        {t("vouchers.gen.timeLimitInherit")}
+                        {selectedGenProfile
+                          ? ` (${
+                              selectedGenProfile.sessionTimeoutMin > 0
+                                ? fmtRouterDuration(selectedGenProfile.sessionTimeoutMin)
+                                : t("vouchers.gen.timeLimitUnlimited")
+                            })`
+                          : ""}
+                      </SelectItem>
+                      {TIME_LIMIT_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.min === 0
+                            ? t("vouchers.gen.timeLimitUnlimited")
+                            : fmtRouterDuration(option.min)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">{t("vouchers.gen.timeLimitHint")}</p>
+                </div>
+
                 <div className="grid gap-2">
                   <Label htmlFor="gen-quota">{t("vouchers.gen.quotaLabel")}</Label>
                   <Select

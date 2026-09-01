@@ -132,3 +132,18 @@ export function roleLabel(role: string, lang: Lang = "fr"): string {
   if (!role) return lang === "en" ? "User" : "Utilisateur";
   return role.charAt(0).toUpperCase() + role.slice(1);
 }
+
+/** Durée au format RouterOS [wdhm] à partir de minutes (parité Mikhmon). */
+export function fmtRouterDuration(min: number): string {
+  if (!min || min <= 0) return "—";
+  const w = Math.floor(min / 10080);
+  const d = Math.floor((min % 10080) / 1440);
+  const h = Math.floor((min % 1440) / 60);
+  const m = min % 60;
+  const parts: string[] = [];
+  if (w) parts.push(`${w}w`);
+  if (d) parts.push(`${d}d`);
+  if (h) parts.push(`${h}h`);
+  if (m) parts.push(`${m}m`);
+  return parts.length ? parts.join("") : "0m";
+}

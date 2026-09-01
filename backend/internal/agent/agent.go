@@ -527,6 +527,12 @@ func profileAddParams(p ProfileRef) string {
 	if p.HasShared && p.SharedUsers > 0 {
 		s += fmt.Sprintf(" shared-users=%d", p.SharedUsers)
 	}
+	if p.HasPool && p.AddressPool != "" {
+		s += ` address-pool="` + rosEscape(p.AddressPool) + `"`
+	}
+	if p.HasQueue && p.ParentQueue != "" {
+		s += ` parent-queue="` + rosEscape(p.ParentQueue) + `"`
+	}
 	if p.LockFirstDevice {
 		s += ` on-login="` + rosScriptValue(onLoginLockScript) + `"`
 	}
@@ -553,6 +559,20 @@ func profileSetLine(name string, p ProfileRef) string {
 	if p.HasShared && p.SharedUsers > 0 {
 		s += fmt.Sprintf(" shared-users=%d", p.SharedUsers)
 	}
+	if p.HasPool {
+		if p.AddressPool != "" {
+			s += ` address-pool="` + rosEscape(p.AddressPool) + `"`
+		} else {
+			s += ` address-pool=none`
+		}
+	}
+	if p.HasQueue {
+		if p.ParentQueue != "" {
+			s += ` parent-queue="` + rosEscape(p.ParentQueue) + `"`
+		} else {
+			s += ` parent-queue=none`
+		}
+	}
 	if p.LockFirstDevice {
 		s += ` on-login="` + rosScriptValue(onLoginLockScript) + `"`
 	} else {
@@ -575,7 +595,10 @@ func profileUserLimitLine(p ProfileRef) string {
 	if !p.HasTimeout || p.SessionTimeoutMin <= 0 {
 		return ""
 	}
-	s := `/ip hotspot user set [find profile="` + rosEscape(p.Name) + `"] limit-uptime=` + rosMinutes(p.SessionTimeoutMin)
+	// Cible uniquement les utilisateurs SANS quota (limit-uptime=0s) : les
+	// vouchers portent désormais leur propre limit-uptime par lot (parité
+	// Mikhmon) — un set global écraserait ces quotas individuels.
+	s := `/ip hotspot user set [find where profile="` + rosEscape(p.Name) + `" && limit-uptime=0s] limit-uptime=` + rosMinutes(p.SessionTimeoutMin)
 	return ":do { " + s + " } on-error={ :log info \"mikcloud: quota temps profil " + rosEscape(p.Name) + " inaccessible\" }\n"
 }
 
@@ -592,9 +615,13 @@ func (b Builder) buildProfileSet(cmd model.Command) string {
 		SessionTimeoutMin: int(plInt64(cmd.Payload, "sessionTimeoutMin")),
 		SharedUsers:       int(plInt64(cmd.Payload, "sharedUsers")),
 		LockFirstDevice:   plBool(cmd.Payload, "lockFirstDevice"),
+		AddressPool:       plStr(cmd.Payload, "addressPool"),
+		ParentQueue:       plStr(cmd.Payload, "parentQueue"),
 		HasRate:           plHas(cmd.Payload, "rateLimit"),
 		HasTimeout:        plHas(cmd.Payload, "sessionTimeoutMin"),
 		HasShared:         plHas(cmd.Payload, "sharedUsers"),
+		HasPool:           plHas(cmd.Payload, "addressPool"),
+		HasQueue:          plHas(cmd.Payload, "parentQueue"),
 	}
 	var sb strings.Builder
 	sb.WriteString(header(cmd))
@@ -680,6 +707,13 @@ func (b Builder) buildUserAdd(cmd model.Command) string {
 	prof := plProfile(cmd.Payload, "profile")
 	comment := plStr(cmd.Payload, "comment")
 	quota := plInt64(cmd.Payload, "limitBytesTotal")
+	// Parité Mikhmon : limit-uptime du voucher (minutes) — le payload prime,
+	// sinon héritage du session-timeout du profil (0 = illimité).
+	uptime := plInt64(cmd.Payload, "limitUptimeMin")
+	if uptime <= 0 && prof.HasTimeout && prof.SessionTimeoutMin > 0 {
+		uptime = int64(prof.SessionTimeoutMin)
+	}
+	server := plStr(cmd.Payload, "server")
 	okVar := "ok" + idSafe(cmd.ID)
 	var sb strings.Builder
 	sb.WriteString(header(cmd))
@@ -690,13 +724,15 @@ func (b Builder) buildUserAdd(cmd model.Command) string {
 		line += ` password="` + rosEscape(pass) + `"`
 	}
 	line += ` profile="` + rosEscape(prof.Name) + `"`
-	// Quota de temps TOTAL du ticket (parité Mikhmon) : la durée du profil
-	// borne aussi l'usage CUMULÉ (limit-uptime). Sans lui, après la coupe de
-	// session le même code repartait pour une session complète à chaque
-	// reconnexion (réutilisation infinie tant que la validité courait) ; le
-	// routeur refuse alors la reconnexion (« no more time »).
-	if prof.HasTimeout && prof.SessionTimeoutMin > 0 {
-		line += " limit-uptime=" + rosMinutes(prof.SessionTimeoutMin)
+	// Quota de temps TOTAL du ticket (parité Mikhmon) : limit-uptime du
+	// voucher (override par lot) ou, à défaut, la durée du profil. Une fois
+	// le cumul épuisé, le routeur refuse la reconnexion (« no more time »).
+	if uptime > 0 {
+		line += " limit-uptime=" + rosMinutes(int(uptime))
+	}
+	// Parité Mikhmon : serveur hotspot RouterOS visé ("all" ou nom précis).
+	if server != "" {
+		line += ` server="` + rosEscape(server) + `"`
 	}
 	if quota > 0 {
 		// Quota de données : limit-bytes-total (in + out cumulés, in/out laissés à 0).
@@ -716,6 +752,13 @@ func (b Builder) buildVoucherBatch(cmd model.Command) string {
 	batch := plStr(cmd.Payload, "batch")
 	custom := plStr(cmd.Payload, "comment")
 	quota := plInt64(cmd.Payload, "limitBytesTotal")
+	// Parité Mikhmon : limit-uptime par lot (minutes) — le payload prime,
+	// sinon héritage du session-timeout du profil (0 = illimité).
+	uptime := plInt64(cmd.Payload, "limitUptimeMin")
+	if uptime <= 0 && prof.HasTimeout && prof.SessionTimeoutMin > 0 {
+		uptime = int64(prof.SessionTimeoutMin)
+	}
+	server := plStr(cmd.Payload, "server")
 	okVar := "ok" + idSafe(cmd.ID)
 	// Commentaire router : la traçabilité MikCloud (lot) reste toujours présente ;
 	// le commentaire libre du gérant est préfixé devant s'il existe.
@@ -736,9 +779,13 @@ func (b Builder) buildVoucherBatch(cmd model.Command) string {
 		line := `/ip hotspot user add name="` + rosEscape(SanitizeName(u.Name)) + `" password="` + rosEscape(u.Password) +
 			`" profile="` + rosEscape(prof.Name) + `"`
 		// Quota de temps TOTAL du ticket (parité Mikhmon, cf. buildUserAdd) :
-		// une fois le cumul épuisé, le routeur refuse la reconnexion.
-		if prof.HasTimeout && prof.SessionTimeoutMin > 0 {
-			line += " limit-uptime=" + rosMinutes(prof.SessionTimeoutMin)
+		// limit-uptime du lot (override) ou du profil ; cumul épuisé = refus.
+		if uptime > 0 {
+			line += " limit-uptime=" + rosMinutes(int(uptime))
+		}
+		// Parité Mikhmon : serveur hotspot RouterOS visé ("all" ou nom précis).
+		if server != "" {
+			line += ` server="` + rosEscape(server) + `"`
 		}
 		if quota > 0 {
 			// Quota de données du lot (ex. « 5 Go = 500 F ») : limit-bytes-total
@@ -1189,6 +1236,9 @@ type ProfileRef struct {
 	SessionTimeoutMin int
 	SharedUsers       int
 	LockFirstDevice   bool
+	// Parité Mikhmon : address-pool / parent-queue RouterOS ("" = none).
+	AddressPool string
+	ParentQueue string
 	// Présence des clés dans le payload : une commande héritée peut n'exporter
 	// que le nom (voire le verrou) — dans ce cas le set ne doit PAS toucher au
 	// rate-limit/session-timeout/shared-users du routeur (jamais d'effacement
@@ -1196,6 +1246,8 @@ type ProfileRef struct {
 	HasRate    bool
 	HasTimeout bool
 	HasShared  bool
+	HasPool    bool
+	HasQueue   bool
 }
 
 func plProfile(p map[string]any, k string) ProfileRef {
@@ -1220,6 +1272,14 @@ func plProfile(p map[string]any, k string) ProfileRef {
 		ref.SharedUsers = int(plInt64(m, "sharedUsers"))
 	}
 	ref.LockFirstDevice = plBool(m, "lockFirstDevice")
+	if _, ok := m["addressPool"]; ok {
+		ref.HasPool = true
+		ref.AddressPool = plStr(m, "addressPool")
+	}
+	if _, ok := m["parentQueue"]; ok {
+		ref.HasQueue = true
+		ref.ParentQueue = plStr(m, "parentQueue")
+	}
 	return ref
 }
 

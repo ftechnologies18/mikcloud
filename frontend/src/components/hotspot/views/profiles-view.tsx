@@ -52,7 +52,7 @@ import { ProfileEditDialog } from "@/components/hotspot/parts/profile-dialog";
 import { useCurrency } from "@/components/hotspot/parts/sd-currency";
 import { api } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
-import { formatBytes, formatCurrency, formatDuration, formatRateLimit } from "@/lib/hotspot/format";
+import { formatBytes, formatCurrency, formatDuration, formatRateLimit , fmtRouterDuration } from "@/lib/hotspot/format";
 import type { Profile } from "@/lib/hotspot/types";
 import { useChartPalette } from "@/lib/hotspot/chart-theme";
 
@@ -267,7 +267,9 @@ export default function ProfilesView() {
                           <CalendarClock className="size-4 shrink-0 text-muted-foreground" />
                           <span className="text-muted-foreground">{t("profiles.validity")}</span>
                           <span className="ml-auto font-medium">
-                            {tf("profiles.validityDays", { n: profile.validityDays })}
+                            {fmtRouterDuration(
+                              profile.validityMin > 0 ? profile.validityMin : profile.validityDays * 1440,
+                            )}
                           </span>
                         </div>
                         <div className="flex min-h-6 items-center gap-2 text-sm">

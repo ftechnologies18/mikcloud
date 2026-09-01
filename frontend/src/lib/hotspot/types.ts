@@ -317,8 +317,8 @@ export interface RouterTestResult {
   version: string;
 }
 
-/** Mode d'expiration cloud (F1) : « notify » désactive au routeur, « remove » supprime. */
-export type ProfileExpiryMode = "notify" | "remove";
+/** Mode d'expiration cloud (F1, parité Mikhmon) : « none » aucune action, « notify » désactive au routeur, « remove » supprime. */
+export type ProfileExpiryMode = "none" | "notify" | "remove";
 
 export interface Profile {
   id: string;
@@ -340,6 +340,12 @@ export interface Profile {
   lockFirstDevice: boolean;
   /** F13 : prix de vente affiché sur le voucher (0 = même prix que price). */
   sellingPrice: number;
+  /** Parité Mikhmon : pool IP RouterOS servi au client hotspot ("" = none). */
+  addressPool: string;
+  /** Parité Mikhmon : queue simple RouterOS héritée par les utilisateurs ("" = none). */
+  parentQueue: string;
+  /** Parité Mikhmon : validité fine en minutes (0 = hériter validityDays, compat contrat V2). */
+  validityMin: number;
 }
 
 export interface HotspotUser {
@@ -367,6 +373,8 @@ export interface HotspotUser {
   sellingPrice?: number;
   /** Quota data appliqué sur le routeur (limit-bytes-total, en Mo ; 0 = illimité). */
   dataQuotaMb: number;
+  /** Parité Mikhmon : Time Limit (limit-uptime) résolu à la génération (minutes ; 0 = héritage historique). */
+  timeLimitMin: number;
   /** N (rapprochement doux) — utilisateur absent du dernier read_state du routeur. */
   missingOnRouter?: boolean;
 }
@@ -426,12 +434,16 @@ export interface GenerateVouchersRequest {
   resellerId?: string;
   /** « userpass » (défaut) ou « same » : mot de passe = nom d'utilisateur. */
   userMode?: VoucherUserMode;
-  /** Preset de caractères : "" (MikCloud sûr) | abc | ABC | aBc | 5ab | 5AB | 5aB. */
+  /** Preset de caractères : "" (MikCloud sûr) | abc | ABC | aBc | 5ab | 5AB | 5aB | num. */
   charset?: string;
   /** Commentaire libre inscrit sur le routeur avec le n° de lot (64 car. max). */
   comment?: string;
   /** Quota data par voucher en Mo : undefined = hériter du profil, 0 = illimité, >0 = plafond. */
   dataQuotaMb?: number;
+  /** Parité Mikhmon : Time Limit par lot (limit-uptime, minutes ; 0 = hériter du profil). */
+  timeLimitMin?: number;
+  /** Parité Mikhmon : serveur hotspot RouterOS visé ("" = tous). */
+  server?: string;
 }
 
 export interface GenerateVouchersResponse {
@@ -512,6 +524,8 @@ export interface Batch {
   totalCost: number;
   /** Quota data porté par chaque voucher du lot (Mo, 0 = illimité). */
   dataQuotaMb: number;
+  /** Parité Mikhmon : Time Limit (limit-uptime) résolu à la génération (minutes). */
+  timeLimitMin: number;
   channel: SaleChannel;
   resellerId: string;
   resellerName: string;

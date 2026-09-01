@@ -48,6 +48,10 @@ const (
 	CharsetDigLow  = "5ab" // chiffres + minuscules — preset « 5ab2c34d »
 	CharsetDigUp   = "5AB" // chiffres + majuscules — preset « 5AB2C34D »
 	CharsetDigMix  = "5aB" // chiffres + lettres    — preset « 5aB2c34D »
+	// Parité Mikhmon : jeu « 1234 » (chiffres purs, très demandé pour les
+	// codes courts revendus par les revendeurs). Alphabet = digitSafe (sans
+	// 0/1) pour conserver la règle « zéro caractère ambigu » de MikCloud.
+	CharsetNum = "num" // chiffres purs          — preset « 1234 »
 )
 
 const (
@@ -65,6 +69,7 @@ var CharsetAlphabets = map[string]string{
 	CharsetDigLow:  digitSafe + lowerSafe,
 	CharsetDigUp:   digitSafe + upperSafe,
 	CharsetDigMix:  digitSafe + lowerSafe + upperSafe,
+	CharsetNum:     digitSafe,
 }
 
 // RandomCodeFrom génère un code de n caractères dans l'alphabet du preset
@@ -170,7 +175,7 @@ type Profile struct {
 	DataQuotaMb       int    `json:"dataQuotaMb"`
 	CreatedAt         string `json:"createdAt"`
 	// P0 (audit Mikhmon) — expiration cloud (F1).
-	ExpMode        string `json:"expMode"`        // "notify" (défaut) | "remove"
+	ExpMode        string `json:"expMode"`        // "none" (parité Mikhmon « None ») | "notify" (défaut) | "remove"
 	GracePeriodMin int    `json:"gracePeriodMin"` // 0 = immédiat (borne 43200)
 	LockUser       bool   `json:"lockUser"`       // verrouiller : 1 session à la fois
 	// P2 (audit Mikhmon) — marge (F13) : prix de vente affiché (0 = même prix que Price).
@@ -181,6 +186,27 @@ type Profile struct {
 	// commentaire routeur sous la marque « mikcloud_lock: », jamais renvoyé au
 	// cloud). Les autres appareils sont déconnectés à la connexion.
 	LockFirstDevice bool `json:"lockFirstDevice"`
+	// Parité Mikhmon (profil User Profile) : Address Pool et Parent Queue —
+	// noms RouterOS transmis tels quels au routeur ("" = none/absent).
+	// address-pool : pool IP du routeur (/ip pool) servi au client hotspot ;
+	// parent-queue : queue simple (/queue simple) héritée par les utilisateurs.
+	AddressPool string `json:"addressPool"`
+	ParentQueue string `json:"parentQueue"`
+	// Parité Mikhmon : validité au format RouterOS [wdhm] (ex. 5h30m, 4w3d).
+	// ValidityMin = source de vérité fine (minutes, 0 = hériter ValidityDays × 1440
+	// pour la compatibilité contrat V2 / données existantes). Utiliser TOUJOURS
+	// ValidityMinutes() pour calculer une expiration.
+	ValidityMin int `json:"validityMin"`
+}
+
+// ValidityMinutes — durée de validité effective du profil en minutes.
+// Extension parité Mikhmon : ValidityMin (> 0) prime sur ValidityDays
+// (champ historique du contrat V2, conservé pour rétro-compatibilité).
+func (p Profile) ValidityMinutes() int {
+	if p.ValidityMin > 0 {
+		return p.ValidityMin
+	}
+	return p.ValidityDays * 1440
 }
 
 // HotspotUser — utilisateur hotspot régulier ou voucher.
@@ -216,6 +242,10 @@ type HotspotUser struct {
 	// (/ip hotspot user add limit-bytes-total=…, exprimé en Mo ; 0 = illimité
 	// dans la limite de la validité). Ex. « 5 Go = 500 F » → DataQuotaMb 5120.
 	DataQuotaMb int64 `json:"dataQuotaMb"`
+	// Parité Mikhmon — Time Limit PAR LOT (limit-uptime RouterOS) : quota de
+	// temps CUMULÉ propre au voucher, surchargé à la génération (minutes ;
+	// 0 = hériter du sessionTimeoutMin du profil à la génération).
+	TimeLimitMin int64 `json:"timeLimitMin"`
 	// N°8 — Mode Vente : remise effective du voucher au client par le
 	// revendeur (traçabilité anti-vol). Vide = encore en stock.
 	SoldAt  string `json:"soldAt,omitempty"`  // RFC3339
@@ -332,7 +362,10 @@ type Batch struct {
 	TotalCost   int    `json:"totalCost"`
 	// DataQuotaMb — quota de données (Mo) porté par chaque voucher du lot
 	// (0 = illimité). Tracé pour l'affichage et la comptabilité.
-	DataQuotaMb  int64  `json:"dataQuotaMb"`
+	DataQuotaMb int64 `json:"dataQuotaMb"`
+	// Parité Mikhmon — Time Limit (limit-uptime) résolu à la génération du
+	// lot (minutes ; 0 = héritage historique : profil sans quota de temps).
+	TimeLimitMin int64  `json:"timeLimitMin"`
 	Channel      string `json:"channel"` // direct | reseller
 	ResellerID   string `json:"resellerId"`
 	ResellerName string `json:"resellerName"`

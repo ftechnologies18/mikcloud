@@ -1658,6 +1658,10 @@ func (a *API) handleProfileCreate(w http.ResponseWriter, r *http.Request) {
 		SellingPrice   int    `json:"sellingPrice"`
 		// v2 — verrou « 1er appareil » (liaison MAC par on-login).
 		LockFirstDevice bool `json:"lockFirstDevice"`
+		// Parité Mikhmon : address-pool / parent-queue RouterOS + validité fine.
+		AddressPool string `json:"addressPool"`
+		ParentQueue string `json:"parentQueue"`
+		ValidityMin int    `json:"validityMin"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
@@ -1673,8 +1677,8 @@ func (a *API) handleProfileCreate(w http.ResponseWriter, r *http.Request) {
 	if expMode == "" {
 		expMode = "notify"
 	}
-	if expMode != "notify" && expMode != "remove" {
-		writeErr(w, http.StatusBadRequest, "Mode d'expiration invalide (notify ou remove)")
+	if expMode != "none" && expMode != "notify" && expMode != "remove" {
+		writeErr(w, http.StatusBadRequest, "Mode d'expiration invalide (none, notify ou remove)")
 		return
 	}
 	if req.GracePeriodMin < 0 || req.GracePeriodMin > 43200 {
@@ -1683,6 +1687,12 @@ func (a *API) handleProfileCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.SellingPrice < 0 {
 		writeErr(w, http.StatusBadRequest, "Le prix de vente doit être positif")
+		return
+	}
+	// Parité Mikhmon : validité fine en minutes (borne 5 ans) ; 0 = hériter
+	// de validityDays (compatibilité contrat V2 / données existantes).
+	if req.ValidityMin < 0 || req.ValidityMin > 2628000 {
+		writeErr(w, http.StatusBadRequest, "La validité doit être comprise entre 0 et 2628000 minutes")
 		return
 	}
 	a.store.Lock()
@@ -1709,6 +1719,14 @@ func (a *API) handleProfileCreate(w http.ResponseWriter, r *http.Request) {
 		ExpMode:           expMode, GracePeriodMin: req.GracePeriodMin,
 		LockUser: req.LockUser, SellingPrice: defaultMinZero(req.SellingPrice),
 		LockFirstDevice: req.LockFirstDevice,
+		AddressPool:     strings.TrimSpace(req.AddressPool),
+		ParentQueue:     strings.TrimSpace(req.ParentQueue),
+		ValidityMin:     defaultMinZero(req.ValidityMin),
+	}
+	// Parité Mikhmon : la validité fine est la source de vérité ; le champ
+	// historique validityDays reste cohérent (arrondi supérieur, contrat V2).
+	if profile.ValidityMin > 0 {
+		profile.ValidityDays = (profile.ValidityMin + 1439) / 1440
 	}
 	a.store.Lock()
 	db := a.store.Data()
@@ -1760,6 +1778,10 @@ func (a *API) handleProfileUpdate(w http.ResponseWriter, r *http.Request) {
 		SellingPrice   *int    `json:"sellingPrice"`
 		// v2 — verrou « 1er appareil » (liaison MAC par on-login).
 		LockFirstDevice *bool `json:"lockFirstDevice"`
+		// Parité Mikhmon : address-pool / parent-queue RouterOS + validité fine.
+		AddressPool *string `json:"addressPool"`
+		ParentQueue *string `json:"parentQueue"`
+		ValidityMin *int    `json:"validityMin"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
@@ -1768,8 +1790,8 @@ func (a *API) handleProfileUpdate(w http.ResponseWriter, r *http.Request) {
 	// Bornes contrat F1/F13 (validées avant verrou).
 	if req.ExpMode != nil {
 		m := strings.TrimSpace(*req.ExpMode)
-		if m != "" && m != "notify" && m != "remove" {
-			writeErr(w, http.StatusBadRequest, "Mode d'expiration invalide (notify ou remove)")
+		if m != "" && m != "none" && m != "notify" && m != "remove" {
+			writeErr(w, http.StatusBadRequest, "Mode d'expiration invalide (none, notify ou remove)")
 			return
 		}
 	}
@@ -1779,6 +1801,11 @@ func (a *API) handleProfileUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.SellingPrice != nil && *req.SellingPrice < 0 {
 		writeErr(w, http.StatusBadRequest, "Le prix de vente doit être positif")
+		return
+	}
+	// Parité Mikhmon : validité fine en minutes (borne 5 ans).
+	if req.ValidityMin != nil && (*req.ValidityMin < 0 || *req.ValidityMin > 2628000) {
+		writeErr(w, http.StatusBadRequest, "La validité doit être comprise entre 0 et 2628000 minutes")
 		return
 	}
 	a.store.Lock()
@@ -1816,6 +1843,18 @@ func (a *API) handleProfileUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ValidityDays != nil && *req.ValidityDays > 0 {
 		p.ValidityDays = *req.ValidityDays
+	}
+	if req.ValidityMin != nil && *req.ValidityMin >= 0 {
+		p.ValidityMin = *req.ValidityMin
+		if p.ValidityMin > 0 {
+			p.ValidityDays = (p.ValidityMin + 1439) / 1440
+		}
+	}
+	if req.AddressPool != nil {
+		p.AddressPool = strings.TrimSpace(*req.AddressPool)
+	}
+	if req.ParentQueue != nil {
+		p.ParentQueue = strings.TrimSpace(*req.ParentQueue)
 	}
 	if req.Price != nil && *req.Price >= 0 {
 		p.Price = *req.Price
@@ -1874,6 +1913,8 @@ func (a *API) queueProfileSetLocked(db *model.DB, acc string, p model.Profile) {
 				"sessionTimeoutMin": p.SessionTimeoutMin,
 				"sharedUsers":       p.SharedUsers,
 				"lockFirstDevice":   p.LockFirstDevice,
+				"addressPool":       p.AddressPool,
+				"parentQueue":       p.ParentQueue,
 			})
 		}
 	}
@@ -2024,7 +2065,7 @@ func (a *API) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 		Status: "active", BatchID: "", ResellerID: "", ResellerName: "",
 		Comment:   strings.TrimSpace(req.Comment),
 		CreatedAt: nowISO,
-		ExpiresAt: now.Add(time.Duration(profile.ValidityDays) * 24 * time.Hour).Format(time.RFC3339),
+		ExpiresAt: now.Add(time.Duration(profile.ValidityMinutes()) * time.Minute).Format(time.RFC3339),
 		UsedAt:    "", Price: profile.Price, DataQuotaMb: int64(profile.DataQuotaMb),
 	}
 	a.store.Unlock()
@@ -2145,7 +2186,7 @@ func (a *API) handleUserUpdate(w http.ResponseWriter, r *http.Request) {
 		u.ProfileID = p.ID
 		u.ProfileName = p.Name
 		u.Price = p.Price
-		u.ExpiresAt = now.Add(time.Duration(p.ValidityDays) * 24 * time.Hour).Format(time.RFC3339)
+		u.ExpiresAt = now.Add(time.Duration(p.ValidityMinutes()) * time.Minute).Format(time.RFC3339)
 	}
 	if req.Comment != nil {
 		u.Comment = strings.TrimSpace(*req.Comment)
@@ -2390,6 +2431,10 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 		Charset     string `json:"charset"`     // preset model.Charset* ("" = MikCloud sûr)
 		Comment     string `json:"comment"`     // commentaire libre inscrit sur le routeur
 		DataQuotaMb *int   `json:"dataQuotaMb"` // nil = hériter du profil · 0 = illimité · >0 = Mo
+		// Parité Mikhmon : Time Limit par lot (limit-uptime, minutes ; 0 =
+		// hériter du sessionTimeoutMin du profil) + serveur hotspot optionnel.
+		TimeLimitMin int    `json:"timeLimitMin"`
+		Server       string `json:"server"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
@@ -2403,10 +2448,10 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 	if codeLength == 0 {
 		codeLength = 5
 	}
-	// 4 caractères comme le User Manager MikroTik, jusqu'à 10 pour les codes
+	// 3 à 8 caractères comme Mikhmon (parité), jusqu'à 10 pour les codes
 	// personnalisés ; l'alphabet choisi exclut toujours les caractères ambigus.
-	if codeLength < 4 || codeLength > 10 {
-		writeErr(w, http.StatusBadRequest, "La longueur du code doit être comprise entre 4 et 10")
+	if codeLength < 3 || codeLength > 10 {
+		writeErr(w, http.StatusBadRequest, "La longueur du code doit être comprise entre 3 et 10")
 		return
 	}
 	prefix := req.Prefix
@@ -2477,7 +2522,24 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 	sellingTotal := selling * req.Count
 
 	batchID := fmt.Sprintf("B%s-%04d", now.Format("20060102"), now.Nanosecond()%10000)
-	expiresAt := now.Add(time.Duration(profile.ValidityDays) * 24 * time.Hour).Format(time.RFC3339)
+	expiresAt := now.Add(time.Duration(profile.ValidityMinutes()) * time.Minute).Format(time.RFC3339)
+	// Parité Mikhmon : Time Limit (limit-uptime) par lot — 0 = hériter du
+	// sessionTimeoutMin du profil. Résolu une fois, tracé et poussé au routeur.
+	if req.TimeLimitMin < 0 || req.TimeLimitMin > 2628000 {
+		a.store.Unlock()
+		writeErr(w, http.StatusBadRequest, "Le quota de temps doit être compris entre 0 et 2628000 minutes")
+		return
+	}
+	timeLimitMin := int64(req.TimeLimitMin)
+	if timeLimitMin <= 0 {
+		timeLimitMin = int64(profile.SessionTimeoutMin)
+	}
+	server := strings.TrimSpace(req.Server)
+	if server != "" && (len(server) > 64 || strings.ContainsAny(server, "\"\n\r")) {
+		a.store.Unlock()
+		writeErr(w, http.StatusBadRequest, "Nom de serveur hotspot invalide")
+		return
+	}
 	vouchers := make([]model.HotspotUser, 0, req.Count)
 	for i := 0; i < req.Count; i++ {
 		code := model.RandomCodeFrom(codeLength, req.Charset)
@@ -2500,6 +2562,7 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 			Status: "active", BatchID: batchID,
 			CreatedAt: model.NowISO(), ExpiresAt: expiresAt, UsedAt: "",
 			Price: profile.Price, SellingPrice: profile.SellingPrice, DataQuotaMb: int64(quotaMb),
+			TimeLimitMin: timeLimitMin,
 		}
 		if resellerCopy != nil {
 			u.ResellerID = resellerCopy.ID
@@ -2529,6 +2592,13 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 		}
 		if voucherComment != "" {
 			batchPayload["comment"] = voucherComment
+		}
+		if timeLimitMin > 0 {
+			// Parité Mikhmon : limit-uptime du lot (minutes → RouterOS).
+			batchPayload["limitUptimeMin"] = timeLimitMin
+		}
+		if server != "" {
+			batchPayload["server"] = server
 		}
 		cmd := queueCommandLocked(db, routerCopy.AccountID, routerCopy.ID, model.CmdVoucherBatch, batchPayload)
 		a.logActivityBy(r, db, acc, "voucher", fmt.Sprintf("Lot %s : %d vouchers en file pour «%s»%s (commande %s)", batchID, req.Count, routerCopy.Name, quotaNote(quotaMb), cmd.ID))
@@ -2560,7 +2630,7 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 		db.Batches = append([]model.Batch{{
 			ID: batchID, AccountID: acc, ProfileID: profile.ID, ProfileName: profile.Name,
 			RouterID: routerCopy.ID, RouterName: routerCopy.Name,
-			Count: req.Count, UnitPrice: profile.Price, TotalCost: cost, DataQuotaMb: int64(quotaMb),
+			Count: req.Count, UnitPrice: profile.Price, TotalCost: cost, DataQuotaMb: int64(quotaMb), TimeLimitMin: timeLimitMin,
 			Channel: channel, ResellerID: batchResellerID, ResellerName: resName,
 			CreatedAt: model.NowISO(),
 		}}, db.Batches...)
@@ -2616,7 +2686,7 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 	db.Batches = append([]model.Batch{{
 		ID: batchID, AccountID: acc, ProfileID: profile.ID, ProfileName: profile.Name,
 		RouterID: routerCopy.ID, RouterName: routerCopy.Name,
-		Count: req.Count, UnitPrice: profile.Price, TotalCost: cost, DataQuotaMb: int64(quotaMb),
+		Count: req.Count, UnitPrice: profile.Price, TotalCost: cost, DataQuotaMb: int64(quotaMb), TimeLimitMin: timeLimitMin,
 		Channel: channel, ResellerID: batchResellerID, ResellerName: resName,
 		CreatedAt: model.NowISO(),
 	}}, db.Batches...)

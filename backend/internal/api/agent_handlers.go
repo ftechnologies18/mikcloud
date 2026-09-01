@@ -210,6 +210,10 @@ func profileRef(p model.Profile) map[string]any {
 		"sessionTimeoutMin": p.SessionTimeoutMin,
 		"sharedUsers":       p.SharedUsers,
 		"lockFirstDevice":   p.LockFirstDevice,
+		// Parité Mikhmon : pools/queues RouterOS portés par le profil
+		// (chaque user_add / voucher_batch aligne le profil sur le cloud).
+		"addressPool": p.AddressPool,
+		"parentQueue": p.ParentQueue,
 	}
 }
 

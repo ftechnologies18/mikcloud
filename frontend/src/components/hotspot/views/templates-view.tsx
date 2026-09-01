@@ -107,6 +107,11 @@ function buildSampleVoucher(num: number, profile: Profile | undefined): HotspotU
     routerName: "Routeur principal",
     status: "active",
     dataQuotaMb: profile?.dataQuotaMb ?? 0,
+    // Parité Mikhmon : quota temps résolu du profil (aperçu fidèle).
+    timeLimitMin:
+      profile && profile.sessionTimeoutMin > 0
+        ? profile.sessionTimeoutMin
+        : 0,
     batchId: "",
     resellerId: "",
     resellerName: "",

@@ -31,6 +31,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { useCurrency } from "@/components/hotspot/parts/sd-currency";
 import { api } from "@/lib/hotspot/api";
+import { fmtRouterDuration } from "@/lib/hotspot/format";
 import { useI18n } from "@/lib/hotspot/i18n";
 import type { Profile, ProfileExpiryMode } from "@/lib/hotspot/types";
 
@@ -46,6 +47,19 @@ type SessionUnit = "min" | "hour" | "day";
 // Facteur de conversion vers minutes selon l'unité choisie.
 const SESSION_UNIT_MIN: Record<SessionUnit, number> = { min: 1, hour: 60, day: 1440 };
 
+// Parité Mikhmon : unité de saisie de la VALIDITÉ [wdhm] — le serveur stocke
+// des minutes (validityMin), la conversion se fait ici, à la frappe.
+type ValidityUnit = "min" | "hour" | "day" | "week";
+
+const VALIDITY_UNIT_MIN: Record<ValidityUnit, number> = {
+  min: 1,
+  hour: 60,
+  day: 1440,
+  week: 10080,
+};
+
+const VALIDITY_MAX_MIN = 2_628_000; // 5 ans (borne serveur)
+
 // Déduit l'unité la plus lisible pour afficher une durée stockée en minutes
 // (multiple de 1440 → jours, multiple de 60 → heures, sinon minutes).
 function sessionDisplay(min: number): { sessionTimeoutValue: string; sessionTimeoutUnit: SessionUnit } {
@@ -54,12 +68,21 @@ function sessionDisplay(min: number): { sessionTimeoutValue: string; sessionTime
   return { sessionTimeoutValue: String(min), sessionTimeoutUnit: "min" };
 }
 
+// Déduit l'unité la plus lisible pour la validité (semaines → jours → heures → minutes).
+function validityDisplay(min: number): { validityValue: string; validityUnit: ValidityUnit } {
+  if (min > 0 && min % 10080 === 0) return { validityValue: String(min / 10080), validityUnit: "week" };
+  if (min > 0 && min % 1440 === 0) return { validityValue: String(min / 1440), validityUnit: "day" };
+  if (min > 0 && min % 60 === 0) return { validityValue: String(min / 60), validityUnit: "hour" };
+  return { validityValue: String(min), validityUnit: "min" };
+}
+
 interface ProfileForm {
   name: string;
   rateLimit: string;
   sessionTimeoutValue: string;
   sessionTimeoutUnit: SessionUnit;
-  validityDays: string;
+  validityValue: string;
+  validityUnit: ValidityUnit;
   sharedUsers: string;
   price: string;
   dataQuotaMb: string;
@@ -68,6 +91,8 @@ interface ProfileForm {
   lockUser: boolean;
   lockFirstDevice: boolean;
   sellingPrice: string;
+  addressPool: string;
+  parentQueue: string;
 }
 
 const DEFAULT_FORM: ProfileForm = {
@@ -76,7 +101,8 @@ const DEFAULT_FORM: ProfileForm = {
   // Défaut 1 heure (équivalent à l'ancien défaut 60 min, plus lisible).
   sessionTimeoutValue: "1",
   sessionTimeoutUnit: "hour",
-  validityDays: "1",
+  validityValue: "1",
+  validityUnit: "day",
   sharedUsers: "1",
   price: "0",
   dataQuotaMb: "0",
@@ -85,6 +111,8 @@ const DEFAULT_FORM: ProfileForm = {
   lockUser: false,
   lockFirstDevice: false,
   sellingPrice: "0",
+  addressPool: "",
+  parentQueue: "",
 };
 
 interface ProfileEditDialogProps {
@@ -99,7 +127,8 @@ function formFromProfile(profile: Profile): ProfileForm {
     name: profile.name,
     rateLimit: profile.rateLimit,
     ...sessionDisplay(profile.sessionTimeoutMin),
-    validityDays: String(profile.validityDays),
+    // Parité Mikhmon : validité fine (minutes) si présente, sinon jours historiques.
+    ...validityDisplay(profile.validityMin > 0 ? profile.validityMin : profile.validityDays * 1440),
     sharedUsers: String(profile.sharedUsers),
     price: String(profile.price),
     dataQuotaMb: String(profile.dataQuotaMb),
@@ -108,6 +137,8 @@ function formFromProfile(profile: Profile): ProfileForm {
     lockUser: profile.lockUser ?? false,
     lockFirstDevice: profile.lockFirstDevice ?? false,
     sellingPrice: String(profile.sellingPrice ?? 0),
+    addressPool: profile.addressPool ?? "",
+    parentQueue: profile.parentQueue ?? "",
   };
 }
 
@@ -141,7 +172,7 @@ export function ProfileEditDialog({ open, onOpenChange, profile }: ProfileEditDi
   // Valeur saisie dans l'unité choisie, convertie en minutes (NaN si vide).
   const sessionNum =
     parseInt(form.sessionTimeoutValue, 10) * SESSION_UNIT_MIN[form.sessionTimeoutUnit];
-  const validityNum = parseInt(form.validityDays, 10);
+  const validityNum = parseInt(form.validityValue, 10) * VALIDITY_UNIT_MIN[form.validityUnit];
   const devicesNum = parseInt(form.sharedUsers, 10);
   const priceNum = Number(form.price);
   const quotaNum = parseInt(form.dataQuotaMb, 10);
@@ -156,6 +187,7 @@ export function ProfileEditDialog({ open, onOpenChange, profile }: ProfileEditDi
     sessionNum >= 1 &&
     Number.isInteger(validityNum) &&
     validityNum >= 1 &&
+    validityNum <= VALIDITY_MAX_MIN &&
     Number.isInteger(devicesNum) &&
     devicesNum >= 1 &&
     devicesNum <= 10 &&
@@ -176,7 +208,7 @@ export function ProfileEditDialog({ open, onOpenChange, profile }: ProfileEditDi
         toast.error(t("profiles.dialog.rateToast"));
       else if (!Number.isInteger(sessionNum) || sessionNum < 1)
         toast.error(t("profiles.dialog.sessionToast"));
-      else if (!Number.isInteger(validityNum) || validityNum < 1)
+      else if (!Number.isInteger(validityNum) || validityNum < 1 || validityNum > VALIDITY_MAX_MIN)
         toast.error(t("profiles.dialog.validityToast"));
       else if (!Number.isInteger(devicesNum) || devicesNum < 1 || devicesNum > 10)
         toast.error(t("profiles.dialog.devicesToast"));
@@ -195,7 +227,9 @@ export function ProfileEditDialog({ open, onOpenChange, profile }: ProfileEditDi
         rateLimit: form.rateLimit.trim(),
         sessionTimeoutMin: sessionNum,
         sharedUsers: devicesNum,
-        validityDays: validityNum,
+        // Parité Mikhmon : validité fine en minutes (le serveur maintient
+        // validityDays en cohérence, arrondi supérieur).
+        validityMin: validityNum,
         price: Math.round(priceNum),
         dataQuotaMb: quotaNum,
         expMode: form.expMode,
@@ -203,6 +237,8 @@ export function ProfileEditDialog({ open, onOpenChange, profile }: ProfileEditDi
         lockUser: form.lockUser,
         lockFirstDevice: form.lockFirstDevice,
         sellingPrice: Math.round(sellingNum),
+        addressPool: form.addressPool.trim(),
+        parentQueue: form.parentQueue.trim(),
       },
     });
   }
@@ -298,14 +334,41 @@ export function ProfileEditDialog({ open, onOpenChange, profile }: ProfileEditDi
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="profile-validity">{t("profiles.dialog.validity")}</Label>
-                <Input
-                  id="profile-validity"
-                  type="number"
-                  min={1}
-                  value={form.validityDays}
-                  onChange={(event) => setForm((f) => ({ ...f, validityDays: event.target.value }))}
-                  disabled={saveMutation.isPending}
-                />
+                <div className="flex gap-2">
+                  <Input
+                    id="profile-validity"
+                    type="number"
+                    min={1}
+                    value={form.validityValue}
+                    onChange={(event) => setForm((f) => ({ ...f, validityValue: event.target.value }))}
+                    disabled={saveMutation.isPending}
+                    className="min-w-0 flex-1"
+                  />
+                  <Select
+                    value={form.validityUnit}
+                    onValueChange={(value) =>
+                      setForm((f) => ({ ...f, validityUnit: value as ValidityUnit }))
+                    }
+                  >
+                    <SelectTrigger
+                      className="w-[6.75rem] shrink-0"
+                      aria-label={t("profiles.dialog.validity")}
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="min">{t("profiles.dialog.validityUnitMin")}</SelectItem>
+                      <SelectItem value="hour">{t("profiles.dialog.validityUnitHour")}</SelectItem>
+                      <SelectItem value="day">{t("profiles.dialog.validityUnitDay")}</SelectItem>
+                      <SelectItem value="week">{t("profiles.dialog.validityUnitWeek")}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {form.validityUnit !== "min" && Number.isInteger(validityNum) && (
+                  <p className="text-xs text-muted-foreground">
+                    {tf("profiles.dialog.validityEq", { d: fmtRouterDuration(validityNum) })}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -336,6 +399,37 @@ export function ProfileEditDialog({ open, onOpenChange, profile }: ProfileEditDi
               </div>
             </div>
           </div>
+
+          {/* ─── RouterOS (parité Mikhmon) : address-pool / parent-queue ─── */}
+          <fieldset className="grid gap-4 rounded-lg border p-4" disabled={saveMutation.isPending}>
+            <legend className="px-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              {t("profiles.dialog.routeros")}
+            </legend>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid gap-2">
+                <Label htmlFor="profile-pool">{t("profiles.dialog.pool")}</Label>
+                <Input
+                  id="profile-pool"
+                  placeholder="pool-hotspot-1"
+                  className="font-mono"
+                  value={form.addressPool}
+                  onChange={(event) => setForm((f) => ({ ...f, addressPool: event.target.value }))}
+                />
+                <p className="text-xs text-muted-foreground">{t("profiles.dialog.poolHint")}</p>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="profile-queue">{t("profiles.dialog.queue")}</Label>
+                <Input
+                  id="profile-queue"
+                  placeholder="q-parent-vip"
+                  className="font-mono"
+                  value={form.parentQueue}
+                  onChange={(event) => setForm((f) => ({ ...f, parentQueue: event.target.value }))}
+                />
+                <p className="text-xs text-muted-foreground">{t("profiles.dialog.queueHint")}</p>
+              </div>
+            </div>
+          </fieldset>
 
           {/* ─── Tarifs ─── */}
           <fieldset className="grid gap-4 rounded-lg border p-4" disabled={saveMutation.isPending}>
@@ -390,6 +484,7 @@ export function ProfileEditDialog({ open, onOpenChange, profile }: ProfileEditDi
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="none">{t("profiles.dialog.expNone")}</SelectItem>
                     <SelectItem value="notify">{t("profiles.dialog.expNotify")}</SelectItem>
                     <SelectItem value="remove">{t("profiles.dialog.expRemove")}</SelectItem>
                   </SelectContent>

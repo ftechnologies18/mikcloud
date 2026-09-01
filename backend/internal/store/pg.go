@@ -126,7 +126,15 @@ func (p *PG) ensureSchema() error {
                         validity_days       INTEGER NOT NULL,
                         price               INTEGER NOT NULL,
                         data_quota_mb       INTEGER NOT NULL,
-                        created_at          TEXT NOT NULL
+                        created_at          TEXT NOT NULL,
+                        exp_mode            TEXT NOT NULL DEFAULT 'notify',
+                        grace_period_min    INTEGER NOT NULL DEFAULT 0,
+                        lock_user           BOOLEAN NOT NULL DEFAULT FALSE,
+                        selling_price       INTEGER NOT NULL DEFAULT 0,
+                        lock_first_device   BOOLEAN NOT NULL DEFAULT FALSE,
+                        address_pool        TEXT NOT NULL DEFAULT '',
+                        parent_queue        TEXT NOT NULL DEFAULT '',
+                        validity_min        INTEGER NOT NULL DEFAULT 0
                 )`,
 		`CREATE TABLE IF NOT EXISTS hotspot_users (
                         id              TEXT PRIMARY KEY,
@@ -149,7 +157,8 @@ func (p *PG) ensureSchema() error {
                         expires_at      TEXT NOT NULL,
                         used_at         TEXT NOT NULL,
                         price           INTEGER NOT NULL,
-                        data_quota_mb   BIGINT NOT NULL DEFAULT 0
+                        data_quota_mb   BIGINT NOT NULL DEFAULT 0,
+                        time_limit_min  BIGINT NOT NULL DEFAULT 0
                 )`,
 		`CREATE INDEX IF NOT EXISTS idx_hotspot_users_batch    ON hotspot_users (batch_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_hotspot_users_router   ON hotspot_users (router_id)`,
@@ -166,6 +175,7 @@ func (p *PG) ensureSchema() error {
                         unit_price    INTEGER NOT NULL,
                         total_cost    INTEGER NOT NULL,
                         data_quota_mb BIGINT NOT NULL DEFAULT 0,
+                        time_limit_min BIGINT NOT NULL DEFAULT 0,
                         channel       TEXT NOT NULL,
                         reseller_id   TEXT NOT NULL,
                         reseller_name TEXT NOT NULL,
@@ -459,6 +469,13 @@ func (p *PG) ensureSchema() error {
 		// Quota de données par voucher (« 5 Go = 500 F ») : Mo, 0 = illimité.
 		`ALTER TABLE hotspot_users ADD COLUMN IF NOT EXISTS data_quota_mb BIGINT NOT NULL DEFAULT 0`,
 		`ALTER TABLE batches       ADD COLUMN IF NOT EXISTS data_quota_mb BIGINT NOT NULL DEFAULT 0`,
+		// Parité Mikhmon : address-pool / parent-queue du profil, validité
+		// fine (minutes) et Time Limit par lot (limit-uptime RouterOS).
+		`ALTER TABLE profiles      ADD COLUMN IF NOT EXISTS address_pool  TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE profiles      ADD COLUMN IF NOT EXISTS parent_queue  TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE profiles      ADD COLUMN IF NOT EXISTS validity_min  INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE hotspot_users ADD COLUMN IF NOT EXISTS time_limit_min BIGINT NOT NULL DEFAULT 0`,
+		`ALTER TABLE batches       ADD COLUMN IF NOT EXISTS time_limit_min BIGINT NOT NULL DEFAULT 0`,
 		// Abonnement SaaS (formules Essentiel 1 250 F/mois/routeur et
 		// Illimité 12 000 F/an, routeurs illimités) : état par compte dans settings.
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS sub_plan_id      TEXT NOT NULL DEFAULT ''`,
@@ -1129,19 +1146,21 @@ var routerSpec = entitySpec[model.Router]{
 
 var profileSpec = entitySpec[model.Profile]{
 	table: "profiles",
-	cols:  []string{"id", "name", "rate_limit", "session_timeout_min", "shared_users", "validity_days", "price", "data_quota_mb", "created_at", "account_id", "exp_mode", "grace_period_min", "lock_user", "selling_price", "lock_first_device"},
+	cols:  []string{"id", "name", "rate_limit", "session_timeout_min", "shared_users", "validity_days", "price", "data_quota_mb", "created_at", "account_id", "exp_mode", "grace_period_min", "lock_user", "selling_price", "lock_first_device", "address_pool", "parent_queue", "validity_min"},
 	idOf:  func(x *model.Profile) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Profile, error) {
 		var x model.Profile
 		err := r.Scan(&x.ID, &x.Name, &x.RateLimit, &x.SessionTimeoutMin, &x.SharedUsers,
 			&x.ValidityDays, &x.Price, &x.DataQuotaMb, &x.CreatedAt, &x.AccountID,
-			&x.ExpMode, &x.GracePeriodMin, &x.LockUser, &x.SellingPrice, &x.LockFirstDevice)
+			&x.ExpMode, &x.GracePeriodMin, &x.LockUser, &x.SellingPrice, &x.LockFirstDevice,
+			&x.AddressPool, &x.ParentQueue, &x.ValidityMin)
 		return x, err
 	},
 	args: func(x *model.Profile) []any {
 		return []any{x.ID, x.Name, x.RateLimit, x.SessionTimeoutMin, x.SharedUsers,
 			x.ValidityDays, x.Price, x.DataQuotaMb, x.CreatedAt, x.AccountID,
-			x.ExpMode, x.GracePeriodMin, x.LockUser, x.SellingPrice, x.LockFirstDevice}
+			x.ExpMode, x.GracePeriodMin, x.LockUser, x.SellingPrice, x.LockFirstDevice,
+			x.AddressPool, x.ParentQueue, x.ValidityMin}
 	},
 	hashOf: hashEntity[model.Profile],
 }
@@ -1151,38 +1170,38 @@ var hotspotUserSpec = entitySpec[model.HotspotUser]{
 	cols: []string{"id", "kind", "username", "password", "profile_id", "profile_name",
 		"router_id", "router_name", "status", "batch_id", "reseller_id", "reseller_name",
 		"comment", "bytes_in", "bytes_out", "uptime_used_sec", "created_at", "expires_at", "used_at", "price", "data_quota_mb", "account_id",
-		"selling_price", "enforced", "sold_at", "sold_via", "missing_on_router"},
+		"selling_price", "enforced", "sold_at", "sold_via", "missing_on_router", "time_limit_min"},
 	idOf: func(x *model.HotspotUser) string { return x.ID },
 	scan: func(r *sql.Rows) (model.HotspotUser, error) {
 		var x model.HotspotUser
 		err := r.Scan(&x.ID, &x.Kind, &x.Username, &x.Password, &x.ProfileID, &x.ProfileName,
 			&x.RouterID, &x.RouterName, &x.Status, &x.BatchID, &x.ResellerID, &x.ResellerName,
 			&x.Comment, &x.BytesIn, &x.BytesOut, &x.UptimeUsedSec, &x.CreatedAt, &x.ExpiresAt, &x.UsedAt, &x.Price, &x.DataQuotaMb, &x.AccountID,
-			&x.SellingPrice, &x.Enforced, &x.SoldAt, &x.SoldVia, &x.MissingOnRouter)
+			&x.SellingPrice, &x.Enforced, &x.SoldAt, &x.SoldVia, &x.MissingOnRouter, &x.TimeLimitMin)
 		return x, err
 	},
 	args: func(x *model.HotspotUser) []any {
 		return []any{x.ID, x.Kind, x.Username, x.Password, x.ProfileID, x.ProfileName,
 			x.RouterID, x.RouterName, x.Status, x.BatchID, x.ResellerID, x.ResellerName,
 			x.Comment, x.BytesIn, x.BytesOut, x.UptimeUsedSec, x.CreatedAt, x.ExpiresAt, x.UsedAt, x.Price, x.DataQuotaMb, x.AccountID,
-			x.SellingPrice, x.Enforced, x.SoldAt, x.SoldVia, x.MissingOnRouter}
+			x.SellingPrice, x.Enforced, x.SoldAt, x.SoldVia, x.MissingOnRouter, x.TimeLimitMin}
 	},
 	hashOf: hashEntity[model.HotspotUser],
 }
 
 var batchSpec = entitySpec[model.Batch]{
 	table: "batches",
-	cols:  []string{"id", "profile_id", "profile_name", "router_id", "router_name", "count", "unit_price", "total_cost", "data_quota_mb", "channel", "reseller_id", "reseller_name", "created_at", "account_id"},
+	cols:  []string{"id", "profile_id", "profile_name", "router_id", "router_name", "count", "unit_price", "total_cost", "data_quota_mb", "time_limit_min", "channel", "reseller_id", "reseller_name", "created_at", "account_id"},
 	idOf:  func(x *model.Batch) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Batch, error) {
 		var x model.Batch
 		err := r.Scan(&x.ID, &x.ProfileID, &x.ProfileName, &x.RouterID, &x.RouterName,
-			&x.Count, &x.UnitPrice, &x.TotalCost, &x.DataQuotaMb, &x.Channel, &x.ResellerID, &x.ResellerName, &x.CreatedAt, &x.AccountID)
+			&x.Count, &x.UnitPrice, &x.TotalCost, &x.DataQuotaMb, &x.TimeLimitMin, &x.Channel, &x.ResellerID, &x.ResellerName, &x.CreatedAt, &x.AccountID)
 		return x, err
 	},
 	args: func(x *model.Batch) []any {
 		return []any{x.ID, x.ProfileID, x.ProfileName, x.RouterID, x.RouterName,
-			x.Count, x.UnitPrice, x.TotalCost, x.DataQuotaMb, x.Channel, x.ResellerID, x.ResellerName, x.CreatedAt, x.AccountID}
+			x.Count, x.UnitPrice, x.TotalCost, x.DataQuotaMb, x.TimeLimitMin, x.Channel, x.ResellerID, x.ResellerName, x.CreatedAt, x.AccountID}
 	},
 	hashOf: hashEntity[model.Batch],
 }

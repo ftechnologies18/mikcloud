@@ -983,16 +983,20 @@ func applyExpiry(db *model.DB, now time.Time) map[string][]string {
 	// statut des utilisateurs réguliers reste géré manuellement
 	// (active/disabled) — leur date d'expiration est informative.
 	grace := make(map[string]int, len(db.Profiles))
+	noExpiry := make(map[string]bool, len(db.Profiles))
 	for _, p := range db.Profiles {
 		g := p.GracePeriodMin
 		if g < 0 {
 			g = 0
 		}
 		grace[p.ID] = g
+		// Parité Mikhmon — ExpMode « none » : aucune expiration cloud, le
+		// voucher reste actif jusqu'à épuisement temps/data sur le routeur.
+		noExpiry[p.ID] = p.ExpMode == "none"
 	}
 	for i := range db.HotspotUsers {
 		u := &db.HotspotUsers[i]
-		if u.Kind != "voucher" || u.Status != "active" || u.ExpiresAt == "" {
+		if u.Kind != "voucher" || u.Status != "active" || u.ExpiresAt == "" || noExpiry[u.ProfileID] {
 			continue
 		}
 		exp, err := time.Parse(time.RFC3339, u.ExpiresAt)

@@ -514,6 +514,10 @@ const fr: Record<string, string> = {
   "a4.password": "MDP :",
   "a4.scanHint": "Scannez le QR ou saisissez le code",
   "a4.qrAria": "QR code du voucher {code}",
+  "a4.pdf": "Télécharger le PDF",
+  "a4.pdfBusy": "Génération…",
+  "a4.pdfReady": "PDF A4 généré — ouvrez-le puis imprimez (Ctrl+P).",
+  "a4.pdfError": "Échec de la génération du PDF.",
 
   // — notifications (tier1 : alertes + canaux + historique) —
   "notif.title": "Notifications",
@@ -2251,6 +2255,10 @@ const en: Record<string, string> = {
   "a4.password": "PWD:",
   "a4.scanHint": "Scan the QR or enter the code",
   "a4.qrAria": "QR code for voucher {code}",
+  "a4.pdf": "Download the PDF",
+  "a4.pdfBusy": "Generating…",
+  "a4.pdfReady": "A4 PDF generated — open it and print (Ctrl+P).",
+  "a4.pdfError": "PDF generation failed.",
 
   // — notifications (tier1: alerts + channels + history) —
   "notif.title": "Notifications",

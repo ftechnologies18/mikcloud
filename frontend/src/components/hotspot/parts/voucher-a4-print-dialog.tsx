@@ -1,25 +1,28 @@
 "use client";
 
-// Dialog d'impression A4 + QR — 40 tickets par page (grille 5 × 8), pensé pour le flux
-// revendeur « imprimer → vendre » : chaque ticket porte un QR pointant vers la page de
-// login du hotspot avec le code pré-rempli (connexion en 1 scan) ou, à défaut, le code
-// en texte. Impression : chaque .a4-page remplit exactement une feuille A4 — voir les
-// sections « Impression des vouchers » et « Impression A4 + QR » de globals.css.
+// Dialog d'impression A4 + QR — approche PDF : le bouton génère un VRAI
+// document PDF (jsPDF — voir lib/hotspot/a4-pdf.ts) figé à 40 tickets par
+// page (grille 5 × 8). L'impression se fait depuis le lecteur PDF : la mise
+// en page ne dépend plus du moteur d'impression du navigateur (zoom, marges,
+// en-têtes…). Le QR pointe vers la page de login du hotspot avec le code
+// pré-rempli (connexion en 1 scan) ou, à défaut, porte le code en texte.
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
-import { Printer } from "lucide-react";
+import { FileDown, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { isSamePasswordMode } from "@/components/hotspot/parts/template-render";
 import { useCurrency } from "@/components/hotspot/parts/sd-currency";
+import { buildVouchersA4Pdf, downloadBlob, qrValue } from "@/lib/hotspot/a4-pdf";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { formatBytes, formatCurrency } from "@/lib/hotspot/format";
 import type { HotspotUser } from "@/lib/hotspot/types";
 
 // 40 tickets par page : 5 colonnes × 8 lignes — tickets compactés (QR 42 px ≈ 11 mm,
-// toujours scannable) et marges de feuille réduites (voir globals.css : @page 5 mm).
+// toujours scannable). La même géométrie est reprise au mm dans le générateur PDF.
 const COLS = 5;
 const ROWS = 8;
 const PER_PAGE = COLS * ROWS;
@@ -35,20 +38,6 @@ interface VoucherA4PrintDialogProps {
   hotspotLoginUrl?: string;
 }
 
-/** Contenu du QR : URL de login pré-remplie si disponible, sinon « code / mot de passe »
- * (code seul en mode « mot de passe = identifiant » — rien de redondant à scanner). */
-function qrValue(voucher: HotspotUser, hotspotLoginUrl?: string): string {
-  if (hotspotLoginUrl) {
-    const sep = hotspotLoginUrl.includes("?") ? "&" : "?";
-    return `${hotspotLoginUrl}${sep}username=${encodeURIComponent(voucher.username)}&password=${encodeURIComponent(
-      voucher.password,
-    )}`;
-  }
-  return isSamePasswordMode(voucher)
-    ? voucher.username
-    : `${voucher.username} / ${voucher.password}`;
-}
-
 export function VoucherA4PrintDialog({
   open,
   onOpenChange,
@@ -57,8 +46,9 @@ export function VoucherA4PrintDialog({
   tenantName,
   hotspotLoginUrl,
 }: VoucherA4PrintDialogProps) {
-  const { t, tf } = useI18n();
+  const { t, tf, lang } = useI18n();
   const currency = useCurrency();
+  const [pdfBusy, setPdfBusy] = useState(false);
 
   const pages = useMemo(() => {
     const chunks: HotspotUser[][] = [];
@@ -68,11 +58,37 @@ export function VoucherA4PrintDialog({
     return chunks;
   }, [vouchers]);
 
+  const generatePdf = async () => {
+    if (pdfBusy || vouchers.length === 0) return;
+    setPdfBusy(true);
+    try {
+      const { blob, filename } = await buildVouchersA4Pdf({
+        vouchers,
+        title,
+        tenantName,
+        hotspotLoginUrl,
+        currency,
+        lang,
+        labels: {
+          password: t("a4.password"),
+          scanHint: t("a4.scanHint"),
+          pageOf: (n: number, total: number) => tf("a4.pageStamp", { n, total }),
+        },
+      });
+      downloadBlob(blob, filename);
+      toast.success(t("a4.pdfReady"));
+    } catch {
+      toast.error(t("a4.pdfError"));
+    } finally {
+      setPdfBusy(false);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="gap-4 sm:max-w-5xl">
-        {/* Barre d'outils — masquée à l'impression (.no-print) */}
-        <div className="no-print flex flex-wrap items-start justify-between gap-3">
+        {/* Barre d'outils (écran) — le document imprimé est le PDF téléchargé */}
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <DialogTitle className="truncate">{title}</DialogTitle>
             <DialogDescription>
@@ -87,16 +103,16 @@ export function VoucherA4PrintDialog({
             <Button variant="outline" className="min-h-10" onClick={() => onOpenChange(false)}>
               {t("a4.close")}
             </Button>
-            <Button className="min-h-10" onClick={() => window.print()}>
-              <Printer className="size-4" />
-              {t("a4.print")}
+            <Button className="min-h-10" disabled={pdfBusy || vouchers.length === 0} onClick={generatePdf}>
+              {pdfBusy ? <Loader2 className="size-4 animate-spin" /> : <FileDown className="size-4" />}
+              {pdfBusy ? t("a4.pdfBusy") : t("a4.pdf")}
             </Button>
           </div>
         </div>
 
-        {/* Aperçu A4 — défilement écran uniquement, pleine page à l'impression */}
+        {/* Aperçu écran — mise en page identique au PDF généré (géométrie calquée) */}
         <div className="a4-scroll max-h-[70vh] overflow-auto rounded-lg p-4">
-          <div className="print-area a4-print mx-auto flex w-[794px] flex-col gap-6 bg-white text-black">
+          <div className="mx-auto flex w-[794px] flex-col gap-6 bg-white text-black">
             {pages.length === 0 && (
               <p className="py-12 text-center text-sm text-neutral-500">{t("a4.empty")}</p>
             )}

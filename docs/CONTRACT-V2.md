@@ -106,6 +106,16 @@ type VoucherTemplate struct {
 {{dataLimit}} {{timeLimit}} {{qrCode}} {{logo}} {{hotspotName}} {{dnsName}} {{num}}
 {{comment}} {{currency}}`
 
+**Bloc conditionnel `{{#password}}…{{/password}}`** : retiré du rendu quand le
+voucher est en mode « mot de passe = identifiant » (`password === username`,
+parité Mikhmon — le ticket n'affiche que le code), déballé (contenu conservé)
+sinon. Les gabarits hérités des presets d'origine, sans bloc, voient leur ligne
+mot de passe exacte (`<p>Mot de passe : {{password}}</p>` / `<p>PASS :
+{{password}}</p>`) retirée automatiquement en mode « même mot de passe » ;
+un gabarit personnalisé sans bloc conserve son affichage (choix du gérant).
+Le ticket standard MikCloud (hors modèle) et le A4+QR appliquent la même règle
+(code seul ; QR de secours A4 = code seul).
+
 ### Settings tenant (ajouts)
 ```go
 DNSName string `json:"dnsName,omitempty"` // ex. wifi.mondomaine.ci

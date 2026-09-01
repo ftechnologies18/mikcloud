@@ -23,6 +23,8 @@ export interface TemplateRenderContext {
 export const TEMPLATE_VARIABLES = [
   "{{username}}",
   "{{password}}",
+  "{{#password}}",
+  "{{/password}}",
   "{{profile}}",
   "{{validity}}",
   "{{price}}",
@@ -37,6 +39,27 @@ export const TEMPLATE_VARIABLES = [
   "{{comment}}",
   "{{currency}}",
 ] as const;
+
+/**
+ * isSamePasswordMode — vrai si le voucher a été généré en mode
+ * « mot de passe = identifiant » (parité Mikhmon) : le ticket ne doit alors
+ * afficher QUE le code, sans ligne mot de passe redondante.
+ */
+export function isSamePasswordMode(
+  voucher: Pick<HotspotUser, "username" | "password">,
+): boolean {
+  return voucher.password.length > 0 && voucher.password === voucher.username;
+}
+
+/** Bloc conditionnel {{#password}}…{{/password}} — retiré en mode « même mot de
+ * passe », déballé (contenu conservé) sinon. */
+const PASSWORD_BLOCK_RE = /\{\{#password\}\}([\s\S]*?)\{\{\/password\}\}/g;
+// Gabarits hérités des presets d'origine (non réédités, sans bloc conditionnel) :
+// la ligne mot de passe exacte est retirée en mode « même mot de passe ».
+const LEGACY_PASSWORD_LINE_RES = [
+  /<p[^>]*>\s*Mot de passe\s*:\s*\{\{password\}\}\s*<\/p>/gi,
+  /<p[^>]*>\s*PASS\s*:\s*\{\{password\}\}\s*<\/p>/gi,
+];
 
 /** GIF 1px transparent — placeholder {{logo}} quand aucun logo n'est configuré. */
 const TRANSPARENT_PIXEL =
@@ -78,6 +101,17 @@ export async function renderTemplate(
   const selling = voucher.sellingPrice || voucher.price;
 
   let html = bodyHtml;
+  // Mode « mot de passe = identifiant » (parité Mikhmon) : les blocs
+  // {{#password}}…{{/password}} disparaissent du ticket ; sinon ils sont
+  // déballés. Les gabarits hérités sans bloc conditionnel perdent leur ligne
+  // mot de passe exacte (presets d'origine).
+  const sameMode = isSamePasswordMode(voucher);
+  html = html.replace(PASSWORD_BLOCK_RE, sameMode ? "" : "$1");
+  if (sameMode) {
+    for (const legacyRe of LEGACY_PASSWORD_LINE_RES) {
+      html = html.replace(legacyRe, "");
+    }
+  }
   html = replaceAllLiteral(html, "{{username}}", escapeHtml(voucher.username));
   html = replaceAllLiteral(html, "{{password}}", escapeHtml(voucher.password));
   html = replaceAllLiteral(html, "{{profile}}", escapeHtml(voucher.profileName));
@@ -166,7 +200,7 @@ export const TEMPLATE_PRESETS: TemplatePreset[] = [
   <p style="margin:2px 0 8px;font-size:9px;letter-spacing:2px;color:#555;">WIFI HOTSPOT</p>
   <img src="{{qrCode}}" alt="QR code" style="display:block;margin:0 auto 8px;width:84px;height:84px;">
   <p style="margin:0;font-size:17px;font-weight:bold;font-family:'Courier New',monospace;letter-spacing:1px;">{{username}}</p>
-  <p style="margin:3px 0 8px;font-size:12px;font-family:'Courier New',monospace;">Mot de passe : {{password}}</p>
+  {{#password}}<p style="margin:3px 0 8px;font-size:12px;font-family:'Courier New',monospace;">Mot de passe : {{password}}</p>{{/password}}
   <p style="margin:0 0 2px;font-size:11px;color:#222;">{{profile}} · {{validity}}</p>
   <p style="margin:0 0 6px;font-size:13px;font-weight:bold;">{{price}}</p>
   <p style="margin:0;font-size:9px;color:#666;">{{dnsName}}</p>
@@ -183,7 +217,7 @@ export const TEMPLATE_PRESETS: TemplatePreset[] = [
   <p style="margin:1px 0 6px;font-size:8px;letter-spacing:1px;color:#555;">WIFI HOTSPOT · {{dnsName}}</p>
   <img src="{{qrCode}}" alt="QR code" style="display:block;margin:0 auto 6px;width:70px;height:70px;">
   <p style="margin:0;font-size:13px;font-weight:bold;font-family:'Courier New',monospace;">{{username}}</p>
-  <p style="margin:1px 0 5px;font-size:11px;font-family:'Courier New',monospace;">PASS : {{password}}</p>
+  {{#password}}<p style="margin:1px 0 5px;font-size:11px;font-family:'Courier New',monospace;">PASS : {{password}}</p>{{/password}}
   <p style="margin:0 0 3px;font-size:10px;">{{profile}} · {{validity}}</p>
   <p style="margin:0 0 4px;font-size:12px;font-weight:bold;">{{price}}</p>
   <p style="margin:6px 0 0;border-top:1px dashed #999;padding-top:4px;font-size:8px;color:#666;">N° {{num}} — Gardez ce ticket</p>
@@ -202,7 +236,7 @@ export const TEMPLATE_PRESETS: TemplatePreset[] = [
   <p style="margin:2px 0 8px;font-size:10px;letter-spacing:2px;color:#555;">WIFI HOTSPOT · {{dnsName}}</p>
   <img src="{{qrCode}}" alt="QR code" style="display:block;margin:0 auto 8px;width:96px;height:96px;">
   <p style="margin:0;font-size:18px;font-weight:bold;font-family:'Courier New',monospace;letter-spacing:1px;">{{username}}</p>
-  <p style="margin:3px 0 8px;font-size:14px;font-family:'Courier New',monospace;">Mot de passe : {{password}}</p>
+  {{#password}}<p style="margin:3px 0 8px;font-size:14px;font-family:'Courier New',monospace;">Mot de passe : {{password}}</p>{{/password}}
   <p style="margin:0 0 3px;font-size:12px;color:#222;">{{profile}} · {{validity}} · {{timeLimit}}</p>
   <p style="margin:0 0 6px;font-size:15px;font-weight:bold;">{{price}}</p>
   <p style="margin:8px 0 0;border-top:1px dashed #999;padding-top:5px;font-size:9px;color:#666;">N° {{num}} · {{comment}} — Gardez ce ticket pour vous connecter</p>

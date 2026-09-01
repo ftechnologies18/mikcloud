@@ -12,6 +12,7 @@ import { Printer } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { isSamePasswordMode } from "@/components/hotspot/parts/template-render";
 import { useCurrency } from "@/components/hotspot/parts/sd-currency";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { formatBytes, formatCurrency } from "@/lib/hotspot/format";
@@ -31,7 +32,8 @@ interface VoucherA4PrintDialogProps {
   hotspotLoginUrl?: string;
 }
 
-/** Contenu du QR : URL de login pré-remplie si disponible, sinon « code / mot de passe ». */
+/** Contenu du QR : URL de login pré-remplie si disponible, sinon « code / mot de passe »
+ * (code seul en mode « mot de passe = identifiant » — rien de redondant à scanner). */
 function qrValue(voucher: HotspotUser, hotspotLoginUrl?: string): string {
   if (hotspotLoginUrl) {
     const sep = hotspotLoginUrl.includes("?") ? "&" : "?";
@@ -39,7 +41,9 @@ function qrValue(voucher: HotspotUser, hotspotLoginUrl?: string): string {
       voucher.password,
     )}`;
   }
-  return `${voucher.username} / ${voucher.password}`;
+  return isSamePasswordMode(voucher)
+    ? voucher.username
+    : `${voucher.username} / ${voucher.password}`;
 }
 
 export function VoucherA4PrintDialog({
@@ -162,7 +166,10 @@ function A4Ticket({
       />
       <div className="w-full">
         <p className="truncate font-mono text-[15px] font-bold leading-tight">{voucher.username}</p>
-        <p className="font-mono text-[10px] leading-tight">{t("a4.password")} {voucher.password}</p>
+        {/* Mode « mot de passe = identifiant » : le code seul sur le ticket. */}
+        {!isSamePasswordMode(voucher) && (
+          <p className="font-mono text-[10px] leading-tight">{t("a4.password")} {voucher.password}</p>
+        )}
         <p className="mt-0.5 text-[10px] leading-tight">
           {voucher.profileName}
           {voucher.dataQuotaMb > 0 && ` · ${formatBytes(voucher.dataQuotaMb * 1048576, lang)}`} ·{" "}

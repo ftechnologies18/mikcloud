@@ -22,6 +22,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { api, ApiError } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { formatCurrency } from "@/lib/hotspot/format";
+import { isSamePasswordMode } from "@/components/hotspot/parts/template-render";
 import { useHotspotStore } from "@/lib/hotspot/store";
 
 interface SellVoucher {
@@ -94,12 +95,19 @@ export default function SellShell() {
 
   async function share(v: SellVoucher) {
     const price = v.sellingPrice || v.price;
-    const text = tf("sell.shareText", {
-      profile: v.profileName,
-      code: v.username,
-      pass: v.password,
-      price: formatCurrency(price, currency, lang),
-    });
+    // Mode « mot de passe = identifiant » : le partage ne mentionne que le code.
+    const text = isSamePasswordMode(v)
+      ? tf("sell.shareTextCodeOnly", {
+          profile: v.profileName,
+          code: v.username,
+          price: formatCurrency(price, currency, lang),
+        })
+      : tf("sell.shareText", {
+          profile: v.profileName,
+          code: v.username,
+          pass: v.password,
+          price: formatCurrency(price, currency, lang),
+        });
     try {
       if (navigator.share) {
         await navigator.share({ title: "MikCloud", text });
@@ -215,15 +223,22 @@ export default function SellShell() {
                     </p>
                   </div>
 
-                  <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg bg-muted/50 p-3 font-mono text-sm">
+                  <div
+                    className={`mt-3 grid gap-2 rounded-lg bg-muted/50 p-3 font-mono text-sm ${
+                      isSamePasswordMode(v) ? "grid-cols-1" : "grid-cols-2"
+                    }`}
+                  >
                     <div>
                       <p className="text-[10px] tracking-wide text-muted-foreground uppercase">{t("sell.code")}</p>
                       <p className="mt-0.5 font-semibold">{v.username}</p>
                     </div>
-                    <div>
-                      <p className="text-[10px] tracking-wide text-muted-foreground uppercase">{t("sell.password")}</p>
-                      <p className="mt-0.5 font-semibold">{v.password}</p>
-                    </div>
+                    {/* Mode « mot de passe = identifiant » : le code seul. */}
+                    {!isSamePasswordMode(v) && (
+                      <div>
+                        <p className="text-[10px] tracking-wide text-muted-foreground uppercase">{t("sell.password")}</p>
+                        <p className="mt-0.5 font-semibold">{v.password}</p>
+                      </div>
+                    )}
                   </div>
 
                   <div className="mt-3 flex gap-2">

@@ -26,7 +26,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useCurrency, useSettings } from "@/components/hotspot/parts/sd-currency";
-import { renderBatch } from "@/components/hotspot/parts/template-render";
+import { isSamePasswordMode, renderBatch } from "@/components/hotspot/parts/template-render";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { formatBytes, formatCurrency , fmtRouterDuration } from "@/lib/hotspot/format";
 import type { HotspotUser, Profile, VoucherTemplate } from "@/lib/hotspot/types";
@@ -225,9 +225,12 @@ export function UcPrintDialog({
                         {t("print.wifiHotspot")}
                       </p>
                       <p className="mt-1 text-lg font-bold font-mono tracking-wider">{voucher.username}</p>
-                      <p className="font-mono text-sm">
-                        {t("print.passwordLabel")} {voucher.password}
-                      </p>
+                      {/* Mode « mot de passe = identifiant » : le code seul sur le ticket. */}
+                      {!isSamePasswordMode(voucher) && (
+                        <p className="font-mono text-sm">
+                          {t("print.passwordLabel")} {voucher.password}
+                        </p>
+                      )}
                       <p className="text-xs text-neutral-700">
                         {voucher.profileName}
                         {validityMin ? ` · ${fmtRouterDuration(validityMin)}` : ""}

@@ -2,10 +2,10 @@
 
 // « Studio Forfait » — dialog PROFIL HOTSPOT (création / édition) repensé :
 // bento 2 colonnes avec CARTE FORFAIT en APERÇU LIVE (dégradé aurora, la
-// signature MikCloud), modèles rapides à un tap, et contrôles interactifs
-// (chips de débit / quota, stepper d'appareils, cartes radio d'expiration,
-// toggles d'unités). Les animations Framer Motion restent discrètes et
-// respectent prefers-reduced-motion.
+// signature MikCloud) et contrôles interactifs (chips de débit / quota,
+// stepper d'appareils, cartes radio d'expiration, toggles d'unités).
+// Les animations Framer Motion restent discrètes et respectent
+// prefers-reduced-motion.
 //
 // Logique métier INCHANGÉE : mêmes champs, mêmes bornes de validation, même
 // payload API. Champs P0 du contrat : expiration F1 (expMode/grâce/verrous),
@@ -24,10 +24,8 @@ import {
   ArrowDownUp,
   Bell,
   CalendarClock,
-  CalendarDays,
   Check,
   ChevronDown,
-  Crown,
   Database,
   Eye,
   Gauge,
@@ -40,14 +38,11 @@ import {
   Router as RouterIcon,
   ShieldCheck,
   Smartphone,
-  Sparkles,
-  Sun,
   Timer,
   Trash2,
   TrendingUp,
   Wifi,
   X,
-  Zap,
   type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -206,113 +201,6 @@ function formFromProfile(profile: Profile): ProfileForm {
     addressPool: profile.addressPool ?? "",
     parentQueue: profile.parentQueue ?? "",
   };
-}
-
-// ─── Modèles rapides (création uniquement) ──────────────────────────────────
-// Forfaits courants du terrain — un tap pré-remplit tout le formulaire
-// (nom et réglages RouterOS conservés), l'opérateur affine ensuite.
-
-interface PlanPreset {
-  id: string;
-  nameKey: string;
-  icon: LucideIcon;
-  rate: string;
-  sessionValue: string;
-  sessionUnit: SessionUnit;
-  validityValue: string;
-  validityUnit: ValidityUnit;
-  sharedUsers: number;
-  quotaMb: number;
-  price: number;
-  expMode: ProfileExpiryMode;
-  gracePeriodMin: number;
-  lockFirstDevice: boolean;
-}
-
-const PLAN_PRESETS: PlanPreset[] = [
-  {
-    id: "instant",
-    nameKey: "profiles.dialog.presetInstant",
-    icon: Zap,
-    rate: "1M/1M",
-    sessionValue: "1",
-    sessionUnit: "hour",
-    validityValue: "1",
-    validityUnit: "day",
-    sharedUsers: 1,
-    quotaMb: 0,
-    price: 100,
-    expMode: "notify",
-    gracePeriodMin: 0,
-    lockFirstDevice: false,
-  },
-  {
-    id: "day",
-    nameKey: "profiles.dialog.presetDay",
-    icon: Sun,
-    rate: "2M/2M",
-    sessionValue: "1",
-    sessionUnit: "day",
-    validityValue: "1",
-    validityUnit: "day",
-    sharedUsers: 2,
-    quotaMb: 0,
-    price: 300,
-    expMode: "notify",
-    gracePeriodMin: 60,
-    lockFirstDevice: false,
-  },
-  {
-    id: "week",
-    nameKey: "profiles.dialog.presetWeek",
-    icon: CalendarDays,
-    rate: "2M/2M",
-    sessionValue: "1",
-    sessionUnit: "day",
-    validityValue: "1",
-    validityUnit: "week",
-    sharedUsers: 3,
-    quotaMb: 0,
-    price: 1500,
-    expMode: "notify",
-    gracePeriodMin: 60,
-    lockFirstDevice: false,
-  },
-  {
-    id: "vip",
-    nameKey: "profiles.dialog.presetVip",
-    icon: Crown,
-    rate: "5M/5M",
-    sessionValue: "2",
-    sessionUnit: "hour",
-    validityValue: "30",
-    validityUnit: "day",
-    sharedUsers: 5,
-    quotaMb: 0,
-    price: 5000,
-    expMode: "notify",
-    gracePeriodMin: 1440,
-    lockFirstDevice: true,
-  },
-];
-
-// Le formulaire courant correspond-il exactement à ce modèle ? (hors nom)
-function matchesPreset(form: ProfileForm, preset: PlanPreset): boolean {
-  return (
-    form.rateLimit === preset.rate &&
-    form.sessionTimeoutValue === preset.sessionValue &&
-    form.sessionTimeoutUnit === preset.sessionUnit &&
-    form.validityValue === preset.validityValue &&
-    form.validityUnit === preset.validityUnit &&
-    form.sharedUsers === String(preset.sharedUsers) &&
-    form.dataQuotaMb === String(preset.quotaMb) &&
-    form.price === String(preset.price) &&
-    form.sellingPrice === String(preset.price) &&
-    form.expMode === preset.expMode &&
-    form.gracePeriodMin === String(preset.gracePeriodMin) &&
-    form.lockFirstDevice === preset.lockFirstDevice &&
-    !form.lockUser
-  );
 }
 
 // ─── Animations (discrètes, staggeré au montage) ────────────────────────────
@@ -484,29 +372,6 @@ export function ProfileEditDialog({ open, onOpenChange, profile }: ProfileEditDi
     });
   }
 
-  function applyPreset(preset: PlanPreset) {
-    setForm((f) => ({
-      ...DEFAULT_FORM,
-      name: f.name,
-      rateLimit: preset.rate,
-      sessionTimeoutValue: preset.sessionValue,
-      sessionTimeoutUnit: preset.sessionUnit,
-      validityValue: preset.validityValue,
-      validityUnit: preset.validityUnit,
-      sharedUsers: String(preset.sharedUsers),
-      dataQuotaMb: String(preset.quotaMb),
-      price: String(preset.price),
-      sellingPrice: String(preset.price),
-      expMode: preset.expMode,
-      gracePeriodMin: String(preset.gracePeriodMin),
-      lockUser: false,
-      lockFirstDevice: preset.lockFirstDevice,
-      addressPool: f.addressPool,
-      parentQueue: f.parentQueue,
-    }));
-    toast.success(tf("profiles.dialog.presetApplied", { name: t(preset.nameKey) }));
-  }
-
   function submitProfile() {
     setAttempted(true);
     if (!formValid || saveMutation.isPending) {
@@ -615,53 +480,6 @@ export function ProfileEditDialog({ open, onOpenChange, profile }: ProfileEditDi
                 }}
                 className="grid gap-5"
               >
-                {/* ─── Modèles rapides (création uniquement) ─── */}
-                {!profile && (
-                  <motion.section variants={itemVariants} className="grid gap-3" aria-label={t("profiles.dialog.presetsLabel")}>
-                    <SectionTitle icon={Sparkles} title={t("profiles.dialog.presetsLabel")} />
-                    <p className="-mt-1 text-xs text-muted-foreground">{t("profiles.dialog.presetsHint")}</p>
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                      {PLAN_PRESETS.map((preset) => {
-                        const active = matchesPreset(form, preset);
-                        return (
-                          <motion.button
-                            key={preset.id}
-                            type="button"
-                            whileTap={{ scale: 0.97 }}
-                            onClick={() => applyPreset(preset)}
-                            aria-pressed={active}
-                            className={cn(
-                              "rounded-xl border p-3 text-left transition-all duration-150",
-                              active
-                                ? "border-primary bg-primary/5 shadow-sm ring-1 ring-primary"
-                                : "border-border hover:border-primary/40 hover:bg-accent/40",
-                            )}
-                          >
-                            <span
-                              className={cn(
-                                "grid size-7 place-items-center rounded-lg transition-colors",
-                                active ? "bg-primary text-primary-foreground" : "bg-accent text-accent-foreground",
-                              )}
-                              aria-hidden
-                            >
-                              <preset.icon className="size-4" />
-                            </span>
-                            <p className="mt-2 text-sm font-semibold leading-tight">{t(preset.nameKey)}</p>
-                            <p className="mt-1 text-[11px] leading-tight tabular-nums text-muted-foreground">
-                              {preset.rate} · {fmtRouterDuration(
-                                parseInt(preset.validityValue, 10) * VALIDITY_UNIT_MIN[preset.validityUnit],
-                              )}
-                            </p>
-                            <p className="text-[11px] leading-tight tabular-nums text-muted-foreground">
-                              {formatCurrency(preset.price, currency, lang)}
-                            </p>
-                          </motion.button>
-                        );
-                      })}
-                    </div>
-                  </motion.section>
-                )}
-
                 {/* ─── Identité & débit ─── */}
                 <motion.section variants={itemVariants} className="grid gap-3">
                   <SectionTitle icon={Wifi} title={t("profiles.dialog.secIdentity")} />
@@ -822,6 +640,11 @@ export function ProfileEditDialog({ open, onOpenChange, profile }: ProfileEditDi
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div className="grid content-start gap-2 rounded-xl border p-3">
                       <Label htmlFor="profile-devices">{t("profiles.dialog.devices")}</Label>
+                      {/* Stepper sur sa rangée propre : les chips de graduation ne
+                          tiennent JAMAIS à côté dans la colonne formulaire
+                          (~239 px utiles à lg) — sur la même ligne elles
+                          débordaient de la carte et chevauchaient la carte
+                          « Quota de données ». */}
                       <div className="flex items-center gap-2">
                         <Button
                           type="button"
@@ -855,26 +678,33 @@ export function ProfileEditDialog({ open, onOpenChange, profile }: ProfileEditDi
                         >
                           <Plus className="size-4" />
                         </Button>
-                        <div className="ml-auto flex gap-1" role="group" aria-label={t("profiles.dialog.devices")}>
-                          {DEVICE_CHIPS.map((n) => (
-                            <Button
-                              key={n}
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className={cn(
-                                "h-7 w-8 rounded-full px-0 text-xs tabular-nums",
-                                form.sharedUsers === String(n)
-                                  ? "border-primary bg-primary/10 text-primary"
-                                  : "text-muted-foreground",
-                              )}
-                              onClick={() => setForm((f) => ({ ...f, sharedUsers: String(n) }))}
-                              disabled={saveMutation.isPending}
-                            >
-                              {n}
-                            </Button>
-                          ))}
-                        </div>
+                        {/* Compteur live à droite du stepper (lit à l'écran via
+                            l'aperçu, aria-hidden pour éviter le doublon SR). */}
+                        <span className="ml-auto text-xs tabular-nums text-muted-foreground" aria-hidden>
+                          {Number.isInteger(devicesNum) && devicesNum >= 1 && devicesNum <= 10
+                            ? tf("profiles.devicesCount", { n: devicesNum })
+                            : "—"}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5" role="group" aria-label={t("profiles.dialog.devices")}>
+                        {DEVICE_CHIPS.map((n) => (
+                          <Button
+                            key={n}
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className={cn(
+                              "h-7 w-9 rounded-full px-0 text-xs tabular-nums",
+                              form.sharedUsers === String(n)
+                                ? "border-primary bg-primary/10 text-primary"
+                                : "text-muted-foreground",
+                            )}
+                            onClick={() => setForm((f) => ({ ...f, sharedUsers: String(n) }))}
+                            disabled={saveMutation.isPending}
+                          >
+                            {n}
+                          </Button>
+                        ))}
                       </div>
                       {form.lockUser && (
                         <p className="text-[11px] leading-snug text-amber-600 dark:text-amber-400">

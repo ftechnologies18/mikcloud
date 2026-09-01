@@ -782,6 +782,13 @@ func Tick(db *model.DB, now time.Time) {
 	for i := range db.Routers {
 		db.Routers[i].UptimeSec += dt
 		db.Routers[i].CPULoad = clamp(db.Routers[i].CPULoad+rand.Intn(13)-6, 5, 45)
+		// Routeurs simulés : « vus » à chaque tick (sessions vivantes → état
+		// « en ligne » des vouchers actif en démo). Les routeurs agents ne sont
+		// PAS touchés ici : leur LastSeen réel (touchAgent) porte la garde
+		// anti-sessions figées de ResolvedStatus/onlineSessions.
+		if db.Routers[i].Mode == "simulated" {
+			db.Routers[i].LastSeen = now.UTC().Format(time.RFC3339)
+		}
 	}
 
 	// P1 (audit Mikhmon) — F6 : marche aléatoire du trafic des routeurs

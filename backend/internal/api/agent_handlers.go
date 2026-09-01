@@ -520,7 +520,9 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 //   - F6 : ifaces=name:rx:tx;… → diff des compteurs cumulés avec l'état
 //     précédent (db.Traffic) → débits par interface + point d'historique ;
 //   - F3 : diff des sessions avant/après remplacement → UserLogs login/logout
-//     (un utilisateur déjà présent n'est pas re-journalisé).
+//     (un utilisateur déjà présent n'est pas re-journalisé) ;
+//   - Suivi data : bytes-in/out des sessions actives cumulés par deltas dans
+//     les compteurs du user (BytesIn/BytesOut — miroir du limit-bytes-total).
 func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values) {
 	if v := strings.TrimSpace(vals.Get("version")); v != "" {
 		if len(v) > 32 {
@@ -613,7 +615,7 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 		}
 	}
 
-	// Sessions actives : "user|ip|uptime;…"
+	// Sessions actives : "user|ip|uptime|bytes-in|bytes-out;…" (script v3).
 	sessEntries := splitAgentList(vals.Get("sessions"))
 	router.ActiveSessions = len(sessEntries)
 	userIDs := map[string]string{}
@@ -623,17 +625,19 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 		}
 	}
 
-	// F3 — capture des usernames présents AVANT remplacement (diff).
-	prevByUser := map[string]model.Session{}
+	// F3 — capture des sessions présentes AVANT remplacement (diff), par
+	// username : un profil shared-users > 1 autorise PLUSIEURS sessions
+	// simultanées du même utilisateur — chacune doit conserver son identité
+	// (sinon la 2e session change d'ID à chaque poll : bruit de journal).
+	prevByUser := map[string][]model.Session{}
 	for _, s := range db.Sessions {
 		if s.RouterID == router.ID {
-			if _, ok := prevByUser[s.Username]; !ok {
-				prevByUser[s.Username] = s
-			}
+			prevByUser[s.Username] = append(prevByUser[s.Username], s)
 		}
 	}
 
 	live := []model.Session{}
+	matched := []bool{} // appariée à une session précédente ? (aligné avec live)
 	for _, e := range sessEntries {
 		s := model.Session{ID: model.NewID("s-"), AccountID: router.AccountID, Username: e[0], RouterID: router.ID, RouterName: router.Name}
 		if len(e) > 1 {
@@ -658,33 +662,59 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 				}
 			}
 		}
-		// P (fix session flip) — si l'utilisateur était DÉJÀ actif (même username + même routeur),
-		// on PRÉSERVE l'ID et le StartedAt de la session existante au lieu d'en créer une nouvelle.
-		// Le read_state met à jour l'uptime et les bytes, mais ne reset PAS l'identité de la session.
-		// C'est ce qui empêche le clignotement « connexion → déconnexion » à chaque poll.
-		if prev, ok := prevByUser[s.Username]; ok {
+		// P (fix session flip) — appariement FIFO : chaque session live
+		// reprend l'identité (ID + StartedAt) d'une session précédente du
+		// même username ; le read_state met à jour uptime et bytes mais ne
+		// reset PAS l'identité de la session. C'est ce qui empêche le
+		// clignotement « connexion → déconnexion » à chaque poll.
+		if lst := prevByUser[s.Username]; len(lst) > 0 {
+			prev := lst[0]
+			prevByUser[s.Username] = lst[1:]
 			s.ID = prev.ID
 			s.StartedAt = prev.StartedAt
+			matched = append(matched, true)
+			// Suivi data user-level — cumul par DELTAS entre read_state successifs
+			// (bytes-in/bytes-out d'une session active RouterOS
+			// sont cumulatifs depuis le login). Les octets gagnent le
+			// compteur du user EN LIVE (session de plusieurs jours suivie
+			// côté cloud), en miroir du limit-bytes-total appliqué par le
+			// routeur. Garde anti-régression : compteur décroissant
+			// (reset-counters) → delta 0.
+			if s.UserID != "" && (s.BytesIn > prev.BytesIn || s.BytesOut > prev.BytesOut) {
+				addUserBytes(db, s.UserID,
+					max(int64(0), s.BytesIn-prev.BytesIn),
+					max(int64(0), s.BytesOut-prev.BytesOut))
+			}
 		} else {
 			s.StartedAt = model.NowISO()
+			matched = append(matched, false)
+			// Nouvelle session : ses octets déjà accumulés à la 1re
+			// observation (RouterOS compte depuis le login) entrent
+			// intégralement au compteur du user — les deltas des polls
+			// suivants complètent le cumul jusqu'à la déconnexion.
+			if s.UserID != "" && (s.BytesIn > 0 || s.BytesOut > 0) {
+				addUserBytes(db, s.UserID, s.BytesIn, s.BytesOut)
+			}
 		}
 		live = append(live, s)
 	}
 
-	// F3 — nouvelles sessions → login ; disparues → logout.
+	// F3 — nouvelles sessions (non appariées) → login ; sessions précédentes
+	// non retrouvées → logout.
 	now := time.Now().UTC()
-	liveNames := map[string]bool{}
 	for i := range live {
-		liveNames[live[i].Username] = true
-		if _, ok := prevByUser[live[i].Username]; !ok {
+		if !matched[i] {
 			logRouterUserEvent(db, router, live[i], "login", now)
 			markVoucherUsed(db, live[i], now) // statut dynamique : 1re connexion = utilisé
 		}
 	}
-	for _, s := range prevByUser {
-		if !liveNames[s.Username] {
+	for _, lst := range prevByUser {
+		for _, s := range lst {
 			logRouterUserEvent(db, router, s, "logout", now)
 			accumulateUptime(db, s) // quota temps : cumul de la session terminée
+			// NB — pas de cumul de BYTES ici : les compteurs data user-level
+			// sont déjà alimentés EN LIVE par deltas (addUserBytes) ; un
+			// cumul au logout doublerait le comptage.
 		}
 	}
 
@@ -753,6 +783,22 @@ func accumulateUptime(db *model.DB, s model.Session) {
 	for i := range db.HotspotUsers {
 		if db.HotspotUsers[i].ID == s.UserID {
 			db.HotspotUsers[i].UptimeUsedSec += s.UptimeSec
+			return
+		}
+	}
+}
+
+// addUserBytes — cumule les octets observés sur une session (deltas entre
+// read_state successifs, mode agent) dans les compteurs data du user.
+// Miroir cloud du limit-bytes-total appliqué par le routeur (DataQuotaMb) :
+// le suivi data reste lisible côté cloud même quand la session dure plusieurs
+// jours. À appeler sous verrou, par deltas uniquement (jamais un cumul
+// absolu — une session déjà comptée ne doit pas l'être deux fois).
+func addUserBytes(db *model.DB, userID string, dIn, dOut int64) {
+	for i := range db.HotspotUsers {
+		if db.HotspotUsers[i].ID == userID {
+			db.HotspotUsers[i].BytesIn += dIn
+			db.HotspotUsers[i].BytesOut += dOut
 			return
 		}
 	}

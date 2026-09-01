@@ -655,3 +655,13 @@
     transform: none;
   }
 }
+
+/* N°8 — PWA : ouverture directe sur le login (pas la vitrine publique).
+ * Le script inline du layout pose .pwa-standalone avant le premier paint ;
+ * le contenu prérendu de la landing reste donc invisible pendant la fenêtre
+ * pré-hydratation (fond nuit identitaire à la place). Dès la première
+ * interface React rendue — login ou console selon la session — page.tsx pose
+ * .pwa-ready et la landing redevient affichable (accessible via « Retour »). */
+html.pwa-standalone:not(.pwa-ready) main {
+  visibility: hidden;
+}

@@ -25,6 +25,14 @@ export const metadata: Metadata = {
   appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "MikCloud" },
 };
 
+// N°8 — PWA : classe posée AVANT le premier paint quand l'app est lancée
+// depuis l'écran d'accueil (standalone). Combinée à la règle
+// `pwa-standalone:not(.pwa-ready)` de globals.css, elle masque le HTML
+// prérendu de la vitrine pendant la fenêtre pré-hydratation : la PWA
+// s'ouvre sur le fond nuit puis révèle l'écran de connexion (ou la console
+// si une session est active) — zéro flash de landing, rendu natif.
+const PWA_BOOT_SCRIPT = `try{if(matchMedia("(display-mode: standalone)").matches||navigator.standalone===true){document.documentElement.classList.add("pwa-standalone")}}catch(e){}`;
+
 export const viewport: Viewport = {
   themeColor: [
     { media: "(prefers-color-scheme: dark)", color: "#101815" },
@@ -46,6 +54,9 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
+        {/* Premier enfant du body : exécuté pendant le parsing, donc avant
+         * tout paint du contenu — la vitrine n'apparaît jamais en PWA. */}
+        <script dangerouslySetInnerHTML={{ __html: PWA_BOOT_SCRIPT }} />
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} disableTransitionOnChange>
           {children}
           <Toaster richColors position="top-right" closeButton />

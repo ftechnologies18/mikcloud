@@ -807,6 +807,17 @@ func Tick(db *model.DB, now time.Time) {
 		profileIdx[db.Profiles[i].ID] = i
 	}
 
+	// Modes de routeurs — P0 (audit clignotement) : les sessions des
+	// routeurs RÉELS (agent) vivent au rythme du routeur (diff read_state
+	// F3) et ne doivent subir AUCUNE dynamique simulée. Sinon le moteur de
+	// démo coupe aléatoirement des sessions réelles (journal
+	// « login/logout en continu » alors que la connexion routeur est
+	// stable) et fausse les compteurs utilisateurs avec des octets fictifs.
+	routerModes := make(map[string]string, len(db.Routers))
+	for i := range db.Routers {
+		routerModes[db.Routers[i].ID] = db.Routers[i].Mode
+	}
+
 	// Progression (et purge) des sessions — P0 : chaque session coupée
 	// (utilisateur supprimé/désactivé) produit un UserLog "logout" (F3).
 	kept := db.Sessions[:0]
@@ -820,6 +831,13 @@ func Tick(db *model.DB, now time.Time) {
 		u := &db.HotspotUsers[idx]
 		if u.Status == "disabled" {
 			logUserEvent(db, s, "logout", now) // utilisateur désactivé -> session coupée
+			continue
+		}
+		if routerModes[s.RouterID] != "simulated" {
+			// Réel/agent : uptime/bytes viennent du read_state ; le
+			// quota temps est cumulé à la DÉCONNEXION détectée
+			// (accumulateUptime, F3) — jamais ici (double comptage).
+			kept = append(kept, s)
 			continue
 		}
 		s.UptimeSec += dt
@@ -893,11 +911,22 @@ func Tick(db *model.DB, now time.Time) {
 	}
 
 	// Fin de session aléatoire (~12 %) — P0 : le username est capturé AVANT
-	// la suppression pour journaliser le logout (F3).
+	// la suppression pour journaliser le logout (F3). UNIQUEMENT en
+	// simulation : une session de routeur réel/agent ne peut être coupée
+	// que par le routeur lui-même (diff read_state F3), jamais par le
+	// moteur de démo — sinon clignotement login/logout de sessions réelles.
 	if len(db.Sessions) > 0 && rand.Float64() < 0.12 {
-		i := rand.Intn(len(db.Sessions))
-		logUserEvent(db, db.Sessions[i], "logout", now)
-		db.Sessions = append(db.Sessions[:i], db.Sessions[i+1:]...)
+		candidates := []int{}
+		for i := range db.Sessions {
+			if routerModes[db.Sessions[i].RouterID] == "simulated" {
+				candidates = append(candidates, i)
+			}
+		}
+		if len(candidates) > 0 {
+			i := candidates[rand.Intn(len(candidates))]
+			logUserEvent(db, db.Sessions[i], "logout", now)
+			db.Sessions = append(db.Sessions[:i], db.Sessions[i+1:]...)
+		}
 	}
 
 	// P0 (audit Mikhmon) — LockUser (F1) : un utilisateur dont le profil

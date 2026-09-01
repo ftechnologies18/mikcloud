@@ -292,6 +292,9 @@ export function ProfileEditDialog({ open, onOpenChange, profile }: ProfileEditDi
                     {tf("profiles.dialog.sessionEq", { n: sessionNum })}
                   </p>
                 )}
+                <p className="text-xs text-muted-foreground">
+                  {t("profiles.dialog.sessionHint")}
+                </p>
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="profile-validity">{t("profiles.dialog.validity")}</Label>

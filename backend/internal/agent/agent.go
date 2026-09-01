@@ -671,6 +671,14 @@ func (b Builder) buildUserAdd(cmd model.Command) string {
 		line += ` password="` + rosEscape(pass) + `"`
 	}
 	line += ` profile="` + rosEscape(prof.Name) + `"`
+	// Quota de temps TOTAL du ticket (parité Mikhmon) : la durée du profil
+	// borne aussi l'usage CUMULÉ (limit-uptime). Sans lui, après la coupe de
+	// session le même code repartait pour une session complète à chaque
+	// reconnexion (réutilisation infinie tant que la validité courait) ; le
+	// routeur refuse alors la reconnexion (« no more time »).
+	if prof.HasTimeout && prof.SessionTimeoutMin > 0 {
+		line += " limit-uptime=" + rosMinutes(prof.SessionTimeoutMin)
+	}
 	if quota > 0 {
 		// Quota de données : limit-bytes-total (in + out cumulés, in/out laissés à 0).
 		line += fmt.Sprintf(" limit-bytes-total=%d", quota)
@@ -708,6 +716,11 @@ func (b Builder) buildVoucherBatch(cmd model.Command) string {
 	for _, u := range users {
 		line := `/ip hotspot user add name="` + rosEscape(SanitizeName(u.Name)) + `" password="` + rosEscape(u.Password) +
 			`" profile="` + rosEscape(prof.Name) + `"`
+		// Quota de temps TOTAL du ticket (parité Mikhmon, cf. buildUserAdd) :
+		// une fois le cumul épuisé, le routeur refuse la reconnexion.
+		if prof.HasTimeout && prof.SessionTimeoutMin > 0 {
+			line += " limit-uptime=" + rosMinutes(prof.SessionTimeoutMin)
+		}
 		if quota > 0 {
 			// Quota de données du lot (ex. « 5 Go = 500 F ») : limit-bytes-total
 			// en octets — le routeur déconnecte le voucher une fois épuisé.

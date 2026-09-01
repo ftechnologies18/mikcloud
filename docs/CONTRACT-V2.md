@@ -23,6 +23,7 @@
 | IP bindings (F7) | ✅ cloud CRUD | ⛔ (erreur claire) | ✅ commandes |
 | Status étendu + ping (F8) | ✅ simulé | ⛔ (erreur claire) | ✅ read_state v2 + cmd ping |
 | DHCP/hosts/cookies/log (F9) | ✅ généré à la volée | ⛔ (erreur claire) | ✅ commandes read_* |
+| Ressources routeur (pools/queues/servers) | ✅ généré à la volée | ⛔ (erreur claire) | ✅ commande read_resources |
 | Scheduler/reboot/shutdown (F10) | ✅ cloud CRUD | ⛔ (erreur claire) | ✅ commandes |
 
 > En mode `real`, répondre `400` avec message : « Non supporté en mode API directe — utilisez le mode agent ».
@@ -37,13 +38,16 @@
 
 ### Modèle `Profile` (champs ajoutés)
 ```go
-ExpMode        string `json:"expMode"`        // "notify" (défaut) | "remove"
+ExpMode        string `json:"expMode"`        // "none" (parité Mikhmon « None ») | "notify" (défaut) | "remove"
 GracePeriodMin int    `json:"gracePeriodMin"` // 0 = immédiat
 LockUser       bool   `json:"lockUser"`       // verrouiller : 1 session à la fois
 ```
-- `POST/PUT /api/profiles` acceptent ces champs (validation : expMode ∈ {notify,remove},
+- `POST/PUT /api/profiles` acceptent ces champs (validation : expMode ∈ {none,notify,remove},
   gracePeriodMin ∈ [0,43200]).
 - Réponses GET /api/profiles : champs toujours présents.
+- expMode `none` : AUCUNE expiration cloud — le voucher reste `active` jusqu'à
+  épuisement du temps/data sur le routeur (`applyExpiry` le saute ; les modes
+  Mikhmon « remc »/« ntfc » sont couverts par le nettoyage cloud F5).
 
 ### Moteur (fonction partagée `applyExpiry(db, now)` appelée par Tick ET avant chaque
 lecture de /api/users, /api/dashboard, /api/vouchers — sous verrou)
@@ -286,6 +290,11 @@ Modèle de réponse commun :
   (`authorized` boolean, uptime en secondes)
 - `GET /api/routers/{id}/cookies` → data: `[{user, mac, expires}]`
 - `GET /api/routers/{id}/log` → data: `[{time, topics, message}]` (50 dernières lignes hotspot)
+- `GET /api/routers/{id}/resources` → data: `[{kind, name}]` avec kind ∈ {pool, queue, server}
+  (parité Mikhmon : alimente Address Pool / Parent Queue / Server des formulaires).
+  Commande `read_resources` (idem cache 120 s, inscrite dans staleSentReadKinds) :
+  pools `/ip pool`, queues simple NON dynamiques, serveurs `/ip hotspot` — cap 60
+  entrées par kind, rapport `kind|name;`.
 
 Scripts RouterOS (dans les builders) — chaque entrée séparée par `|`, champs par `:`,
 liste par `;` (même mécanique que users/sessions existant) :
@@ -377,16 +386,70 @@ type SchedulerTask struct {
 
 ---
 
+## PARITÉ MIKHMON — User Profiles & Generate (extension post-audit)
+
+> Suite de l'audit : alignement fin des formulaires Profile / Generate sur Mikhmon v3
+> (adduserprofile.php + generateuser.php). Extensions ADDITIVES uniquement — le
+> contrat V2 ci-dessus reste valable tel quel (expiresAt, reports, templates).
+
+### Modèle `Profile` (ajouts)
+```go
+AddressPool string `json:"addressPool"` // nom RouterOS /ip pool ("" = none au routeur)
+ParentQueue string `json:"parentQueue"` // queue simple /queue simple ("" = none)
+ValidityMin int    `json:"validityMin"` // validité fine en minutes (0 = hériter validityDays×1440)
+```
+- **Source de vérité validité** : `Profile.ValidityMinutes()` = validityMin si > 0,
+  sinon validityDays×1440. `expiresAt` (contrat V2) est TOUJOURS calculé via
+  `ValidityMinutes()` (génération, extension F4, resync) ; `validityDays` reste
+  renseigné (arrondi supérieur : (validityMin+1439)/1440) pour rétro-compatibilité.
+- Validations create/update : validityMin ∈ [0, 2628000] ; addressPool/parentQueue
+  = noms RouterOS transmis tels quels (TrimSpace) ; synchronisés sur TOUS les
+  routeurs agents à chaque user_add/voucher_batch via profile_set (`none` si vide).
+- expMode `none` : voir F1.
+- Neon : colonnes `profiles.address_pool`, `profiles.parent_queue`,
+  `profiles.validity_min` (ALTER TABLE idempotents au boot).
+
+### Génération de vouchers (extension `POST /api/vouchers/generate`)
+```go
+TimeLimitMin int    `json:"timeLimitMin"` // limit-uptime PAR LOT (≤0/omis = sessionTimeoutMin du profil)
+Server       string `json:"server"`       // serveur hotspot RouterOS cible (""/omis = all)
+```
+- `timeLimitMin` ∈ [0, 2628000], tracé sur `HotspotUser.timeLimitMin` ET
+  `batches.time_limit_min` ; poussé au routeur (`limit-uptime`), priorité payload >
+  profil. Le correctif rétroactif (`profileUserLimitLine`) ne cible QUE les users
+  `limit-uptime=0s` — les quotas par lot ne sont jamais écrasés.
+- `server` : ≤ 64 chars sans guillemets/retours, poussé tel quel (`server=` ; « all »
+  = omis au routeur, décision routeur par défaut).
+- Validations alignées Mikhmon : `codeLength` ∈ [3,10] (min abaissé 4→3) ; `prefix`
+  ≤ 6 chars (défaut "SC-") ; charset preset `num` (chiffres purs, alphabet digitSafe
+  sans 0/1 — plus lisible à l'impression que 0-9 Mikhmon). Pas de confusion avec la
+  variable template `{{num}}` (n° de voucher).
+- `{{timeLimit}}` des templates reflète le quota propre du voucher.
+
+### Frontend
+- `src/lib/hotspot/use-router-resources.ts` (hook partagé) : agrège
+  `GET /api/routers/{id}/resources` (poll 15 s, fusion dédupliquée multi-routeurs
+  pour les datalists profils ; routeurs `real` exclus — cf. matrice §0).
+- `profile-dialog.tsx` : validité valeur+unité (min/h/j/semaines) avec aperçu
+  RouterOS `fmtRouterDuration()` (ex. `5h30m`, `4w3d`) ; datalists Address Pool /
+  Parent Queue (saisie libre conservée — profils MikCloud multi-routeurs, Mikhmon
+  est mono-routeur) ; nom de profil auto-formaté Mikhmon (espaces → tirets).
+- `vouchers-view.tsx` : sélecteur Server (routeur sélectionné, « all » = omis),
+  Time Limit par lot (hériter/illimité/presets), charset num, récap GetValidPrice
+  (Validité RouterOS / Prix de vente / Verrou 1er appareil / Expired Mode).
+
+---
+
 ## PLAN DE FICHIERS
 
 ### Backend (Go)
 | Fichier | Action |
 |---|---|
-| `internal/model/models.go` | + champs Profile/Router/HotspotUser/Sale/Settings ; + VoucherTemplate, UserLog, IPBinding, SchedulerTask, RouterTraffic, IfaceTraffic, TrafficPoint ; + DB fields ; + Cmd* constants (user_reset, ipbinding_add/set/remove, ping, read_dhcp/hosts/cookies/log/scheduler, scheduler_add/set/remove, reboot, shutdown) |
+| `internal/model/models.go` | + champs Profile/Router/HotspotUser/Sale/Settings ; + VoucherTemplate, UserLog, IPBinding, SchedulerTask, RouterTraffic, IfaceTraffic, TrafficPoint ; + DB fields ; + Cmd* constants (user_reset, ipbinding_add/set/remove, ping, read_dhcp/hosts/cookies/log/scheduler/resources, scheduler_add/set/remove, reboot, shutdown) ; + parité : Profile.AddressPool/ParentQueue/ValidityMin, HotspotUser/Batch.TimeLimitMin, CharsetNum |
 | `internal/store/store.go` | Tick : applyExpiry, user logs capture, cleanup, traffic sim, lock-user kick |
 | `internal/store/pg.go` | CREATE TABLE voucher_templates/user_logs/ip_bindings/scheduler_tasks/traffic + ALTERs + specs + sync |
 | `internal/store/seed.go` | templates×3, profiles sellingPrice, bindings/scheduler/traffic seed |
-| `internal/agent/agent.go` | builders nouveaux kinds + read_state v2 (board/freehdd/totalhdd/ifaces) |
+| `internal/agent/agent.go` | builders nouveaux kinds + read_state v2 (board/freehdd/totalhdd/ifaces) + read_resources + profile address-pool/parent-queue + limit-uptime par lot + server= |
 | `internal/api/agent_handlers.go` | applyReadState v2 (logs diff, traffic diff, board/hdd), queue helpers |
 | `internal/api/handlers_ext.go` (NOUVEAU) | tous les nouveaux handlers console (templates, user-logs, users actions, ipbindings, ping, tools F9, scheduler, reboot, traffic, commands/{id}) |
 | `internal/api/handlers.go` | seulement : enregistrement des nouvelles routes + modifs ponctuelles profiles/settings/reports/vouchers-generate |
@@ -396,11 +459,14 @@ type SchedulerTask struct {
 |---|---|
 | `src/lib/hotspot/types.ts` | tous les nouveaux types + ViewId « templates » « logs » |
 | `src/lib/hotspot/i18n.ts` (NOUVEAU) | dictionnaires fr/en + useI18n |
+| `src/lib/hotspot/use-router-resources.ts` (NOUVEAU) | hook ressources routeur (datalists profil + sélecteur Server du générateur) |
+| `src/lib/hotspot/format.ts` | + fmtRouterDuration (format RouterOS w/d/h/m) |
 | `src/components/hotspot/views/templates-view.tsx` (NOUVEAU) | liste + éditeur + aperçu |
 | `src/components/hotspot/views/logs-view.tsx` (NOUVEAU) | journal utilisateurs |
 | `src/components/hotspot/parts/template-render.ts` (NOUVEAU) | rendu variables + QR (lib `qrcode`) |
 | `src/components/hotspot/parts/uc-print-dialog.tsx` | mode template (sélecteur + aperçu + print CSS par format) |
-| `src/components/hotspot/parts/profile-dialog.tsx` | champs expMode/grace/lock/sellingPrice |
+| `src/components/hotspot/parts/profile-dialog.tsx` | champs expMode/grace/lock/sellingPrice + parité (validité wdhm, datalists pool/queue) |
+| `src/components/hotspot/views/vouchers-view.tsx` | parité Generate : Server, Time Limit par lot, charset num, codeLength 3-10, récap GetValidPrice |
 | `src/components/hotspot/views/users-view.tsx` | actions reset/extend, export CSV, cleanup |
 | `src/components/hotspot/views/profiles-view.tsx` | colonnes/badges nouveaux champs |
 | `src/components/hotspot/views/routers-view.tsx` + `parts/router-tools.tsx` (NOUVEAU) | onglets trafic/bindings/outils/système |

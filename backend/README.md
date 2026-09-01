@@ -66,7 +66,9 @@ est restauré à chaque redéploiement/sleep-wake. Vérifier dans les logs Rende
 | GET     | `/api/vouchers/batches`             | **Lots tracés** (stats live par statut) |
 | POST    | `/api/vouchers/batch/:batchId/delete` | Suppression d'un lot entier        |
 | GET     | `/api/sessions` / DELETE `/:id`     | Sessions actives / kick              |
-| GET/POST/PUT/DELETE | `/api/resellers` (+ `/:id/credit`) | Revendeurs & portefeuille |
+| GET/POST/PUT/DELETE | `/api/resellers` (+ `/:id/credit`) | Revendeurs & portefeuille (liste enrichie : stock/vendus/attribués live) |
+| GET     | `/api/sell/me` / `/api/sell/stock` / `/api/sell/day-report` | Mode Vente revendeur (profil tournée, stock, **rapport de fin de journée**) |
+| POST    | `/api/sell/:id/sold`                | Remise au client (traçabilité anti-vol N°8) |
 | GET     | `/api/accounting?period=day\|week\|month&routerId=` | **Comptabilité multi-sites** (ventes/CA par jour, semaine, mois et par routeur) |
 | GET     | `/api/reports?days=7\|14\|30`       | Rapports commerciaux & trafic        |
 | GET/PUT | `/api/settings`                     | Organisation, devise, fuseau         |

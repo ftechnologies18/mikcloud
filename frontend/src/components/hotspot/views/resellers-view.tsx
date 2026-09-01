@@ -326,13 +326,37 @@ export default function ResellersView() {
                   <p className={cn("mt-1 text-xl font-semibold tabular-nums", creditClass(reseller.credit))}>
                     {formatCurrency(reseller.credit, currency, lang)}
                   </p>
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    {tf("resellers.soldStats", {
-                      n: reseller.vouchersSold,
-                      revenue: formatCurrency(reseller.revenue, currency, lang),
-                    })}
-                  </p>
                 </div>
+                {/* N°8 — stock vs vendus (traçabilité anti-vol) : l'écart
+                    stock + vendus vs attribués révèle les tickets sortis
+                    sans déclaration du revendeur. */}
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  <div className="rounded-lg border bg-muted/30 p-2.5 text-center">
+                    <p className="text-[11px] text-muted-foreground">{t("resellers.stockCount")}</p>
+                    <p className="mt-0.5 text-lg font-semibold tabular-nums">{reseller.stockCount ?? "—"}</p>
+                  </div>
+                  <div className="rounded-lg border bg-muted/30 p-2.5 text-center">
+                    <p className="text-[11px] text-muted-foreground">{t("resellers.soldCount")}</p>
+                    <p className="mt-0.5 flex items-baseline justify-center gap-1 text-lg font-semibold tabular-nums">
+                      {reseller.soldCount ?? "—"}
+                      {!!reseller.soldToday && (
+                        <span className="text-[11px] font-medium text-primary">
+                          {tf("resellers.soldTodayBadge", { n: reseller.soldToday })}
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border bg-muted/30 p-2.5 text-center">
+                    <p className="text-[11px] text-muted-foreground">{t("resellers.assignedCount")}</p>
+                    <p className="mt-0.5 text-lg font-semibold tabular-nums">{reseller.assignedCount ?? "—"}</p>
+                  </div>
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {tf("resellers.revenueLine", {
+                    today: formatCurrency(reseller.revenueToday ?? 0, currency, lang),
+                    total: formatCurrency(reseller.revenueTotal ?? reseller.revenue, currency, lang),
+                  })}
+                </p>
               </CardContent>
             </Card>
           ))}

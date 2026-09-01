@@ -12,16 +12,36 @@
 import { useEffect, useState } from "react";
 import Image from "next/image";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BadgeCheck, Loader2, LogOut, RefreshCw, Share2, ShoppingCart, Store, Wifi, WifiOff } from "lucide-react";
+import {
+  BadgeCheck,
+  FileBarChart,
+  Loader2,
+  LogOut,
+  RefreshCw,
+  Share2,
+  ShoppingCart,
+  Store,
+  Wifi,
+  WifiOff,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, ApiError } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { formatCurrency } from "@/lib/hotspot/format";
+import type { SellDayReport } from "@/lib/hotspot/types";
 import { isSamePasswordMode } from "@/components/hotspot/parts/template-render";
 import { useHotspotStore } from "@/lib/hotspot/store";
 
@@ -68,6 +88,7 @@ export default function SellShell() {
   const qc = useQueryClient();
   const logout = useHotspotStore((s) => s.logout);
   const online = useOnline();
+  const [reportOpen, setReportOpen] = useState(false);
 
   const { data: me } = useQuery({
     queryKey: ["/api/sell/me"],
@@ -81,6 +102,13 @@ export default function SellShell() {
     refetchInterval: 30_000,
   });
 
+  // Rapport de fin de journée — chargé uniquement quand le dialog est ouvert.
+  const { data: report, isLoading: reportLoading } = useQuery({
+    queryKey: ["/api/sell/day-report"],
+    queryFn: () => api<SellDayReport>("/api/sell/day-report"),
+    enabled: reportOpen,
+  });
+
   const sell = useMutation({
     mutationFn: (id: string) => api<{ ok: boolean }>(`/api/sell/${id}/sold`, { method: "POST" }),
     onSuccess: () => {
@@ -92,6 +120,43 @@ export default function SellShell() {
   });
 
   const currency = me?.currency || "FCFA";
+
+  // Clôture : le rapport textuel se partage (WhatsApp) ou se copie — le
+  // revendeur l'envoie au gérant en fin de tournée.
+  async function shareReport() {
+    if (!report) return;
+    const locale = lang === "en" ? "en-GB" : "fr-FR";
+    // T12:00:00Z évite que le fuseau local décale la journée métier (UTC).
+    const dateLabel = new Date(`${report.date}T12:00:00Z`).toLocaleDateString(locale, {
+      weekday: "long",
+      day: "2-digit",
+      month: "long",
+      year: "numeric",
+    });
+    const timeHM = (iso: string) =>
+      new Date(iso).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
+    const lines = [
+      tf("sell.dayReportTextHeader", { date: dateLabel }),
+      me ? `${me.name} (${me.username})` : "",
+      `${t("sell.dayReportSold")} : ${report.soldCount} — ${formatCurrency(report.revenue, currency, lang)}`,
+      `${t("sell.dayReportStock")} : ${report.stockCount}`,
+      t("sell.dayReportDetail"),
+      ...report.sold.map(
+        (s) => `• ${timeHM(s.soldAt)} · ${s.code} · ${s.profileName} — ${formatCurrency(s.price, currency, lang)}`,
+      ),
+    ].filter(Boolean);
+    const text = lines.join("\n");
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: "MikCloud", text });
+      } else {
+        await navigator.clipboard.writeText(text);
+        toast.success(t("sell.dayReportShared"));
+      }
+    } catch {
+      /* partage annulé par l'utilisateur */
+    }
+  }
 
   async function share(v: SellVoucher) {
     const price = v.sellingPrice || v.price;
@@ -171,7 +236,7 @@ export default function SellShell() {
         </div>
       </header>
 
-      {/* État réseau */}
+      {/* État réseau + clôture de journée */}
       <div
         className={`flex items-center justify-center gap-2 px-4 py-1.5 text-xs ${online ? "text-muted-foreground" : "bg-amber-500/15 text-amber-600 dark:text-amber-400"}`}
         role="status"
@@ -179,6 +244,15 @@ export default function SellShell() {
         {online ? <Wifi className="size-3" /> : <WifiOff className="size-3" />}
         {online ? t("sell.online") : t("sell.offline")}
       </div>
+
+      <button
+        type="button"
+        onClick={() => setReportOpen(true)}
+        className="flex min-h-11 w-full items-center justify-center gap-2 border-b bg-muted/30 px-4 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+      >
+        <FileBarChart className="size-4" aria-hidden />
+        {t("sell.dayReport")}
+      </button>
 
       {/* Stock */}
       <main className="flex-1 space-y-3 p-4" aria-label={t("sell.stock")}>
@@ -267,6 +341,95 @@ export default function SellShell() {
         <ShoppingCart className="mr-1 inline size-3" />
         {t("sell.footer")}
       </footer>
+
+      {/* Rapport de fin de journée */}
+      <Dialog open={reportOpen} onOpenChange={setReportOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileBarChart className="size-4 text-primary" aria-hidden />
+              {t("sell.dayReport")}
+            </DialogTitle>
+            <DialogDescription>
+              {report
+                ? new Date(`${report.date}T12:00:00Z`).toLocaleDateString(lang === "en" ? "en-GB" : "fr-FR", {
+                    weekday: "long",
+                    day: "2-digit",
+                    month: "long",
+                    year: "numeric",
+                  })
+                : t("sell.dayReportDesc")}
+            </DialogDescription>
+          </DialogHeader>
+
+          {reportLoading || !report ? (
+            <div className="space-y-2">
+              <div className="grid grid-cols-3 gap-2">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <Skeleton key={i} className="h-16 rounded-lg" />
+                ))}
+              </div>
+              <Skeleton className="h-40 rounded-lg" />
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="rounded-lg border bg-muted/30 p-3 text-center">
+                  <p className="text-lg font-bold tabular-nums">{report.soldCount}</p>
+                  <p className="text-[11px] text-muted-foreground">{t("sell.dayReportSold")}</p>
+                </div>
+                <div className="rounded-lg border bg-muted/30 p-3 text-center">
+                  <p className="text-lg font-bold text-primary tabular-nums">
+                    {formatCurrency(report.revenue, currency, lang)}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">{t("sell.dayReportRevenue")}</p>
+                </div>
+                <div className="rounded-lg border bg-muted/30 p-3 text-center">
+                  <p className="text-lg font-bold tabular-nums">{report.stockCount}</p>
+                  <p className="text-[11px] text-muted-foreground">{t("sell.dayReportStock")}</p>
+                </div>
+              </div>
+
+              <div className="max-h-64 overflow-y-auto rounded-lg border" aria-label={t("sell.dayReportDetail")}>
+                {report.sold.length === 0 ? (
+                  <p className="px-3 py-8 text-center text-sm text-muted-foreground">{t("sell.dayReportEmpty")}</p>
+                ) : (
+                  report.sold.map((s) => (
+                    <div
+                      key={s.id}
+                      className="flex items-center justify-between gap-3 border-b px-3 py-2 last:border-b-0"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate font-mono text-sm font-semibold">{s.code}</p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {s.profileName} ·{" "}
+                          {new Date(s.soldAt).toLocaleTimeString(lang === "en" ? "en-GB" : "fr-FR", {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </p>
+                      </div>
+                      <p className="shrink-0 text-sm font-semibold text-primary tabular-nums">
+                        {formatCurrency(s.price, currency, lang)}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReportOpen(false)}>
+              {t("common.close")}
+            </Button>
+            <Button onClick={() => void shareReport()} disabled={reportLoading || !report}>
+              <Share2 className="size-4" />
+              {t("sell.dayReportShare")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

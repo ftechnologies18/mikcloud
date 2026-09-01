@@ -480,6 +480,41 @@ export interface Reseller {
   revenue: number;
   status: ResellerStatus;
   createdAt: string;
+  /** N°8 — stats LIVE « stock vs vendus » (présentes sur la liste, recalculées serveur) : */
+  /** vouchers attribués, non remis et toujours actifs (vendables). */
+  stockCount?: number;
+  /** vouchers remis au client (SoldAt tracé) — total. */
+  soldCount?: number;
+  /** remises aujourd'hui (badge du jour). */
+  soldToday?: number;
+  /** tout voucher portant le revendeur — l'écart vs stock+vendus révèle le non déclaré. */
+  assignedCount?: number;
+  /** recette du jour (prix de vente des remises du jour). */
+  revenueToday?: number;
+  /** recette totale des remises tracées. */
+  revenueTotal?: number;
+}
+
+/* ─── N°8 : rapport de fin de journée (GET /api/sell/day-report) ─── */
+
+export interface SellDayReportItem {
+  id: string;
+  code: string;
+  profileName: string;
+  price: number;
+  soldAt: string;
+  routerName: string;
+}
+
+export interface SellDayReport {
+  /** YYYY-MM-DD (journée métier UTC). */
+  date: string;
+  currency: string;
+  sold: SellDayReportItem[];
+  soldCount: number;
+  revenue: number;
+  stockCount: number;
+  stockValue: number;
 }
 
 export interface Transaction {

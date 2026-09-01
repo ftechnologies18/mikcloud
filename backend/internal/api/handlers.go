@@ -67,6 +67,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/sell/me", a.requireReseller(a.handleSellMe))
 	mux.HandleFunc("GET /api/sell/stock", a.requireReseller(a.handleSellStock))
 	mux.HandleFunc("POST /api/sell/{id}/sold", a.requireReseller(a.handleSellSold))
+	mux.HandleFunc("GET /api/sell/day-report", a.requireReseller(a.handleSellDayReport))
 
 	// Dashboard
 	mux.HandleFunc("GET /api/dashboard", a.handleDashboard)
@@ -2987,17 +2988,69 @@ func sanitizeReseller(res model.Reseller) map[string]any {
 func (a *API) handleResellersList(w http.ResponseWriter, r *http.Request) {
 	acc := accountScope(r)
 	a.store.Lock()
+	db := a.store.Data()
 	rs := []model.Reseller{}
-	for _, res := range a.store.Data().Resellers {
+	for _, res := range db.Resellers {
 		if res.AccountID == acc {
 			rs = append(rs, res)
+		}
+	}
+	// N°8 — stats LIVE « stock vs vendus » (traçabilité anti-vol) :
+	// recalculées à chaque lecture depuis les vouchers attribués, jamais
+	// depuis les compteurs de démo. stock = attribués non remis toujours
+	// actifs (vendables) ; vendus = remis au client (SoldAt) ; attribués =
+	// tout voucher portant le revendeur — l'écart stock+vendus vs attribués
+	// révèle les tickets sortis sans déclaration.
+	now := time.Now().UTC()
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	type resellerStats struct {
+		stock, sold, assigned, soldToday, revenueToday, revenueTotal int
+	}
+	stats := make(map[string]*resellerStats, len(rs))
+	for i := range db.HotspotUsers {
+		u := &db.HotspotUsers[i]
+		if u.Kind != "voucher" || u.ResellerID == "" || u.AccountID != acc {
+			continue
+		}
+		st := stats[u.ResellerID]
+		if st == nil {
+			st = &resellerStats{}
+			stats[u.ResellerID] = st
+		}
+		st.assigned++
+		price := u.SellingPrice
+		if price == 0 {
+			price = u.Price
+		}
+		if u.SoldAt != "" {
+			st.sold++
+			st.revenueTotal += price
+			if at, err := time.Parse(time.RFC3339, u.SoldAt); err == nil && !at.Before(todayStart) {
+				st.soldToday++
+				st.revenueToday += price
+			}
+			continue
+		}
+		if model.EffectiveStatus(u, now) == "active" {
+			st.stock++
 		}
 	}
 	a.store.Unlock()
 	sort.Slice(rs, func(i, j int) bool { return rs[i].CreatedAt > rs[j].CreatedAt })
 	out := make([]map[string]any, len(rs))
 	for i := range rs {
-		out[i] = sanitizeReseller(rs[i])
+		m := sanitizeReseller(rs[i])
+		st := stats[rs[i].ID]
+		if st == nil {
+			st = &resellerStats{}
+		}
+		m["stockCount"] = st.stock
+		m["soldCount"] = st.sold
+		m["assignedCount"] = st.assigned
+		m["soldToday"] = st.soldToday
+		m["revenueToday"] = st.revenueToday
+		m["revenueTotal"] = st.revenueTotal
+		out[i] = m
 	}
 	writeJSON(w, http.StatusOK, out)
 }

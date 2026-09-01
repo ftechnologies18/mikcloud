@@ -14,6 +14,7 @@ package api
 
 import (
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -222,4 +223,76 @@ func (a *API) handleSellSold(w http.ResponseWriter, r *http.Request) {
 		"Voucher "+u.Username+" remis au client par "+c.Name+" (Mode Vente)")
 	a.store.Save()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "soldAt": now})
+}
+
+// sellDayReportItem — une vente du rapport de fin de journée (journal
+// chronologique : le revendeur relit sa journée dans l'ordre).
+type sellDayReportItem struct {
+	ID          string `json:"id"`
+	Code        string `json:"code"`
+	ProfileName string `json:"profileName"`
+	Price       int    `json:"price"`
+	SoldAt      string `json:"soldAt"`
+	RouterName  string `json:"routerName"`
+}
+
+// sellDayReport — rapport de fin de journée du revendeur (N°8) : tout ce qui
+// a été remis au client AUJOURD'HUI (détail horodaté), la recette du jour et
+// le stock restant (avec sa valeur faciale) pour la clôture en tournée.
+type sellDayReport struct {
+	Date       string              `json:"date"` // YYYY-MM-DD (UTC — journée métier)
+	Currency   string              `json:"currency"`
+	Sold       []sellDayReportItem `json:"sold"`
+	SoldCount  int                 `json:"soldCount"`
+	Revenue    int                 `json:"revenue"`
+	StockCount int                 `json:"stockCount"`
+	StockValue int                 `json:"stockValue"`
+}
+
+// handleSellDayReport — GET /api/sell/day-report : clôture de journée du
+// revendeur. Même frontière de jour que /api/sell/me (UTC, marché cible).
+func (a *API) handleSellDayReport(w http.ResponseWriter, r *http.Request) {
+	c := claimsFrom(r)
+	now := time.Now().UTC()
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	a.store.Lock()
+	defer a.store.Unlock()
+	db := a.store.Data()
+	report := sellDayReport{
+		Date: now.Format("2006-01-02"),
+		Sold: []sellDayReportItem{},
+	}
+	for i := range db.HotspotUsers {
+		u := &db.HotspotUsers[i]
+		if u.ResellerID != c.Sub || u.AccountID != c.Acc || u.Kind != "voucher" {
+			continue
+		}
+		price := u.SellingPrice
+		if price == 0 {
+			price = u.Price
+		}
+		if u.SoldAt != "" {
+			at, err := time.Parse(time.RFC3339, u.SoldAt)
+			if err != nil || at.Before(todayStart) {
+				continue
+			}
+			report.Sold = append(report.Sold, sellDayReportItem{
+				ID: u.ID, Code: u.Username, ProfileName: u.ProfileName,
+				Price: price, SoldAt: u.SoldAt, RouterName: u.RouterName,
+			})
+			report.SoldCount++
+			report.Revenue += price
+			continue
+		}
+		if model.EffectiveStatus(u, now) == "active" {
+			report.StockCount++
+			report.StockValue += price
+		}
+	}
+	// Journal chronologique : de la première vente du matin à la dernière.
+	sort.Slice(report.Sold, func(i, j int) bool { return report.Sold[i].SoldAt < report.Sold[j].SoldAt })
+	if s, ok := db.SettingsByAccount[c.Acc]; ok {
+		report.Currency = s.Tenant.Currency
+	}
+	writeJSON(w, http.StatusOK, report)
 }

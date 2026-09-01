@@ -428,12 +428,18 @@ Server       string `json:"server"`       // serveur hotspot RouterOS cible (""/
 
 ### Frontend
 - `src/lib/hotspot/use-router-resources.ts` (hook partagé) : agrège
-  `GET /api/routers/{id}/resources` (poll 15 s, fusion dédupliquée multi-routeurs
-  pour les datalists profils ; routeurs `real` exclus — cf. matrice §0).
-- `profile-dialog.tsx` : validité valeur+unité (min/h/j/semaines) avec aperçu
-  RouterOS `fmtRouterDuration()` (ex. `5h30m`, `4w3d`) ; datalists Address Pool /
-  Parent Queue (saisie libre conservée — profils MikCloud multi-routeurs, Mikhmon
-  est mono-routeur) ; nom de profil auto-formaté Mikhmon (espaces → tirets).
+  `GET /api/routers/{id}/resources` en décompactant l'enveloppe F9 `{queued, data,
+  updatedAt}` (re-poll 5 s tant qu'un check-in agent est attendu, sinon 15 s ;
+  fusion dédupliquée multi-routeurs ; routeurs `real` exclus — cf. matrice §0).
+  Retourne aussi `queued`/`updatedAt` pour l'état « en attente ».
+- `profile-dialog.tsx` : sélecteur « **Charger depuis un routeur** »
+  (« Tous les routeurs (fusion) » par défaut, sinon un routeur non réel précis →
+  les datalists reflètent les valeurs RÉELLES de ce MikroTik) + bannière d'attente
+  si la commande read_resources est en file ; validité valeur+unité
+  (min/h/j/semaines) avec aperçu RouterOS `fmtRouterDuration()` (ex. `5h30m`,
+  `4w3d`) ; datalists Address Pool / Parent Queue (saisie libre conservée —
+  profils MikCloud multi-routeurs, Mikhmon est mono-routeur) ; nom de profil
+  auto-formaté Mikhmon (espaces → tirets).
 - `vouchers-view.tsx` : sélecteur Server (routeur sélectionné, « all » = omis),
   Time Limit par lot (hériter/illimité/presets), charset num, récap GetValidPrice
   (Validité RouterOS / Prix de vente / Verrou 1er appareil / Expired Mode).

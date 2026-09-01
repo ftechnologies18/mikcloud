@@ -153,14 +153,23 @@ export function ProfileEditDialog({ open, onOpenChange, profile }: ProfileEditDi
     profile ? formFromProfile(profile) : DEFAULT_FORM,
   );
 
-  // Parité Mikhmon : ressources routeur (pools / files) pour assister la
-  // saisie address-pool / parent-queue (datalists — la saisie libre reste
-  // possible, les noms sont transmis tels quels au routeur).
+  // Parité Mikhmon : ressources routeur (pools / files / serveurs) pour assister
+  // la saisie address-pool / parent-queue — datalists (la saisie libre reste
+  // possible, les noms sont transmis tels quels au routeur). Sélecteur
+  // « Charger depuis un routeur » : « all » = fusion dédupliquée de tous les
+  // routeurs non réels, sinon les valeurs RÉELLES du routeur choisi (commande
+  // agent read_resources, réponse après check-in ≤ 45 s).
   const { data: routers } = useQuery({
     queryKey: ["/api/routers"],
     queryFn: () => api<RouterDevice[]>("/api/routers"),
   });
-  const resources = useRouterResources(routers);
+  const [sourceRouterId, setSourceRouterId] = useState("all");
+  const resources = useRouterResources(routers, sourceRouterId === "all" ? undefined : sourceRouterId);
+  const eligibleRouters = (routers ?? []).filter((r) => r.mode !== "real");
+  const resourcesEmpty =
+    (resources.data?.pools.length ?? 0) === 0 &&
+    (resources.data?.queues.length ?? 0) === 0 &&
+    (resources.data?.servers.length ?? 0) === 0;
 
     const saveMutation = useMutation({
     mutationFn: (payload: { id: string | null; body: Record<string, unknown> }) =>
@@ -419,6 +428,31 @@ export function ProfileEditDialog({ open, onOpenChange, profile }: ProfileEditDi
             <legend className="px-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               {t("profiles.dialog.routeros")}
             </legend>
+            <div className="grid gap-2">
+              <Label htmlFor="profile-router-source">{t("profiles.dialog.routerSource")}</Label>
+              <Select value={sourceRouterId} onValueChange={setSourceRouterId}>
+                <SelectTrigger
+                  id="profile-router-source"
+                  className="h-10 w-full"
+                  aria-label={t("profiles.dialog.routerSource")}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t("profiles.dialog.routerSourceAll")}</SelectItem>
+                  {eligibleRouters.map((router) => (
+                    <SelectItem key={router.id} value={router.id}>
+                      {router.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {resources.data?.queued && resourcesEmpty && (
+                <p className="text-xs text-muted-foreground">
+                  {t("profiles.dialog.routerSourcePending")}
+                </p>
+              )}
+            </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="grid gap-2">
                 <Label htmlFor="profile-pool">{t("profiles.dialog.pool")}</Label>

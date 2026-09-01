@@ -964,13 +964,16 @@ func (a *API) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		Status         string `json:"status"`
 		ActiveSessions int    `json:"activeSessions"`
 		HotspotUsers   int    `json:"hotspotUsers"`
+		OnlineUsers    int    `json:"onlineUsers"`
 		ActiveVouchers int    `json:"activeVouchers"`
 		SalesToday     int    `json:"salesToday"`
+		SoldToday      int    `json:"soldToday"`
 		Revenue30d     int    `json:"revenue30d"`
 	}
 
 	accSessions := []model.Session{}
-	onlineNow := map[string]bool{}
+	onlineNow := map[string]bool{} // clé routerID|username — users EN LIGNE
+	onlineByRouter := map[string]int{}
 	sessionsByRouter := map[string]int{}
 	for i := range db.Sessions {
 		s := db.Sessions[i]
@@ -978,10 +981,26 @@ func (a *API) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		accSessions = append(accSessions, s)
-		onlineNow[s.Username] = true
+		// « Utilisateurs actifs » = users avec une session LIVE, identifiés
+		// par (routeur, username) : le même username peut exister sur deux
+		// routeurs sans être le même client — ni compter double sur un seul.
+		if key := s.RouterID + "|" + s.Username; !onlineNow[key] {
+			onlineNow[key] = true
+			onlineByRouter[s.RouterID]++
+		}
 		sessionsByRouter[s.RouterID]++
 	}
 
+	// « Ticket vendu = ticket utilisé » : un voucher est compté vendu le jour
+	// de sa PREMIÈRE connexion (UsedAt horodaté par markVoucherUsed au login
+	// détecté, fuseau du compte). Les Sales enregistrées à la génération
+	// restent la source du chiffre d'affaires ; ce compteur mesure l'ACTIVATION
+	// réelle des tickets — c'est lui que le dashboard affiche en « vendus ».
+	loc := accountTimezone(db, acc)
+	nowLocal := now.In(loc)
+	todayStartLocal := time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), 0, 0, 0, 0, loc)
+	soldToday := 0
+	soldTodayByRouter := map[string]int{}
 	totalUsers, activeVouchers := 0, 0
 	usersByRouter := map[string]int{}
 	vouchersByRouter := map[string]int{}
@@ -995,6 +1014,12 @@ func (a *API) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		totalUsers++
 		counts[u.ProfileName]++
 		totals[u.ProfileName] += u.Price
+		if u.Kind == "voucher" && u.UsedAt != "" {
+			if used, err := time.Parse(time.RFC3339, u.UsedAt); err == nil && !used.In(loc).Before(todayStartLocal) {
+				soldToday++
+				soldTodayByRouter[u.RouterID]++
+			}
+		}
 		if model.EffectiveStatus(u, now) != "active" {
 			continue
 		}
@@ -1050,8 +1075,10 @@ func (a *API) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			Status:         rr.Status,
 			ActiveSessions: sessionsByRouter[rr.ID],
 			HotspotUsers:   usersByRouter[rr.ID],
+			OnlineUsers:    onlineByRouter[rr.ID],
 			ActiveVouchers: vouchersByRouter[rr.ID],
 			SalesToday:     salesTodayByRouter[rr.ID],
+			SoldToday:      soldTodayByRouter[rr.ID],
 			Revenue30d:     revenue30dByRouter[rr.ID],
 		})
 	}
@@ -1059,6 +1086,7 @@ func (a *API) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"activeSessions": len(accSessions),
 		"totalUsers":     totalUsers,
 		"activeVouchers": activeVouchers,
+		"soldToday":      soldToday,
 		"salesToday":     salesToday,
 		"revenue30d":     revenue30d,
 		"routersOnline":  routersOnline,
@@ -1092,7 +1120,6 @@ func (a *API) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 		recent = append(recent, act)
 	}
-	loc := accountTimezone(db, acc)
 	timeline := buildHourlyLogins(db, acc, now, loc)
 	a.store.Unlock()
 

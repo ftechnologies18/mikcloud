@@ -111,11 +111,11 @@ function SiteCard({ site, currency, lang }: { site: SiteOverview; currency: stri
           </div>
           <div>
             <dt className="text-xs text-muted-foreground">{t("dashboard.site.salesToday")}</dt>
-            <dd className="mt-0.5 font-semibold tabular-nums">{nf(site.salesToday)}</dd>
+            <dd className="mt-0.5 font-semibold tabular-nums">{nf(site.soldToday)}</dd>
           </div>
           <div>
             <dt className="text-xs text-muted-foreground">{t("dashboard.site.users")}</dt>
-            <dd className="mt-0.5 font-semibold tabular-nums">{nf(site.hotspotUsers)}</dd>
+            <dd className="mt-0.5 font-semibold tabular-nums">{nf(site.onlineUsers)}</dd>
           </div>
           <div>
             <dt className="text-xs text-muted-foreground">{t("dashboard.site.vouchers")}</dt>
@@ -210,9 +210,20 @@ export default function DashboardView() {
       {/* KPIs */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <StatCard title={t("dashboard.kpi.activeSessions")} value={nf(kpis.activeSessions)} icon={Radio} live />
-        <StatCard title={t("dashboard.kpi.users")} value={nf(kpis.totalUsers)} icon={Users} sub={t("dashboard.kpi.usersSub")} />
+        <StatCard
+          title={t("dashboard.kpi.activeUsers")}
+          value={nf(kpis.onlineNow)}
+          icon={Users}
+          live
+          sub={tf("dashboard.kpi.activeUsersSub", { n: nf(kpis.totalUsers) })}
+        />
         <StatCard title={t("dashboard.kpi.activeVouchers")} value={nf(kpis.activeVouchers)} icon={Ticket} />
-        <StatCard title={t("dashboard.kpi.salesToday")} value={nf(kpis.salesToday)} icon={ShoppingCart} sub={t("dashboard.kpi.salesTodaySub")} />
+        <StatCard
+          title={t("dashboard.kpi.soldToday")}
+          value={nf(kpis.soldToday)}
+          icon={ShoppingCart}
+          sub={t("dashboard.kpi.soldTodaySub")}
+        />
         <StatCard
           title={t("dashboard.kpi.revenue30")}
           value={formatCurrency(kpis.revenue30d, currency, lang)}

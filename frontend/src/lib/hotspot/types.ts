@@ -556,8 +556,12 @@ export interface SiteOverview {
   status: RouterStatus;
   activeSessions: number;
   hotspotUsers: number;
+  /** Users EN LIGNE (session live) — la carte « Utilisateurs actifs ». */
+  onlineUsers: number;
   activeVouchers: number;
   salesToday: number;
+  /** Vouchers activés aujourd'hui (1ʳᵉ connexion) — « Tickets vendus ». */
+  soldToday: number;
   revenue30d: number;
 }
 
@@ -576,6 +580,8 @@ export interface DashboardData {
     activeSessions: number;
     totalUsers: number;
     activeVouchers: number;
+    /** Vouchers activés aujourd'hui (1ʳᵉ connexion) — « Tickets vendus ». */
+    soldToday: number;
     salesToday: number;
     revenue30d: number;
     routersOnline: number;

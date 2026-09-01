@@ -166,7 +166,9 @@ export async function renderBatch(
 
   if (template.format === "a4") {
     const inner = tickets.map((ticket) => `<div class="tpl-ticket">${ticket}</div>`).join("");
-    return `<div class="tpl-batch tpl-format-a4" style="display:grid;grid-template-columns:repeat(3,1fr);gap:5mm;">${inner}</div>`;
+    // minmax(0,1fr) : les pistes ne peuvent pas dépasser 1/3 de la feuille,
+    // même si un gabarit contient du contenu à largeur figée (QR + textes).
+    return `<div class="tpl-batch tpl-format-a4" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5mm;">${inner}</div>`;
   }
 
   const width = template.format === "58mm" ? "54mm" : "76mm";

@@ -463,9 +463,11 @@
    (Navigateurs sans :has — antérieurs à 2023 : dégradation identique à l'ancien
    comportement, aucun régression supplémentaire.) */
 @media print {
+  /* Marge 8 mm : évite que les bords de tickets tombent dans la zone
+     non imprimable matérielle de l'imprimante (ex. Canon G2010). */
   @page {
     size: A4 portrait;
-    margin: 5mm;
+    margin: 8mm;
   }
 
   .no-print {
@@ -481,14 +483,19 @@
     display: none !important;
   }
 
-  /* Le dialog devient le document : flux normal, pleine largeur, sans habillage. */
+  /* Le dialog devient le document : flux normal, pleine largeur, sans habillage.
+     NB critique : le pipeline CSS (Tailwind v4/LightningCSS) réécrit les valeurs
+     littérales translate/scale/rotate: none en transform identitaire (fusion),
+     ce qui LAISSE le centrage translate: -50% -50% du dialog intact → tickets
+     coupés et colonnes hors feuille à l'impression. La parade : passer par var(),
+     que le transformeur ne peut pas replier — la déclaration survit telle quelle. */
   body:has(.print-area) [data-slot="dialog-content"] {
     position: static !important;
     inset: auto !important;
     transform: none !important;
-    translate: none !important;
-    scale: none !important;
-    rotate: none !important;
+    translate: var(--mikcloud-print-none, none) !important;
+    scale: var(--mikcloud-print-none, none) !important;
+    rotate: var(--mikcloud-print-none, none) !important;
     display: block !important;
     width: auto !important;
     max-width: none !important;
@@ -503,7 +510,9 @@
     gap: 0 !important;
   }
 
-  /* Zone imprimée : en flux normal, sans les habillages de l'aperçu écran. */
+  /* Zone imprimée : en flux normal, sans les habillages de l'aperçu écran.
+     print-color-adjust : les bandeaux/couleurs des tickets s'impriment même si
+     « graphiques d'arrière-plan » est décoché dans le navigateur. */
   .print-area {
     position: static !important;
     inset: auto !important;
@@ -517,10 +526,31 @@
     border-radius: 0 !important;
     background: white !important;
     color: black;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Grille A4 du rendu standard : 3 colonnes STRICTES à l'impression
+     (minmax(0,1fr) — les pistes ne débordent jamais de la feuille quelle que
+     soit la largeur min-content des tickets). */
+  .voucher-print-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 4mm !important;
   }
 }
 
 /* ─── Impression via modèles de vouchers (F2) ─── */
+/* Grille A4 : les tickets remplissent leur cellule SANS jamais la déborder
+   (un gabarit avec largeurs figées ne doit pas pousser la grille hors feuille —
+   les pistes minmax(0,1fr) tiennent toujours dans la largeur imprimable). */
+.tpl-format-a4 {
+  width: 100%;
+}
+.tpl-format-a4 .tpl-ticket {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
 .tpl-ticket {
   break-inside: avoid;
 }
@@ -539,6 +569,12 @@
   }
   .tpl-format-80mm {
     width: 80mm;
+  }
+  /* À l'impression, un ticket A4 est confiné à sa cellule : le contenu figé
+     trop large est rogné au bord du ticket au lieu de repousser la grille. */
+  .tpl-format-a4 .tpl-ticket {
+    width: 100%;
+    overflow: hidden;
   }
 }
 

@@ -211,7 +211,8 @@ export function UcPrintDialog({
             </div>
           ) : (
             <div className="print-area rounded-lg bg-white p-4 text-black">
-              <div className="grid grid-cols-2 gap-5 sm:grid-cols-3">
+              {/* voucher-print-grid : à l'impression, 3 colonnes strictes (globals.css). */}
+              <div className="voucher-print-grid grid grid-cols-2 gap-5 sm:grid-cols-3">
                 {vouchers.map((voucher) => {
                   const prof = profiles.find((p) => p.id === voucher.profileId);
                   const validityMin = prof ? (prof.validityMin > 0 ? prof.validityMin : prof.validityDays * 1440) : 0;

@@ -188,7 +188,18 @@ func (a *API) handleVouchersBatchTransfer(w http.ResponseWriter, r *http.Request
 			countByReseller[u.ResellerID]++
 		}
 	}
-	if target != nil && debitTotal > target.Credit {
+	if target != nil && target.PaymentMode == "deposit" {
+		// N°19 — dépôt-vente : rien à débiter, mais exposition bornée par le
+		// plafond de créance (les vouchers transférés sont nouveaux chez la
+		// cible — déjà-chez-la-cible exclus de la sélection).
+		debtNow := depositDebt(db, acc, target.ID)
+		stockNow := depositStockValue(db, time.Now().UTC(), acc, target.ID)
+		if debtNow+stockNow+debitTotal > target.DebtCeiling {
+			writeErr(w, http.StatusBadRequest,
+				fmt.Sprintf("Plafond de créance dépassé (dette: %d, stock: %d, plafond: %d, requis: %d)", debtNow, stockNow, target.DebtCeiling, debitTotal))
+			return
+		}
+	} else if target != nil && debitTotal > target.Credit {
 		writeErr(w, http.StatusBadRequest,
 			fmt.Sprintf("Crédit insuffisant (disponible: %d, requis: %d)", target.Credit, debitTotal))
 		return
@@ -201,15 +212,19 @@ func (a *API) handleVouchersBatchTransfer(w http.ResponseWriter, r *http.Request
 		u := &db.HotspotUsers[c.idx]
 		if target != nil {
 			u.ResellerID, u.ResellerName = target.ID, target.Name
+			// N°19 — la nature « à crédit » suit la destination.
+			u.CreditSale = target.PaymentMode == "deposit"
 		} else {
 			u.ResellerID, u.ResellerName = "", ""
+			u.CreditSale = false
 		}
 		transferred = append(transferred, *u)
 	}
 
 	// Mouvements de portefeuille + Transactions (règles d'or 4 et 5).
 	creditAfter := 0
-	if target != nil && debitTotal > 0 {
+	// N°19 — dépôt-vente : prise à crédit gratuite (pas de débit ni tx).
+	if target != nil && target.PaymentMode != "deposit" && debitTotal > 0 {
 		target.Credit -= debitTotal
 		creditAfter = target.Credit
 		db.Transactions = append([]model.Transaction{{
@@ -225,6 +240,11 @@ func (a *API) handleVouchersBatchTransfer(w http.ResponseWriter, r *http.Request
 		src := findResellerScoped(db, srcID, acc)
 		if src == nil {
 			continue // revendeur supprimé entre-temps : rien à recréditer
+		}
+		if src.PaymentMode == "deposit" {
+			// N°19 — dépôt-vente : rien n'avait été débité à la prise →
+			// aucun recrédit (sinon crédit fantôme).
+			continue
 		}
 		src.Credit += amount
 		credited += amount
@@ -254,9 +274,15 @@ func (a *API) handleVouchersBatchTransfer(w http.ResponseWriter, r *http.Request
 	}
 	a.store.Save()
 
+	// N°19 — « debited » reflète le débit RÉEL du portefeuille : zéro pour
+	// une cible en dépôt-vente (prise à crédit, créance à la remise).
+	debitedActual := 0
+	if target != nil && target.PaymentMode != "deposit" {
+		debitedActual = debitTotal
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"transferred": len(transferred),
-		"debited":     debitTotal,
+		"debited":     debitedActual,
 		"credited":    credited,
 		"creditAfter": creditAfter,
 		"refunds":     refunds,

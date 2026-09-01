@@ -112,6 +112,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/resellers/{id}", a.requireRole(2, a.handleResellerUpdate))
 	mux.HandleFunc("DELETE /api/resellers/{id}", a.requireRole(2, a.handleResellerDelete))
 	mux.HandleFunc("POST /api/resellers/{id}/credit", a.requireRole(2, a.handleResellerCredit))
+	mux.HandleFunc("POST /api/resellers/{id}/settle", a.requireRole(2, a.handleResellerSettle))
 
 	// Divers
 	mux.HandleFunc("GET /api/transactions", a.requireRole(2, a.handleTransactionsList))
@@ -2555,7 +2556,17 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 		quotaMb = 1_073_741_824
 	}
 	cost := req.Count * profile.Price
-	if resellerCopy != nil && resellerCopy.Credit < cost {
+	if resellerCopy != nil && resellerCopy.PaymentMode == "deposit" {
+		// N°19 — dépôt-vente : rien à débiter, mais exposition bornée par le
+		// plafond de créance (dette née + stock à crédit + ce lot ≤ plafond).
+		debtNow := depositDebt(db, acc, resellerCopy.ID)
+		stockNow := depositStockValue(db, time.Now().UTC(), acc, resellerCopy.ID)
+		if debtNow+stockNow+cost > resellerCopy.DebtCeiling {
+			a.store.Unlock()
+			writeErr(w, http.StatusBadRequest, fmt.Sprintf("Plafond de créance dépassé (dette: %d, stock: %d, plafond: %d, requis: %d)", debtNow, stockNow, resellerCopy.DebtCeiling, cost))
+			return
+		}
+	} else if resellerCopy != nil && resellerCopy.Credit < cost {
 		a.store.Unlock()
 		writeErr(w, http.StatusBadRequest, fmt.Sprintf("Crédit insuffisant (disponible: %d, requis: %d)", resellerCopy.Credit, cost))
 		return
@@ -2613,6 +2624,9 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 		if resellerCopy != nil {
 			u.ResellerID = resellerCopy.ID
 			u.ResellerName = resellerCopy.Name
+			// N°19 — dépôt-vente : ticket pris à crédit ; sa remise créera la
+			// créance (le marqueur survit aux changements de mode).
+			u.CreditSale = resellerCopy.PaymentMode == "deposit"
 		}
 		vouchers = append(vouchers, u)
 	}
@@ -2654,21 +2668,30 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 		if resellerCopy != nil {
 			channel = "reseller"
 			resName = resellerCopy.Name
-			if res := findResellerScoped(db, resellerCopy.ID, acc); res != nil {
-				res.Credit -= cost
+			// N°19 — en dépôt-vente, la prise de stock est gratuite : la
+			// créance naîtra à la remise (Mode Vente), pas à la génération.
+			if resellerCopy.PaymentMode != "deposit" {
+				if res := findResellerScoped(db, resellerCopy.ID, acc); res != nil {
+					res.Credit -= cost
+				}
+				db.Transactions = append([]model.Transaction{{
+					ID: model.NewID("tx-"), AccountID: acc, Type: "sale", ResellerID: resellerCopy.ID, ResellerName: resName,
+					Amount: cost, Note: fmt.Sprintf("Achat de %d vouchers (%s)", req.Count, profile.Name),
+					At: model.NowISO(),
+				}}, db.Transactions...)
 			}
-			db.Transactions = append([]model.Transaction{{
-				ID: model.NewID("tx-"), AccountID: acc, Type: "sale", ResellerID: resellerCopy.ID, ResellerName: resName,
-				Amount: cost, Note: fmt.Sprintf("Achat de %d vouchers (%s)", req.Count, profile.Name),
-				At: model.NowISO(),
-			}}, db.Transactions...)
 		}
-		db.Sales = append(db.Sales, model.Sale{
-			ID: model.NewID("sale-"), AccountID: acc, Amount: cost, ProfileName: profile.Name, Count: req.Count,
-			Channel: channel, ResellerName: resName,
-			RouterID: routerCopy.ID, RouterName: routerCopy.Name, BatchID: batchID,
-			At: model.NowISO(), Cost: cost, SellingTotal: sellingTotal,
-		})
+		// N°19 — pas de Sale à la génération en dépôt-vente (reconnaissance à
+		// l'encaissement au versement) : dashboard/rapports/compta ne
+		// double-comptent pas.
+		if resellerCopy == nil || resellerCopy.PaymentMode != "deposit" {
+			db.Sales = append(db.Sales, model.Sale{
+				ID: model.NewID("sale-"), AccountID: acc, Amount: cost, ProfileName: profile.Name, Count: req.Count,
+				Channel: channel, ResellerName: resName,
+				RouterID: routerCopy.ID, RouterName: routerCopy.Name, BatchID: batchID,
+				At: model.NowISO(), Cost: cost, SellingTotal: sellingTotal,
+			})
+		}
 		batchResellerID := ""
 		if resellerCopy != nil {
 			batchResellerID = resellerCopy.ID
@@ -2710,21 +2733,30 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 	if resellerCopy != nil {
 		channel = "reseller"
 		resName = resellerCopy.Name
-		if res := findResellerScoped(db, resellerCopy.ID, acc); res != nil {
-			res.Credit -= cost
+		// N°19 — en dépôt-vente, la prise de stock est gratuite : la
+		// créance naîtra à la remise (Mode Vente), pas à la génération.
+		if resellerCopy.PaymentMode != "deposit" {
+			if res := findResellerScoped(db, resellerCopy.ID, acc); res != nil {
+				res.Credit -= cost
+			}
+			db.Transactions = append([]model.Transaction{{
+				ID: model.NewID("tx-"), AccountID: acc, Type: "sale", ResellerID: resellerCopy.ID, ResellerName: resName,
+				Amount: cost, Note: fmt.Sprintf("Achat de %d vouchers (%s)", req.Count, profile.Name),
+				At: model.NowISO(),
+			}}, db.Transactions...)
 		}
-		db.Transactions = append([]model.Transaction{{
-			ID: model.NewID("tx-"), AccountID: acc, Type: "sale", ResellerID: resellerCopy.ID, ResellerName: resName,
-			Amount: cost, Note: fmt.Sprintf("Achat de %d vouchers (%s)", req.Count, profile.Name),
-			At: model.NowISO(),
-		}}, db.Transactions...)
 	}
-	db.Sales = append(db.Sales, model.Sale{
-		ID: model.NewID("sale-"), AccountID: acc, Amount: cost, ProfileName: profile.Name, Count: req.Count,
-		Channel: channel, ResellerName: resName,
-		RouterID: routerCopy.ID, RouterName: routerCopy.Name, BatchID: batchID,
-		At: model.NowISO(), Cost: cost, SellingTotal: sellingTotal,
-	})
+	// N°19 — pas de Sale à la génération en dépôt-vente (reconnaissance à
+	// l'encaissement au versement) : dashboard/rapports/compta ne
+	// double-comptent pas.
+	if resellerCopy == nil || resellerCopy.PaymentMode != "deposit" {
+		db.Sales = append(db.Sales, model.Sale{
+			ID: model.NewID("sale-"), AccountID: acc, Amount: cost, ProfileName: profile.Name, Count: req.Count,
+			Channel: channel, ResellerName: resName,
+			RouterID: routerCopy.ID, RouterName: routerCopy.Name, BatchID: batchID,
+			At: model.NowISO(), Cost: cost, SellingTotal: sellingTotal,
+		})
+	}
 	batchResellerID := ""
 	if resellerCopy != nil {
 		batchResellerID = resellerCopy.ID
@@ -2983,6 +3015,9 @@ func sanitizeReseller(res model.Reseller) map[string]any {
 		"username": res.Username, "phone": res.Phone, "credit": res.Credit,
 		"vouchersSold": res.VouchersSold, "revenue": res.Revenue,
 		"status": res.Status, "createdAt": res.CreatedAt, "pinSet": pinSet,
+		// N°19 — mode de paiement (prépayé par défaut) + plafond de créance.
+		"paymentMode": map[bool]string{true: res.PaymentMode, false: "prepaid"}[res.PaymentMode != ""],
+		"debtCeiling": res.DebtCeiling,
 	}
 }
 
@@ -3036,6 +3071,34 @@ func (a *API) handleResellersList(w http.ResponseWriter, r *http.Request) {
 			st.stock++
 		}
 	}
+	// N°19 — créance dépôt-vente : Σ(debt) − Σ(settlement) par revendeur,
+	// comptée sur les Transactions (la créance naît à la remise, pas à la
+	// prise de stock — voir handlers_deposit.go).
+	type debtStats struct {
+		debt, settlements int
+		lastSettlement    string
+	}
+	dstats := make(map[string]*debtStats, len(rs))
+	for _, tx := range db.Transactions {
+		if tx.AccountID != acc {
+			continue
+		}
+		ds := dstats[tx.ResellerID]
+		if ds == nil {
+			ds = &debtStats{}
+			dstats[tx.ResellerID] = ds
+		}
+		switch tx.Type {
+		case "debt":
+			ds.debt += tx.Amount
+		case "settlement":
+			ds.debt -= tx.Amount
+			ds.settlements++
+			if tx.At > ds.lastSettlement {
+				ds.lastSettlement = tx.At
+			}
+		}
+	}
 	a.store.Unlock()
 	sort.Slice(rs, func(i, j int) bool { return rs[i].CreatedAt > rs[j].CreatedAt })
 	out := make([]map[string]any, len(rs))
@@ -3051,6 +3114,14 @@ func (a *API) handleResellersList(w http.ResponseWriter, r *http.Request) {
 		m["soldToday"] = st.soldToday
 		m["revenueToday"] = st.revenueToday
 		m["revenueTotal"] = st.revenueTotal
+		// N°19 — dette (0 pour un prépayé sans créance), versements, dernière date.
+		ds := dstats[rs[i].ID]
+		if ds == nil {
+			ds = &debtStats{}
+		}
+		m["debt"] = ds.debt
+		m["settlementsCount"] = ds.settlements
+		m["lastSettlementAt"] = ds.lastSettlement
 		out[i] = m
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -3085,6 +3156,9 @@ func (a *API) handleResellerCreate(w http.ResponseWriter, r *http.Request) {
 		Phone    string `json:"phone"`
 		Credit   int    `json:"credit"`
 		Pin      string `json:"pin"` // N°8 — PIN Mode Vente (4-6 chiffres, optionnel)
+		// N°19 — mode de paiement : prepaid (défaut) | deposit (plafond requis).
+		PaymentMode string `json:"paymentMode"`
+		DebtCeiling int    `json:"debtCeiling"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
@@ -3105,6 +3179,23 @@ func (a *API) handleResellerCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Crédit initial invalide")
 		return
 	}
+	// N°19 — mode de paiement : prépayé (défaut) ou dépôt-vente (plafond requis).
+	paymentMode := req.PaymentMode
+	if paymentMode == "" {
+		paymentMode = "prepaid"
+	}
+	if paymentMode != "prepaid" && paymentMode != "deposit" {
+		writeErr(w, http.StatusBadRequest, "Mode de paiement invalide (prepaid ou deposit)")
+		return
+	}
+	debtCeiling := req.DebtCeiling
+	if paymentMode == "deposit" && debtCeiling <= 0 {
+		writeErr(w, http.StatusBadRequest, "Plafond de créance requis en dépôt-vente (> 0)")
+		return
+	}
+	if paymentMode == "prepaid" {
+		debtCeiling = 0
+	}
 	a.store.Lock()
 	db := a.store.Data()
 	for _, res := range db.Resellers {
@@ -3117,12 +3208,13 @@ func (a *API) handleResellerCreate(w http.ResponseWriter, r *http.Request) {
 	reseller := model.Reseller{
 		ID: model.NewID("res-"), AccountID: acc, Name: name, Username: username, Phone: strings.TrimSpace(req.Phone),
 		Credit: req.Credit, VouchersSold: 0, Revenue: 0, Status: "active", CreatedAt: model.NowISO(),
+		PaymentMode: paymentMode, DebtCeiling: debtCeiling,
 	}
 	if pin != "" {
 		reseller.PinHash = auth.HashPassword(pin, "")
 	}
 	db.Resellers = append(db.Resellers, reseller)
-	a.logActivityBy(r, db, acc, "reseller", "Revendeur "+reseller.Name+" créé"+pinNote(pin))
+	a.logActivityBy(r, db, acc, "reseller", "Revendeur "+reseller.Name+" créé"+pinNote(pin)+modeNote(paymentMode, debtCeiling))
 	a.store.Save()
 	sanitized := sanitizeReseller(reseller)
 	a.store.Unlock()
@@ -3141,6 +3233,9 @@ func (a *API) handleResellerUpdate(w http.ResponseWriter, r *http.Request) {
 		Phone  *string `json:"phone"`
 		Status *string `json:"status"`
 		Pin    *string `json:"pin"` // N°8 — définir/remplacer ; "" = retirer
+		// N°19 — bascule de mode de paiement + plafond de créance.
+		PaymentMode *string `json:"paymentMode"`
+		DebtCeiling *int    `json:"debtCeiling"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
@@ -3181,6 +3276,48 @@ func (a *API) handleResellerUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		res.Status = *req.Status
 	}
+	// N°19 — mode de paiement + plafond : la bascule en prépayé exige une
+	// dette soldée ; le dépôt-vente exige un plafond > 0.
+	newMode := res.PaymentMode
+	if newMode == "" {
+		newMode = "prepaid"
+	}
+	if req.PaymentMode != nil {
+		m := strings.TrimSpace(*req.PaymentMode)
+		if m != "prepaid" && m != "deposit" {
+			a.store.Unlock()
+			writeErr(w, http.StatusBadRequest, "Mode de paiement invalide (prepaid ou deposit)")
+			return
+		}
+		newMode = m
+	}
+	newCeiling := res.DebtCeiling
+	if req.DebtCeiling != nil {
+		if *req.DebtCeiling < 0 {
+			a.store.Unlock()
+			writeErr(w, http.StatusBadRequest, "Le plafond de créance ne peut pas être négatif")
+			return
+		}
+		newCeiling = *req.DebtCeiling
+	}
+	if newMode == "deposit" && newCeiling <= 0 {
+		a.store.Unlock()
+		writeErr(w, http.StatusBadRequest, "Plafond de créance requis en dépôt-vente (> 0)")
+		return
+	}
+	if newMode == "prepaid" {
+		newCeiling = 0
+		if res.PaymentMode == "deposit" {
+			if debt := depositDebt(db, acc, res.ID); debt > 0 {
+				a.store.Unlock()
+				writeErr(w, http.StatusBadRequest, fmt.Sprintf("Régularisez la dette (%d FCFA) avant de repasser en prépayé", debt))
+				return
+			}
+		}
+	}
+	modeChanged := newMode != res.PaymentMode || newCeiling != res.DebtCeiling
+	res.PaymentMode = newMode
+	res.DebtCeiling = newCeiling
 	if req.Pin != nil {
 		p := strings.TrimSpace(*req.Pin)
 		if p == "" {
@@ -3190,7 +3327,11 @@ func (a *API) handleResellerUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	updated := *res
-	a.logActivityBy(r, db, acc, "reseller", "Revendeur "+updated.Name+" modifié")
+	if modeChanged {
+		a.logActivityBy(r, db, acc, "reseller", "Revendeur "+updated.Name+" modifié"+modeNote(updated.PaymentMode, updated.DebtCeiling))
+	} else {
+		a.logActivityBy(r, db, acc, "reseller", "Revendeur "+updated.Name+" modifié")
+	}
 	a.store.Save()
 	sanitized := sanitizeReseller(updated)
 	a.store.Unlock()
@@ -3277,7 +3418,8 @@ func (a *API) handleResellerCredit(w http.ResponseWriter, r *http.Request) {
 	updated := *res
 	a.store.Save()
 	a.store.Unlock()
-	writeJSON(w, http.StatusOK, map[string]any{"reseller": updated, "transaction": tx})
+	// N°19 — réponse sanitisée (la structure brute incluait PinHash).
+	writeJSON(w, http.StatusOK, map[string]any{"reseller": sanitizeReseller(updated), "transaction": tx})
 }
 
 // ---------------------------------------------------------------------------

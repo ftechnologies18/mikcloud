@@ -17,7 +17,9 @@ export type BadgeStatus =
   | "direct"
   | "reseller"
   | "credit"
-  | "sale";
+  | "sale"
+  | "debt"
+  | "settlement";
 
 /** Clés i18n par statut (F11) — le libellé est résolu à chaque rendu. */
 const LABEL_KEYS: Record<BadgeStatus, string> = {
@@ -34,6 +36,8 @@ const LABEL_KEYS: Record<BadgeStatus, string> = {
   reseller: "badge.reseller",
   credit: "badge.credit",
   sale: "badge.sale",
+  debt: "badge.debt",
+  settlement: "badge.settlement",
 };
 
 const STYLES: Record<BadgeStatus, string> = {
@@ -51,6 +55,9 @@ const STYLES: Record<BadgeStatus, string> = {
   agent: "bg-chart-4/15 text-chart-4 border-chart-4/25",
   direct: "bg-chart-5/15 text-chart-5 border-chart-5/25",
   credit: "bg-primary/15 text-primary border-primary/25",
+  // N°19 — dépôt-vente : créance (alerte) vs versement encaissé (cash). 
+  debt: "bg-amber-500/15 text-amber-600 border-amber-500/25 dark:text-amber-400",
+  settlement: "bg-chart-1/15 text-chart-1 border-chart-1/25",
 };
 
 export function StatusBadge({

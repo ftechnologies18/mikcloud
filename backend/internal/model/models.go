@@ -250,6 +250,9 @@ type HotspotUser struct {
 	// revendeur (traçabilité anti-vol). Vide = encore en stock.
 	SoldAt  string `json:"soldAt,omitempty"`  // RFC3339
 	SoldVia string `json:"soldVia,omitempty"` // "sell_mode" (app revendeur)
+	// N°19 — dépôt-vente : ticket attribué À CRÉDIT (prise non payée) ;
+	// sa remise au client crée une créance (Transaction « debt »).
+	CreditSale bool `json:"creditSale,omitempty"`
 	// N (rapprochement doux) — true quand le dernier read_state du routeur
 	// n'a PAS listé cet utilisateur alors qu'il devrait y être (supprimé
 	// directement dans Winbox, commande échouée…). Le cloud le conserve
@@ -284,12 +287,17 @@ type Session struct {
 
 // Reseller — revendeur avec portefeuille.
 type Reseller struct {
-	ID           string `json:"id"`
-	AccountID    string `json:"accountId"`
-	Name         string `json:"name"`
-	Username     string `json:"username"`
-	Phone        string `json:"phone"`
-	Credit       int    `json:"credit"`
+	ID        string `json:"id"`
+	AccountID string `json:"accountId"`
+	Name      string `json:"name"`
+	Username  string `json:"username"`
+	Phone     string `json:"phone"`
+	Credit    int    `json:"credit"`
+	// N°19 — modes de paiement : « prepaid » (historique : crédit débité
+	// à la prise de stock) ou « deposit » (dépôt-vente : il vend puis
+	// verse — créance née à la remise, bornée par le plafond).
+	PaymentMode  string `json:"paymentMode"` // prepaid | deposit
+	DebtCeiling  int    `json:"debtCeiling"`
 	VouchersSold int    `json:"vouchersSold"`
 	Revenue      int    `json:"revenue"`
 	Status       string `json:"status"` // active | disabled

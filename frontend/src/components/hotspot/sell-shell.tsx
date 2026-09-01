@@ -66,6 +66,10 @@ interface SellMe {
   soldToday: number;
   revenueToday: number;
   currency: string;
+  /** N°19 — dépôt-vente : « à verser » remplace le crédit. */
+  paymentMode?: string;
+  debt?: number;
+  debtCeiling?: number;
 }
 
 function useOnline(): boolean {
@@ -194,7 +198,19 @@ export default function SellShell() {
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold">{me?.name ?? "…"}</p>
             <p className="text-xs text-muted-foreground">
-              {t("sell.mode")} · {t("sell.credit")} {me ? formatCurrency(me.credit, currency, lang) : "—"}
+              {t("sell.mode")} ·{" "}
+              {me?.paymentMode === "deposit" ? (
+                <>
+                  {t("sell.toDeposit")}{" "}
+                  <span className={(me.debt ?? 0) > 0 ? "font-semibold text-amber-600 dark:text-amber-400" : ""}>
+                    {formatCurrency(me.debt ?? 0, currency, lang)}
+                  </span>
+                </>
+              ) : (
+                <>
+                  {t("sell.credit")} {me ? formatCurrency(me.credit, currency, lang) : "—"}
+                </>
+              )}
             </p>
           </div>
           <Button

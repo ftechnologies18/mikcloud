@@ -103,6 +103,8 @@ export function VoucherTransferDialog({
 
   const isRecall = target === DIRECT;
   const targetReseller = activeResellers.find((r) => r.id === target) ?? null;
+  // N°19 — dépôt-vente : la prise est à crédit (créance à la remise), pas de débit.
+  const isDepositTarget = !isRecall && targetReseller?.paymentMode === "deposit";
 
   // Quantité : vide = tout le stock transférable pour cette destination.
   const parsedQty = quantity.trim() === "" ? maxForTarget : Math.floor(Number(quantity));
@@ -111,7 +113,7 @@ export function VoucherTransferDialog({
   // Aperçu financier — approximation d'affichage (prix unitaire du lot) ; le
   // débit/recrédit EXACT, par voucher, est renvoyé par l'API (toast de succès).
   const previewAmount = qty * (batch?.unitPrice ?? 0);
-  const insufficient = !isRecall && targetReseller !== null && previewAmount > targetReseller.credit;
+  const insufficient = !isRecall && !isDepositTarget && targetReseller !== null && previewAmount > targetReseller.credit;
   const canSubmit = maxForTarget > 0 && qty > 0 && !insufficient;
 
   // Sources d'un retour de stock (revendeurs détenant du stock vendable du lot).
@@ -132,14 +134,22 @@ export function VoucherTransferDialog({
       }),
     onSuccess: (res) => {
       if (isRecall) {
-        const refund = res.refunds[0];
-        toast.success(
-          tf("vouchers.batches.transferSuccessRecall", {
-            n: res.transferred,
-            amount: formatCurrency(res.credited, currency, lang),
-            name: refund?.resellerName ?? refundSourcesLabel,
-          }),
-        );
+        if (res.credited === 0) {
+          // N°19 — retour depuis un dépôt-vente : rien n'avait été débité.
+          toast.success(tf("vouchers.batches.transferSuccessRecallNoRefund", { n: res.transferred }));
+        } else {
+          const refund = res.refunds[0];
+          toast.success(
+            tf("vouchers.batches.transferSuccessRecall", {
+              n: res.transferred,
+              amount: formatCurrency(res.credited, currency, lang),
+              name: refund?.resellerName ?? refundSourcesLabel,
+            }),
+          );
+        }
+      } else if (isDepositTarget) {
+        // N°19 — prise à crédit : la créance naîtra à la remise.
+        toast.success(tf("vouchers.batches.transferSuccessCredit", { n: res.transferred, name: targetReseller?.name ?? "" }));
       } else {
         toast.success(
           tf("vouchers.batches.transferSuccess", {
@@ -190,10 +200,16 @@ export function VoucherTransferDialog({
                       <span className="text-muted-foreground">
                         {" "}
                         ·{" "}
-                        {tf("vouchers.batches.transferResellerMeta", {
-                          credit: formatCurrency(r.credit, currency, lang),
-                          stock: r.stockCount ?? 0,
-                        })}
+                        {r.paymentMode === "deposit"
+                          ? tf("vouchers.batches.transferResellerMetaDeposit", {
+                              debt: formatCurrency(r.debt ?? 0, currency, lang),
+                              ceiling: formatCurrency(r.debtCeiling ?? 0, currency, lang),
+                              stock: r.stockCount ?? 0,
+                            })
+                          : tf("vouchers.batches.transferResellerMeta", {
+                              credit: formatCurrency(r.credit, currency, lang),
+                              stock: r.stockCount ?? 0,
+                            })}
                       </span>
                     </SelectItem>
                   ))}
@@ -267,7 +283,13 @@ export function VoucherTransferDialog({
                       name: refundSourcesLabel,
                       amount: formatCurrency(previewAmount, currency, lang),
                     })
-                  : tf("vouchers.batches.transferPreviewDebit", {
+                  : isDepositTarget
+                    ? tf("vouchers.batches.transferPreviewCredit", {
+                        amount: formatCurrency(previewAmount, currency, lang),
+                        ceiling: formatCurrency(targetReseller?.debtCeiling ?? 0, currency, lang),
+                        debt: formatCurrency(targetReseller?.debt ?? 0, currency, lang),
+                      })
+                    : tf("vouchers.batches.transferPreviewDebit", {
                       amount: formatCurrency(previewAmount, currency, lang),
                       after: formatCurrency((targetReseller?.credit ?? 0) - previewAmount, currency, lang),
                     })}

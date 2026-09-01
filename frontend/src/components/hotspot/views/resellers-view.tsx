@@ -5,6 +5,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  HandCoins,
   MoreVertical,
   Pencil,
   Power,
@@ -63,9 +64,11 @@ interface ResellerForm {
   phone: string;
   credit: string;
   pin: string; // N°8 — PIN Mode Vente (4-6 chiffres ; vide en édition = inchangé)
+  paymentMode: "prepaid" | "deposit"; // N°19 — dépôt-vente : il vend puis verse
+  debtCeiling: string;
 }
 
-const EMPTY_FORM: ResellerForm = { name: "", username: "", phone: "", credit: "", pin: "" };
+const EMPTY_FORM: ResellerForm = { name: "", username: "", phone: "", credit: "", pin: "", paymentMode: "prepaid", debtCeiling: "" };
 
 function initialsOf(name: string): string {
   return name
@@ -96,6 +99,10 @@ export default function ResellersView() {
   const [form, setForm] = useState<ResellerForm>(EMPTY_FORM);
   const [creditAmount, setCreditAmount] = useState("");
   const [creditNote, setCreditNote] = useState("");
+  // N°19 — encaissement de versement (dépôt-vente).
+  const [settleTarget, setSettleTarget] = useState<Reseller | null>(null);
+  const [settleAmount, setSettleAmount] = useState("");
+  const [settleNote, setSettleNote] = useState("");
 
   const { data: resellers, isLoading } = useQuery({
     queryKey: ["/api/resellers"],
@@ -114,7 +121,7 @@ export default function ResellersView() {
   };
 
   const createMutation = useMutation({
-    mutationFn: (payload: { name: string; username: string; phone: string; credit: number; pin?: string }) =>
+    mutationFn: (payload: { name: string; username: string; phone: string; credit: number; pin?: string; paymentMode?: string; debtCeiling?: number }) =>
       api<Reseller>("/api/resellers", { method: "POST", body: payload }),
     onSuccess: (reseller) => {
       toast.success(tf("resellers.createdToast", { name: reseller.name }));
@@ -126,10 +133,16 @@ export default function ResellersView() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: (payload: { id: string; name: string; phone: string; pin?: string }) =>
+    mutationFn: (payload: { id: string; name: string; phone: string; pin?: string; paymentMode?: string; debtCeiling?: number }) =>
       api<Reseller>(`/api/resellers/${payload.id}`, {
         method: "PUT",
-        body: payload.pin !== undefined ? { name: payload.name, phone: payload.phone, pin: payload.pin } : { name: payload.name, phone: payload.phone },
+        body: {
+          name: payload.name,
+          phone: payload.phone,
+          ...(payload.pin !== undefined ? { pin: payload.pin } : {}),
+          ...(payload.paymentMode !== undefined ? { paymentMode: payload.paymentMode } : {}),
+          ...(payload.debtCeiling !== undefined ? { debtCeiling: payload.debtCeiling } : {}),
+        },
       }),
     onSuccess: (reseller) => {
       toast.success(t("resellers.updatedToast"));
@@ -183,13 +196,38 @@ export default function ResellersView() {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  // N°19 — encaissement d'un versement (dépôt-vente).
+  const settleMutation = useMutation({
+    mutationFn: (payload: { id: string; amount: number; note?: string }) =>
+      api<{ ok: boolean; debtAfter: number }>(`/api/resellers/${payload.id}/settle`, {
+        method: "POST",
+        body: { amount: payload.amount, note: payload.note || undefined },
+      }),
+    onSuccess: (res) => {
+      toast.success(tf("resellers.settledToast", { debt: formatCurrency(res.debtAfter, currency, lang) }));
+      setSettleTarget(null);
+      setSettleAmount("");
+      setSettleNote("");
+      invalidateResellers();
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   const openCreate = () => {
     setForm(EMPTY_FORM);
     setCreateOpen(true);
   };
 
   const openEdit = (reseller: Reseller) => {
-    setForm({ name: reseller.name, username: reseller.username, phone: reseller.phone, credit: String(reseller.credit), pin: "" });
+    setForm({
+      name: reseller.name,
+      username: reseller.username,
+      phone: reseller.phone,
+      credit: String(reseller.credit),
+      pin: "",
+      paymentMode: reseller.paymentMode ?? "prepaid",
+      debtCeiling: reseller.debtCeiling ? String(reseller.debtCeiling) : "",
+    });
     setEditTarget(reseller);
   };
 
@@ -197,6 +235,13 @@ export default function ResellersView() {
     setCreditAmount("");
     setCreditNote("");
     setCreditTarget(reseller);
+  };
+
+  // N°19 — pré-remplit le versement avec la dette totale (tout régler).
+  const openSettle = (reseller: Reseller) => {
+    setSettleAmount(reseller.debt ? String(reseller.debt) : "");
+    setSettleNote("");
+    setSettleTarget(reseller);
   };
 
   const submitReseller = () => {
@@ -207,10 +252,17 @@ export default function ResellersView() {
     }
     if (editTarget) {
       const pin = form.pin.trim();
+      const ceiling = Number(form.debtCeiling);
+      if (form.paymentMode === "deposit" && (!Number.isFinite(ceiling) || ceiling <= 0)) {
+        toast.error(t("resellers.depositNeedCeiling"));
+        return;
+      }
       updateMutation.mutate({
         id: editTarget.id,
         name,
         phone: form.phone.trim(),
+        paymentMode: form.paymentMode,
+        debtCeiling: form.paymentMode === "deposit" && Number.isFinite(ceiling) ? Math.round(ceiling) : 0,
         ...(pin ? { pin } : {}),
       });
       return;
@@ -226,11 +278,18 @@ export default function ResellersView() {
       toast.error(t("resellers.pinInvalid"));
       return;
     }
+    const ceiling = Number(form.debtCeiling);
+    if (form.paymentMode === "deposit" && (!Number.isFinite(ceiling) || ceiling <= 0)) {
+      toast.error(t("resellers.depositNeedCeiling"));
+      return;
+    }
     createMutation.mutate({
       name,
       username,
       phone: form.phone.trim(),
       credit: Number.isFinite(credit) && credit > 0 ? credit : 0,
+      paymentMode: form.paymentMode,
+      debtCeiling: form.paymentMode === "deposit" && Number.isFinite(ceiling) ? Math.round(ceiling) : 0,
       ...(pin ? { pin } : {}),
     });
   };
@@ -241,6 +300,14 @@ export default function ResellersView() {
   const submitCredit = () => {
     if (!creditTarget || !amountValid) return;
     creditMutation.mutate({ id: creditTarget.id, amount: Math.round(parsedAmount), note: creditNote.trim() || undefined });
+  };
+
+  const parsedSettle = Number(settleAmount);
+  const settleValid = Number.isFinite(parsedSettle) && parsedSettle > 0 && !!settleTarget && Math.round(parsedSettle) <= (settleTarget.debt ?? 0);
+
+  const submitSettle = () => {
+    if (!settleTarget || !settleValid) return;
+    settleMutation.mutate({ id: settleTarget.id, amount: Math.round(parsedSettle), note: settleNote.trim() || undefined });
   };
 
   return (
@@ -290,6 +357,8 @@ export default function ResellersView() {
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="truncate font-medium">{reseller.name}</p>
                     <StatusBadge status={reseller.status} dot />
+                    {/* N°19 — mode de paiement : dépôt-vente visible d'un coup d'œil. */}
+                    {reseller.paymentMode === "deposit" && <StatusBadge status="debt" label={t("resellers.modeDeposit")} />}
                   </div>
                   <p className="mt-0.5 truncate text-xs text-muted-foreground">{reseller.phone || "—"}</p>
                 </div>
@@ -300,10 +369,18 @@ export default function ResellersView() {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-52">
-                    <DropdownMenuItem onClick={() => openCredit(reseller)}>
-                      <Wallet className="size-4" />
-                      {t("resellers.recharge")}
-                    </DropdownMenuItem>
+                    {reseller.paymentMode === "deposit" ? (
+                      /* N°19 — dépôt-vente : on encaisse, on ne recharge pas. */
+                      <DropdownMenuItem onClick={() => openSettle(reseller)}>
+                        <HandCoins className="size-4" />
+                        {t("resellers.settle")}
+                      </DropdownMenuItem>
+                    ) : (
+                      <DropdownMenuItem onClick={() => openCredit(reseller)}>
+                        <Wallet className="size-4" />
+                        {t("resellers.recharge")}
+                      </DropdownMenuItem>
+                    )}
                     <DropdownMenuItem onClick={() => openEdit(reseller)}>
                       <Pencil className="size-4" />
                       {t("common.edit")}
@@ -321,12 +398,33 @@ export default function ResellersView() {
                 </DropdownMenu>
               </CardContent>
               <CardContent className="px-4 sm:px-5">
-                <div className="rounded-lg border bg-muted/30 p-3">
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground">{t("resellers.creditAvailable")}</p>
-                  <p className={cn("mt-1 text-xl font-semibold tabular-nums", creditClass(reseller.credit))}>
-                    {formatCurrency(reseller.credit, currency, lang)}
-                  </p>
-                </div>
+                {reseller.paymentMode === "deposit" ? (
+                  /* N°19 — dépôt-vente : la créance remplace le crédit disponible. */
+                  <div className="rounded-lg border bg-muted/30 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs uppercase tracking-wide text-muted-foreground">{t("resellers.debtLabel")}</p>
+                      <Button variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => openSettle(reseller)}>
+                        <HandCoins className="size-3.5" />
+                        {t("resellers.settleSubmit")}
+                      </Button>
+                    </div>
+                    <p className={cn("mt-1 text-xl font-semibold tabular-nums", (reseller.debt ?? 0) > 0 ? "text-amber-600 dark:text-amber-400" : "text-chart-1")}>
+                      {formatCurrency(reseller.debt ?? 0, currency, lang)}
+                    </p>
+                    {!!reseller.debtCeiling && (
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {tf("resellers.ceilingLine", { ceiling: formatCurrency(reseller.debtCeiling, currency, lang) })}
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border bg-muted/30 p-3">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">{t("resellers.creditAvailable")}</p>
+                    <p className={cn("mt-1 text-xl font-semibold tabular-nums", creditClass(reseller.credit))}>
+                      {formatCurrency(reseller.credit, currency, lang)}
+                    </p>
+                  </div>
+                )}
                 {/* N°8 — stock vs vendus (traçabilité anti-vol) : l'écart
                     stock + vendus vs attribués révèle les tickets sortis
                     sans déclaration du revendeur. */}
@@ -399,10 +497,10 @@ export default function ResellersView() {
                     <TableCell
                       className={cn(
                         "text-right font-medium tabular-nums",
-                        transaction.type === "credit" ? "text-primary" : "text-destructive",
+                        transaction.type === "credit" || transaction.type === "settlement" ? "text-primary" : "text-destructive",
                       )}
                     >
-                      {transaction.type === "credit" ? "+" : "−"}
+                      {transaction.type === "credit" || transaction.type === "settlement" ? "+" : "−"}
                       {formatCurrency(Math.abs(transaction.amount), currency, lang)}
                     </TableCell>
                     <TableCell className="max-w-48 truncate text-muted-foreground">{transaction.note || "—"}</TableCell>
@@ -482,7 +580,44 @@ export default function ResellersView() {
                 {editTarget ? t("resellers.pinEditHint") : t("resellers.pinCreateHint")}
               </p>
             </div>
-            {!editTarget && (
+            {/* N°19 — mode de paiement : prépayé ou dépôt-vente (bascule à tout moment). */}
+            <div className="grid gap-2">
+              <Label>{t("resellers.mode")}</Label>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {(["prepaid", "deposit"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setForm((f) => ({ ...f, paymentMode: mode }))}
+                    className={cn(
+                      "rounded-lg border p-3 text-left transition-colors",
+                      form.paymentMode === mode ? "border-primary bg-primary/5" : "hover:bg-muted/40",
+                    )}
+                    aria-pressed={form.paymentMode === mode}
+                  >
+                    <p className="text-sm font-medium">{mode === "prepaid" ? t("resellers.modePrepaid") : t("resellers.modeDeposit")}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {mode === "prepaid" ? t("resellers.modePrepaidDesc") : t("resellers.modeDepositDesc")}
+                    </p>
+                  </button>
+                ))}
+              </div>
+            </div>
+            {form.paymentMode === "deposit" && (
+              <div className="grid gap-2">
+                <Label htmlFor="reseller-ceiling">{t("resellers.debtCeiling")}</Label>
+                <Input
+                  id="reseller-ceiling"
+                  type="number"
+                  min={1}
+                  value={form.debtCeiling}
+                  onChange={(event) => setForm((f) => ({ ...f, debtCeiling: event.target.value }))}
+                  placeholder="25000"
+                />
+                <p className="text-xs text-muted-foreground">{t("resellers.debtCeilingHint")}</p>
+              </div>
+            )}
+            {!editTarget && form.paymentMode === "prepaid" && (
               <div className="grid gap-2">
                 <Label htmlFor="reseller-credit">{tf("resellers.initialCredit", { currency })}</Label>
                 <Input
@@ -566,6 +701,68 @@ export default function ResellersView() {
             </Button>
             <Button onClick={submitCredit} disabled={!amountValid || creditMutation.isPending}>
               {creditMutation.isPending ? t("resellers.recharging") : t("resellers.rechargeSubmit")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* N°19 — Encaissement de versement (dépôt-vente) */}
+      <Dialog open={!!settleTarget} onOpenChange={(open) => !open && setSettleTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("resellers.settleTitle")}</DialogTitle>
+            <DialogDescription>
+              {settleTarget
+                ? tf("resellers.settleDesc", {
+                    name: settleTarget.name,
+                    debt: formatCurrency(settleTarget.debt ?? 0, currency, lang),
+                  })
+                : null}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4">
+            <div className="grid gap-2">
+              <Label htmlFor="settle-amount">{t("resellers.settleAmount")}</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="settle-amount"
+                  type="number"
+                  min={1}
+                  value={settleAmount}
+                  onChange={(event) => setSettleAmount(event.target.value)}
+                  placeholder="5000"
+                />
+                {!!settleTarget?.debt && (
+                  <Button type="button" variant="outline" onClick={() => setSettleAmount(String(settleTarget.debt))}>
+                    {t("resellers.settleAll")}
+                  </Button>
+                )}
+              </div>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="settle-note">{t("resellers.settleNote")}</Label>
+              <Input
+                id="settle-note"
+                value={settleNote}
+                onChange={(event) => setSettleNote(event.target.value)}
+                placeholder={t("resellers.settleNotePlaceholder")}
+              />
+            </div>
+            {settleTarget && settleValid && (
+              <p className="rounded-lg border bg-muted/40 px-3 py-2 text-sm">
+                {t("resellers.settleAfter")}{" "}
+                <span className="font-semibold text-primary">
+                  {formatCurrency(Math.max((settleTarget.debt ?? 0) - Math.round(parsedSettle), 0), currency, lang)}
+                </span>
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSettleTarget(null)}>
+              {t("common.cancel")}
+            </Button>
+            <Button onClick={submitSettle} disabled={!settleValid || settleMutation.isPending}>
+              {settleMutation.isPending ? t("resellers.settling") : t("resellers.settleSubmit")}
             </Button>
           </DialogFooter>
         </DialogContent>

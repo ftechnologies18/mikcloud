@@ -547,6 +547,26 @@ diverge de la provenance, et plafonne le transfert à `transferable − déjà c
 
 ---
 
+## N°19 — Modes de paiement revendeur : prépayé / dépôt-vente (vend puis verse)
+
+Deux modes cohabitent **PAR revendeur** (`Reseller.PaymentMode`, défaut `prepaid` — zéro changement pour les existants) :
+
+- **prepaid** (historique) : le crédit est débité À LA PRISE de stock ; vente reconnue à la génération (Sale + Transaction `sale`).
+- **deposit** (dépôt-vente) : la prise de stock (génération **et** transfert N°18) est GRATUITE et bornée par le **plafond de créance**
+  (`Reseller.DebtCeiling` > 0 obligatoire) : `dette + stock à crédit + nouveau stock ≤ plafond`, sinon 400 « Plafond de créance dépassé ».
+  La créance naît à la REMISE au client (`POST /api/sell/:id/sold` → Transaction `debt`, prix gros `u.Price`) et se règle par
+  `POST /api/resellers/:id/settle {amount, note?}` (requireRole 2) → Transaction `settlement` + ligne Sale (reconnaissance à l'encaissement).
+
+Règles comptables : (1) une vente = UNE écriture — en dépôt-vente, AUCUNE écriture à la génération ni au transfert (le dashboard,
+les rapports et la compta consomment `db.Sales` sans double-compter) ; (2) le marqueur par-voucher `HotspotUser.CreditSale` est posé
+à chaque attribution selon le mode de la destination et SURVIT aux changements de mode — seul le stock pris à crédit crée une créance.
+Anti-vol ACTIF : en dépôt-vente, `dette > plafond` bloque le Mode Vente (403 « versement requis ») jusqu'au versement.
+Bascule de mode : prépayé → dépôt-vente exige un plafond ; dépôt-vente → prépayé exige une dette soldée.
+Réponses enrichies : liste revendeurs `+debt, settlementsCount, lastSettlementAt` ; `/api/sell/me` `+paymentMode, debt, debtCeiling`.
+Migration : ALTER idempotents au boot (`resellers.payment_mode`, `resellers.debt_ceiling`, `hotspot_users.credit_sale`).
+
+---
+
 ## PLAN DE FICHIERS
 
 ### Backend (Go)

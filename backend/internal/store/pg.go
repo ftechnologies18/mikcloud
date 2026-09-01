@@ -432,6 +432,10 @@ func (p *PG) ensureSchema() error {
 		`ALTER TABLE resellers     ADD COLUMN IF NOT EXISTS pin_hash TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE hotspot_users ADD COLUMN IF NOT EXISTS sold_at TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE hotspot_users ADD COLUMN IF NOT EXISTS sold_via TEXT NOT NULL DEFAULT ''`,
+		// N°19 — dépôt-vente : mode de paiement revendeur + plafond de créance + marqueur stock à crédit.
+		`ALTER TABLE resellers     ADD COLUMN IF NOT EXISTS payment_mode TEXT NOT NULL DEFAULT 'prepaid'`,
+		`ALTER TABLE resellers     ADD COLUMN IF NOT EXISTS debt_ceiling INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE hotspot_users ADD COLUMN IF NOT EXISTS credit_sale BOOLEAN NOT NULL DEFAULT FALSE`,
 		// N (rapprochement doux) — utilisateur absent du dernier read_state du
 		// routeur (supprimé dans Winbox) : badge + action de resynchronisation.
 		`ALTER TABLE hotspot_users ADD COLUMN IF NOT EXISTS missing_on_router BOOLEAN NOT NULL DEFAULT FALSE`,
@@ -1170,21 +1174,21 @@ var hotspotUserSpec = entitySpec[model.HotspotUser]{
 	cols: []string{"id", "kind", "username", "password", "profile_id", "profile_name",
 		"router_id", "router_name", "status", "batch_id", "reseller_id", "reseller_name",
 		"comment", "bytes_in", "bytes_out", "uptime_used_sec", "created_at", "expires_at", "used_at", "price", "data_quota_mb", "account_id",
-		"selling_price", "enforced", "sold_at", "sold_via", "missing_on_router", "time_limit_min"},
+		"selling_price", "enforced", "sold_at", "sold_via", "missing_on_router", "time_limit_min", "credit_sale"},
 	idOf: func(x *model.HotspotUser) string { return x.ID },
 	scan: func(r *sql.Rows) (model.HotspotUser, error) {
 		var x model.HotspotUser
 		err := r.Scan(&x.ID, &x.Kind, &x.Username, &x.Password, &x.ProfileID, &x.ProfileName,
 			&x.RouterID, &x.RouterName, &x.Status, &x.BatchID, &x.ResellerID, &x.ResellerName,
 			&x.Comment, &x.BytesIn, &x.BytesOut, &x.UptimeUsedSec, &x.CreatedAt, &x.ExpiresAt, &x.UsedAt, &x.Price, &x.DataQuotaMb, &x.AccountID,
-			&x.SellingPrice, &x.Enforced, &x.SoldAt, &x.SoldVia, &x.MissingOnRouter, &x.TimeLimitMin)
+			&x.SellingPrice, &x.Enforced, &x.SoldAt, &x.SoldVia, &x.MissingOnRouter, &x.TimeLimitMin, &x.CreditSale)
 		return x, err
 	},
 	args: func(x *model.HotspotUser) []any {
 		return []any{x.ID, x.Kind, x.Username, x.Password, x.ProfileID, x.ProfileName,
 			x.RouterID, x.RouterName, x.Status, x.BatchID, x.ResellerID, x.ResellerName,
 			x.Comment, x.BytesIn, x.BytesOut, x.UptimeUsedSec, x.CreatedAt, x.ExpiresAt, x.UsedAt, x.Price, x.DataQuotaMb, x.AccountID,
-			x.SellingPrice, x.Enforced, x.SoldAt, x.SoldVia, x.MissingOnRouter, x.TimeLimitMin}
+			x.SellingPrice, x.Enforced, x.SoldAt, x.SoldVia, x.MissingOnRouter, x.TimeLimitMin, x.CreditSale}
 	},
 	hashOf: hashEntity[model.HotspotUser],
 }
@@ -1208,15 +1212,15 @@ var batchSpec = entitySpec[model.Batch]{
 
 var resellerSpec = entitySpec[model.Reseller]{
 	table: "resellers",
-	cols:  []string{"id", "name", "username", "phone", "credit", "vouchers_sold", "revenue", "status", "created_at", "account_id", "pin_hash"},
+	cols:  []string{"id", "name", "username", "phone", "credit", "vouchers_sold", "revenue", "status", "created_at", "account_id", "pin_hash", "payment_mode", "debt_ceiling"},
 	idOf:  func(x *model.Reseller) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Reseller, error) {
 		var x model.Reseller
-		err := r.Scan(&x.ID, &x.Name, &x.Username, &x.Phone, &x.Credit, &x.VouchersSold, &x.Revenue, &x.Status, &x.CreatedAt, &x.AccountID, &x.PinHash)
+		err := r.Scan(&x.ID, &x.Name, &x.Username, &x.Phone, &x.Credit, &x.VouchersSold, &x.Revenue, &x.Status, &x.CreatedAt, &x.AccountID, &x.PinHash, &x.PaymentMode, &x.DebtCeiling)
 		return x, err
 	},
 	args: func(x *model.Reseller) []any {
-		return []any{x.ID, x.Name, x.Username, x.Phone, x.Credit, x.VouchersSold, x.Revenue, x.Status, x.CreatedAt, x.AccountID, x.PinHash}
+		return []any{x.ID, x.Name, x.Username, x.Phone, x.Credit, x.VouchersSold, x.Revenue, x.Status, x.CreatedAt, x.AccountID, x.PinHash, x.PaymentMode, x.DebtCeiling}
 	},
 	hashOf: hashEntity[model.Reseller],
 }

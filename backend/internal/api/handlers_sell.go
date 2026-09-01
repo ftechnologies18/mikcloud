@@ -13,6 +13,7 @@ package api
 // aucune double écriture financière.
 
 import (
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -120,6 +121,10 @@ type sellMe struct {
 	SoldToday    int    `json:"soldToday"`
 	RevenueToday int    `json:"revenueToday"`
 	Currency     string `json:"currency"`
+	// N°19 — dépôt-vente : le solde affiché devient « à verser ».
+	PaymentMode string `json:"paymentMode"`
+	Debt        int    `json:"debt"`
+	DebtCeiling int    `json:"debtCeiling"`
 }
 
 // handleSellMe — GET /api/sell/me.
@@ -133,6 +138,13 @@ func (a *API) handleSellMe(w http.ResponseWriter, r *http.Request) {
 	out := sellMe{}
 	if res := findResellerScoped(db, c.Sub, c.Acc); res != nil {
 		out.Name, out.Username, out.Credit = res.Name, res.Username, res.Credit
+		// N°19 — dépôt-vente : la créance courante accompagne le profil.
+		out.PaymentMode = res.PaymentMode
+		if out.PaymentMode == "" {
+			out.PaymentMode = "prepaid"
+		}
+		out.DebtCeiling = res.DebtCeiling
+		out.Debt = depositDebt(db, c.Acc, res.ID)
 	}
 	for i := range db.HotspotUsers {
 		u := &db.HotspotUsers[i]
@@ -216,9 +228,27 @@ func (a *API) handleSellSold(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, "Voucher déjà remis à un client")
 		return
 	}
+	// N°19 — anti-vol ACTIF : un revendeur en dépôt-vente dont la créance
+	// dépasse le plafond ne peut plus travailler sur l'argent non versé —
+	// le gérant encaisse un versement pour débloquer la vente.
+	if res := findResellerScoped(db, c.Sub, c.Acc); res != nil && res.PaymentMode == "deposit" {
+		if debt := depositDebt(db, c.Acc, res.ID); debt > res.DebtCeiling {
+			// (le defer store.Unlock ci-dessus libère le verrou — pas d'Unlock explicite)
+			writeErr(w, http.StatusForbidden, fmt.Sprintf("Plafond de créance dépassé (dette: %d, plafond: %d) — versement requis avant de continuer à vendre", debt, res.DebtCeiling))
+			return
+		}
+	}
 	now := model.NowISO()
 	u.SoldAt = now
 	u.SoldVia = "sell_mode"
+	// N°19 — dépôt-vente : la créance naît à la REMISE (prix gros u.Price).
+	if u.CreditSale {
+		db.Transactions = append([]model.Transaction{{
+			ID: model.NewID("tx-"), AccountID: c.Acc, Type: "debt", ResellerID: u.ResellerID, ResellerName: c.Name,
+			Amount: u.Price, Note: fmt.Sprintf("Créance : voucher %s remis au client (Mode Vente)", u.Username),
+			At: now,
+		}}, db.Transactions...)
+	}
 	a.logActivityBy(r, db, c.Acc, "voucher",
 		"Voucher "+u.Username+" remis au client par "+c.Name+" (Mode Vente)")
 	a.store.Save()

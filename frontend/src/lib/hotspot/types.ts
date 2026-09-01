@@ -10,7 +10,8 @@ export type RouterStatus = "online" | "offline";
 export type VoucherStatus = "active" | "online" | "used" | "expired" | "disabled";
 export type UserKind = "regular" | "voucher";
 export type ResellerStatus = "active" | "disabled";
-export type TransactionType = "credit" | "sale";
+// N°19 — dépôt-vente : créance née à la remise + versement encaissé.
+export type TransactionType = "credit" | "sale" | "debt" | "settlement";
 export type SaleChannel = "direct" | "reseller";
 export type AccountStatus = "active" | "disabled";
 
@@ -493,6 +494,17 @@ export interface Reseller {
   revenueToday?: number;
   /** recette totale des remises tracées. */
   revenueTotal?: number;
+  /* N°19 — dépôt-vente : mode de paiement + créance. */
+  /** prepaid (historique) | deposit (il vend puis verse). */
+  paymentMode?: "prepaid" | "deposit";
+  /** plafond de créance (dette + stock ≤ plafond, sinon prise de stock refusée). */
+  debtCeiling?: number;
+  /** créance courante : Σ(remises à crédit) − Σ(versements). */
+  debt?: number;
+  /** nombre de versements encaissés (confiance progressive). */
+  settlementsCount?: number;
+  /** date du dernier versement (ISO). */
+  lastSettlementAt?: string;
 }
 
 /* ─── N°8 : rapport de fin de journée (GET /api/sell/day-report) ─── */

@@ -664,6 +664,7 @@ const (
 	CmdReadCookies     = "read_cookies"     // F9 : /ip hotspot cookie print
 	CmdReadLog         = "read_log"         // F9 : /log print where topics~"hotspot"
 	CmdReadScheduler   = "read_scheduler"   // F10 : /system scheduler print
+	CmdReadResources   = "read_resources"   // Parité Mikhmon : noms /ip pool + /queue simple + /ip hotspot
 	CmdSchedulerAdd    = "scheduler_add"    // F10 : /system scheduler add
 	CmdSchedulerSet    = "scheduler_set"    // F10 : /system scheduler set (disabled)
 	CmdSchedulerRemove = "scheduler_remove" // F10 : /system scheduler remove

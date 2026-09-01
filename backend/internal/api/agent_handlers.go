@@ -146,6 +146,7 @@ var staleSentReadKinds = map[string]bool{
 	model.CmdReadCookies:   true,
 	model.CmdReadLog:       true,
 	model.CmdReadScheduler: true,
+	model.CmdReadResources: true,
 	model.CmdImportHotspot: true,
 	model.CmdPing:          true,
 }

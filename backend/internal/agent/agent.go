@@ -416,6 +416,8 @@ func (b Builder) ScriptFor(cmd model.Command) (string, error) {
 		return b.buildReadLog(cmd), nil
 	case model.CmdReadScheduler:
 		return b.buildReadScheduler(cmd), nil
+	case model.CmdReadResources:
+		return b.buildReadResources(cmd), nil
 	case model.CmdSchedulerAdd:
 		return b.buildSchedulerAdd(cmd), nil
 	case model.CmdSchedulerSet:
@@ -1117,6 +1119,40 @@ func (b Builder) buildReadScheduler(cmd model.Command) string {
 	sb.WriteString("      }\n")
 	sb.WriteString(`      :set rdata ($rdata . [:tostr [/system scheduler get $se name]] . "|" . [:tostr [/system scheduler get $se interval]] . "|" . [:tostr [/system scheduler get $se disabled]] . "|" . $sevc . ";")` + "\n")
 	sb.WriteString("      :set rn ($rn + 1)\n")
+	sb.WriteString("    }\n  }\n")
+	sb.WriteString("} on-error={ :set " + okVar + " false }\n")
+	sb.WriteString(b.fetchResultData(cmd.ID, okVar))
+	return sb.String()
+}
+
+// buildReadResources — Parité Mikhmon : noms des ressources RouterOS utiles
+// aux formulaires — pools d'adresses (/ip pool), files parent (/queue simple,
+// hors files dynamiques) et serveurs hotspot (/ip hotspot). Chaque entrée est
+// rapportée « kind|name; » (pool|queue|server), relu par parseResourcesRows.
+func (b Builder) buildReadResources(cmd model.Command) string {
+	okVar := "ok" + idSafe(cmd.ID)
+	var sb strings.Builder
+	sb.WriteString(header(cmd))
+	sb.WriteString(":local " + okVar + " true\n:local rdata \"\"\n")
+	sb.WriteString(":do {\n  :local rn 0\n")
+	sb.WriteString("  :foreach pe in=[/ip pool find] do={\n")
+	sb.WriteString("    :if ($rn < 60) do={\n")
+	sb.WriteString(`      :set rdata ($rdata . "pool|" . [:tostr [/ip pool get $pe name]] . ";")` + "\n")
+	sb.WriteString("      :set rn ($rn + 1)\n")
+	sb.WriteString("    }\n  }\n")
+	sb.WriteString("  :local qn 0\n")
+	sb.WriteString("  :foreach qe in=[/queue simple find] do={\n")
+	sb.WriteString("    :if ($qn < 60) do={\n")
+	sb.WriteString("      :if ([:tostr [/queue simple get $qe dynamic]] = \"false\") do={\n")
+	sb.WriteString(`        :set rdata ($rdata . "queue|" . [:tostr [/queue simple get $qe name]] . ";")` + "\n")
+	sb.WriteString("      }\n")
+	sb.WriteString("      :set qn ($qn + 1)\n")
+	sb.WriteString("    }\n  }\n")
+	sb.WriteString("  :local hn 0\n")
+	sb.WriteString("  :foreach he in=[/ip hotspot find] do={\n")
+	sb.WriteString("    :if ($hn < 20) do={\n")
+	sb.WriteString(`      :set rdata ($rdata . "server|" . [:tostr [/ip hotspot get $he name]] . ";")` + "\n")
+	sb.WriteString("      :set hn ($hn + 1)\n")
 	sb.WriteString("    }\n  }\n")
 	sb.WriteString("} on-error={ :set " + okVar + " false }\n")
 	sb.WriteString(b.fetchResultData(cmd.ID, okVar))

@@ -219,6 +219,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/routers/{id}/hosts", a.requireRole(2, a.handleRouterHosts))
 	mux.HandleFunc("GET /api/routers/{id}/cookies", a.requireRole(2, a.handleRouterCookies))
 	mux.HandleFunc("GET /api/routers/{id}/log", a.requireRole(2, a.handleRouterLog))
+	// Parité Mikhmon : ressources routeur (pools / files / serveurs) pour les formulaires
+	mux.HandleFunc("GET /api/routers/{id}/resources", a.requireRole(2, a.handleRouterResources))
 	// Scheduler + alimentation (F10)
 	mux.HandleFunc("GET /api/routers/{id}/scheduler", a.requireRole(2, a.handleSchedulerGet))
 	mux.HandleFunc("POST /api/routers/{id}/scheduler", a.requireRole(2, a.handleSchedulerCreate))
@@ -2454,9 +2456,15 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "La longueur du code doit être comprise entre 3 et 10")
 		return
 	}
-	prefix := req.Prefix
+	prefix := strings.TrimSpace(req.Prefix)
 	if prefix == "" {
 		prefix = "SC-"
+	}
+	// Parité Mikhmon : préfixe borné à 6 caractères (maxlength du formulaire
+	// Mikhmon) — les codes restent courts et imprimables sur les tickets.
+	if len(prefix) > 6 {
+		writeErr(w, http.StatusBadRequest, "Le préfixe est limité à 6 caractères")
+		return
 	}
 	if req.UserMode != "" && req.UserMode != "userpass" && req.UserMode != "same" {
 		writeErr(w, http.StatusBadRequest, "Mode utilisateur invalide (userpass ou same)")

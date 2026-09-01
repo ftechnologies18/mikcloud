@@ -6,7 +6,7 @@
 // - Tarifs (F13) : prix de vente affiché sur le voucher (sellingPrice).
 
 import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -33,7 +33,8 @@ import { useCurrency } from "@/components/hotspot/parts/sd-currency";
 import { api } from "@/lib/hotspot/api";
 import { fmtRouterDuration } from "@/lib/hotspot/format";
 import { useI18n } from "@/lib/hotspot/i18n";
-import type { Profile, ProfileExpiryMode } from "@/lib/hotspot/types";
+import { useRouterResources } from "@/lib/hotspot/use-router-resources";
+import type { Profile, ProfileExpiryMode, RouterDevice } from "@/lib/hotspot/types";
 
 // Format RouterOS : "2M/2M", "512k/512k", "5M" (insensible à la casse).
 const RATE_LIMIT_RE = /^\d+[KM](\/\d+[KM])?$/i;
@@ -152,7 +153,16 @@ export function ProfileEditDialog({ open, onOpenChange, profile }: ProfileEditDi
     profile ? formFromProfile(profile) : DEFAULT_FORM,
   );
 
-  const saveMutation = useMutation({
+  // Parité Mikhmon : ressources routeur (pools / files) pour assister la
+  // saisie address-pool / parent-queue (datalists — la saisie libre reste
+  // possible, les noms sont transmis tels quels au routeur).
+  const { data: routers } = useQuery({
+    queryKey: ["/api/routers"],
+    queryFn: () => api<RouterDevice[]>("/api/routers"),
+  });
+  const resources = useRouterResources(routers);
+
+    const saveMutation = useMutation({
     mutationFn: (payload: { id: string | null; body: Record<string, unknown> }) =>
       payload.id
         ? api<Profile>(`/api/profiles/${payload.id}`, { method: "PUT", body: payload.body })
@@ -270,7 +280,11 @@ export function ProfileEditDialog({ open, onOpenChange, profile }: ProfileEditDi
                 id="profile-name"
                 placeholder={t("profiles.dialog.namePlaceholder")}
                 value={form.name}
-                onChange={(event) => setForm((f) => ({ ...f, name: event.target.value }))}
+                onChange={(event) =>
+                  // Parité Mikhmon (remSpace) : le nom de profil RouterOS ne
+                  // contient pas d'espaces — ils deviennent des tirets.
+                  setForm((f) => ({ ...f, name: event.target.value.replace(/\s+/g, "-") }))
+                }
                 disabled={saveMutation.isPending}
               />
             </div>
@@ -412,9 +426,15 @@ export function ProfileEditDialog({ open, onOpenChange, profile }: ProfileEditDi
                   id="profile-pool"
                   placeholder="pool-hotspot-1"
                   className="font-mono"
+                  list="profile-pool-options"
                   value={form.addressPool}
                   onChange={(event) => setForm((f) => ({ ...f, addressPool: event.target.value }))}
                 />
+                <datalist id="profile-pool-options">
+                  {resources.data?.pools.map((p) => (
+                    <option key={p} value={p} />
+                  ))}
+                </datalist>
                 <p className="text-xs text-muted-foreground">{t("profiles.dialog.poolHint")}</p>
               </div>
               <div className="grid gap-2">
@@ -423,9 +443,15 @@ export function ProfileEditDialog({ open, onOpenChange, profile }: ProfileEditDi
                   id="profile-queue"
                   placeholder="q-parent-vip"
                   className="font-mono"
+                  list="profile-queue-options"
                   value={form.parentQueue}
                   onChange={(event) => setForm((f) => ({ ...f, parentQueue: event.target.value }))}
                 />
+                <datalist id="profile-queue-options">
+                  {resources.data?.queues.map((q) => (
+                    <option key={q} value={q} />
+                  ))}
+                </datalist>
                 <p className="text-xs text-muted-foreground">{t("profiles.dialog.queueHint")}</p>
               </div>
             </div>

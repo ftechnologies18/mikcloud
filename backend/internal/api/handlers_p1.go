@@ -494,6 +494,14 @@ type schedulerRow struct {
 	Disabled bool   `json:"disabled"`
 }
 
+// resourcesRow — Parité Mikhmon : une ressource routeur utile aux formulaires
+// (pool d'adresses, file parent, serveur hotspot). Les listes alimentent les
+// sélecteurs address-pool / parent-queue du profil et « serveur » du lot.
+type resourcesRow struct {
+	Kind string `json:"kind"` // pool | queue | server
+	Name string `json:"name"`
+}
+
 // freshToolCommand — dernière commande du kind « done » depuis < 120 s
 // (cache F9/F10), nil sinon. Sous verrou.
 func freshToolCommand(db *model.DB, routerID, kind string, now time.Time) *model.Command {
@@ -626,6 +634,23 @@ func parseCookieRows(rows [][]string) []cookieRow {
 	return out
 }
 
+// parseResourcesRows — rapport agent « kind|name;… » : on ne garde que les
+// kinds connus (tolérance aux versions d'agent plus récentes).
+func parseResourcesRows(rows [][]string) []resourcesRow {
+	out := make([]resourcesRow, 0, len(rows))
+	for _, e := range rows {
+		kind, name := field(e, 0), field(e, 1)
+		if name == "" {
+			continue
+		}
+		switch kind {
+		case "pool", "queue", "server":
+			out = append(out, resourcesRow{Kind: kind, Name: name})
+		}
+	}
+	return out
+}
+
 func parseLogRows(rows [][]string) []logRow {
 	out := make([]logRow, 0, len(rows))
 	for _, e := range rows {
@@ -716,6 +741,21 @@ func genDhcpRows(rnd *rand.Rand, rr *model.Router) []dhcpRow {
 	return rows
 }
 
+// genResourcesRows — ressources simulées déterministes (structure stable :
+// 3 pools, 2 files parent, 1 serveur hotspot) pour la démo sans matériel.
+func genResourcesRows(rnd *rand.Rand, rr *model.Router) []resourcesRow {
+	_ = rnd
+	_ = rr
+	return []resourcesRow{
+		{Kind: "pool", Name: "pool-hotspot"},
+		{Kind: "pool", Name: "pool-vip"},
+		{Kind: "pool", Name: "pool-invites"},
+		{Kind: "queue", Name: "q-parent-all"},
+		{Kind: "queue", Name: "q-vip"},
+		{Kind: "server", Name: "hotspot1"},
+	}
+}
+
 // genHostRows — 8-20 hôtes hotspot, ~1/4 autorisés (bypassed).
 func genHostRows(rnd *rand.Rand, rr *model.Router) []hostRow {
 	n := 8 + rnd.Intn(13)
@@ -768,6 +808,13 @@ func genLogRows(rnd *rand.Rand, rr *model.Router) []logRow {
 
 func (a *API) handleRouterDhcp(w http.ResponseWriter, r *http.Request) {
 	serveRouterTool(w, r, a.store, model.CmdReadDhcp, parseDhcpRows, genDhcpRows)
+}
+
+// handleRouterResources — Parité Mikhmon : pools / files / serveurs hotspot
+// (l'équivalent des listes déroulantes « Address Pool » et « Parent Queue »
+// du formulaire Mikhmon).
+func (a *API) handleRouterResources(w http.ResponseWriter, r *http.Request) {
+	serveRouterTool(w, r, a.store, model.CmdReadResources, parseResourcesRows, genResourcesRows)
 }
 
 func (a *API) handleRouterHosts(w http.ResponseWriter, r *http.Request) {

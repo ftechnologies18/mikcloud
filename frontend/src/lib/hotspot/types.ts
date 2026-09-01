@@ -618,6 +618,12 @@ export interface ReportsData {
   margin?: ReportsMargin;
 }
 
+/** Parité Mikhmon : ressource routeur (read_resources) — pool d'adresses, file parent ou serveur hotspot. */
+export interface RouterResource {
+  kind: "pool" | "queue" | "server";
+  name: string;
+}
+
 /** Marge par profil (F13). */
 export interface ReportsMarginByProfile {
   name: string;

@@ -82,6 +82,7 @@ import { PasswordCell } from "@/components/hotspot/parts/uc-password-cell";
 import { LAST_BATCH_STORAGE_KEY, UcPrintDialog } from "@/components/hotspot/parts/uc-print-dialog";
 import { VoucherA4PrintDialog } from "@/components/hotspot/parts/voucher-a4-print-dialog";
 import { api } from "@/lib/hotspot/api";
+import { useRouterResources } from "@/lib/hotspot/use-router-resources";
 import { useI18n, localeOf } from "@/lib/hotspot/i18n";
 import { formatBytes, formatCurrency, formatDate, formatDuration, fmtRouterDuration } from "@/lib/hotspot/format";
 import type {
@@ -130,6 +131,13 @@ const QUOTA_OPTIONS = [
   { value: "20480", mb: 20480 },
   { value: "51200", mb: 51200 },
 ];
+
+// Parité Mikhmon : libellés du mode d'expiration, réutilisés par le récap.
+const EXP_MODE_LABEL_KEY: Record<string, string> = {
+  none: "profiles.dialog.expNone",
+  notify: "profiles.dialog.expNotify",
+  remove: "profiles.dialog.expRemove",
+};
 
 // Parité Mikhmon : Time Limit (limit-uptime) par lot — quotas de temps
 // courants en minutes, libellés au format RouterOS via fmtRouterDuration().
@@ -234,6 +242,8 @@ export default function VouchersView() {
   const [genQuotaMb, setGenQuotaMb] = useState("inherit");
   // Parité Mikhmon : Time Limit (limit-uptime) par lot — "inherit" = profil.
   const [genTimeLimit, setGenTimeLimit] = useState("inherit");
+  // Parité Mikhmon : serveur hotspot visé par le lot (« all » = omis au routeur).
+  const [genServer, setGenServer] = useState("all");
 
   // Impression (liste simple — ancien dialog)
   const [printOpen, setPrintOpen] = useState(false);
@@ -260,6 +270,9 @@ export default function VouchersView() {
     queryKey: ["/api/routers"],
     queryFn: () => api<RouterDevice[]>("/api/routers"),
   });
+  // Parité Mikhmon : ressources du routeur sélectionné (serveurs hotspot) —
+  // la liste « Server » du générateur Mikhmon.
+  const genResources = useRouterResources(routers, genRouterId || undefined);
 
   const { data: resellers } = useQuery({
     queryKey: ["/api/resellers"],
@@ -545,6 +558,7 @@ export default function VouchersView() {
       count: countNum,
       profileId: genProfileId,
       routerId: genRouterId,
+      server: genServer !== "all" ? genServer : undefined,
       prefix: genPrefix.trim() || undefined,
       codeLength: Number(genCodeLength),
       resellerId: genResellerId === "none" ? undefined : genResellerId,
@@ -1202,12 +1216,57 @@ export default function VouchersView() {
                   </div>
                 </div>
 
+                {/* Parité Mikhmon (GetValidPrice) : rappel du profil sélectionné —
+                    validité RouterOS, prix de vente, verrou, mode d'expiration. */}
+                {selectedGenProfile && (
+                  <div className="grid gap-1 rounded-lg border bg-muted/40 p-3 text-xs sm:grid-cols-2">
+                    <span className="text-muted-foreground">
+                      {t("vouchers.gen.recapValidity")} :{" "}
+                      <span className="font-medium text-foreground">
+                        {fmtRouterDuration(
+                          selectedGenProfile.validityMin > 0
+                            ? selectedGenProfile.validityMin
+                            : selectedGenProfile.validityDays * 1440,
+                        )}
+                      </span>
+                    </span>
+                    <span className="text-muted-foreground">
+                      {t("vouchers.gen.recapPrice")} :{" "}
+                      <span className="font-medium text-foreground">
+                        {formatCurrency(
+                          selectedGenProfile.sellingPrice > 0
+                            ? selectedGenProfile.sellingPrice
+                            : selectedGenProfile.price,
+                          currency,
+                        )}
+                      </span>
+                    </span>
+                    <span className="text-muted-foreground">
+                      {t("vouchers.gen.recapLock")} :{" "}
+                      <span className="font-medium text-foreground">
+                        {selectedGenProfile.lockFirstDevice ? t("common.yes") : t("common.no")}
+                      </span>
+                    </span>
+                    <span className="text-muted-foreground">
+                      {t("vouchers.gen.recapExpiry")} :{" "}
+                      <span className="font-medium text-foreground">
+                        {EXP_MODE_LABEL_KEY[selectedGenProfile.expMode]
+                          ? t(EXP_MODE_LABEL_KEY[selectedGenProfile.expMode])
+                          : selectedGenProfile.expMode}
+                      </span>
+                    </span>
+                  </div>
+                )}
+
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="grid gap-2">
                     <Label htmlFor="gen-router">{t("vouchers.gen.routerLabel")}</Label>
                     <Select
                       value={genRouterId}
-                      onValueChange={setGenRouterId}
+                      onValueChange={(value) => {
+                        setGenRouterId(value);
+                        setGenServer("all");
+                      }}
                       disabled={generateMutation.isPending}
                     >
                       <SelectTrigger id="gen-router" className="h-10 w-full">
@@ -1243,6 +1302,30 @@ export default function VouchersView() {
                   </div>
                 </div>
 
+            {/* Parité Mikhmon : serveur hotspot du routeur (hidden si inconnu). */}
+            {(genResources.data?.servers.length ?? 0) > 0 && (
+              <div className="grid gap-2">
+                <Label htmlFor="gen-server">{t("vouchers.gen.server")}</Label>
+                <Select
+                  value={genServer}
+                  onValueChange={setGenServer}
+                  disabled={generateMutation.isPending}
+                >
+                  <SelectTrigger id="gen-server" className="h-10 w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">{t("vouchers.gen.serverAll")}</SelectItem>
+                    {genResources.data?.servers.map((server) => (
+                      <SelectItem key={server} value={server}>
+                        {server}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">{t("vouchers.gen.serverHint")}</p>
+              </div>
+            )}
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="grid gap-2">
                 <Label htmlFor="gen-prefix">{t("vouchers.prefix")}</Label>

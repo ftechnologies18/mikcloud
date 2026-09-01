@@ -505,13 +505,13 @@ func rosScriptValue(s string) string {
 // n'expiraient jamais. Le set est inconditionnel : sur un profil absent,
 // `set [find …]` sans résultat est un no-op silencieux en RouterOS, jamais
 // une erreur. Deux lignes indépendantes plutôt qu'un :do imbriqué : une
-// erreur de l'add n'empêche jamais le set. Renvoie DEUX lignes terminées.
+// erreur de l'add n'empêche jamais le set. Renvoie TROIS lignes terminées (add, set, quota rétroactif des utilisateurs existants).
 func profileEnsureLine(p ProfileRef) string {
 	add := `/ip hotspot user profile add name="` + rosEscape(p.Name) + `"` +
 		profileAddParams(p)
 	return ":do { " + add + " } on-error={ :log info \"mikcloud: profil " +
 		rosEscape(p.Name) + " deja present, mise a jour\" }\n" +
-		profileSetLine(p.Name, p)
+		profileSetLine(p.Name, p) + profileUserLimitLine(p)
 }
 
 // profileAddParams — paramètres de CRÉATION d'un profil. Une clé absente du
@@ -561,6 +561,24 @@ func profileSetLine(name string, p ProfileRef) string {
 	return ":do { " + s + " } on-error={ :log info \"mikcloud: profil " + rosEscape(name) + " inaccessible\" }\n"
 }
 
+// profileUserLimitLine — applique RÉTROACTIVEMENT le quota de temps du profil
+// (limit-uptime) à tous les utilisateurs hotspot DÉJÀ PRÉSENTS sur le routeur
+// sous ce profil : les vouchers créés avant l'introduction du quota n'en
+// portaient pas et, après la coupe de session, le même code repartait pour une
+// session complète à chaque reconnexion. `set [find profile=…]` sans résultat
+// est un no-op silencieux ; un utilisateur dont le cumul dépasse déjà la limite
+// est refusé dès l'application (le routeur compare uptime-used à limit-uptime
+// à l'authentification, cookie MAC compris). Aucune ligne si la durée est
+// absente du payload ou nulle : on n'efface JAMAIS un quota que le payload ne
+// portait pas (cf. flags Has*).
+func profileUserLimitLine(p ProfileRef) string {
+	if !p.HasTimeout || p.SessionTimeoutMin <= 0 {
+		return ""
+	}
+	s := `/ip hotspot user set [find profile="` + rosEscape(p.Name) + `"] limit-uptime=` + rosMinutes(p.SessionTimeoutMin)
+	return ":do { " + s + " } on-error={ :log info \"mikcloud: quota temps profil " + rosEscape(p.Name) + " inaccessible\" }\n"
+}
+
 // buildProfileSet — v2 : synchronise UN profil routeur sur l'état du cloud :
 // verrou « 1er appareil » (on-login), rate-limit, session-timeout et
 // shared-users. Profil absent = no-op silencieux (il sera créé AVEC les bons
@@ -581,6 +599,7 @@ func (b Builder) buildProfileSet(cmd model.Command) string {
 	var sb strings.Builder
 	sb.WriteString(header(cmd))
 	sb.WriteString(profileSetLine(name, p))
+	sb.WriteString(profileUserLimitLine(p))
 	sb.WriteString(b.reportLine(cmd.ID, true, nil) + "\n")
 	return sb.String()
 }

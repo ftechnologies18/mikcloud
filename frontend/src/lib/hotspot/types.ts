@@ -527,6 +527,31 @@ export interface SellDayReport {
   revenue: number;
   stockCount: number;
   stockValue: number;
+  /** N°19 V2 — dépôt-vente : cash du jour à verser + créance totale. */
+  toDeposit?: number;
+  debtTotal?: number;
+  paymentMode?: "prepaid" | "deposit";
+}
+
+/* ─── N°19 V2 : créances revendeurs (dashboard) ─── */
+
+export interface ReceivableItem {
+  resellerId: string;
+  name: string;
+  debt: number;
+  ceiling: number;
+  /** ancienneté de la créance (jours depuis le dernier versement). */
+  agingDays: number;
+  /** ok | warn (≥ 7 j) | danger (≥ 30 j). */
+  level: "ok" | "warn" | "danger";
+  /** dette > plafond → Mode Vente du revendeur bloqué. */
+  overCeiling: boolean;
+}
+
+export interface Receivables {
+  totalDebt: number;
+  count: number;
+  items: ReceivableItem[];
 }
 
 export interface Transaction {
@@ -657,6 +682,8 @@ export interface DashboardData {
   revenueByDay: { day: string; value: number }[];
   topProfiles: { name: string; users: number; total: number }[];
   recentActivity: Activity[];
+  /** N°19 V2 — créances revendeurs (dépôt-vente) : présent si des créances existent. */
+  receivables?: Receivables;
 }
 
 /* ─── N°10 : affluence par tranche horaire (GET /api/stats/hourly?days=7|14|30) ─── */

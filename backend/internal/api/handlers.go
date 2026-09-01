@@ -1124,6 +1124,9 @@ func (a *API) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		recent = append(recent, act)
 	}
 	timeline := buildHourlyLogins(db, acc, now, loc)
+	// N°19 V2 — créances revendeurs (dépôt-vente) : trésorerie dormant
+	// chez les revendeurs, avec ancienneté et verrou plafond.
+	receivables := buildReceivables(db, acc, now)
 	a.store.Unlock()
 
 	// N°10 — courbe 24 h RÉELLE : connexions/heure agrégées depuis les
@@ -1136,6 +1139,7 @@ func (a *API) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"revenueByDay":     revenueByDay,
 		"topProfiles":      top,
 		"recentActivity":   recent,
+		"receivables":      receivables,
 	})
 }
 

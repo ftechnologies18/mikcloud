@@ -563,6 +563,10 @@ les rapports et la compta consomment `db.Sales` sans double-compter) ; (2) le ma
 Anti-vol ACTIF : en dépôt-vente, `dette > plafond` bloque le Mode Vente (403 « versement requis ») jusqu'au versement.
 Bascule de mode : prépayé → dépôt-vente exige un plafond ; dépôt-vente → prépayé exige une dette soldée.
 Réponses enrichies : liste revendeurs `+debt, settlementsCount, lastSettlementAt` ; `/api/sell/me` `+paymentMode, debt, debtCeiling`.
+
+**V2 — visibilité & recouvrement** : `GET /api/dashboard` `+receivables` `{totalDebt, count, items[] {resellerId, name, debt, ceiling, agingDays, level ok/warn(≥7 j)/danger(≥30 j), overCeiling}}` — widget « Créances revendeurs » (visible si count > 0).
+`GET /api/sell/day-report` `+paymentMode, toDeposit` (cash du jour à verser), `+debtTotal` — bannière amber dans le rapport + lignes du texte partagé.
+Reçu de versement partageable (WhatsApp/presse-papiers) après encaissement ; indication de confiance (≥ 3 versements, dette soldée → suggérer d'augmenter le plafond).
 Migration : ALTER idempotents au boot (`resellers.payment_mode`, `resellers.debt_ceiling`, `hotspot_users.credit_sale`).
 
 ---

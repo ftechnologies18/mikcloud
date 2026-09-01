@@ -24,6 +24,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"time"
 
 	"mikcloud/hotspot-api/internal/model"
@@ -76,6 +77,74 @@ func modeNote(mode string, ceiling int) string {
 		return fmt.Sprintf(" (dépôt-vente, plafond %d FCFA)", ceiling)
 	}
 	return ""
+}
+
+// depositAgingDays — ancienneté de la créance courante : jours depuis le
+// dernier versement (sinon depuis la première créance). Approximation
+// volontairement simple : un signal de recouvrement, pas de la compta.
+func depositAgingDays(db *model.DB, acc, resellerID string, now time.Time) int {
+	lastSettlement, firstDebt := "", ""
+	for _, tx := range db.Transactions {
+		if tx.AccountID != acc || tx.ResellerID != resellerID {
+			continue
+		}
+		switch tx.Type {
+		case "debt":
+			if firstDebt == "" || tx.At < firstDebt {
+				firstDebt = tx.At
+			}
+		case "settlement":
+			if tx.At > lastSettlement {
+				lastSettlement = tx.At
+			}
+		}
+	}
+	ref := lastSettlement
+	if ref == "" {
+		ref = firstDebt
+	}
+	if ref == "" {
+		return 0
+	}
+	at, err := time.Parse(time.RFC3339, ref)
+	if err != nil {
+		return 0
+	}
+	return int(now.Sub(at).Hours() / 24)
+}
+
+// buildReceivables — créances revendeurs (dépôt-vente) pour le dashboard :
+// argent dormant chez les revendeurs + ancienneté (warn ≥ 7 j, danger ≥ 30 j)
+// + verrou (dette > plafond → Mode Vente bloqué). Sous store.Lock.
+func buildReceivables(db *model.DB, acc string, now time.Time) map[string]any {
+	items := []map[string]any{}
+	total, count := 0, 0
+	for i := range db.Resellers {
+		res := &db.Resellers[i]
+		if res.AccountID != acc || res.PaymentMode != "deposit" {
+			continue
+		}
+		debt := depositDebt(db, acc, res.ID)
+		if debt <= 0 {
+			continue
+		}
+		aging := depositAgingDays(db, acc, res.ID, now)
+		level := "ok"
+		if aging >= 30 {
+			level = "danger"
+		} else if aging >= 7 {
+			level = "warn"
+		}
+		total += debt
+		count++
+		items = append(items, map[string]any{
+			"resellerId": res.ID, "name": res.Name, "debt": debt,
+			"ceiling": res.DebtCeiling, "agingDays": aging, "level": level,
+			"overCeiling": res.DebtCeiling > 0 && debt > res.DebtCeiling,
+		})
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i]["debt"].(int) > items[j]["debt"].(int) })
+	return map[string]any{"totalDebt": total, "count": count, "items": items}
 }
 
 // handleResellerSettle — POST /api/resellers/{id}/settle {amount, note?}.

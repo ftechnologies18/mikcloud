@@ -5,6 +5,7 @@ import {
   Activity,
   Clock,
   Cog,
+  HandCoins,
   Radio,
   Router as RouterIcon,
   ShoppingCart,
@@ -40,6 +41,7 @@ import { api } from "@/lib/hotspot/api";
 import { localeOf, useI18n } from "@/lib/hotspot/i18n";
 import { formatCurrency, timeAgo } from "@/lib/hotspot/format";
 import { useChartPalette } from "@/lib/hotspot/chart-theme";
+import { cn } from "@/lib/utils";
 import type { Lang } from "@/lib/hotspot/i18n";
 import type { Activity as ActivityItem, AppSettings, DashboardData, SiteOverview } from "@/lib/hotspot/types";
 
@@ -257,6 +259,59 @@ export default function DashboardView() {
             ))}
           </div>
         </section>
+      )}
+
+      {/* N°19 V2 — créances revendeurs (dépôt-vente) : visible uniquement
+          quand une créance existe — la trésorerie dormant chez les revendeurs. */}
+      {data.receivables && data.receivables.count > 0 && (
+        <Card>
+          <CardHeader className="px-4 sm:px-6">
+            <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-base">
+              <span className="flex items-center gap-2">
+                <HandCoins className="size-4 text-amber-600 dark:text-amber-400" aria-hidden />
+                {t("dashboard.receivables")}
+              </span>
+              <span className="text-sm font-semibold text-amber-600 tabular-nums dark:text-amber-400">
+                {t("dashboard.receivablesTotal")} : {formatCurrency(data.receivables.totalDebt, currency, lang)}
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="px-4 pb-4 sm:px-6 sm:pb-6">
+            <p className="text-xs text-muted-foreground">
+              {tf("dashboard.receivablesCount", { n: data.receivables.count })} · {t("dashboard.receivablesDesc")}
+            </p>
+            <ul className="mt-3 max-h-56 space-y-1.5 overflow-y-auto pr-1">
+              {data.receivables.items.map((item) => (
+                <li key={item.resellerId} className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{item.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      <span
+                        className={cn(
+                          "font-medium",
+                          item.level === "danger" ? "text-destructive" : item.level === "warn" ? "text-amber-600 dark:text-amber-400" : "",
+                        )}
+                      >
+                        {tf("dashboard.receivablesAging", { n: item.agingDays })}
+                      </span>
+                      {item.overCeiling && (
+                        <span className="ml-2 font-medium text-destructive">· {t("dashboard.receivablesOverCeiling")}</span>
+                      )}
+                    </p>
+                  </div>
+                  <p
+                    className={cn(
+                      "shrink-0 text-sm font-semibold tabular-nums",
+                      item.overCeiling ? "text-destructive" : "text-amber-600 dark:text-amber-400",
+                    )}
+                  >
+                    {formatCurrency(item.debt, currency, lang)}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
       )}
 
       {/* Graphiques */}

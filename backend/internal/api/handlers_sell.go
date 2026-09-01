@@ -277,6 +277,10 @@ type sellDayReport struct {
 	Revenue    int                 `json:"revenue"`
 	StockCount int                 `json:"stockCount"`
 	StockValue int                 `json:"stockValue"`
+	// N°19 V2 — dépôt-vente : ce que la tournée doit ramener au gérant.
+	ToDeposit   int    `json:"toDeposit"`   // cash du jour à verser (= recette) ; 0 en prépayé
+	DebtTotal   int    `json:"debtTotal"`   // créance totale courante ; 0 en prépayé
+	PaymentMode string `json:"paymentMode"` // prepaid | deposit
 }
 
 // handleSellDayReport — GET /api/sell/day-report : clôture de journée du
@@ -321,6 +325,17 @@ func (a *API) handleSellDayReport(w http.ResponseWriter, r *http.Request) {
 	}
 	// Journal chronologique : de la première vente du matin à la dernière.
 	sort.Slice(report.Sold, func(i, j int) bool { return report.Sold[i].SoldAt < report.Sold[j].SoldAt })
+	// N°19 V2 — dépôt-vente : le rapport annonce ce qu'il faut ramener.
+	if res := findResellerScoped(db, c.Sub, c.Acc); res != nil {
+		report.PaymentMode = res.PaymentMode
+		if report.PaymentMode == "" {
+			report.PaymentMode = "prepaid"
+		}
+		if report.PaymentMode == "deposit" {
+			report.ToDeposit = report.Revenue
+			report.DebtTotal = depositDebt(db, c.Acc, res.ID)
+		}
+	}
 	if s, ok := db.SettingsByAccount[c.Acc]; ok {
 		report.Currency = s.Tenant.Currency
 	}

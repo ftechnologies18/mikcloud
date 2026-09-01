@@ -143,6 +143,13 @@ export default function SellShell() {
       tf("sell.dayReportTextHeader", { date: dateLabel }),
       me ? `${me.name} (${me.username})` : "",
       `${t("sell.dayReportSold")} : ${report.soldCount} — ${formatCurrency(report.revenue, currency, lang)}`,
+      // N°19 V2 — dépôt-vente : le rapport annonce le versement attendu.
+      ...(report.paymentMode === "deposit"
+        ? [
+            tf("sell.dayReportToDepositText", { amount: formatCurrency(report.toDeposit ?? 0, currency, lang) }),
+            tf("sell.dayReportDebtText", { amount: formatCurrency(report.debtTotal ?? 0, currency, lang) }),
+          ]
+        : []),
       `${t("sell.dayReportStock")} : ${report.stockCount}`,
       t("sell.dayReportDetail"),
       ...report.sold.map(
@@ -405,6 +412,17 @@ export default function SellShell() {
                   <p className="text-[11px] text-muted-foreground">{t("sell.dayReportStock")}</p>
                 </div>
               </div>
+
+              {report.paymentMode === "deposit" && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm">
+                  <p className="font-medium text-amber-700 dark:text-amber-300">
+                    {tf("sell.dayReportToDepositText", { amount: formatCurrency(report.toDeposit ?? 0, currency, lang) })}
+                  </p>
+                  <p className="text-xs text-amber-600/80 dark:text-amber-400/80">
+                    {tf("sell.dayReportDebtText", { amount: formatCurrency(report.debtTotal ?? 0, currency, lang) })}
+                  </p>
+                </div>
+              )}
 
               <div className="max-h-64 overflow-y-auto rounded-lg border" aria-label={t("sell.dayReportDetail")}>
                 {report.sold.length === 0 ? (

@@ -9,6 +9,7 @@ import {
   MoreVertical,
   Pencil,
   Power,
+  Share2,
   Store,
   Trash2,
   UserPlus,
@@ -103,6 +104,8 @@ export default function ResellersView() {
   const [settleTarget, setSettleTarget] = useState<Reseller | null>(null);
   const [settleAmount, setSettleAmount] = useState("");
   const [settleNote, setSettleNote] = useState("");
+  // N°19 V2 — reçu du dernier versement (partageable WhatsApp).
+  const [receipt, setReceipt] = useState<{ name: string; amount: number; debtAfter: number; at: string } | null>(null);
 
   const { data: resellers, isLoading } = useQuery({
     queryKey: ["/api/resellers"],
@@ -205,7 +208,8 @@ export default function ResellersView() {
       }),
     onSuccess: (res) => {
       toast.success(tf("resellers.settledToast", { debt: formatCurrency(res.debtAfter, currency, lang) }));
-      setSettleTarget(null);
+      // N°19 V2 — le dialog passe en mode reçu (partage WhatsApp).
+      setReceipt({ name: settleTarget?.name ?? "", amount: settleMutation.variables?.amount ?? 0, debtAfter: res.debtAfter, at: new Date().toISOString() });
       setSettleAmount("");
       setSettleNote("");
       invalidateResellers();
@@ -241,8 +245,33 @@ export default function ResellersView() {
   const openSettle = (reseller: Reseller) => {
     setSettleAmount(reseller.debt ? String(reseller.debt) : "");
     setSettleNote("");
+    setReceipt(null);
     setSettleTarget(reseller);
   };
+
+  // N°19 V2 — reçu de versement : partage WhatsApp ou presse-papiers.
+  async function shareReceipt() {
+    if (!receipt) return;
+    const dateLabel = new Date(receipt.at).toLocaleString(lang === "en" ? "en-GB" : "fr-FR", {
+      day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
+    });
+    const text = tf("resellers.receiptText", {
+      name: receipt.name,
+      amount: formatCurrency(receipt.amount, currency, lang),
+      debt: formatCurrency(receipt.debtAfter, currency, lang),
+      date: dateLabel,
+    });
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: "MikCloud", text });
+      } else {
+        await navigator.clipboard.writeText(text);
+        toast.success(t("resellers.receiptShared"));
+      }
+    } catch {
+      /* partage annulé par l'utilisateur */
+    }
+  }
 
   const submitReseller = () => {
     const name = form.name.trim();
@@ -455,6 +484,14 @@ export default function ResellersView() {
                     total: formatCurrency(reseller.revenueTotal ?? reseller.revenue, currency, lang),
                   })}
                 </p>
+                {/* N°19 V2 — confiance progressive : suggérer d'élargir le crédit
+                    quand les versements sont réguliers et la dette soldée. */}
+                {reseller.paymentMode === "deposit" && (reseller.settlementsCount ?? 0) >= 3 && (reseller.debt ?? 0) === 0 && (
+                  <p className="mt-1.5 flex items-center gap-1 text-xs text-chart-1">
+                    <HandCoins className="size-3" aria-hidden />
+                    {tf("resellers.trustHint", { n: reseller.settlementsCount ?? 0 })}
+                  </p>
+                )}
               </CardContent>
             </Card>
           ))}
@@ -720,6 +757,17 @@ export default function ResellersView() {
                 : null}
             </DialogDescription>
           </DialogHeader>
+          {receipt ? (
+            <div className="space-y-3 rounded-lg border bg-muted/40 p-4 text-center">
+              <HandCoins className="mx-auto size-8 text-chart-1" aria-hidden />
+              <p className="text-sm font-semibold">
+                {formatCurrency(receipt.amount, currency, lang)} — {receipt.name}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {t("resellers.settleAfter")} {formatCurrency(receipt.debtAfter, currency, lang)}
+              </p>
+            </div>
+          ) : (
           <div className="grid gap-4">
             <div className="grid gap-2">
               <Label htmlFor="settle-amount">{t("resellers.settleAmount")}</Label>
@@ -757,13 +805,28 @@ export default function ResellersView() {
               </p>
             )}
           </div>
+          )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setSettleTarget(null)}>
-              {t("common.cancel")}
-            </Button>
-            <Button onClick={submitSettle} disabled={!settleValid || settleMutation.isPending}>
-              {settleMutation.isPending ? t("resellers.settling") : t("resellers.settleSubmit")}
-            </Button>
+            {receipt ? (
+              <>
+                <Button variant="outline" onClick={() => setSettleTarget(null)}>
+                  {t("common.close")}
+                </Button>
+                <Button onClick={() => void shareReceipt()}>
+                  <Share2 className="size-4" />
+                  {t("resellers.receiptShare")}
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="outline" onClick={() => setSettleTarget(null)}>
+                  {t("common.cancel")}
+                </Button>
+                <Button onClick={submitSettle} disabled={!settleValid || settleMutation.isPending}>
+                  {settleMutation.isPending ? t("resellers.settling") : t("resellers.settleSubmit")}
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

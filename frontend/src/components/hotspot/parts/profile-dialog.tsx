@@ -694,7 +694,7 @@ export function ProfileEditDialog({ open, onOpenChange, profile }: ProfileEditDi
                             variant="outline"
                             size="sm"
                             className={cn(
-                              "h-7 w-9 rounded-full px-0 text-xs tabular-nums",
+                              "h-7 w-8 rounded-full px-0 text-xs tabular-nums",
                               form.sharedUsers === String(n)
                                 ? "border-primary bg-primary/10 text-primary"
                                 : "text-muted-foreground",

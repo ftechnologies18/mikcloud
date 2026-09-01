@@ -36,6 +36,12 @@ import (
 // À appeler sous verrou, après store.Tick (applyExpiry) ; le Save est à charge
 // de l'appelant. Les commandes sont servies à l'agent à son prochain check-in.
 func (a *API) enforceExpired(db *model.DB) {
+	// N — réparation parité limit-uptime en TÊTE : les vouchers coupés par le
+	// routeur à leur quota temps mais restés « utilisés » (déficit
+	// d'échantillonnage du cumul cloud) sont realignés AVANT la résolution
+	// des statuts — les lectures suivantes (listes, stock vente, rapports)
+	// voient immédiatement l'état « expiré » (cf. RepairTimeLimitParity).
+	model.RepairTimeLimitParity(db)
 	expMode := make(map[string]string, len(db.Profiles))
 	for _, p := range db.Profiles {
 		m := p.ExpMode

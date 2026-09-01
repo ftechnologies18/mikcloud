@@ -782,10 +782,24 @@ func accumulateUptime(db *model.DB, s model.Session) {
 		return
 	}
 	for i := range db.HotspotUsers {
-		if db.HotspotUsers[i].ID == s.UserID {
-			db.HotspotUsers[i].UptimeUsedSec += s.UptimeSec
-			return
+		u := &db.HotspotUsers[i]
+		if u.ID != s.UserID {
+			continue
 		}
+		total := u.UptimeUsedSec + s.UptimeSec
+		// Parité limit-uptime : le routeur coupe EXACTEMENT à la limite, mais
+		// le dernier échantillon lu avant la disparition de la session peut
+		// lui manquer de ≤ 1 intervalle de lecture (45 s). Dans cette fenêtre,
+		// la déconnexion observée EST l'épuisement du quota — on aligne le
+		// cumul sur la limite, sinon le voucher resterait « utilisé » pour
+		// toujours (cf. TimeLimitParityGraceSec).
+		if u.Kind == "voucher" && u.TimeLimitMin > 0 {
+			if limit := u.TimeLimitMin * 60; total >= limit-model.TimeLimitParityGraceSec {
+				total = limit
+			}
+		}
+		u.UptimeUsedSec = total
+		return
 	}
 }
 

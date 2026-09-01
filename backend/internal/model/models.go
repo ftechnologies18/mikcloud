@@ -845,6 +845,52 @@ func voucherExpired(u *HotspotUser, now time.Time) bool {
 	return false
 }
 
+// TimeLimitParityGraceSec — tolérance de parité (secondes) entre le cumul
+// cloud d'uptime et la coupure ROUTEUR limit-uptime. La session disparaît du
+// read_state APRÈS la coupure : le dernier échantillon rapporté peut manquer
+// la limite de jusqu'à un intervalle de lecture (scheduler agent = 45 s).
+// Sans tolérance, un voucher coupé par le routeur resterait « utilisé » à
+// jamais — aucun logout ultérieur ne viendrait combler le déficit de quelques
+// secondes. Dans cette fenêtre, la déconnexion observée EST l'épuisement du
+// quota : le cumul est aligné sur la limite (accumulateUptime +
+// RepairTimeLimitParity).
+const TimeLimitParityGraceSec = 60
+
+// RepairTimeLimitParity — réparation idempotente des vouchers dont la session
+// a été coupée par le routeur (limit-uptime atteint) mais dont le cumul cloud
+// est resté juste SOUS la limite (déficit d'échantillonnage ≤ intervalle de
+// lecture). Sans réparation, ces tickets restent affichés « utilisés » alors
+// qu'ils sont inutilisables (le routeur refuse la reconnexion) — ils ne
+// passeraient « expirés » qu'à l'échéance de leur validité. Règle : sans
+// session live, un voucher dont le cumul est dans la fenêtre de grâce sous la
+// limite est aligné sur la limite — voucherExpired le repasse alors « expiré »
+// dès le prochain affichage. Renvoie le nombre de vouchers realignés.
+// À appeler sous verrou.
+func RepairTimeLimitParity(db *DB) int {
+	live := make(map[string]bool, len(db.Sessions))
+	for _, s := range db.Sessions {
+		if s.UserID != "" {
+			live[s.UserID] = true // session en cours : le routeur n'a pas encore coupé
+		}
+	}
+	n := 0
+	for i := range db.HotspotUsers {
+		u := &db.HotspotUsers[i]
+		if u.Kind != "voucher" || u.TimeLimitMin <= 0 || live[u.ID] {
+			continue
+		}
+		if u.Status != "active" && u.Status != "used" {
+			continue // disabled/expired : déjà hors service côté stockage
+		}
+		limit := u.TimeLimitMin * 60
+		if u.UptimeUsedSec > 0 && u.UptimeUsedSec < limit && limit-u.UptimeUsedSec <= TimeLimitParityGraceSec {
+			u.UptimeUsedSec = limit
+			n++
+		}
+	}
+	return n
+}
+
 // AnchorVoucherValidity — ancre la validité d'un voucher à son PREMIER login :
 // expiresAt = 1er login + validité du profil COURANT (parité routeur : le
 // profil est lu à l'authentification). Appelé au 1er login détecté (agent)

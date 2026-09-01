@@ -18,6 +18,7 @@ import (
 	_ "time/tzdata"
 
 	"mikcloud/hotspot-api/internal/api"
+	"mikcloud/hotspot-api/internal/model"
 	"mikcloud/hotspot-api/internal/notify"
 	"mikcloud/hotspot-api/internal/store"
 )
@@ -43,6 +44,17 @@ func main() {
 	if err != nil {
 		log.Fatalf("initialisation du store impossible : %v", err)
 	}
+
+	// N — réparation parité limit-uptime au démarrage : les vouchers coupés
+	// par le routeur à leur quota temps mais restés « utilisés » (déficit
+	// d'échantillonnage du cumul cloud, cf. RepairTimeLimitParity) repassent
+	// « expirés » dès la remontée du service — sans attendre une lecture.
+	st.Lock()
+	if n := model.RepairTimeLimitParity(st.Data()); n > 0 {
+		log.Printf("réparation parité limit-uptime : %d voucher(s) alignés sur leur quota — statut « expiré »", n)
+		st.Save()
+	}
+	st.Unlock()
 
 	// Arrêt propre (SIGTERM Render / Ctrl+C) : flush final vers Neon avant exit.
 	go func() {

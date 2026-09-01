@@ -494,6 +494,59 @@ Server       string `json:"server"`       // serveur hotspot RouterOS cible (""/
 
 ---
 
+## N°18 — Transfert de stock : redistribution des lots déjà générés (gérant/propriétaire)
+
+Maillon manquant du circuit de distribution : l'attribution revendeur n'existait qu'à la
+GÉNÉRATION (`channel=reseller`). Un lot « direct » généré à l'avance ne pouvait pas être
+remis à un revendeur après coup (seule option : re-générer → doublons routeur).
+
+### Endpoint
+
+`POST /api/vouchers/batch/{batchId}/transfer` — `requireRole(2)` (gérant, propriétaire,
+super-admin plateforme consulté), `guardAccountWrite` (compte expiré → refus).
+
+Corps : `{ "resellerId": "<id>" | "direct", "quantity": number?, "excludeExpiringDays": number? }`
+
+Réponse : `{ "transferred": int, "debited": int, "credited": int, "creditAfter": int,
+"refunds": [{resellerId, resellerName, amount, creditAfter}], "vouchers": HotspotUser[] }`
+— `vouchers` = tickets transférés (impression A4 immédiate côté front).
+
+### Règles d'or
+
+1. **Changement de propriété, jamais duplication** : seuls `ResellerID/ResellerName`
+   sont mutés — zéro write RouterOS (fonctionne même routeur hors ligne).
+2. **Seul le stock VENDABLE part** : statut effectif `active` (`EffectiveStatus`) et
+   `soldAt` vide. Un ticket remis à un client ne bouge plus (anti-fraude) ; used/expired/
+   disabled restent dans leur attribution d'origine (audit). Les tickets déjà chez la
+   destination sont ignorés (no-op).
+3. **Transfert partiel** : `quantity ≤ transférable` ; rotation « plus récemment généré
+   en premier » (les vieux restent au comptoir). `quantity` 0/omis = tout.
+4. **L'argent suit le transfert** : entrée chez un revendeur = débit du portefeuille du
+   prix facial (u.Price, cohérent avec la génération) + `Transaction` type `sale` ;
+   sortie d'un revendeur = recrédit + `Transaction` type `credit` (retour de stock ;
+   ré-affectation A→B combine les deux). Solde insuffisant → 400 (même règle que la
+   génération). **AUCUNE ligne `Sale` créée** : les Sales restent liés à la génération —
+   dashboard/rapports/compta ne double-comptent pas.
+5. **Traçabilité** : `Activity` horodatée avec l'acteur (« Transfert du lot … » /
+   « Retour de stock du lot … ») + une Transaction par mouvement.
+
+Garde-fou expiration : `excludeExpiringDays>0` exclut les tickets dont `expiresAt` ANCRÉ
+tombe dans la fenêtre (tickets reconnectés une fois puis ré-activés — `usedAt` remis à
+« » — ou importés avec échéance). Les tickets frais (non ancrés, `expiresAt` vide) ne
+PEUVENT pas expirer en stock : leur validité démarre au premier login — rien à exclure.
+
+### Lot immuable + possession live
+
+`Batch.Channel/ResellerID` décrivent la GÉNÉRATION (provenance) et ne sont JAMAIS mutés.
+`GET /api/vouchers/batches` enrichit chaque lot de champs recalculés à la lecture depuis
+les vouchers : `transferable` (stock vendable), `transferableValue` (valeur faciale),
+`expiring7d` (transférables à échéance ancrée ≤ 7 j), `holdings[]`
+(`{resellerId, name, count, value}` — `resellerId: ""` = stock direct ; tri direct
+d'abord puis quantité décroissante). Le front affiche « Chez : … » quand la possession
+diverge de la provenance, et plafonne le transfert à `transferable − déjà chez la cible`.
+
+---
+
 ## PLAN DE FICHIERS
 
 ### Backend (Go)

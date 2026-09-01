@@ -100,6 +100,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/vouchers/batches", a.handleBatchesList)
 	mux.HandleFunc("DELETE /api/vouchers/{id}", a.requireRole(2, a.handleUserDelete))
 	mux.HandleFunc("POST /api/vouchers/batch/{batchId}/delete", a.requireRole(2, a.handleVouchersBatchDelete))
+	mux.HandleFunc("POST /api/vouchers/batch/{batchId}/transfer", a.requireRole(2, a.handleVouchersBatchTransfer))
 
 	// Sessions
 	mux.HandleFunc("GET /api/sessions", a.handleSessionsList)
@@ -3825,6 +3826,25 @@ func (a *API) handleBatchesList(w http.ResponseWriter, r *http.Request) {
 		Remaining, Active, Used, Expired, Disabled int
 	}
 	stats := map[string]*liveStats{}
+
+	// N°18 — possession LIVE du stock vendable, recalculée depuis les vouchers :
+	// le lot (Batch) reste IMMUABLE (Channel/ResellerID = génération/provenance),
+	// la redistribution se lit dans les vouchers. « Transférable » = même
+	// définition que l'endpoint de transfert (actif, jamais remis).
+	resNames := make(map[string]string, len(db.Resellers))
+	for i := range db.Resellers {
+		resNames[db.Resellers[i].ID] = db.Resellers[i].Name
+	}
+	type holding struct {
+		ResellerID string `json:"resellerId"`
+		Name       string `json:"name"`
+		Count      int    `json:"count"`
+		Value      int    `json:"value"`
+	}
+	holdings := map[string]map[string]*holding{}
+	transferable := map[string]int{}
+	transferableValue := map[string]int{}
+	expiring7d := map[string]int{}
 	for i := range db.HotspotUsers {
 		u := &db.HotspotUsers[i]
 		if u.AccountID != acc || u.Kind != "voucher" || u.BatchID == "" {
@@ -3850,6 +3870,25 @@ func (a *API) handleBatchesList(w http.ResponseWriter, r *http.Request) {
 		case "disabled":
 			st.Disabled++
 		}
+		if u.SoldAt == "" && model.EffectiveStatus(u, now) == "active" {
+			transferable[u.BatchID]++
+			transferableValue[u.BatchID] += u.Price
+			if exp, err := time.Parse(time.RFC3339, u.ExpiresAt); err == nil && exp.Before(now.AddDate(0, 0, 7)) {
+				expiring7d[u.BatchID]++ // garde-fou dialog : stock mort imminent
+			}
+			hm, ok := holdings[u.BatchID]
+			if !ok {
+				hm = map[string]*holding{}
+				holdings[u.BatchID] = hm
+			}
+			h, ok := hm[u.ResellerID]
+			if !ok {
+				h = &holding{ResellerID: u.ResellerID, Name: resNames[u.ResellerID]}
+				hm[u.ResellerID] = h
+			}
+			h.Count++
+			h.Value += u.Price
+		}
 	}
 
 	type batchRow struct {
@@ -3859,6 +3898,11 @@ func (a *API) handleBatchesList(w http.ResponseWriter, r *http.Request) {
 		Used      int `json:"used"`
 		Expired   int `json:"expired"`
 		Disabled  int `json:"disabled"`
+		// N°18 — possession live du stock vendable (lot immuable).
+		Transferable      int       `json:"transferable"`
+		TransferableValue int       `json:"transferableValue"`
+		Expiring7d        int       `json:"expiring7d"`
+		Holdings          []holding `json:"holdings,omitempty"`
 	}
 	filtered := []batchRow{}
 	for _, b := range db.Batches {
@@ -3881,6 +3925,27 @@ func (a *API) handleBatchesList(w http.ResponseWriter, r *http.Request) {
 			row.Used = st.Used
 			row.Expired = st.Expired
 			row.Disabled = st.Disabled
+		}
+		row.Transferable = transferable[b.ID]
+		row.TransferableValue = transferableValue[b.ID]
+		row.Expiring7d = expiring7d[b.ID]
+		if hm, ok := holdings[b.ID]; ok && len(hm) > 0 {
+			hs := make([]holding, 0, len(hm))
+			for _, h := range hm {
+				hs = append(hs, *h)
+			}
+			// Affichage stable : stock direct d'abord, puis par quantité décroissante.
+			sort.Slice(hs, func(i, j int) bool {
+				di, dj := hs[i].ResellerID == "", hs[j].ResellerID == ""
+				if di != dj {
+					return di
+				}
+				if hs[i].Count != hs[j].Count {
+					return hs[i].Count > hs[j].Count
+				}
+				return hs[i].ResellerID < hs[j].ResellerID
+			})
+			row.Holdings = hs
 		}
 		filtered = append(filtered, row)
 	}

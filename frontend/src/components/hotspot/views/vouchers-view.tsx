@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ArrowLeftRight,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -79,6 +80,7 @@ import { copyToClipboard } from "@/components/hotspot/parts/uc-clipboard";
 import { PasswordCell } from "@/components/hotspot/parts/uc-password-cell";
 import { LAST_BATCH_STORAGE_KEY, UcPrintDialog } from "@/components/hotspot/parts/uc-print-dialog";
 import { VoucherA4PrintDialog } from "@/components/hotspot/parts/voucher-a4-print-dialog";
+import { VoucherTransferDialog } from "@/components/hotspot/parts/voucher-transfer-dialog";
 import { VoucherWizardDialog } from "@/components/hotspot/parts/voucher-wizard-dialog";
 import { api } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
@@ -334,6 +336,9 @@ export default function VouchersView() {
   const [printingBatchId, setPrintingBatchId] = useState<string | null>(null);
   const [a4BatchId, setA4BatchId] = useState<string | null>(null);
 
+  // N°18 — Transfert de stock du lot (distribution revendeur / retour de stock).
+  const [transferBatch, setTransferBatch] = useState<BatchWithStats | null>(null);
+
   const batchDeleteMutation = useMutation({
     mutationFn: (batch: BatchWithStats) =>
       api<{ ok: boolean; deleted: number }>(`/api/vouchers/batch/${batch.id}/delete`, { method: "POST" }),
@@ -439,6 +444,32 @@ export default function VouchersView() {
     } finally {
       setA4BatchId(null);
     }
+  }
+
+  // N°18 — après un transfert réussi : ouvre (si demandé) l'impression A4 des
+  // tickets transférés — le revendeur repart avec son papier.
+  function handleTransferred(batchId: string, vouchers: HotspotUser[], print: boolean) {
+    if (print && vouchers.length > 0) {
+      setA4Vouchers(vouchers);
+      setA4Title(`Lot #${shortBatch(batchId)} — ${vouchers.length} tickets`);
+      setA4HotspotUrl(routers?.find((r) => r.id === batches.find((b) => b.id === batchId)?.routerId)?.hotspotLoginUrl);
+      setA4Open(true);
+    }
+  }
+
+  // N°18 — « Chez : » — possession live du stock vendable, affichée seulement
+  // quand elle diverge de la provenance du lot (génération).
+  function holdingsDiverge(batch: BatchWithStats): boolean {
+    const holdings = batch.holdings ?? [];
+    if (holdings.length === 0) return false;
+    if (holdings.length > 1) return true;
+    return batch.channel === "reseller" ? holdings[0].resellerId !== batch.resellerId : holdings[0].resellerId !== "";
+  }
+
+  function holdingsLabel(batch: BatchWithStats): string {
+    return (batch.holdings ?? [])
+      .map((h) => `${h.resellerId === "" ? t("vouchers.batches.holdingsDirect") : h.name || h.resellerId} (${h.count})`)
+      .join(" · ");
   }
 
   const hasFilters = search !== "" || statusFilter !== "all" || profileFilter !== "all";
@@ -890,6 +921,11 @@ export default function VouchersView() {
                               ) : (
                                 <span className="text-muted-foreground">{t("common.direct")}</span>
                               )}
+                              {holdingsDiverge(batch) && (
+                                <p className="mt-0.5 text-xs text-muted-foreground">
+                                  {t("vouchers.batches.heldBy")} {holdingsLabel(batch)}
+                                </p>
+                              )}
                             </TableCell>
                             <TableCell className="text-right font-medium tabular-nums">{batch.count}</TableCell>
                             <TableCell className="text-right tabular-nums">
@@ -909,6 +945,19 @@ export default function VouchersView() {
                             </TableCell>
                             <TableCell className="pr-4 text-right sm:pr-6">
                               <div className="flex items-center justify-end gap-1.5">
+                                {batch.transferable > 0 && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-10 gap-1.5 px-2.5"
+                                    onClick={() => setTransferBatch(batch)}
+                                    aria-label={tf("vouchers.batches.transferAria", { batch: batch.id })}
+                                    title={t("vouchers.batches.transfer")}
+                                  >
+                                    <ArrowLeftRight className="size-4" />
+                                    <span className="hidden md:inline">{t("vouchers.batches.transfer")}</span>
+                                  </Button>
+                                )}
                                 <Button
                                   variant="outline"
                                   size="sm"
@@ -948,6 +997,14 @@ export default function VouchersView() {
                                         <QrCode className="size-4" />
                                       )}
                                       {t("vouchers.batches.printA4")}
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      className="min-h-10"
+                                      disabled={batch.transferable === 0}
+                                      onClick={() => setTransferBatch(batch)}
+                                    >
+                                      <ArrowLeftRight className="size-4" />
+                                      {t("vouchers.batches.transfer")}
                                     </DropdownMenuItem>
                                     <DropdownMenuItem className="min-h-10" onClick={() => viewBatchVouchers(batch)}>
                                       <Eye className="size-4" />
@@ -1056,6 +1113,16 @@ export default function VouchersView() {
         title={a4Title}
         tenantName={tenantName}
         hotspotLoginUrl={a4HotspotUrl}
+      />
+
+      {/* N°18 — Transfert de stock du lot (distribution / retour de stock) */}
+      <VoucherTransferDialog
+        key={transferBatch?.id ?? "transfer-closed"}
+        batch={transferBatch}
+        resellers={resellers ?? []}
+        currency={currency}
+        onOpenChange={(open) => !open && setTransferBatch(null)}
+        onTransferred={handleTransferred}
       />
 
       {/* Confirmation suppression voucher */}

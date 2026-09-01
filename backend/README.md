@@ -65,6 +65,7 @@ est restauré à chaque redéploiement/sleep-wake. Vérifier dans les logs Rende
 | POST    | `/api/vouchers/generate`            | Génération en lot (débit revendeur, lot tracé) |
 | GET     | `/api/vouchers/batches`             | **Lots tracés** (stats live par statut) |
 | POST    | `/api/vouchers/batch/:batchId/delete` | Suppression d'un lot entier        |
+| POST    | `/api/vouchers/batch/:batchId/transfer` | **Transfert de stock (N°18)** : redistribue le stock vendable d'un lot vers un revendeur (débit portefeuille) ou vers le stock direct (retour, recrédit) — anti-fraude : les vendus ne bougent jamais |
 | GET     | `/api/sessions` / DELETE `/:id`     | Sessions actives / kick              |
 | GET/POST/PUT/DELETE | `/api/resellers` (+ `/:id/credit`) | Revendeurs & portefeuille (liste enrichie : stock/vendus/attribués live) |
 | GET     | `/api/sell/me` / `/api/sell/stock` / `/api/sell/day-report` | Mode Vente revendeur (profil tournée, stock, **rapport de fin de journée**) |

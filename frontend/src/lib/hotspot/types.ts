@@ -570,12 +570,29 @@ export interface Batch {
   createdAt: string;
 }
 
+/** N°18 — détenteur d'une partie du stock vendable d'un lot (recalculé backend) :
+ * resellerId "" = stock direct (gérant). Le lot reste immuable (provenance). */
+export interface BatchHolding {
+  resellerId: string;
+  name: string;
+  count: number;
+  value: number;
+}
+
 export interface BatchWithStats extends Batch {
   remaining: number;
   active: number;
   used: number;
   expired: number;
   disabled: number;
+  /** N°18 — stock vendable (actif, jamais remis), toute destination confondue. */
+  transferable: number;
+  /** Valeur faciale du stock vendable (somme des prix) — aperçu du débit. */
+  transferableValue: number;
+  /** Tickets transférables expirant dans les 7 jours (garde-fou du dialog). */
+  expiring7d: number;
+  /** Répartition live du stock vendable par détenteur. */
+  holdings?: BatchHolding[];
 }
 
 export interface PagedBatches {

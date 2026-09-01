@@ -19,7 +19,6 @@ import {
   Loader2,
   MoreHorizontal,
   Printer,
-  QrCode,
   RefreshCcw,
   Search,
   ShieldQuestion,
@@ -79,7 +78,6 @@ import { useCurrency, useSettings } from "@/components/hotspot/parts/sd-currency
 import { copyToClipboard } from "@/components/hotspot/parts/uc-clipboard";
 import { PasswordCell } from "@/components/hotspot/parts/uc-password-cell";
 import { LAST_BATCH_STORAGE_KEY, UcPrintDialog } from "@/components/hotspot/parts/uc-print-dialog";
-import { VoucherA4PrintDialog } from "@/components/hotspot/parts/voucher-a4-print-dialog";
 import { VoucherTransferDialog } from "@/components/hotspot/parts/voucher-transfer-dialog";
 import { VoucherWizardDialog } from "@/components/hotspot/parts/voucher-wizard-dialog";
 import { api } from "@/lib/hotspot/api";
@@ -166,12 +164,6 @@ export default function VouchersView() {
   const [printTitle, setPrintTitle] = useState("");
   /** Lot en cours d'impression (F12) — mémorisé à l'impression par le dialog. */
   const [printBatchId, setPrintBatchId] = useState<string | undefined>(undefined);
-
-  // Impression A4 + QR (flux revendeur « imprimer → vendre »)
-  const [a4Open, setA4Open] = useState(false);
-  const [a4Vouchers, setA4Vouchers] = useState<HotspotUser[]>([]);
-  const [a4Title, setA4Title] = useState("");
-  const [a4HotspotUrl, setA4HotspotUrl] = useState<string | undefined>(undefined);
 
   // Suppression
   const [deleting, setDeleting] = useState<HotspotUser | null>(null);
@@ -334,7 +326,6 @@ export default function VouchersView() {
 
   const [deletingBatch, setDeletingBatch] = useState<BatchWithStats | null>(null);
   const [printingBatchId, setPrintingBatchId] = useState<string | null>(null);
-  const [a4BatchId, setA4BatchId] = useState<string | null>(null);
 
   // N°18 — Transfert de stock du lot (distribution revendeur / retour de stock).
   const [transferBatch, setTransferBatch] = useState<BatchWithStats | null>(null);
@@ -419,41 +410,6 @@ export default function VouchersView() {
       toast.error(error instanceof Error ? error.message : t("vouchers.printFailed"));
     } finally {
       setPrintingBatchId(null);
-    }
-  }
-
-  // « Imprimer A4 + QR » : charge les vouchers ACTIFS (invendus, prêts à la vente) du lot
-  // puis ouvre le dialog A4 (20 tickets/page, QR vers la page de login du hotspot).
-  async function printBatchA4(batch: BatchWithStats) {
-    setA4BatchId(batch.id);
-    try {
-      const res = await api<PagedUsers>("/api/vouchers", {
-        params: { search: batch.id, page: 1, pageSize: 500 },
-      });
-      const printable = res.data.filter((v) => v.status === "active");
-      if (printable.length === 0) {
-        toast.info(`Lot #${shortBatch(batch.id)} : plus aucun voucher disponible à imprimer dans ce lot.`);
-        return;
-      }
-      setA4Vouchers(printable);
-      setA4Title(`Lot #${shortBatch(batch.id)} — ${printable.length} tickets`);
-      setA4HotspotUrl(routers?.find((r) => r.id === batch.routerId)?.hotspotLoginUrl);
-      setA4Open(true);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Impression impossible");
-    } finally {
-      setA4BatchId(null);
-    }
-  }
-
-  // N°18 — après un transfert réussi : ouvre (si demandé) l'impression A4 des
-  // tickets transférés — le revendeur repart avec son papier.
-  function handleTransferred(batchId: string, vouchers: HotspotUser[], print: boolean) {
-    if (print && vouchers.length > 0) {
-      setA4Vouchers(vouchers);
-      setA4Title(`Lot #${shortBatch(batchId)} — ${vouchers.length} tickets`);
-      setA4HotspotUrl(routers?.find((r) => r.id === batches.find((b) => b.id === batchId)?.routerId)?.hotspotLoginUrl);
-      setA4Open(true);
     }
   }
 
@@ -958,22 +914,6 @@ export default function VouchersView() {
                                     <span className="hidden md:inline">{t("vouchers.batches.transfer")}</span>
                                   </Button>
                                 )}
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-10 gap-1.5 px-2.5"
-                                  disabled={a4BatchId === batch.id}
-                                  onClick={() => void printBatchA4(batch)}
-                                  aria-label={tf("vouchers.batches.printA4Aria", { batch: batch.id })}
-                                  title={t("vouchers.batches.printA4Title")}
-                                >
-                                  {a4BatchId === batch.id ? (
-                                    <Loader2 className="size-4 animate-spin" />
-                                  ) : (
-                                    <QrCode className="size-4" />
-                                  )}
-                                  <span className="hidden sm:inline">A4 + QR</span>
-                                </Button>
                                 <DropdownMenu>
                                   <DropdownMenuTrigger asChild>
                                     <Button
@@ -986,18 +926,6 @@ export default function VouchersView() {
                                     </Button>
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent align="end" className="w-60">
-                                    <DropdownMenuItem
-                                      className="min-h-10"
-                                      disabled={a4BatchId === batch.id}
-                                      onClick={() => void printBatchA4(batch)}
-                                    >
-                                      {a4BatchId === batch.id ? (
-                                        <Loader2 className="size-4 animate-spin" />
-                                      ) : (
-                                        <QrCode className="size-4" />
-                                      )}
-                                      {t("vouchers.batches.printA4")}
-                                    </DropdownMenuItem>
                                     <DropdownMenuItem
                                       className="min-h-10"
                                       disabled={batch.transferable === 0}
@@ -1105,16 +1033,6 @@ export default function VouchersView() {
         batchId={printBatchId}
       />
 
-      {/* Dialogue d'impression A4 + QR (flux revendeur — lots) */}
-      <VoucherA4PrintDialog
-        open={a4Open}
-        onOpenChange={setA4Open}
-        vouchers={a4Vouchers}
-        title={a4Title}
-        tenantName={tenantName}
-        hotspotLoginUrl={a4HotspotUrl}
-      />
-
       {/* N°18 — Transfert de stock du lot (distribution / retour de stock) */}
       <VoucherTransferDialog
         key={transferBatch?.id ?? "transfer-closed"}
@@ -1122,7 +1040,6 @@ export default function VouchersView() {
         resellers={resellers ?? []}
         currency={currency}
         onOpenChange={(open) => !open && setTransferBatch(null)}
-        onTransferred={handleTransferred}
       />
 
       {/* Confirmation suppression voucher */}

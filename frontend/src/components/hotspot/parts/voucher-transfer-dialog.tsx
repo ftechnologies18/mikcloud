@@ -5,7 +5,7 @@
 // vers le stock direct (retour de stock, recrédite le revendeur). Le lot reste
 // immuable : seuls partent les tickets actifs jamais remis (anti-fraude), les
 // plus récents d'abord. Garde-fou optionnel : exclure les tickets expirant
-// sous 7 jours. À la clôture : impression A4 + QR des tickets transférés.
+// sous 7 jours.
 //
 // La possession live (holdings) vient du backend : le stock qu'une
 // destination détient déjà n'est pas re-transférable — le sélecteur de
@@ -13,7 +13,7 @@
 
 import { useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeftRight, Loader2, Printer } from "lucide-react";
+import { ArrowLeftRight, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -62,8 +62,6 @@ interface VoucherTransferDialogProps {
   currency: string;
   /** Fermeture du dialog (clic hors zone, Échap, succès ou annulation). */
   onOpenChange: (open: boolean) => void;
-  /** Succès : le parent décide d'ouvrir (ou non) l'impression A4 des tickets transférés. */
-  onTransferred: (batchId: string, vouchers: HotspotUser[], print: boolean) => void;
 }
 
 export function VoucherTransferDialog({
@@ -71,7 +69,6 @@ export function VoucherTransferDialog({
   resellers,
   currency,
   onOpenChange,
-  onTransferred,
 }: VoucherTransferDialogProps) {
   const { t, tf, lang } = useI18n();
   const queryClient = useQueryClient();
@@ -91,7 +88,6 @@ export function VoucherTransferDialog({
   );
   const [quantity, setQuantity] = useState("");
   const [excludeExpiring, setExcludeExpiring] = useState(false);
-  const [print, setPrint] = useState(true);
 
   // Ce que la destination détient déjà n'est pas re-transférable.
   const heldByTarget = useMemo(() => {
@@ -164,7 +160,6 @@ export function VoucherTransferDialog({
       void queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
       void queryClient.invalidateQueries({ queryKey: ["/api/resellers"] });
       void queryClient.invalidateQueries({ queryKey: ["/api/transactions"] });
-      if (batch) onTransferred(batch.id, res.vouchers, print);
       onOpenChange(false);
     },
     onError: (error: Error) => toast.error(error.message),
@@ -265,15 +260,6 @@ export function VoucherTransferDialog({
                 <Switch id="transfer-expiring" checked={excludeExpiring} onCheckedChange={setExcludeExpiring} />
               </div>
             )}
-
-            {/* Impression A4 + QR des tickets transférés */}
-            <div className="flex min-h-11 items-center justify-between gap-3 rounded-lg border p-3">
-              <Label htmlFor="transfer-print" className="flex items-center gap-2 text-sm font-normal">
-                <Printer className="size-4 text-muted-foreground" aria-hidden />
-                {t("vouchers.batches.transferPrint")}
-              </Label>
-              <Switch id="transfer-print" checked={print} onCheckedChange={setPrint} />
-            </div>
 
             {/* Aperçu financier (le débit exact est confirmé par l'API) */}
             {qty > 0 && (

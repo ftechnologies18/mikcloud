@@ -201,13 +201,13 @@ const fr: LandingCopy = {
     eyebrow: "Fonctionnalités",
     title: "Tout votre métier hotspot, un seul écran",
     subtitle:
-      "Du voucher à l'impression A4, de la session temps réel au portefeuille revendeur — MikCloud réunit ce que vous faisiez à la main dans Winbox, Excel et WhatsApp.",
+      "Du voucher à l'impression rapide, de la session temps réel au portefeuille revendeur — MikCloud réunit ce que vous faisiez à la main dans Winbox, Excel et WhatsApp.",
     items: [
       {
         icon: "Ticket",
-        title: "Vouchers A4 + QR",
+        title: "Vouchers & impression rapide",
         description:
-          "Génération par lots (1 à 500), préfixe et longueur de code personnalisables, impression tickets prédécoupés avec QR code. Traçabilité complète par lot : site émetteur, canal, revendeur, statut voucher par voucher.",
+          "Génération par lots (1 à 500), préfixe et longueur de code personnalisables, impression rapide des tickets avec QR code. Traçabilité complète par lot : site émetteur, canal, revendeur, statut voucher par voucher.",
         cta: "Générer un lot",
       },
       {
@@ -263,7 +263,7 @@ const fr: LandingCopy = {
         num: "02",
         title: "Configurez vos forfaits & vouchers",
         description:
-          "Débit (format RouterOS), durée de session, validité, quota Go, prix. Générez un lot de vouchers, débitez automatiquement le portefeuille du revendeur, imprimez en A4 prédécoupé.",
+          "Débit (format RouterOS), durée de session, validité, quota Go, prix. Générez un lot de vouchers, débitez automatiquement le portefeuille du revendeur, imprimez les tickets en un clic.",
       },
       {
         num: "03",
@@ -553,13 +553,13 @@ const en: LandingCopy = {
     eyebrow: "Features",
     title: "Your whole hotspot business, one screen",
     subtitle:
-      "From vouchers to A4 printing, from real-time sessions to reseller wallets — MikCloud unifies what you used to juggle across Winbox, Excel and WhatsApp.",
+      "From vouchers to quick printing, from real-time sessions to reseller wallets — MikCloud unifies what you used to juggle across Winbox, Excel and WhatsApp.",
     items: [
       {
         icon: "Ticket",
-        title: "A4 vouchers + QR",
+        title: "Vouchers & quick printing",
         description:
-          "Batch generation (1 to 500), custom code prefix and length, pre-cut A4 ticket printing with QR codes. Full batch traceability: issuing site, channel, reseller, per-voucher status.",
+          "Batch generation (1 to 500), custom code prefix and length, one-click ticket printing with QR codes. Full batch traceability: issuing site, channel, reseller, per-voucher status.",
         cta: "Generate a batch",
       },
       {
@@ -615,7 +615,7 @@ const en: LandingCopy = {
         num: "02",
         title: "Set up plans & vouchers",
         description:
-          "Bandwidth (RouterOS format), session duration, validity, data quota, price. Generate a voucher batch, automatically debit the reseller wallet, print pre-cut A4.",
+          "Bandwidth (RouterOS format), session duration, validity, data quota, price. Generate a voucher batch, automatically debit the reseller wallet, print tickets in one click.",
       },
       {
         num: "03",

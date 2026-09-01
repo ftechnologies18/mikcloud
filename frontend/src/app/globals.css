@@ -449,7 +449,7 @@
 }
 
 /* ─── Impression des vouchers ───
-   Toutes les impressions (dialog standard, modèles F2, A4+QR) passent par un
+   Toutes les impressions (dialog standard, modèles F2) passent par un
    Dialog Radix ([data-slot="dialog-content"], porté directement dans <body>)
    contenant une .print-area. À l'impression :
    1) toute branche du <body> sans .print-area est masquée (display:none — le
@@ -459,7 +459,7 @@
       `translate` (et non `transform`) — l'annuler explicitement, sinon tout le
       dialog reste décalé de -50 % (tickets coupés/empilés, pagination fausse) ;
    3) la .print-area s'étale naturellement sur les feuilles : pagination native
-      (break-inside: avoid des tickets, page-break-after des modèles/pages A4).
+      (break-inside: avoid des tickets, page-break-after des modèles).
    (Navigateurs sans :has — antérieurs à 2023 : dégradation identique à l'ancien
    comportement, aucun régression supplémentaire.) */
 @media print {
@@ -503,16 +503,6 @@
     gap: 0 !important;
   }
 
-  /* Conteneur d'aperçu à défilement écran du dialog A4 : sans limite à l'impression
-     (celui du dialog standard porte déjà print:max-h-none print:overflow-visible). */
-  .a4-scroll {
-    max-height: none !important;
-    overflow: visible !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    border-radius: 0 !important;
-  }
-
   /* Zone imprimée : en flux normal, sans les habillages de l'aperçu écran. */
   .print-area {
     position: static !important;
@@ -549,36 +539,6 @@
   }
   .tpl-format-80mm {
     width: 80mm;
-  }
-}
-
-/* ─── Impression A4 + QR des lots de vouchers (dialog VoucherA4PrintDialog) ───
-   Grâce au socle commun ci-dessus (dialog en flux normal, .print-area déroulée),
-   chaque .a4-page = exactement une feuille A4 : 200 × 287 mm = zone imprimable
-   après marge @page de 5 mm (+ 2,5 mm de padding interne = 7,5 mm depuis le bord
-   de la feuille), coupée proprement une page par feuille (break-after: page) et
-   chaque ticket reste entier (break-inside: avoid). */
-@media print {
-  /* Chaque .a4-page = exactement une feuille A4. */
-  .a4-page {
-    width: 200mm !important;
-    height: 287mm !important;
-    padding: 2.5mm !important;
-    margin: 0 !important;
-    border: 0 !important;
-    border-radius: 0 !important;
-    box-shadow: none !important;
-    overflow: hidden;
-    break-after: page;
-    page-break-after: always;
-  }
-  .a4-page:last-child {
-    break-after: auto;
-    page-break-after: auto;
-  }
-  .a4-ticket {
-    break-inside: avoid;
-    page-break-inside: avoid;
   }
 }
 

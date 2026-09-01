@@ -14,7 +14,6 @@ import {
   Clock,
   Copy,
   Eye,
-  Gauge,
   Layers,
   Loader2,
   MoreHorizontal,
@@ -23,7 +22,6 @@ import {
   RefreshCcw,
   Search,
   ShieldQuestion,
-  SlidersHorizontal,
   Ticket,
   TicketPlus,
   Trash2,
@@ -81,10 +79,10 @@ import { copyToClipboard } from "@/components/hotspot/parts/uc-clipboard";
 import { PasswordCell } from "@/components/hotspot/parts/uc-password-cell";
 import { LAST_BATCH_STORAGE_KEY, UcPrintDialog } from "@/components/hotspot/parts/uc-print-dialog";
 import { VoucherA4PrintDialog } from "@/components/hotspot/parts/voucher-a4-print-dialog";
+import { VoucherWizardDialog } from "@/components/hotspot/parts/voucher-wizard-dialog";
 import { api } from "@/lib/hotspot/api";
-import { useRouterResources } from "@/lib/hotspot/use-router-resources";
-import { useI18n, localeOf } from "@/lib/hotspot/i18n";
-import { formatBytes, formatCurrency, formatDate, formatDuration, fmtRouterDuration } from "@/lib/hotspot/format";
+import { useI18n } from "@/lib/hotspot/i18n";
+import { formatBytes, formatCurrency, formatDate } from "@/lib/hotspot/format";
 import type {
   BatchWithStats,
   GenerateVouchersRequest,
@@ -101,70 +99,6 @@ import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 12;
 const BATCH_PAGE_SIZE = 10;
-// 3 à 8 caractères comme Mikhmon (parité), jusqu'à 10 (alphabets sans
-// caractères ambigus côté serveur).
-const CODE_LENGTHS = [3, 4, 5, 6, 7, 8, 9, 10];
-
-// Jeux de caractères — presets du User Manager MikroTik (« abcd », « ABCD »,
-// « aBcD », « 5ab2c34d », « 5AB2C34D », « 5aB2c34D »). Le serveur exclut
-// toujours 0/1/I/L/O : les codes restent lisibles sur un ticket imprimé.
-const CHARSET_OPTIONS = [
-  { value: "mikcloud", labelKey: "vouchers.gen.charset.mikcloud" },
-  { value: "abc", labelKey: "vouchers.gen.charset.abc" },
-  { value: "ABC", labelKey: "vouchers.gen.charset.ABC" },
-  { value: "aBc", labelKey: "vouchers.gen.charset.aBc" },
-  { value: "5ab", labelKey: "vouchers.gen.charset.5ab" },
-  { value: "5AB", labelKey: "vouchers.gen.charset.5AB" },
-  { value: "5aB", labelKey: "vouchers.gen.charset.5aB" },
-  { value: "num", labelKey: "vouchers.gen.charset.num" },
-];
-
-// Quotas courants (1 Go = 1024 Mo) — l'argument « 5 Go = 500 F ».
-// Le libellé (Mo/GB selon la langue) est construit au rendu via fmtQuota().
-const QUOTA_OPTIONS = [
-  { value: "0", mb: 0 },
-  { value: "512", mb: 512 },
-  { value: "1024", mb: 1024 },
-  { value: "2048", mb: 2048 },
-  { value: "5120", mb: 5120 },
-  { value: "10240", mb: 10240 },
-  { value: "20480", mb: 20480 },
-  { value: "51200", mb: 51200 },
-];
-
-// Parité Mikhmon : libellés du mode d'expiration, réutilisés par le récap.
-const EXP_MODE_LABEL_KEY: Record<string, string> = {
-  none: "profiles.dialog.expNone",
-  notify: "profiles.dialog.expNotify",
-  remove: "profiles.dialog.expRemove",
-};
-
-// Parité Mikhmon : Time Limit (limit-uptime) par lot — quotas de temps
-// courants en minutes, libellés au format RouterOS via fmtRouterDuration().
-const TIME_LIMIT_OPTIONS = [
-  { value: "0", min: 0 },
-  { value: "30", min: 30 },
-  { value: "60", min: 60 },
-  { value: "120", min: 120 },
-  { value: "180", min: 180 },
-  { value: "300", min: 300 },
-  { value: "720", min: 720 },
-  { value: "1440", min: 1440 },
-  { value: "2880", min: 2880 },
-  { value: "4320", min: 4320 },
-  { value: "10080", min: 10080 },
-  { value: "43200", min: 43200 },
-];
-
-// Repères de prix FCFA pour vendre au quota (le prix réel reste celui du profil) :
-// paires [quota en Mo, prix en F CFA] — libellés localisés au rendu.
-const QUOTA_PRICE_HINTS: [number, number][] = [
-  [1024, 100],
-  [2048, 200],
-  [5120, 500],
-  [10240, 1000],
-  [30720, 3000],
-];
 
 const STATUS_OPTIONS = [
   { value: "all", labelKey: "common.allStatuses" },
@@ -185,12 +119,6 @@ export default function VouchersView() {
   const { data: settings } = useSettings();
   const tenantName = settings?.tenant.name || "MikCloud";
   const queryClient = useQueryClient();
-
-  // Libellé localisé d'un quota : « 512 Mo » / « 5 GB » selon la langue.
-  const fmtQuota = (mb: number) =>
-    mb < 1024 ? tf("vouchers.gen.quota.mb", { n: mb }) : tf("vouchers.gen.quota.gb", { n: mb / 1024 });
-  // Prix F CFA avec séparateur de milliers localisé (1 000 F / 1,000 F).
-  const fmtFcfa = (amount: number) => `${new Intl.NumberFormat(localeOf(lang)).format(amount)} F`;
 
   // Onglet actif : liste des vouchers ou traçabilité des lots
   const [tab, setTab] = useState<"vouchers" | "batches">("vouchers");
@@ -227,24 +155,8 @@ export default function VouchersView() {
   // Révélation des mots de passe (par ligne)
   const [revealed, setRevealed] = useState<Set<string>>(new Set());
 
-  // Générateur
+  // Générateur — le formulaire vit dans VoucherWizardDialog (3 étapes).
   const [genOpen, setGenOpen] = useState(false);
-  const [genCount, setGenCount] = useState("10");
-  const [genProfileId, setGenProfileId] = useState("");
-  const [genRouterId, setGenRouterId] = useState("");
-  const [genPrefix, setGenPrefix] = useState("");
-  const [genCodeLength, setGenCodeLength] = useState("6");
-  const [genResellerId, setGenResellerId] = useState("none");
-  // Génération avancée (style User Manager MikroTik) : mode utilisateur, jeu de
-  // caractères, commentaire libre et quota data (« 5 Go = 500 F »).
-  const [genUserMode, setGenUserMode] = useState<"userpass" | "same">("userpass");
-  const [genCharset, setGenCharset] = useState("mikcloud");
-  const [genComment, setGenComment] = useState("");
-  const [genQuotaMb, setGenQuotaMb] = useState("inherit");
-  // Parité Mikhmon : Time Limit (limit-uptime) par lot — "inherit" = profil.
-  const [genTimeLimit, setGenTimeLimit] = useState("inherit");
-  // Parité Mikhmon : serveur hotspot visé par le lot (« all » = omis au routeur).
-  const [genServer, setGenServer] = useState("all");
 
   // Impression (liste simple — ancien dialog)
   const [printOpen, setPrintOpen] = useState(false);
@@ -271,9 +183,6 @@ export default function VouchersView() {
     queryKey: ["/api/routers"],
     queryFn: () => api<RouterDevice[]>("/api/routers"),
   });
-  // Parité Mikhmon : ressources du routeur sélectionné (serveurs hotspot) —
-  // la liste « Server » du générateur Mikhmon.
-  const genResources = useRouterResources(routers, genRouterId || undefined);
 
   const { data: resellers } = useQuery({
     queryKey: ["/api/resellers"],
@@ -369,25 +278,6 @@ export default function VouchersView() {
     setPrintBatchId(voucher.batchId || undefined);
     setPrintOpen(true);
   }
-
-  // Aperçu coût + quota du générateur
-  const countNum = parseInt(genCount, 10);
-  const countValid = Number.isInteger(countNum) && countNum >= 1 && countNum <= 500;
-  const selectedGenProfile = profiles?.find((p) => p.id === genProfileId);
-  const selectedReseller = resellers?.find((r) => r.id === genResellerId);
-  const unitPrice = selectedGenProfile?.price ?? 0;
-  const totalCost = (countValid ? countNum : 0) * unitPrice;
-  // Quota effectif affiché : hérité du profil ou choisi dans l'onglet Limites.
-  const effectiveQuotaMb =
-    genQuotaMb === "inherit" ? (selectedGenProfile?.dataQuotaMb ?? 0) : Number(genQuotaMb);
-  const quotaLabel =
-    effectiveQuotaMb > 0
-      ? formatBytes(effectiveQuotaMb * 1048576, lang)
-      : genQuotaMb === "inherit" && !selectedGenProfile
-        ? t("vouchers.quotaWillInherit")
-        : t("vouchers.quotaUnlimitedShort");
-  const creditAfter = selectedReseller ? selectedReseller.credit - totalCost : null;
-  const insufficient = creditAfter !== null && creditAfter < 0;
 
   const generateMutation = useMutation({
     mutationFn: (payload: GenerateVouchersRequest) =>
@@ -549,26 +439,6 @@ export default function VouchersView() {
     } finally {
       setA4BatchId(null);
     }
-  }
-
-  const genValid = countValid && genProfileId !== "" && genRouterId !== "" && !insufficient;
-
-  function submitGenerate() {
-    if (!genValid || generateMutation.isPending) return;
-    generateMutation.mutate({
-      count: countNum,
-      profileId: genProfileId,
-      routerId: genRouterId,
-      server: genServer !== "all" ? genServer : undefined,
-      prefix: genPrefix.trim() || undefined,
-      codeLength: Number(genCodeLength),
-      resellerId: genResellerId === "none" ? undefined : genResellerId,
-      userMode: genUserMode === "same" ? "same" : undefined,
-      charset: genCharset && genCharset !== "mikcloud" ? genCharset : undefined,
-      comment: genComment.trim() || undefined,
-      dataQuotaMb: genQuotaMb === "inherit" ? undefined : Number(genQuotaMb),
-      timeLimitMin: genTimeLimit === "inherit" ? undefined : Number(genTimeLimit),
-    });
   }
 
   const hasFilters = search !== "" || statusFilter !== "all" || profileFilter !== "all";
@@ -1151,408 +1021,20 @@ export default function VouchersView() {
         </>
       )}
 
-      {/* Dialogue générateur */}
-      <Dialog open={genOpen} onOpenChange={setGenOpen}>
-        <DialogContent className="sm:max-w-xl">
-          <DialogHeader>
-            <DialogTitle>{t("vouchers.generateTitle")}</DialogTitle>
-            <DialogDescription>{t("vouchers.generateDesc")}</DialogDescription>
-          </DialogHeader>
-
-          <form
-            className="grid gap-4"
-            onSubmit={(event) => {
-              event.preventDefault();
-              submitGenerate();
-            }}
-          >
-            {/* Deux onglets comme le User Manager MikroTik : Général / Limites */}
-            <Tabs defaultValue="general">
-              <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="general" className="gap-1.5">
-                  <SlidersHorizontal className="size-3.5" aria-hidden />
-                  {t("vouchers.gen.tabGeneral")}
-                </TabsTrigger>
-                <TabsTrigger value="limits" className="gap-1.5">
-                  <Gauge className="size-3.5" aria-hidden />
-                  {t("vouchers.gen.tabLimits")}
-                </TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="general" className="mt-4 grid gap-4">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="grid gap-2">
-                    <Label htmlFor="gen-count">{t("vouchers.count")}</Label>
-                    <Input
-                      id="gen-count"
-                      type="number"
-                      min={1}
-                      max={500}
-                      value={genCount}
-                      onChange={(event) => setGenCount(event.target.value)}
-                      disabled={generateMutation.isPending}
-                      aria-invalid={!countValid}
-                    />
-                    <p className="text-xs text-muted-foreground">{t("vouchers.countHint")}</p>
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="gen-profile">{t("vouchers.gen.profileLabel")}</Label>
-                    <Select
-                      value={genProfileId}
-                      onValueChange={setGenProfileId}
-                      disabled={generateMutation.isPending}
-                    >
-                      <SelectTrigger id="gen-profile" className="h-10 w-full">
-                        <SelectValue placeholder={t("common.selectProfile")} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {profiles?.map((profile) => (
-                          <SelectItem key={profile.id} value={profile.id}>
-                            {profile.name} — {formatCurrency(profile.price, currency)} ·{" "}
-                            {formatDuration(profile.sessionTimeoutMin * 60)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                {/* Parité Mikhmon (GetValidPrice) : rappel du profil sélectionné —
-                    validité RouterOS, prix de vente, verrou, mode d'expiration. */}
-                {selectedGenProfile && (
-                  <div className="grid gap-1 rounded-lg border bg-muted/40 p-3 text-xs sm:grid-cols-2">
-                    <span className="text-muted-foreground">
-                      {t("vouchers.gen.recapValidity")} :{" "}
-                      <span className="font-medium text-foreground">
-                        {fmtRouterDuration(
-                          selectedGenProfile.validityMin > 0
-                            ? selectedGenProfile.validityMin
-                            : selectedGenProfile.validityDays * 1440,
-                        )}
-                      </span>
-                    </span>
-                    <span className="text-muted-foreground">
-                      {t("vouchers.gen.recapPrice")} :{" "}
-                      <span className="font-medium text-foreground">
-                        {formatCurrency(
-                          selectedGenProfile.sellingPrice > 0
-                            ? selectedGenProfile.sellingPrice
-                            : selectedGenProfile.price,
-                          currency,
-                        )}
-                      </span>
-                    </span>
-                    <span className="text-muted-foreground">
-                      {t("vouchers.gen.recapLock")} :{" "}
-                      <span className="font-medium text-foreground">
-                        {selectedGenProfile.lockFirstDevice ? t("common.yes") : t("common.no")}
-                      </span>
-                    </span>
-                    <span className="text-muted-foreground">
-                      {t("vouchers.gen.recapExpiry")} :{" "}
-                      <span className="font-medium text-foreground">
-                        {EXP_MODE_LABEL_KEY[selectedGenProfile.expMode]
-                          ? t(EXP_MODE_LABEL_KEY[selectedGenProfile.expMode])
-                          : selectedGenProfile.expMode}
-                      </span>
-                    </span>
-                  </div>
-                )}
-
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="grid gap-2">
-                    <Label htmlFor="gen-router">{t("vouchers.gen.routerLabel")}</Label>
-                    <Select
-                      value={genRouterId}
-                      onValueChange={(value) => {
-                        setGenRouterId(value);
-                        setGenServer("all");
-                      }}
-                      disabled={generateMutation.isPending}
-                    >
-                      <SelectTrigger id="gen-router" className="h-10 w-full">
-                        <SelectValue placeholder={t("common.selectRouter")} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {routers?.map((router) => (
-                          <SelectItem key={router.id} value={router.id}>
-                            {router.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="gen-code-length">{t("vouchers.codeLength")}</Label>
-                    <Select
-                      value={genCodeLength}
-                      onValueChange={setGenCodeLength}
-                      disabled={generateMutation.isPending}
-                    >
-                      <SelectTrigger id="gen-code-length" className="h-10 w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {CODE_LENGTHS.map((length) => (
-                          <SelectItem key={length} value={String(length)}>
-                            {tf("vouchers.codeLengthUnit", { n: length })}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-            {/* Parité Mikhmon : serveur hotspot du routeur (hidden si inconnu). */}
-            {(genResources.data?.servers.length ?? 0) > 0 && (
-              <div className="grid gap-2">
-                <Label htmlFor="gen-server">{t("vouchers.gen.server")}</Label>
-                <Select
-                  value={genServer}
-                  onValueChange={setGenServer}
-                  disabled={generateMutation.isPending}
-                >
-                  <SelectTrigger id="gen-server" className="h-10 w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">{t("vouchers.gen.serverAll")}</SelectItem>
-                    {genResources.data?.servers.map((server) => (
-                      <SelectItem key={server} value={server}>
-                        {server}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">{t("vouchers.gen.serverHint")}</p>
-              </div>
-            )}
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="grid gap-2">
-                <Label htmlFor="gen-prefix">{t("vouchers.prefix")}</Label>
-                <Input
-                  id="gen-prefix"
-                  value={genPrefix}
-                  onChange={(event) => setGenPrefix(event.target.value)}
-                  disabled={generateMutation.isPending}
-                />
-                <p className="text-xs text-muted-foreground">{t("vouchers.prefixHint")}</p>
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="gen-reseller">{t("common.reseller")}</Label>
-                <Select
-                  value={genResellerId}
-                  onValueChange={setGenResellerId}
-                  disabled={generateMutation.isPending}
-                >
-                  <SelectTrigger id="gen-reseller" className="h-10 w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">{t("vouchers.noReseller")}</SelectItem>
-                    {resellers?.map((reseller) => (
-                      <SelectItem key={reseller.id} value={reseller.id}>
-                        {tf("vouchers.creditLine", {
-                          name: reseller.name,
-                          credit: formatCurrency(reseller.credit, currency, lang),
-                        })}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="grid gap-2">
-                    <Label htmlFor="gen-user-mode">{t("vouchers.gen.userMode")}</Label>
-                    <Select
-                      value={genUserMode}
-                      onValueChange={(value) => setGenUserMode(value as "userpass" | "same")}
-                      disabled={generateMutation.isPending}
-                    >
-                      <SelectTrigger id="gen-user-mode" className="h-10 w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="userpass">{t("vouchers.gen.userModeUserpass")}</SelectItem>
-                        <SelectItem value="same">{t("vouchers.gen.userModeSame")}</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="gen-charset">{t("vouchers.gen.charset")}</Label>
-                    <Select
-                      value={genCharset}
-                      onValueChange={setGenCharset}
-                      disabled={generateMutation.isPending}
-                    >
-                      <SelectTrigger id="gen-charset" className="h-10 w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {CHARSET_OPTIONS.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>
-                            {t(option.labelKey)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-
-                <div className="grid gap-2">
-                  <Label htmlFor="gen-comment">{t("vouchers.gen.comment")}</Label>
-                  <Input
-                    id="gen-comment"
-                    placeholder={t("vouchers.gen.commentPlaceholder")}
-                    value={genComment}
-                    onChange={(event) => setGenComment(event.target.value)}
-                    disabled={generateMutation.isPending}
-                    maxLength={64}
-                  />
-                  <p className="text-xs text-muted-foreground">{t("vouchers.gen.commentHint")}</p>
-                </div>
-              </TabsContent>
-
-              <TabsContent value="limits" className="mt-4 grid gap-4">
-                {/* Parité Mikhmon : Time Limit (limit-uptime) par lot */}
-                <div className="grid gap-2">
-                  <Label htmlFor="gen-timelimit">{t("vouchers.gen.timeLimit")}</Label>
-                  <Select
-                    value={genTimeLimit}
-                    onValueChange={setGenTimeLimit}
-                    disabled={generateMutation.isPending}
-                  >
-                    <SelectTrigger id="gen-timelimit" className="h-10 w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="inherit">
-                        {t("vouchers.gen.timeLimitInherit")}
-                        {selectedGenProfile
-                          ? ` (${
-                              selectedGenProfile.sessionTimeoutMin > 0
-                                ? fmtRouterDuration(selectedGenProfile.sessionTimeoutMin)
-                                : t("vouchers.gen.timeLimitUnlimited")
-                            })`
-                          : ""}
-                      </SelectItem>
-                      {TIME_LIMIT_OPTIONS.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.min === 0
-                            ? t("vouchers.gen.timeLimitUnlimited")
-                            : fmtRouterDuration(option.min)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">{t("vouchers.gen.timeLimitHint")}</p>
-                </div>
-
-                <div className="grid gap-2">
-                  <Label htmlFor="gen-quota">{t("vouchers.gen.quotaLabel")}</Label>
-                  <Select
-                    value={genQuotaMb}
-                    onValueChange={setGenQuotaMb}
-                    disabled={generateMutation.isPending}
-                  >
-                    <SelectTrigger id="gen-quota" className="h-10 w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="inherit">
-                        {t("vouchers.gen.quotaInherit")}
-                        {selectedGenProfile
-                          ? ` (${
-                              selectedGenProfile.dataQuotaMb > 0
-                                ? formatBytes(selectedGenProfile.dataQuotaMb * 1048576, lang)
-                                : t("vouchers.quotaUnlimitedShort")
-                            })`
-                          : ""}
-                      </SelectItem>
-                      {QUOTA_OPTIONS.map((quota) => (
-                        <SelectItem key={quota.value} value={quota.value}>
-                          {quota.mb === 0 ? t("vouchers.gen.quotaUnlimited") : fmtQuota(quota.mb)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">{t("vouchers.gen.quotaHint")}</p>
-                </div>
-
-                {/* Repères FCFA — l'argument « 5 Go = 500 F », lisible d'un coup d'œil */}
-                <div className="rounded-lg border bg-background p-3">
-                  <p className="text-sm font-medium">{t("vouchers.gen.priceHintsTitle")}</p>
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {QUOTA_PRICE_HINTS.map(([quotaMb, price]) => (
-                      <Badge key={quotaMb} variant="secondary" className="font-mono text-xs">
-                        {fmtQuota(quotaMb)} = {fmtFcfa(price)}
-                      </Badge>
-                    ))}
-                  </div>
-                  <p className="mt-2 text-xs text-muted-foreground">{t("vouchers.gen.priceHintsHint")}</p>
-                </div>
-              </TabsContent>
-            </Tabs>
-
-            {/* Aperçu du coût et du quota en temps réel */}
-            <div className="rounded-lg bg-muted/50 p-3 text-sm">
-              <p>
-                {t("vouchers.totalCost")}{" "}
-                <span className="font-semibold">{formatCurrency(totalCost, currency, lang)}</span>{" "}
-                <span className="text-muted-foreground">
-                  {tf("vouchers.costDetail", {
-                    n: countValid ? countNum : 0,
-                    price: formatCurrency(unitPrice, currency, lang),
-                  })}
-                </span>
-              </p>
-              <p className="mt-1 text-muted-foreground">
-                {t("vouchers.gen.quotaPerVoucher")}{" "}
-                <span className="font-medium text-foreground">{quotaLabel}</span>
-                {selectedGenProfile && tf("vouchers.gen.profileSuffix", { name: selectedGenProfile.name })}
-              </p>
-              {selectedReseller && (
-                <p
-                  className={cn(
-                    "mt-1",
-                    insufficient ? "font-medium text-destructive" : "text-muted-foreground",
-                  )}
-                >
-                  {tf("vouchers.creditAfter", {
-                    amount: formatCurrency(creditAfter ?? 0, currency, lang),
-                  })}
-                  {insufficient &&
-                    tf("vouchers.insufficient", { name: selectedReseller.name })}
-                </p>
-              )}
-            </div>
-
-            {generateMutation.isError && (
-              <p className="text-sm text-destructive" role="alert">
-                {generateMutation.error.message}
-              </p>
-            )}
-
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setGenOpen(false)}
-                disabled={generateMutation.isPending}
-              >
-                {t("common.cancel")}
-              </Button>
-              <Button type="submit" disabled={!genValid || generateMutation.isPending}>
-                {generateMutation.isPending && <Loader2 className="size-4 animate-spin" />}
-                {t("vouchers.generateSubmit")}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      {/* Wizard de génération — 3 étapes (Forfait → Codes → Récap) */}
+      <VoucherWizardDialog
+        open={genOpen}
+        onOpenChange={setGenOpen}
+        profiles={profiles ?? []}
+        routers={routers ?? []}
+        resellers={resellers ?? []}
+        currency={currency}
+        tenantName={tenantName}
+        isPending={generateMutation.isPending}
+        isError={generateMutation.isError}
+        error={generateMutation.error}
+        onSubmit={(payload) => generateMutation.mutate(payload)}
+      />
 
       {/* Dialogue d'impression (mode modèle F2 si des templates existent) */}
       <UcPrintDialog

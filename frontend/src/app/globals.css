@@ -581,3 +581,77 @@
     page-break-inside: avoid;
   }
 }
+
+/* ─── Wizard vouchers (voucher-wizard-dialog) ───
+   Transitions d'étapes (direction avant/arrière), pop des sélections,
+   expansion des limites avancées. prefers-reduced-motion respecté. */
+@keyframes wizard-step-fwd {
+  from {
+    opacity: 0;
+    transform: translateX(26px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes wizard-step-back {
+  from {
+    opacity: 0;
+    transform: translateX(-26px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes wizard-pop-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  65% {
+    transform: scale(1.08);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes wizard-expand-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.wizard-step-fwd {
+  animation: wizard-step-fwd 0.32s cubic-bezier(0.22, 0.9, 0.3, 1) both;
+}
+.wizard-step-back {
+  animation: wizard-step-back 0.32s cubic-bezier(0.22, 0.9, 0.3, 1) both;
+}
+.wizard-pop {
+  animation: wizard-pop-in 0.35s cubic-bezier(0.22, 0.9, 0.3, 1) both;
+}
+.wizard-expand {
+  animation: wizard-expand-in 0.25s ease-out both;
+}
+.wizard-card:active {
+  transform: scale(0.98);
+}
+@media (prefers-reduced-motion: reduce) {
+  .wizard-step-fwd,
+  .wizard-step-back,
+  .wizard-pop,
+  .wizard-expand {
+    animation: none;
+  }
+  .wizard-card:hover,
+  .wizard-card:active {
+    transform: none;
+  }
+}

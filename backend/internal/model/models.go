@@ -258,6 +258,11 @@ type HotspotUser struct {
 	// (absence attendue) ni les comptes récents (grâce 2 min, commandes
 	// en file).
 	MissingOnRouter bool `json:"missingOnRouter,omitempty"`
+	// Disabled — miroir du statut STOCKÉ (désactivation manuelle) : le champ
+	// Status sérialisé par les listes porte le statut RÉSOLU (ResolvedStatus),
+	// où une expiration calculée peut masquer « disabled ». L'UI s'y réfère
+	// pour le bouton activer/désactiver. Calculé à la lecture, jamais persisté.
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 // Session — session hotspot active.
@@ -820,13 +825,66 @@ type DB struct {
 	LastTick      time.Time      `json:"lastTick"`
 }
 
-// EffectiveStatus retourne le statut réel d'un utilisateur : un voucher encore
-// "active" mais dont la date d'expiration est dépassée est vu comme "expired".
-func EffectiveStatus(u *HotspotUser, now time.Time) string {
-	if u.Kind == "voucher" && u.Status == "active" && u.ExpiresAt != "" {
+// voucherExpired — expiration « calculée » d'un voucher : validité (ExpiresAt)
+// dépassée OU quota temps cumulé (limit-uptime, reflété au cloud via
+// uptimeUsedSec) épuisé. Indépendant du statut stocké.
+func voucherExpired(u *HotspotUser, now time.Time) bool {
+	if u.Kind != "voucher" {
+		return false
+	}
+	if u.ExpiresAt != "" {
 		if exp, err := time.Parse(time.RFC3339, u.ExpiresAt); err == nil && now.After(exp) {
-			return "expired"
+			return true
 		}
+	}
+	if u.TimeLimitMin > 0 && u.UptimeUsedSec >= u.TimeLimitMin*60 {
+		return true
+	}
+	return false
+}
+
+// EffectiveStatus retourne le statut réel d'un utilisateur :
+//   - un voucher (actif ou utilisé en base) dont la validité est dépassée ou
+//     dont le quota temps est épuisé est renvoyé "expired" ;
+//   - un voucher "active" en base mais déjà connecté au moins une fois
+//     (UsedAt renseigné, ex. réactivé après désactivation) est renvoyé "used".
+//
+// Les autres statuts et les utilisateurs réguliers sont renvoyés tels quels.
+// Pour l'AFFICHAGE, utiliser ResolvedStatus (5 états priorisés).
+func EffectiveStatus(u *HotspotUser, now time.Time) string {
+	if u.Kind == "voucher" && u.Status != "disabled" && voucherExpired(u, now) {
+		return "expired"
+	}
+	if u.Status == "active" && u.UsedAt != "" {
+		return "used"
+	}
+	return u.Status
+}
+
+// ResolvedStatus — statut AFFICHÉ (5 états priorisés) :
+//
+//  1. expired  — validité dépassée ou quota temps épuisé (calculé) ;
+//  2. disabled — désactivation manuelle ;
+//  3. online   — session live au dernier read_state (≤ 45 s de latence) ;
+//  4. used     — déjà connecté au moins une fois, hors ligne ;
+//  5. active   — jamais connecté (disponible).
+//
+// `online` provient de la carte des sessions live (voir onlineSessions, api).
+func ResolvedStatus(u *HotspotUser, online bool, now time.Time) string {
+	if u.Kind == "voucher" && voucherExpired(u, now) {
+		return "expired"
+	}
+	switch u.Status {
+	case "expired":
+		return "expired"
+	case "disabled":
+		return "disabled"
+	}
+	if online {
+		return "online"
+	}
+	if u.UsedAt != "" {
+		return "used"
 	}
 	return u.Status
 }

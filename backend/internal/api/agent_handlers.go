@@ -678,11 +678,13 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 		liveNames[live[i].Username] = true
 		if _, ok := prevByUser[live[i].Username]; !ok {
 			logRouterUserEvent(db, router, live[i], "login", now)
+			markVoucherUsed(db, live[i], now) // statut dynamique : 1re connexion = utilisé
 		}
 	}
 	for _, s := range prevByUser {
 		if !liveNames[s.Username] {
 			logRouterUserEvent(db, router, s, "logout", now)
+			accumulateUptime(db, s) // quota temps : cumul de la session terminée
 		}
 	}
 
@@ -716,6 +718,44 @@ func logRouterUserEvent(db *model.DB, router *model.Router, s model.Session, act
 		MAC:        s.MAC,
 		At:         now.UTC().Format(time.RFC3339),
 	})
+}
+
+// markVoucherUsed — statut dynamique : au PREMIER login détecté (diff de
+// sessions du read_state), le voucher est marqué « utilisé » (UsedAt horodaté
+// + statut stocké used). Les utilisateurs réguliers (kind regular, miroir du
+// routeur) ne sont pas marqués. À appeler sous verrou.
+func markVoucherUsed(db *model.DB, s model.Session, now time.Time) {
+	if s.UserID == "" {
+		return
+	}
+	for i := range db.HotspotUsers {
+		u := &db.HotspotUsers[i]
+		if u.ID == s.UserID && u.Kind == "voucher" {
+			if u.UsedAt == "" {
+				u.UsedAt = now.UTC().Format(time.RFC3339)
+			}
+			if u.Status == "active" {
+				u.Status = "used"
+			}
+			return
+		}
+	}
+}
+
+// accumulateUptime — cumule l'uptime de la session terminée dans
+// uptimeUsedSec du user (quota temps « limit-uptime » : le routeur applique
+// la coupure, le cloud reflète le cumul pour l'état « expiré — temps épuisé »).
+// À appeler sous verrou, une seule fois par session terminée (diff logout).
+func accumulateUptime(db *model.DB, s model.Session) {
+	if s.UserID == "" || s.UptimeSec <= 0 {
+		return
+	}
+	for i := range db.HotspotUsers {
+		if db.HotspotUsers[i].ID == s.UserID {
+			db.HotspotUsers[i].UptimeUsedSec += s.UptimeSec
+			return
+		}
+	}
 }
 
 // parseIfaceCounters — décode « name:rx:tx;… » (compteurs cumulés en octets,

@@ -167,6 +167,31 @@ type UserLog struct {
 
 ## F4 — Actions utilisateurs : reset stats / prolonger / exporter / nettoyer [P0]
 
+### Statuts résolus (5 états priorisés) — listes, export, donut dashboard, stats par lot
+
+Le statut RENVOYÉ et FILTRÉ par `GET /api/users` / `GET /api/vouchers` / export CSV est le
+statut résolu (model.ResolvedStatus), par priorité décroissante :
+
+1. `expired` — voucher : validité (`expiresAt`) dépassée **OU** quota temps épuisé
+   (`uptimeUsedSec >= timeLimitMin` quand `timeLimitMin > 0`) — calculé, gagne sur tout ;
+2. `disabled` — désactivation manuelle (statut stocké) ;
+3. `online` — session live au dernier read_state (≤ 45 s de latence) ; garde : seules les
+   sessions des routeurs vus depuis < 3 min sont prises en compte (pas de « en ligne » figé) ;
+4. `used` — déjà connecté au moins une fois, hors ligne ;
+5. `active` — jamais connecté (disponible).
+
+- Persistance dynamique (mode agent) : au 1er login détecté (diff sessions), le voucher passe
+  `status="used"` + `usedAt` horodaté ; à chaque logout détecté, l'uptime de session s'ajoute à
+  `uptimeUsedSec` (le routeur applique lui-même la coupure limit-uptime ; le cloud reflète).
+- Les agrégats (donut dashboard, stats par lot) replient `online` dans `used` (en ligne = consommé
+  en cours) — les buckets restent active/used/expired/disabled.
+- La liste ajoute `disabled` (booléen, miroir du statut stocké) : le badge peut afficher
+  « expiré » (priorité 1) tandis que le toggle activer/désactiver s'y réfère.
+- `EffectiveStatus` (vente, compteurs « disponibles ») : renvoie aussi `expired` pour un voucher
+  utilisé dont la validité/quota est épuisé, et `used` pour un voucher réactivé après connexion.
+- `reset-stats` (unitaire ET bulk, toutes branches) : remet aussi `usedAt=""` et `used → active`
+  (retour « jamais connecté ») en plus des compteurs.
+
 - `POST /api/users/{id}/reset-stats` → `{ok:true}` : met à zéro bytesIn/bytesOut/uptimeUsedSec
   (cloud) + agent : queue nouvelle commande `user_reset` `{name}` (script :
   `/ip hotspot user reset-counters [find name=…]`) ; simulated : direct ; real : gateway Run.

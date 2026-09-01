@@ -3315,13 +3315,18 @@ func (a *API) handleReports(w http.ResponseWriter, r *http.Request) {
 	}
 
 	voucherStatus := map[string]int{"active": 0, "used": 0, "expired": 0, "disabled": 0}
+	online := onlineSessions(db, now)
 	for i := range db.HotspotUsers {
 		u := &db.HotspotUsers[i]
 		if u.AccountID != acc {
 			continue
 		}
 		if u.Kind == "voucher" {
-			voucherStatus[model.EffectiveStatus(u, now)]++
+			st := model.ResolvedStatus(u, online[onlineKey(u)], now)
+			if st == "online" {
+				st = "used" // agrégat : en ligne = consommé (session en cours)
+			}
+			voucherStatus[st]++
 		}
 	}
 	avgTicket := 0
@@ -3722,7 +3727,8 @@ func (a *API) handleBatchesList(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	a.store.Lock()
 	db := a.store.Data()
-	a.enforceExpired(db) // P0 (audit Mikhmon) : expiration appliquée au passage
+	a.enforceExpired(db)              // P0 (audit Mikhmon) : expiration appliquée au passage
+	online := onlineSessions(db, now) // sessions live (routeurs vus < 3 min)
 
 	// Statuts live des vouchers, agrégés par lot.
 	type liveStats struct {
@@ -3739,7 +3745,11 @@ func (a *API) handleBatchesList(w http.ResponseWriter, r *http.Request) {
 			st = &liveStats{}
 			stats[u.BatchID] = st
 		}
-		switch model.EffectiveStatus(u, now) {
+		resolved := model.ResolvedStatus(u, online[onlineKey(u)], now)
+		if resolved == "online" {
+			resolved = "used" // agrégat : en ligne = consommé (session en cours)
+		}
+		switch resolved {
 		case "active":
 			st.Active++
 			st.Remaining++

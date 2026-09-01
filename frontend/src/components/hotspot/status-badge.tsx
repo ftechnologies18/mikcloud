@@ -38,7 +38,8 @@ const LABEL_KEYS: Record<BadgeStatus, string> = {
 
 const STYLES: Record<BadgeStatus, string> = {
   active: "bg-primary/15 text-primary border-primary/25",
-  online: "bg-primary/15 text-primary border-primary/25",
+  // Session hotspot live (statut résolu) — vert + point pulsant (voir dot).
+  online: "bg-chart-1/15 text-chart-1 border-chart-1/25",
   used: "bg-chart-3/15 text-chart-3 border-chart-3/25",
   reseller: "bg-chart-3/15 text-chart-3 border-chart-3/25",
   sale: "bg-chart-3/15 text-chart-3 border-chart-3/25",
@@ -66,7 +67,12 @@ export function StatusBadge({
   const { t } = useI18n();
   return (
     <Badge variant="outline" className={cn("gap-1.5 font-medium", STYLES[status], className)}>
-      {dot && <span className="size-1.5 rounded-full bg-current" aria-hidden />}
+      {dot && (
+        <span
+          className={cn("size-1.5 rounded-full bg-current", status === "online" && "animate-pulse")}
+          aria-hidden
+        />
+      )}
       {label ?? t(LABEL_KEYS[status])}
     </Badge>
   );

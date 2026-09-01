@@ -90,6 +90,7 @@ const PAGE_SIZE = 10;
 const STATUS_OPTIONS = [
   { value: "all", labelKey: "common.allStatuses" },
   { value: "active", labelKey: "common.statusActive" },
+  { value: "online", labelKey: "common.statusOnline" },
   { value: "disabled", labelKey: "common.statusDisabled" },
   { value: "used", labelKey: "common.statusUsed" },
   { value: "expired", labelKey: "common.statusExpired" },
@@ -305,10 +306,15 @@ export default function UsersView() {
   });
 
   const toggleMutation = useMutation({
+    // Le statut listé est RÉSOLU (une expiration peut masquer « disabled ») :
+    // le toggle s'appuie sur le miroir du statut stocké (user.disabled).
     mutationFn: (user: HotspotUser) =>
-      api<HotspotUser>(`/api/users/${user.id}/${user.status === "disabled" ? "enable" : "disable"}`, {
-        method: "POST",
-      }),
+      api<HotspotUser>(
+        `/api/users/${user.id}/${user.disabled === true || user.status === "disabled" ? "enable" : "disable"}`,
+        {
+          method: "POST",
+        },
+      ),
     onSuccess: (user) => {
       toast.success(
         user.status === "disabled"
@@ -497,7 +503,9 @@ export default function UsersView() {
             ) : (
               <Power className="size-4" />
             )}
-            {user.status === "disabled" ? t("common.activate") : t("common.deactivate")}
+            {user.disabled === true || user.status === "disabled"
+              ? t("common.activate")
+              : t("common.deactivate")}
           </DropdownMenuItem>
           <DropdownMenuItem className="min-h-10" onClick={() => void copyCredentials(user)}>
             <ClipboardCopy className="size-4" />

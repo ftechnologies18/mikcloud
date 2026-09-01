@@ -169,6 +169,7 @@ const QUOTA_PRICE_HINTS: [number, number][] = [
 const STATUS_OPTIONS = [
   { value: "all", labelKey: "common.allStatuses" },
   { value: "active", labelKey: "common.statusActive" },
+  { value: "online", labelKey: "common.statusOnline" },
   { value: "used", labelKey: "common.statusUsed" },
   { value: "expired", labelKey: "common.statusExpired" },
   { value: "disabled", labelKey: "common.statusDisabled" },

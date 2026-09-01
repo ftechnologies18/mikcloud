@@ -6,7 +6,8 @@ export type { TeamRole } from "./roles";
 
 export type RouterMode = "simulated" | "real" | "agent";
 export type RouterStatus = "online" | "offline";
-export type VoucherStatus = "active" | "used" | "expired" | "disabled";
+/** Statut RÉSOLU des vouchers (5 états priorisés) : expired > disabled > online > used > active. */
+export type VoucherStatus = "active" | "online" | "used" | "expired" | "disabled";
 export type UserKind = "regular" | "voucher";
 export type ResellerStatus = "active" | "disabled";
 export type TransactionType = "credit" | "sale";
@@ -358,6 +359,8 @@ export interface HotspotUser {
   routerId: string;
   routerName: string;
   status: VoucherStatus;
+  /** Miroir du statut STOCKÉ : true = désactivé manuellement (le badge peut afficher « expiré » — priorité —, le toggle s'y réfère). */
+  disabled?: boolean;
   batchId: string;
   resellerId: string;
   resellerName: string;

@@ -75,16 +75,42 @@ func (a *API) enforceExpired(db *model.DB) {
 // Filtre partagé des listes d'utilisateurs (liste JSON + export CSV F4)
 // ---------------------------------------------------------------------------
 
-// filterUsers — filtrage scopé au compte avec les MÊMES règles que la liste
-// (kind/search/status/profileId + routerId pour l'export) ; le statut renvoyé
-// est le statut effectif (EffectiveStatus). Tri par création décroissante.
+// onlineSessions — ensemble des clés « routerID|username » ayant une session
+// live, restreint aux routeurs vus depuis moins de 3 minutes (garde : au-delà,
+// les sessions cloud peuvent être figées — on ne promet plus « en ligne »).
 // À appeler sous verrou.
+func onlineSessions(db *model.DB, now time.Time) map[string]bool {
+	seen := make(map[string]bool, len(db.Routers))
+	for i := range db.Routers {
+		if t, err := time.Parse(time.RFC3339, db.Routers[i].LastSeen); err == nil && now.Sub(t) <= 3*time.Minute {
+			seen[db.Routers[i].ID] = true
+		}
+	}
+	online := make(map[string]bool, len(db.Sessions))
+	for _, s := range db.Sessions {
+		if seen[s.RouterID] {
+			online[s.RouterID+"|"+strings.ToLower(s.Username)] = true
+		}
+	}
+	return online
+}
+
+// onlineKey — clé de session live d'un utilisateur (voir onlineSessions).
+func onlineKey(u *model.HotspotUser) string {
+	return u.RouterID + "|" + strings.ToLower(u.Username)
+}
+
+// filterUsers — filtrage scopé au compte avec les MÊMES règles que la liste
+// (kind/search/status/profileId + routerId pour l'export) ; le statut filtré
+// et renvoyé est le statut RÉSOLU (ResolvedStatus — 5 états, dont « online »).
+// Tri par création décroissante. À appeler sous verrou.
 func filterUsers(db *model.DB, acc string, q url.Values, now time.Time) []model.HotspotUser {
 	kind := q.Get("kind")
 	search := strings.ToLower(strings.TrimSpace(q.Get("search")))
 	status := q.Get("status")
 	profileID := q.Get("profileId")
 	routerID := strings.TrimSpace(q.Get("routerId"))
+	online := onlineSessions(db, now) // sessions live (routeurs vus < 3 min)
 
 	filtered := []model.HotspotUser{}
 	for i := range db.HotspotUsers {
@@ -101,7 +127,7 @@ func filterUsers(db *model.DB, acc string, q url.Values, now time.Time) []model.
 		if routerID != "" && u.RouterID != routerID {
 			continue
 		}
-		st := model.EffectiveStatus(u, now)
+		st := model.ResolvedStatus(u, online[onlineKey(u)], now)
 		if status != "" && st != status {
 			continue
 		}
@@ -113,6 +139,7 @@ func filterUsers(db *model.DB, acc string, q url.Values, now time.Time) []model.
 		}
 		uc := *u
 		uc.Status = st
+		uc.Disabled = u.Status == "disabled" // miroir du statut stocké (toggle UI)
 		filtered = append(filtered, uc)
 	}
 	sort.Slice(filtered, func(i, j int) bool { return filtered[i].CreatedAt > filtered[j].CreatedAt })
@@ -395,6 +422,10 @@ func (a *API) handleUserResetStats(w http.ResponseWriter, r *http.Request) {
 	u.BytesIn = 0
 	u.BytesOut = 0
 	u.UptimeUsedSec = 0
+	u.UsedAt = "" // retour à « jamais connecté »
+	if u.Status == "used" {
+		u.Status = "active"
+	}
 	var routerCopy *model.Router
 	if rr := findRouterScoped(db, u.RouterID, acc); rr != nil {
 		c := *rr
@@ -618,6 +649,10 @@ func (a *API) handleUsersBulk(w http.ResponseWriter, r *http.Request) {
 				processed++
 			case "reset-stats":
 				u.BytesIn, u.BytesOut, u.UptimeUsedSec = 0, 0, 0
+				u.UsedAt = "" // retour à « jamais connecté »
+				if u.Status == "used" {
+					u.Status = "active"
+				}
 				queueCommandLocked(db, rc.AccountID, rc.ID, model.CmdUserReset, map[string]any{"name": name})
 				processed++
 			}
@@ -635,6 +670,10 @@ func (a *API) handleUsersBulk(w http.ResponseWriter, r *http.Request) {
 				prolonge(u, nil)
 			case "reset-stats":
 				u.BytesIn, u.BytesOut, u.UptimeUsedSec = 0, 0, 0
+				u.UsedAt = "" // retour à « jamais connecté »
+				if u.Status == "used" {
+					u.Status = "active"
+				}
 			}
 			processed++
 		default:
@@ -646,6 +685,10 @@ func (a *API) handleUsersBulk(w http.ResponseWriter, r *http.Request) {
 				processed++
 			case "reset-stats":
 				u.BytesIn, u.BytesOut, u.UptimeUsedSec = 0, 0, 0
+				u.UsedAt = "" // retour à « jamais connecté »
+				if u.Status == "used" {
+					u.Status = "active"
+				}
 				processed++
 			case "enable", "disable", "delete":
 				gwTasks = append(gwTasks, gwTask{id: u.ID, rid: rc.ID})

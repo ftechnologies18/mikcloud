@@ -498,13 +498,13 @@
 
 /* ─── Impression A4 + QR des lots de vouchers (dialog VoucherA4PrintDialog) ───
    Pendant l'impression, le dialog A4 devient tout le document : les pages .a4-page
-   (196 × 283 mm = zone imprimable après marge @page de 7 mm ; + 3 mm de padding
-   interne = 10 mm depuis le bord de la feuille) sont coupées proprement, une par
+   (200 × 287 mm = zone imprimable après marge @page de 5 mm ; + 2,5 mm de padding
+   interne = 7,5 mm depuis le bord de la feuille) sont coupées proprement, une par
    feuille, et chaque ticket reste entier (break-inside: avoid). */
 @media print {
   @page {
     size: A4 portrait;
-    margin: 7mm;
+    margin: 5mm;
   }
 
   /* Tout est masqué sauf la branche contenant le dialog A4. */
@@ -561,9 +561,9 @@
 
   /* Chaque .a4-page = exactement une feuille A4. */
   .a4-page {
-    width: 196mm !important;
-    height: 283mm !important;
-    padding: 3mm !important;
+    width: 200mm !important;
+    height: 287mm !important;
+    padding: 2.5mm !important;
     margin: 0 !important;
     border: 0 !important;
     border-radius: 0 !important;

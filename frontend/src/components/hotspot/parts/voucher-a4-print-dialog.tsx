@@ -1,6 +1,6 @@
 "use client";
 
-// Dialog d'impression A4 + QR — 20 tickets par page (grille 4 × 5), pensé pour le flux
+// Dialog d'impression A4 + QR — 40 tickets par page (grille 5 × 8), pensé pour le flux
 // revendeur « imprimer → vendre » : chaque ticket porte un QR pointant vers la page de
 // login du hotspot avec le code pré-rempli (connexion en 1 scan) ou, à défaut, le code
 // en texte. Impression : chaque .a4-page remplit exactement une feuille A4 — voir la
@@ -18,9 +18,12 @@ import { useI18n } from "@/lib/hotspot/i18n";
 import { formatBytes, formatCurrency } from "@/lib/hotspot/format";
 import type { HotspotUser } from "@/lib/hotspot/types";
 
-// 20 tickets par page : 4 colonnes × 5 lignes.
-const PER_PAGE = 20;
-const QR_SIZE = 56;
+// 40 tickets par page : 5 colonnes × 8 lignes — tickets compactés (QR 42 px ≈ 11 mm,
+// toujours scannable) et marges de feuille réduites (voir globals.css : @page 5 mm).
+const COLS = 5;
+const ROWS = 8;
+const PER_PAGE = COLS * ROWS;
+const QR_SIZE = 42;
 
 interface VoucherA4PrintDialogProps {
   open: boolean;
@@ -108,17 +111,17 @@ export function VoucherA4PrintDialog({
             {pages.map((pageVouchers, pageIndex) => (
               <div
                 key={pageIndex}
-                className="a4-page flex h-[1123px] w-full flex-col rounded-lg border border-neutral-200 p-[10mm] shadow-md"
+                className="a4-page flex h-[1123px] w-full flex-col rounded-lg border border-neutral-200 p-[7.5mm] shadow-md"
               >
                 {/* En-tête discret de page */}
-                <div className="mb-1.5 flex items-center justify-between gap-4 text-[9px] uppercase tracking-wider text-neutral-400">
+                <div className="mb-1 flex items-center justify-between gap-4 text-[8px] uppercase tracking-wider text-neutral-400">
                   <span className="truncate">{tenantName || "MikCloud"}</span>
                   <span className="shrink-0">
                     {title} · {tf("a4.pageStamp", { n: pageIndex + 1, total: pages.length })}
                   </span>
                 </div>
-                {/* Grille 4 × 5 — les tickets remplissent exactement la page */}
-                <div className="grid min-h-0 flex-1 grid-cols-4 grid-rows-5 gap-2.5">
+                {/* Grille 5 × 8 — les tickets remplissent exactement la page */}
+                <div className="grid min-h-0 flex-1 grid-cols-5 grid-rows-8 gap-[1.5mm]">
                   {pageVouchers.map((voucher) => (
                     <A4Ticket
                       key={voucher.id}
@@ -153,10 +156,10 @@ function A4Ticket({
 }) {
   const { t, tf, lang } = useI18n();
   return (
-    <div className="a4-ticket flex min-h-0 flex-col items-center justify-between gap-1 rounded-md border border-dashed border-black p-2 text-center break-inside-avoid">
+    <div className="a4-ticket flex min-h-0 flex-col items-center justify-between gap-0.5 rounded-md border border-dashed border-black p-1.5 text-center break-inside-avoid">
       <div className="w-full">
-        <p className="truncate text-[11px] font-bold leading-tight">{tenantName || "MikCloud"}</p>
-        <p className="text-[7px] uppercase tracking-[0.3em] text-neutral-500">WIFI</p>
+        <p className="truncate text-[10px] font-bold leading-tight">{tenantName || "MikCloud"}</p>
+        <p className="text-[6px] uppercase tracking-[0.3em] text-neutral-500">WIFI</p>
       </div>
       <QRCodeSVG
         value={qrValue(voucher, hotspotLoginUrl)}
@@ -165,17 +168,17 @@ function A4Ticket({
         aria-label={tf("a4.qrAria", { code: voucher.username })}
       />
       <div className="w-full">
-        <p className="truncate font-mono text-[15px] font-bold leading-tight">{voucher.username}</p>
+        <p className="truncate font-mono text-[12px] font-bold leading-tight">{voucher.username}</p>
         {/* Mode « mot de passe = identifiant » : le code seul sur le ticket. */}
         {!isSamePasswordMode(voucher) && (
-          <p className="font-mono text-[10px] leading-tight">{t("a4.password")} {voucher.password}</p>
+          <p className="font-mono text-[9px] leading-tight">{t("a4.password")} {voucher.password}</p>
         )}
-        <p className="mt-0.5 text-[10px] leading-tight">
+        <p className="mt-0.5 text-[9px] leading-tight">
           {voucher.profileName}
           {voucher.dataQuotaMb > 0 && ` · ${formatBytes(voucher.dataQuotaMb * 1048576, lang)}`} ·{" "}
           <span className="font-semibold">{formatCurrency(voucher.price, currency)}</span>
         </p>
-        <p className="mt-0.5 text-[8px] leading-tight text-neutral-500">{t("a4.scanHint")}</p>
+        <p className="mt-0.5 text-[7px] leading-tight text-neutral-500">{t("a4.scanHint")}</p>
       </div>
     </div>
   );

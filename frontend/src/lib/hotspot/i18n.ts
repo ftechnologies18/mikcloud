@@ -395,7 +395,7 @@ const fr: Record<string, string> = {
   "vouchers.batches.filterBatch": "Filtrer le lot {batch}",
   "vouchers.batches.actionsFor": "Actions pour le lot {batch}",
   "vouchers.batches.printA4": "Imprimer A4 + QR",
-  "vouchers.batches.printA4Title": "Imprimer A4 + QR — vouchers actifs à vendre (20 par page)",
+  "vouchers.batches.printA4Title": "Imprimer A4 + QR — vouchers actifs à vendre (40 par page)",
   "vouchers.batches.printA4Aria": "Imprimer A4 + QR les vouchers actifs du lot {batch}",
   "vouchers.batches.printSimple": "Imprimer (liste simple)",
 
@@ -439,8 +439,8 @@ const fr: Record<string, string> = {
   // — impression A4 + QR (dialog flux revendeur) —
   "a4.close": "Fermer",
   "a4.print": "Imprimer",
-  "a4.ticketsOne": "{n} ticket — 20 par page A4 (4 × 5)",
-  "a4.ticketsMany": "{n} tickets — 20 par page A4 (4 × 5)",
+  "a4.ticketsOne": "{n} ticket — 40 par page A4 (5 × 8)",
+  "a4.ticketsMany": "{n} tickets — 40 par page A4 (5 × 8)",
   "a4.pages": " · {n} pages",
   "a4.qrLogin": " · QR vers la page de connexion",
   "a4.qrText": " · QR en texte (URL hotspot non configurée)",
@@ -2028,7 +2028,7 @@ const en: Record<string, string> = {
   "vouchers.batches.filterBatch": "Filter batch {batch}",
   "vouchers.batches.actionsFor": "Actions for batch {batch}",
   "vouchers.batches.printA4": "Print A4 + QR",
-  "vouchers.batches.printA4Title": "Print A4 + QR — active vouchers ready to sell (20 per page)",
+  "vouchers.batches.printA4Title": "Print A4 + QR — active vouchers ready to sell (40 per page)",
   "vouchers.batches.printA4Aria": "Print A4 + QR of the active vouchers of batch {batch}",
   "vouchers.batches.printSimple": "Print (simple list)",
 
@@ -2072,8 +2072,8 @@ const en: Record<string, string> = {
   // — A4 + QR print (reseller flow dialog) —
   "a4.close": "Close",
   "a4.print": "Print",
-  "a4.ticketsOne": "{n} ticket — 20 per A4 page (4 × 5)",
-  "a4.ticketsMany": "{n} tickets — 20 per A4 page (4 × 5)",
+  "a4.ticketsOne": "{n} ticket — 40 per A4 page (5 × 8)",
+  "a4.ticketsMany": "{n} tickets — 40 per A4 page (5 × 8)",
   "a4.pages": " · {n} pages",
   "a4.qrLogin": " · QR to the login page",
   "a4.qrText": " · QR as text (hotspot URL not configured)",

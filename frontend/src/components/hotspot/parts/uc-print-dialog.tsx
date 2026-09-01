@@ -1,8 +1,8 @@
 "use client";
 
 // Dialog d'impression des vouchers — tickets noirs sur fond blanc dans une zone
-// .print-area (globals.css masque tout le reste à l'impression, .no-print cache
-// la barre d'outils).
+// .print-area (globals.css : à l'impression, le dialog devient le document en flux
+// normal et tout le reste est masqué ; .no-print cache la barre d'outils).
 //
 // Mode modèle (F2) : si des VoucherTemplates sont fournis, une barre d'outils
 // permet de choisir le modèle (« Ticket standard MikCloud » = rendu historique

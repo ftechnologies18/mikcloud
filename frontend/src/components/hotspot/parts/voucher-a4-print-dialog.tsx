@@ -3,10 +3,10 @@
 // Dialog d'impression A4 + QR — 40 tickets par page (grille 5 × 8), pensé pour le flux
 // revendeur « imprimer → vendre » : chaque ticket porte un QR pointant vers la page de
 // login du hotspot avec le code pré-rempli (connexion en 1 scan) ou, à défaut, le code
-// en texte. Impression : chaque .a4-page remplit exactement une feuille A4 — voir la
-// section « Impression A4 + QR » de globals.css (body.a4-printing + .print-area.a4-print).
+// en texte. Impression : chaque .a4-page remplit exactement une feuille A4 — voir les
+// sections « Impression des vouchers » et « Impression A4 + QR » de globals.css.
 
-import { useEffect, useMemo } from "react";
+import { useMemo } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { Printer } from "lucide-react";
 
@@ -60,14 +60,6 @@ export function VoucherA4PrintDialog({
   const { t, tf } = useI18n();
   const currency = useCurrency();
 
-  // Marque le document pendant l'impression A4 : globals.css n'imprime alors
-  // que ce dialog, chaque page A4 étant coupée proprement (break-after: page).
-  useEffect(() => {
-    if (!open) return;
-    document.body.classList.add("a4-printing");
-    return () => document.body.classList.remove("a4-printing");
-  }, [open]);
-
   const pages = useMemo(() => {
     const chunks: HotspotUser[][] = [];
     for (let i = 0; i < vouchers.length; i += PER_PAGE) {
@@ -78,7 +70,7 @@ export function VoucherA4PrintDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="a4-dialog gap-4 sm:max-w-5xl">
+      <DialogContent className="gap-4 sm:max-w-5xl">
         {/* Barre d'outils — masquée à l'impression (.no-print) */}
         <div className="no-print flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">

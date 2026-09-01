@@ -448,29 +448,85 @@
   background: oklch(1 0 0 / 0.055);
 }
 
-/* ─── Impression des vouchers ─── */
+/* ─── Impression des vouchers ───
+   Toutes les impressions (dialog standard, modèles F2, A4+QR) passent par un
+   Dialog Radix ([data-slot="dialog-content"], porté directement dans <body>)
+   contenant une .print-area. À l'impression :
+   1) toute branche du <body> sans .print-area est masquée (display:none — le
+      vieux truc visibility: hidden réservait l'espace et cassait la pagination) ;
+   2) le dialog repasse en flux normal, ancré en haut de la feuille. NB : Tailwind
+      v4 compile translate-x/y-[-50%] du DialogContent via la propriété CSS
+      `translate` (et non `transform`) — l'annuler explicitement, sinon tout le
+      dialog reste décalé de -50 % (tickets coupés/empilés, pagination fausse) ;
+   3) la .print-area s'étale naturellement sur les feuilles : pagination native
+      (break-inside: avoid des tickets, page-break-after des modèles/pages A4).
+   (Navigateurs sans :has — antérieurs à 2023 : dégradation identique à l'ancien
+   comportement, aucun régression supplémentaire.) */
 @media print {
-  body * {
-    visibility: hidden;
+  @page {
+    size: A4 portrait;
+    margin: 5mm;
   }
-  .print-area,
-  .print-area * {
-    visibility: visible;
-  }
-  .print-area {
-    position: absolute;
-    inset: 0;
-    display: block !important;
-    background: white !important;
-    color: black;
-    padding: 8mm;
-  }
+
   .no-print {
     display: none !important;
   }
-  @page {
-    size: A4;
-    margin: 8mm;
+
+  /* Masque tout ce qui n'est pas la branche contenant la zone imprimée. */
+  body:has(.print-area) > *:not(:has(.print-area)) {
+    display: none !important;
+  }
+  body:has(.print-area) [data-slot="dialog-overlay"],
+  body:has(.print-area) [data-slot="dialog-content"] > [data-slot="dialog-close"] {
+    display: none !important;
+  }
+
+  /* Le dialog devient le document : flux normal, pleine largeur, sans habillage. */
+  body:has(.print-area) [data-slot="dialog-content"] {
+    position: static !important;
+    inset: auto !important;
+    transform: none !important;
+    translate: none !important;
+    scale: none !important;
+    rotate: none !important;
+    display: block !important;
+    width: auto !important;
+    max-width: none !important;
+    max-height: none !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    background: white !important;
+    gap: 0 !important;
+  }
+
+  /* Conteneur d'aperçu à défilement écran du dialog A4 : sans limite à l'impression
+     (celui du dialog standard porte déjà print:max-h-none print:overflow-visible). */
+  .a4-scroll {
+    max-height: none !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
+  }
+
+  /* Zone imprimée : en flux normal, sans les habillages de l'aperçu écran. */
+  .print-area {
+    position: static !important;
+    inset: auto !important;
+    display: block !important;
+    width: auto !important;
+    max-width: none !important;
+    max-height: none !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
+    background: white !important;
+    color: black;
   }
 }
 
@@ -497,68 +553,12 @@
 }
 
 /* ─── Impression A4 + QR des lots de vouchers (dialog VoucherA4PrintDialog) ───
-   Pendant l'impression, le dialog A4 devient tout le document : les pages .a4-page
-   (200 × 287 mm = zone imprimable après marge @page de 5 mm ; + 2,5 mm de padding
-   interne = 7,5 mm depuis le bord de la feuille) sont coupées proprement, une par
-   feuille, et chaque ticket reste entier (break-inside: avoid). */
+   Grâce au socle commun ci-dessus (dialog en flux normal, .print-area déroulée),
+   chaque .a4-page = exactement une feuille A4 : 200 × 287 mm = zone imprimable
+   après marge @page de 5 mm (+ 2,5 mm de padding interne = 7,5 mm depuis le bord
+   de la feuille), coupée proprement une page par feuille (break-after: page) et
+   chaque ticket reste entier (break-inside: avoid). */
 @media print {
-  @page {
-    size: A4 portrait;
-    margin: 5mm;
-  }
-
-  /* Tout est masqué sauf la branche contenant le dialog A4. */
-  body.a4-printing > *:not(:has(.a4-dialog)) {
-    display: none !important;
-  }
-
-  /* Le dialog A4 repasse en flux normal, pleine page. */
-  body.a4-printing .a4-dialog {
-    position: static !important;
-    inset: auto !important;
-    transform: none !important;
-    display: block !important;
-    width: auto !important;
-    max-width: none !important;
-    max-height: none !important;
-    overflow: visible !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    border: 0 !important;
-    border-radius: 0 !important;
-    box-shadow: none !important;
-    background: white !important;
-    gap: 0 !important;
-  }
-
-  /* Le conteneur d'aperçu (scroll écran) ne limite plus la hauteur. */
-  body.a4-printing .a4-scroll {
-    max-height: none !important;
-    overflow: visible !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    border-radius: 0 !important;
-  }
-
-  /* Zone d'impression : neutralise l'aperçu (padding/gap écran). En repli
-     (navigateurs sans :has), reste en absolu ancré en haut à gauche (règle de
-     base .print-area) ; avec :has, repasse en flux normal pour paginer proprement. */
-  body.a4-printing .print-area.a4-print {
-    width: 100%;
-    height: auto;
-    inset: 0 auto auto 0;
-    padding: 0 !important;
-    gap: 0 !important;
-    background: white !important;
-    color: black;
-  }
-
-  @supports selector(:has(*)) {
-    body.a4-printing .print-area.a4-print {
-      position: static;
-    }
-  }
-
   /* Chaque .a4-page = exactement une feuille A4. */
   .a4-page {
     width: 200mm !important;

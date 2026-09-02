@@ -470,7 +470,9 @@ function AccountingTab({ visible }: { visible: boolean }) {
             <Card className="gap-4 py-4 sm:py-6">
               <CardHeader className="px-4 sm:px-6">
                 <CardTitle className="text-base">{t("reports.channel.title")}</CardTitle>
-                <CardDescription>{t("reports.channel.desc")}</CardDescription>
+                <CardDescription>
+                  {t(routerFilter === "all" ? "reports.channel.desc" : "reports.channel.descSite")}
+                </CardDescription>
               </CardHeader>
               <CardContent className="px-4 sm:px-6">
                 {channelTotal === 0 ? (

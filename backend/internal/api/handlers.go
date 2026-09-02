@@ -1040,23 +1040,17 @@ func (a *API) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	salesToday, revenue30d := 0, 0
 	salesTodayByRouter := map[string]int{}
 	revenue30dByRouter := map[string]int{}
-	for i := range db.Sales {
-		s := db.Sales[i]
-		if s.AccountID != acc {
-			continue
-		}
-		at, err := time.Parse(time.RFC3339, s.At)
-		if err != nil {
-			continue
-		}
-		if !at.Before(todayStart) {
-			salesToday += s.Count
-			salesTodayByRouter[s.RouterID] += s.Count
-		}
-		if at.After(cutoff30) {
-			revenue30d += s.Amount
-			revenue30dByRouter[s.RouterID] += s.Amount
-		}
+	// Revenus RÉELS (voir helpers en tête de fichier) : ventes directes
+	// consommées + encaissements revendeurs nets des retours — générer du
+	// stock n'est pas vendre.
+	for _, e := range collectSaleEvents(db, acc, cutoff30) {
+		revenue30d += e.Amount
+		revenue30dByRouter[e.RouterID] += e.Amount
+	}
+	// Volume : tickets ÉCULÉS du jour (remis au client ou consommés).
+	for _, v := range collectSoldVouchers(db, acc, todayStart) {
+		salesToday++
+		salesTodayByRouter[v.RouterID]++
 	}
 
 	accRouters := []model.Router{}
@@ -1145,19 +1139,186 @@ func (a *API) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ---------------------------------------------------------------------------
+// Revenus RÉELS — source de vérité unique des modules financiers (rapports,
+// comptabilité, marge, dashboard).
+//
+// Logique métier mikCloud : générer du stock N'EST PAS vendre. Un revenu ne
+// naît qu'à un événement d'argent réel :
+//
+//   - vente DIRECTE : un voucher du stock direct (sans ResellerID) n'est
+//     compté que lorsqu'un client le CONSOMME (UsedAt — première connexion)
+//     au prix réellement payé (SellingPrice sinon Price) ;
+//   - canal REVENDEUR : l'argent suit les Transactions — achats de stock
+//     prépayés (type « sale » : génération pour revendeur OU transfert N°18)
+//     + versements dépôt-vente (type « settlement » : espèces OU compensation
+//     crédit N°19) − retours de stock recrédités (type « credit » noté
+//     « Retour de stock : » — N°18/N°20). Un rechargement de portefeuille
+//     (type « credit ») est une AVANCE, pas un revenu.
+//
+// Conséquence : un retour de stock n'appelle AUCUNE écriture négative dans
+// les rapports — le ticket rendu retourne au stock et ne sera compté que le
+// jour où il sera réellement écoulé (achats 1000 − retours 600 = 400 nets).
+// ---------------------------------------------------------------------------
+
+// txNoteReturn — préfixe normalisé des Transactions de retour de stock
+// (handlers_sell.go N°20 et handlers_transfer.go N°18). Le rechargement
+// manuel (handleResellerCredit) utilise le même type « credit » mais une
+// autre note : c'est une avance, jamais un revenu ni un retour.
+const txNoteReturn = "Retour de stock :"
+
+// txNoteCompensation — écriture de portefeuille d'un versement dépôt-vente
+// compensé par le crédit prépayé (handlers_deposit.go N°19 v2) : double
+// écriture du même « settlement », à ne compter qu'une seule fois.
+const txNoteCompensation = "Crédit prépayé converti en versement"
+
+// directSalePrice — prix réellement payé par le client final d'un voucher
+// direct (prix de vente copié du profil à la génération, sinon prix gros).
+func directSalePrice(u *model.HotspotUser) int {
+	if u.SellingPrice > 0 {
+		return u.SellingPrice
+	}
+	return u.Price
+}
+
+// voucherSoldDate — date d'ÉCOULEMENT d'un voucher : la remise au client
+// (Mode Vente, SoldAt) sinon la première connexion (UsedAt) — les dates
+// RFC3339 UTC sont comparables lexicalement. Vide = jamais éculé (stock).
+func voucherSoldDate(u *model.HotspotUser) (time.Time, bool) {
+	raw := u.SoldAt
+	if u.UsedAt != "" && (raw == "" || u.UsedAt < raw) {
+		raw = u.UsedAt
+	}
+	if raw == "" {
+		return time.Time{}, false
+	}
+	at, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return at, true
+}
+
+// resellerNetIncome — contribution TRÉSORERIE d'une transaction au revenu
+// revendeurs : +achats de stock prépayés et versements dépôt-vente,
+// −retours de stock recrédités ; 0 pour tout le reste (avances/rechargements,
+// créances naissantes, écritures de portefeuille de compensation…).
+func resellerNetIncome(t model.Transaction) int {
+	switch t.Type {
+	case "sale":
+		if strings.HasPrefix(t.Note, txNoteCompensation) {
+			return 0 // doublon du « settlement » déjà compté
+		}
+		return t.Amount
+	case "settlement":
+		return t.Amount
+	case "credit":
+		if strings.HasPrefix(t.Note, txNoteReturn) {
+			return -t.Amount // retour de stock : l'argent repart au revendeur
+		}
+		return 0
+	}
+	return 0
+}
+
+// saleEvent — un événement de revenu réel, normalisé pour toutes les
+// agrégations (courbes, KPI, canal, top revendeurs, export CSV).
+type saleEvent struct {
+	At       time.Time
+	Amount   int // argent perçu par le propriétaire (trésorerie)
+	Selling  int // valorisation prix public (analyse F13)
+	Cost     int // valorisation prix gros (coût de référence réseau)
+	RouterID string
+	Profile  string
+	Reseller string // vide = vente directe
+}
+
+// collectSaleEvents — TOUS les événements de revenu réel du compte depuis
+// `since` : ventes directes (tickets consommés) + encaissements revendeurs
+// nets (transactions), triés chronologiquement. L'appelant tient le verrou.
+func collectSaleEvents(db *model.DB, acc string, since time.Time) []saleEvent {
+	events := []saleEvent{}
+	for i := range db.HotspotUsers {
+		u := &db.HotspotUsers[i]
+		if u.AccountID != acc || u.Kind != "voucher" || u.ResellerID != "" {
+			continue
+		}
+		at, ok := voucherSoldDate(u)
+		if !ok || at.Before(since) {
+			continue
+		}
+		events = append(events, saleEvent{
+			At: at, Amount: directSalePrice(u), Selling: directSalePrice(u), Cost: u.Price,
+			RouterID: u.RouterID, Profile: u.ProfileName,
+		})
+	}
+	for _, t := range db.Transactions {
+		if t.AccountID != acc {
+			continue
+		}
+		gain := resellerNetIncome(t)
+		if gain == 0 {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339, t.At)
+		if err != nil || at.Before(since) {
+			continue
+		}
+		// Revenu revendeur : le propriétaire encaisse le PRIX GROS — marge
+		// publique nulle par construction (elle est cédée au revendeur).
+		events = append(events, saleEvent{At: at, Amount: gain, Selling: gain, Cost: gain, Reseller: t.ResellerName})
+	}
+	sort.Slice(events, func(i, j int) bool { return events[i].At.Before(events[j].At) })
+	return events
+}
+
+// soldVoucher — un voucher ÉCULÉ (remis au client ou consommé), quel que
+// soit son canal : base des analyses de volume et de marge (profils, sites).
+type soldVoucher struct {
+	At           time.Time
+	Public       int // valorisation prix public (SellingPrice sinon Price)
+	Cost         int // valeur gros (Price)
+	RouterID     string
+	Profile      string
+	ResellerID   string
+	ResellerName string // vide = éculé en direct par le propriétaire
+}
+
+// collectSoldVouchers — tous les vouchers éculés du compte depuis `since`
+// (date d'écoulement dans la fenêtre). L'appelant tient le verrou.
+func collectSoldVouchers(db *model.DB, acc string, since time.Time) []soldVoucher {
+	out := []soldVoucher{}
+	for i := range db.HotspotUsers {
+		u := &db.HotspotUsers[i]
+		if u.AccountID != acc || u.Kind != "voucher" {
+			continue
+		}
+		at, ok := voucherSoldDate(u)
+		if !ok || at.Before(since) {
+			continue
+		}
+		out = append(out, soldVoucher{
+			At: at, Public: directSalePrice(u), Cost: u.Price,
+			RouterID: u.RouterID, Profile: u.ProfileName,
+			ResellerID: u.ResellerID, ResellerName: u.ResellerName,
+		})
+	}
+	return out
+}
+
+// buildRevenueByDay — courbe du chiffre d'affaires RÉEL par jour (ventes
+// directes consommées + encaissements revendeurs nets des retours).
 func buildRevenueByDay(db *model.DB, acc string, now time.Time, days int) []dayValue {
+	events := collectSaleEvents(db, acc, now.AddDate(0, 0, -days))
 	out := make([]dayValue, 0, days)
 	for i := days - 1; i >= 0; i-- {
 		day := now.AddDate(0, 0, -i)
 		start := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC)
 		end := start.Add(24 * time.Hour)
 		sum := 0
-		for _, s := range db.Sales {
-			if s.AccountID != acc {
-				continue
-			}
-			if at, err := time.Parse(time.RFC3339, s.At); err == nil && !at.Before(start) && at.Before(end) {
-				sum += s.Amount
+		for _, e := range events {
+			if !e.At.Before(start) && e.At.Before(end) {
+				sum += e.Amount
 			}
 		}
 		out = append(out, dayValue{Day: fmt.Sprintf("%02d/%02d", day.Day(), int(day.Month())), Value: sum})
@@ -3488,6 +3649,12 @@ func (a *API) handleReports(w http.ResponseWriter, r *http.Request) {
 
 	since := now.AddDate(0, 0, -days)
 	prevSince := now.AddDate(0, 0, -2*days) // v2 — comparaison Δ% (fenêtre précédente)
+
+	// Revenus RÉELS (trésorerie) + écoulements (volume) — voir helpers en tête
+	// de fichier : générer du stock n'est pas vendre, les retours se déduisent.
+	events := collectSaleEvents(db, acc, prevSince)
+	sold := collectSoldVouchers(db, acc, prevSince)
+
 	profCount := map[string]int{}
 	profRevenue := map[string]int{}
 	prevRevenue, prevSales := 0, 0
@@ -3499,42 +3666,52 @@ func (a *API) handleReports(w http.ResponseWriter, r *http.Request) {
 		revenue int
 		sales   int
 	}{}
-	for _, s := range db.Sales {
-		if s.AccountID != acc {
-			continue
-		}
-		at, err := time.Parse(time.RFC3339, s.At)
-		if err != nil || at.Before(prevSince) {
-			continue
-		}
-		if at.Before(since) {
+	// Trésorerie réelle : ventes directes consommées + encaissements
+	// revendeurs nets (achats/versements − retours recrédités).
+	for _, e := range events {
+		if e.At.Before(since) {
 			// Fenêtre précédente de même longueur — comparaison Δ%.
-			prevRevenue += s.Amount
-			prevSales += s.Count
+			prevRevenue += e.Amount
 			continue
 		}
-		profCount[s.ProfileName] += s.Count
-		profRevenue[s.ProfileName] += s.Amount
-		totals.revenue += s.Amount
-		totals.sales += s.Count
-		// Canal de distribution + performance revendeurs (leaderboard).
-		if s.Channel == "reseller" {
-			chanResellerRevenue += s.Amount
-			chanResellerSales += s.Count
-			tr := topResellersAgg[s.ResellerName]
+		totals.revenue += e.Amount
+		if e.Reseller == "" {
+			chanDirectRevenue += e.Amount
+		} else {
+			chanResellerRevenue += e.Amount
+			tr := topResellersAgg[e.Reseller]
 			if tr == nil {
 				tr = &resellerAgg{}
-				topResellersAgg[s.ResellerName] = tr
+				topResellersAgg[e.Reseller] = tr
 			}
-			tr.sales += s.Count
-			tr.revenue += s.Amount
-		} else {
-			chanDirectRevenue += s.Amount
-			chanDirectSales += s.Count
+			tr.revenue += e.Amount
 		}
 	}
-	// Top 5 revendeurs par CA de la fenêtre (mikCloud : le réseau de
-	// distribution est un moteur clé — savoir qui performe).
+	// Volume réel : tickets ÉCULÉS (remis au client ou consommés) —
+	// indépendant du canal financier (prépayé payé à l'achat, dépôt-vente
+	// payé au versement) : ce que les clients finaux ont reçu.
+	for _, v := range sold {
+		if v.At.Before(since) {
+			prevSales++
+			continue
+		}
+		totals.sales++
+		profCount[v.Profile]++
+		profRevenue[v.Profile] += v.Public
+		if v.ResellerName == "" {
+			chanDirectSales++
+		} else {
+			chanResellerSales++
+			if tr := topResellersAgg[v.ResellerName]; tr != nil {
+				tr.sales++
+			} else {
+				topResellersAgg[v.ResellerName] = &resellerAgg{sales: 1}
+			}
+		}
+	}
+	// Top 5 revendeurs par ENCAISSEMENT NET de la fenêtre (achats prépayés +
+	// versements dépôt-vente − retours recrédités) — mikCloud : le réseau de
+	// distribution est un moteur clé — savoir qui rapporte vraiment.
 	type resellerPerf struct {
 		Name    string `json:"name"`
 		Sales   int    `json:"sales"`
@@ -3682,11 +3859,12 @@ func (a *API) handleReports(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// buildMarginReport — marge par profil (F13) sur 30 jours glissants :
-// revenue = total vente (SellingTotal), cost = coût (Cost), margin = écart.
-// v2 : + évolution quotidienne de la marge (byDay), + profitabilité par site
-// (byRouter), + fenêtre des 30 jours précédents (prev — comparaison Δ%).
-// À appeler sous verrou.
+// buildMarginReport — F13 : analyse de la VALEUR écoulée (tickets réellement
+// remis au client ou consommés) : prix public vs prix gros, 30 jours glissants,
+// par profil + totaux + par site + courbe quotidienne. La marge des ventes
+// directes est captée par le propriétaire ; celle des tickets réseau est
+// cédée au revendeur (il encaisse public, le propriétaire a déjà encaissé le
+// gros à l'achat) — l'analyse reste la même pour les deux canaux.
 func buildMarginReport(db *model.DB, acc string, now time.Time) map[string]any {
 	since := now.AddDate(0, 0, -30)
 	prevSince := now.AddDate(0, 0, -60)
@@ -3725,59 +3903,43 @@ func buildMarginReport(db *model.DB, acc string, now time.Time) map[string]any {
 	}
 	totalRevenue, totalCost := 0, 0
 	prevRevenue, prevCost := 0, 0
-	for i := range db.Sales {
-		s := &db.Sales[i]
-		if s.AccountID != acc {
-			continue
-		}
-		at, err := time.Parse(time.RFC3339, s.At)
-		if err != nil || at.Before(prevSince) {
-			continue
-		}
-		// Ventes antérieures à la marge : SellingTotal = 0 → base = Amount
-		// (équivalent prix coût, cf. migration migrateMultiTenant).
-		selling := s.SellingTotal
-		if selling == 0 {
-			selling = s.Amount
-		}
-		cost := s.Cost
-		if cost == 0 {
-			cost = s.Amount
-		}
-		if at.Before(since) {
+	for _, v := range collectSoldVouchers(db, acc, prevSince) {
+		if v.At.Before(since) {
 			// 30 jours précédents — comparaison Δ%.
-			prevRevenue += selling
-			prevCost += cost
+			prevRevenue += v.Public
+			prevCost += v.Cost
 			continue
 		}
-		pm, ok := byProfile[s.ProfileName]
+		pm, ok := byProfile[v.Profile]
 		if !ok {
-			pm = &profileMargin{Name: s.ProfileName}
-			byProfile[s.ProfileName] = pm
+			pm = &profileMargin{Name: v.Profile}
+			byProfile[v.Profile] = pm
 		}
-		pm.Sold += s.Count
-		pm.Revenue += selling
-		pm.Cost += cost
-		pm.Margin += selling - cost
-		totalRevenue += selling
-		totalCost += cost
+		pm.Sold++
+		pm.Revenue += v.Public
+		pm.Cost += v.Cost
+		pm.Margin += v.Public - v.Cost
+		totalRevenue += v.Public
+		totalCost += v.Cost
 		// Profitabilité par site (multi-sites : quel routeur rapporte ?).
-		rid := s.RouterID
+		rid := v.RouterID
 		if rid == "" {
 			rid = "unknown"
-			routerNames["unknown"] = "(inconnu)"
+		}
+		if routerNames[rid] == "" {
+			routerNames[rid] = "(site supprimé)"
 		}
 		rm, ok := byRouter[rid]
 		if !ok {
 			rm = &routerMargin{RouterName: routerNames[rid]}
 			byRouter[rid] = rm
 		}
-		rm.Revenue += selling
-		rm.Cost += cost
-		rm.Margin += selling - cost
+		rm.Revenue += v.Public
+		rm.Cost += v.Cost
+		rm.Margin += v.Public - v.Cost
 		// Courbe quotidienne de la marge.
-		if idx := sort.Search(len(dayStarts), func(i int) bool { return at.Before(dayStarts[i]) }) - 1; idx >= 0 {
-			byDay[idx].Margin += selling - cost
+		if idx := sort.Search(len(dayStarts), func(i int) bool { return v.At.Before(dayStarts[i]) }) - 1; idx >= 0 {
+			byDay[idx].Margin += v.Public - v.Cost
 		}
 	}
 	rows := make([]profileMargin, 0, len(byProfile))
@@ -4033,72 +4195,107 @@ func buildAccounting(db *model.DB, acc, period, routerID string, now time.Time) 
 	byRouterCost := map[string]int{}
 	byRouterSelling := map[string]int{}
 
-	for _, s := range db.Sales {
-		if s.AccountID != acc {
+	globalScope := routerID == "" || routerID == "all"
+	events := collectSaleEvents(db, acc, prevStart)
+	sold := collectSoldVouchers(db, acc, prevStart)
+
+	bucketIndex := func(at time.Time) int {
+		return sort.Search(len(buckets), func(i int) bool { return at.Before(buckets[i]) }) - 1
+	}
+
+	// TRÉSORERIE RÉELLE — ventes directes (tickets consommés, prix réellement
+	// payé, routables par site) +, en vue globale uniquement, encaissements
+	// revendeurs nets (achats/versements − retours : les transactions ne sont
+	// liées à aucun site).
+	for _, e := range events {
+		inScope := globalScope || e.RouterID == routerID
+		if !inScope {
 			continue
 		}
-		at, err := time.Parse(time.RFC3339, s.At)
-		if err != nil || at.Before(prevStart) {
+		if e.Reseller != "" && !globalScope {
+			continue // couvert par la valeur gros écoulée du site, ci-dessous
+		}
+		if e.At.Before(windowStart) {
+			prevRevenue += e.Amount
 			continue
 		}
-		// F13 : ventes antérieures à la marge → base = Amount.
-		cost := s.Cost
-		if cost == 0 {
-			cost = s.Amount
+		totalsRevenue += e.Amount
+		if e.Reseller == "" {
+			chanDirectRevenue += e.Amount
+		} else {
+			chanResellerRevenue += e.Amount
 		}
-		selling := s.SellingTotal
-		if selling == 0 {
-			selling = s.Amount
+		if idx := bucketIndex(e.At); idx >= 0 && idx < len(revSeries) {
+			revSeries[idx].Revenue += e.Amount
+		}
+	}
+	if !globalScope {
+		// SITE FILTRÉ : la part revendeurs du site = valeur GROS de ses
+		// tickets réseau écoulés (proxy honnête — l'encaissement réel des
+		// achats de stock n'est pas attribuable à un site).
+		for _, v := range sold {
+			if v.ResellerName == "" || v.RouterID != routerID {
+				continue
+			}
+			if v.At.Before(windowStart) {
+				prevRevenue += v.Cost
+				continue
+			}
+			totalsRevenue += v.Cost
+			chanResellerRevenue += v.Cost
+			if idx := bucketIndex(v.At); idx >= 0 && idx < len(revSeries) {
+				revSeries[idx].Revenue += v.Cost
+			}
+		}
+	}
+
+	// ÉCOULEMENTS — volume de tickets réellement passés au client (remis ou
+	// consommés) : série « Ventes », valorisation F13 (public/gros) et
+	// répartition par site.
+	for _, v := range sold {
+		rid := v.RouterID
+		if rid == "" {
+			rid = "unknown"
+		}
+		if routerNames[rid] == "" {
+			routerNames[rid] = "(site supprimé)"
 		}
 
-		// Fenêtre précédente (même longueur, même filtre routeur) :
-		// uniquement les totaux de comparaison Δ%.
-		if at.Before(windowStart) {
-			if routerID == "" || routerID == "all" || s.RouterID == routerID {
-				prevRevenue += s.Amount
-				prevSales += s.Count
-				prevCost += cost
-				prevSelling += selling
+		if v.At.Before(windowStart) {
+			// Fenêtre précédente — uniquement les totaux Δ% (même filtre).
+			if globalScope || v.RouterID == routerID {
+				prevSales++
+				prevCost += v.Cost
+				prevSelling += v.Public
 			}
 			continue
 		}
 
-		// répartition par routeur (toujours tous sites, pour comparaison)
-		rid := s.RouterID
-		if rid == "" {
-			rid = "unknown"
-			routerNames["unknown"] = "(inconnu)"
+		// Répartition par site — fenêtre affichée, TOUS les sites (comparaison) :
+		// CA du site = direct réel (prix payé) + réseau à la valeur gros.
+		siteRevenue := v.Public
+		if v.ResellerName != "" {
+			siteRevenue = v.Cost
 		}
-		byRouterRevenue[rid] += s.Amount
-		byRouterSales[rid] += s.Count
-		byRouterCost[rid] += cost
-		byRouterSelling[rid] += selling
+		byRouterRevenue[rid] += siteRevenue
+		byRouterSales[rid]++
+		byRouterCost[rid] += v.Cost
+		byRouterSelling[rid] += v.Public
 
-		// filtre routeur : la série et les totaux ne comptent que le site choisi
-		if routerID != "" && routerID != "all" && s.RouterID != routerID {
-			continue
-		}
-		totalsRevenue += s.Amount
-		totalsSales += s.Count
-		totalsCost += cost
-		totalsSelling += selling
-
-		// Répartition par canal de distribution (respecte le filtre) :
-		// ventes directes vs réseau revendeurs — « qui vend mes tickets ? »
-		if s.Channel == "reseller" {
-			chanResellerRevenue += s.Amount
-			chanResellerSales += s.Count
-		} else {
-			chanDirectRevenue += s.Amount
-			chanDirectSales += s.Count
-		}
-
-		idx := sort.Search(len(buckets), func(i int) bool { return at.Before(buckets[i]) }) - 1
-		if idx >= 0 && idx < len(revSeries) {
-			revSeries[idx].Revenue += s.Amount
-			revSeries[idx].Sales += s.Count
-			revSeries[idx].Cost += cost
-			revSeries[idx].Selling += selling
+		if globalScope || v.RouterID == routerID {
+			totalsSales++
+			totalsCost += v.Cost
+			totalsSelling += v.Public
+			if idx := bucketIndex(v.At); idx >= 0 && idx < len(revSeries) {
+				revSeries[idx].Sales++
+				revSeries[idx].Cost += v.Cost
+				revSeries[idx].Selling += v.Public
+			}
+			if v.ResellerName == "" {
+				chanDirectSales++
+			} else {
+				chanResellerSales++
+			}
 		}
 	}
 
@@ -4836,15 +5033,34 @@ func (a *API) handleAdminAccounts(w http.ResponseWriter, r *http.Request) {
 			st.Sessions++
 		}
 	}
-	for i := range db.Sales {
-		s := db.Sales[i]
-		st, ok := stats[s.AccountID]
+	// Stats admin : mêmes règles RÉELLES que les rapports — ventes directes
+	// consommées + encaissements revendeurs nets des retours (générer du
+	// stock n'est pas vendre ; voir helpers en tête de fichier).
+	for i := range db.HotspotUsers {
+		u := &db.HotspotUsers[i]
+		if u.Kind != "voucher" || u.ResellerID != "" {
+			continue
+		}
+		st, ok := stats[u.AccountID]
 		if !ok {
 			continue
 		}
-		if at, err := time.Parse(time.RFC3339, s.At); err == nil && at.After(cutoff30) {
+		if at, sold := voucherSoldDate(u); sold && !at.Before(cutoff30) {
 			st.Sales30d++
-			st.Revenue30d += s.Amount
+			st.Revenue30d += directSalePrice(u)
+		}
+	}
+	for _, t := range db.Transactions {
+		gain := resellerNetIncome(t)
+		if gain == 0 {
+			continue
+		}
+		st, ok := stats[t.AccountID]
+		if !ok {
+			continue
+		}
+		if at, err := time.Parse(time.RFC3339, t.At); err == nil && at.After(cutoff30) {
+			st.Revenue30d += gain
 		}
 	}
 	rows := make([]accountRow, 0, len(db.Accounts))

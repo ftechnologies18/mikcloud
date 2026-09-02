@@ -5,6 +5,27 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-02 — Filet de sécurité : suite de tests automatisés
+
+### Ajoutés
+- **Suite de tests backend complète** : 9 paquets couverts (auth, secretbox,
+  store, api, agent, routeros, notify, main) — JWT, bcrypt, chiffrement
+  AES-256-GCM, store JSON (roundtrip Save/Reload, état de mise en service,
+  défauts), surface HTTP via httptest (santé, 404, 401, matrice rôles,
+  liste blanche revendeur, suspension d'abonnement), scripts agent .rsc,
+  encodage du protocole RouterOS. Aucun réseau, aucune base :
+  `DATABASE_URL` neutralisée, store JSON en répertoire temporaire.
+- **CI renforcée** : `go test -race` — le store tient un mutex global, le
+  détecteur de races passe désormais à chaque push.
+
+### Corrigés
+- **Exemption plateforme de la suspension d'abonnement** : dans
+  `authMiddleware`, l'exemption des super-admins plateforme s'appuyait sur le
+  contexte de requête, posé APRÈS la garde — code mort : un administrateur
+  plateforme consultant un compte suspendu (impersonation support) recevait
+  un 402 au lieu du dashboard. L'exemption est désormais évaluée sur les
+  claims du token vérifiés (`isPlatformAdminClaims`).
+
 ## 2026-09-02 — Préparation du lancement commercial
 
 ### Sécurité (sprint P0)

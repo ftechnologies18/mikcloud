@@ -111,8 +111,9 @@ export function UcPrintDialog({
   const batchHtml = batch && batch.key === batchKey ? batch.html : null;
   const batchFailed = batchHtml !== null && batchHtml === "";
 
-  // Grille A4 adaptative du rendu standard : au-delà de 12 tickets, 4→6
-  // colonnes + zoom (a4GridPlan) pour caser le maximum de tickets par feuille.
+  // Grille A4 adaptative du rendu standard : au-delà de 24 tickets, 5
+  // colonnes + réduction ×0,70 (a4GridPlan) — plafond ~35 tickets par feuille
+  // A4, les lots plus gros sont paginés à taille constante.
   const stdPlan = a4GridPlan(vouchers.length);
 
   function handleTemplateChange(value: string) {

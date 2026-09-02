@@ -317,11 +317,13 @@ export async function renderTemplate(
 }
 
 /**
- * a4GridPlan — plan ADAPTATIF de la grille A4 : plus le lot est gros, plus la
- * grille a de colonnes et plus le contenu des tickets est réduit (zoom), pour
- * caser le MAXIMUM de tickets par feuille A4 sans sacrifier la lisibilité
- * (QR ≥ ~8 mm imprimé, code encore lisible). Capacités estimées par feuille :
- * 3 colonnes ≈ 12 tickets · 4 ≈ 24 · 5 ≈ 35 · 6 ≈ 54.
+ * a4GridPlan — plan ADAPTATIF de la grille A4 : au-delà de 24 tickets, la
+ * grille passe à 5 colonnes avec un contenu réduit (×0,70) — chaque feuille
+ * A4 accueille alors ~25 à 35 tickets (5×5 à 5×7 selon la hauteur réelle des
+ * tickets). PLAFOND VOLONTAIRE (consigne client) : jamais de grille plus
+ * dense — les lots > 35 sont simplement paginés sur les feuilles suivantes,
+ * à taille constante (lisibilité préservée : QR ≥ ~9 mm imprimé, code bien
+ * lisible).
  */
 export function a4GridPlan(count: number): {
   cols: number;
@@ -330,14 +332,15 @@ export function a4GridPlan(count: number): {
 } {
   if (count <= 12) return { cols: 3, zoom: 1, gapMm: 5 };
   if (count <= 24) return { cols: 4, zoom: 0.75, gapMm: 5 };
-  if (count <= 35) return { cols: 5, zoom: 0.6, gapMm: 4 };
-  return { cols: 6, zoom: 0.5, gapMm: 4 };
+  // Lots 25-35 (et au-delà, paginés) : 5 colonnes, réduction ×0,70 —
+  // plafond ~35 tickets par feuille A4.
+  return { cols: 5, zoom: 0.7, gapMm: 4 };
 }
 
 /**
  * renderBatch — page imprimable complète pour un lot de vouchers :
- * - a4    : grille ADAPTATIVE (3→6 colonnes selon la quantité, tickets
- *   réduits via zoom — voir a4GridPlan) ;
+ * - a4    : grille ADAPTATIVE (3→5 colonnes selon la quantité, plafond
+ *   ~35 tickets/feuille, pagination au-delà — voir a4GridPlan) ;
  * - 58/80 : tickets verticaux séquentiels (largeur fixe 54/76 mm,
  *   saut de page géré par les règles .tpl-* de globals.css).
  */

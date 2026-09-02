@@ -59,8 +59,14 @@ func Preview(token string) string {
 // ---------------------------------------------------------------------------
 
 // rosEscape échappe une valeur pour une chaîne RouterOS entre guillemets.
+// Sécurité (audit P0 #14) : le « $ » est échappé lui aussi. Sans lui, une
+// valeur utilisateur contenant « $… » (mot de passe, commentaire, nom…)
+// déclenchait l'interpolation de variables RouterOS à l'exécution du script —
+// injection d'expression. rosScriptValue (valeurs de propriété) la traite
+// déjà ; strings.NewReplacer fait une passe unique, donc les remplacements
+// ne se ré-échappent pas entre eux.
 func rosEscape(s string) string {
-	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", " ", "\r", " ", "\t", " ")
+	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, `$`, `\$`, "\n", " ", "\r", " ", "\t", " ")
 	return r.Replace(s)
 }
 

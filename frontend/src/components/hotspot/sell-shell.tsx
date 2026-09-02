@@ -139,11 +139,16 @@ export default function SellShell() {
     onError: (e: Error) => toast.error(e instanceof ApiError ? e.message : t("sell.error")),
   });
 
-  // N°20 — retour de stock : les tickets choisis repartent chez le gérant
-  // (prépayé : portefeuille recrédité du prix gros ; dépôt-vente : stock seul).
+  // N°20 — retour de stock : les tickets choisis repartent dans le stock
+  // direct du compte (gérant OU propriétaire — le backend ne dépend pas d'un
+  // gérant ; prépayé : portefeuille recrédité du prix gros, dépôt-vente : stock seul).
   const returnStock = useMutation({
+    // NB : `api()` sérialise déjà le corps en JSON — passer l'objet brut.
+    // (Un `JSON.stringify` ici produisait un corps doublement encodé — une
+    // chaîne JSON au lieu d'un objet — refusé par le backend en 400
+    // « Corps de requête invalide ». Cause du bug remonté par Ulrich.)
     mutationFn: (ids: string[]) =>
-      api<SellReturnResult>("/api/sell/return", { method: "POST", body: JSON.stringify({ ids }) }),
+      api<SellReturnResult>("/api/sell/return", { method: "POST", body: { ids } }),
     onSuccess: (res) => {
       if (res.credited > 0) {
         toast.success(tf("sell.returnDoneCreditToast", { count: res.returned, amount: formatCurrency(res.credited, currency, lang) }));

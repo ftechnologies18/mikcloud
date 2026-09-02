@@ -17,9 +17,12 @@
 package main
 
 import (
+	"bytes"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -140,12 +143,13 @@ func TestAuthRateLimitBursts(t *testing.T) {
 	exhaust("/api/auth/login", 12)    // /api/auth/* : 12 req/min
 	exhaust("/api/reseller/login", 5) // PIN revendeur : 5 req/min (P0)
 
-	// Les fenêtres sont par route+IP : /api/routers n'est PAS limitée.
+	// Les fenêtres sont par scope+IP : /api/routers tombe dans le scope
+	// global (S1-A2, 120 req/min) — 30 requêtes restent loin de la limite.
 	for i := 0; i < 30; i++ {
 		rec := httptest.NewRecorder()
 		limited.ServeHTTP(rec, req("GET", "/api/routers", nil))
 		if rec.Code != http.StatusOK {
-			t.Fatalf("route hors périmètre du limiteur doit passer, obtenu %d", rec.Code)
+			t.Fatalf("route sous la limite globale doit passer, obtenu %d", rec.Code)
 		}
 	}
 
@@ -182,5 +186,110 @@ func TestAuthRateLimitCountsPerScope(t *testing.T) {
 	if rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("13e requête sur /api/auth/* doit être limitée, obtenu %d (%s)",
 			rec.Code, strconv.Quote(rec.Body.String()))
+	}
+}
+
+// TestSecurityHeaders — S1-A4 : les cinq en-têtes de sécurité sont posés sur
+// toutes les réponses (y compris les erreurs du handler aval).
+func TestSecurityHeaders(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+	})
+	h := securityHeaders(next)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req("GET", "/api/dashboard", nil))
+	want := map[string]string{
+		"X-Content-Type-Options":    "nosniff",
+		"Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+		"X-Frame-Options":           "DENY",
+		"Referrer-Policy":           "no-referrer",
+		"Cache-Control":             "no-store",
+	}
+	for k, v := range want {
+		if got := rec.Header().Get(k); got != v {
+			t.Fatalf("en-tête %s = %q, attendu %q", k, got, v)
+		}
+	}
+}
+
+// TestLimitBodyRejectsOversized — S1-A1 : un corps dont le Content-Length
+// dépasse le plafond reçoit un 413 immédiat (le corps n'est jamais lu) ;
+// un corps dans la limite passe.
+func TestLimitBodyRejectsOversized(t *testing.T) {
+	passed := false
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { passed = true })
+	h := limitBody(next)
+
+	// Corps dans la limite → passe.
+	r := req("POST", "/api/vouchers/generate", nil)
+	r.Body = io.NopCloser(strings.NewReader(`{"count":10}`))
+	r.ContentLength = int64(len(`{"count":10}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, r)
+	if !passed || rec.Code != http.StatusOK {
+		t.Fatalf("corps sous la limite doit passer, obtenu %d (passed=%v)", rec.Code, passed)
+	}
+
+	// Corps au-delà de la limite → 413, le handler aval n'est JAMAIS atteint.
+	passed = false
+	big := make([]byte, maxBodyBytes+1)
+	r = req("POST", "/api/vouchers/generate", nil)
+	r.Body = io.NopCloser(bytes.NewReader(big))
+	r.ContentLength = int64(len(big))
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, r)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("corps au-delà de la limite doit répondre 413, obtenu %d", rec.Code)
+	}
+	if passed {
+		t.Fatal("le handler aval ne doit pas être atteint pour un corps trop grand")
+	}
+	if !strings.Contains(rec.Body.String(), "trop volumineux") {
+		t.Fatalf("le 413 doit porter un message JSON, obtenu %q", rec.Body.String())
+	}
+}
+
+// TestRateLimitGlobalAPI — S1-A2 : toute route /api/* hors auth/revendeur est
+// limitée à 120 requêtes/minute par IP ; les scopes durs d'authentification
+// restent indépendants ; /agent/* et les routes hors /api/ restent hors limiteur.
+func TestRateLimitGlobalAPI(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	limited := authRateLimit(next)
+
+	// 120 requêtes sur /api/dashboard passent, la 121e est limitée.
+	for i := 1; i <= 120; i++ {
+		rec := httptest.NewRecorder()
+		limited.ServeHTTP(rec, req("GET", "/api/dashboard", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("requête %d sur /api/dashboard doit passer (limite 120), obtenu %d", i, rec.Code)
+		}
+	}
+	rec := httptest.NewRecorder()
+	limited.ServeHTTP(rec, req("GET", "/api/dashboard", nil))
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("121e requête sur /api/dashboard doit être limitée (429), obtenu %d", rec.Code)
+	}
+
+	// Le scope auth garde sa propre fenêtre dure (12/min).
+	for i := 0; i < 12; i++ {
+		rec := httptest.NewRecorder()
+		limited.ServeHTTP(rec, req("POST", "/api/auth/login", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("requête %d sur /api/auth/login doit passer, obtenu %d", i+1, rec.Code)
+		}
+	}
+	rec = httptest.NewRecorder()
+	limited.ServeHTTP(rec, req("POST", "/api/auth/login", nil))
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("13e requête sur /api/auth/login doit être limitée (429), obtenu %d", rec.Code)
+	}
+
+	// Les routes hors /api/ (poll agent, healthcheck) restent hors périmètre.
+	for i := 0; i < 200; i++ {
+		rec := httptest.NewRecorder()
+		limited.ServeHTTP(rec, req("POST", "/agent/cmd", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("/agent/cmd doit rester hors limiteur, obtenu %d à la requête %d", rec.Code, i+1)
+		}
 	}
 }

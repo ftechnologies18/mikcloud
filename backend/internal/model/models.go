@@ -514,6 +514,15 @@ type AdminUser struct {
 	// changement d'intention de l'opérateur (env modifiée) par rapport à
 	// un mot de passe changé par l'utilisateur depuis la console.
 	EnvPasswordHash string `json:"envPasswordHash,omitempty"`
+	// SessionEpoch — compteur de révocation des sessions (sécurité S1-A3).
+	// Incrémenté à chaque opération sensible (changement de mot de passe,
+	// réinitialisation par l'owner, changement de rôle) : tout token JWT
+	// portant un claim « ver » ≠ SessionEpoch est refusé IMMÉDIATEMENT par
+	// le middleware — sans attendre l'expiration naturelle (24 h). La
+	// suppression du membre rend l'utilisateur introuvable : refus aussi.
+	// Valeur 0 = aucune révocation (compatible tokens antérieurs au
+	// correctif, décodés avec ver=0).
+	SessionEpoch int `json:"sessionEpoch,omitempty"`
 }
 
 // NotificationSettings — canaux et règles d'alerte d'un compte SaaS. Les

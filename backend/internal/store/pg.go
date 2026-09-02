@@ -500,6 +500,11 @@ func (p *PG) ensureSchema() error {
 		// mot de passe env appliqué pour détecter un changement d'intention opérateur.
 		`ALTER TABLE admin_users   ADD COLUMN IF NOT EXISTS password_set_by_user BOOLEAN NOT NULL DEFAULT FALSE`,
 		`ALTER TABLE admin_users   ADD COLUMN IF NOT EXISTS env_password_hash TEXT NOT NULL DEFAULT ''`,
+		// Sécurité S1-A3 — époque de session : compteur de révocation par
+		// utilisateur. Incrémenté à chaque opération sensible (mot de passe
+		// changé/réinitialisé, rôle modifié) ; tout token dont le claim « ver »
+		// diffère de la valeur stockée est refusé immédiatement par le middleware.
+		`ALTER TABLE admin_users   ADD COLUMN IF NOT EXISTS session_epoch INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE routers       ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE profiles      ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE hotspot_users ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''`,
@@ -1117,15 +1122,15 @@ var accountSpec = entitySpec[model.Account]{
 
 var adminSpec = entitySpec[model.AdminUser]{
 	table: "admin_users",
-	cols:  []string{"id", "name", "username", "role", "password_hash", "salt", "created_at", "account_id", "password_set_by_user", "env_password_hash"},
+	cols:  []string{"id", "name", "username", "role", "password_hash", "salt", "created_at", "account_id", "password_set_by_user", "env_password_hash", "session_epoch"},
 	idOf:  func(u *model.AdminUser) string { return u.ID },
 	scan: func(r *sql.Rows) (model.AdminUser, error) {
 		var u model.AdminUser
-		err := r.Scan(&u.ID, &u.Name, &u.Username, &u.Role, &u.PasswordHash, &u.Salt, &u.CreatedAt, &u.AccountID, &u.PasswordSetByUser, &u.EnvPasswordHash)
+		err := r.Scan(&u.ID, &u.Name, &u.Username, &u.Role, &u.PasswordHash, &u.Salt, &u.CreatedAt, &u.AccountID, &u.PasswordSetByUser, &u.EnvPasswordHash, &u.SessionEpoch)
 		return u, err
 	},
 	args: func(u *model.AdminUser) []any {
-		return []any{u.ID, u.Name, u.Username, u.Role, u.PasswordHash, u.Salt, u.CreatedAt, u.AccountID, u.PasswordSetByUser, u.EnvPasswordHash}
+		return []any{u.ID, u.Name, u.Username, u.Role, u.PasswordHash, u.Salt, u.CreatedAt, u.AccountID, u.PasswordSetByUser, u.EnvPasswordHash, u.SessionEpoch}
 	},
 	hashOf: hashEntity[model.AdminUser],
 }

@@ -5,6 +5,40 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-02 — Sécurité vague S1 : durcissement P0 pré-lancement commercial
+
+### Ajoutés
+- **Révocation immédiate des sessions (S1-A3)** — nouvelle colonne
+  `admin_users.session_epoch` (migration `ensureSchema`, défaut 0) et claim
+  JWT `ver` : le middleware refuse tout token dont l'époque ne correspond
+  plus (`401 « Session révoquée »`) ou dont le porteur a été supprimé
+  (`401 « Compte utilisateur supprimé »`). L'époque est incrémentée à chaque
+  opération sensible : changement de mot de passe (`POST /api/auth/password` —
+  toutes les sessions, y compris la courante, sont coupées), réinitialisation
+  par l'owner et changement de rôle (`PUT /api/team/{id}`) ; la suppression
+  d'un membre (`DELETE /api/team/{id}`) est couverte par le contrôle
+  d'existence. Migration douce : les tokens sans `ver` se décodent `ver=0`.
+- **En-têtes de sécurité HTTP (S1-A4)** — middleware `securityHeaders` :
+  `X-Content-Type-Options: nosniff`, `Strict-Transport-Security`,
+  `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`,
+  `Cache-Control: no-store` sur toutes les réponses.
+- **Limite de taille des corps de requête (S1-A1)** — middleware `limitBody` :
+  `http.MaxBytesReader` 2 Mio + `413` immédiat si Content-Length dépasse
+  (avant : `decodeBody` lisait des corps sans aucune limite).
+- **Limiteur de débit global (S1-A2)** — toute route `/api/*` hors
+  authentification est plafonnée à 120 requêtes/minute par IP (`429` +
+  `Retry-After`) ; les scopes durs existants (auth 12/min, revendeur 5/min)
+  restent prioritaires ; `/agent/*` (poll 45 s) reste hors périmètre.
+- Tests : révocation de session (blocage immédiat + réémission + suppression
+  du porteur), révocation par changement de mot de passe de bout en bout,
+  en-têtes de sécurité, 413 sur corps surdimensionné, limiteur global (120/min
+  + indépendance des scopes), aller-retour du claim `ver` + compatibilité
+  legacy. `go vet`, `gofmt` et `go test -race` verts sur les 9 paquets.
+
+### Documentés
+- `docs/CONTRACT-V2.md` — section « Sécurité S1 » (claims JWT étendus,
+  messages 401 de révocation, limites de débit et de corps, en-têtes).
+
 ## 2026-09-02 — Refactor vague V1 : geniuspay_stripe et admin_account
 
 ### Modifiés

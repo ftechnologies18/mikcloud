@@ -466,11 +466,14 @@ func (a *API) handleAdminImpersonate(w http.ResponseWriter, r *http.Request) {
 		writeErrCode(w, http.StatusConflict, "account_disabled", "Compte désactivé — réactivez-le avant d'ouvrir sa console", nil)
 		return
 	}
-	// Nom réel de l'admin (le claim ne porte que l'ID).
-	adminName, adminUsername := claims.Name, ""
+	// Nom réel de l'admin (le claim ne porte que l'ID) + époque de session à
+	// graver dans le token d'impersonation (S1-A3 : la session support meurt
+	// avec les autres sessions de l'admin).
+	adminName, adminUsername, adminEpoch := claims.Name, "", 0
 	for i := range db.Users {
 		if db.Users[i].ID == claims.Sub {
 			adminName, adminUsername = db.Users[i].Name, db.Users[i].Username
+			adminEpoch = db.Users[i].SessionEpoch
 			break
 		}
 	}
@@ -478,7 +481,7 @@ func (a *API) handleAdminImpersonate(w http.ResponseWriter, r *http.Request) {
 	a.store.Save()
 	a.store.Unlock()
 
-	token := auth.Sign(a.secret, auth.NewClaims(claims.Sub, adminName, model.RolePlatformAdmin, id))
+	token := auth.Sign(a.secret, auth.NewClaims(claims.Sub, adminName, model.RolePlatformAdmin, id, adminEpoch))
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token": token,
 		"user": map[string]any{

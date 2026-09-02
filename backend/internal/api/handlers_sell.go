@@ -103,7 +103,9 @@ func (a *API) handleResellerLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token := auth.Sign(a.secret, auth.NewClaims(res.ID, res.Name, "reseller", res.AccountID))
+	// ver=0 : le revendeur n'est pas un AdminUser — le garde de révocation
+	// S1-A3 du middleware ne s'applique pas au rôle « reseller ».
+	token := auth.Sign(a.secret, auth.NewClaims(res.ID, res.Name, "reseller", res.AccountID, 0))
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token": token,
 		"reseller": map[string]any{

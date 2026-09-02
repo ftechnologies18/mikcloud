@@ -41,8 +41,14 @@ func newTestServerWithStore(t *testing.T) (*store.Store, *httptest.Server) {
 }
 
 func TestAuthMiddlewareMatrix(t *testing.T) {
-	_, ts := newTestServerWithStore(t)
+	st, ts := newTestServerWithStore(t)
 	ownerToken, accID, _ := registerAccount(t, ts, "proprio-mw", "")
+
+	// Utilisateurs RÉELS pour les rôles forgés (S1-A3 : le middleware refuse
+	// tout porteur de token inconnu du store ; le rôle « reseller », hors
+	// AdminUser, reste exempté de ce contrôle).
+	seedUser(t, st, "usr-m", accID, "usr-m", model.RoleManager)
+	seedUser(t, st, "usr-p", "", "usr-p", model.RolePlatformAdmin)
 
 	cas := []struct {
 		nom    string
@@ -59,14 +65,14 @@ func TestAuthMiddlewareMatrix(t *testing.T) {
 		{"token owner valable", http.MethodGet, "/api/auth/me", ownerToken, http.StatusOK},
 		{"token owner sur route métier", http.MethodGet, "/api/vouchers", ownerToken, http.StatusOK},
 		{"revendeur bloqué hors Mode Vente", http.MethodGet, "/api/dashboard",
-			auth.Sign(testJWTSecret, auth.NewClaims("usr-r", "R", "reseller", accID)), http.StatusForbidden},
+			auth.Sign(testJWTSecret, auth.NewClaims("usr-r", "R", "reseller", accID, 0)), http.StatusForbidden},
 		{"revendeur autorisé sur /api/sell/me", http.MethodGet, "/api/sell/me",
-			auth.Sign(testJWTSecret, auth.NewClaims("usr-r", "R", "reseller", accID)), http.StatusOK},
+			auth.Sign(testJWTSecret, auth.NewClaims("usr-r", "R", "reseller", accID, 0)), http.StatusOK},
 		{"manager bloqué sur requireRole(3)", http.MethodGet, "/api/team",
-			auth.Sign(testJWTSecret, auth.NewClaims("usr-m", "M", model.RoleManager, accID)), http.StatusForbidden},
+			auth.Sign(testJWTSecret, auth.NewClaims("usr-m", "M", model.RoleManager, accID, 0)), http.StatusForbidden},
 		{"owner passe sur requireRole(3)", http.MethodGet, "/api/team", ownerToken, http.StatusOK},
 		{"plateforme traité comme owner", http.MethodGet, "/api/team",
-			auth.Sign(testJWTSecret, auth.NewClaims("usr-p", "P", model.RolePlatformAdmin, "")), http.StatusOK},
+			auth.Sign(testJWTSecret, auth.NewClaims("usr-p", "P", model.RolePlatformAdmin, "", 0)), http.StatusOK},
 	}
 	for _, c := range cas {
 		status, _ := doJSON(t, ts, c.method, c.path, c.token, nil)
@@ -119,8 +125,68 @@ func TestSuspendedAccountLockdown(t *testing.T) {
 	// Le super-admin plateforme n'est JAMAIS soumis au verrou (exemption support).
 	// Régression couverte : l'exemption s'évalue sur les claims du token DANS le
 	// middleware (le contexte n'y est pas encore posé — cf. isPlatformAdminClaims).
-	plateforme := auth.Sign(testJWTSecret, auth.NewClaims("usr-plat", "Plateforme", model.RolePlatformAdmin, accID))
+	// S1-A3 : le porteur doit exister dans le store.
+	seedUser(t, st, "usr-plat", "", "usr-plat", model.RolePlatformAdmin)
+	plateforme := auth.Sign(testJWTSecret, auth.NewClaims("usr-plat", "Plateforme", model.RolePlatformAdmin, accID, 0))
 	if status, _ := doJSON(t, ts, http.MethodGet, "/api/dashboard", plateforme, nil); status != http.StatusOK {
 		t.Fatalf("plateforme exempté de la suspension → 200 attendu, obtenu %d", status)
+	}
+}
+
+// TestSessionRevocation — S1-A3 : un token dont l'époque de session (claim
+// « ver ») ne correspond plus à SessionEpoch est refusé immédiatement ; un
+// porteur supprimé du store l'est aussi — sans attendre les 24 h du token.
+func TestSessionRevocation(t *testing.T) {
+	st, ts := newTestServerWithStore(t)
+	token, accID, usrID := registerAccount(t, ts, "proprio-revoc-mw", "")
+
+	if status, _ := doJSON(t, ts, http.MethodGet, "/api/auth/me", token, nil); status != http.StatusOK {
+		t.Fatalf("session valable avant révocation, obtenu %d", status)
+	}
+
+	// Révocation : incrément de l'époque de session (comme le fait un
+	// changement de mot de passe ou une réinitialisation par l'owner).
+	st.Lock()
+	for i := range st.Data().Users {
+		if st.Data().Users[i].ID == usrID {
+			st.Data().Users[i].SessionEpoch++
+			break
+		}
+	}
+	st.Save()
+	st.Unlock()
+
+	status, body := doJSON(t, ts, http.MethodGet, "/api/auth/me", token, nil)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("token à l'époque périmée doit être refusé (401), obtenu %d", status)
+	}
+	if msg, _ := body["error"].(string); msg != "Session révoquée — reconnectez-vous" {
+		t.Fatalf("message de révocation attendu, obtenu %v", body)
+	}
+
+	// Un token réémis avec la NOUVELLE époque repasse.
+	fresh := auth.Sign(testJWTSecret, auth.NewClaims(usrID, "Gérant", "owner", accID, 1))
+	if status, _ := doJSON(t, ts, http.MethodGet, "/api/auth/me", fresh, nil); status != http.StatusOK {
+		t.Fatalf("token à l'époque courante doit passer, obtenu %d", status)
+	}
+
+	// Suppression du membre : même un token à jour devient invalide.
+	st.Lock()
+	users := st.Data().Users[:0]
+	for _, u := range st.Data().Users {
+		if u.ID != usrID {
+			users = append(users, u)
+		}
+	}
+	st.Data().Users = users
+	st.Save()
+	st.Unlock()
+
+	status, body = doJSON(t, ts, http.MethodGet, "/api/auth/me", fresh, nil)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("token d'un porteur supprimé doit être refusé (401), obtenu %d", status)
+	}
+	if msg, _ := body["error"].(string); msg != "Compte utilisateur supprimé — reconnectez-vous" {
+		t.Fatalf("message de suppression attendu, obtenu %v", body)
 	}
 }

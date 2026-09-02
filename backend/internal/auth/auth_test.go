@@ -59,13 +59,40 @@ func TestSignVerifyRoundtrip(t *testing.T) {
 
 func TestNewClaims(t *testing.T) {
 	before := time.Now().Unix()
-	c := NewClaims("usr-1", "Gérant", "owner", "acc-9")
+	c := NewClaims("usr-1", "Gérant", "owner", "acc-9", 3)
 	after := time.Now().Unix()
 	if c.Exp-c.Iat != int64(TokenTTL.Seconds()) {
 		t.Fatalf("durée de vie = %d s, attendu %d", c.Exp-c.Iat, int64(TokenTTL.Seconds()))
 	}
 	if c.Iat < before || c.Iat > after {
 		t.Fatalf("iat %d hors fenêtre [%d,%d]", c.Iat, before, after)
+	}
+	if c.Ver != 3 {
+		t.Fatalf("ver = %d, attendu 3", c.Ver)
+	}
+}
+
+// TestClaimsVerRoundtrip — le claim « ver » (époque de session, S1-A3)
+// survit à l'aller-retour Sign/Verify ; un token SANS ver (émis avant le
+// correctif) se décode ver=0 : compatibilité de migration douce.
+func TestClaimsVerRoundtrip(t *testing.T) {
+	const secret = "secret-de-test-mikcloud"
+	c := claimsT()
+	c.Ver = 7
+	got, err := Verify(secret, Sign(secret, c))
+	if err != nil {
+		t.Fatalf("Verify a échoué : %v", err)
+	}
+	if got.Ver != 7 {
+		t.Fatalf("ver = %d, attendu 7", got.Ver)
+	}
+	legacy := claimsT() // Ver 0 → omitempty : le champ n'est pas sérialisé
+	got2, err := Verify(secret, Sign(secret, legacy))
+	if err != nil {
+		t.Fatalf("Verify d'un token sans ver a échoué : %v", err)
+	}
+	if got2.Ver != 0 {
+		t.Fatalf("ver legacy = %d, attendu 0", got2.Ver)
 	}
 }
 

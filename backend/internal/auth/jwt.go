@@ -16,13 +16,18 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// Claims — revendications du token : {sub, name, role, acc, iat, exp}.
+// Claims — revendications du token : {sub, name, role, acc, ver, iat, exp}.
 // Acc porte l'identifiant du compte SaaS du porteur (isolation multi-tenant).
+// Ver porte l'époque de session attendue par le serveur (révocation S1-A3) :
+// un token dont ver ≠ SessionEpoch de l'utilisateur est refusé immédiatement.
+// Les tokens émis avant l'introduction de ver se décodent ver=0 — compatibles
+// tant que l'utilisateur n'a pas subi de révocation (SessionEpoch 0).
 type Claims struct {
 	Sub  string `json:"sub"`
 	Name string `json:"name"`
 	Role string `json:"role"`
 	Acc  string `json:"acc,omitempty"`
+	Ver  int    `json:"ver,omitempty"`
 	Iat  int64  `json:"iat"`
 	Exp  int64  `json:"exp"`
 }
@@ -30,10 +35,11 @@ type Claims struct {
 // TokenTTL — durée de validité du token (24 h).
 const TokenTTL = 24 * time.Hour
 
-// NewClaims construit des claims frais (acc = identifiant du compte SaaS).
-func NewClaims(sub, name, role, acc string) Claims {
+// NewClaims construit des claims frais (acc = identifiant du compte SaaS,
+// ver = époque de session de l'utilisateur au moment de l'émission).
+func NewClaims(sub, name, role, acc string, ver int) Claims {
 	now := time.Now().Unix()
-	return Claims{Sub: sub, Name: name, Role: role, Acc: acc, Iat: now, Exp: now + int64(TokenTTL.Seconds())}
+	return Claims{Sub: sub, Name: name, Role: role, Acc: acc, Ver: ver, Iat: now, Exp: now + int64(TokenTTL.Seconds())}
 }
 
 // Sign produit un JWT HS256 : base64url(header).base64url(payload).base64url(hmac).

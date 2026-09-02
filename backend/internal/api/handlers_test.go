@@ -119,6 +119,26 @@ func registerAccount(t *testing.T, ts *httptest.Server, username, key string) (s
 	return token, accID, usrID
 }
 
+// seedUser — injecte un AdminUser RÉEL dans le store : depuis S1-A3, le
+// middleware refuse tout token dont le porteur est inconnu du store (les
+// tests qui forgent des tokens par rôle doivent donc créer l'utilisateur —
+// le rôle « reseller », hors AdminUser, reste exempté de ce contrôle).
+func seedUser(t *testing.T, st *store.Store, id, accID, username, role string) {
+	t.Helper()
+	st.Lock()
+	st.Data().Users = append(st.Data().Users, model.AdminUser{
+		ID:           id,
+		AccountID:    accID,
+		Name:         username,
+		Username:     username,
+		Role:         role,
+		PasswordHash: auth.HashPassword("mot-de-passe-8+", ""),
+		CreatedAt:    model.NowISO(),
+	})
+	st.Save()
+	st.Unlock()
+}
+
 func TestHealthEndpoint(t *testing.T) {
 	ts := newTestServer(t)
 	req, _ := http.NewRequest("GET", ts.URL+"/", nil)
@@ -177,7 +197,7 @@ func TestGarbageBearerTokenRejected(t *testing.T) {
 		t.Fatalf("bearer invalide doit répondre 401, obtenu %d", status)
 	}
 	// Même un JWT bien formé mais signé par un autre secret est refusé.
-	foreign := auth.Sign("autre-secret", auth.NewClaims("usr-x", "X", "owner", "acc-x"))
+	foreign := auth.Sign("autre-secret", auth.NewClaims("usr-x", "X", "owner", "acc-x", 0))
 	status, _ = doJSON(t, ts, "GET", "/api/auth/me", foreign, nil)
 	if status != http.StatusUnauthorized {
 		t.Fatalf("token signé par un autre secret doit répondre 401, obtenu %d", status)
@@ -244,13 +264,19 @@ func TestRegisterLoginMeFlow(t *testing.T) {
 }
 
 func TestRequireRoleMatrix(t *testing.T) {
-	ts := newTestServer(t)
+	st, ts := newTestServerWithStore(t)
 	ownerToken, accID, _ := registerAccount(t, ts, "proprio", "")
 
+	// Utilisateurs RÉELS pour les rôles forgés (S1-A3 : un porteur inconnu
+	// du store serait refusé 401 avant même le contrôle de rôle). Le token
+	// revendeur, exempté de ce contrôle, n'a pas besoin d'utilisateur.
+	seedUser(t, st, "usr-mgr", accID, "usr-mgr", model.RoleManager)
+	seedUser(t, st, "usr-plat", "", "usr-plat", model.RolePlatformAdmin)
+
 	// Forge de tokens pour les autres rôles (même secret de test).
-	manager := auth.Sign(testJWTSecret, auth.NewClaims("usr-mgr", "Manager", model.RoleManager, accID))
-	reseller := auth.Sign(testJWTSecret, auth.NewClaims("usr-res", "Revendeur", "reseller", accID))
-	plateforme := auth.Sign(testJWTSecret, auth.NewClaims("usr-plat", "Plateforme", model.RolePlatformAdmin, ""))
+	manager := auth.Sign(testJWTSecret, auth.NewClaims("usr-mgr", "Manager", model.RoleManager, accID, 0))
+	reseller := auth.Sign(testJWTSecret, auth.NewClaims("usr-res", "Revendeur", "reseller", accID, 0))
+	plateforme := auth.Sign(testJWTSecret, auth.NewClaims("usr-plat", "Plateforme", model.RolePlatformAdmin, "", 0))
 
 	// GET /api/team est requireRole(3) : le owner passe.
 	if status, _ := doJSON(t, ts, "GET", "/api/team", ownerToken, nil); status != http.StatusOK {
@@ -283,6 +309,60 @@ func TestRequireRoleMatrix(t *testing.T) {
 	}
 	if status, _ := doJSON(t, ts, "PUT", "/api/settings", manager, map[string]any{}); status != http.StatusForbidden {
 		t.Fatalf("PUT /api/settings par le manager doit répondre 403, obtenu %d", status)
+	}
+}
+
+// TestPasswordChangeRevokesSessions — S1-A3 : le changement de mot de passe
+// incrémente l'époque de session : TOUTES les sessions existantes (token
+// d'inscription comme token de connexion) sont refusées immédiatement, et la
+// reconnexion avec le nouveau mot de passe délivre une session valable.
+func TestPasswordChangeRevokesSessions(t *testing.T) {
+	ts := newTestServer(t)
+	tokenA, _, _ := registerAccount(t, ts, "proprio-revoc", "")
+
+	// Seconde session : login avec le mot de passe d'inscription.
+	status, out := doJSON(t, ts, "POST", "/api/auth/login", "", map[string]string{
+		"username": "proprio-revoc", "password": "mot-de-passe-8+",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("login initial : %d, attendu 200 (%v)", status, out)
+	}
+	tokenB, _ := out["token"].(string)
+
+	// Les deux sessions sont valables avant l'opération.
+	if status, _ := doJSON(t, ts, "GET", "/api/auth/me", tokenA, nil); status != http.StatusOK {
+		t.Fatalf("token d'inscription valable avant changement, obtenu %d", status)
+	}
+	if status, _ := doJSON(t, ts, "GET", "/api/auth/me", tokenB, nil); status != http.StatusOK {
+		t.Fatalf("token de login valable avant changement, obtenu %d", status)
+	}
+
+	// Changement de mot de passe depuis la session A.
+	status, out = doJSON(t, ts, "POST", "/api/auth/password", tokenA, map[string]string{
+		"currentPassword": "mot-de-passe-8+", "newPassword": "nouveau-mot-9+",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("changement de mot de passe : %d, attendu 200 (%v)", status, out)
+	}
+
+	// Les deux sessions d'AVANT sont révoquées immédiatement (401).
+	if status, _ := doJSON(t, ts, "GET", "/api/auth/me", tokenA, nil); status != http.StatusUnauthorized {
+		t.Fatalf("token d'inscription doit être révoqué après changement (401), obtenu %d", status)
+	}
+	if status, _ := doJSON(t, ts, "GET", "/api/auth/me", tokenB, nil); status != http.StatusUnauthorized {
+		t.Fatalf("token de login doit être révoqué après changement (401), obtenu %d", status)
+	}
+
+	// Reconnexion avec le nouveau mot de passe : nouvelle session valable.
+	status, out = doJSON(t, ts, "POST", "/api/auth/login", "", map[string]string{
+		"username": "proprio-revoc", "password": "nouveau-mot-9+",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("login avec le nouveau mot de passe : %d, attendu 200 (%v)", status, out)
+	}
+	tokenC, _ := out["token"].(string)
+	if status, _ := doJSON(t, ts, "GET", "/api/auth/me", tokenC, nil); status != http.StatusOK {
+		t.Fatalf("nouvelle session doit être valable, obtenu %d", status)
 	}
 }
 

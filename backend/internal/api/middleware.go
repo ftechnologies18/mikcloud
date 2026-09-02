@@ -90,6 +90,34 @@ func (a *API) authMiddleware(next http.Handler) http.Handler {
 			writeErr(w, http.StatusUnauthorized, "Token invalide ou expiré")
 			return
 		}
+		// Sécurité S1-A3 — révocation de session : le porteur du token
+		// doit TOUJOURS exister ET porter l'époque de session courante
+		// (claim « ver »). Un membre supprimé de l'équipe, ou dont la
+		// session a été révoquée (mot de passe changé ou réinitialisé,
+		// rôle modifié), perd l'accès IMMÉDIATEMENT — sans attendre
+		// l'expiration naturelle du token (24 h). Compatibilité : les
+		// tokens antérieurs au correctif se décodent ver=0 et restent
+		// valables tant que SessionEpoch vaut 0. Les revendeurs (Mode
+		// Vente) ne sont pas des AdminUser : hors périmètre de ce garde.
+		if claims.Role != "reseller" {
+			a.store.Lock()
+			found, epoch := false, 0
+			for i := range a.store.Data().Users {
+				if u := &a.store.Data().Users[i]; u.ID == claims.Sub {
+					found, epoch = true, u.SessionEpoch
+					break
+				}
+			}
+			a.store.Unlock()
+			if !found {
+				writeErr(w, http.StatusUnauthorized, "Compte utilisateur supprimé — reconnectez-vous")
+				return
+			}
+			if claims.Ver != epoch {
+				writeErr(w, http.StatusUnauthorized, "Session révoquée — reconnectez-vous")
+				return
+			}
+		}
 		// Compte désactivé ou supprimé : le token reste signé mais n'autorise plus
 		// aucun accès (effet immédiat de POST /api/admin/accounts/{id}/status).
 		if claims.Acc != "" {

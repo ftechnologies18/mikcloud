@@ -210,11 +210,13 @@ func (a *API) handleTeamUpdate(w http.ResponseWriter, r *http.Request) {
 		// Un mot de passe (ré)initialisé par le patron devient protégé : la
 		// variable ADMIN_PASSWORD ne doit pas l'écraser au prochain démarrage.
 		target.PasswordSetByUser = true
+		target.SessionEpoch++ // S1-A3 — le nouveau rôle prend effet immédiatement
 	}
 	if req.Password != nil {
 		target.PasswordHash = auth.HashPassword(*req.Password, "")
 		target.Salt = ""
 		target.PasswordSetByUser = true
+		target.SessionEpoch++ // S1-A3 — révoque toutes les sessions du membre
 		changes = append(changes, "mot de passe réinitialisé")
 	}
 	if len(changes) == 0 {

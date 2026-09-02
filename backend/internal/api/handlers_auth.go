@@ -30,12 +30,14 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 	a.store.Lock()
 	var id, name, username, role, salt, hash, accID string
 	var accName, accStatus string
+	var epoch int
 	var user *model.AdminUser
 	for i := range a.store.Data().Users {
 		u := &a.store.Data().Users[i]
 		if strings.EqualFold(u.Username, req.Username) {
 			id, name, username, role, salt, hash = u.ID, u.Name, u.Username, u.Role, u.Salt, u.PasswordHash
 			accID = u.AccountID
+			epoch = u.SessionEpoch
 			user = u
 			break
 		}
@@ -72,7 +74,7 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 	a.logActivityBy(r, a.store.Data(), accID, "system", "Connexion de "+username+" («"+role+"»)")
 	a.store.Save()
 	a.store.Unlock()
-	token := auth.Sign(a.secret, auth.NewClaims(id, name, role, accID))
+	token := auth.Sign(a.secret, auth.NewClaims(id, name, role, accID, epoch))
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token": token,
 		"user": map[string]any{
@@ -87,7 +89,10 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 // laissée ouverte ne suffit pas), 8 caractères minimum, différent de l'actuel.
 // Le flag PasswordSetByUser protège le nouveau mot de passe contre l'override
 // ADMIN_PASSWORD au prochain démarrage/reload (tant que l'opérateur ne change
-// pas la variable). Le token en cours reste valide jusqu'à son expiration.
+// pas la variable). Sécurité S1-A3 : l'époque de session est incrémentée —
+// TOUTES les sessions de l'utilisateur (y compris celle qui effectue la
+// modification) sont révoquées immédiatement ; l'utilisateur se reconnecte
+// avec le nouveau mot de passe.
 func (a *API) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r)
 	if claims == nil {
@@ -132,6 +137,7 @@ func (a *API) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 	user.PasswordHash = auth.HashPassword(req.NewPassword, "") // bcrypt : sel intégré
 	user.Salt = ""
 	user.PasswordSetByUser = true
+	user.SessionEpoch++ // S1-A3 — révoque TOUTES les sessions (dont la courante)
 	a.logActivityBy(r, db, user.AccountID, "system", "Mot de passe modifié par "+user.Username)
 	a.store.Save()
 	a.store.Unlock()
@@ -272,7 +278,7 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 	a.store.Save()
 	a.store.Unlock()
 
-	token := auth.Sign(a.secret, auth.NewClaims(u.ID, u.Name, u.Role, acc.ID))
+	token := auth.Sign(a.secret, auth.NewClaims(u.ID, u.Name, u.Role, acc.ID, u.SessionEpoch))
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"token": token,
 		"user": map[string]any{

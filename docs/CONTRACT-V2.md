@@ -8,6 +8,24 @@
 
 - Toutes les routes console sous `/api/…`, auth `Authorization: Bearer <jwt>`.
 - Erreurs : `{"error": "message"}` + code HTTP (400/401/403/404).
+- **Sécurité S1 (durcissement pré-lancement, 2026-09-02)** :
+  - JWT HS256 24 h, claims `{sub, name, role, acc, ver, iat, exp}` — `ver`
+    porte l'époque de session : un token dont `ver` ≠ `SessionEpoch` de
+    l'utilisateur est refusé `401` (« Session révoquée — reconnectez-vous ») ;
+    un porteur supprimé du store est refusé `401` (« Compte utilisateur
+    supprimé — reconnectez-vous »). Révocation immédiate sur changement/
+    réinitialisation de mot de passe et changement de rôle. Les revendeurs
+    (rôle `reseller`) sont hors périmètre de ce garde. Les tokens sans `ver`
+    se décodent `ver=0` (compatibilité migration, tant que SessionEpoch = 0).
+  - Limiteur de débit par IP (IP = dernier hop XFF) : `/api/auth/*` 12/min,
+    `/api/reseller/login` 5/min, toute autre route `/api/*` 120/min → `429`
+    + `Retry-After: 60` ; `/agent/*` et healthcheck hors périmètre.
+  - Taille des corps de requête plafonnée à 2 Mio → `413` au-delà (les
+    webhooks conservent leur borne propre de 1 Mio).
+  - En-têtes de sécurité sur toutes les réponses : `X-Content-Type-Options:
+    nosniff`, `Strict-Transport-Security: max-age=31536000; includeSubDomains`,
+    `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`,
+    `Cache-Control: no-store`.
 - Isolation multi-tenant : toute entité portée par `accountID` ; helpers existants
   `accountScope(r)`, `findRouterScoped`, etc.
 - 3 modes routeur : `simulated` | `real` | `agent`. **Matrice de support des

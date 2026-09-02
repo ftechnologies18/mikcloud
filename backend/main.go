@@ -90,7 +90,7 @@ func main() {
 	monitor := notify.NewService(st)
 	go monitor.Run()
 
-	handler := logRequests(corsMiddleware(authRateLimit(api.New(st, jwtSecret).Handler())))
+	handler := logRequests(securityHeaders(corsMiddleware(limitBody(authRateLimit(api.New(st, jwtSecret).Handler())))))
 	// Sécurité P1 #12 — timeouts HTTP complets. ReadHeaderTimeout seul laissait
 	// des connexions en lecture/écriture illimitées : un client lent (ou hostile)
 	// pouvait maintenir indéfiniment des goroutines et sockets (slowloris,
@@ -153,11 +153,69 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// authRateLimit — anti brute-force par IP :
+// securityHeaders — en-têtes de sécurité HTTP sur TOUTES les réponses
+// (sécurité S1-A4 : aucun de ces en-têtes n'était émis auparavant) :
+//   - X-Content-Type-Options: nosniff — interdit le reniflage MIME du corps ;
+//   - Strict-Transport-Security — HTTPS imposé aux visites ultérieures du
+//     navigateur (no-op inoffensif sur le HTTP local de développement) ;
+//   - X-Frame-Options: DENY — aucun framing (la facture HTML /api/billing/
+//     invoice est ouverte en nouvel onglet via window.open, jamais en iframe) ;
+//   - Referrer-Policy: no-referrer — aucune fuite d'URL vers des tiers ;
+//   - Cache-Control: no-store — aucune réponse (données métier authentifiées,
+//     factures) ne doit être retenue par un cache d'intermédiaire.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Cache-Control", "no-store")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// maxBodyBytes — plafond de taille des corps de requête (sécurité S1-A1).
+// 2 Mio couvre très largement les payloads JSON réels (création de vouchers,
+// actions bulk, modèles, équipe) ; seuls les webhooks conservent leur propre
+// borne plus stricte (1 Mio).
+const maxBodyBytes = 2 << 20
+
+// limitBody — plafonne la taille des corps de requête (sécurité S1-A1).
+// decodeBody lisait le corps JSON SANS limite : un client malveillant pouvait
+// poster des gigaoctets sur n'importe quelle route (épuisement mémoire du
+// service, inflation du store). Double barrière :
+//  1. Content-Length déclaré au-delà du plafond → 413 immédiat, corps jamais lu ;
+//  2. http.MaxBytesReader coupe la lecture au plafond pour les corps streamés
+//     (chunked) — l'erreur de décodage en amont produit une 400 et net/http
+//     referme la connexion (aucune accumulation mémoire possible).
+func limitBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+		}
+		if r.ContentLength > maxBodyBytes {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			_, _ = w.Write([]byte(`{"error":"Corps de requête trop volumineux (limite 2 Mio)"}`))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// authRateLimit — anti brute-force et anti-abus par IP :
 //   - /api/auth/*           : 12 requêtes/minute (login console, inscription) ;
 //   - /api/reseller/login   : 5 requêtes/minute — le PIN revendeur (4-6
 //     chiffres) forme un espace de recherche minuscule, il exige une limite
-//     plus dure (sécurité P0 : cette route était hors limiteur).
+//     plus dure (sécurité P0 : cette route était hors limiteur) ;
+//   - toute autre route /api/* : 120 requêtes/minute (sécurité S1-A2 —
+//     l'ancien périmètre ne couvrait que l'authentification : génération de
+//     vouchers, actions bulk, demandes de paiement et administration étaient
+//     sans limite par IP).
+//
+// Les routes /agent/* (poll 45 s des routeurs, cadence fixe) et le healthcheck
+// restent hors périmètre.
 //
 // Derrière la passerelle (Render/Caddy), l'IP client vient du DERNIER hop
 // de X-Forwarded-For (cf. clientIP).
@@ -187,6 +245,9 @@ func authRateLimit(next http.Handler) http.Handler {
 			return "auth", 12
 		case path == "/api/reseller/login":
 			return "reseller", 5
+		case strings.HasPrefix(path, "/api/"):
+			// Sécurité S1-A2 — limite globale par IP sur le reste de l'API.
+			return "api", 120
 		}
 		return "", 0
 	}

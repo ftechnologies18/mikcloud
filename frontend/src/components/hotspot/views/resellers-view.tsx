@@ -104,8 +104,11 @@ export default function ResellersView() {
   const [settleTarget, setSettleTarget] = useState<Reseller | null>(null);
   const [settleAmount, setSettleAmount] = useState("");
   const [settleNote, setSettleNote] = useState("");
+  // N°19 v2 — source du versement : cash au guichet ou compensation avec le
+  // crédit prépayé (avance dormante héritée de l'ère prépayée).
+  const [settleMethod, setSettleMethod] = useState<"cash" | "credit">("cash");
   // N°19 V2 — reçu du dernier versement (partageable WhatsApp).
-  const [receipt, setReceipt] = useState<{ name: string; amount: number; debtAfter: number; at: string } | null>(null);
+  const [receipt, setReceipt] = useState<{ name: string; amount: number; debtAfter: number; creditAfter?: number; method: "cash" | "credit"; at: string } | null>(null);
 
   const { data: resellers, isLoading } = useQuery({
     queryKey: ["/api/resellers"],
@@ -199,17 +202,30 @@ export default function ResellersView() {
     onError: (error: Error) => toast.error(error.message),
   });
 
-  // N°19 — encaissement d'un versement (dépôt-vente).
+  // N°19 — encaissement d'un versement (dépôt-vente) ; v2 : method=credit
+  // compense la dette avec le crédit prépayé (aucun cash au guichet).
   const settleMutation = useMutation({
-    mutationFn: (payload: { id: string; amount: number; note?: string }) =>
-      api<{ ok: boolean; debtAfter: number }>(`/api/resellers/${payload.id}/settle`, {
+    mutationFn: (payload: { id: string; amount: number; note?: string; method?: "cash" | "credit" }) =>
+      api<{ ok: boolean; debtAfter: number; creditAfter?: number }>(`/api/resellers/${payload.id}/settle`, {
         method: "POST",
-        body: { amount: payload.amount, note: payload.note || undefined },
+        body: { amount: payload.amount, note: payload.note || undefined, method: payload.method || undefined },
       }),
     onSuccess: (res) => {
-      toast.success(tf("resellers.settledToast", { debt: formatCurrency(res.debtAfter, currency, lang) }));
+      const byCredit = settleMutation.variables?.method === "credit";
+      toast.success(
+        byCredit
+          ? tf("resellers.offsetToast", { debt: formatCurrency(res.debtAfter, currency, lang) })
+          : tf("resellers.settledToast", { debt: formatCurrency(res.debtAfter, currency, lang) }),
+      );
       // N°19 V2 — le dialog passe en mode reçu (partage WhatsApp).
-      setReceipt({ name: settleTarget?.name ?? "", amount: settleMutation.variables?.amount ?? 0, debtAfter: res.debtAfter, at: new Date().toISOString() });
+      setReceipt({
+        name: settleTarget?.name ?? "",
+        amount: settleMutation.variables?.amount ?? 0,
+        debtAfter: res.debtAfter,
+        creditAfter: res.creditAfter,
+        method: byCredit ? "credit" : "cash",
+        at: new Date().toISOString(),
+      });
       setSettleAmount("");
       setSettleNote("");
       invalidateResellers();
@@ -245,6 +261,7 @@ export default function ResellersView() {
   const openSettle = (reseller: Reseller) => {
     setSettleAmount(reseller.debt ? String(reseller.debt) : "");
     setSettleNote("");
+    setSettleMethod("cash");
     setReceipt(null);
     setSettleTarget(reseller);
   };
@@ -255,12 +272,21 @@ export default function ResellersView() {
     const dateLabel = new Date(receipt.at).toLocaleString(lang === "en" ? "en-GB" : "fr-FR", {
       day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
     });
-    const text = tf("resellers.receiptText", {
-      name: receipt.name,
-      amount: formatCurrency(receipt.amount, currency, lang),
-      debt: formatCurrency(receipt.debtAfter, currency, lang),
-      date: dateLabel,
-    });
+    const text =
+      receipt.method === "credit"
+        ? tf("resellers.receiptTextOffset", {
+            name: receipt.name,
+            amount: formatCurrency(receipt.amount, currency, lang),
+            debt: formatCurrency(receipt.debtAfter, currency, lang),
+            credit: formatCurrency(receipt.creditAfter ?? 0, currency, lang),
+            date: dateLabel,
+          })
+        : tf("resellers.receiptText", {
+            name: receipt.name,
+            amount: formatCurrency(receipt.amount, currency, lang),
+            debt: formatCurrency(receipt.debtAfter, currency, lang),
+            date: dateLabel,
+          });
     try {
       if (navigator.share) {
         await navigator.share({ title: "MikCloud", text });
@@ -332,11 +358,17 @@ export default function ResellersView() {
   };
 
   const parsedSettle = Number(settleAmount);
-  const settleValid = Number.isFinite(parsedSettle) && parsedSettle > 0 && !!settleTarget && Math.round(parsedSettle) <= (settleTarget.debt ?? 0);
+  // N°19 v2 — en compensation, le montant est borné par la dette ET le crédit prépayé.
+  const settleMax = settleTarget
+    ? settleMethod === "credit"
+      ? Math.min(settleTarget.debt ?? 0, settleTarget.credit)
+      : (settleTarget.debt ?? 0)
+    : 0;
+  const settleValid = Number.isFinite(parsedSettle) && parsedSettle > 0 && !!settleTarget && Math.round(parsedSettle) <= settleMax;
 
   const submitSettle = () => {
     if (!settleTarget || !settleValid) return;
-    settleMutation.mutate({ id: settleTarget.id, amount: Math.round(parsedSettle), note: settleNote.trim() || undefined });
+    settleMutation.mutate({ id: settleTarget.id, amount: Math.round(parsedSettle), note: settleNote.trim() || undefined, method: settleMethod });
   };
 
   return (
@@ -759,16 +791,72 @@ export default function ResellersView() {
           </DialogHeader>
           {receipt ? (
             <div className="space-y-3 rounded-lg border bg-muted/40 p-4 text-center">
-              <HandCoins className="mx-auto size-8 text-chart-1" aria-hidden />
+              {receipt.method === "credit" ? (
+                <Wallet className="mx-auto size-8 text-chart-1" aria-hidden />
+              ) : (
+                <HandCoins className="mx-auto size-8 text-chart-1" aria-hidden />
+              )}
               <p className="text-sm font-semibold">
                 {formatCurrency(receipt.amount, currency, lang)} — {receipt.name}
               </p>
               <p className="text-xs text-muted-foreground">
                 {t("resellers.settleAfter")} {formatCurrency(receipt.debtAfter, currency, lang)}
+                {receipt.method === "credit" && (
+                  <>
+                    {" · "}
+                    {t("resellers.settleCreditAfter")} {formatCurrency(receipt.creditAfter ?? 0, currency, lang)}
+                  </>
+                )}
               </p>
             </div>
           ) : (
           <div className="grid gap-4">
+            {/* N°19 v2 — source du versement : guichet (cash) ou compensation
+                avec l'avance prépayée (proposée seulement si crédit > 0). */}
+            {!!settleTarget?.credit && (
+              <div className="grid gap-2">
+                <Label>{t("resellers.settleSource")}</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSettleMethod("cash")}
+                    className={cn(
+                      "rounded-xl border p-3 text-left text-sm transition-colors",
+                      settleMethod === "cash" ? "border-primary bg-primary/5" : "hover:bg-muted/40",
+                    )}
+                    aria-pressed={settleMethod === "cash"}
+                  >
+                    <span className="flex items-center gap-2 font-medium">
+                      <HandCoins className="size-4" aria-hidden />
+                      {t("resellers.settleMethodCash")}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSettleMethod("credit");
+                      // Le montant pré-rempli (dette totale) peut dépasser
+                      // le crédit disponible → on borne au cap compensation.
+                      const cap = Math.min(settleTarget.debt ?? 0, settleTarget.credit);
+                      if (Number(settleAmount) > cap) setSettleAmount(String(cap));
+                    }}
+                    className={cn(
+                      "rounded-xl border p-3 text-left text-sm transition-colors",
+                      settleMethod === "credit" ? "border-primary bg-primary/5" : "hover:bg-muted/40",
+                    )}
+                    aria-pressed={settleMethod === "credit"}
+                  >
+                    <span className="flex items-center gap-2 font-medium">
+                      <Wallet className="size-4" aria-hidden />
+                      {t("resellers.settleMethodCredit")}
+                    </span>
+                    <span className="mt-1 block text-xs text-muted-foreground">
+                      {tf("resellers.settleMethodCreditDesc", { credit: formatCurrency(settleTarget.credit, currency, lang) })}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="grid gap-2">
               <Label htmlFor="settle-amount">{t("resellers.settleAmount")}</Label>
               <div className="flex gap-2">
@@ -780,8 +868,8 @@ export default function ResellersView() {
                   onChange={(event) => setSettleAmount(event.target.value)}
                   placeholder="5000"
                 />
-                {!!settleTarget?.debt && (
-                  <Button type="button" variant="outline" onClick={() => setSettleAmount(String(settleTarget.debt))}>
+                {settleMax > 0 && (
+                  <Button type="button" variant="outline" onClick={() => setSettleAmount(String(settleMax))}>
                     {t("resellers.settleAll")}
                   </Button>
                 )}
@@ -802,6 +890,15 @@ export default function ResellersView() {
                 <span className="font-semibold text-primary">
                   {formatCurrency(Math.max((settleTarget.debt ?? 0) - Math.round(parsedSettle), 0), currency, lang)}
                 </span>
+                {settleMethod === "credit" && (
+                  <>
+                    {" · "}
+                    {t("resellers.settleCreditAfter")}{" "}
+                    <span className="font-semibold text-primary">
+                      {formatCurrency(Math.max(settleTarget.credit - Math.round(parsedSettle), 0), currency, lang)}
+                    </span>
+                  </>
+                )}
               </p>
             )}
           </div>
@@ -823,7 +920,7 @@ export default function ResellersView() {
                   {t("common.cancel")}
                 </Button>
                 <Button onClick={submitSettle} disabled={!settleValid || settleMutation.isPending}>
-                  {settleMutation.isPending ? t("resellers.settling") : t("resellers.settleSubmit")}
+                  {settleMutation.isPending ? t("resellers.settling") : settleMethod === "credit" ? t("resellers.offsetSubmit") : t("resellers.settleSubmit")}
                 </Button>
               </>
             )}

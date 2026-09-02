@@ -67,7 +67,7 @@ est restauré à chaque redéploiement/sleep-wake. Vérifier dans les logs Rende
 | POST    | `/api/vouchers/batch/:batchId/delete` | Suppression d'un lot entier        |
 | POST    | `/api/vouchers/batch/:batchId/transfer` | **Transfert de stock (N°18)** : redistribue le stock vendable d'un lot vers un revendeur (débit portefeuille) ou vers le stock direct (retour, recrédit) — anti-fraude : les vendus ne bougent jamais |
 | GET     | `/api/sessions` / DELETE `/:id`     | Sessions actives / kick              |
-| GET/POST/PUT/DELETE | `/api/resellers` (+ `/:id/credit`, `/:id/settle`) | Revendeurs & portefeuille (liste enrichie : stock/vendus/attribués/**dette** live) ; **N°19** : mode de paiement par revendeur — prépayé ou dépôt-vente (plafond de créance), `settle` = encaissement d'un versement (créance −, cash au dashboard) |
+| GET/POST/PUT/DELETE | `/api/resellers` (+ `/:id/credit`, `/:id/settle`) | Revendeurs & portefeuille (liste enrichie : stock/vendus/attribués/**dette** live) ; **N°19** : mode de paiement par revendeur — prépayé ou dépôt-vente (plafond de créance), `settle` = encaissement d'un versement (créance −, cash au dashboard) — N°19 v2 : `method=credit` compense la dette avec le crédit prépayé (avance −, créance −, revenu reconnu, zéro cash) |
 | GET     | `/api/sell/me` / `/api/sell/stock` / `/api/sell/day-report` | Mode Vente revendeur (profil tournée, stock, **rapport de fin de journée**) |
 | POST    | `/api/sell/:id/sold`                | Remise au client (traçabilité anti-vol N°8) |
 | GET     | `/api/accounting?period=day\|week\|month&routerId=` | **Comptabilité multi-sites** (ventes/CA par jour, semaine, mois et par routeur) |

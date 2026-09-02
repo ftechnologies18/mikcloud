@@ -147,11 +147,20 @@ func buildReceivables(db *model.DB, acc string, now time.Time) map[string]any {
 	return map[string]any{"totalDebt": total, "count": count, "items": items}
 }
 
-// handleResellerSettle — POST /api/resellers/{id}/settle {amount, note?}.
+// handleResellerSettle — POST /api/resellers/{id}/settle {amount, note?, method?}.
 // Encaissement d'un versement du revendeur en dépôt-vente : la créance
 // baisse (Transaction « settlement ») et le cash entre au dashboard/rapports
 // via une ligne Sale (reconnaissance à l'encaissement — PAS un doublon :
 // aucune Sale n'a été posée à la prise de stock en dépôt-vente).
+//
+// N°19 v2 — method=« credit » (défaut « cash ») : compensation. Le versement
+// est prélevé sur le crédit prépayé du revendeur (avance dormante héritée de
+// l'ère prépayée) au lieu d'être payé au guichet. Comptabilité : Transaction
+// « settlement » (créance −) + Transaction « sale » (portefeuille crédit −,
+// traçabilité du mouvement) + UNE ligne Sale (le revenu des vouchers pris à
+// crédit vendus est reconnu ici — sinon il ne le serait JAMAIS ; le cash de
+// cette avance a déjà été encaissé à la recharge, la ligne Sale à la recharge
+// n'existant pas, il n'y a AUCUN double comptage).
 func (a *API) handleResellerSettle(w http.ResponseWriter, r *http.Request) {
 	// P3 — compte expiré : écritures métier refusées (lecture seule).
 	if !a.guardAccountWrite(w, r) {
@@ -162,6 +171,7 @@ func (a *API) handleResellerSettle(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Amount int    `json:"amount"`
 		Note   string `json:"note"`
+		Method string `json:"method"` // "" | "cash" (défaut) | "credit" — compensation avec le crédit prépayé
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
@@ -169,6 +179,13 @@ func (a *API) handleResellerSettle(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Amount <= 0 {
 		writeErr(w, http.StatusBadRequest, "Le montant du versement doit être positif")
+		return
+	}
+	if req.Method == "" {
+		req.Method = "cash"
+	}
+	if req.Method != "cash" && req.Method != "credit" {
+		writeErr(w, http.StatusBadRequest, "Méthode invalide (cash ou credit)")
 		return
 	}
 	a.store.Lock()
@@ -195,26 +212,59 @@ func (a *API) handleResellerSettle(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, fmt.Sprintf("Montant supérieur à la dette (dette: %d, reçu: %d)", debt, req.Amount))
 		return
 	}
+	// N°19 v2 — compensation : l'avance prépayée du revendeur paie sa dette
+	// (accord au guichet formalisé). Dernière validation avant écriture.
+	if req.Method == "credit" {
+		if res.Credit < req.Amount {
+			a.store.Unlock()
+			writeErr(w, http.StatusBadRequest, fmt.Sprintf("Crédit prépayé insuffisant (crédit: %d, requis: %d)", res.Credit, req.Amount))
+			return
+		}
+		res.Credit -= req.Amount
+	}
 	nowISO := model.NowISO()
 	note := req.Note
 	if note == "" {
-		note = fmt.Sprintf("Versement dépôt-vente de %s", res.Name)
+		if req.Method == "credit" {
+			note = fmt.Sprintf("Compensation dette avec crédit prépayé de %s", res.Name)
+		} else {
+			note = fmt.Sprintf("Versement dépôt-vente de %s", res.Name)
+		}
 	}
 	tx := model.Transaction{
 		ID: model.NewID("tx-"), AccountID: acc, Type: "settlement", ResellerID: res.ID, ResellerName: res.Name,
 		Amount: req.Amount, Note: note, At: nowISO,
 	}
 	db.Transactions = append([]model.Transaction{tx}, db.Transactions...)
+	if req.Method == "credit" {
+		// Traçabilité du portefeuille : le crédit prépayé baisse d'autant
+		// (mouvement tracé comme toute mutation du solde).
+		walletTx := model.Transaction{
+			ID: model.NewID("tx-"), AccountID: acc, Type: "sale", ResellerID: res.ID, ResellerName: res.Name,
+			Amount: req.Amount, Note: "Crédit prépayé converti en versement — compensation dette", At: nowISO,
+		}
+		db.Transactions = append([]model.Transaction{walletTx}, db.Transactions...)
+	}
 	// Reconnaissance à l'encaissement : le revenu dépôt-vente entre au
 	// dashboard/rapports/compta quand l'argent rentre (une seule écriture).
+	// En compensation, « l'encaissement » = conversion de l'avance prépayée
+	// en paiement de la dette (label distinct pour l'audit).
+	saleLabel := "Versement dépôt-vente"
+	if req.Method == "credit" {
+		saleLabel = "Compensation dette-crédit"
+	}
 	db.Sales = append(db.Sales, model.Sale{
-		ID: model.NewID("sale-"), AccountID: acc, Amount: req.Amount, ProfileName: "Versement dépôt-vente", Count: 1,
+		ID: model.NewID("sale-"), AccountID: acc, Amount: req.Amount, ProfileName: saleLabel, Count: 1,
 		Channel: "reseller", ResellerName: res.Name,
 		At: nowISO, Cost: req.Amount, SellingTotal: req.Amount,
 	})
 	debtAfter := debt - req.Amount
-	a.logActivityBy(r, db, acc, "reseller", fmt.Sprintf("Versement de %d FCFA encaissé de %s — dette restante %d FCFA", req.Amount, res.Name, debtAfter))
+	activityMsg := fmt.Sprintf("Versement de %d FCFA encaissé de %s — dette restante %d FCFA", req.Amount, res.Name, debtAfter)
+	if req.Method == "credit" {
+		activityMsg = fmt.Sprintf("Compensation de %d FCFA avec le crédit prépayé de %s — dette restante %d FCFA, crédit restant %d FCFA", req.Amount, res.Name, debtAfter, res.Credit)
+	}
+	a.logActivityBy(r, db, acc, "reseller", activityMsg)
 	a.store.Save()
 	a.store.Unlock()
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "debtAfter": debtAfter, "transaction": tx})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "debtAfter": debtAfter, "creditAfter": res.Credit, "transaction": tx})
 }

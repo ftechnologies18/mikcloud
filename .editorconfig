@@ -1,0 +1,25 @@
+# MikCloud — conventions d'édition partagées (tous éditeurs / IDE)
+# Référence : https://editorconfig.org — la plupart des éditeurs le
+# lisent nativement (VS Code : extension EditorConfig recommandée).
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+# Go : formatage canonique gofmt (tabulations)
+[*.go]
+indent_style = tab
+
+# Markdown : conserver les espaces de fin utiles (retours à la ligne)
+[*.md]
+trim_trailing_whitespace = false
+
+# Fichiers générés / verrous
+[bun.lock]
+insert_final_newline = false

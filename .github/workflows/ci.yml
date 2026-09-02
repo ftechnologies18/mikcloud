@@ -1,7 +1,7 @@
 # CI MikCloud — qualité de code sur chaque push / pull request.
-# Backend Go : gofmt + go vet + build. Frontend : ESLint + build Next.js.
+# Backend Go : gofmt + go vet + tests + build. Frontend : ESLint + build Next.js.
 # Après CI verte sur main : déploiement automatique — Vercel via son propre
-# webhook GitHub (fonctionne), Render via le job « deploy » ci-dessous
+# webhook GitHub (fonctionne), Render via le job « deploy-render » ci-dessous
 # (le service Render a été créé par API : le webhook Render n'existe pas).
 name: CI
 
@@ -16,8 +16,9 @@ concurrency:
 
 jobs:
   backend:
-    name: Backend Go (vet + build)
+    name: Backend Go (gofmt + vet + test + build)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: backend
@@ -35,12 +36,16 @@ jobs:
       - name: Analyse statique (go vet)
         run: go vet ./...
 
+      - name: Tests (go test)
+        run: go test ./...
+
       - name: Compilation
         run: go build -o /tmp/mikcloud-server .
 
   frontend:
     name: Frontend Next.js (lint + build)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: frontend
@@ -72,6 +77,7 @@ jobs:
     needs: [backend, frontend]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Déclencher le déploiement Render
         env:

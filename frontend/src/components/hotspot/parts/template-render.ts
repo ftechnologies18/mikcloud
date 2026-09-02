@@ -65,6 +65,103 @@ const LEGACY_PASSWORD_LINE_RES = [
 const TRANSPARENT_PIXEL =
   "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
 
+// ─── QR code + logo du tenant au centre ───────────────────────────────────
+// Le logo du client (settings.tenant.logoUrl, importé dans Paramètres) est
+// composé AU CENTRE du QR, comme sur les cartes prépayées du commerce.
+// Le QR passe en niveau H (30 % de redondance) pour rester parfaitement
+// lisible malgré le badge central (scannabilité prouvée par décodage).
+
+/** Taille du bitmap QR généré (px) — suréchantillonné pour l'impression ~300 dpi. */
+const QR_SIZE_PX = 300;
+/** Diamètre du badge blanc central, en fraction du côté du QR (≤ ~0,35 : sécurité niveau H). */
+const QR_BADGE_RATIO = 0.32;
+/** Fraction du badge occupée par le logo (aspect préservé, jamais en contact avec les modules). */
+const QR_LOGO_FIT = 0.68;
+
+/** Cache des logos décodés (src → Image) — un seul décodage par logo et par lot. */
+const logoImageCache = new Map<string, HTMLImageElement>();
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  const cached = logoImageCache.get(src);
+  if (cached) return Promise.resolve(cached);
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      // Garde-fou mémoire : au-delà de 8 logos décodés, on repart de zéro.
+      if (logoImageCache.size >= 8) logoImageCache.clear();
+      logoImageCache.set(src, img);
+      resolve(img);
+    };
+    img.onerror = () => reject(new Error("logo-load-failed"));
+    img.src = src;
+  });
+}
+
+/**
+ * qrWithLogoDataUrl — QR (data URL PNG) avec le logo du tenant composé au
+ * centre sur un badge blanc circulaire. Fallback gracieux : QR nu si canvas
+ * indisponible (SSR/tests) ou image illisible.
+ * Réutilisée par Paramètres pour l'aperçu live « logo au centre du QR ».
+ *
+ * Rendu MANUEL des modules (QRCode.create + fillRect à échelle entière) :
+ * le renderer natif à largeur imposée produit des modules fractionnaires
+ * (ex. 300/29 ≈ 10,3 px) baveux, qui dégradent la lecture — l'échelle
+ * entière garantit des modules nets, indispensables à l'impression.
+ */
+export async function qrWithLogoDataUrl(
+  payload: string,
+  logoUrl?: string,
+): Promise<string> {
+  const qr = QRCode.create(payload, { errorCorrectionLevel: "H" });
+  const cells = qr.modules.size;
+  // Échelle entière visant ~300 px (min 4 px/module pour les longs payloads).
+  const scale = Math.max(4, Math.floor(QR_SIZE_PX / cells));
+  const size = cells * scale;
+
+  /** QR nu de secours (rendu net, échelle entière, sans logo). */
+  const plainQr = () =>
+    QRCode.toDataURL(payload, { errorCorrectionLevel: "H", margin: 0, scale });
+
+  if (!logoUrl || typeof document === "undefined") return plainQr();
+  try {
+    const logo = await loadImage(logoUrl);
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const g = canvas.getContext("2d");
+    if (!g) return plainQr();
+    g.fillStyle = "#ffffff";
+    g.fillRect(0, 0, size, size);
+    g.fillStyle = "#000000";
+    for (let row = 0; row < cells; row++) {
+      for (let col = 0; col < cells; col++) {
+        if (qr.modules.get(row, col)) {
+          g.fillRect(col * scale, row * scale, scale, scale);
+        }
+      }
+    }
+    // Badge blanc circulaire : isole le logo des modules environnants.
+    const cx = size / 2;
+    const badge = size * QR_BADGE_RATIO;
+    g.beginPath();
+    g.arc(cx, cx, badge / 2, 0, Math.PI * 2);
+    g.fillStyle = "#ffffff";
+    g.fill();
+    // Logo ajusté (proportions préservées) ; un logo carré reste dans le
+    // cercle : 0.68 × √2 ≈ 0.96 < 1.
+    const avail = badge * QR_LOGO_FIT;
+    const imgScale = Math.min(avail / logo.naturalWidth, avail / logo.naturalHeight);
+    const w = logo.naturalWidth * imgScale;
+    const h = logo.naturalHeight * imgScale;
+    g.imageSmoothingEnabled = true;
+    g.imageSmoothingQuality = "high";
+    g.drawImage(logo, cx - w / 2, cx - h / 2, w, h);
+    return canvas.toDataURL("image/png");
+  } catch {
+    return plainQr();
+  }
+}
+
 function escapeHtml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -91,10 +188,12 @@ export async function renderTemplate(
   num = 1,
 ): Promise<string> {
   const profile = ctx.profiles.find((p) => p.id === voucher.profileId);
-  const qrCode = await QRCode.toDataURL(`${voucher.username}\n${voucher.password}`, {
-    margin: 0,
-    width: 120,
-  });
+  // QR avec le logo du tenant au centre (badge blanc, niveau H) — voir
+  // qrWithLogoDataUrl : fallback QR nu si aucun logo ou canvas indisponible.
+  const qrCode = await qrWithLogoDataUrl(
+    `${voucher.username}\n${voucher.password}`,
+    ctx.logoUrl,
+  );
 
   // Parité Mikhmon : validité affichée au format RouterOS [wdhm] (5h30m, 30d…).
   const validityMin = profile ? (profile.validityMin > 0 ? profile.validityMin : profile.validityDays * 1440) : 0;

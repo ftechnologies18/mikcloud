@@ -9,7 +9,7 @@
 //   • Avancé     — sécurité (mot de passe) + maintenance admin plateforme
 //                  (rechargement base, purge par catégories).
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Building2,
@@ -38,6 +38,7 @@ import type { AppSettings, ExpiryPolicyMode } from "@/lib/hotspot/types";
 import { useHotspotStore } from "@/lib/hotspot/store";
 import { PageHeader } from "@/components/hotspot/page-header";
 import { SETTINGS_QUERY_KEY, useSettings } from "@/components/hotspot/parts/sd-currency";
+import { qrWithLogoDataUrl } from "@/components/hotspot/parts/template-render";
 import { AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -913,6 +914,23 @@ function VoucherCard({ settings }: { settings: AppSettings }) {
   const [logoUrl, setLogoUrl] = useState(settings.tenant.logoUrl ?? "");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Aperçu live « logo au centre du QR » — même fonction de composition que
+  // les tickets réels ; se régénère dès que le logo importé change.
+  const [qrPreview, setQrPreview] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    qrWithLogoDataUrl("MIKCLOUD\nDEMO-2026", logoUrl || undefined)
+      .then((url) => {
+        if (!cancelled) setQrPreview(url);
+      })
+      .catch(() => {
+        if (!cancelled) setQrPreview("");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [logoUrl]);
+
   // Logo : image ≤ 300 Ko encodée en data URL (contrat F2).
   function handleLogoFile(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -1032,6 +1050,19 @@ function VoucherCard({ settings }: { settings: AppSettings }) {
             <code className="font-mono text-[11px]">{"{{logo}}"}</code>
             {t("settings.logoHintPost")}
           </p>
+          <p className="text-xs font-medium">{t("settings.qrPreviewTitle")}</p>
+          <div className="flex items-center gap-3 rounded-lg border bg-white p-3">
+            {qrPreview ? (
+              <img
+                src={qrPreview}
+                alt={t("settings.qrPreviewAlt")}
+                className="size-20 shrink-0"
+              />
+            ) : (
+              <Skeleton className="size-20 shrink-0" />
+            )}
+            <p className="text-xs text-muted-foreground">{t("settings.qrPreviewHint")}</p>
+          </div>
         </div>
       </CardContent>
       <CardFooter className="justify-end px-4 sm:px-6">

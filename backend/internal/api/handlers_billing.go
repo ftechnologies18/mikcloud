@@ -355,6 +355,16 @@ func (a *API) handleWaveWebhook(w http.ResponseWriter, r *http.Request) {
 		writeErrCode(w, http.StatusBadRequest, "unknown_status", "Statut de paiement inconnu : "+status, nil)
 		return
 	}
+	// Sécurité P0 — un webhook de succès SANS montant ne prouve rien : sans
+	// cette garde, un payload authentifié {"ref":…,"status":"paid"} sans
+	// montant activait la demande sans confrontation (le contrôle aval
+	// « amount > 0 && … » sautait alors la vérification). Un échec, lui,
+	// n'a pas besoin de montant.
+	if success && amount <= 0 {
+		writeErrCode(w, http.StatusBadRequest, "missing_amount",
+			"Montant manquant — un webhook de succès doit porter le montant payé", nil)
+		return
+	}
 
 	a.store.Lock()
 	db := a.store.Data()

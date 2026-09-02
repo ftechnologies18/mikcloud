@@ -353,20 +353,46 @@ export default function VouchersView() {
     setTab("vouchers");
   }
 
-  // « Imprimer le lot » (liste simple) : charge les vouchers restants du lot puis ouvre l'ancien dialog.
+  // Charge les vouchers ACTIFS d'un lot pour l'impression — parité avec le
+  // badge « actifs » du lot (agrégat backend : en ligne = consommé) : les
+  // tickets utilisés, expirés, désactivés ou en session ne sortent PAS.
+  // Pagination obligatoire : /api/vouchers plafonne pageSize à 200.
+  async function fetchActiveBatchVouchers(batchId: string): Promise<PagedUsers> {
+    const pageSize = 200;
+    const first = await api<PagedUsers>("/api/vouchers", {
+      params: { search: batchId, page: 1, pageSize, status: "active" },
+    });
+    const pages = Math.ceil(first.total / pageSize);
+    for (let p = 2; p <= pages; p++) {
+      const next = await api<PagedUsers>("/api/vouchers", {
+        params: { search: batchId, page: p, pageSize, status: "active" },
+      });
+      first.data.push(...next.data);
+    }
+    return first;
+  }
+
+  // « Imprimer le lot » (liste simple) : seuls les tickets ACTIFS du lot
+  // sont imprimés (utilisés/expirés/désactivés exclus).
   async function printBatch(batch: BatchWithStats) {
     setPrintingBatchId(batch.id);
     try {
-      const res = await api<PagedUsers>("/api/vouchers", {
-        params: { search: batch.id, page: 1, pageSize: 500 },
-      });
-      if (res.data.length === 0) {
-        toast.info(tf("vouchers.batches.purgedToast", { batch: shortBatch(batch.id) }));
+      const res = await fetchActiveBatchVouchers(batch.id);
+      if (res.total === 0) {
+        // Lot purgé (plus aucun voucher en base) ou tous consommés — on distingue.
+        const all = await api<PagedUsers>("/api/vouchers", {
+          params: { search: batch.id, page: 1, pageSize: 1 },
+        });
+        if (all.total === 0) {
+          toast.info(tf("vouchers.batches.purgedToast", { batch: shortBatch(batch.id) }));
+        } else {
+          toast.info(tf("vouchers.batches.noActiveToast", { batch: shortBatch(batch.id) }));
+        }
         return;
       }
       setPrintVouchers(res.data);
       setPrintTitle(
-        tf("vouchers.batches.printTitle", { batch: shortBatch(batch.id), n: res.data.length }),
+        tf("vouchers.batches.printTitleActive", { batch: shortBatch(batch.id), n: res.total }),
       );
       setPrintBatchId(batch.id);
       setPrintOpen(true);
@@ -378,7 +404,8 @@ export default function VouchersView() {
   }
 
   // Quick print (F12) : réimprime directement le dernier lot imprimé
-  // (localStorage "mikcloud-last-batch"). Aucun lot récent → toast informatif.
+  // (localStorage "mikcloud-last-batch") — tickets ACTIFS uniquement.
+  // Aucun lot récent → toast informatif.
   async function quickPrint() {
     let lastBatch: string | null = null;
     try {
@@ -392,17 +419,23 @@ export default function VouchersView() {
     }
     setPrintingBatchId(lastBatch);
     try {
-      // Même mécanique que printBatch : recherche par identifiant de lot.
-      const res = await api<PagedUsers>("/api/vouchers", {
-        params: { search: lastBatch, page: 1, pageSize: 500 },
-      });
-      if (res.data.length === 0) {
-        toast.info(tf("vouchers.batches.purgedToast", { batch: shortBatch(lastBatch) }));
+      // Même mécanique que printBatch : recherche par identifiant de lot,
+      // filtre actifs côté serveur + pagination (plafond 200/page).
+      const res = await fetchActiveBatchVouchers(lastBatch);
+      if (res.total === 0) {
+        const all = await api<PagedUsers>("/api/vouchers", {
+          params: { search: lastBatch, page: 1, pageSize: 1 },
+        });
+        if (all.total === 0) {
+          toast.info(tf("vouchers.batches.purgedToast", { batch: shortBatch(lastBatch) }));
+        } else {
+          toast.info(tf("vouchers.batches.noActiveToast", { batch: shortBatch(lastBatch) }));
+        }
         return;
       }
       setPrintVouchers(res.data);
       setPrintTitle(
-        tf("vouchers.batches.printTitle", { batch: shortBatch(lastBatch), n: res.data.length }),
+        tf("vouchers.batches.printTitleActive", { batch: shortBatch(lastBatch), n: res.total }),
       );
       setPrintBatchId(lastBatch);
       setPrintOpen(true);

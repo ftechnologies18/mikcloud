@@ -114,8 +114,14 @@ func main() {
 }
 
 // corsMiddleware — CORS restreint : ALLOWED_ORIGIN liste d'origines autorisées
-// (ex. https://mikcloud.vercel.app,https://mikcloud-ftci.vercel.app). Vide ou *
-// → ouvert (dev local). L'origine demandée est réfléchie si elle est autorisée.
+// (ex. https://mikcloud.vercel.app,https://mikcloud-ftci.vercel.app). L'origine
+// demandée est réfléchie si elle est autorisée.
+// Sécurité P1 #16 — fail-closed en production : sans ALLOWED_ORIGIN, AUCUN
+// en-tête CORS n'est émis (le navigateur refuse les requêtes cross-origin).
+// Avant ce correctif, l'absence de configuration reflétait toutes les origines
+// (« * ») : retirer la variable sur l'hébergeur aurait ouvert silencieusement
+// l'API à n'importe quel site. Le mode permissif reste réservé au
+// développement local (pas de DATABASE_URL).
 func corsMiddleware(next http.Handler) http.Handler {
 	allowed := map[string]bool{}
 	for _, o := range strings.Split(os.Getenv("ALLOWED_ORIGIN"), ",") {
@@ -123,7 +129,11 @@ func corsMiddleware(next http.Handler) http.Handler {
 			allowed[o] = true
 		}
 	}
-	open := len(allowed) == 0 // dev : aucune origine configurée
+	inProd := os.Getenv("DATABASE_URL") != ""
+	open := len(allowed) == 0 && !inProd // dev local uniquement
+	if len(allowed) == 0 && inProd {
+		log.Println("AVERTISSEMENT : ALLOWED_ORIGIN absente en production — CORS en échec par défaut, requêtes cross-origin refusées (définissez ALLOWED_ORIGIN avec l'URL du frontend)")
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
 		switch {

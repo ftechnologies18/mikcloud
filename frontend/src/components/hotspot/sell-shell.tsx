@@ -14,6 +14,8 @@ import Image from "next/image";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BadgeCheck,
+  CheckCircle2,
+  Circle,
   FileBarChart,
   Loader2,
   LogOut,
@@ -21,8 +23,10 @@ import {
   Share2,
   ShoppingCart,
   Store,
+  Undo2,
   Wifi,
   WifiOff,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -72,6 +76,14 @@ interface SellMe {
   debtCeiling?: number;
 }
 
+/** N°20 — réponse du retour de stock (POST /api/sell/return). */
+interface SellReturnResult {
+  returned: number;
+  credited: number;
+  creditAfter: number;
+  codes: string[];
+}
+
 function useOnline(): boolean {
   const [online, setOnline] = useState(true);
   useEffect(() => {
@@ -93,6 +105,10 @@ export default function SellShell() {
   const logout = useHotspotStore((s) => s.logout);
   const online = useOnline();
   const [reportOpen, setReportOpen] = useState(false);
+  // N°20 — retour de stock : mode sélection → confirmation → POST /api/sell/return.
+  const [returnMode, setReturnMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [returnConfirmOpen, setReturnConfirmOpen] = useState(false);
 
   const { data: me } = useQuery({
     queryKey: ["/api/sell/me"],
@@ -123,7 +139,51 @@ export default function SellShell() {
     onError: (e: Error) => toast.error(e instanceof ApiError ? e.message : t("sell.error")),
   });
 
+  // N°20 — retour de stock : les tickets choisis repartent chez le gérant
+  // (prépayé : portefeuille recrédité du prix gros ; dépôt-vente : stock seul).
+  const returnStock = useMutation({
+    mutationFn: (ids: string[]) =>
+      api<SellReturnResult>("/api/sell/return", { method: "POST", body: JSON.stringify({ ids }) }),
+    onSuccess: (res) => {
+      if (res.credited > 0) {
+        toast.success(tf("sell.returnDoneCreditToast", { count: res.returned, amount: formatCurrency(res.credited, currency, lang) }));
+      } else {
+        toast.success(tf("sell.returnDoneToast", { count: res.returned }));
+      }
+      setReturnConfirmOpen(false);
+      setReturnMode(false);
+      setSelected(new Set());
+      qc.invalidateQueries({ queryKey: ["/api/sell/stock"] });
+      qc.invalidateQueries({ queryKey: ["/api/sell/me"] });
+      qc.invalidateQueries({ queryKey: ["/api/sell/day-report"] });
+    },
+    onError: (e: Error) => toast.error(e instanceof ApiError ? e.message : t("sell.error")),
+  });
+
   const currency = me?.currency || "FCFA";
+  const isDeposit = me?.paymentMode === "deposit";
+  const hasStock = !!stock && stock.length > 0;
+  // Valeur GROSSISTE de la sélection (u.Price — ce qui est recrédité en prépayé).
+  const selectedVouchers = (stock ?? []).filter((v) => selected.has(v.id));
+  const selectedWholesale = selectedVouchers.reduce((sum, v) => sum + v.price, 0);
+
+  function toggleReturnMode() {
+    setReturnMode((on) => !on);
+    setSelected(new Set());
+    setReturnConfirmOpen(false);
+  }
+
+  function toggleSelected(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
 
   // Clôture : le rapport textuel se partage (WhatsApp) ou se copie — le
   // revendeur l'envoie au gérant en fin de tournée.
@@ -268,14 +328,36 @@ export default function SellShell() {
         {online ? t("sell.online") : t("sell.offline")}
       </div>
 
-      <button
-        type="button"
-        onClick={() => setReportOpen(true)}
-        className="flex min-h-11 w-full items-center justify-center gap-2 border-b bg-muted/30 px-4 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-      >
-        <FileBarChart className="size-4" aria-hidden />
-        {t("sell.dayReport")}
-      </button>
+      {/* Clôture de journée + retour de stock (N°20) */}
+      <div className="grid grid-cols-2 gap-px border-b bg-border">
+        <button
+          type="button"
+          onClick={() => setReportOpen(true)}
+          className="flex min-h-11 items-center justify-center gap-2 bg-muted/30 px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+        >
+          <FileBarChart className="size-4" aria-hidden />
+          {t("sell.dayReport")}
+        </button>
+        <button
+          type="button"
+          onClick={toggleReturnMode}
+          disabled={!hasStock}
+          aria-pressed={returnMode}
+          className={`flex min-h-11 items-center justify-center gap-2 px-3 text-sm font-medium transition-colors disabled:opacity-50 ${
+            returnMode
+              ? "bg-primary text-primary-foreground"
+              : "bg-muted/30 text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+          }`}
+        >
+          {returnMode ? <X className="size-4" aria-hidden /> : <Undo2 className="size-4" aria-hidden />}
+          {t("sell.returnBtn")}
+        </button>
+      </div>
+      {returnMode && (
+        <p className="bg-primary/5 px-4 py-1.5 text-center text-xs text-muted-foreground" role="status">
+          {t("sell.returnSelectHint")}
+        </p>
+      )}
 
       {/* Stock */}
       <main className="flex-1 space-y-3 p-4" aria-label={t("sell.stock")}>
@@ -294,9 +376,31 @@ export default function SellShell() {
         ) : (
           stock.map((v) => {
             const price = v.sellingPrice || v.price;
+            const isSelected = selected.has(v.id);
             return (
-              <Card key={v.id} className="gap-0 py-0">
-                <CardContent className="p-4">
+              <Card
+                key={v.id}
+                className={`gap-0 py-0 transition-shadow ${
+                  returnMode && isSelected ? "ring-2 ring-primary" : ""
+                }`}
+              >
+                <CardContent
+                  className={`p-4 ${returnMode ? "cursor-pointer select-none" : ""}`}
+                  onClick={returnMode ? () => toggleSelected(v.id) : undefined}
+                  role={returnMode ? "checkbox" : undefined}
+                  aria-checked={returnMode ? isSelected : undefined}
+                  tabIndex={returnMode ? 0 : undefined}
+                  onKeyDown={
+                    returnMode
+                      ? (e) => {
+                          if (e.key === " " || e.key === "Enter") {
+                            e.preventDefault();
+                            toggleSelected(v.id);
+                          }
+                        }
+                      : undefined
+                  }
+                >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
@@ -317,9 +421,15 @@ export default function SellShell() {
                           : t("sell.expiresOnFirstLogin")}
                       </p>
                     </div>
-                    <p className="shrink-0 text-lg font-bold text-primary tabular-nums">
-                      {formatCurrency(price, currency, lang)}
-                    </p>
+                    {returnMode ? (
+                      <span aria-hidden className="shrink-0 text-primary">
+                        {isSelected ? <CheckCircle2 className="size-6" /> : <Circle className="size-6 text-muted-foreground/40" />}
+                      </span>
+                    ) : (
+                      <p className="shrink-0 text-lg font-bold text-primary tabular-nums">
+                        {formatCurrency(price, currency, lang)}
+                      </p>
+                    )}
                   </div>
 
                   <div
@@ -340,25 +450,56 @@ export default function SellShell() {
                     )}
                   </div>
 
-                  <div className="mt-3 flex gap-2">
-                    <Button className="flex-1" onClick={() => sell.mutate(v.id)} disabled={sell.isPending}>
-                      {sell.isPending && sell.variables === v.id ? (
-                        <Loader2 className="size-4 animate-spin" />
-                      ) : (
-                        <BadgeCheck className="size-4" />
-                      )}
-                      {t("sell.sellBtn")}
-                    </Button>
-                    <Button variant="outline" size="icon" onClick={() => void share(v)} aria-label={t("sell.share")}>
-                      <Share2 className="size-4" />
-                    </Button>
-                  </div>
+                  {/* N°20 — en mode retour : pas de vente/partage (anti-misclick). */}
+                  {!returnMode && (
+                    <div className="mt-3 flex gap-2">
+                      <Button className="flex-1" onClick={() => sell.mutate(v.id)} disabled={sell.isPending}>
+                        {sell.isPending && sell.variables === v.id ? (
+                          <Loader2 className="size-4 animate-spin" />
+                        ) : (
+                          <BadgeCheck className="size-4" />
+                        )}
+                        {t("sell.sellBtn")}
+                      </Button>
+                      <Button variant="outline" size="icon" onClick={() => void share(v)} aria-label={t("sell.share")}>
+                        <Share2 className="size-4" />
+                      </Button>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             );
           })
         )}
       </main>
+
+      {/* N°20 — barre d'action du mode retour (sticky au-dessus du footer). */}
+      {returnMode && selected.size > 0 && (
+        <div className="sticky bottom-0 z-10 border-t bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <p className="text-sm font-medium">{tf("sell.returnSelected", { count: selected.size })}</p>
+            <p className="text-sm text-muted-foreground">
+              {t("sell.returnWholesale")} :{" "}
+              <span className="font-semibold text-foreground tabular-nums">
+                {formatCurrency(selectedWholesale, currency, lang)}
+              </span>
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" className="flex-1" onClick={toggleReturnMode}>
+              {t("common.cancel")}
+            </Button>
+            <Button
+              className="flex-1"
+              onClick={() => setReturnConfirmOpen(true)}
+              disabled={returnStock.isPending}
+            >
+              <Undo2 className="size-4" />
+              {t("sell.returnAction")}
+            </Button>
+          </div>
+        </div>
+      )}
 
       <footer className="mt-auto border-t px-4 py-3 text-center text-[11px] text-muted-foreground">
         <ShoppingCart className="mr-1 inline size-3" />
@@ -460,6 +601,38 @@ export default function SellShell() {
             <Button onClick={() => void shareReport()} disabled={reportLoading || !report}>
               <Share2 className="size-4" />
               {t("sell.dayReportShare")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* N°20 — confirmation du retour de stock. */}
+      <Dialog open={returnConfirmOpen} onOpenChange={setReturnConfirmOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Undo2 className="size-4 text-primary" aria-hidden />
+              {t("sell.returnConfirmTitle")}
+            </DialogTitle>
+            <DialogDescription>
+              {isDeposit
+                ? tf("sell.returnConfirmDescDeposit", { count: selected.size })
+                : tf("sell.returnConfirmDescPrepaid", {
+                    count: selected.size,
+                    amount: formatCurrency(selectedWholesale, currency, lang),
+                  })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReturnConfirmOpen(false)} disabled={returnStock.isPending}>
+              {t("common.cancel")}
+            </Button>
+            <Button
+              onClick={() => returnStock.mutate([...selected])}
+              disabled={returnStock.isPending || selected.size === 0}
+            >
+              {returnStock.isPending ? <Loader2 className="size-4 animate-spin" /> : <Undo2 className="size-4" />}
+              {t("sell.returnAction")}
             </Button>
           </DialogFooter>
         </DialogContent>

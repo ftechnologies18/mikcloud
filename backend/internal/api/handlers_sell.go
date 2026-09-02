@@ -255,6 +255,144 @@ func (a *API) handleSellSold(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "soldAt": now})
 }
 
+// sellReturnRequest — corps de POST /api/sell/return : identifiants des
+// vouchers (stock du revendeur) à rendre au gérant.
+type sellReturnRequest struct {
+	IDs []string `json:"ids"`
+}
+
+// handleSellReturn — N°20 — retour de stock initié par le REVENDEUR depuis le
+// Mode Vente : il rend au gérant des tickets encore en sa possession (jamais
+// remis à un client, statut effectif « actif »). Miroir exact du transfert
+// « direct » du gérant (N°18, handlers_transfer.go) mais à l'initiative du
+// revendeur, scopé à SON stock (claims Sub/Acc — isolation stricte) :
+//
+//   - règle d'or 1 (N°18) : changer la propriété, jamais dupliquer —
+//     ResellerID/ResellerName/CreditSale vidés (retour au stock direct) ;
+//   - règle d'or 4 : l'argent suit le retour — prépayé : le portefeuille est
+//     recrédité du prix GROS (u.Price) de chaque ticket + UNE Transaction
+//     « credit » agrégée ; dépôt-vente : rien n'avait été débité à la prise,
+//     aucun recrédit (le retour réduit seulement le stock exposé — la créance
+//     ne naît qu'à la remise client) ;
+//   - règle d'or 5 : Activity avec le revendeur comme acteur (audit).
+//
+// Refus : tickets remis/consommés/expirés/désactivés (409) — on ne rend que
+// du stock vivant ; idempotent par construction (revérifié sous verrou).
+func (a *API) handleSellReturn(w http.ResponseWriter, r *http.Request) {
+	// P3 — compte expiré : écritures métier refusées (lecture seule).
+	if !a.guardAccountWrite(w, r) {
+		return
+	}
+	c := claimsFrom(r)
+	var req sellReturnRequest
+	if err := decodeBody(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
+		return
+	}
+	if len(req.IDs) == 0 {
+		writeErr(w, http.StatusBadRequest, "Aucun ticket sélectionné pour le retour")
+		return
+	}
+	if len(req.IDs) > 500 {
+		writeErr(w, http.StatusBadRequest, "Trop de tickets en une fois (500 maximum)")
+		return
+	}
+
+	now := time.Now().UTC()
+	a.store.Lock()
+	defer a.store.Unlock()
+	db := a.store.Data()
+
+	// Résolution scopée : chaque id doit appartenir AU stock du revendeur
+	// (ResellerID == claims.Sub, compte == claims.Acc) et être rendable.
+	wanted := make(map[string]bool, len(req.IDs))
+	for _, id := range req.IDs {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			wanted[id] = true
+		}
+	}
+	if len(wanted) == 0 {
+		writeErr(w, http.StatusBadRequest, "Aucun ticket sélectionné pour le retour")
+		return
+	}
+	type returnable struct {
+		idx int
+		u   *model.HotspotUser
+	}
+	found := map[string]*returnable{}
+	for i := range db.HotspotUsers {
+		u := &db.HotspotUsers[i]
+		if !wanted[u.ID] || u.ResellerID != c.Sub || u.AccountID != c.Acc || u.Kind != "voucher" {
+			continue
+		}
+		found[u.ID] = &returnable{idx: i, u: u}
+	}
+	rejected := []string{}
+	for id := range wanted {
+		u := found[id]
+		switch {
+		case u == nil:
+			rejected = append(rejected, id) // hors stock / compte voisin / inconnu
+		case u.u.SoldAt != "" || model.EffectiveStatus(u.u, now) != "active":
+			rejected = append(rejected, u.u.Username) // remis, consommé, expiré ou désactivé
+		}
+	}
+	// Tout refus bloque le lot (cohérent avec le refus idempotent de « sold ») :
+	// le revendeur décoche les tickets concernés et relance.
+	if len(rejected) > 0 {
+		writeErr(w, http.StatusConflict,
+			fmt.Sprintf("Ticket(s) non rendable(s) : %s (déjà remis au client, expiré ou introuvable dans votre stock)", strings.Join(rejected, ", ")))
+		return
+	}
+
+	// Recrédit prépayé : prix GROS (u.Price — ce qui avait été débité), aucune
+	// ligne Sale (l'émission reste liée à la génération — zéro double comptage).
+	var res *model.Reseller
+	if r0 := findResellerScoped(db, c.Sub, c.Acc); r0 != nil {
+		res = r0
+	}
+	total := 0
+	for _, rt := range found {
+		total += rt.u.Price
+	}
+	prepaid := res == nil || res.PaymentMode != "deposit"
+
+	// Application — retour au stock direct (règle d'or 1).
+	returned := make([]string, 0, len(found))
+	for _, rt := range found {
+		u := rt.u
+		returned = append(returned, u.Username)
+		u.ResellerID, u.ResellerName = "", ""
+		u.CreditSale = false
+	}
+	sort.Strings(returned) // message d'audit stable
+
+	creditAfter := 0
+	if prepaid && total > 0 && res != nil {
+		res.Credit += total
+		creditAfter = res.Credit
+		db.Transactions = append([]model.Transaction{{
+			ID: model.NewID("tx-"), AccountID: c.Acc, Type: "credit",
+			ResellerID: c.Sub, ResellerName: c.Name, Amount: total,
+			Note: fmt.Sprintf("Retour de stock : %d voucher(s) rendus par %s (Mode Vente)", len(returned), c.Name),
+			At:   model.NowISO(),
+		}}, db.Transactions...)
+	}
+	a.logActivityBy(r, db, c.Acc, "voucher",
+		fmt.Sprintf("Retour de stock : %d voucher(s) [%s] rendus au gérant par %s (Mode Vente%s)",
+			len(returned), strings.Join(returned, ", "), c.Name,
+			map[bool]string{true: fmt.Sprintf(" — recrédité : %d", total), false: " — dépôt-vente : aucun recrédit"}[prepaid]))
+	a.store.Save()
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"returned":    len(returned),
+		"credited":    map[bool]int{true: total, false: 0}[prepaid],
+		"creditAfter": creditAfter,
+		"codes":       returned,
+	})
+}
+
 // sellDayReportItem — une vente du rapport de fin de journée (journal
 // chronologique : le revendeur relit sa journée dans l'ordre).
 type sellDayReportItem struct {

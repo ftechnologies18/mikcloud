@@ -35,9 +35,18 @@ func main() {
 	if dataDir == "" {
 		dataDir = "data"
 	}
+	// Sécurité P0 — le secret JWT ne doit JAMAIS tomber sur la constante de
+	// développement en production : quiconque connaît le repo peut alors forger
+	// des jetons super-admin (console plateforme, impersonation, purge).
+	// Production (DATABASE_URL définie) → refus de démarrer. Dev local →
+	// fallback toléré avec avertissement bruyant.
 	jwtSecret := os.Getenv("JWT_SECRET")
 	if jwtSecret == "" {
-		jwtSecret = "mikcloud-dev-secret" // secret de dev ; en prod, définir JWT_SECRET
+		if os.Getenv("DATABASE_URL") != "" {
+			log.Fatalf("sécurité : JWT_SECRET est obligatoire en production (DATABASE_URL définie) — définissez-la puis redéployez")
+		}
+		jwtSecret = "mikcloud-dev-secret" // développement local uniquement
+		log.Println("AVERTISSEMENT : JWT_SECRET absente — secret de développement utilisé (jamais en production)")
 	}
 
 	st, err := store.New(dataDir)
@@ -114,36 +123,52 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// authRateLimit — 12 requêtes/minute/IP sur /api/auth/* (anti brute-force).
-// Derrière la passerelle (Render/Caddy), l'IP client vient de X-Forwarded-For.
+// authRateLimit — anti brute-force par IP :
+//   - /api/auth/*           : 12 requêtes/minute (login console, inscription) ;
+//   - /api/reseller/login   : 5 requêtes/minute — le PIN revendeur (4-6
+//     chiffres) forme un espace de recherche minuscule, il exige une limite
+//     plus dure (sécurité P0 : cette route était hors limiteur).
+//
+// Derrière la passerelle (Render/Caddy), l'IP client vient du DERNIER hop
+// de X-Forwarded-For (cf. clientIP).
 func authRateLimit(next http.Handler) http.Handler {
 	type bucket struct {
 		count int
 		reset time.Time
 	}
-	const limit = 12
 	var mu sync.Mutex
 	buckets := map[string]*bucket{}
 	go func() { // purge des fenêtres expirées
 		for range time.Tick(time.Minute) {
 			mu.Lock()
-			for ip, b := range buckets {
+			for k, b := range buckets {
 				if time.Now().After(b.reset) {
-					delete(buckets, ip)
+					delete(buckets, k)
 				}
 			}
 			mu.Unlock()
 		}
 	}()
+	// scopeFor — scope du limiteur pour la requête : nom + limite, ou vide
+	// si la route n'est pas limitée.
+	scopeFor := func(path string) (string, int) {
+		switch {
+		case strings.HasPrefix(path, "/api/auth/"):
+			return "auth", 12
+		case path == "/api/reseller/login":
+			return "reseller", 5
+		}
+		return "", 0
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/auth/") {
-			ip := clientIP(r)
+		if scope, limit := scopeFor(r.URL.Path); scope != "" {
+			key := scope + "|" + clientIP(r)
 			mu.Lock()
 			now := time.Now()
-			b := buckets[ip]
+			b := buckets[key]
 			if b == nil || now.After(b.reset) {
 				b = &bucket{reset: now.Add(time.Minute)}
-				buckets[ip] = b
+				buckets[key] = b
 			}
 			b.count++
 			ok := b.count <= limit
@@ -164,9 +189,13 @@ func authRateLimit(next http.Handler) http.Handler {
 // sinon l'host de RemoteAddr sans le port source).
 func clientIP(r *http.Request) string {
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// premier IP de la chaîne = client d'origine
-		if i := strings.IndexByte(xff, ','); i > 0 {
-			return strings.TrimSpace(xff[:i])
+		// Sécurité P0 — on retient le DERNIER hop de la chaîne : c'est celui
+		// ajouté par le proxy de confiance (Render/Caddy). Les IP antérieures
+		// viennent du client lui-même et sont donc forgeables — prendre la
+		// première permettait de contourner le limiteur (une IP fictive par
+		// requête = bucket neuf à chaque fois).
+		if i := strings.LastIndexByte(xff, ','); i >= 0 && i+1 < len(xff) {
+			return strings.TrimSpace(xff[i+1:])
 		}
 		return strings.TrimSpace(xff)
 	}

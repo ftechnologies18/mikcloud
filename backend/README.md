@@ -37,7 +37,9 @@ Variables d'environnement :
 
 Démarrage sur base PostgreSQL vide : état de mise en service (compte + admin,
 réglages, 3 gabarits de tickets — **aucune donnée de démonstration**).
-Compte de développement (mode JSON local, seed démo) : **admin / admin123**.
+Compte de développement (1er démarrage JSON local) : administrateur « admin »
+créé avec un mot de passe aléatoire affiché une seule fois dans les logs —
+aucun identifiant par défaut connu du repo n'existe (sécurité P0).
 `POST /api/admin/purge` supprime les données de test par catégories — aucun
 endpoint ne régénère de données démo (l'ancien `/api/admin/reset` a été retiré :
 il écrasait les données réelles, dont les routeurs agents).

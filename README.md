@@ -23,7 +23,7 @@ mikcloud/
 # 1. Backend (port 4000)
 cd backend
 go run .
-# → http://localhost:4000  (compte démo : admin / admin123)
+# → http://localhost:4000  (1er démarrage : mot de passe admin aléatoire affiché dans les logs)
 
 # 2. Frontend (port 3000)
 cd frontend
@@ -47,8 +47,9 @@ Le frontend appelle le backend via `NEXT_PUBLIC_API_BASE` si défini
 2. `JWT_SECRET` est générée automatiquement.
 3. Ajouter la variable d'environnement `DATABASE_URL` (secret) avec la
    connexion string Neon.
-4. Recommandé : définir `ADMIN_USERNAME` / `ADMIN_PASSWORD` (sinon le compte
-   démo `admin/admin123` reste actif).
+4. Obligatoire : définir `ADMIN_PASSWORD` (fort) — sur une base PostgreSQL
+   vide, le service refuse de démarrer sans elle (sécurité P0 : plus aucun
+   identifiant par défaut connu du repo).
 5. URL obtenue : `https://<service>.onrender.com`.
 
 > Les données vivent dans Neon : l'état est rechargé à chaque démarrage et

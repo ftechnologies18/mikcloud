@@ -17,8 +17,9 @@ services:
       # Render → Environment → Add environment variable (secret, jamais commité).
       - key: DATABASE_URL
         sync: false
-      # Identifiants admin de production (optionnel mais vivement conseillé) :
-      # sans eux, le compte démo admin/admin123 reste actif.
+      # Sécurité P0 — ADMIN_PASSWORD est OBLIGATOIRE sur une base PostgreSQL
+      # vide : sans elle, le service REFUSE de démarrer (bootstrapAdmin).
+      # Plus aucun identifiant par défaut connu du repo n'existe dans le code.
       - key: ADMIN_USERNAME
         value: admin
       - key: ADMIN_PASSWORD

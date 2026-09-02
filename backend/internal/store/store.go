@@ -7,6 +7,8 @@
 package store
 
 import (
+	crand "crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -83,6 +85,10 @@ func New(dir string) (*Store, error) {
 		// démarrage et doit être persisté aussitôt. La synchro est
 		// FORCÉE à chaque boot : elle purge aussi les lignes orphelines
 		// (settings d'un compte supprimé…) via la synchro différentielle.
+		if err := bootstrapAdmin(s.db); err != nil {
+			pg.Close()
+			return nil, err
+		}
 		applyAdminOverride(s.db)
 		s.Lock()
 		s.Save()
@@ -120,6 +126,9 @@ func New(dir string) (*Store, error) {
 			}
 			// Override admin (variables d'environnement) — même garantie
 			// qu'en mode PostgreSQL : appliqué à chaque démarrage.
+			if err := bootstrapAdmin(s.db); err != nil {
+				return nil, err
+			}
 			if applyAdminOverride(s.db) {
 				s.Lock()
 				s.Save()
@@ -131,8 +140,12 @@ func New(dir string) (*Store, error) {
 		log.Println("store: db.json absent — état de mise en service (aucune donnée démo)")
 		s.db = BuildEmptyState()
 	}
-	// État initial : l'override admin remplace le mot de passe admin/admin123
-	// par les identifiants de production si ADMIN_PASSWORD est définie.
+	// État initial : sécurité P0 (bootstrapAdmin — plus AUCUN identifiant
+	// par défaut connu du repo), puis l'override admin crée/remplace le
+	// compte depuis ADMIN_PASSWORD si elle est définie.
+	if err := bootstrapAdmin(s.db); err != nil {
+		return nil, err
+	}
 	applyAdminOverride(s.db)
 	s.Lock()
 	s.Save()
@@ -428,6 +441,51 @@ func migrateRemoveOperator(db *model.DB) bool {
 		}
 	}
 	return changed
+}
+
+// bootstrapAdmin — sécurité P0 : il n'existe PLUS d'identifiants par défaut
+// connus du code (l'ancien admin/admin123 documenté publiquement est
+// supprimé — BuildEmptyState ne crée plus aucun utilisateur). Sur un état
+// sans administrateur plateforme :
+//   - ADMIN_PASSWORD définie → rien à faire ici, applyAdminOverride (appelé
+//     juste après) crée le compte depuis l'environnement ;
+//   - production (PostgreSQL) SANS ADMIN_PASSWORD → REFUS de démarrer : un
+//     SaaS commercial ne doit jamais exposer une console sans opérateur
+//     identifié, encore moins avec un mot de passe public ;
+//   - développement local → administrateur « admin » créé avec un mot de
+//     passe ALÉATOIRE (crypto/rand), affiché une seule fois dans les logs.
+func bootstrapAdmin(db *model.DB) error {
+	for i := range db.Users {
+		if db.Users[i].Role == "admin" {
+			return nil // un opérateur plateforme existe déjà
+		}
+	}
+	if os.Getenv("ADMIN_PASSWORD") != "" {
+		return nil // applyAdminOverride (appelé juste après) crée le compte
+	}
+	if u := os.Getenv("DATABASE_URL"); strings.HasPrefix(u, "postgres://") || strings.HasPrefix(u, "postgresql://") {
+		return errors.New("sécurité : ADMIN_PASSWORD est obligatoire en production (base PostgreSQL) — définissez-la puis redéployez")
+	}
+	// Développement local : mot de passe aléatoire (jamais un mot de passe connu).
+	buf := make([]byte, 15)
+	if _, err := crand.Read(buf); err != nil {
+		return fmt.Errorf("génération du mot de passe administrateur impossible : %w", err)
+	}
+	password := base64.RawURLEncoding.EncodeToString(buf)
+	salt := auth.NewSalt()
+	db.Users = append(db.Users, model.AdminUser{
+		ID:           model.NewID("adm-"),
+		AccountID:    "", // opérateur plateforme sans compte client
+		Name:         "Administrateur",
+		Username:     "admin",
+		Role:         "admin",
+		Salt:         salt,
+		PasswordHash: auth.HashPassword(password, salt),
+		CreatedAt:    model.NowISO(),
+	})
+	log.Printf("sécurité : aucun identifiant par défaut — administrateur local « admin » créé, mot de passe : %s", password)
+	log.Println("sécurité : changez ce mot de passe (console) et définissez ADMIN_PASSWORD en production")
+	return nil
 }
 
 // applyAdminOverride — si ADMIN_PASSWORD est défini, remplace le compte démo

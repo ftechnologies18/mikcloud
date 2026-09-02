@@ -177,8 +177,9 @@ intégré permet de démontrer toute la plateforme sans matériel.
 ## Feuille de route (qualité)
 
 - [ ] Tests automatisés backend Go et frontend — la CI exécute déjà `go test`
-- [ ] Découpage de `backend/internal/api/handlers.go` (~5 100 lignes) en
-      modules plus fins — sans changer le contrat d'API
+- [x] Découpage de `backend/internal/api/handlers.go` (~5 100 lignes) en
+      modules plus fins — sans changer le contrat d'API *(fait : routes.go,
+      middleware.go, helpers.go et 12 fichiers handlers_<domaine>.go)*
 - [ ] Monitoring externe (uptime, alertes) et sauvegardes Neon planifiées
 
 ## Licence

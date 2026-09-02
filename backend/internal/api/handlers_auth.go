@@ -1,0 +1,353 @@
+// handlers_auth.go — connexion, inscription, changement de mot de passe, session courante.
+
+package api
+
+import (
+	"net/http"
+	"regexp"
+	"strings"
+	"time"
+
+	"mikcloud/hotspot-api/internal/auth"
+	"mikcloud/hotspot-api/internal/model"
+	"mikcloud/hotspot-api/internal/store"
+)
+
+func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := decodeBody(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
+		return
+	}
+	req.Username = strings.TrimSpace(req.Username)
+	if req.Username == "" || req.Password == "" {
+		writeErr(w, http.StatusBadRequest, "Nom d'utilisateur et mot de passe requis")
+		return
+	}
+	a.store.Lock()
+	var id, name, username, role, salt, hash, accID string
+	var accName, accStatus string
+	var user *model.AdminUser
+	for i := range a.store.Data().Users {
+		u := &a.store.Data().Users[i]
+		if strings.EqualFold(u.Username, req.Username) {
+			id, name, username, role, salt, hash = u.ID, u.Name, u.Username, u.Role, u.Salt, u.PasswordHash
+			accID = u.AccountID
+			user = u
+			break
+		}
+	}
+	if accID != "" {
+		for i := range a.store.Data().Accounts {
+			acc := &a.store.Data().Accounts[i]
+			if acc.ID == accID {
+				accName, accStatus = acc.Name, acc.Status
+				break
+			}
+		}
+	}
+	a.store.Unlock()
+	if id == "" || !auth.CheckPassword(req.Password, salt, hash) {
+		writeErr(w, http.StatusBadRequest, "Identifiants invalides")
+		return
+	}
+	// Compte désactivé : le login est refusé même avec des identifiants valides.
+	if accID != "" && accStatus == "disabled" {
+		writeErr(w, http.StatusForbidden, "Compte désactivé — contactez le support")
+		return
+	}
+	// Migration transparente : ancien hash SHA-256 → bcrypt au premier login.
+	if user != nil && auth.IsLegacyHash(hash) {
+		a.store.Lock()
+		user.PasswordHash = auth.HashPassword(req.Password, "")
+		user.Salt = ""
+		a.store.Save()
+		a.store.Unlock()
+	}
+	// N°7 — audit : trace la connexion réussie (acteur = qui se connecte).
+	a.store.Lock()
+	a.logActivityBy(r, a.store.Data(), accID, "system", "Connexion de "+username+" («"+role+"»)")
+	a.store.Save()
+	a.store.Unlock()
+	token := auth.Sign(a.secret, auth.NewClaims(id, name, role, accID))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"token": token,
+		"user": map[string]any{
+			"id": id, "name": name, "username": username, "role": role,
+			"accountId": accID, "accountName": accName,
+		},
+	})
+}
+
+// handlePasswordChange — POST /api/auth/password : l'utilisateur connecté
+// modifie SON PROPRE mot de passe. Exige le mot de passe actuel (une session
+// laissée ouverte ne suffit pas), 8 caractères minimum, différent de l'actuel.
+// Le flag PasswordSetByUser protège le nouveau mot de passe contre l'override
+// ADMIN_PASSWORD au prochain démarrage/reload (tant que l'opérateur ne change
+// pas la variable). Le token en cours reste valide jusqu'à son expiration.
+func (a *API) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
+	claims := claimsFrom(r)
+	if claims == nil {
+		writeErr(w, http.StatusUnauthorized, "Token invalide ou expiré")
+		return
+	}
+	var req struct {
+		CurrentPassword string `json:"currentPassword"`
+		NewPassword     string `json:"newPassword"`
+	}
+	if err := decodeBody(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
+		return
+	}
+	if req.CurrentPassword == "" || req.NewPassword == "" {
+		writeErr(w, http.StatusBadRequest, "Mot de passe actuel et nouveau mot de passe requis")
+		return
+	}
+	if len(req.NewPassword) < 8 {
+		writeErr(w, http.StatusBadRequest, "Le nouveau mot de passe doit faire au moins 8 caractères")
+		return
+	}
+	if req.NewPassword == req.CurrentPassword {
+		writeErr(w, http.StatusBadRequest, "Le nouveau mot de passe doit être différent de l'actuel")
+		return
+	}
+	a.store.Lock()
+	db := a.store.Data()
+	var user *model.AdminUser
+	for i := range db.Users {
+		if db.Users[i].ID == claims.Sub {
+			user = &db.Users[i]
+			break
+		}
+	}
+	// Message unique pour utilisateur inconnu et mot de passe incorrect (pas d'oracle).
+	if user == nil || !auth.CheckPassword(req.CurrentPassword, user.Salt, user.PasswordHash) {
+		a.store.Unlock()
+		writeErr(w, http.StatusBadRequest, "Mot de passe actuel incorrect")
+		return
+	}
+	user.PasswordHash = auth.HashPassword(req.NewPassword, "") // bcrypt : sel intégré
+	user.Salt = ""
+	user.PasswordSetByUser = true
+	a.logActivityBy(r, db, user.AccountID, "system", "Mot de passe modifié par "+user.Username)
+	a.store.Save()
+	a.store.Unlock()
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleRegister — inscription SaaS : crée un COMPTE isolé (Account), son
+// propriétaire (owner) et ses réglages par défaut, puis connecte immédiatement.
+// Si REGISTER_KEY est définie (bêta privée), la clé doit être fournie. Le
+// nouveau compte démarre vide : il ne voit aucune donnée des autres comptes.
+func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name     string `json:"name"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+		Key      string `json:"key"`
+		Email    string `json:"email"`
+		Phone    string `json:"phone"`   // WhatsApp de préférence, format E.164 sans +
+		Country  string `json:"country"` // code ISO alpha-2 (CI, SN, NG…) ou "other"
+		City     string `json:"city"`
+	}
+	if err := decodeBody(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
+		return
+	}
+	// Contrôle d'inscription (I — paramètres plateforme) : priorité env
+	// REGISTER_KEY > config DB (registerGate). Ouvert + clé vide = libre.
+	// Sécurité P1 #10 — fail-closed : une inscription FERMÉE sans clé
+	// configurée ne laisse plus personne passer. Avant ce correctif,
+	// « fermée + clé vide » rendait expectedKey vide : toute requête sans
+	// clé (req.Key == "" == expectedKey) était acceptée — le mode fermé
+	// n'était qu'illusion. Le flux OUVERT (essai public 90 jours, mode
+	// produit actuel) est strictement inchangé.
+	if open, expectedKey := a.registerGate(); !open {
+		if expectedKey == "" || req.Key != expectedKey {
+			writeErr(w, http.StatusForbidden, "Inscription fermée — clé d'invitation requise")
+			return
+		}
+	}
+	username := strings.ToLower(strings.TrimSpace(req.Username))
+	if len(username) < 3 || len(username) > 32 {
+		writeErr(w, http.StatusBadRequest, "Le nom d'utilisateur doit faire entre 3 et 32 caractères")
+		return
+	}
+	for _, c := range username {
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+			writeErr(w, http.StatusBadRequest, "Le nom d'utilisateur n'accepte que a-z, 0-9, tirets et tirets bas")
+			return
+		}
+	}
+	if len(req.Password) < 8 {
+		writeErr(w, http.StatusBadRequest, "Le mot de passe doit faire au moins 8 caractères")
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = username
+	}
+
+	// F (signup enrichi) — validation email + WhatsApp + pays.
+	email := strings.TrimSpace(req.Email)
+	if email == "" {
+		writeErr(w, http.StatusBadRequest, "L'email est requis")
+		return
+	}
+	if !emailRegexp.MatchString(email) {
+		writeErr(w, http.StatusBadRequest, "Format d'email invalide")
+		return
+	}
+	// WhatsApp : on garde uniquement les chiffres, 8 à 15 (format E.164 sans +).
+	phone := digitsOnly.ReplaceAllString(req.Phone, "")
+	if len(phone) < 8 || len(phone) > 15 {
+		writeErr(w, http.StatusBadRequest, "Numéro WhatsApp invalide (8 à 15 chiffres)")
+		return
+	}
+	country := strings.ToLower(strings.TrimSpace(req.Country))
+	if country == "" {
+		writeErr(w, http.StatusBadRequest, "Le pays est requis")
+		return
+	}
+	city := strings.TrimSpace(req.City)
+
+	a.store.Lock()
+	db := a.store.Data()
+	// Unicité GLOBALE des usernames console (toutes consoles confondues).
+	for i := range db.Users {
+		if strings.EqualFold(db.Users[i].Username, username) {
+			a.store.Unlock()
+			writeErr(w, http.StatusConflict, "Ce nom d'utilisateur est déjà pris")
+			return
+		}
+	}
+	acc := model.Account{
+		ID:        model.NewID("acc-"),
+		Name:      name,
+		Status:    "active",
+		CreatedAt: model.NowISO(),
+		Email:     email,
+		Phone:     phone,
+		Country:   country,
+		City:      city,
+	}
+	db.Accounts = append(db.Accounts, acc)
+	u := model.AdminUser{
+		ID:           model.NewID("usr-"),
+		AccountID:    acc.ID,
+		Name:         name,
+		Username:     username,
+		Role:         "owner",
+		PasswordHash: auth.HashPassword(req.Password, ""),
+		CreatedAt:    model.NowISO(),
+	}
+	db.Users = append(db.Users, u)
+	if db.SettingsByAccount == nil {
+		db.SettingsByAccount = map[string]model.Settings{}
+	}
+	now := time.Now().UTC()
+	db.SettingsByAccount[acc.ID] = model.Settings{
+		Tenant: model.Tenant{
+			Name: name, Currency: "XOF", Timezone: "Africa/Abidjan",
+			ExpiryPolicyMode: "keep", ExpiryPolicyAfterDays: 30,
+		},
+		Plan: model.Plan{Name: "Essai", MaxRouters: "1", MaxUsers: "Illimité"},
+		Subscription: model.Subscription{
+			PlanID:      "essai",
+			Status:      "active",
+			PeriodStart: now.Format(time.RFC3339),
+			PeriodEnd:   now.AddDate(0, 3, 0).Format(time.RFC3339),
+			RouterSlots: 1,
+		},
+	}
+	// P0 (audit Mikhmon) — chaque nouveau compte démarre avec les 3 modèles
+	// de vouchers par défaut (contrat F2).
+	db.Templates = append(db.Templates, store.SeedTemplatesFor(acc.ID)...)
+	// v2 — chaque compte démarre aussi avec le profil « Staff » (accès personnel).
+	db.Profiles = append(db.Profiles, store.SeedProfilesFor(acc.ID)...)
+	a.logActivityBy(r, db, acc.ID, "compte", "Nouveau compte créé : "+acc.Name)
+	a.store.Save()
+	a.store.Unlock()
+
+	token := auth.Sign(a.secret, auth.NewClaims(u.ID, u.Name, u.Role, acc.ID))
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"token": token,
+		"user": map[string]any{
+			"id": u.ID, "name": u.Name, "username": u.Username, "role": u.Role,
+			"accountId": acc.ID, "accountName": acc.Name,
+		},
+	})
+}
+
+func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
+	claims := claimsFrom(r)
+	if claims == nil {
+		writeErr(w, http.StatusUnauthorized, "Token invalide ou expiré")
+		return
+	}
+	a.store.Lock()
+	db := a.store.Data()
+	id, name, username, role := claims.Sub, claims.Name, claims.Sub, claims.Role
+	// Le compte du TOKEN est prioritaire : il porte la session support
+	// (impersonation — le claim « acc » pointe sur le compte consulté,
+	// pas sur le compte d'origine de l'admin plateforme).
+	accID := accountScope(r)
+	isPlatform := role == model.RolePlatformAdmin || role == "admin"
+	for i := range db.Users {
+		u := &db.Users[i]
+		if u.ID == claims.Sub {
+			id, name, username, role = u.ID, u.Name, u.Username, u.Role
+			isPlatform = role == model.RolePlatformAdmin || role == "admin"
+			if claims.Acc != "" {
+				accID = claims.Acc
+			} else {
+				accID = u.AccountID
+			}
+			break
+		}
+	}
+	// Token émis avant la migration multi-tenant : repli sur le compte
+	// principal pour les utilisateurs CLIENTS uniquement — l'admin
+	// plateforme n'a plus de compte client propre (accountId vide).
+	if accID == model.AccountMainID {
+		found := false
+		for i := range db.Accounts {
+			if db.Accounts[i].ID == model.AccountMainID {
+				found = true
+				break
+			}
+		}
+		if !found && isPlatform {
+			accID = ""
+		}
+	} else if accID == "" && !isPlatform {
+		accID = model.AccountMainID
+	}
+	accName := ""
+	for i := range db.Accounts {
+		if db.Accounts[i].ID == accID {
+			accName = db.Accounts[i].Name
+			break
+		}
+	}
+	a.store.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"user": map[string]any{
+			"id": id, "name": name, "username": username, "role": role,
+			"accountId": accID, "accountName": accName,
+		},
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard
+// ---------------------------------------------------------------------------
+
+// F (signup enrichi) — validations email + WhatsApp (chiffres uniquement).
+var (
+	emailRegexp = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
+	digitsOnly  = regexp.MustCompile(`[^\d]`)
+)

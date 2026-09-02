@@ -551,3 +551,39 @@ func (a *API) handlePlatformTeamDelete(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
+
+// handleWipe — POST /api/admin/wipe : compatibilité — purge TOTALE déléguée
+// au moteur de purge (scope « all », voir handlers_purge.go). Les données
+// métier sont supprimées sans toucher aux comptes, à l'équipe, aux réglages
+// ni aux routeurs réels (agent/real) ; rien n'est régénéré.
+func (a *API) handleWipe(w http.ResponseWriter, r *http.Request) {
+	a.purgeScopes(w, r, nil) // nil → scope « all »
+}
+
+// handleReload — POST /api/admin/reload : réimporte l'état complet depuis la
+// base persistée (Neon en production) sans redémarrer le service. Réservé à
+// l'admin plateforme. Cas d'usage : après une modification SQL directe de la
+// base, ou pour appliquer immédiatement un changement de ADMIN_PASSWORD.
+func (a *API) handleReload(w http.ResponseWriter, r *http.Request) {
+	if !isPlatformAdmin(r) {
+		writeErr(w, http.StatusForbidden, "Réservé aux administrateurs de la plateforme")
+		return
+	}
+	stats, err := a.store.Reload()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "Rechargement impossible : "+err.Error())
+		return
+	}
+	a.store.Lock()
+	a.logActivityBy(r, a.store.Data(), accountScope(r), "system", "Données rechargées depuis la base persistée")
+	a.store.Save()
+	a.store.Unlock()
+	// Les connexions routeurs en cache peuvent référencer des routeurs
+	// modifiés ou supprimés directement en base : on les réinitialise.
+	a.clearGateways()
+	writeJSON(w, http.StatusOK, stats)
+}
+
+// ---------------------------------------------------------------------------
+// Administration plateforme (rôle admin) — gestion des comptes SaaS
+// ---------------------------------------------------------------------------

@@ -583,7 +583,7 @@ Migration : ALTER idempotents au boot (`resellers.payment_mode`, `resellers.debt
 | `internal/agent/agent.go` | builders nouveaux kinds + read_state v2 (board/freehdd/totalhdd/ifaces) + read_resources + profile address-pool/parent-queue + limit-uptime par lot + server= |
 | `internal/api/agent_handlers.go` | applyReadState v2 (logs diff, traffic diff, board/hdd), queue helpers |
 | `internal/api/handlers_ext.go` (NOUVEAU) | tous les nouveaux handlers console (templates, user-logs, users actions, ipbindings, ping, tools F9, scheduler, reboot, traffic, commands/{id}) |
-| `internal/api/handlers.go` | seulement : enregistrement des nouvelles routes + modifs ponctuelles profiles/settings/reports/vouchers-generate |
+| `internal/api/routes.go` | table de routage HTTP complète (mux) + handleHealth + fallback 404 JSON — ancien cœur de `handlers.go`, découpé par domaine : auth, dashboard, routers, profiles, users, vouchers, sessions, resellers, reports, accounting, settings, subscription (+ middleware.go, helpers.go) |
 
 ### Frontend (TSX)
 | Fichier | Action |

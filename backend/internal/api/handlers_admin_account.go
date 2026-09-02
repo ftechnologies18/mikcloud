@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -675,4 +676,166 @@ func dropByString[T any](items []T, v string, field func(T) string) []T {
 		return items
 	}
 	return out
+}
+
+// handleAdminAccounts — liste tous les comptes SaaS (triés par création
+// décroissante) avec le login de leur propriétaire et des statistiques d'usage.
+// Réservé au rôle « admin » (super-administrateur MikCloud).
+func (a *API) handleAdminAccounts(w http.ResponseWriter, r *http.Request) {
+	if !isPlatformAdmin(r) {
+		writeErr(w, http.StatusForbidden, "Réservé aux administrateurs de la plateforme")
+		return
+	}
+	now := time.Now().UTC()
+	cutoff30 := now.AddDate(0, 0, -30)
+	a.store.Lock()
+	db := a.store.Data()
+
+	type accountStats struct {
+		Users      int `json:"users"`
+		Routers    int `json:"routers"`
+		Sessions   int `json:"sessions"`
+		Sales30d   int `json:"sales30d"`
+		Revenue30d int `json:"revenue30d"`
+	}
+	type accountRow struct {
+		ID           string       `json:"id"`
+		Name         string       `json:"name"`
+		Status       string       `json:"status"`
+		CreatedAt    string       `json:"createdAt"`
+		Owner        string       `json:"owner"`
+		Subscription string       `json:"subscription"` // active | expired | beta
+		Stats        accountStats `json:"stats"`
+	}
+
+	stats := map[string]*accountStats{}
+	for i := range db.Accounts {
+		stats[db.Accounts[i].ID] = &accountStats{}
+	}
+	// Propriétaire = premier utilisateur (owner ou admin) du compte.
+	owners := map[string]string{}
+	for i := range db.Users {
+		u := &db.Users[i]
+		if _, ok := stats[u.AccountID]; !ok {
+			continue
+		}
+		if u.Role == "owner" || u.Role == "admin" {
+			if _, seen := owners[u.AccountID]; !seen {
+				owners[u.AccountID] = u.Username
+			}
+		}
+	}
+	for i := range db.HotspotUsers {
+		if st, ok := stats[db.HotspotUsers[i].AccountID]; ok {
+			st.Users++
+		}
+	}
+	for i := range db.Routers {
+		if st, ok := stats[db.Routers[i].AccountID]; ok {
+			st.Routers++
+		}
+	}
+	for i := range db.Sessions {
+		if st, ok := stats[db.Sessions[i].AccountID]; ok {
+			st.Sessions++
+		}
+	}
+	// Stats admin : mêmes règles RÉELLES que les rapports — ventes directes
+	// consommées + encaissements revendeurs nets des retours (générer du
+	// stock n'est pas vendre ; voir helpers en tête de fichier).
+	for i := range db.HotspotUsers {
+		u := &db.HotspotUsers[i]
+		if u.Kind != "voucher" || u.ResellerID != "" {
+			continue
+		}
+		st, ok := stats[u.AccountID]
+		if !ok {
+			continue
+		}
+		if at, sold := voucherSoldDate(u); sold && !at.Before(cutoff30) {
+			st.Sales30d++
+			st.Revenue30d += directSalePrice(u)
+		}
+	}
+	for _, t := range db.Transactions {
+		gain := resellerNetIncome(t)
+		if gain == 0 {
+			continue
+		}
+		st, ok := stats[t.AccountID]
+		if !ok {
+			continue
+		}
+		if at, err := time.Parse(time.RFC3339, t.At); err == nil && at.After(cutoff30) {
+			st.Revenue30d += gain
+		}
+	}
+	rows := make([]accountRow, 0, len(db.Accounts))
+	for i := range db.Accounts {
+		acc := db.Accounts[i]
+		sub := "essai"
+		if settings, ok := db.SettingsByAccount[acc.ID]; ok {
+			switch subscriptionStatus(settings.Subscription, now) {
+			case "active":
+				sub = "active"
+			case "expired":
+				sub = "expired"
+			default:
+				sub = "essai" // « none » : aucun plan souscrit (essai)
+			}
+		}
+		rows = append(rows, accountRow{
+			ID: acc.ID, Name: acc.Name, Status: acc.Status, CreatedAt: acc.CreatedAt,
+			Owner: owners[acc.ID], Subscription: sub, Stats: *stats[acc.ID],
+		})
+	}
+	a.store.Unlock()
+
+	sort.Slice(rows, func(i, j int) bool { return rows[i].CreatedAt > rows[j].CreatedAt })
+	writeJSON(w, http.StatusOK, rows)
+}
+
+// handleAdminAccountStatus — active ou désactive un compte SaaS. Effet immédiat :
+// les tokens du compte sont bloqués par le middleware (401) et le login est
+// refusé (403). Le compte principal ne peut pas être désactivé.
+func (a *API) handleAdminAccountStatus(w http.ResponseWriter, r *http.Request) {
+	if !isPlatformAdmin(r) {
+		writeErr(w, http.StatusForbidden, "Réservé aux administrateurs de la plateforme")
+		return
+	}
+	id := r.PathValue("id")
+	var req struct {
+		Status string `json:"status"`
+	}
+	if err := decodeBody(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
+		return
+	}
+	if req.Status != "active" && req.Status != "disabled" {
+		writeErr(w, http.StatusBadRequest, "Statut invalide (active ou disabled)")
+		return
+	}
+	a.store.Lock()
+	db := a.store.Data()
+	var acc *model.Account
+	for i := range db.Accounts {
+		if db.Accounts[i].ID == id {
+			acc = &db.Accounts[i]
+			break
+		}
+	}
+	if acc == nil {
+		a.store.Unlock()
+		writeErr(w, http.StatusNotFound, "Compte introuvable")
+		return
+	}
+	acc.Status = req.Status
+	verb := "activé"
+	if req.Status == "disabled" {
+		verb = "désactivé"
+	}
+	a.logActivityBy(r, db, id, "system", "Compte «"+acc.Name+"» "+verb+" par la plateforme")
+	a.store.Save()
+	a.store.Unlock()
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

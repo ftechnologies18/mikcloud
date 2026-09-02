@@ -5,6 +5,24 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-02 — Refactor Phase B : découpage de handlers.go
+
+### Modifiés
+- **`internal/api/handlers.go` (5 188 lignes) supprimé et redistribué en
+  17 fichiers par domaine** — mouvement pur de code, zéro changement de
+  logique ni de signature :
+  `routes.go` (mux + table des ~130 routes), `middleware.go` (JWT, rôles),
+  `helpers.go` (outils partagés), et `handlers_<domaine>.go` : auth,
+  dashboard, routers, profiles, users, vouchers, sessions, resellers,
+  reports, accounting, settings, subscription (le surplus rejoint
+  `handlers_admin.go` / `handlers_admin_account.go`).
+- Garanties vérifiées : multiset des 391 déclarations top-level strictement
+  identique avant/après, table de routage (119 routes) octet pour octet
+  identique, imports purgés par `goimports`, `gofmt`/`go vet`/
+  `go test -race` (9 paquets)/`go build` tous au vert.
+- README (feuille de route cochée) et `docs/CONTRACT-V2.md` (cartographie
+  des fichiers) mis à jour.
+
 ## 2026-09-02 — Migration Go 1.25 → 1.27.1
 
 ### Modifiés

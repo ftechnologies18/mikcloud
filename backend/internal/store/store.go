@@ -1033,14 +1033,33 @@ func applyExpiry(db *model.DB, now time.Time) map[string][]string {
 	}
 	for i := range db.HotspotUsers {
 		u := &db.HotspotUsers[i]
-		if u.Kind != "voucher" || u.Status != "active" || u.ExpiresAt == "" || noExpiry[u.ProfileID] {
+		if u.Kind != "voucher" || noExpiry[u.ProfileID] {
 			continue
 		}
-		exp, err := time.Parse(time.RFC3339, u.ExpiresAt)
-		if err != nil {
+		// BUG (audit Winbox) — les vouchers « used » (vendus puis utilisés au
+		// 1er login : le cycle de vie NORMAL) n'étaient JAMAIS expirés : le
+		// statut stocké restait « used » après le passage de la validité, donc
+		// enforceExpired (qui ne traite que les « expired ») ne poussait AUCUNE
+		// commande au routeur → tickets expirés toujours présents dans
+		// /ip hotspot user (Winbox). Seuls les vouchers déjà hors service
+		// (disabled/expired) restent exclus de la transition.
+		if u.Status != "active" && u.Status != "used" {
 			continue
 		}
-		if !now.After(exp.Add(time.Duration(grace[u.ProfileID]) * time.Minute)) {
+		// Expiration par date : validité ancrée au 1er login + grâce du profil.
+		over := false
+		if u.ExpiresAt != "" {
+			if exp, err := time.Parse(time.RFC3339, u.ExpiresAt); err == nil {
+				over = now.After(exp.Add(time.Duration(grace[u.ProfileID]) * time.Minute))
+			}
+		}
+		// …ou par épuisement du quota temps cumulé (parité limit-uptime, même
+		// règle que voucherExpired/EffectiveStatus) : le routeur a déjà coupé
+		// la session, le cloud reflète l'expiration et pousse l'enforcement.
+		if !over && u.TimeLimitMin > 0 && u.UptimeUsedSec >= u.TimeLimitMin*60 {
+			over = true
+		}
+		if !over {
 			continue
 		}
 		u.Status = "expired"

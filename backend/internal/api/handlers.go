@@ -775,8 +775,14 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	// Contrôle d'inscription (I — paramètres plateforme) : priorité env
 	// REGISTER_KEY > config DB (registerGate). Ouvert + clé vide = libre.
+	// Sécurité P1 #10 — fail-closed : une inscription FERMÉE sans clé
+	// configurée ne laisse plus personne passer. Avant ce correctif,
+	// « fermée + clé vide » rendait expectedKey vide : toute requête sans
+	// clé (req.Key == "" == expectedKey) était acceptée — le mode fermé
+	// n'était qu'illusion. Le flux OUVERT (essai public 90 jours, mode
+	// produit actuel) est strictement inchangé.
 	if open, expectedKey := a.registerGate(); !open {
-		if req.Key != expectedKey {
+		if expectedKey == "" || req.Key != expectedKey {
 			writeErr(w, http.StatusForbidden, "Inscription fermée — clé d'invitation requise")
 			return
 		}

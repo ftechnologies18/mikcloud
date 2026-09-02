@@ -184,6 +184,9 @@ intégré permet de démontrer toute la plateforme sans matériel.
       `handlers_p1.go` (1 152 l.) *(fait : protocole agent, agent_results.go,
       handlers_provision.go, puis les vagues F6–F10 — ipbindings, commands,
       router_tools, scheduler ; plus aucun fichier > 900 lignes)*
+- [x] Même traitement pour `handlers_ext.go` (897 l., vague P0) *(fait :
+      handlers_templates.go, handlers_userlogs.go, handlers_users_ops.go ;
+      moteur d'enforcement F1 et filtres sessions live dans helpers.go)*
 - [ ] Monitoring externe (uptime, alertes) et sauvegardes Neon planifiées
 
 ## Licence

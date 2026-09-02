@@ -5,6 +5,28 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-02 — Refactor vague P0 : dissolution de handlers_ext.go
+
+### Modifiés
+- **`internal/api/handlers_ext.go` (897 lignes) supprimé et redistribué**
+  par domaine : F2 templates de vouchers → `handlers_templates.go` (187 l.),
+  F3 journal utilisateurs → `handlers_userlogs.go` (90 l.), F4/F5 actions
+  utilisateurs (reset stats, extend, export CSV, bulk, cleanup) →
+  `handlers_users_ops.go` (504 l.) ; le moteur d'enforcement de
+  l'expiration F1 (`enforceExpired`, partagé par 4 fichiers) et les filtres
+  sessions live (`onlineSessions`, `onlineKey` — vouchers + rapports)
+  rejoignent `helpers.go` ; `filterUsers` (domaine users) rejoint
+  `handlers_users.go`.
+- **Plus aucun fichier du paquet `api` ne dépasse 900 lignes** (max :
+  handlers_geniuspay_stripe.go, 842 l.) ; commentaire de cartographie P0
+  mis à jour dans routes.go.
+- Garanties vérifiées (même méthode que les Phases B) : multiset des 413
+  déclarations top-level strictement identique avant/après, table de routage
+  (119 registrations mux) octet pour octet, couverture ligne à ligne du code
+  déplacé. gofmt, go vet, `go test -race -count=1` (9 paquets) et `go build`
+  tous verts — mouvement pur de code, zéro changement de logique ni de
+  contrat.
+
 ## 2026-09-02 — Refactor Phase B (suite) : agent_handlers.go et handlers_p1.go
 
 ### Modifiés

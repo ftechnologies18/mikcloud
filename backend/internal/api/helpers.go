@@ -9,7 +9,9 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
+	"mikcloud/hotspot-api/internal/agent"
 	"mikcloud/hotspot-api/internal/model"
 	"mikcloud/hotspot-api/internal/routeros"
 )
@@ -273,3 +275,89 @@ func defaultMinZero(v int) int {
 // realModeUnsupported — message unique du mode API directe (matrice §0),
 // partagé par les handlers P1 F6–F10.
 const realModeUnsupported = "Non supporté en mode API directe — utilisez le mode agent"
+
+// ---------------------------------------------------------------------------
+// F1 — Enforcement de l'expiration vers les routeurs
+// ---------------------------------------------------------------------------
+
+// enforceExpired — applique au routeur l'expiration de chaque utilisateur
+// « expired » non encore appliqué (Enforced == false) :
+//
+//   - profil expMode « remove »  → commande agent user_remove ;
+//   - profil expMode « notify »  → commande agent user_set {disabled:true} ;
+//   - routeurs simulated/real    → rien à pousser : le statut cloud suffit
+//     (l'utilisateur reste en historique — cf. contrat F1).
+//
+// Enforced est marqué dans TOUS les modes (l'opération n'est exécutée qu'une
+// fois par expiration ; un « extend » ultérieur repasse le statut « active »).
+// À appeler sous verrou, après store.Tick (applyExpiry) ; le Save est à charge
+// de l'appelant. Les commandes sont servies à l'agent à son prochain check-in.
+func (a *API) enforceExpired(db *model.DB) {
+	// N — réparation parité limit-uptime en TÊTE : les vouchers coupés par le
+	// routeur à leur quota temps mais restés « utilisés » (déficit
+	// d'échantillonnage du cumul cloud) sont realignés AVANT la résolution
+	// des statuts — les lectures suivantes (listes, stock vente, rapports)
+	// voient immédiatement l'état « expiré » (cf. RepairTimeLimitParity).
+	model.RepairTimeLimitParity(db)
+	expMode := make(map[string]string, len(db.Profiles))
+	for _, p := range db.Profiles {
+		m := p.ExpMode
+		if m == "" {
+			m = "notify"
+		}
+		expMode[p.ID] = m
+	}
+	routers := make(map[string]*model.Router, len(db.Routers))
+	for i := range db.Routers {
+		routers[db.Routers[i].ID] = &db.Routers[i]
+	}
+	for i := range db.HotspotUsers {
+		u := &db.HotspotUsers[i]
+		if u.Status != "expired" || u.Enforced {
+			continue
+		}
+		u.Enforced = true
+		rr := routers[u.RouterID]
+		if rr == nil || rr.Mode != "agent" {
+			continue // simulated/real : le statut cloud suffit
+		}
+		name := agent.SanitizeName(u.Username)
+		if expMode[u.ProfileID] == "remove" {
+			queueCommandLocked(db, rr.AccountID, rr.ID, model.CmdUserRemove, map[string]any{
+				"names": []string{name},
+			})
+		} else {
+			queueCommandLocked(db, rr.AccountID, rr.ID, model.CmdUserSet, map[string]any{
+				"oldName": name, "name": name, "disabled": true,
+			})
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Filtres partagés des listes d'utilisateurs (statut résolu, sessions live)
+// ---------------------------------------------------------------------------
+// onlineSessions — ensemble des clés « routerID|username » ayant une session
+// live, restreint aux routeurs vus depuis moins de 3 minutes (garde : au-delà,
+// les sessions cloud peuvent être figées — on ne promet plus « en ligne »).
+// À appeler sous verrou.
+func onlineSessions(db *model.DB, now time.Time) map[string]bool {
+	seen := make(map[string]bool, len(db.Routers))
+	for i := range db.Routers {
+		if t, err := time.Parse(time.RFC3339, db.Routers[i].LastSeen); err == nil && now.Sub(t) <= 3*time.Minute {
+			seen[db.Routers[i].ID] = true
+		}
+	}
+	online := make(map[string]bool, len(db.Sessions))
+	for _, s := range db.Sessions {
+		if seen[s.RouterID] {
+			online[s.RouterID+"|"+strings.ToLower(s.Username)] = true
+		}
+	}
+	return online
+}
+
+// onlineKey — clé de session live d'un utilisateur (voir onlineSessions).
+func onlineKey(u *model.HotspotUser) string {
+	return u.RouterID + "|" + strings.ToLower(u.Username)
+}

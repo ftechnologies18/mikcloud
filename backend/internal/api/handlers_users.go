@@ -5,6 +5,8 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -478,4 +480,50 @@ func (a *API) removeUserByID(id string) {
 			return
 		}
 	}
+}
+
+// filterUsers — filtrage scopé au compte avec les MÊMES règles que la liste
+// (kind/search/status/profileId + routerId pour l'export) ; le statut filtré
+// et renvoyé est le statut RÉSOLU (ResolvedStatus — 5 états, dont « online »).
+// Tri par création décroissante. À appeler sous verrou.
+func filterUsers(db *model.DB, acc string, q url.Values, now time.Time) []model.HotspotUser {
+	kind := q.Get("kind")
+	search := strings.ToLower(strings.TrimSpace(q.Get("search")))
+	status := q.Get("status")
+	profileID := q.Get("profileId")
+	routerID := strings.TrimSpace(q.Get("routerId"))
+	online := onlineSessions(db, now) // sessions live (routeurs vus < 3 min)
+
+	filtered := []model.HotspotUser{}
+	for i := range db.HotspotUsers {
+		u := &db.HotspotUsers[i]
+		if u.AccountID != acc {
+			continue
+		}
+		if kind != "" && u.Kind != kind {
+			continue
+		}
+		if profileID != "" && u.ProfileID != profileID {
+			continue
+		}
+		if routerID != "" && u.RouterID != routerID {
+			continue
+		}
+		st := model.ResolvedStatus(u, online[onlineKey(u)], now)
+		if status != "" && st != status {
+			continue
+		}
+		if search != "" {
+			hay := strings.ToLower(u.Username + " " + u.Comment + " " + u.ResellerName + " " + u.ProfileName + " " + u.BatchID)
+			if !strings.Contains(hay, search) {
+				continue
+			}
+		}
+		uc := *u
+		uc.Status = st
+		uc.Disabled = u.Status == "disabled" // miroir du statut stocké (toggle UI)
+		filtered = append(filtered, uc)
+	}
+	sort.Slice(filtered, func(i, j int) bool { return filtered[i].CreatedAt > filtered[j].CreatedAt })
+	return filtered
 }

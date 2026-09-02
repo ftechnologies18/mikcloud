@@ -588,7 +588,9 @@ Migration : ALTER idempotents au boot (`resellers.payment_mode`, `resellers.debt
 | `internal/api/handlers_commands.go` | F8 — ping routeur + GET /api/commands/{id} (résultat normalisé) |
 | `internal/api/handlers_router_tools.go` | F9 — outils routeur (dhcp/hosts/cookies/log/resources ; cache agent 120 s, simulation déterministe) |
 | `internal/api/handlers_scheduler.go` | F10 — scheduler (CRUD + read_scheduler en cache) et reboot/shutdown |
-| `internal/api/handlers_ext.go` (NOUVEAU) | tous les nouveaux handlers console (templates, user-logs, users actions, ipbindings, ping, tools F9, scheduler, reboot, traffic, commands/{id}) |
+| `internal/api/handlers_templates.go` | F2 — modèles (templates) de vouchers (CRUD scopé au compte, formats a4/58mm/80mm, sanitize HTML, unicité du modèle par défaut) |
+| `internal/api/handlers_userlogs.go` | F3 — journal utilisateurs (liste paginée + export CSV « ; » BOM) |
+| `internal/api/handlers_users_ops.go` | F4/F5 — actions utilisateurs (reset stats, extend, export CSV, bulk) + nettoyage des expirés (cleanup) ; enforcement F1 (enforceExpired) et filtres sessions live (onlineSessions, onlineKey) dans helpers.go |
 | `internal/api/routes.go` | table de routage HTTP complète (mux) + handleHealth + fallback 404 JSON — ancien cœur de `handlers.go`, découpé par domaine : auth, dashboard, routers, profiles, users, vouchers, sessions, resellers, reports, accounting, settings, subscription (+ middleware.go, helpers.go) |
 
 ### Frontend (TSX)

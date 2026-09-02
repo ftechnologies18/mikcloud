@@ -181,7 +181,9 @@ func (a *API) Handler() http.Handler {
 	// webhook d'encaissement GeniusPay (public, authentifié par signature HMAC).
 	mux.HandleFunc("POST /api/webhooks/geniuspay", a.handleGeniusPayWebhook)
 
-	// P0 (audit Mikhmon) — voir docs/CONTRACT-V2.md
+	// P0 (audit Mikhmon) — voir docs/CONTRACT-V2.md (F2 à F5, découpage :
+	// handlers_templates.go, handlers_userlogs.go, handlers_users_ops.go ;
+	// moteur d'enforcement F1 et filtres sessions live dans helpers.go)
 	// Modèles de vouchers (F2)
 	mux.HandleFunc("GET /api/templates", a.handleTemplatesList)
 	mux.HandleFunc("POST /api/templates", a.requireRole(2, a.handleTemplateCreate))

@@ -91,10 +91,21 @@ func main() {
 	go monitor.Run()
 
 	handler := logRequests(corsMiddleware(authRateLimit(api.New(st, jwtSecret).Handler())))
+	// Sécurité P1 #12 — timeouts HTTP complets. ReadHeaderTimeout seul laissait
+	// des connexions en lecture/écriture illimitées : un client lent (ou hostile)
+	// pouvait maintenir indéfiniment des goroutines et sockets (slowloris,
+	// épuisement de ressources). Valeurs généreuses : aucun impact sur les flux
+	// réels (agents 45 s, imports CSV, exports) — uniquement les connexions
+	// pathologiquement lentes sont coupées. Aucun WebSocket : l'agent est en
+	// HTTP-poll, le tableau de bord en polling.
 	srv := &http.Server{
 		Addr:              ":" + port,
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 16, // 64 Kio d'en-têtes (largement au-dessus du nominal)
 	}
 	log.Printf("MikCloud Hotspot API en écoute sur le port %s (données : %s)", port, dataDir)
 	if err := srv.ListenAndServe(); err != nil {

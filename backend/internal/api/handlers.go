@@ -3487,8 +3487,14 @@ func (a *API) handleReports(w http.ResponseWriter, r *http.Request) {
 	revenueByDay := buildRevenueByDay(db, acc, now, days)
 
 	since := now.AddDate(0, 0, -days)
+	prevSince := now.AddDate(0, 0, -2*days) // v2 — comparaison Δ% (fenêtre précédente)
 	profCount := map[string]int{}
 	profRevenue := map[string]int{}
+	prevRevenue, prevSales := 0, 0
+	chanDirectRevenue, chanResellerRevenue := 0, 0
+	chanDirectSales, chanResellerSales := 0, 0
+	type resellerAgg struct{ sales, revenue int }
+	topResellersAgg := map[string]*resellerAgg{}
 	totals := struct {
 		revenue int
 		sales   int
@@ -3498,13 +3504,57 @@ func (a *API) handleReports(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		at, err := time.Parse(time.RFC3339, s.At)
-		if err != nil || at.Before(since) {
+		if err != nil || at.Before(prevSince) {
+			continue
+		}
+		if at.Before(since) {
+			// Fenêtre précédente de même longueur — comparaison Δ%.
+			prevRevenue += s.Amount
+			prevSales += s.Count
 			continue
 		}
 		profCount[s.ProfileName] += s.Count
 		profRevenue[s.ProfileName] += s.Amount
 		totals.revenue += s.Amount
 		totals.sales += s.Count
+		// Canal de distribution + performance revendeurs (leaderboard).
+		if s.Channel == "reseller" {
+			chanResellerRevenue += s.Amount
+			chanResellerSales += s.Count
+			tr := topResellersAgg[s.ResellerName]
+			if tr == nil {
+				tr = &resellerAgg{}
+				topResellersAgg[s.ResellerName] = tr
+			}
+			tr.sales += s.Count
+			tr.revenue += s.Amount
+		} else {
+			chanDirectRevenue += s.Amount
+			chanDirectSales += s.Count
+		}
+	}
+	// Top 5 revendeurs par CA de la fenêtre (mikCloud : le réseau de
+	// distribution est un moteur clé — savoir qui performe).
+	type resellerPerf struct {
+		Name    string `json:"name"`
+		Sales   int    `json:"sales"`
+		Revenue int    `json:"revenue"`
+	}
+	topResellers := []resellerPerf{}
+	for name, tr := range topResellersAgg {
+		if strings.TrimSpace(name) == "" {
+			name = "(inconnu)"
+		}
+		topResellers = append(topResellers, resellerPerf{Name: name, Sales: tr.sales, Revenue: tr.revenue})
+	}
+	sort.Slice(topResellers, func(i, j int) bool {
+		if topResellers[i].Revenue != topResellers[j].Revenue {
+			return topResellers[i].Revenue > topResellers[j].Revenue
+		}
+		return topResellers[i].Name < topResellers[j].Name
+	})
+	if len(topResellers) > 5 {
+		topResellers = topResellers[:5]
 	}
 	type profileSale struct {
 		Name    string `json:"name"`
@@ -3553,6 +3603,22 @@ func (a *API) handleReports(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// Sessions RÉELLES de la fenêtre (comptage + trafic cumulé) — KPI
+	// réseau véridique, indépendant de la courbe synthétique ci-dessus.
+	var winSessions int
+	var winBytesIn, winBytesOut int64
+	for _, s := range db.Sessions {
+		if s.AccountID != acc {
+			continue
+		}
+		if st, err := time.Parse(time.RFC3339, s.StartedAt); err == nil && st.Before(since) {
+			continue
+		}
+		winSessions++
+		winBytesIn += s.BytesIn
+		winBytesOut += s.BytesOut
+	}
+
 	voucherStatus := map[string]int{"active": 0, "used": 0, "expired": 0, "disabled": 0}
 	online := onlineSessions(db, now)
 	for i := range db.HotspotUsers {
@@ -3572,6 +3638,10 @@ func (a *API) handleReports(w http.ResponseWriter, r *http.Request) {
 	if totals.sales > 0 {
 		avgTicket = totals.revenue / totals.sales
 	}
+	prevAvgTicket := 0
+	if prevSales > 0 {
+		prevAvgTicket = prevRevenue / prevSales
+	}
 	// P0 (audit Mikhmon) — bloc marge (F13) : prix de vente vs coût sur
 	// 30 jours glissants, par profil + totaux (cohérent avec les ventes).
 	margin := buildMarginReport(db, acc, now)
@@ -3583,6 +3653,27 @@ func (a *API) handleReports(w http.ResponseWriter, r *http.Request) {
 		"trafficByDay":   trafficByDay,
 		"voucherStatus":  voucherStatus,
 		"margin":         margin,
+		// v2 — comparaison Δ% avec la fenêtre précédente de même longueur.
+		"prev": map[string]any{
+			"revenue":   prevRevenue,
+			"sales":     prevSales,
+			"avgTicket": prevAvgTicket,
+		},
+		// v2 — CA par canal de distribution (direct vs revendeurs).
+		"channel": map[string]any{
+			"directRevenue":   chanDirectRevenue,
+			"resellerRevenue": chanResellerRevenue,
+			"directSales":     chanDirectSales,
+			"resellerSales":   chanResellerSales,
+		},
+		// v2 — top 5 revendeurs par CA de la fenêtre (leaderboard).
+		"topResellers": topResellers,
+		// v2 — sessions réelles de la fenêtre : comptage + trafic cumulé.
+		"sessions": map[string]any{
+			"count":    winSessions,
+			"bytesIn":  winBytesIn,
+			"bytesOut": winBytesOut,
+		},
 		"totals": map[string]any{
 			"revenue":   totals.revenue,
 			"sales":     totals.sales,
@@ -3593,9 +3684,12 @@ func (a *API) handleReports(w http.ResponseWriter, r *http.Request) {
 
 // buildMarginReport — marge par profil (F13) sur 30 jours glissants :
 // revenue = total vente (SellingTotal), cost = coût (Cost), margin = écart.
+// v2 : + évolution quotidienne de la marge (byDay), + profitabilité par site
+// (byRouter), + fenêtre des 30 jours précédents (prev — comparaison Δ%).
 // À appeler sous verrou.
 func buildMarginReport(db *model.DB, acc string, now time.Time) map[string]any {
 	since := now.AddDate(0, 0, -30)
+	prevSince := now.AddDate(0, 0, -60)
 	type profileMargin struct {
 		Name    string `json:"name"`
 		Sold    int    `json:"sold"`
@@ -3603,15 +3697,41 @@ func buildMarginReport(db *model.DB, acc string, now time.Time) map[string]any {
 		Cost    int    `json:"cost"`
 		Margin  int    `json:"margin"`
 	}
+	type routerMargin struct {
+		RouterName string `json:"routerName"`
+		Revenue    int    `json:"revenue"`
+		Cost       int    `json:"cost"`
+		Margin     int    `json:"margin"`
+	}
 	byProfile := map[string]*profileMargin{}
+	byRouter := map[string]*routerMargin{}
+	routerNames := map[string]string{}
+	for _, rr := range db.Routers {
+		if rr.AccountID == acc {
+			routerNames[rr.ID] = rr.Name
+		}
+	}
+	// Buckets quotidiens (le plus ancien d'abord) pour la courbe de marge.
+	type dayMargin struct {
+		Day    string `json:"day"`
+		Margin int    `json:"margin"`
+	}
+	dayStarts := make([]time.Time, 30)
+	byDay := make([]dayMargin, 30)
+	for i := 0; i < 30; i++ {
+		d := now.AddDate(0, 0, -(29 - i))
+		dayStarts[i] = time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.UTC)
+		byDay[i] = dayMargin{Day: fmt.Sprintf("%02d/%02d", d.Day(), int(d.Month()))}
+	}
 	totalRevenue, totalCost := 0, 0
+	prevRevenue, prevCost := 0, 0
 	for i := range db.Sales {
 		s := &db.Sales[i]
 		if s.AccountID != acc {
 			continue
 		}
 		at, err := time.Parse(time.RFC3339, s.At)
-		if err != nil || at.Before(since) {
+		if err != nil || at.Before(prevSince) {
 			continue
 		}
 		// Ventes antérieures à la marge : SellingTotal = 0 → base = Amount
@@ -3624,6 +3744,12 @@ func buildMarginReport(db *model.DB, acc string, now time.Time) map[string]any {
 		if cost == 0 {
 			cost = s.Amount
 		}
+		if at.Before(since) {
+			// 30 jours précédents — comparaison Δ%.
+			prevRevenue += selling
+			prevCost += cost
+			continue
+		}
 		pm, ok := byProfile[s.ProfileName]
 		if !ok {
 			pm = &profileMargin{Name: s.ProfileName}
@@ -3635,6 +3761,24 @@ func buildMarginReport(db *model.DB, acc string, now time.Time) map[string]any {
 		pm.Margin += selling - cost
 		totalRevenue += selling
 		totalCost += cost
+		// Profitabilité par site (multi-sites : quel routeur rapporte ?).
+		rid := s.RouterID
+		if rid == "" {
+			rid = "unknown"
+			routerNames["unknown"] = "(inconnu)"
+		}
+		rm, ok := byRouter[rid]
+		if !ok {
+			rm = &routerMargin{RouterName: routerNames[rid]}
+			byRouter[rid] = rm
+		}
+		rm.Revenue += selling
+		rm.Cost += cost
+		rm.Margin += selling - cost
+		// Courbe quotidienne de la marge.
+		if idx := sort.Search(len(dayStarts), func(i int) bool { return at.Before(dayStarts[i]) }) - 1; idx >= 0 {
+			byDay[idx].Margin += selling - cost
+		}
 	}
 	rows := make([]profileMargin, 0, len(byProfile))
 	for _, pm := range byProfile {
@@ -3645,6 +3789,16 @@ func buildMarginReport(db *model.DB, acc string, now time.Time) map[string]any {
 			return rows[i].Revenue > rows[j].Revenue
 		}
 		return rows[i].Name < rows[j].Name
+	})
+	routerRows := make([]routerMargin, 0, len(byRouter))
+	for _, rm := range byRouter {
+		routerRows = append(routerRows, *rm)
+	}
+	sort.Slice(routerRows, func(i, j int) bool {
+		if routerRows[i].Margin != routerRows[j].Margin {
+			return routerRows[i].Margin > routerRows[j].Margin
+		}
+		return routerRows[i].RouterName < routerRows[j].RouterName
 	})
 	totalMargin := totalRevenue - totalCost
 	marginPct := 0.0
@@ -3657,6 +3811,16 @@ func buildMarginReport(db *model.DB, acc string, now time.Time) map[string]any {
 		"margin":    totalMargin,
 		"marginPct": marginPct,
 		"byProfile": rows,
+		// v2 — comparaison Δ% vs les 30 jours précédents.
+		"prev": map[string]any{
+			"revenue": prevRevenue,
+			"cost":    prevCost,
+			"margin":  prevRevenue - prevCost,
+		},
+		// v2 — marge quotidienne (barres vertes/rouges selon le signe).
+		"byDay": byDay,
+		// v2 — marge par site (profitabilité multi-sites).
+		"byRouter": routerRows,
 	}
 }
 
@@ -3830,6 +3994,18 @@ func buildAccounting(db *model.DB, acc, period, routerID string, now time.Time) 
 		}
 	}
 
+	// Fenêtre précédente de même longueur — comparaison Δ% (tendance) :
+	// 30 j ← 30 j, 12 semaines ← 12 semaines, 12 mois ← 12 mois.
+	var prevStart time.Time
+	switch period {
+	case "day":
+		prevStart = windowStart.AddDate(0, 0, -30)
+	case "week":
+		prevStart = windowStart.AddDate(0, 0, -84)
+	case "month":
+		prevStart = windowStart.AddDate(0, -12, 0)
+	}
+
 	type seriesPoint struct {
 		Label   string `json:"label"`
 		Revenue int    `json:"revenue"`
@@ -3850,6 +4026,8 @@ func buildAccounting(db *model.DB, acc, period, routerID string, now time.Time) 
 	}
 
 	totalsRevenue, totalsSales, totalsCost, totalsSelling := 0, 0, 0, 0
+	prevRevenue, prevSales, prevCost, prevSelling := 0, 0, 0, 0
+	chanDirectRevenue, chanResellerRevenue, chanDirectSales, chanResellerSales := 0, 0, 0, 0
 	byRouterRevenue := map[string]int{}
 	byRouterSales := map[string]int{}
 	byRouterCost := map[string]int{}
@@ -3860,7 +4038,7 @@ func buildAccounting(db *model.DB, acc, period, routerID string, now time.Time) 
 			continue
 		}
 		at, err := time.Parse(time.RFC3339, s.At)
-		if err != nil || at.Before(windowStart) {
+		if err != nil || at.Before(prevStart) {
 			continue
 		}
 		// F13 : ventes antérieures à la marge → base = Amount.
@@ -3871,6 +4049,18 @@ func buildAccounting(db *model.DB, acc, period, routerID string, now time.Time) 
 		selling := s.SellingTotal
 		if selling == 0 {
 			selling = s.Amount
+		}
+
+		// Fenêtre précédente (même longueur, même filtre routeur) :
+		// uniquement les totaux de comparaison Δ%.
+		if at.Before(windowStart) {
+			if routerID == "" || routerID == "all" || s.RouterID == routerID {
+				prevRevenue += s.Amount
+				prevSales += s.Count
+				prevCost += cost
+				prevSelling += selling
+			}
+			continue
 		}
 
 		// répartition par routeur (toujours tous sites, pour comparaison)
@@ -3892,6 +4082,16 @@ func buildAccounting(db *model.DB, acc, period, routerID string, now time.Time) 
 		totalsSales += s.Count
 		totalsCost += cost
 		totalsSelling += selling
+
+		// Répartition par canal de distribution (respecte le filtre) :
+		// ventes directes vs réseau revendeurs — « qui vend mes tickets ? »
+		if s.Channel == "reseller" {
+			chanResellerRevenue += s.Amount
+			chanResellerSales += s.Count
+		} else {
+			chanDirectRevenue += s.Amount
+			chanDirectSales += s.Count
+		}
 
 		idx := sort.Search(len(buckets), func(i int) bool { return at.Before(buckets[i]) }) - 1
 		if idx >= 0 && idx < len(revSeries) {
@@ -3933,12 +4133,32 @@ func buildAccounting(db *model.DB, acc, period, routerID string, now time.Time) 
 	if totalsSales > 0 {
 		avgTicket = totalsRevenue / totalsSales
 	}
+	prevAvgTicket := 0
+	if prevSales > 0 {
+		prevAvgTicket = prevRevenue / prevSales
+	}
 
 	return map[string]any{
 		"period":   period,
 		"routerId": routerID,
 		"series":   revSeries,
 		"byRouter": byRouter,
+		// v2 — comparaison Δ% avec la fenêtre précédente de même longueur
+		// (mêmes totaux : revenue/sales/avgTicket/marge).
+		"prev": map[string]any{
+			"revenue":   prevRevenue,
+			"sales":     prevSales,
+			"avgTicket": prevAvgTicket,
+			"margin":    prevSelling - prevCost,
+		},
+		// v2 — CA par canal de distribution (direct vs revendeurs),
+		// dans la même fenêtre et le même filtre routeur.
+		"channel": map[string]any{
+			"directRevenue":   chanDirectRevenue,
+			"resellerRevenue": chanResellerRevenue,
+			"directSales":     chanDirectSales,
+			"resellerSales":   chanResellerSales,
+		},
 		"totals": map[string]any{
 			"revenue":   totalsRevenue,
 			"sales":     totalsSales,

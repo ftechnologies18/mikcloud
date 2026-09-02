@@ -656,12 +656,49 @@ export interface SiteOverview {
 
 export type AccountingPeriod = "day" | "week" | "month";
 
+/** Répartition du CA par canal de distribution (direct vs réseau revendeurs). */
+export interface ChannelSplit {
+  directRevenue: number;
+  resellerRevenue: number;
+  directSales: number;
+  resellerSales: number;
+}
+
+/** Fenêtre précédente de même longueur — comparaison Δ%. */
+export interface TotalsDelta {
+  revenue: number;
+  sales: number;
+  avgTicket: number;
+  margin?: number;
+}
+
 export interface AccountingData {
   period: AccountingPeriod;
   routerId: string;
   series: { label: string; revenue: number; sales: number }[];
-  byRouter: { routerId: string; routerName: string; revenue: number; sales: number; share: number }[];
-  totals: { revenue: number; sales: number; avgTicket: number };
+  byRouter: {
+    routerId: string;
+    routerName: string;
+    revenue: number;
+    sales: number;
+    share: number;
+    /** F13 — coût/total vente du site (backend v2) : marge par site. */
+    cost?: number;
+    selling?: number;
+  }[];
+  totals: {
+    revenue: number;
+    sales: number;
+    avgTicket: number;
+    /** F13 — coût, total vente et marge (selling − cost). */
+    cost?: number;
+    selling?: number;
+    margin?: number;
+  };
+  /** v2 — fenêtre précédente équivalente (Δ% des KPI). */
+  prev?: TotalsDelta;
+  /** v2 — CA direct vs revendeurs (même fenêtre / filtre routeur). */
+  channel?: ChannelSplit;
 }
 
 export interface DashboardData {
@@ -714,6 +751,14 @@ export interface ReportsData {
   trafficByDay: { day: string; bytesIn: number; bytesOut: number }[];
   voucherStatus: { active: number; used: number; expired: number; disabled: number };
   totals: { revenue: number; sales: number; avgTicket: number };
+  /** v2 — fenêtre précédente de même longueur (Δ% des KPI). */
+  prev?: TotalsDelta;
+  /** v2 — CA direct vs revendeurs sur la fenêtre. */
+  channel?: ChannelSplit;
+  /** v2 — top 5 revendeurs par CA de la fenêtre. */
+  topResellers?: { name: string; sales: number; revenue: number }[];
+  /** v2 — sessions réelles de la fenêtre : comptage + trafic cumulé. */
+  sessions?: { count: number; bytesIn: number; bytesOut: number };
   /** F13 : bloc marge (30 jours glissants) — optionnel tant que le backend P2 n'est pas déployé. */
   margin?: ReportsMargin;
 }
@@ -740,6 +785,12 @@ export interface ReportsMargin {
   margin: number;
   marginPct: number;
   byProfile: ReportsMarginByProfile[];
+  /** v2 — fenêtre des 30 jours précédents (Δ% CA / marge). */
+  prev?: { revenue: number; cost: number; margin: number };
+  /** v2 — marge quotidienne (le plus ancien d'abord, 30 points). */
+  byDay?: { day: string; margin: number }[];
+  /** v2 — profitabilité par site (tri : meilleure marge d'abord). */
+  byRouter?: { routerName: string; revenue: number; cost: number; margin: number }[];
 }
 
 export type ExpiryPolicyMode = "keep" | "remove";

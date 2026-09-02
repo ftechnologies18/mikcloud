@@ -267,14 +267,18 @@ func accountScope(r *http.Request) string {
 	return model.AccountMainID
 }
 
+// isPlatformAdminClaims — variante sur des claims déjà vérifiés, utilisable
+// partout où la requête ne porte pas encore le contexte (authMiddleware pose
+// le contexte APRÈS les gardes — cf. appel de la garde de suspension).
+func isPlatformAdminClaims(c *auth.Claims) bool {
+	return c != nil && (c.Role == model.RolePlatformAdmin || c.Role == "admin")
+}
+
 // isPlatformAdmin — true si le porteur du token a le rôle super-admin
 // plateforme MikCloud (RolePlatformAdmin ; « admin » historique accepté pour
 // les tokens émis avant le renommage N°7).
 func isPlatformAdmin(r *http.Request) bool {
-	if c := claimsFrom(r); c != nil {
-		return c.Role == model.RolePlatformAdmin || c.Role == "admin"
-	}
-	return false
+	return isPlatformAdminClaims(claimsFrom(r))
 }
 
 // roleRank — hiérarchie des rôles d'équipe (N°7) :
@@ -363,7 +367,7 @@ func (a *API) authMiddleware(next http.Handler) http.Handler {
 		// paiement (/api/subscription — DEMANDE de renouvellement, /api/settings)
 		// restent accessibles — le reste est bloqué pour forcer le règlement.
 		// Exemption : administrateurs plateforme.
-		if claims.Acc != "" && !isPlatformAdmin(r) {
+		if claims.Acc != "" && !isPlatformAdminClaims(claims) {
 			view := a.subscriptionGuardState(claims.Acc)
 			if view.Status == "suspended" {
 				allowed := path == "/api/auth/me" || path == "/api/subscription" || path == "/api/settings" || strings.HasPrefix(path, "/api/subscription/pay") || strings.HasPrefix(path, "/api/subscription/stripe") || strings.HasPrefix(path, "/api/billing")

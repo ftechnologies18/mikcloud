@@ -78,6 +78,45 @@ const LEGACY_PASSWORD_ELEMENT_RES = [
   /<(div|p)[^>]*>\s*\{\{password\}\}\s*<\/\1>/gi,
 ];
 
+/** Élément (div/p/span) portant SEUL {{username}} — cible du gras mode « même
+ * mot de passe » (le code est l'unique identité du ticket, il doit se voir). */
+const USERNAME_ELEMENT_RE =
+  /<(div|p|span)([^>]*)>(\s*)\{\{username\}\}(\s*)<\/\1>/gi;
+/** Attribut style existant déjà en gras (ou équivalent) — ne rien changer. */
+const STYLE_BOLD_RE = /font-weight\s*:\s*(bold|bolder|[6-9]00)/i;
+
+/** Fusionne font-weight:bold dans une valeur d'attribut style existante. */
+function styleWithBold(existing: string): string {
+  return `${existing.trim().replace(/;\s*$/, "")};font-weight:bold;`;
+}
+
+/**
+ * boldUsernameElement — mode « même mot de passe » : garantit que le code
+ * ({{username}} seul dans son élément) s'affiche EN GRAS sur tous les modèles,
+ * y compris les gabarits personnalisés qui ne l'étaient pas. Idempotent : un
+ * élément déjà gras (font-weight:bold/bolder/600+) reste inchangé.
+ */
+function boldUsernameElement(html: string): string {
+  return html.replace(
+    USERNAME_ELEMENT_RE,
+    (_m, tag: string, attrs: string, pre: string, post: string) => {
+      if (STYLE_BOLD_RE.test(attrs)) {
+        return `<${tag}${attrs}>${pre}{{username}}${post}</${tag}>`;
+      }
+      let newAttrs = attrs;
+      const dq = /style\s*=\s*"([^"]*)"/i.exec(attrs);
+      if (dq) {
+        newAttrs = attrs.replace(dq[0], `style="${styleWithBold(dq[1])}"`);
+      } else {
+        const sq = /style\s*=\s*'([^']*)'/i.exec(attrs);
+        if (sq) newAttrs = attrs.replace(sq[0], `style='${styleWithBold(sq[1])}'`);
+        else newAttrs = `${attrs} style="font-weight:bold;"`;
+      }
+      return `<${tag}${newAttrs}>${pre}{{username}}${post}</${tag}>`;
+    },
+  );
+}
+
 /** GIF 1px transparent — placeholder {{logo}} quand aucun logo n'est configuré. */
 const TRANSPARENT_PIXEL =
   "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
@@ -235,6 +274,9 @@ export async function renderTemplate(
       for (const elementRe of LEGACY_PASSWORD_ELEMENT_RES) {
         html = html.replace(elementRe, "");
       }
+      // Le code étant l'unique identité du ticket, il s'affiche EN GRAS sur
+      // tous les modèles (idempotent — les gabarits déjà gras sont inchangés).
+      html = boldUsernameElement(html);
     }
   }
   html = replaceAllLiteral(html, "{{username}}", escapeHtml(voucher.username));
@@ -275,8 +317,27 @@ export async function renderTemplate(
 }
 
 /**
+ * a4GridPlan — plan ADAPTATIF de la grille A4 : plus le lot est gros, plus la
+ * grille a de colonnes et plus le contenu des tickets est réduit (zoom), pour
+ * caser le MAXIMUM de tickets par feuille A4 sans sacrifier la lisibilité
+ * (QR ≥ ~8 mm imprimé, code encore lisible). Capacités estimées par feuille :
+ * 3 colonnes ≈ 12 tickets · 4 ≈ 24 · 5 ≈ 35 · 6 ≈ 54.
+ */
+export function a4GridPlan(count: number): {
+  cols: number;
+  zoom: number;
+  gapMm: number;
+} {
+  if (count <= 12) return { cols: 3, zoom: 1, gapMm: 5 };
+  if (count <= 24) return { cols: 4, zoom: 0.75, gapMm: 5 };
+  if (count <= 35) return { cols: 5, zoom: 0.6, gapMm: 4 };
+  return { cols: 6, zoom: 0.5, gapMm: 4 };
+}
+
+/**
  * renderBatch — page imprimable complète pour un lot de vouchers :
- * - a4    : grille 3 colonnes avec espacement ;
+ * - a4    : grille ADAPTATIVE (3→6 colonnes selon la quantité, tickets
+ *   réduits via zoom — voir a4GridPlan) ;
  * - 58/80 : tickets verticaux séquentiels (largeur fixe 54/76 mm,
  *   saut de page géré par les règles .tpl-* de globals.css).
  */
@@ -290,10 +351,14 @@ export async function renderBatch(
   );
 
   if (template.format === "a4") {
-    const inner = tickets.map((ticket) => `<div class="tpl-ticket">${ticket}</div>`).join("");
-    // minmax(0,1fr) : les pistes ne peuvent pas dépasser 1/3 de la feuille,
+    const plan = a4GridPlan(vouchers.length);
+    const ticketStyle = plan.zoom < 1 ? ` style="zoom:${plan.zoom};"` : "";
+    const inner = tickets
+      .map((ticket) => `<div class="tpl-ticket"${ticketStyle}>${ticket}</div>`)
+      .join("");
+    // minmax(0,1fr) : les pistes ne peuvent pas dépasser 1/N de la feuille,
     // même si un gabarit contient du contenu à largeur figée (QR + textes).
-    return `<div class="tpl-batch tpl-format-a4" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5mm;">${inner}</div>`;
+    return `<div class="tpl-batch tpl-format-a4" style="display:grid;grid-template-columns:repeat(${plan.cols},minmax(0,1fr));gap:${plan.gapMm}mm;">${inner}</div>`;
   }
 
   const width = template.format === "58mm" ? "54mm" : "76mm";

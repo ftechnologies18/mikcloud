@@ -13,7 +13,12 @@
 // à chaque impression il est mémorisé dans localStorage("mikcloud-last-batch")
 // pour la réimpression rapide depuis la vue Vouchers.
 
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+} from "react";
 import { Loader2, Printer } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -26,7 +31,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useCurrency, useSettings } from "@/components/hotspot/parts/sd-currency";
-import { isSamePasswordMode, renderBatch } from "@/components/hotspot/parts/template-render";
+import {
+  a4GridPlan,
+  isSamePasswordMode,
+  renderBatch,
+} from "@/components/hotspot/parts/template-render";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { formatBytes, formatCurrency , fmtRouterDuration } from "@/lib/hotspot/format";
 import type { HotspotUser, Profile, VoucherTemplate } from "@/lib/hotspot/types";
@@ -101,6 +110,10 @@ export function UcPrintDialog({
     : null;
   const batchHtml = batch && batch.key === batchKey ? batch.html : null;
   const batchFailed = batchHtml !== null && batchHtml === "";
+
+  // Grille A4 adaptative du rendu standard : au-delà de 12 tickets, 4→6
+  // colonnes + zoom (a4GridPlan) pour caser le maximum de tickets par feuille.
+  const stdPlan = a4GridPlan(vouchers.length);
 
   function handleTemplateChange(value: string) {
     setTplChoice(value);
@@ -211,8 +224,17 @@ export function UcPrintDialog({
             </div>
           ) : (
             <div className="print-area rounded-lg bg-white p-4 text-black">
-              {/* voucher-print-grid : à l'impression, 3 colonnes strictes (globals.css). */}
-              <div className="voucher-print-grid grid grid-cols-2 gap-5 sm:grid-cols-3">
+              {/* Grille ADAPTATIVE (stdPlan) : les variables --vgrid-* alimentent
+                  la règle d'impression !important de globals.css (aperçu = print). */}
+              <div
+                className="voucher-print-grid grid"
+                style={{
+                  gridTemplateColumns: `repeat(${stdPlan.cols}, minmax(0, 1fr))`,
+                  gap: `${stdPlan.gapMm}mm`,
+                  "--vgrid-cols": stdPlan.cols,
+                  "--vgrid-gap": `${stdPlan.gapMm}mm`,
+                } as CSSProperties}
+              >
                 {vouchers.map((voucher) => {
                   const prof = profiles.find((p) => p.id === voucher.profileId);
                   const validityMin = prof ? (prof.validityMin > 0 ? prof.validityMin : prof.validityDays * 1440) : 0;
@@ -220,6 +242,7 @@ export function UcPrintDialog({
                     <div
                       key={voucher.id}
                       className="flex flex-col items-center gap-1 rounded-lg border-2 border-dashed border-black p-3 text-center break-inside-avoid"
+                      style={stdPlan.zoom < 1 ? { zoom: stdPlan.zoom } : undefined}
                     >
                       <p className="text-sm font-bold leading-tight">{tenantName || "MikCloud"}</p>
                       <p className="text-[10px] uppercase tracking-widest text-neutral-500">

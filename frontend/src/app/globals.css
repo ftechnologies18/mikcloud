@@ -530,12 +530,13 @@
     print-color-adjust: exact;
   }
 
-  /* Grille A4 du rendu standard : 3 colonnes STRICTES à l'impression
-     (minmax(0,1fr) — les pistes ne débordent jamais de la feuille quelle que
-     soit la largeur min-content des tickets). */
+  /* Grille A4 du rendu standard : colonnes/espacement pilotés par les variables
+     --vgrid-* posées en inline par le dialog (a4GridPlan — grille adaptative
+     3→6 colonnes selon la quantité). minmax(0,1fr) : les pistes ne débordent
+     jamais de la feuille quelle que soit la largeur min-content des tickets. */
   .voucher-print-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
-    gap: 4mm !important;
+    grid-template-columns: repeat(var(--vgrid-cols, 3), minmax(0, 1fr)) !important;
+    gap: var(--vgrid-gap, 4mm) !important;
   }
 }
 

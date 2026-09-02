@@ -2,6 +2,7 @@
 
 import { useState, type ComponentType } from "react";
 import { motion, useReducedMotion, type Variants } from "framer-motion";
+import { FtciCredit } from "@/components/ftci-credit";
 import {
   Activity,
   BarChart3,
@@ -643,7 +644,7 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
           <Separator className="my-8" />
 
           <div className="flex flex-col items-center justify-between gap-4 text-center sm:flex-row sm:text-left">
-            <p className="text-xs text-muted-foreground">{copy.footer.copyright}</p>
+            <FtciCredit className="text-xs text-muted-foreground" />
             <div className="flex flex-col items-center gap-1 text-xs text-muted-foreground sm:items-end">
               <a href={`mailto:${copy.footer.contact}`} className="hover:text-foreground">
                 {copy.footer.contact}

@@ -233,6 +233,27 @@ function replaceAllLiteral(html: string, token: string, value: string): string {
 }
 
 /**
+ * voucherQrPayload — contenu encodé dans le QR du ticket :
+ * - avec un DNS de hotspot configuré (settings.tenant.dnsName) : LIEN DE
+ *   CONNEXION MikroTik http://<dns>/login?username=…&password=… (parité
+ *   Mikhmon) — le scan ouvre le portail et connecte l'appareil au lieu
+ *   d'afficher le code déjà imprimé sur le ticket ; le schéma/domaine éventuel
+ *   du DNS (https://…/) est neutralisé, paramètres encodés (encodeURIComponent).
+ * - sans DNS : comportement historique « username\npassword ».
+ */
+export function voucherQrPayload(
+  voucher: Pick<HotspotUser, "username" | "password">,
+  dnsName?: string,
+): string {
+  const dns = dnsName
+    ?.trim()
+    .replace(/^https?:\/\//i, "")
+    .replace(/\/+$/, "");
+  if (!dns) return `${voucher.username}\n${voucher.password}`;
+  return `http://${dns}/login?username=${encodeURIComponent(voucher.username)}&password=${encodeURIComponent(voucher.password)}`;
+}
+
+/**
  * renderTemplate — remplace les variables du bodyHtml pour UN voucher.
  * Asynchrone : le QR code (data URL) est généré via la lib `qrcode`.
  * {{price}} affiche le prix de vente (sellingPrice || price, contrat F13).
@@ -246,8 +267,10 @@ export async function renderTemplate(
   const profile = ctx.profiles.find((p) => p.id === voucher.profileId);
   // QR avec le logo du tenant au centre (badge blanc, niveau H) — voir
   // qrWithLogoDataUrl : fallback QR nu si aucun logo ou canvas indisponible.
+  // Payload : lien de connexion du hotspot (dnsName configuré), sinon
+  // username\npassword — voir voucherQrPayload.
   const qrCode = await qrWithLogoDataUrl(
-    `${voucher.username}\n${voucher.password}`,
+    voucherQrPayload(voucher, ctx.dnsName),
     ctx.logoUrl,
   );
 

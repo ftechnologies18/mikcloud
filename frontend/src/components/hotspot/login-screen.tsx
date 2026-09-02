@@ -6,6 +6,7 @@ import { motion, useAnimate, useReducedMotion, type Variants } from "framer-moti
 import { Eye, EyeOff, Loader2, ShieldCheck, Store, Ticket, Wifi } from "lucide-react";
 import { toast } from "sonner";
 
+import { FtciCredit } from "@/components/ftci-credit";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -142,6 +143,9 @@ function BrandPanel() {
           </motion.ul>
           <motion.p variants={rise} className="mt-8 text-xs text-muted-foreground/70">
             {t("login.footer")}
+          </motion.p>
+          <motion.p variants={rise} className="mt-2">
+            <FtciCredit className="text-xs text-muted-foreground/80" />
           </motion.p>
         </motion.div>
       </motion.div>
@@ -425,6 +429,14 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
             className="mt-6 text-center text-xs text-muted-foreground lg:hidden"
           >
             {t("login.footer")}
+          </motion.p>
+          <motion.p
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.6, duration: 0.4 }}
+            className="mt-2 text-center lg:hidden"
+          >
+            <FtciCredit className="text-xs text-muted-foreground/80" />
           </motion.p>
         </div>
       </section>

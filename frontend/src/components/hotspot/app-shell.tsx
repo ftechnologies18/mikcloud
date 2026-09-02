@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { FtciCredit } from "@/components/ftci-credit";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -646,6 +647,7 @@ export default function AppShell() {
         <NavList />
         <div className="px-3 pb-4">
           <UserCard />
+          <FtciCredit className="mt-3 w-full text-center text-[10px] text-muted-foreground/70" />
         </div>
       </aside>
 
@@ -658,6 +660,9 @@ export default function AppShell() {
             <BrandHeader />
           </SheetHeader>
           <NavList />
+          <div className="mt-auto px-4 pb-5 pt-2">
+            <FtciCredit className="w-full text-center text-[10px] text-muted-foreground/70" />
+          </div>
         </SheetContent>
       </Sheet>
 

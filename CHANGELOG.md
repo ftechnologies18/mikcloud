@@ -5,6 +5,25 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-02 — Chaîne de déploiement Render réparée + filtre monorepo
+
+### Corrigés
+- **Déploiements Render en échec (clone GitHub)** : le service Render
+  n'était pas réellement lié au dépôt via l'app GitHub Render — il clonait
+  anonymement l'URL publique, ce que GitHub bloque désormais par
+  intermittence depuis ses IP de build (`could not read Username` /
+  `expected flush after ref listing` ×4). Le dépôt est désormais connecté
+  via l'app GitHub côté Render : le clonage passe de nouveau (déploiement
+  de rattrapage effectué, production à jour).
+
+### Modifiés
+- **Filtre monorepo pour Render** : le job `deploy-render` ne déclenche un
+  déploiement que si le push a modifié `backend/` (comparaison
+  `github.event.before` → `github.sha`) — un push frontend seul ne
+  redéploie plus l'API. Côté service Render, l'auto-deploy Git est
+  désactivé : le déploiement reste piloté par l'API après CI verte
+  (jamais avant la CI, jamais par webhook).
+
 ## 2026-09-02 — Filet de sécurité : suite de tests automatisés
 
 ### Ajoutés

@@ -69,8 +69,11 @@ jobs:
           NEXT_TELEMETRY_DISABLED: 1
 
   # Déploiement du backend Render une fois la CI verte (push main uniquement).
+  # Monorepo : seul un changement sous backend/ déclenche le déploiement —
+  # un push frontend seul ne redéploie pas l'API.
   # Le service Render (srv-da974o142hec73euul60) ne reçoit pas le webhook
-  # GitHub → c'est GitHub Actions qui déclenche le déploiement via l'API.
+  # GitHub (autoDeploy désactivé côté service) → c'est GitHub Actions qui
+  # déclenche le déploiement via l'API.
   # La clé API Render est stockée dans le secret RENDER_API_KEY du dépôt.
   deploy-render:
     name: Déploiement backend Render
@@ -79,7 +82,35 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Récupérer l'historique (comparaison de commits)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Détecter les changements backend (monorepo)
+        id: backend
+        run: |
+          before="${{ github.event.before }}"
+          after="${{ github.sha }}"
+          # Nouvelle branche ou commit de référence absent : déploiement
+          # par prudence (comportement sûr par défaut).
+          if [ -z "$before" ] \
+             || [ "$before" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "$before^{commit}" 2>/dev/null; then
+            echo "Commit de référence indisponible — déploiement par prudence."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --quiet "$before" "$after" -- backend; then
+            echo "Aucun changement sous backend/ — déploiement Render sauté."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "backend/ modifié — déploiement Render autorisé."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Déclencher le déploiement Render
+        if: steps.backend.outputs.changed == 'true'
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
         run: |

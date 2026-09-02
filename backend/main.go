@@ -20,6 +20,7 @@ import (
 	"mikcloud/hotspot-api/internal/api"
 	"mikcloud/hotspot-api/internal/model"
 	"mikcloud/hotspot-api/internal/notify"
+	"mikcloud/hotspot-api/internal/secretbox"
 	"mikcloud/hotspot-api/internal/store"
 )
 
@@ -47,6 +48,14 @@ func main() {
 		}
 		jwtSecret = "mikcloud-dev-secret" // développement local uniquement
 		log.Println("AVERTISSEMENT : JWT_SECRET absente — secret de développement utilisé (jamais en production)")
+	}
+
+	// Sécurité P0 #6 — chiffrement au repos des identifiants RouterOS. La
+	// clé vient de CREDENTIALS_KEY (64 hex) ou, à défaut, est dérivée de
+	// JWT_SECRET (HKDF, domaine distinct). Fail-fast en production si aucune
+	// source — AVANT toute écriture du store.
+	if err := secretbox.Init(jwtSecret); err != nil {
+		log.Fatalf("sécurité : %v", err)
 	}
 
 	st, err := store.New(dataDir)

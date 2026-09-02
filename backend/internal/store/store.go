@@ -24,6 +24,7 @@ import (
 
 	"mikcloud/hotspot-api/internal/auth"
 	"mikcloud/hotspot-api/internal/model"
+	"mikcloud/hotspot-api/internal/secretbox"
 )
 
 // Store — base de données en mémoire protégée par un mutex global, persistée
@@ -103,11 +104,14 @@ func New(dir string) (*Store, error) {
 	}
 	s.path = filepath.Join(dir, "db.json")
 	if data, err := os.ReadFile(s.path); err == nil && len(data) > 0 {
+		// Sécurité P0 #6 — un db.json créé avant le correctif peut être en 0644.
+		_ = os.Chmod(s.path, 0o600)
 		var db model.DB
 		if err := json.Unmarshal(data, &db); err != nil {
 			log.Printf("store: db.json illisible (%v) — état de mise en service (aucune donnée démo)", err)
 			s.db = BuildEmptyState()
 		} else {
+			unsealRouterPasswords(&db)
 			s.db = &db
 			s.ensureSlices()
 			// Un ancien db.json mono-tenant (champs legacy tenant/settings, sans
@@ -688,6 +692,32 @@ func (s *Store) Unlock() { s.mu.Unlock() }
 // Data retourne la base courante (à n'utiliser que sous verrou).
 func (s *Store) Data() *model.DB { return s.db }
 
+// ---------------------------------------------------------------------------
+// Sécurité P0 #6 — chiffrement au repos des identifiants routeur (mode JSON)
+// ---------------------------------------------------------------------------
+
+// sealedSnapshot renvoie une COPIE superficielle de l'état dont les mots de
+// passe routeur sont chiffrés, pour la sérialisation JSON. La mémoire vivante
+// reste en clair (aucun handler à modifier) ; la copie est jetable et ne sert
+// qu'au marshal.
+func sealedSnapshot(db *model.DB) *model.DB {
+	clone := *db
+	clone.Routers = make([]model.Router, len(db.Routers))
+	for i, r := range db.Routers {
+		r.Password = secretbox.Encrypt(r.Password)
+		clone.Routers[i] = r
+	}
+	return &clone
+}
+
+// unsealRouterPasswords déchiffre en place les mots de passe routeur d'un état
+// issu du JSON (valeurs antérieures au correctif : passthrough transparent).
+func unsealRouterPasswords(db *model.DB) {
+	for i := range db.Routers {
+		db.Routers[i].Password = secretbox.Decrypt(db.Routers[i].Password)
+	}
+}
+
 // Save persiste la base (à appeler sous verrou) : synchro différentielle
 // PostgreSQL en production, écriture JSON atomique en développement.
 func (s *Store) Save() {
@@ -698,13 +728,14 @@ func (s *Store) Save() {
 		}
 		return
 	}
-	data, err := json.MarshalIndent(s.db, "", "  ")
+	data, err := json.MarshalIndent(sealedSnapshot(s.db), "", "  ")
 	if err != nil {
 		log.Printf("store: sérialisation impossible : %v", err)
 		return
 	}
+	// Sécurité P0 #6 — fichier de données restreint au propriétaire du process.
 	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		log.Printf("store: écriture impossible : %v", err)
 		return
 	}
@@ -768,6 +799,7 @@ func (s *Store) Reload() (ReloadStats, error) {
 		if err := json.Unmarshal(data, fresh); err != nil {
 			return ReloadStats{}, fmt.Errorf("fichier illisible : %w", err)
 		}
+		unsealRouterPasswords(fresh)
 		db = fresh
 	}
 

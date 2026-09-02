@@ -20,6 +20,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib" // pilote « pgx » pour database/sql
 
 	"mikcloud/hotspot-api/internal/model"
+	"mikcloud/hotspot-api/internal/secretbox"
 )
 
 // maxRowsPerStatement — bornes d'insertion multi-lignes (limite PostgreSQL : 65535 paramètres).
@@ -635,6 +636,10 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 		}
 	}
 
+	// Sécurité P0 #6 — chiffre au repos les mots de passe routeur encore en
+	// clair (base antérieure au correctif), AVANT que les handlers ne s'exécutent.
+	p.migrateSealRouterPasswords()
+
 	// Les tris applicatifs sont faits en Go (sort.Slice dans les handlers),
 	// l'ordre de lecture n'a donc aucune importance.
 
@@ -1138,15 +1143,66 @@ var routerSpec = entitySpec[model.Router]{
 			&x.Version, &x.UptimeSec, &x.CPULoad, &x.HotspotUsers, &x.ActiveSessions, &x.CreatedAt,
 			&x.HotspotLoginUrl, &x.AgentTokenHash, &x.TokenPreview, &x.LastSeen, &x.AccountID,
 			&x.BoardName, &x.FreeHddMb, &x.TotalHddMb)
+		// Sécurité P0 #6 — le mot de passe routeur est stocké chiffré
+		// (AES-256-GCM) : lecture = déchiffrement (passthrough si valeur
+		// antérieure au correctif, migration assurée par
+		// migrateSealRouterPasswords au démarrage).
+		x.Password = secretbox.Decrypt(x.Password)
 		return x, err
 	},
 	args: func(x *model.Router) []any {
-		return []any{x.ID, x.Name, x.Host, x.Port, x.Username, x.Password, x.Mode, x.Status,
+		// Sécurité P0 #6 — écriture = chiffrement. L'empreinte de
+		// synchronisation (hashOf) reste calculée sur l'état mémoire clair,
+		// donc la valeur chiffrée (nonce aléatoire) ne provoque aucune
+		// réécriture en boucle : seules les VRAIES modifications resynchronisent.
+		return []any{x.ID, x.Name, x.Host, x.Port, x.Username, secretbox.Encrypt(x.Password), x.Mode, x.Status,
 			x.Version, x.UptimeSec, x.CPULoad, x.HotspotUsers, x.ActiveSessions, x.CreatedAt,
 			x.HotspotLoginUrl, x.AgentTokenHash, x.TokenPreview, x.LastSeen, x.AccountID,
 			x.BoardName, x.FreeHddMb, x.TotalHddMb}
 	},
 	hashOf: hashEntity[model.Router],
+}
+
+// migrateSealRouterPasswords — passe de démarrage (idempotente) : chiffre
+// TOUTES les valeurs de routers.password encore en clair (base créée avant le
+// correctif P0 #6). La mémoire reste claire ; seules les lignes DB concernées
+// sont réécrites, une seule fois.
+func (p *PG) migrateSealRouterPasswords() {
+	rows, err := p.db.Query(`SELECT id, password FROM routers WHERE password <> ''`)
+	if err != nil {
+		log.Printf("secretbox: migration des mots de passe routeur impossible (%v) — retentée à l'écriture suivante", err)
+		return
+	}
+	type plain struct {
+		id string
+		pw string
+	}
+	var todo []plain
+	for rows.Next() {
+		var t plain
+		if err := rows.Scan(&t.id, &t.pw); err != nil {
+			rows.Close()
+			return
+		}
+		if t.pw != "" && !secretbox.IsEncrypted(t.pw) {
+			todo = append(todo, t)
+		}
+	}
+	rows.Close()
+	for _, t := range todo {
+		enc := secretbox.Encrypt(t.pw)
+		if enc == "" || !secretbox.IsEncrypted(enc) {
+			continue // refus d'écrire un pseudo-chiffré (cf. secretbox.Encrypt)
+		}
+		if _, err := p.db.Exec(`UPDATE routers SET password = $1 WHERE id = $2`, enc, t.id); err != nil {
+			log.Printf("secretbox: chiffrement du routeur %s différé (%v)", t.id, err)
+			continue
+		}
+		log.Printf("secretbox: mot de passe routeur %s chiffré au repos", t.id)
+	}
+	if len(todo) > 0 {
+		log.Printf("secretbox: migration P0 #6 terminée — %d mot(s) de passe routeur chiffré(s)", len(todo))
+	}
 }
 
 var profileSpec = entitySpec[model.Profile]{

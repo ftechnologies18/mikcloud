@@ -581,7 +581,13 @@ Migration : ALTER idempotents au boot (`resellers.payment_mode`, `resellers.debt
 | `internal/store/pg.go` | CREATE TABLE voucher_templates/user_logs/ip_bindings/scheduler_tasks/traffic + ALTERs + specs + sync |
 | `internal/store/seed.go` | templates×3, profiles sellingPrice, bindings/scheduler/traffic seed |
 | `internal/agent/agent.go` | builders nouveaux kinds + read_state v2 (board/freehdd/totalhdd/ifaces) + read_resources + profile address-pool/parent-queue + limit-uptime par lot + server= |
-| `internal/api/agent_handlers.go` | applyReadState v2 (logs diff, traffic diff, board/hdd), queue helpers |
+| `internal/api/agent_handlers.go` | protocole agent (register/cmd/result) + file de commandes (queueCommandLocked, requeue des lectures périmées, helpers de scripts) |
+| `internal/api/agent_results.go` | application des résultats agent : applyReadState v2 (logs diff, traffic diff, board/hdd), markVoucherUsed, accumulateUptime, normalizePingResult |
+| `internal/api/handlers_provision.go` | provisionning console agent : provision / rotate-token / refresh / import + applyImportHotspot |
+| `internal/api/handlers_ipbindings.go` | F7 — IP bindings (CRUD cloud + commandes agent ipbinding_add/set/remove) |
+| `internal/api/handlers_commands.go` | F8 — ping routeur + GET /api/commands/{id} (résultat normalisé) |
+| `internal/api/handlers_router_tools.go` | F9 — outils routeur (dhcp/hosts/cookies/log/resources ; cache agent 120 s, simulation déterministe) |
+| `internal/api/handlers_scheduler.go` | F10 — scheduler (CRUD + read_scheduler en cache) et reboot/shutdown |
 | `internal/api/handlers_ext.go` (NOUVEAU) | tous les nouveaux handlers console (templates, user-logs, users actions, ipbindings, ping, tools F9, scheduler, reboot, traffic, commands/{id}) |
 | `internal/api/routes.go` | table de routage HTTP complète (mux) + handleHealth + fallback 404 JSON — ancien cœur de `handlers.go`, découpé par domaine : auth, dashboard, routers, profiles, users, vouchers, sessions, resellers, reports, accounting, settings, subscription (+ middleware.go, helpers.go) |
 

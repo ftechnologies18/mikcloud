@@ -13,6 +13,7 @@ import (
 	"mikcloud/hotspot-api/internal/agent"
 	"mikcloud/hotspot-api/internal/model"
 	"mikcloud/hotspot-api/internal/routeros"
+	"mikcloud/hotspot-api/internal/store"
 )
 
 func (a *API) handleRoutersList(w http.ResponseWriter, r *http.Request) {
@@ -501,4 +502,56 @@ func (a *API) handleRouterStats(w http.ResponseWriter, r *http.Request) {
 		"version":        stats.Version,
 		"activeSessions": activeSessions,
 	})
+}
+
+// ---------------------------------------------------------------------------
+// F6 — Trafic temps réel
+// ---------------------------------------------------------------------------
+
+// handleRouterTraffic — GET /api/routers/{id}/traffic → RouterTraffic.
+// store.Tick est appelé avant lecture : la simulation vit au rythme des polls
+// du front (5 s) même si personne d'autre ne consulte les sessions/dashboard.
+// Routeur agent sans mesure : enveloppe vide {routerId, interfaces: [], history: []}.
+func (a *API) handleRouterTraffic(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
+	id := r.PathValue("id")
+	now := time.Now().UTC()
+
+	a.store.Lock()
+	db := a.store.Data()
+	rr := findRouterScoped(db, id, acc)
+	if rr == nil {
+		a.store.Unlock()
+		writeErr(w, http.StatusNotFound, "Routeur introuvable")
+		return
+	}
+	if rr.Mode == "real" {
+		a.store.Unlock()
+		writeErr(w, http.StatusBadRequest, realModeUnsupported)
+		return
+	}
+	store.Tick(db, now)
+	out := model.RouterTraffic{
+		RouterID: id, AccountID: acc,
+		Interfaces: []model.IfaceTraffic{}, History: []model.TrafficPoint{},
+	}
+	for i := range db.Traffic {
+		if db.Traffic[i].RouterID != id {
+			continue
+		}
+		// Copie défensive (le rendu JSON se fait hors verrou).
+		out = db.Traffic[i]
+		out.Interfaces = append([]model.IfaceTraffic(nil), db.Traffic[i].Interfaces...)
+		out.History = append([]model.TrafficPoint(nil), db.Traffic[i].History...)
+		if out.Interfaces == nil {
+			out.Interfaces = []model.IfaceTraffic{}
+		}
+		if out.History == nil {
+			out.History = []model.TrafficPoint{}
+		}
+		break
+	}
+	a.store.Save()
+	a.store.Unlock()
+	writeJSON(w, http.StatusOK, out)
 }

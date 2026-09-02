@@ -5,6 +5,35 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-02 — Refactor Phase B (suite) : agent_handlers.go et handlers_p1.go
+
+### Modifiés
+- **`internal/api/agent_handlers.go` (1 349 → 537 lignes)** réduit au
+  protocole agent (register / cmd / result + file de commandes) ; le reste
+  rejoint deux nouveaux fichiers :
+  `agent_results.go` (487 l. — application des résultats agent sur l'état :
+  applyReadState, trafic, uptime, vouchers, normalizePingResult) et
+  `handlers_provision.go` (358 l. — provisionning console : provision,
+  rotate-token, refresh, import).
+- **`internal/api/handlers_p1.go` (1 152 lignes) supprimé et redistribué**
+  par vague fonctionnelle : F6 trafic temps réel → `handlers_routers.go`,
+  F7 IP bindings → `handlers_ipbindings.go` (253 l.), F8 ping + statut
+  commandes → `handlers_commands.go` (133 l.), F9 outils routeur →
+  `handlers_router_tools.go` (378 l.), F10 scheduler + alimentation →
+  `handlers_scheduler.go` (360 l.) ; `realModeUnsupported` (matrice de modes
+  partagée) rejoint `helpers.go`.
+- **Plus aucun fichier du paquet `api` ne dépasse 900 lignes** (max :
+  handlers_ext.go, 897 l.) ; commentaires de cartographie mis à jour
+  (routes.go, docs/CONTRACT-V2.md).
+- Garanties vérifiées (même méthode que le découpage de handlers.go) :
+  multiset des 413 déclarations top-level strictement identique avant/après
+  (specs des blocs const/var éclatés : macPattern et hostnamePattern réémis
+  en vars individuelles, payload des regex vérifié identique), table de
+  routage (126 registrations mux) octet pour octet, couverture ligne à ligne
+  du code déplacé. gofmt, go vet, `go test -race -count=1` (9 paquets) et
+  `go build` tous verts — mouvement pur de code, zéro changement de logique
+  ni de contrat.
+
 ## 2026-09-02 — Refactor Phase B : découpage de handlers.go
 
 ### Modifiés

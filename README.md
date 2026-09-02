@@ -180,6 +180,10 @@ intégré permet de démontrer toute la plateforme sans matériel.
 - [x] Découpage de `backend/internal/api/handlers.go` (~5 100 lignes) en
       modules plus fins — sans changer le contrat d'API *(fait : routes.go,
       middleware.go, helpers.go et 12 fichiers handlers_<domaine>.go)*
+- [x] Même traitement pour `agent_handlers.go` (1 349 l.) et
+      `handlers_p1.go` (1 152 l.) *(fait : protocole agent, agent_results.go,
+      handlers_provision.go, puis les vagues F6–F10 — ipbindings, commands,
+      router_tools, scheduler ; plus aucun fichier > 900 lignes)*
 - [ ] Monitoring externe (uptime, alertes) et sauvegardes Neon planifiées
 
 ## Licence

@@ -269,3 +269,7 @@ func defaultMinZero(v int) int {
 	}
 	return v
 }
+
+// realModeUnsupported — message unique du mode API directe (matrice §0),
+// partagé par les handlers P1 F6–F10.
+const realModeUnsupported = "Non supporté en mode API directe — utilisez le mode agent"

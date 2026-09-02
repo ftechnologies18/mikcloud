@@ -199,7 +199,9 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/users/cleanup", a.requireRole(2, a.handleUsersCleanup))
 	mux.HandleFunc("POST /api/users/bulk", a.handleUsersBulk)
 
-	// P1 (audit Mikhmon) — voir docs/CONTRACT-V2.md (handlers_p1.go)
+	// P1 (audit Mikhmon) — voir docs/CONTRACT-V2.md (F6 à F10, découpage :
+	// handlers_routers.go, handlers_ipbindings.go, handlers_commands.go,
+	// handlers_router_tools.go, handlers_scheduler.go)
 	// Trafic temps réel (F6)
 	mux.HandleFunc("GET /api/routers/{id}/traffic", a.handleRouterTraffic)
 	// IP bindings (F7)

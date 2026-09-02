@@ -361,3 +361,15 @@ func onlineSessions(db *model.DB, now time.Time) map[string]bool {
 func onlineKey(u *model.HotspotUser) string {
 	return u.RouterID + "|" + strings.ToLower(u.Username)
 }
+
+// writeErrCode — erreur JSON enrichie d'un code machine (le front peut
+// adapter sa réaction ; le message reste humain et francophone).
+func writeErrCode(w http.ResponseWriter, status int, code, msg string, extra map[string]any) {
+	body := map[string]any{"error": msg, "code": code}
+	for k, v := range extra {
+		body[k] = v
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(body)
+}

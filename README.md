@@ -187,6 +187,10 @@ intégré permet de démontrer toute la plateforme sans matériel.
 - [x] Même traitement pour `handlers_ext.go` (897 l., vague P0) *(fait :
       handlers_templates.go, handlers_userlogs.go, handlers_users_ops.go ;
       moteur d'enforcement F1 et filtres sessions live dans helpers.go)*
+- [x] Même traitement pour `handlers_geniuspay_stripe.go` (842 l.) et
+      `handlers_admin_account.go` (841 l.) *(fait : geniuspay_stripe.go,
+      handlers_subscription_stripe.go, guards.go ; applySubscriptionLocked
+      dans handlers_subscription.go)*
 - [ ] Monitoring externe (uptime, alertes) et sauvegardes Neon planifiées
 
 ## Licence

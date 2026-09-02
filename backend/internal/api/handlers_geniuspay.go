@@ -16,7 +16,8 @@
 //     si le webhook n'est pas encore arrivé (client de retour de Wave).
 //   - POST /api/subscription/stripe (+ /cancel, GET statut) et webhook
 //     subscription.* : abonnement RÉCURRENT par carte bancaire (Stripe via
-//     GeniusPay) — implémenté dans handlers_geniuspay_stripe.go.
+//     GeniusPay) — routes dans handlers_subscription_stripe.go, intégration
+//     dans geniuspay_stripe.go.
 //
 // Sécurité : la clé secrète (GENIUSPAY_API_SECRET) ne quitte jamais le
 // serveur ; le webhook est vérifié par signature à temps constant ; le
@@ -484,7 +485,7 @@ func (a *API) finalizeBillingSuccess(db *model.DB, idx int, paidVia, resolvedBy,
 // avec anti-replay (horodatage < 5 min). payment.success → encaisse et active
 // la demande appariée (metadata.ref, repli référence marchande) ;
 // payment.failed → rejette la demande ; subscription.* → abonnement carte
-// (Stripe via GeniusPay, handlers_geniuspay_stripe.go) ; autres → accusé OK.
+// (Stripe via GeniusPay, geniuspay_stripe.go) ; autres → accusé OK.
 func (a *API) handleGeniusPayWebhook(w http.ResponseWriter, r *http.Request) {
 	whsec := strings.TrimSpace(os.Getenv("GENIUSPAY_WEBHOOK_SECRET"))
 	if whsec == "" {

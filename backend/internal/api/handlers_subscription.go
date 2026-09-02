@@ -1,5 +1,6 @@
-// handlers_subscription.go — abonnement SaaS, formules et lien marchand Wave.
-
+// handlers_subscription.go — abonnement SaaS : formules, lien marchand Wave
+// et moteur d'application des périodes (applySubscriptionLocked — source
+// unique partagée par la plateforme, les webhooks et l'abonnement carte).
 package api
 
 import (
@@ -304,4 +305,90 @@ func (a *API) handleSubscriptionPost(w http.ResponseWriter, r *http.Request) {
 		"waveLink":       waveLink,
 		"pending":        true,
 	})
+}
+
+// applySubscriptionLocked — active / renouvelle la période d'abonnement d'un
+// compte client (verrou POSÉ par l'appelant). Règles partagées par la fiche
+// client (PUT /api/admin/accounts/{id}/subscription), la file des demandes de
+// renouvellement et le webhook Wave : source unique du calcul de période
+// (empilement sur la période active), des quotas Essentiel et du montant.
+// Retourne l'abonnement, le libellé d'affichage (compat contrat historique),
+// le nom court de la formule et le montant appliqué.
+func applySubscriptionLocked(db *model.DB, accID, planID string, months, reqSlots int, markPaid bool) (model.Subscription, string, string, int) {
+	settings := ensureSettings(db, accID)
+	sub := settings.Subscription
+	now := time.Now().UTC()
+
+	var plan model.SaasPlan
+	var amount int
+	var slots int
+	switch planID {
+	case "essai":
+		// Essai : gratuit, 1 routeur, période limitée (prolongeable par la plateforme).
+		slots = 1
+	case "illimite":
+		// 1 000 F/mois équivalent (12 000 F/an) × durée.
+		slots = 0
+		amount = 1000 * months
+	case "essentiel":
+		plan, _ = model.PlanByID(planID)
+		slots = reqSlots
+		if slots <= 0 {
+			slots = sub.RouterSlots // renouvellement : le quota actuel est conservé
+		}
+		if slots <= 0 {
+			slots = accountRouterCount(db, accID)
+		}
+		if slots < 1 {
+			slots = 1
+		}
+		amount = plan.PriceFcfa * slots * months
+	}
+
+	if planID == "essentiel" || planID == "illimite" || planID == "essai" {
+		// Renouvellement du même plan encore actif : la nouvelle période
+		// s'empile à la fin de la période en cours. Sinon : immédiat.
+		start := now
+		if sub.PlanID == planID && subscriptionStatus(sub, now) == "active" && sub.PeriodEnd != "" {
+			if end, err := time.Parse(time.RFC3339, sub.PeriodEnd); err == nil && now.Before(end) {
+				start = end
+			}
+		}
+		sub.PlanID = planID
+		sub.Status = "active"
+		sub.PeriodStart = start.Format(time.RFC3339)
+		sub.PeriodEnd = start.AddDate(0, months, 0).Format(time.RFC3339)
+		sub.RouterSlots = slots
+		sub.LastAmountFcfa = amount
+	} else {
+		// Cas résiduel (jamais atteint avec la validation ci-dessus, mais
+		// conservé pour la sécurité du type) : période immédiate non expirante.
+		sub.PlanID = planID
+		sub.Status = "active"
+		sub.PeriodStart = now.Format(time.RFC3339)
+		sub.PeriodEnd = "" // non expirant
+		sub.RouterSlots = 0
+		sub.LastAmountFcfa = 0
+	}
+	if markPaid {
+		sub.LastPaidAt = now.Format(time.RFC3339)
+	} else {
+		sub.LastPaidAt = ""
+	}
+	settings.Subscription = sub
+
+	// Compatibilité d'affichage avec l'ancien contrat (libellé Plan).
+	label := "Essai"
+	maxRouters := "1"
+	switch planID {
+	case "essentiel":
+		label = "MikCloud Essentiel"
+		maxRouters = "Par routeur"
+	case "illimite":
+		label = "MikCloud Illimité"
+		maxRouters = "Illimité"
+	}
+	settings.Plan = model.Plan{Name: label, MaxRouters: maxRouters, MaxUsers: "Illimité"}
+	db.SettingsByAccount[accID] = settings
+	return sub, label, plan.Name, amount
 }

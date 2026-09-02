@@ -5,6 +5,29 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-02 — Refactor vague V1 : geniuspay_stripe et admin_account
+
+### Modifiés
+- **`internal/api/handlers_geniuspay_stripe.go` (842 lignes) supprimé et
+  scindé par couche** : intégration GeniusPay « API Abonnements Stripe »
+  (types réels, appels client, helpers statut/cycle, application des
+  échéances, dispatch webhook subscription.*) → `geniuspay_stripe.go`
+  (416 l.) ; routes console POST/GET/cancel de l'abonnement récurrent →
+  `handlers_subscription_stripe.go` (440 l.).
+- **`internal/api/handlers_admin_account.go` (842 → 669 lignes) allégé** :
+  la garde d'écriture P3 (`subscriptionGuardView`, états, `guardAccountWrite`,
+  `guardAccountRouterLimit` — consommée par 12+ fichiers) rejoint
+  `guards.go` (85 l.) ; `writeErrCode` (helper générique) rejoint
+  `helpers.go` ; le moteur d'activation `applySubscriptionLocked` (source
+  unique partagée plateforme/webhooks/carte) rejoint `handlers_subscription.go`.
+- Commentaires de cartographie mis à jour (handlers_geniuspay.go).
+- Garanties vérifiées (même méthode que les vagues précédentes) : multiset
+  des 413 déclarations top-level strictement identique avant/après, table de
+  routage (119 registrations mux) octet pour octet, couverture ligne à ligne
+  du code déplacé. gofmt, go vet, `go test -race -count=1` (9 paquets) et
+  `go build` tous verts — mouvement pur de code, zéro changement de logique
+  ni de contrat.
+
 ## 2026-09-02 — Refactor vague P0 : dissolution de handlers_ext.go
 
 ### Modifiés

@@ -1,109 +1,23 @@
-// Package api — fiche client, gestion d'abonnement et suppression de compte
-// (console plateforme — super-admin MikCloud).
+// Package api — console plateforme (super-admin MikCloud) : comptes clients,
+// fiche détaillée, gestion d'abonnement, impersonation, suppression.
 //
 // P2 : attribuer / renouveler un plan, marquer payé, consulter la fiche
 // détaillée d'un compte client (usage, routeurs, équipe, journal récent).
-// P3 : enforcement serveur — un compte dont l'abonnement est expiré repasse
-// en lecture seule (402 sur les écritures métier) et le plan Essentiel est
-// plafonné aux routeurs couverts par la période payée (routerSlots).
+// L'enforcement serveur P3 (lecture seule d'un compte expiré, plafond de
+// routeurs Essentiel) est dans guards.go ; le moteur d'activation des
+// périodes (applySubscriptionLocked) est dans handlers_subscription.go.
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
+	"mikcloud/hotspot-api/internal/auth"
+	"mikcloud/hotspot-api/internal/model"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
-
-	"mikcloud/hotspot-api/internal/auth"
-	"mikcloud/hotspot-api/internal/model"
 )
-
-// ---------------------------------------------------------------------------
-// P3 — enforcement serveur des abonnements (guard d'écriture)
-// ---------------------------------------------------------------------------
-
-// writeErrCode — erreur JSON enrichie d'un code machine (le front peut
-// adapter sa réaction ; le message reste humain et francophone).
-func writeErrCode(w http.ResponseWriter, status int, code, msg string, extra map[string]any) {
-	body := map[string]any{"error": msg, "code": code}
-	for k, v := range extra {
-		body[k] = v
-	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(body)
-}
-
-// subscriptionGuardView — état d'abonnement vu par le guard (hors verrou).
-type subscriptionGuardView struct {
-	Status      string // none | active | expired (effectif)
-	PlanID      string
-	RouterSlots int
-	PeriodEnd   string
-}
-
-// subscriptionGuardStateLocked — lit l'état d'abonnement du compte, à appeler
-// LE VERROU PRIS (compteurs exacts pour le plafond de routeurs).
-func (a *API) subscriptionGuardStateLocked(acc string) subscriptionGuardView {
-	settings := ensureSettings(a.store.Data(), acc)
-	return subscriptionGuardView{
-		Status:      subscriptionStatus(settings.Subscription, time.Now().UTC()),
-		PlanID:      settings.Subscription.PlanID,
-		RouterSlots: settings.Subscription.RouterSlots,
-		PeriodEnd:   settings.Subscription.PeriodEnd,
-	}
-}
-
-// subscriptionGuardState — lit l'état d'abonnement du compte (sous verrou).
-func (a *API) subscriptionGuardState(acc string) subscriptionGuardView {
-	a.store.Lock()
-	defer a.store.Unlock()
-	return a.subscriptionGuardStateLocked(acc)
-}
-
-// guardAccountWrite — bloque les écritures métier d'un compte expiré (P3).
-// Exemption : les administrateurs plateforme (session support ou console) —
-// le guard protège le modèle économique contre les CLIENTS, pas contre
-// l'opérateur du SaaS. Renvoie true si l'écriture est autorisée, sinon
-// répond 402 et renvoie false.
-//
-// En pratique : un compte expiré repasse en LECTURE SEULE — consultations,
-// exports, suppressions et actions de maintenance (activer/désactiver un
-// utilisateur, déconnecter une session, réglages) restent possibles ; la
-// création et la modification de ressources métier (routeurs, utilisateurs
-// hotspot, vouchers, profils, revendeurs, équipe, import agent) est refusée
-// avec le code machine « subscription_expired ».
-func (a *API) guardAccountWrite(w http.ResponseWriter, r *http.Request) bool {
-	if isPlatformAdmin(r) {
-		return true
-	}
-	view := a.subscriptionGuardState(accountScope(r))
-	if view.Status != "expired" {
-		return true
-	}
-	writeErrCode(w, http.StatusPaymentRequired, "subscription_expired",
-		"Abonnement expiré — renouvelez auprès de MikCloud pour reprendre les modifications",
-		map[string]any{"periodEnd": view.PeriodEnd})
-	return false
-}
-
-// guardAccountRouterLimit — plafond de routeurs du plan Essentiel (P3) :
-// la période couvre RouterSlots routeurs ; au-delà, la création est refusée
-// (402, code « plan_router_limit »). À appeler APRÈS guardAccountWrite,
-// sous verrou (routerCount = routeurs déjà enregistrés du compte).
-func guardAccountRouterLimit(w http.ResponseWriter, view subscriptionGuardView, routerCount int) bool {
-	// Essai : 1 routeur max. Essentiel : quota de routeurs couverts par la période.
-	if (view.PlanID != "essentiel" && view.PlanID != "essai") || view.RouterSlots <= 0 || routerCount < view.RouterSlots {
-		return true
-	}
-	writeErrCode(w, http.StatusPaymentRequired, "plan_router_limit",
-		fmt.Sprintf("Votre formule couvre %d routeur(s) — passez au plan Essentiel (plus de routeurs) ou Illimité pour en ajouter", view.RouterSlots),
-		map[string]any{"limit": view.RouterSlots, "current": routerCount, "plan": view.PlanID})
-	return false
-}
 
 // ---------------------------------------------------------------------------
 // P2 — fiche détaillée d'un compte client : GET /api/admin/accounts/{id}
@@ -409,92 +323,6 @@ func (a *API) handleAdminAccountSubscription(w http.ResponseWriter, r *http.Requ
 			"lastPaidAt": sub.LastPaidAt, "routerCount": routerCount, "amountFcfa": amount,
 		},
 	})
-}
-
-// applySubscriptionLocked — active / renouvelle la période d'abonnement d'un
-// compte client (verrou POSÉ par l'appelant). Règles partagées par la fiche
-// client (PUT /api/admin/accounts/{id}/subscription), la file des demandes de
-// renouvellement et le webhook Wave : source unique du calcul de période
-// (empilement sur la période active), des quotas Essentiel et du montant.
-// Retourne l'abonnement, le libellé d'affichage (compat contrat historique),
-// le nom court de la formule et le montant appliqué.
-func applySubscriptionLocked(db *model.DB, accID, planID string, months, reqSlots int, markPaid bool) (model.Subscription, string, string, int) {
-	settings := ensureSettings(db, accID)
-	sub := settings.Subscription
-	now := time.Now().UTC()
-
-	var plan model.SaasPlan
-	var amount int
-	var slots int
-	switch planID {
-	case "essai":
-		// Essai : gratuit, 1 routeur, période limitée (prolongeable par la plateforme).
-		slots = 1
-	case "illimite":
-		// 1 000 F/mois équivalent (12 000 F/an) × durée.
-		slots = 0
-		amount = 1000 * months
-	case "essentiel":
-		plan, _ = model.PlanByID(planID)
-		slots = reqSlots
-		if slots <= 0 {
-			slots = sub.RouterSlots // renouvellement : le quota actuel est conservé
-		}
-		if slots <= 0 {
-			slots = accountRouterCount(db, accID)
-		}
-		if slots < 1 {
-			slots = 1
-		}
-		amount = plan.PriceFcfa * slots * months
-	}
-
-	if planID == "essentiel" || planID == "illimite" || planID == "essai" {
-		// Renouvellement du même plan encore actif : la nouvelle période
-		// s'empile à la fin de la période en cours. Sinon : immédiat.
-		start := now
-		if sub.PlanID == planID && subscriptionStatus(sub, now) == "active" && sub.PeriodEnd != "" {
-			if end, err := time.Parse(time.RFC3339, sub.PeriodEnd); err == nil && now.Before(end) {
-				start = end
-			}
-		}
-		sub.PlanID = planID
-		sub.Status = "active"
-		sub.PeriodStart = start.Format(time.RFC3339)
-		sub.PeriodEnd = start.AddDate(0, months, 0).Format(time.RFC3339)
-		sub.RouterSlots = slots
-		sub.LastAmountFcfa = amount
-	} else {
-		// Cas résiduel (jamais atteint avec la validation ci-dessus, mais
-		// conservé pour la sécurité du type) : période immédiate non expirante.
-		sub.PlanID = planID
-		sub.Status = "active"
-		sub.PeriodStart = now.Format(time.RFC3339)
-		sub.PeriodEnd = "" // non expirant
-		sub.RouterSlots = 0
-		sub.LastAmountFcfa = 0
-	}
-	if markPaid {
-		sub.LastPaidAt = now.Format(time.RFC3339)
-	} else {
-		sub.LastPaidAt = ""
-	}
-	settings.Subscription = sub
-
-	// Compatibilité d'affichage avec l'ancien contrat (libellé Plan).
-	label := "Essai"
-	maxRouters := "1"
-	switch planID {
-	case "essentiel":
-		label = "MikCloud Essentiel"
-		maxRouters = "Par routeur"
-	case "illimite":
-		label = "MikCloud Illimité"
-		maxRouters = "Illimité"
-	}
-	settings.Plan = model.Plan{Name: label, MaxRouters: maxRouters, MaxUsers: "Illimité"}
-	db.SettingsByAccount[accID] = settings
-	return sub, label, plan.Name, amount
 }
 
 // ---------------------------------------------------------------------------

@@ -10,7 +10,7 @@ services:
     healthCheckPath: /
     envVars:
       - key: GO_VERSION
-        value: 1.25.14
+        value: 1.27.1
       - key: JWT_SECRET
         generateValue: true
       # URL de connexion Neon (postgresql://…), à coller dans le dashboard

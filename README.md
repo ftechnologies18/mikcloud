@@ -20,13 +20,13 @@ mikcloud/
 
 | | Stack | Hébergement |
 |---|---|---|
-| **Backend** | Go 1.25 (net/http), JWT HS256, **PostgreSQL via pgx** (Neon), client natif RouterOS | [Render](https://render.com) (`backend/render.yaml` auto-détecté) |
+| **Backend** | Go 1.27 (net/http), JWT HS256, **PostgreSQL via pgx** (Neon), client natif RouterOS | [Render](https://render.com) (`backend/render.yaml` auto-détecté) |
 | **Frontend** | Next.js 16 App Router, React 19, TypeScript strict, TanStack Query, Recharts | [Vercel](https://vercel.com) (1 variable d'env) |
 | **Base de données** | PostgreSQL serverless ([Neon](https://neon.tech)) — schéma relationnel, synchro différentielle | — |
 
 ## Démarrage local (nouveau développeur)
 
-Prérequis : **Go 1.25+** et **Bun** (ou Node 20+). Aucune autre dépendance.
+Prérequis : **Go 1.27+** et **Bun** (ou Node 20+). Aucune autre dépendance.
 
 ```bash
 # 1. Backend (port 4000)

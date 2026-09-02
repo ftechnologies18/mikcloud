@@ -5,6 +5,17 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-02 — Migration Go 1.25 → 1.27.1
+
+### Modifiés
+- **Backend migré vers la dernière version stable de Go (1.27.1)** :
+  `go.mod` (`go 1.27.0`), image builder Docker `golang:1.27-alpine`,
+  `render.yaml` (`GO_VERSION=1.27.1`), README. La CI suit
+  `go-version-file: backend/go.mod` automatiquement.
+- Validation locale `go1.27.1` : gofmt, `go vet`, `go test -race` (9 paquets),
+  `go build -ldflags="-s -w"` — tout au vert, **aucun changement de code ni
+  de dépendance requis** (`go.sum` inchangé).
+
 ## 2026-09-02 — Chaîne de déploiement Render réparée + filtre monorepo
 
 ### Corrigés

@@ -326,6 +326,17 @@ func (a *API) handleAgentRegister(w http.ResponseWriter, r *http.Request) {
 	touchAgent(router)
 	if v := strings.TrimSpace(vals.Get("version")); v != "" {
 		router.Version = v
+		// Sécurité P0 #5 — TLS strict : pas d'inscription sous RouterOS 7.19.
+		// L'agent installer reçoit un échec (« inscription impossible » dans
+		// son journal local) ; le message détaille la marche à suivre.
+		if !agent.VersionAtLeast(router.Version, 7, 19) {
+			name := router.Name
+			a.store.Unlock()
+			log.Printf("agent/register: REFUS RouterOS %q (< 7.19, TLS requis) — routeur « %s »", router.Version, name)
+			writeErrCode(w, http.StatusUpgradeRequired, "routeros_too_old",
+				"RouterOS 7.19 ou plus récent requis (validation TLS stricte). Version déclarée : "+router.Version+". Mettez à jour le routeur (System → Packages) puis recollez le script d'installation.", nil)
+			return
+		}
 	}
 	if ident := strings.TrimSpace(vals.Get("identity")); ident != "" && router.Host == "" {
 		router.Host = ident
@@ -366,6 +377,20 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	touchAgent(router)
+
+	// Sécurité P0 #5 — TLS strict côté agent : un agent qui s'est déclaré
+	// sous RouterOS 7.19 (pas de certificats racine → impossible de valider
+	// le certificat du cloud) ne reçoit AUCUNE commande. Version inconnue →
+	// tolérée : elle remonte au premier read_state et la garde s'appliquera
+	// au check-in suivant — on ne coupe jamais un parc legacy à l'aveugle.
+	if !agent.VersionAtLeast(router.Version, 7, 19) {
+		name := router.Name
+		a.store.Unlock()
+		log.Printf("agent/cmd: REFUS RouterOS %q (< 7.19, TLS requis) — aucune commande livrée à « %s »", router.Version, name)
+		w.WriteHeader(http.StatusUpgradeRequired)
+		_, _ = w.Write([]byte("# mikcloud: RouterOS 7.19+ requis (validation TLS stricte) — mettez a jour le routeur\n"))
+		return
+	}
 
 	// P0 (audit Mikhmon) — F1 : l'agent reçoit l'enforcement des
 	// expirations à son check-in (les commandes déposées ici sont servies

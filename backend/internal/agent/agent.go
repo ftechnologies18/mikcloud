@@ -16,6 +16,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"mikcloud/hotspot-api/internal/model"
@@ -69,6 +70,27 @@ func rosEscape(s string) string {
 	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, `$`, `\$`, "\n", " ", "\r", " ", "\t", " ")
 	return r.Replace(s)
 }
+
+// VersionAtLeast — true si la version RouterOS déclarée est ≥ major.minor.
+// Sécurité (audit P0 #5) : les agents valident strictement le TLS du cloud,
+// ce qui exige RouterOS ≥ 7.19 (première version embarquant les certificats
+// racine nécessaires à la validation Let's Encrypt). Tolère les suffixes
+// d'édition (« 7.19.6 (stable) », « 7.20beta4 », « 7.19rc1 ») : seuls les
+// deux premiers nombres sont comparés. Une version non analysable (vide,
+// illisible) renvoie true — on ne bloque jamais un parc legacy dont la
+// version n'a pas encore été remontée ; c'est le garde du REGISTER (la
+// version y est toujours envoyée) qui fait le tri à l'installation.
+func VersionAtLeast(v string, major, minor int) bool {
+	m := versionNumRe.FindStringSubmatch(strings.TrimSpace(v))
+	if m == nil {
+		return true
+	}
+	M, _ := strconv.Atoi(m[1])
+	N, _ := strconv.Atoi(m[2])
+	return M > major || (M == major && N >= minor)
+}
+
+var versionNumRe = regexp.MustCompile(`^(\d+)\.(\d+)`)
 
 // SanitizeName assainit un nom (utilisateur ou profil) pour le routeur :
 // caractères [A-Za-z0-9._-] conservés, le reste devient "-", 48 caractères max.
@@ -156,10 +178,12 @@ func InstallScript(baseURL, token, routerName string) string {
 # Coller CE fichier ENTIER dans Terminal (Winbox) — 1 seule fois.
 # Le script s'exécute comme UN SEUL bloc : ne pas le lancer ligne par ligne.
 # ============================================================
-# NB : les fetch essaient D'ABORD avec validation TLS, puis réessaient avec
-# check-certificate=no. RouterOS < 7.19 n'embarque aucun certificat racine
-# (la validation Let's Encrypt échoue) — le repli garantit la compatibilité
-# 6.44 → 7.19+. Sur 7.19+ la validation réussit : trafic authentifié.
+# NB : les fetch valident STRICTEMENT le certificat TLS du cloud (audit P0
+# #5 : aucun repli check-certificate=no — un tel repli autorisait un MITM
+# à délivrer un script de commandes arbitraire au routeur). RouterOS 7.19
+# ou plus récent est REQUIS : les versions antérieures n'embarquent pas les
+# certificats racine nécessaires à la validation Let's Encrypt. Le cloud
+# refuse d'inscrire un agent qui déclare une version inférieure.
 #
 # ROUTEURS NEUFS (RouterOS 7.17+) : d'usine, fetch / scheduler / hotspot
 # sont DÉSACTIVÉS par le « device-mode » restreint (protection anti-malware).
@@ -212,11 +236,7 @@ func InstallScript(baseURL, token, routerName string) string {
     :do {
       /tool fetch url="` + urlEsc + `/agent/register?token=` + tokEsc + `" http-method=post http-data=("identity=" . [:tostr $ident] . "&model=" . [:tostr $mod] . "&version=" . [:tostr $ver] . "&uptime=" . [:tostr $up]) output=none
     } on-error={
-      :do {
-        /tool fetch url="` + urlEsc + `/agent/register?token=` + tokEsc + `" http-method=post http-data=("identity=" . [:tostr $ident] . "&model=" . [:tostr $mod] . "&version=" . [:tostr $ver] . "&uptime=" . [:tostr $up]) check-certificate=no output=none
-      } on-error={
-        :log warning "MikCloud: inscription impossible (reseau?)"
-      }
+      :log error "MikCloud: inscription impossible (reseau ou TLS ? RouterOS 7.19+ requis)"
     }
 
     :do {
@@ -230,12 +250,8 @@ func InstallScript(baseURL, token, routerName string) string {
         :do {
           /tool fetch url="` + urlEsc + `/agent/cmd?token=` + tokEsc + `" dst-path="` + ScriptFilename + `"
         } on-error={
-          :do {
-            /tool fetch url="` + urlEsc + `/agent/cmd?token=` + tokEsc + `" check-certificate=no dst-path="` + ScriptFilename + `"
-          } on-error={
-            :set fetched "no"
-            :log warning "MikCloud agent: check-in echoue (reseau?)"
-          }
+          :set fetched "no"
+          :log warning "MikCloud agent: check-in echoue (reseau ou TLS ? RouterOS 7.19+ requis)"
         }
         :if ($fetched = "yes") do={
           :delay 2s
@@ -376,7 +392,7 @@ func (b Builder) buildImportHotspot(cmd model.Command) string {
 `)
 	sb.WriteString(`/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
 		`" http-method=post http-data=("cmd=` + cmd.ID +
-		`&status=ok&total=". $mikTotal ."&out=". $mikOut ."&profiles=". $mikProf ."&users=". $mikUsr) check-certificate=no output=none` + "\n")
+		`&status=ok&total=". $mikTotal ."&out=". $mikOut ."&profiles=". $mikProf ."&users=". $mikUsr) output=none` + "\n")
 	return sb.String()
 }
 
@@ -464,7 +480,7 @@ func (b Builder) reportLine(cmdID string, ok bool, extra map[string]string) stri
 		data += "&" + k + "=" + urlEscape(v)
 	}
 	return `/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
-		`" http-method=post http-data=("` + data + `") check-certificate=no output=none`
+		`" http-method=post http-data=("` + data + `") output=none`
 }
 
 // urlEscape — encodage minimal sûr pour les valeurs d'URL (http-data).
@@ -705,7 +721,7 @@ func (b Builder) buildReadState(cmd model.Command) string {
 	sb.WriteString(`/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
 		`" http-method=post http-data=("cmd=` + cmd.ID +
 		`&status=ok&version=". $rver ."&uptime=". $rup ."&cpu=". $rcpu ."&freemem=". $rmem ."&totalmem=". $rmemb` +
-		` ."&board=". $rboard ."&freehdd=". $rfreehdd ."&totalhdd=". $rtotalhdd ."&users=". $rusr ."&sessions=". $rsess ."&ifaces=". $rif) check-certificate=no output=none` + "\n")
+		` ."&board=". $rboard ."&freehdd=". $rfreehdd ."&totalhdd=". $rtotalhdd ."&users=". $rusr ."&sessions=". $rsess ."&ifaces=". $rif) output=none` + "\n")
 	return sb.String()
 }
 
@@ -896,7 +912,7 @@ func (b Builder) buildUserReset(cmd model.Command) string {
 // commandes read_* (ok transporte $rdata, calculé côté routeur).
 func (b Builder) fetchResultData(cmdID, okVar string) string {
 	ok := `/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
-		`" http-method=post http-data=("cmd=` + cmdID + `&status=ok&data=". $rdata) check-certificate=no output=none`
+		`" http-method=post http-data=("cmd=` + cmdID + `&status=ok&data=". $rdata) output=none`
 	ko := b.reportLine(cmdID, false, map[string]string{"message": "lecture impossible sur le routeur"})
 	return ":if ($" + okVar + ") do={\n  " + ok + "\n} else={\n  " + ko + "\n}\n"
 }
@@ -948,7 +964,7 @@ func (b Builder) buildPing(cmd model.Command) string {
 	// Rapport dynamique (valeurs calculées côté routeur, pas d'escape possible).
 	ok := `/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
 		`" http-method=post http-data=("cmd=` + cmd.ID +
-		`&status=ok&sent=". $psent ."&received=". $precv ."&minMs=". $pmin ."&avgMs=". $pavg ."&maxMs=". $pmax) check-certificate=no output=none`
+		`&status=ok&sent=". $psent ."&received=". $precv ."&minMs=". $pmin ."&avgMs=". $pavg ."&maxMs=". $pmax) output=none`
 	ko := b.reportLine(cmd.ID, false, map[string]string{"message": "ping impossible sur le routeur"})
 	sb.WriteString(":if ($" + okVar + ") do={\n  " + ok + "\n} else={\n  " + ko + "\n}\n")
 	return sb.String()

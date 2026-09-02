@@ -79,10 +79,12 @@ paiement à partir de votre **lien marchand** :
   automatiquement au premier login)
 - Le **token agent n'est jamais stocké en clair** sur le serveur (haché SHA-256)
   et n'est affiché qu'une seule fois, dans le script
-- Le script valide le **certificat TLS** du serveur (ne pas ajouter
-  `check-certificate=no`) — sur des RouterOS très anciens (6.44–6.45), si le
-  check-in échoue, mettre à jour le firmware ou importer le certificat
-  **ISRG Root X1**
+- Le script valide **strictement le certificat TLS** du serveur (aucun repli
+  `check-certificate=no`) — **RouterOS 7.19 ou plus récent requis** : les
+  versions antérieures n'embarquent pas les certificats racine nécessaires à
+  la validation Let's Encrypt. Le cloud refuse l'inscription d'un agent qui
+  déclare une version inférieure (mettre à jour le firmware ou importer le
+  certificat **ISRG Root X1**)
 - CORS restreint et limitation de tentatives sur le login (12/min/IP)
 
 ## 7. Déploiement

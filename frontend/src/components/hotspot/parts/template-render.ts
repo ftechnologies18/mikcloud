@@ -61,6 +61,23 @@ const LEGACY_PASSWORD_LINE_RES = [
   /<p[^>]*>\s*PASS\s*:\s*\{\{password\}\}\s*<\/p>/gi,
 ];
 
+// Gabarits personnalisés hérités (ex. « Grille A4 » enregistrée avant F2) :
+// étiquette « MOT DE PASSE » et valeur portées par des <div> séparés (ou
+// étiquette+valeur dans le même élément). En mode « même mot de passe » le
+// code figure déjà via {{username}} — tout élément ne portant QUE le mot de
+// passe est retiré pour n'afficher qu'un seul élément sur le ticket.
+// Ordre important : les paires étiquette+valeur d'abord, la valeur nue ensuite
+// (sinon l'étiquette resterait orpheline).
+const LEGACY_PASSWORD_ELEMENT_RES = [
+  // Paire : <div …>MOT DE PASSE</div>  <div …>{{password}}</div>
+  /<(div|p|span)[^>]*>\s*\b(?:mot\s*de\s*passe|password|mdp|pass)\b\s*:?\s*<\/\1>\s*<(div|p)[^>]*>\s*\{\{password\}\}\s*<\/\2>/gi,
+  // Étiquette et valeur dans le MÊME élément : <p …>Mot de passe : {{password}}</p>
+  /<(div|p)[^>]*>[^<]*\b(?:mot\s*de\s*passe|password|mdp|pass)\b[^<]*\{\{password\}\}\s*<\/\1>/gi,
+  // Valeur SEULE dans son élément (étiquette déjà retirée ou absente) :
+  // <div …>{{password}}</div>
+  /<(div|p)[^>]*>\s*\{\{password\}\}\s*<\/\1>/gi,
+];
+
 /** GIF 1px transparent — placeholder {{logo}} quand aucun logo n'est configuré. */
 const TRANSPARENT_PIXEL =
   "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
@@ -203,12 +220,21 @@ export async function renderTemplate(
   // Mode « mot de passe = identifiant » (parité Mikhmon) : les blocs
   // {{#password}}…{{/password}} disparaissent du ticket ; sinon ils sont
   // déballés. Les gabarits hérités sans bloc conditionnel perdent leur ligne
-  // mot de passe exacte (presets d'origine).
+  // mot de passe exacte (presets d'origine), puis tout élément ne portant
+  // QUE le mot de passe (étiquette+valeur séparés, valeur nue) est retiré —
+  // le code étant déjà affiché via {{username}}, le ticket n'a qu'un seul
+  // élément. Garde-fou : sans {{username}} dans le gabarit, {{password}}
+  // serait la seule occurrence du code — gabarit laissé intact.
   const sameMode = isSamePasswordMode(voucher);
   html = html.replace(PASSWORD_BLOCK_RE, sameMode ? "" : "$1");
   if (sameMode) {
     for (const legacyRe of LEGACY_PASSWORD_LINE_RES) {
       html = html.replace(legacyRe, "");
+    }
+    if (/\{\{username\}\}/.test(html)) {
+      for (const elementRe of LEGACY_PASSWORD_ELEMENT_RES) {
+        html = html.replace(elementRe, "");
+      }
     }
   }
   html = replaceAllLiteral(html, "{{username}}", escapeHtml(voucher.username));

@@ -15,6 +15,7 @@ import {
   Building2,
   CalendarClock,
   Database,
+  Eraser,
   Eye,
   EyeOff,
   Globe,
@@ -263,6 +264,11 @@ export default function SettingsView() {
               </Card>
             )}
 
+            {/* Nettoyage des données de démonstration — admin plateforme
+                uniquement (endpoint admin-only) : suppression chirurgicale
+                des artefacts de l'ancien seed, données réelles préservées. */}
+            {isAdmin && <DemoCleanupCard />}
+
             {/* Purge des données — admin plateforme uniquement ; endpoint purge
                 admin-only. Les routeurs réels (agent), comptes, équipe et réglages
                 ne sont JAMAIS touchés, et rien n'est régénéré. */}
@@ -271,6 +277,94 @@ export default function SettingsView() {
         </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+// Carte « Données de démonstration » — nettoyage CHIRURGICAL des artefacts
+// hérités de l'ancien seed de démo (BuildSeed, supprimé du code) : routeurs
+// simulés + cascade (utilisateurs/tickets/lots/ventes/sessions) et revendeurs
+// de démonstration « res-1 »…« res-5 » + leurs transactions. Ne touche NI les
+// routeurs réels (agent), NI les profils, NI les revendeurs réels, NI les
+// réglages. Confirmation simple : rien de réel n'est supprimé, l'opération
+// est idempotente (re-cliquer sur une base propre ne fait rien).
+function DemoCleanupCard() {
+  const { t } = useI18n();
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+
+  const cleanMutation = useMutation({
+    mutationFn: () => api<PurgeResult>("/api/admin/purge-demo", { method: "POST" }),
+    onSuccess: (res) => {
+      toast.success(res.summary);
+      setOpen(false);
+      queryClient.invalidateQueries(); // toutes les vues impactées
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return (
+    <Card className="gap-4 py-4 sm:py-6 lg:col-span-2">
+      <CardHeader className="px-4 sm:px-6">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Eraser className="size-4 text-amber-500" />
+          {t("settings.purgeDemo.title")}
+        </CardTitle>
+        <CardDescription>{t("settings.purgeDemo.desc")}</CardDescription>
+      </CardHeader>
+      <CardContent className="px-4 sm:px-6">
+        <ul className="space-y-1.5 text-sm text-muted-foreground">
+          <li className="flex items-start gap-2">
+            <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-muted-foreground/60" aria-hidden />
+            {t("settings.purgeDemo.itemRouters")}
+          </li>
+          <li className="flex items-start gap-2">
+            <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-muted-foreground/60" aria-hidden />
+            {t("settings.purgeDemo.itemResellers")}
+          </li>
+        </ul>
+      </CardContent>
+      <CardFooter className="px-4 sm:px-6">
+        <Button
+          variant="outline"
+          className="h-10"
+          onClick={() => setOpen(true)}
+          disabled={cleanMutation.isPending}
+        >
+          <Eraser className="size-4" />
+          {t("settings.purgeDemo.action")}
+        </Button>
+      </CardFooter>
+
+      {/* Confirmation simple — pas de saisie « PURGER » : la cible est
+          strictement limitée aux artefacts de démonstration. */}
+      <AlertDialog open={open} onOpenChange={setOpen}>
+        <AlertDialogContent className="max-h-[85vh] overflow-y-auto">
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("settings.purgeDemo.confirmTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("settings.purgeDemo.confirmDesc")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={cleanMutation.isPending}>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={cleanMutation.isPending}
+              onClick={(event) => {
+                event.preventDefault(); // laisse la mutation fermer le dialog
+                cleanMutation.mutate();
+              }}
+            >
+              {cleanMutation.isPending ? (
+                <>
+                  <Loader2 className="mr-2 size-4 animate-spin" />
+                  {t("settings.purgeDemo.running")}
+                </>
+              ) : (
+                t("settings.purgeDemo.confirm")
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </Card>
   );
 }
 

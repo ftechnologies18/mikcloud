@@ -160,6 +160,10 @@ func (a *API) Handler() http.Handler {
 	// routeurs réels. Aucun endpoint ne régénère de données démo.
 	mux.HandleFunc("GET /api/admin/purge/stats", a.requireRole(3, a.handlePurgeStats))
 	mux.HandleFunc("POST /api/admin/purge", a.requireRole(3, a.handlePurge))
+	// Nettoyage CHIRURGICALE des données de démonstration héritées de
+	// l'ancien seed (routeurs simulés + cascade, revendeurs res-1…res-5 +
+	// leurs transactions) — préserve les données réelles du compte.
+	mux.HandleFunc("POST /api/admin/purge-demo", a.requireRole(3, a.handlePurgeDemo))
 
 	// Administration plateforme (rôle admin uniquement)
 	mux.HandleFunc("GET /api/admin/accounts", a.requireRole(3, a.handleAdminAccounts))
@@ -3744,44 +3748,44 @@ func (a *API) handleReports(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(salesByProfile, func(i, j int) bool { return salesByProfile[i].Revenue > salesByProfile[j].Revenue })
 
-	type trafficPoint struct {
-		Day      string `json:"day"`
-		BytesIn  int64  `json:"bytesIn"`
-		BytesOut int64  `json:"bytesOut"`
+	// N°21 (zéro donnée inventée) — l'ancienne courbe « trafic réseau »
+	// était SYNTHÉTIQUE : des octets tirés au sort (rand seedé par jour),
+	// mis à l'échelle par le nombre de sessions. Elle est SUPPRIMÉE. Les
+	// sessions fermées ne sont pas conservées en base — aucun historique
+	// d'octets n'existe — toute courbe de trafic passé serait donc
+	// inventée. À la place : les CONNEXIONS réellement journalisées
+	// (UserLogs action=login — la même source que la heatmap horaire
+	// N°10), regroupées par jour local du compte.
+	loc := accountTimezone(db, acc)
+	type dayLogins struct {
+		Day   string `json:"day"`
+		Count int    `json:"count"`
 	}
-	trafficByDay := []trafficPoint{}
-	todayKey := now.Format("2006-01-02")
-	var todayIn, todayOut int64
-	accSessions := 0
-	for _, s := range db.Sessions {
-		if s.AccountID != acc {
+	todayLocal := now.In(loc)
+	dayIndex := make(map[string]int, days)
+	loginsByDay := make([]dayLogins, days)
+	for i := 0; i < days; i++ {
+		d := todayLocal.AddDate(0, 0, -(days - 1 - i))
+		dayIndex[d.Format("2006-01-02")] = i
+		loginsByDay[i] = dayLogins{Day: d.Format("02/01")}
+	}
+	for i := range db.UserLogs {
+		l := &db.UserLogs[i]
+		if l.AccountID != acc || l.Action != "login" {
 			continue
 		}
-		accSessions++
-		todayIn += s.BytesIn
-		todayOut += s.BytesOut
-	}
-	// La courbe synthétique de trafic est mise à l'échelle du compte
-	// (~24 sessions = trafic nominal ; compte vide → trafic nul).
-	trafficScale := float64(accSessions) / 24.0
-	for i := days - 1; i >= 0; i-- {
-		day := now.AddDate(0, 0, -i)
-		rnd := rand.New(rand.NewSource(day.Unix()))
-		bIn := int64(120_000_000_000) + rnd.Int63n(300_000_000_000)
-		bOut := int64(15_000_000_000) + rnd.Int63n(55_000_000_000)
-		bIn = int64(math.Round(float64(bIn) * trafficScale))
-		bOut = int64(math.Round(float64(bOut) * trafficScale))
-		if day.Format("2006-01-02") == todayKey {
-			bIn += todayIn
-			bOut += todayOut
+		at, err := time.Parse(time.RFC3339, l.At)
+		if err != nil {
+			continue
 		}
-		trafficByDay = append(trafficByDay, trafficPoint{
-			Day: fmt.Sprintf("%02d/%02d", day.Day(), int(day.Month())), BytesIn: bIn, BytesOut: bOut,
-		})
+		if idx, ok := dayIndex[at.In(loc).Format("2006-01-02")]; ok {
+			loginsByDay[idx].Count++
+		}
 	}
 
 	// Sessions RÉELLES de la fenêtre (comptage + trafic cumulé) — KPI
-	// réseau véridique, indépendant de la courbe synthétique ci-dessus.
+	// réseau véridique : seules les sessions effectivement ouvertes sur
+	// la fenêtre sont comptées, jamais de valeur estimée.
 	var winSessions int
 	var winBytesIn, winBytesOut int64
 	for _, s := range db.Sessions {
@@ -3827,7 +3831,7 @@ func (a *API) handleReports(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"revenueByDay":   revenueByDay,
 		"salesByProfile": salesByProfile,
-		"trafficByDay":   trafficByDay,
+		"loginsByDay":    loginsByDay,
 		"voucherStatus":  voucherStatus,
 		"margin":         margin,
 		// v2 — comparaison Δ% avec la fenêtre précédente de même longueur.

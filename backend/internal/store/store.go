@@ -35,9 +35,10 @@ type Store struct {
 }
 
 // New charge l'état persisté (PostgreSQL si DATABASE_URL est défini, sinon
-// data/db.json) ; une base PostgreSQL vide démarre sur l'état de mise en
-// service (BuildEmptyState — zéro démo), le seed démo n'est plus utilisé
-// qu'en mode développement JSON.
+// data/db.json) ; toute base vide ou illisible (PostgreSQL comme JSON)
+// démarre sur l'état de mise en service (BuildEmptyState — zéro démo).
+// Le seed de démonstration a été SUPPRIMÉ du code : aucune donnée de test
+// ne peut plus être générée, en production comme en développement.
 func New(dir string) (*Store, error) {
 	s := &Store{}
 
@@ -98,8 +99,8 @@ func New(dir string) (*Store, error) {
 	if data, err := os.ReadFile(s.path); err == nil && len(data) > 0 {
 		var db model.DB
 		if err := json.Unmarshal(data, &db); err != nil {
-			log.Printf("store: db.json illisible (%v) — re-seed des données démo", err)
-			s.db = BuildSeed()
+			log.Printf("store: db.json illisible (%v) — état de mise en service (aucune donnée démo)", err)
+			s.db = BuildEmptyState()
 		} else {
 			s.db = &db
 			s.ensureSlices()
@@ -127,9 +128,10 @@ func New(dir string) (*Store, error) {
 			return s, nil
 		}
 	} else {
-		s.db = BuildSeed()
+		log.Println("store: db.json absent — état de mise en service (aucune donnée démo)")
+		s.db = BuildEmptyState()
 	}
-	// Seed frais : l'override admin remplace aussi le compte démo (admin123)
+	// État initial : l'override admin remplace le mot de passe admin/admin123
 	// par les identifiants de production si ADMIN_PASSWORD est définie.
 	applyAdminOverride(s.db)
 	s.Lock()

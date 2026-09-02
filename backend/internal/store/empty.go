@@ -16,10 +16,12 @@ import (
 // abonnement propre (les comptes se créent depuis la console plateforme ou
 // l'inscription sur invitation ; leurs consoles s'ouvrent par session support).
 //
-// Utilisé au démarrage d'une base PostgreSQL vide (production Render/Neon) :
-// le système démarre vide, prêt pour les premiers clients. Les données de démo
-// ne reviennent JAMAIS d'elles-mêmes — le seed démo (BuildSeed) est désormais
-// réservé au mode développement JSON local.
+// Utilisé au démarrage de toute base vide ou illisible (production
+// Render/Neon comme développement JSON local) : le système démarre vide,
+// prêt pour les premiers clients. Les données de démo ne reviennent JAMAIS
+// d'elles-mêmes — le seed démo (BuildSeed) a été SUPPRIMÉ du code ; les
+// artefacts de démo hérités de l'ancien seed se retirent de la production
+// via POST /api/admin/purge-demo (api/handlers_purge.go).
 //
 // Le mot de passe initial admin/admin123 est remplacé au boot par les
 // identifiants de production via ADMIN_PASSWORD (applyAdminOverride).

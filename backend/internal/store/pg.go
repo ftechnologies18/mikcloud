@@ -554,12 +554,12 @@ func (p *PG) ensureSchema() error {
 		// unique : un Staff supprimé par le client n'est pas ressuscité au boot.
 		`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS staff_seeded BOOLEAN NOT NULL DEFAULT FALSE`,
 		`INSERT INTO profiles (id, name, rate_limit, session_timeout_min, shared_users, validity_days, price, data_quota_mb, created_at, account_id, exp_mode, grace_period_min, lock_user, selling_price, lock_first_device)
-			SELECT 'p-staff-' || a.id, 'Staff', '10M/10M', 43200, 2, 30, 0, 0,
-			       TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-			       a.id, 'notify', 0, FALSE, 0, FALSE
-			FROM accounts a
-			WHERE a.staff_seeded = FALSE
-			  AND NOT EXISTS (SELECT 1 FROM profiles p WHERE p.account_id = a.id AND LOWER(p.name) = 'staff')`,
+                        SELECT 'p-staff-' || a.id, 'Staff', '10M/10M', 43200, 2, 30, 0, 0,
+                               TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+                               a.id, 'notify', 0, FALSE, 0, FALSE
+                        FROM accounts a
+                        WHERE a.staff_seeded = FALSE
+                          AND NOT EXISTS (SELECT 1 FROM profiles p WHERE p.account_id = a.id AND LOWER(p.name) = 'staff')`,
 		`UPDATE accounts SET staff_seeded = TRUE WHERE staff_seeded = FALSE`,
 	}
 	for _, q := range stmts {
@@ -575,7 +575,8 @@ func (p *PG) ensureSchema() error {
 // ---------------------------------------------------------------------------
 
 // Load relit toute la base et reconstruit *model.DB. Retourne found=false si la
-// base est vide (l'appelant déclenchera le seed démo + synchronisation initiale).
+// base est vide (l'appelant construira l'état de mise en service BuildEmptyState
+// — zéro démo — puis déclenchera la synchronisation initiale).
 func (p *PG) Load() (db *model.DB, found bool, err error) {
 	db = &model.DB{
 		Accounts:          []model.Account{},

@@ -748,7 +748,8 @@ export interface HourlyStats {
 export interface ReportsData {
   revenueByDay: { day: string; value: number }[];
   salesByProfile: { name: string; count: number; revenue: number }[];
-  trafficByDay: { day: string; bytesIn: number; bytesOut: number }[];
+  /** Connexions RÉELLES par jour (journal logins) — remplace la courbe de trafic synthétique, supprimée. */
+  loginsByDay: { day: string; count: number }[];
   voucherStatus: { active: number; used: number; expired: number; disabled: number };
   totals: { revenue: number; sales: number; avgTicket: number };
   /** v2 — fenêtre précédente de même longueur (Δ% des KPI). */

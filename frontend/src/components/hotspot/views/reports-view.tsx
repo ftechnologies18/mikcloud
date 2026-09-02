@@ -1,8 +1,10 @@
 "use client";
 
 // Vue Rapports v2 — Comptabilité multi-sites (ventes par jour/semaine/mois et
-// par routeur) + onglet Activité (performance commerciale et trafic réseau) +
-// onglet Marge (F13 : prix de vente vs coût, 30 jours glissants).
+// par routeur) + onglet Activité (performance commerciale et affluence RÉELLE :
+// connexions journalisées — l'ancienne courbe « trafic réseau » était
+// synthétique et a été supprimée) + onglet Marge (F13 : prix de vente vs coût,
+// 30 jours glissants).
 //
 // v2 — KPI enrichis (logique métier mikCloud) :
 //  - Δ% vs période précédente sur chaque KPI (tendance visible d'un coup d'œil) ;
@@ -24,7 +26,6 @@ import {
   ComposedChart,
   Legend,
   Line,
-  LineChart,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -688,14 +689,19 @@ function ActivityTab({ visible }: { visible: boolean }) {
               </CardContent>
             </Card>
 
+            {/* Connexions par jour — affluence RÉELLE issue du journal de
+                connexions (UserLogs login). L'ancienne courbe « trafic
+                réseau » était synthétique (octets aléatoires, sessions
+                fermées non conservées en base) : supprimée — zéro donnée
+                inventée dans mikCloud. */}
             <Card className="gap-4 py-4 sm:py-6">
               <CardHeader className="px-4 sm:px-6">
-                <CardTitle className="text-base">{t("reports.networkTraffic")}</CardTitle>
-                <CardDescription>{t("reports.networkTrafficDesc")}</CardDescription>
+                <CardTitle className="text-base">{t("reports.loginsPerDay")}</CardTitle>
+                <CardDescription>{t("reports.loginsPerDayDesc")}</CardDescription>
               </CardHeader>
               <CardContent className="px-4 sm:px-6">
                 <ResponsiveContainer width="100%" height={260}>
-                  <LineChart data={data.trafficByDay} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                  <BarChart data={data.loginsByDay} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                     <CartesianGrid stroke={charts.grid} strokeOpacity={0.6} vertical={false} />
                     <XAxis
                       dataKey="day"
@@ -708,37 +714,25 @@ function ActivityTab({ visible }: { visible: boolean }) {
                       tick={AXIS_TICK}
                       axisLine={false}
                       tickLine={false}
-                      width={56}
-                      tickFormatter={(value: number) => formatBytes(value, lang)}
+                      width={40}
+                      allowDecimals={false}
                     />
                     <Tooltip
-                      cursor={{ stroke: "#3f3f46", strokeDasharray: "4 4" }}
-                      content={<ChartTooltip formatter={(value) => formatBytes(value, lang)} />}
+                      cursor={{ fill: charts.cursorFill, fillOpacity: 0.06 }}
+                      content={
+                        <ChartTooltip
+                          formatter={(value) => new Intl.NumberFormat(localeOf(lang)).format(value)}
+                        />
+                      }
                     />
-                    <Legend
-                      iconType="circle"
-                      iconSize={8}
-                      formatter={(value) => <span className="text-xs text-muted-foreground">{value}</span>}
+                    <Bar
+                      dataKey="count"
+                      name={t("reports.loginsPerDay")}
+                      fill={charts.series[1]}
+                      radius={[4, 4, 0, 0]}
+                      maxBarSize={40}
                     />
-                    <Line
-                      dataKey="bytesIn"
-                      name={t("reports.inbound")}
-                      type="monotone"
-                      stroke={charts.series[0]}
-                      strokeWidth={2}
-                      dot={false}
-                      activeDot={{ r: 4 }}
-                    />
-                    <Line
-                      dataKey="bytesOut"
-                      name={t("reports.outbound")}
-                      type="monotone"
-                      stroke={charts.series[1]}
-                      strokeWidth={2}
-                      dot={false}
-                      activeDot={{ r: 4 }}
-                    />
-                  </LineChart>
+                  </BarChart>
                 </ResponsiveContainer>
               </CardContent>
             </Card>

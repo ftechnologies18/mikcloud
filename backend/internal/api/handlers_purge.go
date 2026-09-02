@@ -378,3 +378,140 @@ func purgeSummaryFR(c PurgeCounts, all bool) string {
 	}
 	return prefix + strings.Join(parts, ", ")
 }
+
+// ---------------------------------------------------------------------------
+// Nettoyage CHIRURGICALE des données de démonstration (POST /api/admin/purge-demo)
+// ---------------------------------------------------------------------------
+
+// seedResellerIDs — les 5 revendeurs créés par l'ancien seed de démonstration
+// (BuildSeed, supprimé du code) : identifiants littéraux à faible entropie,
+// distincts des revendeurs réels créés par l'application
+// (model.NewID("res-") — suffixe aléatoire).
+var seedResellerIDs = map[string]bool{
+	"res-1": true, "res-2": true, "res-3": true, "res-4": true, "res-5": true,
+}
+
+// handlePurgeDemo — POST /api/admin/purge-demo : suppression DÉFINITIVE des
+// artefacts hérités de l'ancien seed de démonstration, SANS toucher aux
+// données réelles :
+//
+//   - routeurs SIMULÉS + cascade complète (l'ancien seed ne créait que des
+//     routeurs simulés : tous les utilisateurs/tickets/lots/ventes/sessions/
+//     journaux de démo y sont rattachés et partent avec eux) ;
+//   - revendeurs « res-1 »…« res-5 » (Aya Koné, Kouassi Kouamé, …) + leurs
+//     transactions simulées — les revendeurs réels (identifiants aléatoires)
+//     ne sont JAMAIS touchés ;
+//   - lots et ventes émis par ces routeurs (le registre comptable de démo).
+//
+// Ne touche JAMAIS : routeurs réels (agent), comptes, équipe, profils,
+// réglages, abonnement, gabarits. Ne régénère RIEN. Sous verrou global :
+// la synchro différentielle PostgreSQL propage les suppressions.
+func (a *API) handlePurgeDemo(w http.ResponseWriter, r *http.Request) {
+	if !isPlatformAdmin(r) {
+		writeErr(w, http.StatusForbidden, "Réservé aux administrateurs de la plateforme")
+		return
+	}
+	a.store.Lock()
+	db := a.store.Data()
+	var counts PurgeCounts
+
+	// 1. Routeurs simulés + cascade (mêmes garanties que la catégorie
+	//    « simulated_routers » de la purge par catégories).
+	simIDs := map[string]bool{}
+	kept := db.Routers[:0]
+	for _, rr := range db.Routers {
+		if rr.Mode == "simulated" {
+			simIDs[rr.ID] = true
+			counts.Routers++
+			continue
+		}
+		kept = append(kept, rr)
+	}
+	db.Routers = kept
+	if len(simIDs) > 0 {
+		drop := func(id string) bool { return simIDs[id] }
+		db.HotspotUsers = dropByRouterID(db.HotspotUsers, drop, func(u model.HotspotUser) string { return u.RouterID }, &counts.HotspotUsers)
+		db.Sessions = dropByRouterID(db.Sessions, drop, func(s model.Session) string { return s.RouterID }, &counts.Sessions)
+		db.Traffic = dropByRouterID(db.Traffic, drop, func(t model.RouterTraffic) string { return t.RouterID }, nil)
+		db.Commands = dropByRouterID(db.Commands, drop, func(c model.Command) string { return c.RouterID }, nil)
+		db.IPBindings = dropByRouterID(db.IPBindings, drop, func(b model.IPBinding) string { return b.RouterID }, nil)
+		db.SchedulerTasks = dropByRouterID(db.SchedulerTasks, drop, func(t model.SchedulerTask) string { return t.RouterID }, nil)
+		keptBatches := db.Batches[:0]
+		for _, b := range db.Batches {
+			if drop(b.RouterID) {
+				counts.Batches++
+				continue
+			}
+			keptBatches = append(keptBatches, b)
+		}
+		db.Batches = keptBatches
+		keptSales := db.Sales[:0]
+		for _, s := range db.Sales {
+			if drop(s.RouterID) {
+				counts.Sales++
+				continue
+			}
+			keptSales = append(keptSales, s)
+		}
+		db.Sales = keptSales
+	}
+
+	// 2. Revendeurs de démonstration (res-1…res-5) + leurs transactions.
+	keptResellers := db.Resellers[:0]
+	for _, res := range db.Resellers {
+		if seedResellerIDs[res.ID] {
+			counts.Resellers++
+			continue
+		}
+		keptResellers = append(keptResellers, res)
+	}
+	db.Resellers = keptResellers
+	keptTx := db.Transactions[:0]
+	for _, t := range db.Transactions {
+		if seedResellerIDs[t.ResellerID] {
+			counts.Transactions++
+			continue
+		}
+		keptTx = append(keptTx, t)
+	}
+	db.Transactions = keptTx
+
+	// Journal d'activité écrit APRÈS le nettoyage (traçabilité).
+	summary := purgeDemoSummaryFR(counts)
+	a.logActivityBy(r, db, accountScope(r), "system", summary)
+	a.store.Save()
+	a.store.Unlock()
+	a.clearGateways()
+
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "summary": summary, "purged": counts})
+}
+
+// purgeDemoSummaryFR — bilan lisible pour le journal d'activité et le toast.
+func purgeDemoSummaryFR(c PurgeCounts) string {
+	var parts []string
+	if c.Routers > 0 {
+		parts = append(parts, fmt.Sprintf("%d routeur(s) simulé(s)", c.Routers))
+	}
+	if c.HotspotUsers > 0 {
+		parts = append(parts, fmt.Sprintf("%d utilisateur(s)/ticket(s) de démo", c.HotspotUsers))
+	}
+	if c.Batches > 0 {
+		parts = append(parts, fmt.Sprintf("%d lot(s) de démo", c.Batches))
+	}
+	if c.Sales > 0 {
+		parts = append(parts, fmt.Sprintf("%d vente(s) de démo", c.Sales))
+	}
+	if c.Sessions > 0 {
+		parts = append(parts, fmt.Sprintf("%d session(s) de démo", c.Sessions))
+	}
+	if c.Resellers > 0 {
+		parts = append(parts, fmt.Sprintf("%d revendeur(s) de démo", c.Resellers))
+	}
+	if c.Transactions > 0 {
+		parts = append(parts, fmt.Sprintf("%d transaction(s) de démo", c.Transactions))
+	}
+	if len(parts) == 0 {
+		return "Nettoyage des données de démonstration : rien à supprimer (base déjà propre)"
+	}
+	return "Nettoyage des données de démonstration — " + strings.Join(parts, ", ")
+}

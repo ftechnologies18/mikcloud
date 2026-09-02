@@ -246,10 +246,10 @@ export function UcPrintDialog({
                       style={stdPlan.zoom < 1 ? { zoom: stdPlan.zoom } : undefined}
                     >
                       <p className="text-sm font-bold leading-tight">{tenantName || "MikCloud"}</p>
-                      <p className="text-[10px] uppercase tracking-widest text-neutral-500">
+                      <p className="text-[10px] uppercase tracking-widest text-emerald-700">
                         {t("print.wifiHotspot")}
                       </p>
-                      <p className="mt-1 text-lg font-bold font-mono tracking-wider">{voucher.username}</p>
+                      <p className="mt-1 text-xl font-bold font-mono tracking-wider">{voucher.username}</p>
                       {/* Mode « mot de passe = identifiant » : le code seul sur le ticket. */}
                       {!isSamePasswordMode(voucher) && (
                         <p className="font-mono text-sm">
@@ -263,10 +263,10 @@ export function UcPrintDialog({
                           ? ` · ${formatBytes(voucher.dataQuotaMb * 1048576, lang)}`
                           : ""}
                       </p>
-                      <p className="text-xs font-semibold">
+                      <p className="text-sm font-bold text-emerald-700">
                         {formatCurrency(voucher.price, currency, lang)}
                       </p>
-                      <p className="mt-1 w-full border-t border-neutral-300 pt-1 text-[10px] text-neutral-500">
+                      <p className="mt-1 w-full border-t border-neutral-300 pt-1 text-[10px] text-neutral-600">
                         {t("print.keepTicket")}
                       </p>
                     </div>

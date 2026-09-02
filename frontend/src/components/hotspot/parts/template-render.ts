@@ -318,23 +318,25 @@ export async function renderTemplate(
 
 /**
  * a4GridPlan — plan ADAPTATIF de la grille A4 : au-delà de 24 tickets, la
- * grille passe à 5 colonnes avec un contenu réduit (×0,70) — chaque feuille
+ * grille passe à 5 colonnes avec un contenu réduit (×0,75) — chaque feuille
  * A4 accueille alors ~25 à 35 tickets (5×5 à 5×7 selon la hauteur réelle des
  * tickets). PLAFOND VOLONTAIRE (consigne client) : jamais de grille plus
  * dense — les lots > 35 sont simplement paginés sur les feuilles suivantes,
- * à taille constante (lisibilité préservée : QR ≥ ~9 mm imprimé, code bien
- * lisible).
+ * à taille constante. ESPACEMENTS SERRÉS (3 mm / 2 mm, consigne client :
+ * « réduis les espacements pour augmenter la taille de chaque ticket ») —
+ * la place gagnée agrandit les cellules : tickets plus grands, texte et QR
+ * plus lisibles.
  */
 export function a4GridPlan(count: number): {
   cols: number;
   zoom: number;
   gapMm: number;
 } {
-  if (count <= 12) return { cols: 3, zoom: 1, gapMm: 5 };
-  if (count <= 24) return { cols: 4, zoom: 0.75, gapMm: 5 };
-  // Lots 25-35 (et au-delà, paginés) : 5 colonnes, réduction ×0,70 —
-  // plafond ~35 tickets par feuille A4.
-  return { cols: 5, zoom: 0.7, gapMm: 4 };
+  if (count <= 12) return { cols: 3, zoom: 1, gapMm: 3 };
+  if (count <= 24) return { cols: 4, zoom: 0.75, gapMm: 3 };
+  // Lots 25-35 (et au-delà, paginés) : 5 colonnes, réduction ×0,75,
+  // espacement 2 mm — plafond ~35 tickets par feuille A4.
+  return { cols: 5, zoom: 0.75, gapMm: 2 };
 }
 
 /**
@@ -387,19 +389,19 @@ export const TEMPLATE_PRESETS: TemplatePreset[] = [
     label: "Grille A4",
     name: "Grille A4",
     format: "a4",
-    bodyHtml: `<div style="border:2px dashed #000;border-radius:10px;padding:12px 10px;text-align:center;font-family:Arial,Helvetica,sans-serif;background:#fff;color:#000;">
+    bodyHtml: `<div style="border:2px dashed #16a34a;border-radius:10px;padding:12px 10px;text-align:center;font-family:Arial,Helvetica,sans-serif;background:#fff;color:#000;">
   <div style="display:flex;align-items:center;justify-content:center;gap:6px;">
     <img src="{{logo}}" alt="" style="height:20px;width:auto;">
-    <span style="font-size:14px;font-weight:bold;">{{hotspotName}}</span>
+    <span style="font-size:15px;font-weight:bold;">{{hotspotName}}</span>
   </div>
-  <p style="margin:2px 0 8px;font-size:9px;letter-spacing:2px;color:#555;">WIFI HOTSPOT</p>
+  <p style="margin:2px 0 8px;font-size:9px;letter-spacing:2px;color:#16a34a;">WIFI HOTSPOT</p>
   <img src="{{qrCode}}" alt="QR code" style="display:block;margin:0 auto 8px;width:84px;height:84px;">
-  <p style="margin:0;font-size:17px;font-weight:bold;font-family:'Courier New',monospace;letter-spacing:1px;">{{username}}</p>
+  <p style="margin:0;font-size:19px;font-weight:bold;font-family:'Courier New',monospace;letter-spacing:1px;">{{username}}</p>
   {{#password}}<p style="margin:3px 0 8px;font-size:12px;font-family:'Courier New',monospace;">Mot de passe : {{password}}</p>{{/password}}
-  <p style="margin:0 0 2px;font-size:11px;color:#222;">{{profile}} · {{validity}}</p>
-  <p style="margin:0 0 6px;font-size:13px;font-weight:bold;">{{price}}</p>
-  <p style="margin:0;font-size:9px;color:#666;">{{dnsName}}</p>
-  <p style="margin:8px 0 0;padding-top:5px;border-top:1px solid #ccc;font-size:8px;color:#888;">N° {{num}} — Gardez ce ticket pour vous connecter</p>
+  <p style="margin:0 0 2px;font-size:12px;color:#1f2937;">{{profile}} · {{validity}}</p>
+  <p style="margin:0 0 6px;font-size:14px;font-weight:bold;color:#047857;">{{price}}</p>
+  <p style="margin:0;font-size:9px;color:#4b5563;">{{dnsName}}</p>
+  <p style="margin:8px 0 0;padding-top:5px;border-top:1px solid #ccc;font-size:9px;color:#6b7280;">N° {{num}} — Gardez ce ticket pour vous connecter</p>
 </div>`,
   },
   {
@@ -409,13 +411,13 @@ export const TEMPLATE_PRESETS: TemplatePreset[] = [
     format: "58mm",
     bodyHtml: `<div style="padding:6px 2px;text-align:center;font-family:Arial,Helvetica,sans-serif;background:#fff;color:#000;">
   <p style="margin:0;font-size:12px;font-weight:bold;">{{hotspotName}}</p>
-  <p style="margin:1px 0 6px;font-size:8px;letter-spacing:1px;color:#555;">WIFI HOTSPOT · {{dnsName}}</p>
+  <p style="margin:1px 0 6px;font-size:8px;letter-spacing:1px;color:#16a34a;">WIFI HOTSPOT · {{dnsName}}</p>
   <img src="{{qrCode}}" alt="QR code" style="display:block;margin:0 auto 6px;width:70px;height:70px;">
-  <p style="margin:0;font-size:13px;font-weight:bold;font-family:'Courier New',monospace;">{{username}}</p>
+  <p style="margin:0;font-size:14px;font-weight:bold;font-family:'Courier New',monospace;">{{username}}</p>
   {{#password}}<p style="margin:1px 0 5px;font-size:11px;font-family:'Courier New',monospace;">PASS : {{password}}</p>{{/password}}
-  <p style="margin:0 0 3px;font-size:10px;">{{profile}} · {{validity}}</p>
-  <p style="margin:0 0 4px;font-size:12px;font-weight:bold;">{{price}}</p>
-  <p style="margin:6px 0 0;border-top:1px dashed #999;padding-top:4px;font-size:8px;color:#666;">N° {{num}} — Gardez ce ticket</p>
+  <p style="margin:0 0 3px;font-size:11px;color:#1f2937;">{{profile}} · {{validity}}</p>
+  <p style="margin:0 0 4px;font-size:12px;font-weight:bold;color:#047857;">{{price}}</p>
+  <p style="margin:6px 0 0;border-top:1px dashed #999;padding-top:4px;font-size:9px;color:#6b7280;">N° {{num}} — Gardez ce ticket</p>
 </div>`,
   },
   {
@@ -428,13 +430,13 @@ export const TEMPLATE_PRESETS: TemplatePreset[] = [
     <img src="{{logo}}" alt="" style="height:26px;width:auto;">
     <span style="font-size:17px;font-weight:bold;">{{hotspotName}}</span>
   </div>
-  <p style="margin:2px 0 8px;font-size:10px;letter-spacing:2px;color:#555;">WIFI HOTSPOT · {{dnsName}}</p>
+  <p style="margin:2px 0 8px;font-size:10px;letter-spacing:2px;color:#16a34a;">WIFI HOTSPOT · {{dnsName}}</p>
   <img src="{{qrCode}}" alt="QR code" style="display:block;margin:0 auto 8px;width:96px;height:96px;">
-  <p style="margin:0;font-size:18px;font-weight:bold;font-family:'Courier New',monospace;letter-spacing:1px;">{{username}}</p>
+  <p style="margin:0;font-size:19px;font-weight:bold;font-family:'Courier New',monospace;letter-spacing:1px;">{{username}}</p>
   {{#password}}<p style="margin:3px 0 8px;font-size:14px;font-family:'Courier New',monospace;">Mot de passe : {{password}}</p>{{/password}}
-  <p style="margin:0 0 3px;font-size:12px;color:#222;">{{profile}} · {{validity}} · {{timeLimit}}</p>
-  <p style="margin:0 0 6px;font-size:15px;font-weight:bold;">{{price}}</p>
-  <p style="margin:8px 0 0;border-top:1px dashed #999;padding-top:5px;font-size:9px;color:#666;">N° {{num}} · {{comment}} — Gardez ce ticket pour vous connecter</p>
+  <p style="margin:0 0 3px;font-size:13px;color:#1f2937;">{{profile}} · {{validity}} · {{timeLimit}}</p>
+  <p style="margin:0 0 6px;font-size:15px;font-weight:bold;color:#047857;">{{price}}</p>
+  <p style="margin:8px 0 0;border-top:1px dashed #999;padding-top:5px;font-size:9px;color:#6b7280;">N° {{num}} · {{comment}} — Gardez ce ticket pour vous connecter</p>
 </div>`,
   },
 ];

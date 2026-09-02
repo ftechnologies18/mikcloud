@@ -292,6 +292,14 @@ func roleRank(role string) int {
 	return 0
 }
 
+// prixMaxProfil — plafond économique des prix de profil (création/édition) :
+// un prix géant combiné au débit des lots permettait un débordement
+// arithmétique (cost négatif → portefeuille revendeur recrédité). Les prix
+// réels de tickets vont de quelques dizaines à quelques milliers de FCFA ;
+// 1 million est un plafond généreux. Voir la garde en profondeur dans
+// handleVouchersGenerate.
+const prixMaxProfil = 1_000_000
+
 // requireRole — autorisation SERVEUR (défense en profondeur : l'UI masque,
 // le serveur refuse). Le porteur du token doit avoir un rang ≥ min pour
 // accéder au handler. Ex. : PUT /api/settings → requireRole(3, …).
@@ -339,6 +347,16 @@ func (a *API) authMiddleware(next http.Handler) http.Handler {
 				writeErr(w, http.StatusUnauthorized, "Compte désactivé — contactez le support")
 				return
 			}
+		}
+		// Sécurité P0 — liste blanche du rôle revendeur : le token PIN (rang 0)
+		// n'atteint que le Mode Vente (/api/sell/*), conformément au contrat N°8
+		// documenté en tête de handlers_sell.go (« seul le trio /api/sell/* lui
+		// répond »). Toute autre route est refusée par défaut — ferme notamment la
+		// génération de vouchers gratuits (canal direct non débité) et la lecture
+		// des codes/mots de passe du compte par les routes sans requireRole.
+		if claims.Role == "reseller" && !strings.HasPrefix(path, "/api/sell/") {
+			writeErr(w, http.StatusForbidden, "Accès réservé au Mode Vente")
+			return
 		}
 		// Suspension (P5) : au-delà de PeriodEnd + 30 jours de grâce, le compte
 		// est suspendu. Seules les routes d'identification (/api/auth/me) et de
@@ -1898,6 +1916,12 @@ func (a *API) handleProfileCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "La validité doit être comprise entre 0 et 2628000 minutes")
 		return
 	}
+	// Sécurité P0 — plafond économique (cf. prixMaxProfil) : refuse plutôt
+	// que de clamp silencieusement, pour que l'erreur soit visible en console.
+	if req.Price > prixMaxProfil || req.SellingPrice > prixMaxProfil {
+		writeErr(w, http.StatusBadRequest, fmt.Sprintf("Le prix ne peut pas dépasser %d FCFA", prixMaxProfil))
+		return
+	}
 	a.store.Lock()
 	for _, p := range a.store.Data().Profiles {
 		if p.AccountID == acc && strings.EqualFold(p.Name, name) {
@@ -2004,6 +2028,11 @@ func (a *API) handleProfileUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.SellingPrice != nil && *req.SellingPrice < 0 {
 		writeErr(w, http.StatusBadRequest, "Le prix de vente doit être positif")
+		return
+	}
+	// Sécurité P0 — plafond économique (cf. handleProfileCreate).
+	if (req.Price != nil && *req.Price > prixMaxProfil) || (req.SellingPrice != nil && *req.SellingPrice > prixMaxProfil) {
+		writeErr(w, http.StatusBadRequest, fmt.Sprintf("Le prix ne peut pas dépasser %d FCFA", prixMaxProfil))
 		return
 	}
 	// Parité Mikhmon : validité fine en minutes (borne 5 ans).
@@ -2727,6 +2756,16 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 		quotaMb = 1_073_741_824
 	}
 	cost := req.Count * profile.Price
+	// Sécurité P0 — garde anti-débordement (défense en profondeur) : le plafond
+	// prixMaxProfil × count ≤ 500 rend le débordement impossible sur données
+	// neuves, mais les profils hérités d'avant plafond restent défendus ici —
+	// sans elle, cost négatif faisait passer le contrôle de crédit puis
+	// RECREDITAIT le portefeuille du revendeur (Reseller.Credit -= cost).
+	if profile.Price > 0 && req.Count > math.MaxInt/profile.Price {
+		a.store.Unlock()
+		writeErr(w, http.StatusBadRequest, "Coût du lot trop élevé — corrigez le prix du profil ou réduisez la quantité")
+		return
+	}
 	if resellerCopy != nil && resellerCopy.PaymentMode == "deposit" {
 		// N°19 — dépôt-vente : rien à débiter, mais exposition bornée par le
 		// plafond de créance (dette née + stock à crédit + ce lot ≤ plafond).

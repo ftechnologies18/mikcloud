@@ -134,7 +134,12 @@ restauration intégré**). La CI exécute le workflow `backup.yml` chaque
    WHERE username = '<login>' AND account_id = '<compte-vérifié>';
   ```
   — après **vérification d'identité du demandeur** (canal WhatsApp connu du
-  compte). Puis l'utilisateur re-paire sa 2FA depuis Paramètres → Sécurité.
+  compte). **Puis redéployer le service** (Render → Manual Deploy, ou
+  `POST /v1/services/<id>/deploys` — HTTP 202, réponse vide) : le backend
+  garde l'état en mémoire et ne re-lit la base qu'au démarrage — sans
+  redémarrage, la ligne mémoorisée (2FA active) resynchroniserait la base.
+  Testé en conditions réelles (vague S4). Puis l'utilisateur re-paire sa
+  2FA depuis Paramètres → Sécurité.
 - La 2FA n'est pas écrasée par une réinitialisation de mot de passe.
 
 ## 5. Cloudflare devant l'API (recommandé avant lancement)

@@ -287,13 +287,29 @@ func (a *API) handleAdminAccountCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Sécurité S5 — même dédoublonnage email/WhatsApp que l'auto-inscription
+	// (accountContactTaken, cf. handlers_auth.go) : la console plateforme ne
+	// doit pas devenir un contournement du verrou anti-fermage. Pour recréer
+	// le compte d'un client existant : supprimer l'ancien compte (zone
+	// sensible) ou corriger son contact d'abord.
+	emailNorm := strings.TrimSpace(req.Email)
+	phoneNorm := digitsOnly.ReplaceAllString(req.Phone, "")
+	if emailTaken, phoneTaken := accountContactTaken(db.Accounts, emailNorm, phoneNorm, ""); emailTaken || phoneTaken {
+		a.store.Unlock()
+		if emailTaken {
+			writeErr(w, http.StatusConflict, "Un compte existe déjà avec cet email")
+		} else {
+			writeErr(w, http.StatusConflict, "Un compte existe déjà avec ce numéro WhatsApp")
+		}
+		return
+	}
 	acc := model.Account{
 		ID:        model.NewID("acc-"),
 		Name:      name,
 		Status:    "active",
 		CreatedAt: model.NowISO(),
-		Email:     strings.TrimSpace(req.Email),
-		Phone:     digitsOnly.ReplaceAllString(req.Phone, ""),
+		Email:     emailNorm,
+		Phone:     phoneNorm,
 		Country:   strings.ToLower(strings.TrimSpace(req.Country)),
 		City:      strings.TrimSpace(req.City),
 	}

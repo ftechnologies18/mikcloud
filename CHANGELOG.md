@@ -5,6 +5,28 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-03 — Sécurité vague S5 : dédoublonnage email/WhatsApp à l'inscription
+
+### Ajoutés
+- **Dédoublonnage email/WhatsApp (S5)** — un même email ou un même numéro
+  WhatsApp ne peut plus créer qu'UN SEUL compte, aux deux points de création :
+  auto-inscription publique (`POST /api/auth/register`) et création depuis la
+  console plateforme (`POST /api/admin/accounts`). Objectif : couper le
+  fermage « manuel » d'essais de 90 jours — un client tombé sous le paywall
+  (guard P3) relançait un essai complet en changeant juste nom et username.
+  - `409` avec message distinct (« Un compte existe déjà avec cet email » /
+    « … avec ce numéro WhatsApp »), affiché tel quel par le formulaire
+    d'inscription (toast) — aucun changement frontend nécessaire.
+  - Comparaisons : email trim + insensible à la casse ; WhatsApp en chiffres
+    normalisés (E.164 sans « + », 8–15). Comptes désactivés inclus (un client
+    banni ne revient pas avec ses coordonnées) ; la suppression d'un compte
+    (zone sensible) libère ses coordonnées.
+  - Limite assumée (documentée) : formes de numéro différentes
+    (« 0701020304 » vs « 2250701020304 ») restent distinctes — le quota
+    d'inscription par IP (S3) borne les sondages.
+  - Tests : `TestSignupQuotaE2E` adapté (coordonnées uniques par inscription).
+  - Contrat : section « Sécurité S5 » dans docs/CONTRACT-V2.md.
+
 ## 2026-09-03 — Purge ciblée par compte (zone sensible, console plateforme)
 
 ### Ajoutés

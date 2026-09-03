@@ -186,6 +186,44 @@ func (a *API) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+// ---------------------------------------------------------------------------
+// Dédoublonnage email/WhatsApp (sécurité S5 — anti-fermage d'essai)
+// ---------------------------------------------------------------------------
+
+// accountContactTaken — parcourt les comptes existants et dit si l'email ou le
+// numéro WhatsApp demandé est déjà porté par un AUTRE compte. Comparaisons :
+//   - email : trim + insensible à la casse (majuscules/minuscules d'un même
+//     objet ne créent pas un compte neuf) ;
+//   - WhatsApp : comparaison exacte des chiffres (la normalisation E.164 sans
+//     « + » est faite en amont, 8–15 chiffres).
+//
+// excludeID laisse passer le compte lui-même (édition future du contact).
+// Retourne (emailPris, whatsappPris). Limite assumée : « 0701020304 » et
+// « +225 07 01 02 03 04 » saisis différemment restent deux formes distinctes —
+// un fraudeur acharné peut jouer dessus, il reste borné par le quota
+// d'inscription par IP (signup_abuse.go).
+func accountContactTaken(accounts []model.Account, email, phone, excludeID string) (bool, bool) {
+	e := strings.ToLower(strings.TrimSpace(email))
+	p := strings.TrimSpace(phone)
+	if e == "" && p == "" {
+		return false, false
+	}
+	emailTaken, phoneTaken := false, false
+	for i := range accounts {
+		acc := &accounts[i]
+		if acc.ID == excludeID {
+			continue
+		}
+		if e != "" && strings.EqualFold(strings.TrimSpace(acc.Email), e) {
+			emailTaken = true
+		}
+		if p != "" && acc.Phone == p {
+			phoneTaken = true
+		}
+	}
+	return emailTaken, phoneTaken
+}
+
 // handleRegister — inscription SaaS : crée un COMPTE isolé (Account), son
 // propriétaire (owner) et ses réglages par défaut, puis connecte immédiatement.
 // Si REGISTER_KEY est définie (bêta privée), la clé doit être fournie. Le
@@ -281,6 +319,24 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusConflict, "Ce nom d'utilisateur est déjà pris")
 			return
 		}
+	}
+	// Sécurité S5 — dédoublonnage email/WhatsApp : un même email ou un même
+	// numéro WhatsApp ne peut créer qu'UN SEUL compte. Sans ce verrou, un
+	// client dont l'essai est tombé sous le paywall (guard P3) relance un essai
+	// de 90 jours à l'infini en changeant juste nom et username — le fermage
+	// « manuel » le plus courant du marché cible. La raison fine (email vs
+	// WhatsApp) est renvoyée pour que l'utilisateur légitime corrige son
+	// formulaire ; le quota anti-abus (signup_abuse.go) borne déjà le sondage
+	// d'adresses. Comptes désactivés inclus : un client banni ne revient pas
+	// avec ses coordonnées.
+	if emailTaken, phoneTaken := accountContactTaken(db.Accounts, email, phone, ""); emailTaken || phoneTaken {
+		a.store.Unlock()
+		if emailTaken {
+			writeErr(w, http.StatusConflict, "Un compte existe déjà avec cet email")
+		} else {
+			writeErr(w, http.StatusConflict, "Un compte existe déjà avec ce numéro WhatsApp")
+		}
+		return
 	}
 	acc := model.Account{
 		ID:        model.NewID("acc-"),

@@ -83,6 +83,20 @@
     nettoyage). Workflow `backup.yml` hebdomadaire : chaque export est
     suivi d'un test de restauration, l'artefact chiffré (90 j) est publié
     uniquement si la vérification passe.
+- **Sécurité S5 (dédoublonnage email/WhatsApp, 2026-09-03)** :
+  - Un même email ou un même numéro WhatsApp ne peut créer qu'UN SEUL
+    compte — appliqué aux DEUX points de création : `POST /api/auth/register`
+    (auto-inscription publique) et `POST /api/admin/accounts` (console
+    plateforme). Objectif : bloquer le fermage « manuel » d'essais de 90
+    jours (client sous paywall P3 qui relance un essai en changeant nom et
+    username). → `409` avec message distinct (« Un compte existe déjà avec
+    cet email » / « … avec ce numéro WhatsApp »), emails comparés trim +
+    insensible à la casse, WhatsApp comparé en chiffres normalisés
+    (E.164 sans « + », fait en amont). Comptes désactivés inclus (un client
+    banni ne revient pas avec ses coordonnées) ; la suppression d'un compte
+    libère ses coordonnées. Limite assumée : formes de numéro différentes
+    (« 0701020304 » vs « 2250701020304 ») restent distinctes — bornées par
+    le quota d'inscription par IP (S3).
 - Isolation multi-tenant : toute entité portée par `accountID` ; helpers existants
   `accountScope(r)`, `findRouterScoped`, etc.
 - 3 modes routeur : `simulated` | `real` | `agent`. **Matrice de support des

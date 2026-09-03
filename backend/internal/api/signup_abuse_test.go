@@ -86,9 +86,11 @@ func TestSignupQuotaE2E(t *testing.T) {
 			"username": fmt.Sprintf("quota-e2e-%d", i),
 			"password": "mot-de-passe-8+",
 			"email":    fmt.Sprintf("quota%d@example.ci", i),
-			"phone":    "0707070707",
-			"country":  "CI",
-			"city":     "Abidjan",
+			// S5 — dédoublonnage email/WhatsApp : chaque inscription
+			// porte des coordonnées uniques (sinon 409 avant le quota).
+			"phone":   fmt.Sprintf("07070707%02d", i),
+			"country": "CI",
+			"city":    "Abidjan",
 		})
 		if status != http.StatusCreated {
 			t.Fatalf("inscription %d : statut attendu 201, obtenu %d %v", i+1, status, out)

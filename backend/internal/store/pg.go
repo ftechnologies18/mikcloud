@@ -505,6 +505,11 @@ func (p *PG) ensureSchema() error {
 		// changé/réinitialisé, rôle modifié) ; tout token dont le claim « ver »
 		// diffère de la valeur stockée est refusé immédiatement par le middleware.
 		`ALTER TABLE admin_users   ADD COLUMN IF NOT EXISTS session_epoch INTEGER NOT NULL DEFAULT 0`,
+		// Sécurité S4 — 2FA TOTP : secret base32 (jamais sérialisé en
+		// JSON) et état activé. Valeurs par défaut neutres : aucun
+		// utilisateur existant n'est changé par la migration.
+		`ALTER TABLE admin_users   ADD COLUMN IF NOT EXISTS totp_secret  TEXT    NOT NULL DEFAULT ''`,
+		`ALTER TABLE admin_users   ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT FALSE`,
 		`ALTER TABLE routers       ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE profiles      ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE hotspot_users ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''`,
@@ -1122,15 +1127,15 @@ var accountSpec = entitySpec[model.Account]{
 
 var adminSpec = entitySpec[model.AdminUser]{
 	table: "admin_users",
-	cols:  []string{"id", "name", "username", "role", "password_hash", "salt", "created_at", "account_id", "password_set_by_user", "env_password_hash", "session_epoch"},
+	cols:  []string{"id", "name", "username", "role", "password_hash", "salt", "created_at", "account_id", "password_set_by_user", "env_password_hash", "session_epoch", "totp_secret", "totp_enabled"},
 	idOf:  func(u *model.AdminUser) string { return u.ID },
 	scan: func(r *sql.Rows) (model.AdminUser, error) {
 		var u model.AdminUser
-		err := r.Scan(&u.ID, &u.Name, &u.Username, &u.Role, &u.PasswordHash, &u.Salt, &u.CreatedAt, &u.AccountID, &u.PasswordSetByUser, &u.EnvPasswordHash, &u.SessionEpoch)
+		err := r.Scan(&u.ID, &u.Name, &u.Username, &u.Role, &u.PasswordHash, &u.Salt, &u.CreatedAt, &u.AccountID, &u.PasswordSetByUser, &u.EnvPasswordHash, &u.SessionEpoch, &u.TOTPSecret, &u.TOTPEnabled)
 		return u, err
 	},
 	args: func(u *model.AdminUser) []any {
-		return []any{u.ID, u.Name, u.Username, u.Role, u.PasswordHash, u.Salt, u.CreatedAt, u.AccountID, u.PasswordSetByUser, u.EnvPasswordHash, u.SessionEpoch}
+		return []any{u.ID, u.Name, u.Username, u.Role, u.PasswordHash, u.Salt, u.CreatedAt, u.AccountID, u.PasswordSetByUser, u.EnvPasswordHash, u.SessionEpoch, u.TOTPSecret, u.TOTPEnabled}
 	},
 	hashOf: hashEntity[model.AdminUser],
 }

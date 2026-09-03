@@ -1,0 +1,67 @@
+# Sauvegarde chiffrée hebdomadaire de la base Neon (sécurité S4).
+# L'export utilise l'outil mikbackup (backend/cmd/mikbackup) : toutes les
+# tables du schéma public, chiffrées AES-256-GCM avec le secret BACKUP_KEY.
+# Le fichier est conservé en artefact GitHub (90 jours) — inutilisable sans
+# la clé, qui ne quitte jamais le coffre de l'opérateur.
+# Prérequis (cf. docs/RUNBOOK-SECRETS.md §3) :
+#   - secret GitHub BACKUP_KEY  (openssl rand -hex 32)
+#   - secret GitHub DATABASE_URL (DSN Neon de production)
+# Sans ces secrets, le workflow s'arrête proprement (pas d'échec rouge).
+name: backup
+
+on:
+  schedule:
+    # Dimanche 03:17 UTC — décalé des minutes rondes (charge des runners).
+    - cron: "17 3 * * 0"
+  workflow_dispatch: {}
+
+concurrency:
+  group: backup-${{ github.ref }}
+
+jobs:
+  export:
+    name: Export chiffré Neon
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Vérifier la présence des secrets
+        id: cfg
+        env:
+          BACKUP_KEY: ${{ secrets.BACKUP_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "${BACKUP_KEY}" ] || [ -z "${DATABASE_URL}" ]; then
+            echo "Secrets BACKUP_KEY/DATABASE_URL absents — sauvegarde sautée (cf. RUNBOOK-SECRETS.md §3)."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Export + test de restauration
+        if: steps.cfg.outputs.configured == 'true'
+        working-directory: backend
+        env:
+          BACKUP_KEY: ${{ secrets.BACKUP_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+          go run ./cmd/mikbackup export -dsn "${DATABASE_URL}" -out "/tmp/mikcloud-backup-${STAMP}.enc" -key "${BACKUP_KEY}"
+          # Chaque sauvegarde est AUTOMATIQUEMENT vérifiée : réinsertion
+          # complète dans des tables miroir s4check_* puis nettoyage.
+          go run ./cmd/mikbackup restore-check -dsn "${DATABASE_URL}" -file "/tmp/mikcloud-backup-${STAMP}.enc" -key "${BACKUP_KEY}"
+          cp "/tmp/mikcloud-backup-${STAMP}.enc" "/tmp/mikcloud-backup.enc"
+
+      - name: Publier l'artefact chiffré (90 jours)
+        if: steps.cfg.outputs.configured == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mikcloud-backup
+          path: /tmp/mikcloud-backup.enc
+          retention-days: 90

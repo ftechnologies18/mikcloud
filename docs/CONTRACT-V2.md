@@ -64,6 +64,25 @@
     externe) ; Dependabot hebdomadaire (gomod `/backend`, npm
     `/frontend`, github-actions) avec groupement minor/patch ; secret
     scanning et secret push protection activés au niveau du dépôt.
+- **Sécurité S4 (2FA TOTP + sauvegardes testées, 2026-09-03)** :
+  - 2FA TOTP RFC 6238 (HMAC-SHA1, 30 s, 6 chiffres, fenêtre ±1,
+    constant-time) : `POST /api/auth/2fa/setup` → `{secret, otpauth}`
+    (secret en attente, jamais sérialisé en JSON ensuite), `/activate`
+    `{code}` → active après vérification d'un premier code, `/disable`
+    `{password}` → désactive en exigeant le mot de passe courant. Au
+    login, si la 2FA est active : sans `code` → `401` + code machine
+    `totp_required` ; code erroné → `400` générique + journal
+    `auth_failure` (raison `bad_totp`). Statut exposé via `totpEnabled`
+    (login + `GET /api/auth/me`). Colonnes idempotentes
+    `admin_users.totp_secret` / `totp_enabled`. La 2FA n'est pas écrasée
+    par une réinitialisation de mot de passe ; secours opérateur :
+    RUNBOOK-SECRETS.md §4.
+  - Sauvegardes chiffrées : `backend/cmd/mikbackup` (export
+    row_to_json → AES-256-GCM ; `restore-check` = réinsertion complète en
+    miroir `s4check_*` via json_populate_record, comptages comparés,
+    nettoyage). Workflow `backup.yml` hebdomadaire : chaque export est
+    suivi d'un test de restauration, l'artefact chiffré (90 j) est publié
+    uniquement si la vérification passe.
 - Isolation multi-tenant : toute entité portée par `accountID` ; helpers existants
   `accountScope(r)`, `findRouterScoped`, etc.
 - 3 modes routeur : `simulated` | `real` | `agent`. **Matrice de support des

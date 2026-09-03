@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { api } from "@/lib/hotspot/api";
+import { ApiError, api } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { useHotspotStore } from "@/lib/hotspot/store";
 import type { AuthResponse } from "@/lib/hotspot/types";
@@ -162,6 +162,11 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
   const [password, setPassword] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  // Sécurité S4 — 2FA TOTP : le backend répond 401 + code « totp_required »
+  // quand l'utilisateur a activé la double authentification ; l'écran passe
+  // alors en mode second étape (saisie du code à 6 chiffres).
+  const [awaitingTotp, setAwaitingTotp] = useState(false);
+  const [totpCode, setTotpCode] = useState("");
 
   // N°8 — Mode Vente (revendeur, identifiant + PIN)
   const [sellUsername, setSellUsername] = useState("");
@@ -177,7 +182,11 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
     }
   }
 
-  const canLogin = username.trim().length > 0 && password.trim().length > 0 && !loginLoading;
+  const canLogin =
+    username.trim().length > 0 &&
+    password.trim().length > 0 &&
+    (!awaitingTotp || totpCode.trim().length === 6) &&
+    !loginLoading;
   const canSell = sellUsername.trim().length > 0 && sellPin.length >= 4 && !sellLoading;
 
   // N°8 — connexion revendeur par PIN : token scopé role=reseller → SellShell.
@@ -217,12 +226,23 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
     try {
       const res = await api<AuthResponse>("/api/auth/login", {
         method: "POST",
-        body: { username: username.trim(), password },
+        body: {
+          username: username.trim(),
+          password,
+          // Second étape TOTP (S4) : le code n'est envoyé qu'une fois le
+          // backend passé en mode « totp_required ».
+          ...(awaitingTotp ? { code: totpCode.trim() } : {}),
+        },
       });
       applyAuth(res);
     } catch (err) {
-      shakeCard();
-      toast.error(err instanceof Error ? err.message : t("login.failed"));
+      if (err instanceof ApiError && err.code === "totp_required") {
+        setAwaitingTotp(true);
+        toast.info(t("login.totpPrompt"));
+      } else {
+        shakeCard();
+        toast.error(err instanceof Error ? err.message : t("login.failed"));
+      }
     } finally {
       setLoginLoading(false);
     }
@@ -335,10 +355,27 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
                       </button>
                     </div>
                   </motion.div>
+                  {awaitingTotp && (
+                    <motion.div variants={rise} className="space-y-2">
+                      <Label htmlFor="login-totp">{t("login.totpCode")}</Label>
+                      <Input
+                        id="login-totp"
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        placeholder="000000"
+                        maxLength={6}
+                        value={totpCode}
+                        onChange={(e) => setTotpCode(e.target.value.replace(/[^0-9]/g, ""))}
+                        disabled={loginLoading}
+                        className="text-center font-mono tracking-[0.4em]"
+                      />
+                      <p className="text-xs text-muted-foreground">{t("login.totpHint")}</p>
+                    </motion.div>
+                  )}
                   <motion.div variants={rise} whileHover={{ scale: 1.015 }} whileTap={{ scale: 0.97 }}>
                     <Button type="submit" className="w-full shadow-lg shadow-primary/25" disabled={!canLogin}>
                       {loginLoading && <Loader2 className="size-4 animate-spin" />}
-                      {t("login.tabLogin")}
+                      {awaitingTotp ? t("login.totpSubmit") : t("login.tabLogin")}
                     </Button>
                   </motion.div>
                 </motion.form>

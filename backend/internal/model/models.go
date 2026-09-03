@@ -523,6 +523,12 @@ type AdminUser struct {
 	// Valeur 0 = aucune révocation (compatible tokens antérieurs au
 	// correctif, décodés avec ver=0).
 	SessionEpoch int `json:"sessionEpoch,omitempty"`
+	// TOTPSecret — secret 2FA (base32, RFC 6238 — sécurité S4). JAMAIS
+	// sérialisé en JSON (tag « - ») : il n'apparaît que dans la réponse de
+	// /api/auth/2fa/setup, au moment du pairage.
+	TOTPSecret string `json:"-"`
+	// TOTPEnabled — 2FA active : le login exige alors un code à 6 chiffres.
+	TOTPEnabled bool `json:"totpEnabled,omitempty"`
 }
 
 // NotificationSettings — canaux et règles d'alerte d'un compte SaaS. Les

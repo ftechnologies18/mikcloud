@@ -5,6 +5,52 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-03 — Sécurité vague S4 : 2FA TOTP, sauvegardes testées, conformité
+
+### Ajoutés
+- **Authentification à deux facteurs TOTP (S4)** — implémentation RFC 6238
+  maison (HMAC-SHA1, 30 s, 6 chiffres, fenêtre ±1, comparaison
+  constant-time, secret 160 bits base32 — aucune dépendance nouvelle) :
+  `POST /api/auth/2fa/setup` (génère le secret + URL otpauth), `/activate`
+  (vérifie un premier code puis active), `/disable` (exige le mot de passe
+  courant). Au login, un utilisateur avec 2FA active reçoit `401` + code
+  machine `totp_required` (l'écran de connexion affiche alors le champ
+  code) ; code erroné → `400` générique + journal de raison fine
+  `bad_totp` (S2). Migration idempotente : colonnes `admin_users.totp_secret`
+  (jamais sérialisé en JSON) et `totp_enabled`. Le statut `totpEnabled` est
+  exposé dans login et `/api/auth/me`. Frontend : second étape de connexion
+  (champ one-time-code) et carte 2FA dans Paramètres → Avancé (pairage par
+  secret copiable, activation, désactivation). Tests : vecteurs officiels
+  RFC 6238 (validés par référence indépendante), fenêtre ±1, cycle E2E
+  complet. Secours : procédure opérateur (RUNBOOK-SECRETS.md §4).
+- **Sauvegardes chiffrées testées (S4)** — nouvel outil
+  `backend/cmd/mikbackup` : export de toutes les tables (row_to_json —
+  typage Postgres préservé) chiffré AES-256-GCM, et sous-commande
+  `restore-check` qui recrée chaque table en miroir `s4check_*`, y réinsère
+  l'intégralité des lignes via `json_populate_record` (re-typage natif),
+  compare les comptages et nettoie. **Chaque sauvegarde est
+  automatiquement vérifiée** : le workflow `backup.yml` (dimanche 03:17
+  UTC) exporte PUIS restaure en vérification avant de publier l'artefact
+  chiffré (rétention 90 jours). Test réel exécuté en production Neon :
+  22 tables / 845 lignes exportées puis 845/845 restaurées. Prérequis
+  opérateur : secrets GitHub `BACKUP_KEY` + `DATABASE_URL`
+  (RUNBOOK-SECRETS.md §3 — le workflow se met en skip propre sans eux).
+- **Runbook secrets & procédures (S4)** — `docs/RUNBOOK-SECRETS.md` :
+  inventaire des secrets, emplacements légitimes, périodicités de rotation,
+  procédures pas-à-pas (GitHub PAT, Neon, Render, Vercel, JWT_SECRET),
+  protocole « secret exposé », procédure de secours 2FA, plan Cloudflare
+  (proxy, WAF, rate limit en amont, origin hardening).
+- **Conformité données personnelles (S4)** —
+  `docs/REGISTRE-TRAITEMENT.md` : registre des traitements (loi ivoirienne
+  n° 2013-450 / référence RGPD), sous-traitants (Neon, Render, Vercel,
+  passerelles), droits des personnes avec procédures concrètes (accès,
+  rectification, suppression/anonymisation, opposition), sécurité
+  (renvoi S1–S4), protocole de violation de données (72 h).
+
+### Documentation
+- `docs/CONTRACT-V2.md` : clause « Sécurité S4 » (endpoints 2FA, sémantique
+  login, sauvegardes).
+
 ## 2026-09-03 — Sécurité vague S3 : chaîne d'approvisionnement et anti-abus d'inscription
 
 ### Ajoutés

@@ -23,6 +23,8 @@ export interface AuthUser {
   /** Compte SaaS auquel l'utilisateur est rattaché (multi-tenant). */
   accountId?: string;
   accountName?: string;
+  /** 2FA TOTP active (sécurité S4). */
+  totpEnabled?: boolean;
 }
 
 /* ─── N°7 : équipe & rôles (GET/POST /api/team, PUT/DELETE /api/team/{id}) ─── */

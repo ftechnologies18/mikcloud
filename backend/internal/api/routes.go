@@ -43,6 +43,10 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/auth/register", a.handleRegister)
 	mux.HandleFunc("GET /api/auth/me", a.handleMe)
 	mux.HandleFunc("POST /api/auth/password", a.handlePasswordChange)
+	// Sécurité S4 — 2FA TOTP (pairage, activation, désactivation).
+	mux.HandleFunc("POST /api/auth/2fa/setup", a.handleTOTPSetup)
+	mux.HandleFunc("POST /api/auth/2fa/activate", a.handleTOTPActivate)
+	mux.HandleFunc("POST /api/auth/2fa/disable", a.handleTOTPDisable)
 
 	// N°7 — équipe & rôles (owner uniquement ; le super-admin plateforme est
 	// traité owner sur le compte consulté).

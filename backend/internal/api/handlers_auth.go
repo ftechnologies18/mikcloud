@@ -25,6 +25,9 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
+		// Code — code TOTP à 6 chiffres (sécurité S4), requis uniquement
+		// si l'utilisateur a activé la 2FA. Ignoré sinon.
+		Code string `json:"code"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
@@ -74,6 +77,22 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Identifiants invalides")
 		return
 	}
+	// Sécurité S4 — 2FA TOTP : si activée, le code est requis. Sans code,
+	// 401 + code machine « totp_required » (l'écran de connexion demande
+	// alors la saisie) ; code erroné → réponse générique (aucun oracle) +
+	// journal de raison fine côté serveur. Le contrôle arrive APRÈS la
+	// vérification du mot de passe : aucun contour du mot de passe.
+	if user != nil && user.TOTPEnabled {
+		if strings.TrimSpace(req.Code) == "" {
+			writeErrCode(w, http.StatusUnauthorized, "totp_required", "Code d'authentification à deux facteurs requis", nil)
+			return
+		}
+		if !verifyTOTP(user.TOTPSecret, req.Code) {
+			a.logAuthFailure(r, "console", req.Username, "bad_totp")
+			writeErr(w, http.StatusBadRequest, "Identifiants invalides")
+			return
+		}
+	}
 	// Compte désactivé : le login est refusé même avec des identifiants valides.
 	if accID != "" && accStatus == "disabled" {
 		a.logAuthFailure(r, "console", req.Username, "disabled")
@@ -99,6 +118,7 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 		"user": map[string]any{
 			"id": id, "name": name, "username": username, "role": role,
 			"accountId": accID, "accountName": accName,
+			"totpEnabled": user != nil && user.TOTPEnabled,
 		},
 	})
 }
@@ -372,10 +392,21 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	a.store.Unlock()
+	// Sécurité S4 — statut 2FA exposé à l'écran de réglages.
+	totpEnabled := false
+	a.store.Lock()
+	for i := range db.Users {
+		if db.Users[i].ID == claims.Sub {
+			totpEnabled = db.Users[i].TOTPEnabled
+			break
+		}
+	}
+	a.store.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"user": map[string]any{
 			"id": id, "name": name, "username": username, "role": role,
 			"accountId": accID, "accountName": accName,
+			"totpEnabled": totpEnabled,
 		},
 	})
 }

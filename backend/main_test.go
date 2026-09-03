@@ -18,6 +18,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -290,6 +291,42 @@ func TestRateLimitGlobalAPI(t *testing.T) {
 		limited.ServeHTTP(rec, req("POST", "/agent/cmd", nil))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("/agent/cmd doit rester hors limiteur, obtenu %d à la requête %d", rec.Code, i+1)
+		}
+	}
+}
+
+// TestRateLimitGlobalInstanceCap — suivi S1-A2 : le plafond GLOBAL par
+// instance (900 req/min sur /api/*) est insensible à l'usurpation de
+// X-Forwarded-For : la rotation d'IP forgées ne réinitialise pas le compteur.
+func TestRateLimitGlobalInstanceCap(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	limited := authRateLimit(next)
+
+	codes := map[int]int{}
+	for i := 1; i <= 910; i++ {
+		rec := httptest.NewRecorder()
+		r := req("GET", "/api/dashboard", map[string]string{
+			"X-Forwarded-For": fmt.Sprintf("10.%d.%d.%d, 172.16.0.%d", i/65536%256, i/256%256, i%256, i%256),
+		})
+		limited.ServeHTTP(rec, r)
+		codes[rec.Code]++
+	}
+	if codes[http.StatusOK]+codes[http.StatusTooManyRequests] != 910 {
+		t.Fatalf("statuts inattendus : %v", codes)
+	}
+	if codes[http.StatusOK] != 900 {
+		t.Fatalf("900 requêtes doivent passer avant le plafond global, obtenu %d", codes[http.StatusOK])
+	}
+	if codes[http.StatusTooManyRequests] != 10 {
+		t.Fatalf("10 requêtes doivent être coupées par le plafond global, obtenu %d", codes[http.StatusTooManyRequests])
+	}
+
+	// Hors /api/ : le plafond global ne s'applique pas (poll agent cadencé).
+	for i := 0; i < 50; i++ {
+		rec := httptest.NewRecorder()
+		limited.ServeHTTP(rec, req("GET", "/", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("healthcheck hors plafond global, obtenu %d", rec.Code)
 		}
 	}
 }

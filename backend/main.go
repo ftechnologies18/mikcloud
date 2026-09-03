@@ -212,7 +212,11 @@ func limitBody(next http.Handler) http.Handler {
 //   - toute autre route /api/* : 120 requêtes/minute (sécurité S1-A2 —
 //     l'ancien périmètre ne couvrait que l'authentification : génération de
 //     vouchers, actions bulk, demandes de paiement et administration étaient
-//     sans limite par IP).
+//     sans limite par IP) ;
+//   - plafond GLOBAL par instance de 900 requêtes/minute sur /api/* (suivi
+//     S1-A2) : insensible à l'usurpation de X-Forwarded-For, il borne le
+//     débit total même si un attaquant forge des IP pour échapper aux
+//     buckets par IP.
 //
 // Les routes /agent/* (poll 45 s des routeurs, cadence fixe) et le healthcheck
 // restent hors périmètre.
@@ -252,6 +256,37 @@ func authRateLimit(next http.Handler) http.Handler {
 		return "", 0
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Sécurité S1 (suivi A2) — plafond GLOBAL par instance : certaines
+		// plates-formes relais transmettent le XFF du client (sondes
+		// production : 15 XFF forgés → 15 buckets distincts), donc un
+		// attaquant délibéré peut forger des IP pour échapper aux buckets par
+		// IP. Ce compteur unique, insensible à toute usurpation d'en-tête,
+		// borne le débit total admis par l'instance — la rotation d'IP ne le
+		// contourne pas. 900/min ≈ 15 req/s soutenues, très au-dessus du
+		// trafic légitime agrégé (consoles en polling, exports) — uniquement
+		// les floods sont coupés.
+		globalOK := true
+		mu.Lock()
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			now := time.Now()
+			gb := buckets["global|*"]
+			if gb == nil || now.After(gb.reset) {
+				gb = &bucket{reset: now.Add(time.Minute)}
+				buckets["global|*"] = gb
+			}
+			gb.count++
+			if gb.count > 900 {
+				globalOK = false
+			}
+		}
+		mu.Unlock()
+		if !globalOK {
+			w.Header().Set("Retry-After", "60")
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":"Trop de requêtes — réessayez dans une minute"}`))
+			return
+		}
 		if scope, limit := scopeFor(r.URL.Path); scope != "" {
 			key := scope + "|" + clientIP(r)
 			mu.Lock()

@@ -1178,10 +1178,10 @@ export interface PlatformSettingsUpdatePayload {
   registerKey?: string;
 }
 
-/* ─── Zone sensible : purge ciblée par compte (console plateforme) ─── */
+/* ─── Purge des données fusionnée (portée globale ou ciblée par compte) ─── */
 
 /** Compteurs par élément d'un compte (GET /api/admin/purge/accounts).
- * Mêmes règles que la purge globale : les entités attachées aux routeurs
+ * Mêmes règles que les stats globales : les entités attachées aux routeurs
  * simulés partent en cascade — exclues de leur catégorie. */
 export interface AccountPurgeStats {
   simulatedRouters: number;
@@ -1199,7 +1199,7 @@ export interface AccountPurgeStats {
   templates: number;
 }
 
-/** Ligne de la liste des comptes purgables (zone sensible). */
+/** Ligne de la liste des compteurs par compte (sélecteur de portée). */
 export interface PurgeAccountRow {
   id: string;
   name: string;
@@ -1210,8 +1210,9 @@ export interface PurgeAccountRow {
   stats: AccountPurgeStats;
 }
 
-/** Réponse de POST /api/admin/purge/account — quantités réellement supprimées. */
-export interface PurgeAccountResponse {
+/** Réponse de POST /api/admin/purge (portée globale OU ciblée) — quantités
+ * réellement supprimées. */
+export interface PurgeResponse {
   ok: boolean;
   /** Bilan lisible (journal + toast). */
   summary: string;

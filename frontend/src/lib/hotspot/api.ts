@@ -22,8 +22,8 @@ import type {
   PlatformOverview,
   PlatformSettingsResponse,
   PlatformSettingsUpdatePayload,
-  PurgeAccountResponse,
   PurgeAccountRow,
+  PurgeResponse,
   PlatformTeamMember,
   RegisterPayload,
   SubscriptionInfo,
@@ -270,25 +270,28 @@ export async function updatePlatformSettings(
   });
 }
 
-/* ─── Zone sensible : purge ciblée par compte (console plateforme) ─── */
+/* ─── Purge des données FUSIONNÉE (portée globale ou ciblée par compte) ─── */
 
 /** fetchPurgeAccounts — liste des comptes avec leurs compteurs par élément
- * (alimente le sélecteur et les cases à cocher de la purge ciblée). */
+ * (alimente le sélecteur de PORTÉE et les compteurs de la purge ciblée). */
 export async function fetchPurgeAccounts(): Promise<PurgeAccountRow[]> {
   return api<PurgeAccountRow[]>("/api/admin/purge/accounts");
 }
 
-/** purgeTargetedAccount — purge CHIRURGICALE : supprime les catégories
- * cochées sur UN compte client (les autres comptes ne sont jamais touchés).
- * Scopes : identifiants de la purge globale + « vouchers » (tickets sans les
- * lots) ; "all" sélectionne toutes les catégories ciblables du compte. */
-export async function purgeTargetedAccount(
+/** purgeData — purge UNIFIÉE (POST /api/admin/purge) :
+ * accountId vide → portée GLOBALE (les catégories cochées sont supprimées
+ * sur TOUS les comptes) ; accountId renseigné → portée CIBLÉE (ce compte
+ * seul, les autres ne sont jamais touchés). Scopes : la grille unifiée de
+ * 10 catégories (« vouchers », « simulated_routers », « hotspot_users »,
+ * « profiles », « batches », « resellers », « sales », « sessions »,
+ * « logs », « templates ») ou « all ». */
+export async function purgeData(
   accountId: string,
   scopes: string[],
-): Promise<PurgeAccountResponse> {
-  return api<PurgeAccountResponse>("/api/admin/purge/account", {
+): Promise<PurgeResponse> {
+  return api<PurgeResponse>("/api/admin/purge", {
     method: "POST",
-    body: { accountId, scopes },
+    body: accountId ? { accountId, scopes } : { scopes },
   });
 }
 

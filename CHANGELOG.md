@@ -5,6 +5,37 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-03 — UX K3 : purge des données fusionnée (globale + ciblée)
+
+### Fusionnés
+- **Paramètres plateforme → Maintenance** : les deux cartes jumelles
+  « Purge globale des données » et « Purge ciblée par compte » deviennent
+  **UNE seule carte « Purge des données »** avec un sélecteur de **portée**
+  (« Tous les comptes (purge globale) » ou un compte client précis) :
+  - grille de catégories **unifiée à 10 entrées** (identique dans les deux
+    portées — le scope « vouchers » est désormais disponible en global
+    aussi) avec compteurs live de la portée courante ;
+  - confirmation adaptée à la portée : saisie « PURGER » en global, nom
+    exact du compte en ciblé ; bilan détaillé en toast (tickets comptés
+    à part) ;
+  - état vide vert quand la portée courante est déjà propre.
+- **Backend : un seul moteur et un seul endpoint d'exécution** —
+  `purgeScopes(accID, scopes)` remplace les deux moteurs dupliqués ;
+  `POST /api/admin/purge` accepte un `accountId` OPTIONNEL (vide → global,
+  renseigné → ciblé) et **`POST /api/admin/purge/account` est supprimé**
+  (fusion). `GET /api/admin/purge/stats` gagne le compteur `vouchers` ;
+  harmonisation des cascades (les lots/ventes attachés aux routeurs
+  simulés partent aussi en global, comme en ciblé et comme purge-demo) ;
+  sélection explicite exigée (corps sans `scopes` → 400, les deux portées).
+- Tests backend réécrits autour de l'endpoint fusionné (+ nouveaux tests
+  portée globale : `vouchers` seul et `all`) ; `docs/CONTRACT-V2.md` mis à
+  jour.
+
+### Aucun impact
+- Garanties intactes : routeurs réels (agent), comptes, équipe, réglages,
+  abonnement et facturation ne sont JAMAIS purgés ; rien n'est régénéré ;
+  synchro différentielle Neon inchangée.
+
 ## 2026-09-03 — UX K2 : fusion des paramètres dupliqués (client ↔ plateforme)
 
 ### Modifiés

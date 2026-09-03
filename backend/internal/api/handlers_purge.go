@@ -1,5 +1,10 @@
-// Package api — purge des données par catégories (Paramètres → « Purge des
-// données »).
+// Package api — purge des données par catégories (Paramètres plateforme →
+// « Purge des données »).
+//
+// FUSION (anti-redondance) : la purge GLOBALE et la purge CIBLÉE par compte
+// partagent UN SEUL moteur (purgeScopes) et UN SEUL endpoint d'exécution
+// (POST /api/admin/purge, accountId optionnel). Portée = accountId vide
+// (tous les comptes) ou un compte précis (les autres ne sont jamais touchés).
 //
 // Historique : l'ancien POST /api/admin/reset régénérait le seed de
 // démonstration (BuildSeed) — c'était la cause du RETOUR des données de test
@@ -20,11 +25,14 @@ import (
 )
 
 // Scopes de purge (identifiants stables consommés par le frontend).
+// La grille est UNIFIÉE : les 10 catégories sont disponibles dans les deux
+// portées (globale et ciblée par compte).
 const (
-	PurgeScopeSimulatedRouters = "simulated_routers" // + cascade : utilisateurs, sessions, trafic, commandes, bindings, schedulers
-	PurgeScopeHotspotUsers     = "hotspot_users"     // utilisateurs hotspot restants
+	PurgeScopeSimulatedRouters = "simulated_routers" // + cascade : utilisateurs, sessions, trafic, commandes, bindings, schedulers, lots, ventes
+	PurgeScopeVouchers         = "vouchers"          // tickets seuls (kind=voucher) — les LOTS sont conservés
+	PurgeScopeHotspotUsers     = "hotspot_users"     // comptes client hotspot restants (hors tickets)
 	PurgeScopeProfiles         = "profiles"          // profils / forfaits
-	PurgeScopeBatches          = "batches"           // lots de vouchers + leurs vouchers
+	PurgeScopeBatches          = "batches"           // lots de vouchers + leurs vouchers restants
 	PurgeScopeResellers        = "resellers"         // revendeurs + transactions
 	PurgeScopeSales            = "sales"             // ventes
 	PurgeScopeSessions         = "sessions"          // sessions actives restantes
@@ -33,18 +41,20 @@ const (
 	PurgeScopeAll              = "all"               // toutes les catégories ci-dessus
 )
 
-// purgeScopeSet — les 9 catégories purgables (« all » mis à part).
+// purgeScopeSet — les 10 catégories purgables (« all » mis à part).
 var purgeScopeSet = []string{
-	PurgeScopeSimulatedRouters, PurgeScopeHotspotUsers, PurgeScopeProfiles,
-	PurgeScopeBatches, PurgeScopeResellers, PurgeScopeSales,
+	PurgeScopeSimulatedRouters, PurgeScopeVouchers, PurgeScopeHotspotUsers,
+	PurgeScopeProfiles, PurgeScopeBatches, PurgeScopeResellers, PurgeScopeSales,
 	PurgeScopeSessions, PurgeScopeLogs, PurgeScopeTemplates,
 }
 
-// PurgeStats — compteurs LIVE affichés dans l'UI (GET /api/admin/purge/stats).
-// Les utilisateurs/sessions attachés à des routeurs simulés ne sont PAS
-// comptés dans leurs catégories : ils partent avec le routeur (cascade).
+// PurgeStats — compteurs LIVE affichés dans l'UI (GET /api/admin/purge/stats,
+// portée globale — tous les comptes confondus). Les utilisateurs/sessions
+// attachés à des routeurs simulés ne sont PAS comptés dans leurs catégories :
+// ils partent avec le routeur (cascade).
 type PurgeStats struct {
 	SimulatedRouters int `json:"simulatedRouters"`
+	Vouchers         int `json:"vouchers"` // tickets (kind=voucher)
 	HotspotUsers     int `json:"hotspotUsers"`
 	Profiles         int `json:"profiles"`
 	Batches          int `json:"batches"`
@@ -99,11 +109,17 @@ func computePurgeStats(db *model.DB) PurgeStats {
 	}
 	// Les utilisateurs/sessions des routeurs simulés partent avec eux
 	// (cascade) — seuls les RESTANTS sont proposés dans leurs catégories.
+	// Tickets (kind=voucher) et comptes client sont comptés séparément :
+	// grille unifiée avec la purge ciblée par compte.
 	for _, u := range db.HotspotUsers {
 		if simIDs[u.RouterID] {
 			continue
 		}
-		stats.HotspotUsers++
+		if u.Kind == "voucher" {
+			stats.Vouchers++
+		} else {
+			stats.HotspotUsers++
+		}
 	}
 	for _, s := range db.Sessions {
 		if simIDs[s.RouterID] {
@@ -121,17 +137,27 @@ func computePurgeStats(db *model.DB) PurgeStats {
 	return stats
 }
 
-// handlePurge — POST /api/admin/purge : purge par catégories.
-// Corps : {"scopes": ["simulated_routers", "hotspot_users", …]}
-// (le scope « all » sélectionne les 9 catégories ; {"scope":"all"} accepté).
+// handlePurge — POST /api/admin/purge : purge par catégories, portée UNIFIÉE.
+// Corps : {"scopes": ["simulated_routers", "hotspot_users", …],
+//
+//	       "accountId": "acc-…"  (OPTIONNEL)}
+//	- accountId ABSENT/VIDE → purge GLOBALE : les catégories sont supprimées
+//	  sur TOUS les comptes (comportement historique) ;
+//	- accountId RENSEIGNÉ → purge CIBLÉE : seules les données de CE compte sont
+//	  supprimées (les autres ne sont jamais touchés ; 404 si inconnu).
+//
+// (le scope « all » sélectionne les 10 catégories ; {"scope":"all"} accepté ;
+// l'ancien endpoint POST /api/admin/purge/account est FUSIONNÉ ici).
 func (a *API) handlePurge(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Scopes []string `json:"scopes"`
-		Scope  string   `json:"scope"` // compat mono-scope
+		AccountID string   `json:"accountId"`
+		Scopes    []string `json:"scopes"`
+		Scope     string   `json:"scope"` // compat mono-scope
 	}
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 	}
+	accID := strings.TrimSpace(body.AccountID)
 	scopes := body.Scopes
 	if len(scopes) == 0 && strings.TrimSpace(body.Scope) != "" {
 		scopes = []string{body.Scope}
@@ -145,7 +171,7 @@ func (a *API) handlePurge(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if s == PurgeScopeAll {
-			a.purgeScopes(w, r, nil) // nil → « all »
+			a.purgeScopes(w, r, accID, nil) // nil → « all »
 			return
 		}
 		valid := false
@@ -165,18 +191,22 @@ func (a *API) handlePurge(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(normalized) == 0 {
+		// Purge destructive : exiger une sélection EXPLICITE (ou « all ») —
+		// plus sûr qu'un scopes absent qui voudrait dire « tout ».
 		writeErr(w, http.StatusBadRequest, "Aucune catégorie sélectionnée")
 		return
 	}
-	a.purgeScopes(w, r, normalized)
+	a.purgeScopes(w, r, accID, normalized)
 }
 
-// purgeScopes — moteur commun (handlePurge + handleWipe). scopes nil ou vide
-// → « all ». Sous verrou global ; ne touche JAMAIS les routeurs réels
-// (agent/real), les comptes, l'équipe, les réglages ni l'abonnement ; ne
-// régénère RIEN. Les slices sont réaffectées vides (non-nil) pour que la
-// synchro différentielle PostgreSQL supprime les lignes correspondantes.
-func (a *API) purgeScopes(w http.ResponseWriter, r *http.Request, scopes []string) {
+// purgeScopes — moteur UNIQUE de la purge (handlePurge + handleWipe).
+// accID == "" → portée GLOBALE (tous les comptes) ; accID != "" → portée
+// CIBLÉE, restreinte au compte (404 si inconnu). scopes nil ou vide → « all ».
+// Sous verrou global ; ne touche JAMAIS les routeurs réels (agent/real), les
+// comptes, l'équipe, les réglages ni l'abonnement ; ne régénère RIEN. Les
+// slices sont réaffectées vides (non-nil) pour que la synchro différentielle
+// PostgreSQL supprime les lignes correspondantes.
+func (a *API) purgeScopes(w http.ResponseWriter, r *http.Request, accID string, scopes []string) {
 	if !isPlatformAdmin(r) {
 		writeErr(w, http.StatusForbidden, "Réservé aux administrateurs de la plateforme")
 		return
@@ -193,19 +223,42 @@ func (a *API) purgeScopes(w http.ResponseWriter, r *http.Request, scopes []strin
 		}
 		return false
 	}
+	global := accID == ""
+	// match — filtre de portée : TOUTES les entités (globale) ou uniquement
+	// celles du compte ciblé (les identifiants de compte sont un filtre, pas
+	// une suppression : le compte lui-même et son équipe ne sont jamais purgés).
+	match := func(acc string) bool {
+		return global || acc == accID
+	}
 
 	a.store.Lock()
 	db := a.store.Data()
 	var counts PurgeCounts
 
+	// Compte cible doit exister en portée ciblée (nom repris dans le bilan).
+	accName := ""
+	if !global {
+		for i := range db.Accounts {
+			if db.Accounts[i].ID == accID {
+				accName = db.Accounts[i].Name
+				break
+			}
+		}
+		if accName == "" {
+			a.store.Unlock()
+			writeErr(w, http.StatusNotFound, "Compte introuvable")
+			return
+		}
+	}
+
 	// 1. Routeurs SIMULÉS + cascade complète (utilisateurs, sessions, trafic,
-	//    commandes, IP bindings, schedulers). Les routeurs réels (agent/real)
-	//    sont systématiquement préservés.
+	//    commandes, IP bindings, schedulers, lots, ventes attachés). Les
+	//    routeurs réels (agent/real) sont systématiquement préservés.
 	if has(PurgeScopeSimulatedRouters) {
 		simIDs := map[string]bool{}
 		kept := db.Routers[:0]
 		for _, rr := range db.Routers {
-			if rr.Mode == "simulated" {
+			if rr.Mode == "simulated" && match(rr.AccountID) {
 				simIDs[rr.ID] = true
 				counts.Routers++
 				continue
@@ -215,28 +268,50 @@ func (a *API) purgeScopes(w http.ResponseWriter, r *http.Request, scopes []strin
 		db.Routers = kept
 		if len(simIDs) > 0 {
 			drop := func(id string) bool { return simIDs[id] }
-			db.HotspotUsers = dropByRouterID(db.HotspotUsers, drop, func(u model.HotspotUser) string { return u.RouterID }, &counts.HotspotUsers)
+			// Utilisateurs/tickets du routeur : comptés dans leur catégorie
+			// (tickets séparés des comptes client — grille unifiée).
+			keptUsers := db.HotspotUsers[:0]
+			for _, u := range db.HotspotUsers {
+				if drop(u.RouterID) {
+					if u.Kind == "voucher" {
+						counts.Vouchers++
+					} else {
+						counts.HotspotUsers++
+					}
+					continue
+				}
+				keptUsers = append(keptUsers, u)
+			}
+			db.HotspotUsers = keptUsers
 			db.Sessions = dropByRouterID(db.Sessions, drop, func(s model.Session) string { return s.RouterID }, &counts.Sessions)
 			db.Traffic = dropByRouterID(db.Traffic, drop, func(t model.RouterTraffic) string { return t.RouterID }, nil)
 			db.Commands = dropByRouterID(db.Commands, drop, func(c model.Command) string { return c.RouterID }, nil)
 			db.IPBindings = dropByRouterID(db.IPBindings, drop, func(b model.IPBinding) string { return b.RouterID }, nil)
 			db.SchedulerTasks = dropByRouterID(db.SchedulerTasks, drop, func(t model.SchedulerTask) string { return t.RouterID }, nil)
+			db.Batches = dropByRouterID(db.Batches, drop, func(b model.Batch) string { return b.RouterID }, &counts.Batches)
+			db.Sales = dropByRouterID(db.Sales, drop, func(s model.Sale) string { return s.RouterID }, &counts.Sales)
 		}
 	}
 
-	// 2. Utilisateurs hotspot RESTANTS (les sessions qui leur sont liées sont
-	//    closes avec eux — une session sans utilisateur n'a plus de sens).
-	if has(PurgeScopeHotspotUsers) {
-		orphan := map[string]bool{}
+	// 2. Tickets RESTANTS (kind=voucher) — les LOTS restent. Les sessions
+	//    liées aux tickets supprimés sont closes (une session sans
+	//    utilisateur n'a plus de sens).
+	if has(PurgeScopeVouchers) {
+		dropUser := map[string]bool{}
+		keptUsers := make([]model.HotspotUser, 0, len(db.HotspotUsers))
 		for _, u := range db.HotspotUsers {
-			orphan[u.ID] = true
+			if match(u.AccountID) && u.Kind == "voucher" {
+				dropUser[u.ID] = true
+				counts.Vouchers++
+				continue
+			}
+			keptUsers = append(keptUsers, u)
 		}
-		counts.HotspotUsers += len(db.HotspotUsers)
-		db.HotspotUsers = []model.HotspotUser{}
-		if len(orphan) > 0 && len(db.Sessions) > 0 {
+		db.HotspotUsers = keptUsers
+		if len(dropUser) > 0 {
 			keptSessions := db.Sessions[:0]
 			for _, s := range db.Sessions {
-				if orphan[s.UserID] {
+				if dropUser[s.UserID] {
 					counts.Sessions++
 					continue
 				}
@@ -246,25 +321,65 @@ func (a *API) purgeScopes(w http.ResponseWriter, r *http.Request, scopes []strin
 		}
 	}
 
-	// 3. Profils / forfaits.
-	if has(PurgeScopeProfiles) {
-		counts.Profiles = len(db.Profiles)
-		db.Profiles = []model.Profile{}
+	// 3. Comptes client hotspot RESTANTS (hors tickets) — les sessions qui
+	//    leur sont liées sont closes avec eux.
+	if has(PurgeScopeHotspotUsers) {
+		dropUser := map[string]bool{}
+		keptUsers := make([]model.HotspotUser, 0, len(db.HotspotUsers))
+		for _, u := range db.HotspotUsers {
+			if match(u.AccountID) && u.Kind != "voucher" {
+				dropUser[u.ID] = true
+				counts.HotspotUsers++
+				continue
+			}
+			keptUsers = append(keptUsers, u)
+		}
+		db.HotspotUsers = keptUsers
+		if len(dropUser) > 0 {
+			keptSessions := db.Sessions[:0]
+			for _, s := range db.Sessions {
+				if dropUser[s.UserID] {
+					counts.Sessions++
+					continue
+				}
+				keptSessions = append(keptSessions, s)
+			}
+			db.Sessions = keptSessions
+		}
 	}
 
-	// 4. Lots de vouchers + les vouchers générés par ces lots.
+	// 4. Profils / forfaits.
+	if has(PurgeScopeProfiles) {
+		kept := db.Profiles[:0]
+		for _, p := range db.Profiles {
+			if match(p.AccountID) {
+				counts.Profiles++
+				continue
+			}
+			kept = append(kept, p)
+		}
+		db.Profiles = kept
+	}
+
+	// 5. Lots de vouchers + leurs vouchers RESTANTS (cascade — les tickets
+	//    déjà retirés par le scope « vouchers » ne comptent pas deux fois).
 	if has(PurgeScopeBatches) {
 		batchIDs := map[string]bool{}
+		keptBatches := db.Batches[:0]
 		for _, b := range db.Batches {
-			batchIDs[b.ID] = true
+			if match(b.AccountID) {
+				batchIDs[b.ID] = true
+				counts.Batches++
+				continue
+			}
+			keptBatches = append(keptBatches, b)
 		}
-		counts.Batches = len(db.Batches)
-		db.Batches = []model.Batch{}
-		if len(batchIDs) > 0 && len(db.HotspotUsers) > 0 {
+		db.Batches = keptBatches
+		if len(batchIDs) > 0 {
 			keptUsers := db.HotspotUsers[:0]
 			for _, u := range db.HotspotUsers {
-				if u.Kind == "voucher" && batchIDs[u.BatchID] {
-					counts.HotspotUsers++
+				if match(u.AccountID) && u.Kind == "voucher" && batchIDs[u.BatchID] {
+					counts.Vouchers++
 					continue
 				}
 				keptUsers = append(keptUsers, u)
@@ -273,47 +388,123 @@ func (a *API) purgeScopes(w http.ResponseWriter, r *http.Request, scopes []strin
 		}
 	}
 
-	// 5. Revendeurs + leurs transactions (les vouchers déjà générés sont
+	// 6. Revendeurs + leurs transactions (les vouchers déjà générés sont
 	//    conservés : ce sont des identifiants valides du compte).
 	if has(PurgeScopeResellers) {
-		counts.Resellers = len(db.Resellers)
-		db.Resellers = []model.Reseller{}
-		counts.Transactions = len(db.Transactions)
-		db.Transactions = []model.Transaction{}
+		resIDs := map[string]bool{}
+		keptResellers := db.Resellers[:0]
+		for _, res := range db.Resellers {
+			if match(res.AccountID) {
+				resIDs[res.ID] = true
+				counts.Resellers++
+				continue
+			}
+			keptResellers = append(keptResellers, res)
+		}
+		db.Resellers = keptResellers
+		if len(resIDs) > 0 {
+			keptTx := db.Transactions[:0]
+			for _, t := range db.Transactions {
+				if match(t.AccountID) && resIDs[t.ResellerID] {
+					counts.Transactions++
+					continue
+				}
+				keptTx = append(keptTx, t)
+			}
+			db.Transactions = keptTx
+		}
 	}
 
-	// 6. Ventes.
+	// 7. Ventes.
 	if has(PurgeScopeSales) {
-		counts.Sales = len(db.Sales)
-		db.Sales = []model.Sale{}
+		kept := db.Sales[:0]
+		for _, s := range db.Sales {
+			if match(s.AccountID) {
+				counts.Sales++
+				continue
+			}
+			kept = append(kept, s)
+		}
+		db.Sales = kept
 	}
 
-	// 7. Sessions actives restantes.
+	// 8. Sessions actives restantes.
 	if has(PurgeScopeSessions) {
-		counts.Sessions += len(db.Sessions)
-		db.Sessions = []model.Session{}
+		kept := db.Sessions[:0]
+		for _, s := range db.Sessions {
+			if match(s.AccountID) {
+				counts.Sessions++
+				continue
+			}
+			kept = append(kept, s)
+		}
+		db.Sessions = kept
 	}
 
-	// 8. Journaux : utilisateurs (login/logout…), activité, notifications,
+	// 9. Journaux : utilisateurs (login/logout…), activité, notifications,
 	//    commandes agent (file d'attente incluse).
 	if has(PurgeScopeLogs) {
-		counts.Logs = len(db.UserLogs) + len(db.Activity) + len(db.NotifLog) + len(db.Commands)
-		db.UserLogs = []model.UserLog{}
-		db.Activity = []model.Activity{}
-		db.NotifLog = []model.NotificationLog{}
-		db.Commands = []model.Command{}
+		keptLogs := db.UserLogs[:0]
+		for _, l := range db.UserLogs {
+			if match(l.AccountID) {
+				counts.Logs++
+				continue
+			}
+			keptLogs = append(keptLogs, l)
+		}
+		db.UserLogs = keptLogs
+		keptActivity := db.Activity[:0]
+		for _, act := range db.Activity {
+			if match(act.AccountID) {
+				counts.Logs++
+				continue
+			}
+			keptActivity = append(keptActivity, act)
+		}
+		db.Activity = keptActivity
+		keptNotif := db.NotifLog[:0]
+		for _, nl := range db.NotifLog {
+			if match(nl.AccountID) {
+				counts.Logs++
+				continue
+			}
+			keptNotif = append(keptNotif, nl)
+		}
+		db.NotifLog = keptNotif
+		keptCommands := db.Commands[:0]
+		for _, c := range db.Commands {
+			if match(c.AccountID) {
+				counts.Logs++
+				continue
+			}
+			keptCommands = append(keptCommands, c)
+		}
+		db.Commands = keptCommands
 	}
 
-	// 9. Gabarits de tickets.
+	// 10. Gabarits de tickets.
 	if has(PurgeScopeTemplates) {
-		counts.Templates = len(db.Templates)
-		db.Templates = []model.VoucherTemplate{}
+		kept := db.Templates[:0]
+		for _, tp := range db.Templates {
+			if match(tp.AccountID) {
+				counts.Templates++
+				continue
+			}
+			kept = append(kept, tp)
+		}
+		db.Templates = kept
 	}
 
 	// Journal d'activité — écrit APRÈS la purge : si la catégorie journaux
 	// était purgée, cette ligne est la première du journal neuf (traçabilité).
-	summary := purgeSummaryFR(counts, all)
-	a.logActivityBy(r, db, accountScope(r), "system", summary)
+	// Portée globale → journal du compte de l'admin plateforme ; portée
+	// ciblée → journal du COMPTE CIBLÉ (« par la plateforme »).
+	summary := purgeSummaryFR(accName, counts, all)
+	logAccount := accID
+	if global {
+		logAccount = accountScope(r)
+	}
+	a.logActivityBy(r, db, logAccount, "system", summary)
 	a.store.Save()
 	a.store.Unlock()
 	a.clearGateways()
@@ -339,10 +530,14 @@ func dropByRouterID[T any](items []T, drop func(id string) bool, routerID func(T
 }
 
 // purgeSummaryFR — libellé du bilan pour le journal d'activité (français).
-func purgeSummaryFR(c PurgeCounts, all bool) string {
+// accName == "" → portée globale ; sinon bilan de la purge ciblée du compte.
+func purgeSummaryFR(accName string, c PurgeCounts, all bool) string {
 	var parts []string
 	if c.Routers > 0 {
 		parts = append(parts, fmt.Sprintf("%d routeur(s) simulé(s)", c.Routers))
+	}
+	if c.Vouchers > 0 {
+		parts = append(parts, fmt.Sprintf("%d voucher(s)", c.Vouchers))
 	}
 	if c.HotspotUsers > 0 {
 		parts = append(parts, fmt.Sprintf("%d utilisateur(s) hotspot", c.HotspotUsers))
@@ -371,12 +566,23 @@ func purgeSummaryFR(c PurgeCounts, all bool) string {
 	if c.Templates > 0 {
 		parts = append(parts, fmt.Sprintf("%d gabarit(s)", c.Templates))
 	}
-	if len(parts) == 0 {
-		return "Purge des données : rien à supprimer (données déjà absentes)"
+	empty := " : rien à supprimer (données déjà absentes)"
+	if accName == "" {
+		if len(parts) == 0 {
+			return "Purge des données" + empty
+		}
+		prefix := "Purge des données — "
+		if all {
+			prefix = "Purge totale des données — "
+		}
+		return prefix + strings.Join(parts, ", ")
 	}
-	prefix := "Purge des données — "
+	if len(parts) == 0 {
+		return "Purge ciblée du compte «" + accName + "»" + empty
+	}
+	prefix := "Purge ciblée du compte «" + accName + "» (par la plateforme) — "
 	if all {
-		prefix = "Purge totale des données — "
+		prefix = "Purge totale du compte «" + accName + "» (par la plateforme) — "
 	}
 	return prefix + strings.Join(parts, ", ")
 }
@@ -519,26 +725,10 @@ func purgeDemoSummaryFR(c PurgeCounts) string {
 }
 
 // ---------------------------------------------------------------------------
-// Purge CIBLÉE par compte (zone sensible — console plateforme)
-//
-// Complément CHIRURGICAL de la purge globale : l'administrateur plateforme
-// choisit UN compte client et les catégories d'éléments à supprimer pour
-// CE compte uniquement (vouchers, utilisateurs hotspot, ventes, journaux…).
-// Les autres comptes ne sont JAMAIS touchés. Mêmes garanties que la purge
-// globale : ne touche jamais les routeurs réels (agent/real), les comptes,
-// l'équipe, les réglages, l'abonnement ni la facturation ; ne régénère RIEN ;
-// synchro différentielle PostgreSQL via réaffectation de slices (non-nil).
+// Compteurs par compte (GET /api/admin/purge/accounts — alimente le
+// sélecteur de PORTÉE de la purge fusionnée) ; l'EXÉCUTION, elle, passe par
+// POST /api/admin/purge avec accountId (moteur unique purgeScopes).
 // ---------------------------------------------------------------------------
-
-// PurgeScopeVouchers — tickets uniquement (hotspot users kind=voucher) :
-// les LOTS (métadonnées) sont conservés ; le scope « batches » supprime
-// lots + vouchers restants. Distinction propre à la purge ciblée — la
-// purge globale conserve sa sémantique historique (batches = cascade).
-const PurgeScopeVouchers = "vouchers"
-
-// purgeAccountScopeSet — catégories purgables sur UN compte ciblé
-// (« all » mis à part). Sur-ensemble de purgeScopeSet (+ vouchers).
-var purgeAccountScopeSet = append([]string{PurgeScopeVouchers}, purgeScopeSet...)
 
 // AccountPurgeStats — compteurs par élément pour UN compte
 // (GET /api/admin/purge/accounts — zone sensible de la console plateforme).
@@ -702,424 +892,4 @@ func (a *API) handlePurgeAccountsStats(w http.ResponseWriter, r *http.Request) {
 
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
 	writeJSON(w, http.StatusOK, rows)
-}
-
-// handlePurgeAccount — POST /api/admin/purge/account : purge ciblée sur UN
-// compte. Corps : {"accountId": "acc-…", "scopes": ["vouchers", "sales", …]}
-// (le scope « all » sélectionne toutes les catégories ciblables du compte).
-// Les catégories sont les mêmes identifiants que la purge globale, plus
-// « vouchers » (tickets sans les lots). Les autres comptes ne sont jamais
-// touchés ; les garanties structurelles de la purge globale s'appliquent.
-func (a *API) handlePurgeAccount(w http.ResponseWriter, r *http.Request) {
-	if !isPlatformAdmin(r) {
-		writeErr(w, http.StatusForbidden, "Réservé aux administrateurs de la plateforme")
-		return
-	}
-	var body struct {
-		AccountID string   `json:"accountId"`
-		Scopes    []string `json:"scopes"`
-		Scope     string   `json:"scope"` // compat mono-scope
-	}
-	if r.Body != nil {
-		_ = json.NewDecoder(r.Body).Decode(&body)
-	}
-	accID := strings.TrimSpace(body.AccountID)
-	if accID == "" {
-		writeErr(w, http.StatusBadRequest, "Compte cible manquant (accountId)")
-		return
-	}
-	scopes := body.Scopes
-	if len(scopes) == 0 && strings.TrimSpace(body.Scope) != "" {
-		scopes = []string{body.Scope}
-	}
-	// Normalisation + validation (défensif : doublons, casse, inconnus).
-	seen := map[string]bool{}
-	normalized := make([]string, 0, len(scopes))
-	for _, s := range scopes {
-		s = strings.TrimSpace(s)
-		if s == "" {
-			continue
-		}
-		if s == PurgeScopeAll {
-			normalized = nil // « all » → toutes les catégories ciblables
-			break
-		}
-		valid := false
-		for _, known := range purgeAccountScopeSet {
-			if s == known {
-				valid = true
-				break
-			}
-		}
-		if !valid {
-			writeErr(w, http.StatusBadRequest, "Catégorie de purge inconnue : "+s)
-			return
-		}
-		if !seen[s] {
-			seen[s] = true
-			normalized = append(normalized, s)
-		}
-	}
-	if len(normalized) == 0 && len(scopes) > 0 {
-		// « all » ou aucune catégorie exploitable : distinguer les deux cas.
-		all := false
-		for _, s := range scopes {
-			if strings.TrimSpace(s) == PurgeScopeAll {
-				all = true
-				break
-			}
-		}
-		if !all {
-			writeErr(w, http.StatusBadRequest, "Aucune catégorie sélectionnée")
-			return
-		}
-	}
-	a.purgeAccountScopes(w, r, accID, normalized)
-}
-
-// purgeAccountScopes — moteur de la purge ciblée (sous verrou global).
-// scopes nil ou vide → « all » pour le compte. Cascade identique à la purge
-// globale, RESTREINTE au compte : les utilisateurs/sessions des routeurs
-// simulés partent avec eux ; purger les lots retire leurs vouchers restants ;
-// purger les revendeurs retire leurs transactions ; purger les utilisateurs
-// ou les tickets ferme les sessions liées. La ligne d'activité est écrite
-// APRÈS la purge sur le compte ciblé (traçabilité, première ligne du journal
-// neuf quand « logs » était purgé).
-func (a *API) purgeAccountScopes(w http.ResponseWriter, r *http.Request, accID string, scopes []string) {
-	a.store.Lock()
-	db := a.store.Data()
-
-	// Le compte cible doit exister (les comptes et l'équipe ne sont jamais
-	// purgés : la cible n'est qu'un filtre).
-	accName := ""
-	for i := range db.Accounts {
-		if db.Accounts[i].ID == accID {
-			accName = db.Accounts[i].Name
-			break
-		}
-	}
-	if accName == "" {
-		a.store.Unlock()
-		writeErr(w, http.StatusNotFound, "Compte introuvable")
-		return
-	}
-
-	all := len(scopes) == 0
-	has := func(scope string) bool {
-		if all {
-			return true
-		}
-		for _, s := range scopes {
-			if s == scope {
-				return true
-			}
-		}
-		return false
-	}
-
-	dbm := db
-	var counts PurgeCounts
-
-	// 1. Routeurs SIMULÉS du compte + cascade complète (même garanties que
-	//    la catégorie globale « simulated_routers ») : utilisateurs, sessions,
-	//    trafic, commandes, IP bindings, schedulers, lots, ventes.
-	if has(PurgeScopeSimulatedRouters) {
-		simIDs := map[string]bool{}
-		kept := dbm.Routers[:0]
-		for _, rr := range dbm.Routers {
-			if rr.AccountID == accID && rr.Mode == "simulated" {
-				simIDs[rr.ID] = true
-				counts.Routers++
-				continue
-			}
-			kept = append(kept, rr)
-		}
-		dbm.Routers = kept
-		if len(simIDs) > 0 {
-			drop := func(id string) bool { return simIDs[id] }
-			dbm.HotspotUsers = dropByRouterID(dbm.HotspotUsers, drop, func(u model.HotspotUser) string { return u.RouterID }, &counts.HotspotUsers)
-			dbm.Sessions = dropByRouterID(dbm.Sessions, drop, func(s model.Session) string { return s.RouterID }, &counts.Sessions)
-			dbm.Traffic = dropByRouterID(dbm.Traffic, drop, func(t model.RouterTraffic) string { return t.RouterID }, nil)
-			dbm.Commands = dropByRouterID(dbm.Commands, drop, func(c model.Command) string { return c.RouterID }, nil)
-			dbm.IPBindings = dropByRouterID(dbm.IPBindings, drop, func(b model.IPBinding) string { return b.RouterID }, nil)
-			dbm.SchedulerTasks = dropByRouterID(dbm.SchedulerTasks, drop, func(t model.SchedulerTask) string { return t.RouterID }, nil)
-			keptBatches := dbm.Batches[:0]
-			for _, b := range dbm.Batches {
-				if drop(b.RouterID) {
-					counts.Batches++
-					continue
-				}
-				keptBatches = append(keptBatches, b)
-			}
-			dbm.Batches = keptBatches
-			keptSales := dbm.Sales[:0]
-			for _, s := range dbm.Sales {
-				if drop(s.RouterID) {
-					counts.Sales++
-					continue
-				}
-				keptSales = append(keptSales, s)
-			}
-			dbm.Sales = keptSales
-		}
-	}
-
-	// 2. Tickets du compte (kind=voucher) — les LOTS restent. Les sessions
-	//    liées aux tickets supprimés sont closes (une session sans
-	//    utilisateur n'a plus de sens).
-	if has(PurgeScopeVouchers) {
-		dropUser := map[string]bool{}
-		keptUsers := make([]model.HotspotUser, 0, len(dbm.HotspotUsers))
-		for _, u := range dbm.HotspotUsers {
-			if u.AccountID == accID && u.Kind == "voucher" {
-				dropUser[u.ID] = true
-				counts.Vouchers++
-				continue
-			}
-			keptUsers = append(keptUsers, u)
-		}
-		dbm.HotspotUsers = keptUsers
-		if len(dropUser) > 0 {
-			keptSessions := dbm.Sessions[:0]
-			for _, s := range dbm.Sessions {
-				if dropUser[s.UserID] {
-					counts.Sessions++
-					continue
-				}
-				keptSessions = append(keptSessions, s)
-			}
-			dbm.Sessions = keptSessions
-		}
-	}
-
-	// 3. Utilisateurs hotspot du compte (kind != voucher) + fermeture de
-	//    leurs sessions (même sémantique que la catégorie globale).
-	if has(PurgeScopeHotspotUsers) {
-		dropUser := map[string]bool{}
-		keptUsers := make([]model.HotspotUser, 0, len(dbm.HotspotUsers))
-		for _, u := range dbm.HotspotUsers {
-			if u.AccountID == accID && u.Kind != "voucher" {
-				dropUser[u.ID] = true
-				counts.HotspotUsers++
-				continue
-			}
-			keptUsers = append(keptUsers, u)
-		}
-		dbm.HotspotUsers = keptUsers
-		if len(dropUser) > 0 {
-			keptSessions := dbm.Sessions[:0]
-			for _, s := range dbm.Sessions {
-				if dropUser[s.UserID] {
-					counts.Sessions++
-					continue
-				}
-				keptSessions = append(keptSessions, s)
-			}
-			dbm.Sessions = keptSessions
-		}
-	}
-
-	// 4. Profils / forfaits du compte.
-	if has(PurgeScopeProfiles) {
-		kept := dbm.Profiles[:0]
-		for _, p := range dbm.Profiles {
-			if p.AccountID == accID {
-				counts.Profiles++
-				continue
-			}
-			kept = append(kept, p)
-		}
-		dbm.Profiles = kept
-	}
-
-	// 5. Lots du compte + leurs vouchers RESTANTS (cascade — les tickets
-	//    déjà retirés par le scope « vouchers » ne comptent pas deux fois).
-	if has(PurgeScopeBatches) {
-		batchIDs := map[string]bool{}
-		keptBatches := dbm.Batches[:0]
-		for _, b := range dbm.Batches {
-			if b.AccountID == accID {
-				batchIDs[b.ID] = true
-				counts.Batches++
-				continue
-			}
-			keptBatches = append(keptBatches, b)
-		}
-		dbm.Batches = keptBatches
-		if len(batchIDs) > 0 {
-			keptUsers := dbm.HotspotUsers[:0]
-			for _, u := range dbm.HotspotUsers {
-				if u.AccountID == accID && u.Kind == "voucher" && batchIDs[u.BatchID] {
-					counts.Vouchers++
-					continue
-				}
-				keptUsers = append(keptUsers, u)
-			}
-			dbm.HotspotUsers = keptUsers
-		}
-	}
-
-	// 6. Revendeurs du compte + leurs transactions (mêmes garanties que la
-	//    catégorie globale : les vouchers déjà générés restent valides).
-	if has(PurgeScopeResellers) {
-		resIDs := map[string]bool{}
-		keptResellers := dbm.Resellers[:0]
-		for _, res := range dbm.Resellers {
-			if res.AccountID == accID {
-				resIDs[res.ID] = true
-				counts.Resellers++
-				continue
-			}
-			keptResellers = append(keptResellers, res)
-		}
-		dbm.Resellers = keptResellers
-		if len(resIDs) > 0 {
-			keptTx := dbm.Transactions[:0]
-			for _, t := range dbm.Transactions {
-				if t.AccountID == accID && resIDs[t.ResellerID] {
-					counts.Transactions++
-					continue
-				}
-				keptTx = append(keptTx, t)
-			}
-			dbm.Transactions = keptTx
-		}
-	}
-
-	// 7. Ventes du compte.
-	if has(PurgeScopeSales) {
-		kept := dbm.Sales[:0]
-		for _, s := range dbm.Sales {
-			if s.AccountID == accID {
-				counts.Sales++
-				continue
-			}
-			kept = append(kept, s)
-		}
-		dbm.Sales = kept
-	}
-
-	// 8. Sessions actives restantes du compte.
-	if has(PurgeScopeSessions) {
-		kept := dbm.Sessions[:0]
-		for _, s := range dbm.Sessions {
-			if s.AccountID == accID {
-				counts.Sessions++
-				continue
-			}
-			kept = append(kept, s)
-		}
-		dbm.Sessions = kept
-	}
-
-	// 9. Journaux du compte : utilisateurs, activité, notifications,
-	//    commandes agent (file d'attente incluse).
-	if has(PurgeScopeLogs) {
-		keptLogs := dbm.UserLogs[:0]
-		for _, l := range dbm.UserLogs {
-			if l.AccountID == accID {
-				counts.Logs++
-				continue
-			}
-			keptLogs = append(keptLogs, l)
-		}
-		dbm.UserLogs = keptLogs
-		keptActivity := dbm.Activity[:0]
-		for _, act := range dbm.Activity {
-			if act.AccountID == accID {
-				counts.Logs++
-				continue
-			}
-			keptActivity = append(keptActivity, act)
-		}
-		dbm.Activity = keptActivity
-		keptNotif := dbm.NotifLog[:0]
-		for _, nl := range dbm.NotifLog {
-			if nl.AccountID == accID {
-				counts.Logs++
-				continue
-			}
-			keptNotif = append(keptNotif, nl)
-		}
-		dbm.NotifLog = keptNotif
-		keptCommands := dbm.Commands[:0]
-		for _, c := range dbm.Commands {
-			if c.AccountID == accID {
-				counts.Logs++
-				continue
-			}
-			keptCommands = append(keptCommands, c)
-		}
-		dbm.Commands = keptCommands
-	}
-
-	// 10. Gabarits de tickets du compte.
-	if has(PurgeScopeTemplates) {
-		kept := dbm.Templates[:0]
-		for _, tp := range dbm.Templates {
-			if tp.AccountID == accID {
-				counts.Templates++
-				continue
-			}
-			kept = append(kept, tp)
-		}
-		dbm.Templates = kept
-	}
-
-	// Journal d'activité — écrit APRÈS la purge, SUR LE COMPTE CIBLÉ
-	// (traçabilité côté client : « par la plateforme ») ; si la catégorie
-	// journaux était purgée, cette ligne est la première du journal neuf.
-	summary := purgeAccountSummaryFR(accName, counts, all)
-	a.logActivityBy(r, db, accID, "system", summary)
-	a.store.Save()
-	a.store.Unlock()
-	a.clearGateways()
-
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "summary": summary, "purged": counts})
-}
-
-// purgeAccountSummaryFR — bilan lisible de la purge ciblée (journal + toast).
-func purgeAccountSummaryFR(accName string, c PurgeCounts, all bool) string {
-	var parts []string
-	if c.Routers > 0 {
-		parts = append(parts, fmt.Sprintf("%d routeur(s) simulé(s)", c.Routers))
-	}
-	if c.HotspotUsers > 0 {
-		parts = append(parts, fmt.Sprintf("%d utilisateur(s) hotspot", c.HotspotUsers))
-	}
-	if c.Vouchers > 0 {
-		parts = append(parts, fmt.Sprintf("%d voucher(s)", c.Vouchers))
-	}
-	if c.Profiles > 0 {
-		parts = append(parts, fmt.Sprintf("%d profil(s)", c.Profiles))
-	}
-	if c.Batches > 0 {
-		parts = append(parts, fmt.Sprintf("%d lot(s) de vouchers", c.Batches))
-	}
-	if c.Resellers > 0 {
-		parts = append(parts, fmt.Sprintf("%d revendeur(s)", c.Resellers))
-	}
-	if c.Transactions > 0 {
-		parts = append(parts, fmt.Sprintf("%d transaction(s)", c.Transactions))
-	}
-	if c.Sales > 0 {
-		parts = append(parts, fmt.Sprintf("%d vente(s)", c.Sales))
-	}
-	if c.Sessions > 0 {
-		parts = append(parts, fmt.Sprintf("%d session(s)", c.Sessions))
-	}
-	if c.Logs > 0 {
-		parts = append(parts, fmt.Sprintf("%d entrée(s) de journaux", c.Logs))
-	}
-	if c.Templates > 0 {
-		parts = append(parts, fmt.Sprintf("%d gabarit(s)", c.Templates))
-	}
-	if len(parts) == 0 {
-		return "Purge ciblée du compte «" + accName + "» : rien à supprimer (données déjà absentes)"
-	}
-	prefix := "Purge ciblée du compte «" + accName + "» (par la plateforme) — "
-	if all {
-		prefix = "Purge totale du compte «" + accName + "» (par la plateforme) — "
-	}
-	return prefix + strings.Join(parts, ", ")
 }

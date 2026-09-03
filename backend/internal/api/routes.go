@@ -147,7 +147,10 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/billing/invoice/{id}", a.handleBillingInvoice)
 	mux.HandleFunc("POST /api/admin/wipe", a.requireRole(3, a.handleWipe))
 	mux.HandleFunc("POST /api/admin/reload", a.requireRole(3, a.handleReload))
-	// Purge des données par catégories (UI Paramètres) — voir handlers_purge.go.
+	// Purge des données par catégories (UI Paramètres plateforme) — voir
+	// handlers_purge.go. FUSION : portée GLOBALE (accountId absent/vide —
+	// tous les comptes) ou CIBLÉE (accountId renseigné — ce compte seul).
+	// L'ancien POST /api/admin/purge/account est fusionné dans cet endpoint.
 	// NB : POST /api/admin/reset (régénération du seed démo) a été SUPPRIMÉ —
 	// c'était la cause du retour des données de test et de la disparition des
 	// routeurs réels. Aucun endpoint ne régénère de données démo.
@@ -157,11 +160,9 @@ func (a *API) Handler() http.Handler {
 	// l'ancien seed (routeurs simulés + cascade, revendeurs res-1…res-5 +
 	// leurs transactions) — préserve les données réelles du compte.
 	mux.HandleFunc("POST /api/admin/purge-demo", a.requireRole(3, a.handlePurgeDemo))
-	// Purge CIBLÉE par compte (zone sensible — console plateforme) :
-	// compteurs par élément pour chaque compte + purge de catégories
-	// sélectionnées sur UN compte client (les autres ne sont jamais touchés).
+	// Compteurs par élément de CHAQUE compte (alimente le sélecteur de
+	// portée de la purge fusionnée ; l'exécution passe par POST /purge).
 	mux.HandleFunc("GET /api/admin/purge/accounts", a.requireRole(3, a.handlePurgeAccountsStats))
-	mux.HandleFunc("POST /api/admin/purge/account", a.requireRole(3, a.handlePurgeAccount))
 
 	// Administration plateforme (rôle admin uniquement)
 	mux.HandleFunc("GET /api/admin/accounts", a.requireRole(3, a.handleAdminAccounts))

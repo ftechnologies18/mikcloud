@@ -1,12 +1,15 @@
-// Tests de la purge CIBLÉE par compte (zone sensible — console plateforme) :
+// Tests de la purge FUSIONNÉE (Paramètres plateforme) :
+//   - GET  /api/admin/purge/stats   : compteurs globaux (tous comptes) ;
 //   - GET  /api/admin/purge/accounts : compteurs par élément pour chaque compte ;
-//   - POST /api/admin/purge/account  : suppression par catégories sur UN compte.
+//   - POST /api/admin/purge         : exécution portée GLOBALE (accountId vide)
+//     ou CIBLÉE (accountId renseigné — l'ancien /purge/account est fusionné).
 //
-// Garanties vérifiées : isolation stricte (les données des AUTRES comptes
-// restent intactes), préservation des routeurs réels et des comptes, cascades
-// conformes (sessions fermées avec les utilisateurs, vouchers des lots,
-// transactions des revendeurs, entités des routeurs simulés), ligne de
-// traçabilité écrite sur le compte ciblé, erreurs 400/404 défensives.
+// Garanties vérifiées : isolation stricte en portée ciblée (les données des
+// AUTRES comptes restent intactes), préservation des routeurs réels et des
+// comptes, cascades conformes (sessions fermées avec les utilisateurs/tickets,
+// vouchers des lots, transactions des revendeurs, entités des routeurs
+// simulés), ligne de traçabilité écrite sur le compte ciblé, erreurs 400/404
+// défensives, sélection explicite exigée (scopes vide → 400).
 //
 // AUCUNE connexion réseau réelle (pas de PostgreSQL) : store JSON éphémère,
 // token plateforme forgé avec le secret de test.
@@ -152,6 +155,9 @@ func purgeCountIn(t *testing.T, out map[string]any, field string) int {
 	return int(v)
 }
 
+// TestPurgeTargetedAccountIsolation — portée CIBLÉE (accountId) : purge de
+// vouchers + utilisateurs + ventes + journaux + sessions sur A uniquement ;
+// B témoin strictement intact.
 func TestPurgeTargetedAccountIsolation(t *testing.T) {
 	st, ts, token := newPurgeTestServer(t)
 	accA, accB := purgeSeed(t, st)
@@ -175,10 +181,11 @@ func TestPurgeTargetedAccountIsolation(t *testing.T) {
 		t.Fatalf("A : journaux attendus 2, obtenu %d", got)
 	}
 
-	// 2. Purge ciblée sur A : vouchers + utilisateurs + ventes + journaux
-	//    + sessions (les routeurs, profil, lot, revendeur, transaction,
-	//    gabarit de A et TOUT B restent).
-	status, out := doJSON(t, ts, "POST", "/api/admin/purge/account", token, map[string]any{
+	// 2. Purge ciblée sur A (endpoint FUSIONNÉ : accountId dans le corps) :
+	//    vouchers + utilisateurs + ventes + journaux + sessions (les
+	//    routeurs, profil, lot, revendeur, transaction, gabarit de A et
+	//    TOUT B restent).
+	status, out := doJSON(t, ts, "POST", "/api/admin/purge", token, map[string]any{
 		"accountId": accA,
 		"scopes":    []string{"vouchers", "hotspot_users", "sales", "sessions", "logs"},
 	})
@@ -272,15 +279,15 @@ func TestPurgeTargetedAccountIsolation(t *testing.T) {
 	}
 }
 
-// TestPurgeTargetedAccountCascade — scope « all » : purge totale du compte
-// (cascade du routeur simulé : voucher/lot/vente attachés ; lots restants +
-// leurs vouchers ; revendeurs + transactions ; profil, gabarit, journaux) —
-// B et le routeur réel de A restent intacts.
+// TestPurgeTargetedAccountCascade — portée ciblée, scope « all » : purge
+// totale du compte (cascade du routeur simulé : voucher/lot/vente attachés ;
+// lots restants + leurs vouchers ; revendeurs + transactions ; profil,
+// gabarit, journaux) — B et le routeur réel de A restent intacts.
 func TestPurgeTargetedAccountCascade(t *testing.T) {
 	st, ts, token := newPurgeTestServer(t)
 	accA, accB := purgeSeed(t, st)
 
-	status, out := doJSON(t, ts, "POST", "/api/admin/purge/account", token, map[string]any{
+	status, out := doJSON(t, ts, "POST", "/api/admin/purge", token, map[string]any{
 		"accountId": accA,
 		"scopes":    []string{"all"},
 	})
@@ -339,34 +346,169 @@ func TestPurgeTargetedAccountCascade(t *testing.T) {
 	st.Unlock()
 }
 
-// TestPurgeTargetedAccountGuards — validations défensives : compte manquant,
-// compte inconnu, catégorie inconnue, aucune catégorie exploitable.
-func TestPurgeTargetedAccountGuards(t *testing.T) {
+// TestPurgeGlobalUnified — portée GLOBALE (accountId ABSENT) : le scope
+// « vouchers » supprime les tickets de TOUS les comptes (routeur réel ET
+// compte B), sans toucher aux lots, utilisateurs réguliers, ventes ni
+// sessions hors tickets. C'est la sémantique fusionnée : la grille de
+// catégories est identique dans les deux portées.
+func TestPurgeGlobalUnified(t *testing.T) {
+	st, ts, token := newPurgeTestServer(t)
+	accA, accB := purgeSeed(t, st)
+
+	// Compteurs globaux : 3 vouchers (vSim est en cascade → exclu), 1 compte
+	// client, 2 ventes, 2 sessions.
+	status, stats := doJSON(t, ts, "GET", "/api/admin/purge/stats", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("GET purge/stats : statut %d (%v)", status, stats)
+	}
+	if got := int(stats["vouchers"].(float64)); got != 2 {
+		t.Fatalf("stats globales : vouchers attendus 2, obtenu %d", got)
+	}
+	if got := int(stats["hotspotUsers"].(float64)); got != 1 {
+		t.Fatalf("stats globales : utilisateurs attendus 1, obtenu %d", got)
+	}
+
+	// Purge GLOBALE des vouchers uniquement (pas d'accountId dans le corps).
+	// NB : le ticket vSim attaché au routeur SIMULÉ part aussi — la cascade
+	// simulée n'est déclenchée que par le scope « simulated_routers », tandis
+	// que le scope « vouchers » s'applique à TOUS les tickets de la portée.
+	status, out := doJSON(t, ts, "POST", "/api/admin/purge", token, map[string]any{
+		"scopes": []string{"vouchers"},
+	})
+	if status != http.StatusOK {
+		t.Fatalf("purge globale vouchers : statut %d (%v)", status, out)
+	}
+	if got := purgeCountIn(t, out, "vouchers"); got != 3 { // vSim + vReal (A) + vB (B)
+		t.Fatalf("purge globale : vouchers attendus 3, obtenu %d", got)
+	}
+	if got := purgeCountIn(t, out, "sessions"); got != 2 { // sessions de vReal et vB
+		t.Fatalf("purge globale : sessions attendues 2, obtenu %d", got)
+	}
+
+	st.Lock()
+	db := st.Data()
+	// Aucun voucher restant (A et B)…
+	if n := len(db.HotspotUsers); n != 1 {
+		t.Fatalf("vouchers purgés partout : 1 utilisateur régulier restant attendu, obtenu %d", n)
+	}
+	if db.HotspotUsers[0].ID != "hu-pa-u" {
+		t.Fatalf("l'utilisateur régulier doit rester, obtenu %s", db.HotspotUsers[0].ID)
+	}
+	// …mais les LOTS, routeurs, ventes, revendeurs restent.
+	if n := len(db.Batches); n != 2 {
+		t.Fatalf("lots conservés (scope vouchers seul) : attendu 2, obtenu %d", n)
+	}
+	if n := len(db.Routers); n != 2 {
+		t.Fatalf("routeurs conservés : attendu 2, obtenu %d", n)
+	}
+	if n := len(db.Sales); n != 2 {
+		t.Fatalf("ventes conservées : attendu 2, obtenu %d", n)
+	}
+	// Session témoin de B (voucher VB purgé → sa session part) et la session
+	// de A n'avait pas de ticket lié restant : 0 session restante.
+	if n := len(db.Sessions); n != 0 {
+		t.Fatalf("sessions des tickets purgés : 0 restante attendue, obtenu %d", n)
+	}
+	_ = accA
+	_ = accB
+	st.Unlock()
+}
+
+// TestPurgeGlobalAll — portée GLOBALE, scope « all » : purge totale des
+// données métier (routeur simulé en cascade, lots, ventes, revendeurs +
+// transactions, journaux) ; routeur réel, profils, gabarits et comptes
+// préservés.
+func TestPurgeGlobalAll(t *testing.T) {
+	st, ts, token := newPurgeTestServer(t)
+	accA, accB := purgeSeed(t, st)
+
+	status, out := doJSON(t, ts, "POST", "/api/admin/purge", token, map[string]any{
+		"scopes": []string{"all"},
+	})
+	if status != http.StatusOK {
+		t.Fatalf("purge globale « all » : statut %d (%v)", status, out)
+	}
+	if got := purgeCountIn(t, out, "routers"); got != 1 {
+		t.Fatalf("purge all globale : routeur simulé attendu 1, obtenu %d", got)
+	}
+	if got := purgeCountIn(t, out, "batches"); got != 2 {
+		t.Fatalf("purge all globale : lots attendus 2, obtenu %d", got)
+	}
+	if got := purgeCountIn(t, out, "transactions"); got != 2 {
+		t.Fatalf("purge all globale : transactions attendues 2 (cascade revendeurs), obtenu %d", got)
+	}
+
+	st.Lock()
+	db := st.Data()
+	// Routeur réel préservé, données métier vides sur les deux comptes.
+	if n := len(db.Routers); n != 1 || db.Routers[0].Mode != "agent" {
+		t.Fatalf("purge all globale : seul le routeur réel doit rester, obtenu %d", n)
+	}
+	if n := countBy(db.HotspotUsers, accA, func(u model.HotspotUser) string { return u.AccountID }) +
+		countBy(db.HotspotUsers, accB, func(u model.HotspotUser) string { return u.AccountID }); n != 0 {
+		t.Fatalf("purge all globale : tous les utilisateurs/tickets doivent partir, obtenu %d", n)
+	}
+	if n := countBy(db.Sales, accA, func(s model.Sale) string { return s.AccountID }) +
+		countBy(db.Sales, accB, func(s model.Sale) string { return s.AccountID }); n != 0 {
+		t.Fatalf("purge all globale : toutes les ventes doivent partir, obtenu %d", n)
+	}
+	// Comptes préservés (jamais purgés) ; « all » = TOUTES les catégories,
+	// profils et gabarits compris — seuls les comptes et l'équipe restent.
+	hasA, hasB := false, false
+	for _, acc := range db.Accounts {
+		switch acc.ID {
+		case accA:
+			hasA = true
+		case accB:
+			hasB = true
+		}
+	}
+	if !hasA || !hasB {
+		t.Fatalf("comptes jamais purgés : A présent=%v, B présent=%v", hasA, hasB)
+	}
+	if n := countBy(db.Profiles, accA, func(p model.Profile) string { return p.AccountID }); n != 0 {
+		t.Fatalf("purge all : le profil fait partie des catégories (« all »), obtenu %d", n)
+	}
+	st.Unlock()
+}
+
+// TestPurgeGuards — validations défensives : scope inconnu, aucune
+// catégorie exploitable, scopes absents, compte inconnu en portée ciblée.
+func TestPurgeGuards(t *testing.T) {
 	st, ts, token := newPurgeTestServer(t)
 	accA, _ := purgeSeed(t, st)
 
-	status, _ := doJSON(t, ts, "POST", "/api/admin/purge/account", token, map[string]any{
-		"scopes": []string{"vouchers"},
+	// Scope inconnu (portée globale).
+	status, _ := doJSON(t, ts, "POST", "/api/admin/purge", token, map[string]any{
+		"scopes": []string{"categorie_fantome"},
 	})
 	if status != http.StatusBadRequest {
-		t.Fatalf("accountId manquant : statut %d attendu 400", status)
+		t.Fatalf("catégorie inconnue : statut %d attendu 400", status)
 	}
-	status, _ = doJSON(t, ts, "POST", "/api/admin/purge/account", token, map[string]any{
+	// Scopes blancs uniquement → sélection inexploitable.
+	status, _ = doJSON(t, ts, "POST", "/api/admin/purge", token, map[string]any{
+		"scopes": []string{"  "},
+	})
+	if status != http.StatusBadRequest {
+		t.Fatalf("aucune catégorie exploitable : statut %d attendu 400", status)
+	}
+	// Scopes ABSENTS → 400 (sélection explicite exigée, les deux portées).
+	status, _ = doJSON(t, ts, "POST", "/api/admin/purge", token, map[string]any{})
+	if status != http.StatusBadRequest {
+		t.Fatalf("scopes absents : statut %d attendu 400", status)
+	}
+	// Portée ciblée : compte inconnu → 404.
+	status, _ = doJSON(t, ts, "POST", "/api/admin/purge", token, map[string]any{
 		"accountId": "acc-inconnu", "scopes": []string{"vouchers"},
 	})
 	if status != http.StatusNotFound {
 		t.Fatalf("compte inconnu : statut %d attendu 404", status)
 	}
-	status, _ = doJSON(t, ts, "POST", "/api/admin/purge/account", token, map[string]any{
+	// Portée ciblée : catégorie inconnue → 400.
+	status, _ = doJSON(t, ts, "POST", "/api/admin/purge", token, map[string]any{
 		"accountId": accA, "scopes": []string{"categorie_fantome"},
 	})
 	if status != http.StatusBadRequest {
-		t.Fatalf("catégorie inconnue : statut %d attendu 400", status)
-	}
-	status, _ = doJSON(t, ts, "POST", "/api/admin/purge/account", token, map[string]any{
-		"accountId": accA, "scopes": []string{"  "},
-	})
-	if status != http.StatusBadRequest {
-		t.Fatalf("aucune catégorie exploitable : statut %d attendu 400", status)
+		t.Fatalf("catégorie inconnue (ciblée) : statut %d attendu 400", status)
 	}
 }

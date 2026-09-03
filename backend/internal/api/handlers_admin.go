@@ -571,11 +571,11 @@ func (a *API) handlePlatformTeamDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleWipe — POST /api/admin/wipe : compatibilité — purge TOTALE déléguée
-// au moteur de purge (scope « all », voir handlers_purge.go). Les données
-// métier sont supprimées sans toucher aux comptes, à l'équipe, aux réglages
-// ni aux routeurs réels (agent/real) ; rien n'est régénéré.
+// au moteur de purge (scope « all », portée globale, voir handlers_purge.go).
+// Les données métier sont supprimées sans toucher aux comptes, à l'équipe,
+// aux réglages ni aux routeurs réels (agent/real) ; rien n'est régénéré.
 func (a *API) handleWipe(w http.ResponseWriter, r *http.Request) {
-	a.purgeScopes(w, r, nil) // nil → scope « all »
+	a.purgeScopes(w, r, "", nil) // accID vide → portée globale ; nil → scope « all »
 }
 
 // handleReload — POST /api/admin/reload : réimporte l'état complet depuis la

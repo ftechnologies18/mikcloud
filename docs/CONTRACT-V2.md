@@ -145,30 +145,38 @@
 - CSV : séparateur `;`, BOM UTF-8 (`\ufeff`), Content-Type `text/csv; charset=utf-8`,
   header `Content-Disposition: attachment; filename="…"` (suivre le pattern de
   `handleAccountingExport`).
-- **Purge ciblée par compte (zone sensible — console plateforme, 2026-09-03)** :
-  complément CHIRURGICAL de la purge globale `POST /api/admin/purge` —
-  l'admin plateforme supprime des catégories d'éléments sur UN compte client ;
-  les autres comptes ne sont JAMAIS touchés. Mêmes garanties structurelles
-  (jamais les routeurs réels, comptes, équipe, réglages, abonnement,
-  facturation ; ne régénère rien ; réaffectation de slices non-nil → synchro
-  différentielle Neon) :
+- **Purge des données FUSIONNÉE (zone sensible — console plateforme, 2026-09-03,
+  fusion anti-redondance)** : la purge GLOBALE et la purge CIBLÉE par compte
+  partagent UN SEUL moteur (`purgeScopes`) et UN SEUL endpoint d'exécution ;
+  la grille de 10 catégories est IDENTIQUE dans les deux portées. Mêmes
+  garanties structurelles (jamais les routeurs réels, comptes, équipe,
+  réglages, abonnement, facturation ; ne régénère rien ; réaffectation de
+  slices non-nil → synchro différentielle Neon) :
+  - `GET /api/admin/purge/stats` → compteurs GLOBAUX (tous comptes confondus)
+    `{simulatedRouters, vouchers, hotspotUsers, profiles, batches, resellers,
+    transactions, sales, sessions, logs, templates, realRouters}` — les
+    entités des routeurs simulés sont exclues de leur catégorie (cascade) ;
+    tickets et comptes client comptés séparément.
   - `GET /api/admin/purge/accounts` → tableau
-    `[{id, name, owner, status, stats:{simulatedRouters, hotspotUsers,
-    vouchers, profiles, batches, resellers, transactions, sales, sessions,
-    logs, templates}}]` — compteurs live par compte ; règles de comptage de
-    `PurgeStats` (entités des routeurs simulés exclues de leur catégorie :
-    partent en cascade) ; tri par nom.
-  - `POST /api/admin/purge/account` `{accountId, scopes:[…]}` →
-    `{ok, summary, purged}` (forme de la purge globale + champ `vouchers`).
-    Scopes : identifiants de la purge globale + **`vouchers`** (tickets
-    kind=voucher, LOTS conservés) ; `all` = toutes les catégories ciblables
-    du compte. Cascades restreintes au compte : routeurs simulés (utilisateurs,
-    sessions, trafic, commandes, bindings, schedulers, lots, ventes attachés) ;
-    lots → leurs vouchers restants ; revendeurs → leurs transactions ;
-    utilisateurs/tickets → sessions liées closes. `400` scope inconnu /
-    compte manquant, `404` compte introuvable. Ligne d'activité écrite APRÈS
-    la purge sur le compte ciblé (« … (par la plateforme) »). Réservé rôle
-    admin plateforme (comme la purge globale).
+    `[{id, name, owner, status, stats:{…}}]` — mêmes compteurs PAR COMPTE
+    (alimente le sélecteur de portée de l'UI) ; tri par nom.
+  - `POST /api/admin/purge` `{scopes:[…], accountId?}` → `{ok, summary,
+    purged}` — portée UNIFIÉE :
+    - `accountId` ABSENT/VIDE → purge GLOBALE (les catégories cochées sont
+      supprimées sur TOUS les comptes — comportement historique) ;
+    - `accountId` RENSEIGNÉ → purge CIBLÉE (seules les données de CE compte
+      sont supprimées ; les autres ne sont JAMAIS touchés ; `404` si inconnu ;
+      l'ancien `POST /api/admin/purge/account` est FUSIONNÉ ici).
+    Scopes : **`vouchers`** (tickets kind=voucher, LOTS conservés),
+    `simulated_routers` (cascade : utilisateurs, tickets, sessions, trafic,
+    commandes, bindings, schedulers, lots, ventes attachés), `hotspot_users`
+    (comptes client, hors tickets), `profiles`, `batches` (+ leurs vouchers
+    restants), `resellers` (+ leurs transactions), `sales`, `sessions`,
+    `logs`, `templates` ; `all` = les 10 catégories. `400` scope inconnu /
+    sélection absente (purge destructive : sélection explicite exigée),
+    `404` compte introuvable. Ligne d'activité écrite APRÈS la purge —
+    journal de l'admin en portée globale, journal du compte ciblé en portée
+    ciblée (« … (par la plateforme) »). Réservé rôle admin plateforme.
 
 ---
 

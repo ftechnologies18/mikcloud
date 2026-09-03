@@ -160,6 +160,14 @@ type Router struct {
 	BoardName  string `json:"boardName,omitempty"`
 	FreeHddMb  int    `json:"freeHddMb,omitempty"`
 	TotalHddMb int    `json:"totalHddMb,omitempty"`
+	// Sécurité S6 — détection d'identité routeur dupliquée : vrai quand
+	// l'empreinte (identity + modèle RouterOS) déclarée par l'agent est déjà
+	// portée par un routeur ACTIF d'un autre compte (fenêtre 24 h). L'agent
+	// est alors refusé (409 au register, aucune commande au check-in) tant
+	// que le conflit persiste ; levée automatique dès que le porteur disparaît
+	// ou dort plus de 24 h. Jamais exposé au client de la console : c'est un
+	// signal anti-abus interne (le client voit « hors ligne »).
+	IdentityConflict bool `json:"identityConflict,omitempty"`
 }
 
 // Profile — profil hotspot (débit, durée, prix, validité).

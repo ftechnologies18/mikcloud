@@ -178,6 +178,79 @@ func touchAgent(r *model.Router) {
 	r.LastSeen = model.NowISO()
 }
 
+// ---------------------------------------------------------------------------
+// Sécurité S6 — détection d'identité routeur dupliquée (anti-fermage d'essai)
+// ---------------------------------------------------------------------------
+// L'agent déclare son empreinte RouterOS (System Identity + board-name) au
+// register (script d'installation : /system identity get name + /system
+// resource get board-name). Un client sous paywall (guard P3) peut créer un
+// nouveau compte d'essai et y re-provisionner le MÊME routeur physique : le
+// nouveau script écrase l'ancien scheduler, l'ancien compte devient muet.
+// Le dédoublonnage des coordonnées (S5, handlers_auth.go) bloque les
+// coordonnées réutilisées, pas les identités inventées. Ce garde-fou ferme
+// la boucle :
+//
+//   - POST /agent/register : l'empreinte déclarée est comparée aux routeurs
+//     ACTIFS (LastSeen < 24 h) des AUTRES comptes. Conflit → 409 code
+//     « router_identity_conflict » + flag persistant IdentityConflict.
+//   - GET /agent/cmd : un routeur flaggé ne reçoit AUCUNE commande tant que
+//     le porteur de l'empreinte reste actif ; le flag se lève automatiquement
+//     dès que le porteur disparaît (suppression du routeur fantôme par le
+//     support — impersonation) ou dort plus de 24 h — le check-in reprend
+//     alors normalement.
+//
+// Exclusions assumées : identités génériques (« mikrotik », défaut RouterOS,
+// ou vide — des milliers d'appareils non renommés la portent) et MÊME compte
+// (re-register, rotate-token, doublon logique = gestion interne du client,
+// pas de l'abus plateforme). Fenêtre de 24 h : compromis documenté contre le
+// faux positif « routeur revendu » — le support débloque en supprimant le
+// routeur fantôme de l'ancien compte, ou l'attente naturelle sort son
+// LastSeen de la fenêtre. Limite assumée : l'identity est forgeable par qui
+// contrôle le routeur — la barrière vise le fermage de masse paresseux et
+// rend TOUTE tentative visible dans le journal d'activité (traçabilité).
+
+// identityConflictWindow — fenêtre de récence du porteur de l'empreinte :
+// un routeur qui n'a plus check-in depuis plus de 24 h n'est plus considéré
+// actif (l'appareil physique a vraisemblablement quitté ce compte).
+const identityConflictWindow = 24 * time.Hour
+
+// normalizeRouterIdent — normalisation d'empreinte : trim + minuscules.
+func normalizeRouterIdent(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
+}
+
+// genericRouterIdentity — identité non discriminante (défaut RouterOS ou
+// vide) : jamais de conflit sur une empreinte générique.
+func genericRouterIdentity(ident string) bool {
+	return ident == "" || ident == "mikrotik"
+}
+
+// identityHolderLocked — renvoie le routeur qui PORTE déjà cette empreinte
+// (identity + modèle, normalisées) sur un AUTRE compte, vu ACTIF récemment
+// (LastSeen < identityConflictWindow) ; nil sinon. Appelable sous verrou
+// store. Garde interne : empreinte non discriminante → nil.
+func identityHolderLocked(db *model.DB, router *model.Router, ident, mod string) *model.Router {
+	if genericRouterIdentity(ident) || mod == "" {
+		return nil
+	}
+	now := time.Now().UTC()
+	for i := range db.Routers {
+		other := &db.Routers[i]
+		if other.ID == router.ID || other.AccountID == router.AccountID {
+			continue // même routeur (re-register) ou même compte (gestion interne)
+		}
+		if normalizeRouterIdent(other.Host) != ident || normalizeRouterIdent(other.BoardName) != mod {
+			continue // empreinte différente
+		}
+		seen, err := time.Parse(time.RFC3339, other.LastSeen)
+		if err != nil || now.Sub(seen) >= identityConflictWindow {
+			continue // porteur jamais check-in ou endormi hors fenêtre
+		}
+		return other
+	}
+	return nil
+}
+
 // queueCommandLocked — dépose une commande en file (sous verrou ; Save à charge
 // de l'appelant). Déduplique les read_state déjà en attente. La commande porte
 // l'identifiant du compte du routeur (isolation multi-tenant).
@@ -337,9 +410,36 @@ func (a *API) handleAgentRegister(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if ident := strings.TrimSpace(vals.Get("identity")); ident != "" && router.Host == "" {
-		router.Host = ident
+	// S6 — empreinte de l'appareil : l'identity COURANTE est enregistrée à
+	// chaque register (avant : seulement si Host vide — un renommage RouterOS
+	// n'était jamais répercuté), le modèle board-name complète l'empreinte.
+	identL := normalizeRouterIdent(vals.Get("identity"))
+	modL := normalizeRouterIdent(vals.Get("model"))
+	if identL != "" {
+		router.Host = strings.TrimSpace(vals.Get("identity"))
 	}
+	if modL != "" {
+		router.BoardName = modL
+	}
+	// S6 — détection de conflit : l'empreinte déclarée est-elle déjà portée
+	// par un routeur actif d'un autre compte ? (fermage d'essai : même appareil
+	// physique re-provisionné sur un compte frais). Refus + flag persistant ;
+	// le check-in (cmd) restera bloqué tant que le conflit vit.
+	if holder := identityHolderLocked(db, router, identL, modL); holder != nil {
+		router.IdentityConflict = true
+		a.logActivity(db, router.AccountID, "router",
+			"Inscription agent REFUSÉE : identité « "+vals.Get("identity")+" » ("+modL+") déjà active sur un autre compte — contact du support requis")
+		a.store.Save()
+		name, hName := router.Name, holder.Name
+		a.store.Unlock()
+		log.Printf("agent/register: REFUS conflit identité %q/%q — routeur « %s » déjà porté par « %s » (autre compte)", identL, modL, name, hName)
+		writeErrCode(w, http.StatusConflict, "router_identity_conflict",
+			"Identité de routeur déjà active sur un autre compte — contactez le support MikCloud si vous êtes le propriétaire légitime de cet appareil", nil)
+		return
+	}
+	// S6 — register sans conflit (re-installation, redémarrage…) : le flag
+	// éventuel d'un conflit précédent est levé.
+	router.IdentityConflict = false
 	a.logActivity(db, router.AccountID, "router", "Routeur «"+router.Name+"» connecté à MikCloud (agent inscrit)")
 	a.store.Save()
 	name := router.Name
@@ -389,6 +489,30 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUpgradeRequired)
 		_, _ = w.Write([]byte("# mikcloud: RouterOS 7.19+ requis (validation TLS stricte) — mettez a jour le routeur\n"))
 		return
+	}
+
+	// Sécurité S6 — un routeur marqué en conflit d'identité (empreinte déjà
+	// active sur un autre compte, cf. handleAgentRegister) ne reçoit AUCUNE
+	// commande : le fermage d'essai ne doit rien produire (ni read_state, ni
+	// écritures sur le routeur). Le conflit est RE-VÉRIFIÉ à chaque check-in :
+	// dès que le porteur disparaît (suppression par le support) ou dort
+	// (LastSeen > 24 h), le flag se lève automatiquement et le service normal
+	// reprend. Le script agent n'affiche pas ce refus (réponse texte hors
+	// contrat 200) : le routeur reste simplement sans instruction.
+	if router.IdentityConflict {
+		if holder := identityHolderLocked(db, router, normalizeRouterIdent(router.Host), normalizeRouterIdent(router.BoardName)); holder != nil {
+			a.store.Save() // persiste le touchAgent du check-in
+			name, hName := router.Name, holder.Name
+			a.store.Unlock()
+			log.Printf("agent/cmd: REFUS conflit identité — aucune commande pour « %s » (empreinte portée par « %s », autre compte)", name, hName)
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte("# mikcloud: identite de routeur deja active sur un autre compte - contactez le support\n"))
+			return
+		}
+		// Conflit disparu : levée du flag, tracée, le check-in continue.
+		router.IdentityConflict = false
+		a.logActivity(db, router.AccountID, "router", "Conflit d'identité levé — agent « "+router.Name+" » réactivé automatiquement")
+		a.store.Save()
 	}
 
 	// P0 (audit Mikhmon) — F1 : l'agent reçoit l'enforcement des

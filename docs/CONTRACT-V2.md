@@ -97,6 +97,31 @@
     libère ses coordonnées. Limite assumée : formes de numéro différentes
     (« 0701020304 » vs « 2250701020304 ») restent distinctes — bornées par
     le quota d'inscription par IP (S3).
+- **Sécurité S6 (détection d'identité routeur dupliquée, 2026-09-03)** :
+  - Anti-fermage d'essai côté PROTOCOLE AGENT : l'empreinte RouterOS
+    (System Identity + board-name, normalisées trim/minuscules) déclarée au
+    `POST /agent/register` est comparée aux routeurs ACTIFS (`LastSeen` <
+    24 h) des AUTRES comptes. Conflit → `409` + code machine
+    `router_identity_conflict` + flag persistant `routers.identity_conflict`
+    (colonne idempotente). Le flag est porté par le modèle (jamais exposé à
+    la console client).
+  - `GET /agent/cmd` : un routeur flaggé ne reçoit AUCUNE commande
+    (`409`, texte `# mikcloud: identite de routeur deja active…`) tant que
+    le porteur reste actif — le fermage ne doit rien produire. Levée
+    AUTOMATIQUE à chaque check-in dès que le porteur disparaît (suppression
+    du routeur fantôme par le support, impersonation) ou dort (`LastSeen` >
+    24 h) ; la levée est tracée dans le journal d'activité du compte.
+  - Exclusions : empreintes génériques (identity vide ou « mikrotik » —
+    défaut RouterOS) et MÊME compte (re-register, rotate-token, doublons
+    logiques = gestion interne). Au register sans conflit, l'identity
+    COURANTE écrase `Host` (un renommage RouterOS est désormais répercuté —
+    avant : figé au premier register) et `BoardName` est rempli.
+  - Limites assumées (documentées) : identity forgeable par qui contrôle le
+    routeur (barrière contre le fermage paresseux de masse + traçabilité
+    complète dans le journal d'activité) ; fenêtre 24 h = compromis contre
+    le faux positif « routeur revendu » (le support débloque en supprimant
+    le fantôme). Traçage : ligne d'activité « Inscription agent REFUSÉE »
+    sur le compte cible + journal serveur.
 - Isolation multi-tenant : toute entité portée par `accountID` ; helpers existants
   `accountScope(r)`, `findRouterScoped`, etc.
 - 3 modes routeur : `simulated` | `real` | `agent`. **Matrice de support des

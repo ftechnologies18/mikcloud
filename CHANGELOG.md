@@ -5,6 +5,28 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-03 — Sécurité vague S6 : détection d'identité routeur dupliquée
+
+### Ajoutés
+- **Détection d'identité routeur dupliquée (S6)** — ferme la boucle du fermage
+  d'essai côté protocole agent : un client sous paywall (guard P3) créait un
+  compte neuf et y re-provisionnait le MÊME routeur physique (nouveau script
+  écrasant l'ancien scheduler). L'empreinte RouterOS (System Identity +
+  board-name) déclarée au `POST /agent/register` est comparée aux routeurs
+  ACTIFS (`LastSeen` < 24 h) des autres comptes.
+  - Conflit → `409` code `router_identity_conflict` au register + flag
+    persistant (`routers.identity_conflict`, migration idempotente Neon).
+  - `GET /agent/cmd` : aucune commande livrée à un routeur flaggé tant que
+    le porteur reste actif ; levée AUTOMATIQUE (tracée en activité) dès que
+    le porteur disparaît ou dort > 24 h.
+  - Exclusions : identity générique (« mikrotik » / vide) et même compte
+    (re-register, rotate-token). Au passage : l'identity courante écrase
+    désormais `Host` à chaque register (un renommage RouterOS était figé au
+    premier) et `BoardName` est rempli au register.
+  - Procédure support : débloquer un faux positif en supprimant le routeur
+    fantôme de l'ancien compte (impersonation) — le check-in reprend en 45 s.
+  - Contrat : section « Sécurité S6 » dans docs/CONTRACT-V2.md.
+
 ## 2026-09-03 — Sécurité vague S5 : dédoublonnage email/WhatsApp à l'inscription
 
 ### Ajoutés

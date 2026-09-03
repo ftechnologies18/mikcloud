@@ -284,7 +284,7 @@ function SecurityCard() {
     currentPassword !== "" && newPassword !== "" && confirmPassword !== "" && !changeMutation.isPending;
 
   function submitPassword() {
-    if (newPassword.length < 8) {
+    if (newPassword.length < 10) {
       toast.error(t("settings.passwordTooShort"));
       return;
     }
@@ -332,7 +332,7 @@ function SecurityCard() {
             onChange={(e) => setNewPassword(e.target.value)}
             disabled={changeMutation.isPending}
           />
-          <p className="text-xs text-muted-foreground">{t("signup.passwordHint", "Minimum 8 caractères")}</p>
+          <p className="text-xs text-muted-foreground">{t("signup.passwordHint", "Minimum 10 caractères")}</p>
         </div>
         <div className="space-y-2">
           <Label htmlFor="plat-confirm-password">{t("settings.confirmPassword")}</Label>

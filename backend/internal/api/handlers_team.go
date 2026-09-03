@@ -87,8 +87,9 @@ func (a *API) handleTeamCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Identifiant invalide : 3-32 caractères (a-z, 0-9, . _ -)")
 		return
 	}
-	if len(req.Password) < 8 {
-		writeErr(w, http.StatusBadRequest, "Mot de passe : 8 caractères minimum")
+	// Sécurité S2 — politique centralisée (10 caractères, denylist, ≠ username).
+	if msg := passwordPolicyViolation(req.Password, req.Username); msg != "" {
+		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
 	// Rôles attribuables par un owner : manager / owner.
@@ -152,9 +153,13 @@ func (a *API) handleTeamUpdate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Rôle invalide (manager ou owner)")
 		return
 	}
-	if req.Password != nil && len(*req.Password) < 8 {
-		writeErr(w, http.StatusBadRequest, "Mot de passe : 8 caractères minimum")
-		return
+	// Sécurité S2 — politique centralisée (le username du membre est chargé
+	// plus bas : le contrôle ≠ identifiant ne s'applique pas à ce stade).
+	if req.Password != nil {
+		if msg := passwordPolicyViolation(*req.Password, ""); msg != "" {
+			writeErr(w, http.StatusBadRequest, msg)
+			return
+		}
 	}
 
 	a.store.Lock()

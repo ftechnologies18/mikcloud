@@ -13,15 +13,16 @@ import (
 
 // API — registre des routes + dépendances.
 type API struct {
-	store  *store.Store
-	secret string
-	gwMu   sync.Mutex
-	gws    map[string]routeros.Gateway
+	store   *store.Store
+	secret  string
+	gwMu    sync.Mutex
+	gws     map[string]routeros.Gateway
+	pinLock *pinLimiter // sécurité S2 — verrouillage PIN revendeur par compte
 }
 
 // New construit l'API.
 func New(s *store.Store, jwtSecret string) *API {
-	return &API{store: s, secret: jwtSecret, gws: map[string]routeros.Gateway{}}
+	return &API{store: s, secret: jwtSecret, gws: map[string]routeros.Gateway{}, pinLock: newPinLimiter()}
 }
 
 // Handler — mux complet, protégé par le middleware d'authentification.

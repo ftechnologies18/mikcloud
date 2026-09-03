@@ -100,7 +100,7 @@ export default function SignupModal({ open, onOpenChange }: SignupModalProps) {
   const canSubmitStep1 =
     name.trim().length > 0 &&
     username.trim().length >= 3 &&
-    password.length >= 8;
+    password.length >= 10;
   const emailValid = EMAIL_RE.test(email.trim());
   const phoneValid = phoneDigits.length >= 8 && phoneDigits.length <= 15;
   const canSubmitStep2 = emailValid && phoneValid && country !== "";
@@ -237,7 +237,7 @@ export default function SignupModal({ open, onOpenChange }: SignupModalProps) {
                 </button>
               </div>
               <p className="text-xs text-muted-foreground">
-                {t("signup.passwordHint", "Minimum 8 caractères")}
+                {t("signup.passwordHint", "Minimum 10 caractères")}
               </p>
             </motion.div>
 

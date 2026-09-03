@@ -271,8 +271,9 @@ func (a *API) handleAdminAccountCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if len(req.Password) < 8 {
-		writeErr(w, http.StatusBadRequest, "Le mot de passe doit faire au moins 8 caractères")
+	// Sécurité S2 — politique centralisée (10 caractères, denylist, ≠ username).
+	if msg := passwordPolicyViolation(req.Password, username); msg != "" {
+		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
 
@@ -469,8 +470,9 @@ func (a *API) handlePlatformTeamCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if len(req.Password) < 8 {
-		writeErr(w, http.StatusBadRequest, "Le mot de passe doit faire au moins 8 caractères")
+	// Sécurité S2 — politique centralisée (10 caractères, denylist, ≠ username).
+	if msg := passwordPolicyViolation(req.Password, username); msg != "" {
+		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
 

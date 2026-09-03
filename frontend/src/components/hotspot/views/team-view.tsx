@@ -114,8 +114,8 @@ function MemberDialog({ open, onClose, member }: MemberDialogProps) {
   const submit = () => {
     if (!name.trim()) return toast.error(t("team.errName"));
     if (!editing && username.trim().length < 3) return toast.error(t("team.errUsername"));
-    if (!editing && password.length < 8) return toast.error(t("team.errPassword"));
-    if (editing && password && password.length < 8) return toast.error(t("team.errPassword"));
+    if (!editing && password.length < 10) return toast.error(t("team.errPassword"));
+    if (editing && password && password.length < 10) return toast.error(t("team.errPassword"));
     mutation.mutate();
   };
 

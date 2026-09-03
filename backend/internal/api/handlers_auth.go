@@ -13,6 +13,13 @@ import (
 	"mikcloud/hotspot-api/internal/store"
 )
 
+// dummyPasswordHash — hash bcrypt factice (sécurité S2) : utilisé quand
+// l'identifiant soumis est inconnu, pour exécuter quand même une comparaison
+// bcrypt — le temps de réponse d'un utilisateur inconnu égale celui d'un
+// mauvais mot de passe (aucun oracle de timing sur l'énumération
+// d'identifiants).
+var dummyPasswordHash = auth.HashPassword("mikcloud-dummy-verification", "")
+
 func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Username string `json:"username"`
@@ -52,12 +59,23 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	a.store.Unlock()
-	if id == "" || !auth.CheckPassword(req.Password, salt, hash) {
+	// Sécurité S2 — journal d'échec (cf. auth_audit.go) : la réponse reste
+	// générique, la raison fine n'existe que côté serveur. Identifiant
+	// inconnu : comparaison factice pour égaliser le temps de réponse.
+	if id == "" {
+		_ = auth.CheckPassword(req.Password, "", dummyPasswordHash)
+		a.logAuthFailure(r, "console", req.Username, "unknown_user")
+		writeErr(w, http.StatusBadRequest, "Identifiants invalides")
+		return
+	}
+	if !auth.CheckPassword(req.Password, salt, hash) {
+		a.logAuthFailure(r, "console", req.Username, "bad_password")
 		writeErr(w, http.StatusBadRequest, "Identifiants invalides")
 		return
 	}
 	// Compte désactivé : le login est refusé même avec des identifiants valides.
 	if accID != "" && accStatus == "disabled" {
+		a.logAuthFailure(r, "console", req.Username, "disabled")
 		writeErr(w, http.StatusForbidden, "Compte désactivé — contactez le support")
 		return
 	}
@@ -86,7 +104,8 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 // handlePasswordChange — POST /api/auth/password : l'utilisateur connecté
 // modifie SON PROPRE mot de passe. Exige le mot de passe actuel (une session
-// laissée ouverte ne suffit pas), 8 caractères minimum, différent de l'actuel.
+// laissée ouverte ne suffit pas), la politique S2 (10 caractères minimum +
+// denylist, cf. password_policy.go), différent de l'actuel.
 // Le flag PasswordSetByUser protège le nouveau mot de passe contre l'override
 // ADMIN_PASSWORD au prochain démarrage/reload (tant que l'opérateur ne change
 // pas la variable). Sécurité S1-A3 : l'époque de session est incrémentée —
@@ -111,8 +130,10 @@ func (a *API) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Mot de passe actuel et nouveau mot de passe requis")
 		return
 	}
-	if len(req.NewPassword) < 8 {
-		writeErr(w, http.StatusBadRequest, "Le nouveau mot de passe doit faire au moins 8 caractères")
+	// Sécurité S2 — politique centralisée (username non encore chargé ici :
+	// le contrôle ≠ identifiant est ignoré, longueur et denylist tiennent).
+	if msg := passwordPolicyViolation(req.NewPassword, ""); msg != "" {
+		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
 	if req.NewPassword == req.CurrentPassword {
@@ -188,8 +209,9 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if len(req.Password) < 8 {
-		writeErr(w, http.StatusBadRequest, "Le mot de passe doit faire au moins 8 caractères")
+	// Sécurité S2 — politique centralisée (10 caractères, denylist, ≠ username).
+	if msg := passwordPolicyViolation(req.Password, username); msg != "" {
+		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
 	name := strings.TrimSpace(req.Name)

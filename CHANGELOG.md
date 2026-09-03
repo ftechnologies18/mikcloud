@@ -5,6 +5,51 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-03 — Sécurité vague S2 : durcissement P1 anti brute-force
+
+### Ajoutés
+- **Verrouillage PIN revendeur par compte (S2-B2)** — `POST /api/reseller/login` :
+  après 5 échecs consécutifs de PIN sur le MÊME revendeur, toute nouvelle
+  tentative est refusée `429` + `Retry-After` pendant 15 minutes — même avec
+  le bon PIN, même depuis une IP neuve (clé = ID interne du revendeur,
+  insensible à l'usurpation de X-Forwarded-For ; un succès efface
+  l'historique). Comble le trou du limiteur par IP face aux attaques
+  distribuées contre un compte ciblé (espace PIN 4-6 chiffres). État en
+  mémoire (instance unique) ; sous verrou, le hachage bcrypt n'est même pas
+  exécuté. Contrepartie documentée : un attaquant peut verrouiller le PIN
+  d'un revendeur légitime 15 min (réinitialisable par le gérant).
+- **Journal des échecs d'authentification (S2)** — chaque échec de connexion
+  console ou PIN émet une ligne JSON `{"event":"auth_failure",…}` sur la
+  sortie standard (horodatage RFC3339, IP au premier hop XFF, kind
+  `console`/`reseller_pin`, identifiant soumis, raison fine : `unknown_user`,
+  `bad_password`, `disabled`, `unknown_reseller`, `bad_pin`, `locked`,
+  `reseller_disabled`, `account_disabled`) — agrégeable depuis les logs
+  Render. Les réponses HTTP restent strictement génériques (aucun oracle
+  d'énumération) ; la comparaison bcrypt factice sur identifiant inconnu
+  supprime l'oracle de timing.
+- **Politique centralisée des mots de passe (S2-B4)** — remplaçant les
+  vérifications « 8 caractères » dupliquées, appliquée aux 6 points de
+  définition (inscription, changement personnel, création et
+  réinitialisation d'un membre d'équipe, création d'un compte client par la
+  plateforme, création d'un admin plateforme) : 10 caractères minimum
+  (runes), 72 octets maximum (limite bcrypt), interdiction des mots de
+  passe les plus courants (denylist : fuites publiques, clavier FR, termes
+  métier MikCloud/MikroTik) et du nom d'utilisateur. Les mots de passe
+  existants plus courts restent valides à la connexion (aucune rupture).
+
+### Modifiés
+- Frontend : hints et validations de longueur alignés 8 → 10 caractères
+  (inscription, équipe, comptes plateforme, paramètres — fr et en).
+
+### Tests
+- 6 nouveaux tests dans le paquet `api` : politique de mots de passe
+  (table-driven, casse/denylist/accents/72 octets), verrou PIN unitaire
+  (horloge injectable : seuil, expiration, reset au succès, étanchéité
+  inter-revendeurs), verrou PIN E2E sur la surface HTTP (5 échecs → `429` +
+  `Retry-After` même au bon PIN, revendeur voisin épargné, message
+  anti-énumération inchangé), journal JSON (IP premier hop XFF, repli
+  RemoteAddr).
+
 ## 2026-09-02 — Sécurité vague S1 : durcissement P0 pré-lancement commercial
 
 ### Ajoutés

@@ -723,7 +723,7 @@ function SecurityCard() {
     currentPassword !== "" && newPassword !== "" && confirmPassword !== "" && !changeMutation.isPending;
 
   function submitPassword() {
-    if (newPassword.length < 8) {
+    if (newPassword.length < 10) {
       toast.error(t("settings.passwordTooShort"));
       return;
     }

@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -51,6 +52,10 @@ func (a *API) requireReseller(next http.HandlerFunc) http.HandlerFunc {
 
 // handleResellerLogin — POST /api/reseller/login {username, pin}.
 // Retourne un token scopé (role=reseller) + le profil de tournée.
+// Sécurité S2 — verrouillage par compte (cf. pinlock.go) : après 5 échecs
+// consécutifs de PIN sur le MÊME revendeur, toute tentative est refusée
+// 429 + Retry-After pendant 15 minutes (même bon PIN, même IP neuve) ; les
+// échecs sont journalisés (cf. auth_audit.go), la réponse reste générique.
 func (a *API) handleResellerLogin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Username string `json:"username"`
@@ -90,15 +95,37 @@ func (a *API) handleResellerLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	a.store.Unlock()
 
-	if res == nil || pinHash == "" || !auth.CheckPassword(req.Pin, "", pinHash) {
+	// Sécurité S2 — verrou par compte AVANT toute vérification : un revendeur
+	// ciblé par trop d'échecs est refusé sans même consommer un hachage
+	// bcrypt (le verrou survit au changement d'IP : clé = ID interne).
+	if res != nil {
+		if locked, remaining := a.pinLock.check(res.ID); locked {
+			a.logAuthFailure(r, "reseller_pin", req.Username, "locked")
+			w.Header().Set("Retry-After", strconv.Itoa(int(remaining.Seconds())+1))
+			writeErr(w, http.StatusTooManyRequests, "Trop de tentatives — réessayez dans quelques minutes")
+			return
+		}
+	}
+	if res == nil {
+		a.logAuthFailure(r, "reseller_pin", req.Username, "unknown_reseller")
 		writeErr(w, http.StatusBadRequest, "Identifiant ou PIN invalide")
 		return
 	}
+	if pinHash == "" || !auth.CheckPassword(req.Pin, "", pinHash) {
+		a.pinLock.fail(res.ID)
+		a.logAuthFailure(r, "reseller_pin", req.Username, "bad_pin")
+		writeErr(w, http.StatusBadRequest, "Identifiant ou PIN invalide")
+		return
+	}
+	// PIN correct : l'historique d'échecs du revendeur est effacé.
+	a.pinLock.reset(res.ID)
 	if res.Status != "active" {
+		a.logAuthFailure(r, "reseller_pin", req.Username, "reseller_disabled")
 		writeErr(w, http.StatusForbidden, "Compte revendeur désactivé")
 		return
 	}
 	if accStatus == "disabled" {
+		a.logAuthFailure(r, "reseller_pin", req.Username, "account_disabled")
 		writeErr(w, http.StatusForbidden, "Compte désactivé — contactez le support")
 		return
 	}

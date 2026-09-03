@@ -28,6 +28,25 @@
     nosniff`, `Strict-Transport-Security: max-age=31536000; includeSubDomains`,
     `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`,
     `Cache-Control: no-store`.
+- **Sécurité S2 (durcissement P1 anti brute-force, 2026-09-03)** :
+  - Politique de mots de passe centralisée sur les 6 points de définition
+    (inscription, `POST /api/auth/password`, `POST /api/team`,
+    `PUT /api/team/{id}`, création d'un compte client plateforme, création
+    d'un admin plateforme) : 10 caractères minimum (runes), 72 octets
+    maximum (limite bcrypt), différent du nom d'utilisateur, denylist des
+    mots de passe les plus courants → `400` avec le message correspondant.
+    Les mots de passe existants plus courts restent valides à la connexion.
+  - Verrouillage PIN revendeur par compte : après 5 échecs consécutifs sur
+    le même revendeur, `POST /api/reseller/login` renvoie `429` +
+    `Retry-After` pendant 15 minutes (clé = ID interne du revendeur,
+    insensible à l'IP ; un succès efface l'historique). Réponses d'échec
+    inchangées (`400` générique) — aucun oracle d'énumération.
+  - Journal des échecs d'authentification : une ligne JSON
+    `{"event":"auth_failure",…}` par échec (console, PIN) sur la sortie
+    standard du service — horodatage, IP (premier hop XFF), kind, login
+    soumis, raison fine (`unknown_user`, `bad_password`, `disabled`,
+    `unknown_reseller`, `bad_pin`, `locked`, `reseller_disabled`,
+    `account_disabled`) ; réponses HTTP inchangées.
 - Isolation multi-tenant : toute entité portée par `accountID` ; helpers existants
   `accountScope(r)`, `findRouterScoped`, etc.
 - 3 modes routeur : `simulated` | `real` | `agent`. **Matrice de support des

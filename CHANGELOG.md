@@ -5,6 +5,40 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-03 — UX K2 : fusion des paramètres dupliqués (client ↔ plateforme)
+
+### Modifiés
+- **Fusion anti-redondance (K2)** — plusieurs réglages existaient en double
+  entre la vue client « Paramètres » et la console « Paramètres plateforme » ;
+  chaque préoccupation a désormais UN seul foyer :
+  - **Mot de passe + 2FA** : cartes extraites dans un module partagé
+    (`parts/security-cards.tsx`), utilisé par les deux vues. La console
+    plateforme récupère la version riche (bascule de visibilité) et surtout la
+    **2FA, jusque-là inaccessible à l'admin en mode plateforme** (le guard de
+    vue renvoie la page client vers la console plateforme).
+  - **Maintenance plateforme** (rechargement base, nettoyage démo, purges) :
+    déplacée de l'onglet « Avancé » de la vue client (où ces outils GLOBAUX
+    apparaissaient pendant les sessions support, en plein console client) vers
+    un onglet « Maintenance » dédié de la console plateforme.
+  - **Zone sensible fusionnée dans la purge par catégories** : l'ancienne
+    carte « Purger tout / Vider le journal » (simple `window.confirm`) était un
+    sous-ensemble moins sûr de la purge par catégories — vider le journal se
+    fait désormais en cochant « Journaux », avec confirmation par saisie
+    « PURGER » et bilan détaillé, partout.
+  - **Langue** : carte retirée de la console plateforme (elle existait déjà
+    dans le menu utilisateur, présent sur chaque écran, et dans l'onglet
+    Général du client).
+- Console « Paramètres plateforme » réorganisée en 3 onglets : **Général**
+  (identité + inscriptions), **Sécurité** (mot de passe + 2FA),
+  **Maintenance** (base, démo, purges globale + ciblée).
+- Vue client « Paramètres » : onglet « Avancé » renommé **« Sécurité »**
+  (mot de passe + 2FA uniquement) ; i18n nettoyé (clés mortes retirées,
+  clés maintenance renommées `platformSettings.*`).
+
+### Aucun impact
+- Contrat API inchangé (aucun endpoint ni schéma modifié — refonte UI/i18n
+  uniquement) ; Neon et Render sans changement.
+
 ## 2026-09-03 — Sécurité vague S6 : détection d'identité routeur dupliquée
 
 ### Ajoutés

@@ -1,36 +1,29 @@
 "use client";
 
-// Vue Paramètres — réorganisée en 4 onglets (J), chacun portant UNE
-// préoccupation au lieu d'une grille plate de 9 cartes mélangées :
-//   • Général    — organisation (nom, devise, timezone, Wave) + langue ;
-//   • Abonnement — formules SaaS (Essentiel/Illimité), échéance, Wave ;
-//   • Hotspot    — expiration des vouchers, personnalisation tickets
-//                  (DNS + logo, F2) et guide de connexion routeur réel ;
-//   • Avancé     — sécurité (mot de passe) + maintenance admin plateforme
-//                  (rechargement base, purge par catégories).
+// Vue Paramètres — réorganisée en onglets, chacun portant UNE préoccupation :
+//   • Général  — organisation (nom, devise, timezone, Wave) + langue ;
+//   • Hotspot  — expiration des vouchers, personnalisation tickets
+//                (DNS + logo, F2) et guide de connexion routeur réel ;
+//   • Sécurité — mot de passe + 2FA (cartes PARTAGÉES parts/security-cards,
+//                même implémentation que la console plateforme).
+// Fusion anti-redondance (K2) : la maintenance admin plateforme (rechargement
+// base, nettoyage démo, purges globale + ciblée) vit UNIQUEMENT dans l'onglet
+// Maintenance de la console plateforme — elle était dupliquée ici (outils
+// GLOBAUX dans une console client) et inaccessibles à l'admin en mode
+// plateforme, le guard de vue y bloquant cette page.
 
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Building2,
   CalendarClock,
-  Database,
-  Eraser,
-  Eye,
-  EyeOff,
   Globe,
   ImagePlus,
   Image as ImageIcon,
-  Copy,
-  KeyRound,
   Languages,
-  Loader2,
   Router as RouterIcon,
   ShieldCheck,
-  Smartphone,
   Ticket,
-  Trash2,
-  TriangleAlert,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -38,24 +31,13 @@ import { toast } from "sonner";
 import { api } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
 import type { AppSettings, ExpiryPolicyMode } from "@/lib/hotspot/types";
-import { useHotspotStore } from "@/lib/hotspot/store";
 import { PageHeader } from "@/components/hotspot/page-header";
+import { SecurityCard, TwoFactorCard } from "@/components/hotspot/parts/security-cards";
 import { SETTINGS_QUERY_KEY, useSettings } from "@/components/hotspot/parts/sd-currency";
 import { qrWithLogoDataUrl } from "@/components/hotspot/parts/template-render";
-import { AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -79,74 +61,9 @@ interface SettingsForm {
   waveLink?: string;
 }
 
-// Réponse de POST /api/admin/reload — résumé de l'état réimporté.
-interface ReloadStats {
-  ok: boolean;
-  accounts: number;
-  users: number;
-  hotspotUsers: number;
-  routers: number;
-  sessions: number;
-}
-
-// Réponse de GET /api/admin/purge/stats — compteurs par catégorie de purge.
-// Les routeurs réels (realRouters) sont informatifs : JAMAIS purgés.
-interface PurgeStats {
-  simulatedRouters: number;
-  hotspotUsers: number;
-  profiles: number;
-  batches: number;
-  resellers: number;
-  transactions: number;
-  sales: number;
-  sessions: number;
-  logs: number;
-  templates: number;
-  realRouters: number;
-}
-
-interface PurgeCounts {
-  routers: number;
-  hotspotUsers: number;
-  profiles: number;
-  batches: number;
-  resellers: number;
-  transactions: number;
-  sales: number;
-  sessions: number;
-  logs: number;
-  templates: number;
-}
-
-interface PurgeResult {
-  ok: boolean;
-  summary: string;
-  purged: PurgeCounts;
-}
-
 export default function SettingsView() {
-  const { t, tf } = useI18n();
-  const queryClient = useQueryClient();
+  const { t } = useI18n();
   const { data, isLoading } = useSettings();
-  const user = useHotspotStore((s) => s.user);
-  // Administration de la base et purge : réservées à l'admin plateforme
-  // (les endpoints exigent le rôle côté serveur — défense en profondeur).
-  const isAdmin = user?.role === "admin";
-
-  const reloadMutation = useMutation({
-    mutationFn: () => api<ReloadStats>("/api/admin/reload", { method: "POST" }),
-    onSuccess: (stats) => {
-      toast.success(
-        tf("settings.reloadedToast", {
-          accounts: stats.accounts,
-          users: stats.hotspotUsers,
-          routers: stats.routers,
-        }),
-      );
-      queryClient.invalidateQueries();
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
 
   if (isLoading || !data) {
     return (
@@ -166,9 +83,8 @@ export default function SettingsView() {
     <div className="space-y-4 sm:space-y-6">
       <PageHeader title={t("settings.title")} description={t("settings.description")} />
 
-      {/* J — Paramètres réorganisés en onglets : chaque onglet porte UNE
-          préoccupation (identité, facturation, métier hotspot, maintenance)
-          au lieu d'une grille plate de 9 cartes mélangées. */}
+      {/* Paramètres réorganisés en onglets : chaque onglet porte UNE
+          préoccupation (identité, métier hotspot, sécurité). */}
       <Tabs defaultValue="general" className="gap-4 sm:gap-6">
         <TabsList className="glass-chip h-auto w-full justify-start overflow-x-auto rounded-xl p-1">
           <TabsTrigger value="general" className="gap-1.5 px-3 py-1.5 text-xs sm:px-4 sm:text-sm">
@@ -233,7 +149,10 @@ export default function SettingsView() {
           </div>
         </TabsContent>
 
-        {/* ── Onglet AVANCÉ — sécurité + maintenance admin ── */}
+        {/* ── Onglet SÉCURITÉ — préférences personnelles (cartes partagées).
+            La maintenance admin plateforme (rechargement base, nettoyage démo,
+            purges) a été DÉPLACÉE vers l'onglet Maintenance de la console
+            plateforme (fusion anti-redondance K2). */}
         <TabsContent value="advanced">
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-6">
             {/* Sécurité — changement de mot de passe (POST /api/auth/password,
@@ -242,381 +161,11 @@ export default function SettingsView() {
 
             {/* Sécurité S4 — 2FA TOTP (pairage, activation, désactivation) */}
             <TwoFactorCard />
-
-            {/* Base de données — admin plateforme uniquement (POST /api/admin/reload
-                admin-only) */}
-            {isAdmin && (
-              <Card className="gap-4 py-4 sm:py-6">
-                <CardHeader className="px-4 sm:px-6">
-                  <CardTitle className="flex items-center gap-2 text-base">
-                    <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
-                      <Database className="size-4" />
-                    </span>
-                    {t("settings.database")}
-                  </CardTitle>
-                  <CardDescription>{t("settings.databaseDesc")}</CardDescription>
-                </CardHeader>
-                <CardFooter className="px-4 sm:px-6">
-                  <Button
-                    variant="outline"
-                    className="h-10"
-                    onClick={() => reloadMutation.mutate()}
-                    disabled={reloadMutation.isPending}
-                  >
-                    {reloadMutation.isPending ? t("settings.reloading") : t("settings.reload")}
-                  </Button>
-                </CardFooter>
-              </Card>
-            )}
-
-            {/* Nettoyage des données de démonstration — admin plateforme
-                uniquement (endpoint admin-only) : suppression chirurgicale
-                des artefacts de l'ancien seed, données réelles préservées. */}
-            {isAdmin && <DemoCleanupCard />}
-
-            {/* Purge des données — admin plateforme uniquement ; endpoint purge
-                admin-only. Les routeurs réels (agent), comptes, équipe et réglages
-                ne sont JAMAIS touchés, et rien n'est régénéré. */}
-            {isAdmin && <PurgeCard />}
           </div>
         </TabsContent>
       </Tabs>
     </div>
   );
-}
-
-// Carte « Données de démonstration » — nettoyage CHIRURGICAL des artefacts
-// hérités de l'ancien seed de démo (BuildSeed, supprimé du code) : routeurs
-// simulés + cascade (utilisateurs/tickets/lots/ventes/sessions) et revendeurs
-// de démonstration « res-1 »…« res-5 » + leurs transactions. Ne touche NI les
-// routeurs réels (agent), NI les profils, NI les revendeurs réels, NI les
-// réglages. Confirmation simple : rien de réel n'est supprimé, l'opération
-// est idempotente (re-cliquer sur une base propre ne fait rien).
-function DemoCleanupCard() {
-  const { t } = useI18n();
-  const queryClient = useQueryClient();
-  const [open, setOpen] = useState(false);
-
-  const cleanMutation = useMutation({
-    mutationFn: () => api<PurgeResult>("/api/admin/purge-demo", { method: "POST" }),
-    onSuccess: (res) => {
-      toast.success(res.summary);
-      setOpen(false);
-      queryClient.invalidateQueries(); // toutes les vues impactées
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  return (
-    <Card className="gap-4 py-4 sm:py-6 lg:col-span-2">
-      <CardHeader className="px-4 sm:px-6">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <Eraser className="size-4 text-amber-500" />
-          {t("settings.purgeDemo.title")}
-        </CardTitle>
-        <CardDescription>{t("settings.purgeDemo.desc")}</CardDescription>
-      </CardHeader>
-      <CardContent className="px-4 sm:px-6">
-        <ul className="space-y-1.5 text-sm text-muted-foreground">
-          <li className="flex items-start gap-2">
-            <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-muted-foreground/60" aria-hidden />
-            {t("settings.purgeDemo.itemRouters")}
-          </li>
-          <li className="flex items-start gap-2">
-            <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-muted-foreground/60" aria-hidden />
-            {t("settings.purgeDemo.itemResellers")}
-          </li>
-        </ul>
-      </CardContent>
-      <CardFooter className="px-4 sm:px-6">
-        <Button
-          variant="outline"
-          className="h-10"
-          onClick={() => setOpen(true)}
-          disabled={cleanMutation.isPending}
-        >
-          <Eraser className="size-4" />
-          {t("settings.purgeDemo.action")}
-        </Button>
-      </CardFooter>
-
-      {/* Confirmation simple — pas de saisie « PURGER » : la cible est
-          strictement limitée aux artefacts de démonstration. */}
-      <AlertDialog open={open} onOpenChange={setOpen}>
-        <AlertDialogContent className="max-h-[85vh] overflow-y-auto">
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t("settings.purgeDemo.confirmTitle")}</AlertDialogTitle>
-            <AlertDialogDescription>{t("settings.purgeDemo.confirmDesc")}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={cleanMutation.isPending}>{t("common.cancel")}</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={cleanMutation.isPending}
-              onClick={(event) => {
-                event.preventDefault(); // laisse la mutation fermer le dialog
-                cleanMutation.mutate();
-              }}
-            >
-              {cleanMutation.isPending ? (
-                <>
-                  <Loader2 className="mr-2 size-4 animate-spin" />
-                  {t("settings.purgeDemo.running")}
-                </>
-              ) : (
-                t("settings.purgeDemo.confirm")
-              )}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </Card>
-  );
-}
-
-// Carte « Purge des données » — remplace l'ancienne zone sensible (boutons
-// reset/wipe). L'ancien POST /api/admin/reset régénérait le jeu de démo :
-// c'était la cause du retour des données de test et de la disparition des
-// routeurs réels. Désormais : 9 catégories cochables avec compteurs live
-// (GET /api/admin/purge/stats), confirmation avec saisie obligatoire de
-// « PURGER », bilan détaillé en toast, état vide vert quand tout est propre.
-function PurgeCard() {
-  const { t, tf } = useI18n();
-  const queryClient = useQueryClient();
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [purgeOpen, setPurgeOpen] = useState(false);
-  const [confirmText, setConfirmText] = useState("");
-
-  const statsQuery = useQuery({
-    queryKey: ["purge-stats"],
-    queryFn: () => api<PurgeStats>("/api/admin/purge/stats"),
-  });
-  const stats = statsQuery.data;
-
-  const purgeMutation = useMutation({
-    mutationFn: (scopes: string[]) =>
-      api<PurgeResult>("/api/admin/purge", { method: "POST", body: { scopes } }),
-    onSuccess: (res) => {
-      toast.success(purgeToast(res, tf));
-      setPurgeOpen(false);
-      setConfirmText("");
-      setSelected(new Set());
-      queryClient.invalidateQueries(); // compteurs + toutes les vues impactées
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  const categories: { scope: string; count: number; label: string; hint?: string }[] = stats
-    ? [
-        {
-          scope: "simulated_routers",
-          count: stats.simulatedRouters,
-          label: t("settings.purge.simulatedRouters"),
-          hint: t("settings.purge.simulatedRoutersHint"),
-        },
-        { scope: "hotspot_users", count: stats.hotspotUsers, label: t("settings.purge.hotspotUsers") },
-        { scope: "profiles", count: stats.profiles, label: t("settings.purge.profiles") },
-        { scope: "batches", count: stats.batches, label: t("settings.purge.batches") },
-        {
-          scope: "resellers",
-          count: stats.resellers,
-          label: t("settings.purge.resellers"),
-          hint: stats.transactions > 0 ? tf("settings.purge.resellersHint", { n: stats.transactions }) : undefined,
-        },
-        { scope: "sales", count: stats.sales, label: t("settings.purge.sales") },
-        { scope: "sessions", count: stats.sessions, label: t("settings.purge.sessions") },
-        { scope: "logs", count: stats.logs, label: t("settings.purge.logs") },
-        { scope: "templates", count: stats.templates, label: t("settings.purge.templates") },
-      ]
-    : [];
-
-  const totalPurgeable = categories.reduce((sum, c) => sum + c.count, 0);
-  const clean = stats !== undefined && totalPurgeable === 0;
-
-  const toggle = (scope: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(scope)) {
-        next.delete(scope);
-      } else {
-        next.add(scope);
-      }
-      return next;
-    });
-  };
-
-  const toggleAll = () => {
-    setSelected((prev) => (prev.size === categories.length ? new Set<string>() : new Set(categories.map((c) => c.scope))));
-  };
-
-  const selectedCategories = categories.filter((c) => selected.has(c.scope));
-  const canConfirm = confirmText.trim() === "PURGER" && selectedCategories.length > 0;
-
-  return (
-    <Card className="gap-4 border-destructive/30 py-4 sm:py-6 lg:col-span-2">
-      <CardHeader className="px-4 sm:px-6">
-        <CardTitle className="flex items-center gap-2 text-base text-destructive">
-          <TriangleAlert className="size-4" />
-          {t("settings.purge.title")}
-        </CardTitle>
-        <CardDescription>{t("settings.purge.desc")}</CardDescription>
-      </CardHeader>
-      <CardContent className="px-4 sm:px-6">
-        {statsQuery.isLoading || !stats ? (
-          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-            {Array.from({ length: 9 }).map((_, i) => (
-              <Skeleton key={i} className="h-12 rounded-lg" />
-            ))}
-          </div>
-        ) : clean ? (
-          <div className="flex items-center gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-700 dark:text-emerald-400">
-            <ShieldCheck className="size-5 shrink-0" />
-            <div>
-              <p className="font-medium">{t("settings.purge.empty")}</p>
-              <p className="mt-0.5 text-xs opacity-80">{t("settings.purge.protected")}</p>
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-              {categories.map((c) => (
-                <Label
-                  key={c.scope}
-                  htmlFor={`purge-${c.scope}`}
-                  className="flex cursor-pointer items-start gap-2.5 rounded-lg border p-3 transition-colors hover:bg-muted/50 has-[[data-state=checked]]:border-destructive/50 has-[[data-state=checked]]:bg-destructive/5"
-                >
-                  <Checkbox
-                    id={`purge-${c.scope}`}
-                    checked={selected.has(c.scope)}
-                    onCheckedChange={() => toggle(c.scope)}
-                    className="mt-0.5"
-                  />
-                  <span className="flex min-w-0 flex-1 items-start justify-between gap-2">
-                    <span className="min-w-0">
-                      <span className="block text-sm font-medium leading-tight">{c.label}</span>
-                      {c.hint && <span className="mt-0.5 block text-xs leading-snug text-muted-foreground">{c.hint}</span>}
-                    </span>
-                    <Badge
-                      variant="secondary"
-                      className="shrink-0 tabular-nums"
-                    >
-                      {c.count}
-                    </Badge>
-                  </span>
-                </Label>
-              ))}
-            </div>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-8"
-                onClick={toggleAll}
-                disabled={selected.size === categories.length}
-              >
-                {selected.size === categories.length ? t("settings.purge.clearAll") : t("settings.purge.selectAll")}
-              </Button>
-              <p className="text-xs text-muted-foreground">{t("settings.purge.protected")}</p>
-            </div>
-          </div>
-        )}
-      </CardContent>
-      {!statsQuery.isLoading && stats && !clean && (
-        <CardFooter className="px-4 sm:px-6">
-          <Button
-            variant="destructive"
-            className="h-10"
-            disabled={selectedCategories.length === 0}
-            onClick={() => {
-              setConfirmText("");
-              setPurgeOpen(true);
-            }}
-          >
-            <Trash2 className="size-4" />
-            {t("settings.purge.purgeButton")}
-            {selectedCategories.length > 0 && ` (${selectedCategories.length})`}
-          </Button>
-        </CardFooter>
-      )}
-
-      {/* Confirmation — récapitulatif + saisie obligatoire de « PURGER » */}
-      <AlertDialog
-        open={purgeOpen}
-        onOpenChange={(open) => {
-          setPurgeOpen(open);
-          if (!open) setConfirmText("");
-        }}
-      >
-        <AlertDialogContent className="max-h-[85vh] overflow-y-auto">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="text-destructive">{t("settings.purge.confirmTitle")}</AlertDialogTitle>
-            <AlertDialogDescription>{t("settings.purge.confirmDesc")}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <ul className="max-h-48 space-y-1.5 overflow-y-auto rounded-lg border bg-muted/40 p-3 text-sm">
-            {selectedCategories.map((c) => (
-              <li
-                key={c.scope}
-                className="flex items-center justify-between gap-3"
-              >
-                <span>{c.label}</span>
-                <span className="shrink-0 font-semibold tabular-nums">{c.count}</span>
-              </li>
-            ))}
-          </ul>
-          <div className="space-y-2">
-            <p className="text-sm font-medium">{t("settings.purge.confirmHint")}</p>
-            <Input
-              value={confirmText}
-              onChange={(e) => setConfirmText(e.target.value)}
-              placeholder={t("settings.purge.confirmPlaceholder")}
-              aria-label={t("settings.purge.confirmPlaceholder")}
-              autoComplete="off"
-              disabled={purgeMutation.isPending}
-            />
-          </div>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={purgeMutation.isPending}>{t("common.cancel")}</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-white hover:bg-destructive/90"
-              disabled={!canConfirm || purgeMutation.isPending}
-              onClick={(event) => {
-                event.preventDefault(); // laisse la mutation fermer le dialog
-                purgeMutation.mutate(selectedCategories.map((c) => c.scope));
-              }}
-            >
-              {purgeMutation.isPending ? (
-                <>
-                  <Loader2 className="size-4 animate-spin" />
-                  {t("settings.purge.purging")}
-                </>
-              ) : (
-                t("settings.purge.purgeButton")
-              )}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </Card>
-  );
-}
-
-// purgeToast — bilan du toast construit côté client (i18n) à partir des
-// compteurs renvoyés par l'API.
-function purgeToast(res: PurgeResult, tf: (key: string, vars: Record<string, string | number>) => string): string {
-  const p = res.purged;
-  const parts: string[] = [];
-  if (p.routers > 0) parts.push(tf("settings.purge.cat.routers", { n: p.routers }));
-  if (p.hotspotUsers > 0) parts.push(tf("settings.purge.cat.hotspotUsers", { n: p.hotspotUsers }));
-  if (p.profiles > 0) parts.push(tf("settings.purge.cat.profiles", { n: p.profiles }));
-  if (p.batches > 0) parts.push(tf("settings.purge.cat.batches", { n: p.batches }));
-  if (p.resellers > 0) parts.push(tf("settings.purge.cat.resellers", { n: p.resellers }));
-  if (p.transactions > 0) parts.push(tf("settings.purge.cat.transactions", { n: p.transactions }));
-  if (p.sales > 0) parts.push(tf("settings.purge.cat.sales", { n: p.sales }));
-  if (p.sessions > 0) parts.push(tf("settings.purge.cat.sessions", { n: p.sessions }));
-  if (p.logs > 0) parts.push(tf("settings.purge.cat.logs", { n: p.logs }));
-  if (p.templates > 0) parts.push(tf("settings.purge.cat.templates", { n: p.templates }));
-  if (parts.length === 0) return tf("settings.purge.toastEmpty", {});
-  return tf("settings.purge.toast", { summary: parts.join(" · ") });
 }
 
 // Carte Langue (F11) — bascule FR/EN, appliquée immédiatement (store zustand).
@@ -656,309 +205,6 @@ function LanguageCard() {
           </label>
         </RadioGroup>
       </CardContent>
-    </Card>
-  );
-}
-
-// Champ mot de passe avec bascule de visibilité.
-function PasswordInput({
-  id,
-  value,
-  onChange,
-  placeholder,
-  autoComplete,
-}: {
-  id: string;
-  value: string;
-  onChange: (value: string) => void;
-  placeholder?: string;
-  autoComplete?: string;
-}) {
-  const { t } = useI18n();
-  const [visible, setVisible] = useState(false);
-  return (
-    <div className="relative">
-      <Input
-        id={id}
-        type={visible ? "text" : "password"}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        placeholder={placeholder}
-        autoComplete={autoComplete}
-        className="h-10 pr-10"
-      />
-      <button
-        type="button"
-        onClick={() => setVisible((v) => !v)}
-        aria-label={visible ? t("settings.passwordHide") : t("settings.passwordShow")}
-        className="absolute right-1.5 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-      >
-        {visible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-      </button>
-    </div>
-  );
-}
-
-// Carte Sécurité — changement du mot de passe de connexion de l'utilisateur courant.
-// Le backend exige le mot de passe actuel (une session ouverte ne suffit pas).
-function SecurityCard() {
-  const { t } = useI18n();
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-
-  const changeMutation = useMutation({
-    mutationFn: () =>
-      api<{ ok: boolean }>("/api/auth/password", {
-        method: "POST",
-        body: { currentPassword, newPassword },
-      }),
-    onSuccess: () => {
-      toast.success(t("settings.passwordChangedToast"), {
-        description: t("settings.passwordChangedToastDesc"),
-      });
-      setCurrentPassword("");
-      setNewPassword("");
-      setConfirmPassword("");
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  const canSubmit =
-    currentPassword !== "" && newPassword !== "" && confirmPassword !== "" && !changeMutation.isPending;
-
-  function submitPassword() {
-    if (newPassword.length < 10) {
-      toast.error(t("settings.passwordTooShort"));
-      return;
-    }
-    if (newPassword === currentPassword) {
-      toast.error(t("settings.passwordSame"));
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      toast.error(t("settings.passwordMismatch"));
-      return;
-    }
-    changeMutation.mutate();
-  }
-
-  return (
-    <Card className="gap-4 py-4 sm:py-6">
-      <CardHeader className="px-4 sm:px-6">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
-            <KeyRound className="size-4" />
-          </span>
-          {t("settings.security")}
-        </CardTitle>
-        <CardDescription>{t("settings.securityDesc")}</CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-4 px-4 sm:px-6">
-        <div className="grid gap-2">
-          <Label htmlFor="pwd-current">{t("settings.currentPassword")}</Label>
-          <PasswordInput
-            id="pwd-current"
-            value={currentPassword}
-            onChange={setCurrentPassword}
-            autoComplete="current-password"
-          />
-        </div>
-        <div className="grid gap-2">
-          <Label htmlFor="pwd-new">{t("settings.newPassword")}</Label>
-          <PasswordInput
-            id="pwd-new"
-            value={newPassword}
-            onChange={setNewPassword}
-            autoComplete="new-password"
-          />
-          <p className="text-xs text-muted-foreground">{t("settings.passwordHint")}</p>
-        </div>
-        <div className="grid gap-2">
-          <Label htmlFor="pwd-confirm">{t("settings.confirmPassword")}</Label>
-          <PasswordInput
-            id="pwd-confirm"
-            value={confirmPassword}
-            onChange={setConfirmPassword}
-            autoComplete="new-password"
-          />
-        </div>
-      </CardContent>
-      <CardFooter className="px-4 sm:px-6">
-        <Button className="h-10" onClick={submitPassword} disabled={!canSubmit}>
-          {changeMutation.isPending ? t("settings.passwordChanging") : t("settings.passwordSubmit")}
-        </Button>
-      </CardFooter>
-    </Card>
-  );
-}
-
-// Carte 2FA TOTP (sécurité S4) — statut, activation en deux temps
-// (setup → saisie du code de l'authenticator → activate) puis désactivation
-// exigeant le mot de passe courant. Le secret n'est affiché QUE pendant le
-// pairage ; le statut vient de GET /api/auth/me (champ totpEnabled).
-function TwoFactorCard() {
-  const { t } = useI18n();
-  const queryClient = useQueryClient();
-  const meQuery = useQuery({
-    queryKey: ["totp-status"],
-    queryFn: () => api<{ user: { totpEnabled?: boolean } }>("/api/auth/me"),
-  });
-  const totpEnabled = meQuery.data?.user?.totpEnabled ?? false;
-
-  const [pairing, setPairing] = useState(false);
-  const [secret, setSecret] = useState("");
-  const [otpauth, setOtpauth] = useState("");
-  const [code, setCode] = useState("");
-  const [disablePassword, setDisablePassword] = useState("");
-
-  const setupMutation = useMutation({
-    mutationFn: () =>
-      api<{ secret: string; otpauth: string }>("/api/auth/2fa/setup", { method: "POST" }),
-    onSuccess: (res) => {
-      setSecret(res.secret);
-      setOtpauth(res.otpauth);
-      setPairing(true);
-      setCode("");
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  const activateMutation = useMutation({
-    mutationFn: () =>
-      api<{ ok: boolean }>("/api/auth/2fa/activate", { method: "POST", body: { code } }),
-    onSuccess: () => {
-      toast.success(t("settings.totp.activatedToast"));
-      setPairing(false);
-      setSecret("");
-      setOtpauth("");
-      setCode("");
-      queryClient.invalidateQueries({ queryKey: ["totp-status"] });
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  const disableMutation = useMutation({
-    mutationFn: () =>
-      api<{ ok: boolean }>("/api/auth/2fa/disable", { method: "POST", body: { password: disablePassword } }),
-    onSuccess: () => {
-      toast.success(t("settings.totp.disabledToast"));
-      setDisablePassword("");
-      queryClient.invalidateQueries({ queryKey: ["totp-status"] });
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  return (
-    <Card className="gap-4 py-4 sm:py-6">
-      <CardHeader className="px-4 sm:px-6">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
-            <Smartphone className="size-4" />
-          </span>
-          {t("settings.totp.title")}
-          <Badge variant={totpEnabled ? "default" : "secondary"} className="ml-auto">
-            {totpEnabled ? t("settings.totp.statusOn") : t("settings.totp.statusOff")}
-          </Badge>
-        </CardTitle>
-        <CardDescription>{t("settings.totp.desc")}</CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-4 px-4 sm:px-6">
-        {pairing && !totpEnabled && (
-          <div className="grid gap-3 rounded-lg border border-dashed p-4">
-            <p className="text-sm font-medium">{t("settings.totp.pairTitle")}</p>
-            <p className="text-xs text-muted-foreground">{t("settings.totp.pairHint")}</p>
-            <div className="grid gap-1.5">
-              <Label htmlFor="totp-secret">{t("settings.totp.secretLabel")}</Label>
-              <div className="flex items-center gap-2">
-                <Input id="totp-secret" readOnly value={secret} className="font-mono text-xs" />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  aria-label={t("settings.totp.copySecret")}
-                  onClick={() => {
-                    void navigator.clipboard.writeText(secret);
-                    toast.success(t("settings.totp.copiedToast"));
-                  }}
-                >
-                  <Copy className="size-4" />
-                </Button>
-              </div>
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="totp-code">{t("settings.totp.codeLabel")}</Label>
-              <Input
-                id="totp-code"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                placeholder="000000"
-                maxLength={6}
-                value={code}
-                onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, ""))}
-                className="text-center font-mono tracking-[0.4em]"
-              />
-              <p className="truncate text-xs text-muted-foreground">{otpauth}</p>
-            </div>
-          </div>
-        )}
-        {!pairing && !totpEnabled && (
-          <p className="text-sm text-muted-foreground">{t("settings.totp.enableHint")}</p>
-        )}
-        {totpEnabled && (
-          <div className="grid gap-2">
-            <Label htmlFor="totp-disable-pwd">{t("settings.totp.passwordLabel")}</Label>
-            <PasswordInput
-              id="totp-disable-pwd"
-              value={disablePassword}
-              onChange={setDisablePassword}
-              autoComplete="current-password"
-            />
-          </div>
-        )}
-      </CardContent>
-      <CardFooter className="flex flex-wrap gap-2 px-4 sm:px-6">
-        {!totpEnabled && !pairing && (
-          <Button className="h-10" onClick={() => setupMutation.mutate()} disabled={setupMutation.isPending}>
-            {setupMutation.isPending && <Loader2 className="size-4 animate-spin" />}
-            {t("settings.totp.enable")}
-          </Button>
-        )}
-        {pairing && (
-          <>
-            <Button
-              className="h-10"
-              onClick={() => activateMutation.mutate()}
-              disabled={code.length !== 6 || activateMutation.isPending}
-            >
-              {activateMutation.isPending && <Loader2 className="size-4 animate-spin" />}
-              {t("settings.totp.confirmActivate")}
-            </Button>
-            <Button
-              variant="outline"
-              className="h-10"
-              onClick={() => {
-                setPairing(false);
-                setSecret("");
-                setCode("");
-              }}
-            >
-              {t("settings.totp.cancel")}
-            </Button>
-          </>
-        )}
-        {totpEnabled && (
-          <Button
-            variant="destructive"
-            className="h-10"
-            onClick={() => disableMutation.mutate()}
-            disabled={disablePassword === "" || disableMutation.isPending}
-          >
-            {disableMutation.isPending && <Loader2 className="size-4 animate-spin" />}
-            {t("settings.totp.disable")}
-          </Button>
-        )}
-      </CardFooter>
     </Card>
   );
 }

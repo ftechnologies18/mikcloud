@@ -217,8 +217,8 @@ func limitBody(next http.Handler) http.Handler {
 // Les routes /agent/* (poll 45 s des routeurs, cadence fixe) et le healthcheck
 // restent hors périmètre.
 //
-// Derrière la passerelle (Render/Caddy), l'IP client vient du DERNIER hop
-// de X-Forwarded-For (cf. clientIP).
+// Derrière la passerelle (Render/Caddy), l'IP client vient du PREMIER hop
+// de X-Forwarded-For — celui posé par le proxy de confiance (cf. clientIP).
 func authRateLimit(next http.Handler) http.Handler {
 	type bucket struct {
 		count int
@@ -280,13 +280,20 @@ func authRateLimit(next http.Handler) http.Handler {
 // sinon l'host de RemoteAddr sans le port source).
 func clientIP(r *http.Request) string {
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// Sécurité P0 — on retient le DERNIER hop de la chaîne : c'est celui
-		// ajouté par le proxy de confiance (Render/Caddy). Les IP antérieures
-		// viennent du client lui-même et sont donc forgeables — prendre la
-		// première permettait de contourner le limiteur (une IP fictive par
-		// requête = bucket neuf à chaque fois).
-		if i := strings.LastIndexByte(xff, ','); i >= 0 && i+1 < len(xff) {
-			return strings.TrimSpace(xff[i+1:])
+		// Sécurité S1 (suivi A2) — on retient le PREMIER hop de la chaîne :
+		// c'est celui ajouté par le proxy de confiance Render, qui écrit l'IP
+		// réelle du client EN TÊTE de X-Forwarded-For (convention Render) puis
+		// ajoute ses hops internes à la suite. Les sondes de production de la
+		// vague S1 ont démontré que le DERNIER hop (ancienne règle) est le hop
+		// interne Render — il tourne d'une requête à l'autre, ce qui
+		// fragmentait les buckets du limiteur (jamais de 429, même à 125
+		// requêtes/minute ; 33 requêtes passées sur un scope à 12). La
+		// plate-forme écrase toute valeur forgée par le client avant nous :
+		// le premier hop est l'IP ajoutée par le proxy de confiance (guidance
+		// MDN : ne faire confiance qu'aux IP ajoutées par des proxys de
+		// confiance).
+		if i := strings.IndexByte(xff, ','); i >= 0 {
+			return strings.TrimSpace(xff[:i])
 		}
 		return strings.TrimSpace(xff)
 	}

@@ -12,8 +12,8 @@
 //   - authRateLimit : 12 req/min sur /api/auth/*, 5 req/min sur
 //     /api/reseller/login (P0), routes non limitées, 429 avec Retry-After,
 //     compteur par IP ;
-//   - clientIP : X-Forwarded-For (dernier hop uniquement — les IP antérieures
-//     sont forgeables), repli RemoteAddr.
+//   - clientIP : X-Forwarded-For (PREMIER hop = IP client réelle posée par le
+//     proxy de confiance Render — sondes production S1), repli RemoteAddr.
 package main
 
 import (
@@ -99,8 +99,8 @@ func TestClientIPForwardedFor(t *testing.T) {
 		want string
 	}{
 		{"XFF simple", "198.51.100.23", "10.0.0.1:1", "198.51.100.23"},
-		{"dernier hop uniquement", "1.2.3.4, 5.6.7.8, 9.10.11.12", "10.0.0.1:1", "9.10.11.12"},
-		{"XFF avec espaces", " 1.2.3.4 , 5.6.7.8 ", "10.0.0.1:1", "5.6.7.8"},
+		{"premier hop (contrat Render)", "1.2.3.4, 5.6.7.8, 9.10.11.12", "10.0.0.1:1", "1.2.3.4"},
+		{"XFF avec espaces", " 1.2.3.4 , 5.6.7.8 ", "10.0.0.1:1", "1.2.3.4"},
 		{"sans XFF → RemoteAddr", "", "192.0.2.44:8080", "192.0.2.44"},
 	}
 	for _, c := range cas {

@@ -17,7 +17,9 @@
     réinitialisation de mot de passe et changement de rôle. Les revendeurs
     (rôle `reseller`) sont hors périmètre de ce garde. Les tokens sans `ver`
     se décodent `ver=0` (compatibilité migration, tant que SessionEpoch = 0).
-  - Limiteur de débit par IP (IP = dernier hop XFF) : `/api/auth/*` 12/min,
+  - Limiteur de débit par IP (IP = premier hop XFF, posé par le proxy de
+    confiance Render — suivi S1 : le dernier hop est un hop interne Render
+    qui tourne et fragmentait les buckets) : `/api/auth/*` 12/min,
     `/api/reseller/login` 5/min, toute autre route `/api/*` 120/min → `429`
     + `Retry-After: 60` ; `/agent/*` et healthcheck hors périmètre.
   - Taille des corps de requête plafonnée à 2 Mio → `413` au-delà (les

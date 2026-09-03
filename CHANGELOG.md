@@ -5,6 +5,35 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-03 — Purge ciblée par compte (zone sensible, console plateforme)
+
+### Ajoutés
+- **Purge ciblée par compte (zone sensible)** — complément chirurgical de la
+  purge globale : l'admin plateforme choisit UN compte client et supprime des
+  catégories d'éléments pour CE compte uniquement (les autres comptes ne sont
+  jamais touchés) :
+  - Backend : `GET /api/admin/purge/accounts` (compteurs live par élément :
+    routeurs simulés, utilisateurs hotspot, vouchers, profils, lots,
+    revendeurs, transactions, ventes, sessions, journaux, gabarits) et
+    `POST /api/admin/purge/account` (`{accountId, scopes}` — mêmes garanties
+    que la purge globale : jamais les routeurs réels, comptes, équipe,
+    réglages, abonnement ni facturation ; ne régénère rien ; cascades
+    restreintes au compte : routeurs simulés → entités attachées, lots →
+    vouchers restants, revendeurs → transactions, utilisateurs/tickets →
+    sessions liées closes). Nouveau scope `vouchers` (tickets sans les lots,
+    propre à la purge ciblée). Réponse enrichie du champ `vouchers`
+    (additif, rétrocompatible). Ligne d'activité tracée sur le compte ciblé
+    (« par la plateforme ») après la purge.
+  - Frontend : carte « Purge ciblée par compte » dans Paramètres plateforme
+    (zone sensible) — sélecteur de compte, cases à cocher par élément avec
+    compteurs live (badge), indication des transactions liées aux revendeurs,
+    tout cocher/décocher, confirmation par saisie du nom exact du compte
+    (irréversibilité), bilan détaillé en toast (résumé serveur).
+  - Tests : isolation stricte entre comptes (compte témoin), cascades (all +
+    routeur simulé), compteurs avant/après, traçabilité, gardes 400/404 —
+    `handlers_purge_account_test.go` (3 tests E2E HTTP).
+  - Contrat : clause « Purge ciblée par compte » dans docs/CONTRACT-V2.md.
+
 ## 2026-09-03 — Sécurité vague S4 : 2FA TOTP, sauvegardes testées, conformité
 
 ### Ajoutés

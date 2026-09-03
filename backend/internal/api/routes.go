@@ -157,6 +157,11 @@ func (a *API) Handler() http.Handler {
 	// l'ancien seed (routeurs simulés + cascade, revendeurs res-1…res-5 +
 	// leurs transactions) — préserve les données réelles du compte.
 	mux.HandleFunc("POST /api/admin/purge-demo", a.requireRole(3, a.handlePurgeDemo))
+	// Purge CIBLÉE par compte (zone sensible — console plateforme) :
+	// compteurs par élément pour chaque compte + purge de catégories
+	// sélectionnées sur UN compte client (les autres ne sont jamais touchés).
+	mux.HandleFunc("GET /api/admin/purge/accounts", a.requireRole(3, a.handlePurgeAccountsStats))
+	mux.HandleFunc("POST /api/admin/purge/account", a.requireRole(3, a.handlePurgeAccount))
 
 	// Administration plateforme (rôle admin uniquement)
 	mux.HandleFunc("GET /api/admin/accounts", a.requireRole(3, a.handleAdminAccounts))

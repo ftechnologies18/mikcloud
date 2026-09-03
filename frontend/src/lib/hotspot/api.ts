@@ -22,6 +22,8 @@ import type {
   PlatformOverview,
   PlatformSettingsResponse,
   PlatformSettingsUpdatePayload,
+  PurgeAccountResponse,
+  PurgeAccountRow,
   PlatformTeamMember,
   RegisterPayload,
   SubscriptionInfo,
@@ -265,6 +267,28 @@ export async function updatePlatformSettings(
   return api<PlatformSettingsResponse>("/api/admin/platform/settings", {
     method: "PUT",
     body: payload,
+  });
+}
+
+/* ─── Zone sensible : purge ciblée par compte (console plateforme) ─── */
+
+/** fetchPurgeAccounts — liste des comptes avec leurs compteurs par élément
+ * (alimente le sélecteur et les cases à cocher de la purge ciblée). */
+export async function fetchPurgeAccounts(): Promise<PurgeAccountRow[]> {
+  return api<PurgeAccountRow[]>("/api/admin/purge/accounts");
+}
+
+/** purgeTargetedAccount — purge CHIRURGICALE : supprime les catégories
+ * cochées sur UN compte client (les autres comptes ne sont jamais touchés).
+ * Scopes : identifiants de la purge globale + « vouchers » (tickets sans les
+ * lots) ; "all" sélectionne toutes les catégories ciblables du compte. */
+export async function purgeTargetedAccount(
+  accountId: string,
+  scopes: string[],
+): Promise<PurgeAccountResponse> {
+  return api<PurgeAccountResponse>("/api/admin/purge/account", {
+    method: "POST",
+    body: { accountId, scopes },
   });
 }
 

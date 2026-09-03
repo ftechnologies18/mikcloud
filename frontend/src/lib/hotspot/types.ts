@@ -1178,6 +1178,46 @@ export interface PlatformSettingsUpdatePayload {
   registerKey?: string;
 }
 
+/* ─── Zone sensible : purge ciblée par compte (console plateforme) ─── */
+
+/** Compteurs par élément d'un compte (GET /api/admin/purge/accounts).
+ * Mêmes règles que la purge globale : les entités attachées aux routeurs
+ * simulés partent en cascade — exclues de leur catégorie. */
+export interface AccountPurgeStats {
+  simulatedRouters: number;
+  /** Comptes client hotspot (kind != voucher). */
+  hotspotUsers: number;
+  /** Tickets (kind == voucher). */
+  vouchers: number;
+  profiles: number;
+  batches: number;
+  resellers: number;
+  transactions: number;
+  sales: number;
+  sessions: number;
+  logs: number;
+  templates: number;
+}
+
+/** Ligne de la liste des comptes purgables (zone sensible). */
+export interface PurgeAccountRow {
+  id: string;
+  name: string;
+  /** Login du propriétaire (premier owner/admin du compte). */
+  owner: string;
+  /** active | disabled. */
+  status: string;
+  stats: AccountPurgeStats;
+}
+
+/** Réponse de POST /api/admin/purge/account — quantités réellement supprimées. */
+export interface PurgeAccountResponse {
+  ok: boolean;
+  /** Bilan lisible (journal + toast). */
+  summary: string;
+  purged: Partial<Record<"routers" | "hotspotUsers" | "vouchers" | "profiles" | "batches" | "resellers" | "transactions" | "sales" | "sessions" | "logs" | "templates", number>>;
+}
+
 /* ─── M (facturation client) : GET /api/billing/history ─── */
 
 /** Ligne d'historique de facturation (demande résolue du compte). */

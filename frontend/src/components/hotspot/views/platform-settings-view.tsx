@@ -7,7 +7,10 @@
 //     (priorité : env REGISTER_KEY > config DB — filet de sécurité) ;
 //   • Sécurité — changement de mot de passe (POST /api/auth/password existant) ;
 //   • Langue — FR/EN (préférence locale du navigateur) ;
-//   • Danger zone — purge globale des données (moteur existant, tous comptes).
+//   • Danger zone — purge globale des données (moteur existant, tous comptes) ;
+//   • Zone sensible — purge CIBLÉE par compte : catégories d'éléments
+//     (vouchers, utilisateurs, ventes…) sur UN compte client précis
+//     (GET /api/admin/purge/accounts + POST /api/admin/purge/account).
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -16,17 +19,35 @@ import {
   KeyRound,
   Languages,
   Radio,
+  RotateCw,
   ScrollText,
   ShieldAlert,
   ShieldCheck,
+  Target,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 
-import { api, fetchPlatformSettings, updatePlatformSettings } from "@/lib/hotspot/api";
+import {
+  api,
+  fetchPlatformSettings,
+  fetchPurgeAccounts,
+  purgeTargetedAccount,
+  updatePlatformSettings,
+} from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
-import type { PlatformSettingsResponse } from "@/lib/hotspot/types";
+import type { AccountPurgeStats, PlatformSettingsResponse } from "@/lib/hotspot/types";
 import { PageHeader } from "@/components/hotspot/page-header";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -37,6 +58,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -99,6 +121,7 @@ export default function PlatformSettingsView() {
         <SecurityCard />
         <LanguageCard />
         <DangerCard />
+        <TargetedPurgeCard />
       </div>
     </div>
   );
@@ -497,6 +520,246 @@ function DangerCard() {
           {t("platformSettings.protectedHint")}
         </p>
       </CardContent>
+    </Card>
+  );
+}
+
+/* ─── Zone sensible — purge CIBLÉE par compte (éléments précis) ─── */
+
+// Éléments purgables sur un compte : scope API ↔ compteur ↔ libellé i18n.
+// Les transactions n'ont pas de scope autonome : elles partent avec les
+// revendeurs (cascade) — affichées en indication sous l'élément revendeurs.
+const TARGET_ELEMENTS = [
+  { scope: "vouchers", stat: "vouchers", label: "platformSettings.elVouchers" },
+  { scope: "hotspot_users", stat: "hotspotUsers", label: "platformSettings.elHotspotUsers" },
+  { scope: "simulated_routers", stat: "simulatedRouters", label: "platformSettings.elSimulatedRouters" },
+  { scope: "profiles", stat: "profiles", label: "platformSettings.elProfiles" },
+  { scope: "batches", stat: "batches", label: "platformSettings.elBatches" },
+  { scope: "resellers", stat: "resellers", label: "platformSettings.elResellers" },
+  { scope: "sales", stat: "sales", label: "platformSettings.elSales" },
+  { scope: "sessions", stat: "sessions", label: "platformSettings.elSessions" },
+  { scope: "logs", stat: "logs", label: "platformSettings.elLogs" },
+  { scope: "templates", stat: "templates", label: "platformSettings.elTemplates" },
+] as const;
+
+const PURGE_ACCOUNTS_KEY = ["/api/admin/purge/accounts"] as const;
+
+function TargetedPurgeCard() {
+  const { t, tf } = useI18n();
+  const queryClient = useQueryClient();
+  const [accountId, setAccountId] = useState("");
+  const [selected, setSelected] = useState<Record<string, boolean>>({});
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmText, setConfirmText] = useState("");
+
+  const { data: accounts, isLoading, refetch, isRefetching } = useQuery({
+    queryKey: PURGE_ACCOUNTS_KEY,
+    queryFn: fetchPurgeAccounts,
+  });
+
+  const selectedAccount = accounts?.find((row) => row.id === accountId);
+  const stats: AccountPurgeStats | undefined = selectedAccount?.stats;
+  const selectedScopes = TARGET_ELEMENTS.filter((el) => selected[el.scope]).map((el) => el.scope);
+
+  const purgeMutation = useMutation({
+    mutationFn: () => purgeTargetedAccount(accountId, selectedScopes),
+    onSuccess: (res) => {
+      toast.success(res.summary);
+      setConfirmOpen(false);
+      setConfirmText("");
+      setSelected({});
+      void queryClient.invalidateQueries({ queryKey: PURGE_ACCOUNTS_KEY });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const pickAccount = (id: string) => {
+    setAccountId(id);
+    setSelected({});
+    setConfirmText("");
+  };
+
+  return (
+    <Card className="gap-4 border-destructive/30 py-4 sm:py-6 lg:col-span-2">
+      <CardHeader className="px-4 sm:px-6">
+        <CardTitle className="flex items-center gap-2 text-base text-destructive">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-destructive/10 text-destructive">
+            <Target className="size-4" />
+          </span>
+          {t("platformSettings.targetedTitle")}
+        </CardTitle>
+        <CardDescription>{t("platformSettings.targetedDesc")}</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-4 px-4 sm:px-6">
+        {/* Sélecteur de compte + rafraîchissement des compteurs */}
+        <div className="grid gap-2">
+          <Label htmlFor="purge-account">{t("platformSettings.targetedAccount")}</Label>
+          <div className="flex gap-2">
+            <Select value={accountId} onValueChange={pickAccount} disabled={isLoading}>
+              <SelectTrigger id="purge-account" className="flex-1">
+                <SelectValue placeholder={t("platformSettings.targetedAccountPlaceholder")} />
+              </SelectTrigger>
+              <SelectContent>
+                {(accounts ?? []).map((row) => (
+                  <SelectItem key={row.id} value={row.id}>
+                    {row.name}
+                    {row.owner ? ` — ${row.owner}` : ""}
+                    {row.status === "disabled" ? " ⏸" : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              variant="outline"
+              size="icon"
+              className="size-9 shrink-0"
+              onClick={() => void refetch()}
+              disabled={isRefetching}
+              aria-label={t("common.refresh")}
+              title={t("common.refresh")}
+            >
+              <RotateCw className={`size-4 ${isRefetching ? "animate-spin" : ""}`} />
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">{t("platformSettings.targetedAccountHint")}</p>
+        </div>
+
+        {isLoading && <Skeleton className="h-24 w-full" />}
+
+        {accounts && accounts.length === 0 && (
+          <p className="text-sm text-muted-foreground">{t("platformSettings.targetedNoAccounts")}</p>
+        )}
+
+        {/* Éléments purgables du compte sélectionné (compteurs live) */}
+        {selectedAccount && stats && (
+          <>
+            <div className="flex items-center justify-between gap-2">
+              <Label>{t("platformSettings.targetedElements")}</Label>
+              <div className="flex gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={() =>
+                    setSelected(Object.fromEntries(TARGET_ELEMENTS.map((el) => [el.scope, true])))
+                  }
+                >
+                  {t("platformSettings.targetedSelectAll")}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => setSelected({})}
+                >
+                  {t("platformSettings.targetedClearAll")}
+                </Button>
+              </div>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3" role="group" aria-label={t("platformSettings.targetedElements")}>
+              {TARGET_ELEMENTS.map((el) => {
+                const count = stats[el.stat as keyof AccountPurgeStats] ?? 0;
+                const checked = !!selected[el.scope];
+                return (
+                  <label
+                    key={el.scope}
+                    className={`flex min-h-11 cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2 transition-colors has-[[data-state=checked]]:border-destructive/50 has-[[data-state=checked]]:bg-destructive/5 ${count === 0 ? "opacity-60" : ""}`}
+                  >
+                    <Checkbox
+                      checked={checked}
+                      onCheckedChange={(v) => setSelected((s) => ({ ...s, [el.scope]: !!v }))}
+                      aria-label={t(el.label)}
+                    />
+                    <span className="min-w-0 flex-1 truncate text-sm">{t(el.label)}</span>
+                    <Badge
+                      variant="outline"
+                      className={`shrink-0 px-1.5 py-0 text-[10px] tabular-nums ${count > 0 ? "border-destructive/40 text-destructive" : "border-border bg-muted text-muted-foreground"}`}
+                    >
+                      {count}
+                    </Badge>
+                  </label>
+                );
+              })}
+            </div>
+            {selected.resellers && stats.transactions > 0 && (
+              <p className="text-xs text-muted-foreground">
+                <AlertTriangle className="mr-1.5 inline size-3.5 align-[-2px] text-amber-600 dark:text-amber-400" />
+                {tf("platformSettings.targetedResellersHint", { count: stats.transactions })}
+              </p>
+            )}
+            {selectedScopes.length === 0 ? (
+              <p className="text-xs text-muted-foreground">{t("platformSettings.targetedNone")}</p>
+            ) : (
+              <Button
+                variant="destructive"
+                size="sm"
+                className="justify-self-start"
+                onClick={() => {
+                  setConfirmText("");
+                  setConfirmOpen(true);
+                }}
+                disabled={purgeMutation.isPending}
+              >
+                <Trash2 className="mr-1.5 size-4" />
+                {purgeMutation.isPending
+                  ? t("common.saving")
+                  : t("platformSettings.targetedButton")}
+              </Button>
+            )}
+          </>
+        )}
+
+        <p className="text-xs text-muted-foreground">
+          <Badge variant="outline" className="mr-1.5 border-border bg-muted px-1.5 py-0 text-[10px] text-muted-foreground">
+            {t("platformSettings.protectedBadge")}
+          </Badge>
+          {t("platformSettings.protectedHint")}
+        </p>
+      </CardContent>
+
+      {/* Confirmation par saisie du nom du compte (zone sensible) */}
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {tf("platformSettings.targetedConfirmTitle", { name: selectedAccount?.name ?? "" })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("platformSettings.targetedConfirmDesc")}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <ul className="grid gap-1 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs">
+            {TARGET_ELEMENTS.filter((el) => selected[el.scope]).map((el) => (
+              <li key={el.scope} className="flex items-center justify-between gap-3">
+                <span>{t(el.label)}</span>
+                <Badge variant="outline" className="border-destructive/40 px-1.5 py-0 text-[10px] tabular-nums text-destructive">
+                  {stats?.[el.stat as keyof AccountPurgeStats] ?? 0}
+                </Badge>
+              </li>
+            ))}
+          </ul>
+          <Input
+            value={confirmText}
+            onChange={(e) => setConfirmText(e.target.value)}
+            placeholder={t("platformSettings.targetedConfirmPlaceholder")}
+            disabled={purgeMutation.isPending}
+            autoComplete="off"
+          />
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
+              disabled={confirmText.trim() !== selectedAccount?.name || purgeMutation.isPending}
+              onClick={(event) => {
+                event.preventDefault();
+                purgeMutation.mutate();
+              }}
+            >
+              {purgeMutation.isPending ? t("common.saving") : t("platformSettings.targetedButton")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }

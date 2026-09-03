@@ -5,6 +5,7 @@ package api
 import (
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -182,6 +183,15 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
+		return
+	}
+	// Sécurité S3 — quota d'inscription par IP (cf. signup_abuse.go) :
+	// toute tentative — même invalide — consomme le quota, les fermes de
+	// comptes d'essai sont coupées avant de toucher au registre. 429 +
+	// Retry-After, même contrat que le verrou PIN (S2).
+	if ok, retry := a.signup.allow(clientIP(r)); !ok {
+		w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())+1))
+		writeErr(w, http.StatusTooManyRequests, "Trop de tentatives d'inscription — réessayez plus tard")
 		return
 	}
 	// Contrôle d'inscription (I — paramètres plateforme) : priorité env

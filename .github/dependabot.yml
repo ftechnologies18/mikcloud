@@ -1,0 +1,37 @@
+# Dependabot MikCloud (sécurité S3) — montées de version automatiques
+# hebdomadaires pour les trois écosystèmes du monorepo. Les PR restent
+# reviewées avant fusion ; les mises à jour patch/minor sont groupées pour
+# limiter le bruit. Les mises à jour de sécurité urgentes restent notifiées
+# indépendamment de ce planning.
+version: 2
+updates:
+  # Backend Go — API hotspot (Render).
+  - package-ecosystem: gomod
+    directory: /backend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      go-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Frontend Next.js (Vercel, gestionné via Bun en CI — Dependabot suit
+  # le package-lock/npm manifest standard).
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Actions GitHub (ci.yml) — sécurité de la chaîne CI elle-même.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

@@ -17,12 +17,13 @@ type API struct {
 	secret  string
 	gwMu    sync.Mutex
 	gws     map[string]routeros.Gateway
-	pinLock *pinLimiter // sécurité S2 — verrouillage PIN revendeur par compte
+	pinLock *pinLimiter    // sécurité S2 — verrouillage PIN revendeur par compte
+	signup  *signupLimiter // sécurité S3 — quota d'inscription par IP
 }
 
 // New construit l'API.
 func New(s *store.Store, jwtSecret string) *API {
-	return &API{store: s, secret: jwtSecret, gws: map[string]routeros.Gateway{}, pinLock: newPinLimiter()}
+	return &API{store: s, secret: jwtSecret, gws: map[string]routeros.Gateway{}, pinLock: newPinLimiter(), signup: newSignupLimiter()}
 }
 
 // Handler — mux complet, protégé par le middleware d'authentification.

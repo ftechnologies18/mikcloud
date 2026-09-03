@@ -47,6 +47,23 @@
     soumis, raison fine (`unknown_user`, `bad_password`, `disabled`,
     `unknown_reseller`, `bad_pin`, `locked`, `reseller_disabled`,
     `account_disabled`) ; réponses HTTP inchangées.
+- **Sécurité S3 (hygiène chaîne d'approvisionnement + anti-abus
+  inscription, 2026-09-03)** :
+  - Quota d'inscription par IP (`POST /api/auth/register`, cf.
+    `signup_abuse.go`) : 5 tentatives par fenêtre glissante de 10 minutes
+    (anti-burst) et 20 tentatives par fenêtre glissante de 24 heures
+    (anti-farm) — TOUTE tentative (même invalide) consomme le quota →
+    `429` + `Retry-After` (même contrat que le verrou PIN). Clé = premier
+    hop XFF (forgeable en production, cf. S1) : le fermage organisé reste
+    rattrapé par le plafond global d'instance (900 req/min) et, pour la
+    bêta privée, par `REGISTER_KEY`. État en mémoire (instance unique),
+    remis à zéro au redémarrage.
+  - Chaîne d'approvisionnement (côté dépôt GitHub) : job CI `govulncheck`
+    (vulnérabilités Go atteignables, rapport non bloquant — job rouge =
+    visibilité immédiate, le déploiement n'attend pas une base de CVE
+    externe) ; Dependabot hebdomadaire (gomod `/backend`, npm
+    `/frontend`, github-actions) avec groupement minor/patch ; secret
+    scanning et secret push protection activés au niveau du dépôt.
 - Isolation multi-tenant : toute entité portée par `accountID` ; helpers existants
   `accountScope(r)`, `findRouterScoped`, etc.
 - 3 modes routeur : `simulated` | `real` | `agent`. **Matrice de support des

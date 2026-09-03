@@ -5,6 +5,34 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-03 — Sécurité vague S3 : chaîne d'approvisionnement et anti-abus d'inscription
+
+### Ajoutés
+- **Quota d'inscription par IP (S3)** — `POST /api/auth/register` : au-delà
+  de 5 tentatives en 10 minutes (anti-burst) ou 20 tentatives en 24 heures
+  (anti-farm de comptes d'essai), toute tentative — même invalide — reçoit
+  `429` + `Retry-After` (cf. `internal/api/signup_abuse.go`, mêmes
+  primitives que le verrou PIN S2 : état mémoire, purge paresseuse,
+  garde-fou 10 000 IP). L'imputation par IP reste une première ligne : le
+  fermage organisé via XFF forgés reste rattrapé par le plafond global
+  d'instance S1 (900 req/min) et, en bêta privée, par `REGISTER_KEY`.
+  Derrière un NAT partagé (cybercafé), 20 inscriptions/24 h laissent une
+  large marge aux usages légitimes.
+- **Scan de vulnérabilités dans la CI (S3)** — nouveau job `govulncheck`
+  (vulnérabilités Go *atteignables*, base officielle vuln.go.dev) : rapport
+  non bloquant — le job passe au rouge pour visibilité immédiate mais le
+  déploiement Render n'attend pas la fraîcheur d'une base de CVE externe.
+- **Dependabot (S3)** — montées de version hebdomadaires groupées
+  minor/patch sur les trois écosystèmes : `gomod` (backend), `npm`
+  (frontend), `github-actions` (sécurité de la chaîne CI elle-même).
+- **Secret scanning + secret push protection (S3)** — activés au niveau du
+  dépôt GitHub : toute fuite de credential poussé sur main est détectée,
+  et un push contenant un secret reconnu est bloqué à la source.
+
+### Documentation
+- `docs/CONTRACT-V2.md` : clause « Sécurité S3 » (quota d'inscription,
+  hygiène de la chaîne d'approvisionnement).
+
 ## 2026-09-03 — Sécurité vague S2 : durcissement P1 anti brute-force
 
 ### Ajoutés

@@ -68,6 +68,30 @@ jobs:
           # Build générique : la vraie URL du backend est injectée par Vercel.
           NEXT_TELEMETRY_DISABLED: 1
 
+  # Sécurité S3 — scan des vulnérabilités Go atteignables (govulncheck,
+  # base officielle https://vuln.go.dev). Rapport non bloquant : un échec
+  # rend le job rouge (visibilité immédiate) mais n'interrompt pas le
+  # déploiement — une fenêtre de hotfix ne doit pas dépendre de la fraîcheur
+  # d'une base de CVE externe. Chaque vulnérabilité signalée doit être
+  # traitée (montée de version ou justification documentée).
+  govulncheck:
+    name: Vulnérabilités Go (govulncheck)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Scan des vulnérabilités atteignables
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
   # Déploiement du backend Render une fois la CI verte (push main uniquement).
   # Monorepo : seul un changement sous backend/ déclenche le déploiement —
   # un push frontend seul ne redéploie pas l'API.

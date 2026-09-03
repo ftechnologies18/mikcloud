@@ -29,6 +29,16 @@ la CI puis se déploie automatiquement (frontend Vercel, backend Render).
   authentification est plafonnée à 120 requêtes/minute par IP (`429` +
   `Retry-After`) ; les scopes durs existants (auth 12/min, revendeur 5/min)
   restent prioritaires ; `/agent/*` (poll 45 s) reste hors périmètre.
+- **Suivi S1 (sondes de production)** — deux découvertes traitées :
+  1. l'IP client doit être extraite du **premier** hop de `X-Forwarded-For`
+     (convention Render : l'IP réelle est posée en tête, les hops internes
+     s'ajoutent à la suite) — l'ancienne règle « dernier hop » visait un hop
+     interne qui tourne, ce qui fragmentait silencieusement les buckets du
+     limiteur (bug latent pré-existant, révélé par les seuils S1) ;
+  2. Render **transmet** le `X-Forwarded-For` du client : le premier hop
+     reste forgeable par un attaquant délibéré → plafond **global par
+     instance** de 900 requêtes/minute sur `/api/*`, insensible à toute
+     usurpation d'en-tête (la rotation d'IP ne le contourne pas).
 - Tests : révocation de session (blocage immédiat + réémission + suppression
   du porteur), révocation par changement de mot de passe de bout en bout,
   en-têtes de sécurité, 413 sur corps surdimensionné, limiteur global (120/min

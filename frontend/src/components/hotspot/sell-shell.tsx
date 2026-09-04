@@ -31,7 +31,6 @@ import {
   Share2,
   ShoppingCart,
   Store,
-  Ticket,
   Undo2,
   Wifi,
   WifiOff,
@@ -236,14 +235,9 @@ export default function SellShell() {
   // marquer un ticket « vendu » (trace anti-vol SoldAt immuable, créance
   // dépôt-vente créée immédiatement — la vente est définitive par design).
   const [pendingSale, setPendingSale] = useState<SellVoucher | null>(null);
-  // UX R3 — origine de la vente en attente : papier (code saisi) ou tactile.
-  const [pendingVia, setPendingVia] = useState<"paper" | undefined>(undefined);
   // UX R3 — recherche locale (code, profil, référence de lot) : filtre la
   // liste affichée, sans nouvelle requête (le stock est déjà chargé).
   const [query, setQuery] = useState("");
-  // UX R3 — vente d'un ticket papier imprimé : le code tapé retrouve le
-  // voucher dans le stock actif, puis passe par la confirmation R2.
-  const [physicalCode, setPhysicalCode] = useState("");
 
   const { data: me } = useQuery({
     queryKey: ["/api/sell/me"],
@@ -265,15 +259,14 @@ export default function SellShell() {
   });
 
   const sell = useMutation({
-    // UX R3 — via=paper : la vente d'un ticket papier imprimé est tracée
-    // à part (SoldVia=sell_mode_paper) ; la vente tactile POSTe sans corps.
-    mutationFn: ({ id, via }: { id: string; via?: "paper" }) =>
-      api<{ ok: boolean }>(`/api/sell/${id}/sold`, { method: "POST", body: via ? { via } : undefined }),
+    // UX R5 — la vente tactile POSTe sans corps (SoldVia=sell_mode). Il n'y a
+    // plus de saisie papier : un ticket papier remis au client se vend tout
+    // seul à sa 1ʳᵉ connexion hotspot (auto_connect, tracé côté backend).
+    mutationFn: ({ id }: { id: string }) =>
+      api<{ ok: boolean }>(`/api/sell/${id}/sold`, { method: "POST" }),
     onSuccess: () => {
       toast.success(t("sell.soldToast"));
       setPendingSale(null);
-      setPendingVia(undefined);
-      setPhysicalCode(""); // UX R3 — le code papier saisi est consommé
       qc.invalidateQueries({ queryKey: ["/api/sell/stock"] });
       qc.invalidateQueries({ queryKey: ["/api/sell/me"] });
     },
@@ -349,25 +342,7 @@ export default function SellShell() {
   // UX R2 — la vente n'est déclenchée qu'après confirmation explicite ; en
   // cas d'erreur réseau la dialog reste ouverte (relance sans retaper).
   function confirmSale() {
-    if (pendingSale) sell.mutate({ id: pendingSale.id, via: pendingVia });
-  }
-
-  // UX R3 — ticket papier « connecté » : le revendeur a imprimé des tickets
-  // de son stock ; quand il en remet un au client, il tape le code imprimé —
-  // le voucher est retrouvé dans SON stock actif et suit exactement le même
-  // chemin qu'une vente tactile (confirmation R2, trace SoldAt, créance
-  // dépôt-vente). Code inexistant/vendu/expiré → refus explicite : jamais de
-  // décompte fantôme, le stock ne baisse qu'à la vente réellement confirmée.
-  function sellPhysical() {
-    const code = physicalCode.trim();
-    if (!code) return;
-    const hit = (stock ?? []).find((v) => v.username.toLowerCase() === code.toLowerCase());
-    if (!hit) {
-      toast.error(t("sell.physicalNotFound"));
-      return;
-    }
-    setPendingVia("paper");
-    setPendingSale(hit);
+    if (pendingSale) sell.mutate({ id: pendingSale.id });
   }
 
   function toggleGroup(key: string) {
@@ -566,10 +541,7 @@ export default function SellShell() {
             <div className="mt-3 flex gap-2">
               <Button
                 className="flex-1"
-                onClick={() => {
-                  setPendingVia(undefined);
-                  setPendingSale(v);
-                }}
+                onClick={() => setPendingSale(v)}
                 disabled={sell.isPending}
               >
                 {sell.isPending && sell.variables?.id === v.id ? (
@@ -765,39 +737,25 @@ export default function SellShell() {
               )}
             </div>
 
-            {/* UX R3 — ticket papier déjà imprimé : la saisie du code
-                « connecte » le ticket papier au système — le stock se décompte
-                exactement comme une vente tactile (confirmation incluse). */}
+            {/* UX R5 — la saisie papier (R3) est retirée : elle compliquait
+                l'UX (3ᵉ mode de vente, codes à taper — risque d'homoglyphes)
+                et est devenue redondante. Le ticket papier remis au client se
+                vend tout seul à sa 1ʳᵉ connexion hotspot (auto_connect,
+                idempotent) ; la vente tactile reste le geste « je
+                comptabilise maintenant ». La bannière garde le flux visible —
+                le vendeur comprend pourquoi son stock baisse « tout seul ». */}
             {!returnMode && (
-              <section aria-label={t("sell.physicalTitle")} className="rounded-xl border border-dashed bg-muted/20 p-3">
-                <div className="flex items-center gap-2">
-                  <Ticket aria-hidden className="size-4 shrink-0 text-primary" />
-                  <p className="text-sm font-semibold">{t("sell.physicalTitle")}</p>
+              <div
+                role="note"
+                aria-label={t("sell.autoSaleTitle")}
+                className="flex items-start gap-2.5 rounded-xl border bg-muted/20 p-3"
+              >
+                <Wifi aria-hidden className="mt-0.5 size-4 shrink-0 text-primary" />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold">{t("sell.autoSaleTitle")}</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">{t("sell.autoSaleDesc")}</p>
                 </div>
-                <p className="mt-1 text-xs text-muted-foreground">{t("sell.physicalDesc")}</p>
-                <form
-                  className="mt-2 flex gap-2"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    sellPhysical();
-                  }}
-                >
-                  <Input
-                    value={physicalCode}
-                    onChange={(e) => setPhysicalCode(e.target.value)}
-                    placeholder={t("sell.physicalPlaceholder")}
-                    aria-label={t("sell.physicalPlaceholder")}
-                    autoCapitalize="none"
-                    autoCorrect="off"
-                    spellCheck={false}
-                    className="h-10 min-w-0 flex-1 font-mono"
-                  />
-                  <Button type="submit" variant="outline" className="h-10 shrink-0" disabled={sell.isPending}>
-                    <BadgeCheck className="size-4" aria-hidden />
-                    {t("sell.sellBtn")}
-                  </Button>
-                </form>
-              </section>
+              </div>
             )}
 
             {searching && filteredStock.length === 0 ? (

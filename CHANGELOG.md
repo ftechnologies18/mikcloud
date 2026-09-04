@@ -80,6 +80,28 @@ la CI puis se déploie automatiquement (frontend Vercel, backend Render).
   `replace` (aucune entrée parasite). Le store, les vues, le contrat API et
   le backend restent inchangés.
 
+## 2026-09-04 — UX R5 : Mode Vente — retrait de la saisie papier (tactile + auto uniquement)
+
+### Supprimés
+- **Saisie du code papier (R3) retirée du Mode Vente** — avec la vente auto à la
+  connexion (R4), le 3ᵉ mode de vente était devenu redondant et fragilisait
+  l'UX : un code tapé à la main risquait l'erreur d'homoglyphe (O/0, I/l/1) —
+  donc de vendre le MAUVAIS ticket — pour un résultat identique au tactile
+  (même `POST /sold`, même confirmation R2). La recherche du code dans la
+  liste + tap « Vendu » couvre déjà « je comptabilise maintenant » ; la
+  connexion du client couvre le papier sans aucun geste. Modèle mental final :
+  **« le ticket part : je le tappe, ou le client le connecte — jamais de
+  double comptage. »** Le bloc formulaire est remplacé par une bannière
+  explicative « Vente automatique à la connexion » (le vendeur comprend
+  pourquoi son stock baisse « tout seul »).
+
+### Modifiés
+- Frontend uniquement : `sell-shell.tsx` (−~60 lignes : état `physicalCode`,
+  `sellPhysical()`, bloc saisie, plumbing `pendingVia`) et `i18n.ts`
+  (−4 clés ×FR/EN, +2 clés bannière). Zéro changement backend, zéro changement
+  de contrat — la branche `via=paper` reste supportée (additive, les lignes
+  historiques `sell_mode_paper` gardent leur sens) mais n'est plus émise.
+
 ## 2026-09-04 — UX R4 : Mode Vente — vente automatique à la connexion + vente papier tracée
 
 ### Ajoutés

@@ -7,7 +7,9 @@
 //   toutes les routes console le refusent en 403) ;
 // - stock = vouchers actifs qui lui sont attribués, non remis ;
 // - « Vendu » trace la remise au client (SoldAt/SoldVia → audit anti-vol) ;
-// - « Partager » envoie code + mot de passe via Web Share (WhatsApp) ou presse-papiers ;
+// - ANTI-FUITE : le code d'un ticket en stock est masqué — il ne devient
+//   visible ni partageable (Web Share / presse-papiers) qu'APRÈS
+//   confirmation de la vente, via le reçu « Vente confirmée » ;
 // - hors ligne : bannière d'état — aucune vente offline fantôme (phase 1) ;
 // - UX R3 : recherche code/profil/lot, badge « expire bientôt » (< 48 h),
 //   sélection d'un lot entier en retour, et vente des tickets papier déjà
@@ -327,6 +329,12 @@ export default function SellShell() {
   // marquer un ticket « vendu » (trace anti-vol SoldAt immuable, créance
   // dépôt-vente créée immédiatement — la vente est définitive par design).
   const [pendingSale, setPendingSale] = useState<SellVoucher | null>(null);
+  // Anti-fuite — reçu de vente : la vente vient d'être confirmée (ou mise en
+  // file hors-ligne) ; c'est LE moment où le code devient visible et
+  // partageable. Tant qu'une vente n'est pas confirmée, aucun code ne
+  // s'affiche nulle part dans le comptoir — plus aucun partage anticipé
+  // susceptible de contourner la trace SoldAt/créance.
+  const [receipt, setReceipt] = useState<{ voucher: SellVoucher; offline: boolean } | null>(null);
   // UX R3 — recherche locale (code, profil, référence de lot) : filtre la
   // liste affichée, sans nouvelle requête (le stock est déjà chargé).
   const [query, setQuery] = useState("");
@@ -485,10 +493,14 @@ export default function SellShell() {
       if (nextMe) qc.setQueryData<SellMe>(["/api/sell/me"], nextMe);
       return { paged, me };
     },
-    onSuccess: (res) => {
+    onSuccess: (res, vars) => {
       if (res.offline) toast.info(t("sell.queuedToast"));
       else toast.success(t("sell.soldToast"));
       setPendingSale(null);
+      // Anti-fuite : le code n'est révélé qu'ici, vente tracée (ou file
+      // hors-ligne — la sync est un détail technique, la remise au client
+      // est déjà décidée par le revendeur).
+      setReceipt({ voucher: vars.voucher, offline: res.offline });
       refreshQueue();
       qc.invalidateQueries({ queryKey: ["/api/sell/stock"] });
       qc.invalidateQueries({ queryKey: ["/api/sell/me"] });
@@ -877,39 +889,39 @@ export default function SellShell() {
             )}
           </div>
 
+          {/* Anti-fuite — code masqué tant que la vente n'est pas confirmée :
+              rien ne peut être lu, copié ou partagé avant le reçu. */}
           <div className={`mt-3 grid gap-2 rounded-lg bg-muted/50 p-3 font-mono text-sm ${isSamePasswordMode(v) ? "grid-cols-1" : "grid-cols-2"}`}>
             <div>
               <p className="text-[10px] tracking-wide text-muted-foreground uppercase">{t("sell.code")}</p>
-              <p className="mt-0.5 font-semibold">{v.username}</p>
+              <p className="mt-0.5 font-semibold tracking-widest" aria-label={t("sell.codeAfterConfirm")}>••••••</p>
             </div>
             {/* Mode « mot de passe = identifiant » : le code seul. */}
             {!isSamePasswordMode(v) && (
               <div>
                 <p className="text-[10px] tracking-wide text-muted-foreground uppercase">{t("sell.password")}</p>
-                <p className="mt-0.5 font-semibold">{v.password}</p>
+                <p className="mt-0.5 font-semibold tracking-widest">••••••</p>
               </div>
             )}
           </div>
+          <p className="mt-1.5 text-[11px] text-muted-foreground">{t("sell.codeAfterConfirm")}</p>
 
-          {/* N°20 — en mode retour : pas de vente/partage (anti-misclick). */}
+          {/* N°20 — en mode retour : pas de vente (anti-misclick). Le
+              partage n'existe plus sur la carte : il vit dans le reçu,
+              APRÈS confirmation — le code ne quitte jamais l'app avant. */}
           {!returnMode && (
-            <div className="mt-3 flex gap-2">
-              <Button
-                className="flex-1"
-                onClick={() => setPendingSale(v)}
-                disabled={sell.isPending}
-              >
-                {sell.isPending && sell.variables?.id === v.id ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : (
-                  <BadgeCheck className="size-4" />
-                )}
-                {t("sell.sellBtn")}
-              </Button>
-              <Button variant="outline" size="icon" onClick={() => void share(v)} aria-label={t("sell.share")}>
-                <Share2 className="size-4" />
-              </Button>
-            </div>
+            <Button
+              className="mt-3 w-full"
+              onClick={() => setPendingSale(v)}
+              disabled={sell.isPending}
+            >
+              {sell.isPending && sell.variables?.id === v.id ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <BadgeCheck className="size-4" />
+              )}
+              {t("sell.sellBtn")}
+            </Button>
           )}
         </CardContent>
       </Card>
@@ -1465,7 +1477,9 @@ export default function SellShell() {
                     {formatCurrency(pendingSale.sellingPrice || pendingSale.price, currency, lang)}
                   </p>
                 </div>
-                <p className="mt-1 font-mono text-sm text-muted-foreground">{pendingSale.username}</p>
+                {/* Anti-fuite : même le récapitulatif pré-confirmation reste
+                    muet sur le code — il n'apparaîtra que dans le reçu. */}
+                <p className="mt-1 font-mono text-sm tracking-widest text-muted-foreground" aria-label={t("sell.codeAfterConfirm")}>••••••</p>
               </div>
 
               <DialogFooter>
@@ -1475,6 +1489,72 @@ export default function SellShell() {
                 <Button onClick={confirmSale} disabled={sell.isPending}>
                   {sell.isPending ? <Loader2 className="size-4 animate-spin" /> : <BadgeCheck className="size-4" />}
                   {t("sell.sellConfirmAction")}
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Anti-fuite — reçu « Vente confirmée » : seule porte de sortie du
+          code. La vente est déjà tracée (SoldAt) ou en file hors-ligne ;
+          « Partager » (Web Share, sinon presse-papiers) remet code + mot de
+          passe au client au bon moment — jamais avant. */}
+      <Dialog
+        open={receipt !== null}
+        onOpenChange={(open) => {
+          if (!open) setReceipt(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <BadgeCheck className="size-4 text-primary" aria-hidden />
+              {t("sell.receiptTitle")}
+            </DialogTitle>
+            <DialogDescription>{t("sell.receiptDesc")}</DialogDescription>
+          </DialogHeader>
+
+          {receipt && (
+            <>
+              <div className="rounded-lg border bg-muted/30 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="font-semibold">{receipt.voucher.profileName}</p>
+                  <p className="shrink-0 font-bold text-primary tabular-nums">
+                    {formatCurrency(receipt.voucher.sellingPrice || receipt.voucher.price, currency, lang)}
+                  </p>
+                </div>
+                <div className={`mt-3 grid gap-2 font-mono text-sm ${isSamePasswordMode(receipt.voucher) ? "grid-cols-1" : "grid-cols-2"}`}>
+                  <div>
+                    <p className="text-[10px] tracking-wide text-muted-foreground uppercase">{t("sell.code")}</p>
+                    <p className="mt-0.5 text-base font-semibold select-all">{receipt.voucher.username}</p>
+                  </div>
+                  {!isSamePasswordMode(receipt.voucher) && (
+                    <div>
+                      <p className="text-[10px] tracking-wide text-muted-foreground uppercase">{t("sell.password")}</p>
+                      <p className="mt-0.5 text-base font-semibold select-all">{receipt.voucher.password}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {receipt.offline && (
+                <p
+                  role="status"
+                  className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300"
+                >
+                  <CloudUpload aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+                  {t("sell.receiptOffline")}
+                </p>
+              )}
+
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setReceipt(null)}>
+                  {t("common.close")}
+                </Button>
+                <Button onClick={() => void share(receipt.voucher)}>
+                  <Share2 className="size-4" />
+                  {t("sell.share")}
                 </Button>
               </DialogFooter>
             </>

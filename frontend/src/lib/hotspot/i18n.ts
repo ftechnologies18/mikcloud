@@ -1887,6 +1887,11 @@ const fr: Record<string, string> = {
   "sell.sellConfirmTitle": "Vendre ce ticket ?",
   "sell.sellConfirmDesc": "Le ticket sera marqué « vendu » et remis au client — action définitive, tracée pour l’audit.",
   "sell.sellConfirmAction": "Confirmer la vente",
+  // Anti-fuite — le code n'existe à l'écran qu'après confirmation (reçu).
+  "sell.codeAfterConfirm": "Code visible et partageable après confirmation de la vente",
+  "sell.receiptTitle": "Vente confirmée",
+  "sell.receiptDesc": "Remettez le code au client — partagez-le maintenant.",
+  "sell.receiptOffline": "Vente enregistrée hors ligne : elle partira dès le retour du réseau.",
   "sell.code": "Code",
   "sell.password": "Mot de passe",
   "sell.expires": "exp.",
@@ -3817,6 +3822,11 @@ const en: Record<string, string> = {
   "sell.sellConfirmTitle": "Sell this ticket?",
   "sell.sellConfirmDesc": "The ticket will be marked as sold and handed to the customer — final action, traced for audit.",
   "sell.sellConfirmAction": "Confirm sale",
+  // Anti-leak — the code only appears on screen after confirmation (receipt).
+  "sell.codeAfterConfirm": "Code visible and shareable once the sale is confirmed",
+  "sell.receiptTitle": "Sale confirmed",
+  "sell.receiptDesc": "Hand the code to the customer — share it now.",
+  "sell.receiptOffline": "Sale saved offline: it will sync when the network returns.",
   "sell.code": "Code",
   "sell.password": "Password",
   "sell.expires": "exp.",

@@ -5,6 +5,32 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-04 — Mode Vente anti-fuite : le code ne se partage qu'APRÈS confirmation
+
+### Corrigés
+- **Partage anticipé (fuite comptoir)** : sur une carte de ticket EN STOCK, le
+  bouton « Partager » (Web Share/presse-papiers) et le code + mot de passe en
+  clair permettaient au revendeur de remettre le code au client AVANT
+  confirmation — la vente n'était alors jamais marquée « vendu » : trace
+  SoldAt anti-vol contournée, créance dépôt-vente et CA faussés.
+
+### Modifiés
+- **Carte de ticket muette** : code et mot de passe masqués (« •••••• »,
+  rien de copiable dans le DOM), bouton « Partager » supprimé, « Vendu » en
+  pleine largeur, et rappel « Code visible et partageable après confirmation
+  de la vente » ; le récapitulatif pré-confirmation (UX R2) reste lui aussi
+  muet sur le code.
+- **Reçu « Vente confirmée »** : après confirmation (vente tracée OU file
+  hors-ligne), le code + mot de passe s'affichent en grand (sélectionnables)
+  avec le bouton « Partager » — le geste de remise au client vit À ce moment,
+  jamais avant ; badge « enregistrée hors ligne » le cas échéant. Le code
+  d'un ticket vendu reste consultable dans le rapport de journée.
+
+### Tests
+- E2E réécrits : la recherche et le récapitulatif n'affichent plus le code ;
+  le reçu expose le code et le bouton « Partager » aboutit dans le
+  presse-papiers (contenu vérifié).
+
 ## 2026-09-04 — V1→V5 : suppression des revendeurs maîtrisée — garde-fous, cascade et purge des orphelines
 
 ### Corrigés

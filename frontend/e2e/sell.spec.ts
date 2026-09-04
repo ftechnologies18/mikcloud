@@ -57,38 +57,50 @@ test.describe.serial("Mode Vente — PWA revendeur", () => {
     await expect(page.getByText(/[7][0-2] ticket\(s\) en stock/)).toBeVisible();
   });
 
-  test("recherche exhaustive — un ticket de la 2ᵉ page est retrouvé", async ({ page }) => {
+  test("recherche exhaustive — un ticket de la 2ᵉ page est retrouvé (code masqué)", async ({ page }) => {
     await gotoAsReseller(page);
     // Le contexte neuf n'a chargé que la page 1 : chercher un code de la
     // page 2 doit forcer le chargement du reste (invariant R3 : la recherche
     // porte sur TOUT le stock, jamais « aucun résultat » à tort).
     await page.getByLabel("Rechercher un code, un profil, un lot…").fill(state.pageTwoCode);
-    await expect(page.locator("main").getByText(state.pageTwoCode).first()).toBeVisible({
-      timeout: 15_000,
-    });
+    // Anti-fuite — le code cherché ne s'affiche PAS : la carte reste muette
+    // tant que la vente n'est pas confirmée ; c'est le bouton « Vendu »
+    // (unique — le filtre ne laisse qu'une carte) qui prouve le résultat.
+    await expect(page.getByRole("button", { name: "Vendu" })).toHaveCount(1, { timeout: 15_000 });
+    await expect(page.locator("main").getByText(state.pageTwoCode)).toHaveCount(0);
     await expect(page.getByText(/Aucun ticket ne correspond/)).toHaveCount(0);
   });
 
-  test("vente tactile — confirmation R2, puis décompte du stock", async ({ page }) => {
+  test("vente tactile — code masqué avant confirmation, reçu partageable après", async ({ page }) => {
     await gotoAsReseller(page);
     await page.getByLabel("Rechercher un code, un profil, un lot…").fill(state.pageTwoCode);
-    const card = page.locator("main").getByText(state.pageTwoCode).first();
-    await expect(card).toBeVisible({ timeout: 15_000 });
-    // R2 — le misclick ne vend pas : Annuler laisse le stock intact.
-    await page.getByRole("button", { name: "Vendu" }).first().click();
+    // R2 — le misclick ne vend pas : Annuler laisse le stock intact, et le
+    // récapitulatif pré-confirmation ne révèle pas le code (anti-fuite).
+    await page.getByRole("button", { name: "Vendu" }).click();
     const dialog = page.getByRole("dialog", { name: "Vendre ce ticket ?" });
     await expect(dialog).toBeVisible();
-    await expect(dialog).toContainText(state.pageTwoCode);
+    await expect(dialog.getByText(state.pageTwoCode)).toHaveCount(0);
     await dialog.getByRole("button", { name: "Annuler" }).click();
     await expect(dialog).toHaveCount(0);
-    await expect(page.locator("main").getByText(state.pageTwoCode).first()).toBeVisible();
-    // Confirmation → la vente est tracée, le ticket quitte le comptoir.
-    await page.getByRole("button", { name: "Vendu" }).first().click();
+    await expect(page.getByRole("button", { name: "Vendu" })).toHaveCount(1);
+    // Confirmation → la vente est tracée, le ticket quitte le comptoir et le
+    // reçu « Vente confirmée » devient la SEULE porte de sortie du code.
+    await page.getByRole("button", { name: "Vendu" }).click();
     await page
       .getByRole("dialog", { name: "Vendre ce ticket ?" })
       .getByRole("button", { name: "Confirmer la vente" })
       .click();
     await expect(page.getByText("Voucher remis au client")).toBeVisible();
+    const receipt = page.getByRole("dialog", { name: "Vente confirmée" });
+    await expect(receipt).toBeVisible();
+    await expect(receipt.getByText(state.pageTwoCode)).toBeVisible();
+    // Partage : Web Share absent de Chromium headless → fallback presse-
+    // papiers ; le presse-papiers contient bien le code.
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    await receipt.getByRole("button", { name: "Partager" }).click();
+    await expect(page.getByText("Code copié dans le presse-papiers")).toBeVisible();
+    const clip = await page.evaluate(() => navigator.clipboard.readText());
+    expect(clip).toContain(state.pageTwoCode);
   });
 
   test("rapport de journée — ventilation par canal + export CSV comptable", async ({ page }) => {

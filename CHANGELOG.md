@@ -21,6 +21,52 @@ la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 - Contrat inchangé : un seul appel `POST /api/sell/{id}/sold`, même
   sémantique, aucune route nouvelle. Rapport de journée, retour de stock et
   audit inchangés. i18n FR/EN (+3 clés `sell.sellConfirm*`).
+## 2026-09-04 — UX NAV / Perf : navigation par URL « Speed App » (retour navigateur, liens directs, preconnect)
+
+### Ajoutés
+- **Navigation par URL (Phase A)** — la console quitte la route unique `/` :
+  `/login` (connexion), `/app/[[...vue]]` (console, une URL par vue :
+  `/app/users`, `/app/vouchers`, `/app/platform-logs`…), `/sell` (Mode
+  Vente). Le **bouton Retour/Avancer du navigateur** rejoue désormais la
+  navigation de la console, les **liens directs sont partageables et
+  bookmarkables**, et **recharger la page restaure la vue courante** (la
+  vue n'étant pas persistée, c'est l'URL qui la redéfinit au chargement).
+- **Synchronisation bidirectionnelle URL ↔ store** (`view-path.ts` +
+  `app-route.tsx`) : la vue reste pilotée par le store (source de vérité
+  unique) ; chaque changement de vue crée une entrée d'historique, les
+  navigations Retour/Avancer mettent à jour le store. Les deux sens sont
+  idempotents (aucune boucle, aucune entrée parasite) ; le premier
+  alignement `/app → /app/<vue>` passe par `replace` (historique propre).
+- **Gardes d'accès par route** (`app-route` / `sell-route` / `login-route`) :
+  session requise sur `/app` et `/sell`, revendeur redirigé vers `/sell`
+  (et seul autorisé dessus), session active sur `/login` renvoyée vers son
+  espace. Les fenêtres pré-montage rendent un fallback plein écran
+  (`ShellFallback`) — aucune erreur d'hydratation, aucun flash.
+- **Preconnect API (B1)** — `layout.tsx` émet `preconnect` + `dns-prefetch`
+  vers `NEXT_PUBLIC_API_BASE` (rendu uniquement si défini) : le handshake
+  TCP+TLS vers Render démarre pendant la saisie du login (~100-200 ms
+  économisées sur le premier appel).
+- **Préchauffe des vues chaudes (B4)** — après montage de la console, les
+  chunks des vues les plus consultées (sessions, utilisateurs, vouchers)
+  sont importés à l'idle (`requestIdleCallback`, repli timeout) : premier
+  clic instantané, même en réseau lent.
+- **QueryClient partagé entre routes** — `QueryProvider` remonte au layout
+  racine : le cache TanStack Query survit aux navigations `/` ↔ `/login` ↔
+  `/app` au lieu d'être recréé à chaque changement de route.
+
+### Conservé / inchangé
+- La vitrine reste servie sur `/` (CTA « Se connecter » → navigation client
+  vers `/login`, instantanée) ; PWA standalone : ouverture sur la connexion
+  ou la console si session active (comportement inchangé, redirections par
+  route). L'impersonation plateforme, les gardes de rôle par vue
+  (`canView`, correctif serveur 403) et le store Zustand restent la source
+  de vérité — aucun changement de contrat d'API ni de schéma Neon.
+- Perf listes (B3) : les requêtes paginées gardaient déjà
+  `placeholderData: (previous) => previous` — aucun ajout nécessaire.
+
+### Aucun impact
+- Backend : aucun fichier modifié. Contrats inchangés. Synchro Neon
+  inchangée. (Frontend uniquement — déploiement Vercel.)
 
 ## 2026-09-04 — UX R1 : Mode Vente — stock revendeur groupé par profil et par lot
 

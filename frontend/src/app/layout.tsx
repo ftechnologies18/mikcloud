@@ -4,6 +4,13 @@ import { ThemeProvider } from "next-themes";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 import { PWARegister } from "@/components/pwa-register";
+import { QueryProvider } from "@/lib/hotspot/query";
+
+// Perf B1 — préconnexion à l'API Render (mode direct) : le handshake TCP+TLS
+// démarre pendant que l'utilisateur parcourt la vitrine / saisit son login,
+// économisant ~100-200 ms sur le premier appel API. Rendu uniquement quand
+// NEXT_PUBLIC_API_BASE est défini (build Vercel ; la CI construit sans).
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE;
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -57,8 +64,20 @@ export default function RootLayout({
         {/* Premier enfant du body : exécuté pendant le parsing, donc avant
          * tout paint du contenu — la vitrine n'apparaît jamais en PWA. */}
         <script dangerouslySetInnerHTML={{ __html: PWA_BOOT_SCRIPT }} />
+        {API_BASE ? (
+          <>
+            <link rel="preconnect" href={API_BASE} crossOrigin="anonymous" />
+            <link rel="dns-prefetch" href={API_BASE} />
+          </>
+        ) : null}
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} disableTransitionOnChange>
-          {children}
+          {/* QueryProvider au niveau du layout racine : UN seul QueryClient
+           * partagé par toutes les routes (/, /login, /app, /sell) — le cache
+           * TanStack Query survit aux navigations au lieu d'être recréé à
+           * chaque changement de route. */}
+          <QueryProvider>
+            {children}
+          </QueryProvider>
           <Toaster richColors position="top-right" closeButton />
           <PWARegister />
         </ThemeProvider>

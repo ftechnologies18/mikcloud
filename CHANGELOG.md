@@ -5,6 +5,32 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-04 — UX R3 : Mode Vente — tickets papier connectés, recherche, lot entier, expiration
+
+### Ajoutés
+- **Ticket papier « connecté »** — le revendeur qui a imprimé des tickets de
+  son stock peut les vendre hors écran : il saisit le code imprimé dans le
+  bloc « Ticket papier déjà imprimé ? », le voucher est retrouvé dans SON
+  stock actif et suit exactement le chemin d'une vente tactile (confirmation
+  R2 obligatoire, trace `SoldAt`/`SoldVia`, créance dépôt-vente, rapport de
+  journée). Correspondance insensible à la casse ; code inexistant, déjà
+  vendu, retourné ou expiré → refus explicite, jamais de décompte fantôme.
+- **Recherche de stock** — champ de recherche local (aucune requête
+  supplémentaire) par code, profil ou référence de lot ; les groupes
+  correspondants se déplient automatiquement, état « aucun résultat »
+  explicite, effacement en un geste. Disponible en vente ET en retour.
+- **Retour d'un lot entier** — en mode retour, chaque en-tête de lot porte un
+  bouton « Tout » (sélection/désélection du lot complet) : les tickets d'un
+  lot expirent ensemble, les rendre un par un n'avait pas de sens au comptoir.
+- **Badge « Expire bientôt » (< 48 h)** — sur la carte du ticket concerné et
+  en en-tête du lot dès qu'un de ses tickets entre dans la fenêtre des 48 h :
+  à vendre en priorité, ou à rendre avant qu'il ne meure (un voucher expiré
+  sort du stock sans recyclage possible).
+
+### Aucun impact
+- Contrat inchangé (aucune route nouvelle, aucun champ nouveau) : la vente
+  papier réutilise `POST /api/sell/{id}/sold`, le retour reste
+  `POST /api/sell/return`. i18n FR/EN (+11 clés `sell.*`).
 ## 2026-09-04 — UX R2 : Mode Vente — confirmation avant remise au client
 
 ### Ajoutés

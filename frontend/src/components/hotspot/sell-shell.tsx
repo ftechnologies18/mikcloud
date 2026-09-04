@@ -8,12 +8,17 @@
 // - stock = vouchers actifs qui lui sont attribués, non remis ;
 // - « Vendu » trace la remise au client (SoldAt/SoldVia → audit anti-vol) ;
 // - « Partager » envoie code + mot de passe via Web Share (WhatsApp) ou presse-papiers ;
-// - hors ligne : bannière d'état — aucune vente offline fantôme (phase 1).
+// - hors ligne : bannière d'état — aucune vente offline fantôme (phase 1) ;
+// - UX R3 : recherche code/profil/lot, badge « expire bientôt » (< 48 h),
+//   sélection d'un lot entier en retour, et vente des tickets papier déjà
+//   imprimés — le code saisi « connecte » le ticket papier : décompte du
+//   stock + même traçabilité qu'une vente tactile (confirmation obligatoire).
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import Image from "next/image";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BadgeCheck,
+  CheckCheck,
   CheckCircle2,
   ChevronDown,
   Circle,
@@ -22,9 +27,11 @@ import {
   Loader2,
   LogOut,
   RefreshCw,
+  Search,
   Share2,
   ShoppingCart,
   Store,
+  Ticket,
   Undo2,
   Wifi,
   WifiOff,
@@ -43,6 +50,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, ApiError } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
@@ -153,6 +161,21 @@ function shortBatchId(id: string): string {
   return id.split("-").pop() || id;
 }
 
+// UX R3 — un ticket dont la validité se termine dans moins de 48 h mérite un
+// signal visuel : à vendre en priorité, ou à rendre au stock avant qu'il ne
+// meure (un voucher expiré sort du stock sans recyclage possible).
+const EXPIRY_SOON_MS = 48 * 60 * 60 * 1000;
+
+function expiresSoon(v: SellVoucher): boolean {
+  if (!v.expiresAt) return false;
+  const ms = new Date(v.expiresAt).getTime() - Date.now();
+  return ms > 0 && ms <= EXPIRY_SOON_MS;
+}
+
+function batchExpiringSoon(vouchers: SellVoucher[]): boolean {
+  return vouchers.some(expiresSoon);
+}
+
 function fmtDay(iso: string, lang: string): string {
   const d = new Date(iso.length === 10 ? `${iso}T12:00:00Z` : iso);
   return Number.isNaN(d.getTime())
@@ -213,6 +236,12 @@ export default function SellShell() {
   // marquer un ticket « vendu » (trace anti-vol SoldAt immuable, créance
   // dépôt-vente créée immédiatement — la vente est définitive par design).
   const [pendingSale, setPendingSale] = useState<SellVoucher | null>(null);
+  // UX R3 — recherche locale (code, profil, référence de lot) : filtre la
+  // liste affichée, sans nouvelle requête (le stock est déjà chargé).
+  const [query, setQuery] = useState("");
+  // UX R3 — vente d'un ticket papier imprimé : le code tapé retrouve le
+  // voucher dans le stock actif, puis passe par la confirmation R2.
+  const [physicalCode, setPhysicalCode] = useState("");
 
   const { data: me } = useQuery({
     queryKey: ["/api/sell/me"],
@@ -238,6 +267,7 @@ export default function SellShell() {
     onSuccess: () => {
       toast.success(t("sell.soldToast"));
       setPendingSale(null);
+      setPhysicalCode(""); // UX R3 — le code papier saisi est consommé
       qc.invalidateQueries({ queryKey: ["/api/sell/stock"] });
       qc.invalidateQueries({ queryKey: ["/api/sell/me"] });
     },
@@ -273,6 +303,25 @@ export default function SellShell() {
   // UX R1 — regroupement memoïsé : recalculé uniquement au refetch du stock.
   const groupedStock = useMemo(() => (stock ? groupStock(stock) : []), [stock]);
 
+  // UX R3 — recherche : filtre la liste plate et regroupe la sélection (mêmes
+  // groupes profil → lot, seuls les lots/tickets correspondants restent).
+  const searching = query.trim().length > 0;
+  const filteredStock = useMemo(() => {
+    if (!stock) return [];
+    const needle = query.trim().toLowerCase();
+    if (!needle) return stock;
+    return stock.filter(
+      (v) =>
+        v.username.toLowerCase().includes(needle) ||
+        v.profileName.toLowerCase().includes(needle) ||
+        (v.batchId ? shortBatchId(v.batchId).toLowerCase().includes(needle) : false),
+    );
+  }, [stock, query]);
+  const filteredGroups = useMemo(
+    () => (searching ? groupStock(filteredStock) : groupedStock),
+    [searching, filteredStock, groupedStock],
+  );
+
   const currency = me?.currency || "FCFA";
   const isDeposit = me?.paymentMode === "deposit";
   const hasStock = !!stock && stock.length > 0;
@@ -295,6 +344,23 @@ export default function SellShell() {
   // cas d'erreur réseau la dialog reste ouverte (relance sans retaper).
   function confirmSale() {
     if (pendingSale) sell.mutate(pendingSale.id);
+  }
+
+  // UX R3 — ticket papier « connecté » : le revendeur a imprimé des tickets
+  // de son stock ; quand il en remet un au client, il tape le code imprimé —
+  // le voucher est retrouvé dans SON stock actif et suit exactement le même
+  // chemin qu'une vente tactile (confirmation R2, trace SoldAt, créance
+  // dépôt-vente). Code inexistant/vendu/expiré → refus explicite : jamais de
+  // décompte fantôme, le stock ne baisse qu'à la vente réellement confirmée.
+  function sellPhysical() {
+    const code = physicalCode.trim();
+    if (!code) return;
+    const hit = (stock ?? []).find((v) => v.username.toLowerCase() === code.toLowerCase());
+    if (!hit) {
+      toast.error(t("sell.physicalNotFound"));
+      return;
+    }
+    setPendingSale(hit);
   }
 
   function toggleGroup(key: string) {
@@ -322,6 +388,20 @@ export default function SellShell() {
         next.delete(id);
       } else {
         next.add(id);
+      }
+      return next;
+    });
+  }
+
+  // UX R3 — mode retour : tout un lot en un geste (les tickets d'un lot
+  // expirent ensemble — les rendre un par un n'a pas de sens au comptoir).
+  function toggleBatchSelection(b: SellBatchGroup) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      const allIn = b.vouchers.every((v) => next.has(v.id));
+      for (const v of b.vouchers) {
+        if (allIn) next.delete(v.id);
+        else next.add(v.id);
       }
       return next;
     });
@@ -431,6 +511,11 @@ export default function SellShell() {
                 {v.dataQuotaMb > 0 && (
                   <Badge variant="secondary" className="text-[10px]">
                     {Math.round(v.dataQuotaMb / 1024)} Go
+                  </Badge>
+                )}
+                {expiresSoon(v) && (
+                  <Badge className="border-amber-500/40 bg-amber-500/10 text-[10px] text-amber-700 dark:text-amber-300">
+                    {t("sell.expiresSoon")}
                   </Badge>
                 )}
               </div>
@@ -612,7 +697,7 @@ export default function SellShell() {
             {/* UX R1 — barre du stock : comptage + bascule de vue. */}
             <div className="flex items-center justify-between gap-3">
               <p className="text-sm text-muted-foreground">
-                {tf("sell.stockCountLabel", { count: stock.length })}
+                {tf("sell.stockCountLabel", { count: searching ? filteredStock.length : stock.length })}
               </p>
               <div className="flex rounded-lg border bg-muted/30 p-0.5" role="group" aria-label={t("sell.viewLabel")}>
                 <button
@@ -638,12 +723,83 @@ export default function SellShell() {
               </div>
             </div>
 
-            {view === "recent" ? (
-              stock.map((v) => renderVoucherCard(v))
+            {/* UX R3 — recherche locale : code, profil ou référence de lot.
+                Les groupes correspondants se déplient automatiquement. */}
+            <div className="relative">
+              <Search aria-hidden className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                type="text"
+                inputMode="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={t("sell.searchPlaceholder")}
+                aria-label={t("sell.searchPlaceholder")}
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                className="h-10 pl-9 pr-9"
+              />
+              {searching && (
+                <button
+                  type="button"
+                  onClick={() => setQuery("")}
+                  aria-label={t("sell.searchClear")}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  <X className="size-4" aria-hidden />
+                </button>
+              )}
+            </div>
+
+            {/* UX R3 — ticket papier déjà imprimé : la saisie du code
+                « connecte » le ticket papier au système — le stock se décompte
+                exactement comme une vente tactile (confirmation incluse). */}
+            {!returnMode && (
+              <section aria-label={t("sell.physicalTitle")} className="rounded-xl border border-dashed bg-muted/20 p-3">
+                <div className="flex items-center gap-2">
+                  <Ticket aria-hidden className="size-4 shrink-0 text-primary" />
+                  <p className="text-sm font-semibold">{t("sell.physicalTitle")}</p>
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">{t("sell.physicalDesc")}</p>
+                <form
+                  className="mt-2 flex gap-2"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    sellPhysical();
+                  }}
+                >
+                  <Input
+                    value={physicalCode}
+                    onChange={(e) => setPhysicalCode(e.target.value)}
+                    placeholder={t("sell.physicalPlaceholder")}
+                    aria-label={t("sell.physicalPlaceholder")}
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    className="h-10 min-w-0 flex-1 font-mono"
+                  />
+                  <Button type="submit" variant="outline" className="h-10 shrink-0" disabled={sell.isPending}>
+                    <BadgeCheck className="size-4" aria-hidden />
+                    {t("sell.sellBtn")}
+                  </Button>
+                </form>
+              </section>
+            )}
+
+            {searching && filteredStock.length === 0 ? (
+              <Card>
+                <CardContent className="p-6 text-center text-sm text-muted-foreground">
+                  {t("sell.searchNoResult")}
+                </CardContent>
+              </Card>
+            ) : view === "recent" ? (
+              filteredStock.map((v) => renderVoucherCard(v))
             ) : (
-              groupedStock.map((g) => {
+              filteredGroups.map((g) => {
                 const groupKey = `profil:${g.profileName}`;
-                const isCollapsed = collapsedGroups.has(groupKey);
+                // UX R3 — en recherche, tous les groupes correspondants sont
+                // dépliés (le filtre remplace l'état de repliage mémorisé).
+                const isCollapsed = !searching && collapsedGroups.has(groupKey);
                 return (
                   <section key={g.profileName} aria-label={g.profileName} className="space-y-3">
                     <button
@@ -669,18 +825,42 @@ export default function SellShell() {
 
                     {!isCollapsed &&
                       (g.hasLots ? (
-                        g.batches.map((b) => (
-                          <div key={b.key} className="space-y-3">
-                            <div className="flex items-center gap-1.5 px-1">
-                              <Layers aria-hidden className="size-3 shrink-0 text-muted-foreground" />
-                              <p className="truncate text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                                {b.key === NO_BATCH ? t("sell.lotNone") : tf("sell.lotLabel", { id: b.labelId })} ·{" "}
-                                {fmtDay(b.createdAt, lang)} · {tf("sell.lotCount", { count: b.vouchers.length })}
-                              </p>
+                        g.batches.map((b) => {
+                          const batchAllIn = returnMode && b.vouchers.every((v) => selected.has(v.id));
+                          return (
+                            <div key={b.key} className="space-y-3">
+                              <div className="flex items-center gap-1.5 px-1">
+                                <Layers aria-hidden className="size-3 shrink-0 text-muted-foreground" />
+                                <p className="min-w-0 flex-1 truncate text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                                  {b.key === NO_BATCH ? t("sell.lotNone") : tf("sell.lotLabel", { id: b.labelId })} ·{" "}
+                                  {fmtDay(b.createdAt, lang)} · {tf("sell.lotCount", { count: b.vouchers.length })}
+                                  {batchExpiringSoon(b.vouchers) && (
+                                    <span className="text-amber-600 dark:text-amber-400">
+                                      {" "}· {t("sell.lotExpiring")}
+                                    </span>
+                                  )}
+                                </p>
+                                {returnMode && (
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleBatchSelection(b)}
+                                    aria-label={t("sell.lotSelectAllAria")}
+                                    aria-pressed={batchAllIn}
+                                    className={`flex min-h-8 shrink-0 items-center gap-1 rounded-md border px-2 text-[11px] font-medium transition-colors ${
+                                      batchAllIn
+                                        ? "border-primary bg-primary text-primary-foreground"
+                                        : "bg-background text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                                    }`}
+                                  >
+                                    <CheckCheck className="size-3.5" aria-hidden />
+                                    {t("sell.lotSelectAll")}
+                                  </button>
+                                )}
+                              </div>
+                              {b.vouchers.map((v) => renderVoucherCard(v))}
                             </div>
-                            {b.vouchers.map((v) => renderVoucherCard(v))}
-                          </div>
-                        ))
+                          );
+                        })
                       ) : (
                         g.batches.flatMap((b) => b.vouchers).map((v) => renderVoucherCard(v))
                       ))}

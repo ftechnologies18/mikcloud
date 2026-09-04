@@ -22,6 +22,7 @@ import (
 	"mikcloud/hotspot-api/internal/notify"
 	"mikcloud/hotspot-api/internal/secretbox"
 	"mikcloud/hotspot-api/internal/store"
+	"mikcloud/hotspot-api/internal/telemetry"
 )
 
 // defaultPort — port d'écoute par défaut (overridable via PORT, ex. Render).
@@ -74,12 +75,20 @@ func main() {
 	}
 	st.Unlock()
 
+	// B2 « Speed App UX » — collecte des Core Web Vitals (POST /api/vitals) :
+	// ring mémoire + insertions Neon par lots asynchrones (best-effort, file
+	// bornée — un incident Neon n'impacte jamais les requêtes API). Sans
+	// DATABASE_URL (dev), collecte mémoire seule. Le démarrage n'attend
+	// jamais Neon : schéma + recharge historique en tâche de fond (45 s).
+	vitals := telemetry.NewCollector(os.Getenv("DATABASE_URL"))
+
 	// Arrêt propre (SIGTERM Render / Ctrl+C) : flush final vers Neon avant exit.
 	go func() {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, syscall.SIGTERM, os.Interrupt)
 		<-sig
 		log.Printf("arrêt demandé — flush final des données…")
+		vitals.Close()
 		st.Close()
 		os.Exit(0)
 	}()
@@ -90,7 +99,7 @@ func main() {
 	monitor := notify.NewService(st)
 	go monitor.Run()
 
-	handler := logRequests(securityHeaders(corsMiddleware(limitBody(authRateLimit(api.New(st, jwtSecret).Handler())))))
+	handler := logRequests(securityHeaders(corsMiddleware(limitBody(authRateLimit(api.New(st, jwtSecret).WithVitals(vitals).Handler())))))
 	// Sécurité P1 #12 — timeouts HTTP complets. ReadHeaderTimeout seul laissait
 	// des connexions en lecture/écriture illimitées : un client lent (ou hostile)
 	// pouvait maintenir indéfiniment des goroutines et sockets (slowloris,

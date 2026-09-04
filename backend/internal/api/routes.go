@@ -9,6 +9,7 @@ import (
 	"mikcloud/hotspot-api/internal/model"
 	"mikcloud/hotspot-api/internal/routeros"
 	"mikcloud/hotspot-api/internal/store"
+	"mikcloud/hotspot-api/internal/telemetry"
 )
 
 // API — registre des routes + dépendances.
@@ -17,8 +18,9 @@ type API struct {
 	secret  string
 	gwMu    sync.Mutex
 	gws     map[string]routeros.Gateway
-	pinLock *pinLimiter    // sécurité S2 — verrouillage PIN revendeur par compte
-	signup  *signupLimiter // sécurité S3 — quota d'inscription par IP
+	pinLock *pinLimiter          // sécurité S2 — verrouillage PIN revendeur par compte
+	signup  *signupLimiter       // sécurité S3 — quota d'inscription par IP
+	vitals  *telemetry.Collector // B2 — Core Web Vitals (nil = collecte désactivée)
 }
 
 // New construit l'API.
@@ -240,6 +242,12 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/routers/{id}/scheduler-remove", a.requireRole(2, a.handleSchedulerRemove))
 	mux.HandleFunc("POST /api/routers/{id}/reboot", a.requireRole(2, a.handleRouterReboot))
 	mux.HandleFunc("POST /api/routers/{id}/shutdown", a.requireRole(2, a.handleRouterShutdown))
+
+	// B2 « Speed App UX » — Core Web Vitals (voir handlers_vitals.go) :
+	// collecte publique (beacon text/plain sans preflight, vitrine anonyme
+	// incluse) + synthèse plateforme (isPlatformAdmin).
+	mux.HandleFunc("POST /api/vitals", a.handleVitalsPost)
+	mux.HandleFunc("GET /api/vitals/summary", a.handleVitalsSummary)
 
 	// Fallback API -> 404 JSON
 	mux.HandleFunc("/api/", a.handleAPINotFound)

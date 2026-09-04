@@ -5,6 +5,32 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-04 — B2 perf : télémétrie Core Web Vitals (beacon public + synthèse plateforme)
+
+### Ajoutés
+- **Mesure de la latence réelle (RUM)** — le frontend remonte les Core Web
+  Vitals (LCP, INP, CLS, FCP, TTFB) de TOUS les usagers — visiteurs anonymes
+  de la vitrine inclus — vers `POST /api/vitals` : `navigator.sendBeacon`
+  (Blob `text/plain`, requête simple sans preflight CORS, réponse 204 jamais
+  lue), `web-vitals` v6 importé dynamiquement à l'idle (hors du chemin
+  critique qu'il mesure), `sid` éphémère en sessionStorage (sans cookie ni
+  PII). Monté dans le layout racine → mesure `/`, `/login`, `/app`, `/sell`.
+- **Synthèse plateforme** — `GET /api/vitals/summary?window=h` (1-168, défaut
+  24) : p50/p75/p95 (nearest-rank), répartition good/needs-improvement/poor,
+  top 8 chemins, mobile/desktop — avec déduplication « dernier rapport par
+  (session, page, métrique) » (recommandation Google pour les p75).
+
+### Architecture
+- **`internal/telemetry`** — isolé du store métier (aucun impact sur
+  `model.DB` ni la synchro différentielle) : ring mémoire 20 000 échantillons
+  + table Neon `web_vitals` (DDL idempotente en tâche de fond 45 s après boot
+  — le démarrage n'attend JAMAIS Neon, cold start préservé) ; historique 48 h
+  rechargé au boot (les agrégats survivent aux redéploiements Render) ;
+  insertions par lots asynchrones (10 min ou 200 échantillons, file bornée
+  2 000, pertes loguées) — un incident Neon n'impacte jamais une requête API ;
+  flush final sur SIGTERM. `POST /api/vitals` whitelisté (vitrine anonyme),
+  couvert par le limiteur général ; IP et User-Agent bruts jamais stockés.
+
 ## 2026-09-04 — UX NAV : correctif — le bouton Retour rejoue la navigation console
 
 ### Corrigés

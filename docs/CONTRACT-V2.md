@@ -735,6 +735,67 @@ Migration : ALTER idempotents au boot (`resellers.payment_mode`, `resellers.debt
   entre l'affichage du stock et la confirmation, la validité peut tomber) ; le retour
   de stock N°20 refuse de même tout ticket vendu, expiré ou consommé (inchangé).
 
+## B2 — Core Web Vitals « Speed App UX » (télémétrie RUM, 2026-09-04)
+
+Mesure de la latence RÉELLE perçue par les usagers (vitrine anonyme incluse)
+pour piloter les optimisations et arbitrer l'autosuspend Neon (Phase C).
+Isolée du store métier : `internal/telemetry` (ring mémoire + Neon par lots
+asynchrones) — aucun impact sur `model.DB` ni la synchro différentielle.
+
+### POST /api/vitals — PUBLIC (whitelisté, beacon)
+
+- **Entrée** : `text/plain` contenant du JSON (requête simple → JAMAIS de
+  preflight CORS), envoyé par `navigator.sendBeacon` (fallback fetch keepalive) :
+  ```json
+  { "path": "/app/users", "sid": "a1b2c3d4", "nav": "navigate",
+    "metrics": [ { "name": "LCP", "value": 2340.5, "rating": "good" } ] }
+  ```
+  - `name` ∈ `LCP | CLS | INP | FCP | TTFB` ; `value` ≥ 0, fini, ≤ 600 000
+    (ms ; CLS sans unité) ; `rating` ∈ `good | needs-improvement | poor | ""` ;
+  - `path` ≤ 128, commence par `/` ; `sid` ≤ 64 (session de mesure
+    sessionStorage — sans cookie ni PII) ; `nav` ∈ navigate / reload /
+    back-forward / back-forward-cache / prerender / restore / "" ;
+  - ≤ 8 métriques par requête ; corps ≤ 8 Kio → `400` sinon ;
+- **Sortie** : `204 No Content` (le beacon ne lit jamais la réponse) ;
+- **Sécurité** : whitelist publique dans le middleware d'auth (la vitrine
+  anonyme est précisément la page à mesurer), couverture par le limiteur
+  général (120/min/IP + plafond global 900/min) ; IP et User-Agent bruts
+  JAMAIS stockés (IP = limiteur mémoire uniquement ; `device` = hint
+  `mobile|desktop` dérivé serveur du UA).
+
+### GET /api/vitals/summary — plateforme uniquement (isPlatformAdmin)
+
+- `?window=heures` (1-168, défaut 24) ;
+- Sortie :
+  ```json
+  { "window": 24, "samples": 1234,
+    "metrics": { "LCP": { "n": 300, "p50": 2100.4, "p75": 3300.1, "p95": 5200.0,
+                          "good": 140, "needsImprovement": 90, "poor": 70 } },
+    "paths":   [ { "path": "/app/dashboard", "n": 210,
+                   "p75": { "LCP": 3100.2, "INP": 180.5, "TTFB": 640.0 } } ],
+    "devices": { "mobile": { "n": 980, "p75": { "LCP": 3400.0, "TTFB": 720.0 } } } }
+  ```
+- **Déduplication** : web-vitals re-rapporte LCP/CLS/INP quand la valeur
+  évolue ; seuls les DERNIERS rapports par (sid, path, métrique) comptent
+  dans les agrégats (recommandation Google pour les p75) ; quantiles
+  « nearest-rank » ; p75 par groupe omis sous 5 échantillons.
+
+### Stockage (`internal/telemetry/vitals.go`)
+
+- **Mémoire** : ring 20 000 échantillons — source des agrégats ; historique
+  rechargé depuis Neon au boot (48 h max) → les agrégats survivent aux
+  redéploiements Render ;
+- **Neon** : table `web_vitals` (`id BIGSERIAL`, `sampled_at TIMESTAMPTZ`,
+  `metric`, `value DOUBLE PRECISION`, `rating`, `path`, `device`, `nav`,
+  `sid` + index `sampled_at DESC`) — DDL idempotente en tâche de fond 45 s
+  après boot (le démarrage n'attend JAMAIS Neon) ; insertions par LOT
+  asynchrones (10 min ou 200 échantillons, file bornée 2 000, pertes
+  loguées) — un incident Neon n'impacte jamais une requête API ;
+- **Frontend** : `src/components/perf/vitals-reporter.tsx` monté dans le
+  layout racine (mesure /, /login, /app, /sell) ; `web-vitals` (~1,5 Ko
+  gzip) importé dynamiquement à l'idle — hors du chemin critique qu'il
+  mesure ; `sid` en sessionStorage.
+
 ---
 
 ## PLAN DE FICHIERS

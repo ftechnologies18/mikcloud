@@ -4,6 +4,7 @@ import { ThemeProvider } from "next-themes";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 import { PWARegister } from "@/components/pwa-register";
+import VitalsReporter from "@/components/perf/vitals-reporter";
 import { QueryProvider } from "@/lib/hotspot/query";
 
 // Perf B1 — préconnexion à l'API Render (mode direct) : le handshake TCP+TLS
@@ -80,6 +81,13 @@ export default function RootLayout({
           </QueryProvider>
           <Toaster richColors position="top-right" closeButton />
           <PWARegister />
+          {/* B2 « Speed App UX » — Core Web Vitals réels (LCP/INP/CLS/FCP/
+           * TTFB) de tous les usagers vers POST /api/vitals : mesure de la
+           * latence perçue (vitrine, login, console, Mode Vente) pour piloter
+           * les optimisations et arbitrer l'autosuspend Neon (Phase C).
+           * Composant nul côté rendu : import dynamique à l'idle, zéro coût
+           * sur le chemin critique. */}
+          <VitalsReporter />
         </ThemeProvider>
       </body>
     </html>

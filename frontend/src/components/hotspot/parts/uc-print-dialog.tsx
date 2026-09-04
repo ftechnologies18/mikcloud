@@ -31,13 +31,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useCurrency, useSettings } from "@/components/hotspot/parts/sd-currency";
-import {
-  a4GridPlan,
-  isSamePasswordMode,
-  renderBatch,
-} from "@/components/hotspot/parts/template-render";
+import { a4GridPlan, renderBatch } from "@/components/hotspot/parts/template-render";
+import { VoucherTicketCard } from "@/components/hotspot/parts/voucher-ticket-card";
 import { useI18n } from "@/lib/hotspot/i18n";
-import { formatBytes, formatCurrency , fmtRouterDuration } from "@/lib/hotspot/format";
 import type { HotspotUser, Profile, VoucherTemplate } from "@/lib/hotspot/types";
 
 /** Clé localStorage du dernier modèle choisi pour l'impression. */
@@ -240,36 +236,15 @@ export function UcPrintDialog({
                   const prof = profiles.find((p) => p.id === voucher.profileId);
                   const validityMin = prof ? (prof.validityMin > 0 ? prof.validityMin : prof.validityDays * 1440) : 0;
                   return (
-                    <div
+                    <VoucherTicketCard
                       key={voucher.id}
-                      className="flex flex-col items-center gap-1 rounded-lg border-2 border-dashed border-black p-3 text-center break-inside-avoid"
+                      voucher={voucher}
+                      tenantName={tenantName}
+                      currency={currency}
+                      lang={lang}
+                      validityMin={validityMin}
                       style={stdPlan.zoom < 1 ? { zoom: stdPlan.zoom } : undefined}
-                    >
-                      <p className="text-sm font-bold leading-tight">{tenantName || "MikCloud"}</p>
-                      <p className="text-[10px] uppercase tracking-widest text-emerald-700">
-                        {t("print.wifiHotspot")}
-                      </p>
-                      <p className="mt-1 text-xl font-bold font-mono tracking-wider">{voucher.username}</p>
-                      {/* Mode « mot de passe = identifiant » : le code seul sur le ticket. */}
-                      {!isSamePasswordMode(voucher) && (
-                        <p className="font-mono text-sm">
-                          {t("print.passwordLabel")} {voucher.password}
-                        </p>
-                      )}
-                      <p className="text-xs text-neutral-700">
-                        {voucher.profileName}
-                        {validityMin ? ` · ${fmtRouterDuration(validityMin)}` : ""}
-                        {(voucher.dataQuotaMb ?? 0) > 0
-                          ? ` · ${formatBytes(voucher.dataQuotaMb * 1048576, lang)}`
-                          : ""}
-                      </p>
-                      <p className="text-sm font-bold text-emerald-700">
-                        {formatCurrency(voucher.price, currency, lang)}
-                      </p>
-                      <p className="mt-1 w-full border-t border-neutral-300 pt-1 text-[10px] text-neutral-600">
-                        {t("print.keepTicket")}
-                      </p>
-                    </div>
+                    />
                   );
                 })}
               </div>

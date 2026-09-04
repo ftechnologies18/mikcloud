@@ -44,6 +44,9 @@ type sellVoucherItem struct {
 	// PWA de regrouper le stock par profil puis par lot. Champ additif —
 	// rétrocompatible avec les PWA déjà installées.
 	BatchID string `json:"batchId"`
+	// Impression revendeur — validité du profil en minutes (source
+	// d'affichage du ticket papier ; 0 = profil introuvable/illimité).
+	ValidityMin int `json:"validityMin"`
 }
 
 // requireReseller — le token doit porter le rôle « reseller » (PIN) ET le
@@ -176,6 +179,10 @@ type sellMe struct {
 	SoldToday    int    `json:"soldToday"`
 	RevenueToday int    `json:"revenueToday"`
 	Currency     string `json:"currency"`
+	// Impression revendeur — branding des tickets : nom du hotspot
+	// (en-tête du ticket) et adresse du portail si configurée.
+	TenantName string `json:"tenantName"`
+	DnsName    string `json:"dnsName"`
 	// N°19 — dépôt-vente : le solde affiché devient « à verser ».
 	PaymentMode string `json:"paymentMode"`
 	Debt        int    `json:"debt"`
@@ -223,6 +230,8 @@ func (a *API) handleSellMe(w http.ResponseWriter, r *http.Request) {
 	}
 	if s, ok := db.SettingsByAccount[c.Acc]; ok {
 		out.Currency = s.Tenant.Currency
+		out.TenantName = s.Tenant.Name
+		out.DnsName = s.Tenant.DNSName
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -251,6 +260,14 @@ func (a *API) handleSellStock(w http.ResponseWriter, r *http.Request) {
 	defer a.store.Unlock()
 	db := a.store.Data()
 	items := []sellVoucherItem{}
+	// Impression revendeur — validité affichée sur le ticket : une seule
+	// lecture des profils du compte (le ticket reflète le profil d'origine).
+	profileValidity := map[string]int{}
+	for _, p := range db.Profiles {
+		if p.AccountID == c.Acc {
+			profileValidity[p.ID] = p.ValidityMinutes()
+		}
+	}
 	for i := range db.HotspotUsers {
 		u := &db.HotspotUsers[i]
 		if u.ResellerID != c.Sub || u.AccountID != c.Acc || u.Kind != "voucher" {
@@ -264,6 +281,7 @@ func (a *API) handleSellStock(w http.ResponseWriter, r *http.Request) {
 			ProfileName: u.ProfileName, Price: u.Price, SellingPrice: u.SellingPrice,
 			DataQuotaMb: u.DataQuotaMb, ExpiresAt: u.ExpiresAt,
 			RouterName: u.RouterName, CreatedAt: u.CreatedAt, BatchID: u.BatchID,
+			ValidityMin: profileValidity[u.ProfileID],
 		})
 	}
 	// tri : plus récemment généré en premier (rotation FIFO du stock).

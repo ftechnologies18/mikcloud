@@ -64,6 +64,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, apiDownload, ApiError } from "@/lib/hotspot/api";
+import {
+  SellPrintDialog,
+  type SellPrintScope,
+} from "@/components/hotspot/parts/sell-print-dialog";
 import { useI18n, tf as tfLang } from "@/lib/hotspot/i18n";
 import { formatCurrency } from "@/lib/hotspot/format";
 import {
@@ -89,6 +93,8 @@ interface SellVoucher {
   createdAt: string;
   /** UX R1 — lot d'origine (peut être absent sur les données historiques). */
   batchId?: string;
+  /** Impression revendeur — validité du profil en minutes (ticket papier). */
+  validityMin?: number;
 }
 
 /** P3-e — une page de stock (réponse de /api/sell/stock?limit=…).
@@ -127,6 +133,9 @@ interface SellMe {
   soldToday: number;
   revenueToday: number;
   currency: string;
+  /** Impression revendeur — branding des tickets (nom du hotspot / portail). */
+  tenantName?: string;
+  dnsName?: string;
   /** N°19 — dépôt-vente : « à verser » remplace le crédit. */
   paymentMode?: string;
   debt?: number;
@@ -321,6 +330,16 @@ export default function SellShell() {
   const [returnMode, setReturnMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [returnConfirmOpen, setReturnConfirmOpen] = useState(false);
+  // Impression revendeur — portée courante : tout le stock ou un seul lot
+  // (le dialog relit le stock complet avant impression). printSession est un
+  // nonce : chaque ouverture REMONTE le dialog → stock toujours relu à neuf
+  // (un ticket vendu entre deux ouvertures ne réapparaît pas).
+  const [printScope, setPrintScope] = useState<SellPrintScope | null>(null);
+  const [printSession, setPrintSession] = useState(0);
+  const openPrint = (scope: SellPrintScope) => {
+    setPrintScope(scope);
+    setPrintSession((n) => n + 1);
+  };
   // UX R1 — vue du stock : « profile » (regroupé profil → lot, défaut) ou
   // « recent » (liste plate historique, plus récents d'abord) — persistée.
   const view = useSyncExternalStore(subscribeView, getViewSnapshot, getServerViewSnapshot);
@@ -1052,7 +1071,20 @@ export default function SellShell() {
               <p className="text-sm text-muted-foreground">
                 {tf("sell.stockCountLabel", { count: searching ? filteredStock.length : stock.length })}
               </p>
-              <div className="flex rounded-lg border bg-muted/30 p-0.5" role="group" aria-label={t("sell.viewLabel")}>
+              <div className="flex items-center gap-2">
+                {!returnMode && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="min-h-9 shrink-0"
+                    onClick={() => openPrint({ kind: "all" })}
+                    disabled={stock.length === 0}
+                  >
+                    <Printer className="size-4" />
+                    <span className="hidden min-[420px]:inline">{t("sell.printAll")}</span>
+                  </Button>
+                )}
+                <div className="flex rounded-lg border bg-muted/30 p-0.5" role="group" aria-label={t("sell.viewLabel")}>
                 <button
                   type="button"
                   onClick={() => changeView("profile")}
@@ -1073,6 +1105,7 @@ export default function SellShell() {
                 >
                   {t("sell.viewRecent")}
                 </button>
+                </div>
               </div>
             </div>
 
@@ -1200,6 +1233,22 @@ export default function SellShell() {
                                     </span>
                                   )}
                                 </p>
+                                {!returnMode && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      openPrint({
+                                        kind: "batch",
+                                        batchId: b.key === NO_BATCH ? null : b.key,
+                                        label: b.key === NO_BATCH ? t("sell.lotNone") : b.labelId,
+                                      })
+                                    }
+                                    aria-label={t("sell.printLotAria")}
+                                    className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-background text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+                                  >
+                                    <Printer className="size-3.5" aria-hidden />
+                                  </button>
+                                )}
                                 {returnMode && (
                                   <button
                                     type="button"
@@ -1593,6 +1642,17 @@ export default function SellShell() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {/* Impression revendeur — stock complet ou lot unique (A4 / thermique). */}
+      <SellPrintDialog
+        key={printSession}
+        open={printScope !== null}
+        onOpenChange={(open) => {
+          if (!open) setPrintScope(null);
+        }}
+        scope={printScope ?? { kind: "all" }}
+        tenantName={me?.tenantName ?? ""}
+        currency={currency}
+      />
     </div>
   );
 }

@@ -23,10 +23,13 @@ import {
   ChevronDown,
   Circle,
   CloudUpload,
+  Download,
   FileBarChart,
   Layers,
   Loader2,
   LogOut,
+  MousePointerClick,
+  Printer,
   RefreshCw,
   Search,
   Share2,
@@ -52,7 +55,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { api, ApiError } from "@/lib/hotspot/api";
+import { api, apiDownload, ApiError } from "@/lib/hotspot/api";
 import { useI18n, tf as tfLang } from "@/lib/hotspot/i18n";
 import { formatCurrency } from "@/lib/hotspot/format";
 import {
@@ -61,7 +64,7 @@ import {
   removeQueuedSale,
   type QueuedSale,
 } from "@/lib/hotspot/offline-queue";
-import type { SellDayReport } from "@/lib/hotspot/types";
+import type { SellDayReport, SellVia } from "@/lib/hotspot/types";
 import { isSamePasswordMode } from "@/components/hotspot/parts/template-render";
 import { useHotspotStore } from "@/lib/hotspot/store";
 
@@ -215,6 +218,21 @@ function batchExpiringSoon(vouchers: SellVoucher[]): boolean {
   return vouchers.some(expiresSoon);
 }
 
+// P3-d — canaux de vente (audit R4) : clé i18n + icône du canal. Une vente
+// sans canal tracé (historique pré-R4) était nécessairement tactile.
+const VIA_ORDER = ["sell_mode", "auto_connect", "sell_mode_paper"] as const;
+const VIA_KEYS: Record<string, string> = {
+  sell_mode: "sell.viaTactile",
+  auto_connect: "sell.viaAuto",
+  sell_mode_paper: "sell.viaPaper",
+};
+
+function viaIcon(via?: string) {
+  if (via === "auto_connect") return Wifi;
+  if (via === "sell_mode_paper") return Printer;
+  return MousePointerClick;
+}
+
 function fmtDay(iso: string, lang: string): string {
   const d = new Date(iso.length === 10 ? `${iso}T12:00:00Z` : iso);
   return Number.isNaN(d.getTime())
@@ -323,6 +341,25 @@ export default function SellShell() {
     queryFn: () => api<SellDayReport>("/api/sell/day-report"),
     enabled: reportOpen,
   });
+
+  // P3-d — export comptable « journal de caisse » (CSV Excel, téléchargement
+  // authentifié via apiDownload — le lien direct ne porterait pas le token).
+  const [exporting, setExporting] = useState(false);
+  async function exportJournal() {
+    if (!report || exporting) return;
+    setExporting(true);
+    try {
+      await apiDownload(
+        "/api/sell/day-report.csv",
+        `journal-caisse-${report.date}-${me?.username || "revendeur"}.csv`,
+      );
+      toast.success(t("sell.dayReportExportToast"));
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : t("sell.error"));
+    } finally {
+      setExporting(false);
+    }
+  }
 
   // UX R6 — miroir de la file IndexedDB pour le rendu (bannière + chips).
   const [queued, setQueued] = useState<QueuedSale[]>([]);
@@ -619,15 +656,33 @@ export default function SellShell() {
     });
     const timeHM = (iso: string) =>
       new Date(iso).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
+    const viaLabel = (via?: string) => t(VIA_KEYS[via ?? "sell_mode"] ?? "sell.viaTactile");
+    const viaLine = VIA_ORDER.filter((v) => (report.byVia?.[v] ?? 0) > 0)
+      .map((v) => `${viaLabel(v)} ${report.byVia?.[v]}`)
+      .join(" · ");
     const lines = [
       tf("sell.dayReportTextHeader", { date: dateLabel }),
       me ? `${me.name} (${me.username})` : "",
       `${t("sell.dayReportSold")} : ${report.soldCount} — ${formatCurrency(report.revenue, currency, lang)}`,
+      // P3-d — ventilation par canal (le gérant voit d'où viennent les ventes).
+      ...(viaLine ? [viaLine] : []),
       // N°19 V2 — dépôt-vente : le rapport annonce le versement attendu.
       ...(report.paymentMode === "deposit"
         ? [
             tf("sell.dayReportToDepositText", { amount: formatCurrency(report.toDeposit ?? 0, currency, lang) }),
             tf("sell.dayReportDebtText", { amount: formatCurrency(report.debtTotal ?? 0, currency, lang) }),
+            ...(report.settledToday && report.settledToday > 0
+              ? [tf("sell.dayReportSettled", { amount: formatCurrency(report.settledToday, currency, lang) })]
+              : []),
+          ]
+        : []),
+      // P3-d — retours du jour avec flux cash (recrédit prépayé).
+      ...((report.returnedCredited ?? 0) > 0
+        ? [
+            tf("sell.dayReportReturned", {
+              count: report.returnedCount ?? 0,
+              amount: formatCurrency(report.returnedCredited ?? 0, currency, lang),
+            }),
           ]
         : []),
       `${t("sell.dayReportStock")} : ${report.stockCount}`,
@@ -1168,6 +1223,24 @@ export default function SellShell() {
                 </div>
               </div>
 
+              {/* P3-d — ventilation par canal : le comptoir comprend d'où viennent
+                  les ventes (tactile / auto à la connexion / papier historique). */}
+              {report.byVia && (report.byVia.sell_mode ?? 0) + (report.byVia.auto_connect ?? 0) + (report.byVia.sell_mode_paper ?? 0) > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5" role="list" aria-label={t("sell.dayReportByVia")}>
+                  {VIA_ORDER.map((via) => {
+                    const n = report.byVia?.[via] ?? 0;
+                    if (!n) return null;
+                    const Icon = viaIcon(via);
+                    return (
+                      <Badge key={via} variant="secondary" className="gap-1 text-[11px]" role="listitem">
+                        <Icon aria-hidden className="size-3" />
+                        {t(VIA_KEYS[via])} · {n}
+                      </Badge>
+                    );
+                  })}
+                </div>
+              )}
+
               {report.paymentMode === "deposit" && (
                 <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm">
                   <p className="font-medium text-amber-700 dark:text-amber-300">
@@ -1176,39 +1249,78 @@ export default function SellShell() {
                   <p className="text-xs text-amber-600/80 dark:text-amber-400/80">
                     {tf("sell.dayReportDebtText", { amount: formatCurrency(report.debtTotal ?? 0, currency, lang) })}
                   </p>
+                  {/* P3-d — versements déjà encaissés par le gérant aujourd'hui :
+                      le reste à verser est donc toDeposit − settledToday. */}
+                  {(report.settledToday ?? 0) > 0 && (
+                    <p className="text-xs font-medium text-amber-700 dark:text-amber-300">
+                      {tf("sell.dayReportSettled", { amount: formatCurrency(report.settledToday ?? 0, currency, lang) })}
+                    </p>
+                  )}
                 </div>
+              )}
+
+              {/* P3-d — retours du jour avec flux cash (recrédit prépayé).
+                  En dépôt-vente un retour ne déplace pas d'argent : il n'est
+                  pas listé — le journal reste un vrai journal de caisse. */}
+              {(report.returnedCredited ?? 0) > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  {tf("sell.dayReportReturned", {
+                    count: report.returnedCount ?? 0,
+                    amount: formatCurrency(report.returnedCredited ?? 0, currency, lang),
+                  })}
+                </p>
               )}
 
               <div className="max-h-64 overflow-y-auto rounded-lg border" aria-label={t("sell.dayReportDetail")}>
                 {report.sold.length === 0 ? (
                   <p className="px-3 py-8 text-center text-sm text-muted-foreground">{t("sell.dayReportEmpty")}</p>
                 ) : (
-                  report.sold.map((s) => (
-                    <div
-                      key={s.id}
-                      className="flex items-center justify-between gap-3 border-b px-3 py-2 last:border-b-0"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate font-mono text-sm font-semibold">{s.code}</p>
-                        <p className="truncate text-xs text-muted-foreground">
-                          {s.profileName} ·{" "}
-                          {new Date(s.soldAt).toLocaleTimeString(lang === "en" ? "en-GB" : "fr-FR", {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
+                  report.sold.map((s) => {
+                    const Icon = viaIcon(s.soldVia);
+                    return (
+                      <div
+                        key={s.id}
+                        className="flex items-center justify-between gap-3 border-b px-3 py-2 last:border-b-0"
+                      >
+                        <div className="min-w-0">
+                          <p className="flex items-center gap-1.5 truncate font-mono text-sm font-semibold">
+                            <span title={t(VIA_KEYS[s.soldVia ?? "sell_mode"])} className="flex shrink-0">
+                              <Icon
+                                aria-hidden
+                                className="size-3 text-muted-foreground"
+                              />
+                            </span>
+                            {s.code}
+                          </p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {s.profileName} ·{" "}
+                            {new Date(s.soldAt).toLocaleTimeString(lang === "en" ? "en-GB" : "fr-FR", {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </p>
+                        </div>
+                        <p className="shrink-0 text-sm font-semibold text-primary tabular-nums">
+                          {formatCurrency(s.price, currency, lang)}
                         </p>
                       </div>
-                      <p className="shrink-0 text-sm font-semibold text-primary tabular-nums">
-                        {formatCurrency(s.price, currency, lang)}
-                      </p>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             </>
           )}
 
           <DialogFooter>
+            {/* P3-d — export comptable : journal de caisse Excel (CSV « ; », BOM). */}
+            <Button
+              variant="outline"
+              onClick={() => void exportJournal()}
+              disabled={reportLoading || !report || exporting}
+            >
+              {exporting ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
+              {t("sell.dayReportExport")}
+            </Button>
             <Button variant="outline" onClick={() => setReportOpen(false)}>
               {t("common.close")}
             </Button>

@@ -5,6 +5,39 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-04 — P3-d : rapport de journée enrichi + export comptable « journal de caisse »
+
+### Ajoutés
+- **Export CSV comptable** (`GET /api/sell/day-report.csv` — PWA revendeur) :
+  journal de caisse Excel-fr (séparateur « ; », BOM UTF-8, CRLF — format aligné
+  sur l'export console) téléchargeable depuis le rapport de fin de journée.
+  Paramètre `date=AAAA-MM-JJ` optionnel : aujourd'hui par défaut, toute date
+  passée admise (compta — les lignes stock/créance, état courant, ne figurent
+  que pour le jour en cours). Sections : ventes (heure, code, profil, prix,
+  canal), retours de stock (flux cash), versements dépôt-vente, totaux du jour.
+- **Rapport enrichi** (champs additifs, `omitempty` — zéro rupture de contrat) :
+  `soldVia` par ligne de vente + ventilation `byVia` (tactile / auto connexion /
+  papier historique — les ventes pré-R4, sans trace, sont affichées tactiles),
+  `returnedCount`/`returnedCredited` (retours du jour avec flux cash — un
+  retour en dépôt-vente ne déplace pas d'argent et n'entre donc pas au
+  journal), `settledToday` (versements déjà encaissés par le gérant — le reste
+  à verser est `toDeposit − settledToday`).
+- **UI rapport** : chips de ventilation par canal, ligne retours, ligne
+  « déjà versé aujourd'hui » dans l'encart dépôt-vente, icône de canal sur
+  chaque vente (title au survol), bouton « Exporter CSV » (téléchargement
+  authentifié via `apiDownload`) ; le partage WhatsApp inclut la ventilation
+  et les nouvelles lignes.
+- **Refactor** : le calcul du rapport est mutualisé (`computeDayJournal`) entre
+  la réponse JSON et le CSV — une seule source de vérité, frontière de jour
+  UTC identique à `/api/sell/me`.
+- **Tests** : `TestSellDayReportEnriched` (ventilation, isolation revendeur,
+  exclusion hors-jour, créance/versements dépôt-vente) et `TestSellDayReportCSV`
+  (BOM, sections, retours cash, rechargements exclus, date passée, 400 invalide).
+
+### Notes
+- Aucun changement de contrat existant : nouveaux champs additifs + une route
+  nouvelle ; les PWA déjà installées ignorent les clés inconnues.
+
 ## 2026-09-04 — Phase D perf/UX : UI optimiste + deep-links de détail
 
 ### Ajoutés

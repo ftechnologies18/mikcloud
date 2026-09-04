@@ -458,6 +458,11 @@ type sellDayReportItem struct {
 	Price       int    `json:"price"`
 	SoldAt      string `json:"soldAt"`
 	RouterName  string `json:"routerName"`
+	// P3-d — canal de la vente (audit R4) : sell_mode (tactile),
+	// auto_connect (1ʳᵉ connexion client), sell_mode_paper (papier historique).
+	// Vide sur les ventes antérieures au traçage — affichées comme tactiles
+	// (seul canal qui existait alors).
+	SoldVia string `json:"soldVia,omitempty"`
 }
 
 // sellDayReport — rapport de fin de journée du revendeur (N°8) : tout ce qui
@@ -475,20 +480,53 @@ type sellDayReport struct {
 	ToDeposit   int    `json:"toDeposit"`   // cash du jour à verser (= recette) ; 0 en prépayé
 	DebtTotal   int    `json:"debtTotal"`   // créance totale courante ; 0 en prépayé
 	PaymentMode string `json:"paymentMode"` // prepaid | deposit
+
+	// P3-d — enrichissement comptable (champs additifs, omitempty : les PWA
+	// déjà installées ignorent ces clés sans rien casser).
+	ByVia map[string]int `json:"byVia,omitempty"` // canal → nombre de ventes du jour
+	// Retours de stock du jour (N°20, initiative revendeur OU gérant) :
+	// tickets rendus au gérant + recrédit prépayé correspondant (0 en dépôt-vente).
+	ReturnedCount    int `json:"returnedCount,omitempty"`
+	ReturnedCredited int `json:"returnedCredited,omitempty"`
+	// Versements dépôt-vente déjà encaissés par le gérant aujourd'hui —
+	// la clôture annonce le RESTE à verser (toDeposit − settledToday).
+	SettledToday int `json:"settledToday,omitempty"`
 }
 
-// handleSellDayReport — GET /api/sell/day-report : clôture de journée du
-// revendeur. Même frontière de jour que /api/sell/me (UTC, marché cible).
-func (a *API) handleSellDayReport(w http.ResponseWriter, r *http.Request) {
-	c := claimsFrom(r)
-	now := time.Now().UTC()
-	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	a.store.Lock()
-	defer a.store.Unlock()
-	db := a.store.Data()
-	report := sellDayReport{
-		Date: now.Format("2006-01-02"),
-		Sold: []sellDayReportItem{},
+// dayJournal — le rapport enrichi + le détail des écritures de trésorerie du
+// jour (transactions), partagé entre la réponse JSON et l'export CSV. Les
+// champs non exportés sont ignorés par encoding/json : /day-report ne
+// renvoie que le rapport.
+type dayJournal struct {
+	report      sellDayReport
+	reseller    *model.Reseller
+	returns     []model.Transaction // crédits « Retour de stock » du jour
+	settlements []model.Transaction // versements dépôt-vente du jour
+}
+
+// sellViaLabel — libellé humain d'un canal de vente (rapport, CSV).
+func sellViaLabel(via string) string {
+	switch via {
+	case "auto_connect":
+		return "Auto connexion"
+	case "sell_mode_paper":
+		return "Papier"
+	default:
+		// sell_mode + ventes antérieures au traçage (seul canal existant alors).
+		return "Tactile"
+	}
+}
+
+// computeDayJournal — cœur de calcul partagé JSON / CSV (l'appelant tient le
+// verrou du store). Frontière de jour identique à /api/sell/me : UTC
+// (marché cible). dayEnd borne la fenêtre — aujourd'hui pour le rapport,
+// n'importe quel jour passé pour l'export comptable.
+func (a *API) computeDayJournal(db *model.DB, c *auth.Claims, dayStart, dayEnd, now time.Time) dayJournal {
+	j := dayJournal{
+		report: sellDayReport{
+			Date: dayStart.Format("2006-01-02"),
+			Sold: []sellDayReportItem{},
+		},
 	}
 	for i := range db.HotspotUsers {
 		u := &db.HotspotUsers[i]
@@ -501,37 +539,182 @@ func (a *API) handleSellDayReport(w http.ResponseWriter, r *http.Request) {
 		}
 		if u.SoldAt != "" {
 			at, err := time.Parse(time.RFC3339, u.SoldAt)
-			if err != nil || at.Before(todayStart) {
+			if err != nil || at.Before(dayStart) || !at.Before(dayEnd) {
 				continue
 			}
-			report.Sold = append(report.Sold, sellDayReportItem{
+			via := u.SoldVia
+			if via == "" {
+				via = "sell_mode"
+			}
+			j.report.Sold = append(j.report.Sold, sellDayReportItem{
 				ID: u.ID, Code: u.Username, ProfileName: u.ProfileName,
-				Price: price, SoldAt: u.SoldAt, RouterName: u.RouterName,
+				Price: price, SoldAt: u.SoldAt, RouterName: u.RouterName, SoldVia: via,
 			})
-			report.SoldCount++
-			report.Revenue += price
+			j.report.SoldCount++
+			j.report.Revenue += price
+			if j.report.ByVia == nil {
+				j.report.ByVia = map[string]int{}
+			}
+			j.report.ByVia[via]++
 			continue
 		}
-		if model.EffectiveStatus(u, now) == "active" {
-			report.StockCount++
-			report.StockValue += price
+		// Le stock affiché reste le stock ACTUEL (les tickets restants
+		// aujourd'hui) — pertinent pour la clôture du jour, neutre pour un
+		// export d'une date passée (les lignes stock sont alors omises).
+		if now.Before(dayEnd) && model.EffectiveStatus(u, now) == "active" {
+			j.report.StockCount++
+			j.report.StockValue += price
 		}
 	}
 	// Journal chronologique : de la première vente du matin à la dernière.
-	sort.Slice(report.Sold, func(i, j int) bool { return report.Sold[i].SoldAt < report.Sold[j].SoldAt })
+	sort.Slice(j.report.Sold, func(a, b int) bool { return j.report.Sold[a].SoldAt < j.report.Sold[b].SoldAt })
+
+	// Écritures de trésorerie du jour — retours de stock (crédits, initiative
+	// revendeur N°20 ou gérant) et versements dépôt-vente (encaissements).
+	// Les autres crédits (rechargements) ne sont PAS des flux de tournée.
+	for _, tx := range db.Transactions {
+		if tx.ResellerID != c.Sub || tx.AccountID != c.Acc {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339, tx.At)
+		if err != nil || at.Before(dayStart) || !at.Before(dayEnd) {
+			continue
+		}
+		switch {
+		case tx.Type == "credit" && strings.HasPrefix(tx.Note, "Retour de stock"):
+			j.returns = append(j.returns, tx)
+		case tx.Type == "settlement":
+			j.settlements = append(j.settlements, tx)
+		}
+	}
+	for _, tx := range j.returns {
+		j.report.ReturnedCount++
+		j.report.ReturnedCredited += tx.Amount
+	}
+	for _, tx := range j.settlements {
+		j.report.SettledToday += tx.Amount
+	}
+
 	// N°19 V2 — dépôt-vente : le rapport annonce ce qu'il faut ramener.
 	if res := findResellerScoped(db, c.Sub, c.Acc); res != nil {
-		report.PaymentMode = res.PaymentMode
-		if report.PaymentMode == "" {
-			report.PaymentMode = "prepaid"
+		j.reseller = res
+		j.report.PaymentMode = res.PaymentMode
+		if j.report.PaymentMode == "" {
+			j.report.PaymentMode = "prepaid"
 		}
-		if report.PaymentMode == "deposit" {
-			report.ToDeposit = report.Revenue
-			report.DebtTotal = depositDebt(db, c.Acc, res.ID)
+		if j.report.PaymentMode == "deposit" {
+			j.report.ToDeposit = j.report.Revenue
+			j.report.DebtTotal = depositDebt(db, c.Acc, res.ID)
 		}
 	}
 	if s, ok := db.SettingsByAccount[c.Acc]; ok {
-		report.Currency = s.Tenant.Currency
+		j.report.Currency = s.Tenant.Currency
 	}
-	writeJSON(w, http.StatusOK, report)
+	return j
+}
+
+// handleSellDayReport — GET /api/sell/day-report : clôture de journée du
+// revendeur. Même frontière de jour que /api/sell/me (UTC, marché cible).
+func (a *API) handleSellDayReport(w http.ResponseWriter, r *http.Request) {
+	c := claimsFrom(r)
+	now := time.Now().UTC()
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	a.store.Lock()
+	defer a.store.Unlock()
+	j := a.computeDayJournal(a.store.Data(), c, todayStart, todayStart.AddDate(0, 0, 1), now)
+	writeJSON(w, http.StatusOK, j.report)
+}
+
+// handleSellDayReportCSV — GET /api/sell/day-report.csv?date=YYYY-MM-DD :
+// export comptable « journal de caisse » du revendeur. Le jour par défaut est
+// aujourd'hui ; toute date passée est admise (compta), la date du jour porte
+// en plus les lignes de stock/créance (état courant). Format aligné sur
+// l'export console (séparateur « ; », BOM UTF-8, CRLF — Excel FR).
+func (a *API) handleSellDayReportCSV(w http.ResponseWriter, r *http.Request) {
+	c := claimsFrom(r)
+	now := time.Now().UTC()
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	dayStart := todayStart
+	if raw := strings.TrimSpace(r.URL.Query().Get("date")); raw != "" {
+		d, err := time.ParseInLocation("2006-01-02", raw, time.UTC)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "Date invalide — format attendu AAAA-MM-JJ")
+			return
+		}
+		dayStart = d
+	}
+	dayEnd := dayStart.AddDate(0, 0, 1)
+
+	a.store.Lock()
+	j := a.computeDayJournal(a.store.Data(), c, dayStart, dayEnd, now)
+	currency := j.report.Currency
+	resellerName := c.Name
+	if j.reseller != nil && j.reseller.Name != "" {
+		resellerName = j.reseller.Name
+	}
+	mode := "Prepaye"
+	if j.report.PaymentMode == "deposit" {
+		mode = "Depot-vente"
+	}
+	isToday := dayStart.Equal(todayStart)
+	a.store.Unlock()
+
+	hm := func(iso string) string {
+		t, err := time.Parse(time.RFC3339, iso)
+		if err != nil {
+			return ""
+		}
+		return t.Format("15:04")
+	}
+
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition",
+		fmt.Sprintf("attachment; filename=\"journal-caisse-%s-%s.csv\"", j.report.Date, c.Sub))
+	// BOM UTF-8 : Excel reconnaît l'encodage.
+	_, _ = w.Write([]byte{0xEF, 0xBB, 0xBF})
+	_, _ = w.Write([]byte("Journal de caisse ; MikCloud\r\n"))
+	_, _ = w.Write([]byte(fmt.Sprintf("Date ;%s\r\n", j.report.Date)))
+	_, _ = w.Write([]byte(fmt.Sprintf("Revendeur ;%s (%s)\r\n", csvField(resellerName), csvField(c.Sub))))
+	_, _ = w.Write([]byte(fmt.Sprintf("Mode ;%s\r\n", mode)))
+	_, _ = w.Write([]byte(fmt.Sprintf("Devise ;%s\r\n", csvField(currency))))
+
+	// VENTES — une ligne par ticket remis, canal tracé (audit R4).
+	_, _ = w.Write([]byte("\r\nVENTES\r\n"))
+	_, _ = w.Write([]byte("Heure ;Code ;Profil ;Prix ;Canal\r\n"))
+	for _, s := range j.report.Sold {
+		_, _ = w.Write([]byte(fmt.Sprintf("%s ;%s ;%s ;%d ;%s\r\n",
+			hm(s.SoldAt), csvField(s.Code), csvField(s.ProfileName), s.Price, sellViaLabel(s.SoldVia))))
+	}
+	_, _ = w.Write([]byte(fmt.Sprintf("Total ventes ;%d ; ;%d ;\r\n", j.report.SoldCount, j.report.Revenue)))
+
+	// RETOURS — tickets rendus au gérant dans la journée.
+	_, _ = w.Write([]byte("\r\nRETOURS\r\n"))
+	_, _ = w.Write([]byte("Heure ;Detail ;Montant recredite\r\n"))
+	for _, tx := range j.returns {
+		_, _ = w.Write([]byte(fmt.Sprintf("%s ;%s ;%d\r\n", hm(tx.At), csvField(tx.Note), tx.Amount)))
+	}
+	_, _ = w.Write([]byte(fmt.Sprintf("Total retours ; ;%d\r\n", j.report.ReturnedCredited)))
+
+	// VERSEMENTS — encaissements dépôt-vente du jour.
+	_, _ = w.Write([]byte("\r\nVERSEMENTS\r\n"))
+	_, _ = w.Write([]byte("Heure ;Montant ;Note\r\n"))
+	for _, tx := range j.settlements {
+		_, _ = w.Write([]byte(fmt.Sprintf("%s ;%d ;%s\r\n", hm(tx.At), tx.Amount, csvField(tx.Note))))
+	}
+	_, _ = w.Write([]byte(fmt.Sprintf("Total versements ; ;%d\r\n", j.report.SettledToday)))
+
+	// TOTAUX DU JOUR — la synthèse que l'agent comptable attache au journal.
+	_, _ = w.Write([]byte("\r\nTOTAUX DU JOUR\r\n"))
+	_, _ = w.Write([]byte(fmt.Sprintf("Ventes ;%d ;%d\r\n", j.report.SoldCount, j.report.Revenue)))
+	_, _ = w.Write([]byte(fmt.Sprintf("Retours ;%d ;%d\r\n", j.report.ReturnedCount, j.report.ReturnedCredited)))
+	_, _ = w.Write([]byte(fmt.Sprintf("Versements ;%d ;%d\r\n", len(j.settlements), j.report.SettledToday)))
+	if j.report.PaymentMode == "deposit" {
+		_, _ = w.Write([]byte(fmt.Sprintf("A verser (recette du jour) ; ;%d\r\n", j.report.ToDeposit)))
+		if isToday {
+			_, _ = w.Write([]byte(fmt.Sprintf("Dette en cours ; ;%d\r\n", j.report.DebtTotal)))
+		}
+	}
+	if isToday {
+		_, _ = w.Write([]byte(fmt.Sprintf("Stock restant ;%d ;%d\r\n", j.report.StockCount, j.report.StockValue)))
+	}
 }

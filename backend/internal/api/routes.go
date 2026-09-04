@@ -65,6 +65,8 @@ func (a *API) Handler() http.Handler {
 	// N°20 — retour de stock initié par le revendeur (rendre des tickets au gérant).
 	mux.HandleFunc("POST /api/sell/return", a.requireReseller(a.handleSellReturn))
 	mux.HandleFunc("GET /api/sell/day-report", a.requireReseller(a.handleSellDayReport))
+	// P3-d — export comptable « journal de caisse » (CSV Excel, date passée admise).
+	mux.HandleFunc("GET /api/sell/day-report.csv", a.requireReseller(a.handleSellDayReportCSV))
 
 	// Dashboard
 	mux.HandleFunc("GET /api/dashboard", a.handleDashboard)

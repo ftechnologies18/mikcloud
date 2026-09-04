@@ -511,6 +511,10 @@ export interface Reseller {
 
 /* ─── N°8 : rapport de fin de journée (GET /api/sell/day-report) ─── */
 
+/** P3-d — canal d'une vente (audit R4). `sell_mode` = tactile,
+ * `auto_connect` = 1ʳᵉ connexion client, `sell_mode_paper` = papier historique. */
+export type SellVia = "sell_mode" | "auto_connect" | "sell_mode_paper";
+
 export interface SellDayReportItem {
   id: string;
   code: string;
@@ -518,6 +522,8 @@ export interface SellDayReportItem {
   price: number;
   soldAt: string;
   routerName: string;
+  /** P3-d — canal de la vente (absent sur l'historique pré-R4 → tactile). */
+  soldVia?: SellVia;
 }
 
 export interface SellDayReport {
@@ -533,6 +539,13 @@ export interface SellDayReport {
   toDeposit?: number;
   debtTotal?: number;
   paymentMode?: "prepaid" | "deposit";
+  /** P3-d — ventilation des ventes du jour par canal (nombre). */
+  byVia?: Partial<Record<SellVia, number>>;
+  /** P3-d — retours de stock du jour avec flux cash (recrédit prépayé). */
+  returnedCount?: number;
+  returnedCredited?: number;
+  /** P3-d — versements dépôt-vente déjà encaissés aujourd'hui. */
+  settledToday?: number;
 }
 
 /* ─── N°19 V2 : créances revendeurs (dashboard) ─── */

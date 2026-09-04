@@ -7,7 +7,7 @@
  *   intermittent, l'app doit s'ouvrir et expliquer l'état hors ligne) ;
  * - assets statiques (/_next/static, images) : cache-first (immuables).
  */
-const CACHE = "mikcloud-v1";
+const CACHE = "mikcloud-v2";
 const OFFLINE_URL = "/offline.html";
 const PRECACHE = [OFFLINE_URL, "/logo.png", "/icon.png"];
 

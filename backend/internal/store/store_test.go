@@ -416,3 +416,37 @@ func TestTickNothingUnderTwoSeconds(t *testing.T) {
 		t.Fatal("Tick rapproché (< 2 s) ne doit rien faire")
 	}
 }
+
+// Sémantique RouterOS verrouillée (doc officielle HotSpot — POV routeur) :
+// bytes-out = téléchargé par le client (doit DOMINER), bytes-in = uploadé.
+// Le simulateur doit refléter un routeur réel (download ≫ upload) — miroir
+// front : frontend/src/lib/hotspot/traffic-semantics.ts.
+func TestSimulatedSessionTrafficDirection(t *testing.T) {
+	db := BuildEmptyState()
+	db.LastTick = time.Now().Add(-time.Minute) // tick admissible → dt = 60 s
+	db.Routers = append(db.Routers, model.Router{ID: "rt-traffic", Mode: "simulated"})
+	db.HotspotUsers = append(db.HotspotUsers, model.HotspotUser{
+		ID: "u-traffic", Kind: "voucher", Username: "traffic-test",
+		Status: "active", RouterID: "rt-traffic",
+	})
+	db.Sessions = append(db.Sessions, model.Session{
+		ID: "sess-traffic", UserID: "u-traffic", Username: "traffic-test",
+		RouterID: "rt-traffic",
+	})
+	Tick(db, time.Now())
+	// Le tick de démo peut couper aléatoirement (~12 %) une session simulée
+	// APRÈS avoir accumulé les octets : l'assertion porte donc sur les
+	// compteurs CUMULÉS de l'utilisateur, persistants malgré cette purge.
+	var u model.HotspotUser
+	for i := range db.HotspotUsers {
+		if db.HotspotUsers[i].Username == "traffic-test" {
+			u = db.HotspotUsers[i]
+		}
+	}
+	if u.BytesIn <= 0 || u.BytesOut <= 0 {
+		t.Fatalf("les compteurs doivent progresser : in=%d out=%d", u.BytesIn, u.BytesOut)
+	}
+	if u.BytesOut <= u.BytesIn {
+		t.Fatalf("download (bytes-out=%d) doit dominer l'upload (bytes-in=%d) — sémantique RouterOS inversée ?", u.BytesOut, u.BytesIn)
+	}
+}

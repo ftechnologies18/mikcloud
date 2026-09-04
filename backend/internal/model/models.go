@@ -225,20 +225,25 @@ func (p Profile) ValidityMinutes() int {
 
 // HotspotUser — utilisateur hotspot régulier ou voucher.
 type HotspotUser struct {
-	ID            string `json:"id"`
-	AccountID     string `json:"accountId"`
-	Kind          string `json:"kind"` // regular | voucher
-	Username      string `json:"username"`
-	Password      string `json:"password"`
-	ProfileID     string `json:"profileId"`
-	ProfileName   string `json:"profileName"`
-	RouterID      string `json:"routerId"`
-	RouterName    string `json:"routerName"`
-	Status        string `json:"status"` // active | used | expired | disabled
-	BatchID       string `json:"batchId"`
-	ResellerID    string `json:"resellerId"`
-	ResellerName  string `json:"resellerName"`
-	Comment       string `json:"comment"`
+	ID           string `json:"id"`
+	AccountID    string `json:"accountId"`
+	Kind         string `json:"kind"` // regular | voucher
+	Username     string `json:"username"`
+	Password     string `json:"password"`
+	ProfileID    string `json:"profileId"`
+	ProfileName  string `json:"profileName"`
+	RouterID     string `json:"routerId"`
+	RouterName   string `json:"routerName"`
+	Status       string `json:"status"` // active | used | expired | disabled
+	BatchID      string `json:"batchId"`
+	ResellerID   string `json:"resellerId"`
+	ResellerName string `json:"resellerName"`
+	Comment      string `json:"comment"`
+	// Sémantique RouterOS officielle (help.mikrotik.com — HotSpot) — point de
+	// vue du ROUTEUR : bytes-in = bytes UPLOADÉS par le client, bytes-out =
+	// bytes TÉLÉCHARGÉS. Compteurs transportés BRUTS (somme invariante pour les
+	// quotas) ; l'étiquetage client est verrouillé côté front
+	// (frontend/src/lib/hotspot/traffic-semantics.ts).
 	BytesIn       int64  `json:"bytesIn"`
 	BytesOut      int64  `json:"bytesOut"`
 	UptimeUsedSec int64  `json:"uptimeUsedSec"`
@@ -295,8 +300,10 @@ type Session struct {
 	MAC         string `json:"mac"`
 	StartedAt   string `json:"startedAt"`
 	UptimeSec   int64  `json:"uptimeSec"`
-	BytesIn     int64  `json:"bytesIn"`
-	BytesOut    int64  `json:"bytesOut"`
+	// RouterOS : bytes-in = uploadé, bytes-out = téléchargé (POV routeur —
+	// voir le commentaire HotspotUser et traffic-semantics.ts côté front).
+	BytesIn  int64 `json:"bytesIn"`
+	BytesOut int64 `json:"bytesOut"`
 }
 
 // Reseller — revendeur avec portefeuille.

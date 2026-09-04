@@ -350,12 +350,20 @@ statut résolu (model.ResolvedStatus), par priorité décroissante :
 - `POST /api/users/{id}/reset-stats` → `{ok:true}` : met à zéro bytesIn/bytesOut/uptimeUsedSec
   (cloud) + agent : queue nouvelle commande `user_reset` `{name}` (script :
   `/ip hotspot user reset-counters [find name=…]`) ; simulated : direct ; real : gateway Run.
+
+> **Sémantique des compteurs de trafic (verrouillée)** — RouterOS compte du point de vue du
+> ROUTEUR (doc officielle help.mikrotik.com — HotSpot) : `bytesIn` (`bytes-in`) = bytes
+> **uploadés** par le client ; `bytesOut` (`bytes-out`) = bytes **téléchargés** par le client.
+> Le backend transporte ces compteurs BRUTS (somme invariante pour les quotas) ; l'étiquetage
+> client (upload/download) est interdit hors du module front
+> `frontend/src/lib/hotspot/traffic-semantics.ts` (`upBytes`/`downBytes`). Le simulateur
+> (store tick sessions) respecte la même réalité : download ≫ upload.
 - `POST /api/users/{id}/extend` `{days: number ≥ 1 ≤ 3650}` → `HotspotUser`
   - nouvelle `expiresAt = max(now, expiresAt) + days` ;
   - si le statut était `expired` → repasse `active` + agent `user_set {disabled:false}` ;
   - Activity « Utilisateur X prolongé de N j ».
 - `GET /api/users/export?search=&status=&routerId=&kind=&profileId=` → CSV
-  (colonnes : Utilisateur;Mot de passe;Profil;Statut;Routeur;Créé le;Expire le;Data entrée (Mo);Data sortie (Mo);Prix;Revendeur;Commentaire).
+  (colonnes : Utilisateur;Mot de passe;Profil;Statut;Routeur;Créé le;Expire le;Upload (Mo);Download (Mo);Prix;Revendeur;Commentaire).
   Utilise le MÊME filtrage que handleUsersList.
 - `POST /api/users/cleanup` `{mode:"expired"}` → `{ok:true, removed:number}` — supprime
   du cloud TOUS les utilisateurs `expired` du compte (+ Activity). Mode réel/agent :

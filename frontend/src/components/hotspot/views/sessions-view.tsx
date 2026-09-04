@@ -23,6 +23,8 @@ import { useI18n } from "@/lib/hotspot/i18n";
 import { detailFromPath } from "@/lib/hotspot/view-path";
 import type { HotspotSession } from "@/lib/hotspot/types";
 import { formatBytes, formatDuration } from "@/lib/hotspot/format";
+// Sémantique trafic verrouillée : bytesIn=upload / bytesOut=download (RouterOS).
+import { downBytes, upBytes } from "@/lib/hotspot/traffic-semantics";
 import { EmptyState } from "@/components/hotspot/empty-state";
 import { LoadingRows } from "@/components/hotspot/loading";
 import { PageHeader } from "@/components/hotspot/page-header";
@@ -95,6 +97,10 @@ export default function SessionsView() {
   const elapsedSec = Math.max(0, Math.floor((now - dataUpdatedAt) / 1000));
   const totalIn = sessions.reduce((acc, s) => acc + s.bytesIn, 0);
   const totalOut = sessions.reduce((acc, s) => acc + s.bytesOut, 0);
+  // Sémantique RouterOS verrouillée : bytesOut = download (descendant),
+  // bytesIn = upload (montant) — voir traffic-semantics.ts (doc MikroTik).
+  const totalDown = totalOut;
+  const totalUp = totalIn;
 
   const kickMutation = useMutation({
     // Phase D (UI optimiste) — la session quitte la liste DÈS le clic (le
@@ -167,11 +173,11 @@ export default function SessionsView() {
         <StatCard title={t("sessions.kpi.sessions")} value={String(sessions.length)} sub={t("sessions.kpi.sessionsSub")} icon={Radio} live />
         <StatCard
           title={t("sessions.kpi.download")}
-          value={formatBytes(totalIn, lang)}
+          value={formatBytes(totalDown, lang)}
           sub={t("sessions.kpi.downloadSub")}
           icon={ArrowDownCircle}
         />
-        <StatCard title={t("sessions.kpi.upload")} value={formatBytes(totalOut, lang)} sub={t("sessions.kpi.uploadSub")} icon={ArrowUpCircle} />
+        <StatCard title={t("sessions.kpi.upload")} value={formatBytes(totalUp, lang)} sub={t("sessions.kpi.uploadSub")} icon={ArrowUpCircle} />
       </div>
 
       <Card className="gap-0 py-0">
@@ -227,13 +233,14 @@ export default function SessionsView() {
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-3 text-muted-foreground">
+                        {/* ↓ download = bytes-out · ↑ upload = bytes-in (RouterOS). */}
                         <span className="inline-flex items-center gap-1 tabular-nums">
                           <ArrowDown className="size-3 opacity-60" aria-hidden />
-                          {formatBytes(session.bytesIn, lang)}
+                          {formatBytes(downBytes(session), lang)}
                         </span>
                         <span className="inline-flex items-center gap-1 tabular-nums">
                           <ArrowUp className="size-3 opacity-60" aria-hidden />
-                          {formatBytes(session.bytesOut, lang)}
+                          {formatBytes(upBytes(session), lang)}
                         </span>
                       </div>
                     </TableCell>

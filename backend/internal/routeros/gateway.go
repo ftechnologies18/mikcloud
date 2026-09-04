@@ -392,6 +392,8 @@ func (g *RealGateway) ListUsers() ([]model.HotspotUser, error) {
 			if row["disabled"] == "true" {
 				u.Status = "disabled"
 			}
+			// RouterOS POV routeur : bytes-in = uploadé, bytes-out = téléchargé
+			// (doc officielle HotSpot — voir model.HotspotUser).
 			u.BytesIn = parseInt64(row["bytes-in"])
 			u.BytesOut = parseInt64(row["bytes-out"])
 			out = append(out, u)
@@ -579,8 +581,9 @@ func (g *RealGateway) ListSessions() ([]model.Session, error) {
 			MAC:         row["mac-address"],
 			StartedAt:   now.Add(-time.Duration(uptime) * time.Second).Format(time.RFC3339),
 			UptimeSec:   uptime,
-			BytesIn:     parseInt64(row["bytes-in"]),
-			BytesOut:    parseInt64(row["bytes-out"]),
+			// bytes-in = uploadé, bytes-out = téléchargé (RouterOS, POV routeur).
+			BytesIn:  parseInt64(row["bytes-in"]),
+			BytesOut: parseInt64(row["bytes-out"]),
 		}
 		sessions = append(sessions, s)
 		live[s.ID] = s

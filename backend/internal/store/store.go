@@ -945,8 +945,11 @@ func Tick(db *model.DB, now time.Time) {
 			continue
 		}
 		s.UptimeSec += dt
-		dIn := dt * int64(1_000_000+rand.Intn(2_000_000)) // 1-3 Mo/s
-		dOut := dt * int64(200_000+rand.Intn(600_000))    // 0,2-0,8 Mo/s
+		// Sémantique RouterOS (doc officielle) : bytes-in = UPLOADED (petit),
+		// bytes-out = DOWNLOADED (gros) — la démo doit se comporter comme un
+		// vrai routeur (download ≫ upload), sinon l'UI paraît inversée.
+		dIn := dt * int64(200_000+rand.Intn(600_000))      // 0,2-0,8 Mo/s upload
+		dOut := dt * int64(1_000_000+rand.Intn(2_000_000)) // 1-3 Mo/s download
 		s.BytesIn += dIn
 		s.BytesOut += dOut
 		u.BytesIn += dIn

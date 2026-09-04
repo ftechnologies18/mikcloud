@@ -399,8 +399,11 @@ func (a *API) handleUsersExport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", "attachment; filename=\"mikcloud-utilisateurs.csv\"")
 	// BOM UTF-8 : Excel reconnaît l'encodage.
 	_, _ = w.Write([]byte{0xEF, 0xBB, 0xBF})
+	// Colonnes trafic : RouterOS bytes-in = upload, bytes-out = download
+	// (doc officielle HotSpot) — libellés explicites côté client, sans
+	// ambiguïté de point de vue ; l'ordre des colonnes est inchangé.
 	_, _ = w.Write([]byte("Utilisateur;Mot de passe;Profil;Statut;Routeur;Créé le;Expire le;" +
-		"Data entrée (Mo);Data sortie (Mo);Prix;Revendeur;Commentaire\r\n"))
+		"Upload (Mo);Download (Mo);Prix;Revendeur;Commentaire\r\n"))
 	for _, u := range users {
 		_, _ = w.Write([]byte(fmt.Sprintf("%s;%s;%s;%s;%s;%s;%s;%d;%d;%d;%s;%s\r\n",
 			csvField(u.Username), csvField(u.Password), csvField(u.ProfileName), csvField(u.Status),

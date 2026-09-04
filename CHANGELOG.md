@@ -5,6 +5,35 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-04 — UX R7 : sémantique trafic verrouillée — upload/download dans le bon sens
+
+### Corrigés
+- **Upload et download affichés inversés** (Sessions) : la doc officielle MikroTik
+  (help.mikrotik.com — HotSpot) définit les compteurs du point de vue du ROUTEUR :
+  `bytes-in` = bytes **uploadés** par le client, `bytes-out` = bytes **téléchargés**.
+  L'UI étiquetait l'inverse (KPI « Trafic descendant » = Σ bytesIn, lignes
+  ↓/↑ échangées) — sur routeur réel, download ≫ upload rendait l'inversion visible
+  et les valeurs « paraissaient tronquées ». La démo (simulateur) masquait le bug :
+  elle générait bytesIn comme le gros débit — hypothèse intuitive mais fausse.
+- **Export CSV utilisateurs** : colonnes « Data entrée (Mo)/Data sortie (Mo) » →
+  « Upload (Mo)/Download (Mo) » (même piège de point de vue ; ordre inchangé).
+
+### Ajoutés
+- **Sémantique verrouillée par accesseurs** (`frontend/src/lib/hotspot/traffic-semantics.ts`)
+  : `upBytes`/`downBytes` — un seul endroit connaît la correspondance RouterOS ↔ client ;
+  aucun composant ne doit consommer `.bytesIn`/`.bytesOut` brut pour un affichage
+  directionnel. Sessions migrée vers les accesseurs.
+- **Test de direction** `TestSimulatedSessionTrafficDirection` : le simulateur doit
+  accumuler download > upload (intervalles de débit disjoints, dominance déterministe,
+  robuste à la déconnexion aléatoire de démo ~12 %).
+- **Doc verrouillée** : note « Sémantique des compteurs de trafic » dans
+  CONTRACT-V2.md + commentaires de référence (model.HotspotUser/Session, gateway,
+  simulateur).
+
+### Corrigés (CI)
+- `gofmt` sur `internal/api/purge_tombstones_test.go` (indentation espaces →
+  tabulations — job Backend Go en échec depuis 32397f1, déploiement Render bloqué).
+
 ## 2026-09-04 — P3-e : pagination du stock + tests E2E Playwright en CI
 
 ### Ajoutés

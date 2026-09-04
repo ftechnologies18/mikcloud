@@ -215,7 +215,7 @@ const fr: Record<string, string> = {
   "dashboard.topProfiles": "Profils les plus vendus",
   "dashboard.topProfilesEmpty": "Aucune vente enregistrée",
   "dashboard.topProfilesEmptyDesc": "Les profils les plus vendus apparaîtront ici.",
-  "dashboard.usersCount": "{n} utilisateur{p}",
+  "dashboard.usersCount": "{n} vendu{p}",
   "dashboard.activity": "Activité récente",
   "dashboard.activityEmpty": "Aucune activité récente",
 
@@ -2147,7 +2147,7 @@ const en: Record<string, string> = {
   "dashboard.topProfiles": "Top-selling profiles",
   "dashboard.topProfilesEmpty": "No sales recorded yet",
   "dashboard.topProfilesEmptyDesc": "Top-selling profiles will appear here.",
-  "dashboard.usersCount": "{n} user{p}",
+  "dashboard.usersCount": "{n} sold",
   "dashboard.activity": "Recent activity",
   "dashboard.activityEmpty": "No recent activity",
 

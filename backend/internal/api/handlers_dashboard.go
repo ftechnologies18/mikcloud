@@ -85,19 +85,24 @@ func (a *API) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	todayStartLocal := time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), 0, 0, 0, 0, loc)
 	soldToday := 0
 	soldTodayByRouter := map[string]int{}
+	// Distinction métier (directive gérant) : un VOUCHER est un ticket
+	// jetable remis à un client de passage (généré en série, consommé en
+	// une ou quelques sessions), un UTILISATEUR est un compte nominatif
+	// avec identité enregistrée (abonné, staff — login/password fixe).
+	// Les compteurs « clients » (totalUsers, usersByRouter) ne comptent
+	// QUE kind=regular ; les tickets vivent dans activeVouchers/
+	// vouchersByRouter et dans les analyses de ventes (collectSoldVouchers).
 	totalUsers, activeVouchers := 0, 0
 	usersByRouter := map[string]int{}
 	vouchersByRouter := map[string]int{}
-	counts := map[string]int{}
-	totals := map[string]int{}
 	for i := range db.HotspotUsers {
 		u := &db.HotspotUsers[i]
 		if u.AccountID != acc {
 			continue
 		}
-		totalUsers++
-		counts[u.ProfileName]++
-		totals[u.ProfileName] += u.Price
+		if u.Kind != "voucher" {
+			totalUsers++
+		}
 		if u.Kind == "voucher" && u.UsedAt != "" {
 			if used, err := time.Parse(time.RFC3339, u.UsedAt); err == nil && !used.In(loc).Before(todayStartLocal) {
 				soldToday++
@@ -107,10 +112,11 @@ func (a *API) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		if model.EffectiveStatus(u, now) != "active" {
 			continue
 		}
-		usersByRouter[u.RouterID]++
 		if u.Kind == "voucher" {
 			vouchersByRouter[u.RouterID]++
 			activeVouchers++
+		} else {
+			usersByRouter[u.RouterID]++
 		}
 	}
 
@@ -174,9 +180,20 @@ func (a *API) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	revenueByDay := buildRevenueByDay(db, acc, now, 14)
 
+	// « Profils les plus vendus » — ventes RÉELLES uniquement (doctrine du
+	// fichier : générer du stock n'est pas vendre) : vouchers ÉCULÉS du
+	// compte (remis au client ou consommés), valorisés au prix public
+	// réellement appliqué. Ni le stock dormant, ni les comptes nominatifs
+	// (qui ne sont pas des ventes) n'entrent dans ce classement.
+	soldCounts := map[string]int{}
+	soldTotals := map[string]int{}
+	for _, v := range collectSoldVouchers(db, acc, time.Time{}) {
+		soldCounts[v.Profile]++
+		soldTotals[v.Profile] += v.Public
+	}
 	top := []topProfilePoint{}
-	for name, c := range counts {
-		top = append(top, topProfilePoint{Name: name, Users: c, Total: totals[name]})
+	for name, c := range soldCounts {
+		top = append(top, topProfilePoint{Name: name, Users: c, Total: soldTotals[name]})
 	}
 	sort.Slice(top, func(i, j int) bool {
 		if top[i].Users != top[j].Users {

@@ -84,7 +84,12 @@ func (a *API) handleAdminOverview(w http.ResponseWriter, r *http.Request) {
 			routersOnline++
 		}
 	}
+	// Comptes client NOMINATIFS uniquement (kind != voucher) : les vouchers
+	// sont des tickets (stock / vendus), pas des utilisateurs.
 	for i := range db.HotspotUsers {
+		if db.HotspotUsers[i].Kind == "voucher" {
+			continue
+		}
 		hotspotUsers++
 		if b, ok := accounts[db.HotspotUsers[i].AccountID]; ok {
 			b.Users++

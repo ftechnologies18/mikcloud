@@ -21,9 +21,11 @@ func (a *API) handleRoutersList(w http.ResponseWriter, r *http.Request) {
 	a.store.Lock()
 	db := a.store.Data()
 	rs := []model.Router{}
+	// « Utilisateurs » de la carte routeur = comptes NOMINATIFS (kind !=
+	// voucher) — un ticket en stock ou vendu n'est pas un utilisateur.
 	userCount := map[string]int{}
 	for _, u := range db.HotspotUsers {
-		if u.AccountID == acc {
+		if u.AccountID == acc && u.Kind != "voucher" {
 			userCount[u.RouterID]++
 		}
 	}

@@ -9,14 +9,16 @@
 // - « Vendu » trace la remise au client (SoldAt/SoldVia → audit anti-vol) ;
 // - « Partager » envoie code + mot de passe via Web Share (WhatsApp) ou presse-papiers ;
 // - hors ligne : bannière d'état — aucune vente offline fantôme (phase 1).
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import Image from "next/image";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BadgeCheck,
   CheckCircle2,
+  ChevronDown,
   Circle,
   FileBarChart,
+  Layers,
   Loader2,
   LogOut,
   RefreshCw,
@@ -60,6 +62,8 @@ interface SellVoucher {
   expiresAt: string;
   routerName: string;
   createdAt: string;
+  /** UX R1 — lot d'origine (peut être absent sur les données historiques). */
+  batchId?: string;
 }
 
 interface SellMe {
@@ -99,6 +103,98 @@ function useOnline(): boolean {
   return online;
 }
 
+
+// UX R1 — regroupement du stock : profil → lot. Purement présentationnel (la
+// référence de lot est déjà tracée sur chaque voucher à la génération) —
+// aucune route ni entité nouvelle, l'app revendeur reste légère.
+const NO_BATCH = "__nobatch__";
+const VIEW_STORAGE_KEY = "mikcloud-sell-view";
+
+interface SellBatchGroup {
+  key: string;
+  labelId: string;
+  createdAt: string; // date de génération du lot (la plus ancienne du groupe)
+  vouchers: SellVoucher[];
+}
+
+interface SellProfileGroup {
+  profileName: string;
+  count: number;
+  value: number; // valeur faciale cumulée (sellingPrice || price)
+  batches: SellBatchGroup[]; // lot le plus régent en tête
+  hasLots: boolean; // au moins un lot identifié → sous-groupes affichés
+}
+
+/** UX R1 — vue du stock persistée en localStorage : store externe lu via
+ * useSyncExternalStore (pas de setState en effet — règle react-hooks), SSR
+ * sûr (snapshot serveur = « profile »), synchro inter-onglets gratuite. */
+function subscribeView(callback: () => void) {
+  window.addEventListener("mikcloud-view-change", callback);
+  window.addEventListener("storage", callback);
+  return () => {
+    window.removeEventListener("mikcloud-view-change", callback);
+    window.removeEventListener("storage", callback);
+  };
+}
+
+function getViewSnapshot(): "profile" | "recent" {
+  try {
+    return window.localStorage.getItem(VIEW_STORAGE_KEY) === "recent" ? "recent" : "profile";
+  } catch {
+    return "profile";
+  }
+}
+
+function getServerViewSnapshot(): "profile" | "recent" {
+  return "profile";
+}
+
+function shortBatchId(id: string): string {
+  return id.split("-").pop() || id;
+}
+
+function fmtDay(iso: string, lang: string): string {
+  const d = new Date(iso.length === 10 ? `${iso}T12:00:00Z` : iso);
+  return Number.isNaN(d.getTime())
+    ? ""
+    : d.toLocaleDateString(lang === "en" ? "en-GB" : "fr-FR", { day: "2-digit", month: "short" });
+}
+
+function groupStock(stock: SellVoucher[]): SellProfileGroup[] {
+  const byProfile = new Map<string, SellVoucher[]>();
+  for (const v of stock) {
+    const list = byProfile.get(v.profileName);
+    if (list) list.push(v);
+    else byProfile.set(v.profileName, [v]);
+  }
+  const groups: SellProfileGroup[] = [];
+  for (const [profileName, vouchers] of byProfile) {
+    const byBatch = new Map<string, SellBatchGroup>();
+    for (const v of vouchers) {
+      const key = v.batchId || NO_BATCH;
+      let b = byBatch.get(key);
+      if (!b) {
+        b = { key, labelId: v.batchId ? shortBatchId(v.batchId) : "", createdAt: v.createdAt, vouchers: [] };
+        byBatch.set(key, b);
+      }
+      if (v.createdAt < b.createdAt) b.createdAt = v.createdAt;
+      b.vouchers.push(v);
+    }
+    const batches = [...byBatch.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    for (const b of batches) b.vouchers.sort((a, c) => c.createdAt.localeCompare(a.createdAt));
+    groups.push({
+      profileName,
+      count: vouchers.length,
+      value: vouchers.reduce((sum, v) => sum + (v.sellingPrice || v.price), 0),
+      batches,
+      hasLots: batches.some((b) => b.key !== NO_BATCH),
+    });
+  }
+  // Logique de comptoir : le profil avec le plus de tickets en tête (ordre
+  // stable par nom à égalité) — le vendeur retrouve d'abord son best-seller.
+  return groups.sort((a, b) => b.count - a.count || a.profileName.localeCompare(b.profileName));
+}
+
 export default function SellShell() {
   const { t, tf, lang } = useI18n();
   const qc = useQueryClient();
@@ -109,6 +205,10 @@ export default function SellShell() {
   const [returnMode, setReturnMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [returnConfirmOpen, setReturnConfirmOpen] = useState(false);
+  // UX R1 — vue du stock : « profile » (regroupé profil → lot, défaut) ou
+  // « recent » (liste plate historique, plus récents d'abord) — persistée.
+  const view = useSyncExternalStore(subscribeView, getViewSnapshot, getServerViewSnapshot);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
   const { data: me } = useQuery({
     queryKey: ["/api/sell/me"],
@@ -165,12 +265,38 @@ export default function SellShell() {
     onError: (e: Error) => toast.error(e instanceof ApiError ? e.message : t("sell.error")),
   });
 
+  // UX R1 — regroupement memoïsé : recalculé uniquement au refetch du stock.
+  const groupedStock = useMemo(() => (stock ? groupStock(stock) : []), [stock]);
+
   const currency = me?.currency || "FCFA";
   const isDeposit = me?.paymentMode === "deposit";
   const hasStock = !!stock && stock.length > 0;
   // Valeur GROSSISTE de la sélection (u.Price — ce qui est recrédité en prépayé).
   const selectedVouchers = (stock ?? []).filter((v) => selected.has(v.id));
   const selectedWholesale = selectedVouchers.reduce((sum, v) => sum + v.price, 0);
+
+  // UX R1 — bascule de vue : écriture localStorage + notification des
+  // abonnés (même onglet — « storage » ne se déclenche que dans les autres).
+  function changeView(v: "profile" | "recent") {
+    try {
+      window.localStorage.setItem(VIEW_STORAGE_KEY, v);
+    } catch {
+      /* stockage indisponible — vue de session uniquement */
+    }
+    window.dispatchEvent(new Event("mikcloud-view-change"));
+  }
+
+  function toggleGroup(key: string) {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }
 
   function toggleReturnMode() {
     setReturnMode((on) => !on);
@@ -260,6 +386,98 @@ export default function SellShell() {
       /* partage annulé par l'utilisateur */
     }
   }
+
+  // UX R1 — carte ticket (identique dans les deux vues : groupée et plate).
+  const renderVoucherCard = (v: SellVoucher) => {
+    const price = v.sellingPrice || v.price;
+    const isSelected = selected.has(v.id);
+    return (
+      <Card
+        key={v.id}
+        className={`gap-0 py-0 transition-shadow ${returnMode && isSelected ? "ring-2 ring-primary" : ""}`}
+      >
+        <CardContent
+          className={`p-4 ${returnMode ? "cursor-pointer select-none" : ""}`}
+          onClick={returnMode ? () => toggleSelected(v.id) : undefined}
+          role={returnMode ? "checkbox" : undefined}
+          aria-checked={returnMode ? isSelected : undefined}
+          tabIndex={returnMode ? 0 : undefined}
+          onKeyDown={
+            returnMode
+              ? (e) => {
+                  if (e.key === " " || e.key === "Enter") {
+                    e.preventDefault();
+                    toggleSelected(v.id);
+                  }
+                }
+              : undefined
+          }
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <p className="truncate font-semibold">{v.profileName}</p>
+                {v.dataQuotaMb > 0 && (
+                  <Badge variant="secondary" className="text-[10px]">
+                    {Math.round(v.dataQuotaMb / 1024)} Go
+                  </Badge>
+                )}
+              </div>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {v.routerName} ·{" "}
+                {v.expiresAt
+                  ? `${t("sell.expires")} ${new Date(v.expiresAt).toLocaleDateString(lang === "en" ? "en-GB" : "fr-FR", {
+                      day: "2-digit",
+                      month: "short",
+                    })}`
+                  : t("sell.expiresOnFirstLogin")}
+              </p>
+            </div>
+            {returnMode ? (
+              <span aria-hidden className="shrink-0 text-primary">
+                {isSelected ? <CheckCircle2 className="size-6" /> : <Circle className="size-6 text-muted-foreground/40" />}
+              </span>
+            ) : (
+              <p className="shrink-0 text-lg font-bold text-primary tabular-nums">
+                {formatCurrency(price, currency, lang)}
+              </p>
+            )}
+          </div>
+
+          <div className={`mt-3 grid gap-2 rounded-lg bg-muted/50 p-3 font-mono text-sm ${isSamePasswordMode(v) ? "grid-cols-1" : "grid-cols-2"}`}>
+            <div>
+              <p className="text-[10px] tracking-wide text-muted-foreground uppercase">{t("sell.code")}</p>
+              <p className="mt-0.5 font-semibold">{v.username}</p>
+            </div>
+            {/* Mode « mot de passe = identifiant » : le code seul. */}
+            {!isSamePasswordMode(v) && (
+              <div>
+                <p className="text-[10px] tracking-wide text-muted-foreground uppercase">{t("sell.password")}</p>
+                <p className="mt-0.5 font-semibold">{v.password}</p>
+              </div>
+            )}
+          </div>
+
+          {/* N°20 — en mode retour : pas de vente/partage (anti-misclick). */}
+          {!returnMode && (
+            <div className="mt-3 flex gap-2">
+              <Button className="flex-1" onClick={() => sell.mutate(v.id)} disabled={sell.isPending}>
+                {sell.isPending && sell.variables === v.id ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <BadgeCheck className="size-4" />
+                )}
+                {t("sell.sellBtn")}
+              </Button>
+              <Button variant="outline" size="icon" onClick={() => void share(v)} aria-label={t("sell.share")}>
+                <Share2 className="size-4" />
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    );
+  };
 
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-lg flex-col bg-background">
@@ -379,102 +597,87 @@ export default function SellShell() {
             </CardContent>
           </Card>
         ) : (
-          stock.map((v) => {
-            const price = v.sellingPrice || v.price;
-            const isSelected = selected.has(v.id);
-            return (
-              <Card
-                key={v.id}
-                className={`gap-0 py-0 transition-shadow ${
-                  returnMode && isSelected ? "ring-2 ring-primary" : ""
-                }`}
-              >
-                <CardContent
-                  className={`p-4 ${returnMode ? "cursor-pointer select-none" : ""}`}
-                  onClick={returnMode ? () => toggleSelected(v.id) : undefined}
-                  role={returnMode ? "checkbox" : undefined}
-                  aria-checked={returnMode ? isSelected : undefined}
-                  tabIndex={returnMode ? 0 : undefined}
-                  onKeyDown={
-                    returnMode
-                      ? (e) => {
-                          if (e.key === " " || e.key === "Enter") {
-                            e.preventDefault();
-                            toggleSelected(v.id);
-                          }
-                        }
-                      : undefined
-                  }
+          <>
+            {/* UX R1 — barre du stock : comptage + bascule de vue. */}
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm text-muted-foreground">
+                {tf("sell.stockCountLabel", { count: stock.length })}
+              </p>
+              <div className="flex rounded-lg border bg-muted/30 p-0.5" role="group" aria-label={t("sell.viewLabel")}>
+                <button
+                  type="button"
+                  onClick={() => changeView("profile")}
+                  aria-pressed={view === "profile"}
+                  className={`min-h-9 rounded-md px-3 text-xs font-medium transition-colors ${
+                    view === "profile" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                  }`}
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="truncate font-semibold">{v.profileName}</p>
-                        {v.dataQuotaMb > 0 && (
-                          <Badge variant="secondary" className="text-[10px]">
-                            {Math.round(v.dataQuotaMb / 1024)} Go
-                          </Badge>
-                        )}
-                      </div>
-                      <p className="mt-0.5 text-xs text-muted-foreground">
-                        {v.routerName} ·{" "}
-                        {v.expiresAt
-                          ? `${t("sell.expires")} ${new Date(v.expiresAt).toLocaleDateString(
-                              lang === "en" ? "en-GB" : "fr-FR",
-                              { day: "2-digit", month: "short" },
-                            )}`
-                          : t("sell.expiresOnFirstLogin")}
-                      </p>
-                    </div>
-                    {returnMode ? (
-                      <span aria-hidden className="shrink-0 text-primary">
-                        {isSelected ? <CheckCircle2 className="size-6" /> : <Circle className="size-6 text-muted-foreground/40" />}
+                  {t("sell.viewProfile")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => changeView("recent")}
+                  aria-pressed={view === "recent"}
+                  className={`min-h-9 rounded-md px-3 text-xs font-medium transition-colors ${
+                    view === "recent" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {t("sell.viewRecent")}
+                </button>
+              </div>
+            </div>
+
+            {view === "recent" ? (
+              stock.map((v) => renderVoucherCard(v))
+            ) : (
+              groupedStock.map((g) => {
+                const groupKey = `profil:${g.profileName}`;
+                const isCollapsed = collapsedGroups.has(groupKey);
+                return (
+                  <section key={g.profileName} aria-label={g.profileName} className="space-y-3">
+                    <button
+                      type="button"
+                      onClick={() => toggleGroup(groupKey)}
+                      aria-expanded={!isCollapsed}
+                      className="flex min-h-11 w-full items-center gap-2 rounded-xl border bg-muted/30 px-3 py-2 text-left transition-colors hover:bg-muted/60"
+                    >
+                      <ChevronDown
+                        aria-hidden
+                        className={`size-4 shrink-0 text-muted-foreground transition-transform ${isCollapsed ? "-rotate-90" : ""}`}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-semibold">{g.profileName}</span>
+                        <span className="block text-[11px] text-muted-foreground">
+                          {tf("sell.groupMeta", { lots: g.batches.length })} · {formatCurrency(g.value, currency, lang)}
+                        </span>
                       </span>
-                    ) : (
-                      <p className="shrink-0 text-lg font-bold text-primary tabular-nums">
-                        {formatCurrency(price, currency, lang)}
-                      </p>
-                    )}
-                  </div>
+                      <Badge variant="secondary" className="shrink-0 tabular-nums">
+                        {g.count}
+                      </Badge>
+                    </button>
 
-                  <div
-                    className={`mt-3 grid gap-2 rounded-lg bg-muted/50 p-3 font-mono text-sm ${
-                      isSamePasswordMode(v) ? "grid-cols-1" : "grid-cols-2"
-                    }`}
-                  >
-                    <div>
-                      <p className="text-[10px] tracking-wide text-muted-foreground uppercase">{t("sell.code")}</p>
-                      <p className="mt-0.5 font-semibold">{v.username}</p>
-                    </div>
-                    {/* Mode « mot de passe = identifiant » : le code seul. */}
-                    {!isSamePasswordMode(v) && (
-                      <div>
-                        <p className="text-[10px] tracking-wide text-muted-foreground uppercase">{t("sell.password")}</p>
-                        <p className="mt-0.5 font-semibold">{v.password}</p>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* N°20 — en mode retour : pas de vente/partage (anti-misclick). */}
-                  {!returnMode && (
-                    <div className="mt-3 flex gap-2">
-                      <Button className="flex-1" onClick={() => sell.mutate(v.id)} disabled={sell.isPending}>
-                        {sell.isPending && sell.variables === v.id ? (
-                          <Loader2 className="size-4 animate-spin" />
-                        ) : (
-                          <BadgeCheck className="size-4" />
-                        )}
-                        {t("sell.sellBtn")}
-                      </Button>
-                      <Button variant="outline" size="icon" onClick={() => void share(v)} aria-label={t("sell.share")}>
-                        <Share2 className="size-4" />
-                      </Button>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            );
-          })
+                    {!isCollapsed &&
+                      (g.hasLots ? (
+                        g.batches.map((b) => (
+                          <div key={b.key} className="space-y-3">
+                            <div className="flex items-center gap-1.5 px-1">
+                              <Layers aria-hidden className="size-3 shrink-0 text-muted-foreground" />
+                              <p className="truncate text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                                {b.key === NO_BATCH ? t("sell.lotNone") : tf("sell.lotLabel", { id: b.labelId })} ·{" "}
+                                {fmtDay(b.createdAt, lang)} · {tf("sell.lotCount", { count: b.vouchers.length })}
+                              </p>
+                            </div>
+                            {b.vouchers.map((v) => renderVoucherCard(v))}
+                          </div>
+                        ))
+                      ) : (
+                        g.batches.flatMap((b) => b.vouchers).map((v) => renderVoucherCard(v))
+                      ))}
+                  </section>
+                );
+              })
+            )}
+          </>
         )}
       </main>
 

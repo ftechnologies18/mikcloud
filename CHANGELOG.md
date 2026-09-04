@@ -5,6 +5,38 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-04 — UX R1 : Mode Vente — stock revendeur groupé par profil et par lot
+
+### Ajoutés
+- **PWA revendeur : regroupement du stock « profil → lot » (R1)** — la liste
+  plate mélangée laisse place à une lecture de comptoir : un groupe
+  **accordéon par profil** (nom, nombre de tickets, valeur faciale cumulée)
+  contenant, quand le profil porte plusieurs lots, des **sous-groupes par
+  lot** (« Lot 6147 · 04 sept. · 8 restant(s) »). Le profil le plus stocké
+  arrive en tête (logique de best-seller), les lots du plus récent au plus
+  ancien, les tickets restent triés récent-d'abord dans chaque lot.
+- **Bascule de vue « Par profil / Récents »** — la nouvelle vue groupée est
+  le défaut ; la liste plate historique (récents d'abord) reste accessible
+  en un tap. La préférence est mémorisée en localStorage via
+  `useSyncExternalStore` (SSR sûr, synchro inter-onglets, zéro setState en
+  effet).
+- **API : `GET /api/sell/stock` expose désormais `batchId`** (R1a —
+  `HotspotUser.BatchID`, tracé à la génération). Champ additif : les PWA
+  déjà déployées ne voient aucun changement breaking ; les données
+  historiques sans lot (batchId vide) restent affichées sous leur profil,
+  sans sous-groupe.
+- i18n : 8 clés `sell.*` (FR + EN) pour la barre de vue, les groupes et
+  les sous-groupes de lot.
+
+### Aucun impact
+- Contrats inchangés par ailleurs : vente (`/api/sell/{id}/sold`), retour de
+  stock (`/api/sell/return` — la multi-sélection fonctionne au sein des
+  groupes), rapport de journée, profil de tournée. Le mode retour affiche
+  les mêmes groupes (sélection case par case ; la sélection par lot entier
+  est planifiée en R2).
+- Aucun changement de schéma Neon (lecture d'un champ existant) ; synchro
+  différentielle et sauvegardes inchangées.
+
 ## 2026-09-03 — UX K3 : purge des données fusionnée (globale + ciblée)
 
 ### Fusionnés

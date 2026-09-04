@@ -37,6 +37,10 @@ type sellVoucherItem struct {
 	ExpiresAt    string `json:"expiresAt"`
 	RouterName   string `json:"routerName"`
 	CreatedAt    string `json:"createdAt"`
+	// UX R1 — référence du lot d'origine (tracé à la génération) : permet à la
+	// PWA de regrouper le stock par profil puis par lot. Champ additif —
+	// rétrocompatible avec les PWA déjà installées.
+	BatchID string `json:"batchId"`
 }
 
 // requireReseller — le token doit porter le rôle « reseller » (PIN).
@@ -222,7 +226,7 @@ func (a *API) handleSellStock(w http.ResponseWriter, r *http.Request) {
 			ID: u.ID, Username: u.Username, Password: u.Password,
 			ProfileName: u.ProfileName, Price: u.Price, SellingPrice: u.SellingPrice,
 			DataQuotaMb: u.DataQuotaMb, ExpiresAt: u.ExpiresAt,
-			RouterName: u.RouterName, CreatedAt: u.CreatedAt,
+			RouterName: u.RouterName, CreatedAt: u.CreatedAt, BatchID: u.BatchID,
 		})
 	}
 	// tri : plus récemment généré en premier (rotation FIFO du stock).

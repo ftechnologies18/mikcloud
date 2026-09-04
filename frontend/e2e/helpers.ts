@@ -72,3 +72,21 @@ export async function api(
   }
   return json as Record<string, unknown>;
 }
+
+/** Variante de api() pour les cas d'erreur ATTENDUS (garde-fous 409, révocation
+ * 403…) : retourne le statut et le corps sans lever — le test décide. */
+export async function apiRaw(
+  path: string,
+  opts: { method?: string; token?: string; body?: unknown } = {},
+): Promise<{ status: number; json: Record<string, unknown> }> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: opts.method ?? "GET",
+    headers: {
+      ...(opts.body !== undefined ? { "Content-Type": "application/json" } : {}),
+      ...(opts.token ? { Authorization: `Bearer ${opts.token}` } : {}),
+    },
+    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+  });
+  const json: unknown = await res.json().catch(() => ({}));
+  return { status: res.status, json: json as Record<string, unknown> };
+}

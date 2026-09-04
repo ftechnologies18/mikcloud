@@ -446,8 +446,16 @@ func (a *API) purgeScopes(w http.ResponseWriter, r *http.Request, accID string, 
 
 	// 6. Revendeurs + leurs transactions (les vouchers déjà générés sont
 	//    conservés : ce sont des identifiants valides du compte).
+	//    V3 (audit revendeurs) — la purge couvre AUSSI les transactions
+	//    ORPHELINES : dont le ResellerID ne référence plus aucun revendeur
+	//    (reliques d'un DELETE /api/resellers/{id} antérieur à la cascade
+	//    V2). Elles survivaient à toutes les purges, y compris « all »,
+	//    ce qui rendait l'annonce « et leurs N transaction(s) » mensongère.
+	//    Portée ciblée : les revendeurs des AUTRES comptes (liveRes, global)
+	//    continuent de protéger leurs propres transactions.
 	if has(PurgeScopeResellers) {
-		resIDs := map[string]bool{}
+		resIDs := map[string]bool{}  // revendeurs purgés à l'instant
+		liveRes := map[string]bool{} // revendeurs restants (tous comptes)
 		keptResellers := db.Resellers[:0]
 		for _, res := range db.Resellers {
 			if match(res.AccountID) {
@@ -455,20 +463,19 @@ func (a *API) purgeScopes(w http.ResponseWriter, r *http.Request, accID string, 
 				counts.Resellers++
 				continue
 			}
+			liveRes[res.ID] = true
 			keptResellers = append(keptResellers, res)
 		}
 		db.Resellers = keptResellers
-		if len(resIDs) > 0 {
-			keptTx := db.Transactions[:0]
-			for _, t := range db.Transactions {
-				if match(t.AccountID) && resIDs[t.ResellerID] {
-					counts.Transactions++
-					continue
-				}
-				keptTx = append(keptTx, t)
+		keptTx := db.Transactions[:0]
+		for _, t := range db.Transactions {
+			if match(t.AccountID) && (resIDs[t.ResellerID] || !liveRes[t.ResellerID]) {
+				counts.Transactions++
+				continue
 			}
-			db.Transactions = keptTx
+			keptTx = append(keptTx, t)
 		}
+		db.Transactions = keptTx
 	}
 
 	// 7. Ventes.

@@ -177,9 +177,15 @@ export default function ResellersView() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => api<{ ok: boolean }>(`/api/resellers/${id}`, { method: "DELETE" }),
-    onSuccess: () => {
-      toast.success(t("resellers.deletedToast"));
+    mutationFn: (id: string) =>
+      api<{ ok: boolean; transactionsPurged: number }>(`/api/resellers/${id}`, { method: "DELETE" }),
+    onSuccess: (res) => {
+      // V2 — cascade : le backend retourne le volume d'historique purgé.
+      toast.success(
+        res.transactionsPurged > 0
+          ? tf("resellers.deletedToastHistory", { n: res.transactionsPurged })
+          : t("resellers.deletedToast"),
+      );
       setDeleteTarget(null);
       invalidateResellers();
     },

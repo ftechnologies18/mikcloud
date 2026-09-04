@@ -5,6 +5,43 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-04 — V1→V5 : suppression des revendeurs maîtrisée — garde-fous, cascade et purge des orphelines
+
+### Corrigés
+- **Transactions orphelines immortelles** : supprimer un revendeur ne touchait
+  QUE sa ligne — son historique de transactions (crédit, créance, versements)
+  survivait ensuite à TOUTES les purges, y compris « all » (le scope
+  « Revendeurs » ne filtrait que les revendeurs encore présents), ce qui rendait
+  l'annonce « et leurs N transaction(s) » mensongère. Le scope purge désormais
+  les transactions orphelines (ResellerID sans revendeur) — l'historique fantôme
+  déjà en production est nettoyé au premier passage, idempotent.
+- **Mode Vente zombi** : un token de vente (TTL 24 h) survivait au DELETE du
+  revendeur et pouvait encore marquer des ventes et CRÉER des créances
+  fantômes, le garde de plafond étant silencieusement sauté quand le revendeur
+  n'existait plus. Tout /api/sell/* exige désormais l'existence du revendeur
+  (403 « Session expirée : revendeur supprimé » → la PWA déconnecte).
+- **Message de suppression trompeur** (i18n FR/EN) : il annonce désormais la
+  cascade réelle (historique supprimé, ventes conservées) et la règle des
+  garde-fous ; le toast de succès affiche le volume d'historique purgé.
+
+### Ajoutés
+- **Garde-fous au DELETE revendeur (V1)** : suppression refusée en 409
+  structuré (`code=reseller_not_settled`, payloads credit/debt/stock) tant que
+  le revendeur porte un crédit restant, une créance dépôt-vente ou du stock
+  attribué vendable — motifs détaillés affichés tels quels par l'UI. Le DELETE
+  exige aussi un compte non expiré (guardAccountWrite, aligné sur le reste du
+  CRUD).
+- **Cascade de suppression (V2)** : une fois soldé, le revendeur part avec
+  TOUT son historique de transactions ; ses vouchers attribués restants
+  (vendus/expirés) sont détachés (ResellerID vidé, ResellerName conservé en
+  trace) ; ventes (Sale) et lots (Batch) volontairement conservés (comptabilité
+  du gérant, génération immuable). Réponse enrichie {transactionsPurged,
+  vouchersDetached} ; ligne d'activité de traçabilité.
+- **Tests** : garde-fous (3 motifs), cascade (compteurs + détachement +
+  préservations), purge des orphelines (isolation stricte du compte témoin),
+  révocation Mode Vente après DELETE, cas « revendeur inexistant » dans la
+  matrice d'authentification.
+
 ## 2026-09-04 — UX R7 : sémantique trafic verrouillée — upload/download dans le bon sens
 
 ### Corrigés

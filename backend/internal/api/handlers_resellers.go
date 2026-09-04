@@ -341,6 +341,10 @@ func (a *API) handleResellerUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleResellerDelete(w http.ResponseWriter, r *http.Request) {
+	// P3 — compte expiré : écritures métier refusées (lecture seule).
+	if !a.guardAccountWrite(w, r) {
+		return
+	}
 	acc := accountScope(r)
 	id := r.PathValue("id")
 	a.store.Lock()
@@ -357,12 +361,79 @@ func (a *API) handleResellerDelete(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "Revendeur introuvable")
 		return
 	}
-	name := db.Resellers[idx].Name
+	res := db.Resellers[idx]
+
+	// V1 — GARDE-FOUS (audit revendeurs) : la suppression n'est autorisée que
+	// pour un revendeur « soldé ». Toute valeur active est un motif de refus
+	// détaillé (409 structuré, affiché tel quel par l'UI) : on n'écrase jamais
+	// une position financière (crédit, créance dépôt-vente) ni du stock
+	// attribué sans régularisation — mêmes règles que le changement de mode
+	// de paiement (cf. handleResellerUpdate).
+	debt := depositDebt(db, acc, res.ID)
+	stock := 0
+	now := time.Now().UTC()
+	for i := range db.HotspotUsers {
+		u := &db.HotspotUsers[i]
+		if u.Kind != "voucher" || u.ResellerID != res.ID || u.AccountID != acc {
+			continue
+		}
+		if u.SoldAt == "" && model.EffectiveStatus(u, now) == "active" {
+			stock++
+		}
+	}
+	var blocks []string
+	if res.Credit != 0 {
+		blocks = append(blocks, fmt.Sprintf("crédit restant %d FCFA", res.Credit))
+	}
+	if debt > 0 {
+		blocks = append(blocks, fmt.Sprintf("créance dépôt-vente %d FCFA", debt))
+	}
+	if stock > 0 {
+		blocks = append(blocks, fmt.Sprintf("%d ticket(s) encore en stock", stock))
+	}
+	if len(blocks) > 0 {
+		a.store.Unlock()
+		writeErrCode(w, http.StatusConflict, "reseller_not_settled",
+			"Suppression impossible — régularisez d'abord : "+strings.Join(blocks, ", ")+".",
+			map[string]any{"credit": res.Credit, "debt": debt, "stock": stock})
+		return
+	}
+
+	// V2 — CASCADE : le revendeur part avec TOUT son historique de
+	// transactions (crédit, créance, versements) ; ses vouchers attribués
+	// restants (vendus ou expirés — les actifs vendables sont bloqués par
+	// V1) sont détachés (ResellerID vidé, ResellerName conservé en trace).
+	// Les ventes (Sale) et les lots (Batch) sont volontairement conservés :
+	// comptabilité du gérant + traçabilité de génération immuable. Plus
+	// aucun orphelin ne se crée désormais — le passé est nettoyé par la
+	// purge (V3, scope « resellers » couvrant les orphelines).
+	purgedTx, detached := 0, 0
+	keptTx := db.Transactions[:0]
+	for _, t := range db.Transactions {
+		if t.ResellerID == res.ID {
+			purgedTx++
+			continue
+		}
+		keptTx = append(keptTx, t)
+	}
+	db.Transactions = keptTx
+	for i := range db.HotspotUsers {
+		u := &db.HotspotUsers[i]
+		if u.ResellerID == res.ID {
+			u.ResellerID = ""
+			detached++
+		}
+	}
+	name := res.Name
 	db.Resellers = append(db.Resellers[:idx], db.Resellers[idx+1:]...)
-	a.logActivityBy(r, db, acc, "reseller", "Revendeur "+name+" supprimé")
+	a.logActivityBy(r, db, acc, "reseller",
+		fmt.Sprintf("Revendeur %s supprimé — historique de %d transaction(s) purgé, %d voucher(s) détaché(s)",
+			name, purgedTx, detached))
 	a.store.Save()
 	a.store.Unlock()
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "transactionsPurged": purgedTx, "vouchersDetached": detached,
+	})
 }
 
 func (a *API) handleResellerCredit(w http.ResponseWriter, r *http.Request) {

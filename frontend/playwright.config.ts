@@ -33,6 +33,7 @@ export default defineConfig({
   projects: [
     { name: "setup", testMatch: /bootstrap\.spec\.ts/ },
     { name: "sell", testMatch: /sell\.spec\.ts/, dependencies: ["setup"] },
+    { name: "resellers", testMatch: /resellers-lifecycle\.spec\.ts/ },
   ],
   webServer: [
     {

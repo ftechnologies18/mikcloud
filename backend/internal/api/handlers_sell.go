@@ -46,14 +46,33 @@ type sellVoucherItem struct {
 	BatchID string `json:"batchId"`
 }
 
-// requireReseller — le token doit porter le rôle « reseller » (PIN).
+// requireReseller — le token doit porter le rôle « reseller » (PIN) ET le
+// revendeur doit toujours exister (V4, audit revendeurs) : un token TTL 24 h
+// qui survit au DELETE du revendeur ne doit plus rien pouvoir faire — sinon
+// le revendeur fantôme vendrait sans garde de plafond (findResellerScoped →
+// nil) et créerait des créances orphelines. La PWA Mode Vente traite ce 403
+// comme une fin de session (retour à l'écran PIN).
 func (a *API) requireReseller(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if c := claimsFrom(r); c != nil && c.Role == "reseller" {
-			next(w, r)
+		c := claimsFrom(r)
+		if c == nil || c.Role != "reseller" {
+			writeErr(w, http.StatusForbidden, "Réservé aux revendeurs (Mode Vente)")
 			return
 		}
-		writeErr(w, http.StatusForbidden, "Réservé aux revendeurs (Mode Vente)")
+		a.store.Lock()
+		exists := false
+		for i := range a.store.Data().Resellers {
+			if a.store.Data().Resellers[i].ID == c.Sub && a.store.Data().Resellers[i].AccountID == c.Acc {
+				exists = true
+				break
+			}
+		}
+		a.store.Unlock()
+		if !exists {
+			writeErr(w, http.StatusForbidden, "Session expirée : revendeur supprimé")
+			return
+		}
+		next(w, r)
 	}
 }
 

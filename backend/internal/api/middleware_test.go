@@ -49,6 +49,9 @@ func TestAuthMiddlewareMatrix(t *testing.T) {
 	// AdminUser, reste exempté de ce contrôle).
 	seedUser(t, st, "usr-m", accID, "usr-m", model.RoleManager)
 	seedUser(t, st, "usr-p", "", "usr-p", model.RolePlatformAdmin)
+	// V4 (audit revendeurs) : le Mode Vente exige en plus l'existence du
+	// revendeur — « usr-r » doit donc exister pour que son token réponde 200.
+	seedSellReseller(t, st, "usr-r", accID, "Usr R", "prepaid", 0)
 
 	cas := []struct {
 		nom    string
@@ -68,6 +71,8 @@ func TestAuthMiddlewareMatrix(t *testing.T) {
 			auth.Sign(testJWTSecret, auth.NewClaims("usr-r", "R", "reseller", accID, 0)), http.StatusForbidden},
 		{"revendeur autorisé sur /api/sell/me", http.MethodGet, "/api/sell/me",
 			auth.Sign(testJWTSecret, auth.NewClaims("usr-r", "R", "reseller", accID, 0)), http.StatusOK},
+		{"revendeur inexistant révoqué (V4)", http.MethodGet, "/api/sell/me",
+			auth.Sign(testJWTSecret, auth.NewClaims("res-fantome", "F", "reseller", accID, 0)), http.StatusForbidden},
 		{"manager bloqué sur requireRole(3)", http.MethodGet, "/api/team",
 			auth.Sign(testJWTSecret, auth.NewClaims("usr-m", "M", model.RoleManager, accID, 0)), http.StatusForbidden},
 		{"owner passe sur requireRole(3)", http.MethodGet, "/api/team", ownerToken, http.StatusOK},

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import Image from "next/image";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
@@ -8,6 +9,7 @@ import {
   ChevronDown,
   ChevronsUpDown,
   Languages,
+  Loader2,
   LogOut,
   Menu,
   RefreshCw,
@@ -44,26 +46,40 @@ import { ThemeToggle } from "./theme-toggle";
 import { UserProfileDialog } from "./parts/user-profile-dialog";
 import { ActivityBell, LiveClock, SearchPalette } from "./parts/topbar-widgets";
 
-import AccountsView from "./views/accounts-view";
-import BillingRequestsView from "./views/billing-requests-view";
-import DashboardView from "./views/dashboard-view";
-import LogsView from "./views/logs-view";
-import NotificationsView from "./views/notifications-view";
-import PlatformLogsView from "./views/platform-logs-view";
-import PlatformOverviewView from "./views/platform-overview-view";
-import PlatformSettingsView from "./views/platform-settings-view";
-import PlatformTeamView from "./views/platform-team-view";
-import ProfilesView from "./views/profiles-view";
-import ReportsView from "./views/reports-view";
-import ResellersView from "./views/resellers-view";
-import RoutersView from "./views/routers-view";
-import SessionsView from "./views/sessions-view";
-import SettingsView from "./views/settings-view";
-import SubscriptionView from "./views/subscription-view";
-import TeamView from "./views/team-view";
-import TemplatesView from "./views/templates-view";
-import UsersView from "./views/users-view";
-import VouchersView from "./views/vouchers-view";
+// Perf — vues en chargement différé : chaque vue = chunk distinct chargé à
+// l'ouverture. Les librairies lourdes (recharts, qrcode…) ne sont plus
+// téléchargées qu'à la première vue qui les utilise. Le rendu et le contrat
+// d'API restent inchangés (mêmes composants, mêmes props).
+const ViewFallback = (
+  <div
+    className="flex min-h-[40vh] items-center justify-center"
+    role="status"
+    aria-live="polite"
+  >
+    <Loader2 className="size-6 animate-spin text-muted-foreground" aria-hidden="true" />
+  </div>
+);
+
+const AccountsView = dynamic(() => import("./views/accounts-view"), { loading: () => ViewFallback });
+const BillingRequestsView = dynamic(() => import("./views/billing-requests-view"), { loading: () => ViewFallback });
+const DashboardView = dynamic(() => import("./views/dashboard-view"), { loading: () => ViewFallback });
+const LogsView = dynamic(() => import("./views/logs-view"), { loading: () => ViewFallback });
+const NotificationsView = dynamic(() => import("./views/notifications-view"), { loading: () => ViewFallback });
+const PlatformLogsView = dynamic(() => import("./views/platform-logs-view"), { loading: () => ViewFallback });
+const PlatformOverviewView = dynamic(() => import("./views/platform-overview-view"), { loading: () => ViewFallback });
+const PlatformSettingsView = dynamic(() => import("./views/platform-settings-view"), { loading: () => ViewFallback });
+const PlatformTeamView = dynamic(() => import("./views/platform-team-view"), { loading: () => ViewFallback });
+const ProfilesView = dynamic(() => import("./views/profiles-view"), { loading: () => ViewFallback });
+const ReportsView = dynamic(() => import("./views/reports-view"), { loading: () => ViewFallback });
+const ResellersView = dynamic(() => import("./views/resellers-view"), { loading: () => ViewFallback });
+const RoutersView = dynamic(() => import("./views/routers-view"), { loading: () => ViewFallback });
+const SessionsView = dynamic(() => import("./views/sessions-view"), { loading: () => ViewFallback });
+const SettingsView = dynamic(() => import("./views/settings-view"), { loading: () => ViewFallback });
+const SubscriptionView = dynamic(() => import("./views/subscription-view"), { loading: () => ViewFallback });
+const TeamView = dynamic(() => import("./views/team-view"), { loading: () => ViewFallback });
+const TemplatesView = dynamic(() => import("./views/templates-view"), { loading: () => ViewFallback });
+const UsersView = dynamic(() => import("./views/users-view"), { loading: () => ViewFallback });
+const VouchersView = dynamic(() => import("./views/vouchers-view"), { loading: () => ViewFallback });
 
 /** Libellé dynamique de la vue active — utilisé pour l'aria du conteneur
  *  principal (le titre visible vit dans chaque vue via PageHeader). */

@@ -1,14 +1,39 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
+import { Loader2 } from "lucide-react";
 import { QueryProvider } from "@/lib/hotspot/query";
 import { useHotspotStore } from "@/lib/hotspot/store";
 import { useIsStandalone } from "@/hooks/use-standalone";
 import LoginScreen from "@/components/hotspot/login-screen";
-import AppShell from "@/components/hotspot/app-shell";
-import SellShell from "@/components/hotspot/sell-shell";
 import LandingPage from "@/components/landing/landing-page";
 import SignupModal from "@/components/landing/signup-modal";
+
+// Perf — chargement différé des consoles : la vitrine ne télécharge plus
+// le code de la console (≈ 1,6 Mo : 20 vues + recharts + dnd-kit…).
+// Landing + Login restent statiques : premier paint vitrine instantané et
+// ouverture PWA immédiate (porte d'entrée par défaut en standalone).
+const AppShell = dynamic(() => import("@/components/hotspot/app-shell"), {
+  loading: () => <ShellFallback />,
+});
+const SellShell = dynamic(() => import("@/components/hotspot/sell-shell"), {
+  loading: () => <ShellFallback />,
+});
+
+/** Écran d'attente pendant le chargement différé d'un shell (fond nuit
+ *  identitaire — même rendu que l'ouverture PWA). */
+function ShellFallback() {
+  return (
+    <div
+      className="flex min-h-screen items-center justify-center bg-background"
+      role="status"
+      aria-live="polite"
+    >
+      <Loader2 className="size-7 animate-spin text-muted-foreground" aria-hidden="true" />
+    </div>
+  );
+}
 
 export default function Home() {
   const token = useHotspotStore((s) => s.token);

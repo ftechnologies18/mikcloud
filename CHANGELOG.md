@@ -5,6 +5,58 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-04 — Phase D perf/UX : UI optimiste + deep-links de détail
+
+### Ajoutés
+- **UI optimiste (D2)** — les actions à haute fréquence reflètent le résultat
+  DÈS le clic (snapshot → rollback si l'API refuse ; invalidation onSuccess =
+  vérité serveur), supprimant la perception d'attente due à l'aller-retour
+  réseau (Render free + 3G/4G) :
+  - Mode Vente : la vente (`POST /api/sell/{id}/sold`) retire le ticket du
+    stock affiché et décrémente les compteurs immédiatement — en coordination
+    avec UX R6 : les DEUX caches sont mis à jour (TanStack Query + snapshots
+    localStorage), sinon le fallback hors-ligne ré-afficherait le ticket
+    vendu ; le rollback complet (les deux caches) ne concerne que les erreurs
+    MÉTIER (une erreur réseau part en file IndexedDB — pas de rollback).
+    Retour de stock : mêmes principes, crédit prépayé patché avec la valeur
+    réelle du serveur (jamais devinée) ; CA non deviné (sémantique différente
+    prépayé/dépôt-vente).
+  - Utilisateurs : toggle actif/inactif bascule instantanément dans TOUTES
+    les pages en cache (`setQueriesData`, clés paginées/filtrées) ; la
+    prolongation applique côté client la même règle que le backend
+    (`max(maintenant, expiration) + days`, « expiré » → « actif »), corrigée
+    par la réponse serveur ; réponse serveur écrite dans le cache avant
+    l'invalidation.
+  - Sessions : la session kickée quitte la liste immédiatement (KPI suivent
+    automatiquement).
+- **Deep-links de détail (D3)** — le mécanisme de navigation par URL (Phase A)
+  s'étend aux éléments : `view-path.ts` gagne un segment de détail optionnel
+  (`viewToPath(view, detail)` + `detailFromPath`, encodé
+  `encodeURIComponent`) ; le segment est consommé LOCALEMENT par la vue — le
+  store, la synchro bidirectionnelle et le fix Retour (192ad9f) restent
+  intacts ; app-route re-normalise les segments orphelins (2ᵉ segment sur une
+  vue non adressable) :
+  - `/app/users/<id>` → dialog d'édition de l'utilisateur (push → le Retour
+    referme le dialog ; fermeture manuelle → replace sans segment ; id absent
+    de la page chargée → retour propre à la liste) ;
+  - `/app/vouchers/<batchId>` → « détail lot » = onglet vouchers filtré sur
+    le lot (`viewBatchVouchers` devient adressable) ; sortie (Retour) →
+    filtre levé s'il n'a pas divergé ;
+  - `/app/sessions/<username>` → filtre local par utilisateur (nouveau champ
+    de recherche côté client — la liste n'est pas paginée) ; état DÉRIVÉ de
+    l'URL (segment = filtre tant que l'opérateur n'a pas tapé), aucune
+    synchronisation effet→état.
+- Test de contrat view-path : 12 assertions (encodage, décodage, vues sans
+  détail, 3ᵉ segment ignoré, segment vide).
+
+### Arbitrage
+- **D1 batch dashboard : retiré du plan** — `/api/dashboard` agrège déjà
+  overview + sessions + ventes + revenus en une requête (poll 15 s) ; le gain
+  résiduel est marginal.
+- **D4 Render Starter : reporté** jusqu'aux premiers paiements clients (le
+  keep-alive Neon Phase C couvre déjà le cold start base ; le cold boot du
+  plan free reste la pénalité dominante hors agents en ligne).
+
 ## 2026-09-04 — Phase C perf : keep-alive Neon intelligent (fin du cold start en heures d'activité)
 
 ### Ajoutés

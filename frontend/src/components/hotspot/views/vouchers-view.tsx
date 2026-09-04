@@ -5,7 +5,8 @@
 // Quick print (F12) : bouton « Réimpression rapide » qui réimprime le dernier
 // lot imprimé (localStorage "mikcloud-last-batch", écrit par uc-print-dialog).
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeftRight,
@@ -82,6 +83,7 @@ import { VoucherTransferDialog } from "@/components/hotspot/parts/voucher-transf
 import { VoucherWizardDialog } from "@/components/hotspot/parts/voucher-wizard-dialog";
 import { api } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
+import { detailFromPath, viewToPath } from "@/lib/hotspot/view-path";
 import { formatBytes, formatCurrency, formatDate } from "@/lib/hotspot/format";
 import type {
   BatchWithStats,
@@ -232,6 +234,42 @@ export default function VouchersView() {
     void queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
   }
 
+  // Phase D — deep-link /app/vouchers/<batchId> : « détail lot » = onglet
+  // vouchers filtré sur le lot (équivalent viewBatchVouchers, sans push —
+  // on est déjà sur l'URL). Segment consommé localement : ni le store ni
+  // app-route ne changent (fix 192ad9f préservé). À la sortie du détail
+  // (Retour navigateur), le filtre lot est levé s'il n'a pas divergé.
+  const router = useRouter();
+  const pathname = usePathname();
+  const detailBatchId = detailFromPath(pathname, "vouchers");
+  const prevDetail = useRef<string | null>(null);
+  // Miroir de la recherche lu par l'effet ci-dessous : synchronisé dans un
+  // effet (jamais pendant le rendu — règle react-hooks/refs), déclaré
+  // AVANT l'effet de détail pour tourner en premier.
+  const searchRef = useRef(search);
+  useEffect(() => {
+    searchRef.current = search;
+  });
+
+  useEffect(() => {
+    const leaving = prevDetail.current;
+    if (detailBatchId) {
+      setTab("vouchers");
+      setSearchInput(detailBatchId);
+      setSearch(detailBatchId);
+      setStatusFilter("all");
+      setProfileFilter("all");
+      setPage(1);
+    } else if (leaving && searchRef.current === leaving) {
+      setSearchInput("");
+      setSearch("");
+      setStatusFilter("all");
+      setProfileFilter("all");
+      setPage(1);
+    }
+    prevDetail.current = detailBatchId;
+  }, [detailBatchId]);
+
   // N (rapprochement doux) — resynchronisation d'un voucher « absent du
   // routeur » : recréer (user_add en file) ou oublier (retrait du cloud).
   const resyncMutation = useMutation({
@@ -351,6 +389,10 @@ export default function VouchersView() {
     setProfileFilter("all");
     setPage(1);
     setTab("vouchers");
+    // Phase D — le « détail lot » devient adressable : /app/vouchers/<batchId>
+    // (push → le Retour du navigateur revient à la liste). L'effet de
+    // synchronisation ci-dessous ré-applique le filtre à l'arrivée du push.
+    router.push(viewToPath("vouchers", batch.id), { scroll: false });
   }
 
   // Charge les vouchers ACTIFS d'un lot pour l'impression — parité avec le

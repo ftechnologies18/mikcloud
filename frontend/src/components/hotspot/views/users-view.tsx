@@ -5,7 +5,8 @@
 // Sélection multiple avec actions groupées (activations / prolongation / suppression…)
 // et choix du mode d'affichage : liste (table) ou cartes.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CalendarPlus,
@@ -81,6 +82,7 @@ import { copyToClipboard } from "@/components/hotspot/parts/uc-clipboard";
 import { PasswordCell } from "@/components/hotspot/parts/uc-password-cell";
 import { api, apiDownload } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
+import { detailFromPath, viewToPath } from "@/lib/hotspot/view-path";
 import { formatBytes, formatCurrency, formatDate } from "@/lib/hotspot/format";
 import type { HotspotUser, PagedUsers, Profile, RouterDevice } from "@/lib/hotspot/types";
 import { cn } from "@/lib/utils";
@@ -199,6 +201,47 @@ export default function UsersView() {
     void queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
   }
 
+  // Phase D — deep-link /app/users/<id> : ouvre directement le dialog
+  // d'édition de l'utilisateur (s'il est dans la page chargée — un lien
+  // pointant une autre page/filtre retombe proprement sur la liste). Le
+  // segment est consommé LOCALEMENT : ni le store ni app-route ne changent
+  // (fix 192ad9f préservé). suppressDetail neutralise la ré-ouverture
+  // pendant une fermeture (le replace de l'URL est asynchrone).
+  const router = useRouter();
+  const pathname = usePathname();
+  const detailUserId = detailFromPath(pathname, "users");
+  const prevDetail = useRef<string | null>(null);
+  const suppressDetail = useRef(false);
+
+  useEffect(() => {
+    if (detailUserId) {
+      if (suppressDetail.current || editing?.id === detailUserId) {
+        prevDetail.current = detailUserId;
+        return;
+      }
+      const user = users.find((u) => u.id === detailUserId);
+      if (user) {
+        setEditing(user);
+        setForm({
+          username: user.username,
+          password: "",
+          profileId: user.profileId,
+          routerId: user.routerId,
+          comment: user.comment || "",
+        });
+        setDialogOpen(true);
+      } else if (!isLoading) {
+        // id absent des données chargées → retour à la liste (pas de dialog fantôme)
+        router.replace(viewToPath("users"), { scroll: false });
+      }
+    } else if (prevDetail.current && editing?.id === prevDetail.current) {
+      // sortie du détail (Retour du navigateur) → refermer le dialog
+      setDialogOpen(false);
+      setEditing(null);
+    }
+    prevDetail.current = detailUserId;
+  }, [detailUserId, users, isLoading, editing, router]);
+
   function toggleReveal(id: string) {
     setRevealed((previous) => {
       const next = new Set(previous);
@@ -258,11 +301,24 @@ export default function UsersView() {
       comment: user.comment || "",
     });
     setDialogOpen(true);
+    // Phase D — le dialog d'édition devient adressable : /app/users/<id>
+    // (push → le Retour du navigateur referme le dialog). La vue reste
+    // pilotée par le store : ce segment est consommé localement.
+    router.push(viewToPath("users", user.id), { scroll: false });
   }
 
   function closeDialog(open: boolean) {
     setDialogOpen(open);
-    if (!open) setEditing(null);
+    if (!open) {
+      if (editing) {
+        // Fermeture d'un dialog d'édition (potentiellement ouvert par
+        // deep-link) : retirer le segment — replace, aucune entrée
+        // d'historique parasite (même discipline que le fix 192ad9f).
+        suppressDetail.current = true;
+        router.replace(viewToPath("users"), { scroll: false });
+      }
+      setEditing(null);
+    }
   }
 
   async function copyCredentials(user: HotspotUser) {
@@ -315,15 +371,46 @@ export default function UsersView() {
           method: "POST",
         },
       ),
+    // Phase D (UI optimiste) — bascule immédiate dans TOUTES les pages en
+    // cache (setQueriesData couvre les clés paginées/filtrées) ; rollback si
+    // l'API refuse ; la réponse serveur est écrite avant l'invalidation.
+    onMutate: async (user) => {
+      await queryClient.cancelQueries({ queryKey: ["/api/users"] });
+      const snapshots = queryClient.getQueriesData<PagedUsers>({ queryKey: ["/api/users"] });
+      const disabling = user.disabled === true || user.status === "disabled";
+      queryClient.setQueriesData<PagedUsers>({ queryKey: ["/api/users"] }, (old) =>
+        old
+          ? {
+              ...old,
+              data: old.data.map((u) =>
+                u.id === user.id
+                  ? {
+                      ...u,
+                      disabled: disabling,
+                      status: disabling ? "disabled" : u.status === "disabled" ? "active" : u.status,
+                    }
+                  : u,
+              ),
+            }
+          : old,
+      );
+      return snapshots;
+    },
     onSuccess: (user) => {
       toast.success(
         user.status === "disabled"
           ? tf("users.deactivatedToast", { name: user.username })
           : tf("users.activatedToast", { name: user.username }),
       );
+      queryClient.setQueriesData<PagedUsers>({ queryKey: ["/api/users"] }, (old) =>
+        old ? { ...old, data: old.data.map((u) => (u.id === user.id ? user : u)) } : old,
+      );
       invalidateUsers();
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error, _user, ctx) => {
+      if (ctx) for (const [key, value] of ctx) queryClient.setQueryData(key, value);
+      toast.error(error.message);
+    },
   });
 
   const deleteMutation = useMutation({
@@ -362,14 +449,45 @@ export default function UsersView() {
         method: "POST",
         body: { days: payload.days },
       }),
+    // Phase D (UI optimiste) — même règle que le backend : nouvelle
+    // expiration = max(maintenant, expiration actuelle) + days, et un
+    // utilisateur « expiré » repasse « actif ». La réponse serveur corrige
+    // toute divergence à l'invalidation ; rollback si l'API refuse (ex. :
+    // ticket jamais connecté → 400).
+    onMutate: async ({ user, days }) => {
+      await queryClient.cancelQueries({ queryKey: ["/api/users"] });
+      const snapshots = queryClient.getQueriesData<PagedUsers>({ queryKey: ["/api/users"] });
+      const currentMs = user.expiresAt ? new Date(user.expiresAt).getTime() : NaN;
+      const baseMs = !Number.isNaN(currentMs) && currentMs > Date.now() ? currentMs : Date.now();
+      const expiresAt = new Date(baseMs + days * 86_400_000).toISOString();
+      queryClient.setQueriesData<PagedUsers>({ queryKey: ["/api/users"] }, (old) =>
+        old
+          ? {
+              ...old,
+              data: old.data.map((u) =>
+                u.id === user.id
+                  ? { ...u, expiresAt, status: u.status === "expired" ? "active" : u.status }
+                  : u,
+              ),
+            }
+          : old,
+      );
+      return snapshots;
+    },
     onSuccess: (user, variables) => {
       toast.success(tf("users.extendedToast", { name: user.username, n: variables.days }), {
         description: user.expiresAt ? tf("users.newExpiry", { date: formatDate(user.expiresAt, lang) }) : undefined,
       });
+      queryClient.setQueriesData<PagedUsers>({ queryKey: ["/api/users"] }, (old) =>
+        old ? { ...old, data: old.data.map((u) => (u.id === user.id ? user : u)) } : old,
+      );
       setExtending(null);
       invalidateUsers();
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error, _payload, ctx) => {
+      if (ctx) for (const [key, value] of ctx) queryClient.setQueryData(key, value);
+      toast.error(error.message);
+    },
   });
 
   // Remise à zéro des compteurs (F4) — POST /api/users/{id}/reset-stats.

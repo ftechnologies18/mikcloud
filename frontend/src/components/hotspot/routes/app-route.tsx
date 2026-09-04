@@ -21,8 +21,9 @@
 //      venait de quitter : le Retour ne rejouait plus la navigation et le
 //      ping-pong d'URLs consommait l'historique jusqu'à quitter l'app.
 //    - Sans session (logout) : aucun push — la garde redirige vers /login.
-// 3. Normalisation : /app (nu) ou slug inconnu → replace vers la vue
-//    courante — aucune entrée d'historique parasite.
+// 3. Normalisation : /app (nu), slug inconnu, ou segment de détail orphelin
+//    (2e segment sur une vue qui n'expose pas de détail) → replace vers la
+//    vue cible — aucune entrée d'historique parasite.
 // 4. Préchauffe (B4) : les chunks des vues les plus consultées sont
 //    importés quand le navigateur est inactif — premier clic instantané.
 
@@ -31,7 +32,7 @@ import { usePathname, useRouter } from "next/navigation";
 import AppShell from "@/components/hotspot/app-shell";
 import { useMounted } from "@/hooks/use-mounted";
 import { useHotspotStore } from "@/lib/hotspot/store";
-import { APP_BASE_PATH, viewFromPath, viewToPath } from "@/lib/hotspot/view-path";
+import { APP_BASE_PATH, detailFromPath, viewFromPath, viewToPath } from "@/lib/hotspot/view-path";
 import { ShellFallback } from "./shell-fallback";
 
 export default function AppRoute() {
@@ -97,6 +98,13 @@ export default function AppRoute() {
         // Consommé par l'abonnement s'il est enregistré ; nettoyé ici sinon
         // (fenêtre de montage) — le flag ne fuite jamais vers le clic suivant.
         urlDriven.current = false;
+      }
+      // Phase D — segment de détail orphelin (2e segment sur une vue qui
+      // n'expose pas de détail, ex. /app/dashboard/xyz) : re-normaliser —
+      // seules users/vouchers/sessions adressent un détail, consommé par la
+      // vue elle-même (la vue ne re-normalise PAS son propre segment).
+      if (detailFromPath(pathname, target) === null && pathname !== viewToPath(target)) {
+        router.replace(viewToPath(target), { scroll: false });
       }
     } else {
       // /app nu ou slug inconnu : normaliser sur la vue courante — replace,

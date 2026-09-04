@@ -338,6 +338,12 @@ export default function SellShell() {
     // réseau → la vente part en file locale (IndexedDB) et sera REJOUÉE au
     // retour du réseau (409-safe, cf. replay plus bas) ; erreur métier →
     // R2 : la dialog reste ouverte, on ne file pas un refus du serveur.
+    // Phase D (UI optimiste) — le ticket quitte le stock AFFICHÉ dès le
+    // clic : les DEUX caches sont mis à jour (TanStack + snapshots
+    // localStorage UX R6) — sinon, hors-ligne, l'invalidation retomberait
+    // sur le snapshot qui contient ENCORE le ticket vendu. CA/crédit ne
+    // sont PAS devinés (sémantique différente selon prépayé/dépôt-vente) :
+    // servis par l'invalidation (ou le replay) au retour du réseau.
     mutationFn: async ({ id, voucher }: { id: string; voucher: SellVoucher }) => {
       try {
         await api<{ ok: boolean }>(`/api/sell/${id}/sold`, { method: "POST", timeoutMs: 10_000 });
@@ -354,6 +360,27 @@ export default function SellShell() {
         return { offline: true };
       }
     },
+    onMutate: async ({ id }) => {
+      await Promise.all([
+        qc.cancelQueries({ queryKey: ["/api/sell/stock"] }),
+        qc.cancelQueries({ queryKey: ["/api/sell/me"] }),
+      ]);
+      const stock = qc.getQueryData<SellVoucher[]>(["/api/sell/stock"]);
+      const me = qc.getQueryData<SellMe>(["/api/sell/me"]);
+      const nextStock = stock ? stock.filter((v) => v.id !== id) : undefined;
+      const nextMe = me
+        ? { ...me, stockCount: Math.max(0, me.stockCount - 1), soldToday: me.soldToday + 1 }
+        : undefined;
+      if (nextStock) qc.setQueryData<SellVoucher[]>(["/api/sell/stock"], nextStock);
+      if (nextMe) qc.setQueryData<SellMe>(["/api/sell/me"], nextMe);
+      // UX R6 — les snapshots localStorage suivent : ce sont eux que
+      // l'invalidation relira tant que le réseau est coupé.
+      const lsStock = readCache<SellVoucher[]>(STOCK_CACHE_KEY);
+      const lsMe = readCache<SellMe>(ME_CACHE_KEY);
+      if (lsStock && nextStock) writeCache(STOCK_CACHE_KEY, nextStock);
+      if (lsMe && nextMe) writeCache(ME_CACHE_KEY, nextMe);
+      return { stock, me, lsStock, lsMe };
+    },
     onSuccess: (res) => {
       if (res.offline) toast.info(t("sell.queuedToast"));
       else toast.success(t("sell.soldToast"));
@@ -362,7 +389,15 @@ export default function SellShell() {
       qc.invalidateQueries({ queryKey: ["/api/sell/stock"] });
       qc.invalidateQueries({ queryKey: ["/api/sell/me"] });
     },
-    onError: (e: Error) => toast.error(e instanceof ApiError ? e.message : t("sell.error")),
+    onError: (e: Error, _vars, ctx) => {
+      // Erreur métier uniquement (une erreur réseau part en file dans
+      // mutationFn) : restauration complète des deux caches.
+      if (ctx?.stock) qc.setQueryData(["/api/sell/stock"], ctx.stock);
+      if (ctx?.me) qc.setQueryData(["/api/sell/me"], ctx.me);
+      if (ctx?.lsStock) writeCache(STOCK_CACHE_KEY, ctx.lsStock);
+      if (ctx?.lsMe) writeCache(ME_CACHE_KEY, ctx.lsMe);
+      toast.error(e instanceof ApiError ? e.message : t("sell.error"));
+    },
   });
 
   // UX R6 — replay de la file : au retour du réseau (useOnline réagit aux
@@ -430,11 +465,37 @@ export default function SellShell() {
     // (Un `JSON.stringify` ici produisait un corps doublement encodé — une
     // chaîne JSON au lieu d'un objet — refusé par le backend en 400
     // « Corps de requête invalide ». Cause du bug remonté par Ulrich.)
+    // Phase D (UI optimiste) — les tickets quittent le stock affiché dès la
+    // confirmation ; le crédit éventuel (prépayé) est patché avec la valeur
+    // réelle calculée par le serveur (onSuccess), jamais devinée.
     mutationFn: (ids: string[]) =>
       api<SellReturnResult>("/api/sell/return", { method: "POST", body: { ids } }),
-    onSuccess: (res) => {
+    onMutate: async (ids) => {
+      await Promise.all([
+        qc.cancelQueries({ queryKey: ["/api/sell/stock"] }),
+        qc.cancelQueries({ queryKey: ["/api/sell/me"] }),
+      ]);
+      const stock = qc.getQueryData<SellVoucher[]>(["/api/sell/stock"]);
+      const me = qc.getQueryData<SellMe>(["/api/sell/me"]);
+      if (stock) {
+        qc.setQueryData<SellVoucher[]>(["/api/sell/stock"], (old) =>
+          (old ?? []).filter((v) => !ids.includes(v.id)),
+        );
+      }
+      if (me) {
+        qc.setQueryData<SellMe>(["/api/sell/me"], {
+          ...me,
+          stockCount: Math.max(0, me.stockCount - ids.length),
+        });
+      }
+      return { stock, me };
+    },
+    onSuccess: (res, _ids, ctx) => {
       if (res.credited > 0) {
         toast.success(tf("sell.returnDoneCreditToast", { count: res.returned, amount: formatCurrency(res.credited, currency, lang) }));
+        if (ctx?.me) {
+          qc.setQueryData<SellMe>(["/api/sell/me"], { ...ctx.me, credit: ctx.me.credit + res.credited });
+        }
       } else {
         toast.success(tf("sell.returnDoneToast", { count: res.returned }));
       }
@@ -445,7 +506,11 @@ export default function SellShell() {
       qc.invalidateQueries({ queryKey: ["/api/sell/me"] });
       qc.invalidateQueries({ queryKey: ["/api/sell/day-report"] });
     },
-    onError: (e: Error) => toast.error(e instanceof ApiError ? e.message : t("sell.error")),
+    onError: (e: Error, _ids, ctx) => {
+      if (ctx?.stock) qc.setQueryData(["/api/sell/stock"], ctx.stock);
+      if (ctx?.me) qc.setQueryData(["/api/sell/me"], ctx.me);
+      toast.error(e instanceof ApiError ? e.message : t("sell.error"));
+    },
   });
 
   // UX R1 — regroupement memoïsé : recalculé uniquement au refetch du stock.

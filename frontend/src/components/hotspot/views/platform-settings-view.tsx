@@ -114,7 +114,9 @@ interface PurgeStats {
 }
 
 // purgeToast — bilan du toast construit côté client (i18n) à partir des
-// compteurs renvoyés par l'API.
+// compteurs renvoyés par l'API. Les compteurs de résurgence (tombstones
+// anti-ré-import 30 j, suppressions commandées sur les routeurs réels) sont
+// ajoutés au bilan quand ils sont non nuls.
 function purgeToast(res: PurgeResponse, tf: (key: string, vars: Record<string, string | number>) => string): string {
   const p = res.purged ?? {};
   const routers = p.routers ?? 0;
@@ -128,6 +130,8 @@ function purgeToast(res: PurgeResponse, tf: (key: string, vars: Record<string, s
   const sessions = p.sessions ?? 0;
   const logs = p.logs ?? 0;
   const templates = p.templates ?? 0;
+  const tombstones = p.tombstones ?? 0;
+  const routerRemovals = p.routerRemovals ?? 0;
   const parts: string[] = [];
   if (routers > 0) parts.push(tf("settings.purge.cat.routers", { n: routers }));
   if (vouchers > 0) parts.push(tf("settings.purge.cat.vouchers", { n: vouchers }));
@@ -140,6 +144,8 @@ function purgeToast(res: PurgeResponse, tf: (key: string, vars: Record<string, s
   if (sessions > 0) parts.push(tf("settings.purge.cat.sessions", { n: sessions }));
   if (logs > 0) parts.push(tf("settings.purge.cat.logs", { n: logs }));
   if (templates > 0) parts.push(tf("settings.purge.cat.templates", { n: templates }));
+  if (tombstones > 0) parts.push(tf("settings.purge.cat.tombstones", { n: tombstones }));
+  if (routerRemovals > 0) parts.push(tf("settings.purge.cat.routerRemovals", { n: routerRemovals }));
   if (parts.length === 0) return tf("settings.purge.toastEmpty", {});
   return tf("settings.purge.toast", { summary: parts.join(" · ") });
 }
@@ -539,6 +545,11 @@ const PURGE_ACCOUNTS_KEY = ["/api/admin/purge/accounts"] as const;
 // (Radix Select n'accepte pas value="" d'où une sentinelle explicite).
 const SCOPE_ALL_ACCOUNTS = "global";
 
+// Purge TOTALE (P2) — mot de confirmation exigé par le backend quand
+// alsoRouter = true (les comptes sont aussi supprimés SUR les routeurs
+// réels ; le serveur renvoie 400 sans ce mot exact).
+const PURGE_ROUTER_CONFIRM = "SUPPRIMER";
+
 // Grille UNIFIÉE des 10 catégories purgables (identique dans les deux
 // portées) : scope API ↔ compteur ↔ libellé i18n. Les transactions n'ont pas
 // de scope autonome : elles partent avec les revendeurs (cascade) — affichées
@@ -568,6 +579,10 @@ function DataPurgeCard() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmText, setConfirmText] = useState("");
+  // Purge TOTALE (P2) — désactivée par défaut : supprime aussi les comptes
+  // SUR les routeurs réels (clients déconnectés immédiatement).
+  const [alsoRouter, setAlsoRouter] = useState(false);
+  const [routerConfirm, setRouterConfirm] = useState("");
 
   // Compteurs des deux portées (les deux requêtes sont légères et servent
   // ensemble le sélecteur) : stats GLOBALES + lignes PAR COMPTE.
@@ -597,19 +612,36 @@ function DataPurgeCard() {
   };
   const refreshing = globalStats.isRefetching || accountsQuery.isRefetching;
 
+  // Routeurs RÉELS (agent) — informatifs : jamais purgés. Dès qu'il en existe,
+  // la purge cloud seule ne suffit pas à vider le terrain : avertissement
+  // affiché + blocage anti-ré-import (tombstones 30 j) posé par le backend.
+  const realRouters = globalStats.data?.realRouters ?? 0;
+
   const changeScope = (value: string) => {
     setScopeValue(value);
     setSelected(new Set());
     setConfirmText("");
+    setAlsoRouter(false);
+    setRouterConfirm("");
   };
 
+  // Purge TOTALE : la saisie exacte de « SUPPRIMER » est exigée côté client
+  // (le serveur la revérifie — 400 sinon).
+  const routerConfirmOk = !alsoRouter || routerConfirm.trim() === PURGE_ROUTER_CONFIRM;
+
   const purgeMutation = useMutation({
-    mutationFn: (scopes: string[]) => purgeData(isGlobal ? "" : scopeValue, scopes),
+    mutationFn: (scopes: string[]) =>
+      purgeData(isGlobal ? "" : scopeValue, scopes, {
+        alsoRouter,
+        confirm: alsoRouter ? PURGE_ROUTER_CONFIRM : undefined,
+      }),
     onSuccess: (res) => {
       toast.success(purgeToast(res, tf));
       setConfirmOpen(false);
       setConfirmText("");
       setSelected(new Set());
+      setAlsoRouter(false);
+      setRouterConfirm("");
       void queryClient.invalidateQueries({ queryKey: PURGE_STATS_KEY });
       void queryClient.invalidateQueries({ queryKey: PURGE_ACCOUNTS_KEY });
     },
@@ -642,10 +674,13 @@ function DataPurgeCard() {
   const loading = globalStats.isLoading || accountsQuery.isLoading;
 
   // Confirmation : « PURGER » en portée globale, nom exact du compte en
-  // portée ciblée (réflexe de sécurité distinct selon la portée).
-  const canConfirm = isGlobal
-    ? confirmText.trim() === "PURGER" && selectedCategories.length > 0
-    : confirmText.trim() === selectedAccount?.name && selectedCategories.length > 0;
+  // portée ciblée (réflexe de sécurité distinct selon la portée) — et, en
+  // purge totale, le mot « SUPPRIMER » doit avoir été saisi dans la carte.
+  const canConfirm =
+    routerConfirmOk &&
+    (isGlobal
+      ? confirmText.trim() === "PURGER" && selectedCategories.length > 0
+      : confirmText.trim() === selectedAccount?.name && selectedCategories.length > 0);
 
   return (
     <Card className="gap-4 border-destructive/30 py-4 sm:py-6 lg:col-span-2">
@@ -696,6 +731,22 @@ function DataPurgeCard() {
               : t("platformSettings.targetedAccountHint")}
           </p>
         </div>
+
+        {/* Avertissement RÉSIDENCE des données — la purge est CLOUD ONLY :
+            les routeurs MikroTik réels conservent leurs comptes et la
+            synchronisation agent les ré-importerait (résurgence) sans le
+            blocage anti-ré-import posé par le backend (tombstones 30 j). */}
+        {!loading && realRouters > 0 && (
+          <div className="flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-800 dark:text-amber-300">
+            <TriangleAlert className="mt-0.5 size-5 shrink-0" aria-hidden />
+            <div>
+              <p className="font-medium">{t("settings.purge.routerWarningTitle")}</p>
+              <p className="mt-0.5 text-xs leading-relaxed opacity-90">
+                {t("settings.purge.routerWarning")}
+              </p>
+            </div>
+          </div>
+        )}
 
         {loading && <Skeleton className="h-24 w-full" />}
 
@@ -782,6 +833,50 @@ function DataPurgeCard() {
                 ? t("platformSettings.targetedNone")
                 : t("settings.purge.protected")}
             </p>
+
+            {/* Purge TOTALE (P2) — option avancée DÉSACTIVÉE par défaut :
+                supprime aussi les comptes SUR les routeurs réels. Le mot
+                « SUPPRIMER » est exigé (client + serveur). */}
+            <div className="grid gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3">
+              <Label
+                htmlFor="purge-also-router"
+                className="flex cursor-pointer items-start gap-2.5"
+              >
+                <Checkbox
+                  id="purge-also-router"
+                  checked={alsoRouter}
+                  onCheckedChange={(checked) => setAlsoRouter(checked === true)}
+                  className="mt-0.5"
+                  aria-label={t("settings.purge.alsoRouter")}
+                />
+                <span className="text-sm font-medium leading-snug text-amber-800 dark:text-amber-300">
+                  {t("settings.purge.alsoRouter")}
+                </span>
+              </Label>
+              {alsoRouter && (
+                <div className="grid gap-2">
+                  <p className="flex items-start gap-2 text-xs leading-relaxed text-amber-800 dark:text-amber-300">
+                    <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                    <span>{t("settings.purge.alsoRouterWarning")}</span>
+                  </p>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="purge-router-confirm" className="text-xs">
+                      {t("settings.purge.alsoRouterConfirmHint")}
+                    </Label>
+                    <Input
+                      id="purge-router-confirm"
+                      value={routerConfirm}
+                      onChange={(e) => setRouterConfirm(e.target.value)}
+                      placeholder={t("settings.purge.alsoRouterConfirmPlaceholder")}
+                      aria-label={t("settings.purge.alsoRouterConfirmAria")}
+                      autoComplete="off"
+                      aria-invalid={routerConfirm.trim() !== PURGE_ROUTER_CONFIRM}
+                      disabled={purgeMutation.isPending}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
           </>
         )}
       </CardContent>
@@ -791,7 +886,9 @@ function DataPurgeCard() {
           <Button
             variant="destructive"
             className="h-10"
-            disabled={selectedCategories.length === 0 || purgeMutation.isPending}
+            disabled={
+              selectedCategories.length === 0 || !routerConfirmOk || purgeMutation.isPending
+            }
             onClick={() => {
               setConfirmText("");
               setConfirmOpen(true);
@@ -834,6 +931,11 @@ function DataPurgeCard() {
               </li>
             ))}
           </ul>
+          {alsoRouter && (
+            <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs leading-relaxed text-amber-800 dark:text-amber-300">
+              {t("settings.purge.alsoRouterWarning")}
+            </p>
+          )}
           <div className="space-y-2">
             <p className="text-sm font-medium">
               {isGlobal

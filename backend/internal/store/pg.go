@@ -533,6 +533,22 @@ func (p *PG) ensureSchema() error {
                         cancelled_at    TEXT NOT NULL DEFAULT ''
                 )`,
 		`CREATE INDEX IF NOT EXISTS idx_geniuspay_subs_account ON geniuspay_subs (account_id)`,
+		// Audit purge/résurgence — tombstones de purge : la purge admin
+		// supprime du cloud mais PAS des routeurs réels ; ces marqueurs
+		// bloquent le ré-import des usernames purgés par la synchro agent
+		// pendant 30 jours (PurgeTombstoneTTL) ou jusqu'à levée explicite.
+		`CREATE TABLE IF NOT EXISTS purge_tombstones (
+                        id         TEXT PRIMARY KEY,
+                        account_id TEXT NOT NULL DEFAULT '',
+                        username   TEXT NOT NULL DEFAULT '',
+                        purged_at  TEXT NOT NULL DEFAULT '',
+                        expires_at TEXT NOT NULL DEFAULT ''
+                )`,
+		`CREATE INDEX IF NOT EXISTS idx_purge_tombstones_account ON purge_tombstones (account_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_purge_tombstones_user    ON purge_tombstones (username)`,
+		// Audit purge — réglage par compte : import automatique des
+		// utilisateurs créés hors MikCloud (défaut ON — compatibilité).
+		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS auto_import_router_users BOOLEAN NOT NULL DEFAULT TRUE`,
 		// N°7 — rôles équipe + audit : acteur des actions du journal, et
 		// renommage du rôle historique « admin » → « platform_admin » (les
 		// tokens existants portant « admin » restent acceptés côté API).
@@ -751,6 +767,7 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 		{"notif_log", func() error { return loadInto(p, &db.NotifLog, notifLogSpec) }},
 		{"billing_requests", func() error { return loadInto(p, &db.BillingRequests, billingRequestSpec) }},
 		{"geniuspay_subs", func() error { return loadInto(p, &db.GeniusPaySubs, geniusPaySubSpec) }},
+		{"purge_tombstones", func() error { return loadInto(p, &db.PurgeTombstones, purgeTombstoneSpec) }},
 		{"settings", func() error { return p.loadSettings(db) }},
 	}
 	for _, st := range steps {
@@ -803,7 +820,7 @@ func (p *PG) loadSettings(db *model.DB) error {
                         dns_name, logo_url, expiry_policy_mode, expiry_policy_after_days,
                         sub_plan_id, sub_status, sub_period_start, sub_period_end, sub_last_amount,
                         sub_router_slots, sub_last_paid_at, last_tick,
-                        platform_name, platform_register_open, platform_register_key
+                        platform_name, platform_register_open, platform_register_key, auto_import_router_users
                  FROM settings`)
 	if err != nil {
 		return err
@@ -823,6 +840,8 @@ func (p *PG) loadSettings(db *model.DB) error {
 			subRouterSlots                             int
 			subLastPaidAt                              string
 			lastTick                                   sql.NullTime
+			// Audit purge - reglage d'import automatique (defaut ON).
+			autoImport bool
 			// I (paramètres plateforme) — uniquement sur le compte principal.
 			platformName         string
 			platformRegisterOpen bool
@@ -833,7 +852,7 @@ func (p *PG) loadSettings(db *model.DB) error {
 			&dnsName, &logoURL, &expiryMode, &expiryAfterDays,
 			&subPlanID, &subStatus, &subPeriodStart, &subPeriodEnd, &subLastAmount,
 			&subRouterSlots, &subLastPaidAt, &lastTick,
-			&platformName, &platformRegisterOpen, &platformRegisterKey); err != nil {
+			&platformName, &platformRegisterOpen, &platformRegisterKey, &autoImport); err != nil {
 			return err
 		}
 		if accID == "" {
@@ -860,6 +879,9 @@ func (p *PG) loadSettings(db *model.DB) error {
 				RegisterKey:  platformRegisterKey,
 			}
 		}
+		// Audit purge - valeur lue EXPLICITE (colonne NOT NULL) : le
+		// reglage survit aux redemarrages (le pointeur est pose).
+		settings.AutoImportRouterUsers = &autoImport
 		db.SettingsByAccount[accID] = settings
 		if lastTick.Valid && db.LastTick.IsZero() {
 			db.LastTick = lastTick.Time
@@ -946,6 +968,9 @@ func (p *PG) Sync(db *model.DB) error {
 	if err := syncTable(tx, p.hashes, billingRequestSpec, db.BillingRequests); err != nil {
 		return err
 	}
+	if err := syncTable(tx, p.hashes, purgeTombstoneSpec, db.PurgeTombstones); err != nil {
+		return err
+	}
 	if err := p.syncSettings(tx, db); err != nil {
 		return err
 	}
@@ -1022,8 +1047,8 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
                                dns_name, logo_url, expiry_policy_mode, expiry_policy_after_days,
                                sub_plan_id, sub_status, sub_period_start, sub_period_end, sub_last_amount,
                                sub_router_slots, sub_last_paid_at, last_tick,
-                               platform_name, platform_register_open, platform_register_key)
-                         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+                               platform_name, platform_register_open, platform_register_key, auto_import_router_users)
+                         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
                          ON CONFLICT (id) DO UPDATE SET
                            account_id                = EXCLUDED.account_id,
                            tenant_name               = EXCLUDED.tenant_name,
@@ -1047,7 +1072,8 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
                            last_tick                 = EXCLUDED.last_tick,
                            platform_name             = EXCLUDED.platform_name,
                            platform_register_open    = EXCLUDED.platform_register_open,
-                           platform_register_key    = EXCLUDED.platform_register_key`,
+                           platform_register_key    = EXCLUDED.platform_register_key,
+                           auto_import_router_users = EXCLUDED.auto_import_router_users`,
 			accID, s.Tenant.Name, s.Tenant.Currency, s.Tenant.Timezone,
 			s.Plan.Name, s.Plan.MaxRouters, s.Plan.MaxUsers,
 			s.Tenant.WaveLink, s.Tenant.DNSName, s.Tenant.LogoURL,
@@ -1055,7 +1081,7 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
 			s.Subscription.PlanID, s.Subscription.Status, s.Subscription.PeriodStart,
 			s.Subscription.PeriodEnd, s.Subscription.LastAmountFcfa,
 			s.Subscription.RouterSlots, s.Subscription.LastPaidAt, lastTick,
-			platName, platOpen, platKey)
+			platName, platOpen, platKey, s.ImportAutoEnabled())
 		if err != nil {
 			return fmt.Errorf("pg sync settings (%s) : %w", accID, err)
 		}
@@ -1493,6 +1519,26 @@ var geniusPaySubSpec = entitySpec[model.GeniusPaySub]{
 	hashOf: hashEntity[model.GeniusPaySub],
 }
 
+// purgeTombstoneSpec — marqueurs anti-résurgence posés par la purge admin
+// (audit purge) : bloquent le ré-import des usernames purgés par la synchro
+// agent. Expiration gérée côté applicatif (expires_at, PurgeTombstoneTTL) :
+// les lignes expirées sont élaguées de l'état mémoire par purgeExpired
+// (handlers_purge.go) — la diff syncTable supprime alors les lignes Neon.
+var purgeTombstoneSpec = entitySpec[model.PurgeTombstone]{
+	table: "purge_tombstones",
+	cols:  []string{"id", "account_id", "username", "purged_at", "expires_at"},
+	idOf:  func(x *model.PurgeTombstone) string { return x.ID },
+	scan: func(r *sql.Rows) (model.PurgeTombstone, error) {
+		var x model.PurgeTombstone
+		err := r.Scan(&x.ID, &x.AccountID, &x.Username, &x.PurgedAt, &x.ExpiresAt)
+		return x, err
+	},
+	args: func(x *model.PurgeTombstone) []any {
+		return []any{x.ID, x.AccountID, x.Username, x.PurgedAt, x.ExpiresAt}
+	},
+	hashOf: hashEntity[model.PurgeTombstone],
+}
+
 var saleSpec = entitySpec[model.Sale]{
 	table: "sales",
 	cols:  []string{"id", "amount", "profile_name", "count", "channel", "reseller_name", "router_id", "router_name", "batch_id", "at", "account_id", "cost", "selling"},
@@ -1737,6 +1783,7 @@ func (p *PG) rebuildHashes(db *model.DB) {
 		trafficSpec.table:        hashRows(db.Traffic, trafficSpec),
 		notifLogSpec.table:       hashRows(db.NotifLog, notifLogSpec),
 		billingRequestSpec.table: hashRows(db.BillingRequests, billingRequestSpec),
+		purgeTombstoneSpec.table: hashRows(db.PurgeTombstones, purgeTombstoneSpec),
 	}
 	notifRows := make([]model.NotificationSettings, 0, len(db.NotifSettings))
 	for _, v := range db.NotifSettings {

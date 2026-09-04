@@ -68,6 +68,8 @@ import { api } from "@/lib/hotspot/api";
 import { localeOf, useI18n } from "@/lib/hotspot/i18n";
 import { formatDuration, timeAgo } from "@/lib/hotspot/format";
 import type { RouterDevice, RouterMode, RouterRotateTokenResponse, RouterStats, RouterTestResult } from "@/lib/hotspot/types";
+import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface RouterForm {
   name: string;
@@ -597,7 +599,27 @@ export default function RoutersView() {
                       <div className="flex min-h-6 items-center gap-2 text-sm">
                         <Users className="size-4 shrink-0 text-muted-foreground" />
                         <span className="text-muted-foreground">{t("routers.users")}</span>
-                        <span className="ml-auto font-medium tabular-nums">{nf(router.hotspotUsers)}</span>
+                        <span className="ml-auto flex min-w-0 items-center gap-1.5">
+                          {/* Purge/résurgence — comptes sur le routeur mais
+                              inconnus du cloud (non importés automatiquement
+                              quand autoImportRouterUsers = false). */}
+                          {router.unknownOnRouter ? (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Badge
+                                  variant="outline"
+                                  className="cursor-help border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                                >
+                                  {tf("routers.unknownBadge", { n: router.unknownOnRouter })}
+                                </Badge>
+                              </TooltipTrigger>
+                              <TooltipContent className="max-w-64">
+                                <p>{t("routers.unknownTooltip")}</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          ) : null}
+                          <span className="font-medium tabular-nums">{nf(router.hotspotUsers)}</span>
+                        </span>
                       </div>
                     </div>
 

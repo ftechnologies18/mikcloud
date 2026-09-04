@@ -55,6 +55,15 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 	userEntries := splitAgentList(vals.Get("users"))
 	router.HotspotUsers = len(userEntries)
 
+	// Audit purge/résurgence — tombstones du compte + réglage d'import
+	// automatique. Un username tombstoné (purgé par l'admin) n'est JAMAIS
+	// ré-importé ni compté « inconnu » : c'est le blocage anti-résurrection.
+	// Quand l'import auto est DÉSACTIVÉ, les inconnus ne sont pas créés non
+	// plus — ils sont comptés (UnknownOnRouter) pour adoption manuelle.
+	tomb := purgeTombSet(db, router.AccountID, time.Now())
+	autoImport := importAutoEnabled(db, router.AccountID)
+	unknownCount := 0
+
 	// Sync des utilisateurs créés hors MikCloud (inconnus du cloud)
 	known := map[string]bool{}
 	for i := range db.HotspotUsers {
@@ -71,6 +80,14 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 			}
 			continue
 		}
+		low := strings.ToLower(name)
+		if tomb[low] {
+			continue // purgé : ni import, ni badge, ni compte « inconnu »
+		}
+		if !autoImport {
+			unknownCount++ // compté pour adoption manuelle, non créé
+			continue
+		}
 		profName := ""
 		disabled := false
 		if len(e) > 1 {
@@ -85,8 +102,9 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 			Status:    map[bool]string{true: "disabled", false: "active"}[disabled],
 			CreatedAt: model.NowISO(),
 		})
-		onRouter[strings.ToLower(name)] = true
+		onRouter[low] = true
 	}
+	router.UnknownOnRouter = unknownCount // volatile : recomposé à chaque read_state
 
 	// N (rapprochement doux) — utilisateurs du cloud absents de CE read_state :
 	// marqués « absent du routeur » (badge + action de resynchronisation).
@@ -143,6 +161,13 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 	live := []model.Session{}
 	matched := []bool{} // appariée à une session précédente ? (aligné avec live)
 	for _, e := range sessEntries {
+		if tomb[strings.ToLower(e[0])] {
+			// Audit purge — session d'un username purgé : IGNORÉE (ni
+			// session, ni log login/logout, ni vente auto). Elle ne
+			// reviendra dans le cloud qu'après levée du tombstone
+			// (expiration 30 j ou recréation volontaire du compte).
+			continue
+		}
 		s := model.Session{ID: model.NewID("s-"), AccountID: router.AccountID, Username: e[0], RouterID: router.ID, RouterName: router.Name}
 		if len(e) > 1 {
 			s.IP = e[1]

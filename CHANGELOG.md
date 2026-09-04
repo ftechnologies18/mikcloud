@@ -74,6 +74,49 @@ la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 - Aucun changement de contrat existant : nouveaux champs additifs + une route
   nouvelle ; les PWA déjà installées ignorent les clés inconnues.
 
+---
+
+## 2026-09-04 — Audit purge : tombstones anti-résurgence + réglage d'import auto + purge totale
+
+### Corrigé
+- **Résurgence des données purgées** — la purge admin supprimait du cloud
+  (mémoire + Neon) mais PAS des routeurs réels ; le read_state agent (≤ 45 s)
+  ré-importait ensuite tout ce que le routeur garde encore (bug signalé en
+  production : les données purgées « revenaient toutes seules », et un voucher
+  purgé revenait en utilisateur régulier fantôme, sans lot ni vente). Le
+  correctif pose un **tombstone** (marqueur, TTL 30 jours) sur chaque username
+  purgé : la synchro agent refuse de le ré-importer (ni utilisateur, ni
+  session, ni journal, ni vente automatique) jusqu'à expiration ou levée
+  explicite (création volontaire du même username). La file de commandes qui
+  recréerait les entités purgées est annulée ; les commandes déjà envoyées
+  restent exécutées par l'agent mais leur read_state suivant est filtré.
+  (Table Neon `purge_tombstones` — zéro migration destructive.)
+
+### Ajoutés
+- **Réglage d'import automatique par compte** (`autoImportRouterUsers`, défaut
+  ON — compatibilité) : à OFF, les comptes créés hors MikCloud (Winbox, autre
+  système) ne sont plus importés automatiquement ; ils sont comptés dans le
+  nouveau champ `unknownOnRouter` du routeur (badge discret côté front) pour
+  adoption manuelle via l'outil d'import existant. (Colonne Neon
+  `settings.auto_import_router_users` DEFAULT TRUE.)
+- **Purge totale (opt-in)** : option `alsoRouter` de POST /api/admin/purge —
+  enfile des commandes `user_remove` sur les routeurs AGENT pour supprimer
+  réellement les comptes purgés, y compris du routeur. Double garde
+  (case + saisie « SUPPRIMER » côté front, vérification serveur) : l'action
+  déconnecte immédiatement les clients concernés. Routeurs REAL (passerelle)
+  non commandables après purge (documenté au contrat).
+- **Avertissement purge** quand des routeurs réels existent dans la portée :
+  « les données ne disparaissent pas des routeurs ; leur ré-import est bloqué
+  30 jours » + bilan enrichi (tombstones posés, suppression routeur).
+
+### Sécurité
+- Le read_state ne ré-importe plus un username purgé même si la commande
+  `user_add` correspondante était déjà partie — aucun retour possible des
+  données purgées tant que le tombstone vit.
+
+---
+
+
 ## 2026-09-04 — Phase D perf/UX : UI optimiste + deep-links de détail
 
 ### Ajoutés

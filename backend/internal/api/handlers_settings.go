@@ -27,6 +27,9 @@ type tenantPut struct {
 	LogoURL               *string `json:"logoUrl"`
 	ExpiryPolicyMode      *string `json:"expiryPolicyMode"`
 	ExpiryPolicyAfterDays *int    `json:"expiryPolicyAfterDays"`
+	// Audit purge/résurgence — repli nested du champ plat (corps défensif
+	// du front : les deux formes sont envoyées, le plat prime).
+	AutoImportRouterUsers *bool `json:"autoImportRouterUsers"`
 }
 
 func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
@@ -41,6 +44,9 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		LogoURL               *string `json:"logoUrl"`
 		ExpiryPolicyMode      *string `json:"expiryPolicyMode"`
 		ExpiryPolicyAfterDays *int    `json:"expiryPolicyAfterDays"`
+		// Audit purge/résurgence — import automatique des utilisateurs
+		// créés hors MikCloud (nil = inchangé ; défaut effectif ON).
+		AutoImportRouterUsers *bool `json:"autoImportRouterUsers"`
 		// …et forme imbriquée tenant{…}.
 		Tenant *tenantPut `json:"tenant"`
 	}
@@ -52,6 +58,8 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	// nouveaux champs À LA FOIS plats et dans tenant{…} — le plat prime.
 	name, currency, timezone, waveLink := req.Name, req.Currency, req.Timezone, req.WaveLink
 	dnsName, logoURL, expiryMode, expiryAfterDays := req.DNSName, req.LogoURL, req.ExpiryPolicyMode, req.ExpiryPolicyAfterDays
+	// Audit purge — même résolution plat > imbriqué pour le réglage d'import.
+	autoImport := req.AutoImportRouterUsers
 	if req.Tenant != nil {
 		if name == nil {
 			name = req.Tenant.Name
@@ -76,6 +84,9 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		}
 		if expiryAfterDays == nil {
 			expiryAfterDays = req.Tenant.ExpiryPolicyAfterDays
+		}
+		if autoImport == nil {
+			autoImport = req.Tenant.AutoImportRouterUsers
 		}
 	}
 
@@ -130,6 +141,12 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if expiryAfterDays != nil {
 		settings.Tenant.ExpiryPolicyAfterDays = *expiryAfterDays
+	}
+	// Audit purge/résurgence — le réglage d'import automatique est posé
+	// explicitement (le nil reste « inchangé », la valeur effective par
+	// défaut est ON via Settings.ImportAutoEnabled).
+	if autoImport != nil {
+		settings.AutoImportRouterUsers = autoImport
 	}
 	db.SettingsByAccount[acc] = settings
 	a.logActivityBy(r, db, acc, "system", "Paramètres du tenant mis à jour")

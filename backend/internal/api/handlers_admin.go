@@ -575,7 +575,7 @@ func (a *API) handlePlatformTeamDelete(w http.ResponseWriter, r *http.Request) {
 // Les données métier sont supprimées sans toucher aux comptes, à l'équipe,
 // aux réglages ni aux routeurs réels (agent/real) ; rien n'est régénéré.
 func (a *API) handleWipe(w http.ResponseWriter, r *http.Request) {
-	a.purgeScopes(w, r, "", nil) // accID vide → portée globale ; nil → scope « all »
+	a.purgeScopes(w, r, "", nil, false) // accID vide → portée globale ; nil → scope « all » ; tombstones posés, jamais de purge routeur ici
 }
 
 // handleReload — POST /api/admin/reload : réimporte l'état complet depuis la

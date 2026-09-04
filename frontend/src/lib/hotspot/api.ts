@@ -13,6 +13,7 @@ import type {
   AccountDetail,
   AccountStatus,
   AccountSummary,
+  AppSettings,
   AuthResponse,
   AuthUser,
   BillingRequest,
@@ -293,14 +294,48 @@ export async function fetchPurgeAccounts(): Promise<PurgeAccountRow[]> {
  * seul, les autres ne sont jamais touchés). Scopes : la grille unifiée de
  * 10 catégories (« vouchers », « simulated_routers », « hotspot_users »,
  * « profiles », « batches », « resellers », « sales », « sessions »,
- * « logs », « templates ») ou « all ». */
+ * « logs », « templates ») ou « all ».
+ * options.alsoRouter (défaut false) : purge TOTALE — commande aussi la
+ * suppression des comptes sur les routeurs RÉELS (clients déconnectés) ;
+ * le backend exige alors options.confirm === "SUPPRIMER" (sinon 400).
+ * Les données purgées y sont de toute façon bloquées au ré-import 30 j
+ * (tombstones — cf. purged.tombstones / purged.routerRemovals). */
 export async function purgeData(
   accountId: string,
   scopes: string[],
+  options?: { alsoRouter?: boolean; confirm?: string },
 ): Promise<PurgeResponse> {
   return api<PurgeResponse>("/api/admin/purge", {
     method: "POST",
-    body: accountId ? { accountId, scopes } : { scopes },
+    body: {
+      ...(accountId ? { accountId } : {}),
+      scopes,
+      ...(options?.alsoRouter !== undefined ? { alsoRouter: options.alsoRouter } : {}),
+      ...(options?.confirm !== undefined ? { confirm: options.confirm } : {}),
+    },
+  });
+}
+
+/* ─── Réglages du compte : GET/PUT /api/settings ─── */
+
+/** updateSettings — sauvegarde partielle des réglages du compte (PUT /api/settings).
+ * autoImportRouterUsers : true (défaut) = les utilisateurs présents sur les
+ * routeurs mais inconnus du cloud sont importés automatiquement à chaque
+ * synchronisation agent (comportement historique) ; false = jamais importés
+ * automatiquement (visibles dans la santé du routeur, adoption manuelle via
+ * l'outil d'import existant). */
+export async function updateSettings(
+  payload: { autoImportRouterUsers?: boolean },
+): Promise<AppSettings> {
+  return api<AppSettings>("/api/settings", {
+    method: "PUT",
+    // Corps défensif (cf. ExpiryCard) : champ plat (forme du handler actuel)
+    // + forme imbriquée « tenant » du contrat — le décodeur Go ignore les
+    // champs inconnus.
+    body: {
+      autoImportRouterUsers: payload.autoImportRouterUsers,
+      tenant: { autoImportRouterUsers: payload.autoImportRouterUsers },
+    },
   });
 }
 

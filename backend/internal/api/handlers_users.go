@@ -145,6 +145,10 @@ func (a *API) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 		a.store.Lock()
 		db = a.store.Data()
 		db.HotspotUsers = append(db.HotspotUsers, u)
+		// Audit purge — création VOLONTAIRE : le tombstone éventuel (purge
+		// antérieure de ce nom) est LEVÉ — l'opérateur réclame l'identifiant,
+		// la purge ne doit plus le bloquer (ni ici, ni sur le routeur).
+		liftPurgeTombstone(db, acc, u.Username)
 		userPayload := map[string]any{
 			"name": u.Username, "password": u.Password,
 			"profile": profileRef(*profile), "comment": u.Comment,
@@ -173,6 +177,8 @@ func (a *API) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.store.Lock()
+	// Audit purge — même levée de tombstone pour la création passerelle.
+	liftPurgeTombstone(a.store.Data(), acc, agent.SanitizeName(u.Username))
 	a.logActivityBy(r, a.store.Data(), acc, "user", "Utilisateur "+u.Username+" créé")
 	a.store.Save()
 	a.store.Unlock()

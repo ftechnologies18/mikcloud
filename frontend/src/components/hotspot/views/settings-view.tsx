@@ -24,11 +24,12 @@ import {
   Router as RouterIcon,
   ShieldCheck,
   Ticket,
+  UserPlus,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
 
-import { api } from "@/lib/hotspot/api";
+import { api, updateSettings } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
 import type { AppSettings, ExpiryPolicyMode } from "@/lib/hotspot/types";
 import { PageHeader } from "@/components/hotspot/page-header";
@@ -43,6 +44,7 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const CURRENCIES = ["FCFA", "EUR", "USD", "MAD", "XOF", "GBP", "CDF", "GNF"];
@@ -114,6 +116,10 @@ export default function SettingsView() {
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-6">
             {/* Expiration des vouchers (F1/F5) — politique de nettoyage cloud */}
             <ExpiryCard settings={data} />
+
+            {/* Import automatique des utilisateurs hors MikCloud (purge P1) —
+                comportement de la synchro agent pour les inconnus du cloud */}
+            <AutoImportCard settings={data} />
 
             {/* Vouchers — DNS + logo (F2) */}
             <VoucherCard settings={data} />
@@ -413,6 +419,86 @@ function ExpiryCard({ settings }: { settings: AppSettings }) {
           onClick={() => saveMutation.mutate()}
           disabled={saveMutation.isPending || (mode === "remove" && !daysValid)}
         >
+          {saveMutation.isPending ? t("common.saving") : t("common.save")}
+        </Button>
+      </CardFooter>
+    </Card>
+  );
+}
+
+// Carte Import automatique (purge P1) — comportement de la synchronisation
+// agent pour les utilisateurs présents sur les routeurs mais inconnus du
+// cloud (créés via Winbox ou un autre système). Défaut affiché = ACTIVÉ
+// quand le champ est absent/undefined (comportement historique de découverte).
+// Quand désactivé : jamais importés automatiquement — listés dans la santé
+// du routeur (unknownOnRouter), adoption manuelle via l'outil d'import.
+function AutoImportCard({ settings }: { settings: AppSettings }) {
+  const { t } = useI18n();
+  const queryClient = useQueryClient();
+  // Lecture défensive : le champ peut vivre dans tenant{…} ou à plat selon
+  // la version du backend déployée — absent = true (comportement historique).
+  const [enabled, setEnabled] = useState<boolean>(
+    settings.tenant.autoImportRouterUsers ?? settings.autoImportRouterUsers ?? true,
+  );
+
+  const saveMutation = useMutation({
+    mutationFn: () => updateSettings({ autoImportRouterUsers: enabled }),
+    onSuccess: () => {
+      toast.success(t("settings.autoImport.savedToast"));
+      void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return (
+    <Card className="gap-4 py-4 sm:py-6">
+      <CardHeader className="px-4 sm:px-6">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
+            <UserPlus className="size-4" />
+          </span>
+          {t("settings.autoImport.title")}
+        </CardTitle>
+        <CardDescription>{t("settings.autoImport.desc")}</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-3 px-4 sm:px-6">
+        <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
+          <Label htmlFor="auto-import-router-users" className="cursor-pointer text-sm">
+            {t("settings.autoImport.switchLabel")}
+          </Label>
+          <Switch
+            id="auto-import-router-users"
+            checked={enabled}
+            onCheckedChange={setEnabled}
+            aria-label={t("settings.autoImport.aria")}
+            className="shrink-0"
+            disabled={saveMutation.isPending}
+          />
+        </div>
+        {/* Les deux comportements sont décrits — celui du réglage courant
+            est mis en avant, l'autre reste lisible (montre la conséquence
+            du basculement avant d'enregistrer). */}
+        <p
+          className={
+            enabled
+              ? "text-xs leading-relaxed text-foreground"
+              : "text-xs leading-relaxed text-muted-foreground"
+          }
+        >
+          {t("settings.autoImport.enabledDesc")}
+        </p>
+        <p
+          className={
+            !enabled
+              ? "text-xs leading-relaxed text-foreground"
+              : "text-xs leading-relaxed text-muted-foreground"
+          }
+        >
+          {t("settings.autoImport.disabledDesc")}
+        </p>
+      </CardContent>
+      <CardFooter className="justify-end px-4 sm:px-6">
+        <Button className="h-10" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
           {saveMutation.isPending ? t("common.saving") : t("common.save")}
         </Button>
       </CardFooter>

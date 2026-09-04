@@ -145,7 +145,13 @@ type Router struct {
 	CPULoad        int    `json:"cpuLoad"`
 	HotspotUsers   int    `json:"hotspotUsers"`
 	ActiveSessions int    `json:"activeSessions"`
-	CreatedAt      string `json:"createdAt"`
+	// UnknownOnRouter — compteur VOLATIL (non persisté, recalculé à chaque
+	// read_state) d'utilisateurs présents sur le routeur mais inconnus du
+	// cloud. Alimenté par applyReadState : utile quand l'import automatique
+	// est désactivé (les comptes hors MikCloud restent listés ici pour
+	// adoption manuelle). omitempty → absent du JSON tant que 0.
+	UnknownOnRouter int    `json:"unknownOnRouter,omitempty"`
+	CreatedAt       string `json:"createdAt"`
 	// HotspotLoginUrl — page de login du portail captive MikroTik (ex.
 	// http://10.5.50.1/login). Utilisée par les QR codes des vouchers imprimés :
 	// le QR encode {url}?username=CODE&password=PASS → connexion en 1 scan.
@@ -486,6 +492,22 @@ type Settings struct {
 	// (AccountMainID) : configuration globale du SaaS vue par l'admin
 	// plateforme. Ignoré pour les comptes clients.
 	Platform *PlatformConfig `json:"platform,omitempty"`
+	// AutoImportRouterUsers — réglage par compte (audit purge/résurgence) :
+	// quand activé (valeur effective par défaut : nil OU true), les
+	// utilisateurs hotspot présents sur un routeur AGENT mais inconnus du
+	// cloud sont importés automatiquement à chaque read_state (découverte
+	// des comptes créés dans Winbox). Quand désactivé (false), le read_state
+	// ne crée RIEN : les comptes hors MikCloud sont comptés dans
+	// Router.UnknownOnRouter pour adoption manuelle (outil d'import).
+	// Pointeur : nil = défaut ON sans écrire le champ dans le JSON persisté
+	// (compatibilité zéro-migration pour les comptes existants).
+	AutoImportRouterUsers *bool `json:"autoImportRouterUsers,omitempty"`
+}
+
+// ImportAutoEnabled — valeur EFFECTIVE du réglage d'import automatique pour un
+// compte (nil = ON : comportement historique préservé, zéro surprise).
+func (s Settings) ImportAutoEnabled() bool {
+	return s.AutoImportRouterUsers == nil || *s.AutoImportRouterUsers
 }
 
 // PlatformConfig — configuration globale de la plateforme MikCloud (vivante
@@ -818,6 +840,31 @@ type Command struct {
 	DoneAt    string         `json:"doneAt,omitempty"`
 }
 
+// PurgeTombstone — marqueur anti-résurgence (audit purge) : posé par la purge
+// admin pour CHAQUE username supprimé du cloud. La synchronisation agent
+// (applyReadState) refuse de ré-importer un username tombstoné : le routeur
+// réel garde ses /ip hotspot user après une purge, sans marqueur ils
+// réapparaîtraient dans le cloud à la première synchro (résurgence constatée
+// en production). Le tombstone EXPIRE (TTL — cf. PurgeTombstoneTTL) ou se
+// LÈVE quand l'opérateur recrée volontairement le même username dans MikCloud :
+// la découverte Winbox fonctionne à nouveau sans rien perdre.
+type PurgeTombstone struct {
+	ID        string `json:"id"`
+	AccountID string `json:"accountId"`
+	// Username en MINUSCULES (comparaison insensible à la casse avec les
+	// rapports agent — RouterOS est sensible à la casse mais l'agent
+	// remonte les noms tels quels ; le cloud normalise en lower).
+	Username  string `json:"username"`
+	PurgedAt  string `json:"purgedAt"`
+	ExpiresAt string `json:"expiresAt"`
+}
+
+// PurgeTombstoneTTL — durée de vie d'un tombstone : au-delà, l'import
+// automatique redevient possible (fenêtre de 30 jours, largement au-delà de
+// tout cycle de synchro agent — un routeur hors-ligne pendant la purge ne
+// peut pas ressusciter les données à son retour).
+const PurgeTombstoneTTL = 30 * 24 * time.Hour
+
 // DB — base de données persistée en JSON.
 //   - Accounts/SettingsByAccount : modèle multi-tenant (source de vérité) ;
 //   - Tenant/Settings : champs LEGACY mono-tenant, uniquement lus pour migrer
@@ -848,6 +895,8 @@ type DB struct {
 	// Facturation (verrou du cycle) — file des demandes de souscription /
 	// renouvellement, actionnable depuis la console plateforme.
 	BillingRequests []BillingRequest `json:"billingRequests"`
+	// Tombstones de purge (audit purge/résurgence) — voir PurgeTombstone.
+	PurgeTombstones []PurgeTombstone `json:"purgeTombstones"`
 	// Abonnement récurrent par carte (Stripe via GeniusPay) — prélèvements
 	// automatiques, synchronisés avec l'API abonnements GeniusPay.
 	GeniusPaySubs []GeniusPaySub `json:"geniuspaySubs"`

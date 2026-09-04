@@ -20,7 +20,9 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
+	"mikcloud/hotspot-api/internal/agent"
 	"mikcloud/hotspot-api/internal/model"
 )
 
@@ -81,6 +83,9 @@ type PurgeCounts struct {
 	Sessions     int `json:"sessions"`
 	Logs         int `json:"logs"`
 	Templates    int `json:"templates"`
+	// Audit purge/résurgence :
+	Tombstones     int `json:"tombstones"`     // marqueurs anti-ré-import posés (TTL 30 j)
+	RouterRemovals int `json:"routerRemovals"` // comptes commandés en suppression SUR LES ROUTEURS (P2, opt-in)
 }
 
 // handlePurgeStats — GET /api/admin/purge/stats : compteurs par catégorie.
@@ -153,9 +158,19 @@ func (a *API) handlePurge(w http.ResponseWriter, r *http.Request) {
 		AccountID string   `json:"accountId"`
 		Scopes    []string `json:"scopes"`
 		Scope     string   `json:"scope"` // compat mono-scope
+		// Purge TOTALE (opt-in, P2) : supprimer aussi les comptes SUR LES
+		// ROUTEURS réels (commandes user_remove à l'agent). Exige confirm ==
+		// "SUPPRIMER" — double garde (client + serveur) : action irréversible
+		// qui déconnecte immédiatement les clients concernés.
+		AlsoRouter bool   `json:"alsoRouter"`
+		Confirm    string `json:"confirm"`
 	}
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&body)
+	}
+	if body.AlsoRouter && strings.TrimSpace(body.Confirm) != "SUPPRIMER" {
+		writeErr(w, http.StatusBadRequest, "Purge totale : confirmation « SUPPRIMER » requise")
+		return
 	}
 	accID := strings.TrimSpace(body.AccountID)
 	scopes := body.Scopes
@@ -171,7 +186,7 @@ func (a *API) handlePurge(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if s == PurgeScopeAll {
-			a.purgeScopes(w, r, accID, nil) // nil → « all »
+			a.purgeScopes(w, r, accID, nil, body.AlsoRouter) // nil → « all »
 			return
 		}
 		valid := false
@@ -196,7 +211,7 @@ func (a *API) handlePurge(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Aucune catégorie sélectionnée")
 		return
 	}
-	a.purgeScopes(w, r, accID, normalized)
+	a.purgeScopes(w, r, accID, normalized, body.AlsoRouter)
 }
 
 // purgeScopes — moteur UNIQUE de la purge (handlePurge + handleWipe).
@@ -206,7 +221,15 @@ func (a *API) handlePurge(w http.ResponseWriter, r *http.Request) {
 // comptes, l'équipe, les réglages ni l'abonnement ; ne régénère RIEN. Les
 // slices sont réaffectées vides (non-nil) pour que la synchro différentielle
 // PostgreSQL supprime les lignes correspondantes.
-func (a *API) purgeScopes(w http.ResponseWriter, r *http.Request, accID string, scopes []string) {
+//
+// Audit purge/résurgence : chaque username purgé reçoit un TOMBSTONE (TTL 30
+// jours) qui bloque son ré-import par la synchro agent (applyReadState) —
+// sinon le routeur réel, qui garde ses /ip hotspot user, les ferait
+// ressusciter à la première synchro. La file de commandes qui recréerait les
+// entités purgées est annulée (cancelQueuedForPurged). alsoRouter (opt-in,
+// exige la confirmation « SUPPRIMER » côté handlePurge) enfile en plus des
+// commandes user_remove pour les routeurs AGENT : purge TOTALE.
+func (a *API) purgeScopes(w http.ResponseWriter, r *http.Request, accID string, scopes []string, alsoRouter bool) {
 	if !isPlatformAdmin(r) {
 		writeErr(w, http.StatusForbidden, "Réservé aux administrateurs de la plateforme")
 		return
@@ -234,6 +257,35 @@ func (a *API) purgeScopes(w http.ResponseWriter, r *http.Request, accID string, 
 	a.store.Lock()
 	db := a.store.Data()
 	var counts PurgeCounts
+
+	// Audit purge/résurgence — collecte des usernames purgés :
+	//   - purgedUsers : (compte → usernames lower) → tombstones anti-ré-import ;
+	//   - purgedAgent : (routeur agent → usernames d'origine) → commandes
+	//     user_remove de la purge TOTALE (alsoRouter). Un routeur ABSENT de
+	//     db.Routers au moment de la note (simulé, déjà retiré par le scope 1)
+	//     ne peut pas être commandé — il disparaît avec ses comptes.
+	purgedUsers := map[string]map[string]bool{}
+	purgedAgent := map[string][]string{}
+	noteUser := func(u model.HotspotUser) {
+		name := agent.SanitizeName(u.Username)
+		if name == "" {
+			return
+		}
+		m := purgedUsers[u.AccountID]
+		if m == nil {
+			m = map[string]bool{}
+			purgedUsers[u.AccountID] = m
+		}
+		m[strings.ToLower(name)] = true
+		for i := range db.Routers {
+			if db.Routers[i].ID == u.RouterID {
+				if db.Routers[i].Mode == "agent" {
+					purgedAgent[u.RouterID] = append(purgedAgent[u.RouterID], name)
+				}
+				break
+			}
+		}
+	}
 
 	// Compte cible doit exister en portée ciblée (nom repris dans le bilan).
 	accName := ""
@@ -273,6 +325,7 @@ func (a *API) purgeScopes(w http.ResponseWriter, r *http.Request, accID string, 
 			keptUsers := db.HotspotUsers[:0]
 			for _, u := range db.HotspotUsers {
 				if drop(u.RouterID) {
+					noteUser(u)
 					if u.Kind == "voucher" {
 						counts.Vouchers++
 					} else {
@@ -302,6 +355,7 @@ func (a *API) purgeScopes(w http.ResponseWriter, r *http.Request, accID string, 
 		for _, u := range db.HotspotUsers {
 			if match(u.AccountID) && u.Kind == "voucher" {
 				dropUser[u.ID] = true
+				noteUser(u)
 				counts.Vouchers++
 				continue
 			}
@@ -329,6 +383,7 @@ func (a *API) purgeScopes(w http.ResponseWriter, r *http.Request, accID string, 
 		for _, u := range db.HotspotUsers {
 			if match(u.AccountID) && u.Kind != "voucher" {
 				dropUser[u.ID] = true
+				noteUser(u)
 				counts.HotspotUsers++
 				continue
 			}
@@ -379,6 +434,7 @@ func (a *API) purgeScopes(w http.ResponseWriter, r *http.Request, accID string, 
 			keptUsers := db.HotspotUsers[:0]
 			for _, u := range db.HotspotUsers {
 				if match(u.AccountID) && u.Kind == "voucher" && batchIDs[u.BatchID] {
+					noteUser(u)
 					counts.Vouchers++
 					continue
 				}
@@ -495,11 +551,27 @@ func (a *API) purgeScopes(w http.ResponseWriter, r *http.Request, accID string, 
 		db.Templates = kept
 	}
 
+	// P0 (audit purge/résurgence) — tombstones anti-ré-import, annulation
+	// des commandes en file qui recréeraient les entités purgées, et purge
+	// TOTALE optionnelle (commandes user_remove aux routeurs agent). Tout
+	// est sous verrou ; le Save() ci-dessous persiste tombstones et file.
+	counts.Tombstones = writePurgeTombstones(db, purgedUsers, time.Now())
+	counts.RouterRemovals = cancelQueuedForPurged(db, purgedUsers)
+	if alsoRouter {
+		counts.RouterRemovals += queueRemovalsForPurgedAgent(db, purgedAgent)
+	}
+
 	// Journal d'activité — écrit APRÈS la purge : si la catégorie journaux
 	// était purgée, cette ligne est la première du journal neuf (traçabilité).
 	// Portée globale → journal du compte de l'admin plateforme ; portée
 	// ciblée → journal du COMPTE CIBLÉ (« par la plateforme »).
 	summary := purgeSummaryFR(accName, counts, all)
+	if counts.Tombstones > 0 {
+		summary += fmt.Sprintf(" — ré-import depuis les routeurs bloqué 30 jours pour %d identifiant(s)", counts.Tombstones)
+		if counts.RouterRemovals > 0 {
+			summary += fmt.Sprintf(", %d compte(s) en cours de suppression sur les routeurs (commandes agent en file)", counts.RouterRemovals)
+		}
+	}
 	logAccount := accID
 	if global {
 		logAccount = accountScope(r)

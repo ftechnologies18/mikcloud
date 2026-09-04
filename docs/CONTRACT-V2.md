@@ -798,6 +798,51 @@ asynchrones) — aucun impact sur `model.DB` ni la synchro différentielle.
 
 ---
 
+## PURGE & RÉSURGENCE — tombstones anti-ré-import, réglage d'import auto, purge totale (2026-09-04)
+
+**Problème** (audit) : la purge admin supprime du cloud (mémoire + Neon) mais
+PAS des routeurs réels — le read_state agent (≤ 45 s) ré-importait tout ce que
+le routeur garde encore : résurgence, et un voucher purgé revenait en
+« utilisateur régulier » fantôme (sans lot ni vente).
+
+**Tombstones** : la purge pose un marqueur par username purgé (minuscules,
+compte, TTL 30 jours). `applyReadState` refuse de ré-importer (ni user, ni
+session, ni journal, ni vente auto) un username tombstoné et ne le compte PAS
+comme « inconnu ». Levée : expiration (30 j) OU création volontaire du même
+username dans MikCloud. Annulation des commandes EN FILE qui recréeraient les
+entités purgées (`user_add` du nom, `voucher_batch` du compte) ; celles déjà
+envoyées restent — le tombstone bloque leur effet au read_state suivant.
+Table Neon `purge_tombstones` (id, account_id, username, purged_at, expires_at).
+
+**POST /api/admin/purge** — requête enrichie :
+- `alsoRouter` (bool, défaut false) : purge TOTALE — enfile des commandes
+  `user_remove` (lots de 50, payload `{"names":[…]}`) pour les routeurs AGENT
+  qui détenaient les comptes purgés. Les routeurs REAL (passerelle) ne sont
+  pas commandables après purge (les identifiants cloud sont effacés) : leurs
+  comptes restants restent visibles via `unknownOnRouter`.
+- `confirm` (string) : EXIGÉ égal à `"SUPPRIMER"` si `alsoRouter=true`
+  (400 sinon) — double garde client + serveur.
+Réponse : `purged.tombstones` (marqueurs posés) et `purged.routerRemovals`
+(comptes commandés en suppression routeur).
+
+**Settings compte** — `autoImportRouterUsers` (bool, défaut ON, accepté plat
+et dans `tenant{…}` via PUT /api/settings) : ON = les comptes créés hors
+MikCloud (Winbox…) sont importés automatiquement au read_state (comportement
+historique) ; OFF = jamais importés — comptés dans le NOUVEAU champ volatile
+de l'objet routeur `unknownOnRouter` (adoptables via l'outil d'import).
+Colonne Neon `settings.auto_import_router_users` (NOT NULL DEFAULT TRUE).
+
+**Front** : avertissement purge quand `realRouters > 0` (les données ne
+disparaissent pas des routeurs ; ré-import bloqué 30 j), option purge totale
+avec case + saisie « SUPPRIMER », toast bilan enrichi (tombstones,
+routerRemovals), interrupteur d'import auto dans les réglages du compte,
+badge discret « N hors MikCloud » sur la carte routeur.
+
+**Tests** : `purge_tombstones_test.go` (tombstones posés, blocage read_state,
+expiration, levée, import auto OFF, annulation de file, purge totale 400/200).
+
+---
+
 ## PLAN DE FICHIERS
 
 ### Backend (Go)

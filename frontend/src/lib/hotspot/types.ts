@@ -277,6 +277,11 @@ export interface RouterDevice {
   totalHddMb?: number;
   /** Page de login du hotspot (optionnel) — cible des QR codes imprimés sur les vouchers. */
   hotspotLoginUrl?: string;
+  /** Purge/résurgence : nb d'utilisateurs présents sur le routeur mais
+   * inconnus du cloud (créés via Winbox ou un autre système). Absent si 0 —
+   * ces comptes ne sont pas importés automatiquement (réglage
+   * autoImportRouterUsers) : adoption manuelle via l'outil d'import. */
+  unknownOnRouter?: number;
 }
 
 /** Réponse de création d'un routeur en mode agent (script + token à copier). */
@@ -875,6 +880,11 @@ export interface AppSettings {
     expiryPolicyMode?: ExpiryPolicyMode;
     /** F1/F5 : suppression après N jours (1-365, défaut 30) quand mode = remove. */
     expiryPolicyAfterDays?: number;
+    /** Purge/résurgence : true (défaut) = les utilisateurs présents sur les
+     * routeurs mais inconnus du cloud sont importés automatiquement à chaque
+     * synchronisation agent ; false = jamais importés automatiquement (visibles
+     * dans la santé du routeur, adoption manuelle via l'outil d'import). */
+    autoImportRouterUsers?: boolean;
   };
   plan: {
     name: string;
@@ -883,6 +893,9 @@ export interface AppSettings {
   };
   /** État d'abonnement SaaS (optionnel : absents des réponses d'avant la facturation). */
   subscription?: Subscription;
+  /** Forme PLATE du réglage (repli si le backend ne l'imbrique pas dans tenant) —
+   * même sémantique que tenant.autoImportRouterUsers. */
+  autoImportRouterUsers?: boolean;
 }
 
 /** Formule d'abonnement MikCloud (catalogue GET /api/plans). */
@@ -1224,12 +1237,14 @@ export interface PurgeAccountRow {
 }
 
 /** Réponse de POST /api/admin/purge (portée globale OU ciblée) — quantités
- * réellement supprimées. */
+ * réellement supprimées. purged.tombstones : marqueurs anti-ré-import posés
+ * (blocage 30 j de la synchro agent) ; purged.routerRemovals : comptes
+ * commandés en suppression sur les routeurs réels (0 si alsoRouter = false). */
 export interface PurgeResponse {
   ok: boolean;
   /** Bilan lisible (journal + toast). */
   summary: string;
-  purged: Partial<Record<"routers" | "hotspotUsers" | "vouchers" | "profiles" | "batches" | "resellers" | "transactions" | "sales" | "sessions" | "logs" | "templates", number>>;
+  purged: Partial<Record<"routers" | "hotspotUsers" | "vouchers" | "profiles" | "batches" | "resellers" | "transactions" | "sales" | "sessions" | "logs" | "templates" | "tombstones" | "routerRemovals", number>>;
 }
 
 /* ─── M (facturation client) : GET /api/billing/history ─── */

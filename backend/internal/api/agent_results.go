@@ -7,6 +7,7 @@
 package api
 
 import (
+	"fmt"
 	"mikcloud/hotspot-api/internal/agent"
 	"mikcloud/hotspot-api/internal/model"
 	"net/url"
@@ -208,7 +209,7 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 	for i := range live {
 		if !matched[i] {
 			logRouterUserEvent(db, router, live[i], "login", now)
-			markVoucherUsed(db, live[i], now) // statut dynamique : 1re connexion = utilisé
+			a.markVoucherUsed(db, router, live[i], now) // statut dynamique : 1re connexion = utilisé (+ vente auto)
 		}
 	}
 	for _, lst := range prevByUser {
@@ -257,7 +258,16 @@ func logRouterUserEvent(db *model.DB, router *model.Router, s model.Session, act
 // sessions du read_state), le voucher est marqué « utilisé » (UsedAt horodaté
 // + statut stocké used). Les utilisateurs réguliers (kind regular, miroir du
 // routeur) ne sont pas marqués. À appeler sous verrou.
-func markVoucherUsed(db *model.DB, s model.Session, now time.Time) {
+//
+// UX R4 — vente AUTOMATIQUE à la connexion : le revendeur remet le ticket au
+// client (papier imprimé ou code dicté) sans repasser par l'app ; quand le
+// client SE CONNECTE pour la première fois, la vente se confirme toute
+// seule — décompte du stock (SoldAt), trace DISTINCTE d'une vente tactile
+// (SoldVia=auto_connect), créance dépôt-vente au prix gros (règle N°19 :
+// elle naît à la remise, la connexion en est la preuve), rapport de journée.
+// Idempotent par SoldAt : un ticket déjà vendu (tactile ou papier) n'est
+// jamais recompté, et un voucher hors stock revendeur n'est pas une vente.
+func (a *API) markVoucherUsed(db *model.DB, router *model.Router, s model.Session, now time.Time) {
 	if s.UserID == "" {
 		return
 	}
@@ -270,6 +280,22 @@ func markVoucherUsed(db *model.DB, s model.Session, now time.Time) {
 			}
 			if u.Status == "active" {
 				u.Status = "used"
+			}
+			// Vente auto — réservée au stock revendeur, jamais recomptée.
+			if u.ResellerID != "" && u.SoldAt == "" && u.Status != "disabled" {
+				u.SoldAt = now.UTC().Format(time.RFC3339)
+				u.SoldVia = "auto_connect"
+				if u.CreditSale {
+					db.Transactions = append([]model.Transaction{{
+						ID: model.NewID("tx-"), AccountID: router.AccountID, Type: "debt",
+						ResellerID: u.ResellerID, ResellerName: u.ResellerName,
+						Amount: u.Price,
+						Note:   fmt.Sprintf("Créance : voucher %s connecté par le client (vente auto)", u.Username),
+						At:     u.SoldAt,
+					}}, db.Transactions...)
+				}
+				a.logActivity(db, router.AccountID, "voucher",
+					"Voucher "+u.Username+" connecté par le client — vente automatique (stock revendeur décompté)")
 			}
 			return
 		}

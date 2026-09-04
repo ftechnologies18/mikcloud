@@ -717,6 +717,26 @@ Migration : ALTER idempotents au boot (`resellers.payment_mode`, `resellers.debt
 
 ---
 
+## UX R3/R4 — Mode Vente : vente papier tracée + vente automatique à la connexion
+
+- `POST /api/sell/:id/sold` gagne un **corps optionnel** `{"via":"paper"}` — additif et
+  rétrocompatible (les PWA installées POSTent sans corps) : `via:"paper"` → trace
+  `SoldVia="sell_mode_paper"` (ticket papier imprimé vendu par saisie du code) ;
+  défaut (tactile) inchangé `SoldVia="sell_mode"`.
+- **Vente automatique à la 1ʳᵉ connexion** : au premier login hotspot détecté d'un
+  voucher du stock revendeur (`ResellerID != ""`, jamais vendu, non désactivé), la
+  vente est tracée automatiquement — `SoldAt=now`, `SoldVia="auto_connect"`, créance
+  dépôt-vente au prix gros (Transaction `debt`, règle N°19) + entrée Activity. Le
+  revendeur n'a plus rien à taper : il remet le ticket, le client se connecte, le
+  stock se décompte et le rapport de journée se met à jour (poll 30 s).
+- **Idempotence & refus** : un voucher déjà vendu (tactile, papier ou auto) n'est
+  jamais recompté (`409` « déjà remis ») ; `POST /sold` refuse désormais explicitement
+  un voucher expiré ou consommé (`409` « Voucher expiré ou consommé » — durcissement :
+  entre l'affichage du stock et la confirmation, la validité peut tomber) ; le retour
+  de stock N°20 refuse de même tout ticket vendu, expiré ou consommé (inchangé).
+
+---
+
 ## PLAN DE FICHIERS
 
 ### Backend (Go)

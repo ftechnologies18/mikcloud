@@ -13,7 +13,10 @@ package api
 // aucune double écriture financière.
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strconv"
@@ -240,9 +243,20 @@ func (a *API) handleSellStock(w http.ResponseWriter, r *http.Request) {
 
 // handleSellSold — POST /api/sell/{id}/sold : remise au client (idempotent
 // refusé si déjà remis). Audit avec le revendeur comme acteur.
+//
+// UX R3 — corps OPTIONNEL {"via":"paper"} : les PWA déjà installées POSTent
+// sans corps (vente tactile, SoldVia=sell_mode) ; la vente d'un ticket papier
+// imprimé envoie via=paper → SoldVia=sell_mode_paper. Champ additif —
+// rétrocompatible.
 func (a *API) handleSellSold(w http.ResponseWriter, r *http.Request) {
 	c := claimsFrom(r)
 	id := r.PathValue("id")
+	var body struct {
+		Via string `json:"via"`
+	}
+	if raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20)); err == nil && len(bytes.TrimSpace(raw)) > 0 {
+		_ = json.Unmarshal(raw, &body)
+	}
 	a.store.Lock()
 	defer a.store.Unlock()
 	db := a.store.Data()
@@ -261,6 +275,14 @@ func (a *API) handleSellSold(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, "Voucher déjà remis à un client")
 		return
 	}
+	// P3-c — durcissement : on ne vend qu'un ticket VIVANT. Le stock
+	// n'expose que des actifs ; entre l'affichage et la confirmation, un
+	// voucher peut expirer (ou être consommé) — refus explicite, jamais de
+	// décompte fantôme sur un ticket mort.
+	if model.EffectiveStatus(u, time.Now().UTC()) != "active" {
+		writeErr(w, http.StatusConflict, "Voucher expiré ou consommé — vente impossible")
+		return
+	}
 	// N°19 — anti-vol ACTIF : un revendeur en dépôt-vente dont la créance
 	// dépasse le plafond ne peut plus travailler sur l'argent non versé —
 	// le gérant encaisse un versement pour débloquer la vente.
@@ -273,7 +295,8 @@ func (a *API) handleSellSold(w http.ResponseWriter, r *http.Request) {
 	}
 	now := model.NowISO()
 	u.SoldAt = now
-	u.SoldVia = "sell_mode"
+	// UX R3 — trace d'origine : vente tactile (défaut) vs ticket papier imprimé.
+	u.SoldVia = map[bool]string{true: "sell_mode_paper", false: "sell_mode"}[body.Via == "paper"]
 	// N°19 — dépôt-vente : la créance naît à la REMISE (prix gros u.Price).
 	if u.CreditSale {
 		db.Transactions = append([]model.Transaction{{
@@ -283,7 +306,7 @@ func (a *API) handleSellSold(w http.ResponseWriter, r *http.Request) {
 		}}, db.Transactions...)
 	}
 	a.logActivityBy(r, db, c.Acc, "voucher",
-		"Voucher "+u.Username+" remis au client par "+c.Name+" (Mode Vente)")
+		"Voucher "+u.Username+" remis au client par "+c.Name+" ("+map[bool]string{true: "Mode Vente — ticket papier", false: "Mode Vente"}[body.Via == "paper"]+")")
 	a.store.Save()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "soldAt": now})
 }

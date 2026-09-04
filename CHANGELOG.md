@@ -23,6 +23,29 @@ la CI puis se déploie automatiquement (frontend Vercel, backend Render).
   `replace` (aucune entrée parasite). Le store, les vues, le contrat API et
   le backend restent inchangés.
 
+## 2026-09-04 — UX R4 : Mode Vente — vente automatique à la connexion + vente papier tracée
+
+### Ajoutés
+- **Vente automatique à la connexion** — le revendeur remet le ticket (papier
+  imprimé ou code dicté) sans toucher l'app : à la PREMIÈRE connexion du client
+  au hotspot, la vente se confirme toute seule — décompte du stock, trace
+  `SoldVia="auto_connect"` (distincte d'une vente tactile), créance dépôt-vente
+  au prix gros (N°19), rapport de journée. Idempotent par `SoldAt` : jamais de
+  double comptage, jamais de décompte fantôme.
+- **Vente papier tracée à part** — la vente par saisie du code imprimé (R3)
+  envoie `via=paper` → `SoldVia="sell_mode_paper"` : le gérant distingue
+  désormais vente tactile, vente papier et vente auto dans l'audit.
+
+### Modifiés
+- Durcissement : `POST /api/sell/{id}/sold` refuse explicitement (409) un
+  voucher expiré ou consommé — entre l'affichage du stock et la confirmation,
+  la validité peut tomber ; zéro décompte fantôme sur un ticket mort.
+
+### Contrat
+- Additif : corps optionnel `{"via":"paper"}` sur `/api/sell/{id}/sold`
+  (rétrocompatible — les PWA installées POSTent sans corps) ; nouvelle valeur
+  `SoldVia="auto_connect"`. Documenté dans CONTRACT-V2 (section UX R3/R4).
+
 ## 2026-09-04 — UX R3 : Mode Vente — tickets papier connectés, recherche, lot entier, expiration
 
 ### Ajoutés

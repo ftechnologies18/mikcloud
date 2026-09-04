@@ -236,6 +236,8 @@ export default function SellShell() {
   // marquer un ticket « vendu » (trace anti-vol SoldAt immuable, créance
   // dépôt-vente créée immédiatement — la vente est définitive par design).
   const [pendingSale, setPendingSale] = useState<SellVoucher | null>(null);
+  // UX R3 — origine de la vente en attente : papier (code saisi) ou tactile.
+  const [pendingVia, setPendingVia] = useState<"paper" | undefined>(undefined);
   // UX R3 — recherche locale (code, profil, référence de lot) : filtre la
   // liste affichée, sans nouvelle requête (le stock est déjà chargé).
   const [query, setQuery] = useState("");
@@ -263,10 +265,14 @@ export default function SellShell() {
   });
 
   const sell = useMutation({
-    mutationFn: (id: string) => api<{ ok: boolean }>(`/api/sell/${id}/sold`, { method: "POST" }),
+    // UX R3 — via=paper : la vente d'un ticket papier imprimé est tracée
+    // à part (SoldVia=sell_mode_paper) ; la vente tactile POSTe sans corps.
+    mutationFn: ({ id, via }: { id: string; via?: "paper" }) =>
+      api<{ ok: boolean }>(`/api/sell/${id}/sold`, { method: "POST", body: via ? { via } : undefined }),
     onSuccess: () => {
       toast.success(t("sell.soldToast"));
       setPendingSale(null);
+      setPendingVia(undefined);
       setPhysicalCode(""); // UX R3 — le code papier saisi est consommé
       qc.invalidateQueries({ queryKey: ["/api/sell/stock"] });
       qc.invalidateQueries({ queryKey: ["/api/sell/me"] });
@@ -343,7 +349,7 @@ export default function SellShell() {
   // UX R2 — la vente n'est déclenchée qu'après confirmation explicite ; en
   // cas d'erreur réseau la dialog reste ouverte (relance sans retaper).
   function confirmSale() {
-    if (pendingSale) sell.mutate(pendingSale.id);
+    if (pendingSale) sell.mutate({ id: pendingSale.id, via: pendingVia });
   }
 
   // UX R3 — ticket papier « connecté » : le revendeur a imprimé des tickets
@@ -360,6 +366,7 @@ export default function SellShell() {
       toast.error(t("sell.physicalNotFound"));
       return;
     }
+    setPendingVia("paper");
     setPendingSale(hit);
   }
 
@@ -557,8 +564,15 @@ export default function SellShell() {
           {/* N°20 — en mode retour : pas de vente/partage (anti-misclick). */}
           {!returnMode && (
             <div className="mt-3 flex gap-2">
-              <Button className="flex-1" onClick={() => setPendingSale(v)} disabled={sell.isPending}>
-                {sell.isPending && sell.variables === v.id ? (
+              <Button
+                className="flex-1"
+                onClick={() => {
+                  setPendingVia(undefined);
+                  setPendingSale(v);
+                }}
+                disabled={sell.isPending}
+              >
+                {sell.isPending && sell.variables?.id === v.id ? (
                   <Loader2 className="size-4 animate-spin" />
                 ) : (
                   <BadgeCheck className="size-4" />

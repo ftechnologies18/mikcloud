@@ -54,6 +54,18 @@ func New(dir string) (*Store, error) {
 		if err != nil {
 			return nil, err
 		}
+		// Phase C « Speed App UX » — keep-alive Neon intelligent (cf. pg.go) :
+		// supprime le cold start (~0,5-1 s) payé par la première mutation
+		// pendant les périodes calmes, SANS ping superflu quand la base reçoit
+		// déjà du trafic réel (agents en ligne). Défaut « business »
+		// (05:00–24:00 UTC) ; NEON_KEEPALIVE=off pour désactiver.
+		kaMode := os.Getenv("NEON_KEEPALIVE")
+		if kaMode == "" {
+			kaMode = "business"
+		}
+		if kaMode != "off" {
+			pg.StartKeepAlive(kaMode)
+		}
 		s.pg = pg
 		db, found, err := pg.Load()
 		if err != nil {

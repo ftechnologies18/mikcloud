@@ -29,7 +29,9 @@ Règles transverses :
 
 - **Render** (backend `mikcloud`, service `srv-da974o142hec73euul60`) :
   Dashboard → Environment → Variables (`DATABASE_URL`, `JWT_SECRET`,
-  `ADMIN_PASSWORD`, `REGISTER_KEY`, `WEBHOOK_…`).
+  `ADMIN_PASSWORD`, `REGISTER_KEY`, `WEBHOOK_…`). Non secrète :
+  `NEON_KEEPALIVE` (`business` par défaut — keep-alive Neon fenêtré
+  05:00–24:00 UTC ; `on` 24/7 ; `off` pour laisser Neon s'endormir).
 - **Vercel** (frontend) : Settings → Environment Variables
   (`NEXT_PUBLIC_API_BASE`).
 - **GitHub** (repo `ftechnologies18/mikcloud`) : Settings → Secrets and

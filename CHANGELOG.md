@@ -5,6 +5,37 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-04 — Phase C perf : keep-alive Neon intelligent (fin du cold start en heures d'activité)
+
+### Ajoutés
+- **Keep-alive Neon « smart »** (`internal/store/pg.go` — `StartKeepAlive`) :
+  une goroutine pings `SELECT 1` (via le pool existant) UNIQUEMENT quand la
+  dernière écriture réelle date de plus de 4 min — le garde-fou `lastWrite`
+  (atomic, mis à jour à chaque Load/Sync/ping réussi) fait sauter les pings
+  superflus : quand au moins un agent est en ligne, son check-in (45 s)
+  déclenche `Save()` → `Sync()` et Neon reçoit déjà du trafic continu. Le
+  keep-alive ne parle donc à Neon QUE pendant les périodes où la base serait
+  de toute façon endormée alors que des usagers peuvent arriver — supprimant
+  le cold start (~0,5-1 s) payé par la première mutation après silence.
+- **Fenêtrage configurable** — variable Render `NEON_KEEPALIVE`, défaut
+  `business` (05:00–24:00 UTC ≈ Abidjan UTC+0 : la nuit, Neon retrouve son
+  autosuspend et le plafond gratuit de 191,9 CU-h/mois reste largement couvert
+  — ≈ 142 CU-h au pire) ; `on`/`24/7` maintien permanent (≈ 180 CU-h/mois,
+  toujours sous le plafond) ; `off` désactive. Modes inconnus ignorés (log).
+- **Robustesse** — ping borné 10 s (un compute en cours de réveil peut
+  répondre lentement), retry au tick suivant, échecs logués au plus 1 fois/h ;
+  arrêt propre de la goroutine sur `Close()` (SIGTERM) ; aucun changement de
+  contrat API, aucun coût pour le mode développement JSON.
+
+### Analyse (décision)
+- Lecture du code : le dashboard lit depuis la MÉMOIRE (Neon n'est touché
+  qu'aux `Save()` et aux insertions vitals par lots) — donc pendant une
+  session usager très active en lecture, Neon peut s'endormir, et la mutation
+  suivante (vente, création de voucher…) paye le réveil. Le keep-alive comble
+  exactement ce trou aux heures d'activité, sans gaspillage quand la fleet
+  tourne. La mesure B2 (`GET /api/vitals/summary`, plateforme) permettra de
+  valider l'effet sur le p95 TTFB avant/après.
+
 ## 2026-09-04 — B2 perf : télémétrie Core Web Vitals (beacon public + synthèse plateforme)
 
 ### Ajoutés

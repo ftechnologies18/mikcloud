@@ -101,12 +101,17 @@ export function formatMb(mb: number | undefined | null): string {
   return formatBytes(mb * 1024 * 1024);
 }
 
+/**
+ * Limite de débit au format RouterOS « descendant/montant » (rx/tx côté client,
+ * poussée telle quelle au routeur) → « 4M ↓ / 1M ↑ ».
+ * 1ʳᵉ valeur = descendant (↓, reçu par le client), 2ᵉ = montant (↑, émis).
+ * Valeur unique (« 5M ») = RouterOS applique la même limite aux deux sens.
+ */
 export function formatRateLimit(rate: string): string {
-  // "2M/2M" -> "2M ↓ / 2M ↑"
   if (!rate) return "—";
   const parts = rate.split("/");
   if (parts.length < 2) return rate;
-  return `${parts[1]} ↓ / ${parts[0]} ↑`;
+  return `${parts[0]} ↓ / ${parts[1]} ↑`;
 }
 
 /** Initiales d'affichage (avatar) à partir du nom complet. */

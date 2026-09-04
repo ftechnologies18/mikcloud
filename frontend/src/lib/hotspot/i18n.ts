@@ -1905,6 +1905,9 @@ const fr: Record<string, string> = {
   "sell.searchPlaceholder": "Rechercher un code, un profil, un lot…",
   "sell.searchClear": "Effacer la recherche",
   "sell.searchNoResult": "Aucun ticket ne correspond à cette recherche",
+  // P3-e — pagination du stock.
+  "sell.loadMore": "Afficher plus ({shown} sur {total})",
+  "sell.loadMoreHint": "Le reste du stock se charge à la demande",
   // UX R5 — la saisie papier est retirée ; la bannière explique la vente auto.
   "sell.autoSaleTitle": "Vente automatique à la connexion",
   "sell.autoSaleDesc": "Remettez le ticket au client : dès sa 1ʳᵉ connexion au WiFi, la vente est comptée toute seule dans votre stock et votre rapport — rien à déclarer.",
@@ -3813,6 +3816,9 @@ const en: Record<string, string> = {
   "sell.searchPlaceholder": "Search a code, a profile, a batch…",
   "sell.searchClear": "Clear search",
   "sell.searchNoResult": "No ticket matches this search",
+  // P3-e — stock pagination.
+  "sell.loadMore": "Show more ({shown} of {total})",
+  "sell.loadMoreHint": "The rest of the stock loads on demand",
   // UX R5 — paper entry removed; the banner explains the automatic sale.
   "sell.autoSaleTitle": "Automatic sale on connection",
   "sell.autoSaleDesc": "Hand the ticket to the customer: on their first WiFi connection, the sale is counted automatically in your stock and daily report — nothing to declare.",

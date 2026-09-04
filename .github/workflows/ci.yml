@@ -92,6 +92,57 @@ jobs:
       - name: Scan des vulnérabilités atteignables
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
+  # Tests E2E Playwright (P3-e) — le parcours revendeur complet contre la
+  # stack réelle : backend Go (store JSON éphémère) + frontend Next.js de
+  # production. Bootstrap par API (project « setup »), puis navigateur :
+  # login PIN, pagination du stock, recherche exhaustive, vente tactile,
+  # rapport de journée + export CSV comptable. Bloque le déploiement.
+  e2e:
+    name: E2E Playwright (Mode Vente)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Installation des dépendances
+        run: bun install --frozen-lockfile
+
+      - name: Navigateur Playwright (Chromium)
+        run: bunx playwright install --with-deps chromium
+
+      - name: Build du frontend (production)
+        run: bun run build
+        env:
+          NEXT_TELEMETRY_DISABLED: 1
+          # Le build cuit l'URL de l'API : version de test pointant le
+          # backend local démarré par le webServer Playwright (jamais déployé).
+          NEXT_PUBLIC_API_BASE: http://localhost:4000
+
+      - name: Tests E2E (playwright test)
+        run: bunx playwright test
+        env:
+          NEXT_TELEMETRY_DISABLED: 1
+
+      - name: Rapport HTML + traces (échec)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 7
+
   # Déploiement du backend Render une fois la CI verte (push main uniquement).
   # Monorepo : seul un changement sous backend/ déclenche le déploiement —
   # un push frontend seul ne redéploie pas l'API.
@@ -101,7 +152,7 @@ jobs:
   # La clé API Render est stockée dans le secret RENDER_API_KEY du dépôt.
   deploy-render:
     name: Déploiement backend Render
-    needs: [backend, frontend]
+    needs: [backend, frontend, e2e]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5

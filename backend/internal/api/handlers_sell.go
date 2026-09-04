@@ -208,8 +208,23 @@ func (a *API) handleSellMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// sellStockPage — réponse paginée du stock (P3-e). Sans paramètre `limit`,
+// /api/sell/stock conserve sa réponse historique (tableau complet) — les PWA
+// déjà installées ne voient aucun changement ; avec `limit`, la réponse devient
+// une page explicite (items/total/hasMore) et l'app peut charger par pages.
+type sellStockPage struct {
+	Items   []sellVoucherItem `json:"items"`
+	Total   int               `json:"total"`
+	HasMore bool              `json:"hasMore"`
+}
+
 // handleSellStock — GET /api/sell/stock : vouchers actifs non remis, du jour
 // le plus récent au plus ancien (le prochain à vendre en tête).
+//
+// P3-e — pagination additive : `limit` (1..200) + `offset` (≥ 0). Sans
+// `limit` → tableau complet (contrat historique inchangé) ; avec `limit` →
+// page `{items, total, hasMore}` sur le même tri (le tri est stable : une
+// page se retrouve identique entre deux appels tant que le stock ne bouge pas).
 func (a *API) handleSellStock(w http.ResponseWriter, r *http.Request) {
 	c := claimsFrom(r)
 	now := time.Now().UTC()
@@ -237,6 +252,24 @@ func (a *API) handleSellStock(w http.ResponseWriter, r *http.Request) {
 		for j := i; j > 0 && items[j].CreatedAt > items[j-1].CreatedAt; j-- {
 			items[j], items[j-1] = items[j-1], items[j]
 		}
+	}
+	if r.URL.Query().Get("limit") != "" {
+		limit := queryInt(r, "limit", 60, 1, 200)
+		offset := queryInt(r, "offset", 0, 0, len(items))
+		end := offset + limit
+		if end > len(items) {
+			end = len(items)
+		}
+		page := items
+		if offset > 0 || end < len(items) {
+			page = items[offset:end]
+		}
+		writeJSON(w, http.StatusOK, sellStockPage{
+			Items:   page,
+			Total:   len(items),
+			HasMore: end < len(items),
+		})
+		return
 	}
 	writeJSON(w, http.StatusOK, items)
 }

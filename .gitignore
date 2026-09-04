@@ -23,3 +23,9 @@ backend/data/
 # Système
 .DS_Store
 Thumbs.db
+
+# Tests E2E Playwright (artefacts locaux)
+frontend/e2e/.auth-state.json
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/

@@ -15,7 +15,13 @@
 //   stock + même traçabilité qu'une vente tactile (confirmation obligatoire).
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import Image from "next/image";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type InfiniteData,
+} from "@tanstack/react-query";
 import {
   BadgeCheck,
   CheckCheck,
@@ -81,6 +87,34 @@ interface SellVoucher {
   createdAt: string;
   /** UX R1 — lot d'origine (peut être absent sur les données historiques). */
   batchId?: string;
+}
+
+/** P3-e — une page de stock (réponse de /api/sell/stock?limit=…).
+ * Sans `limit`, l'endpoint renvoie le tableau historique complet. */
+interface StockPage {
+  items: SellVoucher[];
+  total: number;
+  hasMore: boolean;
+}
+
+const STOCK_PAGE_SIZE = 60;
+
+/** Phase D × P3-e — update optimiste du stock PAGINÉ : le filtre traverse
+ * toutes les pages chargées (InfiniteData) ; la vue aplatie puis l'effet
+ * snapshot persistent ensuite le localStorage — les DEUX caches (TanStack +
+ * hors-ligne) restent alignés, sinon le fallback hors-ligne ré-afficherait
+ * un ticket déjà vendu/rendu. */
+function filterPagedStock(
+  paged: InfiniteData<StockPage>,
+  ids: ReadonlySet<string>,
+): InfiniteData<StockPage> {
+  return {
+    ...paged,
+    pages: paged.pages.map((p) => ({
+      ...p,
+      items: p.items.filter((v) => !ids.has(v.id)),
+    })),
+  };
 }
 
 interface SellMe {
@@ -316,24 +350,59 @@ export default function SellShell() {
     retry: false,
   });
 
-  const { data: stock, isLoading, refetch, isRefetching } = useQuery({
-    queryKey: ["/api/sell/stock"],
-    // UX R6 — même contrat que /me : snapshot localStorage en cas de réseau
-    // injoignable — le comptoir reste vendable même sans couverture.
-    queryFn: async () => {
+  // P3-e — stock paginé (useInfiniteQuery) : le comptoir ne charge que la
+  // première page de tickets (60) puis « Afficher plus » ; un gros stock ne
+  // plombe plus le premier rendu ni le payload mobile. Le contrat backend est
+  // additif (sans `limit` → tableau historique) ; hors-ligne, le snapshot
+  // localStorage sert de page unique (hasMore=false) — le comptoir reste
+  // vendable sans couverture.
+  const {
+    data: stockPages,
+    isLoading,
+    refetch,
+    isRefetching,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery({
+    queryKey: ["/api/sell/stock", "paged"],
+    queryFn: async ({ pageParam }) => {
+      const offset = pageParam as number;
       try {
-        const data = await api<SellVoucher[]>("/api/sell/stock", { timeoutMs: 10_000 });
-        writeCache(STOCK_CACHE_KEY, data);
+        const data = await api<StockPage>("/api/sell/stock", {
+          params: { limit: STOCK_PAGE_SIZE, offset },
+          timeoutMs: 10_000,
+        });
         return data;
       } catch (e) {
-        const cached = readCache<SellVoucher[]>(STOCK_CACHE_KEY);
-        if (cached && isNetworkError(e)) return cached;
+        // UX R6 — fallback hors-ligne : uniquement sur la première page (le
+        // snapshot sert d'état complet ; on ne fabrique jamais une page 2).
+        if (offset === 0 && isNetworkError(e)) {
+          const cached = readCache<SellVoucher[]>(STOCK_CACHE_KEY);
+          if (cached) return { items: cached, total: cached.length, hasMore: false };
+        }
         throw e;
       }
     },
+    initialPageParam: 0,
+    getNextPageParam: (last, pages) =>
+      last.hasMore ? pages.reduce((n, p) => n + p.items.length, 0) : undefined,
     refetchInterval: 30_000,
     retry: false,
   });
+
+  // Vue aplatie : tout le reste du composant (groupes, recherche, sélection)
+  // consomme le même tableau qu'avant — la pagination est un détail de charge.
+  const stock = useMemo(
+    () => (stockPages ? stockPages.pages.flatMap((p) => p.items) : undefined),
+    [stockPages],
+  );
+
+  // UX R6 — snapshot hors-ligne : l'état complet chargé (toutes pages) est
+  // persisté à chaque changement, pas seulement la première page.
+  useEffect(() => {
+    if (stock) writeCache(STOCK_CACHE_KEY, stock);
+  }, [stock]);
 
   // Rapport de fin de journée — chargé uniquement quand le dialog est ouvert.
   const { data: report, isLoading: reportLoading } = useQuery({
@@ -402,21 +471,19 @@ export default function SellShell() {
         qc.cancelQueries({ queryKey: ["/api/sell/stock"] }),
         qc.cancelQueries({ queryKey: ["/api/sell/me"] }),
       ]);
-      const stock = qc.getQueryData<SellVoucher[]>(["/api/sell/stock"]);
+      // Phase D × P3-e — le stock vit en pages (InfiniteData sous
+      // ["/api/sell/stock","paged"]) : l'update optimiste filtre toutes les
+      // pages ; le snapshot hors-ligne suit via l'effet sur la vue aplatie
+      // (source de vérité unique — pas d'écriture manuelle du snapshot).
+      const paged = qc.getQueryData<InfiniteData<StockPage>>(["/api/sell/stock", "paged"]);
       const me = qc.getQueryData<SellMe>(["/api/sell/me"]);
-      const nextStock = stock ? stock.filter((v) => v.id !== id) : undefined;
+      const nextPaged = paged ? filterPagedStock(paged, new Set([id])) : undefined;
       const nextMe = me
         ? { ...me, stockCount: Math.max(0, me.stockCount - 1), soldToday: me.soldToday + 1 }
         : undefined;
-      if (nextStock) qc.setQueryData<SellVoucher[]>(["/api/sell/stock"], nextStock);
+      if (nextPaged) qc.setQueryData(["/api/sell/stock", "paged"], nextPaged);
       if (nextMe) qc.setQueryData<SellMe>(["/api/sell/me"], nextMe);
-      // UX R6 — les snapshots localStorage suivent : ce sont eux que
-      // l'invalidation relira tant que le réseau est coupé.
-      const lsStock = readCache<SellVoucher[]>(STOCK_CACHE_KEY);
-      const lsMe = readCache<SellMe>(ME_CACHE_KEY);
-      if (lsStock && nextStock) writeCache(STOCK_CACHE_KEY, nextStock);
-      if (lsMe && nextMe) writeCache(ME_CACHE_KEY, nextMe);
-      return { stock, me, lsStock, lsMe };
+      return { paged, me };
     },
     onSuccess: (res) => {
       if (res.offline) toast.info(t("sell.queuedToast"));
@@ -428,11 +495,10 @@ export default function SellShell() {
     },
     onError: (e: Error, _vars, ctx) => {
       // Erreur métier uniquement (une erreur réseau part en file dans
-      // mutationFn) : restauration complète des deux caches.
-      if (ctx?.stock) qc.setQueryData(["/api/sell/stock"], ctx.stock);
+      // mutationFn) : restauration du cache paginé — le snapshot hors-ligne
+      // se réécrit seul via l'effet sur la vue aplatie.
+      if (ctx?.paged) qc.setQueryData(["/api/sell/stock", "paged"], ctx.paged);
       if (ctx?.me) qc.setQueryData(["/api/sell/me"], ctx.me);
-      if (ctx?.lsStock) writeCache(STOCK_CACHE_KEY, ctx.lsStock);
-      if (ctx?.lsMe) writeCache(ME_CACHE_KEY, ctx.lsMe);
       toast.error(e instanceof ApiError ? e.message : t("sell.error"));
     },
   });
@@ -512,20 +578,18 @@ export default function SellShell() {
         qc.cancelQueries({ queryKey: ["/api/sell/stock"] }),
         qc.cancelQueries({ queryKey: ["/api/sell/me"] }),
       ]);
-      const stock = qc.getQueryData<SellVoucher[]>(["/api/sell/stock"]);
+      // Phase D × P3-e — mêmes principes que la vente : filtre optimiste à
+      // travers toutes les pages, snapshot suivi par l'effet aplati.
+      const paged = qc.getQueryData<InfiniteData<StockPage>>(["/api/sell/stock", "paged"]);
       const me = qc.getQueryData<SellMe>(["/api/sell/me"]);
-      if (stock) {
-        qc.setQueryData<SellVoucher[]>(["/api/sell/stock"], (old) =>
-          (old ?? []).filter((v) => !ids.includes(v.id)),
-        );
-      }
+      if (paged) qc.setQueryData(["/api/sell/stock", "paged"], filterPagedStock(paged, new Set(ids)));
       if (me) {
         qc.setQueryData<SellMe>(["/api/sell/me"], {
           ...me,
           stockCount: Math.max(0, me.stockCount - ids.length),
         });
       }
-      return { stock, me };
+      return { paged, me };
     },
     onSuccess: (res, _ids, ctx) => {
       if (res.credited > 0) {
@@ -544,7 +608,7 @@ export default function SellShell() {
       qc.invalidateQueries({ queryKey: ["/api/sell/day-report"] });
     },
     onError: (e: Error, _ids, ctx) => {
-      if (ctx?.stock) qc.setQueryData(["/api/sell/stock"], ctx.stock);
+      if (ctx?.paged) qc.setQueryData(["/api/sell/stock", "paged"], ctx.paged);
       if (ctx?.me) qc.setQueryData(["/api/sell/me"], ctx.me);
       toast.error(e instanceof ApiError ? e.message : t("sell.error"));
     },
@@ -572,9 +636,23 @@ export default function SellShell() {
     [searching, filteredStock, groupedStock],
   );
 
+  // P3-e — la recherche porte sur TOUT le stock : si des pages restent à
+  // charger quand le vendeur cherche, elles sont chargées automatiquement
+  // (l'effet re-court à chaque page arrivée jusqu'à hasMore=false — borné).
+  // Sans ça, « Aucun ticket ne correspond » pourrait mentir sur un stock
+  // partiellement chargé : l'invariant R3 de recherche exhaustive prime.
+  useEffect(() => {
+    if (searching && hasNextPage && !isFetchingNextPage) {
+      void fetchNextPage();
+    }
+  }, [searching, hasNextPage, isFetchingNextPage, fetchNextPage]);
+
   const currency = me?.currency || "FCFA";
   const isDeposit = me?.paymentMode === "deposit";
   const hasStock = !!stock && stock.length > 0;
+  // P3-e — total réel du stock (le serveur le renvoie avec chaque page) :
+  // sert au bouton « Afficher plus » (X sur Y).
+  const stockTotal = stockPages?.pages[0]?.total ?? stock?.length ?? 0;
   // Valeur GROSSISTE de la sélection (u.Price — ce qui est recrédité en prépayé).
   const selectedVouchers = (stock ?? []).filter((v) => selected.has(v.id));
   const selectedWholesale = selectedVouchers.reduce((sum, v) => sum + v.price, 0);
@@ -1137,6 +1215,34 @@ export default function SellShell() {
                   </section>
                 );
               })
+            )}
+
+            {/* P3-e — pagination du stock : les pages suivantes se chargent
+                sur demande (un gros stock ne casse plus le premier rendu). */}
+            {hasNextPage && (
+              <div className="flex flex-col items-center gap-1 py-1">
+                <Button
+                  variant="outline"
+                  onClick={() => void fetchNextPage()}
+                  disabled={isFetchingNextPage}
+                  className="min-h-11 w-full max-w-xs"
+                >
+                  {isFetchingNextPage ? (
+                    <Loader2 className="size-4 animate-spin" aria-hidden />
+                  ) : (
+                    <ChevronDown className="size-4" aria-hidden />
+                  )}
+                  {tf("sell.loadMore", {
+                    shown: stock?.length ?? 0,
+                    total: stockTotal,
+                  })}
+                </Button>
+                {!searching && (
+                  <p className="text-[11px] text-muted-foreground">
+                    {t("sell.loadMoreHint")}
+                  </p>
+                )}
+              </div>
             )}
           </>
         )}

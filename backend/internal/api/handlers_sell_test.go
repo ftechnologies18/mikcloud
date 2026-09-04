@@ -9,6 +9,7 @@
 package api
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -242,5 +243,87 @@ func TestSellDayReportCSV(t *testing.T) {
 	// Date invalide : 400 explicite.
 	if status, _ := doJSON(t, ts, "GET", "/api/sell/day-report.csv?date=hier", token, nil); status != http.StatusBadRequest {
 		t.Fatalf("date invalide doit répondre 400, obtenu %d", status)
+	}
+}
+
+// TestSellStockPagination — P3-e : sans `limit`, /api/sell/stock renvoie le
+// tableau historique complet ; avec `limit`, une page {items,total,hasMore}
+// sur un tri stable (du plus récent au plus ancien).
+func TestSellStockPagination(t *testing.T) {
+	st, ts := newTestServerWithStore(t)
+	_, accID, _ := registerAccount(t, ts, "gerant-page", "")
+	seedSellReseller(t, st, "res-page", accID, "Ulrich Test", "prepaid", 0)
+	// 5 vouchers du revendeur + 1 hors stock (vendu) + 1 d'un autre revendeur.
+	seedStockVoucher(t, st, "s1", accID, "res-page", "PAGEA", 100, 100, "", "", false)
+	seedStockVoucher(t, st, "s2", accID, "res-page", "PAGEB", 100, 100, model.NowISO(), "sell_mode", false)
+	seedStockVoucher(t, st, "s3", accID, "res-page", "PAGEC", 100, 100, "", "", false)
+	seedStockVoucher(t, st, "s4", accID, "res-page", "PAGED", 100, 100, "", "", false)
+	seedStockVoucher(t, st, "s5", accID, "res-page", "PAGEE", 100, 100, "", "", false)
+	seedStockVoucher(t, st, "sx", accID, "res-autre", "PAGEX", 100, 100, "", "", false)
+	// CreatedAt distincts pour un ordre déterministe (s5 = plus récent).
+	st.Lock()
+	created := map[string]string{
+		"s1": "2026-09-01T10:00:00Z", "s2": "2026-09-02T10:00:00Z",
+		"s3": "2026-09-03T10:00:00Z", "s4": "2026-09-04T10:00:00Z",
+		"s5": "2026-09-05T10:00:00Z",
+	}
+	for i := range st.Data().HotspotUsers {
+		if c, ok := created[st.Data().HotspotUsers[i].ID]; ok {
+			st.Data().HotspotUsers[i].CreatedAt = c
+		}
+	}
+	st.Save()
+	st.Unlock()
+
+	token := resellerToken("res-page", accID)
+
+	// Sans limit : tableau brut historique — 4 tickets actifs du revendeur.
+	status, _, body := doRaw(t, ts, ts.URL+"/api/sell/stock", token)
+	if status != http.StatusOK {
+		t.Fatalf("stock sans limit : statut %d", status)
+	}
+	var flat []map[string]any
+	if err := json.Unmarshal([]byte(body), &flat); err != nil {
+		t.Fatalf("sans limit, la réponse doit rester un tableau JSON : %v", err)
+	}
+	if len(flat) != 4 {
+		t.Fatalf("stock complet = %d items, attendu 4 (vendu et autre revendeur exclus)", len(flat))
+	}
+
+	// Avec limit=2 : page {items,total,hasMore}, du plus récent au plus ancien.
+	status, _, body = doRaw(t, ts, ts.URL+"/api/sell/stock?limit=2&offset=0", token)
+	if status != http.StatusOK {
+		t.Fatalf("stock paginé : statut %d", status)
+	}
+	var page struct {
+		Items   []map[string]any `json:"items"`
+		Total   int              `json:"total"`
+		HasMore bool             `json:"hasMore"`
+	}
+	if err := json.Unmarshal([]byte(body), &page); err != nil {
+		t.Fatalf("réponse paginée invalide : %v", err)
+	}
+	if page.Total != 4 || !page.HasMore || len(page.Items) != 2 {
+		t.Fatalf("page 1 inattendue : total=%d hasMore=%v items=%d", page.Total, page.HasMore, len(page.Items))
+	}
+	if page.Items[0]["username"] != "PAGEE" || page.Items[1]["username"] != "PAGED" {
+		t.Fatalf("tri anti-chronologique attendu, obtenu : %v / %v", page.Items[0]["username"], page.Items[1]["username"])
+	}
+
+	// offset=2 : dernière page — hasMore=false.
+	status, _, body = doRaw(t, ts, ts.URL+"/api/sell/stock?limit=2&offset=2", token)
+	if err := json.Unmarshal([]byte(body), &page); err != nil {
+		t.Fatalf("réponse paginée invalide : %v", err)
+	}
+	if status != http.StatusOK || page.HasMore || len(page.Items) != 2 {
+		t.Fatalf("page 2 inattendue : statut=%d hasMore=%v items=%d", status, page.HasMore, len(page.Items))
+	}
+	// offset au-delà du total : page vide, pas d'erreur.
+	status, _, body = doRaw(t, ts, ts.URL+"/api/sell/stock?limit=2&offset=99", token)
+	if err := json.Unmarshal([]byte(body), &page); err != nil {
+		t.Fatalf("réponse paginée invalide : %v", err)
+	}
+	if status != http.StatusOK || page.HasMore || len(page.Items) != 0 {
+		t.Fatalf("offset hors bornes doit donner une page vide : %v", page)
 	}
 }

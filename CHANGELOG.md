@@ -5,6 +5,42 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-04 — P3-e : pagination du stock + tests E2E Playwright en CI
+
+### Ajoutés
+- **Pagination du stock** (`GET /api/sell/stock`) — additive : sans paramètre,
+  la réponse reste le tableau historique complet (aucune PWA cassée) ; avec
+  `limit` (1..200) + `offset`, la réponse devient une page explicite
+  `{items, total, hasMore}` sur le même tri anti-chronologique (stable).
+- **PWA revendeur — chargement par pages** (`useInfiniteQuery`, page de 60) :
+  un gros stock ne plombe plus le premier rendu ni le payload mobile. Bouton
+  « Afficher plus (X sur Y) » en bas de liste ; le snapshot hors-ligne (UX R6)
+  persiste l'état COMPLET chargé (toutes pages) et sert de page unique quand
+  le réseau tombe. **La recherche reste exhaustive** : si des pages restent à
+  charger, elles se chargent automatiquement — « Aucun ticket ne correspond »
+  ne peut plus mentir sur un stock partiellement chargé (invariant R3).
+- **Tests E2E Playwright en CI** (`frontend/e2e/`, job `e2e` bloquant avant
+  déploiement Render) : la stack réelle est levée par le config (backend Go
+  `go run` avec store JSON éphémère + frontend Next.js de production) et le
+  parcours revendeur complet est vérifié — bootstrap API (compte, routeur,
+  profil, lot de 70 + lot de 3, revendeur PIN, une vente tracée), login PIN
+  par l'UI, pagination « Afficher plus », recherche exhaustive d'un ticket de
+  2ᵉ page, vente tactile avec confirmation R2 (Annuler + Confirmer), rapport
+  de journée avec ventilation par canal et export CSV (BOM, contenu, nom de
+  fichier). Sessions injectées en localStorage : `/api/reseller/login`
+  (5 req/min/IP) n'est appelé qu'une fois par run.
+- **CI** : le job `e2e` s'ajoute aux 4 vérifications existantes et bloque
+  désormais le déploiement Render (`needs: [backend, frontend, e2e]`) ;
+  rapport HTML + traces conservés en artefact 7 jours en cas d'échec.
+
+### Notes
+- La simulation d'activité (routeurs « simulated ») ne touche pas le stock de
+  la PWA : les routes `/api/sell/*` ne déclenchent pas `store.Tick` — vérifié
+  par les tests (stock stable entre les pages).
+- Les tests ne comptent jamais sur le hasard du simulateur : les fixtures
+  passent par l'API réelle et les codes de 2ᵉ page proviennent de l'endpoint
+  paginé lui-même.
+
 ## 2026-09-04 — P3-d : rapport de journée enrichi + export comptable « journal de caisse »
 
 ### Ajoutés

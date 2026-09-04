@@ -5,6 +5,23 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-04 — UX R2 : Mode Vente — confirmation avant remise au client
+
+### Ajoutés
+- **Confirmation de vente (anti-misclick)** — le bouton « Vendu » n'exécute
+  plus immédiatement la remise : une dialog récapitule le ticket exact
+  (profil, prix, code) et exige « Confirmer la vente ». Justification :
+  la vente est définitive par design (trace anti-vol `SoldAt` immuable) et
+  naît de créance immédiate en dépôt-vente — un faux clic en tournée
+  (écran tactile, lumière, mouvement) coûtait une correction manuelle du
+  gérant. « Annuler » (ou Échap / clic hors dialog) ne vend rien ; en cas
+  d'erreur réseau la dialog reste ouverte pour relancer sans re-sélection.
+
+### Aucun impact
+- Contrat inchangé : un seul appel `POST /api/sell/{id}/sold`, même
+  sémantique, aucune route nouvelle. Rapport de journée, retour de stock et
+  audit inchangés. i18n FR/EN (+3 clés `sell.sellConfirm*`).
+
 ## 2026-09-04 — UX R1 : Mode Vente — stock revendeur groupé par profil et par lot
 
 ### Ajoutés

@@ -209,6 +209,10 @@ export default function SellShell() {
   // « recent » (liste plate historique, plus récents d'abord) — persistée.
   const view = useSyncExternalStore(subscribeView, getViewSnapshot, getServerViewSnapshot);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  // UX R2 — ticket en attente de confirmation : un misclick ne doit pas
+  // marquer un ticket « vendu » (trace anti-vol SoldAt immuable, créance
+  // dépôt-vente créée immédiatement — la vente est définitive par design).
+  const [pendingSale, setPendingSale] = useState<SellVoucher | null>(null);
 
   const { data: me } = useQuery({
     queryKey: ["/api/sell/me"],
@@ -233,6 +237,7 @@ export default function SellShell() {
     mutationFn: (id: string) => api<{ ok: boolean }>(`/api/sell/${id}/sold`, { method: "POST" }),
     onSuccess: () => {
       toast.success(t("sell.soldToast"));
+      setPendingSale(null);
       qc.invalidateQueries({ queryKey: ["/api/sell/stock"] });
       qc.invalidateQueries({ queryKey: ["/api/sell/me"] });
     },
@@ -284,6 +289,12 @@ export default function SellShell() {
       /* stockage indisponible — vue de session uniquement */
     }
     window.dispatchEvent(new Event("mikcloud-view-change"));
+  }
+
+  // UX R2 — la vente n'est déclenchée qu'après confirmation explicite ; en
+  // cas d'erreur réseau la dialog reste ouverte (relance sans retaper).
+  function confirmSale() {
+    if (pendingSale) sell.mutate(pendingSale.id);
   }
 
   function toggleGroup(key: string) {
@@ -461,7 +472,7 @@ export default function SellShell() {
           {/* N°20 — en mode retour : pas de vente/partage (anti-misclick). */}
           {!returnMode && (
             <div className="mt-3 flex gap-2">
-              <Button className="flex-1" onClick={() => sell.mutate(v.id)} disabled={sell.isPending}>
+              <Button className="flex-1" onClick={() => setPendingSale(v)} disabled={sell.isPending}>
                 {sell.isPending && sell.variables === v.id ? (
                   <Loader2 className="size-4 animate-spin" />
                 ) : (
@@ -811,6 +822,50 @@ export default function SellShell() {
               {t("sell.dayReportShare")}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* UX R2 — confirmation de vente : récapitulatif du ticket (code,
+          profil, prix) + action définitive explicite. En cas d'erreur réseau
+          la dialog reste ouverte pour relancer sans re-sélectionner. */}
+      <Dialog
+        open={pendingSale !== null}
+        onOpenChange={(open) => {
+          if (!open && !sell.isPending) setPendingSale(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <BadgeCheck className="size-4 text-primary" aria-hidden />
+              {t("sell.sellConfirmTitle")}
+            </DialogTitle>
+            <DialogDescription>{t("sell.sellConfirmDesc")}</DialogDescription>
+          </DialogHeader>
+
+          {pendingSale && (
+            <>
+              <div className="rounded-lg border bg-muted/30 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="font-semibold">{pendingSale.profileName}</p>
+                  <p className="shrink-0 font-bold text-primary tabular-nums">
+                    {formatCurrency(pendingSale.sellingPrice || pendingSale.price, currency, lang)}
+                  </p>
+                </div>
+                <p className="mt-1 font-mono text-sm text-muted-foreground">{pendingSale.username}</p>
+              </div>
+
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setPendingSale(null)} disabled={sell.isPending}>
+                  {t("common.cancel")}
+                </Button>
+                <Button onClick={confirmSale} disabled={sell.isPending}>
+                  {sell.isPending ? <Loader2 className="size-4 animate-spin" /> : <BadgeCheck className="size-4" />}
+                  {t("sell.sellConfirmAction")}
+                </Button>
+              </DialogFooter>
+            </>
+          )}
         </DialogContent>
       </Dialog>
 

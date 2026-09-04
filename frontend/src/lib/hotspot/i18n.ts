@@ -1898,6 +1898,13 @@ const fr: Record<string, string> = {
   // UX R5 — la saisie papier est retirée ; la bannière explique la vente auto.
   "sell.autoSaleTitle": "Vente automatique à la connexion",
   "sell.autoSaleDesc": "Remettez le ticket au client : dès sa 1ʳᵉ connexion au WiFi, la vente est comptée toute seule dans votre stock et votre rapport — rien à déclarer.",
+  // UX R6 — ventes hors-ligne : file locale + replay au retour du réseau.
+  "sell.queueBannerTitle": "Ventes en attente de synchronisation",
+  "sell.queueBannerDesc": "{{count}} vente(s) enregistrée(s) hors ligne — envoi automatique dès le retour du réseau.",
+  "sell.chipPending": "En attente de sync",
+  "sell.queuedToast": "Hors ligne — vente enregistrée, elle partira dès le retour du réseau",
+  "sell.syncSoldToast": "Vente synchronisée : {{code}}",
+  "sell.syncConflictToast": "{{code}} déjà traité (vendu, retourné, expiré ou supprimé) — retiré de la file",
   "sell.expiresSoon": "Expire bientôt",
   "sell.lotExpiring": "expire bientôt",
   "sell.lotSelectAll": "Tout",
@@ -3789,6 +3796,13 @@ const en: Record<string, string> = {
   // UX R5 — paper entry removed; the banner explains the automatic sale.
   "sell.autoSaleTitle": "Automatic sale on connection",
   "sell.autoSaleDesc": "Hand the ticket to the customer: on their first WiFi connection, the sale is counted automatically in your stock and daily report — nothing to declare.",
+  // UX R6 — offline sales: local queue + replay when the network returns.
+  "sell.queueBannerTitle": "Sales pending synchronization",
+  "sell.queueBannerDesc": "{{count}} sale(s) saved offline — they will sync automatically when the network returns.",
+  "sell.chipPending": "Pending sync",
+  "sell.queuedToast": "Offline — sale saved, it will sync when the network returns",
+  "sell.syncSoldToast": "Sale synced: {{code}}",
+  "sell.syncConflictToast": "{{code}} already processed (sold, returned, expired or deleted) — removed from queue",
   "sell.expiresSoon": "Expires soon",
   "sell.lotExpiring": "expiring soon",
   "sell.lotSelectAll": "All",

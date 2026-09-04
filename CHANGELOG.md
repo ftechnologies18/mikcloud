@@ -80,6 +80,36 @@ la CI puis se déploie automatiquement (frontend Vercel, backend Render).
   `replace` (aucune entrée parasite). Le store, les vues, le contrat API et
   le backend restent inchangés.
 
+## 2026-09-04 — UX R6 : Mode Vente hors-ligne — file locale + replay auto (P3-a)
+
+### Ajoutés
+- **Ventes hors-ligne** — le comptoir continue de vendre sans réseau : une
+  vente dont le POST échoue (réseau coupé, backend injoignable 502/503/504,
+  ou requête stallée > 10 s) part dans une file locale IndexedDB
+  (`mikcloud-sell/pending-sales`, zéro dépendance, dédoublonnée par voucher).
+  Au retour du réseau (event `online`, au montage, puis toutes les 60 s) la
+  file est REJOUÉE FIFO : 200 → vente tracée + toast ; 409/404 → entrée
+  retirée sans décompte fantôme (le backend idempotent garantit qu'un replay
+  ne double jamais un comptage). Bannière ambre « Ventes en attente de
+  synchronisation (n) » + chip « En attente de sync » sur les cartes.
+- **Snapshot stock/profil en localStorage** — hors-ligne, la vue affiche le
+  dernier état connu (`mikcloud-stock-cache`/`mikcloud-me-cache` écrits à
+  chaque fetch réussi) au lieu d'un écran vide : le vendeur voit son stock et
+  vend, même sans couverture.
+- **Timeout client 10 s** (`api()` gagne `timeoutMs`, `AbortSignal.timeout`)
+  — un réseau mobile peut stall une requête indéfiniment (socket demi-ouvert
+  à travers un proxy) : ni succès ni échec. Découvert en E2E : une requête
+  « offline » a stallé ~40 s puis abouti — sans timeout, la vente serait
+  restée bloquée en UI sans jamais rejoindre la file. Le pire cas ambigu
+  (serveur a vendu, client sans réponse) est couvert : le replay reçoit 409
+  « déjà remis » et se résout sans double décompte.
+
+### Modifiés
+- Frontend uniquement (`api.ts`, `sell-shell.tsx`, nouveau
+  `offline-queue.ts`, i18n +6 clés ×FR/EN). Zéro changement backend, zéro
+  changement de contrat. Les retours de stock restent en ligne (opération
+  rare, l'invariant anti-fantôme est serveur).
+
 ## 2026-09-04 — UX R5 : Mode Vente — retrait de la saisie papier (tactile + auto uniquement)
 
 ### Supprimés

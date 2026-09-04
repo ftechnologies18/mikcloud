@@ -48,6 +48,11 @@ interface ApiOptions {
   method?: "GET" | "POST" | "PUT" | "DELETE";
   body?: unknown;
   params?: Record<string, string | number | undefined>;
+  /** UX R6 — délai max (ms) avant abandon : un réseau mobile peut stall une
+   * requête indéfiniment (socket demi-ouvert) — ni succès ni échec. Passé le
+   * délai, fetch rejette (DOMException) : l'appelant traite ça comme une
+   * erreur réseau (file hors-ligne / fallback cache). */
+  timeoutMs?: number;
 }
 
 function buildUrl(path: string, params?: ApiOptions["params"]): string {
@@ -80,6 +85,10 @@ export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
     headers,
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     cache: "no-store",
+    signal:
+      opts.timeoutMs && typeof AbortSignal.timeout === "function"
+        ? AbortSignal.timeout(opts.timeoutMs)
+        : undefined,
   });
 
   if (res.status === 401) {

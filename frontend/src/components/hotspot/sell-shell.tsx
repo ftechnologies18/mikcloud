@@ -13,7 +13,7 @@
 //   sélection d'un lot entier en retour, et vente des tickets papier déjà
 //   imprimés — le code saisi « connecte » le ticket papier : décompte du
 //   stock + même traçabilité qu'une vente tactile (confirmation obligatoire).
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import Image from "next/image";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -22,6 +22,7 @@ import {
   CheckCircle2,
   ChevronDown,
   Circle,
+  CloudUpload,
   FileBarChart,
   Layers,
   Loader2,
@@ -52,8 +53,14 @@ import {
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, ApiError } from "@/lib/hotspot/api";
-import { useI18n } from "@/lib/hotspot/i18n";
+import { useI18n, tf as tfLang } from "@/lib/hotspot/i18n";
 import { formatCurrency } from "@/lib/hotspot/format";
+import {
+  listQueuedSales,
+  queueSale,
+  removeQueuedSale,
+  type QueuedSale,
+} from "@/lib/hotspot/offline-queue";
 import type { SellDayReport } from "@/lib/hotspot/types";
 import { isSamePasswordMode } from "@/components/hotspot/parts/template-render";
 import { useHotspotStore } from "@/lib/hotspot/store";
@@ -165,6 +172,39 @@ function shortBatchId(id: string): string {
 // meure (un voucher expiré sort du stock sans recyclage possible).
 const EXPIRY_SOON_MS = 48 * 60 * 60 * 1000;
 
+// UX R6 (P3-a) — ventes hors-ligne : snapshot du stock et du profil
+// revendeur en localStorage à chaque fetch réussi. Hors-ligne, la vue
+// continue d'afficher le dernier état connu (sinon, impossible de vendre :
+// la liste serait vide) — la file IndexedDB prend le relais côté ventes.
+const STOCK_CACHE_KEY = "mikcloud-stock-cache";
+const ME_CACHE_KEY = "mikcloud-me-cache";
+
+function readCache<T>(key: string): T | null {
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(key: string, data: unknown): void {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(data));
+  } catch {
+    /* quota dépassé / stockage indisponible — le cache est un confort, pas une garantie */
+  }
+}
+
+// UX R6 — une erreur « réseau » (fetch TypeError, ou 502/503/504 de la
+// passerelle quand le backend est injoignable) peut partir en file locale ;
+// une erreur HTTP métier (409 « déjà remis », 401 session…) reste une erreur
+// affichée — on ne met jamais en file ce que le serveur a réellement refusé.
+function isNetworkError(e: unknown): boolean {
+  if (!(e instanceof ApiError)) return true; // TypeError fetch = réseau
+  return e.status === 502 || e.status === 503 || e.status === 504;
+}
+
 function expiresSoon(v: SellVoucher): boolean {
   if (!v.expiresAt) return false;
   const ms = new Date(v.expiresAt).getTime() - Date.now();
@@ -241,14 +281,40 @@ export default function SellShell() {
 
   const { data: me } = useQuery({
     queryKey: ["/api/sell/me"],
-    queryFn: () => api<SellMe>("/api/sell/me"),
+    // UX R6 — hors-ligne : dernier snapshot connu (localStorage) plutôt qu'un
+    // écran vide ; retry: false — le refetch 30 s suffit au retour du réseau.
+    queryFn: async () => {
+      try {
+        const data = await api<SellMe>("/api/sell/me", { timeoutMs: 10_000 });
+        writeCache(ME_CACHE_KEY, data);
+        return data;
+      } catch (e) {
+        const cached = readCache<SellMe>(ME_CACHE_KEY);
+        if (cached && isNetworkError(e)) return cached;
+        throw e;
+      }
+    },
     refetchInterval: 30_000,
+    retry: false,
   });
 
   const { data: stock, isLoading, refetch, isRefetching } = useQuery({
     queryKey: ["/api/sell/stock"],
-    queryFn: () => api<SellVoucher[]>("/api/sell/stock"),
+    // UX R6 — même contrat que /me : snapshot localStorage en cas de réseau
+    // injoignable — le comptoir reste vendable même sans couverture.
+    queryFn: async () => {
+      try {
+        const data = await api<SellVoucher[]>("/api/sell/stock", { timeoutMs: 10_000 });
+        writeCache(STOCK_CACHE_KEY, data);
+        return data;
+      } catch (e) {
+        const cached = readCache<SellVoucher[]>(STOCK_CACHE_KEY);
+        if (cached && isNetworkError(e)) return cached;
+        throw e;
+      }
+    },
     refetchInterval: 30_000,
+    retry: false,
   });
 
   // Rapport de fin de journée — chargé uniquement quand le dialog est ouvert.
@@ -258,20 +324,103 @@ export default function SellShell() {
     enabled: reportOpen,
   });
 
+  // UX R6 — miroir de la file IndexedDB pour le rendu (bannière + chips).
+  const [queued, setQueued] = useState<QueuedSale[]>([]);
+  const refreshQueue = useCallback(() => {
+    void listQueuedSales().then(setQueued);
+  }, []);
+  useEffect(() => {
+    refreshQueue();
+  }, [refreshQueue]);
+
   const sell = useMutation({
-    // UX R5 — la vente tactile POSTe sans corps (SoldVia=sell_mode). Il n'y a
-    // plus de saisie papier : un ticket papier remis au client se vend tout
-    // seul à sa 1ʳᵉ connexion hotspot (auto_connect, tracé côté backend).
-    mutationFn: ({ id }: { id: string }) =>
-      api<{ ok: boolean }>(`/api/sell/${id}/sold`, { method: "POST" }),
-    onSuccess: () => {
-      toast.success(t("sell.soldToast"));
+    // UX R5/R6 — la vente POSTe sans corps (SoldVia=sell_mode). Erreur
+    // réseau → la vente part en file locale (IndexedDB) et sera REJOUÉE au
+    // retour du réseau (409-safe, cf. replay plus bas) ; erreur métier →
+    // R2 : la dialog reste ouverte, on ne file pas un refus du serveur.
+    mutationFn: async ({ id, voucher }: { id: string; voucher: SellVoucher }) => {
+      try {
+        await api<{ ok: boolean }>(`/api/sell/${id}/sold`, { method: "POST", timeoutMs: 10_000 });
+        return { offline: false };
+      } catch (e) {
+        if (!isNetworkError(e)) throw e;
+        await queueSale({
+          voucherId: id,
+          username: voucher.username,
+          profileName: voucher.profileName,
+          price: voucher.sellingPrice || voucher.price,
+          queuedAt: new Date().toISOString(),
+        });
+        return { offline: true };
+      }
+    },
+    onSuccess: (res) => {
+      if (res.offline) toast.info(t("sell.queuedToast"));
+      else toast.success(t("sell.soldToast"));
       setPendingSale(null);
+      refreshQueue();
       qc.invalidateQueries({ queryKey: ["/api/sell/stock"] });
       qc.invalidateQueries({ queryKey: ["/api/sell/me"] });
     },
     onError: (e: Error) => toast.error(e instanceof ApiError ? e.message : t("sell.error")),
   });
+
+  // UX R6 — replay de la file : au retour du réseau (useOnline réagit aux
+  // événements online/offline → l'effet re-court), au montage, puis toutes
+  // les 60 s tant qu'il reste des ventes en file. Le backend est idempotent
+  // (409 « déjà remis ») : un replay ne peut jamais doubler un décompte — un
+  // 409 signifie que la vente a déjà été tracée par un autre chemin, ou que
+  // le ticket a été rendu/expiré entre-temps : l'entrée est retirée de la
+  // file, jamais de décompte fantôme.
+  const replayingRef = useRef(false);
+  useEffect(() => {
+    if (!online) return;
+    let cancelled = false;
+    const run = async () => {
+      if (replayingRef.current) return;
+      replayingRef.current = true;
+      try {
+        const q = await listQueuedSales();
+        for (const item of q) {
+          if (cancelled) return;
+          try {
+            await api<{ ok: boolean }>(`/api/sell/${item.voucherId}/sold`, {
+              method: "POST",
+              timeoutMs: 10_000,
+            });
+            await removeQueuedSale(item.voucherId);
+            toast.success(tfLang(useHotspotStore.getState().lang, "sell.syncSoldToast", { code: item.username }));
+          } catch (e) {
+            // 409 : déjà vendu (autre chemin) ou ticket rendu/expiré —
+            // 404 : ticket inexistant (données nettoyées côté gérant).
+            // Dans les deux cas la file est résolue sans décompte fantôme.
+            if (e instanceof ApiError && (e.status === 409 || e.status === 404)) {
+              await removeQueuedSale(item.voucherId);
+              toast.info(
+                tfLang(useHotspotStore.getState().lang, "sell.syncConflictToast", { code: item.username }),
+              );
+            } else {
+              return; // réseau/session toujours indisponible — prochain tick
+            }
+          }
+        }
+      } finally {
+        replayingRef.current = false;
+      }
+      if (cancelled) return;
+      setQueued(await listQueuedSales());
+      qc.invalidateQueries({ queryKey: ["/api/sell/stock"] });
+      qc.invalidateQueries({ queryKey: ["/api/sell/me"] });
+    };
+    void run();
+    const iv = setInterval(() => {
+      if (!cancelled) void run();
+    }, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(iv);
+    };
+  }, [online, qc]);
 
   // N°20 — retour de stock : les tickets choisis repartent dans le stock
   // direct du compte (gérant OU propriétaire — le backend ne dépend pas d'un
@@ -340,9 +489,11 @@ export default function SellShell() {
   }
 
   // UX R2 — la vente n'est déclenchée qu'après confirmation explicite ; en
-  // cas d'erreur réseau la dialog reste ouverte (relance sans retaper).
+  // cas d'erreur réseau la vente part en file hors-ligne (UX R6) et la dialog
+  // se ferme ; les erreurs métier laissent la dialog ouverte (relance sans
+  // retaper).
   function confirmSale() {
-    if (pendingSale) sell.mutate({ id: pendingSale.id });
+    if (pendingSale) sell.mutate({ id: pendingSale.id, voucher: pendingSale });
   }
 
   function toggleGroup(key: string) {
@@ -498,6 +649,12 @@ export default function SellShell() {
                 {expiresSoon(v) && (
                   <Badge className="border-amber-500/40 bg-amber-500/10 text-[10px] text-amber-700 dark:text-amber-300">
                     {t("sell.expiresSoon")}
+                  </Badge>
+                )}
+                {/* UX R6 — vendu hors-ligne, en attente de replay serveur. */}
+                {queued.some((q) => q.voucherId === v.id) && (
+                  <Badge className="border-amber-500/40 bg-amber-500/10 text-[10px] text-amber-700 dark:text-amber-300">
+                    {t("sell.chipPending")}
                   </Badge>
                 )}
               </div>
@@ -754,6 +911,27 @@ export default function SellShell() {
                 <div className="min-w-0">
                   <p className="text-sm font-semibold">{t("sell.autoSaleTitle")}</p>
                   <p className="mt-0.5 text-xs text-muted-foreground">{t("sell.autoSaleDesc")}</p>
+                </div>
+              </div>
+            )}
+
+            {/* UX R6 — file de ventes hors-ligne : tout ce qui est parti sans
+                réseau attend ici, et repartira tout seul au retour du signal
+                (replay 409-safe — jamais de double décompte). */}
+            {queued.length > 0 && (
+              <div
+                role="status"
+                aria-live="polite"
+                className="flex items-start gap-2.5 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3"
+              >
+                <CloudUpload aria-hidden className="mt-0.5 size-4 shrink-0 text-amber-700 dark:text-amber-300" />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-amber-700 dark:text-amber-300">
+                    {t("sell.queueBannerTitle")}
+                  </p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {tf("sell.queueBannerDesc", { count: queued.length })}
+                  </p>
                 </div>
               </div>
             )}

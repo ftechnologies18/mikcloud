@@ -6,14 +6,24 @@
 // 1. Garde d'accès : session requise ; un revendeur est renvoyé vers le
 //    Mode Vente (/sell) — mêmes règles que l'ancien rendu conditionnel de
 //    page.tsx, sans rien changer au store ni aux vues.
-// 2. Synchronisation bidirectionnelle URL ↔ store :
+// 2. Synchronisation bidirectionnelle URL ↔ store, CONSCIENTE DE L'ORIGINE
+//    du changement de vue :
 //    - URL → store : boutons Retour/Avancer du navigateur (popstate) et
-//      liens directs (/app/users…) mettent à jour la vue courante ;
-//    - store → URL : chaque changement de vue (sidebar, palette de
-//      recherche, redirections internes) crée une entrée d'historique.
-//    Les deux sens sont idempotents (comparaison avant écriture) : pas de
-//    boucle, pas d'entrée parasite.
-// 3. Préchauffe (B4) : les chunks des vues les plus consultées sont
+//      liens directs (/app/users…) mettent à jour la vue — sans créer
+//      d'entrée d'historique (l'entrée existe déjà, c'est le navigateur
+//      qui vient de la rejouer) ;
+//    - store → URL : chaque changement de vue initié par l'interface
+//      (sidebar, palette de recherche, bannières, impersonation, bascule
+//      de console) pousse une entrée d'historique — via un abonnement
+//      zustand SYNCHRONE (listener `subscribe`, état réel `state`/`prev`).
+//      L'ancien effet React sur [view, pathname] tournait pendant un
+//      popstate avec la vue PÉRIMÉE du commit et repoussait l'URL qu'on
+//      venait de quitter : le Retour ne rejouait plus la navigation et le
+//      ping-pong d'URLs consommait l'historique jusqu'à quitter l'app.
+//    - Sans session (logout) : aucun push — la garde redirige vers /login.
+// 3. Normalisation : /app (nu) ou slug inconnu → replace vers la vue
+//    courante — aucune entrée d'historique parasite.
+// 4. Préchauffe (B4) : les chunks des vues les plus consultées sont
 //    importés quand le navigateur est inactif — premier clic instantané.
 
 import { useEffect, useRef } from "react";
@@ -21,7 +31,7 @@ import { usePathname, useRouter } from "next/navigation";
 import AppShell from "@/components/hotspot/app-shell";
 import { useMounted } from "@/hooks/use-mounted";
 import { useHotspotStore } from "@/lib/hotspot/store";
-import { viewFromPath, viewToPath } from "@/lib/hotspot/view-path";
+import { APP_BASE_PATH, viewFromPath, viewToPath } from "@/lib/hotspot/view-path";
 import { ShellFallback } from "./shell-fallback";
 
 export default function AppRoute() {
@@ -35,9 +45,19 @@ export default function AppRoute() {
 
   const token = useHotspotStore((s) => s.token);
   const userRole = useHotspotStore((s) => s.user?.role);
-  const view = useHotspotStore((s) => s.view);
-  const setView = useHotspotStore((s) => s.setView);
-  const normalized = useRef(false);
+
+  // Dernier chemin connu, lu par l'abonnement store→URL : celui-ci
+  // s'exécute hors rendu React (callback zustand), il ne peut pas lire
+  // `pathname` sans closure périmée — on maintient un miroir à jour.
+  const pathnameRef = useRef(pathname);
+  useEffect(() => {
+    pathnameRef.current = pathname;
+  }, [pathname]);
+
+  // Marque le setView en cours comme initié par l'URL (popstate, lien
+  // direct) : l'abonnement store→URL ne repousse alors PAS d'entrée —
+  // l'entrée existe déjà, c'est le navigateur qui vient de la rejouer.
+  const urlDriven = useRef(false);
 
   // Garde : sans session → connexion ; revendeur → Mode Vente.
   useEffect(() => {
@@ -46,26 +66,44 @@ export default function AppRoute() {
     else if (userRole === "reseller") router.replace("/sell");
   }, [mounted, token, userRole, router]);
 
-  // URL → store (back/forward + liens directs).
+  // store → URL : abonnement zustand (callback synchrone, aucune closure
+  // React périmée). C'est la SEULE source fiable de l'origine du changement
+  // de vue : navigations interface → push ; changements venus de l'URL →
+  // rien ; changement sans session (logout) → rien.
   useEffect(() => {
-    const target = viewFromPath(pathname);
-    if (target && target !== useHotspotStore.getState().view) setView(target);
-  }, [pathname, setView]);
+    const unsubscribe = useHotspotStore.subscribe((state, prev) => {
+      if (state.view === prev.view) return; // autre champ (sidebarOpen…) : rien à faire
+      if (urlDriven.current) {
+        urlDriven.current = false; // venu de l'URL : l'entrée existe déjà
+        return;
+      }
+      if (!state.token) return; // logout : la garde redirige vers /login
+      const path = viewToPath(state.view);
+      if (pathnameRef.current !== path) {
+        router.push(path, { scroll: false }); // navigation réelle → entrée d'historique
+      }
+    });
+    return unsubscribe;
+  }, [router]);
 
-  // store → URL (historique réel de la navigation console).
+  // URL → store (back/forward, liens directs, normalisation).
   useEffect(() => {
-    if (!mounted) return;
-    const path = viewToPath(view);
-    if (pathname === path) return;
-    // 1er alignement en replace : normaliser /app → /app/<vue> sans créer
-    // d'entrée d'historique parasite ; ensuite, push à chaque navigation.
-    if (!normalized.current) {
-      normalized.current = true;
-      router.replace(path, { scroll: false });
+    if (!pathname.startsWith(APP_BASE_PATH)) return; // transitions hors console : rien à faire
+    const target = viewFromPath(pathname);
+    if (target) {
+      if (target !== useHotspotStore.getState().view) {
+        urlDriven.current = true;
+        useHotspotStore.getState().setView(target);
+        // Consommé par l'abonnement s'il est enregistré ; nettoyé ici sinon
+        // (fenêtre de montage) — le flag ne fuite jamais vers le clic suivant.
+        urlDriven.current = false;
+      }
     } else {
-      router.push(path, { scroll: false });
+      // /app nu ou slug inconnu : normaliser sur la vue courante — replace,
+      // aucune entrée d'historique parasite.
+      router.replace(viewToPath(useHotspotStore.getState().view), { scroll: false });
     }
-  }, [mounted, view, pathname, router]);
+  }, [pathname, router]);
 
   // B4 — préchauffe des vues chaudes à l'idle (sessions, utilisateurs,
   // vouchers) : les chunks sont déjà en cache au premier clic.

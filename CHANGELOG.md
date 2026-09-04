@@ -5,6 +5,24 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-04 — UX NAV : correctif — le bouton Retour rejoue la navigation console
+
+### Corrigés
+- **Retour navigateur qui quittait l'application** — la synchronisation
+  store → URL reposait sur un effet React dépendant de `[view, pathname]` :
+  pendant un popstate (Retour/Avancer), il tournait avec la vue PÉRIMÉE du
+  commit et repoussait `router.push()` vers l'URL qu'on venait de quitter —
+  annulant la navigation du navigateur, créant un ping-pong d'URLs (2
+  entrées parasites par cycle) et consommant l'historique jusqu'à sortir de
+  l'application (fermeture de la PWA standalone). Remplacé par un
+  **abonnement zustand synchrone** (`store.subscribe`) conscient de
+  l'origine du changement de vue : navigations interface (sidebar, palette,
+  impersonation, bascule de console) → `push` d'une entrée ; changements
+  venus de l'URL (popstate, lien direct) → aucun push ; sans session
+  (logout) → aucun push. Normalisation `/app` nu / slug inconnu en
+  `replace` (aucune entrée parasite). Le store, les vues, le contrat API et
+  le backend restent inchangés.
+
 ## 2026-09-04 — UX R3 : Mode Vente — tickets papier connectés, recherche, lot entier, expiration
 
 ### Ajoutés
@@ -31,6 +49,7 @@ la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 - Contrat inchangé (aucune route nouvelle, aucun champ nouveau) : la vente
   papier réutilise `POST /api/sell/{id}/sold`, le retour reste
   `POST /api/sell/return`. i18n FR/EN (+11 clés `sell.*`).
+
 ## 2026-09-04 — UX R2 : Mode Vente — confirmation avant remise au client
 
 ### Ajoutés

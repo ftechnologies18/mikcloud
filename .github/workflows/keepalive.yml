@@ -1,0 +1,38 @@
+# Keep-alive Render — anti-hibernation (plan gratuit).
+# Le plan FREE de Render suspend le service après ~15 min sans trafic :
+# le premier visiteur suivant paie un redémarrage à froid de 30 à 90 s
+# (conteneur + rechargement complet de l'état depuis Neon).
+# Un ping léger toutes les 10 min maintient l'instance éveillée.
+# Alternative propre : upgrade Render Starter (payant) — supprimer ce
+# workflow le cas échéant.
+name: Keep-alive Render
+
+on:
+  schedule:
+    - cron: "*/10 * * * *" # GitHub Actions : pas de crontab inférieur à 5 min
+  workflow_dispatch: # déclenchement manuel possible depuis l'onglet Actions
+
+concurrency:
+  group: keepalive-render
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    name: Ping mikcloud.onrender.com
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Ping du service (3 tentatives)
+        run: |
+          ok=""
+          for i in 1 2 3; do
+            code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 https://mikcloud.onrender.com/ || true)"
+            echo "Tentative ${i} — HTTP ${code}"
+            if [ "${code}" = "200" ]; then ok=1; break; fi
+            sleep 20
+          done
+          if [ -z "${ok}" ]; then
+            echo "::warning::Service injoignable après 3 tentatives — vérifier le dashboard Render."
+            exit 1
+          fi
+          echo "Service éveillé (HTTP 200)."

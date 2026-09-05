@@ -105,6 +105,9 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/vouchers/{id}", a.requireRole(2, a.handleUserDelete))
 	mux.HandleFunc("POST /api/vouchers/batch/{batchId}/delete", a.requireRole(2, a.handleVouchersBatchDelete))
 	mux.HandleFunc("POST /api/vouchers/batch/{batchId}/transfer", a.requireRole(2, a.handleVouchersBatchTransfer))
+	// N°22 — impression tracée : seul canal de sortie des codes des tickets
+	// revendeur depuis la console (les listes les masquent désormais).
+	mux.HandleFunc("POST /api/vouchers/print", a.requireRole(2, a.handleVouchersPrint))
 
 	// Sessions
 	mux.HandleFunc("GET /api/sessions", a.handleSessionsList)

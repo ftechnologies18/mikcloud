@@ -5,6 +5,48 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-05 — N°22 : les codes des tickets revendeur ne fuient plus par la console gérant
+
+### Corrigés
+- **Vente en direct aux dépens du revendeur** : le gérant voyait dans la
+  console les codes (et mots de passe) de TOUS les vouchers, y compris ceux
+  déjà transférés à un revendeur — il pouvait les dicter au comptoir, les
+  copier, les réimprimer ou même RÉÉCRIRE leur code, puis encaisser le cash
+  pendant que la vente auto (auto_connect) décomptait le stock / créait la
+  créance dépôt-vente CHEZ LE REVENDEUR.
+
+### Ajoutés
+- **Canal d'impression tracé** (POST /api/vouchers/print) : le gérant reste
+  L'IMPRIMEUR DE SERVICE du revendeur (thermique 58/80 mm, grille A4) — il
+  demande souvent à son gérant d'imprimer ses tickets. L'impression reste
+  donc possible et devient le SEUL canal de sortie des codes : codes complets
+  rendus pour l'impression en cours, action TRACÉE dans le journal d'activité
+  (« Codes remis pour impression : N ticket(s) revendeur(s) — {revendeur} : M »),
+  propriété INCHANGÉE (la vente reste créditée au revendeur à la 1ʳᵉ connexion
+  du client). Le stock direct du gérant s'imprime comme avant, sans tracé.
+
+### Modifiés
+- **Listes console masquées** (/api/vouchers, /api/users, export CSV) : tout
+  voucher attribué sort avec un code « •••••• » et sans mot de passe ; badge
+  cadenas « Attribué à {revendeur} », copie et révélation supprimées. La
+  recherche par code réel fonctionne toujours (vérifier un ticket papier qui
+  revient au comptoir reste possible — la ligne ressort masquée).
+- **Code verrouillé** : réécrire username/password d'un ticket revendeur
+  depuis la console est refusé (403 structuré `reseller_voucher_locked`) —
+  formulaire d'édition verrouillé avec rappel « retour de stock » (la voie
+  propre pour récupérer un ticket, recrédite le revendeur).
+- **Réponses unitaires masquées** : PUT /api/users/{id}, enable/disable,
+  extend ne renvoient plus le vrai code d'un ticket attribué.
+- Bandeau d'impression « pour le compte des revendeurs » dans le dialog
+  (impression simple, lots, réimpression rapide F12, transfert A4, génération).
+
+### Tests
+- Go : masquage listes + CSV, canal d'impression tracé (et sans trace pour le
+  stock direct), garde 403, écho username toléré, réponse PUT masquée.
+- E2E (projet resellers) : transfert partiel → liste masquée, impression
+  tracée (tracedCount=1, code complet rendu), 403 à la réécriture, recherche
+  par code réel.
+
 ## 2026-09-04 — Mode Vente anti-fuite : le code ne se partage qu'APRÈS confirmation
 
 ### Corrigés

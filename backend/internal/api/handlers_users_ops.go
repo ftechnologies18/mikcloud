@@ -121,7 +121,8 @@ func (a *API) handleUserExtend(w http.ResponseWriter, r *http.Request) {
 	a.logActivityBy(r, db, acc, "user", fmt.Sprintf("Utilisateur %s prolongé de %d j", u.Username, req.Days))
 	a.store.Save()
 	a.store.Unlock()
-	writeJSON(w, http.StatusOK, updated)
+	// N°22 — même règle que les listes : pas de code revendeur dans la réponse.
+	writeJSON(w, http.StatusOK, maskResellerCode(updated))
 }
 
 // handleUsersBulk — POST /api/users/bulk {ids, action, days} : actions
@@ -394,6 +395,9 @@ func (a *API) handleUsersExport(w http.ResponseWriter, r *http.Request) {
 	users := filterUsers(db, acc, r.URL.Query(), now)
 	a.store.Save()
 	a.store.Unlock()
+	// Même règle que la liste : les codes des tickets revendeur ne sortent pas
+	// via l'export (ligne conservée pour l'audit, code masqué, mdp vide).
+	maskResellerCodes(users)
 
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", "attachment; filename=\"mikcloud-utilisateurs.csv\"")

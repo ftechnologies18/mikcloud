@@ -77,6 +77,24 @@ export function UcPrintDialog({
   // "" = choix automatique (dernier utilisé → défaut du compte → standard).
   const [tplChoice, setTplChoice] = useState<string>("");
 
+  // N°22 — impression pour le compte des revendeurs : le lot imprimé peut
+  // contenir des tickets attribués (ResellerID). L'impression reste le service
+  // légitime du gérant (le revendeur n'a pas toujours d'imprimante) : le
+  // bandeau le rappelle, la remise des codes est tracée côté serveur
+  // (POST /api/vouchers/print ou journal de génération/transfert) et la
+  // propriété ne change pas — la vente auto crédite le revendeur à la 1ʳᵉ
+  // connexion du client.
+  const resellerCount = vouchers.reduce((n, v) => (v.resellerId ? n + 1 : n), 0);
+  const resellerNames = useMemo(() => {
+    const names: string[] = [];
+    for (const v of vouchers) {
+      if (!v.resellerId) continue;
+      const name = v.resellerName || v.resellerId;
+      if (!names.includes(name)) names.push(name);
+    }
+    return names;
+  }, [vouchers]);
+
   // Aperçu du lot rendu via le modèle (async : génération des QR codes).
   // « batch » conserve une empreinte du rendu : tant qu'elle diffère de l'état
   // courant, l'aperçu est considéré en cours de génération.
@@ -202,6 +220,17 @@ export function UcPrintDialog({
             </Button>
           </div>
         </div>
+
+        {/* N°22 — bandeau « impression pour le compte des revendeurs »
+            (hors impression : .no-print). */}
+        {resellerCount > 0 && (
+          <p
+            role="note"
+            className="no-print rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-700 dark:text-amber-400"
+          >
+            {tf("print.resellerNotice", { n: resellerCount, names: resellerNames.join(", ") })}
+          </p>
+        )}
 
         <div className="max-h-[65vh] overflow-y-auto print:max-h-none print:overflow-visible">
           {selectedTemplate ? (

@@ -16,6 +16,8 @@ import { api, apiRaw, REGISTER_KEY } from "./helpers";
 
 const SUFFIX = Date.now().toString(36); // unique entre les réutilisations locales
 const PHONE = "07" + String(Date.now()).slice(-8); // anti-abus : numéro unique par run
+// N°22 — chaque test du fichier s'enregistre avec SON numéro (unicité compte).
+const PHONE_MASQ = "05" + String(Date.now()).slice(-8);
 
 test("cycle de vie revendeur — gardes 409, cascade 200, révocation 403", async () => {
   // 1. Compte dédié + routeur simulé + profil tarifaire.
@@ -110,4 +112,111 @@ test("cycle de vie revendeur — gardes 409, cascade 200, révocation 403", asyn
   const revoked = await apiRaw("/api/sell/stock?limit=10&offset=0", { token: resToken });
   expect(revoked.status).toBe(403);
   expect(String(revoked.json.error)).toContain("revendeur supprimé");
+});
+
+test("N°22 — codes revendeur masqués côté gérant, impression tracée, code verrouillé", async () => {
+  // 1. Compte dédié + routeur simulé + profil tarifaire.
+  const reg = await api("/api/auth/register", {
+    method: "POST",
+    body: {
+      name: "Gérant Masq",
+      username: `gerant-masq-${SUFFIX}`,
+      password: "mot-de-passe-8+",
+      key: REGISTER_KEY,
+      email: `masq-${SUFFIX}@example.ci`,
+      phone: PHONE_MASQ,
+      country: "CI",
+      city: "Abidjan",
+    },
+  });
+  const token = reg.token as string;
+  expect(token).toBeTruthy();
+
+  const router = await api("/api/routers", {
+    method: "POST",
+    token,
+    body: { name: "site-masq", host: "10.5.50.1", mode: "simulated" },
+  });
+  const profile = await api("/api/profiles", {
+    method: "POST",
+    token,
+    body: { name: "1 Heure", price: 200, sellingPrice: 200, validityDays: 7, sessionTimeoutMin: 60 },
+  });
+  expect(router.id).toBeTruthy();
+  expect(profile.id).toBeTruthy();
+
+  // 2. Lot de 2 dont UN SEUL ticket transféré au revendeur (l'autre reste en
+  //    stock direct) : les deux traversent toutes les vérifications.
+  const reseller = await api("/api/resellers", {
+    method: "POST",
+    token,
+    body: { name: "Vendeur Masq", username: `masq-${SUFFIX}`, pin: "2468", credit: 50_000 },
+  });
+  const batch = await api("/api/vouchers/generate", {
+    method: "POST",
+    token,
+    body: { count: 2, profileId: profile.id, routerId: router.id },
+  });
+  await api(`/api/vouchers/batch/${batch.batchId}/transfer`, {
+    method: "POST",
+    token,
+    body: { resellerId: reseller.id, quantity: 1 },
+  });
+
+  // 3. Liste gérant : le ticket transféré sort MASQUÉ, le direct en clair.
+  const list = await api(`/api/vouchers?search=${batch.batchId}&pageSize=10`, { token });
+  const rows = list.data as Array<{
+    id: string;
+    username: string;
+    password: string;
+    resellerId: string;
+    resellerName: string;
+  }>;
+  expect(rows.length).toBe(2);
+  const resRow = rows.find((r) => r.resellerId !== "");
+  const directRow = rows.find((r) => r.resellerId === "");
+  expect(resRow).toBeTruthy();
+  expect(directRow).toBeTruthy();
+  expect(resRow!.username).toBe("••••••");
+  expect(resRow!.password).toBe("");
+  expect(resRow!.resellerName).toBe("Vendeur Masq");
+  const directCode = directRow!.username;
+  expect(directCode).not.toBe("••••••");
+
+  // 4. Canal d'impression tracé : codes COMPLETS rendus + trace revendeur.
+  const printed = await api("/api/vouchers/print", {
+    method: "POST",
+    token,
+    body: { ids: [resRow!.id, directRow!.id] },
+  });
+  const printedVouchers = printed.vouchers as Array<{ id: string; username: string }>;
+  const printedRes = printedVouchers.find((v) => v.id === resRow!.id);
+  expect(printedRes).toBeTruthy();
+  expect(printedRes!.username).not.toBe("••••••");
+  expect(String(printedRes!.username).length).toBeGreaterThan(0);
+  expect(printed.tracedCount).toBe(1);
+
+  // 5. Le code d'un ticket attribué n'est pas réinscriptible depuis la console.
+  const locked = await apiRaw(`/api/users/${resRow!.id}`, {
+    method: "PUT",
+    token,
+    body: { username: "HACKED" },
+  });
+  expect(locked.status).toBe(403);
+  expect(locked.json.code).toBe("reseller_voucher_locked");
+
+  // 6. Recherche par le VRAI code (ticket papier qui revient) : la ligne
+  //    ressort — mais TOUJOURS masquée en sortie.
+  const found = await api(`/api/vouchers?search=${directCode}`, { token });
+  expect(found.total).toBe(1);
+  const foundRow = (found.data as Array<{ username: string; resellerId: string }>)[0];
+  expect(foundRow.resellerId).toBe("");
+  expect(foundRow.username).toBe(directCode);
+
+  const foundRes = await api(`/api/vouchers?search=${(printedRes as { username: string }).username}`, { token });
+  const resHit = (foundRes.data as Array<{ username: string; resellerId: string }>).find(
+    (r) => r.resellerId !== "",
+  );
+  expect(resHit).toBeTruthy();
+  expect(resHit!.username).toBe("••••••");
 });

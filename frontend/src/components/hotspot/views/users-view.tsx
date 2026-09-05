@@ -223,7 +223,7 @@ export default function UsersView() {
       if (user) {
         setEditing(user);
         setForm({
-          username: user.username,
+          username: user.resellerId ? "" : user.username,
           password: "",
           profileId: user.profileId,
           routerId: user.routerId,
@@ -294,7 +294,9 @@ export default function UsersView() {
   function openEdit(user: HotspotUser) {
     setEditing(user);
     setForm({
-      username: user.username,
+      // N°22 — ticket revendeur : le code est masqué et verrouillé (le champ
+      // reste vide, la sauvegarde ne renvoie donc pas username/password).
+      username: user.resellerId ? "" : user.username,
       password: "",
       profileId: user.profileId,
       routerId: user.routerId,
@@ -625,10 +627,14 @@ export default function UsersView() {
               ? t("common.activate")
               : t("common.deactivate")}
           </DropdownMenuItem>
-          <DropdownMenuItem className="min-h-10" onClick={() => void copyCredentials(user)}>
-            <ClipboardCopy className="size-4" />
-            {t("users.copyCredentials")}
-          </DropdownMenuItem>
+          {/* N°22 — ticket revendeur : pas de copie d'identifiants (code masqué,
+              anti-vente en direct ; l'impression tracée reste la seule sortie). */}
+          {!user.resellerId && (
+            <DropdownMenuItem className="min-h-10" onClick={() => void copyCredentials(user)}>
+              <ClipboardCopy className="size-4" />
+              {t("users.copyCredentials")}
+            </DropdownMenuItem>
+          )}
           {/* Prolongation masquée sur un voucher jamais connecté : sa validité
               s'ancrera au 1er login (elle se règle via le profil). */}
           {!(user.kind === "voucher" && !user.expiresAt) && (
@@ -911,16 +917,20 @@ export default function UsersView() {
                         />
                         <div className="flex min-w-0 flex-col gap-0.5">
                           <span className="truncate font-mono text-sm font-medium">{user.username}</span>
-                          <PasswordCell
-                            password={user.password}
-                            visible={revealed.has(user.id)}
-                            onToggle={() => toggleReveal(user.id)}
-                            label={
-                              revealed.has(user.id)
-                                ? tf("vouchers.hidePassword", { name: user.username })
-                                : tf("vouchers.showPassword", { name: user.username })
-                            }
-                          />
+                          {user.resellerId ? (
+                            <span className="font-mono text-sm tracking-widest text-muted-foreground">••••••</span>
+                          ) : (
+                            <PasswordCell
+                              password={user.password}
+                              visible={revealed.has(user.id)}
+                              onToggle={() => toggleReveal(user.id)}
+                              label={
+                                revealed.has(user.id)
+                                  ? tf("vouchers.hidePassword", { name: user.username })
+                                  : tf("vouchers.showPassword", { name: user.username })
+                              }
+                            />
+                          )}
                         </div>
                       </div>
                       {renderUserMenu(user)}
@@ -993,16 +1003,20 @@ export default function UsersView() {
                       <TableCell>
                         <div className="flex flex-col gap-0.5 py-1">
                           <span className="font-mono text-sm font-medium">{user.username}</span>
-                          <PasswordCell
-                            password={user.password}
-                            visible={revealed.has(user.id)}
-                            onToggle={() => toggleReveal(user.id)}
-                            label={
-                              revealed.has(user.id)
-                                ? tf("vouchers.hidePassword", { name: user.username })
-                                : tf("vouchers.showPassword", { name: user.username })
-                            }
-                          />
+                          {user.resellerId ? (
+                            <span className="font-mono text-sm tracking-widest text-muted-foreground">••••••</span>
+                          ) : (
+                            <PasswordCell
+                              password={user.password}
+                              visible={revealed.has(user.id)}
+                              onToggle={() => toggleReveal(user.id)}
+                              label={
+                                revealed.has(user.id)
+                                  ? tf("vouchers.hidePassword", { name: user.username })
+                                  : tf("vouchers.showPassword", { name: user.username })
+                              }
+                            />
+                          )}
                         </div>
                       </TableCell>
                       <TableCell>
@@ -1109,7 +1123,7 @@ export default function UsersView() {
                   placeholder={t("users.autoGenerated")}
                   value={form.username}
                   onChange={(event) => setForm((f) => ({ ...f, username: event.target.value }))}
-                  disabled={saveMutation.isPending}
+                  disabled={saveMutation.isPending || (editing?.resellerId ?? "") !== ""}
                 />
               </div>
               <div className="grid gap-2">
@@ -1121,10 +1135,16 @@ export default function UsersView() {
                   placeholder={editing ? t("users.unchangedIfEmpty") : t("users.autoGenerated")}
                   value={form.password}
                   onChange={(event) => setForm((f) => ({ ...f, password: event.target.value }))}
-                  disabled={saveMutation.isPending}
+                  disabled={saveMutation.isPending || (editing?.resellerId ?? "") !== ""}
                 />
               </div>
             </div>
+
+            {/* N°22 — ticket revendeur : code verrouillé dans la console (garde
+                serveur symétrique : PUT refuse tout username/password). */}
+            {(editing?.resellerId ?? "") !== "" && (
+              <p className="text-xs text-muted-foreground">{t("users.editCodeLocked")}</p>
+            )}
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="grid gap-2">

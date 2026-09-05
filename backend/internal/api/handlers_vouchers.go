@@ -19,6 +19,100 @@ func (a *API) handleVouchersList(w http.ResponseWriter, r *http.Request) {
 	a.usersList(w, r, "voucher")
 }
 
+// N°22 — Impression tracée : SEUL canal de sortie des codes des tickets
+// revendeur depuis la console gérant.
+//
+// Contexte : depuis le masquage des listes (maskResellerCodes), la console
+// n'expose plus les codes des tickets attribués (ResellerID != "") — le gérant
+// ne peut plus les dicter au comptoir ni les recopier. Mais il reste
+// L'IMPRIMEUR DE SERVICE du revendeur : celui-ci n'a pas toujours d'imprimante
+// et demande au gérant d'imprimer ses tickets (thermique 58/80 mm, grille A4).
+// Cet endpoint répond à ce besoin légitime SANS rouvrir la fuite :
+//   - il délivre les codes COMPLETS uniquement pour l'impression en cours ;
+//   - toute remise de codes revendeur est TRACÉE dans le journal d'activité
+//     (anti-litige : horodatée, attribuée à l'acteur connecté, décompte par
+//     revendeur) ;
+//   - la propriété ne change PAS : le ticket reste chez le revendeur et la
+//     vente auto (auto_connect) continue de créditer SON compte à la première
+//     connexion du client ;
+//   - le stock direct du gérant s'imprime comme avant, sans tracé.
+
+// vouchersPrintRequest — corps de POST /api/vouchers/print.
+type vouchersPrintRequest struct {
+	IDs []string `json:"ids"`
+}
+
+// handleVouchersPrint — POST /api/vouchers/print {ids:[...]} (requireRole 2).
+// Répond {vouchers:[...], tracedCount:N} — vouchers complets (codes réels),
+// scopés au compte ; tracedCount = tickets revendeur tracés dans l'activité.
+func (a *API) handleVouchersPrint(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
+	var req vouchersPrintRequest
+	if err := decodeBody(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
+		return
+	}
+	if len(req.IDs) == 0 {
+		writeErr(w, http.StatusBadRequest, "Aucun ticket demandé")
+		return
+	}
+	// Plafond = cap de génération : un lot thermique / une grille A4 ne
+	// dépasse jamais quelques centaines de tickets.
+	if len(req.IDs) > 500 {
+		writeErr(w, http.StatusBadRequest, "Maximum 500 tickets par impression")
+		return
+	}
+	wanted := make(map[string]bool, len(req.IDs))
+	for _, id := range req.IDs {
+		if id = strings.TrimSpace(id); id != "" {
+			wanted[id] = true
+		}
+	}
+
+	a.store.Lock()
+	db := a.store.Data()
+	out := make([]model.HotspotUser, 0, len(wanted))
+	byReseller := map[string]int{}
+	resNames := map[string]string{}
+	for i := range db.HotspotUsers {
+		u := &db.HotspotUsers[i]
+		if u.AccountID != acc || !wanted[u.ID] {
+			continue
+		}
+		out = append(out, *u)
+		if u.ResellerID != "" {
+			byReseller[u.ResellerID]++
+			resNames[u.ResellerID] = u.ResellerName
+		}
+	}
+	// Traçabilité — uniquement les tickets revendeur (le stock direct du
+	// gérant s'imprime sans journal : comportement historique conservé).
+	resCount := 0
+	details := make([]string, 0, len(byReseller))
+	for id, n := range byReseller {
+		resCount += n
+		details = append(details, fmt.Sprintf("%s : %d", resNames[id], n))
+	}
+	if resCount > 0 {
+		sort.Strings(details)
+		a.logActivityBy(r, db, acc, "voucher",
+			fmt.Sprintf("Codes remis pour impression : %d ticket(s) revendeur(s) — %s", resCount, strings.Join(details, ", ")))
+		a.store.Save()
+	}
+	a.store.Unlock()
+
+	if len(out) == 0 {
+		writeErr(w, http.StatusNotFound, "Aucun ticket trouvé pour ces identifiants")
+		return
+	}
+	// Tri création décroissante : ordre stable, identique aux listes.
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt > out[j].CreatedAt })
+	writeJSON(w, http.StatusOK, map[string]any{
+		"vouchers":    out,
+		"tracedCount": resCount,
+	})
+}
+
 func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 	// P3 — compte expiré : écritures métier refusées (lecture seule).
 	if !a.guardAccountWrite(w, r) {

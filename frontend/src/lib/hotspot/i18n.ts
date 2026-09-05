@@ -274,6 +274,8 @@ const fr: Record<string, string> = {
   "users.deleteTitle": "Supprimer {name} ?",
   "users.deleteDesc": "Cette action est irréversible. Le compte hotspot sera retiré du routeur.",
   "users.copyCredentials": "Copier identifiants",
+  // N°22 — ticket revendeur : code verrouillé dans la console gérant.
+  "users.editCodeLocked": "Ticket attribué à un revendeur : le code n’est pas modifiable ici. Effectuez un retour de stock pour le récupérer.",
   "users.credentialsCopied": "Identifiants copiés",
   "users.extend": "Prolonger…",
   "users.extendTitle": "Prolonger {name}",
@@ -351,6 +353,8 @@ const fr: Record<string, string> = {
   "vouchers.hidePassword": "Masquer le mot de passe de {name}",
   "vouchers.printOne": "Imprimer ce voucher",
   "vouchers.printOneTitle": "Imprimer le voucher — {code}",
+  // N°22 — ticket revendeur : code masqué dans les listes (anti-vente en direct).
+  "vouchers.resellerLocked": "Attribué à {name} — code masqué (impression tracée uniquement)",
   "vouchers.deletedToast": "Voucher {code} supprimé",
   "vouchers.deleteTitle": "Supprimer le voucher {code} ?",
   "vouchers.deleteDesc": "Cette action est irréversible. Le ticket ne pourra plus être utilisé.",
@@ -1698,6 +1702,8 @@ const fr: Record<string, string> = {
   // — print (uc-print-dialog) —
   "print.action": "Imprimer",
   "print.ticketsReady": "{n} ticket{p} prêt{p} à imprimer — découpez le long des cadres.",
+  // N°22 — impression pour le compte des revendeurs (action tracée côté serveur).
+  "print.resellerNotice": "{n} ticket{p} attribué{p} à un revendeur ({names}) — impression pour son compte, action tracée dans le journal d’activité. La vente reste créditée au revendeur.",
   "print.template": "Modèle",
   "print.templateAria": "Modèle de voucher pour l'impression",
   "print.standard": "Ticket standard MikCloud",
@@ -2283,6 +2289,8 @@ const en: Record<string, string> = {
   "users.deleteTitle": "Delete {name}?",
   "users.deleteDesc": "This action is irreversible. The hotspot account will be removed from the router.",
   "users.copyCredentials": "Copy credentials",
+  // N°22 — reseller ticket: code locked in the manager console.
+  "users.editCodeLocked": "Ticket assigned to a reseller: the code cannot be changed here. Perform a stock return to get it back.",
   "users.credentialsCopied": "Credentials copied",
   "users.extend": "Extend…",
   "users.extendTitle": "Extend {name}",
@@ -2360,6 +2368,8 @@ const en: Record<string, string> = {
   "vouchers.hidePassword": "Hide password of {name}",
   "vouchers.printOne": "Print this voucher",
   "vouchers.printOneTitle": "Print voucher — {code}",
+  // N°22 — reseller ticket: code hidden in lists (anti direct-sale).
+  "vouchers.resellerLocked": "Assigned to {name} — code hidden (traced printing only)",
   "vouchers.deletedToast": "Voucher {code} deleted",
   "vouchers.deleteTitle": "Delete voucher {code}?",
   "vouchers.deleteDesc": "This action is irreversible. The ticket will no longer be usable.",
@@ -3707,6 +3717,8 @@ const en: Record<string, string> = {
   // — print —
   "print.action": "Print",
   "print.ticketsReady": "{n} ticket{p} ready to print — cut along the frames.",
+  // N°22 — printing on behalf of resellers (action traced server-side).
+  "print.resellerNotice": "{n} ticket{p} assigned to a reseller ({names}) — printing on their behalf, action traced in the activity log. The sale is still credited to the reseller.",
   "print.template": "Template",
   "print.templateAria": "Voucher template for printing",
   "print.standard": "Standard MikCloud ticket",

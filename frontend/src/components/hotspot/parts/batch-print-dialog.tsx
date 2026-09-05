@@ -95,9 +95,32 @@ export function BatchPrintDialog({
   const isLoading = vouchers === null;
   const items = vouchers ?? [];
 
+  // N°22 — impression pour le compte des revendeurs : même bandeau que
+  // uc-print-dialog (les codes ont été remis via le canal tracé
+  // POST /api/vouchers/print ; la propriété et l'attribution ne changent pas).
+  // Calcul direct (petits volumes) — pas de useMemo dérivé d'un tableau
+  // reconstruit à chaque rendu (react-hooks/preserve-manual-memoization).
+  const resellerCount = items.reduce((n, v) => (v.resellerId ? n + 1 : n), 0);
+  const resellerNames: string[] = [];
+  for (const v of items) {
+    if (!v.resellerId) continue;
+    const name = v.resellerName || v.resellerId;
+    if (!resellerNames.includes(name)) resellerNames.push(name);
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="gap-4 sm:max-w-3xl">
+        {/* N°22 — bandeau « impression pour le compte des revendeurs »
+            (hors impression : .no-print). */}
+        {resellerCount > 0 && (
+          <p
+            role="note"
+            className="no-print rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-700 dark:text-amber-400"
+          >
+            {tf("print.resellerNotice", { n: resellerCount, names: resellerNames.join(", ") })}
+          </p>
+        )}
         <div className="no-print flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <DialogTitle className="truncate">{title}</DialogTitle>

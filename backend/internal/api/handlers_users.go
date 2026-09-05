@@ -19,6 +19,36 @@ func (a *API) handleUsersList(w http.ResponseWriter, r *http.Request) {
 	a.usersList(w, r, "")
 }
 
+// maskResellerCodes — la console gérant ne révèle JAMAIS les codes des tickets
+// attribués à un revendeur (anti-« vente en direct » : le gérant ne peut plus
+// dicter ni copier depuis les listes un ticket qui ne lui appartient pas — la
+// vente passerait sur le dos du revendeur : créance dépôt-vente ou stock payé
+// décompté chez LUI à la connexion du client, cash encaissé par le gérant).
+// Le filtre `search` continue de tourner sur les VRAIS codes côté serveur
+// (vérifier un ticket papier qui revient au comptoir reste possible) ; le
+// seul canal de sortie des codes est l'impression tracée
+// POST /api/vouchers/print — et le revendeur voit ses codes dans sa PWA
+// Mode Vente (/api/sell/*). À appeler après filterUsers (copies), hors store.
+func maskResellerCodes(users []model.HotspotUser) {
+	for i := range users {
+		if users[i].ResellerID != "" {
+			users[i].Username = "••••••"
+			users[i].Password = ""
+		}
+	}
+}
+
+// maskResellerCode — variante unitaire : masque la COPIE renvoyée au client
+// (PUT /api/users/{id}, enable/disable, extend) sans toucher au stockage —
+// la réponse d'une action ne doit pas devenir un canal de sortie du code.
+func maskResellerCode(u model.HotspotUser) model.HotspotUser {
+	if u.ResellerID != "" {
+		u.Username = "••••••"
+		u.Password = ""
+	}
+	return u
+}
+
 func (a *API) usersList(w http.ResponseWriter, r *http.Request, kindOverride string) {
 	acc := accountScope(r)
 	q := r.URL.Query()
@@ -38,6 +68,7 @@ func (a *API) usersList(w http.ResponseWriter, r *http.Request, kindOverride str
 	filtered := filterUsers(db, acc, q, now)
 	a.store.Save()
 	a.store.Unlock()
+	maskResellerCodes(filtered)
 
 	total := len(filtered)
 	start := (page - 1) * pageSize
@@ -212,6 +243,24 @@ func (a *API) handleUserUpdate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "Utilisateur introuvable")
 		return
 	}
+	// Garde propriété — le code d'un ticket attribué à un revendeur n'est pas
+	// modifiable depuis la console : réécrire username/password permettrait de
+	// contourner le masquage des listes (poser un code connu puis le dicter au
+	// comptoir = vente en direct aux dépens du revendeur). La voie propre pour
+	// récupérer un ticket reste le retour de stock (recrédite le revendeur).
+	// Un écho strict du username inchangé est toléré (clients qui renvoient
+	// le formulaire complet) ; le commentaire/profil/statut restent éditables
+	// (outils de gestion et anti-fraude du gérant).
+	if cur.ResellerID != "" {
+		usernameEcho := req.Username != nil && strings.TrimSpace(*req.Username) == cur.Username
+		if (req.Username != nil && !usernameEcho) || (req.Password != nil && *req.Password != "") {
+			a.store.Unlock()
+			writeErrCode(w, http.StatusForbidden, "reseller_voucher_locked",
+				"Ticket attribué à "+cur.ResellerName+" : le code n'est pas modifiable depuis la console (effectuez un retour de stock pour le récupérer)",
+				map[string]any{"resellerId": cur.ResellerID, "resellerName": cur.ResellerName})
+			return
+		}
+	}
 	u := *cur
 	oldUsername := cur.Username
 	router := findRouterScoped(db, u.RouterID, acc)
@@ -290,7 +339,7 @@ func (a *API) handleUserUpdate(w http.ResponseWriter, r *http.Request) {
 		a.logActivityBy(r, a.store.Data(), acc, "user", "Utilisateur "+u.Username+" modifié (en attente du routeur, commande "+cmd.ID+")")
 		a.store.Save()
 		a.store.Unlock()
-		writeJSON(w, http.StatusOK, u)
+		writeJSON(w, http.StatusOK, maskResellerCode(u))
 		return
 	}
 
@@ -312,7 +361,7 @@ func (a *API) handleUserUpdate(w http.ResponseWriter, r *http.Request) {
 	a.logActivityBy(r, a.store.Data(), acc, "user", "Utilisateur "+u.Username+" modifié")
 	a.store.Save()
 	a.store.Unlock()
-	writeJSON(w, http.StatusOK, u)
+	writeJSON(w, http.StatusOK, maskResellerCode(u))
 }
 
 func (a *API) handleUserEnable(w http.ResponseWriter, r *http.Request) {
@@ -374,7 +423,7 @@ func (a *API) userSetStatus(w http.ResponseWriter, r *http.Request, action strin
 			writeErr(w, http.StatusNotFound, "Utilisateur introuvable")
 			return
 		}
-		writeJSON(w, http.StatusOK, updated)
+		writeJSON(w, http.StatusOK, maskResellerCode(*updated))
 		return
 	}
 	if routerCopy != nil {
@@ -415,7 +464,7 @@ func (a *API) userSetStatus(w http.ResponseWriter, r *http.Request, action strin
 	a.logActivityBy(r, a.store.Data(), acc, "user", "Utilisateur "+username+" "+verb)
 	a.store.Save()
 	a.store.Unlock()
-	writeJSON(w, http.StatusOK, updated)
+	writeJSON(w, http.StatusOK, maskResellerCode(*updated))
 }
 
 func (a *API) handleUserDelete(w http.ResponseWriter, r *http.Request) {

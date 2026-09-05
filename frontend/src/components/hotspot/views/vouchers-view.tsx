@@ -20,6 +20,7 @@ import {
   Info,
   Layers,
   Loader2,
+  Lock,
   MoreHorizontal,
   Printer,
   RefreshCcw,
@@ -185,6 +186,8 @@ export default function VouchersView() {
   const [printTitle, setPrintTitle] = useState("");
   /** Lot en cours d'impression (F12) — mémorisé à l'impression par le dialog. */
   const [printBatchId, setPrintBatchId] = useState<string | undefined>(undefined);
+  // N°22 — impression unitaire en cours (spinner sur la ligne concernée).
+  const [printingVoucherId, setPrintingVoucherId] = useState<string | null>(null);
 
   // Suppression
   const [deleting, setDeleting] = useState<HotspotUser | null>(null);
@@ -323,11 +326,33 @@ export default function VouchersView() {
     else toast.error(t("common.copyImpossible"));
   }
 
-  function printOne(voucher: HotspotUser) {
-    setPrintVouchers([voucher]);
-    setPrintTitle(tf("vouchers.printOneTitle", { code: voucher.username }));
-    setPrintBatchId(voucher.batchId || undefined);
-    setPrintOpen(true);
+  // N°22 — canal d'impression tracé : les listes masquent les codes des
+  // tickets revendeur (anti-vente en direct) ; l'impression récupère les
+  // codes COMPLETS via POST /api/vouchers/print — le serveur trace toute
+  // remise de codes revendeur dans le journal d'activité. La propriété ne
+  // change pas : le ticket reste chez le revendeur (vente auto à la 1ʳᵉ
+  // connexion du client créditée chez lui).
+  async function fetchPrintVouchers(ids: string[]): Promise<HotspotUser[]> {
+    const res = await api<{ vouchers: HotspotUser[]; tracedCount: number }>("/api/vouchers/print", {
+      method: "POST",
+      body: { ids },
+    });
+    return res.vouchers;
+  }
+
+  async function printOne(voucher: HotspotUser) {
+    setPrintingVoucherId(voucher.id);
+    try {
+      const full = await fetchPrintVouchers([voucher.id]);
+      setPrintVouchers(full);
+      setPrintTitle(tf("vouchers.printOneTitle", { code: full[0]?.username ?? voucher.username }));
+      setPrintBatchId(voucher.batchId || undefined);
+      setPrintOpen(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("vouchers.printFailed"));
+    } finally {
+      setPrintingVoucherId(null);
+    }
   }
 
   const generateMutation = useMutation({
@@ -482,7 +507,7 @@ export default function VouchersView() {
         }
         return;
       }
-      setPrintVouchers(res.data);
+      setPrintVouchers(await fetchPrintVouchers(res.data.map((v) => v.id)));
       setPrintTitle(
         tf("vouchers.batches.printTitleActive", { batch: shortBatch(batch.id), n: res.total }),
       );
@@ -525,7 +550,7 @@ export default function VouchersView() {
         }
         return;
       }
-      setPrintVouchers(res.data);
+      setPrintVouchers(await fetchPrintVouchers(res.data.map((v) => v.id)));
       setPrintTitle(
         tf("vouchers.batches.printTitleActive", { batch: shortBatch(lastBatch), n: res.total }),
       );
@@ -574,7 +599,10 @@ export default function VouchersView() {
         setMultiPrintBatch(null);
         return;
       }
-      setMultiPrintVouchers(res.data);
+      // N°22 — même canal tracé que printBatch : les listes masquent les codes
+      // revendeur, l'impression multi-formats les récupère via
+      // POST /api/vouchers/print (remise tracée, propriété inchangée).
+      setMultiPrintVouchers(await fetchPrintVouchers(res.data.map((v) => v.id)));
     } catch (error) {
       setMultiPrintBatch(null);
       toast.error(error instanceof Error ? error.message : t("vouchers.printFailed"));
@@ -897,29 +925,48 @@ export default function VouchersView() {
                       <TableCell className="pl-4 sm:pl-6">
                         <span className="inline-flex items-center gap-0.5">
                           <span className="font-mono text-sm font-medium">{voucher.username}</span>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="size-9 text-muted-foreground hover:text-foreground"
-                            onClick={() => void copyCode(voucher)}
-                            aria-label={tf("vouchers.copyCodeAria", { code: voucher.username })}
-                            title={t("vouchers.copyCode")}
-                          >
-                            <Copy className="size-4" />
-                          </Button>
+                          {voucher.resellerId ? (
+                            // N°22 — ticket revendeur : code masqué côté serveur,
+                            // copie impossible (anti-vente en direct) ; l'impression
+                            // tracée reste disponible dans le menu d'actions.
+                            <span
+                              className="inline-flex size-9 items-center justify-center text-muted-foreground"
+                              title={tf("vouchers.resellerLocked", { name: voucher.resellerName })}
+                            >
+                              <Lock className="size-4" aria-hidden />
+                              <span className="sr-only">
+                                {tf("vouchers.resellerLocked", { name: voucher.resellerName })}
+                              </span>
+                            </span>
+                          ) : (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-9 text-muted-foreground hover:text-foreground"
+                              onClick={() => void copyCode(voucher)}
+                              aria-label={tf("vouchers.copyCodeAria", { code: voucher.username })}
+                              title={t("vouchers.copyCode")}
+                            >
+                              <Copy className="size-4" />
+                            </Button>
+                          )}
                         </span>
                       </TableCell>
                       <TableCell>
-                        <PasswordCell
-                          password={voucher.password}
-                          visible={revealed.has(voucher.id)}
-                          onToggle={() => toggleReveal(voucher.id)}
-                          label={
-                            revealed.has(voucher.id)
-                              ? tf("vouchers.hidePassword", { name: voucher.username })
-                              : tf("vouchers.showPassword", { name: voucher.username })
-                          }
-                        />
+                        {voucher.resellerId ? (
+                          <span className="font-mono text-sm tracking-widest text-muted-foreground">••••••</span>
+                        ) : (
+                          <PasswordCell
+                            password={voucher.password}
+                            visible={revealed.has(voucher.id)}
+                            onToggle={() => toggleReveal(voucher.id)}
+                            label={
+                              revealed.has(voucher.id)
+                                ? tf("vouchers.hidePassword", { name: voucher.username })
+                                : tf("vouchers.showPassword", { name: voucher.username })
+                            }
+                          />
+                        )}
                       </TableCell>
                       <TableCell>
                         <Badge variant="outline" className="max-w-36 truncate">
@@ -993,8 +1040,16 @@ export default function VouchersView() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-56">
-                            <DropdownMenuItem className="min-h-10" onClick={() => printOne(voucher)}>
-                              <Printer className="size-4" />
+                            <DropdownMenuItem
+                              className="min-h-10"
+                              disabled={printingVoucherId === voucher.id}
+                              onClick={() => void printOne(voucher)}
+                            >
+                              {printingVoucherId === voucher.id ? (
+                                <Loader2 className="size-4 animate-spin" />
+                              ) : (
+                                <Printer className="size-4" />
+                              )}
                               {t("vouchers.printOne")}
                             </DropdownMenuItem>
                             {/* N — resynchronisation (uniquement si absent du routeur). */}

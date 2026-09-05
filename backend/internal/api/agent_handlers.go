@@ -696,6 +696,21 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	sort.Slice(queued, func(i, j int) bool { return queued[i].CreatedAt < queued[j].CreatedAt })
+	// N°31-c — le (ou les) chunk(s) walled_garden FERMENT la marche : si une
+	// de ses lignes avorte l'import RouterOS (constat prod 2026-09-05 — chunk
+	// muet 2×/2×, commandes du même fichier tuées avec lui), les commandes
+	// métier/télémétrie du même check-in continuent de vivre. Le
+	// walled_garden est idempotent et repris par la boucle zombie N°31.
+	walled := []model.Command{}
+	rest := make([]model.Command, 0, len(queued))
+	for _, c := range queued {
+		if c.Kind == model.CmdWalledGarden {
+			walled = append(walled, c)
+		} else {
+			rest = append(rest, c)
+		}
+	}
+	queued = append(rest, walled...)
 
 	b := agent.Builder{BaseURL: base, Token: token}
 	var chunks []string
@@ -747,6 +762,13 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 	status := vals.Get("status")
 	if token == "" || cmdID == "" {
 		writeErr(w, http.StatusBadRequest, "Paramètres manquants (token, cmd)")
+		return
+	}
+	// N°31-c — battement de cœur du script walled_garden (« status=started ») :
+	// preuve de LIVRAISON du fichier, pas un résultat final. La commande
+	// reste « sent » — le rapport réel ou la reprise zombie N°31 tranchera.
+	if status == "started" {
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true, "heartbeat": true})
 		return
 	}
 	ok := status == "ok"

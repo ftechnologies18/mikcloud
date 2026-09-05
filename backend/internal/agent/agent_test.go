@@ -407,8 +407,9 @@ func TestWalledGardenScript(t *testing.T) {
 	for _, marqueur := range []string{
 		"# mikcloud cmd c-wg01 walled_garden",
 		`:local okcwg01 true`,
-		`/ip hotspot walled-garden remove [find comment~"` + WalledGardenMarker + `"]`,
-		`/ip hotspot walled-garden ip remove [find comment~"` + WalledGardenMarker + `"]`,
+		`status=started`, // N°31-c : battement de cœur de livraison
+		`/ip hotspot walled-garden remove [find comment="` + WalledGardenMarker + ` page"]`,
+		`/ip hotspot walled-garden remove [find comment="` + WalledGardenMarker + ` dns"]`,
 		`/ip hotspot walled-garden add action=allow dst-host="mikcloud.ftci.fr" comment="` + WalledGardenMarker + ` page"`,
 		`/ip hotspot walled-garden add action=allow dst-host="api.example.com:8443" comment="` + WalledGardenMarker + ` page"`,
 		`/ip hotspot walled-garden ip add action=allow protocol=udp dst-port=53 comment="` + WalledGardenMarker + ` dns"`,
@@ -442,7 +443,8 @@ func TestWalledGardenInstallBlock(t *testing.T) {
 	// parseur console), règles page + DNS, marqueur d'idempotence.
 	with := InstallScript("https://cloud.example", "tok", "Routeur A", "a.example", "b.example")
 	for _, marqueur := range []string{
-		`/ip hotspot walled-garden remove [find comment~"` + WalledGardenMarker + `"]`,
+		`/ip hotspot walled-garden remove [find comment="` + WalledGardenMarker + ` page"]`,
+		`/ip hotspot walled-garden ip remove [find comment="` + WalledGardenMarker + ` dns"]`,
 		`/ip hotspot walled-garden add action=allow dst-host="a.example" comment="` + WalledGardenMarker + ` page"`,
 		`/ip hotspot walled-garden add action=allow dst-host="b.example" comment="` + WalledGardenMarker + ` page"`,
 		`/ip hotspot walled-garden ip add action=allow protocol=udp dst-port=53`,

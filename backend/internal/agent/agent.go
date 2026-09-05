@@ -1318,11 +1318,12 @@ func walledGardenInstallBlock(domains []string) string {
 	sb.WriteString("    # son API restent joignables AVANT authentification — le scan du QR\n")
 	sb.WriteString("    # fonctionne depuis le WiFi du hotspot. Seules les règles marquées\n")
 	sb.WriteString("    # \"" + WalledGardenMarker + "\" sont remplacées, les vôtres sont conservées.\n")
-	sb.WriteString("    :do {\n      /ip hotspot walled-garden remove [find comment~\"" + WalledGardenMarker + "\"]\n    } on-error={}\n")
-	sb.WriteString("    :do {\n      /ip hotspot walled-garden ip remove [find comment~\"" + WalledGardenMarker + "\"]\n    } on-error={}\n")
+	sb.WriteString("    :do {\n      /ip hotspot walled-garden remove [find comment=\"" + WalledGardenMarker + " page\"]\n    } on-error={}\n")
+	sb.WriteString("    :do {\n      /ip hotspot walled-garden remove [find comment=\"" + WalledGardenMarker + " dns\"]\n    } on-error={}\n")
 	for _, d := range domains {
 		sb.WriteString("    :do {\n      /ip hotspot walled-garden add action=allow dst-host=\"" + rosEscape(d) + "\" comment=\"" + WalledGardenMarker + " page\"\n    } on-error={}\n")
 	}
+	sb.WriteString("    :do {\n      /ip hotspot walled-garden ip remove [find comment=\"" + WalledGardenMarker + " dns\"]\n    } on-error={}\n")
 	sb.WriteString("    :do {\n      /ip hotspot walled-garden ip add action=allow protocol=udp dst-port=53 comment=\"" + WalledGardenMarker + " dns\"\n    } on-error={}\n")
 	sb.WriteString("    :do {\n      /ip hotspot walled-garden ip add action=allow protocol=tcp dst-port=53 comment=\"" + WalledGardenMarker + " dns\"\n    } on-error={}\n")
 	return sb.String()
@@ -1340,12 +1341,26 @@ func (b Builder) buildWalledGarden(cmd model.Command) string {
 	okVar := "ok" + idSafe(cmd.ID)
 	var sb strings.Builder
 	sb.WriteString(header(cmd))
+	// N°31-c — BATTEMENT DE CŒUR : le script confirme SA LIVRAISON avant
+	// d'attaquer les lignes à risque (construct « status=started », identique
+	// aux fetch de rapport — prouvé 849+ fois). Si l'import meurt ensuite sur
+	// une ligne que ce RouterOS rejette, le cloud sait au moins que le
+	// fichier est ARRIVÉ — l'ancien silence total rendait tout diagnostic
+	// impossible (constat prod : 2 livraisons sans AUCUN signal).
+	sb.WriteString(`/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
+		`" http-method=post http-data=("cmd=` + urlEscape(cmd.ID) + `&status=started") output=none` + "\n")
 	sb.WriteString(":local " + okVar + " true\n")
-	sb.WriteString(":do { /ip hotspot walled-garden remove [find comment~\"" + WalledGardenMarker + "\"] } on-error={ :set " + okVar + " false }\n")
-	sb.WriteString(":do { /ip hotspot walled-garden ip remove [find comment~\"" + WalledGardenMarker + "\"] } on-error={ :set " + okVar + " false }\n")
+	// N°31-c — find EXACT (même classe syntaxique que `find name="..."` des
+	// user_remove — prouvé 4×) au lieu du regex `comment~"..."` — suspect
+	// n°1 du blocage d'import constaté en prod (chunk muet 2×/2×, commandes
+	// du même check-in tuées avec lui). Nos règles portent EXACTEMENT les
+	// commentaires ci-dessous : la suppression exacte est complète.
+	sb.WriteString(":do { /ip hotspot walled-garden remove [find comment=\"" + WalledGardenMarker + " page\"] } on-error={ :set " + okVar + " false }\n")
+	sb.WriteString(":do { /ip hotspot walled-garden remove [find comment=\"" + WalledGardenMarker + " dns\"] } on-error={ :set " + okVar + " false }\n")
 	for _, d := range domains {
 		sb.WriteString(":do { /ip hotspot walled-garden add action=allow dst-host=\"" + rosEscape(d) + "\" comment=\"" + WalledGardenMarker + " page\" } on-error={ :set " + okVar + " false }\n")
 	}
+	sb.WriteString(":do { /ip hotspot walled-garden ip remove [find comment=\"" + WalledGardenMarker + " dns\"] } on-error={ :set " + okVar + " false }\n")
 	sb.WriteString(":do { /ip hotspot walled-garden ip add action=allow protocol=udp dst-port=53 comment=\"" + WalledGardenMarker + " dns\" } on-error={ :set " + okVar + " false }\n")
 	sb.WriteString(":do { /ip hotspot walled-garden ip add action=allow protocol=tcp dst-port=53 comment=\"" + WalledGardenMarker + " dns\" } on-error={ :set " + okVar + " false }\n")
 	sb.WriteString(b.resultLines(cmd.ID, okVar, map[string]string{"domains": strconv.Itoa(len(domains))}))

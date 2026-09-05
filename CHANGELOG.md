@@ -33,8 +33,27 @@ la CI puis se déploie automatiquement (frontend Vercel, backend Render).
   origines de dev de ALLOWED_ORIGIN polluait la liste ; un `dst-host` avec
   port ne peut de toute façon pas matcher HTTPS/SNI). Hôtes publics éligibles,
   port numérique compris. Test dédié (15 cas).
+### Complément N°31-c — script walled_garden blindé : find exact + battement de cœur + chunk en fin de file
+- **Constat approfondi** : le chunk `walled_garden` tue l'import RouterOS du
+  script ENTIER — à 17:12:31, le check-in servait [walled_garden, read_state] :
+  les DEUX sont restés muets, puis tout est redevenu sain dès 17:19
+  (user_remove, read_state… done en 3-5 s). Reproductible 2×/2× (09:50 et
+  17:12). Les commandes du même check-in étaient empoisonnées avec lui.
+- **Find EXACT** (`find comment="mikcloud-wg page|dns"`) remplaçant le regex
+  `find comment~"…"` — même classe syntaxique que les `find name="…"` des
+  user_remove (prouvé terrain) ; nos règles portent exactement ces deux
+  commentaires, la suppression exacte reste complète. Suspect n°1 éliminé.
+- **Battement de cœur** : le script poste `status=started` AVANT les lignes à
+  risque (construct fetch prouvé 849×) — si l'import meurt ensuite, le cloud
+  sait au moins que le fichier est arrivé ; le serveur tolère ce statut
+  (commande laissée « sent », réponse heartbeat).
+- **Chunk en fin de file** : les walled_garden sont servis en DERNIER dans le
+  script du check-in — plus jamais de commandes métier/télémétrie prises en
+  otage par une ligne walled-garden fatale (la reprise zombie N°31 retente).
+- Syntaxe identique dans le bloc d'installation des routeurs neufs ; tests
+  mis à jour + interdiction du find regex dans le script généré.
 
-## 2026-09-05 — N°29 :## 2026-09-05 — N°29 : walled-garden d'inscription publique automatisé par l'agent (routeurs neufs ET déjà en ligne)
+## 2026-09-05 — N°29 :## 2026-09-05 — N°29 :## 2026-09-05 — N°29 : walled-garden d'inscription publique automatisé par l'agent (routeurs neufs ET déjà en ligne)
 
 ### Le runbook N°27-D appliqué par le système lui-même
 - Nouvelle commande agent **`walled_garden`** : pose sur le routeur les règles

@@ -5,6 +5,21 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-05 — N°27-D : runbook walled-garden (inscriptions publiques accessibles depuis le WiFi du hotspot)
+
+### Documentation opérateur — `docs/RUNBOOK-WALLED-GARDEN.md`
+- Sans walled-garden, le QR de la N°27 ne se charge que depuis la **4G** :
+  le portail captif MikroTik intercepte tout le trafic des appareils non
+  authentifiés — précisément ceux qui n'ont pas encore de compte.
+- Le runbook couvre : les **2 domaines** à autoriser (page `mikcloud.ftci.fr`
+  + API `mikcloud.onrender.com` — variante `api.<domaine>` Cloudflare),
+  procédures **CLI RouterOS v6/v7 et WinBox** (règles par domaine + DNS
+  udp/tcp 53), fonctionnement réel (reniflement DNS → HTTP/HTTPS couverts),
+  **vérification de bout en bout** avec appareil témoin, **dépannage**
+  (DNS codé en dur, DNS chiffré/DoH, portail captif auto-ouvert, TLS),
+  **périmètre de sécurité** (anti-patterns : wildcards génériques, IP en
+  dur, ouverture 80/443) et rappel du flux complet N°27.
+
 ## 2026-09-05 — N°27 : inscriptions publiques par QR code (Campus & écoles, administration, entreprise)
 
 ### N°27 — Le gérant génère un QR, l'utilisateur s'inscrit, le gérant valide

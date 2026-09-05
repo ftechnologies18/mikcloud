@@ -1336,6 +1336,12 @@ func walledGardenInstallBlock(domains []string) string {
 // résolution traverse le routeur même pour les clients avec DNS codé en dur —
 // le matching par domaine du walled-garden s'appuie sur le reniflement DNS.
 // Rapport : domains = nombre de règles page/api réellement posées.
+// N°32 — TRAÇAGE : une variable RouterOS « step » est posée avant chaque bloc
+// à risque et embarquée dans le rapport d'erreur (concaténation console
+// « . $step », construct d'expression identique au « (“…”) » prouvé) — le
+// constat prod du 05/09 (3× echec_sur_le_routeur sur le script « propre »,
+// alors que le même script à 5 domaines passe) exige de savoir QUELLE ligne
+// échoue sans accès console au routeur client.
 func (b Builder) buildWalledGarden(cmd model.Command) string {
 	domains := WalledGardenDomainsFromPayload(cmd.Payload)
 	okVar := "ok" + idSafe(cmd.ID)
@@ -1350,6 +1356,8 @@ func (b Builder) buildWalledGarden(cmd model.Command) string {
 	sb.WriteString(`/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
 		`" http-method=post http-data=("cmd=` + urlEscape(cmd.ID) + `&status=started") output=none` + "\n")
 	sb.WriteString(":local " + okVar + " true\n")
+	sb.WriteString(`:local step "start"` + "\n")
+	step := func(s string) { sb.WriteString(`:set step "` + s + `"` + "\n") }
 	// N°31-c — find EXACT (même classe syntaxique que `find name="..."` des
 	// user_remove — prouvé 4×) au lieu du regex `comment~"..."` — suspect
 	// n°1 du blocage d'import constaté en prod (chunk muet 2×/2×, commandes
@@ -1357,23 +1365,35 @@ func (b Builder) buildWalledGarden(cmd model.Command) string {
 	// commentaires ci-dessous : la suppression exacte est complète.
 	// N°31-e — removes SILENCIEUX (best-effort) : une règle « en usage » par
 	// les clients du hotspot (flux DNS permanents sur les règles DNS — constat
-	// prod 18:26→18:30 : 6 re-filés error d'affilée) ne doit PAS faire
+	// prod 18:26→18:30 : 6 re-filés error d’affilée) ne doit PAS faire
 	// échouer la mise à jour : le service prime sur le ménage.
+	step("rm-page")
 	sb.WriteString(":do { /ip hotspot walled-garden remove [find comment=\"" + WalledGardenMarker + " page\"] } on-error={}\n")
+	step("rm-dns-ip")
 	sb.WriteString(":do { /ip hotspot walled-garden ip remove [find comment=\"" + WalledGardenMarker + " dns\"] } on-error={}\n")
-	// N°31-e — adds CONDITIONNELS à l'absence : si le remove vient d'échouer,
+	// N°31-e — adds CONDITIONNELS à l’absence : si le remove vient d’échouer,
 	// la règle existe DÉJÀ (service assuré) → skip — PAS de doublon, PAS
-	// d'erreur. Seule une vraie erreur d'add met okVar à false.
+	// d’erreur. Seule une vraie erreur d’add met okVar à false.
+	// N°32 — chaque bloc à risque est précédé de :set step : le rapport
+	// d’erreur embarque la ligne fautive (« &step=" . $step ») — diagnostic
+	// sans accès console (les removes étant best-effort, seuls les adds
+	// peuvent porter okVar à false).
 	// N°31-d — action=ACCEPT (et NON allow) sur walled-garden ip : la table
-	// n'accepte que accept|drop|reject (doc officielle HotSpot) — « allow »
+	// n’accepte que accept|drop|reject (doc officielle HotSpot) — « allow »
 	// est une erreur de validation console qui rejetait TOUT le fichier
-	// d'import (constat prod : 4 livraisons muettes, rien ne s'exécutait).
-	for _, d := range domains {
+	// d’import (constat prod : 4 livraisons muettes, rien ne s’exécutait).
+	for i, d := range domains {
+		step("add-page-" + strconv.Itoa(i+1))
 		sb.WriteString(":do { :if ([:len [/ip hotspot walled-garden find comment=\"" + WalledGardenMarker + " page\" dst-host=\"" + rosEscape(d) + "\"]] = 0) do={ /ip hotspot walled-garden add action=allow dst-host=\"" + rosEscape(d) + "\" comment=\"" + WalledGardenMarker + " page\" } } on-error={ :set " + okVar + " false }\n")
 	}
+	step("add-dns-udp")
 	sb.WriteString(":do { :if ([:len [/ip hotspot walled-garden ip find comment=\"" + WalledGardenMarker + " dns\" protocol=udp]] = 0) do={ /ip hotspot walled-garden ip add action=accept protocol=udp dst-port=53 comment=\"" + WalledGardenMarker + " dns\" } } on-error={ :set " + okVar + " false }\n")
+	step("add-dns-tcp")
 	sb.WriteString(":do { :if ([:len [/ip hotspot walled-garden ip find comment=\"" + WalledGardenMarker + " dns\" protocol=tcp]] = 0) do={ /ip hotspot walled-garden ip add action=accept protocol=tcp dst-port=53 comment=\"" + WalledGardenMarker + " dns\" } } on-error={ :set " + okVar + " false }\n")
-	sb.WriteString(b.resultLines(cmd.ID, okVar, map[string]string{"domains": strconv.Itoa(len(domains))}))
+	ok := b.reportLine(cmd.ID, true, map[string]string{"domains": strconv.Itoa(len(domains))})
+	ko := `/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
+		`" http-method=post http-data=("cmd=` + urlEscape(cmd.ID) + `&status=error&message=echec_sur_le_routeur&step=" . $step) output=none`
+	sb.WriteString(":if ($" + okVar + ") do={\n  " + ok + "\n} else={\n  " + ko + "\n}\n")
 	return sb.String()
 }
 

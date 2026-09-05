@@ -423,6 +423,12 @@ func TestWalledGardenScript(t *testing.T) {
 			t.Fatalf("marqueur absent du script walled_garden : %q", marqueur)
 		}
 	}
+	// N°31-d — la table walled-garden ip n'accepte que accept|drop|reject :
+	// un « action=allow » sur une règle ip est une erreur de validation
+	// console qui rejette le FICHIER d'import entier — interdit à jamais.
+	if strings.Contains(script, "walled-garden ip add action=allow") {
+		t.Fatal("action=allow invalide sur walled-garden ip (accept|drop|reject uniquement)")
+	}
 
 	// Injection : un domaine hostile est REFUSÉ par l'assainisseur → il ne
 	// peut ni apparaître dans le script ni y exécuter quoi que ce soit.
@@ -451,6 +457,7 @@ func TestWalledGardenInstallBlock(t *testing.T) {
 		`/ip hotspot walled-garden add action=allow dst-host="a.example" comment="` + WalledGardenMarker + ` page"`,
 		`/ip hotspot walled-garden add action=allow dst-host="b.example" comment="` + WalledGardenMarker + ` page"`,
 		`/ip hotspot walled-garden ip add action=accept protocol=udp dst-port=53`,
+		`/ip hotspot walled-garden ip add action=accept protocol=tcp dst-port=53`,
 		"on-error={}",
 	} {
 		if !strings.Contains(with, marqueur) {
@@ -464,6 +471,11 @@ func TestWalledGardenInstallBlock(t *testing.T) {
 		if strings.HasPrefix(l, "/ip hotspot walled-garden add") && strings.Contains(l, ":do {") {
 			t.Fatal("corps one-line détecté dans le bloc walled-garden de l'InstallScript")
 		}
+	}
+	// N°31-d — idem bloc installation : jamais d’« action=allow » sur la
+	// table walled-garden ip (rejet console du fichier entier).
+	if strings.Contains(with, "walled-garden ip add action=allow") {
+		t.Fatal("action=allow invalide sur walled-garden ip dans l'InstallScript")
 	}
 	// Aucun domaine annoncé → aucun bloc (script inchangé pour ce cas).
 	without := InstallScript("https://cloud.example", "tok", "Routeur B")

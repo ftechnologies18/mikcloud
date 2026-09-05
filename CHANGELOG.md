@@ -71,8 +71,23 @@ la CI puis se déploie automatiquement (frontend Vercel, backend Render).
   si le remove échoue, la règle existe DÉJÀ (service assuré) → skip, pas de
   doublon, pas d'erreur. Seule une vraie erreur d'add échoue. Le bloc
   d'installation est aligné (re-collage idempotent).
+### Suite N°32 — audit terrain : première application OK, traçage « step » + runbook enfin propre
+- **Vérification prod post-déploiement N°31-d** (18:16:23 live) : la
+  commande zombie c-998288c03052 re-servie à 18:26:02 (reprise N°31,
+  10 min sans rapport) est passée **done/ok en 14 s** — walled-garden
+  ENFIN appliqué sur le routeur client, Journal « Walled-garden …
+  appliqué ». La cause racine N°31-d est confirmée terrain.
+- **Traçage `step`** (complément N°31-e) : les removes étant désormais
+  best-effort, seuls les adds peuvent porter okVar à false — chaque bloc
+  à risque est précédé de `:set step` et le rapport d'erreur embarque la
+  ligne fautive (« &step=" . $step ») : diagnostic sans accès console au
+  routeur client.
+- **Runbook N°27-D achevé** : la ligne DNS **TCP** §2 et la procédure
+  WinBox §3 portaient ENCORE `action=allow` (le correctif N°31-d n'avait
+  passé que l'UDP) — corrigées + encadré d'avertissement accept/allow par
+  table ; entête N°29 du CHANGELOG dédupliqué.
 
-## 2026-09-05 — N°29 :## 2026-09-05 — N°29 :## 2026-09-05 — N°29 :## 2026-09-05 — N°29 :## 2026-09-05 — N°29 : walled-garden d'inscription publique automatisé par l'agent (routeurs neufs ET déjà en ligne)
+## 2026-09-05 — N°29 : walled-garden d'inscription publique automatisé par l'agent (routeurs neufs ET déjà en ligne)
 
 ### Le runbook N°27-D appliqué par le système lui-même
 - Nouvelle commande agent **`walled_garden`** : pose sur le routeur les règles

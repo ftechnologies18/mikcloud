@@ -65,7 +65,7 @@ add action=allow dst-host=mikcloud.onrender.com comment="N27 inscription publiqu
 # par domaine fonctionnent (le hotspot « renifle » les réponses DNS).
 /ip hotspot walled-garden ip
 add action=accept protocol=udp dst-port=53 comment="DNS pour regles par domaine"
-add action=allow protocol=tcp dst-port=53 comment="DNS TCP (reponses tronquees)"
+add action=accept protocol=tcp dst-port=53 comment="DNS TCP (reponses tronquees)"
 ```
 
 Vérification immédiate :
@@ -97,8 +97,14 @@ Les règles sont actives immédiatement — aucun redémarrage du hotspot.
    - `Dst. Host` : `mikcloud.ftci.fr` — `Action` : `allow`
    - refaire avec `mikcloud.onrender.com`
 3. Bouton **Walled Garden IP** → `+` :
-   - `Protocol` : `udp`, `Dst. Port` : `53`, `Action` : `allow`
+   - `Protocol` : `udp`, `Dst. Port` : `53`, `Action` : `accept`
    - refaire en `tcp`
+
+> ⚠️ Dans la table **Walled Garden IP**, l'action est `accept` (ou
+> `drop`/`reject`) — JAMAIS `allow` : `allow` n'existe que dans la table
+> **par domaine** (étape 2 ci-dessus). C'est cette confusion qui rendait
+> le walled-garden inapplicable (rejet console de la commande entière,
+> cf. N°31-d).
 4. `Apply` — actif immédiatement.
 
 ## 4. Vérification de bout en bout (appareil témoin non authentifié)

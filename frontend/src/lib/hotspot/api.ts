@@ -120,6 +120,40 @@ export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
   return data as T;
 }
 
+/**
+ * apiAnon — variante SANS authentification pour la page publique WiFi jetable
+ * (N°27) : pas de header Bearer, pas de logout automatique sur 401 (un
+ * visiteur anonyme n'a pas de session à expirer — l'appelant traite l'erreur).
+ */
+export async function apiAnon<T>(path: string, opts: ApiOptions = {}): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (opts.body !== undefined) headers["Content-Type"] = "application/json";
+  const res = await fetch(buildUrl(path, opts.params), {
+    method: opts.method ?? "GET",
+    headers,
+    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+    cache: "no-store",
+    signal:
+      opts.timeoutMs && typeof AbortSignal.timeout === "function"
+        ? AbortSignal.timeout(opts.timeoutMs)
+        : undefined,
+  });
+  let data: unknown = null;
+  try {
+    data = await res.json();
+  } catch {
+    /* réponse non JSON */
+  }
+  if (!res.ok) {
+    const body = data && typeof data === "object" ? (data as { error?: unknown; code?: unknown }) : null;
+    const message =
+      (body && typeof body.error === "string" ? body.error : null) ?? `Erreur ${res.status}`;
+    const code = body && typeof body.code === "string" ? body.code : undefined;
+    throw new ApiError(message, res.status, code);
+  }
+  return data as T;
+}
+
 /** apiDownload — télécharge un fichier (CSV, PDF…) renvoyé par l'API, avec token. */
 export async function apiDownload(path: string, filename: string, params?: ApiOptions["params"]): Promise<void> {
   const token = useHotspotStore.getState().token;
@@ -357,4 +391,73 @@ export function invoiceURL(id: string): string {
   if (base) return `${base}/api/billing/invoice/${id}`;
   // Mode passerelle sandbox : le port du backend transite par le proxy local.
   return `/api/billing/invoice/${id}?XTransformPort=4000`;
+}
+
+/* ─── N°27 — WiFi jetable : console (authentifiée) + page publique (anonyme) ─── */
+
+import type {
+  WifiClaimResponse,
+  WifiGuest,
+  WifiSite,
+  WifiSiteInfo,
+  WifiSitePayload,
+  WifiSitesResponse,
+  WifiStatusResponse,
+} from "./types";
+
+/** fetchWifiSites — sites du compte + stats du jour (console). */
+export async function fetchWifiSites(): Promise<WifiSitesResponse> {
+  return api<WifiSitesResponse>("/api/wifi/sites");
+}
+
+/** createWifiSite — création d'un site (slug dérivé du nom, unique global). */
+export async function createWifiSite(payload: WifiSitePayload): Promise<WifiSite> {
+  return api<WifiSite>("/api/wifi/sites", { method: "POST", body: payload });
+}
+
+/** updateWifiSite — mise à jour complète (quotas, plafonds) + bascule active. */
+export async function updateWifiSite(id: string, payload: WifiSitePayload): Promise<WifiSite> {
+  return api<WifiSite>(`/api/wifi/sites/${encodeURIComponent(id)}`, { method: "PUT", body: payload });
+}
+
+/** deleteWifiSite — suppression du site + de son registre visiteurs. */
+export async function deleteWifiSite(id: string): Promise<{ ok: boolean; removedGuests: number }> {
+  return api<{ ok: boolean; removedGuests: number }>(`/api/wifi/sites/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+/** fetchWifiGuests — registre marketing d'un site (gérant uniquement). */
+export async function fetchWifiGuests(siteId: string, optIn?: boolean): Promise<{ guests: WifiGuest[]; count: number }> {
+  return api<{ guests: WifiGuest[]; count: number }>("/api/wifi/guests", {
+    params: { siteId, optIn: optIn === undefined ? undefined : optIn ? "true" : "false" },
+  });
+}
+
+/** wifiGuestsCsvURL — URL d'export CSV du registre (apiDownload). */
+export function wifiGuestsCsvURL(siteId: string): string {
+  return `/api/wifi/guests?siteId=${encodeURIComponent(siteId)}&export=csv`;
+}
+
+/* — page publique (SANS auth) — */
+
+/** fetchWifiSiteInfo — branding + quotas du site public. */
+export async function fetchWifiSiteInfo(slug: string): Promise<WifiSiteInfo> {
+  return apiAnon<WifiSiteInfo>(`/api/wifi/site/${encodeURIComponent(slug)}`);
+}
+
+/** claimWifiCode — émission du code gratuit (idempotent par téléphone/jour). */
+export async function claimWifiCode(
+  slug: string,
+  body: { phone: string; optIn: boolean },
+): Promise<WifiClaimResponse> {
+  return apiAnon<WifiClaimResponse>(`/api/wifi/site/${encodeURIComponent(slug)}/claim`, {
+    method: "POST",
+    body,
+  });
+}
+
+/** fetchWifiStatus — état du ticket du jour + offres payantes (bascule). */
+export async function fetchWifiStatus(slug: string, phone: string): Promise<WifiStatusResponse> {
+  return apiAnon<WifiStatusResponse>(`/api/wifi/site/${encodeURIComponent(slug)}/status`, {
+    params: { phone },
+  });
 }

@@ -80,6 +80,7 @@ const SubscriptionView = dynamic(() => import("./views/subscription-view"), { lo
 const TeamView = dynamic(() => import("./views/team-view"), { loading: () => ViewFallback });
 const TemplatesView = dynamic(() => import("./views/templates-view"), { loading: () => ViewFallback });
 const UsersView = dynamic(() => import("./views/users-view"), { loading: () => ViewFallback });
+const WifiView = dynamic(() => import("./views/wifi-view"), { loading: () => ViewFallback });
 const VouchersView = dynamic(() => import("./views/vouchers-view"), { loading: () => ViewFallback });
 
 /** Libellé dynamique de la vue active — utilisé pour l'aria du conteneur
@@ -95,6 +96,7 @@ function viewTitle(view: ViewId, t: (key: string) => string): string {
     templates: "templates.title",
     profiles: "nav.profiles",
     resellers: "nav.resellers",
+    wifi: "wifi.title",
     routers: "nav.routers",
     reports: "nav.reports",
     logs: "logs.title",
@@ -121,6 +123,7 @@ const VIEWS: Record<ViewId, React.ComponentType> = {
   templates: TemplatesView,
   profiles: ProfilesView,
   resellers: ResellersView,
+  wifi: WifiView,
   routers: RoutersView,
   reports: ReportsView,
   logs: LogsView,

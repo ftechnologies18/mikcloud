@@ -1213,6 +1213,7 @@ export type ViewId =
   | "templates"
   | "profiles"
   | "resellers"
+  | "wifi"
   | "routers"
   | "reports"
   | "logs"
@@ -1401,4 +1402,108 @@ export interface RegistrationApproveResponse {
   user: HotspotUser;
   queued?: boolean;
   commandId?: string;
+}
+
+/* ─── N°28 — WiFi Jetable : sites publics + registre marketing ─── */
+
+/** Site d'un établissement (maquis, resto, salon…) offrant le WiFi jetable. */
+export interface WifiSite {
+  id: string;
+  accountId: string;
+  name: string;
+  slug: string;
+  routerId: string;
+  routerName: string;
+  profileId: string;
+  profileName: string;
+  /** Minutes offertes (0 = hériter du profil). */
+  freeTimeMin: number;
+  /** Mo offerts (0 = hériter du profil). */
+  freeDataMb: number;
+  marketingOptIn: boolean;
+  dailyPerPhone: number;
+  dailyCap: number;
+  active: boolean;
+  createdAt: string;
+}
+
+/** Entrée du registre : un code délivré (marketing + anti-abus). */
+export interface WifiGuest {
+  id: string;
+  accountId: string;
+  siteId: string;
+  siteName: string;
+  phone: string;
+  optIn: boolean;
+  voucherId: string;
+  code: string;
+  day: string;
+  createdAt: string;
+}
+
+/** GET /api/wifi/sites — liste + statistiques du jour. */
+export interface WifiSitesResponse {
+  sites: WifiSite[];
+  day: string;
+  stats: Record<string, { guestsToday: number; optInTotal: number }>;
+}
+
+/** Corps de création / mise à jour d'un site (quotas ajustables par le gérant). */
+export interface WifiSitePayload {
+  name: string;
+  routerId: string;
+  profileId: string;
+  freeTimeMin: number;
+  freeDataMb: number;
+  marketingOptIn: boolean;
+  dailyPerPhone: number;
+  dailyCap: number;
+  active: boolean;
+}
+
+/** GET /api/wifi/site/{slug} — branding public (aucune donnée sensible). */
+export interface WifiSiteInfo {
+  slug: string;
+  name: string;
+  tenantName?: string;
+  logoUrl?: string;
+  freeTimeMin: number;
+  freeDataMb: number;
+  profileName?: string;
+  marketingOptIn: boolean;
+  active: boolean;
+  suspended?: boolean;
+  offers?: WifiOffer[];
+}
+
+/** Offre payante affichée à la bascule (profil à prix > 0). */
+export interface WifiOffer {
+  id: string;
+  name: string;
+  price: number;
+  validityMinutes: number;
+  dataQuotaMb: number;
+  timeLimitMin: number;
+}
+
+/** POST /api/wifi/site/{slug}/claim — code délivré au visiteur. */
+export interface WifiClaimResponse {
+  duplicate: boolean;
+  code: string;
+  loginUrl: string;
+  timeLimitMin: number;
+  dataQuotaMb: number;
+  profileName?: string;
+  siteName?: string;
+}
+
+/** GET /api/wifi/site/{slug}/status — état du ticket du jour. */
+export interface WifiStatusResponse {
+  state: "none" | "active" | "exhausted";
+  active: boolean;
+  code?: string;
+  loginUrl?: string;
+  timeLimitMin?: number;
+  dataQuotaMb?: number;
+  offers?: WifiOffer[];
 }

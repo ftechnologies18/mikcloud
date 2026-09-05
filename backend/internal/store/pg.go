@@ -590,6 +590,42 @@ func (p *PG) ensureSchema() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_registration_requests_account ON registration_requests (account_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_registration_requests_status ON registration_requests (status)`,
+		// N°28 — WiFi jetable : sites publics (slug GLOBALEMENT unique) +
+		// registre marketing visiteurs (1 ligne = 1 code délivré).
+		`CREATE TABLE IF NOT EXISTS wifi_sites (
+			id          TEXT PRIMARY KEY,
+			account_id  TEXT NOT NULL DEFAULT '',
+			name        TEXT NOT NULL DEFAULT '',
+			slug        TEXT NOT NULL DEFAULT '',
+			router_id   TEXT NOT NULL DEFAULT '',
+			router_name TEXT NOT NULL DEFAULT '',
+			profile_id   TEXT NOT NULL DEFAULT '',
+			profile_name TEXT NOT NULL DEFAULT '',
+			free_time_min BIGINT NOT NULL DEFAULT 0,
+			free_data_mb  BIGINT NOT NULL DEFAULT 0,
+			marketing_opt_in BOOLEAN NOT NULL DEFAULT FALSE,
+			daily_per_phone INTEGER NOT NULL DEFAULT 1,
+			daily_cap       INTEGER NOT NULL DEFAULT 100,
+			active    BOOLEAN NOT NULL DEFAULT FALSE,
+			created_at TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_wifi_sites_account ON wifi_sites (account_id)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_wifi_sites_slug ON wifi_sites (slug)`,
+		`CREATE TABLE IF NOT EXISTS wifi_guests (
+			id         TEXT PRIMARY KEY,
+			account_id TEXT NOT NULL DEFAULT '',
+			site_id    TEXT NOT NULL DEFAULT '',
+			site_name  TEXT NOT NULL DEFAULT '',
+			phone      TEXT NOT NULL DEFAULT '',
+			opt_in     BOOLEAN NOT NULL DEFAULT FALSE,
+			voucher_id TEXT NOT NULL DEFAULT '',
+			code       TEXT NOT NULL DEFAULT '',
+			day        TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_wifi_guests_account ON wifi_guests (account_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_wifi_guests_site   ON wifi_guests (site_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_wifi_guests_phone  ON wifi_guests (phone)`,
 		// Audit purge — réglage par compte : import automatique des
 		// utilisateurs créés hors MikCloud (défaut ON — compatibilité).
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS auto_import_router_users BOOLEAN NOT NULL DEFAULT TRUE`,
@@ -784,6 +820,8 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 		NotifSettings:     map[string]model.NotificationSettings{},
 		NotifLog:          []model.NotificationLog{},
 		BillingRequests:   []model.BillingRequest{},
+		WifiSites:         []model.WifiSite{},
+		WifiGuests:        []model.WifiGuest{},
 	}
 
 	steps := []struct {
@@ -814,6 +852,8 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 		{"purge_tombstones", func() error { return loadInto(p, &db.PurgeTombstones, purgeTombstoneSpec) }},
 		{"join_links", func() error { return loadInto(p, &db.JoinLinks, joinLinkSpec) }},
 		{"registration_requests", func() error { return loadInto(p, &db.RegistrationRequests, registrationRequestSpec) }},
+		{"wifi_sites", func() error { return loadInto(p, &db.WifiSites, wifiSiteSpec) }},
+		{"wifi_guests", func() error { return loadInto(p, &db.WifiGuests, wifiGuestSpec) }},
 		{"settings", func() error { return p.loadSettings(db) }},
 	}
 	for _, st := range steps {
@@ -1021,6 +1061,12 @@ func (p *PG) Sync(db *model.DB) error {
 		return err
 	}
 	if err := syncTable(tx, p.hashes, registrationRequestSpec, db.RegistrationRequests); err != nil {
+		return err
+	}
+	if err := syncTable(tx, p.hashes, wifiSiteSpec, db.WifiSites); err != nil {
+		return err
+	}
+	if err := syncTable(tx, p.hashes, wifiGuestSpec, db.WifiGuests); err != nil {
 		return err
 	}
 	if err := p.syncSettings(tx, db); err != nil {
@@ -1551,6 +1597,44 @@ var billingRequestSpec = entitySpec[model.BillingRequest]{
 	hashOf: hashEntity[model.BillingRequest],
 }
 
+// wifiSiteSpec — N°28 : sites WiFi jetables (slug unique global).
+var wifiSiteSpec = entitySpec[model.WifiSite]{
+	table: "wifi_sites",
+	cols:  []string{"id", "account_id", "name", "slug", "router_id", "router_name", "profile_id", "profile_name", "free_time_min", "free_data_mb", "marketing_opt_in", "daily_per_phone", "daily_cap", "active", "created_at"},
+	idOf:  func(x *model.WifiSite) string { return x.ID },
+	scan: func(r *sql.Rows) (model.WifiSite, error) {
+		var x model.WifiSite
+		err := r.Scan(&x.ID, &x.AccountID, &x.Name, &x.Slug, &x.RouterID, &x.RouterName,
+			&x.ProfileID, &x.ProfileName, &x.FreeTimeMin, &x.FreeDataMb,
+			&x.MarketingOptIn, &x.DailyPerPhone, &x.DailyCap, &x.Active, &x.CreatedAt)
+		return x, err
+	},
+	args: func(x *model.WifiSite) []any {
+		return []any{x.ID, x.AccountID, x.Name, x.Slug, x.RouterID, x.RouterName,
+			x.ProfileID, x.ProfileName, x.FreeTimeMin, x.FreeDataMb,
+			x.MarketingOptIn, x.DailyPerPhone, x.DailyCap, x.Active, x.CreatedAt}
+	},
+	hashOf: hashEntity[model.WifiSite],
+}
+
+// wifiGuestSpec — N°28 : registre marketing/anti-abus des visiteurs WiFi.
+var wifiGuestSpec = entitySpec[model.WifiGuest]{
+	table: "wifi_guests",
+	cols:  []string{"id", "account_id", "site_id", "site_name", "phone", "opt_in", "voucher_id", "code", "day", "created_at"},
+	idOf:  func(x *model.WifiGuest) string { return x.ID },
+	scan: func(r *sql.Rows) (model.WifiGuest, error) {
+		var x model.WifiGuest
+		err := r.Scan(&x.ID, &x.AccountID, &x.SiteID, &x.SiteName, &x.Phone, &x.OptIn,
+			&x.VoucherID, &x.Code, &x.Day, &x.CreatedAt)
+		return x, err
+	},
+	args: func(x *model.WifiGuest) []any {
+		return []any{x.ID, x.AccountID, x.SiteID, x.SiteName, x.Phone, x.OptIn,
+			x.VoucherID, x.Code, x.Day, x.CreatedAt}
+	},
+	hashOf: hashEntity[model.WifiGuest],
+}
+
 // geniusPaySubSpec — abonnements récurrents carte (Stripe via GeniusPay).
 var geniusPaySubSpec = entitySpec[model.GeniusPaySub]{
 	table: "geniuspay_subs",
@@ -1872,6 +1956,8 @@ func (p *PG) rebuildHashes(db *model.DB) {
 		purgeTombstoneSpec.table:      hashRows(db.PurgeTombstones, purgeTombstoneSpec),
 		joinLinkSpec.table:            hashRows(db.JoinLinks, joinLinkSpec),
 		registrationRequestSpec.table: hashRows(db.RegistrationRequests, registrationRequestSpec),
+		wifiSiteSpec.table:       hashRows(db.WifiSites, wifiSiteSpec),
+		wifiGuestSpec.table:      hashRows(db.WifiGuests, wifiGuestSpec),
 	}
 	notifRows := make([]model.NotificationSettings, 0, len(db.NotifSettings))
 	for _, v := range db.NotifSettings {

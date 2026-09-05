@@ -23,6 +23,7 @@ const VIEW_SLUGS: Record<ViewId, string> = {
   templates: "templates",
   profiles: "profiles",
   resellers: "resellers",
+  wifi: "wifi",
   routers: "routers",
   reports: "reports",
   logs: "logs",

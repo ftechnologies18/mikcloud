@@ -21,6 +21,7 @@ import {
   UserPlus,
   Users,
   UsersRound,
+  Wifi,
 } from "lucide-react";
 import { canView } from "./roles";
 import type { ViewId } from "./types";
@@ -54,6 +55,8 @@ export const NAV_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
       // échéance, renouvellement anticipé et factures téléchargeables.
       { id: "subscription", labelKey: "nav.subscription", icon: CreditCard },
       { id: "resellers", labelKey: "nav.resellers", icon: Store },
+      // N°27 — WiFi jetable : mode d'accès offert des établissements.
+      { id: "wifi", labelKey: "wifi.title", icon: Wifi },
     ],
   },
   {

@@ -261,6 +261,13 @@ func authRateLimit(next http.Handler) http.Handler {
 		case strings.HasPrefix(path, "/api/join/"):
 			// N°27 — formulaire public d'inscription : borne serrée (bots).
 			return "join", 10
+		// N°28 — WiFi jetable : émission publique de tickets (surface d'attaque
+		// critique : un anonyme qui crée des vouchers) → limite DURE ; lectures
+		// publiques (branding, statut) → limite confortable pour un smartphone.
+		case strings.HasPrefix(path, "/api/wifi/site/") && strings.HasSuffix(path, "/claim"):
+			return "wifi-claim", 6
+		case strings.HasPrefix(path, "/api/wifi/site/"):
+			return "wifi-read", 30
 		case strings.HasPrefix(path, "/api/"):
 			// Sécurité S1-A2 — limite globale par IP sur le reste de l'API.
 			return "api", 120

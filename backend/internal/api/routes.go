@@ -276,6 +276,18 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/vitals", a.handleVitalsPost)
 	mux.HandleFunc("GET /api/vitals/summary", a.handleVitalsSummary)
 
+	// N°27 — WiFi jetable : page publique (SANS auth, whitelist middleware
+	// + rate-limit dédié) résolue par slug GLOBALEMENT unique + console
+	// gérant (CRUD sites, registre marketing).
+	mux.HandleFunc("GET /api/wifi/site/{slug}", a.handleWifiSiteInfo)
+	mux.HandleFunc("POST /api/wifi/site/{slug}/claim", a.handleWifiClaim)
+	mux.HandleFunc("GET /api/wifi/site/{slug}/status", a.handleWifiStatus)
+	mux.HandleFunc("GET /api/wifi/sites", a.requireRole(2, a.handleWifiSitesList))
+	mux.HandleFunc("POST /api/wifi/sites", a.requireRole(2, a.handleWifiSiteCreate))
+	mux.HandleFunc("PUT /api/wifi/sites/{id}", a.requireRole(2, a.handleWifiSiteUpdate))
+	mux.HandleFunc("DELETE /api/wifi/sites/{id}", a.requireRole(2, a.handleWifiSiteDelete))
+	mux.HandleFunc("GET /api/wifi/guests", a.requireRole(2, a.handleWifiGuests))
+
 	// Fallback API -> 404 JSON
 	mux.HandleFunc("/api/", a.handleAPINotFound)
 

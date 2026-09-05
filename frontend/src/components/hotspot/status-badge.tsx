@@ -19,7 +19,8 @@ export type BadgeStatus =
   | "credit"
   | "sale"
   | "debt"
-  | "settlement";
+  | "settlement"
+  | "prepaid";
 
 /** Clés i18n par statut (F11) — le libellé est résolu à chaque rendu. */
 const LABEL_KEYS: Record<BadgeStatus, string> = {
@@ -38,6 +39,7 @@ const LABEL_KEYS: Record<BadgeStatus, string> = {
   sale: "badge.sale",
   debt: "badge.debt",
   settlement: "badge.settlement",
+  prepaid: "badge.prepaid",
 };
 
 const STYLES: Record<BadgeStatus, string> = {
@@ -58,6 +60,8 @@ const STYLES: Record<BadgeStatus, string> = {
   // N°19 — dépôt-vente : créance (alerte) vs versement encaissé (cash). 
   debt: "bg-amber-500/15 text-amber-600 border-amber-500/25 dark:text-amber-400",
   settlement: "bg-chart-1/15 text-chart-1 border-chart-1/25",
+  // N°24 — prépayé : cash avant stock — teal, distinct du vert « Actif ».
+  prepaid: "bg-chart-2/15 text-chart-2 border-chart-2/25",
 };
 
 export function StatusBadge({

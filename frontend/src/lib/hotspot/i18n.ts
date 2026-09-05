@@ -1785,6 +1785,7 @@ const fr: Record<string, string> = {
   "badge.sale": "Vente",
   "badge.debt": "Créance",
   "badge.settlement": "Versement",
+  "badge.prepaid": "Prépayé",
 
   // — abonnement SaaS — carte + bannière tableau de bord —
   // Les libellés du catalogue côté serveur (nom, tagline, badge, période) sont
@@ -3841,6 +3842,7 @@ const en: Record<string, string> = {
   "badge.sale": "Sale",
   "badge.debt": "Debt",
   "badge.settlement": "Settlement",
+  "badge.prepaid": "Prepaid",
 
   // — SaaS subscription — card + dashboard banner (server catalogue labels are
   // translated by plan id; unknown plans fall back to the server value) —

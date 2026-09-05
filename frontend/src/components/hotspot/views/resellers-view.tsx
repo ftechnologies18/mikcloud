@@ -424,8 +424,13 @@ export default function ResellersView() {
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="truncate font-medium">{reseller.name}</p>
                     <StatusBadge status={reseller.status} dot />
-                    {/* N°19 — mode de paiement : dépôt-vente visible d'un coup d'œil. */}
-                    {reseller.paymentMode === "deposit" && <StatusBadge status="debt" label={t("resellers.modeDeposit")} />}
+                    {/* N°19/N°24 — mode de paiement sur CHAQUE carte :
+                        dépôt-vente (ambre) vs prépayé (teal), d'un coup d'œil. */}
+                    {reseller.paymentMode === "deposit" ? (
+                      <StatusBadge status="debt" label={t("resellers.modeDeposit")} />
+                    ) : (
+                      <StatusBadge status="prepaid" />
+                    )}
                   </div>
                   <p className="mt-0.5 truncate text-xs text-muted-foreground">{reseller.phone || "—"}</p>
                 </div>

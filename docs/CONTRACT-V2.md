@@ -699,6 +699,25 @@ les vouchers : `transferable` (stock vendable), `transferableValue` (valeur faci
 d'abord puis quantité décroissante). Le front affiche « Chez : … » quand la possession
 diverge de la provenance, et plafonne le transfert à `transferable − déjà chez la cible`.
 
+### Refonte onglet Lots — « fiche de vie » (ADDITIF, contrat liste intact)
+
+`GET /api/vouchers/batches` gagne un champ `status` par lot (cycle de vie DÉRIVÉ des
+stats live, jamais stocké) : `stock` (du consommable reste : active>0) → `consumed`
+(épuisé : used>0 ou disabled>0, plus de stock) → `expired` (jamais utilisé, validité
+envolée) → `purged` (plus rien en base). Nouveaux filtres query (tous optionnels,
+valeurs `all`/vide = ignorés) : `status` (une des 4 valeurs ci-dessus), `channel`
+(`direct|reseller` — PROVENANCE, pas la possession), `holder` (détenteur LIVE du
+stock vendable : `direct` ou l'ID du revendeur — un lot sans stock vendable
+n'appartient à personne). La réponse gagne `summary` (totaux sur l'ensemble FILTRÉ,
+avant pagination) : `{batches, stockTickets, transferable, stockValue, expiring7d}` —
+le gérant filtre par détenteur et lit « son » stock. Le lot porte aussi
+`DataQuotaMb/TimeLimitMin` (hérités de la génération) déjà exposés.
+
+`GET /api/vouchers/batches/export` (requireRole 2) — export CSV des lots, MÊMES
+filtres que la liste, sans pagination : séparateur `;` + BOM UTF-8 (convention
+`mikcloud-comptabilite`), une ligne par lot — cycle de vie, stock vendable,
+détail des statuts et possession (`Stock direct (13) · David (6)`).
+
 ---
 
 ## N°19 — Modes de paiement revendeur : prépayé / dépôt-vente (vend puis verse)

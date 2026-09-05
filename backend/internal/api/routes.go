@@ -101,6 +101,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/vouchers/generate", a.handleVouchersGenerate)
 	mux.HandleFunc("GET /api/vouchers", a.handleVouchersList)
 	mux.HandleFunc("GET /api/vouchers/batches", a.handleBatchesList)
+	mux.HandleFunc("GET /api/vouchers/batches/export", a.requireRole(2, a.handleBatchesExport))
 	mux.HandleFunc("DELETE /api/vouchers/{id}", a.requireRole(2, a.handleUserDelete))
 	mux.HandleFunc("POST /api/vouchers/batch/{batchId}/delete", a.requireRole(2, a.handleVouchersBatchDelete))
 	mux.HandleFunc("POST /api/vouchers/batch/{batchId}/transfer", a.requireRole(2, a.handleVouchersBatchTransfer))

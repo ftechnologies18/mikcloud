@@ -636,12 +636,29 @@ export interface BatchHolding {
   value: number;
 }
 
+/** Refonte onglet Lots — cycle de vie du lot, dérivé backend des stats live :
+ * stock (du consommable reste) → consumed (épuisé : utilisé/désactivé)
+ * → expired (jamais utilisé, validité envolée) → purged (plus rien en base). */
+export type BatchLifecycle = "stock" | "consumed" | "expired" | "purged";
+
+/** Refonte onglet Lots — bande KPI de l'onglet (totaux sur l'ensemble FILTRÉ,
+ * avant pagination) : le gérant filtre par détenteur et lit « son » stock. */
+export interface BatchSummary {
+  batches: number;
+  stockTickets: number;
+  transferable: number;
+  stockValue: number;
+  expiring7d: number;
+}
+
 export interface BatchWithStats extends Batch {
   remaining: number;
   active: number;
   used: number;
   expired: number;
   disabled: number;
+  /** Refonte — cycle de vie dérivé (stock | consumed | expired | purged). */
+  status: BatchLifecycle;
   /** N°18 — stock vendable (actif, jamais remis), toute destination confondue. */
   transferable: number;
   /** Valeur faciale du stock vendable (somme des prix) — aperçu du débit. */
@@ -657,6 +674,8 @@ export interface PagedBatches {
   total: number;
   page: number;
   pageSize: number;
+  /** Refonte — bande KPI de l'onglet Lots (additif, présent sur liste filtrée). */
+  summary?: BatchSummary;
 }
 
 export interface SiteOverview {

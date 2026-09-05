@@ -15,7 +15,9 @@ import {
   ChevronRight,
   Clock,
   Copy,
+  Download,
   Eye,
+  Info,
   Layers,
   Loader2,
   MoreHorizontal,
@@ -81,7 +83,10 @@ import { PasswordCell } from "@/components/hotspot/parts/uc-password-cell";
 import { LAST_BATCH_STORAGE_KEY, UcPrintDialog } from "@/components/hotspot/parts/uc-print-dialog";
 import { VoucherTransferDialog } from "@/components/hotspot/parts/voucher-transfer-dialog";
 import { VoucherWizardDialog } from "@/components/hotspot/parts/voucher-wizard-dialog";
-import { api } from "@/lib/hotspot/api";
+import { BatchLifeBadge, BatchLifeBar } from "@/components/hotspot/parts/batch-life-bar";
+import { BatchDetailSheet } from "@/components/hotspot/parts/batch-detail-sheet";
+import { BatchPrintDialog } from "@/components/hotspot/parts/batch-print-dialog";
+import { api, apiDownload } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { detailFromPath, viewToPath } from "@/lib/hotspot/view-path";
 import { formatBytes, formatCurrency, formatDate } from "@/lib/hotspot/format";
@@ -111,6 +116,15 @@ const STATUS_OPTIONS = [
   { value: "disabled", labelKey: "common.statusDisabled" },
 ];
 
+// Refonte « fiche de vie » — cycle de vie filtrable (dérivé backend batchLifecycle).
+const BATCH_STATUS_OPTIONS = [
+  { value: "all", labelKey: "common.allStatuses" },
+  { value: "stock", labelKey: "vouchers.batches.life.stock" },
+  { value: "consumed", labelKey: "vouchers.batches.life.consumed" },
+  { value: "expired", labelKey: "vouchers.batches.life.expired" },
+  { value: "purged", labelKey: "vouchers.batches.life.purged" },
+];
+
 function shortBatch(batchId: string): string {
   return batchId.split("-").pop() || batchId;
 }
@@ -137,6 +151,11 @@ export default function VouchersView() {
   const [batchSearch, setBatchSearch] = useState("");
   const [batchRouterFilter, setBatchRouterFilter] = useState("all");
   const [batchPage, setBatchPage] = useState(1);
+  // Refonte « fiche de vie » — filtres canal (provenance), cycle de vie et
+  // détenteur LIVE du stock vendable (direct | id du revendeur).
+  const [batchChannelFilter, setBatchChannelFilter] = useState("all");
+  const [batchStatusFilter, setBatchStatusFilter] = useState("all");
+  const [batchHolderFilter, setBatchHolderFilter] = useState("all");
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -344,18 +363,42 @@ export default function VouchersView() {
 
   // --- Traçabilité des lots ---
   const batchRouterParam = batchRouterFilter === "all" ? undefined : batchRouterFilter;
+  const batchStatusParam = batchStatusFilter === "all" ? undefined : batchStatusFilter;
+  const batchHolderParam = batchHolderFilter === "all" ? undefined : batchHolderFilter;
+  const batchChannelParam = batchChannelFilter === "all" ? undefined : batchChannelFilter;
 
   const { data: batchData, isLoading: batchesLoading, isFetching: batchesFetching } = useQuery({
-    queryKey: ["/api/vouchers", "batches", { search: batchSearch, routerId: batchRouterParam, page: batchPage }],
+    queryKey: [
+      "/api/vouchers",
+      "batches",
+      {
+        search: batchSearch,
+        routerId: batchRouterParam,
+        status: batchStatusParam,
+        holder: batchHolderParam,
+        channel: batchChannelParam,
+        page: batchPage,
+      },
+    ],
     queryFn: () =>
       api<PagedBatches>("/api/vouchers/batches", {
-        params: { search: batchSearch, routerId: batchRouterParam, page: batchPage, pageSize: BATCH_PAGE_SIZE },
+        params: {
+          search: batchSearch,
+          routerId: batchRouterParam,
+          status: batchStatusParam,
+          holder: batchHolderParam,
+          channel: batchChannelParam,
+          page: batchPage,
+          pageSize: BATCH_PAGE_SIZE,
+        },
       }),
     refetchInterval: 30_000,
     placeholderData: (previous) => previous,
   });
 
   const batches = batchData?.data ?? [];
+  // Refonte — bande KPI « fiche de vie » (totaux sur l'ensemble FILTRÉ, back).
+  const batchKpi = batchData?.summary;
   const batchTotal = batchData?.total ?? 0;
   const batchMaxPage = Math.max(1, Math.ceil(batchTotal / BATCH_PAGE_SIZE));
   const batchSafePage = Math.min(batchPage, batchMaxPage);
@@ -367,6 +410,13 @@ export default function VouchersView() {
 
   // N°18 — Transfert de stock du lot (distribution revendeur / retour de stock).
   const [transferBatch, setTransferBatch] = useState<BatchWithStats | null>(null);
+
+  // Refonte « fiche de vie » — fiche 360° du lot (drawer) + impression
+  // multi-formats (F3) + export CSV.
+  const [detailBatch, setDetailBatch] = useState<BatchWithStats | null>(null);
+  const [multiPrintBatch, setMultiPrintBatch] = useState<BatchWithStats | null>(null);
+  const [multiPrintVouchers, setMultiPrintVouchers] = useState<HotspotUser[] | null>(null);
+  const [exportingBatches, setExportingBatches] = useState(false);
 
   const batchDeleteMutation = useMutation({
     mutationFn: (batch: BatchWithStats) =>
@@ -503,7 +553,200 @@ export default function VouchersView() {
       .join(" · ");
   }
 
+  // Refonte (F3) — impression multi-formats du lot (grille A4 / thermique
+  // 58/80 mm) : mêmes règles que printBatch — seuls les tickets ACTIFS sortent
+  // (utilisés, expirés, désactivés ou en session exclus).
+  async function printMulti(batch: BatchWithStats) {
+    setMultiPrintBatch(batch);
+    setMultiPrintVouchers(null);
+    try {
+      const res = await fetchActiveBatchVouchers(batch.id);
+      if (res.total === 0) {
+        // Lot purgé (plus aucun voucher en base) ou tous consommés — on distingue.
+        const all = await api<PagedUsers>("/api/vouchers", {
+          params: { search: batch.id, page: 1, pageSize: 1 },
+        });
+        if (all.total === 0) {
+          toast.info(tf("vouchers.batches.purgedToast", { batch: shortBatch(batch.id) }));
+        } else {
+          toast.info(tf("vouchers.batches.noActiveToast", { batch: shortBatch(batch.id) }));
+        }
+        setMultiPrintBatch(null);
+        return;
+      }
+      setMultiPrintVouchers(res.data);
+    } catch (error) {
+      setMultiPrintBatch(null);
+      toast.error(error instanceof Error ? error.message : t("vouchers.printFailed"));
+    }
+  }
+
+  // Refonte (F3) — export CSV des lots : mêmes filtres que la liste, sans
+  // pagination (endpoint dédié ; séparateur « ; » + BOM Excel côté back).
+  async function exportBatches() {
+    setExportingBatches(true);
+    try {
+      await apiDownload("/api/vouchers/batches/export", "mikcloud-lots.csv", {
+        search: batchSearch || undefined,
+        routerId: batchRouterParam,
+        status: batchStatusParam,
+        holder: batchHolderParam,
+        channel: batchChannelParam,
+      });
+      toast.success(t("common.exportDownloaded"));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("common.exportFailed"));
+    } finally {
+      setExportingBatches(false);
+    }
+  }
+
+  function resetBatchFilters() {
+    setBatchSearchInput("");
+    setBatchSearch("");
+    setBatchRouterFilter("all");
+    setBatchChannelFilter("all");
+    setBatchStatusFilter("all");
+    setBatchHolderFilter("all");
+    setBatchPage(1);
+  }
+
+  // Fiche 360° — actions déléguées aux mécanismes existants (la fiche se ferme).
+  function detailToTransfer(batch: BatchWithStats) {
+    setDetailBatch(null);
+    setTransferBatch(batch);
+  }
+  function detailToPrintMulti(batch: BatchWithStats) {
+    setDetailBatch(null);
+    void printMulti(batch);
+  }
+  function detailToPrintSimple(batch: BatchWithStats) {
+    setDetailBatch(null);
+    void printBatch(batch);
+  }
+  function detailToView(batch: BatchWithStats) {
+    setDetailBatch(null);
+    viewBatchVouchers(batch);
+  }
+  function detailToDelete(batch: BatchWithStats) {
+    setDetailBatch(null);
+    setDeletingBatch(batch);
+  }
+
+  // Refonte — actions 1ᵉʳ niveau (découvrabilité) : impression multi-formats et
+  // transfert, déclinées compacte (cartes mobiles) / étendue (table).
+  function printMultiButton(batch: BatchWithStats, iconOnly = false) {
+    return (
+      <Button
+        variant="outline"
+        size={iconOnly ? "icon" : "sm"}
+        className={iconOnly ? "size-10" : "h-10 gap-1.5 px-2.5"}
+        disabled={multiPrintBatch?.id === batch.id}
+        onClick={() => void printMulti(batch)}
+        aria-label={tf("vouchers.batches.printMultiTitle", { batch: shortBatch(batch.id) })}
+        title={t("vouchers.batches.detail.printMulti")}
+      >
+        {multiPrintBatch?.id === batch.id ? (
+          <Loader2 className="size-4 animate-spin" />
+        ) : (
+          <Printer className="size-4" />
+        )}
+        {!iconOnly && <span className="hidden md:inline">{t("vouchers.batches.detail.printMulti")}</span>}
+      </Button>
+    );
+  }
+
+  function transferButton(batch: BatchWithStats, iconOnly = false) {
+    if (batch.transferable === 0) return null;
+    return (
+      <Button
+        variant="outline"
+        size={iconOnly ? "icon" : "sm"}
+        className={iconOnly ? "size-10" : "h-10 gap-1.5 px-2.5"}
+        onClick={() => setTransferBatch(batch)}
+        aria-label={tf("vouchers.batches.transferAria", { batch: batch.id })}
+        title={t("vouchers.batches.transfer")}
+      >
+        <ArrowLeftRight className="size-4" />
+        {!iconOnly && <span className="hidden md:inline">{t("vouchers.batches.transfer")}</span>}
+      </Button>
+    );
+  }
+
+  // Refonte — menu ⋯ du lot : la fiche 360° d'abord, puis toutes les actions.
+  function batchActionsMenu(batch: BatchWithStats) {
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-10 text-muted-foreground hover:text-foreground"
+            aria-label={tf("vouchers.batches.actionsFor", { batch: batch.id })}
+          >
+            <MoreHorizontal className="size-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-60">
+          <DropdownMenuItem className="min-h-10" onClick={() => setDetailBatch(batch)}>
+            <Info className="size-4" />
+            {tf("vouchers.batches.detailOpen", { batch: `#${shortBatch(batch.id)}` })}
+          </DropdownMenuItem>
+          <DropdownMenuItem className="min-h-10" onClick={() => viewBatchVouchers(batch)}>
+            <Eye className="size-4" />
+            {t("vouchers.batches.view")}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            className="min-h-10"
+            disabled={multiPrintBatch?.id === batch.id}
+            onClick={() => void printMulti(batch)}
+          >
+            {multiPrintBatch?.id === batch.id ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Printer className="size-4" />
+            )}
+            {t("vouchers.batches.detail.printMulti")}
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            className="min-h-10"
+            disabled={printingBatchId === batch.id}
+            onClick={() => void printBatch(batch)}
+          >
+            {printingBatchId === batch.id ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Ticket className="size-4" />
+            )}
+            {t("vouchers.batches.printSimple")}
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            className="min-h-10"
+            disabled={batch.transferable === 0}
+            onClick={() => setTransferBatch(batch)}
+          >
+            <ArrowLeftRight className="size-4" />
+            {t("vouchers.batches.transfer")}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem variant="destructive" className="min-h-10" onClick={() => setDeletingBatch(batch)}>
+            <Trash2 className="size-4" />
+            {t("common.deleteBatch")}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  }
+
   const hasFilters = search !== "" || statusFilter !== "all" || profileFilter !== "all";
+  // Refonte — filtres « fiche de vie » des lots (recherche + site + canal + cycle + détenteur).
+  const hasBatchFilters =
+    batchSearch !== "" ||
+    batchRouterFilter !== "all" ||
+    batchChannelFilter !== "all" ||
+    batchStatusFilter !== "all" ||
+    batchHolderFilter !== "all";
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -843,7 +1086,42 @@ export default function VouchersView() {
       {/* ----------------------------------------------------------------- */}
       {tab === "batches" && (
         <>
-          {/* Filtres des lots */}
+          {/* Refonte — bande KPI « fiche de vie » : la vie du stock en 4 chiffres
+              (totaux sur l'ensemble FILTRÉ — filtrez par détenteur, lisez son stock). */}
+          {batchesLoading && !batchData ? (
+            <LoadingCards cards={4} />
+          ) : (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <StatCard
+                title={t("vouchers.batches.kpi.batches")}
+                value={String(batchKpi?.batches ?? batchTotal)}
+                sub={t("vouchers.batches.kpi.batchesSub")}
+                icon={Layers}
+              />
+              <StatCard
+                title={t("vouchers.batches.kpi.stock")}
+                value={String(batchKpi?.stockTickets ?? 0)}
+                sub={t("vouchers.batches.kpi.stockSub")}
+                icon={Ticket}
+                valueClassName="text-primary"
+              />
+              <StatCard
+                title={t("vouchers.batches.kpi.value")}
+                value={formatCurrency(batchKpi?.stockValue ?? 0, currency, lang)}
+                sub={t("vouchers.batches.kpi.valueSub")}
+                icon={Wallet}
+              />
+              <StatCard
+                title={t("vouchers.batches.kpi.expiring")}
+                value={String(batchKpi?.expiring7d ?? 0)}
+                sub={t("vouchers.batches.kpi.expiringSub")}
+                icon={Clock}
+                valueClassName={cn(batchKpi?.expiring7d ? "text-amber-600 dark:text-amber-400" : undefined)}
+              />
+            </div>
+          )}
+
+          {/* Filtres des lots — recherche, site, canal, cycle de vie, détenteur + export */}
           <Card className="gap-0 py-0">
             <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center">
               <div className="relative w-full sm:max-w-xs sm:flex-1">
@@ -856,7 +1134,7 @@ export default function VouchersView() {
                   aria-label={t("vouchers.batches.searchLabel")}
                 />
               </div>
-              <div className="flex flex-1 flex-wrap gap-3 sm:justify-end">
+              <div className="flex flex-1 flex-wrap items-center gap-3 sm:justify-end">
                 <Select
                   value={batchRouterFilter}
                   onValueChange={(value) => {
@@ -864,10 +1142,10 @@ export default function VouchersView() {
                     setBatchPage(1);
                   }}
                 >
-                  <SelectTrigger className="h-10 w-full sm:w-52" aria-label={t("vouchers.batches.siteFilter")}>
+                  <SelectTrigger className="h-10 w-full sm:w-44" aria-label={t("vouchers.batches.siteFilter")}>
                     <SelectValue placeholder={t("vouchers.batches.siteFilterLabel")} />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="max-h-72">
                     <SelectItem value="all">{t("common.allSites")}</SelectItem>
                     {routers?.map((router) => (
                       <SelectItem key={router.id} value={router.id}>
@@ -876,6 +1154,78 @@ export default function VouchersView() {
                     ))}
                   </SelectContent>
                 </Select>
+                <Select
+                  value={batchChannelFilter}
+                  onValueChange={(value) => {
+                    setBatchChannelFilter(value);
+                    setBatchPage(1);
+                  }}
+                >
+                  <SelectTrigger className="h-10 w-full sm:w-40" aria-label={t("vouchers.batches.filterChannel")}>
+                    <SelectValue placeholder={t("vouchers.batches.channelAll")} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">{t("vouchers.batches.channelAll")}</SelectItem>
+                    <SelectItem value="direct">{t("common.direct")}</SelectItem>
+                    <SelectItem value="reseller">{t("common.reseller")}</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={batchStatusFilter}
+                  onValueChange={(value) => {
+                    setBatchStatusFilter(value);
+                    setBatchPage(1);
+                  }}
+                >
+                  <SelectTrigger className="h-10 w-full sm:w-40" aria-label={t("vouchers.batches.filterStatus")}>
+                    <SelectValue placeholder={t("vouchers.batches.lifeStatus")} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {BATCH_STATUS_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {t(option.labelKey)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={batchHolderFilter}
+                  onValueChange={(value) => {
+                    setBatchHolderFilter(value);
+                    setBatchPage(1);
+                  }}
+                >
+                  <SelectTrigger className="h-10 w-full sm:w-48" aria-label={t("vouchers.batches.filterHolder")}>
+                    <SelectValue placeholder={t("vouchers.batches.holderAll")} />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-72">
+                    <SelectItem value="all">{t("vouchers.batches.holderAll")}</SelectItem>
+                    <SelectItem value="direct">{t("vouchers.batches.holderDirect")}</SelectItem>
+                    {resellers?.map((reseller) => (
+                      <SelectItem key={reseller.id} value={reseller.id}>
+                        {reseller.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  variant="outline"
+                  className="h-10 shrink-0"
+                  onClick={() => void exportBatches()}
+                  disabled={exportingBatches}
+                  title={t("vouchers.batches.exportCsv")}
+                  aria-label={t("vouchers.batches.exportCsv")}
+                >
+                  {exportingBatches ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
+                  <span className="hidden xl:inline">{t("vouchers.batches.exportCsv")}</span>
+                </Button>
+                {hasBatchFilters && (
+                  <Button variant="ghost" className="h-10 shrink-0" onClick={resetBatchFilters}>
+                    <RefreshCcw className="size-4" />
+                    <span className="hidden lg:inline">{t("vouchers.batches.resetFilters")}</span>
+                    <span className="sr-only lg:hidden">{t("vouchers.batches.resetFilters")}</span>
+                  </Button>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -889,12 +1239,10 @@ export default function VouchersView() {
                 icon={Layers}
                 title={t("vouchers.batches.empty")}
                 description={
-                  batchSearch !== "" || batchRouterFilter !== "all"
-                    ? t("vouchers.batches.emptyFiltered")
-                    : t("vouchers.emptyDesc")
+                  hasBatchFilters ? t("vouchers.batches.emptyFiltered") : t("vouchers.emptyDesc")
                 }
                 action={
-                  batchSearch === "" && batchRouterFilter === "all" && (
+                  !hasBatchFilters && (
                     <Button onClick={() => setGenOpen(true)}>
                       <TicketPlus className="size-4" />
                       {t("vouchers.generate")}
@@ -904,143 +1252,150 @@ export default function VouchersView() {
               />
             ) : (
               <>
-                <div className="overflow-x-auto">
+                {/* Cartes mobiles (< md) — chaque lot est une fiche tappable */}
+                <div className="md:hidden">
+                  {batches.map((batch) => (
+                    <div
+                      key={batch.id}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={tf("vouchers.batches.detailOpen", { batch: batch.id })}
+                      className="cursor-pointer space-y-3 border-b p-4 transition-colors last:border-b-0 hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none"
+                      onClick={() => setDetailBatch(batch)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          setDetailBatch(batch);
+                        }
+                      }}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className="font-mono text-sm font-medium">#{shortBatch(batch.id)}</span>
+                          <BatchLifeBadge status={batch.status} />
+                        </span>
+                        <span className="text-xs text-muted-foreground">{formatDate(batch.createdAt, lang)}</span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <Badge variant="outline" className="max-w-36 truncate">
+                          {batch.profileName}
+                        </Badge>
+                        <span className="truncate text-xs text-muted-foreground">{batch.routerName}</span>
+                        <span className="text-xs text-muted-foreground">
+                          · {batch.channel === "reseller" ? batch.resellerName || t("common.reseller") : t("common.direct")}
+                        </span>
+                      </div>
+                      <BatchLifeBar
+                        count={batch.count}
+                        active={batch.active}
+                        used={batch.used}
+                        expired={batch.expired}
+                        disabled={batch.disabled}
+                      />
+                      <div className="flex items-center justify-between gap-2" onClick={(event) => event.stopPropagation()}>
+                        <span className="text-sm font-medium tabular-nums text-muted-foreground">
+                          {formatCurrency(batch.totalCost, currency, lang)}
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          {transferButton(batch, true)}
+                          {printMultiButton(batch, true)}
+                          {batchActionsMenu(batch)}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Table (md+) */}
+                <div className="hidden overflow-x-auto md:block">
                   <Table>
                     <TableHeader>
                       <TableRow className="hover:bg-transparent">
                         <TableHead className="pl-4 text-muted-foreground sm:pl-6">{t("common.batch")}</TableHead>
                         <TableHead className="text-muted-foreground">{t("common.profile")}</TableHead>
                         <TableHead className="hidden text-muted-foreground md:table-cell">{t("vouchers.batches.site")}</TableHead>
-                        <TableHead className="hidden text-muted-foreground lg:table-cell">{t("vouchers.batches.channel")}</TableHead>
-                        <TableHead className="text-right text-muted-foreground">{t("vouchers.batches.vouchers")}</TableHead>
-                        <TableHead className="text-right text-muted-foreground">{t("vouchers.batches.active")}</TableHead>
-                        <TableHead className="hidden text-right text-muted-foreground xl:table-cell">
-                          {t("vouchers.batches.usedExpired")}
-                        </TableHead>
+                        <TableHead className="hidden text-muted-foreground xl:table-cell">{t("vouchers.batches.channel")}</TableHead>
+                        <TableHead className="hidden min-w-44 text-muted-foreground sm:table-cell">{t("vouchers.batches.life")}</TableHead>
                         <TableHead className="hidden text-right text-muted-foreground md:table-cell">{t("vouchers.batches.cost")}</TableHead>
                         <TableHead className="pr-4 text-right text-muted-foreground sm:pr-6">{t("common.actions")}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {batches.map((batch) => {
-                        const purged =
-                          batch.active === 0 && batch.used === 0 && batch.expired === 0 && batch.disabled === 0;
-                        return (
-                          <TableRow key={batch.id}>
-                            <TableCell className="pl-4 sm:pl-6">
-                              <p className="font-mono text-sm font-medium">#{shortBatch(batch.id)}</p>
-                              <p className="text-xs text-muted-foreground">{formatDate(batch.createdAt, lang)}</p>
-                            </TableCell>
-                            <TableCell>
-                              <Badge variant="outline" className="max-w-36 truncate">
-                                {batch.profileName}
-                              </Badge>
-                              {batch.dataQuotaMb > 0 && (
-                                <p className="mt-0.5 text-xs text-muted-foreground">
-                                  {formatBytes(batch.dataQuotaMb * 1048576, lang)} / voucher
-                                </p>
-                              )}
-                            </TableCell>
-                            <TableCell className="hidden max-w-40 truncate text-muted-foreground md:table-cell">
-                              {batch.routerName}
-                            </TableCell>
-                            <TableCell className="hidden lg:table-cell">
-                              {batch.channel === "reseller" ? (
-                                <span className="text-muted-foreground">
-                                  {t("common.reseller")} · <span className="text-foreground">{batch.resellerName || "—"}</span>
+                      {batches.map((batch) => (
+                        <TableRow
+                          key={batch.id}
+                          className="cursor-pointer"
+                          onClick={() => setDetailBatch(batch)}
+                        >
+                          <TableCell className="pl-4 sm:pl-6">
+                            <button
+                              type="button"
+                              className="flex flex-col items-start gap-0.5 text-left"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setDetailBatch(batch);
+                              }}
+                              aria-label={tf("vouchers.batches.detailOpen", { batch: batch.id })}
+                            >
+                              <span className="inline-flex items-center gap-1.5">
+                                <span className="font-mono text-sm font-medium underline-offset-2 hover:underline">
+                                  #{shortBatch(batch.id)}
                                 </span>
-                              ) : (
-                                <span className="text-muted-foreground">{t("common.direct")}</span>
-                              )}
-                              {holdingsDiverge(batch) && (
-                                <p className="mt-0.5 text-xs text-muted-foreground">
-                                  {t("vouchers.batches.heldBy")} {holdingsLabel(batch)}
-                                </p>
-                              )}
-                            </TableCell>
-                            <TableCell className="text-right font-medium tabular-nums">{batch.count}</TableCell>
-                            <TableCell className="text-right tabular-nums">
-                              {purged ? (
-                                <span className="text-xs text-muted-foreground">{t("vouchers.batches.purged")}</span>
-                              ) : (
-                                <span className={cn("font-medium", batch.active > 0 ? "text-primary" : "text-muted-foreground")}>
-                                  {batch.active}
-                                </span>
-                              )}
-                            </TableCell>
-                            <TableCell className="hidden text-right text-xs text-muted-foreground tabular-nums xl:table-cell">
-                              {batch.used} · {batch.expired}
-                            </TableCell>
-                            <TableCell className="hidden text-right tabular-nums text-muted-foreground md:table-cell">
-                              {formatCurrency(batch.totalCost, currency, lang)}
-                            </TableCell>
-                            <TableCell className="pr-4 text-right sm:pr-6">
-                              <div className="flex items-center justify-end gap-1.5">
-                                {batch.transferable > 0 && (
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    className="h-10 gap-1.5 px-2.5"
-                                    onClick={() => setTransferBatch(batch)}
-                                    aria-label={tf("vouchers.batches.transferAria", { batch: batch.id })}
-                                    title={t("vouchers.batches.transfer")}
-                                  >
-                                    <ArrowLeftRight className="size-4" />
-                                    <span className="hidden md:inline">{t("vouchers.batches.transfer")}</span>
-                                  </Button>
-                                )}
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger asChild>
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="size-10 text-muted-foreground hover:text-foreground"
-                                      aria-label={tf("vouchers.batches.actionsFor", { batch: batch.id })}
-                                    >
-                                      <MoreHorizontal className="size-4" />
-                                    </Button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent align="end" className="w-60">
-                                    <DropdownMenuItem
-                                      className="min-h-10"
-                                      disabled={batch.transferable === 0}
-                                      onClick={() => setTransferBatch(batch)}
-                                    >
-                                      <ArrowLeftRight className="size-4" />
-                                      {t("vouchers.batches.transfer")}
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem className="min-h-10" onClick={() => viewBatchVouchers(batch)}>
-                                      <Eye className="size-4" />
-                                      {t("vouchers.batches.view")}
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                      className="min-h-10"
-                                      disabled={printingBatchId === batch.id}
-                                      onClick={() => void printBatch(batch)}
-                                    >
-                                      {printingBatchId === batch.id ? (
-                                        <Loader2 className="size-4 animate-spin" />
-                                      ) : (
-                                        <Printer className="size-4" />
-                                      )}
-                                      {t("vouchers.batches.printSimple")}
-                                    </DropdownMenuItem>
-                                    <DropdownMenuSeparator />
-                                    <DropdownMenuItem
-                                      variant="destructive"
-                                      className="min-h-10"
-                                      onClick={() => setDeletingBatch(batch)}
-                                    >
-                                      <Trash2 className="size-4" />
-                                      {t("common.deleteBatch")}
-                                    </DropdownMenuItem>
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
+                                <BatchLifeBadge status={batch.status} />
+                              </span>
+                              <span className="text-xs text-muted-foreground">{formatDate(batch.createdAt, lang)}</span>
+                            </button>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="max-w-36 truncate">
+                              {batch.profileName}
+                            </Badge>
+                            {batch.dataQuotaMb > 0 && (
+                              <p className="mt-0.5 text-xs text-muted-foreground">
+                                {formatBytes(batch.dataQuotaMb * 1048576, lang)} / voucher
+                              </p>
+                            )}
+                          </TableCell>
+                          <TableCell className="hidden max-w-40 truncate text-muted-foreground md:table-cell">
+                            {batch.routerName}
+                          </TableCell>
+                          <TableCell className="hidden xl:table-cell">
+                            {batch.channel === "reseller" ? (
+                              <span className="text-muted-foreground">
+                                {t("common.reseller")} · <span className="text-foreground">{batch.resellerName || "—"}</span>
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground">{t("common.direct")}</span>
+                            )}
+                            {holdingsDiverge(batch) && (
+                              <p className="mt-0.5 text-xs text-muted-foreground">
+                                {t("vouchers.batches.heldBy")} {holdingsLabel(batch)}
+                              </p>
+                            )}
+                          </TableCell>
+                          {/* Refonte — la vie du lot en un coup d'œil (composition + légende) */}
+                          <TableCell>
+                            <BatchLifeBar
+                              count={batch.count}
+                              active={batch.active}
+                              used={batch.used}
+                              expired={batch.expired}
+                              disabled={batch.disabled}
+                              className="w-44 max-w-56"
+                            />
+                          </TableCell>
+                          <TableCell className="hidden text-right tabular-nums text-muted-foreground md:table-cell">
+                            {formatCurrency(batch.totalCost, currency, lang)}
+                          </TableCell>
+                          <TableCell className="pr-4 text-right sm:pr-6" onClick={(event) => event.stopPropagation()}>
+                            <div className="flex items-center justify-end gap-1.5">
+                              {transferButton(batch)}
+                              {printMultiButton(batch)}
+                              {batchActionsMenu(batch)}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
                     </TableBody>
                   </Table>
                 </div>
@@ -1115,6 +1470,33 @@ export default function VouchersView() {
         resellers={resellers ?? []}
         currency={currency}
         onOpenChange={(open) => !open && setTransferBatch(null)}
+      />
+
+      {/* Refonte — fiche 360° du lot (drawer) : cycle de vie, possession, actions */}
+      <BatchDetailSheet
+        batch={detailBatch}
+        currency={currency}
+        onOpenChange={(open) => !open && setDetailBatch(null)}
+        onTransfer={detailToTransfer}
+        onPrintMulti={detailToPrintMulti}
+        onPrintSimple={detailToPrintSimple}
+        onViewVouchers={detailToView}
+        onDelete={detailToDelete}
+      />
+
+      {/* Refonte (F3) — impression multi-formats du lot : grille A4 / thermique 58/80 */}
+      <BatchPrintDialog
+        open={multiPrintBatch !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setMultiPrintBatch(null);
+            setMultiPrintVouchers(null);
+          }
+        }}
+        vouchers={multiPrintVouchers}
+        title={tf("vouchers.batches.printMultiTitle", { batch: multiPrintBatch ? shortBatch(multiPrintBatch.id) : "" })}
+        tenantName={tenantName}
+        currency={currency}
       />
 
       {/* Confirmation suppression voucher */}

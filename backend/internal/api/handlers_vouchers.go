@@ -449,14 +449,110 @@ func (a *API) handleVouchersBatchDelete(w http.ResponseWriter, r *http.Request) 
 // Sessions
 // ---------------------------------------------------------------------------
 
-func (a *API) handleBatchesList(w http.ResponseWriter, r *http.Request) {
-	acc := accountScope(r)
-	q := r.URL.Query()
-	search := strings.ToLower(strings.TrimSpace(q.Get("search")))
-	routerID := strings.TrimSpace(q.Get("routerId"))
-	page := queryInt(r, "page", 1, 1, 1_000_000)
-	pageSize := queryInt(r, "pageSize", 15, 1, 100)
+// ---------------------------------------------------------------------------
+// Lots — liste enrichie + export CSV (refonte « fiche de vie »)
+// ---------------------------------------------------------------------------
 
+// holding — détenteur LIVE d'une part du stock vendable d'un lot (N°18) :
+// ResellerID vide = stock direct du gérant. Tri affichage : direct d'abord,
+// puis quantité décroissante.
+type holding struct {
+	ResellerID string `json:"resellerId"`
+	Name       string `json:"name"`
+	Count      int    `json:"count"`
+	Value      int    `json:"value"`
+}
+
+// batchRow — un lot enrichi des stats live de ses vouchers + statut de
+// « fiche de vie » (dérivé) + possession du stock vendable.
+type batchRow struct {
+	model.Batch
+	Remaining int `json:"remaining"`
+	Active    int `json:"active"`
+	Used      int `json:"used"`
+	Expired   int `json:"expired"`
+	Disabled  int `json:"disabled"`
+	// Refonte onglet Lots — cycle de vie dérivé : stock | consumed | expired | purged.
+	Status string `json:"status"`
+	// N°18 — possession live du stock vendable (lot immuable).
+	Transferable      int       `json:"transferable"`
+	TransferableValue int       `json:"transferableValue"`
+	Expiring7d        int       `json:"expiring7d"`
+	Holdings          []holding `json:"holdings,omitempty"`
+}
+
+// batchSummary — bande KPI de l'onglet Lots : totaux sur l'ensemble FILTRÉ
+// (avant pagination) — le gérant filtre par détenteur et lit « son » stock.
+type batchSummary struct {
+	Batches      int `json:"batches"`
+	StockTickets int `json:"stockTickets"`
+	Transferable int `json:"transferable"`
+	StockValue   int `json:"stockValue"`
+	Expiring7d   int `json:"expiring7d"`
+}
+
+// batchFilter — filtres communs à la liste et à l'export CSV.
+// status : cycle de vie (stock|consumed|expired|purged) · holder : détenteur
+// LIVE du stock vendable (direct|resellerId) · channel : provenance (direct|reseller).
+type batchFilter struct {
+	search   string
+	routerID string
+	status   string
+	holder   string
+	channel  string
+}
+
+func batchFilterFrom(r *http.Request) batchFilter {
+	q := r.URL.Query()
+	return batchFilter{
+		search:   strings.ToLower(strings.TrimSpace(q.Get("search"))),
+		routerID: strings.TrimSpace(q.Get("routerId")),
+		status:   strings.TrimSpace(q.Get("status")),
+		holder:   strings.TrimSpace(q.Get("holder")),
+		channel:  strings.TrimSpace(q.Get("channel")),
+	}
+}
+
+// batchLifecycle — statut de « fiche de vie » d'un lot, dérivé des stats live :
+// stock (du stock consommable reste) → consumed (épuisé : utilisé/désactivé)
+// → expired (jamais utilisé, validité envolée) → purged (plus rien en base).
+func batchLifecycle(active, used, expired, disabled int) string {
+	switch {
+	case active > 0:
+		return "stock"
+	case used > 0 || disabled > 0:
+		return "consumed"
+	case expired > 0:
+		return "expired"
+	default:
+		return "purged"
+	}
+}
+
+// batchHeldBy — le détenteur vit dans les holdings (possession LIVE du stock
+// vendable) : « direct » = stock du gérant, sinon l'ID du revendeur. Un lot
+// sans stock vendable (tout vendu, purgé) n'appartient à personne.
+func batchHeldBy(hs []holding, holder string) bool {
+	for _, h := range hs {
+		if holder == "direct" {
+			if h.ResellerID == "" {
+				return true
+			}
+			continue
+		}
+		if h.ResellerID == holder {
+			return true
+		}
+	}
+	return false
+}
+
+// computeBatches — agrégation partagée de GET /api/vouchers/batches (liste)
+// et /api/vouchers/batches/export (CSV) : stats live des vouchers, holdings
+// N°18, statut de vie, filtres (recherche, site, canal, statut, détenteur),
+// tri du plus récent au plus ancien. Le contrat de la liste reste intact :
+// les nouveaux champs (status, summary) et filtres sont ADDITIFS.
+func (a *API) computeBatches(acc string, f batchFilter) ([]batchRow, batchSummary) {
 	now := time.Now().UTC()
 	a.store.Lock()
 	db := a.store.Data()
@@ -476,12 +572,6 @@ func (a *API) handleBatchesList(w http.ResponseWriter, r *http.Request) {
 	resNames := make(map[string]string, len(db.Resellers))
 	for i := range db.Resellers {
 		resNames[db.Resellers[i].ID] = db.Resellers[i].Name
-	}
-	type holding struct {
-		ResellerID string `json:"resellerId"`
-		Name       string `json:"name"`
-		Count      int    `json:"count"`
-		Value      int    `json:"value"`
 	}
 	holdings := map[string]map[string]*holding{}
 	transferable := map[string]int{}
@@ -533,30 +623,20 @@ func (a *API) handleBatchesList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	type batchRow struct {
-		model.Batch
-		Remaining int `json:"remaining"`
-		Active    int `json:"active"`
-		Used      int `json:"used"`
-		Expired   int `json:"expired"`
-		Disabled  int `json:"disabled"`
-		// N°18 — possession live du stock vendable (lot immuable).
-		Transferable      int       `json:"transferable"`
-		TransferableValue int       `json:"transferableValue"`
-		Expiring7d        int       `json:"expiring7d"`
-		Holdings          []holding `json:"holdings,omitempty"`
-	}
 	filtered := []batchRow{}
 	for _, b := range db.Batches {
 		if b.AccountID != acc {
 			continue
 		}
-		if routerID != "" && routerID != "all" && b.RouterID != routerID {
+		if f.routerID != "" && f.routerID != "all" && b.RouterID != f.routerID {
 			continue
 		}
-		if search != "" {
+		if f.channel != "" && f.channel != "all" && b.Channel != f.channel {
+			continue
+		}
+		if f.search != "" {
 			hay := strings.ToLower(b.ID + " " + b.ProfileName + " " + b.RouterName + " " + b.ResellerName + " " + b.Channel)
-			if !strings.Contains(hay, search) {
+			if !strings.Contains(hay, f.search) {
 				continue
 			}
 		}
@@ -568,6 +648,8 @@ func (a *API) handleBatchesList(w http.ResponseWriter, r *http.Request) {
 			row.Expired = st.Expired
 			row.Disabled = st.Disabled
 		}
+		// Refonte — statut de « fiche de vie » dérivé des stats live.
+		row.Status = batchLifecycle(row.Active, row.Used, row.Expired, row.Disabled)
 		row.Transferable = transferable[b.ID]
 		row.TransferableValue = transferableValue[b.ID]
 		row.Expiring7d = expiring7d[b.ID]
@@ -589,13 +671,35 @@ func (a *API) handleBatchesList(w http.ResponseWriter, r *http.Request) {
 			})
 			row.Holdings = hs
 		}
+		// Filtres « fiche de vie » : cycle de vie + détenteur du stock vendable.
+		if f.status != "" && f.status != "all" && row.Status != f.status {
+			continue
+		}
+		if f.holder != "" && f.holder != "all" && !batchHeldBy(row.Holdings, f.holder) {
+			continue
+		}
 		filtered = append(filtered, row)
 	}
 	a.store.Save() // P0 : persiste les flags Enforced déposés par enforceExpired
 	a.store.Unlock()
 
 	sort.Slice(filtered, func(i, j int) bool { return filtered[i].CreatedAt > filtered[j].CreatedAt })
-	total := len(filtered)
+	summary := batchSummary{Batches: len(filtered)}
+	for _, row := range filtered {
+		summary.StockTickets += row.Active
+		summary.Transferable += row.Transferable
+		summary.StockValue += row.TransferableValue
+		summary.Expiring7d += row.Expiring7d
+	}
+	return filtered, summary
+}
+
+func (a *API) handleBatchesList(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
+	page := queryInt(r, "page", 1, 1, 1_000_000)
+	pageSize := queryInt(r, "pageSize", 15, 1, 100)
+	rows, summary := a.computeBatches(acc, batchFilterFrom(r))
+	total := len(rows)
 	start := (page - 1) * pageSize
 	if start > total {
 		start = total
@@ -605,9 +709,39 @@ func (a *API) handleBatchesList(w http.ResponseWriter, r *http.Request) {
 		end = total
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"data":     filtered[start:end],
+		"data":     rows[start:end],
 		"total":    total,
 		"page":     page,
 		"pageSize": pageSize,
+		"summary":  summary,
 	})
+}
+
+// handleBatchesExport — export CSV des lots (mêmes filtres que la liste, sans
+// pagination) : une ligne par lot — cycle de vie, stock vendable, possession.
+// Séparateur « ; » + BOM UTF-8 (convention mikcloud-comptabilite).
+func (a *API) handleBatchesExport(w http.ResponseWriter, r *http.Request) {
+	rows, _ := a.computeBatches(accountScope(r), batchFilterFrom(r))
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"mikcloud-lots.csv\"")
+	_, _ = w.Write([]byte{0xEF, 0xBB, 0xBF})
+	_, _ = w.Write([]byte("Lot ;Date ;Statut ;Profil ;Quota Mo ;Site ;Canal ;Revendeur ;Tickets ;En stock ;Vendables ;Utilises ;Expires ;Desactives ;Expirent < 7j ;Valeur stock ;Cout total ;Possession\r\n"))
+	statusLabels := map[string]string{"stock": "En stock", "consumed": "Epuise", "expired": "Expire", "purged": "Purge"}
+	for _, row := range rows {
+		parts := make([]string, 0, len(row.Holdings))
+		for _, h := range row.Holdings {
+			name := h.Name
+			if h.ResellerID == "" {
+				name = "Stock direct"
+			}
+			parts = append(parts, fmt.Sprintf("%s (%d)", name, h.Count))
+		}
+		_, _ = w.Write([]byte(fmt.Sprintf(
+			"%s ;%s ;%s ;%s ;%d ;%s ;%s ;%s ;%d ;%d ;%d ;%d ;%d ;%d ;%d ;%d ;%d ;%s\r\n",
+			csvField(row.ID), csvField(row.CreatedAt), csvField(statusLabels[row.Status]),
+			csvField(row.ProfileName), row.DataQuotaMb, csvField(row.RouterName),
+			row.Channel, csvField(row.ResellerName), row.Count, row.Active,
+			row.Transferable, row.Used, row.Expired, row.Disabled, row.Expiring7d,
+			row.TransferableValue, row.TotalCost, csvField(strings.Join(parts, " · ")))))
+	}
 }

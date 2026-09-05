@@ -64,7 +64,7 @@ add action=allow dst-host=mikcloud.onrender.com comment="N27 inscription publiqu
 # la résolution DNS doit traverser le routeur pour que les règles
 # par domaine fonctionnent (le hotspot « renifle » les réponses DNS).
 /ip hotspot walled-garden ip
-add action=allow protocol=udp dst-port=53 comment="DNS pour regles par domaine"
+add action=accept protocol=udp dst-port=53 comment="DNS pour regles par domaine"
 add action=allow protocol=tcp dst-port=53 comment="DNS TCP (reponses tronquees)"
 ```
 

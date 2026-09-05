@@ -52,8 +52,17 @@ la CI puis se déploie automatiquement (frontend Vercel, backend Render).
   otage par une ligne walled-garden fatale (la reprise zombie N°31 retente).
 - Syntaxe identique dans le bloc d'installation des routeurs neufs ; tests
   mis à jour + interdiction du find regex dans le script généré.
+### Correctif N°31-d — LA cause racine : `action=allow` invalide sur `walled-garden ip`
+- Doc officielle HotSpot : la table `/ip hotspot walled-garden` (domaines)
+  accepte `action=allow|deny` — mais la table `/ip hotspot walled-garden ip`
+  (DNS udp/tcp 53) n'accepte QUE `accept|drop|reject`. Nos lignes DNS portaient
+  `action=allow` → **erreur de validation console qui rejetait le fichier
+  d'import ENTIER** (les read_states du même check-in mouraient avec lui —
+  4 livraisons muettes 4×/4×, y compris le runbook manuel N°27-D corrigé
+  rétroactivement). Correctif : `action=accept` (script + bloc installation
+  + runbook §2). Test mis à jour.
 
-## 2026-09-05 — N°29 :## 2026-09-05 — N°29 :## 2026-09-05 — N°29 : walled-garden d'inscription publique automatisé par l'agent (routeurs neufs ET déjà en ligne)
+## 2026-09-05 — N°29 :## 2026-09-05 — N°29 :## 2026-09-05 — N°29 :## 2026-09-05 — N°29 : walled-garden d'inscription publique automatisé par l'agent (routeurs neufs ET déjà en ligne)
 
 ### Le runbook N°27-D appliqué par le système lui-même
 - Nouvelle commande agent **`walled_garden`** : pose sur le routeur les règles

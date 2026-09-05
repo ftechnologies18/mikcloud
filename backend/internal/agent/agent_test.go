@@ -412,8 +412,8 @@ func TestWalledGardenScript(t *testing.T) {
 		`/ip hotspot walled-garden remove [find comment="` + WalledGardenMarker + ` dns"]`,
 		`/ip hotspot walled-garden add action=allow dst-host="mikcloud.ftci.fr" comment="` + WalledGardenMarker + ` page"`,
 		`/ip hotspot walled-garden add action=allow dst-host="api.example.com:8443" comment="` + WalledGardenMarker + ` page"`,
-		`/ip hotspot walled-garden ip add action=allow protocol=udp dst-port=53 comment="` + WalledGardenMarker + ` dns"`,
-		`/ip hotspot walled-garden ip add action=allow protocol=tcp dst-port=53 comment="` + WalledGardenMarker + ` dns"`,
+		`/ip hotspot walled-garden ip add action=accept protocol=udp dst-port=53 comment="` + WalledGardenMarker + ` dns"`,
+		`/ip hotspot walled-garden ip add action=accept protocol=tcp dst-port=53 comment="` + WalledGardenMarker + ` dns"`,
 		"domains=2", // rapport : 2 règles page/api posées
 	} {
 		if !strings.Contains(script, marqueur) {
@@ -447,7 +447,7 @@ func TestWalledGardenInstallBlock(t *testing.T) {
 		`/ip hotspot walled-garden ip remove [find comment="` + WalledGardenMarker + ` dns"]`,
 		`/ip hotspot walled-garden add action=allow dst-host="a.example" comment="` + WalledGardenMarker + ` page"`,
 		`/ip hotspot walled-garden add action=allow dst-host="b.example" comment="` + WalledGardenMarker + ` page"`,
-		`/ip hotspot walled-garden ip add action=allow protocol=udp dst-port=53`,
+		`/ip hotspot walled-garden ip add action=accept protocol=udp dst-port=53`,
 		"on-error={}",
 	} {
 		if !strings.Contains(with, marqueur) {

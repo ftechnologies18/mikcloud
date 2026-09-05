@@ -1324,8 +1324,8 @@ func walledGardenInstallBlock(domains []string) string {
 		sb.WriteString("    :do {\n      /ip hotspot walled-garden add action=allow dst-host=\"" + rosEscape(d) + "\" comment=\"" + WalledGardenMarker + " page\"\n    } on-error={}\n")
 	}
 	sb.WriteString("    :do {\n      /ip hotspot walled-garden ip remove [find comment=\"" + WalledGardenMarker + " dns\"]\n    } on-error={}\n")
-	sb.WriteString("    :do {\n      /ip hotspot walled-garden ip add action=allow protocol=udp dst-port=53 comment=\"" + WalledGardenMarker + " dns\"\n    } on-error={}\n")
-	sb.WriteString("    :do {\n      /ip hotspot walled-garden ip add action=allow protocol=tcp dst-port=53 comment=\"" + WalledGardenMarker + " dns\"\n    } on-error={}\n")
+	sb.WriteString("    :do {\n      /ip hotspot walled-garden ip add action=accept protocol=udp dst-port=53 comment=\"" + WalledGardenMarker + " dns\"\n    } on-error={}\n")
+	sb.WriteString("    :do {\n      /ip hotspot walled-garden ip add action=accept protocol=tcp dst-port=53 comment=\"" + WalledGardenMarker + " dns\"\n    } on-error={}\n")
 	return sb.String()
 }
 
@@ -1361,8 +1361,12 @@ func (b Builder) buildWalledGarden(cmd model.Command) string {
 		sb.WriteString(":do { /ip hotspot walled-garden add action=allow dst-host=\"" + rosEscape(d) + "\" comment=\"" + WalledGardenMarker + " page\" } on-error={ :set " + okVar + " false }\n")
 	}
 	sb.WriteString(":do { /ip hotspot walled-garden ip remove [find comment=\"" + WalledGardenMarker + " dns\"] } on-error={ :set " + okVar + " false }\n")
-	sb.WriteString(":do { /ip hotspot walled-garden ip add action=allow protocol=udp dst-port=53 comment=\"" + WalledGardenMarker + " dns\" } on-error={ :set " + okVar + " false }\n")
-	sb.WriteString(":do { /ip hotspot walled-garden ip add action=allow protocol=tcp dst-port=53 comment=\"" + WalledGardenMarker + " dns\" } on-error={ :set " + okVar + " false }\n")
+	// N°31-d — action=ACCEPT (et NON allow) : la table walled-garden ip
+	// n'accepte que accept|drop|reject (doc officielle HotSpot) — « allow »
+	// est une erreur de validation console qui rejetait TOUT le fichier
+	// d'import (constat prod : 4 livraisons muettes, rien ne s'exécutait).
+	sb.WriteString(":do { /ip hotspot walled-garden ip add action=accept protocol=udp dst-port=53 comment=\"" + WalledGardenMarker + " dns\" } on-error={ :set " + okVar + " false }\n")
+	sb.WriteString(":do { /ip hotspot walled-garden ip add action=accept protocol=tcp dst-port=53 comment=\"" + WalledGardenMarker + " dns\" } on-error={ :set " + okVar + " false }\n")
 	sb.WriteString(b.resultLines(cmd.ID, okVar, map[string]string{"domains": strconv.Itoa(len(domains))}))
 	return sb.String()
 }

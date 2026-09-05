@@ -15,15 +15,25 @@
 //   - token de 32 caractères (alphabet sans ambiguïtés, ~155 bits) ;
 //   - whitelist middleware restreinte à /api/join/{token} — PAS
 //     /api/join-links (JWT console requis) ;
-//   - rate-limit dédié main.go (10 req/min/IP) + quota anti-abus par IP
-//     (signupLimiter réutilisé : 5/10 min, 20/24 h) sur la SOUMISSION ;
+//   - rate-limit dédié main.go (10 req/min/IP) + quotas anti-abus CUMULÉS
+//     sur la SOUMISSION (signupLimiter réutilisé : 5/10 min, 20/24 h) :
+//     par IP et — N°33 — par MAC d'appareil (?mac= de la page login du
+//     routeur), seule clé réellement discriminante derrière le NAT partagé
+//     du hotspot (une seule IP publique pour tous les clients du lieu) ;
 //   - honeypot « website » : un bot qui le remplit reçoit un succès factice
 //     (rien n'est créé) — aucun indice sur le filtre ;
+//   - N°33 anti-abus kiosque : au plus 1 compte AUTO-VALIDÉ par numéro de
+//     téléphone et 24 h, par compte (joinKioskPhoneDailyMax) — sans ce
+//     plafond, le dédoublonnage téléphone ne couvrait que les demandes
+//     « pending » et le même numéro pouvait créer un compte à répétition ;
 //   - GET public minimal : nom du lien, organisation, état, expiration,
 //     places restantes — JAMAIS le catalogue de profils ;
 //   - le mot de passe choisi n'est conservé que le temps de la décision :
-//     VIDÉ à l'approbation comme au refus ; demandes refusées purgées à
-//     30 jours (sweepStaleRegistrations, hook enforceExpired).
+//     VIDÉ à l'approbation comme au refus ; VIDÉ aussi (N°33) pour les
+//     demandes pending de plus de 30 jours ; demandes refusées purgées à
+//     30 jours (sweepStaleRegistrations, hook enforceExpired) ;
+//   - N°33 politique mot de passe publique : 8 caractères min., denylist
+//     S2 (mots de passe les plus courants), ≠ nom d'utilisateur.
 package api
 
 import (
@@ -32,6 +42,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"mikcloud/hotspot-api/internal/model"
 )
@@ -43,6 +54,27 @@ const joinTokenLength = 32
 // registrationRetention — durée de conservation d'une demande REFUSÉE avant
 // purge automatique (minimisation des données personnelles).
 const registrationRetention = 30 * 24 * time.Hour
+
+// joinMinPasswordLen — longueur minimale d'un mot de passe CHOISI sur la page
+// publique (N°33). La console S2 exige 10 (comptes métier) ; le formulaire
+// public est saisi sur un clavier de téléphone par des clients de passage :
+// 8 caractères reste au-dessus des 6 d'origine (l'espace de recherche passe
+// de ~3·10^7 à ~10^14 sur alphabet 62) sans friction excessive. La denylist
+// S2 (mots de passe les plus courants, variantes FR) et l'interdiction
+// « identique au nom d'utilisateur » s'appliquent aussi.
+const joinMinPasswordLen = 8
+
+// joinKioskPhoneDailyMax — N°33 anti-abus kiosque : nombre maximal de comptes
+// AUTO-VALIDÉS par numéro de téléphone et fenêtre de 24 h, PAR COMPTE (tous
+// liens kiosque confondus). Sans ce plafond, le dédoublonnage « phone_pending
+// » ne couvrait que la file d'attente : en mode kiosque la demande passe
+// directement « approved », un même numéro pouvait donc créer un compte
+// toutes les quelques secondes (gratuité répétée). 1/24 h couvre l'usage
+// légitime (une personne s'inscrit une fois) sans gêner personne.
+const joinKioskPhoneDailyMax = 1
+
+// joinKioskPhoneDailyWindow — fenêtre glissante du plafond ci-dessus.
+const joinKioskPhoneDailyWindow = 24 * time.Hour
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -153,6 +185,62 @@ func usernameSuggestion(db *model.DB, acc, base string) string {
 	return ""
 }
 
+// normalizeJoinMac — N°33 : adresse MAC de l'appareil de l'inscrit, fournie
+// par la page de login du routeur (lien « S'inscrire » vers
+// /join/{token}?mac=$(mac-esc)). Formats acceptés : séparateurs « : » ou « - »
+// ou aucun, casse libre ; normalisée en majuscules avec « : ». Une MAC vide,
+// absente ou INVALIDE renvoie "" (durcissement optionnel : on ne bloque
+// jamais un vrai client sur un champ qu'il ne contrôle pas).
+func normalizeJoinMac(raw string) string {
+	p := strings.TrimSpace(raw)
+	if p == "" {
+		return ""
+	}
+	hexDigits := 0
+	var b strings.Builder
+	for _, c := range p {
+		switch {
+		case (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'):
+			hexDigits++
+			if hexDigits > 12 {
+				return ""
+			}
+			b.WriteRune(unicode.ToUpper(c))
+			if hexDigits%2 == 0 && hexDigits < 12 {
+				b.WriteByte(':')
+			}
+		case c == ':' || c == '-':
+			// séparateur ignoré — la sortie est toujours normalisée
+		default:
+			return ""
+		}
+	}
+	if hexDigits != 12 {
+		return ""
+	}
+	return b.String()
+}
+
+// joinPasswordViolation — politique mot de passe de la page publique (N°33) :
+// retourne le message d'erreur français si le mot de passe est refusé, ""
+// s'il est acceptable. Miroir allégé de passwordPolicyViolation (console) :
+// longueur 8 (vs 10 — clients de passage sur clavier mobile), même denylist
+// S2, même interdiction « identique au nom d'utilisateur » ; la borne bcrypt
+// n'entre pas en jeu (les mots de passe hotspot sont stockés tels quels pour
+// RouterOS, plafonnés à 64 par la validation d'entrée).
+func joinPasswordViolation(password, username string) string {
+	if n := len(password); n < joinMinPasswordLen {
+		return "Le mot de passe doit faire entre 8 et 64 caractères"
+	}
+	if username != "" && strings.EqualFold(password, username) {
+		return "Le mot de passe ne doit pas être identique au nom d'utilisateur"
+	}
+	if _, banned := passwordDenylist[strings.ToLower(password)]; banned {
+		return "Ce mot de passe figure parmi les plus utilisés et est interdit — choisissez-en un unique"
+	}
+	return ""
+}
+
 // joinLinkView — lien tel que renvoyé à la console, avec état dérivé.
 type joinLinkView struct {
 	model.JoinLink
@@ -213,10 +301,13 @@ func (a *API) handleJoinInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleJoinSubmit — POST /api/join/{token} : soumission du formulaire
-// public. Toute tentative consomme le quota anti-abus par IP (même contrat
-// que l'inscription SaaS : 429 + Retry-After). Honeypot → succès factice.
-// Lien kiosque (autoValidate + profil + routeur pré-attribués) → création
-// immédiate via createHotspotUser ; sinon demande « pending » pour le gérant.
+// public. Toute tentative consomme le quota anti-abus par IP ET par MAC
+// (N°33 — la MAC vient de la page login du routeur via ?mac= ; elle distingue
+// les appareils derrière le NAT partagé du hotspot, où l'IP publique est la
+// MÊME pour tout le monde). Honeypot → succès factice. Lien kiosque
+// (autoValidate + profil + routeur pré-attribués) → création immédiate via
+// createHotspotUser, plafonnée par numéro (joinKioskPhoneDailyMax) ; sinon
+// demande « pending » pour le gérant.
 func (a *API) handleJoinSubmit(w http.ResponseWriter, r *http.Request) {
 	if ok, retry := a.join.allow(clientIP(r)); !ok {
 		w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())+1))
@@ -231,10 +322,22 @@ func (a *API) handleJoinSubmit(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 		Message  string `json:"message"`
 		Website  string `json:"website"` // honeypot — champ invisible du formulaire
+		Mac      string `json:"mac"`     // N°33 — appareil (page login du routeur), optionnel
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
 		return
+	}
+	mac := normalizeJoinMac(req.Mac)
+	if mac != "" {
+		// Second quota cumulé par APPAREIL : derrière le NAT du hotspot tous
+		// les clients partagent la même IP publique — la MAC est la seule
+		// clé qui isole réellement un fermier de comptes sur place.
+		if ok, retry := a.join.allow("mac:" + mac); !ok {
+			w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())+1))
+			writeErr(w, http.StatusTooManyRequests, "Trop de tentatives — réessayez plus tard")
+			return
+		}
 	}
 	// Honeypot — un bot qui remplit le champ caché reçoit un succès factice :
 	// rien n'est créé, aucun indice sur le filtre.
@@ -257,8 +360,9 @@ func (a *API) handleJoinSubmit(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Le nom d'utilisateur doit faire 3 à 32 caractères (lettres, chiffres, . _ -)")
 		return
 	}
-	if len(req.Password) < 6 || len(req.Password) > 64 {
-		writeErr(w, http.StatusBadRequest, "Le mot de passe doit faire entre 6 et 64 caractères")
+	// N°33 — politique publique : 8 caractères min., denylist S2, ≠ nom.
+	if msg := joinPasswordViolation(req.Password, username); msg != "" {
+		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
 	message := strings.TrimSpace(req.Message)
@@ -304,6 +408,32 @@ func (a *API) handleJoinSubmit(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	autoValidate := lcopy.AutoValidate && lcopy.ProfileID != "" && lcopy.RouterID != ""
+	if autoValidate {
+		// N°33 — plafond anti-abus kiosque : les demandes auto-validées ne
+		// passent JAMAIS par « pending » (le dédoublonnage ci-dessus est
+		// aveugle pour elles) — sans plafond, le même numéro pouvait créer
+		// un compte à chaque soumission. Comptage des APPROUVÉES de la
+		// fenêtre glissante, par compte (tous liens kiosque confondus).
+		approvedToday := 0
+		for i := range db.RegistrationRequests {
+			q := &db.RegistrationRequests[i]
+			if q.AccountID != acc || q.Status != "approved" || q.Phone != phone {
+				continue
+			}
+			stamp := q.CreatedAt
+			if q.ReviewedAt != "" {
+				stamp = q.ReviewedAt
+			}
+			if t, err := time.Parse(time.RFC3339, stamp); err == nil && now.Sub(t) < joinKioskPhoneDailyWindow {
+				approvedToday++
+			}
+		}
+		if approvedToday >= joinKioskPhoneDailyMax {
+			a.store.Unlock()
+			writeErrCode(w, http.StatusConflict, "phone_limit", "Un compte a déjà été créé avec ce numéro dans les dernières 24 heures", nil)
+			return
+		}
+	}
 	a.store.Unlock()
 
 	if autoValidate {
@@ -328,7 +458,7 @@ func (a *API) handleJoinSubmit(w http.ResponseWriter, r *http.Request) {
 			Message: message,
 			Status:  "approved", UserID: u.ID,
 			ReviewedByName: "auto", ReviewedAt: model.NowISO(),
-			CreatedIP: clientIP(r), CreatedAt: model.NowISO(),
+			CreatedIP: clientIP(r), CreatedMac: mac, CreatedAt: model.NowISO(),
 		}
 		db.RegistrationRequests = append(db.RegistrationRequests, reg)
 		a.logActivityBy(r, db, acc, "registration", "Inscription auto-validée (lien « "+lcopy.Name+" ») : "+fullName+" → "+u.Username)
@@ -359,7 +489,7 @@ func (a *API) handleJoinSubmit(w http.ResponseWriter, r *http.Request) {
 		DesiredUsername: username, Password: req.Password,
 		Message:   message,
 		Status:    "pending",
-		CreatedIP: clientIP(r), CreatedAt: model.NowISO(),
+		CreatedIP: clientIP(r), CreatedMac: mac, CreatedAt: model.NowISO(),
 	}
 	db.RegistrationRequests = append(db.RegistrationRequests, reg)
 	link.Uses++
@@ -614,9 +744,13 @@ func (a *API) handleRegistrationApprove(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusBadRequest, "Le nom d'utilisateur doit faire 3 à 32 caractères (lettres, chiffres, . _ -)")
 		return
 	}
-	if len(req.Password) > 0 && (len(req.Password) < 6 || len(req.Password) > 64) {
-		writeErr(w, http.StatusBadRequest, "Le mot de passe doit faire entre 6 et 64 caractères (vide = générer)")
-		return
+	// Mot de passe OPTIONNEL (vide = généré par le serveur). S'il est choisi,
+	// même politique que la page publique (N°33 — 8 min., denylist, ≠ nom).
+	if len(req.Password) > 0 {
+		if msg := joinPasswordViolation(req.Password, username); msg != "" {
+			writeErr(w, http.StatusBadRequest, msg)
+			return
+		}
 	}
 	profileID := strings.TrimSpace(req.ProfileID)
 	routerID := strings.TrimSpace(req.RouterID)
@@ -779,22 +913,32 @@ func (a *API) handleRegistrationDelete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// sweepStaleRegistrations — purge des demandes REFUSÉES au-delà de la
-// rétention (30 jours) : minimisation des données personnelles. À appeler
-// sous verrou (hook enforceExpired, à côté de sweepDeadBatches) — le Save
-// est à charge de l'appelant.
+// sweepStaleRegistrations — minimisation des données personnelles au-delà de
+// la rétention (30 jours), hook enforceExpired, à appeler sous verrou (le Save
+// est à charge de l'appelant) :
+//   - demandes REFUSÉES : purgées (statut final, plus aucune valeur) ;
+//   - demandes PENDING jamais tranchées : le MOT DE PASSE CLAIR est vidé
+//     (N°33) — une demande oubliée ne doit pas conserver un secret
+//     indéfiniment ; la demande reste visible du gérant, qui peut encore
+//     l'approuver (le serveur génère alors un mot de passe) ou la refuser.
 func sweepStaleRegistrations(db *model.DB) int {
 	now := time.Now().UTC()
 	kept := db.RegistrationRequests[:0]
 	removed := 0
-	for _, q := range db.RegistrationRequests {
-		if q.Status == "rejected" && q.CreatedAt != "" {
+	for i := range db.RegistrationRequests {
+		q := &db.RegistrationRequests[i]
+		if q.CreatedAt != "" {
 			if t, err := time.Parse(time.RFC3339, q.CreatedAt); err == nil && now.Sub(t) > registrationRetention {
-				removed++
-				continue
+				switch {
+				case q.Status == "rejected":
+					removed++
+					continue
+				case q.Status == "pending":
+					q.Password = "" // secret vidé, demande conservée
+				}
 			}
 		}
-		kept = append(kept, q)
+		kept = append(kept, *q)
 	}
 	db.RegistrationRequests = kept
 	return removed

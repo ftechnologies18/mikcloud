@@ -2242,7 +2242,7 @@ const fr: Record<string, string> = {
   "joinPage.err.fullName": "Le nom complet doit contenir entre 2 et 80 caractères.",
   "joinPage.err.phone": "Numéro invalide : 8 à 15 chiffres (« + » et espaces acceptés).",
   "joinPage.err.username": "3 à 32 caractères : lettres, chiffres, . _ -",
-  "joinPage.err.password": "Le mot de passe doit contenir entre 6 et 64 caractères.",
+  "joinPage.err.password": "Le mot de passe doit contenir entre 8 et 64 caractères.",
   "joinPage.err.confirm": "Les mots de passe ne correspondent pas.",
   "joinPage.err.message": "300 caractères maximum.",
   "joinPage.err.usernameTaken": "Ce nom d'utilisateur est déjà pris.",
@@ -2272,6 +2272,10 @@ const fr: Record<string, string> = {
   "joinPage.networkError.desc": "Vérifiez votre connexion internet puis réessayez.",
   "joinPage.newSignup": "Nouvelle inscription",
   "joinPage.langAria": "Changer de langue",
+  "joinPage.approved.redirectDesc": "Restez sur cette page : le portail WiFi va s'ouvrir automatiquement — connectez-vous avec vos identifiants.",
+  "joinPage.approved.redirectIn": "Ouverture du portail dans {seconds} s",
+  "joinPage.approved.connectNow": "Se connecter maintenant",
+  "joinPage.approved.stayHere": "Rester sur cette page",
 };
 
 // ─── Dictionnaire EN (traduction opérateur télécom, simple et pro) ───
@@ -4498,7 +4502,7 @@ const en: Record<string, string> = {
   "joinPage.err.fullName": "Full name must be 2 to 80 characters.",
   "joinPage.err.phone": "Invalid phone number: 8 to 15 digits (“+” and spaces allowed).",
   "joinPage.err.username": "3 to 32 characters: letters, digits, . _ -",
-  "joinPage.err.password": "Password must be 6 to 64 characters.",
+  "joinPage.err.password": "Password must be 8 to 64 characters.",
   "joinPage.err.confirm": "Passwords do not match.",
   "joinPage.err.message": "300 characters maximum.",
   "joinPage.err.usernameTaken": "This username is already taken.",
@@ -4528,6 +4532,10 @@ const en: Record<string, string> = {
   "joinPage.networkError.desc": "Check your internet connection and try again.",
   "joinPage.newSignup": "New sign-up",
   "joinPage.langAria": "Switch language",
+  "joinPage.approved.redirectDesc": "Stay on this page: the WiFi portal will open automatically — sign in with your credentials.",
+  "joinPage.approved.redirectIn": "Opening the portal in {seconds}s",
+  "joinPage.approved.connectNow": "Connect now",
+  "joinPage.approved.stayHere": "Stay on this page",
 };
 
 // ─── Résolution ───

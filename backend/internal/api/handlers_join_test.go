@@ -148,7 +148,7 @@ func TestJoinFullFlow(t *testing.T) {
 	// Soumission publique — téléphone avec espaces et « + » (normalisé).
 	body := map[string]any{
 		"fullName": "Awa Traoré", "phone": "+225 07 08 09 10 11",
-		"username": "awa.t", "password": "motdepasse1",
+		"username": "awa.t", "password": "mot-passe-awa1",
 	}
 	status, out = doJSON(t, ts, "POST", "/api/join/"+joinToken, "", body)
 	if status != http.StatusOK || out["status"] != "pending" {
@@ -175,7 +175,7 @@ func TestJoinFullFlow(t *testing.T) {
 		t.Fatalf("demande inattendue : %v", items)
 	}
 	reqID, _ := items[0]["id"].(string)
-	if pw, _ := items[0]["password"].(string); pw != "motdepasse1" {
+	if pw, _ := items[0]["password"].(string); pw != "mot-passe-awa1" {
 		t.Fatalf("mot de passe de la demande absent pour le gérant : %v", items[0])
 	}
 
@@ -192,14 +192,14 @@ func TestJoinFullFlow(t *testing.T) {
 	// Approbation — mode « Nom d'utilisateur & Mot de passe » (codes distincts).
 	approve := map[string]any{
 		"profileId": "p-join", "routerId": "r-sim",
-		"username": "awa.t", "password": "motdepasse1",
+		"username": "awa.t", "password": "mot-passe-awa1",
 	}
 	status, out = doJSON(t, ts, "POST", "/api/registrations/"+reqID+"/approve", managerToken, approve)
 	if status != http.StatusOK {
 		t.Fatalf("approbation : statut %d, corps %v", status, out)
 	}
 	user, _ := out["user"].(map[string]any)
-	if user["kind"] != "regular" || user["username"] != "awa.t" || user["password"] != "motdepasse1" {
+	if user["kind"] != "regular" || user["username"] != "awa.t" || user["password"] != "mot-passe-awa1" {
 		t.Fatalf("utilisateur créé inattendu : %v", user)
 	}
 	if user["profileId"] != "p-join" {
@@ -321,7 +321,7 @@ func TestJoinLinkGuards(t *testing.T) {
 			t.Fatalf("état %q attendu, obtenu %v", cas.state, out["state"])
 		}
 		status, out = doJSON(t, ts, "POST", "/api/join/"+cas.token, "", map[string]any{
-			"fullName": "Test Garde", "phone": "0708091011", "username": "test.g", "password": "motdepasse",
+			"fullName": "Test Garde", "phone": "0708091011", "username": "test.g", "password": "mot-passe-x",
 		})
 		if status != http.StatusConflict || out["code"] != "join_link_closed" {
 			t.Fatalf("soumission sur lien %s : statut %d, corps %v", cas.state, status, out)
@@ -331,7 +331,7 @@ func TestJoinLinkGuards(t *testing.T) {
 	// Identifiant déjà pris → 409 + suggestion libre.
 	_, joinToken := createJoinLink(t, ts, managerToken, map[string]any{"name": "Sain"})
 	status, out = doJSON(t, ts, "POST", "/api/join/"+joinToken, "", map[string]any{
-		"fullName": "Test Pris", "phone": "0601020304", "username": "taken.user", "password": "motdepasse",
+		"fullName": "Test Pris", "phone": "0601020304", "username": "taken.user", "password": "mot-passe-x",
 	})
 	if status != http.StatusConflict || out["code"] != "username_taken" {
 		t.Fatalf("identifiant pris : statut %d, corps %v", status, out)
@@ -352,9 +352,9 @@ func TestJoinSubmitValidation(t *testing.T) {
 
 	for nom, body := range map[string]map[string]any{
 		"mot de passe court":  {"fullName": "Test Court", "phone": "0601020305", "username": "test.c", "password": "12345"},
-		"nom trop court":      {"fullName": "T", "phone": "0601020306", "username": "test.n", "password": "motdepasse"},
-		"téléphone invalide":  {"fullName": "Test Tel", "phone": "12ab", "username": "test.t", "password": "motdepasse"},
-		"identifiant espaces": {"fullName": "Test Esp", "phone": "0601020307", "username": "a b", "password": "motdepasse"},
+		"nom trop court":      {"fullName": "T", "phone": "0601020306", "username": "test.n", "password": "mot-passe-x"},
+		"téléphone invalide":  {"fullName": "Test Tel", "phone": "12ab", "username": "test.t", "password": "mot-passe-x"},
+		"identifiant espaces": {"fullName": "Test Esp", "phone": "0601020307", "username": "a b", "password": "mot-passe-x"},
 	} {
 		status, _ := doJSON(t, ts, "POST", "/api/join/"+joinToken, "", body)
 		if status != http.StatusBadRequest {
@@ -370,7 +370,7 @@ func TestJoinHoneypot(t *testing.T) {
 	_, joinToken := createJoinLink(t, ts, managerToken, map[string]any{"name": "Honey"})
 
 	status, out := doJSON(t, ts, "POST", "/api/join/"+joinToken, "", map[string]any{
-		"fullName": "Bot Bot", "phone": "0601020308", "username": "bot.bot", "password": "motdepasse",
+		"fullName": "Bot Bot", "phone": "0601020308", "username": "bot.bot", "password": "mot-passe-x",
 		"website": "http://spam.example",
 	})
 	if status != http.StatusOK || out["status"] != "pending" {
@@ -438,7 +438,7 @@ func TestJoinAutoValidate(t *testing.T) {
 
 	// Identifiant désormais pris → 409 (même lien).
 	status, _ = doJSON(t, ts, "POST", "/api/join/"+joinToken, "", map[string]any{
-		"fullName": "Deuxieme Etudiant", "phone": "0601020310", "username": "kiosque.e", "password": "motdepasse",
+		"fullName": "Deuxieme Etudiant", "phone": "0601020310", "username": "kiosque.e", "password": "mot-passe-x",
 	})
 	if status != http.StatusConflict {
 		t.Fatalf("doublon kiosque : 409 attendu, obtenu %d", status)
@@ -462,7 +462,7 @@ func TestJoinScoping(t *testing.T) {
 	// Compte A : un lien + une demande.
 	_, joinToken := createJoinLink(t, ts, tokenA, map[string]any{"name": "Lien A"})
 	doJSON(t, ts, "POST", "/api/join/"+joinToken, "", map[string]any{
-		"fullName": "Chez A", "phone": "0601020311", "username": "chez.a", "password": "motdepasse",
+		"fullName": "Chez A", "phone": "0601020311", "username": "chez.a", "password": "mot-passe-x",
 	})
 
 	// Compte B ne voit rien de A.
@@ -495,7 +495,8 @@ func TestJoinScoping(t *testing.T) {
 	_ = accA
 }
 
-// TestSweepStaleRegistrations — les refusés > 30 j sont purgés, rien d'autre.
+// TestSweepStaleRegistrations — les refusés > 30 j sont purgés, les pending
+// > 30 j ont leur mot de passe VIDÉ (N°33), rien d'autre.
 func TestSweepStaleRegistrations(t *testing.T) {
 	_, ts := newTestServerWithStore(t)
 	_ = ts
@@ -504,18 +505,160 @@ func TestSweepStaleRegistrations(t *testing.T) {
 		{ID: "r-old", Status: "rejected", CreatedAt: now.Add(-31 * 24 * time.Hour).Format(time.RFC3339)},
 		{ID: "r-recent", Status: "rejected", CreatedAt: now.Add(-10 * 24 * time.Hour).Format(time.RFC3339)},
 		{ID: "r-approved", Status: "approved", CreatedAt: now.Add(-40 * 24 * time.Hour).Format(time.RFC3339)},
-		{ID: "r-pending", Status: "pending", CreatedAt: now.Add(-40 * 24 * time.Hour).Format(time.RFC3339)},
+		{ID: "r-pending", Status: "pending", CreatedAt: now.Add(-40 * 24 * time.Hour).Format(time.RFC3339), Password: "Mot-Passe-Vieux"},
+		{ID: "r-pending-recent", Status: "pending", CreatedAt: now.Add(-2 * 24 * time.Hour).Format(time.RFC3339), Password: "Mot-Passe-Recent"},
 	}}
 	removed := sweepStaleRegistrations(db)
 	if removed != 1 {
 		t.Fatalf("1 refusé à purger, obtenu %d", removed)
 	}
-	if len(db.RegistrationRequests) != 3 {
-		t.Fatalf("3 demandes conservées attendues, obtenu %d", len(db.RegistrationRequests))
+	if len(db.RegistrationRequests) != 4 {
+		t.Fatalf("4 demandes conservées attendues, obtenu %d", len(db.RegistrationRequests))
 	}
 	for _, q := range db.RegistrationRequests {
-		if q.ID == "r-old" {
+		switch q.ID {
+		case "r-old":
 			t.Fatalf("le refusé de 31 jours devait être purgé")
+		case "r-pending":
+			if q.Password != "" {
+				t.Fatalf("le mot de passe du pending de 40 jours devait être vidé")
+			}
+		case "r-pending-recent":
+			if q.Password != "Mot-Passe-Recent" {
+				t.Fatalf("le mot de passe d'un pending récent ne doit pas être touché")
+			}
 		}
+	}
+}
+
+// TestJoinKioskPhoneCap — N°33 anti-abus kiosque : au plus 1 compte
+// AUTO-VALIDÉ par numéro et 24 h (409 phone_limit), quel que soit
+// l'identifiant demandé ; les autres numéros passent ; le flux STANDARD
+// (file d'attente) n'est pas plafonné — le dédoublonnage phone_pending
+// suffit pour lui.
+func TestJoinKioskPhoneCap(t *testing.T) {
+	st, ts := newTestServerWithStore(t)
+	managerToken, _ := joinSeedEnv(t, st, ts, "proprio-join-h", "0808080808")
+	_, joinToken := createJoinLink(t, ts, managerToken, map[string]any{
+		"name": "Kiosque Plafond", "autoValidate": true, "profileId": "p-join", "routerId": "r-sim",
+	})
+
+	// 1re inscription kiosque du numéro → approuvée.
+	status, out := doJSON(t, ts, "POST", "/api/join/"+joinToken, "", map[string]any{
+		"fullName": "Etudiant Plafond", "phone": "0601020312",
+		"username": "plafond.a", "password": "mot-passe-x",
+	})
+	if status != http.StatusOK || out["status"] != "approved" {
+		t.Fatalf("première inscription kiosque : statut %d, corps %v", status, out)
+	}
+
+	// Même numéro, autre identifiant → 409 phone_limit (PAS username_taken).
+	status, out = doJSON(t, ts, "POST", "/api/join/"+joinToken, "", map[string]any{
+		"fullName": "Etudiant Plafond Bis", "phone": "0601020312",
+		"username": "plafond.b", "password": "mot-passe-x",
+	})
+	if status != http.StatusConflict || out["code"] != "phone_limit" {
+		t.Fatalf("plafond téléphone kiosque : 409 phone_limit attendu, statut %d, corps %v", status, out)
+	}
+
+	// Un AUTRE numéro passe toujours — l'abuseur est bloqué, pas le lieu.
+	status, out = doJSON(t, ts, "POST", "/api/join/"+joinToken, "", map[string]any{
+		"fullName": "Etudiant Voisin", "phone": "0601020313",
+		"username": "plafond.c", "password": "mot-passe-x",
+	})
+	if status != http.StatusOK || out["status"] != "approved" {
+		t.Fatalf("autre numéro : approbation attendue, statut %d, corps %v", status, out)
+	}
+
+	// Le flux STANDARD n'est pas plafonné : le même numéro qu'une demande
+	// déjà approuvée peut déposer une demande « pending ».
+	_, stdToken := createJoinLink(t, ts, managerToken, map[string]any{"name": "Standard"})
+	status, out = doJSON(t, ts, "POST", "/api/join/"+stdToken, "", map[string]any{
+		"fullName": "Etudiant Standard", "phone": "0601020312",
+		"username": "plafond.d", "password": "mot-passe-x",
+	})
+	if status != http.StatusOK || out["status"] != "pending" {
+		t.Fatalf("flux standard non plafonné : statut %d, corps %v", status, out)
+	}
+}
+
+// TestJoinMacAntiAbuse — N°33 : la MAC de l'appareil (page login du routeur)
+// est normalisée, stockée sur la demande, et porte son propre quota cumulé ;
+// une MAC invalide ou absente n'empêche JAMAIS une soumission légitime.
+func TestJoinMacAntiAbuse(t *testing.T) {
+	st, ts := newTestServerWithStore(t)
+	managerToken, _ := joinSeedEnv(t, st, ts, "proprio-join-i", "0909090909")
+	_, joinToken := createJoinLink(t, ts, managerToken, map[string]any{"name": "MAC"})
+
+	// MAC au format routeur « aa-bb-cc-dd-ee-ff » → normalisée AA:BB:CC:DD:EE:FF.
+	status, out := doJSON(t, ts, "POST", "/api/join/"+joinToken, "", map[string]any{
+		"fullName": "Client MAC", "phone": "0601020314", "username": "client.mac",
+		"password": "mot-passe-x", "mac": "aa-bb-cc-dd-ee-ff",
+	})
+	if status != http.StatusOK || out["status"] != "pending" {
+		t.Fatalf("soumission avec MAC : statut %d, corps %v", status, out)
+	}
+	st.Lock()
+	mac := st.Data().RegistrationRequests[0].CreatedMac
+	st.Unlock()
+	if mac != "AA:BB:CC:DD:EE:FF" {
+		t.Fatalf("MAC normalisée attendue AA:BB:CC:DD:EE:FF, obtenue %q", mac)
+	}
+
+	// MAC invalide → ignorée silencieusement (pas de 4xx).
+	status, out = doJSON(t, ts, "POST", "/api/join/"+joinToken, "", map[string]any{
+		"fullName": "Client Sans MAC", "phone": "0601020315", "username": "client.mac2",
+		"password": "mot-passe-x", "mac": "pas-une-mac!",
+	})
+	if status != http.StatusOK || out["status"] != "pending" {
+		t.Fatalf("MAC invalide doit être ignorée : statut %d, corps %v", status, out)
+	}
+
+	// Normalisation unitaire : sans séparateur, mélange de casse, trop longue.
+	if got := normalizeJoinMac("aabbccddeeff"); got != "AA:BB:CC:DD:EE:FF" {
+		t.Fatalf("MAC sans séparateur attendue AA:BB:CC:DD:EE:FF, obtenue %q", got)
+	}
+	if got := normalizeJoinMac(""); got != "" {
+		t.Fatalf("MAC absente attendue vide, obtenue %q", got)
+	}
+	if got := normalizeJoinMac("aabbccddeeff00"); got != "" {
+		t.Fatalf("MAC de 14 hex attendue vide, obtenue %q", got)
+	}
+}
+
+// TestJoinPasswordPolicy — N°33 : politique mot de passe publique (8 min.,
+// denylist S2, ≠ nom d'utilisateur), côté unitaire et côté API.
+func TestJoinPasswordPolicy(t *testing.T) {
+	if msg := joinPasswordViolation("1234567", ""); !strings.Contains(msg, "8") {
+		t.Fatalf("7 caractères : refus attendu, obtenu %q", msg)
+	}
+	if msg := joinPasswordViolation("motdepasse", ""); !strings.Contains(msg, "interdit") {
+		t.Fatalf("mot de passe de la denylist : refus attendu, obtenu %q", msg)
+	}
+	if msg := joinPasswordViolation("MotPasse-X", "motpasse-x"); !strings.Contains(msg, "identique") {
+		t.Fatalf("identique au nom d'utilisateur : refus attendu, obtenu %q", msg)
+	}
+	if msg := joinPasswordViolation("MotPasse-X", "autre.user"); msg != "" {
+		t.Fatalf("mot de passe valide refusé : %q", msg)
+	}
+
+	// Côté API : 7 caractères → 400 avant même la consultation du lien.
+	st, ts := newTestServerWithStore(t)
+	managerToken, _ := joinSeedEnv(t, st, ts, "proprio-join-j", "1010101010")
+	_, joinToken := createJoinLink(t, ts, managerToken, map[string]any{"name": "Politique"})
+	status, out := doJSON(t, ts, "POST", "/api/join/"+joinToken, "", map[string]any{
+		"fullName": "Client Court", "phone": "0601020316", "username": "client.court",
+		"password": "abc1234",
+	})
+	if status != http.StatusBadRequest {
+		t.Fatalf("mot de passe 7 caractères : 400 attendu, obtenu %d (%v)", status, out)
+	}
+	// Mot de passe identique au nom → 400.
+	status, out = doJSON(t, ts, "POST", "/api/join/"+joinToken, "", map[string]any{
+		"fullName": "Client Écho", "phone": "0601020317", "username": "echo.user",
+		"password": "echo.user",
+	})
+	if status != http.StatusBadRequest {
+		t.Fatalf("mot de passe identique au nom : 400 attendu, obtenu %d (%v)", status, out)
 	}
 }

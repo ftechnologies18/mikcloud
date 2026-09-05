@@ -5,6 +5,50 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-05 — N°33 : inscriptions publiques — anti-abus kiosque + redirection portail 45 s
+
+### Sécurité / anti-abus (module inscription N°27)
+- **Plafond kiosque par numéro de téléphone** : au plus 1 compte AUTO-VALIDÉ
+  par numéro et par 24 h glissantes, par compte (tous liens kiosque
+  confondus) — erreur `phone_limit` (409). Sans ce plafond, le
+  dédoublonnage téléphone ne couvrait que la file d'attente : en mode
+  kiosque la demande passait directement « approved », un même numéro
+  pouvait donc créer un compte à chaque soumission (gratuité répétée).
+- **Quota anti-abus par APPAREIL (MAC)** : la page de login du routeur peut
+  désormais pointer vers `/join/{token}?mac=$(mac-esc)` ; la MAC (normalisée,
+  invalidée silencieusement si malformée) porte un second quota cumulé
+  5/10 min + 20/24 h à côté du quota IP — derrière le NAT du hotspot, tous
+  les clients partagent la MÊME IP publique : la MAC est la seule clé qui
+  isole réellement un fermier de comptes sur place. Stockée sur la demande
+  (`createdMac`, colonne Neon `created_mac` auto-migrée).
+- **Politique mot de passe publique renforcée** : 6 → 8 caractères minimum,
+  denylist S2 (mots de passe les plus courants) et interdiction
+  « identique au nom d'utilisateur » — côté page publique ET approbation
+  console (mot de passe choisi) ; l'auto-génération (6 caractères serveur)
+  reste inchangée.
+- **Demandes pending oubliées** : le mot de passe clair est VIDÉ au sweep
+  après 30 jours (minimisation — avant, une demande jamais tranchée gardait
+  son secret indéfiniment) ; la demande reste décidable (l'approbation
+  génère alors un mot de passe).
+
+### Ajouté (mode kiosque)
+- **Redirection portail après 45 s** : sur la page publique, une inscription
+  auto-validée affiche désormais un compte à rebours (45 s) puis envoie le
+  navigateur vers une URL HTTP neutre (`connectivitycheck.gstatic.com/generate_204`)
+  — interceptée par le routeur MikroTik, elle rouvre la page de login du
+  hotspot où l'utilisateur saisit ses nouveaux identifiants. Échappatoires
+  manuelles : « Se connecter maintenant » (immédiat) et « Rester sur cette
+  page » (annule le compte à rebours pour recopier les codes). HTTP
+  obligatoire : seul le trafic HTTP est interceptable sans erreur de
+  certificat.
+
+### Page login routeur (`login.html`)
+- Livrée corrigée à part : CSP réellement restrictive (l'ancienne
+  `default-src *` n'interdisait rien), zoom mobile réautorisé
+  (accessibilité), bouton QR externe (site tiers hors walled-garden,
+  inutilisable pré-auth) remplacé par « Créer un compte » pointant vers le
+  lien d'inscription MikCloud avec la MAC de l'appareil.
+
 ## 2026-09-05 — N°31 : audit walled-garden agent — reprise des commandes perdues + diagnostic visible
 
 ### Corrigé (audit en profondeur suite à « aucune règle sur un routeur client »)

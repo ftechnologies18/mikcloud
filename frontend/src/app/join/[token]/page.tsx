@@ -9,7 +9,7 @@
 // (components/hotspot/parts/join-form.tsx) — étape 3 : écrans de confirmation
 // en état LOCAL (aucune route) avec bouton « Nouvelle inscription » (kiosque).
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { motion, useReducedMotion } from "framer-motion";
@@ -22,8 +22,10 @@ import {
   KeyRound,
   Link2Off,
   Loader2,
+  MonitorSmartphone,
   PackageX,
   RotateCcw,
+  Wifi,
   WifiOff,
   Zap,
   type LucideIcon,
@@ -42,6 +44,16 @@ import { cn } from "@/lib/utils";
 
 type LockedState = Exclude<JoinLinkState, "active">;
 
+// N°33 — redirection kiosque : 45 s après l'approbation automatique, le
+// navigateur quitte la page d'inscription vers une URL HTTP NEUTRE non
+// walled-gardée. Le routeur MikroTik intercepte (redirection captive du
+// hotspot) et ouvre SA page de login : l'utilisateur se connecte avec ses
+// nouveaux identifiants. HTTP obligatoire (pas HTTPS) : seul le trafic HTTP
+// est interceptable sans erreur de certificat. generate_204 = sonde standard
+// Android de détection de portail — reconnue et ré-interceptée proprement.
+const KIOSK_REDIRECT_URL = "http://connectivitycheck.gstatic.com/generate_204";
+const KIOSK_REDIRECT_DELAY_S = 45;
+
 /** Carte d'état verrouillé : icône + couleur par état (aucune action, ou Réessayer). */
 const LOCKED_UI: Record<LockedState, { title: string; desc: string; icon: LucideIcon; iconClass: string }> = {
   revoked: { title: "joinPage.revoked.title", desc: "joinPage.revoked.desc", icon: Ban, iconClass: "text-destructive" },
@@ -54,6 +66,15 @@ export default function JoinPage() {
   const token = Array.isArray(params.token) ? params.token[0] : params.token;
   const { lang, setLang, t } = useI18n();
   const reduce = useReducedMotion();
+
+  // N°33 — MAC de l'appareil si l'URL vient de la page login du routeur
+  // (/join/{token}?mac=$(mac-esc)) : transmise au POST, elle alimente le
+  // quota anti-abus par appareil (NAT du hotspot = une seule IP partagée).
+  // Lecture client-only (window) : pas de useSearchParams (évite la boundary
+  // Suspense en pré-rendu) — la MAC est un durcissement, pas une exigence.
+  const [mac] = useState(() =>
+    typeof window === "undefined" ? "" : (new URLSearchParams(window.location.search).get("mac") ?? ""),
+  );
 
   // Écrans post-soumission (pending / approved / 429 / réseau) — état LOCAL,
   // pas de route : le bouton « Nouvelle inscription » remonte le formulaire.
@@ -121,7 +142,7 @@ export default function JoinPage() {
     }
     // Écrans post-soumission.
     if (outcome && (outcome.kind === "pending" || outcome.kind === "approved")) {
-      return <SuccessCard outcome={outcome} onReset={resetForm} />;
+      return <SuccessCard outcome={outcome} autoValidate={info.autoValidate === true} onReset={resetForm} />;
     }
     if (outcome?.kind === "rateLimited") {
       return (
@@ -155,6 +176,7 @@ export default function JoinPage() {
           link={info}
           onOutcome={setOutcome}
           onLinkClosed={() => void linkQuery.refetch()}
+          mac={mac}
         />
       </div>
     );
@@ -243,16 +265,22 @@ function StateCard({
 /** Écrans de confirmation — demande en attente (CheckCircle2 vert) ou compte
  * activé par lien kiosque (Zap teal). Rappel lisible des identifiants avec
  * bouton copier : l'utilisateur rejoindra le portail WiFi avec ces DEUX codes
- * distincts (mode régulier N°27, différent des vouchers nom=mot de passe). */
+ * distincts (mode régulier N°27, différent des vouchers nom=mot de passe).
+ * N°33 — kiosque (approved + autoValidate) : compte à rebours de 45 s puis
+ * redirection vers le portail du routeur (KIOSK_REDIRECT_URL), avec échappatoires
+ * manuelles (« Se connecter maintenant » / « Rester sur cette page »). */
 function SuccessCard({
   outcome,
+  autoValidate,
   onReset,
 }: {
   outcome: Extract<SubmitOutcome, { kind: "pending" | "approved" }>;
+  autoValidate: boolean;
   onReset: () => void;
 }) {
   const { t } = useI18n();
   const approved = outcome.kind === "approved";
+  const kiosk = approved && autoValidate;
 
   async function copyCredentials() {
     const ok = await copyToClipboard(`${outcome.username}\n${outcome.password}`);
@@ -314,6 +342,8 @@ function SuccessCard({
           </dl>
         </div>
 
+        {kiosk && <KioskRedirect />}
+
         <Button
           type="button"
           variant="ghost"
@@ -326,5 +356,54 @@ function SuccessCard({
         </Button>
       </CardContent>
     </Card>
+  );
+}
+
+/** N°33 — kiosque : compte à rebours jusqu'à la redirection vers le portail
+ * du routeur. Le navigateur est envoyé vers une URL HTTP non walled-gardée :
+ * le MikroTik l'intercepte et ouvre sa page de login où l'utilisateur saisit
+ * ses nouveaux identifiants. Deux échappatoires manuelles : connexion
+ * immédiate, ou annulation (rester sur la page pour recopier les codes). */
+function KioskRedirect() {
+  const { t, tf } = useI18n();
+  const [secondsLeft, setSecondsLeft] = useState(KIOSK_REDIRECT_DELAY_S);
+  const [canceled, setCanceled] = useState(false);
+
+  // Un seul minuteur : chaque tic décrémente ; à 0, redirection réelle.
+  useEffect(() => {
+    if (canceled) return;
+    if (secondsLeft <= 0) {
+      window.location.href = KIOSK_REDIRECT_URL;
+      return;
+    }
+    const id = window.setTimeout(() => setSecondsLeft((s) => s - 1), 1000);
+    return () => window.clearTimeout(id);
+  }, [secondsLeft, canceled]);
+
+  if (canceled) return null;
+
+  return (
+    <div
+      className="flex w-full flex-col items-center gap-3 rounded-xl border border-chart-2/30 bg-chart-2/10 p-4"
+      role="status"
+      aria-live="polite"
+    >
+      <p className="flex items-center gap-2 text-sm text-foreground/90">
+        <MonitorSmartphone className="size-4 shrink-0 text-chart-2" aria-hidden />
+        <span className="tabular-nums font-semibold">
+          {tf("joinPage.approved.redirectIn", { seconds: Math.max(secondsLeft, 0) })}
+        </span>
+      </p>
+      <p className="text-xs leading-relaxed text-muted-foreground">{t("joinPage.approved.redirectDesc")}</p>
+      <div className="flex w-full flex-col gap-2 sm:flex-row sm:justify-center">
+        <Button type="button" className="h-11 gap-2 px-4 text-sm font-semibold" onClick={() => (window.location.href = KIOSK_REDIRECT_URL)}>
+          <Wifi className="size-4" aria-hidden />
+          {t("joinPage.approved.connectNow")}
+        </Button>
+        <Button type="button" variant="outline" className="h-11 px-4 text-sm" onClick={() => setCanceled(true)}>
+          {t("joinPage.approved.stayHere")}
+        </Button>
+      </div>
+    </div>
   );
 }

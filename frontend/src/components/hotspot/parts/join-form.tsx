@@ -49,9 +49,12 @@ interface JoinFormProps {
   onOutcome: (outcome: SubmitOutcome) => void;
   /** 409 join_link_closed — la page refait le GET et affiche l'état verrouillé réel. */
   onLinkClosed: () => void;
+  /** N°33 — MAC de l'appareil (page login du routeur, ?mac=), anti-abus par
+   * appareil derrière le NAT du hotspot. Optionnelle : jamais bloquante. */
+  mac?: string;
 }
 
-export default function JoinForm({ token, link, onOutcome, onLinkClosed }: JoinFormProps) {
+export default function JoinForm({ token, link, onOutcome, onLinkClosed, mac }: JoinFormProps) {
   const { t, tf } = useI18n();
 
   const [fullName, setFullName] = useState("");
@@ -80,7 +83,9 @@ export default function JoinForm({ token, link, onOutcome, onLinkClosed }: JoinF
           return digits.length >= 8 && digits.length <= 15;
         }, t("joinPage.err.phone")),
         username: z.string().trim().regex(USERNAME_RE, t("joinPage.err.username")),
-        password: z.string().min(6, t("joinPage.err.password")).max(64, t("joinPage.err.password")),
+        // N°33 — même plancher que le backend : 8 caractères (denylist et
+        // interdiction « = nom d'utilisateur » appliquées côté serveur).
+        password: z.string().min(8, t("joinPage.err.password")).max(64, t("joinPage.err.password")),
         confirmPassword: z.string(),
         message: z.string().max(300, t("joinPage.err.message")),
       })
@@ -131,6 +136,7 @@ export default function JoinForm({ token, link, onOutcome, onLinkClosed }: JoinF
           password: parsed.data.password,
           message: parsed.data.message.trim(),
           website,
+          mac: mac || undefined,
         },
       });
       if (res.status === "approved") {

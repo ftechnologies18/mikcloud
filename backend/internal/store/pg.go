@@ -586,6 +586,7 @@ func (p *PG) ensureSchema() error {
                         reviewed_at      TEXT NOT NULL DEFAULT '',
                         user_id          TEXT NOT NULL DEFAULT '',
                         created_ip       TEXT NOT NULL DEFAULT '',
+                        created_mac      TEXT NOT NULL DEFAULT '',
                         created_at       TEXT NOT NULL
                 )`,
 		`CREATE INDEX IF NOT EXISTS idx_registration_requests_account ON registration_requests (account_id)`,
@@ -683,6 +684,9 @@ func (p *PG) ensureSchema() error {
 		// N°29 — signature de la config walled-garden d'inscription publique
 		// déjà appliquée sur ce routeur agent (cf. agent_handlers.go).
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS walled_garden_sig TEXT NOT NULL DEFAULT ''`,
+		// N°33 — MAC de l'appareil d'inscription publique (page login du
+		// routeur, ?mac=) : anti-abus par appareil derrière le NAT du hotspot.
+		`ALTER TABLE registration_requests ADD COLUMN IF NOT EXISTS created_mac TEXT NOT NULL DEFAULT ''`,
 		// Quota de données par voucher (« 5 Go = 500 F ») : Mo, 0 = illimité.
 		`ALTER TABLE hotspot_users ADD COLUMN IF NOT EXISTS data_quota_mb BIGINT NOT NULL DEFAULT 0`,
 		`ALTER TABLE batches       ADD COLUMN IF NOT EXISTS data_quota_mb BIGINT NOT NULL DEFAULT 0`,
@@ -1699,15 +1703,15 @@ var joinLinkSpec = entitySpec[model.JoinLink]{
 // attente de validation (mot de passe vidé à l'approbation comme au refus).
 var registrationRequestSpec = entitySpec[model.RegistrationRequest]{
 	table: "registration_requests",
-	cols:  []string{"id", "account_id", "link_id", "link_name", "full_name", "phone", "desired_username", "password", "message", "status", "rejection_reason", "reviewed_by", "reviewed_by_name", "reviewed_at", "user_id", "created_ip", "created_at"},
+	cols:  []string{"id", "account_id", "link_id", "link_name", "full_name", "phone", "desired_username", "password", "message", "status", "rejection_reason", "reviewed_by", "reviewed_by_name", "reviewed_at", "user_id", "created_ip", "created_mac", "created_at"},
 	idOf:  func(x *model.RegistrationRequest) string { return x.ID },
 	scan: func(r *sql.Rows) (model.RegistrationRequest, error) {
 		var x model.RegistrationRequest
-		err := r.Scan(&x.ID, &x.AccountID, &x.LinkID, &x.LinkName, &x.FullName, &x.Phone, &x.DesiredUsername, &x.Password, &x.Message, &x.Status, &x.RejectionReason, &x.ReviewedBy, &x.ReviewedByName, &x.ReviewedAt, &x.UserID, &x.CreatedIP, &x.CreatedAt)
+		err := r.Scan(&x.ID, &x.AccountID, &x.LinkID, &x.LinkName, &x.FullName, &x.Phone, &x.DesiredUsername, &x.Password, &x.Message, &x.Status, &x.RejectionReason, &x.ReviewedBy, &x.ReviewedByName, &x.ReviewedAt, &x.UserID, &x.CreatedIP, &x.CreatedMac, &x.CreatedAt)
 		return x, err
 	},
 	args: func(x *model.RegistrationRequest) []any {
-		return []any{x.ID, x.AccountID, x.LinkID, x.LinkName, x.FullName, x.Phone, x.DesiredUsername, x.Password, x.Message, x.Status, x.RejectionReason, x.ReviewedBy, x.ReviewedByName, x.ReviewedAt, x.UserID, x.CreatedIP, x.CreatedAt}
+		return []any{x.ID, x.AccountID, x.LinkID, x.LinkName, x.FullName, x.Phone, x.DesiredUsername, x.Password, x.Message, x.Status, x.RejectionReason, x.ReviewedBy, x.ReviewedByName, x.ReviewedAt, x.UserID, x.CreatedIP, x.CreatedMac, x.CreatedAt}
 	},
 	hashOf: hashEntity[model.RegistrationRequest],
 }

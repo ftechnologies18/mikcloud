@@ -1030,6 +1030,7 @@ type RegistrationRequest struct {
 	ReviewedAt      string `json:"reviewedAt,omitempty"`
 	UserID          string `json:"userId,omitempty"` // utilisateur créé à l'approbation
 	CreatedIP       string `json:"createdIp,omitempty"`
+	CreatedMac      string `json:"createdMac,omitempty"` // N°33 — MAC de l'appareil (?mac= page login routeur), si fournie
 	CreatedAt       string `json:"createdAt"`
 }
 

@@ -1,0 +1,7 @@
+.background {
+  background:url('/img/bg-body.png') repeat center 20px #558ea5;  /* fallback for old browsers */
+  background: url('/img/bg-body.png') repeat center 20px -webkit-linear-gradient(to right, #91EAE4, #86A8E7, #7F7FD5);  /* Chrome 10-25, Safari 5.1-6 */
+  background: url('/img/bg-body.png') repeat center 20px linear-gradient(to right, #91EAE4, #86A8E7, #7F7FD5); /* W3C, IE 10+/ Edge, Firefox 16+, Chrome 26+, Opera 12+, Safari 7+ */
+    
+}
+

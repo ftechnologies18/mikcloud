@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <title id="title">Au revoir</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <meta name="viewport" content="width=device-width; initial-scale=1.0; maximum-scale=1.0; user-scalable=no"/>
+
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+
+    <style>
+        :root {
+            --bg-1: #0a1929; --bg-2: #102a43; --bg-3: #0d3b3e;
+            --primary: #14b8a6; --primary-dark: #0d9488;
+            --accent: #f59e0b; --accent-dark: #d97706;
+            --danger: #ef4444;
+            --glass-bg: rgba(255,255,255,0.97);
+            --text: #1f2937; --text-muted: #6b7280;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; min-height: 100vh;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+            background: linear-gradient(135deg, var(--bg-1) 0%, var(--bg-2) 50%, var(--bg-3) 100%);
+            color: var(--text);
+            display: flex; align-items: center; justify-content: center;
+            padding: 20px; position: relative; overflow-x: hidden;
+        }
+        .bg-blob {
+            position: fixed; border-radius: 50%; filter: blur(90px);
+            opacity: 0.4; z-index: 0; pointer-events: none;
+        }
+        .bg-blob.b1 { width: 360px; height: 360px; background: var(--primary); top: -120px; left: -120px; animation: float1 14s ease-in-out infinite; }
+        .bg-blob.b2 { width: 320px; height: 320px; background: var(--accent); bottom: -120px; right: -120px; animation: float2 16s ease-in-out infinite; }
+        @keyframes float1 { 0%,100% { transform: translate(0,0); } 50% { transform: translate(40px,30px); } }
+        @keyframes float2 { 0%,100% { transform: translate(0,0); } 50% { transform: translate(-40px,-30px); } }
+
+        .logout-card {
+            position: relative; z-index: 1;
+            background: var(--glass-bg);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid rgba(255,255,255,0.18);
+            border-radius: 22px;
+            padding: 2.5rem 2rem 2rem;
+            box-shadow: 0 25px 60px rgba(0,0,0,0.45);
+            text-align: center;
+            max-width: 460px; width: 90%;
+            overflow: hidden;
+            animation: cardIn 0.6s cubic-bezier(0.16,1,0.3,1);
+        }
+        @keyframes cardIn { from { opacity: 0; transform: translateY(24px) scale(0.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+
+        .bye-icon {
+            width: 88px; height: 88px;
+            margin: 0 auto 1.25rem;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #ccfbef, #a7f3d0);
+            display: flex; align-items: center; justify-content: center;
+            border: 3px solid var(--primary);
+            box-shadow: 0 0 0 8px rgba(20,184,166,0.15), 0 10px 30px rgba(20,184,166,0.25);
+        }
+        .bye-icon i {
+            font-size: 2.6rem;
+            color: var(--primary-dark);
+            display: inline-block;
+            animation: wave 2.5s ease-in-out infinite;
+            transform-origin: 70% 70%;
+        }
+        @keyframes wave {
+            0% { transform: rotate(0deg); }
+            10% { transform: rotate(14deg); }
+            20% { transform: rotate(-8deg); }
+            30% { transform: rotate(14deg); }
+            40% { transform: rotate(-4deg); }
+            50% { transform: rotate(10deg); }
+            60% { transform: rotate(0deg); }
+            100% { transform: rotate(0deg); }
+        }
+
+        .logout-card h2 {
+            margin: 0 0 0.5rem;
+            font-weight: 800; font-size: 1.6rem;
+        }
+        .subtitle {
+            color: var(--text-muted);
+            margin: 0 0 1.5rem;
+            font-style: italic; font-size: 0.95rem;
+        }
+
+        .mini-stats {
+            background: linear-gradient(135deg, #f8fafb, #f1f5f9);
+            border-radius: 16px;
+            padding: 16px 18px;
+            margin-bottom: 1.5rem;
+            text-align: left;
+        }
+        .mini-stats-row {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 9px 0;
+            border-bottom: 1px solid #e5e8eb;
+            font-size: 0.92rem;
+        }
+        .mini-stats-row:last-child { border-bottom: none; padding-bottom: 0; }
+        .mini-stats-row:first-child { padding-top: 0; }
+        .label {
+            color: var(--text-muted); font-weight: 600;
+            display: inline-flex; align-items: center; gap: 8px;
+        }
+        .label i { color: var(--primary); font-size: 0.85rem; width: 16px; }
+        .value { font-weight: 800; color: var(--text); }
+        .value.warning { color: var(--accent-dark); }
+
+        .btn-login {
+            background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+            color: #fff; border: none;
+            padding: 13px 32px;
+            border-radius: 14px;
+            font-size: 1rem; font-weight: 700;
+            cursor: pointer;
+            transition: all 0.25s;
+            box-shadow: 0 8px 22px rgba(20,184,166,0.35);
+            display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+            width: 100%;
+        }
+        .btn-login:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 28px rgba(20,184,166,0.5);
+            color: #fff;
+        }
+        .btn-login:active { transform: scale(0.98); }
+
+        .footer-note {
+            margin-top: 1.25rem;
+            font-size: 0.8rem; color: var(--text-muted);
+        }
+        .footer-note a {
+            color: var(--primary-dark); text-decoration: none; font-weight: 600;
+        }
+        .footer-note a:hover { text-decoration: underline; }
+    </style>
+
+    <script language="JavaScript">
+    <!--
+        function openLogin() {
+            if (window.name != 'hotspot_logout') return true;
+            open('$(link-login)', '_blank', '');
+            window.close();
+            return false;
+        }
+    //-->
+    </script>
+</head>
+<body>
+    <div class="bg-blob b1"></div>
+    <div class="bg-blob b2"></div>
+
+    <div class="logout-card">
+        <div class="bye-icon">
+            <i class="fas fa-hand-paper"></i>
+        </div>
+
+        <h2>À bientôt !</h2>
+        <p class="subtitle">Merci d'avoir utilisé notre WiFi</p>
+
+        <div class="mini-stats">
+            <div class="mini-stats-row">
+                <span class="label"><i class="fas fa-user"></i> Utilisateur</span>
+                <span class="value">$(username)</span>
+            </div>
+            <div class="mini-stats-row">
+                <span class="label"><i class="fas fa-clock"></i> Temps de connexion</span>
+                <span class="value">$(uptime)</span>
+            </div>
+            $(if session-time-left)
+            <div class="mini-stats-row">
+                <span class="label"><i class="fas fa-hourglass-half"></i> Temps restant</span>
+                <span class="value warning">$(session-time-left)</span>
+            </div>
+            $(endif)
+        </div>
+
+        <form action="$(link-login)" name="login" onSubmit="return openLogin()">
+            <button type="submit" class="btn-login">
+                <i class="fas fa-sign-in-alt"></i> Se reconnecter
+            </button>
+        </form>
+
+        <div class="footer-note">
+            Besoin d'aide ? <a href="https://wa.me/2250150491807" target="_blank" rel="noopener">01 5049 1807</a>
+        </div>
+    </div>
+
+    <script type="text/javascript">
+        document.getElementById('title').innerHTML = window.location.hostname + " > logout";
+    </script>
+</body>
+</html>

@@ -245,6 +245,9 @@ const fr: Record<string, string> = {
 
   // — users —
   "users.title": "Utilisateurs",
+  // N°30 — hub fusionné : onglets de la page Utilisateurs.
+  "users.hub.accounts": "Comptes",
+  "users.hub.registrations": "Inscriptions",
   "users.description": "Comptes hotspot personnalisés (abonnés, staff, illimités)",
   "users.searchPlaceholder": "Rechercher un utilisateur…",
   "users.searchLabel": "Rechercher un utilisateur",
@@ -2500,6 +2503,9 @@ const en: Record<string, string> = {
 
   // — users —
   "users.title": "Users",
+  // N°30 — Users hub: merged page tabs.
+  "users.hub.accounts": "Accounts",
+  "users.hub.registrations": "Registrations",
   "users.description": "Custom hotspot accounts (subscribers, staff, unlimited)",
   "users.searchPlaceholder": "Search for a user…",
   "users.searchLabel": "Search for a user",

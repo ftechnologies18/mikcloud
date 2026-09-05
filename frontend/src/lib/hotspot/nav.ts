@@ -18,7 +18,6 @@ import {
   ShieldCheck,
   Store,
   Ticket,
-  UserPlus,
   Users,
   UsersRound,
   Wifi,
@@ -41,8 +40,10 @@ export const NAV_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
       { id: "dashboard", labelKey: "nav.dashboard", icon: LayoutDashboard },
       { id: "sessions", labelKey: "nav.sessions", icon: Radio },
       { id: "users", labelKey: "nav.users", icon: Users },
-      // N°27 — inscriptions publiques par QR code : file des demandes + liens.
-      { id: "registrations", labelKey: "nav.registrations", icon: UserPlus },
+      // N°30 — les inscriptions publiques (N°27) sont fusionnées dans la
+      // page Utilisateurs (onglet) : l'entrée dédiée disparaît de la
+      // sidebar. ViewId « registrations » reste valide (URL
+      // /app/registrations → hub Utilisateurs, onglet Inscriptions).
       { id: "vouchers", labelKey: "nav.vouchers", icon: Ticket },
       { id: "templates", labelKey: "nav.templates", icon: Printer },
       { id: "profiles", labelKey: "nav.profiles", icon: Gauge },

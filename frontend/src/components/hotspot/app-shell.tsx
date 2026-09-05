@@ -71,7 +71,6 @@ const PlatformSettingsView = dynamic(() => import("./views/platform-settings-vie
 const PlatformTeamView = dynamic(() => import("./views/platform-team-view"), { loading: () => ViewFallback });
 const ProfilesView = dynamic(() => import("./views/profiles-view"), { loading: () => ViewFallback });
 const ReportsView = dynamic(() => import("./views/reports-view"), { loading: () => ViewFallback });
-const RegistrationsView = dynamic(() => import("./views/registrations-view"), { loading: () => ViewFallback });
 const ResellersView = dynamic(() => import("./views/resellers-view"), { loading: () => ViewFallback });
 const RoutersView = dynamic(() => import("./views/routers-view"), { loading: () => ViewFallback });
 const SessionsView = dynamic(() => import("./views/sessions-view"), { loading: () => ViewFallback });
@@ -79,7 +78,10 @@ const SettingsView = dynamic(() => import("./views/settings-view"), { loading: (
 const SubscriptionView = dynamic(() => import("./views/subscription-view"), { loading: () => ViewFallback });
 const TeamView = dynamic(() => import("./views/team-view"), { loading: () => ViewFallback });
 const TemplatesView = dynamic(() => import("./views/templates-view"), { loading: () => ViewFallback });
-const UsersView = dynamic(() => import("./views/users-view"), { loading: () => ViewFallback });
+// N°30 — hub fusionné : les vues « users » et « registrations » rendent la
+// MÊME page Utilisateurs (onglets Comptes / Inscriptions) — l'onglet actif
+// dérive du ViewId courant, les deux URLs restent deep-linkables.
+const UsersHubView = dynamic(() => import("./views/users-hub-view"), { loading: () => ViewFallback });
 const WifiView = dynamic(() => import("./views/wifi-view"), { loading: () => ViewFallback });
 const VouchersView = dynamic(() => import("./views/vouchers-view"), { loading: () => ViewFallback });
 
@@ -117,8 +119,9 @@ const VIEWS: Record<ViewId, React.ComponentType> = {
   dashboard: DashboardView,
   sessions: SessionsView,
   subscription: SubscriptionView,
-  users: UsersView,
-  registrations: RegistrationsView,
+  // N°30 — les deux ViewIds pointent le même hub (onglet dérivé du ViewId).
+  users: UsersHubView,
+  registrations: UsersHubView,
   vouchers: VouchersView,
   templates: TemplatesView,
   profiles: ProfilesView,
@@ -330,6 +333,10 @@ function NavList() {
   const setView = useHotspotStore((s) => s.setView);
   const user = useHotspotStore((s) => s.user);
   const shellMode = useHotspotStore((s) => s.shellMode);
+  // N°30 — « registrations » est fusionné dans la page Utilisateurs (hub) :
+  // la sidebar surligne et auto-ouvre « Utilisateurs » pour les deux ViewIds
+  // (l'item « Inscriptions » n'existe plus dans la navigation).
+  const navView: ViewId = view === "registrations" ? "users" : view;
   const isAdmin = user?.role === "admin" || user?.role === "platform_admin";
   // O — sections repliables : état persisté par section (labelKey). Une
   // section fermée manuellement reste fermée entre les visites ; celle qui
@@ -388,7 +395,7 @@ function NavList() {
   // ne perd jamais son contexte) — mais il peut ensuite la replier
   // volontairement : le toggle manuel reste maître tant que la vue ne change pas.
   useEffect(() => {
-    const section = sections.find((s) => s.items.some((item) => item.id === view));
+    const section = sections.find((s) => s.items.some((item) => item.id === navView));
     if (section && lastAutoOpened.current !== section.labelKey) {
       lastAutoOpened.current = section.labelKey;
       setCollapsed((prev) => {
@@ -404,7 +411,7 @@ function NavList() {
       });
     }
     if (!section) lastAutoOpened.current = null;
-  }, [view, sections]);
+  }, [navView, sections]);
   // M — statut d'abonnement du client pour le badge « Abonnement » de la
   // sidebar : point vert (actif), ambre (échéance ≤ 7 j) ou rouge (expiré/
   // suspendu) — rappel passif anti-churn, visible sans ouvrir la vue.
@@ -450,7 +457,7 @@ function NavList() {
             {open && (
               <ul className="space-y-0.5 pb-1">
                 {items.map((item) => {
-                  const active = view === item.id;
+                  const active = item.id === navView;
                 return (
                   <li key={item.id}>
                     <button

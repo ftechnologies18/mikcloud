@@ -374,3 +374,95 @@ func TestPayloadReaders(t *testing.T) {
 		t.Fatalf("plStrList (mémoire) incorrect : %v", l)
 	}
 }
+
+func TestSanitizeWGDomain(t *testing.T) {
+	cas := []struct{ in, want string }{
+		{"Mikcloud.Ftci.fr", "mikcloud.ftci.fr"},         // normalisation casse
+		{"  api.example.com  ", "api.example.com"},       // trim
+		{"hop.example.com:8443", "hop.example.com:8443"}, // port non standard OK
+		{"x.example.com:443x", ""},                       // port non numérique → refus
+		{"x.example.com:", ""},                           // port vide → refus
+		{"bad host.example", ""},                         // espace → refus
+		{`evil"; /system reboot`, ""},                    // injection → refus
+		{"", ""},                                         // vide → refus
+		{strings.Repeat("a", 254), ""},                   // > 253 → refus
+	}
+	for _, c := range cas {
+		if got := SanitizeWGDomain(c.in); got != c.want {
+			t.Fatalf("SanitizeWGDomain(%q) = %q, attendu %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestWalledGardenScript(t *testing.T) {
+	b := Builder{BaseURL: "https://cloud.example", Token: "tok-agent"}
+	cmd := model.Command{ID: "c-wg01", Kind: model.CmdWalledGarden, Payload: map[string]any{
+		"domains": []any{"Mikcloud.Ftci.fr", "api.example.com:8443"},
+		"sig":     "abcd1234abcd1234",
+	}}
+	script, err := b.ScriptFor(cmd)
+	if err != nil {
+		t.Fatalf("ScriptFor(walled_garden) : %v", err)
+	}
+	for _, marqueur := range []string{
+		"# mikcloud cmd c-wg01 walled_garden",
+		`:local okcwg01 true`,
+		`/ip hotspot walled-garden remove [find comment~"` + WalledGardenMarker + `"]`,
+		`/ip hotspot walled-garden ip remove [find comment~"` + WalledGardenMarker + `"]`,
+		`/ip hotspot walled-garden add action=allow dst-host="mikcloud.ftci.fr" comment="` + WalledGardenMarker + ` page"`,
+		`/ip hotspot walled-garden add action=allow dst-host="api.example.com:8443" comment="` + WalledGardenMarker + ` page"`,
+		`/ip hotspot walled-garden ip add action=allow protocol=udp dst-port=53 comment="` + WalledGardenMarker + ` dns"`,
+		`/ip hotspot walled-garden ip add action=allow protocol=tcp dst-port=53 comment="` + WalledGardenMarker + ` dns"`,
+		"domains=2", // rapport : 2 règles page/api posées
+	} {
+		if !strings.Contains(script, marqueur) {
+			t.Fatalf("marqueur absent du script walled_garden : %q", marqueur)
+		}
+	}
+
+	// Injection : un domaine hostile est REFUSÉ par l'assainisseur → il ne
+	// peut ni apparaître dans le script ni y exécuter quoi que ce soit.
+	hostile := model.Command{ID: "c-wg02", Kind: model.CmdWalledGarden, Payload: map[string]any{
+		"domains": []any{`evil"; /system reboot x`},
+	}}
+	s2, err := b.ScriptFor(hostile)
+	if err != nil {
+		t.Fatalf("ScriptFor(walled_garden hostile) : %v", err)
+	}
+	if strings.Contains(s2, "/system reboot") || strings.Contains(s2, `evil"`) {
+		t.Fatal("le domaine hostile doit être neutralisé par SanitizeWGDomain")
+	}
+	if !strings.Contains(s2, "domains=0") {
+		t.Fatal("aucune règle valide → rapport domains=0 attendu")
+	}
+}
+
+func TestWalledGardenInstallBlock(t *testing.T) {
+	// Domaines annoncés → le bloc est présent, corps MULTI-lignes (règle du
+	// parseur console), règles page + DNS, marqueur d'idempotence.
+	with := InstallScript("https://cloud.example", "tok", "Routeur A", "a.example", "b.example")
+	for _, marqueur := range []string{
+		`/ip hotspot walled-garden remove [find comment~"` + WalledGardenMarker + `"]`,
+		`/ip hotspot walled-garden add action=allow dst-host="a.example" comment="` + WalledGardenMarker + ` page"`,
+		`/ip hotspot walled-garden add action=allow dst-host="b.example" comment="` + WalledGardenMarker + ` page"`,
+		`/ip hotspot walled-garden ip add action=allow protocol=udp dst-port=53`,
+		"on-error={}",
+	} {
+		if !strings.Contains(with, marqueur) {
+			t.Fatalf("marqueur absent de l'InstallScript (walled-garden) : %q", marqueur)
+		}
+	}
+	// Le bloc d'installation n'utilise JAMAIS de corps one-line (fragile au
+	// collage console) : chaque add walled-garden est sur sa propre ligne.
+	for _, ligne := range strings.Split(with, "\n") {
+		l := strings.TrimSpace(ligne)
+		if strings.HasPrefix(l, "/ip hotspot walled-garden add") && strings.Contains(l, ":do {") {
+			t.Fatal("corps one-line détecté dans le bloc walled-garden de l'InstallScript")
+		}
+	}
+	// Aucun domaine annoncé → aucun bloc (script inchangé pour ce cas).
+	without := InstallScript("https://cloud.example", "tok", "Routeur B")
+	if strings.Contains(without, "walled-garden add") {
+		t.Fatal("sans domaine annoncé, l'InstallScript ne doit pas contenir de règles walled-garden")
+	}
+}

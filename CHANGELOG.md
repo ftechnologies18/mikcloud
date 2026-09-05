@@ -5,6 +5,29 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-05 — N°29 : walled-garden d'inscription publique automatisé par l'agent (routeurs neufs ET déjà en ligne)
+
+### Le runbook N°27-D appliqué par le système lui-même
+- Nouvelle commande agent **`walled_garden`** : pose sur le routeur les règles
+  qui rendent la page `/join/{token}` et son API joignables SANS
+  authentification depuis le WiFi du hotspot (le scan du QR fonctionne sur
+  place) — **idempotente** : seules les règles marquées `mikcloud-wg` sont
+  remplacées, les règles personnelles du gérant sont préservées ; + 2 règles
+  DNS udp/tcp 53 pour la robustesse de la résolution.
+- **Routeurs déjà en ligne** : à chaque check-in (≤ 45 s), le cloud compare la
+  signature de la configuration à celle déjà appliquée sur le routeur
+  (`routers.walled_garden_sig`) — différente → mise à jour en file, servie
+  dans le MÊME check-in ; signature posée uniquement à la confirmation du
+  routeur (échec → retry automatique au check-in suivant, changement de
+  config → re-file). **Aucun recollage manuel** sur le parc existant.
+- **Routeurs neufs** : le script d'installation embarque le même bloc
+  (multi-lignes — règle du parseur console —, idempotent).
+- Domaines déduits du déploiement (hôte API + origines page via CORS
+  `ALLOWED_ORIGIN` / `APP_PUBLIC_URL`), assainis (anti-injection), triés,
+  plafonnés à 10.
+- 6 tests dédiés : assainissement, script (règles + rapport), bloc
+  d'installation, exactly-once / re-file sur changement / retry sur échec.
+
 ## 2026-09-05 — N°27-D : runbook walled-garden (inscriptions publiques accessibles depuis le WiFi du hotspot)
 
 ### Documentation opérateur — `docs/RUNBOOK-WALLED-GARDEN.md`

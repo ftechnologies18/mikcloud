@@ -189,7 +189,7 @@ func (a *API) handleRouterCreate(w http.ResponseWriter, r *http.Request) {
 	_ = json.Unmarshal(data, &out)
 	if agentToken != "" {
 		out["agentToken"] = agentToken
-		out["installScript"] = agent.InstallScript(agentBaseURL(r), agentToken, name)
+		out["installScript"] = agent.InstallScript(agentBaseURL(r), agentToken, name, walledGardenDomains(r)...)
 		out["message"] = "Copiez le script et collez-le dans Terminal (Winbox) — le routeur passera « En ligne » au premier check-in (≤ 45 s)."
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -328,7 +328,7 @@ func (a *API) handleRouterUpdate(w http.ResponseWriter, r *http.Request) {
 	_ = json.Unmarshal(data, &out)
 	if agentToken != "" {
 		out["agentToken"] = agentToken
-		out["installScript"] = agent.InstallScript(agentBaseURL(r), agentToken, updated.Name)
+		out["installScript"] = agent.InstallScript(agentBaseURL(r), agentToken, updated.Name, walledGardenDomains(r)...)
 	}
 	writeJSON(w, http.StatusOK, out)
 }

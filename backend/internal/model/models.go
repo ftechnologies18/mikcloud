@@ -174,6 +174,13 @@ type Router struct {
 	// ou dort plus de 24 h. Jamais exposé au client de la console : c'est un
 	// signal anti-abus interne (le client voit « hors ligne »).
 	IdentityConflict bool `json:"identityConflict,omitempty"`
+	// N°29 — signature de la configuration walled-garden d'inscription
+	// publique DÉJÀ APPLIQUÉE avec succès sur ce routeur (hash des domaines
+	// page+API). Vide → rien d'appliqué (ou dernier échec) : le check-in
+	// suivant re-file la commande walled_garden. Posée au retour « ok » de la
+	// commande (handleAgentResult) — jamais à la mise en file : un échec est
+	// retenté automatiquement au check-in suivant.
+	WalledGardenSig string `json:"walledGardenSig,omitempty"`
 }
 
 // Profile — profil hotspot (débit, durée, prix, validité).
@@ -737,6 +744,7 @@ const (
 	CmdShutdown        = "shutdown"         // F10 : /system shutdown
 	CmdImportHotspot   = "import_hotspot"   // import initial : lecture paginée des profils + utilisateurs existants sur le routeur
 	CmdProfileSet      = "profile_set"      // v2 : applique/retire le verrou « 1er appareil » (on-login de liaison MAC) sur un profil
+	CmdWalledGarden    = "walled_garden"    // N°29 : walled-garden d'inscription publique (runbook N°27-D automatisé)
 )
 
 // ---------------------------------------------------------------------------

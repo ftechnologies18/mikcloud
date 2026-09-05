@@ -89,7 +89,7 @@ func (a *API) handleRouterRotateToken(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"agentToken":    token,
-		"installScript": agent.InstallScript(agentBaseURL(r), token, name),
+		"installScript": agent.InstallScript(agentBaseURL(r), token, name, walledGardenDomains(r)...),
 	})
 }
 

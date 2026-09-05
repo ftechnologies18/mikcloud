@@ -550,79 +550,79 @@ func (p *PG) ensureSchema() error {
 		// serveur révocable, compteur d'usages, expiration) + demandes en
 		// attente de validation par le gérant.
 		`CREATE TABLE IF NOT EXISTS join_links (
-			id              TEXT PRIMARY KEY,
-			account_id      TEXT NOT NULL DEFAULT '',
-			name            TEXT NOT NULL DEFAULT '',
-			token           TEXT NOT NULL DEFAULT '',
-			profile_id      TEXT NOT NULL DEFAULT '',
-			profile_name    TEXT NOT NULL DEFAULT '',
-			router_id       TEXT NOT NULL DEFAULT '',
-			router_name     TEXT NOT NULL DEFAULT '',
-			auto_validate   BOOLEAN NOT NULL DEFAULT FALSE,
-			max_uses        INTEGER NOT NULL DEFAULT 0,
-			uses            INTEGER NOT NULL DEFAULT 0,
-			expires_at      TEXT NOT NULL DEFAULT '',
-			revoked         BOOLEAN NOT NULL DEFAULT FALSE,
-			created_by      TEXT NOT NULL DEFAULT '',
-			created_by_name TEXT NOT NULL DEFAULT '',
-			created_at      TEXT NOT NULL
-		)`,
+                        id              TEXT PRIMARY KEY,
+                        account_id      TEXT NOT NULL DEFAULT '',
+                        name            TEXT NOT NULL DEFAULT '',
+                        token           TEXT NOT NULL DEFAULT '',
+                        profile_id      TEXT NOT NULL DEFAULT '',
+                        profile_name    TEXT NOT NULL DEFAULT '',
+                        router_id       TEXT NOT NULL DEFAULT '',
+                        router_name     TEXT NOT NULL DEFAULT '',
+                        auto_validate   BOOLEAN NOT NULL DEFAULT FALSE,
+                        max_uses        INTEGER NOT NULL DEFAULT 0,
+                        uses            INTEGER NOT NULL DEFAULT 0,
+                        expires_at      TEXT NOT NULL DEFAULT '',
+                        revoked         BOOLEAN NOT NULL DEFAULT FALSE,
+                        created_by      TEXT NOT NULL DEFAULT '',
+                        created_by_name TEXT NOT NULL DEFAULT '',
+                        created_at      TEXT NOT NULL
+                )`,
 		`CREATE INDEX IF NOT EXISTS idx_join_links_account ON join_links (account_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_join_links_token  ON join_links (token)`,
 		`CREATE TABLE IF NOT EXISTS registration_requests (
-			id               TEXT PRIMARY KEY,
-			account_id       TEXT NOT NULL DEFAULT '',
-			link_id          TEXT NOT NULL DEFAULT '',
-			link_name        TEXT NOT NULL DEFAULT '',
-			full_name        TEXT NOT NULL DEFAULT '',
-			phone            TEXT NOT NULL DEFAULT '',
-			desired_username TEXT NOT NULL DEFAULT '',
-			password         TEXT NOT NULL DEFAULT '',
-			message          TEXT NOT NULL DEFAULT '',
-			status           TEXT NOT NULL DEFAULT 'pending',
-			rejection_reason TEXT NOT NULL DEFAULT '',
-			reviewed_by      TEXT NOT NULL DEFAULT '',
-			reviewed_by_name TEXT NOT NULL DEFAULT '',
-			reviewed_at      TEXT NOT NULL DEFAULT '',
-			user_id          TEXT NOT NULL DEFAULT '',
-			created_ip       TEXT NOT NULL DEFAULT '',
-			created_at       TEXT NOT NULL
-		)`,
+                        id               TEXT PRIMARY KEY,
+                        account_id       TEXT NOT NULL DEFAULT '',
+                        link_id          TEXT NOT NULL DEFAULT '',
+                        link_name        TEXT NOT NULL DEFAULT '',
+                        full_name        TEXT NOT NULL DEFAULT '',
+                        phone            TEXT NOT NULL DEFAULT '',
+                        desired_username TEXT NOT NULL DEFAULT '',
+                        password         TEXT NOT NULL DEFAULT '',
+                        message          TEXT NOT NULL DEFAULT '',
+                        status           TEXT NOT NULL DEFAULT 'pending',
+                        rejection_reason TEXT NOT NULL DEFAULT '',
+                        reviewed_by      TEXT NOT NULL DEFAULT '',
+                        reviewed_by_name TEXT NOT NULL DEFAULT '',
+                        reviewed_at      TEXT NOT NULL DEFAULT '',
+                        user_id          TEXT NOT NULL DEFAULT '',
+                        created_ip       TEXT NOT NULL DEFAULT '',
+                        created_at       TEXT NOT NULL
+                )`,
 		`CREATE INDEX IF NOT EXISTS idx_registration_requests_account ON registration_requests (account_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_registration_requests_status ON registration_requests (status)`,
 		// N°28 — WiFi jetable : sites publics (slug GLOBALEMENT unique) +
 		// registre marketing visiteurs (1 ligne = 1 code délivré).
 		`CREATE TABLE IF NOT EXISTS wifi_sites (
-			id          TEXT PRIMARY KEY,
-			account_id  TEXT NOT NULL DEFAULT '',
-			name        TEXT NOT NULL DEFAULT '',
-			slug        TEXT NOT NULL DEFAULT '',
-			router_id   TEXT NOT NULL DEFAULT '',
-			router_name TEXT NOT NULL DEFAULT '',
-			profile_id   TEXT NOT NULL DEFAULT '',
-			profile_name TEXT NOT NULL DEFAULT '',
-			free_time_min BIGINT NOT NULL DEFAULT 0,
-			free_data_mb  BIGINT NOT NULL DEFAULT 0,
-			marketing_opt_in BOOLEAN NOT NULL DEFAULT FALSE,
-			daily_per_phone INTEGER NOT NULL DEFAULT 1,
-			daily_cap       INTEGER NOT NULL DEFAULT 100,
-			active    BOOLEAN NOT NULL DEFAULT FALSE,
-			created_at TEXT NOT NULL DEFAULT ''
-		)`,
+                        id          TEXT PRIMARY KEY,
+                        account_id  TEXT NOT NULL DEFAULT '',
+                        name        TEXT NOT NULL DEFAULT '',
+                        slug        TEXT NOT NULL DEFAULT '',
+                        router_id   TEXT NOT NULL DEFAULT '',
+                        router_name TEXT NOT NULL DEFAULT '',
+                        profile_id   TEXT NOT NULL DEFAULT '',
+                        profile_name TEXT NOT NULL DEFAULT '',
+                        free_time_min BIGINT NOT NULL DEFAULT 0,
+                        free_data_mb  BIGINT NOT NULL DEFAULT 0,
+                        marketing_opt_in BOOLEAN NOT NULL DEFAULT FALSE,
+                        daily_per_phone INTEGER NOT NULL DEFAULT 1,
+                        daily_cap       INTEGER NOT NULL DEFAULT 100,
+                        active    BOOLEAN NOT NULL DEFAULT FALSE,
+                        created_at TEXT NOT NULL DEFAULT ''
+                )`,
 		`CREATE INDEX IF NOT EXISTS idx_wifi_sites_account ON wifi_sites (account_id)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_wifi_sites_slug ON wifi_sites (slug)`,
 		`CREATE TABLE IF NOT EXISTS wifi_guests (
-			id         TEXT PRIMARY KEY,
-			account_id TEXT NOT NULL DEFAULT '',
-			site_id    TEXT NOT NULL DEFAULT '',
-			site_name  TEXT NOT NULL DEFAULT '',
-			phone      TEXT NOT NULL DEFAULT '',
-			opt_in     BOOLEAN NOT NULL DEFAULT FALSE,
-			voucher_id TEXT NOT NULL DEFAULT '',
-			code       TEXT NOT NULL DEFAULT '',
-			day        TEXT NOT NULL DEFAULT '',
-			created_at TEXT NOT NULL DEFAULT ''
-		)`,
+                        id         TEXT PRIMARY KEY,
+                        account_id TEXT NOT NULL DEFAULT '',
+                        site_id    TEXT NOT NULL DEFAULT '',
+                        site_name  TEXT NOT NULL DEFAULT '',
+                        phone      TEXT NOT NULL DEFAULT '',
+                        opt_in     BOOLEAN NOT NULL DEFAULT FALSE,
+                        voucher_id TEXT NOT NULL DEFAULT '',
+                        code       TEXT NOT NULL DEFAULT '',
+                        day        TEXT NOT NULL DEFAULT '',
+                        created_at TEXT NOT NULL DEFAULT ''
+                )`,
 		`CREATE INDEX IF NOT EXISTS idx_wifi_guests_account ON wifi_guests (account_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_wifi_guests_site   ON wifi_guests (site_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_wifi_guests_phone  ON wifi_guests (phone)`,
@@ -680,6 +680,9 @@ func (p *PG) ensureSchema() error {
 		// Sécurité S6 — détection d'identité routeur dupliquée (conflit
 		// inter-comptes, cf. internal/api/agent_handlers.go).
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS identity_conflict BOOLEAN NOT NULL DEFAULT FALSE`,
+		// N°29 — signature de la config walled-garden d'inscription publique
+		// déjà appliquée sur ce routeur agent (cf. agent_handlers.go).
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS walled_garden_sig TEXT NOT NULL DEFAULT ''`,
 		// Quota de données par voucher (« 5 Go = 500 F ») : Mo, 0 = illimité.
 		`ALTER TABLE hotspot_users ADD COLUMN IF NOT EXISTS data_quota_mb BIGINT NOT NULL DEFAULT 0`,
 		`ALTER TABLE batches       ADD COLUMN IF NOT EXISTS data_quota_mb BIGINT NOT NULL DEFAULT 0`,
@@ -1385,14 +1388,14 @@ var routerSpec = entitySpec[model.Router]{
 	cols: []string{"id", "name", "host", "port", "username", "password", "mode", "status",
 		"version", "uptime_sec", "cpu_load", "hotspot_users", "active_sessions", "created_at",
 		"hotspot_login_url", "agent_token_hash", "token_preview", "last_seen", "account_id",
-		"board_name", "free_hdd_mb", "total_hdd_mb", "identity_conflict"},
+		"board_name", "free_hdd_mb", "total_hdd_mb", "identity_conflict", "walled_garden_sig"},
 	idOf: func(x *model.Router) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Router, error) {
 		var x model.Router
 		err := r.Scan(&x.ID, &x.Name, &x.Host, &x.Port, &x.Username, &x.Password, &x.Mode, &x.Status,
 			&x.Version, &x.UptimeSec, &x.CPULoad, &x.HotspotUsers, &x.ActiveSessions, &x.CreatedAt,
 			&x.HotspotLoginUrl, &x.AgentTokenHash, &x.TokenPreview, &x.LastSeen, &x.AccountID,
-			&x.BoardName, &x.FreeHddMb, &x.TotalHddMb, &x.IdentityConflict)
+			&x.BoardName, &x.FreeHddMb, &x.TotalHddMb, &x.IdentityConflict, &x.WalledGardenSig)
 		// Sécurité P0 #6 — le mot de passe routeur est stocké chiffré
 		// (AES-256-GCM) : lecture = déchiffrement (passthrough si valeur
 		// antérieure au correctif, migration assurée par
@@ -1408,7 +1411,7 @@ var routerSpec = entitySpec[model.Router]{
 		return []any{x.ID, x.Name, x.Host, x.Port, x.Username, secretbox.Encrypt(x.Password), x.Mode, x.Status,
 			x.Version, x.UptimeSec, x.CPULoad, x.HotspotUsers, x.ActiveSessions, x.CreatedAt,
 			x.HotspotLoginUrl, x.AgentTokenHash, x.TokenPreview, x.LastSeen, x.AccountID,
-			x.BoardName, x.FreeHddMb, x.TotalHddMb, x.IdentityConflict}
+			x.BoardName, x.FreeHddMb, x.TotalHddMb, x.IdentityConflict, x.WalledGardenSig}
 	},
 	hashOf: hashEntity[model.Router],
 }

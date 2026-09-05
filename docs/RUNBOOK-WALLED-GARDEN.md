@@ -4,7 +4,17 @@
 > publique `/join/{token}` accessible **depuis le WiFi du hotspot, avant
 > toute authentification**, pour que le scan du QR fonctionne sur place
 > (campus, écoles, administrations, entreprises). Dernière mise à jour :
-> N°27-D (2026-09-05).
+> N°29 (2026-09-05).
+
+> **⚙️ Automatisation (N°29)** : les routeurs en mode **AGENT** appliquent
+> cette configuration automatiquement — bloc inclus dans le script
+> d'installation (routeurs neufs) et commande `walled_garden` servie au
+> check-in (routeurs **déjà en ligne** : mise à niveau en ≤ 45 s, sans
+> recollage). Les règles posées portent le commentaire-marqueur
+> `mikcloud-wg` (idempotence — vos règles personnelles sont préservées).
+> Ce runbook reste la référence pour les routeurs en mode « réel » (API
+> directe), pour les réglages manuels et pour comprendre/vérifier ce que
+> l'agent pose.
 
 ## 0. Quand ce runbook est nécessaire
 

@@ -65,6 +65,102 @@ func agentBaseURL(r *http.Request) string {
 	return scheme + "://" + r.Host
 }
 
+// ---------------------------------------------------------------------------
+// N°29 — walled-garden d'inscription publique (runbook N°27-D automatisé)
+// ---------------------------------------------------------------------------
+
+// walledGardenDomains — les noms d'hôtes à rendre joignables SANS
+// authentification depuis le WiFi du hotspot : l'origine PAGE (console —
+// héberge /join/{token}, encodée dans le QR) et l'hôte API (appelé par le
+// navigateur du visiteur depuis la page). Sources : MICKLOUD_BASE_URL,
+// APP_PUBLIC_URL, ALLOWED_ORIGIN (CORS = exactement les origines navigateur)
+// et l'hôte de la requête agent courante (l'API telle que ce déploiement
+// l'expose). Dé-dupliqués, triés (signature stable), 10 max — un déploiement
+// standard en produit 2 (page + API).
+func walledGardenDomains(r *http.Request) []string {
+	hosts := make([]string, 0, 4)
+	add := func(raw string) {
+		if h := agent.SanitizeWGDomain(normalizeWGHost(raw)); h != "" {
+			hosts = append(hosts, h)
+		}
+	}
+	add(os.Getenv("MIKCLOUD_BASE_URL"))
+	add(os.Getenv("APP_PUBLIC_URL"))
+	for _, o := range strings.Split(os.Getenv("ALLOWED_ORIGIN"), ",") {
+		add(strings.TrimSpace(o))
+	}
+	if r != nil {
+		add(r.Host)
+	}
+	seen := make(map[string]bool, len(hosts))
+	out := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		if !seen[h] {
+			seen[h] = true
+			out = append(out, h)
+		}
+	}
+	sort.Strings(out)
+	if len(out) > 10 {
+		out = out[:10]
+	}
+	return out
+}
+
+// normalizeWGHost — extrait l'hôte brut d'une origine/URL/hôte : préfixe de
+// schéma, userinfo et chemin retirés, ports par défaut (80/443) retirés.
+// La validation fine du jeu de caractères est faite par agent.SanitizeWGDomain.
+func normalizeWGHost(raw string) string {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	if i := strings.Index(s, "://"); i >= 0 {
+		s = s[i+3:]
+	}
+	if i := strings.LastIndexByte(s, '@'); i >= 0 { // userinfo parasites
+		s = s[i+1:]
+	}
+	if i := strings.IndexAny(s, "/?#"); i >= 0 {
+		s = s[:i]
+	}
+	s = strings.TrimSuffix(s, ":443")
+	s = strings.TrimSuffix(s, ":80")
+	return s
+}
+
+// walledGardenSig — signature courte et stable d'une configuration de
+// domaines (hash du join trié) : elle distingue « déjà appliqué sur ce
+// routeur » d'« à (re)appliquer » sans table supplémentaire.
+func walledGardenSig(domains []string) string {
+	return agent.HashToken(strings.Join(domains, "|"))[:16]
+}
+
+// ensureWalledGardenLocked — sous verrou : si la configuration walled-garden
+// courante diffère de celle déjà appliquée sur le routeur (et qu'aucune
+// commande n'est en vol), file la mise à jour — elle est servie dans CE
+// check-in. C'est le point N°29 pour les routeurs DÉJÀ EN LIGNE lors du
+// déploiement : aucun recollage manuel, chaque agent se met à niveau tout
+// seul à son premier check-in (≤ 45 s). La signature n'est posée qu'au
+// retour « ok » (handleAgentResult) : un échec est retenté au check-in
+// suivant, un changement de config re-file automatiquement.
+func ensureWalledGardenLocked(db *model.DB, router *model.Router, domains []string) {
+	if len(domains) == 0 {
+		return
+	}
+	sig := walledGardenSig(domains)
+	if router.WalledGardenSig == sig {
+		return // déjà appliqué avec cette configuration exacte
+	}
+	for i := range db.Commands {
+		c := &db.Commands[i]
+		if c.RouterID == router.ID && c.Kind == model.CmdWalledGarden && (c.Status == "queued" || c.Status == "sent") {
+			return // une mise à jour est déjà en vol
+		}
+	}
+	queueCommandLocked(db, router.AccountID, router.ID, model.CmdWalledGarden, map[string]any{
+		"domains": domains,
+		"sig":     sig,
+	})
+}
+
 // parseAgentForm — parse tolérant : query URL + corps brut (RouterOS n'envoie pas
 // toujours un Content-Type form-urlencoded).
 func parseAgentForm(r *http.Request) url.Values {
@@ -520,6 +616,12 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 	// dans le MÊME check-in, juste après).
 	a.enforceExpired(db)
 
+	// N°29 — walled-garden d'inscription publique : si la configuration
+	// (domaines page+API) a changé ou n'a jamais été appliquée sur ce
+	// routeur, la commande walled_garden rejoint la file FIFO ci-dessous —
+	// servie dans CE check-in, y compris pour les routeurs déjà en ligne.
+	ensureWalledGardenLocked(db, router, walledGardenDomains(r))
+
 	// Reprise : une commande de lecture « sent » sans rapport depuis plus de
 	// 10 min est un zombie (blip réseau, rejet historique du rapport…) —
 	// remise en file pour re-exécution au check-in courant. Lectures
@@ -648,7 +750,17 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 			a.logActivity(db, router.AccountID, "router", "Import depuis «"+router.Name+"» terminé : "+summary)
 		}
 	case ok:
-		a.logActivity(db, router.AccountID, "router", "Commande "+cmd.Kind+" exécutée sur «"+router.Name+"»")
+		if cmd.Kind == model.CmdWalledGarden {
+			// N°29 — configuration appliquée et CONFIRMÉE par le routeur :
+			// la signature est posée ici (et seulement ici) — un échec sera
+			// retenté au check-in suivant, un changement de config re-file.
+			if sig, _ := cmd.Payload["sig"].(string); sig != "" {
+				router.WalledGardenSig = sig
+			}
+			a.logActivity(db, router.AccountID, "router", "Walled-garden d'inscription publique appliqué sur «"+router.Name+"»")
+		} else {
+			a.logActivity(db, router.AccountID, "router", "Commande "+cmd.Kind+" exécutée sur «"+router.Name+"»")
+		}
 		queueCommandLocked(db, router.AccountID, router.ID, model.CmdReadState, map[string]any{})
 	default:
 		a.logActivity(db, router.AccountID, "router", "Commande "+cmd.Kind+" ÉCHOUÉE sur «"+router.Name+"» ("+vals.Get("message")+")")

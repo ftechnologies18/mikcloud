@@ -957,6 +957,45 @@ inter-comptes, sweep 30 j).
 
 ---
 
+## N°29 — Walled-garden d'inscription publique automatisé par l'agent (runbook N°27-D)
+
+Objectif : le scan du QR `/join/{token}` fonctionne depuis le WiFi du hotspot SANS
+configuration manuelle des routeurs — le runbook `docs/RUNBOOK-WALLED-GARDEN.md`
+est appliqué par le système lui-même, pour les routeurs neufs ET ceux déjà en ligne.
+
+- **Nouvelle commande agent `walled_garden`** (kind `CmdWalledGarden`, payload
+  `{domains: […], sig: …}`) : script idempotent — remplace UNIQUEMENT les règles
+  portant le commentaire-marqueur `mikcloud-wg` (les règles personnelles du
+  gérant sont préservées), pose une règle `allow` par domaine
+  (`/ip hotspot walled-garden add action=allow dst-host=…`) + 2 règles DNS
+  udp/tcp 53 (`walled-garden ip`), et se rapporte avec `domains=N`.
+- **Domaines calculés par le déploiement** (`walledGardenDomains`) : hôte API
+  (`MIKCLOUD_BASE_URL` sinon hôte de la requête agent), origine page
+  (`APP_PUBLIC_URL` + `ALLOWED_ORIGIN` — les origines CORS sont exactement les
+  origines navigateur à autoriser), hôte de la requête courante ; dé-dupliqués,
+  triés (signature stable), 10 max, assainis (`agent.SanitizeWGDomain` :
+  `[a-z0-9._-]` + port numérique, 253 car. max).
+- **Routeurs DÉJÀ EN LIGNE** : à chaque check-in (`handleAgentCmd`),
+  `ensureWalledGardenLocked` compare la signature de la configuration courante à
+  `Router.WalledGardenSig` (nouvelle colonne `routers.walled_garden_sig`) —
+  différente et aucune commande en vol → mise en file, servie dans CE check-in.
+  La signature n'est posée qu'au retour « ok » (`handleAgentResult`) : un échec
+  est retenté au check-in suivant, un changement de config re-file
+  automatiquement. Un parc en ligne se met à niveau tout seul en ≤ 45 s.
+- **Routeurs neufs** : le script d'INSTALLATION intègre le même bloc (généré
+  par `walledGardenInstallBlock`, corps multi-lignes — règle du parseur
+  console) ; les mises à jour ultérieures passent par le check-in, pas par un
+  recollage.
+- Journal : « Walled-garden d'inscription publique appliqué sur … ».
+- Tests : `TestSanitizeWGDomain` (anti-injection), `TestWalledGardenScript`
+  (règles + rapport `domains=N` + injection neutralisée),
+  `TestWalledGardenInstallBlock` (multi-lignes, absent si aucun domaine),
+  `TestNormalizeWGHost`, `TestWalledGardenDomains` (tri/dé-dup),
+  `TestEnsureWalledGardenLocked` (exactly-once, re-file sur changement, retry
+  sur échec).
+
+---
+
 ## PLAN DE FICHIERS
 
 ### Backend (Go)

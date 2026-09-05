@@ -28,6 +28,12 @@ const ScriptFilename = "mikcloud-cmd.rsc"
 // SchedulerName — nom du scheduler créé sur le routeur.
 const SchedulerName = "mikcloud-agent"
 
+// WalledGardenMarker — commentaire des règles walled-garden posées par
+// MikCloud (N°29 — runbook N°27-D automatisé). L'idempotence s'appuie dessus :
+// seules les règles portant ce marqueur sont remplacées — les règles
+// personnelles du gérant sont préservées.
+const WalledGardenMarker = "mikcloud-wg"
+
 // ---------------------------------------------------------------------------
 // Tokens
 // ---------------------------------------------------------------------------
@@ -162,7 +168,7 @@ func rosMinutes(m int) string {
 //     dst-path seul (output par défaut = file), sinon l'import échoue ;
 //   - les :global RouterOS ne survivent pas à coup sûr à un reboot → URL et
 //     token sont INLINÉS dans l'on-event : le scheduler est auto-suffisant.
-func InstallScript(baseURL, token, routerName string) string {
+func InstallScript(baseURL, token, routerName string, wgDomains ...string) string {
 	// Le nom n'apparaît que dans un commentaire .rsc : interdire tout retour à
 	// la ligne ou caractère de contrôle (anti-injection dans le fichier).
 	safeName := strings.Map(func(c rune) rune {
@@ -274,7 +280,7 @@ func InstallScript(baseURL, token, routerName string) string {
       :put "MIKCLOUD : agent installe. Prochaine connexion au cloud dans 45 s max."
       :log info "MikCloud: agent installe, check-in dans 45s"
     }
-  }
+` + walledGardenInstallBlock(wgDomains) + `  }
 } on-error={
   :log error "MikCloud: erreur pendant l'installation de l'agent"
 }
@@ -454,6 +460,8 @@ func (b Builder) ScriptFor(cmd model.Command) (string, error) {
 		return b.buildImportHotspot(cmd), nil
 	case model.CmdProfileSet:
 		return b.buildProfileSet(cmd), nil
+	case model.CmdWalledGarden:
+		return b.buildWalledGarden(cmd), nil
 	default:
 		return "", fmt.Errorf("kind de commande inconnu : %s", cmd.Kind)
 	}
@@ -1245,6 +1253,102 @@ func (b Builder) buildPower(cmd model.Command, action string) string {
 	sb.WriteString(b.reportLine(cmd.ID, true, map[string]string{"action": action}) + "\n")
 	sb.WriteString(":delay 1s\n")
 	sb.WriteString(":do { /system " + action + " } on-error={ :log warning \"mikcloud: " + action + " impossible\" }\n")
+	return sb.String()
+}
+
+// ---------------------------------------------------------------------------
+// N°29 — walled-garden d'inscription publique (runbook N°27-D automatisé)
+// ---------------------------------------------------------------------------
+
+// SanitizeWGDomain — hôte walled-garden sûr : minuscules, [a-z0-9._-] plus un
+// suffixe de port NUMÉRIQUE (déploiements non standard), 253 caractères max.
+// Tout le reste est refusé : ces valeurs sont injectées dans un script
+// RouterOS (défense en profondeur, rosEscape reste appliqué à l'écriture).
+func SanitizeWGDomain(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "" || len(s) > 253 {
+		return ""
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '.' || c == '-' || c == ':') {
+			return ""
+		}
+	}
+	if i := strings.IndexByte(s, ':'); i >= 0 { // port numérique uniquement
+		port := s[i+1:]
+		if port == "" || len(port) > 5 {
+			return ""
+		}
+		for j := 0; j < len(port); j++ {
+			if port[j] < '0' || port[j] > '9' {
+				return ""
+			}
+		}
+	}
+	return s
+}
+
+// WalledGardenDomainsFromPayload — les domaines d'une commande walled_garden
+// ([]any JSON ou []string mémoire, cf. plStrList), assainis.
+func WalledGardenDomainsFromPayload(p map[string]any) []string {
+	raw := plStrList(p, "domains")
+	out := make([]string, 0, len(raw))
+	for _, d := range raw {
+		if d = SanitizeWGDomain(d); d != "" {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// walledGardenInstallBlock — bloc walled-garden du script d'INSTALLATION
+// (N°29) : la page d'inscription publique /join/{token} et l'API qu'elle
+// appelle restent joignables AVANT authentification depuis le WiFi du hotspot
+// (le scan du QR fonctionne sur place, cf. docs/RUNBOOK-WALLED-GARDEN.md).
+// Idempotent : seules les règles marquées "mikcloud-wg" sont remplacées.
+// Corps multi-lignes (règle du parseur console — cf. en-tête InstallScript).
+// Vide si aucun domaine annoncé par le déploiement.
+func walledGardenInstallBlock(domains []string) string {
+	if len(domains) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("\n    # Walled-garden d'inscription publique (N°27/N°29) : la page /join et\n")
+	sb.WriteString("    # son API restent joignables AVANT authentification — le scan du QR\n")
+	sb.WriteString("    # fonctionne depuis le WiFi du hotspot. Seules les règles marquées\n")
+	sb.WriteString("    # \"" + WalledGardenMarker + "\" sont remplacées, les vôtres sont conservées.\n")
+	sb.WriteString("    :do {\n      /ip hotspot walled-garden remove [find comment~\"" + WalledGardenMarker + "\"]\n    } on-error={}\n")
+	sb.WriteString("    :do {\n      /ip hotspot walled-garden ip remove [find comment~\"" + WalledGardenMarker + "\"]\n    } on-error={}\n")
+	for _, d := range domains {
+		sb.WriteString("    :do {\n      /ip hotspot walled-garden add action=allow dst-host=\"" + rosEscape(d) + "\" comment=\"" + WalledGardenMarker + " page\"\n    } on-error={}\n")
+	}
+	sb.WriteString("    :do {\n      /ip hotspot walled-garden ip add action=allow protocol=udp dst-port=53 comment=\"" + WalledGardenMarker + " dns\"\n    } on-error={}\n")
+	sb.WriteString("    :do {\n      /ip hotspot walled-garden ip add action=allow protocol=tcp dst-port=53 comment=\"" + WalledGardenMarker + " dns\"\n    } on-error={}\n")
+	return sb.String()
+}
+
+// buildWalledGarden — N°29 : applique le walled-garden d'inscription publique
+// sur un routeur AGENT déjà en ligne (le script d'installation le fait pour
+// les routeurs neufs). Idempotent : les règles marquées sont remplacées, les
+// autres préservées. Les 2 règles DNS (udp/tcp 53) garantissent que la
+// résolution traverse le routeur même pour les clients avec DNS codé en dur —
+// le matching par domaine du walled-garden s'appuie sur le reniflement DNS.
+// Rapport : domains = nombre de règles page/api réellement posées.
+func (b Builder) buildWalledGarden(cmd model.Command) string {
+	domains := WalledGardenDomainsFromPayload(cmd.Payload)
+	okVar := "ok" + idSafe(cmd.ID)
+	var sb strings.Builder
+	sb.WriteString(header(cmd))
+	sb.WriteString(":local " + okVar + " true\n")
+	sb.WriteString(":do { /ip hotspot walled-garden remove [find comment~\"" + WalledGardenMarker + "\"] } on-error={ :set " + okVar + " false }\n")
+	sb.WriteString(":do { /ip hotspot walled-garden ip remove [find comment~\"" + WalledGardenMarker + "\"] } on-error={ :set " + okVar + " false }\n")
+	for _, d := range domains {
+		sb.WriteString(":do { /ip hotspot walled-garden add action=allow dst-host=\"" + rosEscape(d) + "\" comment=\"" + WalledGardenMarker + " page\" } on-error={ :set " + okVar + " false }\n")
+	}
+	sb.WriteString(":do { /ip hotspot walled-garden ip add action=allow protocol=udp dst-port=53 comment=\"" + WalledGardenMarker + " dns\" } on-error={ :set " + okVar + " false }\n")
+	sb.WriteString(":do { /ip hotspot walled-garden ip add action=allow protocol=tcp dst-port=53 comment=\"" + WalledGardenMarker + " dns\" } on-error={ :set " + okVar + " false }\n")
+	sb.WriteString(b.resultLines(cmd.ID, okVar, map[string]string{"domains": strconv.Itoa(len(domains))}))
 	return sb.String()
 }
 

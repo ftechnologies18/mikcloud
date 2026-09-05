@@ -26,8 +26,15 @@ la CI puis se déploie automatiquement (frontend Vercel, backend Render).
   dernière connexion, version ≥ 7.19, Journal, commande perdue) + note
   terrain : inscriptions (N°27) et WiFi jetable (N°28) partagent le MÊME
   walled-garden — une seule cause possible quand il manque.
+### Complément N°31-b — hygiène des domaines (`wgHostUsable`)
+- La configuration ne retient plus que les hôtes réellement joignables depuis
+  un client du WiFi : localhost, *.localhost, *.local, loopback, RFC1918,
+  link-local et 0.0.0.0 exclus (constat prod : « localhost:3000 » issu des
+  origines de dev de ALLOWED_ORIGIN polluait la liste ; un `dst-host` avec
+  port ne peut de toute façon pas matcher HTTPS/SNI). Hôtes publics éligibles,
+  port numérique compris. Test dédié (15 cas).
 
-## 2026-09-05 — N°29 : walled-garden d'inscription publique automatisé par l'agent (routeurs neufs ET déjà en ligne)
+## 2026-09-05 — N°29 :## 2026-09-05 — N°29 : walled-garden d'inscription publique automatisé par l'agent (routeurs neufs ET déjà en ligne)
 
 ### Le runbook N°27-D appliqué par le système lui-même
 - Nouvelle commande agent **`walled_garden`** : pose sur le routeur les règles

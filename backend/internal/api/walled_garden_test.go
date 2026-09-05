@@ -145,3 +145,36 @@ func TestRequeueStaleWalledGarden(t *testing.T) {
 		t.Fatalf("doublon après reprise : %d commande(s), attendu 2", len(db.Commands))
 	}
 }
+
+// TestWGHostUsable — complément N°31-b : les hôtes non joignables depuis un
+// client du WiFi (boucle locale, RFC1918, link-local, mDNS) sont exclus de
+// la configuration walled-garden ; les hôtes publics (port numérique
+// compris) restent éligibles. Constat prod : « localhost:3000 » issu des
+// origines de dev de ALLOWED_ORIGIN polluait la configuration.
+func TestWGHostUsable(t *testing.T) {
+	cas := []struct {
+		in   string
+		want bool
+	}{
+		{"localhost:3000", false},              // dev local (constat prod)
+		{"localhost", false},                   // boucle
+		{"api.localhost", false},               // sous-domaine boucle
+		{"127.0.0.1", false},                   // loopback IPv4
+		{"10.0.0.5", false},                    // RFC1918
+		{"192.168.1.10", false},                // RFC1918
+		{"172.20.0.1", false},                  // RFC1918 (172.16–31)
+		{"172.32.0.1", true},                   // hors RFC1918 (172.32+)
+		{"169.254.9.9", false},                 // link-local
+		{"0.0.0.0", false},                     // this-network
+		{"atelier.local", false},               // mDNS
+		{"mikcloud.ftci.fr", true},             // page publique
+		{"mikcloud.onrender.com", true},        // API
+		{"api.example:4000", true},             // port non standard conservé
+		{"mikcloud-ftech-ci.vercel.app", true}, // preview Vercel
+	}
+	for _, c := range cas {
+		if got := wgHostUsable(c.in); got != c.want {
+			t.Fatalf("wgHostUsable(%q) = %v, attendu %v", c.in, got, c.want)
+		}
+	}
+}

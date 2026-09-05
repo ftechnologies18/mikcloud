@@ -80,7 +80,7 @@ func agentBaseURL(r *http.Request) string {
 func walledGardenDomains(r *http.Request) []string {
 	hosts := make([]string, 0, 4)
 	add := func(raw string) {
-		if h := agent.SanitizeWGDomain(normalizeWGHost(raw)); h != "" {
+		if h := agent.SanitizeWGDomain(normalizeWGHost(raw)); h != "" && wgHostUsable(h) {
 			hosts = append(hosts, h)
 		}
 	}
@@ -105,6 +105,48 @@ func walledGardenDomains(r *http.Request) []string {
 		out = out[:10]
 	}
 	return out
+}
+
+// wgHostUsable — filtre les hôtes inutiles voire nuisibles dans un
+// walled-garden hotspot (complément N°31-b) : boucle locale, RFC1918,
+// link-local, mDNS et 0.0.0.0 ne sont PAS joignables depuis un client du
+// WiFi — les autoriser ne protège aucun flux réel et pollue la table
+// walled-garden du gérant (constat prod : « localhost:3000 » issu des
+// origines de dev de ALLOWED_ORIGIN). Les hôtes publics restent éligibles,
+// port numérique compris (le Host HTTP l'inclut sur les ports non standard).
+func wgHostUsable(h string) bool {
+	if h == "" {
+		return false
+	}
+	host := h
+	if i := strings.IndexByte(host, ':'); i >= 0 {
+		host = host[:i] // port retiré pour l'évaluation (un FQDN ne porte pas « : »)
+	}
+	if host == "" {
+		return false // IPv6 abrégée (« ::1 ») — non exprimable en dst-host
+	}
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".local") {
+		return false
+	}
+	if o := strings.Split(host, "."); len(o) == 4 { // candidat IPv4
+		nums := make([]int, 4)
+		ok := true
+		for i, p := range o {
+			n, err := strconv.Atoi(p)
+			if err != nil || p == "" || len(p) > 3 {
+				ok = false
+				break
+			}
+			nums[i] = n
+		}
+		if ok {
+			a, b := nums[0], nums[1]
+			if a == 0 || a == 10 || a == 127 || (a == 169 && b == 254) || (a == 172 && b >= 16 && b <= 31) || (a == 192 && b == 168) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // normalizeWGHost — extrait l'hôte brut d'une origine/URL/hôte : préfixe de

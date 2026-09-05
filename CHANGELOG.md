@@ -61,8 +61,18 @@ la CI puis se déploie automatiquement (frontend Vercel, backend Render).
   4 livraisons muettes 4×/4×, y compris le runbook manuel N°27-D corrigé
   rétroactivement). Correctif : `action=accept` (script + bloc installation
   + runbook §2). Test mis à jour.
+### Correctif N°31-e — les removes « en usage » ne font plus échouer la mise à jour
+- Après le premier succès (18:26:16, walled-garden appliqué !), les re-filés
+  de mise à jour échouaient : les `remove` de règles DÉSORMAIS UTILISÉES par
+  les clients du hotspot (flux DNS permanents sur les règles udp/tcp 53)
+  lèvent une erreur RouterOS → okVar=false → error, en boucle.
+- **Removes silencieux** (on-error={}, best-effort) + **adds conditionnels à
+  l'absence** (`:if ([:len [find comment=… dst-host=…]] = 0) do={ add … }`) :
+  si le remove échoue, la règle existe DÉJÀ (service assuré) → skip, pas de
+  doublon, pas d'erreur. Seule une vraie erreur d'add échoue. Le bloc
+  d'installation est aligné (re-collage idempotent).
 
-## 2026-09-05 — N°29 :## 2026-09-05 — N°29 :## 2026-09-05 — N°29 :## 2026-09-05 — N°29 : walled-garden d'inscription publique automatisé par l'agent (routeurs neufs ET déjà en ligne)
+## 2026-09-05 — N°29 :## 2026-09-05 — N°29 :## 2026-09-05 — N°29 :## 2026-09-05 — N°29 :## 2026-09-05 — N°29 : walled-garden d'inscription publique automatisé par l'agent (routeurs neufs ET déjà en ligne)
 
 ### Le runbook N°27-D appliqué par le système lui-même
 - Nouvelle commande agent **`walled_garden`** : pose sur le routeur les règles

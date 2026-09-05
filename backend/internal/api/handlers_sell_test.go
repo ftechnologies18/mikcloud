@@ -327,3 +327,251 @@ func TestSellStockPagination(t *testing.T) {
 		t.Fatalf("offset hors bornes doit donner une page vide : %v", page)
 	}
 }
+
+// TestSellTransferP2P — N°21 : transfert de stock ENTRE REVENDEURS initié par
+// le cédant (Mode Vente). Couvre les 4 combinaisons prepaid/deposit (recrédit
+// cédant prepaid, débit cible prepaid, anti-crédit fantôme en dépôt-vente,
+// plafond de créance), les refus de garde (soi-même, désactivé, hors compte,
+// ticket remis, hors stock, crédit insuffisant, cédant désactivé) et
+// l'isolation stricte de /peers.
+func TestSellTransferP2P(t *testing.T) {
+	st, ts := newTestServerWithStore(t)
+	_, accID, _ := registerAccount(t, ts, "gerant-p2p", "")
+	// Le compte voisin n'a pas besoin d'exister réellement : les routes sell
+	// sont scopées par claims.Acc (isolation par comparaison d'identifiants).
+	otherAcc := "acc-voisin-test"
+
+	seedSellReseller(t, st, "res-a", accID, "Alice", "prepaid", 0)
+	seedSellReseller(t, st, "res-b", accID, "Binta", "prepaid", 0)
+	seedSellReseller(t, st, "res-c", accID, "Celine", "deposit", 500)
+	seedSellReseller(t, st, "res-d", accID, "David", "deposit", 100)
+	seedSellReseller(t, st, "res-e", accID, "Eve", "prepaid", 0)
+	seedSellReseller(t, st, "res-off", accID, "Off", "prepaid", 0)
+	seedSellReseller(t, st, "res-voisin", otherAcc, "Voisin", "prepaid", 0)
+
+	st.Lock()
+	for i := range st.Data().Resellers {
+		switch st.Data().Resellers[i].ID {
+		case "res-a":
+			st.Data().Resellers[i].Credit = 300
+		case "res-b":
+			st.Data().Resellers[i].Credit = 1000
+		case "res-e":
+			st.Data().Resellers[i].Credit = 50
+		case "res-off":
+			st.Data().Resellers[i].Status = "disabled"
+		}
+	}
+	st.Save()
+	st.Unlock()
+
+	// Dette de David (dépôt-vente) : 200 — le plafond est 100.
+	seedTransaction(t, st, accID, "res-d", "debt", 200, time.Now().UTC())
+
+	// Stock d'Alice : v1/v2 vendables, v3 déjà remis à un client.
+	seedStockVoucher(t, st, "v1", accID, "res-a", "P2P01", 100, 150, "", "", false)
+	seedStockVoucher(t, st, "v2", accID, "res-a", "P2P02", 100, 0, "", "", false)
+	seedStockVoucher(t, st, "v3", accID, "res-a", "P2P03", 50, 0, model.NowISO(), "sell_mode", false)
+	// Stock d'Eve (pour le refus « cédant désactivé ») et du compte voisin.
+	seedStockVoucher(t, st, "ve1", accID, "res-e", "EVE01", 100, 0, "", "", false)
+	seedStockVoucher(t, st, "vx", otherAcc, "res-voisin", "VOISIN1", 100, 0, "", "", false)
+
+	tokenA := resellerToken("res-a", accID)
+	tokenB := resellerToken("res-b", accID)
+	tokenE := resellerToken("res-e", accID)
+
+	// 1) peers — actifs du même compte uniquement, demandeur exclu.
+	status, _, body := doRaw(t, ts, ts.URL+"/api/sell/peers", tokenA)
+	if status != http.StatusOK {
+		t.Fatalf("peers : statut %d (%s)", status, body)
+	}
+	var peers []map[string]any
+	if err := json.Unmarshal([]byte(body), &peers); err != nil {
+		t.Fatalf("peers : corps non-tableau : %v (%s)", err, body)
+	}
+	gotIDs := map[string]bool{}
+	for _, p := range peers {
+		id, _ := p["id"].(string)
+		gotIDs[id] = true
+		if _, ok := p["credit"]; ok {
+			t.Fatalf("peers : donnée financière exposée : %v", p)
+		}
+	}
+	want := []string{"res-b", "res-c", "res-d", "res-e"}
+	if len(peers) != len(want) {
+		t.Fatalf("peers = %v, attendu %v", gotIDs, want)
+	}
+	for _, id := range want {
+		if !gotIDs[id] {
+			t.Fatalf("peers : %s manquant (%v)", id, gotIDs)
+		}
+	}
+	if gotIDs["res-a"] || gotIDs["res-off"] || gotIDs["res-voisin"] {
+		t.Fatalf("peers : soi-même, désactivé ou compte voisin exposé : %v", gotIDs)
+	}
+
+	// 2) prepaid → prepaid : recrédit cédant + débit cible + 2 transactions.
+	status, out := doJSON(t, ts, "POST", "/api/sell/transfer", tokenA, map[string]any{
+		"ids":              []string{"v1", "v2"},
+		"targetResellerId": "res-b",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("transfert prepaid→prepaid : statut %d (%v)", status, out)
+	}
+	if got := int(out["transferred"].(float64)); got != 2 {
+		t.Fatalf("transferred = %d, attendu 2", got)
+	}
+	if got := int(out["credited"].(float64)); got != 200 {
+		t.Fatalf("credited = %d, attendu 200 (prix gros de v1+v2)", got)
+	}
+	if got := int(out["debited"].(float64)); got != 200 {
+		t.Fatalf("debited = %d, attendu 200", got)
+	}
+	if got := int(out["creditAfter"].(float64)); got != 500 {
+		t.Fatalf("creditAfter = %d, attendu 500 (300 + 200)", got)
+	}
+
+	// 3) prepaid → dépôt-vente : recrédit cédant, rien débité, CreditSale suit.
+	status, out = doJSON(t, ts, "POST", "/api/sell/transfer", tokenB, map[string]any{
+		"ids":              []string{"v1"},
+		"targetResellerId": "res-c",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("transfert prepaid→deposit : statut %d (%v)", status, out)
+	}
+	if got := int(out["credited"].(float64)); got != 100 {
+		t.Fatalf("credited = %d, attendu 100", got)
+	}
+	if got := int(out["debited"].(float64)); got != 0 {
+		t.Fatalf("debited = %d, attendu 0 (dépôt-vente : prise gratuite)", got)
+	}
+
+	// 4) dépôt-vente → prepaid : AUCUN recrédit (anti crédit fantôme), cible débitée.
+	status, out = doJSON(t, ts, "POST", "/api/sell/transfer", resellerToken("res-c", accID), map[string]any{
+		"ids":              []string{"v1"},
+		"targetResellerId": "res-b",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("transfert deposit→prepaid : statut %d (%v)", status, out)
+	}
+	if got := int(out["credited"].(float64)); got != 0 {
+		t.Fatalf("credited = %d, attendu 0 (Céline n'avait rien payé — crédit fantôme interdit)", got)
+	}
+	if got := int(out["debited"].(float64)); got != 100 {
+		t.Fatalf("debited = %d, attendu 100", got)
+	}
+
+	// 5) plafond de créance dépassé chez la cible dépôt-vente (dette 200 + 100 > 100).
+	status, out = doJSON(t, ts, "POST", "/api/sell/transfer", tokenB, map[string]any{
+		"ids":              []string{"v2"},
+		"targetResellerId": "res-d",
+	})
+	if status != http.StatusBadRequest {
+		t.Fatalf("plafond : statut %d, attendu 400 (%v)", status, out)
+	}
+	if msg, _ := out["error"].(string); !strings.Contains(msg, "Plafond de créance dépassé") {
+		t.Fatalf("plafond : message inattendu : %v", out["error"])
+	}
+
+	// 6) crédit insuffisant chez la cible prepaid (100 > 50).
+	status, out = doJSON(t, ts, "POST", "/api/sell/transfer", tokenB, map[string]any{
+		"ids":              []string{"v2"},
+		"targetResellerId": "res-e",
+	})
+	if status != http.StatusBadRequest || !strings.Contains(out["error"].(string), "insuffisant") {
+		t.Fatalf("crédit insuffisant : statut %d (%v)", status, out)
+	}
+
+	// 7) refus self, cible désactivée, cible hors compte.
+	status, out = doJSON(t, ts, "POST", "/api/sell/transfer", tokenB, map[string]any{
+		"ids": []string{"v2"}, "targetResellerId": "res-b",
+	})
+	if status != http.StatusBadRequest {
+		t.Fatalf("self : statut %d, attendu 400", status)
+	}
+	status, out = doJSON(t, ts, "POST", "/api/sell/transfer", tokenA, map[string]any{
+		"ids": []string{"v3"}, "targetResellerId": "res-off",
+	})
+	if status != http.StatusBadRequest {
+		t.Fatalf("cible désactivée : statut %d, attendu 400", status)
+	}
+	status, out = doJSON(t, ts, "POST", "/api/sell/transfer", tokenA, map[string]any{
+		"ids": []string{"v3"}, "targetResellerId": "res-voisin",
+	})
+	if status != http.StatusNotFound {
+		t.Fatalf("cible hors compte : statut %d, attendu 404", status)
+	}
+
+	// 8) refus 409 — ticket déjà remis, et lot bloqué si un seul est hors stock.
+	status, out = doJSON(t, ts, "POST", "/api/sell/transfer", tokenA, map[string]any{
+		"ids": []string{"v3"}, "targetResellerId": "res-b",
+	})
+	if status != http.StatusConflict || !strings.Contains(out["error"].(string), "P2P03") {
+		t.Fatalf("ticket remis : statut %d (%v)", status, out)
+	}
+	status, out = doJSON(t, ts, "POST", "/api/sell/transfer", tokenA, map[string]any{
+		"ids": []string{"vx"}, "targetResellerId": "res-b",
+	})
+	if status != http.StatusConflict || !strings.Contains(out["error"].(string), "vx") {
+		t.Fatalf("hors stock : statut %d (%v)", status, out)
+	}
+
+	// 9) cédant désactivé : son token TTL survit à la suspension → 403.
+	st.Lock()
+	for i := range st.Data().Resellers {
+		if st.Data().Resellers[i].ID == "res-e" {
+			st.Data().Resellers[i].Status = "disabled"
+		}
+	}
+	st.Save()
+	st.Unlock()
+	status, out = doJSON(t, ts, "POST", "/api/sell/transfer", tokenE, map[string]any{
+		"ids": []string{"ve1"}, "targetResellerId": "res-b",
+	})
+	if status != http.StatusForbidden {
+		t.Fatalf("cédant désactivé : statut %d, attendu 403", status)
+	}
+
+	// 10) État final du store : propriété, portefeuilles, transactions.
+	st.Lock()
+	defer st.Unlock()
+	credit := map[string]int{}
+	for _, rs := range st.Data().Resellers {
+		credit[rs.ID] = rs.Credit
+	}
+	if credit["res-a"] != 500 || credit["res-b"] != 800 || credit["res-e"] != 50 {
+		t.Fatalf("portefeuilles : %v (attendu a=500, b=800, e=50)", credit)
+	}
+	holder := map[string]string{}
+	v1AtB, v1CreditSale := false, false
+	for _, u := range st.Data().HotspotUsers {
+		holder[u.ID] = u.ResellerID
+		if u.ID == "v1" && u.ResellerID == "res-b" {
+			v1AtB, v1CreditSale = true, u.CreditSale
+		}
+	}
+	if holder["v1"] != "res-b" || holder["v2"] != "res-b" || holder["v3"] != "res-a" || holder["ve1"] != "res-e" || holder["vx"] != "res-voisin" {
+		t.Fatalf("propriété finale : %v", holder)
+	}
+	if !v1AtB || v1CreditSale {
+		t.Fatalf("CreditSale de v1 : attendu false chez la cible prepaid (chez Binta: %v, \u00e0 crédit: %v)", v1AtB, v1CreditSale)
+	}
+	txCount := map[string]int{}
+	for _, tx := range st.Data().Transactions {
+		if tx.AccountID != accID {
+			continue
+		}
+		txCount[tx.Type+"|"+tx.ResellerID]++
+	}
+	if txCount["credit|res-a"] != 1 || txCount["credit|res-b"] != 1 {
+		t.Fatalf("transactions recrédit : %v (attendu 1 credit res-a, 1 credit res-b)", txCount)
+	}
+	if txCount["sale|res-b"] != 2 {
+		t.Fatalf("transactions débit : %v (attendu 2 sales res-b : réception 200 + réception 100)", txCount)
+	}
+	if txCount["debt|res-d"] != 1 {
+		t.Fatalf("dette David : %v (aucun transfert ne doit l'avoir bougée)", txCount)
+	}
+}
+
+// doRawJSON supprimé : doRaw existant (GET brut) suffit pour /api/sell/peers.

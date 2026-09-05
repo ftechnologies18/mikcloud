@@ -25,6 +25,7 @@ import {
   type InfiniteData,
 } from "@tanstack/react-query";
 import {
+  ArrowLeftRight,
   BadgeCheck,
   CheckCheck,
   CheckCircle2,
@@ -62,7 +63,15 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { api, apiDownload, ApiError } from "@/lib/hotspot/api";
 import {
   SellPrintDialog,
@@ -147,6 +156,22 @@ interface SellReturnResult {
   returned: number;
   credited: number;
   creditAfter: number;
+  codes: string[];
+}
+
+/** N°21 — pair de transfert : revendeur actif du même compte (identité minimale). */
+interface SellPeer {
+  id: string;
+  name: string;
+}
+
+/** N°21 — réponse du transfert entre revendeurs (POST /api/sell/transfer). */
+interface SellTransferResult {
+  transferred: number;
+  credited: number;
+  creditAfter: number;
+  debited: number;
+  target: SellPeer;
   codes: string[];
 }
 
@@ -330,6 +355,10 @@ export default function SellShell() {
   const [returnMode, setReturnMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [returnConfirmOpen, setReturnConfirmOpen] = useState(false);
+  // N°21 — fusion retour/transfert : la destination se choisit dans le dialog
+  // de confirmation — « manager » (retour de stock historique) ou l'id d'un
+  // pair (transfert entre revendeurs). Réinitialisée à chaque ouverture.
+  const [dest, setDest] = useState("manager");
   // Impression revendeur — portée courante : tout le stock ou un seul lot
   // (le dialog relit le stock complet avant impression). printSession est un
   // nonce : chaque ouverture REMONTE le dialog → stock toujours relu à neuf
@@ -437,6 +466,25 @@ export default function SellShell() {
     queryFn: () => api<SellDayReport>("/api/sell/day-report"),
     enabled: reportOpen,
   });
+
+  // N°21 — pairs de transfert : revendeurs actifs du même compte, chargés
+  // uniquement quand le dialog de confirmation est ouvert. Identité minimale
+  // (id + nom) — aucune donnée financière d'un pair n'est exposée ici.
+  const { data: peers } = useQuery({
+    queryKey: ["/api/sell/peers"],
+    queryFn: () => api<SellPeer[]>("/api/sell/peers", { timeoutMs: 10_000 }),
+    enabled: returnConfirmOpen,
+    retry: false,
+  });
+  // Garde de cohérence : si la destination choisie disparaît (pair désactivé
+  // ou supprimé pendant la sélection), on revient au retour gérant — jamais
+  // d'action sur une destination fantôme.
+  useEffect(() => {
+    if (returnConfirmOpen && dest !== "manager" && peers && !peers.some((p) => p.id === dest)) {
+      setDest("manager");
+    }
+  }, [returnConfirmOpen, dest, peers]);
+  const destName = (peers ?? []).find((p) => p.id === dest)?.name ?? "";
 
   // P3-d — export comptable « journal de caisse » (CSV Excel, téléchargement
   // authentifié via apiDownload — le lien direct ne porterait pas le token).
@@ -591,6 +639,41 @@ export default function SellShell() {
     };
   }, [online, qc]);
 
+  // N°21 — sorties de stock (retour N°20 + transfert entre revendeurs) : la
+  // mise à jour optimiste est partagée — les tickets quittent le stock affiché
+  // dès la confirmation ; le crédit éventuel (prépayé) est patché avec la
+  // valeur réelle calculée par le serveur (onSuccess), jamais devinée.
+  async function outboundOptimistic(ids: string[]) {
+    await Promise.all([
+      qc.cancelQueries({ queryKey: ["/api/sell/stock"] }),
+      qc.cancelQueries({ queryKey: ["/api/sell/me"] }),
+    ]);
+    const paged = qc.getQueryData<InfiniteData<StockPage>>(["/api/sell/stock", "paged"]);
+    const me = qc.getQueryData<SellMe>(["/api/sell/me"]);
+    if (paged) qc.setQueryData(["/api/sell/stock", "paged"], filterPagedStock(paged, new Set(ids)));
+    if (me) {
+      qc.setQueryData<SellMe>(["/api/sell/me"], {
+        ...me,
+        stockCount: Math.max(0, me.stockCount - ids.length),
+      });
+    }
+    return { paged, me };
+  }
+
+  function outboundRollback(ctx?: { paged?: InfiniteData<StockPage>; me?: SellMe }) {
+    if (ctx?.paged) qc.setQueryData(["/api/sell/stock", "paged"], ctx.paged);
+    if (ctx?.me) qc.setQueryData(["/api/sell/me"], ctx.me);
+  }
+
+  function outboundFinish() {
+    setReturnConfirmOpen(false);
+    setReturnMode(false);
+    setSelected(new Set());
+    qc.invalidateQueries({ queryKey: ["/api/sell/stock"] });
+    qc.invalidateQueries({ queryKey: ["/api/sell/me"] });
+    qc.invalidateQueries({ queryKey: ["/api/sell/day-report"] });
+  }
+
   // N°20 — retour de stock : les tickets choisis repartent dans le stock
   // direct du compte (gérant OU propriétaire — le backend ne dépend pas d'un
   // gérant ; prépayé : portefeuille recrédité du prix gros, dépôt-vente : stock seul).
@@ -599,29 +682,9 @@ export default function SellShell() {
     // (Un `JSON.stringify` ici produisait un corps doublement encodé — une
     // chaîne JSON au lieu d'un objet — refusé par le backend en 400
     // « Corps de requête invalide ». Cause du bug remonté par Ulrich.)
-    // Phase D (UI optimiste) — les tickets quittent le stock affiché dès la
-    // confirmation ; le crédit éventuel (prépayé) est patché avec la valeur
-    // réelle calculée par le serveur (onSuccess), jamais devinée.
     mutationFn: (ids: string[]) =>
       api<SellReturnResult>("/api/sell/return", { method: "POST", body: { ids } }),
-    onMutate: async (ids) => {
-      await Promise.all([
-        qc.cancelQueries({ queryKey: ["/api/sell/stock"] }),
-        qc.cancelQueries({ queryKey: ["/api/sell/me"] }),
-      ]);
-      // Phase D × P3-e — mêmes principes que la vente : filtre optimiste à
-      // travers toutes les pages, snapshot suivi par l'effet aplati.
-      const paged = qc.getQueryData<InfiniteData<StockPage>>(["/api/sell/stock", "paged"]);
-      const me = qc.getQueryData<SellMe>(["/api/sell/me"]);
-      if (paged) qc.setQueryData(["/api/sell/stock", "paged"], filterPagedStock(paged, new Set(ids)));
-      if (me) {
-        qc.setQueryData<SellMe>(["/api/sell/me"], {
-          ...me,
-          stockCount: Math.max(0, me.stockCount - ids.length),
-        });
-      }
-      return { paged, me };
-    },
+    onMutate: (ids) => outboundOptimistic(ids),
     onSuccess: (res, _ids, ctx) => {
       if (res.credited > 0) {
         toast.success(tf("sell.returnDoneCreditToast", { count: res.returned, amount: formatCurrency(res.credited, currency, lang) }));
@@ -631,17 +694,45 @@ export default function SellShell() {
       } else {
         toast.success(tf("sell.returnDoneToast", { count: res.returned }));
       }
-      setReturnConfirmOpen(false);
-      setReturnMode(false);
-      setSelected(new Set());
-      qc.invalidateQueries({ queryKey: ["/api/sell/stock"] });
-      qc.invalidateQueries({ queryKey: ["/api/sell/me"] });
-      qc.invalidateQueries({ queryKey: ["/api/sell/day-report"] });
+      outboundFinish();
     },
     onError: (e: Error, _ids, ctx) => {
-      if (ctx?.paged) qc.setQueryData(["/api/sell/stock", "paged"], ctx.paged);
-      if (ctx?.me) qc.setQueryData(["/api/sell/me"], ctx.me);
+      outboundRollback(ctx);
       toast.error(e instanceof ApiError ? e.message : t("sell.error"));
+    },
+  });
+
+  // N°21 — transfert de stock entre revendeurs : même sélection, destination
+  // un pair (revendeur actif du même compte). L'argent suit le stock à prix
+  // gros : prépayé → portefeuille recrédité du prix facial ; dépôt-vente →
+  // aucun mouvement pour vous (la créance du pair naît à la remise client).
+  const transferStock = useMutation({
+    mutationFn: ({ ids, target }: { ids: string[]; target: string }) =>
+      api<SellTransferResult>("/api/sell/transfer", {
+        method: "POST",
+        body: { ids, targetResellerId: target },
+      }),
+    onMutate: ({ ids }) => outboundOptimistic(ids),
+    onSuccess: (res, _vars, ctx) => {
+      if (res.credited > 0) {
+        toast.success(
+          tf("sell.transferDoneCreditToast", {
+            count: res.transferred,
+            name: res.target.name,
+            amount: formatCurrency(res.credited, currency, lang),
+          }),
+        );
+        if (ctx?.me) {
+          qc.setQueryData<SellMe>(["/api/sell/me"], { ...ctx.me, credit: ctx.me.credit + res.credited });
+        }
+      } else {
+        toast.success(tf("sell.transferDoneToast", { count: res.transferred, name: res.target.name }));
+      }
+      outboundFinish();
+    },
+    onError: (e: Error, _vars, ctx) => {
+      outboundRollback(ctx);
+      toast.error(e instanceof ApiError ? e.message : t("sell.transferError"));
     },
   });
 
@@ -723,6 +814,7 @@ export default function SellShell() {
     setReturnMode((on) => !on);
     setSelected(new Set());
     setReturnConfirmOpen(false);
+    setDest("manager");
   }
 
   function toggleSelected(id: string) {
@@ -1327,8 +1419,11 @@ export default function SellShell() {
             </Button>
             <Button
               className="flex-1"
-              onClick={() => setReturnConfirmOpen(true)}
-              disabled={returnStock.isPending}
+              onClick={() => {
+                setDest("manager");
+                setReturnConfirmOpen(true);
+              }}
+              disabled={returnStock.isPending || transferStock.isPending}
             >
               <Undo2 className="size-4" />
               {t("sell.returnAction")}
@@ -1611,33 +1706,87 @@ export default function SellShell() {
         </DialogContent>
       </Dialog>
 
-      {/* N°20 — confirmation du retour de stock. */}
+      {/* N°20/N°21 — confirmation de sortie de stock : retour au gérant OU
+          transfert entre revendeurs (fusion UX — même sélection de tickets,
+          destination choisie ici, défaut = retour historique). */}
       <Dialog open={returnConfirmOpen} onOpenChange={setReturnConfirmOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Undo2 className="size-4 text-primary" aria-hidden />
-              {t("sell.returnConfirmTitle")}
+              {dest === "manager" ? (
+                <Undo2 className="size-4 text-primary" aria-hidden />
+              ) : (
+                <ArrowLeftRight className="size-4 text-primary" aria-hidden />
+              )}
+              {dest === "manager"
+                ? t("sell.returnConfirmTitle")
+                : tf("sell.transferConfirmTitle", { name: destName })}
             </DialogTitle>
             <DialogDescription>
-              {isDeposit
-                ? tf("sell.returnConfirmDescDeposit", { count: selected.size })
-                : tf("sell.returnConfirmDescPrepaid", {
+              {dest === "manager" ? (
+                isDeposit ? (
+                  tf("sell.returnConfirmDescDeposit", { count: selected.size })
+                ) : (
+                  tf("sell.returnConfirmDescPrepaid", {
                     count: selected.size,
                     amount: formatCurrency(selectedWholesale, currency, lang),
-                  })}
+                  })
+                )
+              ) : isDeposit ? (
+                tf("sell.transferConfirmDescDeposit", { count: selected.size, name: destName })
+              ) : (
+                tf("sell.transferConfirmDescPrepaid", {
+                  count: selected.size,
+                  name: destName,
+                  amount: formatCurrency(selectedWholesale, currency, lang),
+                })
+              )}
             </DialogDescription>
           </DialogHeader>
+          {/* Destination : gérant (retour de stock) ou pair (transfert). */}
+          <div className="space-y-1.5">
+            <Label htmlFor="outbound-dest">{t("sell.outboundDest")}</Label>
+            <Select value={dest} onValueChange={setDest}>
+              <SelectTrigger id="outbound-dest" className="h-10 w-full">
+                <SelectValue aria-label={t("sell.outboundDest")} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="manager">{t("sell.outboundDestManager")}</SelectItem>
+                {(peers ?? []).map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {tf("sell.outboundDestPeer", { name: p.name })}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {dest !== "manager" && (
+              <p className="text-xs text-muted-foreground">{t("sell.transferHint")}</p>
+            )}
+          </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setReturnConfirmOpen(false)} disabled={returnStock.isPending}>
+            <Button
+              variant="outline"
+              onClick={() => setReturnConfirmOpen(false)}
+              disabled={returnStock.isPending || transferStock.isPending}
+            >
               {t("common.cancel")}
             </Button>
             <Button
-              onClick={() => returnStock.mutate([...selected])}
-              disabled={returnStock.isPending || selected.size === 0}
+              onClick={() =>
+                dest === "manager"
+                  ? returnStock.mutate([...selected])
+                  : transferStock.mutate({ ids: [...selected], target: dest })
+              }
+              disabled={returnStock.isPending || transferStock.isPending || selected.size === 0}
             >
-              {returnStock.isPending ? <Loader2 className="size-4 animate-spin" /> : <Undo2 className="size-4" />}
-              {t("sell.returnAction")}
+              {returnStock.isPending || transferStock.isPending ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : dest === "manager" ? (
+                <Undo2 className="size-4" />
+              ) : (
+                <ArrowLeftRight className="size-4" />
+              )}
+              {dest === "manager" ? t("sell.returnAction") : t("sell.transferAction")}
             </Button>
           </DialogFooter>
         </DialogContent>

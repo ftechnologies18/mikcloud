@@ -788,3 +788,243 @@ func (a *API) handleSellDayReportCSV(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(fmt.Sprintf("Stock restant ;%d ;%d\r\n", j.report.StockCount, j.report.StockValue)))
 	}
 }
+
+// sellPeerItem — pair visible depuis la PWA : identité minimale UNIQUEMENT.
+// Aucune donnée financière (crédit, dette, stock) d'un revendeur n'est
+// exposée à un autre revendeur — seule la console du gérant voit les chiffres.
+type sellPeerItem struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// sellTransferRequest — corps de POST /api/sell/transfer : cession directe
+// de stock ENTRE REVENDEURS du même compte, à l'initiative du revendeur
+// cédant (Mode Vente). Même sémantique de sélection que le retour N°20 —
+// les deux actions partagent la même UI (destination choisie à la
+// confirmation : gérant → /return, pair → /transfer).
+type sellTransferRequest struct {
+	IDs              []string `json:"ids"`
+	TargetResellerID string   `json:"targetResellerId"`
+}
+
+// handleSellPeers — GET /api/sell/peers : revendeurs ACTIFS du même compte,
+// demandeur exclu (destinations possibles d'un transfert entre revendeurs).
+func (a *API) handleSellPeers(w http.ResponseWriter, r *http.Request) {
+	c := claimsFrom(r)
+	a.store.Lock()
+	defer a.store.Unlock()
+	db := a.store.Data()
+	peers := []sellPeerItem{}
+	for i := range db.Resellers {
+		rs := &db.Resellers[i]
+		if rs.AccountID != c.Acc || rs.ID == c.Sub || rs.Status != "active" {
+			continue
+		}
+		peers = append(peers, sellPeerItem{ID: rs.ID, Name: rs.Name})
+	}
+	writeJSON(w, http.StatusOK, peers)
+}
+
+// handleSellTransfer — N°21 — transfert de stock ENTRE REVENDEURS, initié
+// par le cédant depuis le Mode Vente (fusion UX avec le retour de stock :
+// même sélection de tickets, destination différente). Miroir de N°20 pour
+// la garde d'accès et N°18 pour les finances :
+//
+//   - règle d'or 1 (N°18) : changer la propriété, jamais dupliquer —
+//     ResellerID/ResellerName = cible, CreditSale suit le mode de la cible ;
+//   - règle d'or 4 : l'argent suit le transfert, à prix GROS (u.Price) —
+//     cédant prepaid recrédité (il avait payé à la prise) ; cible prepaid
+//     débitée ; dépôt-vente : zéro mouvement à la prise (la créance naît à
+//     la remise), mais plafond de créance vérifié pour la cible. Les 4
+//     combinaisons prepaid/deposit sont saines par construction — aucun
+//     crédit fantôme possible ;
+//   - règle d'or 5 : activity horodatée avec le cédant comme acteur +
+//     Transactions visibles du gérant (notification a posteriori — le
+//     gérant voit tout dans ses journaux et son journal de caisse).
+//
+// Refus : cible inconnue (404), désactivée ou soi-même (400), cédant
+// désactivé (403 — un token TTL 24 h qui survit à une suspension ne doit
+// pas pouvoir rediriger le stock vers un pair ; le rendre au gérant via
+// N°20 reste possible), ticket remis/consommé/expiré/hors stock (409, lot
+// bloqué — même sémantique que le retour), crédit insuffisant / plafond
+// dépassé (400). Idempotent par construction (revérifié sous verrou).
+func (a *API) handleSellTransfer(w http.ResponseWriter, r *http.Request) {
+	// P3 — compte expiré : écritures métier refusées (lecture seule).
+	if !a.guardAccountWrite(w, r) {
+		return
+	}
+	c := claimsFrom(r)
+	var req sellTransferRequest
+	if err := decodeBody(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
+		return
+	}
+	if len(req.IDs) == 0 {
+		writeErr(w, http.StatusBadRequest, "Aucun ticket sélectionné pour le transfert")
+		return
+	}
+	if len(req.IDs) > 500 {
+		writeErr(w, http.StatusBadRequest, "Trop de tickets en une fois (500 maximum)")
+		return
+	}
+	req.TargetResellerID = strings.TrimSpace(req.TargetResellerID)
+	if req.TargetResellerID == "" {
+		writeErr(w, http.StatusBadRequest, "Destination requise : identifiant du revendeur destinataire")
+		return
+	}
+	if req.TargetResellerID == c.Sub {
+		writeErr(w, http.StatusBadRequest, "Impossible de se transférer du stock à soi-même")
+		return
+	}
+
+	now := time.Now().UTC()
+	a.store.Lock()
+	defer a.store.Unlock()
+	db := a.store.Data()
+
+	// Cédant — durcissement anti-fraude : un revendeur désactivé ne déplace
+	// plus son stock chez un pair (son token peut survivre 24 h à la
+	// suspension) ; le retour au gérant reste toujours possible.
+	if sender := findResellerScoped(db, c.Sub, c.Acc); sender != nil && sender.Status != "active" {
+		writeErr(w, http.StatusForbidden, "Compte revendeur désactivé — transfert impossible")
+		return
+	}
+
+	// Cible : revendeur ACTIF du même compte (findResellerScoped garantit le
+	// périmètre — un identifiant d'un compte voisin est introuvable).
+	target := findResellerScoped(db, req.TargetResellerID, c.Acc)
+	if target == nil {
+		writeErr(w, http.StatusNotFound, "Revendeur destinataire introuvable")
+		return
+	}
+	if target.Status != "active" {
+		writeErr(w, http.StatusBadRequest, "Revendeur destinataire désactivé — transfert impossible")
+		return
+	}
+
+	// Résolution scopée : chaque identifiant doit appartenir AU stock du
+	// cédant (claims Sub/Acc — isolation stricte, comme le retour N°20).
+	wanted := make(map[string]bool, len(req.IDs))
+	for _, id := range req.IDs {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			wanted[id] = true
+		}
+	}
+	if len(wanted) == 0 {
+		writeErr(w, http.StatusBadRequest, "Aucun ticket sélectionné pour le transfert")
+		return
+	}
+	type transferable struct {
+		idx int
+		u   *model.HotspotUser
+	}
+	found := map[string]*transferable{}
+	for i := range db.HotspotUsers {
+		u := &db.HotspotUsers[i]
+		if !wanted[u.ID] || u.ResellerID != c.Sub || u.AccountID != c.Acc || u.Kind != "voucher" {
+			continue
+		}
+		found[u.ID] = &transferable{idx: i, u: u}
+	}
+	rejected := []string{}
+	for id := range wanted {
+		rt := found[id]
+		switch {
+		case rt == nil:
+			rejected = append(rejected, id) // hors stock / compte voisin / inconnu
+		case rt.u.SoldAt != "" || model.EffectiveStatus(rt.u, now) != "active":
+			rejected = append(rejected, rt.u.Username) // remis, consommé, expiré ou désactivé
+		}
+	}
+	// Tout refus bloque le lot (cohérent avec le refus idempotent du retour
+	// et de la vente) : le revendeur décoche les tickets concernés et relance.
+	if len(rejected) > 0 {
+		sort.Strings(rejected)
+		writeErr(w, http.StatusConflict,
+			fmt.Sprintf("Ticket(s) non transférable(s) : %s (déjà remis au client, expiré ou introuvable dans votre stock)", strings.Join(rejected, ", ")))
+		return
+	}
+
+	// Finances (règle d'or 4) — prix GROS : recrédit du cédant si prepaid,
+	// débit de la cible si prepaid, plafond de créance si dépôt-vente.
+	total := 0
+	for _, rt := range found {
+		total += rt.u.Price
+	}
+	sender := findResellerScoped(db, c.Sub, c.Acc)
+	senderPrepaid := sender == nil || sender.PaymentMode != "deposit"
+
+	if target.PaymentMode != "deposit" {
+		// Cible prepaid : crédit suffisant requis (miroir exact de N°18).
+		if total > target.Credit {
+			writeErr(w, http.StatusBadRequest,
+				fmt.Sprintf("Crédit insuffisant chez %s (disponible: %d, requis: %d) — le gérant doit recharger son portefeuille", target.Name, target.Credit, total))
+			return
+		}
+	} else {
+		// N°19 — cible dépôt-vente : exposition bornée par le plafond de
+		// créance (dette + stock courant + tickets entrants).
+		debtNow := depositDebt(db, c.Acc, target.ID)
+		stockNow := depositStockValue(db, now, c.Acc, target.ID)
+		if debtNow+stockNow+total > target.DebtCeiling {
+			writeErr(w, http.StatusBadRequest,
+				fmt.Sprintf("Plafond de créance dépassé chez %s (dette: %d, stock: %d, plafond: %d, requis: %d)", target.Name, debtNow, stockNow, target.DebtCeiling, total))
+			return
+		}
+	}
+
+	// Application (règle d'or 1) — changement de propriété, rien d'autre.
+	nowISO := model.NowISO()
+	codes := make([]string, 0, len(found))
+	for _, rt := range found {
+		u := rt.u
+		u.ResellerID, u.ResellerName = target.ID, target.Name
+		// N°19 — la nature « à crédit » suit la destination.
+		u.CreditSale = target.PaymentMode == "deposit"
+		codes = append(codes, u.Username)
+	}
+	sort.Strings(codes) // message d'audit stable
+
+	credited, creditAfter, debited := 0, 0, 0
+	if senderPrepaid && total > 0 && sender != nil {
+		// Cédant prepaid : recrédit de ce qu'il avait payé (zéro ligne Sale —
+		// l'émission reste liée à la génération, zéro double comptage).
+		sender.Credit += total
+		credited = total
+		creditAfter = sender.Credit
+		db.Transactions = append([]model.Transaction{{
+			ID: model.NewID("tx-"), AccountID: c.Acc, Type: "credit",
+			ResellerID: c.Sub, ResellerName: c.Name, Amount: total,
+			Note: fmt.Sprintf("Transfert entre revendeurs : %d voucher(s) cédés à %s par %s (Mode Vente)", len(codes), target.Name, c.Name),
+			At:   nowISO,
+		}}, db.Transactions...)
+	}
+	if target.PaymentMode != "deposit" && total > 0 {
+		// Cible prepaid : débit du prix facial (comme une distribution N°18).
+		target.Credit -= total
+		debited = total
+		db.Transactions = append([]model.Transaction{{
+			ID: model.NewID("tx-"), AccountID: c.Acc, Type: "sale",
+			ResellerID: target.ID, ResellerName: target.Name, Amount: total,
+			Note: fmt.Sprintf("Transfert entre revendeurs : %d voucher(s) reçus de %s (Mode Vente)", len(codes), c.Name),
+			At:   nowISO,
+		}}, db.Transactions...)
+	}
+
+	a.logActivityBy(r, db, c.Acc, "voucher",
+		fmt.Sprintf("Transfert entre revendeurs : %d voucher(s) [%s] cédés à %s par %s (Mode Vente%s%s)",
+			len(codes), strings.Join(codes, ", "), target.Name, c.Name,
+			map[bool]string{true: fmt.Sprintf(" — recrédité : %d", credited), false: " — dépôt-vente : aucun recrédit"}[senderPrepaid],
+			map[bool]string{true: fmt.Sprintf(", débité : %d", debited), false: ", pris à crédit (dépôt-vente)"}[target.PaymentMode != "deposit"]))
+	a.store.Save()
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"transferred": len(codes),
+		"credited":    credited,
+		"creditAfter": creditAfter,
+		"debited":     debited,
+		"target":      sellPeerItem{ID: target.ID, Name: target.Name},
+		"codes":       codes,
+	})
+}

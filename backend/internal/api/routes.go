@@ -64,6 +64,10 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/sell/{id}/sold", a.requireReseller(a.handleSellSold))
 	// N°20 — retour de stock initié par le revendeur (rendre des tickets au gérant).
 	mux.HandleFunc("POST /api/sell/return", a.requireReseller(a.handleSellReturn))
+	// N°21 — transfert de stock entre revendeurs (Mode Vente, fusion UX avec
+	// le retour : même sélection de tickets, destination pair au lieu du gérant).
+	mux.HandleFunc("GET /api/sell/peers", a.requireReseller(a.handleSellPeers))
+	mux.HandleFunc("POST /api/sell/transfer", a.requireReseller(a.handleSellTransfer))
 	mux.HandleFunc("GET /api/sell/day-report", a.requireReseller(a.handleSellDayReport))
 	// P3-d — export comptable « journal de caisse » (CSV Excel, date passée admise).
 	mux.HandleFunc("GET /api/sell/day-report.csv", a.requireReseller(a.handleSellDayReportCSV))

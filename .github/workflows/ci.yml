@@ -18,7 +18,11 @@ jobs:
   backend:
     name: Backend Go (gofmt + vet + test + build)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # La suite Go (N°26 sweep + N°27 join + N°28 wifi) avec -race dépasse
+    # 10 min : les tests d'intégration HTTP sont ~10x plus lents sous le
+    # détecteur de course. 25 min = marge confortable, échec propre via
+    # -timeout avant le kill du runner.
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: backend
@@ -37,7 +41,7 @@ jobs:
         run: go vet ./...
 
       - name: Tests (go test)
-        run: go test -race ./...
+        run: go test -race -timeout 22m ./...
 
       - name: Compilation
         run: go build -o /tmp/mikcloud-server .

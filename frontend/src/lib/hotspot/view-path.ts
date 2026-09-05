@@ -18,6 +18,7 @@ const VIEW_SLUGS: Record<ViewId, string> = {
   sessions: "sessions",
   subscription: "subscription",
   users: "users",
+  registrations: "registrations",
   vouchers: "vouchers",
   templates: "templates",
   profiles: "profiles",

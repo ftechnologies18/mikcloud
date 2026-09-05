@@ -71,6 +71,7 @@ const PlatformSettingsView = dynamic(() => import("./views/platform-settings-vie
 const PlatformTeamView = dynamic(() => import("./views/platform-team-view"), { loading: () => ViewFallback });
 const ProfilesView = dynamic(() => import("./views/profiles-view"), { loading: () => ViewFallback });
 const ReportsView = dynamic(() => import("./views/reports-view"), { loading: () => ViewFallback });
+const RegistrationsView = dynamic(() => import("./views/registrations-view"), { loading: () => ViewFallback });
 const ResellersView = dynamic(() => import("./views/resellers-view"), { loading: () => ViewFallback });
 const RoutersView = dynamic(() => import("./views/routers-view"), { loading: () => ViewFallback });
 const SessionsView = dynamic(() => import("./views/sessions-view"), { loading: () => ViewFallback });
@@ -89,6 +90,7 @@ function viewTitle(view: ViewId, t: (key: string) => string): string {
     sessions: "nav.sessions",
     subscription: "sub.title",
     users: "nav.users",
+    registrations: "nav.registrations",
     vouchers: "nav.vouchers",
     templates: "templates.title",
     profiles: "nav.profiles",
@@ -114,6 +116,7 @@ const VIEWS: Record<ViewId, React.ComponentType> = {
   sessions: SessionsView,
   subscription: SubscriptionView,
   users: UsersView,
+  registrations: RegistrationsView,
   vouchers: VouchersView,
   templates: TemplatesView,
   profiles: ProfilesView,

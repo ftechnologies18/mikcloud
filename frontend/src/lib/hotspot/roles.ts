@@ -25,6 +25,7 @@ const VIEW_MIN_RANK: Record<string, number> = {
   dashboard: 1,
   sessions: 1,
   users: 1,
+  registrations: 2, // N°27 — file des demandes + liens (API requireRole(2) : manager+)
   vouchers: 1,
   stats: 1, // heatmap affluence (lecture)
   templates: 2, // gestion des modèles (l'impression reste accessible à tous)

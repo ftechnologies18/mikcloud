@@ -905,6 +905,58 @@ entrée d'activité par compte. Ventes/transactions/journaux INTACTS.
 Aucun changement de contrat API ni de schéma — les listes reflètent la
 disparition (un lot éteint n'apparaît plus, même sous `status=tous`).
 
+## N°27 — Inscriptions publiques par QR (campus/écoles/administration/entreprise)
+
+Deux nouvelles entités (tables `join_links`, `registration_requests` —
+migration purement additive, aucune colonne ajoutée à `hotspot_users`) :
+
+**Liens d'invitation (console, rôle 2)** — `GET /api/join-links` →
+`{items:[JoinLinkView]}` ; `POST /api/join-links {name, profileId?, routerId?,
+autoValidate, maxUses, expiresAt?}` (autoValidate exige profil+routeur ;
+maxUses 0 = illimité) ; `PUT /api/join-links/{id} {revoked}` (révocable
+INSTANTANÉMENT) ; `DELETE /api/join-links/{id}`. `JoinLinkView` = lien +
+`state` dérivé (`active|revoked|expired|exhausted` — expired/exhausted sont
+des états calculés, pas stockés). Token = `RandomCode(32)` (alphabet sans
+ambiguïtés, ~155 bits), stocké côté serveur : le lien FAIT l'authentification
+de la page publique.
+
+**Page publique (whitelist middleware `/api/join/` — PAS `/api/join-links`)** :
+- `GET /api/join/{token}` → `{name, organization, state, expiresAt?,
+  remaining?, autoValidate?, profileName?}` — minimal : JAMAIS le catalogue
+  de profils. 404 `join_link_unknown` si token inconnu.
+- `POST /api/join/{token}` `{fullName, phone, username, password, message?,
+  website?}` — `website` = honeypot (réponse 200 factice, rien n'est créé).
+  Quotas : rate-limit « join » 10/min/IP (main.go) + `signupLimiter` réutilisé
+  sur la soumission (5/10 min, 20/24 h — 429 + Retry-After). Validations :
+  nom 2–80, téléphone normalisé 8–15 chiffres (dédoublonné contre les
+  demandes pending : 409 `phone_pending`), username 3–32 `[A-Za-z0-9._-]`
+  (409 `username_taken` + `suggestion`), mot de passe 6–64. 200 →
+  `{status:"pending"}` ou, lien kiosque, `{status:"approved", username,
+  password, queued?}` (création immédiate via `createHotspotUser`).
+
+**File de validation (console, rôle 2)** — `GET /api/registrations?status=`
+→ `{counts:{pending,approved,rejected}, items:[RegistrationRequest]}` (max
+300, tri desc) ; `POST /api/registrations/{id}/approve
+{profileId, routerId, username, password?}` (password vide → généré ; 409
+`username_taken`+`suggestion` si repris entre-temps ; 409 « Demande déjà
+traitée ») → `{request, user, queued?, commandId?}` ; `POST
+/…/{id}/reject {reason}` (1–300 requis) ; `DELETE /api/registrations/{id}`.
+L'approbation passe par `createHotspotUser` (cœur extrait de
+`handleUserCreate`) : kind `regular`, validité = maintenant + validité du
+profil (démarre À L'APPROBATION), file agent `user_add`, tombstone levé,
+journal. Mode de connexion « Nom d'utilisateur & Mot de passe » (codes
+distincts au choix) — distinct des vouchers (N°25). Minimisation : le mot de
+passe de la demande est VIDÉ à l'approbation comme au refus ; les demandes
+refusées sont purgées à 30 jours (`sweepStaleRegistrations`, hook
+`enforceExpired`). `RegistrationRequest.password` n'est non-vide QUE pour
+les demandes pending.
+
+**Tests** : `handlers_join_test.go` (cycle complet console↔public,
+garde-fous de lien, validations + honeypot, kiosque + file agent, scoping
+inter-comptes, sweep 30 j).
+
+---
+
 ## PLAN DE FICHIERS
 
 ### Backend (Go)

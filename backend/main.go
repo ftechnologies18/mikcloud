@@ -258,6 +258,9 @@ func authRateLimit(next http.Handler) http.Handler {
 			return "auth", 12
 		case path == "/api/reseller/login":
 			return "reseller", 5
+		case strings.HasPrefix(path, "/api/join/"):
+			// N°27 — formulaire public d'inscription : borne serrée (bots).
+			return "join", 10
 		case strings.HasPrefix(path, "/api/"):
 			// Sécurité S1-A2 — limite globale par IP sur le reste de l'API.
 			return "api", 120

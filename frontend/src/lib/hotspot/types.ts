@@ -1208,6 +1208,7 @@ export type ViewId =
   | "sessions"
   | "subscription"
   | "users"
+  | "registrations"
   | "vouchers"
   | "templates"
   | "profiles"
@@ -1305,4 +1306,99 @@ export interface InvoiceRow {
   ref: string;
   paidVia: "wave" | "manual" | string;
   issuedAt: string;
+}
+
+/* ─── N°27 — Inscriptions publiques par QR code (liens + demandes) ─── */
+
+/** État dérivé d'un lien d'inscription : revoked > expired > exhausted > active. */
+export type JoinLinkState = "active" | "revoked" | "expired" | "exhausted";
+
+/** Lien d'inscription publique — encodé en QR côté console (URL /join/{token}). */
+export interface JoinLink {
+  id: string;
+  accountId: string;
+  name: string;
+  token: string;
+  /** Pré-attribution optionnelle : profil et routeur imposés par le lien. */
+  profileId?: string;
+  profileName?: string;
+  routerId?: string;
+  routerName?: string;
+  /** Mode kiosque : profil + routeur pré-attribués requis, compte créé dès la soumission. */
+  autoValidate: boolean;
+  /** Nombre max de soumissions — 0 = illimité. */
+  maxUses: number;
+  uses: number;
+  expiresAt?: string;
+  revoked: boolean;
+  createdBy?: string;
+  createdByName?: string;
+  createdAt: string;
+}
+
+/** Lien enrichi de l'état dérivé (réponse GET/POST/PUT /api/join-links). */
+export interface JoinLinkView extends JoinLink {
+  state: JoinLinkState;
+}
+
+/** Demande d'inscription publique (page /join/{token}). Le mot de passe choisi
+ * n'est renvoyé NON VIDE que pour status="pending" (vidé après décision). */
+export interface RegistrationRequest {
+  id: string;
+  accountId: string;
+  linkId: string;
+  linkName: string;
+  fullName: string;
+  phone: string;
+  desiredUsername: string;
+  password: string;
+  /** Message libre éventuel laissé par le demandeur. */
+  message?: string;
+  status: "pending" | "approved" | "rejected";
+  rejectionReason?: string;
+  reviewedByName?: string;
+  reviewedAt?: string;
+  /** Utilisateur hotspot créé à l'approbation. */
+  userId?: string;
+  createdAt: string;
+}
+
+/** Réponse GET /api/registrations — compteurs globaux du compte + items
+ * (plafond 300, tri createdAt desc ; status vide = toutes). */
+export interface RegistrationsResponse {
+  counts: { pending: number; approved: number; rejected: number };
+  items: RegistrationRequest[];
+}
+
+/** Corps de POST /api/join-links (profil/routeur optionnels ; maxUses 0–100000). */
+export interface JoinLinkCreatePayload {
+  name: string;
+  profileId?: string;
+  routerId?: string;
+  autoValidate: boolean;
+  maxUses: number;
+  /** RFC3339 futur (fin de journée locale côté console). */
+  expiresAt?: string;
+}
+
+/** Corps de PUT /api/join-links/{id} — révoquer / réactiver. */
+export interface JoinLinkUpdatePayload {
+  revoked: boolean;
+}
+
+/** Corps de POST /api/registrations/{id}/approve. password vide = généré côté serveur. */
+export interface RegistrationApprovePayload {
+  profileId: string;
+  routerId: string;
+  username: string;
+  password?: string;
+}
+
+/** Réponse de l'approbation — queued=true si la commande user_add est en file
+ * agent (routeur réel) ; le mot de passe final vit dans user.password. */
+export interface RegistrationApproveResponse {
+  request?: RegistrationRequest;
+  user: HotspotUser;
+  queued?: boolean;
+  commandId?: string;
 }

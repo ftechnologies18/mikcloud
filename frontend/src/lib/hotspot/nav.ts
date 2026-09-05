@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   Store,
   Ticket,
+  UserPlus,
   Users,
   UsersRound,
 } from "lucide-react";
@@ -39,6 +40,8 @@ export const NAV_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
       { id: "dashboard", labelKey: "nav.dashboard", icon: LayoutDashboard },
       { id: "sessions", labelKey: "nav.sessions", icon: Radio },
       { id: "users", labelKey: "nav.users", icon: Users },
+      // N°27 — inscriptions publiques par QR code : file des demandes + liens.
+      { id: "registrations", labelKey: "nav.registrations", icon: UserPlus },
       { id: "vouchers", labelKey: "nav.vouchers", icon: Ticket },
       { id: "templates", labelKey: "nav.templates", icon: Printer },
       { id: "profiles", labelKey: "nav.profiles", icon: Gauge },

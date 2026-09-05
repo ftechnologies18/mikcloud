@@ -338,6 +338,10 @@ func (a *API) enforceExpired(db *model.DB) {
 	// nettoyage RouterOS). Ce point est le passage commun de toutes les lectures
 	// (console, agent 45 s, PWA) : sous verrou, avant le Save de l'appelant.
 	sweepDeadBatches(db)
+
+	// N°27 — inscriptions publiques : les demandes REFUSÉES au-delà de la
+	// rétention (30 jours) sont purgées (minimisation des données personnelles).
+	sweepStaleRegistrations(db)
 }
 
 // ---------------------------------------------------------------------------

@@ -105,35 +105,58 @@ func (a *API) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
 		return
 	}
-	now := time.Now().UTC()
-	nowISO := model.NowISO()
-
-	// Validation + construction (sous verrou)
-	a.store.Lock()
-	db := a.store.Data()
-	profile := findProfileScoped(db, strings.TrimSpace(req.ProfileID), acc)
-	if profile == nil {
-		a.store.Unlock()
-		writeErr(w, http.StatusBadRequest, "Profil introuvable")
-		return
-	}
-	router := findRouterScoped(db, strings.TrimSpace(req.RouterID), acc)
-	if router == nil {
-		a.store.Unlock()
-		writeErr(w, http.StatusBadRequest, "Routeur introuvable")
-		return
-	}
-	routerCopy := *router
 	kind := req.Kind
 	if kind == "" {
 		kind = "regular"
 	}
-	if kind != "regular" && kind != "voucher" {
-		a.store.Unlock()
-		writeErr(w, http.StatusBadRequest, "Type d'utilisateur invalide (regular ou voucher)")
+	u, cmdID, status, msg := a.createHotspotUser(r, acc, kind, req.Username, req.Password, req.ProfileID, req.RouterID, req.Comment)
+	if status != 0 {
+		writeErr(w, status, msg)
 		return
 	}
-	username := strings.TrimSpace(req.Username)
+	if cmdID != "" {
+		// Mode agent : persistance immédiate + commande user_add en file.
+		data, _ := json.Marshal(u)
+		var out map[string]any
+		_ = json.Unmarshal(data, &out)
+		out["queued"] = true
+		out["commandId"] = cmdID
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	writeJSON(w, http.StatusOK, u)
+}
+
+// createHotspotUser — cœur partagé de création d'un utilisateur hotspot
+// (console + validation des inscriptions publiques N°27) : recherche du
+// couple profil/routeur scopé compte, unicité du nom (avec génération
+// automatique éventuelle), mot de passe auto, validité (régulier : dès la
+// création ; voucher : ancrée au 1er login), puis persistance + file agent
+// (user_add, tombstone levé) ou passage passerelle. Retourne (utilisateur,
+// id de commande agent — vide sinon, statut HTTP d'erreur — 0 = succès,
+// message d'erreur). Le verrou store est pris/rendu en interne.
+func (a *API) createHotspotUser(r *http.Request, acc, kind, username, password, profileID, routerID, comment string) (model.HotspotUser, string, int, string) {
+	now := time.Now().UTC()
+
+	// Validation + construction (sous verrou)
+	a.store.Lock()
+	db := a.store.Data()
+	profile := findProfileScoped(db, strings.TrimSpace(profileID), acc)
+	if profile == nil {
+		a.store.Unlock()
+		return model.HotspotUser{}, "", http.StatusBadRequest, "Profil introuvable"
+	}
+	router := findRouterScoped(db, strings.TrimSpace(routerID), acc)
+	if router == nil {
+		a.store.Unlock()
+		return model.HotspotUser{}, "", http.StatusBadRequest, "Routeur introuvable"
+	}
+	routerCopy := *router
+	if kind != "regular" && kind != "voucher" {
+		a.store.Unlock()
+		return model.HotspotUser{}, "", http.StatusBadRequest, "Type d'utilisateur invalide (regular ou voucher)"
+	}
+	username = strings.TrimSpace(username)
 	if username == "" {
 		for i := 0; i < 50; i++ {
 			candidate := "user-" + model.RandomCode(5)
@@ -144,10 +167,8 @@ func (a *API) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	} else if usernameTaken(db, acc, username) {
 		a.store.Unlock()
-		writeErr(w, http.StatusBadRequest, "Ce nom d'utilisateur existe déjà")
-		return
+		return model.HotspotUser{}, "", http.StatusBadRequest, "Ce nom d'utilisateur existe déjà"
 	}
-	password := req.Password
 	if password == "" {
 		password = model.RandomCode(6)
 	}
@@ -162,8 +183,8 @@ func (a *API) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 		ProfileID: profile.ID, ProfileName: profile.Name,
 		RouterID: routerCopy.ID, RouterName: routerCopy.Name,
 		Status: "active", BatchID: "", ResellerID: "", ResellerName: "",
-		Comment:   strings.TrimSpace(req.Comment),
-		CreatedAt: nowISO,
+		Comment:   strings.TrimSpace(comment),
+		CreatedAt: model.NowISO(),
 		ExpiresAt: expiresAt,
 		UsedAt:    "", Price: profile.Price, DataQuotaMb: int64(profile.DataQuotaMb),
 	}
@@ -192,19 +213,12 @@ func (a *API) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 		a.store.Save()
 		cmdID := cmd.ID
 		a.store.Unlock()
-		data, _ := json.Marshal(u)
-		var out map[string]any
-		_ = json.Unmarshal(data, &out)
-		out["queued"] = true
-		out["commandId"] = cmdID
-		writeJSON(w, http.StatusOK, out)
-		return
+		return u, cmdID, 0, ""
 	}
 
 	gw := a.gatewayFor(routerCopy)
 	if err := gw.AddUser(&u); err != nil {
-		writeErr(w, http.StatusBadRequest, "Création impossible : "+err.Error())
-		return
+		return u, "", http.StatusBadRequest, "Création impossible : " + err.Error()
 	}
 
 	a.store.Lock()
@@ -213,7 +227,7 @@ func (a *API) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 	a.logActivityBy(r, a.store.Data(), acc, "user", "Utilisateur "+u.Username+" créé")
 	a.store.Save()
 	a.store.Unlock()
-	writeJSON(w, http.StatusOK, u)
+	return u, "", 0, ""
 }
 
 func (a *API) handleUserUpdate(w http.ResponseWriter, r *http.Request) {

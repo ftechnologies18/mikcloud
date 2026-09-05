@@ -5,6 +5,42 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-05 — N°27 : inscriptions publiques par QR code (Campus & écoles, administration, entreprise)
+
+### N°27 — Le gérant génère un QR, l'utilisateur s'inscrit, le gérant valide
+- **Nouveau flux d'inscription publique** : depuis l'onglet console
+  **« Inscriptions »** (rubrique Utilisateurs), le gérant crée un LIEN
+  d'invitation (nom, profil et routeur pré-attribués optionnels, validation
+  automatique « kiosque » opt-in, limite d'usages, expiration) — la console
+  l'encode en **QR code** + **affiche A4 imprimable** (QR, URL, 3 étapes).
+- **Page publique `/join/{token}`** (SANS authentification — le token de
+  32 caractères stocké côté serveur fait l'accès : révocable instantanément,
+  compteur d'usages, expiration) : l'utilisateur scanne, remplit le
+  formulaire mobile-first (nom, téléphone, identifiant, mot de passe ×2,
+  message, honeypot anti-bot) et soumet.
+- **File de validation** dans la console : la demande atterrit « en attente »
+  (compteurs par statut) ; le gérant **attribue le profil** (+ routeur,
+  identifiants éditables, aperçu de validité) et **valide** — l'utilisateur
+  hotspot est créé par le même cœur que la console (`createHotspotUser`,
+  extrait de `handleUserCreate`) : la validité démarre à l'APPROBATION, la
+  file agent `user_add` s'enchaîne, le tombstone éventuel est levé. Refus
+  avec motif possible ; historique = annuaire des inscrits.
+- **Mode de connexion « Nom d'utilisateur & Mot de passe »** (deux codes
+  distincts au choix de l'utilisateur) — distinct des vouchers, restés
+  verrouillés « nom d'utilisateur = mot de passe » (N°25).
+- **Sécurité** : whitelist publique limitée à `/api/join/{token}`
+  (PAS `/api/join-links`), rate-limit dédié (10/min/IP) + quota anti-abus
+  par IP réutilisé (5/10 min, 20/24 h), honeypot à succès factice, GET public
+  minimal (jamais le catalogue de profils), mot de passe de la demande VIDÉ
+  à l'approbation comme au refus, demandes refusées purgées à 30 jours
+  (`sweepStaleRegistrations`, hook `enforceExpired`).
+- Migration **purement additive** (2 tables : `join_links`,
+  `registration_requests` — aucune colonne ajoutée à `hotspot_users`) ;
+  QR généré côté navigateur (libs déjà présentes, zéro nouvelle dépendance) ;
+  lien kiosque `autoValidate` = création immédiate du compte à la soumission.
+- Tests : `handlers_join_test.go` (cycle complet, garde-fous de lien,
+  honeypot, kiosque + file agent, scoping inter-comptes, sweep 30 j).
+
 ## 2026-09-05 — N°25/N°26 : verrou « code unique » + lots éteints auto-supprimés
 
 ### N°25 — Génération verrouillée au code unique

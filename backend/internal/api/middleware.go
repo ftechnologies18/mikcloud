@@ -75,7 +75,10 @@ func (a *API) requireRole(min int, next http.HandlerFunc) http.HandlerFunc {
 func (a *API) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
-		if path == "/api/auth/login" || path == "/api/auth/register" || path == "/api/reseller/login" || path == "/api/webhooks/wave" || path == "/api/webhooks/geniuspay" || path == "/api/vitals" || !strings.HasPrefix(path, "/api/") {
+		// N°27 — formulaire public d'inscription : /api/join/{token} est
+		// public, le token du lien fait l'authentification (PAS /api/join-links,
+		// qui reste derrière le JWT console — le préfixe avec « / » exclut ce nom).
+		if path == "/api/auth/login" || path == "/api/auth/register" || path == "/api/reseller/login" || path == "/api/webhooks/wave" || path == "/api/webhooks/geniuspay" || path == "/api/vitals" || strings.HasPrefix(path, "/api/join/") || !strings.HasPrefix(path, "/api/") {
 			next.ServeHTTP(w, r)
 			return
 		}

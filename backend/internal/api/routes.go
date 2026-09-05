@@ -20,12 +20,13 @@ type API struct {
 	gws     map[string]routeros.Gateway
 	pinLock *pinLimiter          // sécurité S2 — verrouillage PIN revendeur par compte
 	signup  *signupLimiter       // sécurité S3 — quota d'inscription par IP
+	join    *signupLimiter       // N°27 — quota anti-abus du formulaire public d'inscription
 	vitals  *telemetry.Collector // B2 — Core Web Vitals (nil = collecte désactivée)
 }
 
 // New construit l'API.
 func New(s *store.Store, jwtSecret string) *API {
-	return &API{store: s, secret: jwtSecret, gws: map[string]routeros.Gateway{}, pinLock: newPinLimiter(), signup: newSignupLimiter()}
+	return &API{store: s, secret: jwtSecret, gws: map[string]routeros.Gateway{}, pinLock: newPinLimiter(), signup: newSignupLimiter(), join: newSignupLimiter()}
 }
 
 // Handler — mux complet, protégé par le middleware d'authentification.
@@ -110,6 +111,20 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/vouchers/print", a.requireRole(2, a.handleVouchersPrint))
 	// N°23 (W6) — reprise gérant : reprendre au revendeur du stock invendu.
 	mux.HandleFunc("POST /api/vouchers/reprise", a.requireRole(2, a.handleVouchersReprise))
+
+	// N°27 — inscriptions publiques (QR) : /api/join/{token} est PUBLIC
+	// (whitelist middleware) — le token du lien fait l'accès. La gestion des
+	// liens et la file de validation restent derrière le JWT (manager et plus).
+	mux.HandleFunc("GET /api/join/{token}", a.handleJoinInfo)
+	mux.HandleFunc("POST /api/join/{token}", a.handleJoinSubmit)
+	mux.HandleFunc("GET /api/join-links", a.requireRole(2, a.handleJoinLinksList))
+	mux.HandleFunc("POST /api/join-links", a.requireRole(2, a.handleJoinLinkCreate))
+	mux.HandleFunc("PUT /api/join-links/{id}", a.requireRole(2, a.handleJoinLinkUpdate))
+	mux.HandleFunc("DELETE /api/join-links/{id}", a.requireRole(2, a.handleJoinLinkDelete))
+	mux.HandleFunc("GET /api/registrations", a.requireRole(2, a.handleRegistrationsList))
+	mux.HandleFunc("POST /api/registrations/{id}/approve", a.requireRole(2, a.handleRegistrationApprove))
+	mux.HandleFunc("POST /api/registrations/{id}/reject", a.requireRole(2, a.handleRegistrationReject))
+	mux.HandleFunc("DELETE /api/registrations/{id}", a.requireRole(2, a.handleRegistrationDelete))
 
 	// Sessions
 	mux.HandleFunc("GET /api/sessions", a.handleSessionsList)

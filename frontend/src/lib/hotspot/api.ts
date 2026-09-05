@@ -38,10 +38,14 @@ export class ApiError extends Error {
   status: number;
   /** Code machine optionnel renvoyé par le backend (ex. subscription_expired). */
   code?: string;
-  constructor(message: string, status: number, code?: string) {
+  /** N°27 — suggestion optionnelle du backend (ex. username_taken propose un
+   * nom libre) : champ top-level du corps d'erreur, recopié tel quel. */
+  suggestion?: string;
+  constructor(message: string, status: number, code?: string, suggestion?: string) {
     super(message);
     this.status = status;
     this.code = code;
+    this.suggestion = suggestion;
   }
 }
 
@@ -105,11 +109,12 @@ export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
   }
 
   if (!res.ok) {
-    const body = data && typeof data === "object" ? (data as { error?: unknown; code?: unknown }) : null;
+    const body = data && typeof data === "object" ? (data as { error?: unknown; code?: unknown; suggestion?: unknown }) : null;
     const message =
       (body && typeof body.error === "string" ? body.error : null) ?? `Erreur ${res.status}`;
     const code = body && typeof body.code === "string" ? body.code : undefined;
-    throw new ApiError(message, res.status, code);
+    const suggestion = body && typeof body.suggestion === "string" ? body.suggestion : undefined;
+    throw new ApiError(message, res.status, code, suggestion);
   }
 
   return data as T;

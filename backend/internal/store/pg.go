@@ -546,6 +546,50 @@ func (p *PG) ensureSchema() error {
                 )`,
 		`CREATE INDEX IF NOT EXISTS idx_purge_tombstones_account ON purge_tombstones (account_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_purge_tombstones_user    ON purge_tombstones (username)`,
+		// N°27 — inscriptions publiques par QR : liens d'invitation (token
+		// serveur révocable, compteur d'usages, expiration) + demandes en
+		// attente de validation par le gérant.
+		`CREATE TABLE IF NOT EXISTS join_links (
+			id              TEXT PRIMARY KEY,
+			account_id      TEXT NOT NULL DEFAULT '',
+			name            TEXT NOT NULL DEFAULT '',
+			token           TEXT NOT NULL DEFAULT '',
+			profile_id      TEXT NOT NULL DEFAULT '',
+			profile_name    TEXT NOT NULL DEFAULT '',
+			router_id       TEXT NOT NULL DEFAULT '',
+			router_name     TEXT NOT NULL DEFAULT '',
+			auto_validate   BOOLEAN NOT NULL DEFAULT FALSE,
+			max_uses        INTEGER NOT NULL DEFAULT 0,
+			uses            INTEGER NOT NULL DEFAULT 0,
+			expires_at      TEXT NOT NULL DEFAULT '',
+			revoked         BOOLEAN NOT NULL DEFAULT FALSE,
+			created_by      TEXT NOT NULL DEFAULT '',
+			created_by_name TEXT NOT NULL DEFAULT '',
+			created_at      TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_join_links_account ON join_links (account_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_join_links_token  ON join_links (token)`,
+		`CREATE TABLE IF NOT EXISTS registration_requests (
+			id               TEXT PRIMARY KEY,
+			account_id       TEXT NOT NULL DEFAULT '',
+			link_id          TEXT NOT NULL DEFAULT '',
+			link_name        TEXT NOT NULL DEFAULT '',
+			full_name        TEXT NOT NULL DEFAULT '',
+			phone            TEXT NOT NULL DEFAULT '',
+			desired_username TEXT NOT NULL DEFAULT '',
+			password         TEXT NOT NULL DEFAULT '',
+			message          TEXT NOT NULL DEFAULT '',
+			status           TEXT NOT NULL DEFAULT 'pending',
+			rejection_reason TEXT NOT NULL DEFAULT '',
+			reviewed_by      TEXT NOT NULL DEFAULT '',
+			reviewed_by_name TEXT NOT NULL DEFAULT '',
+			reviewed_at      TEXT NOT NULL DEFAULT '',
+			user_id          TEXT NOT NULL DEFAULT '',
+			created_ip       TEXT NOT NULL DEFAULT '',
+			created_at       TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_registration_requests_account ON registration_requests (account_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_registration_requests_status ON registration_requests (status)`,
 		// Audit purge — réglage par compte : import automatique des
 		// utilisateurs créés hors MikCloud (défaut ON — compatibilité).
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS auto_import_router_users BOOLEAN NOT NULL DEFAULT TRUE`,
@@ -768,6 +812,8 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 		{"billing_requests", func() error { return loadInto(p, &db.BillingRequests, billingRequestSpec) }},
 		{"geniuspay_subs", func() error { return loadInto(p, &db.GeniusPaySubs, geniusPaySubSpec) }},
 		{"purge_tombstones", func() error { return loadInto(p, &db.PurgeTombstones, purgeTombstoneSpec) }},
+		{"join_links", func() error { return loadInto(p, &db.JoinLinks, joinLinkSpec) }},
+		{"registration_requests", func() error { return loadInto(p, &db.RegistrationRequests, registrationRequestSpec) }},
 		{"settings", func() error { return p.loadSettings(db) }},
 	}
 	for _, st := range steps {
@@ -969,6 +1015,12 @@ func (p *PG) Sync(db *model.DB) error {
 		return err
 	}
 	if err := syncTable(tx, p.hashes, purgeTombstoneSpec, db.PurgeTombstones); err != nil {
+		return err
+	}
+	if err := syncTable(tx, p.hashes, joinLinkSpec, db.JoinLinks); err != nil {
+		return err
+	}
+	if err := syncTable(tx, p.hashes, registrationRequestSpec, db.RegistrationRequests); err != nil {
 		return err
 	}
 	if err := p.syncSettings(tx, db); err != nil {
@@ -1539,6 +1591,40 @@ var purgeTombstoneSpec = entitySpec[model.PurgeTombstone]{
 	hashOf: hashEntity[model.PurgeTombstone],
 }
 
+// joinLinkSpec — N°27 : liens d'inscription publique (QR) — token stocké
+// côté serveur, révocable, compteur d'usages, expiration.
+var joinLinkSpec = entitySpec[model.JoinLink]{
+	table: "join_links",
+	cols:  []string{"id", "account_id", "name", "token", "profile_id", "profile_name", "router_id", "router_name", "auto_validate", "max_uses", "uses", "expires_at", "revoked", "created_by", "created_by_name", "created_at"},
+	idOf:  func(x *model.JoinLink) string { return x.ID },
+	scan: func(r *sql.Rows) (model.JoinLink, error) {
+		var x model.JoinLink
+		err := r.Scan(&x.ID, &x.AccountID, &x.Name, &x.Token, &x.ProfileID, &x.ProfileName, &x.RouterID, &x.RouterName, &x.AutoValidate, &x.MaxUses, &x.Uses, &x.ExpiresAt, &x.Revoked, &x.CreatedBy, &x.CreatedByName, &x.CreatedAt)
+		return x, err
+	},
+	args: func(x *model.JoinLink) []any {
+		return []any{x.ID, x.AccountID, x.Name, x.Token, x.ProfileID, x.ProfileName, x.RouterID, x.RouterName, x.AutoValidate, x.MaxUses, x.Uses, x.ExpiresAt, x.Revoked, x.CreatedBy, x.CreatedByName, x.CreatedAt}
+	},
+	hashOf: hashEntity[model.JoinLink],
+}
+
+// registrationRequestSpec — N°27 : demandes d'inscription publique en
+// attente de validation (mot de passe vidé à l'approbation comme au refus).
+var registrationRequestSpec = entitySpec[model.RegistrationRequest]{
+	table: "registration_requests",
+	cols:  []string{"id", "account_id", "link_id", "link_name", "full_name", "phone", "desired_username", "password", "message", "status", "rejection_reason", "reviewed_by", "reviewed_by_name", "reviewed_at", "user_id", "created_ip", "created_at"},
+	idOf:  func(x *model.RegistrationRequest) string { return x.ID },
+	scan: func(r *sql.Rows) (model.RegistrationRequest, error) {
+		var x model.RegistrationRequest
+		err := r.Scan(&x.ID, &x.AccountID, &x.LinkID, &x.LinkName, &x.FullName, &x.Phone, &x.DesiredUsername, &x.Password, &x.Message, &x.Status, &x.RejectionReason, &x.ReviewedBy, &x.ReviewedByName, &x.ReviewedAt, &x.UserID, &x.CreatedIP, &x.CreatedAt)
+		return x, err
+	},
+	args: func(x *model.RegistrationRequest) []any {
+		return []any{x.ID, x.AccountID, x.LinkID, x.LinkName, x.FullName, x.Phone, x.DesiredUsername, x.Password, x.Message, x.Status, x.RejectionReason, x.ReviewedBy, x.ReviewedByName, x.ReviewedAt, x.UserID, x.CreatedIP, x.CreatedAt}
+	},
+	hashOf: hashEntity[model.RegistrationRequest],
+}
+
 var saleSpec = entitySpec[model.Sale]{
 	table: "sales",
 	cols:  []string{"id", "amount", "profile_name", "count", "channel", "reseller_name", "router_id", "router_name", "batch_id", "at", "account_id", "cost", "selling"},
@@ -1764,26 +1850,28 @@ var notifLogSpec = entitySpec[model.NotificationLog]{
 // (après un Load ou un seed initial).
 func (p *PG) rebuildHashes(db *model.DB) {
 	p.hashes = map[string]map[string]uint64{
-		accountSpec.table:        hashRows(db.Accounts, accountSpec),
-		adminSpec.table:          hashRows(db.Users, adminSpec),
-		routerSpec.table:         hashRows(db.Routers, routerSpec),
-		profileSpec.table:        hashRows(db.Profiles, profileSpec),
-		hotspotUserSpec.table:    hashRows(db.HotspotUsers, hotspotUserSpec),
-		batchSpec.table:          hashRows(db.Batches, batchSpec),
-		resellerSpec.table:       hashRows(db.Resellers, resellerSpec),
-		transactionSpec.table:    hashRows(db.Transactions, transactionSpec),
-		sessionSpec.table:        hashRows(db.Sessions, sessionSpec),
-		activitySpec.table:       hashRows(db.Activity, activitySpec),
-		saleSpec.table:           hashRows(db.Sales, saleSpec),
-		commandSpec.table:        hashRows(db.Commands, commandSpec),
-		templateSpec.table:       hashRows(db.Templates, templateSpec),
-		userLogSpec.table:        hashRows(db.UserLogs, userLogSpec),
-		ipBindingSpec.table:      hashRows(db.IPBindings, ipBindingSpec),
-		schedulerTaskSpec.table:  hashRows(db.SchedulerTasks, schedulerTaskSpec),
-		trafficSpec.table:        hashRows(db.Traffic, trafficSpec),
-		notifLogSpec.table:       hashRows(db.NotifLog, notifLogSpec),
-		billingRequestSpec.table: hashRows(db.BillingRequests, billingRequestSpec),
-		purgeTombstoneSpec.table: hashRows(db.PurgeTombstones, purgeTombstoneSpec),
+		accountSpec.table:             hashRows(db.Accounts, accountSpec),
+		adminSpec.table:               hashRows(db.Users, adminSpec),
+		routerSpec.table:              hashRows(db.Routers, routerSpec),
+		profileSpec.table:             hashRows(db.Profiles, profileSpec),
+		hotspotUserSpec.table:         hashRows(db.HotspotUsers, hotspotUserSpec),
+		batchSpec.table:               hashRows(db.Batches, batchSpec),
+		resellerSpec.table:            hashRows(db.Resellers, resellerSpec),
+		transactionSpec.table:         hashRows(db.Transactions, transactionSpec),
+		sessionSpec.table:             hashRows(db.Sessions, sessionSpec),
+		activitySpec.table:            hashRows(db.Activity, activitySpec),
+		saleSpec.table:                hashRows(db.Sales, saleSpec),
+		commandSpec.table:             hashRows(db.Commands, commandSpec),
+		templateSpec.table:            hashRows(db.Templates, templateSpec),
+		userLogSpec.table:             hashRows(db.UserLogs, userLogSpec),
+		ipBindingSpec.table:           hashRows(db.IPBindings, ipBindingSpec),
+		schedulerTaskSpec.table:       hashRows(db.SchedulerTasks, schedulerTaskSpec),
+		trafficSpec.table:             hashRows(db.Traffic, trafficSpec),
+		notifLogSpec.table:            hashRows(db.NotifLog, notifLogSpec),
+		billingRequestSpec.table:      hashRows(db.BillingRequests, billingRequestSpec),
+		purgeTombstoneSpec.table:      hashRows(db.PurgeTombstones, purgeTombstoneSpec),
+		joinLinkSpec.table:            hashRows(db.JoinLinks, joinLinkSpec),
+		registrationRequestSpec.table: hashRows(db.RegistrationRequests, registrationRequestSpec),
 	}
 	notifRows := make([]model.NotificationSettings, 0, len(db.NotifSettings))
 	for _, v := range db.NotifSettings {

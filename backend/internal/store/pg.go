@@ -1956,8 +1956,8 @@ func (p *PG) rebuildHashes(db *model.DB) {
 		purgeTombstoneSpec.table:      hashRows(db.PurgeTombstones, purgeTombstoneSpec),
 		joinLinkSpec.table:            hashRows(db.JoinLinks, joinLinkSpec),
 		registrationRequestSpec.table: hashRows(db.RegistrationRequests, registrationRequestSpec),
-		wifiSiteSpec.table:       hashRows(db.WifiSites, wifiSiteSpec),
-		wifiGuestSpec.table:      hashRows(db.WifiGuests, wifiGuestSpec),
+		wifiSiteSpec.table:            hashRows(db.WifiSites, wifiSiteSpec),
+		wifiGuestSpec.table:           hashRows(db.WifiGuests, wifiGuestSpec),
 	}
 	notifRows := make([]model.NotificationSettings, 0, len(db.NotifSettings))
 	for _, v := range db.NotifSettings {

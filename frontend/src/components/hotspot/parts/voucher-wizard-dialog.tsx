@@ -25,9 +25,9 @@ import {
   Fingerprint,
   Gauge,
   Hash,
-  KeyRound,
   Layers,
   Loader2,
+  Lock,
   QrCode,
   RefreshCcw,
   Route,
@@ -76,7 +76,6 @@ import type {
   Profile,
   Reseller,
   RouterDevice,
-  VoucherUserMode,
 } from "@/lib/hotspot/types";
 import { cn } from "@/lib/utils";
 
@@ -235,7 +234,8 @@ export function VoucherWizardDialog({
   const [routerId, setRouterId] = useState("");
   const [count, setCount] = useState("10");
   const [server, setServer] = useState("all");
-  const [userMode, setUserMode] = useState<VoucherUserMode>("userpass");
+  // N°25 — VERROU : le mode « nom d'utilisateur = mot de passe » est imposé.
+  // L'ancien choix userpass/same a été retiré — l'API force aussi "same" côté serveur.
   const [charset, setCharset] = useState("mikcloud");
   const [codeLength, setCodeLength] = useState(6);
   const [prefix, setPrefix] = useState("");
@@ -355,7 +355,7 @@ export function VoucherWizardDialog({
       prefix: prefix.trim() || undefined,
       codeLength,
       resellerId: resellerId === "none" ? undefined : resellerId,
-      userMode: userMode === "same" ? "same" : undefined,
+      userMode: "same", // N°25 — verrou : code unique (nom = mot de passe)
       charset: charset !== "mikcloud" ? charset : undefined,
       comment: comment.trim() || undefined,
       dataQuotaMb: quotaMb === "inherit" ? undefined : Number(quotaMb),
@@ -380,10 +380,10 @@ export function VoucherWizardDialog({
       ).join("");
     return Array.from({ length: 3 }, () => ({
       code: rnd(),
-      pass: userMode === "same" ? "" : rnd(),
+      pass: "", // N°25 — code unique : le mot de passe EST le code
     }));
     // seed volontaire dans les deps : re-tirage à la demande.
-  }, [charset, codeLength, userMode, seed]);
+  }, [charset, codeLength, seed]);
 
   const profileValidity = (p: Profile) =>
     fmtRouterDuration(p.validityMin > 0 ? p.validityMin : p.validityDays * 1440);
@@ -399,10 +399,7 @@ export function VoucherWizardDialog({
   const formatRecap = tf("vouchers.wizard.recapFormatValue", {
     n: codeLength,
     charset: charset === "mikcloud" ? "MikCloud" : CHARSET_PILLS.find((c) => c.value === charset)?.name ?? charset,
-    mode:
-      userMode === "same"
-        ? t("vouchers.wizard.modeSameShort")
-        : t("vouchers.wizard.modeUserpassShort"),
+    mode: t("vouchers.wizard.modeSameShort"),
   });
 
   return (
@@ -765,77 +762,35 @@ export function VoucherWizardDialog({
                         >
                           <span className="text-primary">{prefix}</span>
                           {s.code}
-                          {userMode === "userpass" && (
-                            <span className="ml-2 text-xs font-normal text-muted-foreground">
-                              {tf("vouchers.wizard.previewPass", { code: s.pass })}
-                            </span>
-                          )}
                         </span>
                       ))}
                     </div>
                     <p className="mt-2 text-xs text-muted-foreground">{t("vouchers.wizard.previewHint")}</p>
                   </section>
 
-                  {/* Type de connexion — deux cartes */}
+                  {/* N°25 — Type de connexion VERROUILLÉ : un seul code par ticket
+                      (il sert aussi de mot de passe). Le choix a été retiré. */}
                   <section aria-label={t("vouchers.wizard.connectionMode")} className="grid gap-2">
                     <Label className="text-sm font-semibold">{t("vouchers.wizard.connectionMode")}</Label>
-                    <div role="radiogroup" aria-label={t("vouchers.wizard.connectionMode")} className="grid gap-2 sm:grid-cols-2">
-                      {(
-                        [
-                          {
-                            value: "userpass" as const,
-                            icon: KeyRound,
-                            title: t("vouchers.gen.userModeUserpass"),
-                            desc: t("vouchers.wizard.modeUserpassDesc"),
-                          },
-                          {
-                            value: "same" as const,
-                            icon: Fingerprint,
-                            title: t("vouchers.gen.userModeSame"),
-                            desc: t("vouchers.wizard.modeSameDesc"),
-                          },
-                        ]
-                      ).map((opt) => {
-                        const selected = userMode === opt.value;
-                        const Icon = opt.icon;
-                        return (
-                          <button
-                            key={opt.value}
-                            type="button"
-                            role="radio"
-                            aria-checked={selected}
-                            onClick={() => setUserMode(opt.value)}
-                            className={cn(
-                              "wizard-card flex items-start gap-3 rounded-xl border-2 p-3 text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
-                              selected
-                                ? "border-primary bg-gradient-to-br from-primary/10 to-transparent shadow-md shadow-primary/10"
-                                : "border-border bg-card",
-                            )}
-                          >
-                            <span
-                              className={cn(
-                                "flex size-9 shrink-0 items-center justify-center rounded-lg",
-                                selected ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground",
-                              )}
-                              aria-hidden
-                            >
-                              <Icon className="size-4" />
-                            </span>
-                            <span className="min-w-0">
-                              <span className="block text-sm font-bold">{opt.title}</span>
-                              <span className="mt-0.5 block text-xs text-muted-foreground">{opt.desc}</span>
-                            </span>
-                            {selected && (
-                              <span
-                                className="wizard-pop ml-auto flex size-5 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground"
-                                aria-hidden
-                              >
-                                <Check className="size-3" />
-                              </span>
-                            )}
-                          </button>
-                        );
-                      })}
+                    <div className="flex items-start gap-3 rounded-xl border-2 border-primary/25 bg-gradient-to-br from-primary/10 to-transparent p-3">
+                      <span
+                        className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary"
+                        aria-hidden
+                      >
+                        <Fingerprint className="size-4" />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="flex flex-wrap items-center gap-2">
+                          <span className="text-sm font-bold">{t("vouchers.gen.userModeSame")}</span>
+                          <Badge variant="outline" className="gap-1 border-primary/25 bg-primary/10 text-primary">
+                            <Lock className="size-3" aria-hidden />
+                            {t("vouchers.wizard.modeLocked")}
+                          </Badge>
+                        </span>
+                        <span className="mt-0.5 block text-xs text-muted-foreground">
+                          {t("vouchers.wizard.modeSameDesc")}
+                        </span>
+                      </span>
                     </div>
                   </section>
 
@@ -1189,11 +1144,6 @@ export function VoucherWizardDialog({
                           {prefix}
                           {samples[0]?.code}
                         </p>
-                        {userMode === "userpass" && samples[0]?.pass && (
-                          <p className="mt-1 font-mono text-[10px] text-muted-foreground">
-                            {tf("vouchers.wizard.previewPass", { code: samples[0].pass })}
-                          </p>
-                        )}
                         <Separator className="my-2" />
                         <p className="truncate text-xs font-semibold">{profile?.name ?? "—"}</p>
                         <p className="text-[10px] text-muted-foreground">{quotaLabel}</p>

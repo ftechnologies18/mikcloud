@@ -276,7 +276,7 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 		Prefix      string `json:"prefix"`
 		CodeLength  int    `json:"codeLength"`
 		ResellerID  string `json:"resellerId"`
-		UserMode    string `json:"userMode"`    // "" | "userpass" | "same" (mot de passe = nom)
+		UserMode    string `json:"userMode"`    // N°25 — IGNORÉ (verrou) : toujours "same", voir plus bas
 		Charset     string `json:"charset"`     // preset model.Charset* ("" = MikCloud sûr)
 		Comment     string `json:"comment"`     // commentaire libre inscrit sur le routeur
 		DataQuotaMb *int   `json:"dataQuotaMb"` // nil = hériter du profil · 0 = illimité · >0 = Mo
@@ -316,7 +316,10 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Mode utilisateur invalide (userpass ou same)")
 		return
 	}
-	samePassword := req.UserMode == "same"
+	// N°25 — VERROU métier : tout voucher est créé en mode « nom d'utilisateur
+	// = mot de passe » (code unique). La valeur du client est ignorée — même un
+	// appel API direct (console, PWA, script) reçoit des tickets à code unique.
+	samePassword := true
 	voucherComment := sanitizeVoucherComment(req.Comment)
 	now := time.Now().UTC()
 

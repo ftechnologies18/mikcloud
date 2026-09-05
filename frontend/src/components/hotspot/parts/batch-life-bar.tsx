@@ -1,10 +1,11 @@
 "use client";
 
-// Barre de « fiche de vie » d'un lot (refonte onglet Lots) : composition
-// visuelle du stock — en stock (primary), vendus (chart-3), expirés (gris),
-// désactivés (destructive) — le reste (purgés) restant en piste vide.
-// Les couleurs reprennent la sémantique de StatusBadge pour rester lisibles
-// d'un écran à l'autre (table, cartes mobiles, fiche 360°).
+// Barre de vie d'un lot — ÉLÉMENT SIGNATURE de l'onglet Lots (v2) :
+// h-6 avec le CHIFFRE de chaque segment affiché dans le segment. Vocabulaire
+// métier unifié : en stock (primary = vendable), éculés (chart-3 = vendus +
+// consommés, FUSIONNÉS — du chiffre d'affaires, jamais une perte), expirés
+// (destructive = perte sèche), purgés (piste vide). Les couleurs reprennent la
+// sémantique des badges pour rester lisibles d'un écran à l'autre.
 
 import { Badge } from "@/components/ui/badge";
 import { useI18n } from "@/lib/hotspot/i18n";
@@ -17,7 +18,8 @@ interface BatchLifeBarProps {
   used: number;
   expired: number;
   disabled: number;
-  /** Légende compacte sous la barre (segments > 0 + purgés). Défaut : oui. */
+  /** Légende compacte sous la barre — défaut : NON (v2 : les chiffres sont
+   * dans les segments, l'aria-label porte toujours la composition complète). */
   legend?: boolean;
   className?: string;
 }
@@ -28,39 +30,53 @@ export function BatchLifeBar({
   used,
   expired,
   disabled,
-  legend = true,
+  legend = false,
   className,
 }: BatchLifeBarProps) {
   const { t, tf } = useI18n();
-  const sum = active + used + expired + disabled;
+  // v2 — fusion métier : used + disabled = « éculés » (vendus/consommés = CA).
+  const sold = used + disabled;
+  const sum = active + sold + expired;
   const total = Math.max(count, sum);
   const purged = Math.max(0, count - sum);
   if (total === 0) return null;
   const segments = [
-    { n: active, cls: "bg-primary", key: "vouchers.batches.legendActive" },
-    { n: used, cls: "bg-chart-3", key: "vouchers.batches.legendUsed" },
-    { n: expired, cls: "bg-muted-foreground/40", key: "vouchers.batches.legendExpired" },
-    { n: disabled, cls: "bg-destructive/70", key: "vouchers.batches.legendDisabled" },
+    { n: active, cls: "bg-primary", numCls: "text-primary-foreground", key: "vouchers.batches.legendActive" },
+    { n: sold, cls: "bg-chart-3", numCls: "text-amber-950", key: "vouchers.batches.legendConsumed" },
+    { n: expired, cls: "bg-destructive/70", numCls: "text-white", key: "vouchers.batches.legendExpired" },
   ];
   const visible = segments.filter((s) => s.n > 0);
   return (
     <div className={cn("space-y-1.5", className)}>
-      {/* Purged : count - (active+used+expired+disabled) reste en piste vide. */}
+      {/* Purged : count - (active + éculés + expirés) reste en piste vide.
+          Somme nulle + purgés > 0 → piste vide, sans chiffres. */}
       <div
-        className="flex h-2 w-full overflow-hidden rounded-full bg-muted"
+        className="flex h-6 w-full gap-px overflow-hidden rounded-sm bg-muted"
         role="img"
         aria-label={visible
           .map((s) => `${s.n} ${t(s.key)}`)
           .concat(purged > 0 ? [`${purged} ${t("vouchers.batches.legendPurged")}`] : [])
           .join(", ")}
       >
-        {visible.map((s) => (
-          <span
-            key={s.key}
-            className={cn("h-full", s.cls)}
-            style={{ width: `${(s.n / total) * 100}%` }}
-          />
-        ))}
+        {visible.map((s) => {
+          const pct = (s.n / total) * 100;
+          // Chiffre affiché uniquement si le segment est assez large (≥ 10 %)
+          // pour le porter — sinon l'aria-label garde l'information.
+          const showCount = pct >= 10;
+          return (
+            <span
+              key={s.key}
+              className={cn("flex h-full items-center justify-center rounded-sm", s.cls)}
+              style={{ width: `${pct}%` }}
+            >
+              {showCount && (
+                <span className={cn("px-1 text-[10px] font-semibold tabular-nums leading-none", s.numCls)}>
+                  {s.n}
+                </span>
+              )}
+            </span>
+          );
+        })}
       </div>
       {legend && (
         <p className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
@@ -85,7 +101,7 @@ export function BatchLifeBar({
   );
 }
 
-/** Refonte — badge du cycle de vie du lot (sémantique alignée sur StatusBadge). */
+/** Badge du cycle de vie du lot (sémantique alignée sur StatusBadge). */
 const LIFE_BADGE: Record<BatchLifecycle, { className: string; labelKey: string }> = {
   stock: { className: "bg-primary/15 text-primary border-primary/25", labelKey: "vouchers.batches.life.stock" },
   consumed: { className: "bg-chart-3/15 text-chart-3 border-chart-3/25", labelKey: "vouchers.batches.life.consumed" },

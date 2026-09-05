@@ -718,6 +718,26 @@ filtres que la liste, sans pagination : séparateur `;` + BOM UTF-8 (convention
 `mikcloud-comptabilite`), une ligne par lot — cycle de vie, stock vendable,
 détail des statuts et possession (`Stock direct (13) · David (6)`).
 
+### V2 onglet Lots — « tour de contrôle du stock » (ADDITIF)
+
+Vocabulaire métier unifié (front) : `used`+`disabled` = « éculés » (vendus/consommés —
+du chiffre d'affaires, jamais une perte) ; `expired` = « expirés » (perte sèche) ;
+vendable = actif jamais remis au client.
+
+Filtre `holder` gagne la valeur `resellers` (n'importe quel revendeur — pipeline).
+Chaque lot gagne (ADDITIF, calculés à la lecture, jamais stockés) :
+`sold7d` (sorties de stock sur 7 j glissants — vente `SoldAt` OU consommation
+`UsedAt`, un ticket ne compte qu'UNE fois), `lastEgressAt` (dernier mouvement de
+sortie), `dormantDays` (jours depuis la dernière sortie, sinon création du lot —
+rempli uniquement si `transferable > 0`, seuil d'alerte front 7 j), `stockFace`
+(valeur faciale du vendable, Σ prix public avec repli `price`), `marginPending`
+(marge en attente = face − gros, jamais négative).
+`summary` gagne : `resellerStock` + `resellerStockValue` (vendables détenus par
+des revendeurs), `sold7d`, `stockFace`, `marginPending` (totaux sur l'ensemble
+FILTRÉ).
+CSV : 3 colonnes additives en queue d'en-tête avant `Possession` —
+`Ecoules 7j ;Dormance j ;Marge en attente`.
+
 ---
 
 ## N°19 — Modes de paiement revendeur : prépayé / dépôt-vente (vend puis verse)

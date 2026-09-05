@@ -643,14 +643,24 @@ export interface BatchHolding {
  * → expired (jamais utilisé, validité envolée) → purged (plus rien en base). */
 export type BatchLifecycle = "stock" | "consumed" | "expired" | "purged";
 
-/** Refonte onglet Lots — bande KPI de l'onglet (totaux sur l'ensemble FILTRÉ,
- * avant pagination) : le gérant filtre par détenteur et lit « son » stock. */
+/** Refonte v2 « tour de contrôle » — pipeline d'une ligne de l'onglet Lots
+ * (totaux sur l'ensemble FILTRÉ, avant pagination). */
 export interface BatchSummary {
   batches: number;
   stockTickets: number;
   transferable: number;
   stockValue: number;
   expiring7d: number;
+  /** v2 — vendables détenus par des revendeurs (étape « Chez revendeurs »). */
+  resellerStock: number;
+  /** v2 — valeur gros de ce stock chez les revendeurs. */
+  resellerStockValue: number;
+  /** v2 — sorties de stock sur 7 j glissants (ventes + consommations). */
+  sold7d: number;
+  /** v2 — valeur faciale du vendable (Σ prix public). */
+  stockFace: number;
+  /** v2 — marge en attente cumulée (face − gros, jamais négative). */
+  marginPending: number;
 }
 
 export interface BatchWithStats extends Batch {
@@ -667,6 +677,18 @@ export interface BatchWithStats extends Batch {
   transferableValue: number;
   /** Tickets transférables expirant dans les 7 jours (garde-fou du dialog). */
   expiring7d: number;
+  /** v2 — sorties de stock sur 7 j glissants (ventes + consommations) : vélocité. */
+  sold7d: number;
+  /** v2 — dernier mouvement de sortie (ISO, absent si aucun mouvement). */
+  lastEgressAt?: string;
+  /** v2 — jours de dormance (rempli uniquement si transferable > 0) :
+   * base = dernière sortie, sinon création du lot si rien n'est jamais sorti. */
+  dormantDays: number;
+  /** v2 — valeur faciale du stock vendable (Σ prix public). */
+  stockFace: number;
+  /** v2 — marge en attente (face − gros, jamais négative) : ce que le stock
+   * vivant RAPPORTERA à l'écoulement. */
+  marginPending: number;
   /** Répartition live du stock vendable par détenteur. */
   holdings?: BatchHolding[];
 }

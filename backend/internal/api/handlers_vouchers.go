@@ -736,10 +736,22 @@ type batchRow struct {
 	// Refonte onglet Lots — cycle de vie dérivé : stock | consumed | expired | purged.
 	Status string `json:"status"`
 	// N°18 — possession live du stock vendable (lot immuable).
-	Transferable      int       `json:"transferable"`
-	TransferableValue int       `json:"transferableValue"`
-	Expiring7d        int       `json:"expiring7d"`
-	Holdings          []holding `json:"holdings,omitempty"`
+	Transferable      int `json:"transferable"`
+	TransferableValue int `json:"transferableValue"`
+	Expiring7d        int `json:"expiring7d"`
+	// v2 « tour de contrôle » — intelligence métier (additif) :
+	// Sold7d = sorties de stock sur 7 j glissants (vente SoldAt ou consommation
+	// UsedAt, jamais les deux pour un même ticket) — la vélocité du lot.
+	Sold7d int `json:"sold7d"`
+	// Dernier mouvement de sortie + jours de dormance (lot VIVANT uniquement :
+	// base = dernière sortie, sinon création du lot si rien n'est jamais sorti).
+	LastEgressAt string `json:"lastEgressAt,omitempty"`
+	DormantDays  int    `json:"dormantDays"`
+	// Valeur faciale du stock vendable (Σ prix public) et marge en attente
+	// (face − gros) : ce que le stock vivant RAPPORTEERA à l'écoulement.
+	StockFace     int       `json:"stockFace"`
+	MarginPending int       `json:"marginPending"`
+	Holdings      []holding `json:"holdings,omitempty"`
 }
 
 // batchSummary — bande KPI de l'onglet Lots : totaux sur l'ensemble FILTRÉ
@@ -750,6 +762,12 @@ type batchSummary struct {
 	Transferable int `json:"transferable"`
 	StockValue   int `json:"stockValue"`
 	Expiring7d   int `json:"expiring7d"`
+	// v2 — pipeline métier (mêmes règles que batchRow) :
+	ResellerStock      int `json:"resellerStock"`      // vendables détenus par des revendeurs
+	ResellerStockValue int `json:"resellerStockValue"` // valeur gros de ce stock
+	Sold7d             int `json:"sold7d"`             // sorties de stock 7 j (lots filtrés)
+	StockFace          int `json:"stockFace"`          // valeur faciale du vendable (Σ prix public)
+	MarginPending      int `json:"marginPending"`      // marge en attente cumulée
 }
 
 // batchFilter — filtres communs à la liste et à l'export CSV.
@@ -791,12 +809,19 @@ func batchLifecycle(active, used, expired, disabled int) string {
 }
 
 // batchHeldBy — le détenteur vit dans les holdings (possession LIVE du stock
-// vendable) : « direct » = stock du gérant, sinon l'ID du revendeur. Un lot
-// sans stock vendable (tout vendu, purgé) n'appartient à personne.
+// vendable) : « direct » = stock du gérant, « resellers » = n'importe quel
+// revendeur (v2 pipeline), sinon l'ID précis du revendeur. Un lot sans stock
+// vendable (tout vendu, purgé) n'appartient à personne.
 func batchHeldBy(hs []holding, holder string) bool {
 	for _, h := range hs {
 		if holder == "direct" {
 			if h.ResellerID == "" {
+				return true
+			}
+			continue
+		}
+		if holder == "resellers" {
+			if h.ResellerID != "" {
 				return true
 			}
 			continue
@@ -810,7 +835,8 @@ func batchHeldBy(hs []holding, holder string) bool {
 
 // computeBatches — agrégation partagée de GET /api/vouchers/batches (liste)
 // et /api/vouchers/batches/export (CSV) : stats live des vouchers, holdings
-// N°18, statut de vie, filtres (recherche, site, canal, statut, détenteur),
+// N°18, statut de vie, filtres (recherche, site, canal, statut, détenteur —
+// « resellers » v2), intelligence métier v2 (sorties 7 j, dormance, marge),
 // tri du plus récent au plus ancien. Le contrat de la liste reste intact :
 // les nouveaux champs (status, summary) et filtres sont ADDITIFS.
 func (a *API) computeBatches(acc string, f batchFilter) ([]batchRow, batchSummary) {
@@ -838,6 +864,12 @@ func (a *API) computeBatches(acc string, f batchFilter) ([]batchRow, batchSummar
 	transferable := map[string]int{}
 	transferableValue := map[string]int{}
 	expiring7d := map[string]int{}
+	// v2 — intelligence métier : sorties de stock 7 j (vélocité), dernier
+	// mouvement de sortie (dormance), valeur faciale du vendable (marge).
+	sold7d := map[string]int{}
+	lastEgress := map[string]time.Time{}
+	stockFace := map[string]int{}
+	window7d := now.Add(-7 * 24 * time.Hour)
 	for i := range db.HotspotUsers {
 		u := &db.HotspotUsers[i]
 		if u.AccountID != acc || u.Kind != "voucher" || u.BatchID == "" {
@@ -863,9 +895,37 @@ func (a *API) computeBatches(acc string, f batchFilter) ([]batchRow, batchSummar
 		case "disabled":
 			st.Disabled++
 		}
+		// v2 — sortie de stock : vente enregistrée (SoldAt) ou consommation
+		// (UsedAt). Un ticket ne sort qu'une fois : booléen par ticket, jamais
+		// de double comptage. Dernier mouvement = max des deux horodatages.
+		egress7d := false
+		if ua, err := time.Parse(time.RFC3339, u.UsedAt); err == nil && !ua.IsZero() {
+			if ua.After(window7d) {
+				egress7d = true
+			}
+			if ua.After(lastEgress[u.BatchID]) {
+				lastEgress[u.BatchID] = ua
+			}
+		}
+		if sa, err := time.Parse(time.RFC3339, u.SoldAt); err == nil && !sa.IsZero() {
+			if sa.After(window7d) {
+				egress7d = true
+			}
+			if sa.After(lastEgress[u.BatchID]) {
+				lastEgress[u.BatchID] = sa
+			}
+		}
+		if egress7d {
+			sold7d[u.BatchID]++
+		}
 		if u.SoldAt == "" && model.EffectiveStatus(u, now) == "active" {
 			transferable[u.BatchID]++
 			transferableValue[u.BatchID] += u.Price
+			face := u.SellingPrice
+			if face <= 0 {
+				face = u.Price // générations anciennes sans prix public copié
+			}
+			stockFace[u.BatchID] += face
 			if exp, err := time.Parse(time.RFC3339, u.ExpiresAt); err == nil && exp.Before(now.AddDate(0, 0, 7)) {
 				expiring7d[u.BatchID]++ // garde-fou dialog : stock mort imminent
 			}
@@ -914,6 +974,30 @@ func (a *API) computeBatches(acc string, f batchFilter) ([]batchRow, batchSummar
 		row.Transferable = transferable[b.ID]
 		row.TransferableValue = transferableValue[b.ID]
 		row.Expiring7d = expiring7d[b.ID]
+		// v2 — intelligence métier du lot (dormance : lot vivant uniquement,
+		// base = dernière sortie sinon création ; jamais de jour négatif).
+		row.Sold7d = sold7d[b.ID]
+		row.StockFace = stockFace[b.ID]
+		row.MarginPending = row.StockFace - row.TransferableValue
+		if row.MarginPending < 0 {
+			row.MarginPending = 0 // config dégénérée (public < gros) : pas de marge négative affichée
+		}
+		if row.Transferable > 0 {
+			base := lastEgress[b.ID]
+			if base.IsZero() {
+				if ct, err := time.Parse(time.RFC3339, b.CreatedAt); err == nil {
+					base = ct
+				}
+			}
+			if !base.IsZero() {
+				d := int(now.Sub(base).Hours() / 24)
+				if d < 0 {
+					d = 0
+				}
+				row.DormantDays = d
+				row.LastEgressAt = base.UTC().Format(time.RFC3339)
+			}
+		}
 		if hm, ok := holdings[b.ID]; ok && len(hm) > 0 {
 			hs := make([]holding, 0, len(hm))
 			for _, h := range hm {
@@ -951,6 +1035,16 @@ func (a *API) computeBatches(acc string, f batchFilter) ([]batchRow, batchSummar
 		summary.Transferable += row.Transferable
 		summary.StockValue += row.TransferableValue
 		summary.Expiring7d += row.Expiring7d
+		// v2 — pipeline métier (toute valeur lue sur l'ensemble FILTRÉ).
+		summary.Sold7d += row.Sold7d
+		summary.StockFace += row.StockFace
+		summary.MarginPending += row.MarginPending
+		for _, h := range row.Holdings {
+			if h.ResellerID != "" {
+				summary.ResellerStock += h.Count
+				summary.ResellerStockValue += h.Value
+			}
+		}
 	}
 	return filtered, summary
 }
@@ -986,7 +1080,7 @@ func (a *API) handleBatchesExport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", "attachment; filename=\"mikcloud-lots.csv\"")
 	_, _ = w.Write([]byte{0xEF, 0xBB, 0xBF})
-	_, _ = w.Write([]byte("Lot ;Date ;Statut ;Profil ;Quota Mo ;Site ;Canal ;Revendeur ;Tickets ;En stock ;Vendables ;Utilises ;Expires ;Desactives ;Expirent < 7j ;Valeur stock ;Cout total ;Possession\r\n"))
+	_, _ = w.Write([]byte("Lot ;Date ;Statut ;Profil ;Quota Mo ;Site ;Canal ;Revendeur ;Tickets ;En stock ;Vendables ;Utilises ;Expires ;Desactives ;Expirent < 7j ;Valeur stock ;Cout total ;Ecoules 7j ;Dormance j ;Marge en attente ;Possession\r\n"))
 	statusLabels := map[string]string{"stock": "En stock", "consumed": "Epuise", "expired": "Expire", "purged": "Purge"}
 	for _, row := range rows {
 		parts := make([]string, 0, len(row.Holdings))
@@ -998,11 +1092,12 @@ func (a *API) handleBatchesExport(w http.ResponseWriter, r *http.Request) {
 			parts = append(parts, fmt.Sprintf("%s (%d)", name, h.Count))
 		}
 		_, _ = w.Write([]byte(fmt.Sprintf(
-			"%s ;%s ;%s ;%s ;%d ;%s ;%s ;%s ;%d ;%d ;%d ;%d ;%d ;%d ;%d ;%d ;%d ;%s\r\n",
+			"%s ;%s ;%s ;%s ;%d ;%s ;%s ;%s ;%d ;%d ;%d ;%d ;%d ;%d ;%d ;%d ;%d ;%d ;%d ;%d ;%s\r\n",
 			csvField(row.ID), csvField(row.CreatedAt), csvField(statusLabels[row.Status]),
 			csvField(row.ProfileName), row.DataQuotaMb, csvField(row.RouterName),
 			row.Channel, csvField(row.ResellerName), row.Count, row.Active,
 			row.Transferable, row.Used, row.Expired, row.Disabled, row.Expiring7d,
-			row.TransferableValue, row.TotalCost, csvField(strings.Join(parts, " · ")))))
+			row.TransferableValue, row.TotalCost, row.Sold7d, row.DormantDays,
+			row.MarginPending, csvField(strings.Join(parts, " · ")))))
 	}
 }

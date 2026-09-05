@@ -890,6 +890,21 @@ expiration, levée, import auto OFF, annulation de file, purge totale 400/200).
 
 ---
 
+## N°26 — Lots éteints : disparition automatique (lot tous-expirés)
+
+Sweep `sweepDeadBatches(db)` (api, appelé en fin d'`enforceExpired` — donc
+après `applyExpiry`, sous verrou, persisté par le `Save` de chaque appelant :
+dashboard, listes users/vouchers, ops, check-in agent 45 s).
+
+Critère (par lot, vouchers uniquement) : ≥ 1 ticket ET tous les tickets
+présents `status == "expired"` ET aucun ticket avec `ResellerID != ""`
+(N°23/W1). Effets : suppression des tickets, de la ligne `db.Batches`, des
+sessions associées ; tombstones de purge (TTL 30 j) pour chaque username ;
+`CmdUserRemove` (paquets de 50) pour chaque routeur AGENT détenteur ;
+entrée d'activité par compte. Ventes/transactions/journaux INTACTS.
+Aucun changement de contrat API ni de schéma — les listes reflètent la
+disparition (un lot éteint n'apparaît plus, même sous `status=tous`).
+
 ## PLAN DE FICHIERS
 
 ### Backend (Go)

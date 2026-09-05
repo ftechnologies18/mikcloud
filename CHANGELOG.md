@@ -5,6 +5,34 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-05 — N°25/N°26 : verrou « code unique » + lots éteints auto-supprimés
+
+### N°25 — Génération verrouillée au code unique
+- **Toute création de voucher est désormais en mode « nom d'utilisateur =
+  mot de passe »** (un seul code par ticket) — verrouillé côté SERVEUR
+  (`samePassword := true`, la valeur `userMode` du client est ignorée :
+  console, PWA, appel API direct) ET côté wizard (le choix « 2 codes » est
+  retiré, carte « Verrouillé — un seul code par ticket » à la place, aperçu
+  sans mot de passe). Contrat inchangé (champ accepté, ignoré).
+
+### N°26 — Un lot dont tous les tickets ont expiré disparaît du système
+- **Auto-suppression des « lots éteints »** (sweep `sweepDeadBatches`, branché
+  en fin d'`enforceExpired` — passage commun console/agent 45 s/PWA, sous
+  verrou, persisté par l'appelant) : tickets supprimés, ligne de lot
+  supprimée (plus de lot « Expiré » zombie même sous le filtre « Tous »),
+  sessions abandonnées, **tombstones anti-résurrection posés** (les tickets
+  restent sur le routeur réel : sans tombstone, la synchro agent les
+  réimporterait en fantômes) et **user_remove** par paquets de 50 enfilé
+  pour chaque routeur AGENT (RouterOS reste propre).
+- Garde-fous : ≥ 1 ticket (les lots vides relèvent de la purge manuelle) ;
+  **aucun ticket revendeur** (N°23/W1 — la trace du stock confié prime, la
+  reprise puis la suppression individuelle restent la voie) ; ventes et
+  transactions INTACTS (la comptabilité du lot supprimé demeure) ; journal
+  d'activité par compte (« Lots éteints supprimés automatiquement : N »).
+- Test : `TestSweepDeadBatches` (suppression B1/B4, conservation mixte B2 et
+  revendeur B3, tombstones, 1 commande agent / 0 simulé, sessions, vente,
+  idempotence).
+
 ## 2026-09-05 — N°23 : reprise gérant (W6), verrou de destruction du stock revendeur (W1), visibilité de l'allocation (W3/W4)
 
 ### Ajoutés

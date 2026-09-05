@@ -332,6 +332,12 @@ func (a *API) enforceExpired(db *model.DB) {
 			})
 		}
 	}
+
+	// N°26 — lots éteints : un lot dont TOUS les tickets sont expirés disparaît
+	// du système (tickets + ligne de lot + tombstones anti-résurrection +
+	// nettoyage RouterOS). Ce point est le passage commun de toutes les lectures
+	// (console, agent 45 s, PWA) : sous verrou, avant le Save de l'appelant.
+	sweepDeadBatches(db)
 }
 
 // ---------------------------------------------------------------------------

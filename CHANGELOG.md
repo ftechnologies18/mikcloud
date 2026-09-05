@@ -5,6 +5,28 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-05 — N°34 : Hotspot Page — réorganisation du portail captif
+
+### Nettoyage (`Hotspot Page/`)
+- **Fichiers parasites retirés** (tous récupérables via
+  `git show 913b151:'<chemin>'`) : `debug.log` (log Windows parasite),
+  `euh.html` (brouillon « Mnaspot » remplacé par le login FTCI), `engine1/` +
+  `data1/` (slider WOW Slider généré, référencé par aucune page — ~290 Ko),
+  `css/style.css` + `css/mikhmon-ui-light.css` + `css/background.css` (CSS du
+  template Mikhmon d'origine, non liés), `js/jquery-3.2.1.min.js` (n'exigeait
+  que WOW Slider) et `js/typed.min.js` (doublon de `typed.umd.js`),
+  `img/bg-body.png` + `img/favicon.png` (non référencés). Gain ~800 Ko de
+  flash routeur ; seul l'utile est désormais téléversé.
+- **Correction 404** : `login.html` chargeait `js/bootstrap.bundle.min.js`
+  absent du dossier (404 systématique sur le portail) ; le script est retiré —
+  aucun composant Bootstrap JS n'est utilisé (grille/utilitaires CSS
+  uniquement), Swiper/Typed restent inchangés.
+- **README du dossier réécrit en français** : contrat des noms de fichiers
+  RouterOS (pages obligatoires à la racine, immuables), inventaire assets,
+  déploiement FTP/Winbox, intégration MikCloud (`/join/{token}?mac=`,
+  walled-garden, portail kiosque 45 s) et guide de personnalisation (couleurs
+  `:root`, offres Wave, carrousel, logo, messages Typed).
+
 ## 2026-09-05 — N°33 : inscriptions publiques — anti-abus kiosque + redirection portail 45 s
 
 ### Sécurité / anti-abus (module inscription N°27)

@@ -29,6 +29,7 @@ import {
   Ticket,
   TicketPlus,
   Trash2,
+  Undo2,
   Wallet,
   Zap,
 } from "lucide-react";
@@ -144,6 +145,8 @@ export default function VouchersView() {
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  // N°23 (W3/W4) — détenteur du stock : direct (gérant) / alloué (revendeurs).
+  const [holderFilter, setHolderFilter] = useState("all");
   const [profileFilter, setProfileFilter] = useState("all");
   const [page, setPage] = useState(1);
 
@@ -192,6 +195,9 @@ export default function VouchersView() {
   // Suppression
   const [deleting, setDeleting] = useState<HotspotUser | null>(null);
 
+  // N°23 (W6) — reprise gérant : reprendre au revendeur un ticket invendu.
+  const [reprising, setReprising] = useState<HotspotUser | null>(null);
+
   const { data: profiles } = useQuery({
     queryKey: ["/api/profiles"],
     queryFn: () => api<Profile[]>("/api/profiles"),
@@ -226,6 +232,8 @@ export default function VouchersView() {
   const activeCount = stats.filter((v) => v.status === "active").length;
   const usedCount = stats.filter((v) => v.status === "used").length;
   const expiredCount = stats.filter((v) => v.status === "expired").length;
+  // N°23 (W3/W4) — visibilité du stock confié aux revendeurs.
+  const allocatedCount = stats.filter((v) => v.resellerId).length;
   const stockValue = stats
     .filter((v) => v.status === "active")
     .reduce((acc, v) => acc + v.price, 0);
@@ -233,12 +241,14 @@ export default function VouchersView() {
   // Liste paginée filtrée
   const statusParam = statusFilter === "all" ? undefined : statusFilter;
   const profileParam = profileFilter === "all" ? undefined : profileFilter;
+  // N°23 (W3/W4) — détenteur : direct (gérant) / alloué (revendeurs).
+  const holderParam = holderFilter === "all" ? undefined : holderFilter;
 
   const { data: pagedData, isLoading, isFetching } = useQuery({
-    queryKey: ["/api/vouchers", "list", { search, status: statusParam, profileId: profileParam, page }],
+    queryKey: ["/api/vouchers", "list", { search, status: statusParam, profileId: profileParam, holder: holderParam, page }],
     queryFn: () =>
       api<PagedUsers>("/api/vouchers", {
-        params: { search, status: statusParam, profileId: profileParam, page, pageSize: PAGE_SIZE },
+        params: { search, status: statusParam, profileId: profileParam, holder: holderParam, page, pageSize: PAGE_SIZE },
       }),
     refetchInterval: 20_000,
     placeholderData: (previous) => previous,
@@ -280,12 +290,14 @@ export default function VouchersView() {
       setSearchInput(detailBatchId);
       setSearch(detailBatchId);
       setStatusFilter("all");
+      setHolderFilter("all");
       setProfileFilter("all");
       setPage(1);
     } else if (leaving && searchRef.current === leaving) {
       setSearchInput("");
       setSearch("");
       setStatusFilter("all");
+      setHolderFilter("all");
       setProfileFilter("all");
       setPage(1);
     }
@@ -386,6 +398,30 @@ export default function VouchersView() {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  // N°23 (W6) — reprise gérant : retour au stock direct d'un ticket invendu
+  // (recrédit prépayé au prix gros côté serveur ; dépôt-vente : aucun).
+  const repriseMutation = useMutation({
+    mutationFn: (voucher: HotspotUser) =>
+      api<{ returned: number; credited: number }>("/api/vouchers/reprise", {
+        method: "POST",
+        body: { ids: [voucher.id] },
+      }),
+    onSuccess: (res) => {
+      if (res.credited > 0) {
+        toast.success(
+          tf("vouchers.reprise.doneCredited", { count: res.returned, credit: formatCurrency(res.credited, currency, lang) }),
+        );
+      } else {
+        toast.success(tf("vouchers.reprise.done", { count: res.returned }));
+      }
+      setReprising(null);
+      invalidateVouchers();
+      void queryClient.invalidateQueries({ queryKey: ["/api/resellers"] });
+      void queryClient.invalidateQueries({ queryKey: ["/api/transactions"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   // --- Traçabilité des lots ---
   const batchRouterParam = batchRouterFilter === "all" ? undefined : batchRouterFilter;
   const batchStatusParam = batchStatusFilter === "all" ? undefined : batchStatusFilter;
@@ -461,6 +497,7 @@ export default function VouchersView() {
     setSearchInput(batch.id);
     setSearch(batch.id);
     setStatusFilter("all");
+    setHolderFilter("all");
     setProfileFilter("all");
     setPage(1);
     setTab("vouchers");
@@ -767,7 +804,8 @@ export default function VouchersView() {
     );
   }
 
-  const hasFilters = search !== "" || statusFilter !== "all" || profileFilter !== "all";
+  const hasFilters =
+    search !== "" || statusFilter !== "all" || profileFilter !== "all" || holderFilter !== "all";
   // Refonte — filtres « fiche de vie » des lots (recherche + site + canal + cycle + détenteur).
   const hasBatchFilters =
     batchSearch !== "" ||
@@ -813,12 +851,19 @@ export default function VouchersView() {
         <>
       {/* Statistiques du stock */}
       {statsLoading ? (
-        <LoadingCards cards={4} />
+        <LoadingCards cards={5} />
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
           <StatCard title={t("vouchers.kpi.active")} value={String(activeCount)} sub={t("vouchers.kpi.activeSub")} icon={Ticket} />
           <StatCard title={t("vouchers.kpi.used")} value={String(usedCount)} sub={t("vouchers.kpi.usedSub")} icon={CheckCircle2} />
           <StatCard title={t("vouchers.kpi.expired")} value={String(expiredCount)} sub={t("vouchers.kpi.expiredSub")} icon={Clock} />
+          {/* N°23 (W3/W4) — stock confié aux revendeurs, visible d'un coup d'œil. */}
+          <StatCard
+            title={t("vouchers.kpiAllocated")}
+            value={String(allocatedCount)}
+            sub={t("vouchers.kpiAllocatedSub")}
+            icon={Undo2}
+          />
           <StatCard
             title={t("vouchers.kpi.stockValue")}
             value={formatCurrency(stockValue, currency, lang)}
@@ -858,6 +903,23 @@ export default function VouchersView() {
                     {t(option.labelKey)}
                   </SelectItem>
                 ))}
+              </SelectContent>
+            </Select>
+            {/* N°23 (W3/W4) — détenteur du stock : direct vs revendeurs. */}
+            <Select
+              value={holderFilter}
+              onValueChange={(value) => {
+                setHolderFilter(value);
+                setPage(1);
+              }}
+            >
+              <SelectTrigger className="h-10 w-full sm:w-44" aria-label={t("vouchers.holderLabel")}>
+                <SelectValue placeholder={t("vouchers.holderLabel")} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t("vouchers.holderAll")}</SelectItem>
+                <SelectItem value="direct">{t("vouchers.holderDirect")}</SelectItem>
+                <SelectItem value="reseller">{t("vouchers.holderReseller")}</SelectItem>
               </SelectContent>
             </Select>
             <Select
@@ -1052,6 +1114,26 @@ export default function VouchersView() {
                               )}
                               {t("vouchers.printOne")}
                             </DropdownMenuItem>
+                            {/* N°23 (W6) — reprise gérant : uniquement les tickets
+                                revendeur invendus (soldAt vide = pas encore remis
+                                au client ; auto_connect pose SoldAt à la 1ʳᵉ connexion). */}
+                            {voucher.resellerId && !voucher.soldAt && (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  className="min-h-10"
+                                  disabled={repriseMutation.isPending && repriseMutation.variables?.id === voucher.id}
+                                  onClick={() => setReprising(voucher)}
+                                >
+                                  {repriseMutation.isPending && repriseMutation.variables?.id === voucher.id ? (
+                                    <Loader2 className="size-4 animate-spin" />
+                                  ) : (
+                                    <Undo2 className="size-4" />
+                                  )}
+                                  {t("vouchers.reprise.action")}
+                                </DropdownMenuItem>
+                              </>
+                            )}
                             {/* N — resynchronisation (uniquement si absent du routeur). */}
                             {voucher.missingOnRouter && (
                               <>
@@ -1086,6 +1168,11 @@ export default function VouchersView() {
                             <DropdownMenuItem
                               variant="destructive"
                               className="min-h-10"
+                              // N°23 (W1) — le stock revendeur n'est pas destructible
+                              // depuis la console (le serveur refuse en 403 ; on
+                              // neutralise l'action pour éviter l'aller-retour).
+                              disabled={!!voucher.resellerId}
+                              title={voucher.resellerId ? t("vouchers.deleteBlocked") : undefined}
                               onClick={() => setDeleting(voucher)}
                             >
                               <Trash2 className="size-4" />
@@ -1553,6 +1640,31 @@ export default function VouchersView() {
         tenantName={tenantName}
         currency={currency}
       />
+
+      {/* N°23 (W6) — confirmation reprise gérant (retour au stock direct). */}
+      <AlertDialog open={reprising !== null} onOpenChange={(open) => !open && setReprising(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("vouchers.reprise.title")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {reprising && tf("vouchers.reprise.desc", { name: reprising.resellerName || t("common.reseller") })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={repriseMutation.isPending}>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={repriseMutation.isPending}
+              onClick={(event) => {
+                event.preventDefault();
+                if (reprising) repriseMutation.mutate(reprising);
+              }}
+            >
+              {repriseMutation.isPending && <Loader2 className="size-4 animate-spin" />}
+              {t("vouchers.reprise.action")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Confirmation suppression voucher */}
       <AlertDialog open={deleting !== null} onOpenChange={(open) => !open && setDeleting(null)}>

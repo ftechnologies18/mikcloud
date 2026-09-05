@@ -256,7 +256,7 @@ func (a *API) handleUserUpdate(w http.ResponseWriter, r *http.Request) {
 		if (req.Username != nil && !usernameEcho) || (req.Password != nil && *req.Password != "") {
 			a.store.Unlock()
 			writeErrCode(w, http.StatusForbidden, "reseller_voucher_locked",
-				"Ticket attribué à "+cur.ResellerName+" : le code n'est pas modifiable depuis la console (effectuez un retour de stock pour le récupérer)",
+				"Ticket attribué à "+cur.ResellerName+" : le code n'est pas modifiable depuis la console (effectuez une reprise ou un retour de stock pour le récupérer)",
 				map[string]any{"resellerId": cur.ResellerID, "resellerName": cur.ResellerName})
 			return
 		}
@@ -478,6 +478,18 @@ func (a *API) handleUserDelete(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "Utilisateur introuvable")
 		return
 	}
+	// N°23 (W1) — même philosophie que la garde de code (N°22) : un ticket
+	// attribué à un revendeur n'est pas destructible depuis la console —
+	// sa suppression effacerait le stock du revendeur ET la preuve de la
+	// créance. La voie propre : reprise par le gérant (N°23) ou retour de
+	// stock par le revendeur (N°20).
+	if cur.ResellerID != "" {
+		a.store.Unlock()
+		writeErrCode(w, http.StatusForbidden, "reseller_voucher_locked",
+			"Ticket attribué à "+cur.ResellerName+" : suppression impossible (effectuez une reprise pour le récupérer, ou faites-le retourner par le revendeur)",
+			map[string]any{"resellerId": cur.ResellerID, "resellerName": cur.ResellerName})
+		return
+	}
 	username := cur.Username
 	router := findRouterScoped(db, cur.RouterID, acc)
 	var routerCopy *model.Router
@@ -547,6 +559,9 @@ func filterUsers(db *model.DB, acc string, q url.Values, now time.Time) []model.
 	status := q.Get("status")
 	profileID := q.Get("profileId")
 	routerID := strings.TrimSpace(q.Get("routerId"))
+	// N°23 (W3/W4) — détenteur du stock : direct (gérant) ou revendeur
+	// (alloué). Additif : absent = aucun effet (contrat liste préservé).
+	holder := q.Get("holder")
 	online := onlineSessions(db, now) // sessions live (routeurs vus < 3 min)
 
 	filtered := []model.HotspotUser{}
@@ -563,6 +578,16 @@ func filterUsers(db *model.DB, acc string, q url.Values, now time.Time) []model.
 		}
 		if routerID != "" && u.RouterID != routerID {
 			continue
+		}
+		switch holder {
+		case "reseller":
+			if u.ResellerID == "" {
+				continue
+			}
+		case "direct":
+			if u.ResellerID != "" {
+				continue
+			}
 		}
 		st := model.ResolvedStatus(u, online[onlineKey(u)], now)
 		if status != "" && st != status {

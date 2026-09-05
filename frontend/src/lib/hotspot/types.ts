@@ -372,6 +372,8 @@ export interface HotspotUser {
   batchId: string;
   resellerId: string;
   resellerName: string;
+  /** N°23 — ticket remis au client (Mode Vente / auto_connect) : reprise refusée. */
+  soldAt?: string;
   comment: string;
   bytesIn: number;
   bytesOut: number;

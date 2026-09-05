@@ -220,3 +220,136 @@ test("N°22 — codes revendeur masqués côté gérant, impression tracée, cod
   expect(resHit).toBeTruthy();
   expect(resHit!.username).toBe("••••••");
 });
+
+test("N°23 — reprise gérant (W6) : recrédit prépayé, gardes de destruction (W1), boucle fermée", async () => {
+  // Numéro dédié (anti-abus : un numéro unique par compte et par run).
+  const PHONE_REP = "01" + String(Date.now()).slice(-8);
+
+  // 1. Compte dédié + routeur simulé + profil tarifaire.
+  const reg = await api("/api/auth/register", {
+    method: "POST",
+    body: {
+      name: "Gérant Reprise",
+      username: `gerant-rep-${SUFFIX}`,
+      password: "mot-de-passe-8+",
+      key: REGISTER_KEY,
+      email: `rep-${SUFFIX}@example.ci`,
+      phone: PHONE_REP,
+      country: "CI",
+      city: "Abidjan",
+    },
+  });
+  const token = reg.token as string;
+  expect(token).toBeTruthy();
+
+  const router = await api("/api/routers", {
+    method: "POST",
+    token,
+    body: { name: "site-rep", host: "10.5.50.1", mode: "simulated" },
+  });
+  const profile = await api("/api/profiles", {
+    method: "POST",
+    token,
+    body: { name: "1 Heure", price: 300, sellingPrice: 300, validityDays: 7, sessionTimeoutMin: 60 },
+  });
+  expect(router.id).toBeTruthy();
+  expect(profile.id).toBeTruthy();
+
+  // 2. Revendeur prépayé + lot de 3 transféré (stock revendeur).
+  const reseller = await api("/api/resellers", {
+    method: "POST",
+    token,
+    body: { name: "Vendeur Reprise", username: `rep-v-${SUFFIX}`, pin: "3579", credit: 10_000 },
+  });
+  const batch = await api("/api/vouchers/generate", {
+    method: "POST",
+    token,
+    body: { count: 3, profileId: profile.id, routerId: router.id },
+  });
+  await api(`/api/vouchers/batch/${batch.batchId}/transfer`, {
+    method: "POST",
+    token,
+    body: { resellerId: reseller.id },
+  });
+
+  // 3. W1 — aucune porte de destruction : unitaire 403, bulk 409, lot 409.
+  const login = await api("/api/reseller/login", {
+    method: "POST",
+    body: { username: `rep-v-${SUFFIX}`, pin: "3579" },
+  });
+  const resToken = login.token as string;
+  expect(resToken).toBeTruthy();
+  const stock = await api("/api/sell/stock?limit=60&offset=0", { token: resToken });
+  const ids = (stock.items as Array<{ id: string }>).map((it) => it.id);
+  expect(ids.length).toBe(3);
+
+  const delUnit = await apiRaw(`/api/vouchers/${ids[0]}`, { method: "DELETE", token });
+  expect(delUnit.status).toBe(403);
+  expect(delUnit.json.code).toBe("reseller_voucher_locked");
+
+  const delBulk = await apiRaw("/api/users/bulk", {
+    method: "POST",
+    token,
+    body: { ids, action: "delete" },
+  });
+  expect(delBulk.status).toBe(409);
+  expect(String(delBulk.json.error)).toContain("revendeur");
+
+  const delBatch = await apiRaw(`/api/vouchers/batch/${batch.batchId}/delete`, { method: "POST", token });
+  expect(delBatch.status).toBe(409);
+  expect(String(delBatch.json.error)).toContain("reprise");
+
+  // 4. W6 — reprise gérant de 2 tickets : recrédit prépayé au prix gros.
+  const reprise = await api("/api/vouchers/reprise", {
+    method: "POST",
+    token,
+    body: { ids: [ids[0], ids[1]] },
+  });
+  expect(reprise.returned).toBe(2);
+  expect(reprise.credited).toBe(600); // 2 × 300 — le portefeuille suit le retour
+  const details = (reprise.details as string[]) ?? [];
+  expect(details.some((d) => d.includes("Vendeur Reprise"))).toBe(true);
+
+  // 5. Le crédit du revendeur suit l'argent : 10 000 − 900 (débit au
+  //    transfert, prépayé) + 600 (recrédit de la reprise) = 9 700.
+  const resellers = (await api("/api/resellers", { token })) as unknown as Array<{
+    id: string;
+    credit: number;
+  }>;
+  const res = resellers.find((r) => r.id === reseller.id);
+  expect(res?.credit).toBe(9_700);
+
+  // 6. W3/W4 — le filtre détenteur sépare le stock : 2 repris côté direct
+  //    (codes en clair), 1 reste alloué (masqué).
+  const direct = await api(`/api/vouchers?search=${batch.batchId}&holder=direct&pageSize=10`, { token });
+  expect(direct.total).toBe(2);
+  const allocated = await api(`/api/vouchers?search=${batch.batchId}&holder=reseller&pageSize=10`, { token });
+  expect(allocated.total).toBe(1);
+  const allocatedRow = (allocated.data as Array<{ username: string; resellerName: string }>)[0];
+  expect(allocatedRow.username).toBe("••••••");
+  expect(allocatedRow.resellerName).toBe("Vendeur Reprise");
+
+  // 7. Boucle fermée — reprise du dernier, puis les portes de destruction
+  //    s'ouvrent (unitaire 200, lot 200).
+  const reprise2 = await api("/api/vouchers/reprise", {
+    method: "POST",
+    token,
+    body: { ids: [ids[2]] },
+  });
+  expect(reprise2.credited).toBe(300);
+  const resellers2 = (await api("/api/resellers", { token })) as unknown as Array<{
+    id: string;
+    credit: number;
+  }>;
+  const res2 = resellers2.find((r) => r.id === reseller.id);
+  expect(res2?.credit).toBe(10_000);
+
+  const directRows = (direct.data as Array<{ id: string; username: string }>).slice();
+  const codes = ((reprise.codes as string[]) ?? []).concat((reprise2.codes as string[]) ?? []);
+  const victim = directRows.find((r) => codes.includes(r.username));
+  expect(victim).toBeTruthy();
+  const delUnitOk = await apiRaw(`/api/vouchers/${victim!.id}`, { method: "DELETE", token });
+  expect(delUnitOk.status).toBe(200);
+  const delBatchOk = await apiRaw(`/api/vouchers/batch/${batch.batchId}/delete`, { method: "POST", token });
+  expect(delBatchOk.status).toBe(200);
+});

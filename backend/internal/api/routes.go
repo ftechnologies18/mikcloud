@@ -108,6 +108,8 @@ func (a *API) Handler() http.Handler {
 	// N°22 — impression tracée : seul canal de sortie des codes des tickets
 	// revendeur depuis la console (les listes les masquent désormais).
 	mux.HandleFunc("POST /api/vouchers/print", a.requireRole(2, a.handleVouchersPrint))
+	// N°23 (W6) — reprise gérant : reprendre au revendeur du stock invendu.
+	mux.HandleFunc("POST /api/vouchers/reprise", a.requireRole(2, a.handleVouchersReprise))
 
 	// Sessions
 	mux.HandleFunc("GET /api/sessions", a.handleSessionsList)

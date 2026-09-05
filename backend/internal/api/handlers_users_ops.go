@@ -242,6 +242,24 @@ func (a *API) handleUsersBulk(w http.ResponseWriter, r *http.Request) {
 		}
 		targets = append(targets, target{user: *u, router: rc})
 	}
+	// N°23 (W1) — la suppression groupée n'emporte pas le stock revendeur :
+	// tout-le-lot ou rien (cohérent avec les refus idempotents N°20/N°22),
+	// compte seul dans le message — jamais les codes réels. La voie propre :
+	// reprise (N°23) ou retour de stock par le revendeur (N°20).
+	if req.Action == "delete" {
+		nAlloc := 0
+		for _, tg := range targets {
+			if tg.user.ResellerID != "" {
+				nAlloc++
+			}
+		}
+		if nAlloc > 0 {
+			a.store.Unlock()
+			writeErr(w, http.StatusConflict,
+				fmt.Sprintf("Suppression impossible : %d ticket(s) sélectionné(s) sont attribués à un revendeur — effectuez une reprise (ou faites-les retourner par le revendeur) avant de supprimer.", nAlloc))
+			return
+		}
+	}
 	for _, tg := range targets {
 		u := findUserScoped(db, tg.user.ID, acc)
 		if u == nil { // disparu entre-temps (course interne)
@@ -451,6 +469,13 @@ func (a *API) handleUsersCleanup(w http.ResponseWriter, r *http.Request) {
 	targets := []target{}
 	for _, u := range db.HotspotUsers {
 		if u.AccountID != acc || u.Status != "expired" {
+			continue
+		}
+		// N°23 (W1) — les tickets revendeur ne sont pas purgés en silence par
+		// le nettoyage, même expirés : ils restent la trace du stock confié
+		// (le revendeur les voit, le gérant les récupère via la reprise N°23,
+		// puis peut les supprimer individuellement).
+		if u.ResellerID != "" {
 			continue
 		}
 		targets = append(targets, target{id: u.ID, username: u.Username})

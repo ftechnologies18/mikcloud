@@ -5,6 +5,44 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-05 — N°23 : reprise gérant (W6), verrou de destruction du stock revendeur (W1), visibilité de l'allocation (W3/W4)
+
+### Ajoutés
+- **Reprise gérant** (POST /api/vouchers/reprise, rôle 2) — miroir exact du
+  retour de stock du revendeur (N°20) mais à l'INITIATIVE du gérant (revendeur
+  absent, litige, désengagement) : le ticket invendu redevient du stock direct
+  (`ResellerID`/`ResellerName`/`CreditSale` vidés) ; l'argent suit le retour —
+  prépayé : portefeuille recrédité du prix GROS du stock VIVANT + UNE
+  transaction « credit » agrégée par revendeur ; dépôt-vente : aucun recrédit ;
+  expiré/désactivé : aucun recrédit (le ticket a péri chez le revendeur) mais
+  la reprise ferme la boucle (suppression ensuite possible). Tickets DÉJÀ
+  REMIS au client : refusés en 409 tout-le-lot — la créance est née, le ticket
+  en est la preuve. Trace d'activité avec décompte par revendeur et recrédits.
+  UI : action « Reprendre au stock » sur les tickets revendeur invendus +
+  dialogue de confirmation explicite (recrédit / dépôt-vente), toasts de
+  résultat.
+- **Filtre « Détenteur »** sur la liste des vouchers (W3/W4) : Tous / Stock
+  direct (gérant) / Alloués aux revendeurs — paramètre `holder` additif des
+  listes (contrat préservé), KPI « Alloués » ajouté à la bande de statistiques.
+
+### Corrigés
+- **Verrou de destruction du stock revendeur (W1)** : un ticket attribué à un
+  revendeur n'est plus supprimable par AUCUNE porte console — suppression
+  unitaire (403 `reseller_voucher_locked`), suppression groupée (409
+  tout-le-lot), suppression d'un lot entier (409, comptes sans codes réels) ;
+  le nettoyage des expirés épargne désormais les tickets revendeur (même
+  expirés, ils restent la trace du stock confié). Après reprise ou retour de
+  stock, toutes les portes se rouvrent normalement — aucun zombie.
+
+### Sécurité
+- Message de la garde de code N°22 mis à jour : la voie propre est désormais
+  « reprise OU retour de stock ».
+- Tests : `handlers_reprise_test.go` (recrédit prépayé, dépôt-vente, refus
+  all-or-nothing, boucle fermée expiré→suppression, gardes W1 unitaire/bulk/
+  lot/cleanup, filtre holder) ; E2E N°23 (reprise 2 tickets → recrédit
+  vérifié sur le portefeuille, gardes 403/409, filtres détenteur, boucle
+  fermée). CI 5/5 requis avant push.
+
 ## 2026-09-05 — N°22 : les codes des tickets revendeur ne fuient plus par la console gérant
 
 ### Corrigés

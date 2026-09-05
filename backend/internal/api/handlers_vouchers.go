@@ -113,6 +113,156 @@ func (a *API) handleVouchersPrint(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// vouchersRepriseRequest — corps de POST /api/vouchers/reprise.
+type vouchersRepriseRequest struct {
+	IDs []string `json:"ids"`
+}
+
+// handleVouchersReprise — N°23 (W6) — reprise initiée par le GÉRANT : il
+// reprend au revendeur des tickets encore invendus (revendeur absent,
+// litige, désengagement). Miroir exact du retour de stock du revendeur
+// (N°20, handleSellReturn) mais à l'initiative du gérant (requireRole 2),
+// scopé au compte :
+//
+//   - règle d'or 1 (N°18) : changer la propriété, jamais dupliquer —
+//     ResellerID/ResellerName/CreditSale vidés (retour au stock direct) ;
+//   - règle d'or 4 : l'argent suit le retour, mais seulement pour du stock
+//     VIVANT — actif : prépayé → portefeuille recrédité du prix GROS
+//     (u.Price, ce qui avait été débité) + UNE Transaction « credit »
+//     agrégée par revendeur ; dépôt-vente → aucun recrédit (rien n'avait
+//     été débité à la prise) ; expiré/désactivé → aucun recrédit (le
+//     ticket a péri chez le revendeur) : la reprise sert alors à fermer la
+//     boucle (le gérant peut nettoyer, le revendeur voit le stock partir) ;
+//   - règle d'or 5 : Activity avec le gérant comme acteur (audit, décompte
+//     par revendeur et recrédits).
+//
+// Refus (409, tout-le-lot — cohérent avec les refus idempotents N°20) :
+// tickets déjà REMIS au client (SoldAt != « » — la créance est née, le
+// ticket en est la preuve : la reprise n'existe pas pour du stock vendu) et
+// tickets inconnus/hors compte/stock direct du gérant.
+func (a *API) handleVouchersReprise(w http.ResponseWriter, r *http.Request) {
+	// P3 — compte expiré : écritures métier refusées (lecture seule).
+	if !a.guardAccountWrite(w, r) {
+		return
+	}
+	acc := accountScope(r)
+	var req vouchersRepriseRequest
+	if err := decodeBody(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
+		return
+	}
+	if len(req.IDs) == 0 {
+		writeErr(w, http.StatusBadRequest, "Aucun ticket sélectionné pour la reprise")
+		return
+	}
+	if len(req.IDs) > 500 {
+		writeErr(w, http.StatusBadRequest, "Trop de tickets en une fois (500 maximum)")
+		return
+	}
+	wanted := make(map[string]bool, len(req.IDs))
+	for _, id := range req.IDs {
+		if id = strings.TrimSpace(id); id != "" {
+			wanted[id] = true
+		}
+	}
+	if len(wanted) == 0 {
+		writeErr(w, http.StatusBadRequest, "Aucun ticket sélectionné pour la reprise")
+		return
+	}
+
+	now := time.Now().UTC()
+	a.store.Lock()
+	defer a.store.Unlock()
+	db := a.store.Data()
+
+	// Résolution scopée : chaque id doit être un ticket ATTRIBUÉ du compte
+	// (ResellerID != "", AccountID == acc, Kind == "voucher").
+	found := map[string]*model.HotspotUser{}
+	for i := range db.HotspotUsers {
+		u := &db.HotspotUsers[i]
+		if !wanted[u.ID] || u.ResellerID == "" || u.AccountID != acc || u.Kind != "voucher" {
+			continue
+		}
+		found[u.ID] = u
+	}
+	rejected := []string{}
+	for id := range wanted {
+		u := found[id]
+		switch {
+		case u == nil:
+			rejected = append(rejected, id) // inconnu, hors compte ou stock direct
+		case u.SoldAt != "":
+			rejected = append(rejected, u.Username) // déjà remis au client
+		}
+	}
+	if len(rejected) > 0 {
+		writeErr(w, http.StatusConflict,
+			fmt.Sprintf("Ticket(s) non reprisable(s) : %s (déjà remis au client, stock direct ou introuvable)",
+				strings.Join(rejected, ", ")))
+		return
+	}
+
+	// Décompte par revendeur + recrédit du stock VIVANT (prix GROS).
+	byReseller := map[string]int{}  // resellerID → tickets repris
+	resNames := map[string]string{} // resellerID → nom (audit)
+	liveValue := map[string]int{}   // resellerID → valeur recréditable (stock actif)
+	for _, u := range found {
+		byReseller[u.ResellerID]++
+		resNames[u.ResellerID] = u.ResellerName
+		if model.EffectiveStatus(u, now) == "active" {
+			liveValue[u.ResellerID] += u.Price
+		}
+	}
+	credited := 0
+	for resID, total := range liveValue {
+		res := findResellerScoped(db, resID, acc)
+		if res == nil || total == 0 || res.PaymentMode == "deposit" {
+			continue // dépôt-vente ou revendeur disparu : aucun recrédit
+		}
+		res.Credit += total
+		credited += total
+		db.Transactions = append([]model.Transaction{{
+			ID: model.NewID("tx-"), AccountID: acc, Type: "credit",
+			ResellerID: resID, ResellerName: res.Name, Amount: total,
+			Note: fmt.Sprintf("Reprise par le gérant : %d voucher(s) repris à %s (Mode Vente)",
+				byReseller[resID], res.Name),
+			At: model.NowISO(),
+		}}, db.Transactions...)
+	}
+
+	// Application — retour au stock direct (règle d'or 1).
+	returned := make([]string, 0, len(found))
+	for _, u := range found {
+		returned = append(returned, u.Username)
+		u.ResellerID, u.ResellerName = "", ""
+		u.CreditSale = false
+	}
+	sort.Strings(returned) // message d'audit stable
+
+	details := make([]string, 0, len(byReseller))
+	for resID, n := range byReseller {
+		label := fmt.Sprintf("%s : %d ticket(s)", resNames[resID], n)
+		if c := liveValue[resID]; c > 0 {
+			label += fmt.Sprintf(", recrédité : %d", c)
+		} else {
+			label += ", aucun recrédit"
+		}
+		details = append(details, label)
+	}
+	sort.Strings(details)
+	a.logActivityBy(r, db, acc, "voucher",
+		fmt.Sprintf("Reprise de stock : %d voucher(s) [%s] repris au stock direct par le gérant — %s",
+			len(returned), strings.Join(returned, ", "), strings.Join(details, " ; ")))
+	a.store.Save()
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"returned": len(returned),
+		"credited": credited,
+		"codes":    returned,
+		"details":  details,
+	})
+}
+
 func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 	// P3 — compte expiré : écritures métier refusées (lecture seule).
 	if !a.guardAccountWrite(w, r) {
@@ -472,6 +622,23 @@ func (a *API) handleVouchersBatchDelete(w http.ResponseWriter, r *http.Request) 
 	a.store.Unlock()
 	if len(targets) == 0 {
 		writeErr(w, http.StatusNotFound, "Lot introuvable")
+		return
+	}
+	// N°23 (W1) — un lot contenant des tickets revendeur ne se supprime pas
+	// en silence : ce stock appartient au revendeur (créance à la remise
+	// client). Compte seul dans le message — jamais les codes réels (le
+	// message remonte dans les toasts console, masquage N°22 maintenu).
+	// La voie propre : reprise (POST /api/vouchers/reprise) ou retour de
+	// stock initié par le revendeur (Mode Vente), puis suppression.
+	allocated := 0
+	for _, u := range targets {
+		if u.ResellerID != "" {
+			allocated++
+		}
+	}
+	if allocated > 0 {
+		writeErr(w, http.StatusConflict,
+			fmt.Sprintf("Suppression impossible : %d ticket(s) de ce lot sont attribués à un revendeur — effectuez une reprise (ou faites-les retourner par le revendeur) avant de supprimer.", allocated))
 		return
 	}
 

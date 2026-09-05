@@ -4,7 +4,7 @@
 > publique `/join/{token}` accessible **depuis le WiFi du hotspot, avant
 > toute authentification**, pour que le scan du QR fonctionne sur place
 > (campus, écoles, administrations, entreprises). Dernière mise à jour :
-> N°29 (2026-09-05).
+> N°31 (2026-09-05).
 
 > **⚙️ Automatisation (N°29)** : les routeurs en mode **AGENT** appliquent
 > cette configuration automatiquement — bloc inclus dans le script
@@ -128,6 +128,31 @@ Si l'étape 2 échoue → §5.
 | Le scan ouvre le portail captif au lieu du lien | Comportement normal : l'OS ouvre le portail à la connexion du WiFi | Fermer le portail, scanner depuis l'appareil photo (ou saisir l'URL) — le lien s'ouvre alors dans le navigateur normal |
 | Erreur TLS sur la page | Horloge de l'appareil fausse, ou proxy HTTP explicite configuré sur le hotspot pour ces domaines | Horloge correcte ; ne jamais placer de proxy explicite pour les domaines du walled-garden |
 | La page s'ouvre mais affiche « Lien introuvable » / verrouillé | Ce n'est **pas** un problème de walled-garden : lien révoqué, expiré ou saturé côté serveur | Console → Inscriptions → Liens & QR : vérifier le badge d'état du lien |
+
+### 5-bis. Mode AGENT — aucune règle sur le routeur : checklist de diagnostic (N°31)
+
+En mode agent, les règles sont posées par le cloud via la commande
+`walled_garden` servie au check-in (toutes les 45 s). Si
+`WinBox → IP → Hotspot → Walled Garden` reste vide alors que le routeur est
+en mode agent, vérifier **dans cet ordre** :
+
+| # | Vérification | Comment | Si c'est le problème |
+|---|---|---|---|
+| 1 | Le backend Render tourne bien en N°29+ | Le déploiement Render est déclenché par la CI (job « Déploiement backend Render ») pour tout push modifiant `backend/` | Attendre la fin du déploiement (quelques minutes) puis un check-in (≤ 45 s) |
+| 2 | Le routeur est en mode **agent** et connecté | Console → Routeurs : « Dernière connexion » récente (≤ quelques minutes) | (Re)coller le script d'installation dans Terminal (WinBox) |
+| 3 | RouterOS **≥ 7.19** | WinBox → System → Resources → Version (aussi visible console → Routeurs) | Mettre à jour (System → Packages) puis réinstaller l'agent — sinon le cloud refuse TOUTE commande (TLS strict), sans autre symptôme |
+| 4 | Le Journal montre l'application | Console → Journal : « Walled-garden d'inscription publique appliqué sur … » (succès) ou « Commande walled_garden ÉCHOUÉE » (échec côté routeur) | Échec → vérifier le paquet hotspot actif ; la commande est retentée au check-in suivant |
+| 5 | Commande perdue « en vol » | Corrigé en N°31 : un `walled_garden` envoyé sans rapport depuis > 10 min repart automatiquement en file (idempotent) | Rien à faire après mise à jour : auto-guérison en ≤ 2 check-ins |
+
+Notes de terrain :
+
+- **Piège n° 1** : un routeur < 7.19 apparaît « En ligne » dans la console
+  (le contact de connexion passe) alors qu'il ne reçoit AUCUNE commande —
+  ni walled-garden, ni WiFi jetable, ni users/vouchers. N°31 journalise
+  désormais ce refus dans le Journal au moment de l'installation de l'agent.
+- Le même mécanisme couvre les **deux** modules (inscriptions N°27 ET WiFi
+  jetable N°28 : mêmes domaines page + API) — si l'un est absent, l'autre
+  l'est aussi : une seule cause, une seule correction.
 
 ## 6. Périmètre de sécurité (ce que le walled-garden ouvre — et n'ouvre pas)
 

@@ -8,6 +8,7 @@ package api
 import (
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"mikcloud/hotspot-api/internal/agent"
 	"mikcloud/hotspot-api/internal/model"
@@ -109,5 +110,38 @@ func TestEnsureWalledGardenLocked(t *testing.T) {
 	ensureWalledGardenLocked(db, router, nil)
 	if len(db.Commands) != before {
 		t.Fatal("aucun domaine → aucune commande attendue")
+	}
+}
+
+// TestRequeueStaleWalledGarden — audit N°31 : un walled_garden « sent » sans
+// rapport depuis plus de staleSentLimit (rapport perdu : blip réseau, reboot
+// en cours de check-in…) doit repartir en file — sinon il restait « sent » à
+// jamais, ensureWalledGardenLocked le croyant « en vol », et le walled-garden
+// n'était JAMAIS appliqué sur le routeur. La re-exécution est sûre : le bloc
+// est idempotent (remove+add des seules règles marquées mikcloud-wg).
+func TestRequeueStaleWalledGarden(t *testing.T) {
+	old := time.Now().Add(-staleSentLimit - time.Minute).Format(time.RFC3339)
+	fresh := time.Now().Format(time.RFC3339)
+	db := &model.DB{Commands: []model.Command{
+		{ID: "c-old", RouterID: "r-z", Kind: model.CmdWalledGarden, Status: "sent", SentAt: old},
+		{ID: "c-new", RouterID: "r-z", Kind: model.CmdWalledGarden, Status: "sent", SentAt: fresh},
+	}}
+
+	requeueStaleReadsLocked(db, "r-z")
+
+	if db.Commands[0].Status != "queued" || db.Commands[0].SentAt != "" {
+		t.Fatalf("walled_garden périmée non reprise : %+v", db.Commands[0])
+	}
+	if db.Commands[1].Status != "sent" {
+		t.Fatalf("walled_garden fraîche (en vol) reprise à tort : %+v", db.Commands[1])
+	}
+
+	// Boucle complète : après reprise, ensureWalledGardenLocked ne crée
+	// PAS de doublon (la commande reprise est « en vol » à nouveau) et le
+	// FIFO la sert telle quelle au check-in courant.
+	router := &model.Router{ID: "r-z", AccountID: "acc-z"}
+	ensureWalledGardenLocked(db, router, []string{"a.example"})
+	if len(db.Commands) != 2 {
+		t.Fatalf("doublon après reprise : %d commande(s), attendu 2", len(db.Commands))
 	}
 }

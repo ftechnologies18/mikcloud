@@ -5,6 +5,28 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-05 — N°31 : audit walled-garden agent — reprise des commandes perdues + diagnostic visible
+
+### Corrigé (audit en profondeur suite à « aucune règle sur un routeur client »)
+- **Commande `walled_garden` perdue « en vol » = deadlock silencieux** : un
+  rapport jamais reçu (blip réseau entre l'import et le fetch de rapport,
+  reboot en cours de check-in…) laissait la commande « sent » à jamais —
+  le cloud la croyant en cours, il ne la re-file jamais : walled-garden
+  jamais appliqué, aucun signal. Elle est désormais reprise automatiquement
+  après 10 min sans rapport (bloc idempotent par conception, marqueur
+  `mikcloud-wg`), comme les lectures — auto-guérison en ≤ 2 check-ins.
+- **Routeur RouterOS < 7.19 invisible** : au moment de l'installation de
+  l'agent, le refus (TLS strict) est désormais journalisé dans le Journal du
+  gérant — avant, le routeur semblait « En ligne » mais restait muet à
+  jamais (aucune commande, aucun symptôme côté console).
+
+### Documentation
+- RUNBOOK-WALLED-GARDEN §5-bis : checklist de diagnostic en 5 points pour
+  « aucune règle sur le routeur en mode agent » (déploiement, mode agent +
+  dernière connexion, version ≥ 7.19, Journal, commande perdue) + note
+  terrain : inscriptions (N°27) et WiFi jetable (N°28) partagent le MÊME
+  walled-garden — une seule cause possible quand il manque.
+
 ## 2026-09-05 — N°29 : walled-garden d'inscription publique automatisé par l'agent (routeurs neufs ET déjà en ligne)
 
 ### Le runbook N°27-D appliqué par le système lui-même

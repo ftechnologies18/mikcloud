@@ -231,9 +231,15 @@ func routerByToken(db *model.DB, token string) *model.Router {
 	return nil
 }
 
-// staleSentReadKinds — kinds de LECTURE dont la re-exécution est sans
-// effet de bord (idempotents) : seuls ceux-là sont repris s'ils restent
-// « sent » sans rapport (les écritures ne sont jamais re-exécutées).
+// staleSentReadKinds — kinds dont la re-exécution est sans effet de bord
+// (idempotents) : seuls ceux-là sont repris s'ils restent « sent » sans
+// rapport (les écritures non idempotentes ne sont jamais re-exécutées).
+// Audit N°31 : walled_garden rejoint la liste — le bloc est conçu
+// idempotent (remove+add des seules règles marquées mikcloud-wg). Sans
+// cela, UN rapport perdu (blip réseau entre l'import et le fetch de
+// rapport, reboot en cours de check-in…) laissait la commande « sent » à
+// jamais : ensureWalledGardenLocked la croyait « en vol » et ne la
+// re-filait jamais — walled-garden jamais appliqué, en silence.
 var staleSentReadKinds = map[string]bool{
 	model.CmdReadState:     true,
 	model.CmdReadDhcp:      true,
@@ -244,14 +250,16 @@ var staleSentReadKinds = map[string]bool{
 	model.CmdReadResources: true,
 	model.CmdImportHotspot: true,
 	model.CmdPing:          true,
+	model.CmdWalledGarden:  true, // N°31 : idempotent (marqueur mikcloud-wg)
 }
 
 // staleSentLimit — au-delà de cette ancienneté sans rapport, une commande
-// de lecture « sent » est considérée perdue et repart en file.
+// idempotente « sent » est considérée perdue et repart en file.
 const staleSentLimit = 10 * time.Minute
 
-// requeueStaleReadsLocked — remet en file les lectures « sent » zombies
-// (sous verrou ; Save à charge de l'appelant, comme le reste du flux).
+// requeueStaleReadsLocked — remet en file les commandes IDEMPOTENTES
+// « sent » zombies — lectures ET walled_garden (sous verrou ; Save à charge
+// de l'appelant, comme le reste du flux).
 func requeueStaleReadsLocked(db *model.DB, routerID string) {
 	lim := time.Now().Add(-staleSentLimit).Format(time.RFC3339)
 	changed := false
@@ -264,7 +272,7 @@ func requeueStaleReadsLocked(db *model.DB, routerID string) {
 		}
 	}
 	if changed {
-		log.Printf("agent/cmd: commandes de lecture « sent » sans rapport reprises en file (routeur %s)", routerID)
+		log.Printf("agent/cmd: commandes idempotentes « sent » sans rapport reprises en file (routeur %s)", routerID)
 	}
 }
 
@@ -499,6 +507,13 @@ func (a *API) handleAgentRegister(w http.ResponseWriter, r *http.Request) {
 		// son journal local) ; le message détaille la marche à suivre.
 		if !agent.VersionAtLeast(router.Version, 7, 19) {
 			name := router.Name
+			// Audit N°31 — le refus est rendu VISIBLE du gérant (le journal
+			// d'activité est sa seule fenêtre côté console : sans lui, un
+			// routeur < 7.19 semble « en ligne » mais reste muet à jamais).
+			registerVer := router.Version
+			a.logActivity(db, router.AccountID, "router",
+				"Agent « "+name+" » refusé : RouterOS "+registerVer+" < 7.19 requis (validation TLS stricte) — mettez à jour le routeur (System → Packages) puis réinstallez l'agent")
+			a.store.Save()
 			a.store.Unlock()
 			log.Printf("agent/register: REFUS RouterOS %q (< 7.19, TLS requis) — routeur « %s »", router.Version, name)
 			writeErrCode(w, http.StatusUpgradeRequired, "routeros_too_old",

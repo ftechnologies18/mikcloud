@@ -5,6 +5,37 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-06 — N°40 : vague Dependabot #16-#20 traitée — 4 majeures fusionnées, ESLint 10 écarté
+
+### Quatre bumps majeurs adoptés (CI verte branche par branche, production vérifiée)
+- **uuid 11 → 14** (#16), **lucide-react 0.525 → 1.39** (#19), 
+  **react-syntax-highlighter 15.6 → 16.1** (#20), **@mdxeditor/editor 3.52 → 4.2** (#17) :
+  chaque branche avait sa CI complète verte (lint + typecheck tsgo + build +
+  E2E Playwright) ; fusions squash successives — `bun.lock` auto-fusionne
+  (sections alphabétiques disjointes) — et CI main + Vercel vérifiés après
+  chaque étape. Aucun code consommateur impacté : les usages du repo restent
+  compatibles avec les API v14/v1/v16/v4.
+- **Bilan dépendances frontend** : après les vagues N°35 (52 updates) et
+  N°40 (4 majeures), l'inventaire Dependabot est à zéro PR ouverte côté bun.
+
+### ESLint 9 → 10 (#18) : écarté proprement, écosystème pas prêt
+- Diagnostic complet du crash CI (`Class extends value undefined` dans
+  `@typescript-eslint/utils/.../FlatESLint.js`) : **deux couches**.
+  1. typescript-eslint 8.53 ne supportait pas ESLint 10 — **résolu** : la
+     version 8.69.0 (peer `^10.0.0` ajouté par l'écosystème) est compatible,
+     validé en local (résolution forcée `typescript-eslint ^8.69.0` +
+     purge de la copie imbriquée 8.53 du lockfile — le crash initial
+     disparaît, révélant le bloqueur suivant).
+  2. **Bloqueur dur restant** : `eslint-plugin-react` 7.37.5 (latest, peer
+     max `^9.7`) plante en runtime sous ESLint 10
+     (`getReactVersionFromContext`), et `react-hooks` 7.0.1,
+     `jsx-a11y` 6.10.2, `import` 2.32.0 restent peer `^9` — **5 plugins sur
+     6 incompatibles**. La PR serait structurellement rouge, comme #13 (TS 7).
+- Même traitement que le chantier TS 7 : `.github/dependabot.yml` ignore
+  désormais `eslint >= 10` (pas de PR rouge hebdomadaire), PR #18 fermée avec
+  le diagnostic complet. Ré-adoption quand `eslint-config-next` (ou
+  `eslint-plugin-react`) supportera ESLint 10.
+
 ## 2026-09-06 — N°36 : TypeScript 7 natif (compilateur Go) — typecheck gate CI + passif vagues 2-3 corrigé
 
 ### Compilateur natif adopté, API JS conservée

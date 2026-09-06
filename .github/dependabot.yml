@@ -44,6 +44,18 @@ updates:
       - dependency-name: "typescript"
         versions:
           - ">=7.0.0"
+      # ESLint 10 : la chaîne de plugins d'eslint-config-next 16.3.4 ne le
+      # supporte pas encore (état écosystème sept. 2026) — PR #18 fermée.
+      # typescript-eslint 8.69 est OK (peer ^10 ajouté, sauvegarde locale
+      # validée) MAIS eslint-plugin-react 7.37.5 (latest, peer max ^9.7)
+      # plante en runtime avec ESLint 10 (getReactVersionFromContext), et
+      # eslint-plugin-react-hooks 7.0.1, eslint-plugin-jsx-a11y 6.10.2,
+      # eslint-plugin-import 2.32.0 restent peer ^9 — cinq plugins sur six
+      # incompatibles : la PR serait structurellement rouge. Ré-adoption
+      # quand eslint-config-next (ou eslint-plugin-react) supportera ESLint 10.
+      - dependency-name: "eslint"
+        versions:
+          - ">=10.0.0"
 
   # Actions GitHub (ci.yml) — sécurité de la chaîne CI elle-même.
   - package-ecosystem: github-actions

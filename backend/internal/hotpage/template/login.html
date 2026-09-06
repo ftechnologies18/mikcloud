@@ -790,20 +790,36 @@
                     logoImg.alt = 'Logo ' + cfg.tenantName;
                 }
 
-                // 2. Bouton « S'inscrire » : remplace laksa19 par le lien join MikCloud
-                // avec MAC pré-injectée (alimente enfin le quota MAC N°33).
+                // 2. Bouton d'inscription (N°46) : l'affichage est piloté par le
+                // réglage console tenant.joinButton, exposé au portail via le
+                // champ joinEnabled de la config (fallback inliné ET fetch live).
+                // Trois états :
+                //   - activé (défaut effectif) + lien d'inscription publique actif
+                //     lié au routeur → le bouton Mikhmon devient « S'inscrire »
+                //     (?mac= pré-injectée, alimente le quota MAC N°33) ;
+                //   - activé mais AUCUN lien actif → aucun bouton (pas de cible
+                //     valide à ouvrir) ;
+                //   - désactivé → aucun bouton : le reliquat Mikhmon « Scanner un
+                //     QR Code » (lien externe laksa19 sans fonction métier MikCloud)
+                //     est retiré du DOM.
+                // joinEnabled !== false : undefined (vieux fallback inliné
+                // antérieur au N°46) = activé — comportement historique préservé.
                 var btnQr = document.querySelector('.btn-qr');
-                if (btnQr && cfg.joinUrl) {
-                    var joinHref = cfg.joinUrl + (cfg.joinUrl.indexOf('?') >= 0 ? '&' : '?') + 'mac=' + encodeURIComponent(clientMac);
-                    btnQr.textContent = "S'inscrire";
-                    btnQr.setAttribute('href', joinHref);
-                    // laksa19 ouvrait window.location — on garde le comportement
-                    // (navigation same-tab, pas de popup bloqué en CNA).
-                    btnQr.removeAttribute('onclick');
-                    btnQr.addEventListener('click', function (ev) {
-                        ev.preventDefault();
-                        window.location.href = joinHref;
-                    });
+                if (btnQr) {
+                    if (cfg.joinEnabled !== false && cfg.joinUrl) {
+                        var joinHref = cfg.joinUrl + (cfg.joinUrl.indexOf('?') >= 0 ? '&' : '?') + 'mac=' + encodeURIComponent(clientMac);
+                        btnQr.textContent = "S'inscrire";
+                        // laksa19 ouvrait window.location vers une URL externe —
+                        // on remplace par le lien join MikCloud (navigation
+                        // same-tab, pas de popup bloqué en CNA).
+                        btnQr.removeAttribute('onclick');
+                        btnQr.addEventListener('click', function (ev) {
+                            ev.preventDefault();
+                            window.location.href = joinHref;
+                        });
+                    } else {
+                        btnQr.remove();
+                    }
                 }
 
                 // 3. Bandeau « WiFi offert » : inséré en tête du login-section si

@@ -28,6 +28,10 @@ type tenantPut struct {
 	BannerURL             *string `json:"bannerUrl"`
 	ExpiryPolicyMode      *string `json:"expiryPolicyMode"`
 	ExpiryPolicyAfterDays *int    `json:"expiryPolicyAfterDays"`
+	// N°46 — bouton « S'inscrire » du portail captif (repli nested du
+	// champ plat : le corps défensif du front envoie les deux formes, le
+	// plat prime).
+	JoinButton *bool `json:"joinButton"`
 	// Audit purge/résurgence — repli nested du champ plat (corps défensif
 	// du front : les deux formes sont envoyées, le plat prime).
 	AutoImportRouterUsers *bool `json:"autoImportRouterUsers"`
@@ -46,6 +50,9 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		BannerURL             *string `json:"bannerUrl"`
 		ExpiryPolicyMode      *string `json:"expiryPolicyMode"`
 		ExpiryPolicyAfterDays *int    `json:"expiryPolicyAfterDays"`
+		// N°46 — bouton « S'inscrire » du portail captif (nil = inchangé ;
+		// défaut effectif ON — cf. Tenant.JoinButtonEnabled).
+		JoinButton *bool `json:"joinButton"`
 		// Audit purge/résurgence — import automatique des utilisateurs
 		// créés hors MikCloud (nil = inchangé ; défaut effectif ON).
 		AutoImportRouterUsers *bool `json:"autoImportRouterUsers"`
@@ -61,6 +68,8 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	name, currency, timezone, waveLink := req.Name, req.Currency, req.Timezone, req.WaveLink
 	dnsName, logoURL, expiryMode, expiryAfterDays := req.DNSName, req.LogoURL, req.ExpiryPolicyMode, req.ExpiryPolicyAfterDays
 	bannerURL := req.BannerURL
+	// N°46 — même résolution plat > imbriqué pour le bouton d'inscription.
+	joinButton := req.JoinButton
 	// Audit purge — même résolution plat > imbriqué pour le réglage d'import.
 	autoImport := req.AutoImportRouterUsers
 	if req.Tenant != nil {
@@ -90,6 +99,9 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		}
 		if expiryAfterDays == nil {
 			expiryAfterDays = req.Tenant.ExpiryPolicyAfterDays
+		}
+		if joinButton == nil {
+			joinButton = req.Tenant.JoinButton
 		}
 		if autoImport == nil {
 			autoImport = req.Tenant.AutoImportRouterUsers
@@ -164,6 +176,12 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if expiryAfterDays != nil {
 		settings.Tenant.ExpiryPolicyAfterDays = *expiryAfterDays
+	}
+	// N°46 — le réglage du bouton « S'inscrire » est posé explicitement
+	// (le nil reste « inchangé » ; défaut effectif ON via
+	// Tenant.JoinButtonEnabled pour les comptes qui ne l'ont jamais touché).
+	if joinButton != nil {
+		settings.Tenant.JoinButton = joinButton
 	}
 	// Audit purge/résurgence — le réglage d'import automatique est posé
 	// explicitement (le nil reste « inchangé », la valeur effective par

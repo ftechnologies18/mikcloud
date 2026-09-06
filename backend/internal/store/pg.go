@@ -630,6 +630,10 @@ func (p *PG) ensureSchema() error {
 		// Audit purge — réglage par compte : import automatique des
 		// utilisateurs créés hors MikCloud (défaut ON — compatibilité).
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS auto_import_router_users BOOLEAN NOT NULL DEFAULT TRUE`,
+		// N°46 — bouton « S'inscrire » du portail captif, réglage par
+		// compte (défaut ON — compatibilité zéro-migration : les lignes
+		// existantes passent à TRUE explicite au premier Save).
+		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS join_button BOOLEAN NOT NULL DEFAULT TRUE`,
 		// N°7 — rôles équipe + audit : acteur des actions du journal, et
 		// renommage du rôle historique « admin » → « platform_admin » (les
 		// tokens existants portant « admin » restent acceptés côté API).
@@ -920,7 +924,8 @@ func (p *PG) loadSettings(db *model.DB) error {
                         dns_name, logo_url, banner_url, expiry_policy_mode, expiry_policy_after_days,
                         sub_plan_id, sub_status, sub_period_start, sub_period_end, sub_last_amount,
                         sub_router_slots, sub_last_paid_at, last_tick,
-                        platform_name, platform_register_open, platform_register_key, auto_import_router_users
+                        platform_name, platform_register_open, platform_register_key, auto_import_router_users,
+                        join_button
                  FROM settings`)
 	if err != nil {
 		return err
@@ -942,6 +947,8 @@ func (p *PG) loadSettings(db *model.DB) error {
 			lastTick                                   sql.NullTime
 			// Audit purge - reglage d'import automatique (defaut ON).
 			autoImport bool
+			// N°46 - reglage du bouton « S'inscrire » du portail (defaut ON).
+			joinButton bool
 			// I (paramètres plateforme) — uniquement sur le compte principal.
 			platformName         string
 			platformRegisterOpen bool
@@ -952,7 +959,8 @@ func (p *PG) loadSettings(db *model.DB) error {
 			&dnsName, &logoURL, &bannerURL, &expiryMode, &expiryAfterDays,
 			&subPlanID, &subStatus, &subPeriodStart, &subPeriodEnd, &subLastAmount,
 			&subRouterSlots, &subLastPaidAt, &lastTick,
-			&platformName, &platformRegisterOpen, &platformRegisterKey, &autoImport); err != nil {
+			&platformName, &platformRegisterOpen, &platformRegisterKey, &autoImport,
+			&joinButton); err != nil {
 			return err
 		}
 		if accID == "" {
@@ -983,6 +991,10 @@ func (p *PG) loadSettings(db *model.DB) error {
 		// Audit purge - valeur lue EXPLICITE (colonne NOT NULL) : le
 		// reglage survit aux redemarrages (le pointeur est pose).
 		settings.AutoImportRouterUsers = &autoImport
+		// N°46 - meme pattern : valeur lue EXPLICITE (colonne NOT NULL
+		// DEFAULT TRUE), le reglage du bouton « S'inscrire » survit aux
+		// redemarrages.
+		settings.Tenant.JoinButton = &joinButton
 		db.SettingsByAccount[accID] = settings
 		if lastTick.Valid && db.LastTick.IsZero() {
 			db.LastTick = lastTick.Time
@@ -1160,8 +1172,8 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
                                dns_name, logo_url, banner_url, expiry_policy_mode, expiry_policy_after_days,
                                sub_plan_id, sub_status, sub_period_start, sub_period_end, sub_last_amount,
                                sub_router_slots, sub_last_paid_at, last_tick,
-                               platform_name, platform_register_open, platform_register_key, auto_import_router_users)
-                         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+                               platform_name, platform_register_open, platform_register_key, auto_import_router_users, join_button)
+                         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
                          ON CONFLICT (id) DO UPDATE SET
                            account_id                = EXCLUDED.account_id,
                            tenant_name               = EXCLUDED.tenant_name,
@@ -1187,7 +1199,8 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
                            platform_name             = EXCLUDED.platform_name,
                            platform_register_open    = EXCLUDED.platform_register_open,
                            platform_register_key    = EXCLUDED.platform_register_key,
-                           auto_import_router_users = EXCLUDED.auto_import_router_users`,
+                           auto_import_router_users = EXCLUDED.auto_import_router_users,
+                           join_button              = EXCLUDED.join_button`,
 			accID, s.Tenant.Name, s.Tenant.Currency, s.Tenant.Timezone,
 			s.Plan.Name, s.Plan.MaxRouters, s.Plan.MaxUsers,
 			s.Tenant.WaveLink, s.Tenant.DNSName, s.Tenant.LogoURL, s.Tenant.BannerURL,
@@ -1195,7 +1208,7 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
 			s.Subscription.PlanID, s.Subscription.Status, s.Subscription.PeriodStart,
 			s.Subscription.PeriodEnd, s.Subscription.LastAmountFcfa,
 			s.Subscription.RouterSlots, s.Subscription.LastPaidAt, lastTick,
-			platName, platOpen, platKey, s.ImportAutoEnabled())
+			platName, platOpen, platKey, s.ImportAutoEnabled(), s.Tenant.JoinButtonEnabled())
 		if err != nil {
 			return fmt.Errorf("pg sync settings (%s) : %w", accID, err)
 		}

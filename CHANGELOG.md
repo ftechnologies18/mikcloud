@@ -5,6 +5,41 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-06 — N°46 : bouton « S'inscrire » du portail captif rendu dynamique (joinButton)
+
+### N°46 — l'option d'inscription est pilotée depuis la console gérant
+- **Constat** : sur la page hotspot hybride, le bouton « S'inscrire »
+  n'apparaissait jamais — remplacé par le reliquat Mikhmon « Scanner un QR
+  Code » (lien externe laksa19 sans fonction métier). Cause racine : le
+  `joinUrl` n'était jamais peuplé en production car `APP_PUBLIC_URL` n'était
+  pas défini sur Render (`publicFrontendURL` retournait ""), et l'affichage
+  n'était piloté par aucun réglage explicite.
+- **Backend** : nouveau réglage par compte `Tenant.JoinButton` (`*bool`,
+  nil = défaut ON — zéro-migration, même pattern que
+  `AutoImportRouterUsers`), accepté par `PUT /api/settings` (formes plate +
+  `tenant{…}`), persisté Neon (`settings.join_button BOOLEAN NOT NULL
+  DEFAULT TRUE`, DDL idempotent + scan + sync). Le PortalConfig expose la
+  valeur effective via `JoinEnabled` (`joinEnabled` du bloc config JSON,
+  SANS omitempty : true/false toujours explicite — l'absence réactiverait le
+  bouton) dans le fallback inliné ET la config live
+  (`GET /api/wifi/site/{slug}/portal`) → effet immédiat sans re-déploiement.
+- **Fix production** : `APP_PUBLIC_URL=https://mikcloud.ftci.fr` posé dans
+  `backend/render.yaml` — les liens absolus `/join/{token}` et `/wifi/{slug}`
+  sont enfin construits (`buildPortalConfig` → `publicFrontendURL`).
+- **Template** : `login.html` — logique à trois états du bouton : activé +
+  lien actif → « S'inscrire » (`?mac=$(mac-esc)`, quota MAC N°33) ; activé
+  sans lien → aucun bouton ; désactivé → aucun bouton (`btnQr.remove()`).
+  Le « Scanner un QR Code » Mikhmon ne peut plus survivre à la page.
+- **Frontend** : carte « Inscription sur le portail captif » dans Paramètres
+  → Hotspot (interrupteur + description des deux comportements + toast) ;
+  i18n FR + EN ; `updateSettings` élargi au champ `joinButton`.
+- **Tests** : `TestSettingsJoinButton` (PUT plat/nested, nil inchangé),
+  `TestPortalServeJoinButton` (JSON explicite true/false dans le login.html
+  servi), `TestWifiPortalJoinButtonDisabled` (config live reflète off sans
+  re-déploiement), `TestConfigJSONJoinEnabledAlwaysExplicit` (gèle le contrat
+  sans-omitempty), `TestLoginTemplateJoinButtonLogic` (logique 3 états dans
+  le template embarqué).
+
 ## 2026-09-06 — N°45 : bannière personnalisée du portail captif (bannerUrl)
 
 ### N°45 — la bannière du portail passe dans le PortalConfig et la console gérant

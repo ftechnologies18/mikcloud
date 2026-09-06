@@ -148,6 +148,44 @@ func TestWifiPortalFull(t *testing.T) {
 	if !strings.Contains(bodyStr, `"waveUrl":"https://pay.wave.com/m/M_x/c/ci/amount/300/"`) {
 		t.Errorf("wave URL pré-construit absent : %s", bodyStr)
 	}
+	// N°46 — le fetch live expose joinEnabled (défaut effectif ON).
+	if !strings.Contains(bodyStr, `"joinEnabled":true`) {
+		t.Errorf("joinEnabled true absent de la config live : %s", bodyStr)
+	}
+}
+
+// TestWifiPortalJoinButtonDisabled — N°46 : quand le réglage console
+// tenant.joinButton est posé à false, la config LIVE (fetch du portail au
+// chargement) expose "joinEnabled":false — le réglage s'applique SANS
+// re-déploiement sur les portails déjà déployés.
+func TestWifiPortalJoinButtonDisabled(t *testing.T) {
+	st, ts := newTestServerWithStore(t)
+	seedWifiSitePortal(t, st, "cyber-join-off", "Cyber Join Off", "", true, 100)
+
+	// Poser le réglage console : bouton d'inscription désactivé.
+	st.Lock()
+	db := st.Data()
+	off := false
+	for i := range db.WifiSites {
+		if db.WifiSites[i].Slug == "cyber-join-off" {
+			acc := db.WifiSites[i].AccountID
+			settings := db.SettingsByAccount[acc]
+			settings.Tenant.JoinButton = &off
+			db.SettingsByAccount[acc] = settings
+		}
+	}
+	st.Save()
+	st.Unlock()
+
+	resp, err := http.Get(ts.URL + "/api/wifi/site/cyber-join-off/portal")
+	if err != nil {
+		t.Fatalf("GET : %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), `"joinEnabled":false`) {
+		t.Errorf(`"joinEnabled":false absent de la config live : %s`, body)
+	}
 }
 
 // Tests CORS du portail captif : gérés dans main_test.go (TestCorsMiddlewareWifiPublicOpen,

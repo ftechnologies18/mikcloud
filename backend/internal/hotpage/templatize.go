@@ -20,6 +20,9 @@
 //	{{MIKCLOUD_JOIN_URL}}     — URL d'inscription publique liée au routeur (ou "")
 //	                            avec ?mac= laissé à ajouter côté page (la MAC est
 //	                            disponible côté routeur via $(mac-esc))
+//	                            (N°46 : l'AFFICHAGE du bouton « S'inscrire » est
+//	                            piloté par le champ joinEnabled du bloc config JSON,
+//	                            lui-même posé par le réglage console tenant.joinButton)
 //	{{MIKCLOUD_WAVE_LINK}}    — lien marchand Wave du tenant (ou "")
 //	{{MIKCLOUD_LOGO_URL}}     — logo du tenant (data URL, ou "")
 //	{{MIKCLOUD_BANNER_URL}}   — bannière du portail du tenant (data URL ≤ 500 Ko
@@ -63,6 +66,15 @@ type PortalConfig struct {
 	// (ex. https://mikcloud.ftci.fr/join/abcdef1234...). La MAC doit être
 	// ajoutée côté page (?mac=$(mac-esc)). Vide si pas de lien actif.
 	JoinURL string `json:"joinUrl,omitempty"`
+	// JoinEnabled — bouton « S'inscrire » visible sur la page (N°46).
+	// Piloté par le réglage console tenant.joinButton (défaut effectif ON,
+	// cf. model.Tenant.JoinButtonEnabled). false = AUCUN bouton
+	// d'inscription : la page retire le reliquat Mikhmon « Scanner un QR
+	// Code » du DOM. Sérialisé SANS omitempty : true/false doit toujours
+	// être EXPLICITE dans le bloc config JSON — avec omitempty, un false
+	// serait omis et la page (undefined ≠ false) réactiverait le bouton
+	// malgré le réglage du gérant.
+	JoinEnabled bool `json:"joinEnabled"`
 	// WaveLink — lien marchand Wave du tenant
 	// (ex. https://pay.wave.com/m/M_xxx/c/ci/). Vide si non configuré.
 	WaveLink string `json:"waveLink,omitempty"`

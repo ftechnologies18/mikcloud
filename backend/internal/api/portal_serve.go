@@ -132,6 +132,9 @@ func buildPortalConfig(db *model.DB, router *model.Router, r *http.Request) hotp
 		WaveLink:   settings.Tenant.WaveLink,
 		LogoURL:    settings.Tenant.LogoURL,
 		BannerURL:  settings.Tenant.BannerURL,
+		// N°46 — l'affichage du bouton « S'inscrire » est piloté par le
+		// réglage console (défaut effectif ON pour les comptes existants).
+		JoinEnabled: settings.Tenant.JoinButtonEnabled(),
 	}
 	// WifiSlug — 1er site WiFi actif lié à ce routeur.
 	for i := range db.WifiSites {
@@ -228,7 +231,11 @@ func buildPortalConfigForSite(db *model.DB, site *model.WifiSite, router *model.
 		WaveLink:   settings.Tenant.WaveLink,
 		LogoURL:    settings.Tenant.LogoURL,
 		BannerURL:  settings.Tenant.BannerURL,
-		WifiSlug:   site.Slug,
+		// N°46 — même pilotage que le fallback inliné : le fetch live
+		// prime sur le fallback, le réglage s'applique donc sans
+		// re-déploiement sur les portails des routeurs déjà déployés.
+		JoinEnabled: settings.Tenant.JoinButtonEnabled(),
+		WifiSlug:    site.Slug,
 	}
 	if origin := publicFrontendURL(r); origin != "" {
 		cfg.WifiURL = origin + "/wifi/" + site.Slug

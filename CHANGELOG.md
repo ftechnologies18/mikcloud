@@ -5,6 +5,37 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-06 — N°51 : la carte « WiFi offert » du portail suit l'état du site (activée → affichée, en pause → retirée)
+
+### N°51 — portail dynamique : si le site WiFi est désactivé, la carte téléphone disparaît
+- **Demande gérant** : l'affichage du formulaire (carte champ téléphone) sur le
+  portail captif doit être dynamique — site WiFi activé → la carte s'affiche ;
+  site désactivé → elle disparaît.
+- **Constat** : la présence de la carte n'était pilotée qu'au DÉPLOIEMENT du
+  portail (`buildPortalConfig` ne renseigne `wifiSlug` que pour un site actif)
+  et le claim refusait déjà les sites en pause (403 `site_inactive`) — mais
+  désactiver un site n'effaçait PAS la carte des portails déjà déployés (la
+  config live ne transportait pas d'état, et aucun re-déploiement n'était
+  déclenché par un toggle).
+- **Backend** : `PortalConfig.Active` (json `active`, SANS omitempty — même
+  logique que `joinEnabled` N°46 : un false omis serait ignoré par la page),
+  peuplé dans `buildPortalConfig` (site actif lié) et
+  `buildPortalConfigForSite` (état réel) ; `handleWifiPortal` répond pour un
+  site EN PAUSE avec la config fraîche du ROUTEUR (1er autre site actif, sinon
+  wifiSlug vide + active:false) — auto-réparation de la page même si le
+  fallback inliné est périmé ; création d'un site ACTIF / bascule active 1 clic
+  / changement de routeur / suppression → sig `hotspot_files` vidée → le
+  portail se re-déploie au prochain check-in agent (≤ 45 s), ce qui resynchronise
+  le fallback inliné (indispensable dans le sens « activé après coup » : un
+  fallback sans slug ne fetch jamais la config live). Garde-fou
+  `TestWifiPortalClaimDynamicN51` (flag live actif/pause/réactivation, sig vidée
+  sur create/toggle/delete, 404 après suppression).
+- **Frontend portail** (`login.html`) : bloc 5 `applyConfig` — carte claim
+  injectée si `wifiSlug` ET `active !== false` (les portails déployés avant
+  N°51 n'embarquent pas le champ : `undefined ≠ false` = carte injectée,
+  comportement historique, le fetch live corrige) ; RETIRÉE (idempotent) si
+  `active === false` ou slug vide. Le retrait est sans re-déploiement : la
+  config live transporte l'état à chaque visite.
 ## 2026-09-06 — N°52 : messages d'épuisement contextuels (upsell commercial ou ton neutre hospitalité)
 
 ### N°52 — MikCloud ne présuppose plus que l'établissement VEND du WiFi
@@ -37,24 +68,6 @@ la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 - **Tests** : suite API verte (`go test ./internal/api/`), `go vet` propre,
   ESLint frontend vert. Aucun test n'assertait les textes (seuls les codes
   machine sont contractuels).
-
-## 2026-09-06 — N°49-b : affiche à QR unique (l'ancien QR « page web » quitte l'affiche)
-
-### N°49-b — un seul QR sur l'affiche : celui qui connecte au WiFi
-- **Décision gérant** : supprimer le second QR « Page web » conservé en
-  secours au N°49. Deux QR côte à côte = hésitation au scan ; le QR de
-  connexion (N°49) redevient l'unique geste de l'affiche.
-- **Pourquoi c'est sûr** : les affiches déjà collées ne changent pas (leur QR
-  page web est imprimé sur le papier et /wifi/{slug} reste en ligne) ; le
-  repli « portail qui ne poppe pas » est repris par une ligne imprimée sous
-  le QR (« La page ne s'ouvre pas ? Ouvrez simplement votre navigateur. » —
-  le hotspot MikroTik redirige le HTTP non authentifié vers le portail) ;
-  le repli vieux téléphones reste le SSID imprimé sur l'affiche.
-- **Frontend** : `wifi-poster-dialog` — onglets « Connexion WiFi / Page web »
-  supprimés (QR unique `WIFI:T:nopass|WPA;S:..;P:..;;`, échappement spec
-  Android conservé), prop `publicUrl` retirée ; SSID vide → guidage console
-  + Impression désactivée (inchangé). Le bouton console « Copier l'URL » et
-  la page /wifi/{slug} restent inchangés.
 
 ## 2026-09-06 — N°50 : WiFi jetable — garde-fous anti-abus (plafond appareil + honeypot + quota anti-fermage IP)
 
@@ -97,6 +110,24 @@ la CI puis se déploie automatiquement (frontend Vercel, backend Render).
   (succès factice sans écriture, puis claim honnête OK),
   TestWifiClaimDeviceCap (plafond, idempotence prioritaire, claims sans
   MAC / MAC invalide, empreintes tracées). Suite backend 12/12.
+
+## 2026-09-06 — N°49-b : affiche à QR unique (l'ancien QR « page web » quitte l'affiche)
+
+### N°49-b — un seul QR sur l'affiche : celui qui connecte au WiFi
+- **Décision gérant** : supprimer le second QR « Page web » conservé en
+  secours au N°49. Deux QR côte à côte = hésitation au scan ; le QR de
+  connexion (N°49) redevient l'unique geste de l'affiche.
+- **Pourquoi c'est sûr** : les affiches déjà collées ne changent pas (leur QR
+  page web est imprimé sur le papier et /wifi/{slug} reste en ligne) ; le
+  repli « portail qui ne poppe pas » est repris par une ligne imprimée sous
+  le QR (« La page ne s'ouvre pas ? Ouvrez simplement votre navigateur. » —
+  le hotspot MikroTik redirige le HTTP non authentifié vers le portail) ;
+  le repli vieux téléphones reste le SSID imprimé sur l'affiche.
+- **Frontend** : `wifi-poster-dialog` — onglets « Connexion WiFi / Page web »
+  supprimés (QR unique `WIFI:T:nopass|WPA;S:..;P:..;;`, échappement spec
+  Android conservé), prop `publicUrl` retirée ; SSID vide → guidage console
+  + Impression désactivée (inchangé). Le bouton console « Copier l'URL » et
+  la page /wifi/{slug} restent inchangés.
 
 ## 2026-09-06 — N°49 : QR de connexion WiFi sur l'affiche (SSID du hotspot encodé, format universel WIFI:)
 

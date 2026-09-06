@@ -750,7 +750,10 @@
          - claim inline : téléphone → POST /api/wifi/site/{slug}/claim → code →
            doLogin() CHAP auto → écran « Connecté ✓ » (N°50 : la MAC du
            client accompagne le claim — plafond anti-abus par appareil —
-           et un honeypot « website » piège les bots, cf. handlers_wifi.go).
+           et un honeypot « website » piège les bots, cf. handlers_wifi.go) ;
+         - (N°51) carte claim pilotée par l'état du site : active === false
+           (site en pause) → la carte est RETIRÉE du portail, sans
+           re-déploiement (la config live transporte active) ;
          Le script est non invasif : si la config est absente (routeur non lié à
          un site MikCloud), il s'auto-désactive et le portail reste tel quel. -->
     <script>
@@ -840,12 +843,20 @@
                     renderOffers(cfg);
                 }
 
-                // 5. Claim inline : si un slug WiFi est configuré, on ajoute un
-                // formulaire de téléphone en tête du login-section. À la soumission,
-                // on POST /api/wifi/site/{slug}/claim → code reçu → doLogin() CHAP
-                // auto (le code sert de username ET password, verrou N°25).
-                if (cfg.wifiSlug && !document.getElementById('mikcloud-claim-form')) {
-                    renderClaimForm(cfg);
+                // 5. Claim inline (N°51 : piloté par l'état du site) : si un slug
+                // WiFi est configuré ET le site actif, on ajoute un formulaire de
+                // téléphone en tête du login-section ; site en pause (active ===
+                // false) ou sans slug → on RETIRE la carte si elle existe
+                // (idempotent). Portails déployés avant N°51 : active vaut
+                // undefined (≠ false) → carte injectée, le fetch live corrige.
+                // À la soumission : POST /api/wifi/site/{slug}/claim → code reçu →
+                // doLogin() CHAP auto (le code sert de username ET password,
+                // verrou N°25).
+                var claimForm = document.getElementById('mikcloud-claim-form');
+                if (cfg.wifiSlug && cfg.active !== false) {
+                    if (!claimForm) renderClaimForm(cfg);
+                } else if (claimForm) {
+                    claimForm.remove();
                 }
 
                 // 6. Bannière personnalisée (N°45) : image en tête du login-section

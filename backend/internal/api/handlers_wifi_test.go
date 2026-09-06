@@ -637,6 +637,117 @@ func TestWifiSiteWifiFieldsN49(t *testing.T) {
 	}
 }
 
+// TestWifiPortalClaimDynamicN51 — N°51 « portail dynamique » : la config du
+// portail transporte l'état actif du site WiFi (active:true/false) et la page
+// retire la carte claim quand le site est en pause ; la création (active), la
+// bascule 1 clic et la suppression vident la sig hotspot_files → le portail
+// se re-déploie au prochain check-in (≤ 45 s).
+func TestWifiPortalClaimDynamicN51(t *testing.T) {
+	ts, st := newWifiTestServer(t)
+	token, accID, _ := registerAccount(t, ts, "gerant-wifi-n51", "")
+	routerID, profileID := seedWifiEnv(t, st, accID)
+
+	// Sig factice : simule un portail déjà déployé sur le routeur.
+	st.Lock()
+	for i := range st.Data().Routers {
+		if st.Data().Routers[i].ID == routerID {
+			st.Data().Routers[i].HotspotFilesSig = "sig-avant-n51"
+		}
+	}
+	st.Unlock()
+
+	routerSig := func() string {
+		st.Lock()
+		defer st.Unlock()
+		for i := range st.Data().Routers {
+			if st.Data().Routers[i].ID == routerID {
+				return st.Data().Routers[i].HotspotFilesSig
+			}
+		}
+		return ""
+	}
+
+	// Création d'un site ACTIF → sig vidée (re-déploiement programmé).
+	status, out := doJSON(t, ts, "POST", "/api/wifi/sites", token, map[string]any{
+		"name": "Cyber N51", "routerId": routerID, "profileId": profileID,
+		"freeTimeMin": 30, "freeDataMb": 100, "dailyPerPhone": 1, "dailyCap": 100,
+		"active": true,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("création site : statut %d, corps %v", status, out)
+	}
+	siteID, _ := out["id"].(string)
+	slug, _ := out["slug"].(string)
+	if sig := routerSig(); sig != "" {
+		t.Fatalf("sig hotspot_files = %q, voulue vide (re-déploiement après création)", sig)
+	}
+
+	// Config live du portail (endpoint public) : site actif → active:true + slug.
+	status, out = doJSON(t, ts, "GET", "/api/wifi/site/"+slug+"/portal", "", nil)
+	if status != http.StatusOK {
+		t.Fatalf("portal site actif : statut %d, corps %v", status, out)
+	}
+	if active, _ := out["active"].(bool); !active {
+		t.Fatalf("active attendu true (site actif), corps %v", out)
+	}
+	if s, _ := out["wifiSlug"].(string); s != slug {
+		t.Fatalf("wifiSlug = %q, voulu %q", s, slug)
+	}
+
+	// Désactivation (bascule 1 clic) → sig vidée + config live : active:false,
+	// wifiSlug absent (aucun autre site actif → config routeur fraîche).
+	if status, out = doJSON(t, ts, "PUT", "/api/wifi/sites/"+siteID, token, map[string]any{
+		"name": "Cyber N51", "routerId": routerID, "profileId": profileID,
+		"freeTimeMin": 30, "freeDataMb": 100, "dailyPerPhone": 1, "dailyCap": 100,
+		"active": false,
+	}); status != http.StatusOK {
+		t.Fatalf("désactivation : statut %d, corps %v", status, out)
+	}
+	if sig := routerSig(); sig != "" {
+		t.Fatalf("sig hotspot_files = %q, voulue vide (re-déploiement après bascule)", sig)
+	}
+	status, out = doJSON(t, ts, "GET", "/api/wifi/site/"+slug+"/portal", "", nil)
+	if status != http.StatusOK {
+		t.Fatalf("portal site en pause : statut %d, corps %v", status, out)
+	}
+	if active, _ := out["active"].(bool); active {
+		t.Fatalf("active attendu false (site en pause), corps %v", out)
+	}
+	if s, _ := out["wifiSlug"].(string); s != "" {
+		t.Fatalf("wifiSlug = %q, voulu absent (site en pause)", s)
+	}
+
+	// Réactivation → active:true + slug de retour (buildPortalConfigForSite).
+	if status, out = doJSON(t, ts, "PUT", "/api/wifi/sites/"+siteID, token, map[string]any{
+		"name": "Cyber N51", "routerId": routerID, "profileId": profileID,
+		"freeTimeMin": 30, "freeDataMb": 100, "dailyPerPhone": 1, "dailyCap": 100,
+		"active": true,
+	}); status != http.StatusOK {
+		t.Fatalf("réactivation : statut %d, corps %v", status, out)
+	}
+	status, out = doJSON(t, ts, "GET", "/api/wifi/site/"+slug+"/portal", "", nil)
+	if status != http.StatusOK {
+		t.Fatalf("portal site réactivé : statut %d, corps %v", status, out)
+	}
+	if active, _ := out["active"].(bool); !active {
+		t.Fatalf("active attendu true (site réactivé), corps %v", out)
+	}
+	if s, _ := out["wifiSlug"].(string); s != slug {
+		t.Fatalf("wifiSlug après réactivation = %q, voulu %q", s, slug)
+	}
+
+	// Suppression → sig vidée + config live 404 (plus de config pour ce slug).
+	if status, out = doJSON(t, ts, "DELETE", "/api/wifi/sites/"+siteID, token, nil); status != http.StatusOK {
+		t.Fatalf("suppression : statut %d, corps %v", status, out)
+	}
+	if sig := routerSig(); sig != "" {
+		t.Fatalf("sig hotspot_files = %q, voulue vide (re-déploiement après suppression)", sig)
+	}
+	if status, _ = doJSON(t, ts, "GET", "/api/wifi/site/"+slug+"/portal", "", nil); status != http.StatusNotFound {
+		t.Fatalf("portal site supprimé : statut %d, voulu 404", status)
+	}
+}
+
 // TestWifiClaimHoneypot — N°50 : un bot qui remplit le champ caché « website »
 // reçoit un succès FACTICE (même forme JSON, code plausible) mais AUCUN ticket
 // ni entrée de registre n'est créé ; un vrai client (champ vide) obtient

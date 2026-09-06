@@ -57,6 +57,14 @@ type PortalConfig struct {
 	// WifiURL — URL publique de la page WiFi (ex. https://mikcloud.ftci.fr/wifi/cyber-espace-sc).
 	// Vide si pas de site WiFi.
 	WifiURL string `json:"wifiUrl,omitempty"`
+	// Active — N°51 : état du site WiFi lié. true = carte claim « WiFi offert »
+	// affichée sur le portail ; false = site en pause → la page RETIRE la carte
+	// (et le claim refuserait de toute façon : 403 site_inactive). Sérialisé SANS
+	// omitempty — même raison que JoinEnabled : un false omis (undefined ≠ false
+	// côté page) réafficherait la carte malgré la pause. Les portails déployés
+	// avant N°51 n'embarquent pas ce champ : côté page, undefined ≠ false = carte
+	// injectée (comportement historique), le fetch live corrige au chargement.
+	Active bool `json:"active"`
 	// FreeTimeMin — minutes offertes sur le site WiFi jetable (0 = hériter
 	// du profil). Alimente l'affichage de la dotation gratuite côté portail.
 	FreeTimeMin int64 `json:"freeTimeMin,omitempty"`

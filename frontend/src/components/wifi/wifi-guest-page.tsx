@@ -218,6 +218,18 @@ export function WifiGuestPage({ slug }: { slug: string }) {
 
   return (
     <WifiFrame>
+      {/* Bannière du tenant (N°45) — data URL ou URL https (R2). Retrait
+          automatique du bloc si l'image ne charge pas (onerror). */}
+      {info.bannerUrl ? (
+        <img
+          src={info.bannerUrl}
+          alt=""
+          className="mb-4 h-28 w-full rounded-xl object-cover"
+          onError={(event) => {
+            (event.currentTarget.parentElement ?? event.currentTarget).remove();
+          }}
+        />
+      ) : null}
       {/* En-tête branding */}
       <div className="mb-5 flex flex-col items-center gap-2 text-center">
         {info.logoUrl ? (

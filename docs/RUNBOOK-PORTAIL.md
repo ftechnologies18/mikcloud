@@ -124,11 +124,29 @@ contient :
 - « Portail captif déployé sur » (déploiement automatique réussi, N°35-a) ;
 - « Re-déploiement du portail demandé pour » (action manuelle, N°35-d).
 
+### Bannière du portail (N°45)
+
+Le gérant personnalise une image d'en-tête affichée **en haut de la colonne
+de connexion** (au-dessus du logo et du bandeau « WiFi offert ») sur la page
+de login du portail, et exposée aussi à la page visiteur WiFi.
+
+1. **Console** : Paramètres → onglet **Hotspot** → carte **Bannière du portail
+   captif** : coller une URL `https://…` (recommandé — Cloudflare R2, voir
+   RUNBOOK-SECRETS) ou téléverser une image PNG/JPG ≤ 500 Ko (stockée en data
+   URL dans le tenant). Aperçu live avant enregistrement.
+2. **Effet immédiat** : la page du portail lit `bannerUrl` dans la config
+   live (`GET /api/wifi/site/{slug}/portal`) — pas de re-déploiement nécessaire
+   pour les routeurs agent déjà déployés (le fallback inliné au déploiement
+   l'embarque aussi pour les nouveaux).
+3. **Robustesse** : si l'image ne charge pas (URL morte), la bannière se
+   retire automatiquement de la page (`onerror` → retrait du bloc).
+
 ## 3. Quand re-déployer manuellement ?
 
 | Cas | Re-déploiement nécessaire ? |
 |---|---|
 | Changement de branding (nom, logo, services) | ❌ Non — le fetch live rafraîchit automatiquement |
+| Changement de bannière du portail (N°45, settings tenant `bannerUrl`) | ❌ Non — fetch live (le bloc config JSON embarque la bannière) |
 | Changement d'offres (prix, profils) | ❌ Non — fetch live |
 | Changement de textes d'accueil | ❌ Non — fetch live |
 | Changement de lien Wave marchand | ❌ Non — fetch live |

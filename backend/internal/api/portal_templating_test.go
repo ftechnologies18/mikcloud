@@ -36,6 +36,7 @@ func seedRouterWithAccount(t *testing.T, st interface {
 	profileName string
 	profilePrc  int
 	waveLink    string
+	bannerUrl   string // N°45 — bannière du portail (data URL ou https)
 }) string {
 	t.Helper()
 	st.Lock()
@@ -46,10 +47,11 @@ func seedRouterWithAccount(t *testing.T, st interface {
 	// Settings avec le tenant name + wave link.
 	db.SettingsByAccount[accID] = model.Settings{
 		Tenant: model.Tenant{
-			Name:     opts.tenantName,
-			Currency: "XOF",
-			Timezone: "Africa/Abidjan",
-			WaveLink: opts.waveLink,
+			Name:      opts.tenantName,
+			Currency:  "XOF",
+			Timezone:  "Africa/Abidjan",
+			WaveLink:  opts.waveLink,
+			BannerURL: opts.bannerUrl,
 		},
 	}
 	// Routeur agent.
@@ -106,6 +108,7 @@ func TestBuildPortalConfigTenant(t *testing.T) {
 		profileName string
 		profilePrc  int
 		waveLink    string
+		bannerUrl   string
 	}{tenantName: "Mon Cyber", wifiSlug: "", joinActive: false, profileName: "", profilePrc: 0, waveLink: ""})
 
 	st.Lock()
@@ -149,6 +152,7 @@ func TestBuildPortalConfigFull(t *testing.T) {
 		profileName string
 		profilePrc  int
 		waveLink    string
+		bannerUrl   string
 	}{tenantName: "Cyber Full", wifiSlug: "cyber-full", joinActive: true, profileName: "1h", profilePrc: 100, waveLink: "https://pay.wave.com/m/M_x/c/ci/"})
 
 	st.Lock()
@@ -197,6 +201,7 @@ func TestPortalServePersonalized(t *testing.T) {
 		profileName string
 		profilePrc  int
 		waveLink    string
+		bannerUrl   string
 	}{tenantName: "Cyber Personnalisé", wifiSlug: "cyber-perso", joinActive: true, profileName: "24h", profilePrc: 300, waveLink: ""})
 
 	resp, err := http.Get(ts.URL + "/portal/tok-personalized/login.html")
@@ -245,6 +250,44 @@ func TestPortalServePersonalized(t *testing.T) {
 	}
 }
 
+// TestPortalServeBanner — la bannière du tenant (N°45) est propagée dans la
+// config JSON du login.html servi : buildPortalConfig lit settings.Tenant.BannerURL
+// et le bloc <script id="mikcloud-config"> embarque "bannerUrl" tel quel.
+func TestPortalServeBanner(t *testing.T) {
+	st, ts := newTestServerWithStore(t)
+	seedRouterWithAccount(t, st, "tok-banner", struct {
+		tenantName  string
+		wifiSlug    string
+		joinActive  bool
+		profileName string
+		profilePrc  int
+		waveLink    string
+		bannerUrl   string
+	}{tenantName: "Cyber Bannière", wifiSlug: "", joinActive: false, profileName: "", profilePrc: 0, waveLink: "", bannerUrl: "https://r2.example.com/cyber/banner.jpg"})
+
+	resp, err := http.Get(ts.URL + "/portal/tok-banner/login.html")
+	if err != nil {
+		t.Fatalf("GET login.html : %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("statut %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	start := strings.Index(string(body), `id="mikcloud-config">`) + len(`id="mikcloud-config">`)
+	end := strings.Index(string(body)[start:], "</script>")
+	if start <= 0 || end <= 0 {
+		t.Fatal("bloc config introuvable")
+	}
+	var cfg hotpage.PortalConfig
+	if err := json.Unmarshal([]byte(string(body)[start:start+end]), &cfg); err != nil {
+		t.Fatalf("JSON config invalide : %v", err)
+	}
+	if cfg.BannerURL != "https://r2.example.com/cyber/banner.jpg" {
+		t.Errorf("BannerURL = %q, attendu l'URL https du tenant", cfg.BannerURL)
+	}
+}
+
 // TestPortalServeBinaryNotTemplated — les assets binaires (logo.png) sont
 // servis tels quels, PAS passés par Personalize (qui casserait les octets).
 func TestPortalServeBinaryNotTemplated(t *testing.T) {
@@ -256,6 +299,7 @@ func TestPortalServeBinaryNotTemplated(t *testing.T) {
 		profileName string
 		profilePrc  int
 		waveLink    string
+		bannerUrl   string
 	}{tenantName: "Binary Test", wifiSlug: "", joinActive: false, profileName: "", profilePrc: 0, waveLink: ""})
 
 	resp, err := http.Get(ts.URL + "/portal/tok-binary/img/logo.png")
@@ -290,6 +334,7 @@ func TestPortalServeSecurityTenantInjection(t *testing.T) {
 		profileName string
 		profilePrc  int
 		waveLink    string
+		bannerUrl   string
 	}{tenantName: `</script><script>alert(1)</script>`, wifiSlug: "", joinActive: false, profileName: "", profilePrc: 0, waveLink: ""})
 
 	resp, err := http.Get(ts.URL + "/portal/tok-inject/login.html")

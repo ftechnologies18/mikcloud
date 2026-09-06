@@ -131,6 +131,7 @@ func buildPortalConfig(db *model.DB, router *model.Router, r *http.Request) hotp
 		APIBase:    agentBaseURL(r),
 		WaveLink:   settings.Tenant.WaveLink,
 		LogoURL:    settings.Tenant.LogoURL,
+		BannerURL:  settings.Tenant.BannerURL,
 	}
 	// WifiSlug — 1er site WiFi actif lié à ce routeur.
 	for i := range db.WifiSites {
@@ -226,6 +227,7 @@ func buildPortalConfigForSite(db *model.DB, site *model.WifiSite, router *model.
 		APIBase:    agentBaseURL(r),
 		WaveLink:   settings.Tenant.WaveLink,
 		LogoURL:    settings.Tenant.LogoURL,
+		BannerURL:  settings.Tenant.BannerURL,
 		WifiSlug:   site.Slug,
 	}
 	if origin := publicFrontendURL(r); origin != "" {

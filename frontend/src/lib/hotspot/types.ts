@@ -919,6 +919,10 @@ export interface AppSettings {
     dnsName?: string;
     /** F2 : logo du tenant (data URL image ≤ 300 Ko) affiché sur les vouchers. */
     logoUrl?: string;
+    /** N°45 : bannière du portail captif — data URL image ≤ 500 Ko ou URL
+     * https:// (Cloudflare R2). Affichée en tête de la page de login du
+     * portail et de la page visiteur WiFi. Vide = aucune bannière. */
+    bannerUrl?: string;
     /** F1/F5 : politique de nettoyage des utilisateurs expirés (défaut « keep »). */
     expiryPolicyMode?: ExpiryPolicyMode;
     /** F1/F5 : suppression après N jours (1-365, défaut 30) quand mode = remove. */
@@ -1468,6 +1472,8 @@ export interface WifiSiteInfo {
   name: string;
   tenantName?: string;
   logoUrl?: string;
+  /** N°45 — bannière du tenant (data URL ≤ 500 Ko ou URL https R2). */
+  bannerUrl?: string;
   freeTimeMin: number;
   freeDataMb: number;
   profileName?: string;

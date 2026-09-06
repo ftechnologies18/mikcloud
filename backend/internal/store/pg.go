@@ -673,6 +673,8 @@ func (p *PG) ensureSchema() error {
 		`ALTER TABLE sales ADD COLUMN IF NOT EXISTS selling INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS dns_name TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS logo_url TEXT NOT NULL DEFAULT ''`,
+		// N°45 — bannière du portail captif (data URL ≤ 500 Ko ou URL https R2).
+		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS banner_url TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS expiry_policy_mode TEXT NOT NULL DEFAULT 'keep'`,
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS expiry_policy_after_days INTEGER NOT NULL DEFAULT 30`,
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS board_name TEXT NOT NULL DEFAULT ''`,
@@ -915,7 +917,7 @@ func (p *PG) loadNotifSettings(db *model.DB) error {
 func (p *PG) loadSettings(db *model.DB) error {
 	rows, err := p.db.Query(
 		`SELECT account_id, tenant_name, tenant_currency, tenant_timezone, plan_name, plan_max_routers, plan_max_users, wave_link,
-                        dns_name, logo_url, expiry_policy_mode, expiry_policy_after_days,
+                        dns_name, logo_url, banner_url, expiry_policy_mode, expiry_policy_after_days,
                         sub_plan_id, sub_status, sub_period_start, sub_period_end, sub_last_amount,
                         sub_router_slots, sub_last_paid_at, last_tick,
                         platform_name, platform_register_open, platform_register_key, auto_import_router_users
@@ -929,7 +931,7 @@ func (p *PG) loadSettings(db *model.DB) error {
 			accID                                      string
 			tenantName, tenantCurrency, tenantTimezone string
 			planName, planMaxRouters, planMaxUsers     string
-			waveLink, dnsName, logoURL                 string
+			waveLink, dnsName, logoURL, bannerURL      string
 			expiryMode                                 string
 			expiryAfterDays                            int
 			subPlanID, subStatus                       string
@@ -947,7 +949,7 @@ func (p *PG) loadSettings(db *model.DB) error {
 		)
 		if err := rows.Scan(&accID, &tenantName, &tenantCurrency, &tenantTimezone,
 			&planName, &planMaxRouters, &planMaxUsers, &waveLink,
-			&dnsName, &logoURL, &expiryMode, &expiryAfterDays,
+			&dnsName, &logoURL, &bannerURL, &expiryMode, &expiryAfterDays,
 			&subPlanID, &subStatus, &subPeriodStart, &subPeriodEnd, &subLastAmount,
 			&subRouterSlots, &subLastPaidAt, &lastTick,
 			&platformName, &platformRegisterOpen, &platformRegisterKey, &autoImport); err != nil {
@@ -960,6 +962,7 @@ func (p *PG) loadSettings(db *model.DB) error {
 			Tenant: model.Tenant{
 				Name: tenantName, Currency: tenantCurrency, Timezone: tenantTimezone,
 				WaveLink: waveLink, DNSName: dnsName, LogoURL: logoURL,
+				BannerURL:        bannerURL,
 				ExpiryPolicyMode: expiryMode, ExpiryPolicyAfterDays: expiryAfterDays,
 			},
 			Plan: model.Plan{Name: planName, MaxRouters: planMaxRouters, MaxUsers: planMaxUsers},
@@ -1154,11 +1157,11 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
 		}
 		_, err := tx.Exec(
 			`INSERT INTO settings (id, account_id, tenant_name, tenant_currency, tenant_timezone, plan_name, plan_max_routers, plan_max_users, wave_link,
-                               dns_name, logo_url, expiry_policy_mode, expiry_policy_after_days,
+                               dns_name, logo_url, banner_url, expiry_policy_mode, expiry_policy_after_days,
                                sub_plan_id, sub_status, sub_period_start, sub_period_end, sub_last_amount,
                                sub_router_slots, sub_last_paid_at, last_tick,
                                platform_name, platform_register_open, platform_register_key, auto_import_router_users)
-                         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+                         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
                          ON CONFLICT (id) DO UPDATE SET
                            account_id                = EXCLUDED.account_id,
                            tenant_name               = EXCLUDED.tenant_name,
@@ -1170,6 +1173,7 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
                            wave_link                 = EXCLUDED.wave_link,
                            dns_name                  = EXCLUDED.dns_name,
                            logo_url                  = EXCLUDED.logo_url,
+                           banner_url                = EXCLUDED.banner_url,
                            expiry_policy_mode        = EXCLUDED.expiry_policy_mode,
                            expiry_policy_after_days  = EXCLUDED.expiry_policy_after_days,
                            sub_plan_id               = EXCLUDED.sub_plan_id,
@@ -1186,7 +1190,7 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
                            auto_import_router_users = EXCLUDED.auto_import_router_users`,
 			accID, s.Tenant.Name, s.Tenant.Currency, s.Tenant.Timezone,
 			s.Plan.Name, s.Plan.MaxRouters, s.Plan.MaxUsers,
-			s.Tenant.WaveLink, s.Tenant.DNSName, s.Tenant.LogoURL,
+			s.Tenant.WaveLink, s.Tenant.DNSName, s.Tenant.LogoURL, s.Tenant.BannerURL,
 			s.Tenant.ExpiryPolicyMode, s.Tenant.ExpiryPolicyAfterDays,
 			s.Subscription.PlanID, s.Subscription.Status, s.Subscription.PeriodStart,
 			s.Subscription.PeriodEnd, s.Subscription.LastAmountFcfa,

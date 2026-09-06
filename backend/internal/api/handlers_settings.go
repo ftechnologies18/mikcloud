@@ -25,6 +25,7 @@ type tenantPut struct {
 	WaveLink              *string `json:"waveLink"`
 	DNSName               *string `json:"dnsName"`
 	LogoURL               *string `json:"logoUrl"`
+	BannerURL             *string `json:"bannerUrl"`
 	ExpiryPolicyMode      *string `json:"expiryPolicyMode"`
 	ExpiryPolicyAfterDays *int    `json:"expiryPolicyAfterDays"`
 	// Audit purge/résurgence — repli nested du champ plat (corps défensif
@@ -42,6 +43,7 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		// P0 (audit Mikhmon) — champs plats…
 		DNSName               *string `json:"dnsName"`
 		LogoURL               *string `json:"logoUrl"`
+		BannerURL             *string `json:"bannerUrl"`
 		ExpiryPolicyMode      *string `json:"expiryPolicyMode"`
 		ExpiryPolicyAfterDays *int    `json:"expiryPolicyAfterDays"`
 		// Audit purge/résurgence — import automatique des utilisateurs
@@ -58,6 +60,7 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	// nouveaux champs À LA FOIS plats et dans tenant{…} — le plat prime.
 	name, currency, timezone, waveLink := req.Name, req.Currency, req.Timezone, req.WaveLink
 	dnsName, logoURL, expiryMode, expiryAfterDays := req.DNSName, req.LogoURL, req.ExpiryPolicyMode, req.ExpiryPolicyAfterDays
+	bannerURL := req.BannerURL
 	// Audit purge — même résolution plat > imbriqué pour le réglage d'import.
 	autoImport := req.AutoImportRouterUsers
 	if req.Tenant != nil {
@@ -78,6 +81,9 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		}
 		if logoURL == nil {
 			logoURL = req.Tenant.LogoURL
+		}
+		if bannerURL == nil {
+			bannerURL = req.Tenant.BannerURL
 		}
 		if expiryMode == nil {
 			expiryMode = req.Tenant.ExpiryPolicyMode
@@ -102,6 +108,20 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(*logoURL) > 300*1024 {
 			writeErr(w, http.StatusBadRequest, "Logo trop volumineux (300 Ko max)")
+			return
+		}
+	}
+	// N°45 — bannière du portail : data:image/… ≤ 500 Ko OU URL https://
+	// (Cloudflare R2 et tout hébergeur d'images — le portail et la page
+	// WiFi exigent https pour éviter le mixed content). Vide = retirée.
+	if bannerURL != nil && *bannerURL != "" {
+		v := strings.TrimSpace(*bannerURL)
+		if !strings.HasPrefix(v, "data:image/") && !strings.HasPrefix(v, "https://") {
+			writeErr(w, http.StatusBadRequest, "Bannière invalide : image intégrée (data:image/…) ou URL https:// requise")
+			return
+		}
+		if strings.HasPrefix(v, "data:image/") && len(v) > 500*1024 {
+			writeErr(w, http.StatusBadRequest, "Bannière trop volumineuse (500 Ko max)")
 			return
 		}
 	}
@@ -135,6 +155,9 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if logoURL != nil {
 		settings.Tenant.LogoURL = strings.TrimSpace(*logoURL) // vide = logo retiré
+	}
+	if bannerURL != nil {
+		settings.Tenant.BannerURL = strings.TrimSpace(*bannerURL) // vide = bannière retirée
 	}
 	if expiryMode != nil {
 		settings.Tenant.ExpiryPolicyMode = *expiryMode

@@ -47,7 +47,7 @@ jobs:
         run: go build -o /tmp/mikcloud-server .
 
   frontend:
-    name: Frontend Next.js (lint + build)
+    name: Frontend Next.js (lint + typecheck + build)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -65,6 +65,9 @@ jobs:
 
       - name: Lint (ESLint)
         run: bun run lint
+
+      - name: Type-check (TypeScript 7 natif — compilateur Go « tsgo »)
+        run: bun run typecheck
 
       - name: Build (Next.js)
         run: bun run build

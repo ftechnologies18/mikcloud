@@ -5,6 +5,52 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-06 — N°36 : TypeScript 7 natif (compilateur Go) — typecheck gate CI + passif vagues 2-3 corrigé
+
+### Compilateur natif adopté, API JS conservée
+- **TypeScript 7.0.2** (le compilateur réécrit en Go, « tsgo » — 10× plus
+  rapide) est adopté comme **type-checker du projet** : devDependency alias
+  `tsgo: npm:typescript@7.0.2` + script `bun run typecheck`
+  (`node node_modules/tsgo/bin/tsc --noEmit` — chemin explicite car bun lie
+  les bins sous le nom déclaré du paquet `tsc`, l'alias ne crée pas de lien
+  `.bin/tsgo`).
+- **Le paquet `typescript` reste en 5.9.3** : TS 7 n'expose plus d'API
+  JavaScript classique (`exports['.']` = stub de version, binaire natif par
+  plateforme) et la chaîne ESLint (`typescript-estree` de
+  `eslint-config-next`) plante au chargement avec TS 7 hoisté
+  (`TypeError: Cannot read properties of undefined (reading 'Cjs')`,
+  `ts.Extension` undefined — PR #13). typescript-eslint reste verrouillé sur
+  `>=4.8.4 <6.0.0` (état écosystème sept. 2026).
+- **Dependabot écarté du piège** : `.github/dependabot.yml` ignore
+  désormais les bumps `typescript >= 7` (sinon Dependabot rouvrirait chaque
+  semaine une PR équivalente à la #13, structurellement rouge). Ré-adoption
+  du paquet `typescript` quand typescript-eslint supportera TS 7.
+
+### Passif des vagues 2-3 découvert et corrigé
+- Découverte : `next build` a `typescript.ignoreBuildErrors` dans
+  `next.config` — **aucun type-check n'a jamais gate la CI frontend**. Les
+  bumps majeurs fusionnés en N°35 (react-day-picker 9→10 #11,
+  react-resizable-panels 3→4 #14) avaient cassé **en silence** deux
+  composants shadcn scaffoldés (non importés : aucun impact runtime) :
+  - `calendar.tsx` : clé `table` renommée `month_grid` (v10, enum
+    `MonthGrid` de `UI.d.ts`) ;
+  - `resizable.tsx` : réécrit pour l'API v4 — `PanelGroup` → `Group`,
+    `PanelResizeHandle` → `Separator`, prop `direction` → `orientation`,
+    sélecteurs CSS `data-panel-group-direction` → `aria-orientation`
+    (v4 pose l'attribut sur le Separator lui-même).
+- **Nouveau gate CI** : le job frontend exécute désormais
+  `bun run typecheck` (TypeScript 7 natif) après le lint — le type-check
+  devient bloquant, il ne peut plus y avoir d'erreurs de type dormantes.
+
+### Vérifications
+- `bun run typecheck` (tsgo 7.0.2) : **0 erreur** sur tout le frontend ;
+  test négatif validé (sonde d'erreur volontaire → TS2322, exit 1).
+- `bun run lint` (ESLint 9 + typescript 5.9.3 API JS) : vert.
+- `bun run build` (Next.js 16.3.4) : vert.
+- PR #13 (bump direct typescript 5.9→7.0.2) : fermée, remplacée par cette
+  adoption en deux couches (compilateur natif via `tsgo` + API JS 5.9 pour
+  ESLint) — la seule voie compatible écosystème en sept. 2026.
+
 ## 2026-09-05 — N°35 : audit branches & CI — Dependabot npm→bun + gouvernance
 
 ### Audit des branches (10 identifiées)

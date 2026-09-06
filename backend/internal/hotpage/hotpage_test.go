@@ -2,8 +2,11 @@
 package hotpage
 
 import (
+	"sort"
 	"strings"
 	"testing"
+
+	"mikcloud/hotspot-api/internal/agent"
 )
 
 // TestDefaultFilesNonEmpty — le template doit contenir au minimum login.html,
@@ -139,6 +142,35 @@ func TestSigStable(t *testing.T) {
 	}
 	if len(sa) != 16 {
 		t.Errorf("Sig longueur = %d, attendu 16 (cf. walledGardenSig)", len(sa))
+	}
+}
+
+// TestSigContentSensitive — N°48-b : la sig couvre le CONTENU des fichiers,
+// pas seulement la liste des chemins. Garde-fou du bug coulissant du N°48 :
+// avec la formule v1 (chemins seuls), le login.html corrigé n'était jamais
+// re-poussé aux routeurs — le portail restait servie périmé jusqu'au clic
+// manuel « Re-déployer maintenant ». Si ce test échoue, le contenu a de
+// nouveau disparu de la signature.
+func TestSigContentSensitive(t *testing.T) {
+	files := DefaultFiles()
+	if len(files) == 0 {
+		t.Fatal("template embarqué vide — DefaultFiles doit lister les fichiers")
+	}
+	s := Sig(files)
+	if len(s) != 16 {
+		t.Fatalf("Sig longueur = %d, attendu 16", len(s))
+	}
+	// Formule v1 (chemins seuls, triés) — si Sig la reproduit, le contenu ne
+	// fait plus partie de la signature.
+	sorted := make([]string, len(files))
+	copy(sorted, files)
+	sort.Strings(sorted)
+	legacy := agent.HashToken(strings.Join(sorted, "|"))[:16]
+	if s == legacy {
+		t.Fatal("Sig basée chemins seuls : une édition du template ne serait jamais re-poussée (régression N°48-b)")
+	}
+	if s != Sig(files) {
+		t.Fatal("Sig doit être déterministe (mêmes fichiers → même sig)")
 	}
 }
 

@@ -5,6 +5,24 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-06 — N°48-b : portail auto-redéployé après chaque édition du template (sig hotspot_files basée contenu)
+
+### N°48-b — fini le login.html périmé sur le routeur sans clic console
+- **Constat coulissant** : le correctif N°48 (retrait du bandeau doublon dans
+  `login.html`) n'était pas servi aux clients — la signature `hotspot_files`
+  ne hashait que la LISTE des chemins, pas le contenu : une édition du
+  template ne changeait pas la sig, `ensureHotspotFilesLocked` ne re-filait
+  rien, le routeur servait l'ancienne page jusqu'au bouton console
+  « Re-déployer maintenant » (les règles walled-garden v2, elles, étaient
+  déjà appliquées automatiquement — asymétrie absurde).
+- **Backend** (`hotpage.Sig`) : chemin + sha256 (16 hex) du contenu de chaque
+  fichier embarqué → toute édition change la sig → re-pousse automatique au
+  premier check-in (≤ 45 s). Contenus inchangés → même sig → check-in no-op
+  (aucun spam de commandes). Garde-fou `TestSigContentSensitive` (pattern du
+  sel `wg-v2-api`) : si le contenu disparaît de la sig, le test échoue.
+- **Effet immédiat au déploiement** : sig changée → tous les routeurs agents
+  re-tirent le portail (login.html N°48 sans bandeau) au prochain check-in.
+
 ## 2026-09-06 — N°48 : claim inline opérationnel en pré-auth (walled-garden HTTPS) + portail dédoublonné
 
 ### N°48 — le « WiFi offert » marche vraiment depuis le portail, sans doublon à l'écran

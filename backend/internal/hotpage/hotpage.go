@@ -23,7 +23,9 @@
 package hotpage
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"io/fs"
 	"sort"
 	"strings"
@@ -159,14 +161,27 @@ func HasFile(path string) bool {
 	return err == nil && !st.IsDir()
 }
 
-// Sig — signature stable d'un ensemble de fichiers personnalisés. Pattern
-// identique à walledGardenSig : hash du join trié, tronqué à 16 car.
-// L'argument est la concaténation "path1|path2|…|pathN" (paths triés, déjà
-// personnalisés par compte). Deux ensembles identiques → même sig → pas de
-// re-déploiement.
+// Sig — signature stable d'un ensemble de fichiers du portail. Pattern
+// identique à walledGardenSig : hash court, tronqué à 16 car.
+// N°48-b — la signature couvre le CONTENU (chemin + hash du contenu de
+// chaque fichier embarqué), pas seulement la liste des chemins : une édition
+// du template (ex. N°48 : retrait du bandeau « WiFi offert » doublon) doit
+// re-pousser le portail vers les routeurs agents automatiquement, sans
+// action console (« Re-déployer maintenant »). Une liste identique avec des
+// contenus inchangés → même sig → check-in no-op (aucun spam de commandes).
+// Constat d'origine : la sig v1 (chemins seuls) laissait le routeur servir
+// un login.html périmé après chaque correctif template.
 func Sig(files []string) string {
 	sorted := make([]string, len(files))
 	copy(sorted, files)
 	sort.Strings(sorted)
-	return agent.HashToken(strings.Join(sorted, "|"))[:16]
+	parts := make([]string, 0, len(sorted))
+	for _, f := range sorted {
+		sum := sha256.Sum256([]byte(f)) // fallback stable si le fichier manque
+		if b, ok := File(f); ok {
+			sum = sha256.Sum256(b)
+		}
+		parts = append(parts, f+"="+hex.EncodeToString(sum[:8]))
+	}
+	return agent.HashToken(strings.Join(parts, "|"))[:16]
 }

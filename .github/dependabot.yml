@@ -33,6 +33,17 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      # TypeScript 7 (compilateur natif Go) n'expose plus d'API JavaScript
+      # classique (« exports » = stub de version) : typescript-estree — la
+      # chaîne ESLint de eslint-config-next — plante au chargement
+      # (ts.Extension undefined, PR #13). Le compilateur natif est DÉJÀ
+      # adopté via l'alias devDependency `tsgo` (npm:typescript@7.0.2) et le
+      # script `typecheck` gate de la CI. Le paquet `typescript` (API JS)
+      # reste en 5.x tant que typescript-eslint ne supporte pas TS 7.
+      - dependency-name: "typescript"
+        versions:
+          - ">=7.0.0"
 
   # Actions GitHub (ci.yml) — sécurité de la chaîne CI elle-même.
   - package-ecosystem: github-actions

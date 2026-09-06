@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start -p 3000",
     "lint": "eslint .",
+    "typecheck": "node node_modules/tsgo/bin/tsc --noEmit",
     "e2e": "playwright test"
   },
   "dependencies": {
@@ -91,6 +92,7 @@
     "eslint-config-next": "^16.3.4",
     "tailwindcss": "^4",
     "tw-animate-css": "^1.3.5",
-    "typescript": "^5"
+    "typescript": "^5",
+    "tsgo": "npm:typescript@7.0.2"
   }
 }

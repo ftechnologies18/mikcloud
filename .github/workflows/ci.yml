@@ -12,7 +12,16 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # N°37 — ne jamais annuler un run main. Audit post-N°36-b : avec
+  # cancel-in-progress: true, le push N°36-b (07:36) a annulé la CI de
+  # N°35-d (07:26) encore en cours — le job deploy-render n'a jamais
+  # tourné et les changements backend de N°35-d ne sont jamais partis en
+  # production (Render live resté sur N°35-c). Le diff event.before→sha
+  # du push suivant (frontend seul) sautait ensuite le déploiement :
+  # l'écart devenait permanent. Les runs main s'exécutent désormais
+  # toujours jusqu'au bout ; l'annulation reste réservée aux PR
+  # (itération rapide, économies de minutes runner).
+  cancel-in-progress: github.event_name == 'pull_request'
 
 jobs:
   backend:

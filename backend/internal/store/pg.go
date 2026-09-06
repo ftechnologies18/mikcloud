@@ -628,6 +628,13 @@ func (p *PG) ensureSchema() error {
 		`CREATE INDEX IF NOT EXISTS idx_wifi_guests_account ON wifi_guests (account_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_wifi_guests_site   ON wifi_guests (site_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_wifi_guests_phone  ON wifi_guests (phone)`,
+		// N°47 — colonne ajoutée sur la table EXISTANTE : le CREATE TABLE IF NOT
+		// EXISTS ne fait rien sur une base déjà initialisée, et le chargement
+		// différentiel SELECT la colonne ⇒ sans ALTER, le store ne boot plus
+		// (SQLSTATE 42703 « column does not exist », déploiement Render
+		// update_failed constaté sur f85629e). Idempotent, sans risque pour le
+		// code antérieur (listes de colonnes explicites).
+		`ALTER TABLE wifi_guests ADD COLUMN IF NOT EXISTS claim_cmd_id TEXT NOT NULL DEFAULT ''`,
 		// Audit purge — réglage par compte : import automatique des
 		// utilisateurs créés hors MikCloud (défaut ON — compatibilité).
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS auto_import_router_users BOOLEAN NOT NULL DEFAULT TRUE`,

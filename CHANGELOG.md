@@ -5,6 +5,43 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-05 — N°35 : audit branches & CI — Dependabot npm→bun + gouvernance
+
+### Audit des branches (10 identifiées)
+- **Cause racine des échecs CI sur les PR Dependabot frontend** : l'écosystème
+  `npm` de Dependabot met à jour `package.json` mais **jamais `bun.lock`** ;
+  la CI (`bun install --frozen-lockfile`) échouait donc systématiquement
+  (« lockfile had changes, but lockfile is frozen ») — vérifié dans les logs
+  des 5 PR concernées (sharp #4, uuid #5, lucide-react #6, react-table #7,
+  eslint #8 — le job E2E de #8 échouait pour la même raison). Aucune PR
+  frontend Dependabot ne pouvait passer.
+- **Correctif structurel** : `.github/dependabot.yml` passe l'écosystème
+  frontend de `npm` à `bun` — Dependabot met désormais à jour `bun.lock`
+  lui-même et les PR redeviennent CI-compatible. Les 5 PR npm rouges et
+  périmées (34–59 commits de retard) seront fermées et recréées par
+  Dependabot sous le nouvel écosystème.
+- **Branche `feature/agent-poll` supprimée** : entièrement fusionnée dans
+  `main` (0 commit propre, 205 de retard) — branche morte.
+- **Gouvernance** : protection de branche `main` activée via API —
+  force-push et suppression interdits, **sans exiger de PR ni de checks**
+  (le workflow « push main = production » est préservé).
+
+### État des 8 PR Dependabot (audit)
+| PR | Mise à jour | Fusion Git | CI | Verdict |
+|---|---|---|---|---|
+| #1 | actions/checkout 4→7 | propre | ✅ verte | prête à fusionner |
+| #2 | actions/setup-go 5→7 | propre | ✅ verte | prête à fusionner |
+| #3 | groupe go minor/patch | propre | ✅ verte | prête à fusionner |
+| #4 | sharp (groupe minor) | propre | ❌ lockfile | fermer → recréée (bun) |
+| #5 | uuid 11→14 (majeure) | propre | ❌ lockfile | fermer → reprise dédiée |
+| #6 | lucide-react 0→1 (majeure) | propre | ❌ lockfile | fermer → reprise dédiée |
+| #7 | react-table 8→9 (majeure) | propre | ❌ lockfile | fermer → reprise dédiée |
+| #8 | eslint 9→10 (majeure) | propre | ❌ lockfile | fermer → reprise dédiée |
+
+> Les 4 mises à jour majeures (uuid, lucide-react, react-table, eslint)
+> demanderont une adaptation de code — à traiter une par une, pas en fusion
+> directe.
+
 ## 2026-09-05 — N°34 : Hotspot Page — réorganisation du portail captif
 
 ### Nettoyage (`Hotspot Page/`)

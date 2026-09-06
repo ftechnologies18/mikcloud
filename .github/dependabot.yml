@@ -17,9 +17,13 @@ updates:
           - "minor"
           - "patch"
 
-  # Frontend Next.js (Vercel, gestionné via Bun en CI — Dependabot suit
-  # le package-lock/npm manifest standard).
-  - package-ecosystem: npm
+  # Frontend Next.js (Vercel) — écosystème « bun » : Dependabot met à jour
+  # package.json ET bun.lock. L'ancien écosystème « npm » ne touchait que
+  # package.json, laissant bun.lock désynchronisé : la CI
+  # (`bun install --frozen-lockfile`) échouait systématiquement
+  # (« lockfile had changes, but lockfile is frozen ») — aucune PR npm
+  # ne pouvait passer. Audit N°35, 2026-09-05.
+  - package-ecosystem: bun
     directory: /frontend
     schedule:
       interval: weekly

@@ -114,8 +114,9 @@ func isTextAsset(p string) bool {
 // Raisonnement sur la résolution des entités liées au routeur :
 //   - WifiSlug : on cherche le site WiFi jetable du compte qui est LIÉ à ce
 //     routeur (WifiSite.RouterID == router.ID) ET actif. Si plusieurs, on prend
-//     le 1er (ordre d'itération du store). Si aucun, on laisse vide — la page
-//     cachera le bloc WiFi offert via la config JSON.
+//     le 1er (ordre d'itération du store). Si aucun, on laisse WifiSlug vide
+//     et Active reste false (N°51) — la page ne pose pas la carte claim (ou
+//     la retire si un fallback inliné périmé l'avait posée).
 //   - JoinURL : on cherche le lien d'inscription publique du compte qui est
 //     LIÉ à ce routeur (JoinLink.RouterID == router.ID) ET actif (pas révoqué,
 //     pas expiré, pas épuisé). Si plusieurs, on prend le 1er. Si aucun, on
@@ -141,6 +142,7 @@ func buildPortalConfig(db *model.DB, router *model.Router, r *http.Request) hotp
 		s := &db.WifiSites[i]
 		if s.AccountID == acc && s.RouterID == router.ID && s.Active {
 			cfg.WifiSlug = s.Slug
+			cfg.Active = true // N°51 — site actif lié trouvé → carte claim affichée
 			// WifiURL — construit à partir de l'origine publique (frontend Vercel).
 			// Pour l'instant, on dérive du Host de la requête si c'est une origine
 			// connue (mikcloud.ftci.fr), sinon on laisse vide (la page utilisera
@@ -216,8 +218,12 @@ func joinLinkActive(l *model.JoinLink) bool {
 //
 // Différence avec buildPortalConfig : ici on a déjà le site (résolu par slug),
 // pas besoin de le chercher. Le wifiSlug et le wifiURL sont TOUJOURS peuplés
-// (le site existe, sinon 404 déjà renvoyé). Le joinURL est résolu via le
-// routeur lié au site (1er JoinLink actif du routeur).
+// (le site existe, sinon 404 déjà renvoyé). N°51 : Active reflète l'état
+// RÉEL du site — handleWifiPortal n'appelle ce builder avec un site en
+// pause que si le routeur est introuvable (sinon il bascule sur
+// buildPortalConfig, qui résout le 1er site actif du routeur).
+// Le joinURL est résolu via le routeur lié au site (1er JoinLink actif du
+// routeur).
 //
 // Note : le PortalConfig renvoyé ne contient PAS de secret (pas de token
 // agent, pas de mots de passe). C'est la même structure que celle inlinée
@@ -236,6 +242,7 @@ func buildPortalConfigForSite(db *model.DB, site *model.WifiSite, router *model.
 		// re-déploiement sur les portails des routeurs déjà déployés.
 		JoinEnabled: settings.Tenant.JoinButtonEnabled(),
 		WifiSlug:    site.Slug,
+		Active:      site.Active, // N°51 — état réel (peut être en pause)
 	}
 	if origin := publicFrontendURL(r); origin != "" {
 		cfg.WifiURL = origin + "/wifi/" + site.Slug

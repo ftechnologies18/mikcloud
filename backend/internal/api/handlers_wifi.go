@@ -579,9 +579,11 @@ func (a *API) handleWifiStatus(w http.ResponseWriter, r *http.Request) {
 // une origine imprévisible). Pas de cookie, pas de JWT → ouverture cohérente
 // avec la nature publique de l'endpoint.
 //
-// Réponse 404 si le slug n'existe pas. 200 avec un PortalConfig valide sinon
-// (même si le site est inactif — la page affichera le bandeau « WiFi offert
-// en pause » grâce au champ active=false, cf. handleWifiSiteInfo).
+// Réponse 404 si le slug n'existe pas. Sinon 200 avec un PortalConfig qui
+// transporte N°51 l'état réel : site actif → sa config (active:true) ; site
+// en pause → la config FRAÎCHE du routeur (wifiSlug vide + active:false, ou
+// le 1er AUTRE site actif du routeur) — la page retire la carte claim du
+// fallback inliné périmé sans attendre un re-déploiement.
 func (a *API) handleWifiPortal(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 	a.store.Lock()
@@ -607,6 +609,13 @@ func (a *API) handleWifiPortal(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	cfg := buildPortalConfigForSite(db, site, router, r)
+	if !site.Active && router != nil {
+		// N°51 — site en pause : config fraîche du ROUTEUR (1er site actif
+		// lié — éventuellement un autre — sinon wifiSlug vide + active:false).
+		// Auto-réparation sans re-déploiement : la page retire la carte du
+		// fallback périmé, ou la rebranche sur le bon slug.
+		cfg = buildPortalConfig(db, router, r)
+	}
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, cfg)
 }
@@ -779,6 +788,14 @@ func (a *API) handleWifiSiteCreate(w http.ResponseWriter, r *http.Request) {
 		Active: req.Active, CreatedAt: model.NowISO(),
 	}
 	db.WifiSites = append(db.WifiSites, site)
+	// N°51 — création d'un site ACTIF : la carte claim doit apparaître sur le
+	// portail du routeur. Tant qu'aucun site actif n'existait au déploiement, le
+	// fallback inliné n'a pas de slug et la page ne fetch JAMAIS la config live
+	// → re-déploiement forcé (sig vidée, re-filée au prochain check-in ≤ 45 s).
+	// Inerte hors mode agent (aucun check-in, ensureHotspotFilesLocked no-op).
+	if req.Active {
+		router0.HotspotFilesSig = ""
+	}
 	a.logActivityBy(r, db, acc, "wifi", fmt.Sprintf("Site WiFi jetable «%s» créé (/wifi/%s, routeur %s)", site.Name, site.Slug, site.RouterName))
 	a.store.Save()
 	a.store.Unlock()
@@ -808,6 +825,7 @@ func (a *API) handleWifiSiteUpdate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "Site WiFi introuvable")
 		return
 	}
+	oldRouterID := site.RouterID // N°51 — pour le re-déploiement si le site change de routeur
 	router := findRouterScoped(db, req.RouterID, acc)
 	if router == nil {
 		a.store.Unlock()
@@ -841,6 +859,18 @@ func (a *API) handleWifiSiteUpdate(w http.ResponseWriter, r *http.Request) {
 	site.WifiSSID = req.WifiSSID
 	site.WifiPassword = req.WifiPassword
 	site.Active = req.Active
+	// N°51 — bascule active (1 clic) ou changement de routeur : la présence de
+	// la carte claim sur le portail change → re-déploiement forcé du portail
+	// (sig vidée, re-filée au prochain check-in ≤ 45 s). La config live
+	// (active:false) retire déjà la carte dès la visite suivante ; ce
+	// re-déploiement resynchronise le fallback inliné — indispensable dans le
+	// sens « activé après coup » (fallback sans slug = pas de fetch live).
+	if toggled != "" || oldRouterID != router.ID {
+		router.HotspotFilesSig = ""
+		if old := findRouterScoped(db, oldRouterID, acc); old != nil && old.ID != router.ID {
+			old.HotspotFilesSig = ""
+		}
+	}
 	msg := fmt.Sprintf("Site WiFi jetable «%s» mis à jour (quotas : %d min / %d Mo, plafonds : %d/tél, %d/site)", site.Name, site.FreeTimeMin, site.FreeDataMb, site.DailyPerPhone, site.DailyCap)
 	if toggled != "" {
 		msg = fmt.Sprintf("WiFi jetable «%s» %s (bascule 1 clic)", site.Name, toggled)
@@ -887,6 +917,13 @@ func (a *API) handleWifiSiteDelete(w http.ResponseWriter, r *http.Request) {
 		sites = append(sites, s)
 	}
 	db.WifiSites = sites
+	// N°51 — le site supprimé ne doit plus proposer sa carte claim : sig
+	// hotspot_files vidée → re-déploiement au prochain check-in (≤ 45 s).
+	// D'ici là, la config live (buildPortalConfig — plus aucun site actif lié)
+	// fait déjà retirer la carte par la page.
+	if router := findRouterScoped(db, site.RouterID, acc); router != nil {
+		router.HotspotFilesSig = ""
+	}
 	a.logActivityBy(r, db, acc, "wifi", fmt.Sprintf("Site WiFi jetable «%s» supprimé (%d entrées de registre effacées)", site.Name, removed))
 	a.store.Save()
 	a.store.Unlock()

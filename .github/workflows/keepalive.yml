@@ -1,15 +1,27 @@
 # Keep-alive Render — anti-hibernation (plan gratuit).
-# Le plan FREE de Render suspend le service après ~15 min sans trafic :
-# le premier visiteur suivant paie un redémarrage à froid de 30 à 90 s
-# (conteneur + rechargement complet de l'état depuis Neon).
-# Un ping léger toutes les 10 min maintient l'instance éveillée.
-# Alternative propre : upgrade Render Starter (payant) — supprimer ce
-# workflow le cas échéant.
+#
+# ⚠️ FIABILITÉ MESURÉE (sept. 2026) : GitHub Actions exécute ce cron avec des
+# retards plateforme de 99 à 288 min (moyenne ≈ 2 h 50 sur 15 runs), contre
+# 10 min nominale. Le plan FREE de Render suspend le service après ~15 min
+# sans trafic : ce workflow EST donc un filet partiel, pas une garantie —
+# des cold boots restent possibles entre deux pings.
+#
+# 👉 Le correctif réel est documenté dans docs/RUNBOOK-KEEPALIVE.md :
+#    - Option A (gratuit, recommandé) : monitor externe UptimeRobot
+#      (checks HTTP toutes les 5 min, fiable, indépendant de GitHub) ;
+#    - Option B (payant) : upgrade Render Starter (~7 $/mois, always-on).
+#    Une fois l'une des deux en place, désactiver ce workflow :
+#    `gh workflow disable keepalive.yml` (ou onglet Actions → Disable).
+#
+# Atténuation embarquée : deux lignes de cron décalées hors des minutes
+# rondes (:00, :10, :20… = pic de congestion du planificateur GitHub).
+# Le dépôt étant public, la charge double reste gratuite en minutes Actions.
 name: Keep-alive Render
 
 on:
   schedule:
-    - cron: "*/10 * * * *" # GitHub Actions : pas de crontab inférieur à 5 min
+    - cron: "3,13,23,33,43,53 * * * *" # hors minute ronde, série A
+    - cron: "8,18,28,38,48,58 * * * *" # hors minute ronde, série B
   workflow_dispatch: # déclenchement manuel possible depuis l'onglet Actions
 
 concurrency:

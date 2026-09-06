@@ -60,7 +60,7 @@ jobs:
 
       - name: Publier l'artefact chiffré (90 jours)
         if: steps.cfg.outputs.configured == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mikcloud-backup
           path: /tmp/mikcloud-backup.enc

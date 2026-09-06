@@ -141,7 +141,7 @@ jobs:
 
       - name: Rapport HTML + traces (échec)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report
           path: frontend/playwright-report/

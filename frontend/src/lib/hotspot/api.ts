@@ -448,10 +448,12 @@ export async function fetchWifiSiteInfo(slug: string): Promise<WifiSiteInfo> {
   return apiAnon<WifiSiteInfo>(`/api/wifi/site/${encodeURIComponent(slug)}`);
 }
 
-/** claimWifiCode — émission du code gratuit (idempotent par téléphone/jour). */
+/** claimWifiCode — émission du code gratuit (idempotent par téléphone/jour).
+ * N°50 : mac (appareil, quand la page est ouverte depuis le portail) alimente
+ * le plafond par appareil ; website = honeypot (toujours vide côté UI). */
 export async function claimWifiCode(
   slug: string,
-  body: { phone: string; optIn: boolean },
+  body: { phone: string; optIn: boolean; mac?: string; website?: string },
 ): Promise<WifiClaimResponse> {
   return apiAnon<WifiClaimResponse>(`/api/wifi/site/${encodeURIComponent(slug)}/claim`, {
     method: "POST",

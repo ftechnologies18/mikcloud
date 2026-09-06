@@ -67,6 +67,7 @@ interface SiteForm {
   freeDataMb: number;
   marketingOptIn: boolean;
   dailyPerPhone: number;
+  dailyPerMac: number;
   dailyCap: number;
   wifiSsid: string;
   wifiPassword: string;
@@ -82,6 +83,7 @@ function formFromSite(site: WifiSite): SiteForm {
     freeDataMb: site.freeDataMb,
     marketingOptIn: site.marketingOptIn,
     dailyPerPhone: site.dailyPerPhone,
+    dailyPerMac: site.dailyPerMac,
     dailyCap: site.dailyCap,
     wifiSsid: site.wifiSsid,
     wifiPassword: site.wifiPassword,
@@ -97,6 +99,7 @@ const EMPTY_FORM: SiteForm = {
   freeDataMb: 100,
   marketingOptIn: true,
   dailyPerPhone: 1,
+  dailyPerMac: 1,
   dailyCap: 100,
   wifiSsid: "",
   wifiPassword: "",
@@ -170,6 +173,7 @@ export default function WifiView() {
         freeDataMb: site.freeDataMb,
         marketingOptIn: site.marketingOptIn,
         dailyPerPhone: site.dailyPerPhone,
+        dailyPerMac: site.dailyPerMac,
         dailyCap: site.dailyCap,
         wifiSsid: site.wifiSsid,
         wifiPassword: site.wifiPassword,
@@ -401,6 +405,18 @@ export default function WifiView() {
                   value={form.dailyPerPhone}
                   onChange={(e) => setForm((f) => ({ ...f, dailyPerPhone: Number(e.target.value) || 1 }))}
                 />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="wifi-permac">{t("wifi.perMac")}</Label>
+                <Input
+                  id="wifi-permac"
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={form.dailyPerMac}
+                  onChange={(e) => setForm((f) => ({ ...f, dailyPerMac: Number(e.target.value) || 1 }))}
+                />
+                <p className="text-xs text-muted-foreground">{t("wifi.perMacHint")}</p>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="wifi-cap">{t("wifi.dailyCap")}</Label>

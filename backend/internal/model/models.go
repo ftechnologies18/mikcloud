@@ -958,6 +958,7 @@ type WifiSite struct {
 	FreeDataMb     int64  `json:"freeDataMb"`     // Mo offerts (0 = hériter profil)
 	MarketingOptIn bool   `json:"marketingOptIn"` // case consentement affichée
 	DailyPerPhone  int    `json:"dailyPerPhone"`  // tickets max / téléphone / jour
+	DailyPerMac    int    `json:"dailyPerMac"`    // N°50 — tickets max / appareil (MAC) / jour
 	DailyCap       int    `json:"dailyCap"`       // budget gratuit : tickets max / site / jour
 	WifiSSID       string `json:"wifiSsid"`       // N°49 — SSID du réseau du hotspot (QR de connexion, ≤ 32 car. 802.11)
 	WifiPassword   string `json:"wifiPassword"`   // N°49 — mot de passe WPA (≤ 63 car., vide = réseau ouvert)
@@ -985,6 +986,13 @@ type WifiGuest struct {
 	// réellement appliqué au routeur (anti-course du check-in ≤ 45 s).
 	// Vide en mode simulated/real (application immédiate).
 	ClaimCmdID string `json:"claimCmdId,omitempty"`
+	// N°50 — empreintes anti-abus du claim : MAC normalisée (claim depuis le
+	// portail, qui injecte $(mac-esc)) et IP client (premier hop XFF). Le
+	// téléphone reste la clé métier ; MAC/IP alimentent le plafond par
+	// appareil (DailyPerMac) et l'audit anti-abus du gérant. Vides pour les
+	// claims antérieurs au N°50 ou sans MAC (page /wifi scannée hors portail).
+	Mac string `json:"mac,omitempty"`
+	IP  string `json:"ip,omitempty"`
 }
 
 // NormalizeWifiSlug — normalise un nom d'établissement en slug public

@@ -69,10 +69,23 @@ type signupLimiter struct {
 	mu  sync.Mutex
 	ips map[string]*signupState
 	now func() time.Time // injectable pour les tests
+	// N°50 — seuils configurables : le limiter historique (inscription)
+	// garde les constantes S3 ; le claim WiFi jetable utilise des bornes
+	// NAT-friendly (un établissement entier partage UNE IP publique).
+	burstMax int
+	dailyMax int
 }
 
 func newSignupLimiter() *signupLimiter {
-	return &signupLimiter{ips: map[string]*signupState{}, now: time.Now}
+	return newSignupLimiterLimits(signupBurstMax, signupDailyMax)
+}
+
+// newSignupLimiterLimits — variante à seuils personnalisés (N°50 — claim
+// WiFi jetable : burst 20/10 min, quotidien 100/24 h par IP, calibrés pour
+// laisser passer un établissement complet derrière le NAT du hotspot tout
+// en bornant le fermage de codes depuis une même IP).
+func newSignupLimiterLimits(burst, daily int) *signupLimiter {
+	return &signupLimiter{ips: map[string]*signupState{}, now: time.Now, burstMax: burst, dailyMax: daily}
 }
 
 // allow — enregistre une tentative d'inscription pour cette IP et dit si elle
@@ -104,7 +117,7 @@ func (s *signupLimiter) allow(ip string) (bool, time.Duration) {
 	// Quota quotidien : au seuil, refus jusqu'à ce que la plus ancienne
 	// tentative de la fenêtre glissante en sorte (st.stamps[0] — tri
 	// chronologique garanti par l'ordre d'ajout).
-	if len(st.stamps) >= signupDailyMax {
+	if len(st.stamps) >= s.dailyMax {
 		return false, st.stamps[0].Add(signupDailyWindow).Sub(now)
 	}
 	// Fenêtre burst : comptage du suffixe récent (les tentatives des
@@ -113,10 +126,10 @@ func (s *signupLimiter) allow(ip string) (bool, time.Duration) {
 	for i := len(st.stamps) - 1; i >= 0 && now.Sub(st.stamps[i]) < signupBurstWindow; i-- {
 		burst++
 	}
-	if burst >= signupBurstMax {
+	if burst >= s.burstMax {
 		// La place se libère quand la première tentative de la série
 		// burst actuelle sort de la fenêtre.
-		first := st.stamps[len(st.stamps)-signupBurstMax]
+		first := st.stamps[len(st.stamps)-s.burstMax]
 		return false, first.Add(signupBurstWindow).Sub(now)
 	}
 	st.stamps = append(st.stamps, now)

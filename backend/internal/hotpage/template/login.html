@@ -748,7 +748,9 @@
          - bouton « S'inscrire » pointant vers {{MIKCLOUD_JOIN_URL}}?mac=$(mac-esc) ;
          - offres payantes dynamiques (remplace les Wave hardcodés 100→3000 F) ;
          - claim inline : téléphone → POST /api/wifi/site/{slug}/claim → code →
-           doLogin() CHAP auto → écran « Connecté ✓ ».
+           doLogin() CHAP auto → écran « Connecté ✓ » (N°50 : la MAC du
+           client accompagne le claim — plafond anti-abus par appareil —
+           et un honeypot « website » piège les bots, cf. handlers_wifi.go).
          Le script est non invasif : si la config est absente (routeur non lié à
          un site MikCloud), il s'auto-désactive et le portail reste tel quel. -->
     <script>
@@ -922,6 +924,11 @@
                     'Recevoir' +
                     '</button>' +
                     '</div>' +
+                    /* N°50 — honeypot : champ invisible (hors écran, non
+                       tabulable) qu'un bot remplira ; l'API répond alors un
+                       succès factice sans créer le ticket. */
+                    '<input type="text" id="mc-website" name="website" value="" tabindex="-1" autocomplete="off" aria-hidden="true" ' +
+                    'style="position:absolute;left:-9999px;top:-9999px;height:0;width:0;opacity:0;" />' +
                     '<p id="mc-claim-status" style="margin:8px 0 0;font-size:14px;color:#0f766e;"></p>';
                 var loginSection = document.querySelector('.login-section');
                 if (!loginSection) return;
@@ -940,10 +947,19 @@
                     showClaimStatus('Envoi...', 'info');
 
                     var claimUrl = cfg.apiBase + '/api/wifi/site/' + encodeURIComponent(cfg.wifiSlug) + '/claim';
+                    // N°50 — mac : identité de l'appareil ($(mac-esc) résolue par
+                    // le routeur, lue plus haut) → plafond anti-abus par appareil ;
+                    // website : honeypot (toujours vide pour un vrai client).
+                    var mcWebsite = document.getElementById('mc-website');
                     fetch(claimUrl, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ phone: phone, optIn: false })
+                        body: JSON.stringify({
+                            phone: phone,
+                            optIn: false,
+                            mac: clientMac || '',
+                            website: mcWebsite ? mcWebsite.value : ''
+                        })
                     }).then(function (resp) {
                         if (!resp.ok && resp.status !== 402 && resp.status !== 403 && resp.status !== 429) {
                             throw new Error('HTTP ' + resp.status);

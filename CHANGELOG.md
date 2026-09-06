@@ -5,6 +5,56 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-06 — N°43/N°44 : vague Dependabot 2 adoptée — ESLint 10 ré-adopté, recharts 3 migré
+
+### N°43 — ESLint 10 ré-adopté via @eslint/compat (#28, gérant)
+- Le diagnostic N°40 (« 5 plugins sur 6 incompatibles — PR structurellement
+  rouge ») était **factuel mais contournable** : le shim officiel
+  `@eslint/compat` (`fixupPluginRules`) rétro-compatibilise les API de
+  contexte supprimées par ESLint 10 pour les plugins legacy (react,
+  react-hooks, jsx-a11y, import) — typescript-eslint 8.69 supporte
+  nativement ^10.
+- `eslint.config.mjs` : wrapper `retroCompatPlugins` appliqué à toute la
+  config ; `package.json` : `eslint ^10` + `@eslint/compat 2.1` +
+  **`overrides` déclaratif** pinant typescript-eslint/@typescript-eslint/*
+  sur 8.69.0 (version propre de la résolution forcée N°40) ; l'ignore
+  Dependabot `eslint >= 10` est retiré. CI 5/5 verte (lint sous ESLint
+  10.10, typecheck tsgo, build, E2E). Fusion 8192c9e.
+
+### N°44 — quatre bumps + migration recharts 3 (#24, #26, #27, #29, #25)
+- **prisma 6 → 7** (#24) et **@prisma/client 6 → 7** (#26) : dépendances
+  héritées du template, **jamais importées** dans `frontend/src` — zéro
+  impact code, CI verte.
+- **framer-motion 12 → 13** (#27) : très utilisé (app-shell, paywall,
+  dialogs, pages join/wifi) — l'API consommée reste compatible, CI complète
+  verte y compris E2E.
+- **lucide-react 1.40** + **@types/react-dom** (#29, groupe minor/patch) :
+  trivial.
+- **recharts 2 → 3** (#25) : migration réelle — recharts 3 omet
+  `active`/`payload`/`label` des props du composant `Tooltip`
+  (`PropertiesReadFromContext`) et `payload`/`verticalAlign` des props de
+  `Legend` :
+  - `chart.tsx` : `ChartTooltipContent` typé `TooltipContentProps`
+    (génériques par défaut — `TooltipPayload` est
+    `Payload<ValueType,NameType>[]` non spécialisé), `ChartLegendContent`
+    typé `LegendPayload[]` + union `verticalAlign` locale, clé de série
+    React sur la clé calculée string (`DataKey` v3 peut être une fonction) ;
+  - `sd-chart-tooltip.tsx` : `ChartTooltip` typé
+    `Partial<TooltipContentProps<number,string>>` + formatter requis — les
+    4 sites consommateurs (`router-tools.tsx`, `reports-view.tsx`) créent
+    `content={<ChartTooltip formatter={...} />}` sans les props que
+    recharts injecte au rendu.
+- **Leçon tooling** : le cache incrémental de tsgo (`tsconfig "incremental":
+  true` → `tsconfig.tsbuildinfo`) **masquait les erreurs transitoires** lors
+  d'un changement de types de dépendances — local « 0 erreur » là où la CI
+  (arbre frais) en voyait 4. Purger `tsconfig.tsbuildinfo` avant tout
+  verdict de typecheck local.
+- Fusion aa16ead ; **Render déployé manuellement** sur aa16ead
+  (le run CI main du merge N°41 avait été annulé par une fenêtre de
+  flakiness GitHub Actions — runs « pending » jamais démarrés, pushes
+  synchronize sans run — le deploy-render de N°41 n'a jamais tourné ;
+  Vercel, sur son webhook propre, est resté à jour en continu).
+
 ## 2026-09-06 — N°41 : salvage PR #21 (jules) — quota gratuit exposé au portail + téléphones locaux CI préfixés 225
 
 ### Revue de la PR #21 « Unified Captive Portal & Hybrid Cloud/Local WiFi Jetable Claim »

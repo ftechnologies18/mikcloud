@@ -5,6 +5,24 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-06 — N°49-b : affiche à QR unique (l'ancien QR « page web » quitte l'affiche)
+
+### N°49-b — un seul QR sur l'affiche : celui qui connecte au WiFi
+- **Décision gérant** : supprimer le second QR « Page web » conservé en
+  secours au N°49. Deux QR côte à côte = hésitation au scan ; le QR de
+  connexion (N°49) redevient l'unique geste de l'affiche.
+- **Pourquoi c'est sûr** : les affiches déjà collées ne changent pas (leur QR
+  page web est imprimé sur le papier et /wifi/{slug} reste en ligne) ; le
+  repli « portail qui ne poppe pas » est repris par une ligne imprimée sous
+  le QR (« La page ne s'ouvre pas ? Ouvrez simplement votre navigateur. » —
+  le hotspot MikroTik redirige le HTTP non authentifié vers le portail) ;
+  le repli vieux téléphones reste le SSID imprimé sur l'affiche.
+- **Frontend** : `wifi-poster-dialog` — onglets « Connexion WiFi / Page web »
+  supprimés (QR unique `WIFI:T:nopass|WPA;S:..;P:..;;`, échappement spec
+  Android conservé), prop `publicUrl` retirée ; SSID vide → guidage console
+  + Impression désactivée (inchangé). Le bouton console « Copier l'URL » et
+  la page /wifi/{slug} restent inchangés.
+
 ## 2026-09-06 — N°49 : QR de connexion WiFi sur l'affiche (SSID du hotspot encodé, format universel WIFI:)
 
 ### N°49 — le client scanne, le WiFi se connecte tout seul, le portail fait le reste

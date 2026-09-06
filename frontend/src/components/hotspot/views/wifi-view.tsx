@@ -477,7 +477,6 @@ export default function WifiView() {
         open={Boolean(posterFor)}
         onOpenChange={(o) => !o && setPosterFor(null)}
         siteName={posterFor?.name ?? ""}
-        publicUrl={posterFor ? publicUrlOf(posterFor) : ""}
         wifiSsid={posterFor?.wifiSsid ?? ""}
         wifiPassword={posterFor?.wifiPassword ?? ""}
         quotaLabel={

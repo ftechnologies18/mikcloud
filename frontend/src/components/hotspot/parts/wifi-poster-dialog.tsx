@@ -3,17 +3,19 @@
 // N°27 — WiFi Jetable : affiche QR imprimable par site (chevalet de table).
 // Réutilise le système d'impression global (.print-area dans globals.css).
 //
-// N°49 — QR de CONNEXION : le QR encode maintenant le RÉSEAU WiFi lui-même
+// N°49 — QR de CONNEXION : le QR encode le RÉSEAU WiFi lui-même
 // (format universel « WIFI:T:...;S:...;P:...;; », scanné par l'appareil photo
 // iOS 11+ / Android 10+) : le téléphone propose de rejoindre le réseau, le
 // portail captif s'ouvre, et le formulaire inline (N°48) prend le relais
 // (numéro → code → en ligne). Zéro page intermédiaire, zéro copie de code.
-// L'ancien QR « page web » (/wifi/{slug}) reste disponible en second mode :
-// il sert de secours (portail qui ne poppe pas) et aux QR déjà imprimés.
-// Échappement : \ ; , : " doivent être backslashés dans S:/P: (spec Android).
 //
-// Le mode initial dépend du SSID au moment de l'OUVERTURE : le parent passe
-// une key par site (wifi-view.tsx) pour remonter le composant à chaque choix.
+// N°49-b — QR UNIQUE : l'ancien QR « page web » (/wifi/{slug}) quitte
+// l'affiche — deux QR côte à côte = hésitation au scan. La page /wifi/{slug}
+// reste EN LIGNE (affiches déjà imprimées, secours, vitrine). Le repli
+// « portail qui ne poppe pas » est repris par une ligne imprimée : le client
+// ouvre son navigateur et le hotspot MikroTik redirige vers le portail
+// (HTTP non authentifié). Échappement : \ ; , : " backslashés dans S:/P:
+// (spec Android).
 
 import { useEffect, useMemo, useState } from "react";
 import QRCode from "qrcode";
@@ -28,8 +30,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-
-type PosterMode = "wifi" | "web";
 
 /** Échappe les caractères réservés du format WIFI: (\ ; , : "). */
 function escWifi(s: string) {
@@ -47,7 +47,6 @@ export function WifiPosterDialog({
   open,
   onOpenChange,
   siteName,
-  publicUrl,
   logoUrl,
   quotaLabel,
   wifiSsid,
@@ -56,27 +55,24 @@ export function WifiPosterDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   siteName: string;
-  publicUrl: string;
   logoUrl?: string;
   quotaLabel: string;
   wifiSsid?: string;
   wifiPassword?: string;
 }) {
   const ssid = (wifiSsid ?? "").trim();
-  const [mode, setMode] = useState<PosterMode>(ssid ? "wifi" : "web");
   // Rendu asynchrone du QR : {payload encodé, data URL}. L'URL affichée n'est
   // valable que si elle correspond AU payload actif (évite le flash d'un QR
-  // d'un autre mode pendant la régénération).
+  // périmé pendant la régénération).
   const [rendered, setRendered] = useState<{ payload: string; url: string }>({
     payload: "",
     url: "",
   });
 
   const payload = useMemo(() => {
-    if (!open) return "";
-    if (mode === "wifi") return ssid ? wifiQrPayload(ssid, (wifiPassword ?? "").trim()) : "";
-    return publicUrl;
-  }, [open, mode, ssid, wifiPassword, publicUrl]);
+    if (!open || !ssid) return "";
+    return wifiQrPayload(ssid, (wifiPassword ?? "").trim());
+  }, [open, ssid, wifiPassword]);
 
   useEffect(() => {
     if (!payload) return;
@@ -98,7 +94,7 @@ export function WifiPosterDialog({
     };
   }, [payload]);
 
-  const missingSsid = mode === "wifi" && !ssid;
+  const missingSsid = !ssid;
   const qr = payload && rendered.payload === payload ? rendered.url : "";
 
   return (
@@ -107,30 +103,9 @@ export function WifiPosterDialog({
         <DialogHeader>
           <DialogTitle>Affiche QR — {siteName}</DialogTitle>
           <DialogDescription>
-            Choisissez le mode, imprimez et posez sur les tables : le client scanne et profite du WiFi offert.
+            Imprimez et posez sur les tables : le client scanne, le WiFi se connecte tout seul.
           </DialogDescription>
         </DialogHeader>
-        {/* Sélecteur de mode (N°49) : connexion directe au réseau vs page web. */}
-        <div className="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1" role="tablist" aria-label="Mode du QR code">
-          <Button
-            size="sm"
-            variant={mode === "wifi" ? "default" : "ghost"}
-            aria-selected={mode === "wifi"}
-            role="tab"
-            onClick={() => setMode("wifi")}
-          >
-            Connexion WiFi
-          </Button>
-          <Button
-            size="sm"
-            variant={mode === "web" ? "default" : "ghost"}
-            aria-selected={mode === "web"}
-            role="tab"
-            onClick={() => setMode("web")}
-          >
-            Page web
-          </Button>
-        </div>
         <div className="print-area rounded-lg bg-white p-4 text-black">
           <div className="flex flex-col items-center gap-3 text-center">
             {logoUrl ? (
@@ -147,13 +122,13 @@ export function WifiPosterDialog({
                 </p>
               </div>
             ) : qr ? (
-              <img src={qr} alt={mode === "wifi" ? "QR code de connexion WiFi" : "QR code WiFi"} className="h-52 w-52" />
+              <img src={qr} alt="QR code de connexion WiFi" className="h-52 w-52" />
             ) : (
               <div className="flex h-52 w-52 items-center justify-center">
                 <Loader2 className="size-8 animate-spin text-neutral-400" />
               </div>
             )}
-            {mode === "wifi" && !missingSsid ? (
+            {!missingSsid ? (
               <>
                 <p className="max-w-[240px] text-sm font-semibold">
                   Scannez : le WiFi « {ssid} » se connecte tout seul
@@ -161,13 +136,12 @@ export function WifiPosterDialog({
                 <p className="text-xs text-neutral-500">
                   La page « WiFi Offert » s&apos;ouvre à l&apos;arrivée — entrez juste votre numéro.
                 </p>
-              </>
-            ) : mode === "web" ? (
-              <>
-                <p className="max-w-[240px] text-sm font-semibold">
-                  Scannez, recevez votre code, connectez-vous
+                {/* N°49-b — remplace le QR « page web » retiré : si le portail
+                    ne poppe pas, ouvrir le navigateur suffit (le hotspot
+                    MikroTik redirige le HTTP non authentifié vers le portail). */}
+                <p className="text-[10px] text-neutral-400">
+                  La page ne s&apos;ouvre pas ? Ouvrez simplement votre navigateur.
                 </p>
-                <p className="text-[10px] text-neutral-400">{publicUrl}</p>
               </>
             ) : null}
             <p className="text-xs text-neutral-500">{quotaLabel}</p>

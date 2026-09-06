@@ -15,6 +15,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  BadgeCheck,
   Building2,
   CalendarClock,
   Globe,
@@ -121,6 +122,10 @@ export default function SettingsView() {
             {/* Import automatique des utilisateurs hors MikCloud (purge P1) —
                 comportement de la synchro agent pour les inconnus du cloud */}
             <AutoImportCard settings={data} />
+
+            {/* Bouton « S'inscrire » du portail captif (N°46) — affichage
+                dynamique piloté par le gérant */}
+            <PortalJoinCard settings={data} />
 
             {/* Vouchers — DNS + logo (F2) */}
             <VoucherCard settings={data} />
@@ -499,6 +504,83 @@ function AutoImportCard({ settings }: { settings: AppSettings }) {
           }
         >
           {t("settings.autoImport.disabledDesc")}
+        </p>
+      </CardContent>
+      <CardFooter className="justify-end px-4 sm:px-6">
+        <Button className="h-10" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
+          {saveMutation.isPending ? t("common.saving") : t("common.save")}
+        </Button>
+      </CardFooter>
+    </Card>
+  );
+}
+
+// Carte Bouton « S'inscrire » (N°46) — réglage dynamique de l'affichage du
+// bouton d'inscription sur la page de connexion du portail captif. Le portail
+// lit ce réglage dans la config (fallback inliné + fetch live) : activé → le
+// bouton Mikhmon « Scanner un QR Code » devient « S'inscrire » (lien join
+// ?mac= pré-injectée) ; désactivé → aucun bouton d'inscription.
+function PortalJoinCard({ settings }: { settings: AppSettings }) {
+  const { t } = useI18n();
+  const queryClient = useQueryClient();
+  // Lecture défensive : le champ vit dans tenant{…} (forme du contrat) —
+  // absent (nil côté Go) = true (défaut effectif, comportement historique).
+  const [enabled, setEnabled] = useState<boolean>(settings.tenant.joinButton ?? true);
+
+  const saveMutation = useMutation({
+    mutationFn: () => updateSettings({ joinButton: enabled }),
+    onSuccess: () => {
+      toast.success(t("settings.joinButton.savedToast"));
+      void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return (
+    <Card className="gap-4 py-4 sm:py-6">
+      <CardHeader className="px-4 sm:px-6">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
+            <BadgeCheck className="size-4" />
+          </span>
+          {t("settings.joinButton.title")}
+        </CardTitle>
+        <CardDescription>{t("settings.joinButton.desc")}</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-3 px-4 sm:px-6">
+        <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
+          <Label htmlFor="portal-join-button" className="cursor-pointer text-sm">
+            {t("settings.joinButton.switchLabel")}
+          </Label>
+          <Switch
+            id="portal-join-button"
+            checked={enabled}
+            onCheckedChange={setEnabled}
+            aria-label={t("settings.joinButton.aria")}
+            className="shrink-0"
+            disabled={saveMutation.isPending}
+          />
+        </div>
+        {/* Les deux comportements sont décrits — celui du réglage courant
+            est mis en avant, l'autre reste lisible (montre la conséquence
+            du basculement avant d'enregistrer). */}
+        <p
+          className={
+            enabled
+              ? "text-xs leading-relaxed text-foreground"
+              : "text-xs leading-relaxed text-muted-foreground"
+          }
+        >
+          {t("settings.joinButton.enabledDesc")}
+        </p>
+        <p
+          className={
+            !enabled
+              ? "text-xs leading-relaxed text-foreground"
+              : "text-xs leading-relaxed text-muted-foreground"
+          }
+        >
+          {t("settings.joinButton.disabledDesc")}
         </p>
       </CardContent>
       <CardFooter className="justify-end px-4 sm:px-6">

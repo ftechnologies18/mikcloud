@@ -91,6 +91,9 @@ sortant). Les modes « simulé » et « réel » ne déploient rien.
 │   Live prime sur le fallback (Object.assign merge)          │
 │   Claim inline → code → doLogin() CHAP auto → en ligne       │
 │   Bouton « S'inscrire » → /join/{token}?mac=$(mac-esc)       │
+│   (N°46 : affichage piloté par tenant.joinButton — off =     │
+│    aucun bouton, le reliquat Mikhmon « Scanner QR » est      │
+│    retiré de la page)                                        │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -141,12 +144,44 @@ de login du portail, et exposée aussi à la page visiteur WiFi.
 3. **Robustesse** : si l'image ne charge pas (URL morte), la bannière se
    retire automatiquement de la page (`onerror` → retrait du bloc).
 
+### Bouton « S'inscrire » du portail (N°46)
+
+Le gérant pilote l'affichage du bouton d'inscription sur la page de login —
+l'option est **dynamique** : activée dans la console → le bouton s'affiche ;
+désactivée → **rien** (aucun bouton d'inscription, et le reliquat Mikhmon
+« Scanner un QR Code » qui pointait vers un site externe est retiré de la
+page).
+
+1. **Console** : Paramètres → onglet **Hotspot** → carte **Inscription sur le
+   portail captif** : interrupteur (activé par défaut) + « Enregistrer ».
+2. **Comportement du portail** (page `login.html`, bloc config JSON
+   `joinEnabled`) :
+   - **Activé + lien d'inscription publique actif lié au routeur** → le
+     bouton « S'inscrire » s'affiche, ouvrant `/join/{token}?mac=<MAC du
+     client>` (quota MAC N°33 : anti-doublon par appareil).
+   - **Activé mais aucun lien actif** → aucun bouton (pas de cible valide à
+     ouvrir — créer un lien d'inscription dans la vue **Inscriptions** et le
+     lier au routeur).
+   - **Désactivé** → aucun bouton d'inscription, quel que soit l'état des
+     liens.
+3. **Effet immédiat** : la page lit `joinEnabled` dans la config live
+   (`GET /api/wifi/site/{slug}/portal`) — pas de re-déploiement nécessaire
+   pour les routeurs agent déjà déployés (le fallback inliné des nouveaux
+   déploiements l'embarque aussi).
+4. **Prérequis de production** : `APP_PUBLIC_URL=https://mikcloud.ftci.fr`
+   sur Render (env var, posée dans `backend/render.yaml`) — sans cette
+   variable, `cfg.joinUrl` reste vide et le bouton ne peut jamais s'afficher.
+   Si la variable a été ajoutée APRÈS le déploiement initial du service,
+   re-démarrer le service Render (Manual Deploy) pour qu'elle soit prise
+   en compte.
+
 ## 3. Quand re-déployer manuellement ?
 
 | Cas | Re-déploiement nécessaire ? |
 |---|---|
 | Changement de branding (nom, logo, services) | ❌ Non — le fetch live rafraîchit automatiquement |
 | Changement de bannière du portail (N°45, settings tenant `bannerUrl`) | ❌ Non — fetch live (le bloc config JSON embarque la bannière) |
+| Changement du bouton « S'inscrire » (N°46, settings tenant `joinButton`) | ❌ Non — fetch live (le bloc config JSON embarque `joinEnabled`) |
 | Changement d'offres (prix, profils) | ❌ Non — fetch live |
 | Changement de textes d'accueil | ❌ Non — fetch live |
 | Changement de lien Wave marchand | ❌ Non — fetch live |

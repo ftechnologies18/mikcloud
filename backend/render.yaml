@@ -30,6 +30,12 @@ services:
       # Ex. : https://mikcloud.ftci.fr,https://mikcloud.vercel.app
       - key: ALLOWED_ORIGIN
         sync: false
+      # N°46 — origine publique du frontend Vercel : sert à construire les
+      # liens absolus /join/{token} et /wifi/{slug} exposés au portail captif
+      # (buildPortalConfig → publicFrontendURL). Sans elle, cfg.joinUrl reste
+      # vide et le bouton « S'inscrire » du portail ne peut jamais s'afficher.
+      - key: APP_PUBLIC_URL
+        value: https://mikcloud.ftci.fr
 # Les données vivent dans Neon (PostgreSQL) : le disque éphémère du plan
 # gratuit Render n'est plus un problème — l'état est rechargé à chaque
 # démarrage et synchronisé à chaque modification.

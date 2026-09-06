@@ -185,3 +185,53 @@ func TestPersonalizeOffersInJSON(t *testing.T) {
 		t.Errorf("prix manquant :\n%s", out)
 	}
 }
+
+// TestConfigJSONJoinEnabledAlwaysExplicit — N°46 : le champ joinEnabled doit
+// être TOUJOURS explicite dans le bloc config JSON, même à false. Sans
+// omitempty ce test est trivial, mais il gèle le contrat : si quelqu'un
+// rajoute `omitempty` sur JoinEnabled, un réglage console « désactivé » serait
+// OMIS du JSON → la page lirait undefined (≠ false) et réactiverait le bouton
+// « S'inscrire » malgré le gérant.
+func TestConfigJSONJoinEnabledAlwaysExplicit(t *testing.T) {
+	for _, tc := range []struct {
+		enabled bool
+		want    string
+	}{
+		{true, `"joinEnabled":true`},
+		{false, `"joinEnabled":false`},
+	} {
+		out := Personalize(`{{MIKCLOUD_CONFIG_JSON}}`, PortalConfig{JoinEnabled: tc.enabled})
+		if !strings.Contains(out, tc.want) {
+			t.Errorf("joinEnabled=%v : %q attendu dans le JSON, obtenu :\n%s", tc.enabled, tc.want, out)
+		}
+	}
+}
+
+// TestLoginTemplateJoinButtonLogic — N°46 : le template embarqué login.html
+// porte la logique dynamique du bouton d'inscription :
+//   - condition cfg.joinEnabled !== false (undefined = activé, rétrocompat) ;
+//   - remplacement du bouton Mikhmon par « S'inscrire » quand activé + lien ;
+//   - retrait du bouton (btnQr.remove()) quand désactivé ou sans lien —
+//     le reliquat Mikhmon « Scanner un QR Code » ne doit JAMAIS rester.
+func TestLoginTemplateJoinButtonLogic(t *testing.T) {
+	raw, ok := File("login.html")
+	if !ok {
+		t.Fatal("login.html introuvable dans le template embarqué")
+	}
+	body := string(raw)
+	for _, want := range []string{
+		"cfg.joinEnabled !== false && cfg.joinUrl",
+		`btnQr.textContent = "S'inscrire"`,
+		"btnQr.remove()",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("logique N°46 absente de login.html : %q", want)
+		}
+	}
+	// Le onclick laksa19 (lien externe sans fonction métier) ne doit plus
+	// survivre dans le script hybride : la seule occurrence du domaine doit
+	// être dans le bouton statique initial, que applyConfig remplace ou retire.
+	if !strings.Contains(body, "S'inscrire") {
+		t.Error("le libellé « S'inscrire » doit rester présent dans login.html")
+	}
+}

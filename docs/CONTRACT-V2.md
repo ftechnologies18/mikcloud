@@ -281,6 +281,18 @@ BannerURL string `json:"bannerUrl,omitempty"`
   `{{MIKCLOUD_BANNER_URL}}` et le champ `bannerUrl` du bloc config JSON ;
   `login.html` insère l'image (id `mikcloud-banner`) en tête de la colonne
   de connexion quand la valeur est non vide (retrait auto si l'image 404).
+- `PUT /api/settings` accepte `joinButton` (N°46, booléen, formes plate +
+  `tenant{…}`) : bouton « S'inscrire » du portail captif. `false` = AUCUN
+  bouton d'inscription sur la page de login (le reliquat Mikhmon « Scanner un
+  QR Code » est retiré du DOM) ; true/absent (nil) = le bouton s'affiche
+  quand un lien d'inscription publique actif est lié au routeur. Persisté
+  Neon (`settings.join_button BOOLEAN NOT NULL DEFAULT TRUE`, DDL idempotent).
+  Le templating du portail expose la valeur effective via le champ
+  `joinEnabled` du bloc config JSON (SANS omitempty : toujours explicite) et
+  `GET /api/wifi/site/{slug}/portal` le renvoie aussi — le réglage s'applique
+  sans re-déploiement sur les portails déjà déployés (fetch live prime).
+  Prérequis d'affichage : `APP_PUBLIC_URL` doit être défini sur Render
+  (origine publique du frontend) pour que `cfg.joinUrl` soit construit.
 
 ### Seed (compte principal + tout nouveau compte)
 3 templates par défaut (contenus HTML fidèles à Mikhmon, adaptés MikCloud) :

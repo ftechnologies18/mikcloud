@@ -438,6 +438,18 @@ type Tenant struct {
 	// (upload console) ou URL https:// (Cloudflare R2, session suivante).
 	// Vide = aucune bannière (portail sans image tête).
 	BannerURL string `json:"bannerUrl,omitempty"`
+	// Bouton « S'inscrire » du portail captif (N°46) : quand activé (valeur
+	// effective par défaut : nil OU true), la page de login affiche le
+	// bouton « S'inscrire » pointant vers le lien d'inscription publique
+	// actif lié au routeur (quota MAC N°33). Quand désactivé (false),
+	// AUCUN bouton d'inscription n'est rendu — le reliquat Mikhmon
+	// « Scanner un QR Code » (lien externe sans fonction métier) est
+	// retiré de la page. Pointeur : nil = défaut ON sans écrire le champ
+	// dans le JSON renvoyé (compatibilité zéro-migration, même pattern
+	// que Settings.AutoImportRouterUsers) ; la colonne Neon
+	// `settings.join_button` (NOT NULL DEFAULT TRUE) reporte la valeur
+	// explicite au premier Save.
+	JoinButton *bool `json:"joinButton,omitempty"`
 	// P0 (audit Mikhmon) — F5 : politique de nettoyage des expirés.
 	ExpiryPolicyMode      string `json:"expiryPolicyMode"`      // "keep" (défaut) | "remove"
 	ExpiryPolicyAfterDays int    `json:"expiryPolicyAfterDays"` // défaut 30
@@ -536,6 +548,13 @@ type Settings struct {
 // compte (nil = ON : comportement historique préservé, zéro surprise).
 func (s Settings) ImportAutoEnabled() bool {
 	return s.AutoImportRouterUsers == nil || *s.AutoImportRouterUsers
+}
+
+// JoinButtonEnabled — valeur EFFECTIVE du réglage du bouton « S'inscrire »
+// du portail captif (N°46) pour un compte (nil = ON : comportement historique
+// préservé, zéro-migration pour les comptes existants).
+func (t Tenant) JoinButtonEnabled() bool {
+	return t.JoinButton == nil || *t.JoinButton
 }
 
 // PlatformConfig — configuration globale de la plateforme MikCloud (vivante

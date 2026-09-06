@@ -288,6 +288,80 @@ func TestPortalServeBanner(t *testing.T) {
 	}
 }
 
+// TestPortalServeJoinButton — N°46 : le champ joinEnabled du bloc config JSON
+// reflète le réglage console tenant.joinButton :
+//   - nil (compte qui n'a jamais touché le réglage) → "joinEnabled":true
+//     (défaut effectif ON, comportement historique préservé) ;
+//   - false (bouton désactivé dans la console) → "joinEnabled":false EXPLICITE
+//     dans le JSON brut (pas d'omitempty : l'absence réactiverait le bouton).
+func TestPortalServeJoinButton(t *testing.T) {
+	st, ts := newTestServerWithStore(t)
+	seedRouterWithAccount(t, st, "tok-join", struct {
+		tenantName  string
+		wifiSlug    string
+		joinActive  bool
+		profileName string
+		profilePrc  int
+		waveLink    string
+		bannerUrl   string
+	}{tenantName: "Cyber Join", wifiSlug: "", joinActive: true, profileName: "", profilePrc: 0, waveLink: ""})
+
+	fetchConfig := func() (string, hotpage.PortalConfig) {
+		resp, err := http.Get(ts.URL + "/portal/tok-join/login.html")
+		if err != nil {
+			t.Fatalf("GET login.html : %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("statut %d", resp.StatusCode)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		bodyStr := string(body)
+		start := strings.Index(bodyStr, `id="mikcloud-config">`) + len(`id="mikcloud-config">`)
+		end := strings.Index(bodyStr[start:], "</script>")
+		if start <= 0 || end <= 0 {
+			t.Fatal("bloc config introuvable")
+		}
+		var cfg hotpage.PortalConfig
+		if err := json.Unmarshal([]byte(bodyStr[start:start+end]), &cfg); err != nil {
+			t.Fatalf("JSON config invalide : %v", err)
+		}
+		return bodyStr, cfg
+	}
+
+	// Cas 1 — défaut (nil) : activé effectivement.
+	bodyStr, cfg := fetchConfig()
+	if !cfg.JoinEnabled {
+		t.Error("joinEnabled par défaut (joinButton nil) doit être true")
+	}
+	if !strings.Contains(bodyStr, `"joinEnabled":true`) {
+		t.Error(`"joinEnabled":true absent du JSON brut`)
+	}
+
+	// Cas 2 — réglage console : désactivé → false EXPLICITE dans le JSON.
+	st.Lock()
+	db := st.Data()
+	off := false
+	for i := range db.Routers {
+		if db.Routers[i].ID == "r-portal-tok-join" {
+			acc := db.Routers[i].AccountID
+			settings := db.SettingsByAccount[acc]
+			settings.Tenant.JoinButton = &off
+			db.SettingsByAccount[acc] = settings
+		}
+	}
+	st.Save()
+	st.Unlock()
+
+	bodyStr, cfg = fetchConfig()
+	if cfg.JoinEnabled {
+		t.Error("joinEnabled doit être false quand tenant.joinButton = false")
+	}
+	if !strings.Contains(bodyStr, `"joinEnabled":false`) {
+		t.Error(`"joinEnabled":false doit être EXPLICITE dans le JSON brut (pas d'omitempty)`)
+	}
+}
+
 // TestPortalServeBinaryNotTemplated — les assets binaires (logo.png) sont
 // servis tels quels, PAS passés par Personalize (qui casserait les octets).
 func TestPortalServeBinaryNotTemplated(t *testing.T) {

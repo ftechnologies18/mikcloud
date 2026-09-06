@@ -932,6 +932,12 @@ export interface AppSettings {
      * synchronisation agent ; false = jamais importés automatiquement (visibles
      * dans la santé du routeur, adoption manuelle via l'outil d'import). */
     autoImportRouterUsers?: boolean;
+    /** N°46 : bouton « S'inscrire » du portail captif — true (défaut, absent
+     * du JSON tant que le réglage n'a pas été touché) = le bouton « S'inscrire »
+     * s'affiche sur la page de connexion si un lien d'inscription publique
+     * actif est lié au routeur ; false = aucun bouton d'inscription (le
+     * reliquat Mikhmon « Scanner un QR Code » est retiré du portail). */
+    joinButton?: boolean;
   };
   plan: {
     name: string;

@@ -364,7 +364,7 @@ export async function purgeData(
  * automatiquement (visibles dans la santé du routeur, adoption manuelle via
  * l'outil d'import existant). */
 export async function updateSettings(
-  payload: { autoImportRouterUsers?: boolean },
+  payload: { autoImportRouterUsers?: boolean; joinButton?: boolean },
 ): Promise<AppSettings> {
   return api<AppSettings>("/api/settings", {
     method: "PUT",
@@ -373,7 +373,11 @@ export async function updateSettings(
     // champs inconnus.
     body: {
       autoImportRouterUsers: payload.autoImportRouterUsers,
-      tenant: { autoImportRouterUsers: payload.autoImportRouterUsers },
+      joinButton: payload.joinButton,
+      tenant: {
+        autoImportRouterUsers: payload.autoImportRouterUsers,
+        joinButton: payload.joinButton,
+      },
     },
   });
 }

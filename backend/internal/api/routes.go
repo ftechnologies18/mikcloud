@@ -282,6 +282,10 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/wifi/site/{slug}", a.handleWifiSiteInfo)
 	mux.HandleFunc("POST /api/wifi/site/{slug}/claim", a.handleWifiClaim)
 	mux.HandleFunc("GET /api/wifi/site/{slug}/status", a.handleWifiStatus)
+	// N°35-c — config LIVE du portail captif (fetch hybride cloud/local).
+	// Public (pas de JWT, pas de token agent) — appelé par login.html au
+	// chargement. CORS ouverte à toute origine (cf. corsMiddleware).
+	mux.HandleFunc("GET /api/wifi/site/{slug}/portal", a.handleWifiPortal)
 	mux.HandleFunc("GET /api/wifi/sites", a.requireRole(2, a.handleWifiSitesList))
 	mux.HandleFunc("POST /api/wifi/sites", a.requireRole(2, a.handleWifiSiteCreate))
 	mux.HandleFunc("PUT /api/wifi/sites/{id}", a.requireRole(2, a.handleWifiSiteUpdate))

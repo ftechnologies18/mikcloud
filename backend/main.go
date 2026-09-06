@@ -145,11 +145,26 @@ func corsMiddleware(next http.Handler) http.Handler {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
+		// N°35-c — portail captif : les endpoints publics /api/wifi/site/*
+		// (hors /sites et /guests qui restent console) acceptent N'IMPORTE
+		// quelle origine. La page login.html est servie par le routeur avec
+		// une origine imprévisible (IP du routeur, hostname DNS, etc.) —
+		// la liste ALLOWED_ORIGIN (qui contient l'URL du frontend Vercel)
+		// ne la couvrirait jamais. Ces endpoints sont PUBLICS par design
+		// (aucun cookie, aucun JWT, juste un rate-limit IP + les plafonds
+		// métier DailyPerPhone/DailyCap) — l'ouverture CORS est cohérente
+		// avec leur nature publique et n'expose aucun credential.
+		publicWifiCORS := strings.HasPrefix(r.URL.Path, "/api/wifi/site/") &&
+			!strings.HasSuffix(r.URL.Path, "/sites") &&
+			!strings.HasSuffix(r.URL.Path, "/guests")
 		switch {
 		case open:
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 		case origin != "" && allowed[origin]:
 			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Add("Vary", "Origin")
+		case origin != "" && publicWifiCORS:
+			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.Header().Add("Vary", "Origin")
 		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")

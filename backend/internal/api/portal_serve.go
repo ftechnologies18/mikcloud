@@ -199,6 +199,68 @@ func joinLinkActive(l *model.JoinLink) bool {
 	return true
 }
 
+// buildPortalConfigForSite — N°35-c : variante de buildPortalConfig par SLUG
+// de site WiFi (au lieu de par token agent). Utilisée par handleWifiPortal
+// (endpoint public /api/wifi/site/{slug}/portal) pour exposer la config LIVE
+// au portail routeur au chargement. Le site WiFi est résolu par son slug
+// (global, unique) ; le routeur est retrouvé via site.RouterID.
+//
+// Différence avec buildPortalConfig : ici on a déjà le site (résolu par slug),
+// pas besoin de le chercher. Le wifiSlug et le wifiURL sont TOUJOURS peuplés
+// (le site existe, sinon 404 déjà renvoyé). Le joinURL est résolu via le
+// routeur lié au site (1er JoinLink actif du routeur).
+//
+// Note : le PortalConfig renvoyé ne contient PAS de secret (pas de token
+// agent, pas de mots de passe). C'est la même structure que celle inlinée
+// dans login.html au déploiement — cohérente avec le pattern fallback/live.
+func buildPortalConfigForSite(db *model.DB, site *model.WifiSite, router *model.Router, r *http.Request) hotpage.PortalConfig {
+	acc := site.AccountID
+	settings := ensureSettings(db, acc)
+	cfg := hotpage.PortalConfig{
+		TenantName: settings.Tenant.Name,
+		APIBase:    agentBaseURL(r),
+		WaveLink:   settings.Tenant.WaveLink,
+		LogoURL:    settings.Tenant.LogoURL,
+		WifiSlug:   site.Slug,
+	}
+	if origin := publicFrontendURL(r); origin != "" {
+		cfg.WifiURL = origin + "/wifi/" + site.Slug
+	}
+	// JoinURL — 1er lien d'inscription publique actif lié au routeur.
+	if router != nil {
+		for i := range db.JoinLinks {
+			l := &db.JoinLinks[i]
+			if l.AccountID == acc && l.RouterID == router.ID && !l.Revoked && joinLinkActive(l) {
+				if origin := publicFrontendURL(r); origin != "" {
+					cfg.JoinURL = origin + "/join/" + l.Token
+				}
+				break
+			}
+		}
+	}
+	// Offers — profils à prix > 0 (max 8).
+	for i := range db.Profiles {
+		p := &db.Profiles[i]
+		if p.AccountID != acc || p.Price <= 0 {
+			continue
+		}
+		if len(cfg.Offers) >= 8 {
+			break
+		}
+		offer := hotpage.PortalOffer{
+			Name:        p.Name,
+			PriceFcfa:   p.Price,
+			ValidityMin: p.ValidityMinutes(),
+			DataQuotaMb: p.DataQuotaMb,
+		}
+		if settings.Tenant.WaveLink != "" {
+			offer.WaveURL = strings.TrimRight(settings.Tenant.WaveLink, "/") + "/amount/" + strconv.Itoa(p.Price) + "/"
+		}
+		cfg.Offers = append(cfg.Offers, offer)
+	}
+	return cfg
+}
+
 // publicFrontendURL — l'origine publique du frontend Vercel (pour construire
 // les URL /wifi/{slug} et /join/{token}). En production, le frontend est sur
 // mikcloud.ftci.fr, le backend sur mikcloud.onrender.com : ce sont DEUX hôtes

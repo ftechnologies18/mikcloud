@@ -732,5 +732,304 @@
          Le bloc reste inerte tant que la page ne le lit pas (N°35-c activera
          la consommation hybride). -->
     <script type="application/json" id="mikcloud-config">{{MIKCLOUD_CONFIG_JSON}}</script>
+    <!-- N°35-c — MAC du client (variable RouterOS $(mac-esc)) lue par le script
+         hybride ci-dessous pour alimenter le quota MAC N°33 (lien inscription
+         ?mac=AA:BB:CC:DD:EE:FF). Span caché (display:none) — non visible par
+         le client, mais accessible au JS via document.getElementById. -->
+    <span id="mikcloud-mac" style="display:none;">$(mac-esc)</span>
+    <!-- N°35-c — portail hybride MikCloud (Cloud/Local avec fallback).
+         Lit la config inlinée (fallback au déploiement), tente un fetch live
+         de /api/wifi/site/{slug}/portal (walled-gardensé pré-auth), et applique
+         la config FRAICHE si disponible (prime sur le fallback). Active :
+         - branding dynamique (tenant name, logo URL si fournie) ;
+         - bandeau « WiFi offert » avec lien /wifi/{slug} si le site est actif ;
+         - bouton « S'inscrire » pointant vers {{MIKCLOUD_JOIN_URL}}?mac=$(mac-esc) ;
+         - offres payantes dynamiques (remplace les Wave hardcodés 100→3000 F) ;
+         - claim inline : téléphone → POST /api/wifi/site/{slug}/claim → code →
+           doLogin() CHAP auto → écran « Connecté ✓ ».
+         Le script est non invasif : si la config est absente (routeur non lié à
+         un site MikCloud), il s'auto-désactive et le portail reste tel quel. -->
+    <script>
+        (function () {
+            'use strict';
+
+            // --- Lecture de la config inlinée (fallback au déploiement) ---
+            var fallback = null;
+            var cfgScript = document.getElementById('mikcloud-config');
+            if (cfgScript) {
+                try {
+                    fallback = JSON.parse(cfgScript.textContent || '{}');
+                } catch (e) {
+                    fallback = {};
+                }
+            }
+
+            // MAC du client (pour la pré-inscription). Variable RouterOS $(mac-esc)
+            // est résolue côté serveur (routeur MikroTik). En dev (page servie hors
+            // routeur), la MAC est vide — le bouton « S'inscrire » ouvrira le lien
+            // sans ?mac= (le quota MAC N°33 ne s'appliquera pas, mais le quota IP
+            // reste actif côté backend).
+            var clientMac = '';
+            try {
+                // Le template peut porter un placeholder $(mac-esc) qui sera résolu
+                // par RouterOS au moment de servir la page. En dev, on lit l'attribut
+                // data-mac si présent (injection de test).
+                var macNode = document.querySelector('[data-mikcloud-mac]');
+                if (macNode) clientMac = macNode.getAttribute('data-mikcloud-mac') || '';
+            } catch (e) {}
+
+            // --- Application de la config (live ou fallback) ---
+            function applyConfig(cfg) {
+                if (!cfg || !cfg.tenantName) return;
+
+                // 1. Branding : titre de la page + logo si fourni.
+                document.title = cfg.tenantName + ' > Connexion';
+                var logoImg = document.querySelector('.logo-wrap img');
+                if (logoImg && cfg.logoUrl) {
+                    logoImg.src = cfg.logoUrl;
+                    logoImg.alt = 'Logo ' + cfg.tenantName;
+                }
+
+                // 2. Bouton « S'inscrire » : remplace laksa19 par le lien join MikCloud
+                // avec MAC pré-injectée (alimente enfin le quota MAC N°33).
+                var btnQr = document.querySelector('.btn-qr');
+                if (btnQr && cfg.joinUrl) {
+                    var joinHref = cfg.joinUrl + (cfg.joinUrl.indexOf('?') >= 0 ? '&' : '?') + 'mac=' + encodeURIComponent(clientMac);
+                    btnQr.textContent = "S'inscrire";
+                    btnQr.setAttribute('href', joinHref);
+                    // laksa19 ouvrait window.location — on garde le comportement
+                    // (navigation same-tab, pas de popup bloqué en CNA).
+                    btnQr.removeAttribute('onclick');
+                    btnQr.addEventListener('click', function (ev) {
+                        ev.preventDefault();
+                        window.location.href = joinHref;
+                    });
+                }
+
+                // 3. Bandeau « WiFi offert » : inséré en tête du login-section si
+                // un slug est configuré. Lien vers /wifi/{slug} (page visiteur).
+                if (cfg.wifiSlug && !document.getElementById('mikcloud-wifi-banner')) {
+                    var banner = document.createElement('div');
+                    banner.id = 'mikcloud-wifi-banner';
+                    banner.style.cssText = 'margin:10px 0;padding:12px 16px;border-radius:8px;background:linear-gradient(135deg,#0d9488,#14b8a6);color:#fff;text-align:center;font-weight:600;box-shadow:0 2px 8px rgba(13,148,136,0.25);';
+                    var wifiUrl = cfg.wifiUrl || (cfg.apiBase + '/wifi/' + cfg.wifiSlug);
+                    banner.innerHTML = '🎁 WiFi offert — <a href="' + escapeHtml(wifiUrl) + '" style="color:#fff;text-decoration:underline;">Recevoir mon accès gratuit</a>';
+                    var loginSection = document.querySelector('.login-section');
+                    if (loginSection) loginSection.insertBefore(banner, loginSection.firstChild);
+                }
+
+                // 4. Offres dynamiques : remplace les liens Wave hardcodés par les
+                // profils live du compte. On cible les cartes d'offre existantes
+                // (sélecteur .offer-card) — si elles existent, on les remplace ;
+                // sinon, on insère une nouvelle section offres.
+                if (cfg.offers && cfg.offers.length > 0) {
+                    renderOffers(cfg);
+                }
+
+                // 5. Claim inline : si un slug WiFi est configuré, on ajoute un
+                // formulaire de téléphone en tête du login-section. À la soumission,
+                // on POST /api/wifi/site/{slug}/claim → code reçu → doLogin() CHAP
+                // auto (le code sert de username ET password, verrou N°25).
+                if (cfg.wifiSlug && !document.getElementById('mikcloud-claim-form')) {
+                    renderClaimForm(cfg);
+                }
+            }
+
+            // escapeHtml — échappe <, >, &, ", ' pour insertion HTML safe.
+            function escapeHtml(s) {
+                if (!s) return '';
+                return String(s).replace(/[&<>"']/g, function (c) {
+                    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+                });
+            }
+
+            // renderOffers — remplace les cartes d'offres hardcodées par les
+            // offres live (price + waveUrl pré-construit). Préserve le style
+            // existant (cards) en réutilisant la structure HTML.
+            function renderOffers(cfg) {
+                var container = document.querySelector('.offers-section, .offre-section, [data-offers]');
+                if (!container) {
+                    // Pas de section offres existante — on en crée une après le
+                    // formulaire de login.
+                    container = document.createElement('div');
+                    container.className = 'offers-section';
+                    container.style.cssText = 'margin-top:20px;';
+                    var loginSection = document.querySelector('.login-section');
+                    if (loginSection) loginSection.appendChild(container);
+                }
+                // On ne remplace QUE les liens pay.wave.com (les offres MikCloud),
+                // pas les autres cartes. Chaque offre live trouve son lien Wave.
+                var existingLinks = container.querySelectorAll('a[href*="pay.wave.com"]');
+                cfg.offers.forEach(function (offer, i) {
+                    if (!offer.waveUrl) return; // pas de waveUrl = pas de paiement online
+                    if (existingLinks[i]) {
+                        existingLinks[i].setAttribute('href', offer.waveUrl);
+                        // Met à jour le libellé du prix si présent.
+                        var priceEl = existingLinks[i].querySelector('.price, [data-price]');
+                        if (priceEl) priceEl.textContent = offer.priceFcfa + ' F';
+                    }
+                });
+            }
+
+            // renderClaimForm — formulaire de téléphone en tête du login-section.
+            // À la soumission : POST /api/wifi/site/{slug}/claim → code reçu →
+            // auto-remplit le formulaire de login (username=code, password=code)
+            // et appelle doLogin() (CHAP-MD5). Si la page n'a pas de CHAP (routeur
+            // sans chap-id), on tente un login direct via le formulaire existant.
+            function renderClaimForm(cfg) {
+                var form = document.createElement('form');
+                form.id = 'mikcloud-claim-form';
+                form.style.cssText = 'margin:12px 0;padding:12px;border:1px solid #0d9488;border-radius:8px;background:#f0fdfa;';
+                form.innerHTML =
+                    '<label for="mc-phone" style="display:block;font-weight:600;margin-bottom:6px;color:#0f766e;">' +
+                    '🎁 WiFi offert — recevez votre code gratuit' +
+                    '</label>' +
+                    '<div style="display:flex;gap:8px;">' +
+                    '<input type="tel" id="mc-phone" inputmode="tel" autocomplete="tel" placeholder="225 07 XX XX XX XX" ' +
+                    'style="flex:1;padding:10px;border:1px solid #0d9488;border-radius:6px;font-size:16px;" />' +
+                    '<button type="submit" style="padding:10px 16px;background:#0d9488;color:#fff;border:none;border-radius:6px;font-weight:600;cursor:pointer;">' +
+                    'Recevoir' +
+                    '</button>' +
+                    '</div>' +
+                    '<p id="mc-claim-status" style="margin:8px 0 0;font-size:14px;color:#0f766e;"></p>';
+                var loginSection = document.querySelector('.login-section');
+                if (!loginSection) return;
+                loginSection.insertBefore(form, loginSection.firstChild);
+
+                form.addEventListener('submit', function (ev) {
+                    ev.preventDefault();
+                    var phone = (document.getElementById('mc-phone').value || '').replace(/[^\d]/g, '');
+                    if (phone.length < 8 || phone.length > 15) {
+                        showClaimStatus('Numéro invalide (8 à 15 chiffres, indicatif inclus).', 'error');
+                        return;
+                    }
+                    var btn = form.querySelector('button[type=submit]');
+                    btn.disabled = true;
+                    btn.textContent = '...';
+                    showClaimStatus('Envoi...', 'info');
+
+                    var claimUrl = cfg.apiBase + '/api/wifi/site/' + encodeURIComponent(cfg.wifiSlug) + '/claim';
+                    fetch(claimUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ phone: phone, optIn: false })
+                    }).then(function (resp) {
+                        if (!resp.ok && resp.status !== 402 && resp.status !== 403 && resp.status !== 429) {
+                            throw new Error('HTTP ' + resp.status);
+                        }
+                        return resp.json().catch(function () { return {}; });
+                    }).then(function (data) {
+                        btn.disabled = false;
+                        btn.textContent = 'Recevoir';
+                        if (data && data.code) {
+                            showClaimStatus('Code reçu : ' + data.code + ' — connexion en cours...', 'success');
+                            // Auto-login CHAP : on remplit le formulaire existant
+                            // (username=code, password=code, verrou N°25) et on
+                            // appelle doLogin() si disponible (CHAP-MD5), sinon on
+                            // submit le formulaire de login directement.
+                            attemptAutoLogin(data.code);
+                        } else if (data && data.error) {
+                            showClaimStatus(data.error, 'error');
+                        } else if (data && data.duplicate && data.code) {
+                            showClaimStatus('Vous avez déjà votre code : ' + data.code, 'info');
+                            attemptAutoLogin(data.code);
+                        } else {
+                            showClaimStatus('Réponse inattendue — réessayez.', 'error');
+                        }
+                    }).catch(function (err) {
+                        btn.disabled = false;
+                        btn.textContent = 'Recevoir';
+                        // Le cloud est injoignable (CNA sans DNS résolu, routeur
+                        // en mode pré-auth sans walled-garden, etc.). On invite le
+                        // client à saisir un code existant ou à demander au personnel.
+                        showClaimStatus('Service WiFi offert momentanément indisponible — demandez votre code au personnel.', 'error');
+                    });
+                });
+            }
+
+            // showClaimStatus — met à jour le paragraphe de statut du claim form.
+            function showClaimStatus(msg, level) {
+                var el = document.getElementById('mc-claim-status');
+                if (!el) return;
+                el.textContent = msg;
+                el.style.color = level === 'error' ? '#dc2626' : (level === 'success' ? '#16a34a' : '#0f766e');
+            }
+
+            // attemptAutoLogin — remplit le formulaire de login RouterOS avec le
+            // code reçu (username=code, password=code, verrou N°25), puis appelle
+            // doLogin() si la fonction existe (CHAP-MD5) ou submit le form directement.
+            // Effet : le client passe en ligne en 20 s sans copier-coller le code.
+            function attemptAutoLogin(code) {
+                var userField = document.getElementById('input-user');
+                var passField = document.getElementById('dynamic_pass');
+                if (userField) userField.value = code;
+                if (passField) passField.value = code;
+                // Mode voucher : le miroir user→password (setMode) doit être à jour.
+                // On déclenche le mode voucher pour s'assurer que le miroir est actif.
+                var btnVcr = document.getElementById('btn-vcr');
+                if (btnVcr && typeof window.setMode === 'function') {
+                    try { window.setMode('voucher'); } catch (e) {}
+                }
+                // doLogin() existe si le routeur exige CHAP-MD5 ($(if chap-id)).
+                if (typeof window.doLogin === 'function') {
+                    try { window.doLogin(); return; } catch (e) {}
+                }
+                // Sans CHAP : on submit le formulaire de login directement.
+                var loginForm = document.forms.login;
+                if (loginForm) loginForm.submit();
+            }
+
+            // --- Fetch live : tente /api/wifi/site/{slug}/portal avec timeout ---
+            // Si succès → live prime sur le fallback. Si échec → fallback.
+            function tryFetchLive(cfg) {
+                if (!cfg || !cfg.wifiSlug) {
+                    applyConfig(cfg || {});
+                    return;
+                }
+                var url = cfg.apiBase + '/api/wifi/site/' + encodeURIComponent(cfg.wifiSlug) + '/portal';
+                // Timeout 4 s : si le cloud ne répond pas (CNA, routeur en pré-auth
+                // sans DNS encore résolu, etc.), on retombe sur le fallback inliné.
+                var done = false;
+                var timer = setTimeout(function () {
+                    if (done) return;
+                    done = true;
+                    applyConfig(cfg); // fallback
+                }, 4000);
+                fetch(url, { method: 'GET', mode: 'cors' }).then(function (resp) {
+                    if (done) return;
+                    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                    return resp.json();
+                }).then(function (liveCfg) {
+                    if (done) return;
+                    done = true;
+                    clearTimeout(timer);
+                    // Live prime sur le fallback — on merge pour conserver les
+                    // champs absents du live (par cohérence future).
+                    var merged = Object.assign({}, cfg, liveCfg);
+                    applyConfig(merged);
+                }).catch(function () {
+                    if (done) return;
+                    done = true;
+                    clearTimeout(timer);
+                    applyConfig(cfg); // fallback
+                });
+            }
+
+            // --- Bootstrap : MAC depuis RouterOS + applyConfig ---
+            // La variable $(mac-esc) est résolue côté RouterOS. On l'injecte via
+            // un span caché que le template porte (ou on l'écrit en dur en dev).
+            // Pour la production, on ajoute le span au template ; pour les tests,
+            // on accepte l'absence (MAC vide — quota MAC non actif, quota IP seul).
+            try {
+                // Lecture de la MAC depuis un span caché (ajouté par le template
+                // ou par l'agent au déploiement). Format AA:BB:CC:DD:EE:FF.
+                var macSpan = document.getElementById('mikcloud-mac');
+                if (macSpan) clientMac = macSpan.textContent || '';
+            } catch (e) {}
+
+            // Démarre : tente live, sinon fallback.
+            tryFetchLive(fallback);
+        })();
+    </script>
 </body>
 </html>

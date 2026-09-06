@@ -513,6 +513,62 @@ func (a *API) handleWifiStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// handleWifiPortal — N°35-c : config LIVE du portail captif pour le site
+// WiFi jetable {slug}. Endpoint PUBLIC (pas de JWT, pas de token agent) —
+// appelé par la page login.html SERVIE PAR LE ROUTEUR au chargement, pour
+// récupérer une config FRAICHE qui prime sur le fallback inliné au déploiement.
+//
+// Parcours :
+//  1. Le routeur déploie login.html via l'agent (hotspot_files). Le fichier
+//     contient un bloc <script id="mikcloud-config"> avec la config au moment
+//     du déploiement (fallback si le cloud est injoignable).
+//  2. Au chargement côté client, login.html lit ce bloc PUIS fetch ce
+//     endpoint /api/wifi/site/{slug}/portal pour récupérer la config LIVE.
+//  3. Si le fetch réussit (200), la config live prime sur le fallback —
+//     le gérant peut changer branding/offres/textes sans re-déployer le
+//     portail. Si le fetch échoue (cloud injoignable, slug introuvable,
+//     site inactif), le fallback inliné est utilisé — le portail reste
+//     fonctionnel même hors connexion cloud.
+//
+// Rate-limit : `wifi-read` (30/min/IP) — cf. main.go authRateLimit. La page
+// charge une fois par visite, le plafond est largement suffisant.
+//
+// CORS : ouverte à toute origine (cf. corsMiddleware — le portail routeur a
+// une origine imprévisible). Pas de cookie, pas de JWT → ouverture cohérente
+// avec la nature publique de l'endpoint.
+//
+// Réponse 404 si le slug n'existe pas. 200 avec un PortalConfig valide sinon
+// (même si le site est inactif — la page affichera le bandeau « WiFi offert
+// en pause » grâce au champ active=false, cf. handleWifiSiteInfo).
+func (a *API) handleWifiPortal(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	a.store.Lock()
+	db := a.store.Data()
+	site := findWifiSiteBySlug(db, slug)
+	if site == nil {
+		a.store.Unlock()
+		writeErrCode(w, http.StatusNotFound, "site_unknown", "Site WiFi introuvable", nil)
+		return
+	}
+	// Le routeur du site WiFi est le point d'ancrage de la config. On retrouve
+	// le routeur pour résoudre le lien join lié (1er JoinLink actif du routeur)
+	// et le branding (settings du compte). Si le routeur a été supprimé mais
+	// pas le site WiFi (cas théorique — la suppression du routeur ne cascade
+	// pas vers les sites WiFi), on continue avec un Router vide — le join_url
+	// et le wave_link peuvent rester vides, le fallback inliné prendra le
+	// relais côté page.
+	var router *model.Router
+	for i := range db.Routers {
+		if db.Routers[i].ID == site.RouterID && db.Routers[i].AccountID == site.AccountID {
+			router = &db.Routers[i]
+			break
+		}
+	}
+	cfg := buildPortalConfigForSite(db, site, router, r)
+	a.store.Unlock()
+	writeJSON(w, http.StatusOK, cfg)
+}
+
 // ---------------------------------------------------------------------------
 // Endpoints CONSOLE (rôle gérant+)
 // ---------------------------------------------------------------------------

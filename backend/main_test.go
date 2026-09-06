@@ -92,6 +92,106 @@ func TestCorsMiddlewareDevOpenAndProdFailClosed(t *testing.T) {
 	}
 }
 
+// TestCorsMiddlewareWifiPublicOpen — N°35-c : en production (DATABASE_URL
+// défini) avec ALLOWED_ORIGIN limité au frontend Vercel, un portail routeur
+// (origine = IP du routeur, non listée) DOIT quand même recevoir
+// Access-Control-Allow-Origin: * pour /api/wifi/site/* (portail hybride).
+// C'est la clé de l'architecture : le portail captif a une origine imprévisible
+// (IP du routeur, hostname DNS du tenant, etc.) que ALLOWED_ORIGIN ne peut pas
+// couvrir statiquement. Les endpoints /api/wifi/site/* sont PUBLICS par design
+// (pas de cookie, pas de JWT) — l'ouverture CORS est cohérente.
+func TestCorsMiddlewareWifiPublicOpen(t *testing.T) {
+	t.Setenv("ALLOWED_ORIGIN", "https://mikcloud.ftci.fr")
+	t.Setenv("DATABASE_URL", "postgres://fake-prod-dsn")
+	handler := corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// /api/wifi/site/{slug}/portal — origine IP routeur non listée → ACAO:* (N°35-c).
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req("GET", "/api/wifi/site/cyber-test/portal", map[string]string{"Origin": "http://10.5.50.1"}))
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Errorf("wifi portal origine routeur → ACAO:* attendu, obtenu %q", got)
+	}
+	// Vary: Origin doit être présent.
+	if got := rec.Header().Get("Vary"); got != "Origin" {
+		t.Errorf("Vary: Origin attendu, obtenu %q", got)
+	}
+
+	// /api/wifi/site/{slug}/claim — idem (POST depuis le portail).
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req("POST", "/api/wifi/site/cyber-test/claim", map[string]string{"Origin": "http://10.5.50.1"}))
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Errorf("wifi claim origine routeur → ACAO:* attendu, obtenu %q", got)
+	}
+
+	// /api/wifi/site/{slug}/status — idem (GET statut ticket).
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req("GET", "/api/wifi/site/cyber-test/status", map[string]string{"Origin": "http://10.5.50.1"}))
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Errorf("wifi status origine routeur → ACAO:* attendu, obtenu %q", got)
+	}
+
+	// Preflight OPTIONS sur /api/wifi/site/* → 204 + Allow-Methods/Headers.
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req("OPTIONS", "/api/wifi/site/cyber-test/claim", map[string]string{
+		"Origin":                         "http://10.5.50.1",
+		"Access-Control-Request-Method":  "POST",
+		"Access-Control-Request-Headers": "Content-Type",
+	}))
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("OPTIONS wifi claim → 204 attendu, obtenu %d", rec.Code)
+	}
+	if m := rec.Header().Get("Access-Control-Allow-Methods"); !strings.Contains(m, "POST") {
+		t.Errorf("Allow-Methods doit contenir POST, obtenu %q", m)
+	}
+	if h := rec.Header().Get("Access-Control-Allow-Headers"); !strings.Contains(h, "Content-Type") {
+		t.Errorf("Allow-Headers doit contenir Content-Type, obtenu %q", h)
+	}
+}
+
+// TestCorsMiddlewareWifiSitesConsoleProtected — les routes CONSOLE
+// /api/wifi/sites et /api/wifi/guests RESTENT protégées par ALLOWED_ORIGIN
+// (elles nécessitent un JWT, donc ne sont jamais appelées par le portail).
+// L'ouverture N°35-c ne s'applique qu'à /api/wifi/site/ (singulier, public),
+// PAS à /api/wifi/sites (pluriel, console).
+func TestCorsMiddlewareWifiSitesConsoleProtected(t *testing.T) {
+	t.Setenv("ALLOWED_ORIGIN", "https://mikcloud.ftci.fr")
+	t.Setenv("DATABASE_URL", "postgres://fake-prod-dsn")
+	handler := corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// /api/wifi/sites (pluriel) — origine IP routeur non listée → PAS d'ACAO.
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req("GET", "/api/wifi/sites", map[string]string{"Origin": "http://10.5.50.1"}))
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("wifi sites console → AUCUN ACAO attendu (fail-closed), obtenu %q", got)
+	}
+
+	// /api/wifi/guests — idem (registre marketing console).
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req("GET", "/api/wifi/guests", map[string]string{"Origin": "http://10.5.50.1"}))
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("wifi guests console → AUCUN ACAO attendu (fail-closed), obtenu %q", got)
+	}
+
+	// /api/dashboard — origine inconnue → fail-closed (vérifie qu'on n'a pas
+	// cassé la sécurité des routes privées).
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req("GET", "/api/dashboard", map[string]string{"Origin": "http://10.5.50.1"}))
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("dashboard origine inconnue → AUCUN ACAO attendu, obtenu %q", got)
+	}
+
+	// /api/dashboard — origine frontend Vercel (listée) → reflétée (inchangé).
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req("GET", "/api/dashboard", map[string]string{"Origin": "https://mikcloud.ftci.fr"}))
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://mikcloud.ftci.fr" {
+		t.Errorf("dashboard origine frontend → attendu reflétée, obtenu %q", got)
+	}
+}
+
 func TestClientIPForwardedFor(t *testing.T) {
 	cas := []struct {
 		nom  string

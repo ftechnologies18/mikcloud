@@ -1434,6 +1434,10 @@ export interface WifiSite {
   marketingOptIn: boolean;
   dailyPerPhone: number;
   dailyCap: number;
+  /** N°49 — SSID du réseau du hotspot (QR de connexion de l'affiche, vide = désactivé). */
+  wifiSsid: string;
+  /** N°49 — mot de passe WPA (vide = réseau ouvert, QR sans phrase secrète). */
+  wifiPassword: string;
   active: boolean;
   createdAt: string;
 }
@@ -1469,6 +1473,10 @@ export interface WifiSitePayload {
   marketingOptIn: boolean;
   dailyPerPhone: number;
   dailyCap: number;
+  /** N°49 — SSID du réseau (≤ 32 car. 802.11) pour le QR de connexion. */
+  wifiSsid: string;
+  /** N°49 — mot de passe WPA (≤ 63 car., vide = réseau ouvert). */
+  wifiPassword: string;
   active: boolean;
 }
 

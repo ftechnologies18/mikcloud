@@ -2134,6 +2134,14 @@ const fr: Record<string, string> = {
   "wifi.postTitle": "WiFi Offert",
   "wifi.postScan": "Scannez, recevez votre code, connectez-vous",
   "wifi.postFoot": "Offert par l'établissement — au-delà du quota, passez à l'offre payante.",
+  // — N°49 QR de connexion —
+  "wifi.ssid": "SSID du réseau WiFi",
+  "wifi.ssidHint": "Tel qu'il apparaît sur le téléphone du client — sert au QR de connexion de l'affiche.",
+  "wifi.wifiPass": "Mot de passe WiFi (optionnel)",
+  "wifi.wifiPassPh": "Vide si le réseau est ouvert",
+  "wifi.wifiPassHint": "Renseigné : le QR connecte au réseau protégé (WPA).",
+  "wifi.postWifi": "Scannez : le WiFi se connecte tout seul",
+  "wifi.postWifiHint": "La page « WiFi Offert » s'ouvre à l'arrivée — entrez juste votre numéro.",
 
   // — N°35-d — portail captif (vue Portail) —
   "portal.title": "Portail captif",
@@ -4439,6 +4447,14 @@ const en: Record<string, string> = {
   "wifi.postTitle": "Free WiFi",
   "wifi.postScan": "Scan, get your code, connect",
   "wifi.postFoot": "Offered by the venue — beyond the quota, switch to a paid offer.",
+  // — N°49 WiFi connection QR —
+  "wifi.ssid": "WiFi network SSID",
+  "wifi.ssidHint": "As it appears on the customer's phone — used by the poster's connection QR.",
+  "wifi.wifiPass": "WiFi password (optional)",
+  "wifi.wifiPassPh": "Empty if the network is open",
+  "wifi.wifiPassHint": "Set: the QR joins the protected (WPA) network.",
+  "wifi.postWifi": "Scan: the WiFi connects by itself",
+  "wifi.postWifiHint": "The WiFi Offert page opens on arrival — just enter your number.",
 
   // — N°35-d — captive portal (Portal view) —
   "portal.title": "Captive portal",

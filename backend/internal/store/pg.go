@@ -635,6 +635,12 @@ func (p *PG) ensureSchema() error {
 		// update_failed constaté sur f85629e). Idempotent, sans risque pour le
 		// code antérieur (listes de colonnes explicites).
 		`ALTER TABLE wifi_guests ADD COLUMN IF NOT EXISTS claim_cmd_id TEXT NOT NULL DEFAULT ''`,
+		// N°49 — QR de connexion WiFi : SSID (+ mot de passe WPA
+		// optionnel) du réseau du hotspot, encodés dans l'affiche
+		// imprimable (format universel WIFI:). Même mécanique que
+		// N°47 : les tables pré-existantes ont besoin de l'ALTER.
+		`ALTER TABLE wifi_sites ADD COLUMN IF NOT EXISTS wifi_ssid TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE wifi_sites ADD COLUMN IF NOT EXISTS wifi_password TEXT NOT NULL DEFAULT ''`,
 		// Audit purge — réglage par compte : import automatique des
 		// utilisateurs créés hors MikCloud (défaut ON — compatibilité).
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS auto_import_router_users BOOLEAN NOT NULL DEFAULT TRUE`,
@@ -1641,19 +1647,21 @@ var billingRequestSpec = entitySpec[model.BillingRequest]{
 // wifiSiteSpec — N°28 : sites WiFi jetables (slug unique global).
 var wifiSiteSpec = entitySpec[model.WifiSite]{
 	table: "wifi_sites",
-	cols:  []string{"id", "account_id", "name", "slug", "router_id", "router_name", "profile_id", "profile_name", "free_time_min", "free_data_mb", "marketing_opt_in", "daily_per_phone", "daily_cap", "active", "created_at"},
+	cols:  []string{"id", "account_id", "name", "slug", "router_id", "router_name", "profile_id", "profile_name", "free_time_min", "free_data_mb", "marketing_opt_in", "daily_per_phone", "daily_cap", "wifi_ssid", "wifi_password", "active", "created_at"},
 	idOf:  func(x *model.WifiSite) string { return x.ID },
 	scan: func(r *sql.Rows) (model.WifiSite, error) {
 		var x model.WifiSite
 		err := r.Scan(&x.ID, &x.AccountID, &x.Name, &x.Slug, &x.RouterID, &x.RouterName,
 			&x.ProfileID, &x.ProfileName, &x.FreeTimeMin, &x.FreeDataMb,
-			&x.MarketingOptIn, &x.DailyPerPhone, &x.DailyCap, &x.Active, &x.CreatedAt)
+			&x.MarketingOptIn, &x.DailyPerPhone, &x.DailyCap,
+			&x.WifiSSID, &x.WifiPassword, &x.Active, &x.CreatedAt)
 		return x, err
 	},
 	args: func(x *model.WifiSite) []any {
 		return []any{x.ID, x.AccountID, x.Name, x.Slug, x.RouterID, x.RouterName,
 			x.ProfileID, x.ProfileName, x.FreeTimeMin, x.FreeDataMb,
-			x.MarketingOptIn, x.DailyPerPhone, x.DailyCap, x.Active, x.CreatedAt}
+			x.MarketingOptIn, x.DailyPerPhone, x.DailyCap,
+			x.WifiSSID, x.WifiPassword, x.Active, x.CreatedAt}
 	},
 	hashOf: hashEntity[model.WifiSite],
 }

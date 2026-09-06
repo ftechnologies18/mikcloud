@@ -5,6 +5,41 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-06 — N°48 : claim inline opérationnel en pré-auth (walled-garden HTTPS) + portail dédoublonné
+
+### N°48 — le « WiFi offert » marche vraiment depuis le portail, sans doublon à l'écran
+- **Constat** (screenshot client, portail CYBER-ESPACE SC / cyberscwifi.net) :
+  (a) « Recevoir » affichait « Service WiFi offert momentanément indisponible
+  — demandez votre code au personnel » ; (b) l'offre gratuite apparaissait DEUX
+  fois (carte formulaire + gros bouton lien).
+- **Diagnostic** — l'API était saine : `POST /api/wifi/site/{slug}/claim`
+  répond 200 (code 5 car.) en ~0,6 s, préflight CORS 204 + ACAO. Preuve
+  décisive en base : la tentative du téléphone (16:49) n'a laissé AUCUNE
+  trace dans `wifi_guests` → le fetch n'a jamais quitté le hotspot. Cause
+  racine : le walled-garden v1 ne posait que des règles « page » (variante
+  proxy du hotspot = HTTP PUR, port 80) + DNS. L'API est en HTTPS
+  (Render/Cloudflare) : le TLS 443 pré-auth était bloqué → `fetch` rejeté →
+  message d'échec. Les tests curl (hors hotspot) passaient, le terrain non.
+- **Backend** (`internal/agent`, `internal/api`) : le builder de commande
+  `walled_garden` ET le bloc d'installation posent désormais, par domaine,
+  une règle `ip hotspot walled-garden ip add action=accept dst-host=…`
+  (commentaire `mikcloud-wg api`) — couvre TCP 80/443 ET UDP 443 (QUIC) ;
+  `action=accept` obligatoire sur la variante ip (leçon N°31-d), adds
+  conditionnels + `:set step` (traçage N°32), removes best-effort (N°31-e).
+- **Auto-mise à niveau** : `walledGardenSig` est salée avec
+  `walledGardenRulesVersion = "wg-v2-api"` — la sig change SANS changer la
+  liste des domaines, donc `ensureWalledGardenLocked` re-file la commande sur
+  chaque routeur existant à son premier check-in (≤ 45 s). Garde-fou
+  `TestWalledGardenSigVersioned` : si le sel disparaît, le test échoue (la
+  régression exacte de ce bug : corriger le script sans re-pousser).
+- **Template** (`login.html`) : bandeau « WiFi offert — Recevoir mon accès
+  gratuit » RETIRÉ — il doublonnait le formulaire de claim inline (même
+  donnée, même promesse, deux points d'entrée). Le formulaire (téléphone →
+  code 5 car. → `doLogin()` CHAP auto) est seul maintenu.
+- **Tests** : marqueurs N°48 dans `TestWalledGardenScript` /
+  `TestWalledGardenInstallBlock` (règles api présentes, interdit
+  `action=allow` en variante ip maintenu) ; suite backend 11/11 verte.
+
 ## 2026-09-06 — N°46 : bouton « S'inscrire » du portail captif rendu dynamique (joinButton)
 
 ### N°46 — l'option d'inscription est pilotée depuis la console gérant

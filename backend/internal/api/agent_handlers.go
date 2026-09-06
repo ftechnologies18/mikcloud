@@ -178,10 +178,22 @@ func normalizeWGHost(raw string) string {
 }
 
 // walledGardenSig — signature courte et stable d'une configuration de
-// domaines (hash du join trié) : elle distingue « déjà appliqué sur ce
-// routeur » d'« à (re)appliquer » sans table supplémentaire.
+// domaines (hash du join trié + SEL DE VERSION des règles) : elle distingue
+// « déjà appliqué sur ce routeur » d'« à (re)appliquer » sans table
+// supplémentaire.
+// N°48 — sel wg-v2-api : la v1 ne posait que des règles « page » (variante
+// proxy du hotspot = HTTP pur, port 80) + DNS. Or l'API MikCloud (claim,
+// /portal, /join) est intégralement en HTTPS (Render/Vercel) : le TLS 443
+// pré-auth restait bloqué et le fetch du claim échouait côté client
+// (« Service WiFi offert momentanément indisponible »). La v2 ajoute les
+// règles « api » (variante ip, dst-host, action=accept). Le sel change la
+// signature SANS changer la liste des domaines → chaque routeur déjà en
+// ligne (sig v1 stockée) reçoit la mise à niveau automatiquement à son
+// premier check-in (ensureWalledGardenLocked voit un mismatch → re-file).
+const walledGardenRulesVersion = "wg-v2-api"
+
 func walledGardenSig(domains []string) string {
-	return agent.HashToken(strings.Join(domains, "|"))[:16]
+	return agent.HashToken(walledGardenRulesVersion + "|" + strings.Join(domains, "|"))[:16]
 }
 
 // ensureWalledGardenLocked — sous verrou : si la configuration walled-garden

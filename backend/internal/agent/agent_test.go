@@ -415,6 +415,12 @@ func TestWalledGardenScript(t *testing.T) {
 		`/ip hotspot walled-garden ip remove [find comment="` + WalledGardenMarker + ` dns"]`,
 		`:if ([:len [/ip hotspot walled-garden find comment="` + WalledGardenMarker + ` page" dst-host="mikcloud.ftci.fr"]] = 0) do={ /ip hotspot walled-garden add action=allow dst-host="mikcloud.ftci.fr" comment="` + WalledGardenMarker + ` page" }`,
 		`:if ([:len [/ip hotspot walled-garden find comment="` + WalledGardenMarker + ` page" dst-host="api.example.com:8443"]] = 0) do={ /ip hotspot walled-garden add action=allow dst-host="api.example.com:8443" comment="` + WalledGardenMarker + ` page" }`,
+		// N°48 — règles « api » (variante ip, action=accept) : le HTTPS
+		// pré-auth (claim, /portal, /join) passe par ICI, pas par la variante
+		// proxy qui ne voit que le HTTP pur.
+		`/ip hotspot walled-garden ip remove [find comment="` + WalledGardenMarker + ` api"]`,
+		`:if ([:len [/ip hotspot walled-garden ip find comment="` + WalledGardenMarker + ` api" dst-host="mikcloud.ftci.fr"]] = 0) do={ /ip hotspot walled-garden ip add action=accept dst-host="mikcloud.ftci.fr" comment="` + WalledGardenMarker + ` api" }`,
+		`:if ([:len [/ip hotspot walled-garden ip find comment="` + WalledGardenMarker + ` api" dst-host="api.example.com:8443"]] = 0) do={ /ip hotspot walled-garden ip add action=accept dst-host="api.example.com:8443" comment="` + WalledGardenMarker + ` api" }`,
 		`:if ([:len [/ip hotspot walled-garden ip find comment="` + WalledGardenMarker + ` dns" protocol=udp]] = 0) do={ /ip hotspot walled-garden ip add action=accept protocol=udp dst-port=53 comment="` + WalledGardenMarker + ` dns" }`,
 		`:if ([:len [/ip hotspot walled-garden ip find comment="` + WalledGardenMarker + ` dns" protocol=tcp]] = 0) do={ /ip hotspot walled-garden ip add action=accept protocol=tcp dst-port=53 comment="` + WalledGardenMarker + ` dns" }`,
 		"domains=2", // rapport : 2 règles page/api posées
@@ -456,6 +462,10 @@ func TestWalledGardenInstallBlock(t *testing.T) {
 		`/ip hotspot walled-garden ip remove [find comment="` + WalledGardenMarker + ` dns"]`,
 		`/ip hotspot walled-garden add action=allow dst-host="a.example" comment="` + WalledGardenMarker + ` page"`,
 		`/ip hotspot walled-garden add action=allow dst-host="b.example" comment="` + WalledGardenMarker + ` page"`,
+		// N°48 — règles « api » (variante ip) : HTTPS pré-auth couvert.
+		`/ip hotspot walled-garden ip remove [find comment="` + WalledGardenMarker + ` api"]`,
+		`/ip hotspot walled-garden ip add action=accept dst-host="a.example" comment="` + WalledGardenMarker + ` api"`,
+		`/ip hotspot walled-garden ip add action=accept dst-host="b.example" comment="` + WalledGardenMarker + ` api"`,
 		`/ip hotspot walled-garden ip add action=accept protocol=udp dst-port=53`,
 		`/ip hotspot walled-garden ip add action=accept protocol=tcp dst-port=53`,
 		"on-error={}",

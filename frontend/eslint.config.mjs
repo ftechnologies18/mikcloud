@@ -1,12 +1,31 @@
 import nextCoreWebVitals from "eslint-config-next/core-web-vitals";
 import nextTypescript from "eslint-config-next/typescript";
+import { fixupPluginRules } from "@eslint/compat";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, {
+// ESLint 10 a supprimé les API de contexte dépréciées (context.getFilename(),
+// context.getScope(), …) que certains plugins tirés transitivement par
+// eslint-config-next (react, import, jsx-a11y, …) utilisent encore.
+// fixupPluginRules (@eslint/compat, outil officiel de l'équipe ESLint) les
+// rétro-compatibilise de façon transparente — pass-through pur pour les
+// plugins déjà conformes (typescript-eslint 8.69 supporte nativement ^10).
+const retroCompatPlugins = (config) =>
+  config.map((entry) => {
+    if (!entry.plugins) return entry;
+    const plugins = Object.fromEntries(
+      Object.entries(entry.plugins).map(([name, plugin]) => [
+        name,
+        fixupPluginRules(plugin),
+      ])
+    );
+    return { ...entry, plugins };
+  });
+
+const eslintConfig = retroCompatPlugins([...nextCoreWebVitals, ...nextTypescript, {
   rules: {
     // TypeScript rules
     "@typescript-eslint/no-explicit-any": "off",
@@ -45,6 +64,6 @@ const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, {
   },
 }, {
   ignores: ["node_modules/**", ".next/**", "out/**", "build/**", "next-env.d.ts", "examples/**", "skills"]
-}];
+}]);
 
 export default eslintConfig;

@@ -57,6 +57,47 @@ la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 - **Tests** : marqueurs N°48 dans `TestWalledGardenScript` /
   `TestWalledGardenInstallBlock` (règles api présentes, interdit
   `action=allow` en variante ip maintenu) ; suite backend 11/11 verte.
+## 2026-09-06 — N°49 : walled-garden AUTO-RÉPARANT (horodatage + re-file périodique) et réparation à la demande depuis la console
+
+### N°49 — la panne CyberSC (règles page absentes) ne peut plus se reproduire en silence
+- **Constat terrain (CyberSC)** : le bouton « S'inscrire » (N°46) — comme le
+  lien join ouvert par QR dans un onglet — aboutissait à « vérifiez votre
+  connexion internet » sur le WiFi non authentifié. Export walled-garden du
+  routeur : règles DNS `mikcloud-wg dns` présentes mais AUCUNE règle page/api
+  pour `mikcloud.ftci.fr` / `mikcloud.onrender.com`, alors que la sig côté
+  cloud croyait la config appliquée — plus AUCUN re-file possible : panne
+  silencieuse et durable. La config Mikhmon supprimée au même moment
+  (`walled-garden ip dst-host="laksa19.github.io"` + shadow rules dynamiques
+  `dst-address=185.199.x.153` issues du reniflement DNS) établissait le
+  mécanisme efficace (cf. N°48 : les règles ip sont la couverture HTTPS).
+- **Auto-réparation durable** : le sel de version N°48 (wg-v2-api) répare les
+  routeurs existants UNE fois ; si la liste est vidée/amputée localement
+  APRÈS (ménage Mikhmon, restauration de backup, ajout manuel partiel), la
+  sig posée re-bloquait tout re-file — même panne à terme. Nouveau champ
+  `Router.WalledGardenAppliedAt` (RFC3339, colonne
+  `routers.walled_garden_applied_at`, DDL idempotent + scan + sync), posé
+  avec la signature au retour « ok ». `ensureWalledGardenLocked` re-file le
+  bloc idempotent si la sig est identique MAIS `walledGardenFresh` est faux :
+  horodatage ABSENT (routeurs antérieurs au N°49 — réparation immédiate au
+  premier check-in) ou plus vieux que `walledGardenRefresh` = 6 h.
+- **Réparation à la demande (console gérant)** : `POST
+  /api/routers/{id}/repair-walled-garden` (404/400 not_agent/402
+  subscription_expired ; vide sig + horodatage → re-file au check-in ≤ 45 s)
+  + bouton « Réparer le walled-garden » dans le menu ⋯ d'un routeur agent
+  (vue Routeurs, i18n FR/EN).
+- **Tests (5)** : `TestEnsureWalledGardenAutoRepair` (trois leviers du
+  re-file), `TestBuildWalledGardenCoversBothTables` (page host + api ip dans
+  le script de commande ET le bloc d'installation),
+  `TestRepairWalledGardenOK/NotFound/NotAgent` (endpoint console) ;
+  `TestEnsureWalledGardenLocked` adapté (retour ok pose sig + horodatage).
+  Suite backend 11/11 packages ; lint ESLint 10 + typecheck tsgo frontend
+  verts.
+- **Docs** : `docs/RUNBOOK-WALLED-GARDEN.md` — §5-ter auto-réparation,
+  entrée de diagnostic « DNS posées / page absentes », révision de
+  l'anti-pattern §6 (la règle `dst-host` dans `walled-garden ip` n'est PAS
+  inopérante en HTTPS : elle déclenche le sniff DNS — constat Mikhmon) ;
+  `docs/CONTRACT-V2.md` addendum N°49.
+
 
 ## 2026-09-06 — N°46 : bouton « S'inscrire » du portail captif rendu dynamique (joinButton)
 

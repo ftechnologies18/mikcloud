@@ -53,6 +53,8 @@ func (a *API) registerAgentRoutes(mux *http.ServeMux) {
 	// N°35-d — portail captif : re-déploiement forcé + aperçu HTML (console).
 	mux.HandleFunc("POST /api/routers/{id}/redeploy-portal", a.handleRouterRedeployPortal)
 	mux.HandleFunc("GET /api/routers/{id}/portal-preview", a.handleRouterPortalPreview)
+	// N°49 — walled-garden : réparation forcée (console gérant).
+	mux.HandleFunc("POST /api/routers/{id}/repair-walled-garden", a.handleRouterRepairWalledGarden)
 }
 
 // ---------------------------------------------------------------------------
@@ -196,6 +198,33 @@ func walledGardenSig(domains []string) string {
 	return agent.HashToken(walledGardenRulesVersion + "|" + strings.Join(domains, "|"))[:16]
 }
 
+// N°49 — auto-réparation : même à configuration IDENTIQUE, le bloc
+// walled-garden est re-filé périodiquement (walledGardenRefresh). Le bloc
+// étant idempotent (remove+add des seules règles marquées mikcloud-wg), ce
+// re-file répare silencieusement une liste vidée ou amputée LOCALEMENT sur
+// le routeur : ménage Mikhmon, restauration de backup, ajout manuel
+// partiel (constat prod CyberSC 2026-09-06 : règles DNS mikcloud-wg posées
+// mais règles page absentes — le bouton « S'inscrire » aboutissait à une
+// page injoignable, la sig côté cloud croyant le contraire).
+const walledGardenRefresh = 6 * time.Hour
+
+// walledGardenFresh — vrai si la configuration actuelle a été CONFIRMÉE
+// appliquée récemment. Deux cas forcant le re-file :
+//   - WalledGardenAppliedAt vide alors que la sig est posée : routeur
+//     configuré AVANT le N°49 (l'horodatage n'existait pas) — re-file au
+//     premier check-in suivant, ce qui répare aussi le constat prod.
+//   - horodatage présent mais plus vieux que walledGardenRefresh.
+func walledGardenFresh(router *model.Router) bool {
+	if router.WalledGardenAppliedAt == "" {
+		return false // sig posée avant le N°49 → réparer une fois, puis cadence
+	}
+	t, err := time.Parse(time.RFC3339, router.WalledGardenAppliedAt)
+	if err != nil {
+		return false // horodatage illisible → prudent : re-filer (idempotent)
+	}
+	return time.Since(t) < walledGardenRefresh
+}
+
 // ensureWalledGardenLocked — sous verrou : si la configuration walled-garden
 // courante diffère de celle déjà appliquée sur le routeur (et qu'aucune
 // commande n'est en vol), file la mise à jour — elle est servie dans CE
@@ -209,8 +238,8 @@ func ensureWalledGardenLocked(db *model.DB, router *model.Router, domains []stri
 		return
 	}
 	sig := walledGardenSig(domains)
-	if router.WalledGardenSig == sig {
-		return // déjà appliqué avec cette configuration exacte
+	if router.WalledGardenSig == sig && walledGardenFresh(router) {
+		return // déjà appliqué avec cette configuration exacte, et récemment
 	}
 	for i := range db.Commands {
 		c := &db.Commands[i]
@@ -878,9 +907,12 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 			// N°29 — configuration appliquée et CONFIRMÉE par le routeur :
 			// la signature est posée ici (et seulement ici) — un échec sera
 			// retenté au check-in suivant, un changement de config re-file.
+			// N°49 — l'horodatage accompagne la signature : il porte la
+			// cadence d'auto-réparation (walledGardenFresh).
 			if sig, _ := cmd.Payload["sig"].(string); sig != "" {
 				router.WalledGardenSig = sig
 			}
+			router.WalledGardenAppliedAt = model.NowISO()
 			a.logActivity(db, router.AccountID, "router", "Walled-garden d'inscription publique appliqué sur «"+router.Name+"»")
 		} else if cmd.Kind == model.CmdHotspotFiles {
 			// N°35 — portail captif déployé et CONFIRMÉ par le routeur :

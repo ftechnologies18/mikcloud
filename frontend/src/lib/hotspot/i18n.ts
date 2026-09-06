@@ -978,6 +978,10 @@ const fr: Record<string, string> = {
   "routers.importToast": "Import programmé pour « {name} »",
   "routers.importToastDesc": "Les profils et utilisateurs du routeur seront importés au prochain check-in de l'agent (≤ 45 s).",
   "routers.importOffline": "Le routeur doit être en ligne pour importer ses données",
+  // N°49 — réparation du walled-garden d'inscription publique.
+  "routers.repairWg": "Réparer le walled-garden",
+  "routers.repairWgHint": "Réapplique les règles d'accès au portail d'inscription (bouton « S'inscrire » et QR) sur ce routeur — utile si la page /join est injoignable depuis le WiFi",
+  "routers.repairWgToast": "Réparation du walled-garden programmée pour « {name} »",
   "routers.test": "Tester la connexion",
   "routers.stats": "Statistiques",
   "routers.routeros": "RouterOS",
@@ -3281,6 +3285,10 @@ const en: Record<string, string> = {
   "routers.importToast": "Import scheduled for « {name} »",
   "routers.importToastDesc": "Router profiles and users will be imported at the next agent check-in (≤ 45 s).",
   "routers.importOffline": "The router must be online to import its data",
+  // N°49 — walled-garden repair.
+  "routers.repairWg": "Repair the walled garden",
+  "routers.repairWgHint": "Re-applies the signup portal access rules (the “Sign up” button and QR) on this router — useful if the /join page is unreachable from the WiFi",
+  "routers.repairWgToast": "Walled garden repair scheduled for “{name}”",
   "routers.test": "Test connection",
   "routers.stats": "Statistics",
   "routers.routeros": "RouterOS",

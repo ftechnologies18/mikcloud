@@ -9,6 +9,14 @@
 //	  manuellement ici : c'est le mécanisme N°35-a qui s'en charge. L'endpoint
 //	  trace l'acteur (logActivityBy) pour le journal d'audit.
 //
+//	POST /api/routers/{id}/repair-walled-garden — force le re-file du
+//	  walled-garden d'inscription publique sur le routeur. Vide
+//	  router.WalledGardenSig ET router.WalledGardenAppliedAt →
+//	  ensureWalledGardenLocked (appelé au prochain check-in agent, ≤ 45 s)
+//	  re-file automatiquement CmdWalledGarden. Utile après une suppression
+//	  manuelle des règles sur le routeur (entre deux cycles d'auto-réparation
+//	  N°49). Trace l'acteur (logActivityBy) pour le journal d'audit.
+//
 //	GET /api/routers/{id}/portal-preview — retourne le HTML personnalisé de
 //	  login.html pour le routeur, à injecter dans une iframe srcDoc côté
 //	  console. Réutilise buildPortalConfig (résout tenant + 1er WifiSite actif
@@ -67,6 +75,50 @@ func (a *API) handleRouterRedeployPortal(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":      true,
 		"message": "Re-déploiement programmé pour «" + name + " » — le routeur rechargera le portail à son prochain check-in (≤ 45 s)",
+	})
+}
+
+// handleRouterRepairWalledGarden — POST /api/routers/{id}/repair-walled-garden
+// N°49 — force le re-file du walled-garden d'inscription publique sur le
+// routeur agent : sig + horodatage vidés → ensureWalledGardenLocked re-file
+// CmdWalledGarden au prochain check-in (≤ 45 s). Le bloc étant idempotent
+// (seules les règles marquées mikcloud-wg sont remplacées), la réparation est
+// sans risque pour les règles personnelles du gérant.
+func (a *API) handleRouterRepairWalledGarden(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
+	id := r.PathValue("id")
+	a.store.Lock()
+	db := a.store.Data()
+	cur := findRouterScoped(db, id, acc)
+	if cur == nil {
+		a.store.Unlock()
+		writeErr(w, http.StatusNotFound, "Routeur introuvable")
+		return
+	}
+	if cur.Mode != "agent" {
+		a.store.Unlock()
+		writeErrCode(w, http.StatusBadRequest, "not_agent",
+			"La réparation du walled-garden ne s'applique qu'aux routeurs en mode agent", nil)
+		return
+	}
+	// P3 — compte expiré : écritures métier refusées.
+	if a.subscriptionGuardStateLocked(cur.AccountID).Status == "expired" {
+		a.store.Unlock()
+		writeErrCode(w, http.StatusPaymentRequired, "subscription_expired",
+			"Abonnement expiré — réparation impossible", nil)
+		return
+	}
+	// Sig + horodatage vidés → ensureWalledGardenLocked re-file au prochain check-in.
+	cur.WalledGardenSig = ""
+	cur.WalledGardenAppliedAt = ""
+	a.logActivityBy(r, db, acc, "router", "Réparation du walled-garden demandée pour «"+cur.Name+"»")
+	a.store.Save()
+	name := cur.Name
+	a.store.Unlock()
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":      true,
+		"message": "Réparation programmée pour «" + name + " » — le walled-garden sera réappliqué à son prochain check-in (≤ 45 s)",
 	})
 }
 

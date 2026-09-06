@@ -104,8 +104,10 @@ func TestEnsureWalledGardenLocked(t *testing.T) {
 		t.Fatalf("commande en vol dupliquée : %d commande(s)", len(db.Commands))
 	}
 
-	// La commande est rapportée « ok » (handleAgentResult pose la signature).
+	// La commande est rapportée « ok » (handleAgentResult pose la signature
+	// ET l'horodatage N°49 — cf. TestEnsureWalledGardenAutoRepair).
 	router.WalledGardenSig = walledGardenSig(domains)
+	router.WalledGardenAppliedAt = time.Now().Format(time.RFC3339)
 	db.Commands[0].Status = "done"
 
 	// Check-in suivant, config inchangée → toujours rien de neuf.
@@ -166,6 +168,59 @@ func TestRequeueStaleWalledGarden(t *testing.T) {
 	ensureWalledGardenLocked(db, router, []string{"a.example"})
 	if len(db.Commands) != 2 {
 		t.Fatalf("doublon après reprise : %d commande(s), attendu 2", len(db.Commands))
+	}
+}
+
+// TestEnsureWalledGardenAutoRepair — N°49 : le walled-garden est
+// AUTO-RÉPARANT. Constat prod CyberSC 2026-09-06 : les règles DNS étaient
+// posées sur le routeur mais PAS les règles page (script d'install partiel,
+// ménage local, restauration…) alors que la sig côté cloud croyait le
+// contraire — le bouton « S'inscrire » et le QR aboutissaient à une page
+// injoignable. Trois leviers : (1) sig posée + horodatage ABSENT (routeur
+// configuré avant le N°49) → re-file au premier check-in ; (2) horodatage
+// plus vieux que walledGardenRefresh (6 h) → re-file périodique ;
+// (3) horodatage frais → aucun re-file (pas de spam de commandes).
+func TestEnsureWalledGardenAutoRepair(t *testing.T) {
+	db := &model.DB{}
+	router := &model.Router{ID: "r-wg48", AccountID: "acc-wg48"}
+	domains := []string{"a.example", "b.example"}
+	sig := walledGardenSig(domains)
+
+	// 1er check-in : mise en file initiale.
+	ensureWalledGardenLocked(db, router, domains)
+	if len(db.Commands) != 1 {
+		t.Fatalf("mise en file initiale absente : %d commande(s)", len(db.Commands))
+	}
+	db.Commands[0].Status = "done"
+
+	// (3) Retour ok simulé (sig + horodatage FRAIS) : aucun re-file —
+	// la cadence N°49 ne doit pas spamer les check-ins.
+	router.WalledGardenSig = sig
+	router.WalledGardenAppliedAt = time.Now().Format(time.RFC3339)
+	ensureWalledGardenLocked(db, router, domains)
+	if len(db.Commands) != 1 {
+		t.Fatal("re-file injustifié avec horodatage frais")
+	}
+
+	// (2) Horodatage ANCIEN (> 6 h) : re-file périodique — une liste vidée
+	// localement est recréée au plus tard 6 h après, sans intervention.
+	router.WalledGardenAppliedAt = time.Now().Add(-walledGardenRefresh - time.Minute).Format(time.RFC3339)
+	ensureWalledGardenLocked(db, router, domains)
+	if len(db.Commands) != 2 {
+		t.Fatalf("réparation périodique non déclenchée : %d commande(s), attendu 2", len(db.Commands))
+	}
+	if s, _ := db.Commands[1].Payload["sig"].(string); s != sig {
+		t.Fatalf("sig du payload de réparation = %q, attendu %q", s, sig)
+	}
+	db.Commands[1].Status = "done"
+
+	// (1) Sig posée mais horodatage ABSENT (routeur antérieur au N°49,
+	// cas CyberSC) : re-file immédiat au premier check-in qui suit le
+	// déploiement — réparation sans action humaine.
+	routerOld := &model.Router{ID: "r-wg-old", AccountID: "acc-wg48", WalledGardenSig: sig}
+	ensureWalledGardenLocked(db, routerOld, domains)
+	if len(db.Commands) != 3 {
+		t.Fatalf("réparation immédiate (horodatage absent) non déclenchée : %d commande(s), attendu 3", len(db.Commands))
 	}
 }
 

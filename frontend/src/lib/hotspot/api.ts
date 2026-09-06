@@ -484,6 +484,24 @@ export async function redeployRouterPortal(routerId: string): Promise<RedeployRo
   );
 }
 
+/** RepairWalledGardenResponse — réponse du POST /api/routers/{id}/repair-walled-garden. */
+export interface RepairWalledGardenResponse {
+  ok: boolean;
+  message: string;
+}
+
+/** repairRouterWalledGarden — N°49 : force la ré-application du walled-garden
+ * d'inscription publique sur un routeur agent (règles page + DNS, deux
+ * tables). Vide la signature et l'horodatage côté backend → l'agent réapplique
+ * automatiquement au prochain check-in (≤ 45 s). Idempotent : seules les
+ * règles marquées mikcloud-wg sont remplacées. */
+export async function repairRouterWalledGarden(routerId: string): Promise<RepairWalledGardenResponse> {
+  return api<RepairWalledGardenResponse>(
+    `/api/routers/${encodeURIComponent(routerId)}/repair-walled-garden`,
+    { method: "POST" },
+  );
+}
+
 /** fetchRouterPortalPreview — récupère le HTML personnalisé de login.html
  * pour un routeur agent, à injecter dans une iframe srcDoc (aperçu console).
  * Retourne le HTML brut (text/html). */

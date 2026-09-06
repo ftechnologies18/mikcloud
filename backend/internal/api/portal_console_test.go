@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"mikcloud/hotspot-api/internal/model"
 )
@@ -111,6 +112,100 @@ func TestRedeployPortalNotAgent(t *testing.T) {
 	st.Unlock()
 
 	req, _ := http.NewRequest("POST", ts.URL+"/api/routers/r-sim-test/redeploy-portal", nil)
+	req.Header.Set("Authorization", "Bearer "+ownerToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST : %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("statut %d, attendu 400", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "not_agent") {
+		t.Errorf("code not_agent absent : %s", body)
+	}
+}
+
+// TestRepairWalledGardenOK — N°49 : POST /api/routers/{id}/repair-walled-garden
+// vide la signature ET l'horodatage du walled-garden → ensureWalledGardenLocked
+// re-filer la commande au prochain check-in (≤ 45 s). Réponse 200 ok:true.
+func TestRepairWalledGardenOK(t *testing.T) {
+	st, ts := newTestServerWithStore(t)
+	ownerToken, accID, _ := registerAccount(t, ts, "gerant-wg-repair", "")
+	routerID := "r-wg-repair"
+	st.Lock()
+	st.Data().Routers = append(st.Data().Routers, model.Router{
+		ID:                    routerID,
+		AccountID:             accID,
+		Name:                  "Router WG",
+		Mode:                  "agent",
+		Status:                "online",
+		WalledGardenSig:       "abcd1234abcd1234", // simule une application déjà confirmée
+		WalledGardenAppliedAt: time.Now().Format(time.RFC3339),
+	})
+	st.Save()
+	st.Unlock()
+
+	req, _ := http.NewRequest("POST", ts.URL+"/api/routers/"+routerID+"/repair-walled-garden", nil)
+	req.Header.Set("Authorization", "Bearer "+ownerToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST : %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("statut %d, attendu 200, body : %s", resp.StatusCode, body)
+	}
+
+	// Sig ET horodatage doivent être vidés : le prochain check-in re-file.
+	st.Lock()
+	after := findRouterScoped(st.Data(), routerID, accID)
+	sigAfter, atAfter := "", ""
+	if after != nil {
+		sigAfter, atAfter = after.WalledGardenSig, after.WalledGardenAppliedAt
+	}
+	st.Unlock()
+	if sigAfter != "" || atAfter != "" {
+		t.Errorf("après réparation : sig=%q horodatage=%q, attendu vides tous les deux", sigAfter, atAfter)
+	}
+
+	// Boucle complète : ensureWalledGardenLocked avec la config courante
+	// re-filerait (sig vide ≠ sig attendue) — cohérence avec le test N°49
+	// de walled_garden_test.go qui couvre ce re-file.
+}
+
+// TestRepairWalledGardenNotFound — routeur inexistant → 404.
+func TestRepairWalledGardenNotFound(t *testing.T) {
+	_, ts := newTestServerWithStore(t)
+	ownerToken, _, _ := registerAccount(t, ts, "gerant-wg-repair-404", "")
+
+	req, _ := http.NewRequest("POST", ts.URL+"/api/routers/r-inexistant/repair-walled-garden", nil)
+	req.Header.Set("Authorization", "Bearer "+ownerToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST : %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("statut %d, attendu 404", resp.StatusCode)
+	}
+}
+
+// TestRepairWalledGardenNotAgent — routeur en mode real → 400 code not_agent.
+func TestRepairWalledGardenNotAgent(t *testing.T) {
+	st, ts := newTestServerWithStore(t)
+	ownerToken, accID, _ := registerAccount(t, ts, "gerant-wg-repair-real", "")
+	st.Lock()
+	st.Data().Routers = append(st.Data().Routers, model.Router{
+		ID: "r-real-wg", AccountID: accID, Name: "RealRouter WG",
+		Mode: "real", Status: "online",
+	})
+	st.Save()
+	st.Unlock()
+
+	req, _ := http.NewRequest("POST", ts.URL+"/api/routers/r-real-wg/repair-walled-garden", nil)
 	req.Header.Set("Authorization", "Bearer "+ownerToken)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

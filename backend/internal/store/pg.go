@@ -698,6 +698,10 @@ func (p *PG) ensureSchema() error {
 		// N°29 — signature de la config walled-garden d'inscription publique
 		// déjà appliquée sur ce routeur agent (cf. agent_handlers.go).
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS walled_garden_sig TEXT NOT NULL DEFAULT ''`,
+		// N°49 — horodatage de la dernière application confirmée du
+		// walled-garden (auto-réparation périodique, cf. agent_handlers.go
+		// ensureWalledGardenLocked / walledGardenFresh).
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS walled_garden_applied_at TEXT NOT NULL DEFAULT ''`,
 		// N°35 — signature du portail captif déjà déployé avec succès sur
 		// ce routeur agent (cf. agent_handlers.go ensureHotspotFilesLocked).
 		// Pattern identique à walled_garden_sig : posée au retour « ok »,
@@ -1422,14 +1426,14 @@ var routerSpec = entitySpec[model.Router]{
 	cols: []string{"id", "name", "host", "port", "username", "password", "mode", "status",
 		"version", "uptime_sec", "cpu_load", "hotspot_users", "active_sessions", "created_at",
 		"hotspot_login_url", "agent_token_hash", "token_preview", "last_seen", "account_id",
-		"board_name", "free_hdd_mb", "total_hdd_mb", "identity_conflict", "walled_garden_sig", "hotspot_files_sig"},
+		"board_name", "free_hdd_mb", "total_hdd_mb", "identity_conflict", "walled_garden_sig", "walled_garden_applied_at", "hotspot_files_sig"},
 	idOf: func(x *model.Router) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Router, error) {
 		var x model.Router
 		err := r.Scan(&x.ID, &x.Name, &x.Host, &x.Port, &x.Username, &x.Password, &x.Mode, &x.Status,
 			&x.Version, &x.UptimeSec, &x.CPULoad, &x.HotspotUsers, &x.ActiveSessions, &x.CreatedAt,
 			&x.HotspotLoginUrl, &x.AgentTokenHash, &x.TokenPreview, &x.LastSeen, &x.AccountID,
-			&x.BoardName, &x.FreeHddMb, &x.TotalHddMb, &x.IdentityConflict, &x.WalledGardenSig, &x.HotspotFilesSig)
+			&x.BoardName, &x.FreeHddMb, &x.TotalHddMb, &x.IdentityConflict, &x.WalledGardenSig, &x.WalledGardenAppliedAt, &x.HotspotFilesSig)
 		// Sécurité P0 #6 — le mot de passe routeur est stocké chiffré
 		// (AES-256-GCM) : lecture = déchiffrement (passthrough si valeur
 		// antérieure au correctif, migration assurée par
@@ -1445,7 +1449,7 @@ var routerSpec = entitySpec[model.Router]{
 		return []any{x.ID, x.Name, x.Host, x.Port, x.Username, secretbox.Encrypt(x.Password), x.Mode, x.Status,
 			x.Version, x.UptimeSec, x.CPULoad, x.HotspotUsers, x.ActiveSessions, x.CreatedAt,
 			x.HotspotLoginUrl, x.AgentTokenHash, x.TokenPreview, x.LastSeen, x.AccountID,
-			x.BoardName, x.FreeHddMb, x.TotalHddMb, x.IdentityConflict, x.WalledGardenSig, x.HotspotFilesSig}
+			x.BoardName, x.FreeHddMb, x.TotalHddMb, x.IdentityConflict, x.WalledGardenSig, x.WalledGardenAppliedAt, x.HotspotFilesSig}
 	},
 	hashOf: hashEntity[model.Router],
 }

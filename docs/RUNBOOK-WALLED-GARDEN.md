@@ -4,7 +4,7 @@
 > publique `/join/{token}` accessible **depuis le WiFi du hotspot, avant
 > toute authentification**, pour que le scan du QR fonctionne sur place
 > (campus, écoles, administrations, entreprises). Dernière mise à jour :
-> N°31 (2026-09-05).
+> N°49 (2026-09-06).
 
 > **⚙️ Automatisation (N°29)** : les routeurs en mode **AGENT** appliquent
 > cette configuration automatiquement — bloc inclus dans le script
@@ -132,8 +132,40 @@ Si l'étape 2 échoue → §5.
 | « Impossible de trouver le serveur » (résolution DNS) | Client avec DNS codé en dur, port 53 non autorisé | Ajouter les règles 53 udp/tcp (§2) |
 | Page injoignable alors que le DNS fonctionne | Navigateur configuré en **DNS chiffré** (DoH : « Secure DNS » Chrome/Edge/Firefox, « DNS privé » Android) — le routeur ne voit plus les requêtes, la règle par domaine ne peut plus correspondre | Désactiver « Secure DNS » / DNS privé sur l'appareil ; en durcissement avancé, bloquer le DoH externe et forcer le DNS du hotspot |
 | Le scan ouvre le portail captif au lieu du lien | Comportement normal : l'OS ouvre le portail à la connexion du WiFi | Fermer le portail, scanner depuis l'appareil photo (ou saisir l'URL) — le lien s'ouvre alors dans le navigateur normal |
+| **Règles DNS `mikcloud-wg dns` présentes mais AUCUNE règle `mikcloud-wg page`** (constat prod CyberSC 2026-09-06 : le bouton « S'inscrire » et le QR aboutissaient à « vérifiez votre connexion internet ») | La liste a été vidée/amputée localement (ménage Mikhmon, restauration, script partiel) alors que la sig côté cloud croyait la config appliquée — plus aucun re-file possible | **N°49 corrige à la racine** : auto-réparation au check-in (§5-ter) ; correctif immédiat : réappliquer §2, ou console → Routeurs → menu ⋯ → « Réparer le walled-garden » |
 | Erreur TLS sur la page | Horloge de l'appareil fausse, ou proxy HTTP explicite configuré sur le hotspot pour ces domaines | Horloge correcte ; ne jamais placer de proxy explicite pour les domaines du walled-garden |
 | La page s'ouvre mais affiche « Lien introuvable » / verrouillé | Ce n'est **pas** un problème de walled-garden : lien révoqué, expiré ou saturé côté serveur | Console → Inscriptions → Liens & QR : vérifier le badge d'état du lien |
+
+### 5-ter. Auto-réparation (N°49) — le cloud recrée ce qui manque, tout seul
+
+Depuis le N°49, le walled-garden est **auto-réparant** : le bloc `walled_garden`
+est idempotent (seules les règles marquées `mikcloud-wg` sont remplacées) et le
+cloud le re-file périodiquement au check-in agent, même si la configuration est
+INCHANGÉE :
+
+| Cas | Déclencheur | Délai de réparation |
+|---|---|---|
+| Configuration changée côté cloud (N°29) | sig ≠ `Router.WalledGardenSig` | ≤ 45 s (check-in suivant) |
+| **Liste vidée/amputée localement** (constat CyberSC) | horodatage `WalledGardenAppliedAt` ABSENT alors que la sig est posée — routeurs configurés avant le N°49 | ≤ 45 s au premier check-in après déploiement du N°49 |
+| Liste vidée/amputée localement APRÈS le N°49 | horodatage plus vieux que 6 h (`walledGardenRefresh`) | ≤ 6 h |
+| Réparation urgente à la demande | console → Routeurs → menu ⋯ → **« Réparer le walled-garden »** (`POST /api/routers/{id}/repair-walled-garden`, vide sig + horodatage) | ≤ 45 s |
+
+L'horodatage est posé en même temps que la signature au retour « ok » de la
+commande (colonne `routers.walled_garden_applied_at`, DDL idempotent). Le
+Journal trace chaque application : « Walled-garden d'inscription publique
+appliqué sur … ».
+
+Notes :
+
+- Le re-file périodique est sans risque : idempotent, best-effort (les règles
+  « en usage » ne sont pas supprimées, N°31-e), et aucune règle personnelle du
+  gérant n'est touchée (seul le marqueur `mikcloud-wg` est géré).
+- Depuis le N°48 (v2), le bloc couvre les **deux** tables : règle host
+  « page » (`/ip hotspot walled-garden`, `action=allow` — HTTP par en-tête
+  Host) ET règle ip « api » (`/ip hotspot walled-garden ip`, `action=accept`,
+  `dst-host`) — c'est la règle ip qui déclenche le reniflement DNS et donc la
+  liste dynamique d'IP couvrant le HTTPS (cf. §3 et la révision de
+  l'anti-pattern §6). Le N°49 ajoute l'auto-réparation durable.
 
 ### 5-bis. Mode AGENT — aucune règle sur le routeur : checklist de diagnostic (N°31)
 
@@ -174,9 +206,21 @@ Notes de terrain :
     d'autres services que MikCloud) ;
   - ouvrir 80/443 en général via `walled-garden ip` (annule le portail) ;
   - épingler des IP Vercel/Render (elles changent) ;
-  - utiliser la règle `dst-host` dans la table **`walled-garden ip`**
-    pour ces domaines (elle ne matche que l'en-tête HTTP — inopérant en
-    HTTPS) : utiliser la table **par domaine** (§2).
+  - épingler des adresses IP « manuellement » en croyant renforcer
+    (`walled-garden ip dst-address=…`) — les shadow rules dynamiques
+    `dst-address` que le routeur crée LUI-MÊME via le reniflement DNS
+    (visibles `print` flag `D`) sont le mécanisme correct ; des IP posées
+    à la main finissent par viser un service différent.
+
+> **Révision N°48/N°49** — l'ancienne version de cette liste interdisait
+> « `dst-host` dans la table `walled-garden ip` » en l'estimant « inopérant
+> en HTTPS ». Le terrain a établi le contraire : la configuration Mikhmon
+> (règle `walled-garden ip dst-host="laksa19.github.io"`, HTTPS GitHub Pages)
+> fonctionnait — c'est cette règle ip qui déclenche le reniflement DNS et la
+> liste dynamique d'IP. Le N°48 (v2) pose donc, par domaine, la règle host
+> « page » ET la règle ip « api » (deux tables) ; l'action `accept` reste
+> obligatoire côté table ip (`allow` y est invalide, cf. N°31-d). Le N°49
+> garantit en outre que toute liste vidée localement est recréée (§5-ter).
 
 ## 7. Rappel du flux complet (N°27)
 

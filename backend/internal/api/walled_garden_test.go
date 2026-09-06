@@ -7,6 +7,7 @@ package api
 
 import (
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,6 +31,28 @@ func TestNormalizeWGHost(t *testing.T) {
 		if got := agent.SanitizeWGDomain(normalizeWGHost(c.in)); got != c.want {
 			t.Fatalf("normalizeWGHost(%q) → %q, attendu %q", c.in, got, c.want)
 		}
+	}
+}
+
+// TestWalledGardenSigVersioned — N°48 : la signature intègre un sel de
+// VERSION des règles, pas seulement les domaines. Garde-fou du bug prod : la
+// v1 calculait la sig sur les seuls domaines — corriger le SCRIPT (ajout des
+// règles ip HTTPS) sans changer la liste laissait la sig identique →
+// ensureWalledGardenLocked ne re-filait rien → les routeurs restaient en
+// règles v1 (HTTPS pré-auth bloqué, claim « indisponible » côté client). Si
+// ce test échoue, le sel de version a disparu de walledGardenSig.
+func TestWalledGardenSigVersioned(t *testing.T) {
+	domains := []string{"mikcloud.onrender.com", "mikcloud.ftci.fr"}
+	s := walledGardenSig(domains)
+	legacy := agent.HashToken(strings.Join(domains, "|"))[:16] // formule v1 (sans sel)
+	if s == legacy {
+		t.Fatal("walledGardenSig sans sel de version : un correctif de règles ne serait jamais re-poussé aux routeurs (régression N°48)")
+	}
+	// Stabilité : même entrée → même sig (contrat « déjà appliqué » vs « à
+	// (re)appliquer »). NB : le tri des domaines est le fait de
+	// walledGardenDomains (amont), pas de walledGardenSig.
+	if s != walledGardenSig([]string{"mikcloud.onrender.com", "mikcloud.ftci.fr"}) {
+		t.Fatal("walledGardenSig doit être déterministe")
 	}
 }
 

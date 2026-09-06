@@ -1325,6 +1325,16 @@ func walledGardenInstallBlock(domains []string) string {
 	for _, d := range domains {
 		sb.WriteString("    :do {\n      :if ([:len [/ip hotspot walled-garden find comment=\"" + WalledGardenMarker + " page\" dst-host=\"" + rosEscape(d) + "\"]] = 0) do={ /ip hotspot walled-garden add action=allow dst-host=\"" + rosEscape(d) + "\" comment=\"" + WalledGardenMarker + " page\" }\n    } on-error={}\n")
 	}
+	// N°48 — règles « api » (variante ip, action=accept, dst-host) : la
+	// variante proxy ci-dessus ne voit que le HTTP pur (port 80) — or l'API
+	// (claim, /portal, /join) est en HTTPS (Render/Vercel). Sans règles ip,
+	// le TLS 443 pré-auth restait bloqué par le hotspot → le fetch du claim
+	// échouait côté client (« Service WiFi offert momentanément indisponible
+	// »). Pas de restriction de port : couvre TCP 80/443 ET UDP 443 (QUIC).
+	sb.WriteString("    :do {\n      /ip hotspot walled-garden ip remove [find comment=\"" + WalledGardenMarker + " api\"]\n    } on-error={}\n")
+	for _, d := range domains {
+		sb.WriteString("    :do {\n      :if ([:len [/ip hotspot walled-garden ip find comment=\"" + WalledGardenMarker + " api\" dst-host=\"" + rosEscape(d) + "\"]] = 0) do={ /ip hotspot walled-garden ip add action=accept dst-host=\"" + rosEscape(d) + "\" comment=\"" + WalledGardenMarker + " api\" }\n    } on-error={}\n")
+	}
 	sb.WriteString("    :do {\n      /ip hotspot walled-garden ip remove [find comment=\"" + WalledGardenMarker + " dns\"]\n    } on-error={}\n")
 	sb.WriteString("    :do {\n      :if ([:len [/ip hotspot walled-garden ip find comment=\"" + WalledGardenMarker + " dns\" protocol=udp]] = 0) do={ /ip hotspot walled-garden ip add action=accept protocol=udp dst-port=53 comment=\"" + WalledGardenMarker + " dns\" }\n    } on-error={}\n")
 	sb.WriteString("    :do {\n      :if ([:len [/ip hotspot walled-garden ip find comment=\"" + WalledGardenMarker + " dns\" protocol=tcp]] = 0) do={ /ip hotspot walled-garden ip add action=accept protocol=tcp dst-port=53 comment=\"" + WalledGardenMarker + " dns\" }\n    } on-error={}\n")
@@ -1371,6 +1381,8 @@ func (b Builder) buildWalledGarden(cmd model.Command) string {
 	// échouer la mise à jour : le service prime sur le ménage.
 	step("rm-page")
 	sb.WriteString(":do { /ip hotspot walled-garden remove [find comment=\"" + WalledGardenMarker + " page\"] } on-error={}\n")
+	step("rm-api-ip")
+	sb.WriteString(":do { /ip hotspot walled-garden ip remove [find comment=\"" + WalledGardenMarker + " api\"] } on-error={}\n")
 	step("rm-dns-ip")
 	sb.WriteString(":do { /ip hotspot walled-garden ip remove [find comment=\"" + WalledGardenMarker + " dns\"] } on-error={}\n")
 	// N°31-e — adds CONDITIONNELS à l’absence : si le remove vient d’échouer,
@@ -1387,6 +1399,16 @@ func (b Builder) buildWalledGarden(cmd model.Command) string {
 	for i, d := range domains {
 		step("add-page-" + strconv.Itoa(i+1))
 		sb.WriteString(":do { :if ([:len [/ip hotspot walled-garden find comment=\"" + WalledGardenMarker + " page\" dst-host=\"" + rosEscape(d) + "\"]] = 0) do={ /ip hotspot walled-garden add action=allow dst-host=\"" + rosEscape(d) + "\" comment=\"" + WalledGardenMarker + " page\" } } on-error={ :set " + okVar + " false }\n")
+	}
+	// N°48 — règles « api » (variante ip) : le HTTPS pré-auth passe ICI, pas
+	// dans la variante proxy (page) qui ne voit que le HTTP pur. La variante
+	// ip n'accepte que accept|drop|reject (N°31-d) → action=accept ; le
+	// matching dst-host s'appuie sur le reniflement DNS (les règles DNS
+	// ci-dessous garantissent que la résolution transite par le routeur,
+	// même pour les clients avec DNS codé en dur).
+	for i, d := range domains {
+		step("add-api-" + strconv.Itoa(i+1))
+		sb.WriteString(":do { :if ([:len [/ip hotspot walled-garden ip find comment=\"" + WalledGardenMarker + " api\" dst-host=\"" + rosEscape(d) + "\"]] = 0) do={ /ip hotspot walled-garden ip add action=accept dst-host=\"" + rosEscape(d) + "\" comment=\"" + WalledGardenMarker + " api\" } } on-error={ :set " + okVar + " false }\n")
 	}
 	step("add-dns-udp")
 	sb.WriteString(":do { :if ([:len [/ip hotspot walled-garden ip find comment=\"" + WalledGardenMarker + " dns\" protocol=udp]] = 0) do={ /ip hotspot walled-garden ip add action=accept protocol=udp dst-port=53 comment=\"" + WalledGardenMarker + " dns\" } } on-error={ :set " + okVar + " false }\n")

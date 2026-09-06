@@ -742,7 +742,9 @@
          de /api/wifi/site/{slug}/portal (walled-gardensé pré-auth), et applique
          la config FRAICHE si disponible (prime sur le fallback). Active :
          - branding dynamique (tenant name, logo URL si fournie) ;
-         - bandeau « WiFi offert » avec lien /wifi/{slug} si le site est actif ;
+         - (N°48) bandeau « WiFi offert » retiré — le formulaire de claim
+           inline (même donnée, action directe téléphone → code → en ligne)
+           le remplace ;
          - bouton « S'inscrire » pointant vers {{MIKCLOUD_JOIN_URL}}?mac=$(mac-esc) ;
          - offres payantes dynamiques (remplace les Wave hardcodés 100→3000 F) ;
          - claim inline : téléphone → POST /api/wifi/site/{slug}/claim → code →
@@ -822,17 +824,11 @@
                     }
                 }
 
-                // 3. Bandeau « WiFi offert » : inséré en tête du login-section si
-                // un slug est configuré. Lien vers /wifi/{slug} (page visiteur).
-                if (cfg.wifiSlug && !document.getElementById('mikcloud-wifi-banner')) {
-                    var banner = document.createElement('div');
-                    banner.id = 'mikcloud-wifi-banner';
-                    banner.style.cssText = 'margin:10px 0;padding:12px 16px;border-radius:8px;background:linear-gradient(135deg,#0d9488,#14b8a6);color:#fff;text-align:center;font-weight:600;box-shadow:0 2px 8px rgba(13,148,136,0.25);';
-                    var wifiUrl = cfg.wifiUrl || (cfg.apiBase + '/wifi/' + cfg.wifiSlug);
-                    banner.innerHTML = '🎁 WiFi offert — <a href="' + escapeHtml(wifiUrl) + '" style="color:#fff;text-decoration:underline;">Recevoir mon accès gratuit</a>';
-                    var loginSection = document.querySelector('.login-section');
-                    if (loginSection) loginSection.insertBefore(banner, loginSection.firstChild);
-                }
+                // 3. (N°48) Bandeau « WiFi offert » RETIRÉ : il doublonnait le
+                // formulaire de claim inline (bloc 5) — même information, deux
+                // points d'entrée visibles pour la même offre gratuite. Le
+                // formulaire (téléphone → code → auto-login) est seul maintenu :
+                // action directe, zéro redondance.
 
                 // 4. Offres dynamiques : remplace les liens Wave hardcodés par les
                 // profils live du compte. On cible les cartes d'offre existantes

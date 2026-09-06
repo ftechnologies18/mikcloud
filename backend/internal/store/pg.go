@@ -622,7 +622,8 @@ func (p *PG) ensureSchema() error {
                         voucher_id TEXT NOT NULL DEFAULT '',
                         code       TEXT NOT NULL DEFAULT '',
                         day        TEXT NOT NULL DEFAULT '',
-                        created_at TEXT NOT NULL DEFAULT ''
+                        created_at TEXT NOT NULL DEFAULT '',
+                        claim_cmd_id TEXT NOT NULL DEFAULT ''
                 )`,
 		`CREATE INDEX IF NOT EXISTS idx_wifi_guests_account ON wifi_guests (account_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_wifi_guests_site   ON wifi_guests (site_id)`,
@@ -1649,17 +1650,17 @@ var wifiSiteSpec = entitySpec[model.WifiSite]{
 // wifiGuestSpec — N°28 : registre marketing/anti-abus des visiteurs WiFi.
 var wifiGuestSpec = entitySpec[model.WifiGuest]{
 	table: "wifi_guests",
-	cols:  []string{"id", "account_id", "site_id", "site_name", "phone", "opt_in", "voucher_id", "code", "day", "created_at"},
+	cols:  []string{"id", "account_id", "site_id", "site_name", "phone", "opt_in", "voucher_id", "code", "day", "created_at", "claim_cmd_id"},
 	idOf:  func(x *model.WifiGuest) string { return x.ID },
 	scan: func(r *sql.Rows) (model.WifiGuest, error) {
 		var x model.WifiGuest
 		err := r.Scan(&x.ID, &x.AccountID, &x.SiteID, &x.SiteName, &x.Phone, &x.OptIn,
-			&x.VoucherID, &x.Code, &x.Day, &x.CreatedAt)
+			&x.VoucherID, &x.Code, &x.Day, &x.CreatedAt, &x.ClaimCmdID)
 		return x, err
 	},
 	args: func(x *model.WifiGuest) []any {
 		return []any{x.ID, x.AccountID, x.SiteID, x.SiteName, x.Phone, x.OptIn,
-			x.VoucherID, x.Code, x.Day, x.CreatedAt}
+			x.VoucherID, x.Code, x.Day, x.CreatedAt, x.ClaimCmdID}
 	},
 	hashOf: hashEntity[model.WifiGuest],
 }

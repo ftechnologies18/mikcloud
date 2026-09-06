@@ -459,3 +459,98 @@ func TestWifiPortalFreeQuota(t *testing.T) {
 		t.Fatal("tenantName manquant dans la réponse portal")
 	}
 }
+
+// TestWifiClaimAgentProvisioningWait — N°47 : en mode agent, le claim trace la
+// commande voucher_batch sur le registre du jour (WifiGuest.ClaimCmdID) et
+// répond waitForRouter=true ; /status expose provisioned=false tant que la
+// commande n'est pas appliquée au routeur, puis true une fois done. Le
+// portail attend ce signal avant l'auto-login CHAP — sans lui, le visiteur
+// recevait « invalid username or password » pendant la fenêtre de check-in
+// (≤ 45 s) et croyait le service cassé (claim inline inutilisable).
+func TestWifiClaimAgentProvisioningWait(t *testing.T) {
+	ts, st := newWifiTestServer(t)
+	_, accID, _ := registerAccount(t, ts, "gerant-wifi-agent", "")
+	routerID, profileID := seedWifiEnv(t, st, accID)
+	seedWifiSite(t, st, accID, "kiosk-agent", routerID, profileID, true, 1, 100)
+
+	// Le routeur passe en mode agent : le claim n'applique plus le voucher en
+	// direct (gateway), il met la commande voucher_batch en file.
+	st.Lock()
+	for i := range st.Data().Routers {
+		if st.Data().Routers[i].ID == routerID {
+			st.Data().Routers[i].Mode = "agent"
+		}
+	}
+	st.Unlock()
+
+	status, out := doJSON(t, ts, "POST", "/api/wifi/site/kiosk-agent/claim", "", map[string]any{
+		"phone": "2250707080909", "optIn": false,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("claim agent : statut %d, corps %v", status, out)
+	}
+	if wait, _ := out["waitForRouter"].(bool); !wait {
+		t.Fatalf("waitForRouter attendu true en mode agent, obtenu %v", out["waitForRouter"])
+	}
+	code, _ := out["code"].(string)
+	if len(code) != 5 {
+		t.Fatalf("code délivré invalide : %q", code)
+	}
+
+	// Le registre du jour porte la commande, encore en file à l'instant du claim.
+	st.Lock()
+	cmdID := ""
+	for _, g := range st.Data().WifiGuests {
+		if g.Phone == "2250707080909" {
+			cmdID = g.ClaimCmdID
+		}
+	}
+	if cmdID == "" {
+		st.Unlock()
+		t.Fatal("ClaimCmdID vide sur le registre du jour (mode agent attendu)")
+	}
+	applied := false
+	for _, c := range st.Data().Commands {
+		if c.ID == cmdID {
+			if c.Kind != model.CmdVoucherBatch {
+				st.Unlock()
+				t.Fatalf("commande %s : kind %q, voulu voucher_batch", cmdID, c.Kind)
+			}
+			applied = c.Status == "done" || c.DoneAt != ""
+		}
+	}
+	st.Unlock()
+	if applied {
+		t.Fatal("la commande doit être en file juste après le claim")
+	}
+
+	// /status : provisioned=false tant que l'agent n'a pas appliqué la commande.
+	stCode, sOut := doJSON(t, ts, "GET", "/api/wifi/site/kiosk-agent/status?phone=2250707080909", "", nil)
+	if stCode != http.StatusOK {
+		t.Fatalf("status : statut %d, corps %v", stCode, sOut)
+	}
+	if state, _ := sOut["state"].(string); state != "active" {
+		t.Fatalf("state attendu active, obtenu %v", sOut["state"])
+	}
+	if prov, _ := sOut["provisioned"].(bool); prov {
+		t.Fatal("provisioned attendu false avant application de la commande")
+	}
+
+	// L'agent applique la commande (résultat ok, cf. agent_results) → true.
+	st.Lock()
+	for i := range st.Data().Commands {
+		if st.Data().Commands[i].ID == cmdID {
+			st.Data().Commands[i].Status = "done"
+			st.Data().Commands[i].DoneAt = model.NowISO()
+		}
+	}
+	st.Unlock()
+
+	stCode, sOut = doJSON(t, ts, "GET", "/api/wifi/site/kiosk-agent/status?phone=2250707080909", "", nil)
+	if stCode != http.StatusOK {
+		t.Fatalf("status 2 : statut %d", stCode)
+	}
+	if prov, _ := sOut["provisioned"].(bool); !prov {
+		t.Fatalf("provisioned attendu true après application, corps %v", sOut)
+	}
+}

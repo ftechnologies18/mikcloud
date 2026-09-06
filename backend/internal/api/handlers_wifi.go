@@ -274,13 +274,14 @@ func (a *API) handleWifiClaim(w http.ResponseWriter, r *http.Request) {
 		if wifiVoucherUsable(v) {
 			a.store.Unlock()
 			writeJSON(w, http.StatusOK, map[string]any{
-				"duplicate":    true,
-				"code":         v.Username,
-				"loginUrl":     wifiLoginURL(wifiLoginBase(db, site), v.Username),
-				"timeLimitMin": v.TimeLimitMin,
-				"dataQuotaMb":  v.DataQuotaMb,
-				"profileName":  v.ProfileName,
-				"siteName":     site.Name,
+				"duplicate":     true,
+				"waitForRouter": routerCopy.Mode == "agent",
+				"code":          v.Username,
+				"loginUrl":      wifiLoginURL(wifiLoginBase(db, site), v.Username),
+				"timeLimitMin":  v.TimeLimitMin,
+				"dataQuotaMb":   v.DataQuotaMb,
+				"profileName":   v.ProfileName,
+				"siteName":      site.Name,
 			})
 			return
 		}
@@ -353,7 +354,6 @@ func (a *API) handleWifiClaim(w http.ResponseWriter, r *http.Request) {
 	// lot-jour, comptabilité, audit). Appelé sous verrou, UNE fois, APRÈS
 	// l'application au routeur (pattern du générateur de vouchers).
 	bookkeeping := func(db *model.DB) {
-		db.WifiGuests = append(db.WifiGuests, guest)
 		var cmdID string
 		if isAgent {
 			payload := map[string]any{
@@ -373,6 +373,12 @@ func (a *API) handleWifiClaim(w http.ResponseWriter, r *http.Request) {
 			cmd := queueCommandLocked(db, routerCopy.AccountID, routerCopy.ID, model.CmdVoucherBatch, payload)
 			cmdID = cmd.ID
 		}
+		// N°47 — anti-course : la commande est tracée sur le registre du jour
+		// AVANT l'append. /status en expose l'état (« provisioned ») au
+		// portail, qui n'auto-logue le visiteur qu'une fois l'utilisateur
+		// réellement appliqué au routeur par l'agent (check-in ≤ 45 s).
+		guest.ClaimCmdID = cmdID
+		db.WifiGuests = append(db.WifiGuests, guest)
 		// Lot-jour : création ou incrément (Count / TotalCost).
 		batchFound := false
 		for i := range db.Batches {
@@ -438,13 +444,14 @@ func (a *API) handleWifiClaim(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"duplicate":    false,
-		"code":         voucher.Username,
-		"loginUrl":     wifiLoginURL(loginBase, voucher.Username),
-		"timeLimitMin": timeMin,
-		"dataQuotaMb":  dataMb,
-		"profileName":  voucher.ProfileName,
-		"siteName":     site.Name,
+		"duplicate":     false,
+		"waitForRouter": isAgent,
+		"code":          voucher.Username,
+		"loginUrl":      wifiLoginURL(loginBase, voucher.Username),
+		"timeLimitMin":  timeMin,
+		"dataQuotaMb":   dataMb,
+		"profileName":   voucher.ProfileName,
+		"siteName":      site.Name,
 	})
 }
 
@@ -464,6 +471,38 @@ func maskPhone(phone string) string {
 		return phone
 	}
 	return strings.Repeat("*", len(phone)-4) + phone[len(phone)-4:]
+}
+
+// wifiProvisioned — N°47 : le code du visiteur est-il déjà appliqué au
+// routeur ? En mode agent, le claim met le voucher en file (voucher_batch) ;
+// l'utilisateur n'existe sur le MikroTik qu'après le check-in de l'agent
+// (≤ 45 s). Le portail lit ce champ via /status et n'auto-logue qu'une fois
+// « provisioned » vrai — sinon le CHAP échoue (« invalid username or
+// password ») et le visiteur croit le service cassé. Modes simulated/real :
+// le push est synchrone dans le claim ⇒ toujours true. Commande inconnue
+// (registre antérieur à N°47) : true — on ne bloque jamais par défaut.
+// À appeler sous verrou.
+func wifiProvisioned(db *model.DB, g *model.WifiGuest, site *model.WifiSite) bool {
+	if g == nil || g.ClaimCmdID == "" {
+		return true
+	}
+	var router *model.Router
+	for i := range db.Routers {
+		if db.Routers[i].ID == site.RouterID {
+			router = &db.Routers[i]
+			break
+		}
+	}
+	if router == nil || router.Mode != "agent" {
+		return true
+	}
+	for i := range db.Commands {
+		cmd := &db.Commands[i]
+		if cmd.ID == g.ClaimCmdID {
+			return cmd.Status == "done" || cmd.DoneAt != ""
+		}
+	}
+	return true
 }
 
 // handleWifiStatus — état du ticket du jour pour un téléphone : none | active
@@ -506,6 +545,8 @@ func (a *API) handleWifiStatus(w http.ResponseWriter, r *http.Request) {
 			resp["loginUrl"] = wifiLoginURL(wifiLoginBase(db, site), v.Username)
 			resp["timeLimitMin"] = v.TimeLimitMin
 			resp["dataQuotaMb"] = v.DataQuotaMb
+			// N°47 — le code est-il déjà appliqué au routeur ? (anti-course)
+			resp["provisioned"] = wifiProvisioned(db, latest, site)
 		} else {
 			resp["state"] = "exhausted"
 		}

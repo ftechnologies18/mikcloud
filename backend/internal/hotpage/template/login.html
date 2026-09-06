@@ -957,17 +957,17 @@
                         btn.disabled = false;
                         btn.textContent = 'Recevoir';
                         if (data && data.code) {
-                            showClaimStatus('Code reçu : ' + data.code + ' — connexion en cours...', 'success');
-                            // Auto-login CHAP : on remplit le formulaire existant
-                            // (username=code, password=code, verrou N°25) et on
-                            // appelle doLogin() si disponible (CHAP-MD5), sinon on
-                            // submit le formulaire de login directement.
-                            attemptAutoLogin(data.code);
+                            // N°47 — anti-course : en mode agent, le routeur ne
+                            // connaît le code qu'au prochain check-in (≤ 45 s).
+                            // waitForRouter=true ⇒ on sonde /status (provisioned)
+                            // avant l'auto-login CHAP, sinon il échoue
+                            // (« invalid username or password »).
+                            autoLoginWhenReady(cfg, phone, data.code, data.waitForRouter === true);
                         } else if (data && data.error) {
                             showClaimStatus(data.error, 'error');
                         } else if (data && data.duplicate && data.code) {
                             showClaimStatus('Vous avez déjà votre code : ' + data.code, 'info');
-                            attemptAutoLogin(data.code);
+                            autoLoginWhenReady(cfg, phone, data.code, data.waitForRouter === true);
                         } else {
                             showClaimStatus('Réponse inattendue — réessayez.', 'error');
                         }
@@ -1012,6 +1012,50 @@
                 // Sans CHAP : on submit le formulaire de login directement.
                 var loginForm = document.forms.login;
                 if (loginForm) loginForm.submit();
+            }
+
+            // autoLoginWhenReady — N°47 : n'auto-logue qu'une fois le code
+            // réellement appliqué au routeur. En mode agent, le claim met le
+            // voucher en file (voucher_batch) ; l'utilisateur MikroTik n'existe
+            // qu'au prochain check-in (≤ 45 s). Tant que /status répond
+            // provisioned=false, on sonde toutes les 5 s (30/min/IP ≪ quota
+            // wifi-read 30/min — un poll/5 s par visiteur est sûr). Plafond de
+            // garde 2 min (24 tentatives = 2-3 cycles d'agent) : au-delà, on
+            // tente quand même (mode simulated/real ou commande perdue).
+            function autoLoginWhenReady(cfg, phone, code, wait) {
+                if (!wait) {
+                    showClaimStatus('Code reçu : ' + code + ' — connexion en cours...', 'success');
+                    attemptAutoLogin(code);
+                    return;
+                }
+                var tries = 0;
+                var MAX_TRIES = 24; // 24 × 5 s = 2 min
+                showClaimStatus('Code ' + code + ' reçu — activation sur le routeur (jusqu\'à ~45 s)...', 'info');
+                var statusUrl = cfg.apiBase + '/api/wifi/site/' + encodeURIComponent(cfg.wifiSlug) + '/status?phone=' + encodeURIComponent(phone);
+                var timer = setInterval(function () {
+                    tries++;
+                    fetch(statusUrl, { method: 'GET', mode: 'cors' }).then(function (r) {
+                        return r.json();
+                    }).then(function (st) {
+                        if (st && st.provisioned) {
+                            clearInterval(timer);
+                            showClaimStatus('Code ' + code + ' activé — connexion en cours...', 'success');
+                            attemptAutoLogin(code);
+                        } else if (tries >= MAX_TRIES) {
+                            clearInterval(timer);
+                            showClaimStatus('Activation lente — tentative de connexion...', 'info');
+                            attemptAutoLogin(code);
+                        } else {
+                            showClaimStatus('Activation sur le routeur... (' + (tries * 5) + ' s)', 'info');
+                        }
+                    }).catch(function () {
+                        // Cloud momentanément injoignable : on persévère jusqu'au plafond.
+                        if (tries >= MAX_TRIES) {
+                            clearInterval(timer);
+                            attemptAutoLogin(code);
+                        }
+                    });
+                }, 5000);
             }
 
             // --- Fetch live : tente /api/wifi/site/{slug}/portal avec timeout ---

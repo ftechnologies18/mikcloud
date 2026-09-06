@@ -121,6 +121,52 @@ export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
 }
 
 /**
+ * apiUpload — variante multipart (N°53) : téléversement de fichiers (images
+ * du gérant vers le stockage R2 via POST /api/media). Pas de Content-Type
+ * manuel (le navigateur pose le boundary), corps = FormData, auth Bearer
+ * identique. L'upload Media n'est PAS concerné par le 401 automatique :
+ * l'appelant décide (fallback data URL possible si le stockage est indispo).
+ */
+export async function apiUpload<T>(path: string, form: FormData, opts: ApiOptions = {}): Promise<T> {
+  const token = useHotspotStore.getState().token;
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const res = await fetch(buildUrl(path), {
+    method: "POST",
+    headers,
+    body: form,
+    cache: "no-store",
+    signal:
+      opts.timeoutMs && typeof AbortSignal.timeout === "function"
+        ? AbortSignal.timeout(opts.timeoutMs)
+        : undefined,
+  });
+
+  if (res.status === 401) {
+    useHotspotStore.getState().logout();
+    throw new ApiError("Session expirée, veuillez vous reconnecter.", 401);
+  }
+
+  let data: unknown = null;
+  try {
+    data = await res.json();
+  } catch {
+    /* réponse non JSON */
+  }
+
+  if (!res.ok) {
+    const body = data && typeof data === "object" ? (data as { error?: unknown; code?: unknown }) : null;
+    const message =
+      (body && typeof body.error === "string" ? body.error : null) ?? `Erreur ${res.status}`;
+    const code = body && typeof body.code === "string" ? body.code : undefined;
+    throw new ApiError(message, res.status, code);
+  }
+
+  return data as T;
+}
+
+/**
  * apiAnon — variante SANS authentification pour la page publique WiFi jetable
  * (N°27) : pas de header Bearer, pas de logout automatique sur 401 (un
  * visiteur anonyme n'a pas de session à expirer — l'appelant traite l'erreur).

@@ -155,6 +155,15 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/settings", a.handleSettingsGet)
 	mux.HandleFunc("PUT /api/settings", a.requireRole(3, a.handleSettingsPut))
 
+	// N°53 — Média Cloudflare R2 : dépôt d'images du gérant (bannière du
+	// portail N°45, promos hospitalité à venir) + lecture PUBLIQUE des
+	// objets (le portail captif charge ses images pré-authentification —
+	// même hôte que apiBase, donc déjà couvert par le walled-garden).
+	// {key...} : les clés hiérarchiques (media/{compte}/{année}/{hex}.jpg)
+	// contiennent des slash. Lecture bornée par le limiter global "api".
+	mux.HandleFunc("POST /api/media", a.requireRole(3, a.handleMediaUpload))
+	mux.HandleFunc("GET /api/media/{key...}", a.handleMediaGet)
+
 	// Abonnement SaaS — formules FCFA (Essentiel 1 250 F/mois/routeur,
 	// Illimité 12 000 F/an routeurs illimités). Catalogue et état lisibles
 	// par toute l'équipe. VERROU FACTURATION : l'activation d'un abonnement

@@ -1087,6 +1087,44 @@ partiel) repassait en panne silencieuse — la sig posée bloquant tout re-file.
 
 ---
 
+## N°53 — Stockage média Cloudflare R2 (images du gérant)
+
+### Principe
+Les images du gérant (bannière du portail N°45, promos hospitalité à venir)
+quittent la base (data URL ≤ 500 Ko) pour un stockage objet durable :
+compartiment R2 **mikcloud-media**. Canal retenu : **API REST Cloudflare**
+(Bearer `R2_API_TOKEN`), PAS l'API S3 — zéro SDK Go, un seul secret, volumes
+minuscules (≤ 2 Mo).
+
+### Env (Render, backend)
+`R2_ACCOUNT_ID` (compte Cloudflare), `R2_API_TOKEN` (jeton API R2:Edit),
+`R2_BUCKET` (défaut `mikcloud-media`). Non configuré ⇒ upload 503
+`media_unconfigured` (le frontend retombe sur la data URL N°45) et lecture 404.
+
+### Routes
+- `POST /api/media` (auth gérant `requireRole(3)`, multipart `file`) —
+  type SNIFFÉ dans le contenu (`http.DetectContentType` : jpg/png/webp/gif),
+  ≤ 2 Mo (`MaxBytesReader`), clé `media/{compte}/{année}/{hex32}.{ext}`
+  (128 bits), PUT REST, réponse 201 `{url, key, size, type}`.
+- `GET /api/media/{key...}` (PUBLIC, limiter « api » 120/min/IP) — clé
+  validée par regex stricte (aucune traversal, uniquement des objets déposés
+  par l'upload authentifié), Content-Type déduit de l'extension (jamais des
+  en-têtes stockés), `X-Content-Type-Options: nosniff`,
+  `Cache-Control: public, max-age=31536000, immutable` (clé unique à jamais),
+  404 typé si l'objet n'existe pas.
+
+### Walled-garden (portail captif)
+Les URL renvoyées sont sur le MÊME hôte que `apiBase`
+(`https://mikcloud.onrender.com/api/media/…`) : déjà joignable pré-auth
+(claim N°47, fetch live N°48) — AUCUNE entrée walled-garden nouvelle.
+
+### Console (bannière, settings-view)
+Le bouton « Téléverser » envoie l'image vers R2 (`apiUpload` multipart,
+≤ 2 Mo, i18n fr/en) et remplit le champ avec l'URL permanente ; repli
+dégradé automatique : stockage indisponible ⇒ data URL intégrée ≤ 500 Ko
+(contrat N°45 inchangé), sinon message d'erreur. `bannerUrl` reste la
+seule donnée persistée — aucun changement de schéma, aucune migration Neon.
+
 ## PLAN DE FICHIERS
 
 ### Backend (Go)

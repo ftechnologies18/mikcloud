@@ -7,12 +7,19 @@
 
 import type { TooltipContentProps } from "recharts";
 
+// Partial : recharts fournit active/payload/label/coordinate AU RENDU via
+// content={<ChartTooltip formatter={...} />} — les sites consommateurs ne
+// déclarent que formatter (sinon TS2739 props requises manquantes).
+type ChartTooltipProps = Partial<TooltipContentProps<number, string>> & {
+  formatter: (value: number) => string;
+};
+
 export function ChartTooltip({
   active,
   payload,
   label,
   formatter,
-}: TooltipContentProps<number, string> & { formatter: (value: number) => string }) {
+}: ChartTooltipProps) {
   if (!active || !payload || payload.length === 0) return null;
   return (
     <div className="rounded-lg border bg-popover px-3 py-2 text-xs shadow-md">

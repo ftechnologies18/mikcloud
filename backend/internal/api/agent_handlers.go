@@ -50,6 +50,9 @@ func (a *API) registerAgentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/routers/{id}/rotate-token", a.handleRouterRotateToken)
 	mux.HandleFunc("POST /api/routers/{id}/refresh", a.handleRouterRefresh)
 	mux.HandleFunc("POST /api/routers/{id}/import", a.handleRouterImport)
+	// N°35-d — portail captif : re-déploiement forcé + aperçu HTML (console).
+	mux.HandleFunc("POST /api/routers/{id}/redeploy-portal", a.handleRouterRedeployPortal)
+	mux.HandleFunc("GET /api/routers/{id}/portal-preview", a.handleRouterPortalPreview)
 }
 
 // ---------------------------------------------------------------------------

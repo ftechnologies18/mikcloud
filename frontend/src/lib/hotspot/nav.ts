@@ -9,6 +9,7 @@ import {
   CreditCard,
   Gauge,
   LayoutDashboard,
+  Monitor,
   Printer,
   Radio,
   ReceiptText,
@@ -62,7 +63,12 @@ export const NAV_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
   },
   {
     labelKey: "nav.section.infrastructure",
-    items: [{ id: "routers", labelKey: "nav.routers", icon: RouterIcon }],
+    items: [
+      { id: "routers", labelKey: "nav.routers", icon: RouterIcon },
+      // N°35-d — portail captif : vue dédiée au déploiement automatique du
+      // portail sur les routeurs agents (aperçu + re-déploiement + journal).
+      { id: "portal", labelKey: "nav.portal", icon: Monitor },
+    ],
   },
   {
     labelKey: "nav.section.analysis",

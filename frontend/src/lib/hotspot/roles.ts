@@ -32,6 +32,7 @@ const VIEW_MIN_RANK: Record<string, number> = {
   profiles: 2,
   resellers: 2,
   routers: 2, // outils routeur (config/diagnostics) — gérant+
+  portal: 2, // N°35-d — portail captif (aperçu + re-déploiement) — gérant+
   reports: 2,
   logs: 2,
   notifications: 2,

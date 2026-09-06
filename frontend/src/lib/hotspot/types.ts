@@ -1215,6 +1215,7 @@ export type ViewId =
   | "resellers"
   | "wifi"
   | "routers"
+  | "portal"
   | "reports"
   | "logs"
   | "platform"

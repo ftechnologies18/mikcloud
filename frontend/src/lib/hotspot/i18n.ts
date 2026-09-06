@@ -85,6 +85,7 @@ const fr: Record<string, string> = {
   "nav.profiles": "Profils",
   "nav.resellers": "Revendeurs",
   "nav.routers": "Routeurs",
+  "nav.portal": "Portail",
   "nav.reports": "Rapports",
   "nav.logs": "Journal",
   "nav.accounts": "Comptes",
@@ -2112,6 +2113,29 @@ const fr: Record<string, string> = {
   "wifi.postTitle": "WiFi Offert",
   "wifi.postScan": "Scannez, recevez votre code, connectez-vous",
   "wifi.postFoot": "Offert par l'établissement — au-delà du quota, passez à l'offre payante.",
+
+  // — N°35-d — portail captif (vue Portail) —
+  "portal.title": "Portail captif",
+  "portal.subtitle":
+    "Déploiement automatique du portail sur vos routeurs agents — zéro intervention humaine.",
+  "portal.empty": "Aucun routeur agent en ligne",
+  "portal.emptyHint":
+    "Les routeurs en mode agent déploient le portail automatiquement. Ajoutez un routeur en mode agent dans la section Infrastructure pour activer le portail captif.",
+  "portal.sigDeployed": "Portail à jour",
+  "portal.sigPending": "Re-déploiement en attente",
+  "portal.sigNever": "Jamais déployé",
+  "portal.preview": "Aperçu",
+  "portal.previewTitle": "Aperçu du portail — {name}",
+  "portal.previewHint":
+    "Aperçu statique du portail (le fetch live n'est pas actif en aperçu — le branding se rafraîchit automatiquement côté routeur).",
+  "portal.redeploy": "Re-déployer",
+  "portal.redeployConfirmTitle": "Re-déploiement du portail",
+  "portal.redeployConfirm":
+    "Forcer le re-déploiement du portail sur «{name}» ? Le routeur rechargera tous les fichiers (login.html, status.html, assets) à son prochain check-in (≤ 45 s).",
+  "portal.redeployQueued": "Re-déploiement programmé",
+  "portal.cancel": "Annuler",
+  "portal.journal": "Journal des déploiements",
+  "portal.journalEmpty": "Aucun déploiement enregistré",
   "resellers.pinInvalid": "PIN invalide : 4 à 6 chiffres",
 
   // — N°27 — inscriptions publiques par QR code (vue Inscriptions) —
@@ -2347,6 +2371,7 @@ const en: Record<string, string> = {
   "nav.profiles": "Profiles",
   "nav.resellers": "Resellers",
   "nav.routers": "Routers",
+  "nav.portal": "Portal",
   "nav.reports": "Reports",
   "nav.logs": "Logs",
   "nav.accounts": "Accounts",
@@ -4372,6 +4397,29 @@ const en: Record<string, string> = {
   "wifi.postTitle": "Free WiFi",
   "wifi.postScan": "Scan, get your code, connect",
   "wifi.postFoot": "Offered by the venue — beyond the quota, switch to a paid offer.",
+
+  // — N°35-d — captive portal (Portal view) —
+  "portal.title": "Captive portal",
+  "portal.subtitle":
+    "Automatic portal deployment on your agent routers — zero manual intervention.",
+  "portal.empty": "No agent router online",
+  "portal.emptyHint":
+    "Agent-mode routers deploy the portal automatically. Add an agent-mode router in the Infrastructure section to enable the captive portal.",
+  "portal.sigDeployed": "Portal up to date",
+  "portal.sigPending": "Redeploy pending",
+  "portal.sigNever": "Never deployed",
+  "portal.preview": "Preview",
+  "portal.previewTitle": "Portal preview — {name}",
+  "portal.previewHint":
+    "Static portal preview (live fetch is not active in preview — branding refreshes automatically on the router).",
+  "portal.redeploy": "Redeploy",
+  "portal.redeployConfirmTitle": "Portal redeployment",
+  "portal.redeployConfirm":
+    "Force portal redeployment on \"{name}\"? The router will reload all files (login.html, status.html, assets) at its next check-in (≤ 45 s).",
+  "portal.redeployQueued": "Redeploy scheduled",
+  "portal.cancel": "Cancel",
+  "portal.journal": "Deployment log",
+  "portal.journalEmpty": "No deployment recorded",
   "resellers.pinInvalid": "Invalid PIN: 4 to 6 digits",
 
   // — N°27 — public sign-ups by QR code (Sign-ups view) —

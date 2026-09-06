@@ -69,6 +69,7 @@ const PlatformLogsView = dynamic(() => import("./views/platform-logs-view"), { l
 const PlatformOverviewView = dynamic(() => import("./views/platform-overview-view"), { loading: () => ViewFallback });
 const PlatformSettingsView = dynamic(() => import("./views/platform-settings-view"), { loading: () => ViewFallback });
 const PlatformTeamView = dynamic(() => import("./views/platform-team-view"), { loading: () => ViewFallback });
+const PortalView = dynamic(() => import("./views/portal-view"), { loading: () => ViewFallback });
 const ProfilesView = dynamic(() => import("./views/profiles-view"), { loading: () => ViewFallback });
 const ReportsView = dynamic(() => import("./views/reports-view"), { loading: () => ViewFallback });
 const ResellersView = dynamic(() => import("./views/resellers-view"), { loading: () => ViewFallback });
@@ -100,6 +101,7 @@ function viewTitle(view: ViewId, t: (key: string) => string): string {
     resellers: "nav.resellers",
     wifi: "wifi.title",
     routers: "nav.routers",
+    portal: "nav.portal",
     reports: "nav.reports",
     logs: "logs.title",
     platform: "nav.platform",
@@ -128,6 +130,7 @@ const VIEWS: Record<ViewId, React.ComponentType> = {
   resellers: ResellersView,
   wifi: WifiView,
   routers: RoutersView,
+  portal: PortalView,
   reports: ReportsView,
   logs: LogsView,
   platform: PlatformOverviewView,

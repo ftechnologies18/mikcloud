@@ -461,3 +461,66 @@ export async function fetchWifiStatus(slug: string, phone: string): Promise<Wifi
     params: { phone },
   });
 }
+
+/* — N°35-d : portail captif (console gérant) — */
+
+/** RedeployRouterPortalResponse — réponse du POST /api/routers/{id}/redeploy-portal. */
+export interface RedeployRouterPortalResponse {
+  ok: boolean;
+  message: string;
+}
+
+/** redeployRouterPortal — force le re-déploiement du portail captif sur un
+ * routeur agent. Vide la signature HotspotFilesSig côté backend → l'agent
+ * re-déploie automatiquement au prochain check-in (≤ 45 s). */
+export async function redeployRouterPortal(routerId: string): Promise<RedeployRouterPortalResponse> {
+  return api<RedeployRouterPortalResponse>(
+    `/api/routers/${encodeURIComponent(routerId)}/redeploy-portal`,
+    { method: "POST" },
+  );
+}
+
+/** fetchRouterPortalPreview — récupère le HTML personnalisé de login.html
+ * pour un routeur agent, à injecter dans une iframe srcDoc (aperçu console).
+ * Retourne le HTML brut (text/html). */
+export async function fetchRouterPortalPreview(routerId: string): Promise<string> {
+  const token = useHotspotStore.getState().token;
+  const headers: Record<string, string> = { Accept: "text/html" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(buildUrl(`/api/routers/${encodeURIComponent(routerId)}/portal-preview`), {
+    method: "GET",
+    headers,
+    cache: "no-store",
+  });
+  if (res.status === 401) {
+    useHotspotStore.getState().logout();
+    throw new ApiError("Session expirée, veuillez vous reconnecter.", 401);
+  }
+  if (!res.ok) {
+    let message = `Erreur ${res.status}`;
+    try {
+      const body = await res.json();
+      if (body && typeof body.error === "string") message = body.error;
+    } catch {
+      /* non-JSON */
+    }
+    throw new ApiError(message, res.status);
+  }
+  return res.text();
+}
+
+/** AccountActivity — entrée du journal d'activité (GET /api/activity). */
+export interface AccountActivity {
+  id: string;
+  type: string;
+  message: string;
+  at: string;
+  actorId?: string;
+  actorName?: string;
+}
+
+/** fetchAccountActivity — journal d'activité du compte (filtrable côté client
+ * sur le type et le message). Limit 1-200. */
+export async function fetchAccountActivity(limit = 100): Promise<AccountActivity[]> {
+  return api<AccountActivity[]>("/api/activity", { params: { limit: String(limit) } });
+}

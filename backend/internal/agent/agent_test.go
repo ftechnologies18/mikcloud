@@ -483,3 +483,121 @@ func TestWalledGardenInstallBlock(t *testing.T) {
 		t.Fatal("sans domaine annoncé, l'InstallScript ne doit pas contenir de règles walled-garden")
 	}
 }
+
+// TestHotspotFilesScript — N°35 : le builder buildHotspotFiles produit un
+// script RouterOS qui fetch chaque fichier du portail depuis le cloud, dans
+// l'ordre d'atomicité (assets → pages → login.html en dernier). Calqué sur
+// TestWalledGardenScript : vérifie les marqueurs critiques (header, battement
+// de cœur, step, mkdir, fetch, rapport).
+func TestHotspotFilesScript(t *testing.T) {
+	b := Builder{BaseURL: "https://cloud.example", Token: "tok-agent"}
+	cmd := model.Command{ID: "c-hf01", Kind: model.CmdHotspotFiles, Payload: map[string]any{
+		"files": []any{"css/bootstrap.min.css", "md5.js", "status.html", "login.html"},
+		"sig":   "abcd1234abcd1234",
+	}}
+	script, err := b.ScriptFor(cmd)
+	if err != nil {
+		t.Fatalf("ScriptFor(hotspot_files) : %v", err)
+	}
+	for _, marqueur := range []string{
+		"# mikcloud cmd c-hf01 hotspot_files",
+		":local okchf01 true",
+		"status=started", // N°31-c : battement de cœur de livraison
+		`:local step "start"`,
+		`:set step "mkdir"`,     // pré-requis dossier hotspot/
+		`/file mkdir "hotspot"`, // commande idempotente
+		`:set step "fetch-1"`,   // 1er fetch (css/bootstrap.min.css)
+		`:set step "fetch-2"`,   // md5.js
+		`:set step "fetch-3"`,   // status.html
+		`:set step "fetch-4"`,   // login.html EN DERNIER
+		`:set step "done"`,
+		// URL de base : /portal/{token}/{path}
+		`https://cloud.example/portal/tok-agent/css/bootstrap.min.css`,
+		`https://cloud.example/portal/tok-agent/md5.js`,
+		`https://cloud.example/portal/tok-agent/status.html`,
+		`https://cloud.example/portal/tok-agent/login.html`,
+		// dst-path sous hotspot/
+		`dst-path="hotspot/css/bootstrap.min.css"`,
+		`dst-path="hotspot/md5.js"`,
+		`dst-path="hotspot/status.html"`,
+		`dst-path="hotspot/login.html"`,
+		// remove best-effort avant chaque fetch (surcharge atomique)
+		`/file remove "hotspot/css/bootstrap.min.css"`,
+		`/file remove "hotspot/login.html"`,
+		// on-error par fetch (un fichier cassé ne tue pas les autres)
+		`} on-error={ :set okchf01 false }`,
+		// rapport final : 4 fichiers déployés
+		"files=4",
+	} {
+		if !strings.Contains(script, marqueur) {
+			t.Fatalf("marqueur absent du script hotspot_files : %q", marqueur)
+		}
+	}
+	// Ordre d'atomicité : login.html doit apparaître EN DERNIER parmi les
+	// dst-path. On vérifie que le dernier `dst-path="hotspot/..."` est login.html.
+	lastDst := ""
+	for _, line := range strings.Split(script, "\n") {
+		if i := strings.Index(line, `dst-path="hotspot/`); i >= 0 {
+			lastDst = line[i+len(`dst-path="`):]
+			lastDst = lastDst[:strings.Index(lastDst, `"`)]
+		}
+	}
+	if lastDst != "hotspot/login.html" {
+		t.Errorf("login.html doit fermer la marche, dernier dst-path = %q", lastDst)
+	}
+}
+
+// TestHotspotFilesSecurity — un path hostile (remontée, injection RouterOS)
+// est REFUSÉ par sanitizePortalPath : il n'apparaît ni dans le script ni
+// comme dst-path. Sécurité défense en profondeur même si la source (cloud)
+// est déjà validée.
+func TestHotspotFilesSecurity(t *testing.T) {
+	b := Builder{BaseURL: "https://cloud.example", Token: "tok-agent"}
+	hostile := model.Command{ID: "c-hf02", Kind: model.CmdHotspotFiles, Payload: map[string]any{
+		"files": []any{
+			"../go.mod",                     // remontée refusée
+			"/etc/passwd",                   // absolu refusé
+			`login.html"; /system reboot x`, // injection refusée
+			"valid.html",                    // valide — doit passer
+		},
+	}}
+	script, err := b.ScriptFor(hostile)
+	if err != nil {
+		t.Fatalf("ScriptFor(hotspot_files hostile) : %v", err)
+	}
+	if strings.Contains(script, "/system reboot") {
+		t.Fatal("le path hostile doit être neutralisé par sanitizePortalPath")
+	}
+	if strings.Contains(script, "../go.mod") {
+		t.Fatal("la remontée de dossier doit être neutralisée")
+	}
+	if strings.Contains(script, "/etc/passwd") {
+		t.Fatal("le chemin absolu doit être neutralisé")
+	}
+	// Un seul fichier valide → rapport files=1.
+	if !strings.Contains(script, "files=1") {
+		t.Fatalf("rapport attendu files=1 (1 fichier valide sur 4), script :\n%s", script)
+	}
+}
+
+// TestHotspotFilesEmpty — liste vide → script sans fetch de fichier (juste
+// header + battement + mkdir + rapport files=0). Le battement status=started
+// reste émis (preuve de livraison du .rsc même vide), mais aucun dst-path.
+// Ne doit pas paniquer.
+func TestHotspotFilesEmpty(t *testing.T) {
+	b := Builder{BaseURL: "https://cloud.example", Token: "tok-agent"}
+	cmd := model.Command{ID: "c-hf03", Kind: model.CmdHotspotFiles, Payload: map[string]any{}}
+	script, err := b.ScriptFor(cmd)
+	if err != nil {
+		t.Fatalf("ScriptFor(hotspot_files vide) : %v", err)
+	}
+	if !strings.Contains(script, "files=0") {
+		t.Errorf("rapport attendu files=0, script :\n%s", script)
+	}
+	// Aucun fetch de fichier ne doit être généré pour une liste vide. Le
+	// battement status=started (vers /agent/result) reste légitime — on cible
+	// donc dst-path="hotspot/ qui n'apparaît QUE pour les fetchs de fichiers.
+	if strings.Contains(script, `dst-path="hotspot/`) {
+		t.Errorf("aucun dst-path ne doit être généré pour une liste vide, script :\n%s", script)
+	}
+}

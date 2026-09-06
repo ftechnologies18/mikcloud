@@ -39,6 +39,12 @@ func (a *API) registerAgentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /agent/cmd", a.handleAgentCmd)
 	mux.HandleFunc("POST /agent/result", a.handleAgentResult)
 
+	// N°35 — portail captif : le routeur agent /tool fetch ses fichiers
+	// personnalisés ici. Hors /api/ (pas de JWT) — l'auth est le token
+	// agent (haché côté cloud, 192 bits). TLS strict hérité.
+	// {path...} capte aussi /portal/{token}/ (path="") → 404 propre.
+	mux.HandleFunc("GET /portal/{token}/{path...}", a.handlePortalFile)
+
 	// Console (auth JWT via middleware /api/)
 	mux.HandleFunc("GET /api/routers/{id}/provision", a.handleRouterProvision)
 	mux.HandleFunc("POST /api/routers/{id}/rotate-token", a.handleRouterRotateToken)
@@ -293,6 +299,7 @@ var staleSentReadKinds = map[string]bool{
 	model.CmdImportHotspot: true,
 	model.CmdPing:          true,
 	model.CmdWalledGarden:  true, // N°31 : idempotent (marqueur mikcloud-wg)
+	model.CmdHotspotFiles:  true, // N°35 : idempotent (surcharge atomique des fichiers du portail)
 }
 
 // staleSentLimit — au-delà de cette ancienneté sans rapport, une commande
@@ -679,6 +686,16 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 	// servie dans CE check-in, y compris pour les routeurs déjà en ligne.
 	ensureWalledGardenLocked(db, router, walledGardenDomains(r))
 
+	// N°35 — portail captif : si l'ensemble des fichiers du portail a
+	// changé (nouveau template, nouvelle liste d'assets) ou n'a jamais
+	// été déployé sur ce routeur, la commande hotspot_files rejoint la
+	// file FIFO ci-dessous. Le contenu est personnalisé au moment du
+	// SERVE (GET /portal/{token}/{path}) ; ici on ne file que la liste
+	// des chemins à déployer. Zéro intervention humaine : le gérant
+	// change sa config dans la console, l'agent re-déploie tout seul au
+	// prochain check-in (≤ 45 s) si la sig a changé.
+	ensureHotspotFilesLocked(db, router)
+
 	// Reprise : une commande de lecture « sent » sans rapport depuis plus de
 	// 10 min est un zombie (blip réseau, rejet historique du rapport…) —
 	// remise en file pour re-exécution au check-in courant. Lectures
@@ -701,16 +718,29 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 	// muet 2×/2×, commandes du même fichier tuées avec lui), les commandes
 	// métier/télémétrie du même check-in continuent de vivre. Le
 	// walled_garden est idempotent et repris par la boucle zombie N°31.
-	walled := []model.Command{}
+	// N°35 — hotspot_files ferme la marche APRÈS walled_garden, pour la
+	// même raison (un fetch avorté ne doit pas tuer les autres commandes du
+	// même check-in) : le portail est idempotent et repris par la boucle zombie.
+	deferred := []model.Command{}
 	rest := make([]model.Command, 0, len(queued))
 	for _, c := range queued {
-		if c.Kind == model.CmdWalledGarden {
-			walled = append(walled, c)
-		} else {
+		switch c.Kind {
+		case model.CmdWalledGarden, model.CmdHotspotFiles:
+			deferred = append(deferred, c)
+		default:
 			rest = append(rest, c)
 		}
 	}
-	queued = append(rest, walled...)
+	// Au sein des différés, walled_garden avant hotspot_files (le walled-garden
+	// doit être en place pour que le portail puisse appeler l'API cloud pré-auth).
+	sort.SliceStable(deferred, func(i, j int) bool {
+		if deferred[i].Kind == deferred[j].Kind {
+			return deferred[i].CreatedAt < deferred[j].CreatedAt
+		}
+		// walled_garden (N°29) < hotspot_files (N°35) : ordre par numéro de vague.
+		return deferred[i].Kind == model.CmdWalledGarden
+	})
+	queued = append(rest, deferred...)
 
 	b := agent.Builder{BaseURL: base, Token: token}
 	var chunks []string
@@ -837,6 +867,17 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 				router.WalledGardenSig = sig
 			}
 			a.logActivity(db, router.AccountID, "router", "Walled-garden d'inscription publique appliqué sur «"+router.Name+"»")
+		} else if cmd.Kind == model.CmdHotspotFiles {
+			// N°35 — portail captif déployé et CONFIRMÉ par le routeur :
+			// la signature est posée ici (et seulement ici). Pattern
+			// identique à walled_garden : un échec est retenté au check-in
+			// suivant, un changement de template re-file automatiquement.
+			if sig := hotspotFilesSigFromPayload(cmd.Payload); sig != "" {
+				router.HotspotFilesSig = sig
+			}
+			files := agent.HotspotFilesFromPayload(cmd.Payload)
+			a.logActivity(db, router.AccountID, "router", "Portail captif déployé sur «"+router.Name+"» ("+
+				strconv.Itoa(len(files))+" fichier(s) — login.html, status.html, assets)")
 		} else {
 			a.logActivity(db, router.AccountID, "router", "Commande "+cmd.Kind+" exécutée sur «"+router.Name+"»")
 		}

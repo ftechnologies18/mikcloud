@@ -181,6 +181,15 @@ type Router struct {
 	// commande (handleAgentResult) — jamais à la mise en file : un échec est
 	// retenté automatiquement au check-in suivant.
 	WalledGardenSig string `json:"walledGardenSig,omitempty"`
+	// N°35 — signature du PORTAIL CAPTIF déjà déployé avec succès sur ce
+	// routeur (hash de l'ensemble des fichiers personnalisés login.html,
+	// status.html, assets). Vide → rien déployé (ou dernier échec) : le
+	// check-in suivant re-file la commande hotspot_files. Posée au retour
+	// « ok » uniquement. Pattern identique à WalledGardenSig : un échec est
+	// retenté automatiquement, un changement de config (branding, offres,
+	// textes) re-file automatiquement — le gérant change sa config dans la
+	// console, l'agent re-déploie tout seul au prochain check-in (≤ 45 s).
+	HotspotFilesSig string `json:"hotspotFilesSig,omitempty"`
 }
 
 // Profile — profil hotspot (débit, durée, prix, validité).
@@ -745,6 +754,7 @@ const (
 	CmdImportHotspot   = "import_hotspot"   // import initial : lecture paginée des profils + utilisateurs existants sur le routeur
 	CmdProfileSet      = "profile_set"      // v2 : applique/retire le verrou « 1er appareil » (on-login de liaison MAC) sur un profil
 	CmdWalledGarden    = "walled_garden"    // N°29 : walled-garden d'inscription publique (runbook N°27-D automatisé)
+	CmdHotspotFiles    = "hotspot_files"    // N°35 : déploiement automatique du portail captif (login.html, status.html, assets) — pattern walled_garden
 )
 
 // ---------------------------------------------------------------------------

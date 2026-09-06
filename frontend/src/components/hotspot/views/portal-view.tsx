@@ -78,7 +78,7 @@ function sigStatus(router: RouterDevice): "deployed" | "pending" | "never" {
 }
 
 export default function PortalView() {
-  const { t } = useI18n();
+  const { t, tf } = useI18n();
   const queryClient = useQueryClient();
 
   // Liste des routeurs du compte.
@@ -222,6 +222,7 @@ export default function PortalView() {
         router={previewFor}
         onClose={() => setPreviewFor(null)}
         t={t}
+        tf={tf}
       />
 
       {/* AlertDialog re-déploiement */}
@@ -233,7 +234,7 @@ export default function PortalView() {
           <AlertDialogHeader>
             <AlertDialogTitle>{t("portal.redeployConfirmTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t("portal.redeployConfirm", { name: redeployFor?.name ?? "" })}
+              {tf("portal.redeployConfirm", { name: redeployFor?.name ?? "" })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -265,7 +266,9 @@ function SigBadge({
   t,
 }: {
   status: "deployed" | "pending" | "never";
-  t: (key: string, params?: Record<string, string>) => string;
+  // Signature identique au t() du hook useI18n (traduction simple ;
+  // l'interpolation {variable} passe par tf()).
+  t: (key: string, fallback?: string) => string;
 }) {
   switch (status) {
     case "deployed":
@@ -298,10 +301,12 @@ function PreviewDialog({
   router,
   onClose,
   t,
+  tf,
 }: {
   router: RouterDevice | null;
   onClose: () => void;
-  t: (key: string, params?: Record<string, string>) => string;
+  t: (key: string, fallback?: string) => string;
+  tf: (key: string, vars: Record<string, string | number>) => string;
 }) {
   const [html, setHtml] = useState<string>("");
   const [loading, setLoading] = useState(false);
@@ -335,7 +340,7 @@ function PreviewDialog({
       <DialogContent className="max-h-[90vh] max-w-4xl overflow-hidden">
         <DialogHeader>
           <DialogTitle>
-            {t("portal.previewTitle", { name: router?.name ?? "" })}
+            {tf("portal.previewTitle", { name: router?.name ?? "" })}
           </DialogTitle>
           <DialogDescription>{t("portal.previewHint")}</DialogDescription>
         </DialogHeader>

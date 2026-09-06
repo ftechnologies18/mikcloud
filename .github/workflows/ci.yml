@@ -21,7 +21,7 @@ concurrency:
   # l'écart devenait permanent. Les runs main s'exécutent désormais
   # toujours jusqu'au bout ; l'annulation reste réservée aux PR
   # (itération rapide, économies de minutes runner).
-  cancel-in-progress: github.event_name == 'pull_request'
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   backend:

@@ -5,6 +5,33 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-06 — N°49 : QR de connexion WiFi sur l'affiche (SSID du hotspot encodé, format universel WIFI:)
+
+### N°49 — le client scanne, le WiFi se connecte tout seul, le portail fait le reste
+- **Idée gérant** : remplacer le QR « page web » (qui ouvrait /wifi/{slug},
+  obligeait à copier un code puis à basculer vers le portail) par un QR qui
+  connecte DIRECTEMENT au SSID du hotspot — même slogan « WiFi Offert »
+  imprimé, même argument marketing, parcours raccourci.
+- **Backend** : `WifiSite.WifiSSID` (+ `WifiPassword` si le réseau est WPA) ;
+  bornes des normes radio (SSID ≤ 32 car. 802.11, phrase secrète ≤ 63 car.,
+  trim) dans `validateWifiSitePayload` ; handlers create/update ; migration
+  boot `ALTER TABLE wifi_sites ADD COLUMN IF NOT EXISTS wifi_ssid /
+  wifi_password` (mécanique N°47 : le CREATE TABLE ne touche pas les bases
+  pré-existantes). Mot de passe stocké en clair VOLONTAIREMENT : sa seule
+  utilité est d'être encodé dans le QR imprimé (destiné aux clients).
+  Garde-fou `TestWifiSiteWifiFieldsN49`.
+- **Frontend** : deux champs console dans le formulaire site (« SSID du
+  réseau WiFi », « mot de passe optionnel ») ; affiche en 2 modes —
+  « Connexion WiFi » (défaut si SSID renseigné) encode
+  `WIFI:T:nopass|WPA;S:..;P:..;;` avec l'échappement de la spec Android
+  (`\ ; , : "` backslashés), « Page web » conserve l'ancien QR /wifi/{slug}
+  (secours : portail qui ne poppe pas, QR déjà imprimés). SSID vide → mode
+  connexion indisponible avec message de guidage console. i18n fr+en.
+- **Parcours client** : scan appareil photo (natif iOS 11+ / Android 10+) →
+  « Rejoindre le réseau ? » → portail captif s'ouvre → formulaire inline
+  N°48 (numéro → code → en ligne). La page /wifi/{slug} reste vivante
+  (secours + bascule offres payantes + compatibilité affiches passées).
+
 ## 2026-09-06 — N°48-b : portail auto-redéployé après chaque édition du template (sig hotspot_files basée contenu)
 
 ### N°48-b — fini le login.html périmé sur le routeur sans clic console

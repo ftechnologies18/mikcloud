@@ -5,6 +5,34 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-06 — N°41 : salvage PR #21 (jules) — quota gratuit exposé au portail + téléphones locaux CI préfixés 225
+
+### Revue de la PR #21 « Unified Captive Portal & Hybrid Cloud/Local WiFi Jetable Claim »
+- **Convergence** : la PR (bot jules, base N°35-b) implémentait le portail
+  hybride cloud/local — travail déjà fusionné sur main par la série N°35-c/d
+  (fetch live `/api/wifi/site/{slug}/portal` + fallback inliné + claim inline,
+  E2E + production). Son `login.html` réécrit (445 lignes) et son handler
+  `handleWifiSitePortal` sont **éclipsés** par la version main — et son
+  `routes.go` réenregistrait la route `GET /api/wifi/site/{slug}/portal`
+  **déjà déclarée** (double enregistrement = panic au démarrage du mux Go,
+  Render down). Fusion directe impossible.
+- **Deux apports réels sauvés** (le reste fermé avec explication) :
+  1. **Quota gratuit dans `PortalConfig`** — `freeTimeMin`/`freeDataMb`
+     (0 site = hériter du profil) peuplés dans les **deux** builders
+     (`buildPortalConfig` router-ancré pour le fallback inliné,
+     `buildPortalConfigForSite` pour l'endpoint live). Le portail peut
+     afficher la dotation gratuite (« X min offertes ») sans second appel ;
+     le fallback et la config live portent la même donnée. Test API
+     `TestWifiPortalFreeQuota` (héritage profil 30 min vérifié).
+  2. **`NormalizeWifiPhone` : préfixe 225 automatique** — un numéro local
+     Côte d'Ivoire (10 chiffres commençant par 01/05/07, format usuel des
+     affiches) est préfixé par l'indicatif 225 avant validation. Fini les
+     « numéro invalide » pour les visiteurs qui tapent leur numéro sans
+     indicatif. Table de tests `TestNormalizeWifiPhone` (7 cas : séparateurs,
+     +225/225 déjà présents, bornes).
+- Aucun changement de schéma Neon (champs runtime uniquement, aucune
+  colonne ajoutée) — la synchro différentielle du backend n'est pas impactée.
+
 ## 2026-09-06 — N°40 : vague Dependabot #16-#20 traitée — 4 majeures fusionnées, ESLint 10 écarté
 
 ### Quatre bumps majeurs adoptés (CI verte branche par branche, production vérifiée)

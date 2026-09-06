@@ -966,7 +966,11 @@ func NormalizeWifiSlug(name string) string {
 }
 
 // NormalizeWifiPhone — normalise un téléphone visiteur : chiffres seuls
-// (E.164 sans "+"). Renvoie "" si invalide (8 à 15 chiffres après normalisation).
+// (E.164 sans "+"). Si le numéro comporte 10 chiffres et commence par 01,
+// 05 ou 07 (format local Côte d'Ivoire), il est automatiquement préfixé par
+// l'indicatif 225 — les visiteurs saisissent usuellement leur numéro sans
+// indicatif sur les affiches locales. Renvoie "" si invalide (8 à 15 chiffres
+// après normalisation).
 func NormalizeWifiPhone(phone string) string {
 	var sb strings.Builder
 	for _, r := range phone {
@@ -975,6 +979,9 @@ func NormalizeWifiPhone(phone string) string {
 		}
 	}
 	s := sb.String()
+	if len(s) == 10 && (strings.HasPrefix(s, "01") || strings.HasPrefix(s, "05") || strings.HasPrefix(s, "07")) {
+		s = "225" + s
+	}
 	if len(s) < 8 || len(s) > 15 {
 		return ""
 	}

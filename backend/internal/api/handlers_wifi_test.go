@@ -432,3 +432,30 @@ func TestWifiConsoleCRUDAndIsolation(t *testing.T) {
 		t.Fatalf("suppression : %d entrées de registre restantes", left)
 	}
 }
+
+// TestWifiPortalFreeQuota — l'endpoint public GET /api/wifi/site/{slug}/portal
+// expose le quota gratuit effectif du site (0 site = hériter du profil) :
+// le portail captive affiche la dotation gratuite sans second appel, et le
+// fallback inliné porte la même donnée (salvage PR #21, implémentation
+// convergente du portail hybride N°35-c conservée).
+func TestWifiPortalFreeQuota(t *testing.T) {
+	ts, st := newWifiTestServer(t)
+	_, accID, _ := registerAccount(t, ts, "gerant-wifi-portal-quota", "")
+	routerID, profileID := seedWifiEnv(t, st, accID)
+	seedWifiSite(t, st, accID, "maquis-portal", routerID, profileID, true, 1, 100)
+
+	status, out := doJSON(t, ts, "GET", "/api/wifi/site/maquis-portal/portal", "", nil)
+	if status != http.StatusOK {
+		t.Fatalf("portal site : statut %d, corps %v", status, out)
+	}
+	if slug, _ := out["wifiSlug"].(string); slug != "maquis-portal" {
+		t.Fatalf("wifiSlug inattendu : %v", out["wifiSlug"])
+	}
+	// Le site seedé n'a pas de quota propre (0) : héritage du profil (30 min).
+	if tm, _ := out["freeTimeMin"].(float64); tm != 30 {
+		t.Fatalf("freeTimeMin = %v, voulu 30 (héritage profil)", out["freeTimeMin"])
+	}
+	if tn, _ := out["tenantName"].(string); tn == "" {
+		t.Fatal("tenantName manquant dans la réponse portal")
+	}
+}

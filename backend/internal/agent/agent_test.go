@@ -303,6 +303,52 @@ func TestScriptForUserAdd(t *testing.T) {
 	}
 }
 
+// TestBuildWalledGardenCoversBothTables — N°49 : la couverture des DEUX
+// tables est garantie dans le script de commande ET le bloc d'installation :
+// règle host (walled-garden, action=allow — HTTP par en-tête Host) ET règle
+// ip (walled-garden ip, action=accept, commentaire mikcloud-wg api — HTTPS
+// via reniflement DNS, cf. N°48 v2 ; « allow » est invalide en variante ip,
+// cf. N°31-d). Removes compris (idempotence complète).
+func TestBuildWalledGardenCoversBothTables(t *testing.T) {
+	b := Builder{BaseURL: "https://cloud.example", Token: "tk"}
+	cmd := model.Command{ID: "cmd-wg49", Kind: model.CmdWalledGarden, Payload: map[string]any{
+		"domains": []any{"mikcloud.ftci.fr", "mikcloud.onrender.com"},
+	}}
+	script, err := b.ScriptFor(cmd)
+	if err != nil {
+		t.Fatalf("ScriptFor impossible : %v", err)
+	}
+	// Table host : action=allow (les 2 domaines) — variante « page ».
+	for _, d := range []string{"mikcloud.ftci.fr", "mikcloud.onrender.com"} {
+		if !strings.Contains(script, `/ip hotspot walled-garden add action=allow dst-host="`+d+`"`) {
+			t.Errorf("règle host (allow) absente pour %s", d)
+		}
+		// Table ip : action=accept, marqueur « api » (couverture HTTPS N°48).
+		if !strings.Contains(script, `/ip hotspot walled-garden ip add action=accept dst-host="`+d+`" comment="mikcloud-wg api"`) {
+			t.Errorf("règle ip (accept, api) absente pour %s", d)
+		}
+	}
+	// Removes des règles marquées dans les DEUX tables (idempotence complète).
+	if !strings.Contains(script, `/ip hotspot walled-garden remove [find comment="mikcloud-wg page"]`) {
+		t.Error("remove host des règles page absent")
+	}
+	if !strings.Contains(script, `/ip hotspot walled-garden ip remove [find comment="mikcloud-wg api"]`) {
+		t.Error("remove ip des règles api absent")
+	}
+
+	// Bloc d'installation : même couverture des deux tables.
+	install := walledGardenInstallBlock([]string{"mikcloud.ftci.fr"})
+	if !strings.Contains(install, `/ip hotspot walled-garden add action=allow dst-host="mikcloud.ftci.fr"`) {
+		t.Error("bloc d'installation : règle host absente")
+	}
+	if !strings.Contains(install, `/ip hotspot walled-garden ip add action=accept dst-host="mikcloud.ftci.fr" comment="mikcloud-wg api"`) {
+		t.Error("bloc d'installation : règle ip (accept, api) absente")
+	}
+	if !strings.Contains(install, `/ip hotspot walled-garden ip remove [find comment="mikcloud-wg api"]`) {
+		t.Error("bloc d'installation : remove ip des règles api absent")
+	}
+}
+
 func TestScriptForUnknownKind(t *testing.T) {
 	b := Builder{BaseURL: "https://cloud.example", Token: "tk"}
 	if _, err := b.ScriptFor(model.Command{ID: "cmd-x", Kind: "kind-bidon"}); err == nil {

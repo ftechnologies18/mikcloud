@@ -1321,9 +1321,12 @@ func walledGardenInstallBlock(domains []string) string {
 	sb.WriteString("    # fonctionne depuis le WiFi du hotspot. Seules les règles marquées\n")
 	sb.WriteString("    # \"" + WalledGardenMarker + "\" sont remplacées, les vôtres sont conservées.\n")
 	sb.WriteString("    :do {\n      /ip hotspot walled-garden remove [find comment=\"" + WalledGardenMarker + " page\"]\n    } on-error={}\n")
+	sb.WriteString("    :do {\n      /ip hotspot walled-garden ip remove [find comment=\"" + WalledGardenMarker + " page\"]\n    } on-error={}\n")
 	sb.WriteString("    :do {\n      /ip hotspot walled-garden remove [find comment=\"" + WalledGardenMarker + " dns\"]\n    } on-error={}\n")
 	for _, d := range domains {
 		sb.WriteString("    :do {\n      :if ([:len [/ip hotspot walled-garden find comment=\"" + WalledGardenMarker + " page\" dst-host=\"" + rosEscape(d) + "\"]] = 0) do={ /ip hotspot walled-garden add action=allow dst-host=\"" + rosEscape(d) + "\" comment=\"" + WalledGardenMarker + " page\" }\n    } on-error={}\n")
+		// N°48 — miroir ip (action=accept, cf. N°31-d) : couverture HTTPS.
+		sb.WriteString("    :do {\n      :if ([:len [/ip hotspot walled-garden ip find comment=\"" + WalledGardenMarker + " page\" dst-host=\"" + rosEscape(d) + "\"]] = 0) do={ /ip hotspot walled-garden ip add action=accept dst-host=\"" + rosEscape(d) + "\" comment=\"" + WalledGardenMarker + " page\" }\n    } on-error={}\n")
 	}
 	// N°48 — règles « api » (variante ip, action=accept, dst-host) : la
 	// variante proxy ci-dessus ne voit que le HTTP pur (port 80) — or l'API

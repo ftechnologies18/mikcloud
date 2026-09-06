@@ -181,6 +181,17 @@ type Router struct {
 	// commande (handleAgentResult) — jamais à la mise en file : un échec est
 	// retenté automatiquement au check-in suivant.
 	WalledGardenSig string `json:"walledGardenSig,omitempty"`
+	// N°49 — horodatage (RFC3339) de la DERNIÈRE application confirmée du
+	// walled-garden sur ce routeur. Rend le walled-garden AUTO-RÉPARANT :
+	// posé avec la signature au retour « ok » de la commande, il sert de
+	// base au re-file périodique (walledGardenRefresh) — une liste vidée
+	// localement (ménage Mikhmon, restauration, ajout manuel partiel,
+	// constat prod CyberSC 2026-09-06 : règles DNS posées mais règles page
+	// absentes) est recréée au plus tard 6 h après, sans intervention.
+	// Vide + sig posée = état antérieur au N°49 : considéré non frais →
+	// re-file automatique au premier check-in suivant (réparation des
+	// routeurs déjà en ligne, zéro action humaine).
+	WalledGardenAppliedAt string `json:"walledGardenAppliedAt,omitempty"`
 	// N°35 — signature du PORTAIL CAPTIF déjà déployé avec succès sur ce
 	// routeur (hash de l'ensemble des fichiers personnalisés login.html,
 	// status.html, assets). Vide → rien déployé (ou dernier échec) : le

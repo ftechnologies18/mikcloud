@@ -64,7 +64,7 @@ import { LoadingCards } from "@/components/hotspot/loading";
 import { PageHeader } from "@/components/hotspot/page-header";
 import { RouterToolsDialog } from "@/components/hotspot/parts/router-tools";
 import { StatusBadge } from "@/components/hotspot/status-badge";
-import { api } from "@/lib/hotspot/api";
+import { api, repairRouterWalledGarden } from "@/lib/hotspot/api";
 import { localeOf, useI18n } from "@/lib/hotspot/i18n";
 import { formatDuration, timeAgo } from "@/lib/hotspot/format";
 import type { RouterDevice, RouterMode, RouterRotateTokenResponse, RouterStats, RouterTestResult } from "@/lib/hotspot/types";
@@ -420,6 +420,23 @@ export default function RoutersView() {
     },
   });
 
+  // N°49 — réparation forcée du walled-garden d'inscription publique :
+  // les règles page+DNS (marqueur mikcloud-wg) sont réappliquées au prochain
+  // check-in (≤ 45 s). Utile quand le bouton « S'inscrire » ou le QR ne
+  // répondent pas depuis le WiFi — ex. règles supprimées localement.
+  const repairWgMutation = useMutation({
+    mutationFn: (router: RouterDevice) => repairRouterWalledGarden(router.id),
+    onSuccess: (res, router) => {
+      toast.success(tf("routers.repairWgToast", { name: router.name }), {
+        description: res.message,
+      });
+      invalidateRouters();
+    },
+    onError: (err: Error) => {
+      toast.error(err.message);
+    },
+  });
+
   const formValid =
     form.name.trim().length > 0 &&
     (form.mode === "agent" || form.host.trim().length > 0) &&
@@ -533,6 +550,22 @@ export default function RoutersView() {
                                     <Download className="size-4" />
                                   )}
                                   {t("routers.import")}
+                                </DropdownMenuItem>
+                                {/* N°49 — réparation du walled-garden : disponible
+                                    même hors ligne (la commande est filée et
+                                    exécutée au retour de la connexion). */}
+                                <DropdownMenuItem
+                                  className="min-h-10"
+                                  disabled={repairWgMutation.isPending}
+                                  title={t("routers.repairWgHint")}
+                                  onClick={() => repairWgMutation.mutate(router)}
+                                >
+                                  {repairWgMutation.isPending ? (
+                                    <Loader2 className="size-4 animate-spin" />
+                                  ) : (
+                                    <ShieldCheck className="size-4" />
+                                  )}
+                                  {t("routers.repairWg")}
                                 </DropdownMenuItem>
                               </>
                             ) : (

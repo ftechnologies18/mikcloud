@@ -1018,6 +1018,33 @@ est appliqué par le système lui-même, pour les routeurs neufs ET ceux déjà 
   `TestEnsureWalledGardenLocked` (exactly-once, re-file sur changement, retry
   sur échec).
 
+### N°49 — walled-garden AUTO-RÉPARANT + réparation à la demande (addendum au N°29/N°48)
+
+Contexte : le N°48 (v2, sel `wg-v2-api`) a couvert le HTTPS (règles ip « api »)
+et réparé les routeurs existants UNE fois. Constat prod CyberSC : une liste
+vidée/amputée LOCALEMENT après coup (ménage Mikhmon, restauration, script
+partiel) repassait en panne silencieuse — la sig posée bloquant tout re-file.
+
+- **Nouveau champ `Router.WalledGardenAppliedAt`** (RFC3339, colonne
+  `routers.walled_garden_applied_at`, DDL idempotent) : posé avec la signature
+  au retour « ok » de la commande (`handleAgentResult`), jamais à la mise en
+  file.
+- **Re-file élargi (`ensureWalledGardenLocked`)** : la commande est (re)filée
+  si la sig diffère (N°29, sel N°48) OU si la sig est identique mais
+  `walledGardenFresh(router)` est faux : horodatage ABSENT (routeur configuré
+  avant le N°49 — réparation immédiate au premier check-in) ou plus vieux que
+  `walledGardenRefresh` = 6 h (réparation périodique d'une liste vidée
+  localement). Aucune commande en vol reste prioritaire (pas de doublon).
+- **Nouvel endpoint console** : `POST /api/routers/{id}/repair-walled-garden`
+  → `{ok, message}` ; 404 routeur inconnu, 400 `not_agent` (modes
+  simulated/real), 402 `subscription_expired`. Vide sig + horodatage → re-file
+  au check-in suivant (≤ 45 s). Bouton « Réparer le walled-garden » dans le
+  menu d'un routeur agent (vue Routeurs).
+- Tests : `TestEnsureWalledGardenAutoRepair` (trois leviers),
+  `TestBuildWalledGardenCoversBothTables` (page host + api ip, commande +
+  installation, removes compris),
+  `TestRepairWalledGardenOK/NotFound/NotAgent`.
+
 ---
 
 ## PLAN DE FICHIERS

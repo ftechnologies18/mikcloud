@@ -928,6 +928,12 @@ const PurgeTombstoneTTL = 30 * 24 * time.Hour
 // FreeTimeMin / FreeDataMb = quotas gratuits surchargés à l'émission
 // (0 = hériter du profil) ; DailyPerPhone / DailyCap = garde-fous anti-abus
 // (budget gratuit du gérant) ; Active = bascule 1 clic du gérant.
+// N°49 : WifiSSID (+ WifiPassword si le réseau est WPA) alimente le QR de
+// CONNEXION de l'affiche — format universel « WIFI:T:...;S:...;P:...;; »,
+// scanné par l'appareil photo (iOS 11+ / Android 10+) : le téléphone
+// propose de rejoindre le réseau, puis le portail captif inline (N°48)
+// prend le relais (numéro → code → en ligne). Vide = affiche limitée au
+// QR page web (/wifi/{slug}).
 type WifiSite struct {
 	ID             string `json:"id"`
 	AccountID      string `json:"accountId"`
@@ -942,6 +948,8 @@ type WifiSite struct {
 	MarketingOptIn bool   `json:"marketingOptIn"` // case consentement affichée
 	DailyPerPhone  int    `json:"dailyPerPhone"`  // tickets max / téléphone / jour
 	DailyCap       int    `json:"dailyCap"`       // budget gratuit : tickets max / site / jour
+	WifiSSID       string `json:"wifiSsid"`       // N°49 — SSID du réseau du hotspot (QR de connexion, ≤ 32 car. 802.11)
+	WifiPassword   string `json:"wifiPassword"`   // N°49 — mot de passe WPA (≤ 63 car., vide = réseau ouvert)
 	Active         bool   `json:"active"`
 	CreatedAt      string `json:"createdAt"`
 }

@@ -625,6 +625,8 @@ type wifiSitePayload struct {
 	MarketingOptIn bool   `json:"marketingOptIn"`
 	DailyPerPhone  int    `json:"dailyPerPhone"`
 	DailyCap       int    `json:"dailyCap"`
+	WifiSSID       string `json:"wifiSsid"`     // N°49 — QR de connexion de l'affiche (vide = pas de QR WiFi)
+	WifiPassword   string `json:"wifiPassword"` // N°49 — mot de passe WPA si le réseau est protégé (vide = ouvert)
 	Active         bool   `json:"active"`
 }
 
@@ -669,6 +671,20 @@ func validateWifiSitePayload(w http.ResponseWriter, r *http.Request, a *API, acc
 	// doit répondre 404, pas 400 (isolation multi-tenant).
 	req.RouterID = strings.TrimSpace(req.RouterID)
 	req.ProfileID = strings.TrimSpace(req.ProfileID)
+	// N°49 — QR de connexion WiFi : bornes des normes radio (SSID 32 octets
+	// 802.11, phrase secrète WPA 63 caractères). Le mot de passe est stocké
+	// en clair VOLONTAIREMENT : sa seule utilité est d'être encodé dans le
+	// QR imprimé, donc destiné aux clients de l'établissement.
+	req.WifiSSID = strings.TrimSpace(req.WifiSSID)
+	if len(req.WifiSSID) > 32 {
+		writeErr(w, http.StatusBadRequest, "Le SSID du réseau ne peut pas dépasser 32 caractères (norme 802.11)")
+		return nil, false
+	}
+	req.WifiPassword = strings.TrimSpace(req.WifiPassword)
+	if len(req.WifiPassword) > 63 {
+		writeErr(w, http.StatusBadRequest, "Le mot de passe WiFi ne peut pas dépasser 63 caractères (norme WPA)")
+		return nil, false
+	}
 	return &req, true
 }
 
@@ -759,6 +775,7 @@ func (a *API) handleWifiSiteCreate(w http.ResponseWriter, r *http.Request) {
 		FreeTimeMin: req.FreeTimeMin, FreeDataMb: req.FreeDataMb,
 		MarketingOptIn: req.MarketingOptIn,
 		DailyPerPhone:  req.DailyPerPhone, DailyCap: req.DailyCap,
+		WifiSSID: req.WifiSSID, WifiPassword: req.WifiPassword,
 		Active: req.Active, CreatedAt: model.NowISO(),
 	}
 	db.WifiSites = append(db.WifiSites, site)
@@ -821,6 +838,8 @@ func (a *API) handleWifiSiteUpdate(w http.ResponseWriter, r *http.Request) {
 	site.MarketingOptIn = req.MarketingOptIn
 	site.DailyPerPhone = req.DailyPerPhone
 	site.DailyCap = req.DailyCap
+	site.WifiSSID = req.WifiSSID
+	site.WifiPassword = req.WifiPassword
 	site.Active = req.Active
 	msg := fmt.Sprintf("Site WiFi jetable «%s» mis à jour (quotas : %d min / %d Mo, plafonds : %d/tél, %d/site)", site.Name, site.FreeTimeMin, site.FreeDataMb, site.DailyPerPhone, site.DailyCap)
 	if toggled != "" {

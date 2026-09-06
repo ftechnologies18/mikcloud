@@ -554,3 +554,85 @@ func TestWifiClaimAgentProvisioningWait(t *testing.T) {
 		t.Fatalf("provisioned attendu true après application, corps %v", sOut)
 	}
 }
+
+// TestWifiSiteWifiFieldsN49 — N°49 « QR de connexion » : le site WiFi porte
+// le SSID du réseau (+ mot de passe WPA optionnel) encodé dans l'affiche
+// imprimable. Garde-fous : bornes des normes radio (SSID ≤ 32 car. 802.11,
+// phrase secrète WPA ≤ 63 car.), trim des espaces, persistance create + PUT.
+func TestWifiSiteWifiFieldsN49(t *testing.T) {
+	ts, st := newWifiTestServer(t)
+	token, accID, _ := registerAccount(t, ts, "gerant-wifi-n49", "")
+	routerID, profileID := seedWifiEnv(t, st, accID)
+
+	// Création avec SSID + mot de passe (espaces parasites volontaires).
+	status, out := doJSON(t, ts, "POST", "/api/wifi/sites", token, map[string]any{
+		"name": "Cyber Espace", "routerId": routerID, "profileId": profileID,
+		"freeTimeMin": 30, "freeDataMb": 100, "marketingOptIn": true,
+		"dailyPerPhone": 1, "dailyCap": 100, "active": true,
+		"wifiSsid": "  CYBER-ESPACE  ", "wifiPassword": "  secret123  ",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("création site N°49 : statut %d, corps %v", status, out)
+	}
+	if ssid, _ := out["wifiSsid"].(string); ssid != "CYBER-ESPACE" {
+		t.Fatalf("wifiSsid = %q, voulu \"CYBER-ESPACE\" (trim attendu)", out["wifiSsid"])
+	}
+	if pass, _ := out["wifiPassword"].(string); pass != "secret123" {
+		t.Fatalf("wifiPassword = %q, voulu \"secret123\" (trim attendu)", out["wifiPassword"])
+	}
+	siteID, _ := out["id"].(string)
+
+	// SSID de 33 caractères → 400 (norme 802.11).
+	longSsid := strings.Repeat("a", 33)
+	if status, out = doJSON(t, ts, "PUT", "/api/wifi/sites/"+siteID, token, map[string]any{
+		"name": "Cyber Espace", "routerId": routerID, "profileId": profileID,
+		"freeTimeMin": 30, "freeDataMb": 100, "dailyPerPhone": 1, "dailyCap": 100,
+		"active": true, "wifiSsid": longSsid,
+	}); status != http.StatusBadRequest {
+		t.Fatalf("SSID 33 car. : statut %d, voulu 400, corps %v", status, out)
+	}
+
+	// Phrase secrète de 64 caractères → 400 (norme WPA).
+	longPass := strings.Repeat("b", 64)
+	if status, out = doJSON(t, ts, "PUT", "/api/wifi/sites/"+siteID, token, map[string]any{
+		"name": "Cyber Espace", "routerId": routerID, "profileId": profileID,
+		"freeTimeMin": 30, "freeDataMb": 100, "dailyPerPhone": 1, "dailyCap": 100,
+		"active": true, "wifiSsid": "CYBER-ESPACE", "wifiPassword": longPass,
+	}); status != http.StatusBadRequest {
+		t.Fatalf("mot de passe 64 car. : statut %d, voulu 400, corps %v", status, out)
+	}
+
+	// Mise à jour complète : réseau OUVERT (mot de passe vidé) → persisté.
+	status, out = doJSON(t, ts, "PUT", "/api/wifi/sites/"+siteID, token, map[string]any{
+		"name": "Cyber Espace", "routerId": routerID, "profileId": profileID,
+		"freeTimeMin": 30, "freeDataMb": 100, "marketingOptIn": true,
+		"dailyPerPhone": 1, "dailyCap": 100, "active": true,
+		"wifiSsid": "CYBER-ESPACE-FREE", "wifiPassword": "",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("update N°49 : statut %d, corps %v", status, out)
+	}
+	if ssid, _ := out["wifiSsid"].(string); ssid != "CYBER-ESPACE-FREE" {
+		t.Fatalf("wifiSsid après PUT = %q, voulu \"CYBER-ESPACE-FREE\"", out["wifiSsid"])
+	}
+	if pass, _ := out["wifiPassword"].(string); pass != "" {
+		t.Fatalf("wifiPassword après PUT = %q, voulu vide (réseau ouvert)", out["wifiPassword"])
+	}
+
+	// La console relit bien les champs (persistés dans le store).
+	status, out = doJSON(t, ts, "GET", "/api/wifi/sites", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("liste sites : statut %d", status)
+	}
+	sites, _ := out["sites"].([]any)
+	if len(sites) != 1 {
+		t.Fatalf("1 site attendu, obtenu %d", len(sites))
+	}
+	site, _ := sites[0].(map[string]any)
+	if ssid, _ := site["wifiSsid"].(string); ssid != "CYBER-ESPACE-FREE" {
+		t.Fatalf("wifiSsid en lecture = %q, voulu \"CYBER-ESPACE-FREE\"", site["wifiSsid"])
+	}
+	if _, hasPass := site["wifiPassword"]; !hasPass {
+		t.Fatal("wifiPassword doit être présent dans la réponse console (vide = ouvert)")
+	}
+}

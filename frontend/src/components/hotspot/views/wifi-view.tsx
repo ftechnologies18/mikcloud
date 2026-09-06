@@ -68,6 +68,8 @@ interface SiteForm {
   marketingOptIn: boolean;
   dailyPerPhone: number;
   dailyCap: number;
+  wifiSsid: string;
+  wifiPassword: string;
   active: boolean;
 }
 
@@ -81,6 +83,8 @@ function formFromSite(site: WifiSite): SiteForm {
     marketingOptIn: site.marketingOptIn,
     dailyPerPhone: site.dailyPerPhone,
     dailyCap: site.dailyCap,
+    wifiSsid: site.wifiSsid,
+    wifiPassword: site.wifiPassword,
     active: site.active,
   };
 }
@@ -94,6 +98,8 @@ const EMPTY_FORM: SiteForm = {
   marketingOptIn: true,
   dailyPerPhone: 1,
   dailyCap: 100,
+  wifiSsid: "",
+  wifiPassword: "",
   active: true,
 };
 
@@ -165,6 +171,8 @@ export default function WifiView() {
         marketingOptIn: site.marketingOptIn,
         dailyPerPhone: site.dailyPerPhone,
         dailyCap: site.dailyCap,
+        wifiSsid: site.wifiSsid,
+        wifiPassword: site.wifiPassword,
         active: !site.active,
       }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/wifi/sites"] }),
@@ -406,6 +414,31 @@ export default function WifiView() {
                 />
               </div>
             </div>
+            {/* N°49 — Réseau WiFi : alimente le QR de CONNEXION de l'affiche. */}
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="wifi-ssid">{t("wifi.ssid")}</Label>
+                <Input
+                  id="wifi-ssid"
+                  value={form.wifiSsid}
+                  placeholder="CYBER-ESPACE"
+                  maxLength={32}
+                  onChange={(e) => setForm((f) => ({ ...f, wifiSsid: e.target.value }))}
+                />
+                <p className="text-xs text-muted-foreground">{t("wifi.ssidHint")}</p>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="wifi-pass">{t("wifi.wifiPass")}</Label>
+                <Input
+                  id="wifi-pass"
+                  value={form.wifiPassword}
+                  placeholder={t("wifi.wifiPassPh")}
+                  maxLength={63}
+                  onChange={(e) => setForm((f) => ({ ...f, wifiPassword: e.target.value }))}
+                />
+                <p className="text-xs text-muted-foreground">{t("wifi.wifiPassHint")}</p>
+              </div>
+            </div>
             <div className="flex items-center justify-between rounded-lg border p-3">
               <div>
                 <Label htmlFor="wifi-optin">{t("wifi.optIn")}</Label>
@@ -440,10 +473,13 @@ export default function WifiView() {
 
       {/* Affiche QR imprimable. */}
       <WifiPosterDialog
+        key={posterFor?.id ?? "none"}
         open={Boolean(posterFor)}
         onOpenChange={(o) => !o && setPosterFor(null)}
         siteName={posterFor?.name ?? ""}
         publicUrl={posterFor ? publicUrlOf(posterFor) : ""}
+        wifiSsid={posterFor?.wifiSsid ?? ""}
+        wifiPassword={posterFor?.wifiPassword ?? ""}
         quotaLabel={
           posterFor
             ? `${posterFor.freeTimeMin > 0 ? `${posterFor.freeTimeMin} min` : posterFor.profileName}${

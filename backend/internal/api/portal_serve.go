@@ -144,6 +144,11 @@ func buildPortalConfig(db *model.DB, router *model.Router, r *http.Request) hotp
 			if origin := publicFrontendURL(r); origin != "" {
 				cfg.WifiURL = origin + "/wifi/" + s.Slug
 			}
+			// Quota gratuit effectif (0 site = hériter du profil) —
+			// exposé au fallback inliné comme à l'endpoint live.
+			if profile := findProfileScoped(db, s.ProfileID, acc); profile != nil {
+				cfg.FreeTimeMin, cfg.FreeDataMb = wifiQuotaResp(s, profile)
+			}
 			break
 		}
 	}
@@ -225,6 +230,11 @@ func buildPortalConfigForSite(db *model.DB, site *model.WifiSite, router *model.
 	}
 	if origin := publicFrontendURL(r); origin != "" {
 		cfg.WifiURL = origin + "/wifi/" + site.Slug
+	}
+	// Quota gratuit effectif (0 site = hériter du profil) — servit par
+	// l'endpoint live GET /api/wifi/site/{slug}/portal.
+	if profile := findProfileScoped(db, site.ProfileID, acc); profile != nil {
+		cfg.FreeTimeMin, cfg.FreeDataMb = wifiQuotaResp(site, profile)
 	}
 	// JoinURL — 1er lien d'inscription publique actif lié au routeur.
 	if router != nil {

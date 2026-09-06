@@ -81,7 +81,11 @@ func (a *API) authMiddleware(next http.Handler) http.Handler {
 		// N°28 — WiFi jetable : la page publique est résolue par slug (sans
 		// authentification) ; /api/wifi/sites|guests (console) RESTE protégée.
 		publicWifi := strings.HasPrefix(path, "/api/wifi/site/") && !strings.HasSuffix(path, "/sites") && !strings.HasSuffix(path, "/guests")
-		if path == "/api/auth/login" || path == "/api/auth/register" || path == "/api/reseller/login" || path == "/api/webhooks/wave" || path == "/api/webhooks/geniuspay" || path == "/api/vitals" || strings.HasPrefix(path, "/api/join/") || publicWifi || !strings.HasPrefix(path, "/api/") {
+		// N°53 — Média R2 : la LECTURE d'image est publique (le portail
+		// captif charge ses images pré-authentification — même hôte que
+		// apiBase) ; le POST (téléversement) reste derrière le JWT gérant.
+		publicMedia := r.Method == http.MethodGet && strings.HasPrefix(path, "/api/media/")
+		if path == "/api/auth/login" || path == "/api/auth/register" || path == "/api/reseller/login" || path == "/api/webhooks/wave" || path == "/api/webhooks/geniuspay" || path == "/api/vitals" || strings.HasPrefix(path, "/api/join/") || publicWifi || publicMedia || !strings.HasPrefix(path, "/api/") {
 			next.ServeHTTP(w, r)
 			return
 		}

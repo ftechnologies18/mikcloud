@@ -960,6 +960,12 @@ type WifiGuest struct {
 	Code      string `json:"code"`
 	Day       string `json:"day"`
 	CreatedAt string `json:"createdAt"`
+	// ClaimCmdID — N°47 : ID de la commande voucher_batch émise par le claim
+	// (mode agent uniquement). Le portail l'utilise via /status (champ
+	// « provisioned ») pour n'auto-loguer le visiteur qu'une fois le code
+	// réellement appliqué au routeur (anti-course du check-in ≤ 45 s).
+	// Vide en mode simulated/real (application immédiate).
+	ClaimCmdID string `json:"claimCmdId,omitempty"`
 }
 
 // NormalizeWifiSlug — normalise un nom d'établissement en slug public

@@ -39,6 +39,40 @@ la CI puis se déploie automatiquement (frontend Vercel, backend Render).
   re-déploiement), `TestConfigJSONJoinEnabledAlwaysExplicit` (gèle le contrat
   sans-omitempty), `TestLoginTemplateJoinButtonLogic` (logique 3 états dans
   le template embarqué).
+## 2026-09-06 — N°47 : le claim inline attend l'application routeur (anti-course 45 s)
+
+### N°47 — « téléphone → code → en ligne » marche enfin bout en bout en mode agent
+- **Motivation** : en production (routeurs en mode agent), le claim émet le
+  code et met la commande `voucher_batch` en file ; l'utilisateur MikroTik
+  n'existe qu'au **prochain check-in de l'agent (≤ 45 s)**. Le portail lançait
+  l'auto-login CHAP **immédiatement** ⇒ « invalid username or password » quasi
+  systématique pendant la fenêtre de check-in : le visiteur voyait le code
+  s'afficher puis un échec de connexion, et croyait le service cassé. Preuve en
+  production : claim du 10:24 (code FM9V7) — commande appliquée à la seconde
+  par l'agent (result ok, created=1) mais auto-login parti bien trop tôt.
+- **Backend** : le claim trace désormais la commande sur le registre du jour
+  (`WifiGuest.ClaimCmdID`, colonne Neon `wifi_guests.claim_cmd_id` — DDL
+  idempotent, sync différentielle) et répond `waitForRouter: true` en mode
+  agent (champ absent/false en simulated/real : application synchrone).
+  `GET /api/wifi/site/{slug}/status` expose `provisioned` (helper
+  `wifiProvisioned`) : vrai dès que la commande est `done` au sens agent ;
+  `true` par défaut en non-agent et pour tout registre antérieur à N°47
+  (on ne bloque jamais par défaut).
+- **Portail** (`login.html`) : `autoLoginWhenReady` — si `waitForRouter`, le
+  portail sonde `/status?phone=` toutes les **5 s** (1 requête/5 s ≪ rate-limit
+  `wifi-read` 30/min/IP) avec affichage « Activation sur le routeur... (X s) »,
+  puis déclenche l'auto-login CHAP dès `provisioned` ; plafond de garde
+  **2 min** (24 tentatives = 2-3 cycles d'agent) au-delà duquel la connexion
+  est tentée quand même. Le message fixe enfin l'attente du visiteur.
+- **Déploiement portail** : la modification de `login.html` change la
+  signature `HotspotFilesSig` ⇒ au check-in suivant, l'agent re-tire les
+  fichiers hotspot (surcharge atomique) — aucun geste gérant requis.
+- **Tests** : `TestWifiClaimAgentProvisioningWait` — routeur basculé en mode
+  agent : claim ⇒ `waitForRouter=true` + `ClaimCmdID` tracé + commande en
+  file ; `/status` ⇒ `provisioned=false` tant que la commande est en file,
+  `true` après application. Suite backend complète verte (gofmt, vet, build,
+  test ./... — 11 packages). Aucun changement de contrat authentifié ; les
+  endpoints publics restent rate-limités (claim 5/min, read 30/min).
 
 ## 2026-09-06 — N°45 : bannière personnalisée du portail captif (bannerUrl)
 

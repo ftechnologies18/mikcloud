@@ -7,13 +7,14 @@
 // requête — pas de JWT, pas de cookie, pas de session : c'est un flux
 // machine-à-machine pré-auth (avant le login du client du WiFi).
 //
-// Personnalisation : dans la phase initiale (N°35-a), le fichier est servi
-// TEL QUEL depuis le template (hotpage.RawFile). La personnalisation par
-// compte (branding, slug WiFi, lien join avec MAC, offres, textes) sera
-// introduite en N°35-b/c via un moteur de templating léger (substitution de
-// marqueurs {{MIKCLOUD_TENANT_NAME}}, {{MIKCLOUD_WIFI_SLUG}}, …). L'objectif
-// est que login.html, au chargement côté client, fetch la config live via
-// /api/wifi/site/{slug}/portal (portail hybride Cloud/Local avec fallback).
+// Personnalisation (N°35-b) : les fichiers TEXTE (HTML, JS, txt) sont passés
+// par hotpage.Personalize qui substitue les marqueurs {{MIKCLOUD_*}} par les
+// valeurs du compte (tenant, slug WiFi, lien join, offres, API base, wave link).
+// Les fichiers BINAIRES (png, ico, woff2, jpg) sont servis tels quels — aucun
+// marqueur à substituer, gain de cycles. La config complète est embarquée dans
+// login.html/status.html via un bloc <script type="application/json"
+// id="mikcloud-config">{{MIKCLOUD_CONFIG_JSON}}</script> que la page lit côté
+// client (N°35-c pour la consommation hybride fetch/fallback).
 //
 // Sécurité :
 //   - token agent haché (routerByToken) → seul un routeur légitime peut fetch ;
@@ -23,14 +24,20 @@
 //     /portal) — un routeur < 7.19 ne reçoit aucune commande, donc ne fetch rien ;
 //   - Cache-Control: no-store (sécurité S1-A4) — le contenu est personnalisé
 //     par compte, ne doit pas être mis en cache par un intermédiaire.
+//   - Échappement strict des valeurs (html.EscapeString + encoding/json avec
+//     SetEscapeHTML par défaut) → aucune injection XSS possible via le nom du
+//     tenant ou autre.
 package api
 
 import (
 	"net/http"
+	"os"
 	"path"
+	"strconv"
 	"strings"
 
 	"mikcloud/hotspot-api/internal/hotpage"
+	"mikcloud/hotspot-api/internal/model"
 )
 
 // handlePortalFile — sert un fichier du portail captif personnalisé pour le
@@ -53,15 +60,21 @@ func (a *API) handlePortalFile(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	// Vérifier le routeur sous verrou (court — on relache avant de servir).
+
+	// Résoudre le routeur ET son compte, puis construire le PortalConfig
+	// en UN seul passage sous verrou (évite le re-lock pour lire les settings).
 	a.store.Lock()
-	router := routerByToken(a.store.Data(), token)
-	a.store.Unlock()
+	db := a.store.Data()
+	router := routerByToken(db, token)
 	if router == nil {
+		a.store.Unlock()
 		// Token inconnu : 404 sans révéler la structure (anti-énumération).
 		http.NotFound(w, r)
 		return
 	}
+	cfg := buildPortalConfig(db, router, r)
+	a.store.Unlock()
+
 	if !hotpage.HasFile(rawPath) {
 		http.NotFound(w, r)
 		return
@@ -71,14 +84,158 @@ func (a *API) handlePortalFile(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	// N°35-b — personnalisation : les fichiers texte sont passés par Personalize.
+	// Les fichiers binaires (png, ico, woff2, jpg) sont servis tels quels — aucun
+	// marqueur à substituer, gain de cycles et zéro risque de corruption binaire.
+	if isTextAsset(rawPath) {
+		body = []byte(hotpage.Personalize(string(body), cfg))
+	}
 	w.Header().Set("Content-Type", contentTypeFor(rawPath))
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = w.Write(body)
 }
 
-// contentTypeFor — Content-Type minimal pour les fichiers du portail. Les
-// fichiers binaires ne sont pas servis par RawFile (cf. commentaire ci-dessus).
+// isTextAsset — true si le path est un fichier texte (HTML, CSS, JS, txt) qui
+// doit être passé par Personalize. Les fichiers binaires (png, ico, woff2, ttf,
+// jpg) retournent false → servis tels quels.
+func isTextAsset(p string) bool {
+	switch path.Ext(p) {
+	case ".html", ".css", ".js", ".txt":
+		return true
+	}
+	return false
+}
+
+// buildPortalConfig — construit le PortalConfig pour le compte propriétaire
+// du routeur, à partir du store. À appeler SOUS VERROU (lit db.SettingsByAccount,
+// db.WifiSites, db.JoinLinks, db.Profiles).
+//
+// Raisonnement sur la résolution des entités liées au routeur :
+//   - WifiSlug : on cherche le site WiFi jetable du compte qui est LIÉ à ce
+//     routeur (WifiSite.RouterID == router.ID) ET actif. Si plusieurs, on prend
+//     le 1er (ordre d'itération du store). Si aucun, on laisse vide — la page
+//     cachera le bloc WiFi offert via la config JSON.
+//   - JoinURL : on cherche le lien d'inscription publique du compte qui est
+//     LIÉ à ce routeur (JoinLink.RouterID == router.ID) ET actif (pas révoqué,
+//     pas expiré, pas épuisé). Si plusieurs, on prend le 1er. Si aucun, on
+//     laisse vide — la page cachera le bloc inscription.
+//   - Offers : on prend les profils du compte à prix > 0 (max 8, ordre
+//     d'itération), on construit le waveUrl pré-construit via le lien marchand
+//     Wave du tenant (si configuré).
+func buildPortalConfig(db *model.DB, router *model.Router, r *http.Request) hotpage.PortalConfig {
+	acc := router.AccountID
+	settings := ensureSettings(db, acc) // défauts si absent
+	cfg := hotpage.PortalConfig{
+		TenantName: settings.Tenant.Name,
+		APIBase:    agentBaseURL(r),
+		WaveLink:   settings.Tenant.WaveLink,
+		LogoURL:    settings.Tenant.LogoURL,
+	}
+	// WifiSlug — 1er site WiFi actif lié à ce routeur.
+	for i := range db.WifiSites {
+		s := &db.WifiSites[i]
+		if s.AccountID == acc && s.RouterID == router.ID && s.Active {
+			cfg.WifiSlug = s.Slug
+			// WifiURL — construit à partir de l'origine publique (frontend Vercel).
+			// Pour l'instant, on dérive du Host de la requête si c'est une origine
+			// connue (mikcloud.ftci.fr), sinon on laisse vide (la page utilisera
+			// l'APIBase pour construire le lien relatif /wifi/{slug}).
+			if origin := publicFrontendURL(r); origin != "" {
+				cfg.WifiURL = origin + "/wifi/" + s.Slug
+			}
+			break
+		}
+	}
+	// JoinURL — 1er lien d'inscription publique actif lié à ce routeur.
+	for i := range db.JoinLinks {
+		l := &db.JoinLinks[i]
+		if l.AccountID == acc && l.RouterID == router.ID && !l.Revoked && joinLinkActive(l) {
+			if origin := publicFrontendURL(r); origin != "" {
+				cfg.JoinURL = origin + "/join/" + l.Token
+			}
+			break
+		}
+	}
+	// Offers — profils à prix > 0 (max 8).
+	for i := range db.Profiles {
+		p := &db.Profiles[i]
+		if p.AccountID != acc || p.Price <= 0 {
+			continue
+		}
+		if len(cfg.Offers) >= 8 {
+			break
+		}
+		offer := hotpage.PortalOffer{
+			Name:        p.Name,
+			PriceFcfa:   p.Price,
+			ValidityMin: p.ValidityMinutes(),
+			DataQuotaMb: p.DataQuotaMb,
+		}
+		// WaveURL — deep-link Wave pré-construit : {waveLink}/amount/{priceFcfa}/
+		// (cf. handlers_subscription.go wavePayLink). Vide si le tenant n'a pas
+		// configuré son lien marchand Wave.
+		if settings.Tenant.WaveLink != "" {
+			offer.WaveURL = strings.TrimRight(settings.Tenant.WaveLink, "/") + "/amount/" + strconv.Itoa(p.Price) + "/"
+		}
+		cfg.Offers = append(cfg.Offers, offer)
+	}
+	return cfg
+}
+
+// joinLinkActive — true si le lien n'est ni révoqué, ni expiré, ni épuisé.
+// Reflète la logique de joinLinkState (handlers_join.go) sans la dépendance
+// au temps humain (on utilise model.NowISO).
+func joinLinkActive(l *model.JoinLink) bool {
+	if l.Revoked {
+		return false
+	}
+	if l.ExpiresAt != "" && l.ExpiresAt < model.NowISO() {
+		return false
+	}
+	if l.MaxUses > 0 && l.Uses >= l.MaxUses {
+		return false
+	}
+	return true
+}
+
+// publicFrontendURL — l'origine publique du frontend Vercel (pour construire
+// les URL /wifi/{slug} et /join/{token}). En production, le frontend est sur
+// mikcloud.ftci.fr, le backend sur mikcloud.onrender.com : ce sont DEUX hôtes
+// distincts. On dérive l'origine du frontend à partir de APP_PUBLIC_URL (env)
+// si défini, sinon de l'origine de la requête courante si elle semble être le
+// frontend (rare — les requêtes /portal/ viennent des routeurs, pas des
+// navigateurs), sinon on laisse vide (la page utilisera l'APIBase pour
+// construire les liens en relatif).
+func publicFrontendURL(r *http.Request) string {
+	if v := strings.TrimSpace(getEnv("APP_PUBLIC_URL")); v != "" {
+		return strings.TrimRight(v, "/")
+	}
+	// En l'absence d'APP_PUBLIC_URL, on ne peut pas deviner l'origine du
+	// frontend (Render ≠ Vercel). On retourne "" : la page devra utiliser
+	// l'APIBase (backend Render) pour construire les liens relatifs /wifi/{slug}
+	// et /join/{token} — le backend Render redirige ou proxie vers le frontend.
+	// C'est un compromis acceptable pour la phase initiale (N°35-b) ; le
+	// mécanisme sera affiné quand le portail hybride (N°35-c) aura besoin de
+	// liens absolus pour le QR code imprimé.
+	return ""
+}
+
+// getEnv — wrapper os.Getenv pour faciliter le mock en tests.
+func getEnv(key string) string {
+	return osGetEnv(key)
+}
+
+// osGetEnv — indirection pour permettre le mock en tests (sans dépendre de
+// os.Getenv directement, ce qui rendrait buildPortalConfig non testable).
+var osGetEnv = osGetEnvReal
+
+// osGetEnvReal — implémentation réelle de os.Getenv.
+func osGetEnvReal(key string) string {
+	return os.Getenv(key)
+}
+
+// contentTypeFor — Content-Type minimal pour les fichiers du portail.
 func contentTypeFor(p string) string {
 	switch path.Ext(p) {
 	case ".html":

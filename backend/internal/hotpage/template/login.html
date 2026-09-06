@@ -724,5 +724,13 @@
             }
         })();
     </script>
+    <!-- N°35-b — config MikCloud embarquée (portail hybride Cloud/Local).
+         Au déploiement, le backend substitue {{MIKCLOUD_CONFIG_JSON}} par la
+         config du compte (tenant, slug WiFi, lien join, offres, API base).
+         Au chargement côté client, la page peut fetch /api/wifi/site/{slug}/portal
+         pour récupérer une config FRAICHE (live) qui prime sur ce fallback inliné.
+         Le bloc reste inerte tant que la page ne le lit pas (N°35-c activera
+         la consommation hybride). -->
+    <script type="application/json" id="mikcloud-config">{{MIKCLOUD_CONFIG_JSON}}</script>
 </body>
 </html>

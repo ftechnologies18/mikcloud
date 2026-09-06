@@ -422,5 +422,11 @@
             }
         })();
     </script>
+    <!-- N°35-b — config MikCloud embarquée (portail hybride Cloud/Local).
+         Au déploiement, le backend substitue {{MIKCLOUD_CONFIG_JSON}} par la
+         config du compte (tenant, slug WiFi, lien join, offres, API base).
+         La page status lit ce bloc pour afficher le branding et les offres
+         upgrade (N°35-c activera la consommation). -->
+    <script type="application/json" id="mikcloud-config">{{MIKCLOUD_CONFIG_JSON}}</script>
 </body>
 </html>

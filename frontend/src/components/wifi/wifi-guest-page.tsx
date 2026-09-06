@@ -48,6 +48,17 @@ export function WifiGuestPage({ slug }: { slug: string }) {
   const [phone, setPhone] = useState("");
   const [optIn, setOptIn] = useState(true);
   const [claiming, setClaiming] = useState(false);
+  // N°50 — honeypot « website » : champ invisible, jamais rempli par un
+  // humain ; si un bot le remplit, l'API répond un succès factice.
+  const [honeypot, setHoneypot] = useState("");
+  // N°50 — MAC de l'appareil si l'URL vient du portail du routeur
+  // (/wifi/{slug}?mac=$(mac-esc)) : transmise au claim, elle alimente le
+  // plafond anti-abus par appareil. Lecture client-only (pas de
+  // useSearchParams — évite la boundary Suspense en pré-rendu) : la MAC est
+  // un durcissement, pas une exigence (vide = plafonds téléphone/site).
+  const [mac] = useState(() =>
+    typeof window === "undefined" ? "" : (new URLSearchParams(window.location.search).get("mac") ?? ""),
+  );
 
   const [code, setCode] = useState("");
   const [loginUrl, setLoginUrl] = useState("");
@@ -128,7 +139,12 @@ export function WifiGuestPage({ slug }: { slug: string }) {
     }
     setClaiming(true);
     try {
-      const res = await claimWifiCode(slug, { phone: digits, optIn });
+      const res = await claimWifiCode(slug, {
+        phone: digits,
+        optIn,
+        mac: mac || undefined,
+        website: honeypot || undefined,
+      });
       remember(digits);
       setCode(res.code);
       setLoginUrl(res.loginUrl);
@@ -299,39 +315,54 @@ export function WifiGuestPage({ slug }: { slug: string }) {
           </Card>
         </motion.div>
       ) : exhausted ? (
-        // ─── Bascule 1 clic : quota épuisé → offres payantes ───
+        // ─── N°52 — Écran « épuisé » contextuel : avec un catalogue payant
+        // (commercial/hybride) on bascule vers l'upsell 1 clic ; sans
+        // catalogue (hospitalité : hôtel, maquis, café — le WiFi offert
+        // fidélise, il ne se vend pas) on reste neutre et chaleureux.
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
           <Card className="border-white/10 bg-white/95">
             <CardContent className="space-y-4 p-6 text-center">
               <p className="text-base font-semibold">Quota offert épuisé</p>
-              <p className="text-sm text-muted-foreground">
-                Votre WiFi gratuit du jour est terminé. Passez à une offre payante :
-              </p>
-              <div className="space-y-2">
-                {(offers ?? []).map((o) => (
-                  <div
-                    key={o.id}
-                    className="flex items-center justify-between rounded-xl border bg-muted/40 p-3 text-left"
-                  >
-                    <div>
-                      <p className="font-semibold">{o.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {o.validityMinutes >= 1440
-                          ? `${Math.round(o.validityMinutes / 1440)} j`
-                          : `${Math.round(o.validityMinutes / 60)} h`}
-                        {o.dataQuotaMb > 0 ? ` · ${o.dataQuotaMb} Mo` : ""}
-                      </p>
-                    </div>
-                    <p className="text-lg font-black text-emerald-700">{FCFA(o.price)}</p>
+              {(offers ?? []).length > 0 ? (
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    Votre WiFi gratuit du jour est terminé. Passez à une offre payante :
+                  </p>
+                  <div className="space-y-2">
+                    {offers.map((o) => (
+                      <div
+                        key={o.id}
+                        className="flex items-center justify-between rounded-xl border bg-muted/40 p-3 text-left"
+                      >
+                        <div>
+                          <p className="font-semibold">{o.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {o.validityMinutes >= 1440
+                              ? `${Math.round(o.validityMinutes / 1440)} j`
+                              : `${Math.round(o.validityMinutes / 60)} h`}
+                            {o.dataQuotaMb > 0 ? ` · ${o.dataQuotaMb} Mo` : ""}
+                          </p>
+                        </div>
+                        <p className="text-lg font-black text-emerald-700">{FCFA(o.price)}</p>
+                      </div>
+                    ))}
                   </div>
-                ))}
-                {(!offers || offers.length === 0) && (
-                  <p className="text-sm text-muted-foreground">Demandez les tarifs au comptoir.</p>
-                )}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Achetez votre ticket au comptoir, puis connectez-vous avec le code reçu.
-              </p>
+                  <p className="text-xs text-muted-foreground">
+                    Achetez votre ticket au comptoir, puis connectez-vous avec le code reçu.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    Votre WiFi gratuit du jour est terminé. Revenez demain ou demandez au
+                    personnel.
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Un nouveau code gratuit vous attendra à votre prochaine visite — merci de
+                    votre fidélité.
+                  </p>
+                </>
+              )}
             </CardContent>
           </Card>
         </motion.div>
@@ -341,6 +372,21 @@ export function WifiGuestPage({ slug }: { slug: string }) {
           <Card className="border-white/10 bg-white/95">
             <CardContent className="p-6">
               <form className="space-y-4" onSubmit={onClaim}>
+                {/*
+                  N°50 — honeypot anti-bot : champ hors écran (absolute),
+                  non tabulable (tabIndex -1) et ignoré par les lecteurs
+                  d'écran (aria-hidden). Aucun impact visuel ni d'accessibilité.
+                */}
+                <input
+                  type="text"
+                  name="website"
+                  value={honeypot}
+                  onChange={(e) => setHoneypot(e.target.value)}
+                  tabIndex={-1}
+                  autoComplete="off"
+                  aria-hidden="true"
+                  className="absolute -left-[9999px] h-0 w-0 opacity-0"
+                />
                 <div className="space-y-1.5">
                   <Label htmlFor="wifi-phone">Votre numéro de téléphone</Label>
                   <Input

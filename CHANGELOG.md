@@ -36,6 +36,80 @@ la CI puis se déploie automatiquement (frontend Vercel, backend Render).
   comportement historique, le fetch live corrige) ; RETIRÉE (idempotent) si
   `active === false` ou slug vide. Le retrait est sans re-déploiement : la
   config live transporte l'état à chaque visite.
+## 2026-09-06 — N°52 : messages d'épuisement contextuels (upsell commercial ou ton neutre hospitalité)
+
+### N°52 — MikCloud ne présuppose plus que l'établissement VEND du WiFi
+- **Constat** : les refus de claim (`phone_cap`, `device_cap`) se terminaient
+  TOUJOURS par « passez à une offre payante » — un copywriting pensé pour la
+  vente de tickets. Or MikCloud sert deux usages : la vente (camps, bars,
+  événements payants) ET l'offre gratuite de fidélisation (hôtels, maquis,
+  cafés-glaciers, salons de coiffure, espaces événementiels) où le WiFi offert
+  retient le client au lieu de se vendre. Pousser une « offre payante »
+  inexistante décrédibilise l'écran ET l'établissement — et rétrécit notre
+  clientèle potentielle et nos arguments de vente.
+- **Détection automatique, zéro config, zéro migration** : le signal est le
+  catalogue — `wifiOffers(db, site)` (profils du compte à prix > 0), le même
+  signal que l'écran « épuisé » de la page /wifi utilise déjà. Catalogue
+  présent → mode commercial (upsell) ; catalogue vide → mode hospitalité
+  (neutre).
+- **Backend (`handleWifiClaim`)** — suffixe `capSuffix` calculé une fois sous
+  verrou : « — passez à une offre payante » (commercial) vs « — demandez au
+  personnel ou revenez demain » (hospitalité), appliqué aux 429 `device_cap`
+  et `phone_cap`. `site_cap` était déjà neutre, inchangé. Le portail captif
+  (`login.html`) affiche `data.error` tel quel : il hérite du bon ton sans
+  modification.
+- **Frontend (`wifi-guest-page.tsx`)** — l'écran « Quota offert épuisé » se
+  dédouble : avec catalogue, upsell 1 clic inchangé (liste des offres +
+  « Achetez votre ticket au comptoir ») ; sans catalogue, message chaleureux
+  (« Revenez demain ou demandez au personnel » + « Un nouveau code gratuit
+  vous attendra à votre prochaine visite — merci de votre fidélité »).
+- **Honeypot/plafonds inchangés** : N°50 continue de filtrer bots et rotation
+  d'appareils — seul le TON du refus s'adapte, la sécurité reste identique.
+- **Tests** : suite API verte (`go test ./internal/api/`), `go vet` propre,
+  ESLint frontend vert. Aucun test n'assertait les textes (seuls les codes
+  machine sont contractuels).
+
+## 2026-09-06 — N°50 : WiFi jetable — garde-fous anti-abus (plafond appareil + honeypot + quota anti-fermage IP)
+
+### N°50 — le gratuit reste un cadeau, pas un gisement à miner
+- **Constat** : le WiFi jetable distribuait des tickets gratuits sur la seule
+  foi d'un numéro autodéclaré. Un visiteur motivé pouvait taper des numéros
+  différents pour multiplier les codes (jusqu'au budget journalier du site),
+  et un fermier pouvait automatiser le claim depuis une même IP.
+- **Plafond par appareil (MAC)** — la leçon N°33 étendue au claim : derrière
+  le NAT du hotspot tous les clients partagent la MÊME IP publique, la MAC
+  est la seule clé qui isole réellement un appareil. `WifiSite.DailyPerMac`
+  (1–10, défaut 1, console) borne les tickets / appareil / jour sur les
+  claims du PORTAIL (qui injecte `$(mac-esc)` dans le POST) ; la page
+  /wifi scannée hors portail ne fournit pas de MAC (plafonds existants
+  inchangés). L'idempotence téléphone PRIME : le re-claim du même numéro
+  renvoie toujours le même code, plafond atteint ou non — un visiteur
+  légitime n'est jamais puni. Réponse machine `429 device_cap`.
+- **Honeypot « website »** — même contrat que le formulaire d'inscription :
+  champ invisible (hors écran, non tabulable, aria-hidden) sur la page
+  /wifi ET sur le formulaire de claim inline du portail ; un bot qui le
+  remplit reçoit un succès FACTICE (même forme JSON, code aléatoire jamais
+  créé) — rien n'est émis, rien n'est enregistré, aucun indice sur le
+  filtre. Placé APRÈS résolution site/profil (quotas plausibles), AVANT
+  toute écriture.
+- **Quota anti-fermage par IP** — `signupLimiter` paramétrable
+  (`newSignupLimiterLimits`) : le claim WiFi obtient son propre limiter
+  (20/10 min + 100/24 h par IP, NAT-friendly : un établissement entier
+  partage une IP) consommé par TOUTE tentative. Un attaquant qui tourne sur
+  des numéros falsifiés est coupé avant toute création de voucher.
+- **Traçabilité gérant** : `WifiGuest.Mac` (+ normalisée
+  `normalizeJoinMac`) et `WifiGuest.IP` (premier hop XFF) stockées à
+  l'émission — audit anti-abus dans le registre + colonnes « appareil » et
+  « ip » de l'export CSV. Migration boot `ALTER TABLE ... ADD COLUMN IF NOT
+  EXISTS` (mécanique N°47/N°49) : `wifi_sites.daily_per_mac`,
+  `wifi_guests.mac`, `wifi_guests.ip`.
+- **Backend** : handlers claim/create/update ; validations (DailyPerMac
+  1–10) ; messages d'audit étendus. **Frontend** : champ console « Tickets
+  max / appareil / jour » (+hint), types, i18n fr+en. **Portail** : claim
+  inline envoie `mac` + `website`. **Tests** : TestWifiClaimHoneypot
+  (succès factice sans écriture, puis claim honnête OK),
+  TestWifiClaimDeviceCap (plafond, idempotence prioritaire, claims sans
+  MAC / MAC invalide, empreintes tracées). Suite backend 12/12.
 
 ## 2026-09-06 — N°49-b : affiche à QR unique (l'ancien QR « page web » quitte l'affiche)
 

@@ -1433,6 +1433,8 @@ export interface WifiSite {
   freeDataMb: number;
   marketingOptIn: boolean;
   dailyPerPhone: number;
+  /** N°50 — tickets max / appareil (MAC) / jour (claim portail ; vide = page /wifi). */
+  dailyPerMac: number;
   dailyCap: number;
   /** N°49 — SSID du réseau du hotspot (QR de connexion de l'affiche, vide = désactivé). */
   wifiSsid: string;
@@ -1454,6 +1456,9 @@ export interface WifiGuest {
   code: string;
   day: string;
   createdAt: string;
+  /** N°50 — empreintes anti-abus : MAC du claim portail + IP client (audit gérant). */
+  mac?: string;
+  ip?: string;
 }
 
 /** GET /api/wifi/sites — liste + statistiques du jour. */
@@ -1472,6 +1477,8 @@ export interface WifiSitePayload {
   freeDataMb: number;
   marketingOptIn: boolean;
   dailyPerPhone: number;
+  /** N°50 — tickets max / appareil (MAC) / jour (1–10 ; sert au claim du portail). */
+  dailyPerMac: number;
   dailyCap: number;
   /** N°49 — SSID du réseau (≤ 32 car. 802.11) pour le QR de connexion. */
   wifiSsid: string;

@@ -606,6 +606,7 @@ func (p *PG) ensureSchema() error {
                         free_data_mb  BIGINT NOT NULL DEFAULT 0,
                         marketing_opt_in BOOLEAN NOT NULL DEFAULT FALSE,
                         daily_per_phone INTEGER NOT NULL DEFAULT 1,
+                        daily_per_mac   INTEGER NOT NULL DEFAULT 1,
                         daily_cap       INTEGER NOT NULL DEFAULT 100,
                         active    BOOLEAN NOT NULL DEFAULT FALSE,
                         created_at TEXT NOT NULL DEFAULT ''
@@ -623,7 +624,9 @@ func (p *PG) ensureSchema() error {
                         code       TEXT NOT NULL DEFAULT '',
                         day        TEXT NOT NULL DEFAULT '',
                         created_at TEXT NOT NULL DEFAULT '',
-                        claim_cmd_id TEXT NOT NULL DEFAULT ''
+                        claim_cmd_id TEXT NOT NULL DEFAULT '',
+                        mac        TEXT NOT NULL DEFAULT '',
+                        ip         TEXT NOT NULL DEFAULT ''
                 )`,
 		`CREATE INDEX IF NOT EXISTS idx_wifi_guests_account ON wifi_guests (account_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_wifi_guests_site   ON wifi_guests (site_id)`,
@@ -635,6 +638,12 @@ func (p *PG) ensureSchema() error {
 		// update_failed constaté sur f85629e). Idempotent, sans risque pour le
 		// code antérieur (listes de colonnes explicites).
 		`ALTER TABLE wifi_guests ADD COLUMN IF NOT EXISTS claim_cmd_id TEXT NOT NULL DEFAULT ''`,
+		// N°50 — garde-fous anti-abus WiFi jetable : plafond par appareil sur
+		// les sites, empreintes MAC/IP sur le registre. Même mécanique que
+		// N°47/N°49 : les tables pré-existantes ont besoin de l'ALTER.
+		`ALTER TABLE wifi_sites ADD COLUMN IF NOT EXISTS daily_per_mac INTEGER NOT NULL DEFAULT 1`,
+		`ALTER TABLE wifi_guests ADD COLUMN IF NOT EXISTS mac TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE wifi_guests ADD COLUMN IF NOT EXISTS ip TEXT NOT NULL DEFAULT ''`,
 		// N°49 — QR de connexion WiFi : SSID (+ mot de passe WPA
 		// optionnel) du réseau du hotspot, encodés dans l'affiche
 		// imprimable (format universel WIFI:). Même mécanique que
@@ -1647,20 +1656,20 @@ var billingRequestSpec = entitySpec[model.BillingRequest]{
 // wifiSiteSpec — N°28 : sites WiFi jetables (slug unique global).
 var wifiSiteSpec = entitySpec[model.WifiSite]{
 	table: "wifi_sites",
-	cols:  []string{"id", "account_id", "name", "slug", "router_id", "router_name", "profile_id", "profile_name", "free_time_min", "free_data_mb", "marketing_opt_in", "daily_per_phone", "daily_cap", "wifi_ssid", "wifi_password", "active", "created_at"},
+	cols:  []string{"id", "account_id", "name", "slug", "router_id", "router_name", "profile_id", "profile_name", "free_time_min", "free_data_mb", "marketing_opt_in", "daily_per_phone", "daily_per_mac", "daily_cap", "wifi_ssid", "wifi_password", "active", "created_at"},
 	idOf:  func(x *model.WifiSite) string { return x.ID },
 	scan: func(r *sql.Rows) (model.WifiSite, error) {
 		var x model.WifiSite
 		err := r.Scan(&x.ID, &x.AccountID, &x.Name, &x.Slug, &x.RouterID, &x.RouterName,
 			&x.ProfileID, &x.ProfileName, &x.FreeTimeMin, &x.FreeDataMb,
-			&x.MarketingOptIn, &x.DailyPerPhone, &x.DailyCap,
+			&x.MarketingOptIn, &x.DailyPerPhone, &x.DailyPerMac, &x.DailyCap,
 			&x.WifiSSID, &x.WifiPassword, &x.Active, &x.CreatedAt)
 		return x, err
 	},
 	args: func(x *model.WifiSite) []any {
 		return []any{x.ID, x.AccountID, x.Name, x.Slug, x.RouterID, x.RouterName,
 			x.ProfileID, x.ProfileName, x.FreeTimeMin, x.FreeDataMb,
-			x.MarketingOptIn, x.DailyPerPhone, x.DailyCap,
+			x.MarketingOptIn, x.DailyPerPhone, x.DailyPerMac, x.DailyCap,
 			x.WifiSSID, x.WifiPassword, x.Active, x.CreatedAt}
 	},
 	hashOf: hashEntity[model.WifiSite],
@@ -1669,17 +1678,17 @@ var wifiSiteSpec = entitySpec[model.WifiSite]{
 // wifiGuestSpec — N°28 : registre marketing/anti-abus des visiteurs WiFi.
 var wifiGuestSpec = entitySpec[model.WifiGuest]{
 	table: "wifi_guests",
-	cols:  []string{"id", "account_id", "site_id", "site_name", "phone", "opt_in", "voucher_id", "code", "day", "created_at", "claim_cmd_id"},
+	cols:  []string{"id", "account_id", "site_id", "site_name", "phone", "opt_in", "voucher_id", "code", "day", "created_at", "claim_cmd_id", "mac", "ip"},
 	idOf:  func(x *model.WifiGuest) string { return x.ID },
 	scan: func(r *sql.Rows) (model.WifiGuest, error) {
 		var x model.WifiGuest
 		err := r.Scan(&x.ID, &x.AccountID, &x.SiteID, &x.SiteName, &x.Phone, &x.OptIn,
-			&x.VoucherID, &x.Code, &x.Day, &x.CreatedAt, &x.ClaimCmdID)
+			&x.VoucherID, &x.Code, &x.Day, &x.CreatedAt, &x.ClaimCmdID, &x.Mac, &x.IP)
 		return x, err
 	},
 	args: func(x *model.WifiGuest) []any {
 		return []any{x.ID, x.AccountID, x.SiteID, x.SiteName, x.Phone, x.OptIn,
-			x.VoucherID, x.Code, x.Day, x.CreatedAt, x.ClaimCmdID}
+			x.VoucherID, x.Code, x.Day, x.CreatedAt, x.ClaimCmdID, x.Mac, x.IP}
 	},
 	hashOf: hashEntity[model.WifiGuest],
 }

@@ -981,6 +981,46 @@ inter-comptes, sweep 30 j).
 
 ---
 
+## N°50 — WiFi jetable : garde-fous anti-abus du claim (appareil + honeypot + IP)
+
+### Modèle (ajouts)
+```go
+WifiSite.DailyPerMac int    // N°50 — tickets max / appareil (MAC) / jour (1–10, défaut 1)
+WifiGuest.Mac string        // N°50 — MAC normalisée du claim portail (audit + plafond)
+WifiGuest.IP string         // N°50 — IP client (premier hop XFF, audit)
+```
+Migration boot idempotente : `wifi_sites.daily_per_mac INTEGER NOT NULL DEFAULT 1`,
+`wifi_guests.mac TEXT`, `wifi_guests.ip TEXT` (mécanique N°47/N°49).
+
+### Règles du claim (POST /api/wifi/site/{slug}/claim)
+1. **Quota anti-fermage IP** (limiter dédié, NAT-friendly : 20/10 min +
+   100/24 h, `newSignupLimiterLimits`) — consommé par toute tentative ;
+   429 + `Retry-After` au seuil.
+2. **Honeypot `website`** — champ invisible (page /wifi ET formulaire inline
+   du portail) : rempli ⇒ succès FACTICE 200 (même forme JSON, code
+   aléatoire jamais créé, aucune écriture) — aucun indice sur le filtre.
+3. **Plafond par appareil** — `mac` (normalisée via `normalizeJoinMac`,
+   injectée par le portail `$(mac-esc)`) : comptée sur le registre du jour
+   du site ; `>= DailyPerMac` ⇒ 429 `device_cap`. Positionné APRÈS
+   l'idempotence téléphone (le re-claim du même numéro renvoie le même
+   code, plafond atteint ou non) et AVANT `phone_cap`. Claims sans MAC
+   (page /wifi scannée hors portail) ou MAC invalide : plafond ignoré.
+4. Plafonds métier inchangés : `phone_cap` (téléphone/jour) puis
+   `site_cap` (budget site/jour).
+5. Empreintes `Mac`/`IP` stockées dans `WifiGuest` + colonnes
+   « appareil »/« ip » de l'export CSV (audit gérant).
+
+### Payload console (create/update site)
+`dailyPerMac` (int 1–10, 0 ⇒ 1). Champs UI : « Tickets max / appareil /
+jour » + hint (i18n fr/en). Registre JSON : `mac`/`ip` optionnels (vides
+pour les lignes antérieures au N°50).
+
+**Tests** : `TestWifiClaimHoneypot` (succès factice sans écriture puis
+claim honnête OK), `TestWifiClaimDeviceCap` (plafond 429 `device_cap`,
+idempotence prioritaire, sans MAC / MAC invalide, empreintes tracées).
+
+---
+
 ## N°29 — Walled-garden d'inscription publique automatisé par l'agent (runbook N°27-D)
 
 Objectif : le scan du QR `/join/{token}` fonctionne depuis le WiFi du hotspot SANS

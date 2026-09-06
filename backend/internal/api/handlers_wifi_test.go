@@ -747,3 +747,113 @@ func TestWifiPortalClaimDynamicN51(t *testing.T) {
 		t.Fatalf("portal site supprimé : statut %d, voulu 404", status)
 	}
 }
+
+// TestWifiClaimHoneypot — N°50 : un bot qui remplit le champ caché « website »
+// reçoit un succès FACTICE (même forme JSON, code plausible) mais AUCUN ticket
+// ni entrée de registre n'est créé ; un vrai client (champ vide) obtient
+// normalement son code juste après.
+func TestWifiClaimHoneypot(t *testing.T) {
+	ts, st := newWifiTestServer(t)
+	_, accID, _ := registerAccount(t, ts, "gerant-wifi-honey", "")
+	routerID, profileID := seedWifiEnv(t, st, accID)
+	seedWifiSite(t, st, accID, "maquis-honey", routerID, profileID, true, 1, 100)
+
+	status, out := doJSON(t, ts, "POST", "/api/wifi/site/maquis-honey/claim", "", map[string]any{
+		"phone": "2250707123456", "optIn": true, "website": "http://spam.example",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("honeypot : statut %d, voulu 200 (succès factice indiscernable), corps %v", status, out)
+	}
+	if c, _ := out["code"].(string); len(c) != 5 {
+		t.Fatalf("code factice plausible attendu (5 caractères), reçu %v", out["code"])
+	}
+	if _, ok := out["loginUrl"]; !ok {
+		t.Fatal("la réponse factice doit porter un loginUrl comme une vraie émission")
+	}
+
+	// Rien n'a été créé : ni voucher, ni lot, ni entrée de registre.
+	st.Lock()
+	if n := len(st.Data().HotspotUsers); n != 0 {
+		st.Unlock()
+		t.Fatalf("honeypot a créé %d voucher(s) — interdit", n)
+	}
+	if n := len(st.Data().WifiGuests); n != 0 {
+		st.Unlock()
+		t.Fatalf("honeypot a créé %d entrée(s) de registre — interdit", n)
+	}
+	st.Unlock()
+
+	// Un vrai client (champ caché vide) obtient bien son ticket.
+	if status, out = doJSON(t, ts, "POST", "/api/wifi/site/maquis-honey/claim", "", map[string]any{
+		"phone": "2250707123456", "optIn": true,
+	}); status != http.StatusOK {
+		t.Fatalf("claim honnête après honeypot : statut %d, corps %v", status, out)
+	}
+	if dup, _ := out["duplicate"].(bool); dup {
+		t.Fatal("le claim honnête ne doit pas être marqué duplicata")
+	}
+}
+
+// TestWifiClaimDeviceCap — N°50 : au plus DailyPerMac tickets par appareil
+// (MAC) et par jour, sur les seuls claims qui la fournissent (portail) ;
+// l'idempotence téléphone PRIME sur le plafond ; les empreintes mac/ip sont
+// tracées dans le registre ; une MAC invalide est ignorée.
+func TestWifiClaimDeviceCap(t *testing.T) {
+	ts, st := newWifiTestServer(t)
+	_, accID, _ := registerAccount(t, ts, "gerant-wifi-mac", "")
+	routerID, profileID := seedWifiEnv(t, st, accID)
+	seedWifiSite(t, st, accID, "salon-mac", routerID, profileID, true, 10, 100)
+
+	claim := func(phone, mac string) (int, map[string]any) {
+		body := map[string]any{"phone": phone, "optIn": false}
+		if mac != "" {
+			body["mac"] = mac
+		}
+		return doJSON(t, ts, "POST", "/api/wifi/site/salon-mac/claim", "", body)
+	}
+
+	// 1er claim du portail (MAC incluse) : OK, empreintes tracées.
+	if status, out := claim("2250707010101", "AA:BB:CC-DD-EE-FF"); status != http.StatusOK {
+		t.Fatalf("claim 1 : statut %d, corps %v", status, out)
+	}
+	st.Lock()
+	empreintOK := false
+	for _, g := range st.Data().WifiGuests {
+		if g.Mac == "AA:BB:CC:DD:EE:FF" && g.IP != "" {
+			empreintOK = true
+		}
+	}
+	st.Unlock()
+	if !empreintOK {
+		t.Fatal("empreintes mac (normalisée) et ip absentes du registre")
+	}
+
+	// Même appareil, AUTRE numéro → 429 device_cap (perMac=1).
+	status, out := claim("2250707020202", "AA:BB:CC-DD-EE-FF")
+	if status != http.StatusTooManyRequests {
+		t.Fatalf("plafond appareil : statut %d, voulu 429 (corps %v)", status, out)
+	}
+	if code, _ := out["code"].(string); code != "device_cap" {
+		t.Fatalf("code machine attendu device_cap, reçu %v", out["code"])
+	}
+
+	// Idempotence : re-claim du MÊME téléphone (même MAC) ⇒ même code,
+	// même plafond atteint — le visiteur légitime n'est jamais puni.
+	status, out = claim("2250707010101", "AA:BB:CC-DD-EE-FF")
+	if status != http.StatusOK {
+		t.Fatalf("re-claim idempotent après device_cap : statut %d", status)
+	}
+	if dup, _ := out["duplicate"].(bool); !dup {
+		t.Fatal("le re-claim du même téléphone doit rester idempotent")
+	}
+
+	// La page /wifi (sans MAC — scan hors portail) n'est pas affectée.
+	if status, _ = claim("2250707030303", ""); status != http.StatusOK {
+		t.Fatalf("claim sans MAC : statut %d, voulu 200", status)
+	}
+
+	// MAC invalide → ignorée (comportement identique à sans MAC).
+	if status, _ = claim("2250707040404", "zz:invalide"); status != http.StatusOK {
+		t.Fatalf("claim MAC invalide : statut %d, voulu 200", status)
+	}
+}

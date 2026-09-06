@@ -763,10 +763,22 @@ export default function SellShell() {
   // (l'effet re-court à chaque page arrivée jusqu'à hasMore=false — borné).
   // Sans ça, « Aucun ticket ne correspond » pourrait mentir sur un stock
   // partiellement chargé : l'invariant R3 de recherche exhaustive prime.
+  // N°39 — l'effet peut se figer si le fetchNextPage est avalé par un
+  // refetch concurrent du même queryKey (race TanStack Query v5 : la réponse
+  // de la page suivante est jetée quand le refetch réinitialise `pages`,
+  // isFetchingNextPage repasse false sans re-rendu intermédiaire → aucune
+  // dep ne change → plus jamais re-couru ; symptomatique E2E 08:15 :
+  // offset=60 reçu en 200 mais « Aucun ticket ne correspond » affiché).
+  // Garde temporisée : tant que l'invariant est insatisfait (recherche
+  // active + pages restantes), une tentative est relancée toutes les 300 ms
+  // dès que la query est oisive — l'appel est idempotent côté serveur et
+  // borné par le nombre de pages du stock.
   useEffect(() => {
-    if (searching && hasNextPage && !isFetchingNextPage) {
-      void fetchNextPage();
-    }
+    if (!searching || !hasNextPage) return;
+    const id = setInterval(() => {
+      if (!isFetchingNextPage) void fetchNextPage();
+    }, 300);
+    return () => clearInterval(id);
   }, [searching, hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   const currency = me?.currency || "FCFA";

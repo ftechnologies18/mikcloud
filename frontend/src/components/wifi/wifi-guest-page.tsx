@@ -48,6 +48,17 @@ export function WifiGuestPage({ slug }: { slug: string }) {
   const [phone, setPhone] = useState("");
   const [optIn, setOptIn] = useState(true);
   const [claiming, setClaiming] = useState(false);
+  // N°50 — honeypot « website » : champ invisible, jamais rempli par un
+  // humain ; si un bot le remplit, l'API répond un succès factice.
+  const [honeypot, setHoneypot] = useState("");
+  // N°50 — MAC de l'appareil si l'URL vient du portail du routeur
+  // (/wifi/{slug}?mac=$(mac-esc)) : transmise au claim, elle alimente le
+  // plafond anti-abus par appareil. Lecture client-only (pas de
+  // useSearchParams — évite la boundary Suspense en pré-rendu) : la MAC est
+  // un durcissement, pas une exigence (vide = plafonds téléphone/site).
+  const [mac] = useState(() =>
+    typeof window === "undefined" ? "" : (new URLSearchParams(window.location.search).get("mac") ?? ""),
+  );
 
   const [code, setCode] = useState("");
   const [loginUrl, setLoginUrl] = useState("");
@@ -128,7 +139,12 @@ export function WifiGuestPage({ slug }: { slug: string }) {
     }
     setClaiming(true);
     try {
-      const res = await claimWifiCode(slug, { phone: digits, optIn });
+      const res = await claimWifiCode(slug, {
+        phone: digits,
+        optIn,
+        mac: mac || undefined,
+        website: honeypot || undefined,
+      });
       remember(digits);
       setCode(res.code);
       setLoginUrl(res.loginUrl);
@@ -341,6 +357,21 @@ export function WifiGuestPage({ slug }: { slug: string }) {
           <Card className="border-white/10 bg-white/95">
             <CardContent className="p-6">
               <form className="space-y-4" onSubmit={onClaim}>
+                {/*
+                  N°50 — honeypot anti-bot : champ hors écran (absolute),
+                  non tabulable (tabIndex -1) et ignoré par les lecteurs
+                  d'écran (aria-hidden). Aucun impact visuel ni d'accessibilité.
+                */}
+                <input
+                  type="text"
+                  name="website"
+                  value={honeypot}
+                  onChange={(e) => setHoneypot(e.target.value)}
+                  tabIndex={-1}
+                  autoComplete="off"
+                  aria-hidden="true"
+                  className="absolute -left-[9999px] h-0 w-0 opacity-0"
+                />
                 <div className="space-y-1.5">
                   <Label htmlFor="wifi-phone">Votre numéro de téléphone</Label>
                   <Input

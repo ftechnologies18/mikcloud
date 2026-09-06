@@ -344,7 +344,11 @@ Pour que les routeurs récupèrent le nouveau template :
 - **`html-directory` manuel one-shot** : ne peut pas être automatisé sans
   risque (multi-profils hotspot possibles sur un même routeur). Documenté
   dans ce runbook.
-- **Pas de quota MAC côté WiFi Jetable** (cf. audit C2) : le claim inline
-  utilise `DailyPerPhone` + `DailyCap` + rate-limit IP. Le quota MAC N°33
-  n'est actif que pour l'inscription publique (via le bouton
-  « S'inscrire » qui injecte `?mac=$(mac-esc)`).
+- **Quota MAC côté WiFi Jetable — RÉSOLU N°50** (ancien audit C2) : le
+  claim (page /wifi ET formulaire inline du portail) envoie désormais la
+  MAC de l'appareil — plafond `DailyPerMac` / appareil / jour (console,
+  défaut 1), honeypot « website » (succès factice) et quota anti-fermage
+  IP (20/10 min + 100/24 h). La page /wifi scannée hors portail reste sans
+  MAC (plafonds téléphone/site actifs) ; l'idempotence téléphone prime
+  toujours sur le plafond appareil. Audit : colonnes « appareil »/« ip »
+  dans l'export CSV du registre.

@@ -17,7 +17,9 @@
 // Garde-fous anti-abus : rate-limit IP (cf. main.go), plafond par
 // téléphone/jour (idempotence : re-claim ⇒ MÊME code), plafond site/jour
 // (budget gratuit du gérant), garde abonnement (compte expiré → émission
-// refusée 402). Registre marketing : WifiGuest (opt-in explicite, export CSV
+// refusée 402) — N°50 : honeypot « website » (succès factice), quota
+// anti-fermage par IP (20/10 min + 100/24 h) et plafond par appareil (MAC)
+// journalier, empreintes MAC/IP tracées dans le registre. Registre marketing : WifiGuest (opt-in explicite, export CSV
 // console, loi ivoirienne n°2013-450 / ARTCI-CIL : consentement et finalité
 // affichés, suppression à la demande via DELETE du site).
 package api
@@ -25,6 +27,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -201,9 +204,25 @@ func (a *API) handleWifiClaim(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Phone string `json:"phone"`
 		OptIn bool   `json:"optIn"`
+		// N°50 — durcissement anti-abus : honeypot « website » (champ
+		// invisible du formulaire, jamais rendu visible) et MAC de
+		// l'appareil (injectée par le portail via $(mac-esc) ; la page
+		// /wifi scannée hors portail ne peut pas la fournir — vide OK).
+		Website string `json:"website"`
+		Mac     string `json:"mac"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
+		return
+	}
+	// N°50 — quota anti-fermage par IP (20/10 min, 100/24 h) : consommé par
+	// TOUTE tentative (succès comme échec de validation, mimant le contrat
+	// join/signup). Borne le volume depuis une même IP avant toute création
+	// de voucher — les plafonds métier journaliers (téléphone/MAC/site)
+	// restent la seconde ligne de défense.
+	if ok, retry := a.wifiClaim.allow(clientIP(r)); !ok {
+		w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())+1))
+		writeErr(w, http.StatusTooManyRequests, "Trop de tentatives — réessayez plus tard")
 		return
 	}
 	phone := model.NormalizeWifiPhone(req.Phone)
@@ -211,6 +230,11 @@ func (a *API) handleWifiClaim(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Numéro de téléphone invalide (8 à 15 chiffres, indicatif inclus)")
 		return
 	}
+	// N°50 — MAC de l'appareil (claim portail : $(mac-esc) injecté par le
+	// routeur) normalisée comme au formulaire d'inscription ; IP client du
+	// claim (déjà consommée par le limiteur) tracée pour l'audit du gérant.
+	mac := normalizeJoinMac(req.Mac)
+	ip := clientIP(r)
 
 	a.store.Lock()
 	db := a.store.Data()
@@ -247,6 +271,31 @@ func (a *API) handleWifiClaim(w http.ResponseWriter, r *http.Request) {
 	routerCopy := *router
 	profileCopy := *profile
 	settings := ensureSettings(db, site.AccountID)
+	// N°50 — honeypot : un bot qui a rempli le champ caché reçoit un succès
+	// FACTICE (même forme JSON qu'une vraie émission, code aléatoire jamais
+	// créé côté routeur) — rien n'est émis, rien n'est enregistré, et le bot
+	// ne reçoit AUCUN indice sur le filtre (même contrat que le formulaire
+	// d'inscription). Placé APRÈS la résolution site/profil pour refléter
+	// des quotas plausibles, AVANT toute écriture.
+	if strings.TrimSpace(req.Website) != "" {
+		// Tout est lu SOUS verrou (jamais de lecture de db après Unlock) ;
+		// seul l'écrit de la réponse est relâché.
+		fake := model.RandomCodeFrom(5, "")
+		fakeTime, fakeData := wifiQuotaResp(site, profile)
+		fakeURL := wifiLoginURL(wifiLoginBase(db, site), fake)
+		a.store.Unlock()
+		writeJSON(w, http.StatusOK, map[string]any{
+			"duplicate":     false,
+			"waitForRouter": false,
+			"code":          fake,
+			"loginUrl":      fakeURL,
+			"timeLimitMin":  fakeTime,
+			"dataQuotaMb":   fakeData,
+			"profileName":   profileCopy.Name,
+			"siteName":      site.Name,
+		})
+		return
+	}
 	now := time.Now().UTC()
 	dayKey := model.WifiDayKey(settings.Tenant.Timezone, now)
 
@@ -254,6 +303,7 @@ func (a *API) handleWifiClaim(w http.ResponseWriter, r *http.Request) {
 	// et des plafonds.
 	today := []model.WifiGuest{}
 	siteToday := 0
+	macToday := 0 // N°50 — claims du même appareil (MAC) aujourd'hui, ce site
 	for _, g := range db.WifiGuests {
 		if g.AccountID != site.AccountID || g.Day != dayKey {
 			continue
@@ -262,6 +312,9 @@ func (a *API) handleWifiClaim(w http.ResponseWriter, r *http.Request) {
 			siteToday++
 			if g.Phone == phone {
 				today = append(today, g)
+			}
+			if mac != "" && g.Mac == mac {
+				macToday++
 			}
 		}
 	}
@@ -283,6 +336,25 @@ func (a *API) handleWifiClaim(w http.ResponseWriter, r *http.Request) {
 				"profileName":   v.ProfileName,
 				"siteName":      site.Name,
 			})
+			return
+		}
+	}
+	// N°50 — Plafond par appareil (MAC) / jour : derrière le NAT du hotspot
+	// tous les clients partagent la MÊME IP publique — la MAC est la seule
+	// clé qui isole réellement un appareil (même leçon que le quota MAC N°33
+	// de l'inscription). Elle n'est disponible que pour les claims du
+	// portail ; la page /wifi scannée hors portail ne la fournit pas (les
+	// plafonds téléphone/site + le quota IP anti-fermage restent actifs).
+	// Placé APRÈS l'idempotence téléphone : le re-claim du MÊME téléphone
+	// renvoie toujours le même code, plafond atteint ou non.
+	if mac != "" {
+		perMac := site.DailyPerMac
+		if perMac < 1 {
+			perMac = 1
+		}
+		if macToday >= perMac {
+			a.store.Unlock()
+			writeErrCode(w, http.StatusTooManyRequests, "device_cap", "Votre WiFi offert du jour est déjà consommé sur cet appareil — passez à une offre payante", nil)
 			return
 		}
 	}
@@ -339,6 +411,7 @@ func (a *API) handleWifiClaim(w http.ResponseWriter, r *http.Request) {
 		SiteID: site.ID, SiteName: site.Name, Phone: phone,
 		OptIn:     req.OptIn && site.MarketingOptIn, // opt-in tracé seulement si la case est proposée
 		VoucherID: voucher.ID, Code: code, Day: dayKey, CreatedAt: model.NowISO(),
+		Mac: mac, IP: ip, // N°50 — empreintes anti-abus (audit gérant)
 	}
 	isAgent := routerCopy.Mode == "agent"
 	if isAgent {
@@ -624,6 +697,7 @@ type wifiSitePayload struct {
 	FreeDataMb     int64  `json:"freeDataMb"`
 	MarketingOptIn bool   `json:"marketingOptIn"`
 	DailyPerPhone  int    `json:"dailyPerPhone"`
+	DailyPerMac    int    `json:"dailyPerMac"` // N°50 — tickets max / appareil (MAC) / jour
 	DailyCap       int    `json:"dailyCap"`
 	WifiSSID       string `json:"wifiSsid"`     // N°49 — QR de connexion de l'affiche (vide = pas de QR WiFi)
 	WifiPassword   string `json:"wifiPassword"` // N°49 — mot de passe WPA si le réseau est protégé (vide = ouvert)
@@ -657,6 +731,13 @@ func validateWifiSitePayload(w http.ResponseWriter, r *http.Request, a *API, acc
 	}
 	if req.DailyPerPhone < 1 || req.DailyPerPhone > 10 {
 		writeErr(w, http.StatusBadRequest, "Le plafond par téléphone doit être compris entre 1 et 10 tickets par jour")
+		return nil, false
+	}
+	if req.DailyPerMac == 0 {
+		req.DailyPerMac = 1
+	}
+	if req.DailyPerMac < 1 || req.DailyPerMac > 10 {
+		writeErr(w, http.StatusBadRequest, "Le plafond par appareil doit être compris entre 1 et 10 tickets par jour")
 		return nil, false
 	}
 	if req.DailyCap == 0 {
@@ -774,7 +855,7 @@ func (a *API) handleWifiSiteCreate(w http.ResponseWriter, r *http.Request) {
 		ProfileID: profile0.ID, ProfileName: profile0.Name,
 		FreeTimeMin: req.FreeTimeMin, FreeDataMb: req.FreeDataMb,
 		MarketingOptIn: req.MarketingOptIn,
-		DailyPerPhone:  req.DailyPerPhone, DailyCap: req.DailyCap,
+		DailyPerPhone:  req.DailyPerPhone, DailyPerMac: req.DailyPerMac, DailyCap: req.DailyCap,
 		WifiSSID: req.WifiSSID, WifiPassword: req.WifiPassword,
 		Active: req.Active, CreatedAt: model.NowISO(),
 	}
@@ -837,11 +918,12 @@ func (a *API) handleWifiSiteUpdate(w http.ResponseWriter, r *http.Request) {
 	site.FreeDataMb = req.FreeDataMb
 	site.MarketingOptIn = req.MarketingOptIn
 	site.DailyPerPhone = req.DailyPerPhone
+	site.DailyPerMac = req.DailyPerMac
 	site.DailyCap = req.DailyCap
 	site.WifiSSID = req.WifiSSID
 	site.WifiPassword = req.WifiPassword
 	site.Active = req.Active
-	msg := fmt.Sprintf("Site WiFi jetable «%s» mis à jour (quotas : %d min / %d Mo, plafonds : %d/tél, %d/site)", site.Name, site.FreeTimeMin, site.FreeDataMb, site.DailyPerPhone, site.DailyCap)
+	msg := fmt.Sprintf("Site WiFi jetable «%s» mis à jour (quotas : %d min / %d Mo, plafonds : %d/tél, %d/appareil, %d/site)", site.Name, site.FreeTimeMin, site.FreeDataMb, site.DailyPerPhone, site.DailyPerMac, site.DailyCap)
 	if toggled != "" {
 		msg = fmt.Sprintf("WiFi jetable «%s» %s (bascule 1 clic)", site.Name, toggled)
 	}
@@ -935,11 +1017,15 @@ func (a *API) handleWifiGuests(w http.ResponseWriter, r *http.Request) {
 
 	if export == "csv" {
 		var sb strings.Builder
-		sb.WriteString("date;telephone;opt_in;code;site\r\n")
+		sb.WriteString("date;telephone;appareil;ip;opt_in;code;site\r\n") // N°50 — appareil (MAC) + ip pour l'audit anti-abus
 		for _, g := range rows {
 			sb.WriteString(g.CreatedAt)
 			sb.WriteByte(';')
 			sb.WriteString(g.Phone)
+			sb.WriteByte(';')
+			sb.WriteString(g.Mac)
+			sb.WriteByte(';')
+			sb.WriteString(g.IP)
 			sb.WriteByte(';')
 			if g.OptIn {
 				sb.WriteString("oui")

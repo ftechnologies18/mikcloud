@@ -18,15 +18,20 @@ type API struct {
 	secret  string
 	gwMu    sync.Mutex
 	gws     map[string]routeros.Gateway
-	pinLock *pinLimiter          // sécurité S2 — verrouillage PIN revendeur par compte
-	signup  *signupLimiter       // sécurité S3 — quota d'inscription par IP
-	join    *signupLimiter       // N°27 — quota anti-abus du formulaire public d'inscription
-	vitals  *telemetry.Collector // B2 — Core Web Vitals (nil = collecte désactivée)
+	pinLock *pinLimiter    // sécurité S2 — verrouillage PIN revendeur par compte
+	signup  *signupLimiter // sécurité S3 — quota d'inscription par IP
+	join    *signupLimiter // N°27 — quota anti-abus du formulaire public d'inscription
+	// N°50 — quota anti-fermage du claim WiFi jetable (par IP, bornes
+	// NAT-friendly : 20/10 min + 100/24 h). Complète les plafonds métier
+	// journaliers (téléphone/MAC/site) : un attaquant qui tourne sur des
+	// numéros falsifiés est coupé AVANT toute création de voucher.
+	wifiClaim *signupLimiter
+	vitals    *telemetry.Collector // B2 — Core Web Vitals (nil = collecte désactivée)
 }
 
 // New construit l'API.
 func New(s *store.Store, jwtSecret string) *API {
-	return &API{store: s, secret: jwtSecret, gws: map[string]routeros.Gateway{}, pinLock: newPinLimiter(), signup: newSignupLimiter(), join: newSignupLimiter()}
+	return &API{store: s, secret: jwtSecret, gws: map[string]routeros.Gateway{}, pinLock: newPinLimiter(), signup: newSignupLimiter(), join: newSignupLimiter(), wifiClaim: newSignupLimiterLimits(20, 100)}
 }
 
 // Handler — mux complet, protégé par le middleware d'authentification.

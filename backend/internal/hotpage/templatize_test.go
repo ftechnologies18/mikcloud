@@ -17,12 +17,14 @@ func TestPersonalizeMarkers(t *testing.T) {
 		JoinURL:    "https://mikcloud.ftci.fr/join/abcdef1234567890",
 		WaveLink:   "https://pay.wave.com/m/M_xxx/c/ci/",
 		LogoURL:    "data:image/png;base64,xyz",
+		BannerURL:  "https://r2.example.com/banners/cyber.jpg",
 	}
 	content := `<title>{{MIKCLOUD_TENANT_NAME}}</title>
 <a href="{{MIKCLOUD_WIFI_URL}}">WiFi</a>
 <form action="{{MIKCLOUD_JOIN_URL}}">Join</form>
 <a href="{{MIKCLOUD_WAVE_LINK}}/amount/100/">Wave</a>
 <img src="{{MIKCLOUD_LOGO_URL}}"/>
+<img src="{{MIKCLOUD_BANNER_URL}}"/>
 <base data-api="{{MIKCLOUD_API_BASE}}"/>`
 	out := Personalize(content, cfg)
 	for _, want := range []string{
@@ -31,6 +33,7 @@ func TestPersonalizeMarkers(t *testing.T) {
 		`action="https://mikcloud.ftci.fr/join/abcdef1234567890"`,
 		`href="https://pay.wave.com/m/M_xxx/c/ci//amount/100/"`,
 		`src="data:image/png;base64,xyz"`,
+		`src="https://r2.example.com/banners/cyber.jpg"`,
 		`data-api="https://mikcloud.onrender.com"`,
 	} {
 		if !strings.Contains(out, want) {
@@ -136,13 +139,32 @@ func TestPersonalizeEmpty(t *testing.T) {
 // marqueurs substitués par des chaînes vides (pas d'erreur, pas de marqueur
 // laissé tel quel).
 func TestPersonalizeMissingFields(t *testing.T) {
-	content := `<a href="{{MIKCLOUD_WIFI_URL}}">{{MIKCLOUD_TENANT_NAME}}</a>`
+	content := `<a href="{{MIKCLOUD_WIFI_URL}}">{{MIKCLOUD_TENANT_NAME}}</a><img src="{{MIKCLOUD_BANNER_URL}}"/>`
 	out := Personalize(content, PortalConfig{})
 	if strings.Contains(out, "{{MIKCLOUD_") {
 		t.Errorf("marqueur non substitué :\n%s", out)
 	}
 	if !strings.Contains(out, `href=""`) {
 		t.Errorf("URL vide attendue, out : %s", out)
+	}
+	if !strings.Contains(out, `src=""`) {
+		t.Errorf("bannière vide attendue (omitempty côté JSON, chaîne vide côté marqueur), out : %s", out)
+	}
+}
+
+// TestPersonalizeBannerURLInjection — une bannière malveillante (tentative de
+// sortie d'attribut HTML) est échappée : les guillemets deviennent &#34; et ne
+// peuvent pas casser l'attribut src ni injecter d'événements.
+func TestPersonalizeBannerURLInjection(t *testing.T) {
+	cfg := PortalConfig{
+		BannerURL: `https://evil/x.jpg" onerror="alert(1)`,
+	}
+	out := Personalize(`<img src="{{MIKCLOUD_BANNER_URL}}"/>`, cfg)
+	if strings.Contains(out, `" onerror="`) {
+		t.Errorf("injection non échappée dans la bannière : %s", out)
+	}
+	if !strings.Contains(out, `&#34;`) {
+		t.Errorf("guillemets non échappés HTML : %s", out)
 	}
 }
 

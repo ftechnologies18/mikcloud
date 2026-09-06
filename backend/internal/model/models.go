@@ -433,6 +433,11 @@ type Tenant struct {
 	// P0 (audit Mikhmon) — F2 : personnalisation voucher.
 	DNSName string `json:"dnsName,omitempty"` // ex. wifi.mondomaine.ci
 	LogoURL string `json:"logoUrl,omitempty"` // data URL image ≤ 300 Ko
+	// Bannière du portail captif (N°45) : image affichée en tête de la page
+	// de login. Deux formes acceptées — data URL `data:image/…` ≤ 500 Ko
+	// (upload console) ou URL https:// (Cloudflare R2, session suivante).
+	// Vide = aucune bannière (portail sans image tête).
+	BannerURL string `json:"bannerUrl,omitempty"`
 	// P0 (audit Mikhmon) — F5 : politique de nettoyage des expirés.
 	ExpiryPolicyMode      string `json:"expiryPolicyMode"`      // "keep" (défaut) | "remove"
 	ExpiryPolicyAfterDays int    `json:"expiryPolicyAfterDays"` // défaut 30

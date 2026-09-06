@@ -5,6 +5,32 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-06 — N°45 : bannière personnalisée du portail captif (bannerUrl)
+
+### N°45 — la bannière du portail passe dans le PortalConfig et la console gérant
+- **Motivation** : le gérant veut brander le portail captif au-delà du logo —
+  une image d'en-tête (offre du jour, nom du cyber-café, photo du lieu)
+  affichée en haut de la page de login, visible par TOUS les clients WiFi.
+- **Backend** : `Tenant.BannerURL` (data URL image ≤ 500 Ko **ou** URL
+  `https://` — prêt pour Cloudflare R2 ; http/ftp/relative/javascript:
+  refusés en 400, mixed content impossible). Persisté Neon (`settings.banner_url`,
+  DDL idempotent), propagé dans `PortalConfig.BannerURL` (templating :
+  marqueur `{{MIKCLOUD_BANNER_URL}}` + champ `bannerUrl` du bloc config JSON)
+  et exposé par `GET /api/wifi/site/{slug}/info`. Changer la bannière ne
+  force PAS de re-déploiement : la config live rafraîchit la page.
+- **Template** : `login.html` insère la bannière (id `mikcloud-banner`) en
+  tête de la colonne de connexion (au-dessus du logo et du bandeau WiFi),
+  retrait automatique du bloc si l'image ne charge pas (`onerror`).
+- **Frontend** : carte « Bannière du portail captif » dans Paramètres →
+  Hotspot : saisie d'URL https (placeholder Cloudflare R2), téléversement
+  data URL ≤ 500 Ko, aperçu live, retrait, validation https/data:image
+  alignée sur le backend ; i18n FR + EN.
+- **Tests** : `TestPersonalizeMarkers` (marqueur bannière),
+  `TestPersonalizeBannerURLInjection` (échappement HTML d'une URL
+  malveillante), `TestPortalServeBanner` (propagation bout en bout dans le
+  login.html servi), `TestSettingsBannerValidation` (matrice 400/200/retrait).
+  CI backend + frontend vertes.
+
 ## 2026-09-06 — N°43/N°44 : vague Dependabot 2 adoptée — ESLint 10 ré-adopté, recharts 3 migré
 
 ### N°43 — ESLint 10 ré-adopté via @eslint/compat (#28, gérant)

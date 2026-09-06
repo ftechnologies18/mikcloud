@@ -20,6 +20,7 @@ import {
   Globe,
   ImagePlus,
   Image as ImageIcon,
+  Images,
   Languages,
   Router as RouterIcon,
   ShieldCheck,
@@ -123,6 +124,9 @@ export default function SettingsView() {
 
             {/* Vouchers — DNS + logo (F2) */}
             <VoucherCard settings={data} />
+
+            {/* Bannière du portail captif (N°45) — image tête de page login */}
+            <PortalBannerCard settings={data} />
 
             {/* Guide connexion routeur réel */}
             <Card className="gap-4 border-primary/20 bg-primary/5 py-4 sm:py-6 lg:col-span-2">
@@ -671,6 +675,147 @@ function VoucherCard({ settings }: { settings: AppSettings }) {
           className="h-10"
           onClick={() => saveMutation.mutate()}
           disabled={saveMutation.isPending || dnsName.trim().length > 100}
+        >
+          {saveMutation.isPending ? t("common.saving") : t("common.save")}
+        </Button>
+      </CardFooter>
+    </Card>
+  );
+}
+
+// Carte Bannière portail (N°45) — image affichée en tête de la page de login
+// du portail captif (routeurs agent) et de la page visiteur WiFi. Deux sources
+// acceptées par le backend : data URL (téléversement, ≤ 500 Ko) ou URL https
+// (Cloudflare R2 et tout hébergeur d'images). Vide = portail sans bannière.
+function PortalBannerCard({ settings }: { settings: AppSettings }) {
+  const { t } = useI18n();
+  const queryClient = useQueryClient();
+  const [bannerUrl, setBannerUrl] = useState(settings.tenant.bannerUrl ?? "");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Téléversement : image ≤ 500 Ko encodée en data URL (contrat N°45 — la
+  // bannière tolère des fichiers plus lourds que le logo 300 Ko, c'est une
+  // image d'ambiance pleine largeur).
+  function handleBannerFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    // Permet de re-sélectionner le même fichier après une erreur.
+    event.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error(t("settings.logoNotImage"));
+      return;
+    }
+    if (file.size > 500 * 1024) {
+      toast.error(t("settings.bannerTooBig"));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") setBannerUrl(reader.result);
+    };
+    reader.onerror = () => toast.error(t("settings.logoReadError"));
+    reader.readAsDataURL(file);
+  }
+
+  // Validation souple de l'URL collée : https:// requis (le portail et la
+  // page WiFi sont servies en https — mixed content interdit), data URL
+  // tolérée (elle vient du téléversement). Backend : même contrat (400 sinon).
+  const bannerUrlInvalid =
+    bannerUrl.trim() !== "" &&
+    !bannerUrl.trim().startsWith("https://") &&
+    !bannerUrl.trim().startsWith("data:image/");
+
+  const saveMutation = useMutation({
+    mutationFn: () =>
+      api<AppSettings>("/api/settings", {
+        method: "PUT",
+        // Corps défensif : champs plats + forme imbriquée « tenant » (cf. VoucherCard).
+        body: {
+          bannerUrl: bannerUrl.trim(),
+          tenant: { bannerUrl: bannerUrl.trim() },
+        },
+      }),
+    onSuccess: () => {
+      toast.success(t("settings.bannerSavedToast"));
+      void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return (
+    <Card className="gap-4 py-4 sm:py-6">
+      <CardHeader className="px-4 sm:px-6">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
+            <Images className="size-4" />
+          </span>
+          {t("settings.bannerCard")}
+        </CardTitle>
+        <CardDescription>{t("settings.bannerCardDesc")}</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-4 px-4 sm:px-6">
+        <div className="grid gap-2">
+          <Label htmlFor="banner-url">{t("settings.bannerUrl")}</Label>
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              id="banner-url"
+              className="h-10 min-w-0 flex-1"
+              placeholder={t("settings.bannerUrlPlaceholder")}
+              value={bannerUrl.startsWith("data:image/") ? "" : bannerUrl}
+              onChange={(event) => setBannerUrl(event.target.value)}
+              aria-invalid={bannerUrlInvalid || undefined}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <ImagePlus className="size-4" />
+              {t("settings.upload")}
+            </Button>
+            {bannerUrl && (
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-10 text-destructive hover:text-destructive"
+                onClick={() => setBannerUrl("")}
+              >
+                <X className="size-4" />
+                {t("settings.remove")}
+              </Button>
+            )}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="sr-only"
+              onChange={handleBannerFile}
+              aria-label={t("settings.bannerInputAria")}
+            />
+          </div>
+          <p className="text-xs text-muted-foreground">{t("settings.bannerUrlHint")}</p>
+        </div>
+
+        {/* Aperçu live — même rendu que la page du portail (objet cover, coins arrondis) */}
+        {bannerUrl && !bannerUrlInvalid && (
+          <div className="grid gap-2">
+            <p className="text-xs font-medium">{t("settings.bannerPreviewAlt")}</p>
+            <div className="overflow-hidden rounded-xl border bg-muted">
+              <img
+                src={bannerUrl}
+                alt={t("settings.bannerPreviewAlt")}
+                className="h-32 w-full object-cover"
+              />
+            </div>
+          </div>
+        )}
+      </CardContent>
+      <CardFooter className="justify-end px-4 sm:px-6">
+        <Button
+          className="h-10"
+          onClick={() => saveMutation.mutate()}
+          disabled={saveMutation.isPending || bannerUrlInvalid}
         >
           {saveMutation.isPending ? t("common.saving") : t("common.save")}
         </Button>

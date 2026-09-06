@@ -833,6 +833,25 @@
                 if (cfg.wifiSlug && !document.getElementById('mikcloud-claim-form')) {
                     renderClaimForm(cfg);
                 }
+
+                // 6. Bannière personnalisée (N°45) : image en tête du login-section
+                // (au-dessus du logo et du bandeau WiFi — ce bloc s'exécute après
+                // le bloc 3, insertBefore(firstChild) la hisse donc tout en haut).
+                // Sources possibles : data URL (upload console ≤ 500 Ko) ou URL
+                // https (Cloudflare R2). Config vide/absente → aucune insertion.
+                if (cfg.bannerUrl && !document.getElementById('mikcloud-banner')) {
+                    var bannerWrap = document.createElement('div');
+                    bannerWrap.id = 'mikcloud-banner';
+                    bannerWrap.style.cssText = 'width:100%;margin:0 0 14px;';
+                    var bannerImg = document.createElement('img');
+                    bannerImg.src = cfg.bannerUrl;
+                    bannerImg.alt = 'Bannière ' + (cfg.tenantName || '');
+                    bannerImg.style.cssText = 'display:block;width:100%;max-height:160px;object-fit:cover;border-radius:12px;box-shadow:0 4px 14px rgba(0,0,0,0.15);';
+                    bannerImg.onerror = function () { bannerWrap.remove(); };
+                    bannerWrap.appendChild(bannerImg);
+                    var loginSectionB = document.querySelector('.login-section');
+                    if (loginSectionB) loginSectionB.insertBefore(bannerWrap, loginSectionB.firstChild);
+                }
             }
 
             // escapeHtml — échappe <, >, &, ", ' pour insertion HTML safe.

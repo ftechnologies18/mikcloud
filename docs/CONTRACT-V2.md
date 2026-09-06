@@ -266,9 +266,21 @@ Le ticket standard MikCloud (hors modèle) et le A4+QR appliquent la même règl
 ```go
 DNSName string `json:"dnsName,omitempty"` // ex. wifi.mondomaine.ci
 LogoURL string `json:"logoUrl,omitempty"` // data URL image ≤ 300 Ko
+// N°45 — bannière du portail captif : data URL image ≤ 500 Ko OU URL https
+// (Cloudflare R2). Affichée en tête de la page login du portail (routeurs
+// agent) et exposée par GET /api/wifi/site/{slug}/info (page visiteur).
+BannerURL string `json:"bannerUrl,omitempty"`
 ```
 - `PUT /api/settings` accepte `dnsName` (≤100 chars) et `logoUrl` (data:image/*,
   ≤ 300 Ko — sinon 400 « Logo trop volumineux (300 Ko max) »).
+- `PUT /api/settings` accepte `bannerUrl` (N°45) : `data:image/*` ≤ 500 Ko
+  (sinon 400 « Bannière trop volumineuse (500 Ko max) ») **ou** URL
+  `https://…` (Cloudflare R2 et tout hébergeur externe — http/ftp/relative/
+  javascript: sont refusés en 400, mixed content impossible sur le portail).
+  Vide = bannière retirée. Le templating du portail expose le marqueur
+  `{{MIKCLOUD_BANNER_URL}}` et le champ `bannerUrl` du bloc config JSON ;
+  `login.html` insère l'image (id `mikcloud-banner`) en tête de la colonne
+  de connexion quand la valeur est non vide (retrait auto si l'image 404).
 
 ### Seed (compte principal + tout nouveau compte)
 3 templates par défaut (contenus HTML fidèles à Mikhmon, adaptés MikCloud) :

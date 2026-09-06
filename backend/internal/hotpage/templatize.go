@@ -21,6 +21,9 @@
 //	                            avec ?mac= laissé à ajouter côté page (la MAC est
 //	                            disponible côté routeur via $(mac-esc))
 //	{{MIKCLOUD_WAVE_LINK}}    — lien marchand Wave du tenant (ou "")
+//	{{MIKCLOUD_LOGO_URL}}     — logo du tenant (data URL, ou "")
+//	{{MIKCLOUD_BANNER_URL}}   — bannière du portail du tenant (data URL ≤ 500 Ko
+//	                            ou URL https, ex. Cloudflare R2 ; ou "")
 //
 // Sécurité : les valeurs sont ÉCHAPPÉES pour leur contexte d'insertion. Pour le
 // bloc JSON, on utilise encoding/json (échappement strict : guillemets,
@@ -65,6 +68,10 @@ type PortalConfig struct {
 	WaveLink string `json:"waveLink,omitempty"`
 	// LogoURL — logo du tenant (data URL, ex. data:image/png;base64,...). Vide = défaut.
 	LogoURL string `json:"logoUrl,omitempty"`
+	// BannerURL — bannière du portail (N°45) : image affichée en tête de la
+	// page de login. data URL image ≤ 500 Ko OU URL https:// (Cloudflare R2).
+	// Vide = pas de bannière — la page n'insère rien.
+	BannerURL string `json:"bannerUrl,omitempty"`
 	// Offers — offres payantes du compte (profils à prix > 0), max 8. Sérialisées
 	// dans le bloc JSON pour que la page les affiche. Chaque offre porte le nom,
 	// le prix, la durée et le waveUrl pré-construit.
@@ -101,6 +108,7 @@ func Personalize(content string, cfg PortalConfig) string {
 		"{{MIKCLOUD_JOIN_URL}}", html.EscapeString(cfg.JoinURL),
 		"{{MIKCLOUD_WAVE_LINK}}", html.EscapeString(cfg.WaveLink),
 		"{{MIKCLOUD_LOGO_URL}}", html.EscapeString(cfg.LogoURL),
+		"{{MIKCLOUD_BANNER_URL}}", html.EscapeString(cfg.BannerURL),
 		"{{MIKCLOUD_CONFIG_JSON}}", configJSON(cfg),
 	)
 	return repl.Replace(content)

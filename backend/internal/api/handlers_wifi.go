@@ -339,6 +339,18 @@ func (a *API) handleWifiClaim(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// N°52 — Ton du refus selon le MODE de l'établissement. MikCloud sert
+	// deux usages : la vente de tickets (commercial/hybride) ET l'offre
+	// gratuite de fidélisation (hôtel, maquis, café-glacier, salon…). Avec
+	// des profils payants au catalogue on propose l'upsell ; sans catalogue
+	// payant, pousser une « offre payante » inexistante décrédibilise l'écran
+	// et l'établissement → message neutre. Même signal que l'écran « épuisé »
+	// de la page /wifi, qui liste ces mêmes offres (wifiOffers).
+	// Calculé sous verrou, une seule fois, avant les trois gardes.
+	capSuffix := " — passez à une offre payante"
+	if len(wifiOffers(db, site)) == 0 {
+		capSuffix = " — demandez au personnel ou revenez demain"
+	}
 	// N°50 — Plafond par appareil (MAC) / jour : derrière le NAT du hotspot
 	// tous les clients partagent la MÊME IP publique — la MAC est la seule
 	// clé qui isole réellement un appareil (même leçon que le quota MAC N°33
@@ -354,7 +366,7 @@ func (a *API) handleWifiClaim(w http.ResponseWriter, r *http.Request) {
 		}
 		if macToday >= perMac {
 			a.store.Unlock()
-			writeErrCode(w, http.StatusTooManyRequests, "device_cap", "Votre WiFi offert du jour est déjà consommé sur cet appareil — passez à une offre payante", nil)
+			writeErrCode(w, http.StatusTooManyRequests, "device_cap", "Votre WiFi offert du jour est déjà consommé sur cet appareil"+capSuffix, nil) // N°52 — ton contextuel
 			return
 		}
 	}
@@ -365,7 +377,7 @@ func (a *API) handleWifiClaim(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(today) >= perPhone {
 		a.store.Unlock()
-		writeErrCode(w, http.StatusTooManyRequests, "phone_cap", "Votre WiFi offert du jour est déjà consommé — passez à une offre payante", nil)
+		writeErrCode(w, http.StatusTooManyRequests, "phone_cap", "Votre WiFi offert du jour est déjà consommé"+capSuffix, nil) // N°52 — ton contextuel
 		return
 	}
 	// Budget gratuit du site (plafond journalier posé par le gérant).

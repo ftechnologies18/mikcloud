@@ -315,39 +315,54 @@ export function WifiGuestPage({ slug }: { slug: string }) {
           </Card>
         </motion.div>
       ) : exhausted ? (
-        // ─── Bascule 1 clic : quota épuisé → offres payantes ───
+        // ─── N°52 — Écran « épuisé » contextuel : avec un catalogue payant
+        // (commercial/hybride) on bascule vers l'upsell 1 clic ; sans
+        // catalogue (hospitalité : hôtel, maquis, café — le WiFi offert
+        // fidélise, il ne se vend pas) on reste neutre et chaleureux.
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
           <Card className="border-white/10 bg-white/95">
             <CardContent className="space-y-4 p-6 text-center">
               <p className="text-base font-semibold">Quota offert épuisé</p>
-              <p className="text-sm text-muted-foreground">
-                Votre WiFi gratuit du jour est terminé. Passez à une offre payante :
-              </p>
-              <div className="space-y-2">
-                {(offers ?? []).map((o) => (
-                  <div
-                    key={o.id}
-                    className="flex items-center justify-between rounded-xl border bg-muted/40 p-3 text-left"
-                  >
-                    <div>
-                      <p className="font-semibold">{o.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {o.validityMinutes >= 1440
-                          ? `${Math.round(o.validityMinutes / 1440)} j`
-                          : `${Math.round(o.validityMinutes / 60)} h`}
-                        {o.dataQuotaMb > 0 ? ` · ${o.dataQuotaMb} Mo` : ""}
-                      </p>
-                    </div>
-                    <p className="text-lg font-black text-emerald-700">{FCFA(o.price)}</p>
+              {(offers ?? []).length > 0 ? (
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    Votre WiFi gratuit du jour est terminé. Passez à une offre payante :
+                  </p>
+                  <div className="space-y-2">
+                    {offers.map((o) => (
+                      <div
+                        key={o.id}
+                        className="flex items-center justify-between rounded-xl border bg-muted/40 p-3 text-left"
+                      >
+                        <div>
+                          <p className="font-semibold">{o.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {o.validityMinutes >= 1440
+                              ? `${Math.round(o.validityMinutes / 1440)} j`
+                              : `${Math.round(o.validityMinutes / 60)} h`}
+                            {o.dataQuotaMb > 0 ? ` · ${o.dataQuotaMb} Mo` : ""}
+                          </p>
+                        </div>
+                        <p className="text-lg font-black text-emerald-700">{FCFA(o.price)}</p>
+                      </div>
+                    ))}
                   </div>
-                ))}
-                {(!offers || offers.length === 0) && (
-                  <p className="text-sm text-muted-foreground">Demandez les tarifs au comptoir.</p>
-                )}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Achetez votre ticket au comptoir, puis connectez-vous avec le code reçu.
-              </p>
+                  <p className="text-xs text-muted-foreground">
+                    Achetez votre ticket au comptoir, puis connectez-vous avec le code reçu.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    Votre WiFi gratuit du jour est terminé. Revenez demain ou demandez au
+                    personnel.
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Un nouveau code gratuit vous attendra à votre prochaine visite — merci de
+                    votre fidélité.
+                  </p>
+                </>
+              )}
             </CardContent>
           </Card>
         </motion.div>

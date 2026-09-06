@@ -5,6 +5,39 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-06 — N°52 : messages d'épuisement contextuels (upsell commercial ou ton neutre hospitalité)
+
+### N°52 — MikCloud ne présuppose plus que l'établissement VEND du WiFi
+- **Constat** : les refus de claim (`phone_cap`, `device_cap`) se terminaient
+  TOUJOURS par « passez à une offre payante » — un copywriting pensé pour la
+  vente de tickets. Or MikCloud sert deux usages : la vente (camps, bars,
+  événements payants) ET l'offre gratuite de fidélisation (hôtels, maquis,
+  cafés-glaciers, salons de coiffure, espaces événementiels) où le WiFi offert
+  retient le client au lieu de se vendre. Pousser une « offre payante »
+  inexistante décrédibilise l'écran ET l'établissement — et rétrécit notre
+  clientèle potentielle et nos arguments de vente.
+- **Détection automatique, zéro config, zéro migration** : le signal est le
+  catalogue — `wifiOffers(db, site)` (profils du compte à prix > 0), le même
+  signal que l'écran « épuisé » de la page /wifi utilise déjà. Catalogue
+  présent → mode commercial (upsell) ; catalogue vide → mode hospitalité
+  (neutre).
+- **Backend (`handleWifiClaim`)** — suffixe `capSuffix` calculé une fois sous
+  verrou : « — passez à une offre payante » (commercial) vs « — demandez au
+  personnel ou revenez demain » (hospitalité), appliqué aux 429 `device_cap`
+  et `phone_cap`. `site_cap` était déjà neutre, inchangé. Le portail captif
+  (`login.html`) affiche `data.error` tel quel : il hérite du bon ton sans
+  modification.
+- **Frontend (`wifi-guest-page.tsx`)** — l'écran « Quota offert épuisé » se
+  dédouble : avec catalogue, upsell 1 clic inchangé (liste des offres +
+  « Achetez votre ticket au comptoir ») ; sans catalogue, message chaleureux
+  (« Revenez demain ou demandez au personnel » + « Un nouveau code gratuit
+  vous attendra à votre prochaine visite — merci de votre fidélité »).
+- **Honeypot/plafonds inchangés** : N°50 continue de filtrer bots et rotation
+  d'appareils — seul le TON du refus s'adapte, la sécurité reste identique.
+- **Tests** : suite API verte (`go test ./internal/api/`), `go vet` propre,
+  ESLint frontend vert. Aucun test n'assertait les textes (seuls les codes
+  machine sont contractuels).
+
 ## 2026-09-06 — N°49-b : affiche à QR unique (l'ancien QR « page web » quitte l'affiche)
 
 ### N°49-b — un seul QR sur l'affiche : celui qui connecte au WiFi

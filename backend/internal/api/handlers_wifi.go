@@ -25,10 +25,12 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"mikcloud/hotspot-api/internal/agent"
+	"mikcloud/hotspot-api/internal/hotpage"
 	"mikcloud/hotspot-api/internal/model"
 )
 
@@ -189,6 +191,94 @@ func (a *API) handleWifiSiteInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleWifiSitePortal — configuration dynamique live du portail captif pour la
+// consommation hybride (fetch progressif au chargement de login.html/status.html).
+func (a *API) handleWifiSitePortal(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	a.store.Lock()
+	db := a.store.Data()
+	site := findWifiSiteBySlug(db, slug)
+	if site == nil {
+		a.store.Unlock()
+		writeErr(w, http.StatusNotFound, "Site WiFi introuvable")
+		return
+	}
+	settings := ensureSettings(db, site.AccountID)
+	guard := a.subscriptionGuardStateLocked(site.AccountID)
+	siteCopy := *site
+
+	cfg := hotpage.PortalConfig{
+		TenantName: settings.Tenant.Name,
+		APIBase:    agentBaseURL(r),
+		WaveLink:   settings.Tenant.WaveLink,
+		LogoURL:    settings.Tenant.LogoURL,
+		WifiSlug:   siteCopy.Slug,
+	}
+
+	if origin := publicFrontendURL(r); origin != "" {
+		cfg.WifiURL = origin + "/wifi/" + siteCopy.Slug
+	}
+
+	if profile := findProfileScoped(db, siteCopy.ProfileID, siteCopy.AccountID); profile != nil {
+		timeMin, dataMb := wifiQuotaResp(&siteCopy, profile)
+		cfg.FreeTimeMin = timeMin
+		cfg.FreeDataMb = dataMb
+	}
+
+	for i := range db.JoinLinks {
+		l := &db.JoinLinks[i]
+		if l.AccountID == siteCopy.AccountID && l.RouterID == siteCopy.RouterID && !l.Revoked && joinLinkActive(l) {
+			if origin := publicFrontendURL(r); origin != "" {
+				cfg.JoinURL = origin + "/join/" + l.Token
+			}
+			break
+		}
+	}
+
+	if siteCopy.Active && guard.Status != "expired" {
+		for i := range db.Profiles {
+			p := &db.Profiles[i]
+			if p.AccountID != siteCopy.AccountID || p.Price <= 0 {
+				continue
+			}
+			if len(cfg.Offers) >= 8 {
+				break
+			}
+			offer := hotpage.PortalOffer{
+				Name:        p.Name,
+				PriceFcfa:   p.Price,
+				ValidityMin: p.ValidityMinutes(),
+				DataQuotaMb: p.DataQuotaMb,
+			}
+			if settings.Tenant.WaveLink != "" {
+				offer.WaveURL = strings.TrimRight(settings.Tenant.WaveLink, "/") + "/amount/" + strconv.Itoa(p.Price) + "/"
+			}
+			cfg.Offers = append(cfg.Offers, offer)
+		}
+	}
+
+	loginBase := wifiLoginBase(db, &siteCopy)
+	a.store.Unlock()
+
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{
+		"slug":        siteCopy.Slug,
+		"siteName":    siteCopy.Name,
+		"tenantName":  settings.Tenant.Name,
+		"logoUrl":     settings.Tenant.LogoURL,
+		"freeTimeMin": cfg.FreeTimeMin,
+		"freeDataMb":  cfg.FreeDataMb,
+		"active":      siteCopy.Active,
+		"suspended":   guard.Status == "expired",
+		"offers":      cfg.Offers,
+		"waveLink":    settings.Tenant.WaveLink,
+		"apiBase":     cfg.APIBase,
+		"joinUrl":     cfg.JoinURL,
+		"loginBase":   loginBase,
+		"config":      cfg,
+	})
 }
 
 // handleWifiClaim — cœur du mode : valide le téléphone, applique les plafonds

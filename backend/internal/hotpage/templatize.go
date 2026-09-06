@@ -51,6 +51,10 @@ type PortalConfig struct {
 	// WifiURL — URL publique de la page WiFi (ex. https://mikcloud.ftci.fr/wifi/cyber-espace-sc).
 	// Vide si pas de site WiFi.
 	WifiURL string `json:"wifiUrl,omitempty"`
+	// FreeTimeMin — minutes offertes sur le site WiFi jetable.
+	FreeTimeMin int64 `json:"freeTimeMin,omitempty"`
+	// FreeDataMb — Mo offerts sur le site WiFi jetable (0 = illimité).
+	FreeDataMb int64 `json:"freeDataMb,omitempty"`
 	// JoinURL — URL d'inscription publique liée au routeur
 	// (ex. https://mikcloud.ftci.fr/join/abcdef1234...). La MAC doit être
 	// ajoutée côté page (?mac=$(mac-esc)). Vide si pas de lien actif.

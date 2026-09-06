@@ -280,6 +280,7 @@ func (a *API) Handler() http.Handler {
 	// + rate-limit dédié) résolue par slug GLOBALEMENT unique + console
 	// gérant (CRUD sites, registre marketing).
 	mux.HandleFunc("GET /api/wifi/site/{slug}", a.handleWifiSiteInfo)
+	mux.HandleFunc("GET /api/wifi/site/{slug}/portal", a.handleWifiSitePortal)
 	mux.HandleFunc("POST /api/wifi/site/{slug}/claim", a.handleWifiClaim)
 	mux.HandleFunc("GET /api/wifi/site/{slug}/status", a.handleWifiStatus)
 	mux.HandleFunc("GET /api/wifi/sites", a.requireRole(2, a.handleWifiSitesList))

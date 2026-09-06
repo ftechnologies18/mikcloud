@@ -144,6 +144,11 @@ func buildPortalConfig(db *model.DB, router *model.Router, r *http.Request) hotp
 			if origin := publicFrontendURL(r); origin != "" {
 				cfg.WifiURL = origin + "/wifi/" + s.Slug
 			}
+			if profile := findProfileScoped(db, s.ProfileID, acc); profile != nil {
+				timeMin, dataMb := wifiQuotaResp(s, profile)
+				cfg.FreeTimeMin = timeMin
+				cfg.FreeDataMb = dataMb
+			}
 			break
 		}
 	}

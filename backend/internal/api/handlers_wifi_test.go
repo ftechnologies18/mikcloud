@@ -432,3 +432,30 @@ func TestWifiConsoleCRUDAndIsolation(t *testing.T) {
 		t.Fatalf("suppression : %d entrées de registre restantes", left)
 	}
 }
+
+func TestWifiSitePortalPublic(t *testing.T) {
+	ts, st := newWifiTestServer(t)
+	_, accID, _ := registerAccount(t, ts, "gerant-wifi-portal", "")
+	routerID, profileID := seedWifiEnv(t, st, accID)
+	seedWifiSite(t, st, accID, "maquis-portal", routerID, profileID, true, 1, 100)
+
+	status, out := doJSON(t, ts, "GET", "/api/wifi/site/maquis-portal/portal", "", nil)
+	if status != http.StatusOK {
+		t.Fatalf("portal site : statut %d, corps %v", status, out)
+	}
+	if slug, _ := out["slug"].(string); slug != "maquis-portal" {
+		t.Fatalf("slug inattendu : %v", out["slug"])
+	}
+	if name, _ := out["siteName"].(string); name != "Maquis Chez Fofi" {
+		t.Fatalf("siteName inattendu : %v", out["siteName"])
+	}
+	if active, _ := out["active"].(bool); !active {
+		t.Fatal("le site doit être actif")
+	}
+	if tm, _ := out["freeTimeMin"].(float64); tm != 30 {
+		t.Fatalf("freeTimeMin = %v, voulu 30", out["freeTimeMin"])
+	}
+	if _, ok := out["config"]; !ok {
+		t.Fatal("champ config manquant dans la réponse portal")
+	}
+}

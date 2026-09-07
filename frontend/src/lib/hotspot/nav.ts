@@ -28,35 +28,52 @@ export interface NavItem {
 }
 
 export const NAV_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
-  // O — 4 catégories métier (au lieu de 6 sections plates) : la sidebar est
-  // plus compacte et chaque groupe est repliable (row expandable).
+  // N°57-g — réorganisation experte de la navigation métier : 4 catégories
+  // homogènes dont l'ordre suit le parcours d'usage (surveiller → vendre
+  // l'accès → gérer les gens → analyser). L'ancienne section
+  // « Exploitation » (5 items : fourre-tout mêlant supervision, clients et
+  // produit) et « Facturation & Ventes » (libellé mensonger depuis N°57-e :
+  // plus de facturation dans la nav, et le WiFi jetable n'est pas un canal
+  // de vente mais un mode d'accès) disparaissent au profit de :
+  //   • Supervision — le temps réel (tableau de bord, sessions actives) ;
+  //   • Hotspot — LE produit : les trois façons de délivrer de l'accès
+  //     (voucher prépayé, profil/forfait, WiFi jetable offert) ;
+  //   • Personnes — les deux annuaires humains du business (clients finaux
+  //     qui se connectent, revendeurs qui écoulent) ;
+  //   • Analyse — comprendre et auditer (rapports, journal, comptes SaaS).
+  // Chaque groupe reste repliable (row expandable O).
   {
-    labelKey: "nav.section.exploitation",
+    labelKey: "nav.section.supervision",
     items: [
       { id: "dashboard", labelKey: "nav.dashboard", icon: LayoutDashboard },
       { id: "sessions", labelKey: "nav.sessions", icon: Radio },
-      { id: "users", labelKey: "nav.users", icon: Users },
+    ],
+  },
+  {
+    labelKey: "nav.section.hotspot",
+    items: [
+      { id: "vouchers", labelKey: "nav.vouchers", icon: Ticket },
       // N°30 — les inscriptions publiques (N°27) sont fusionnées dans la
       // page Utilisateurs (onglet) : l'entrée dédiée disparaît de la
       // sidebar. ViewId « registrations » reste valide (URL
       // /app/registrations → hub Utilisateurs, onglet Inscriptions).
-      { id: "vouchers", labelKey: "nav.vouchers", icon: Ticket },
       // N°57 — « Modèles » vit désormais dans la zone Paramètres
       // (/app/settings/templates) : la sidebar ne montre plus que les
       // modules métier.
       { id: "profiles", labelKey: "nav.profiles", icon: Gauge },
+      // N°27 — WiFi jetable : mode d'accès offert des établissements.
+      { id: "wifi", labelKey: "wifi.title", icon: Wifi },
     ],
   },
   {
-    labelKey: "nav.section.commercial",
+    labelKey: "nav.section.people",
     items: [
+      { id: "users", labelKey: "nav.users", icon: Users },
       // N°57-e — l'Abonnement quitte la navigation principale : la
       // facturation de l'espace vit désormais dans la zone Paramètres
       // (/app/settings/subscription, section dédiée de la sidebar de zone).
       // L'ancienne URL /app/subscription reste deep-linkable (re-normalisée).
       { id: "resellers", labelKey: "nav.resellers", icon: Store },
-      // N°27 — WiFi jetable : mode d'accès offert des établissements.
-      { id: "wifi", labelKey: "wifi.title", icon: Wifi },
     ],
   },
   // N°57 — la section Infrastructure disparaît : Routeurs et Portail sont

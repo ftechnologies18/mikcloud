@@ -5,6 +5,37 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-08 — N°57-g : sidebar principale réorganisée — 4 catégories homogènes (Supervision / Hotspot / Personnes / Analyse)
+
+### N°57-g — Réorganisation experte des vues et catégories de la navigation métier (demande utilisateur)
+- **Constat** : « Exploitation » était un fourre-tout (5 items mêlant
+  supervision temps réel, annuaire clients et produit) ; « Facturation &
+  Ventes » portait un libellé mensonger depuis N°57-e (plus de facturation
+  dans la nav — l'Abonnement vit en zone Paramètres — et le WiFi jetable
+  n'est pas un canal de vente mais un mode d'accès) ; le couplage métier
+  Vouchers ↔ Profils (le profil définit ce que le voucher vend) était
+  ignoré, et les deux annuaires humains (clients / revendeurs) éclatés.
+- **4 catégories dont l'ordre suit le parcours d'usage** (surveiller →
+  vendre l'accès → gérer les gens → analyser) :
+  1. **Supervision** — Tableau de bord · Sessions actives (le temps réel) ;
+  2. **Hotspot** — Vouchers · Profils · WiFi Jetable : LE produit et ses
+     trois façons de délivrer de l'accès (prépayé, forfait, offert) —
+     réutilise la clé i18n existante `nav.section.hotspot` ;
+  3. **Personnes** — Utilisateurs · Revendeurs : les deux annuaires humains
+     du business (clients finaux qui se connectent, partenaires qui
+     écoulent) — nouvelle clé `nav.section.people` (FR « Personnes », EN
+     « People ») ;
+  4. **Analyse** — Rapports · Journal · Comptes (comprendre et auditer).
+- **Chaque section garde 2-3 items scannables** (groupes repliables O
+  inchangés) ; la palette ⌘K suit automatiquement le nouvel ordre (elle
+  rend `navItemsFor`, la même source).
+- **Contrat strictement inchangé** : ViewIds, icônes, garde-fous de rôles
+  (`canView`, comptes admin plateforme filtré), zone Paramètres N°57-c-f,
+  console plateforme — pure réorganisation présentationnelle. Seul effet
+  bord bénin : l'état replié localStorage (persisté par libellé de section)
+  repart ouvert pour les nouvelles catégories.
+- **Frontend only** : aucun changement backend, aucune migration Neon.
+
 ## 2026-09-08 — N°57-f : l'entrée « Paramètres » quitte la sidebar principale (accès unique : menu utilisateur)
 
 ### N°57-f — Retrait de l'entrée nav « Paramètres » (demande utilisateur : déjà présente dans le menu utilisateur)

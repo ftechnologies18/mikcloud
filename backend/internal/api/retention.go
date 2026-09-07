@@ -14,7 +14,8 @@
 // simulation (sessions/uptime/télémétrie restent au rythme des polls) :
 //
 //	store.Sweep     — applyExpiry : expirations vouchers + politique
-//	                  « remove » + purge UserLogs > 90 j + plafond 5 000,
+//	                  « remove » + purge UserLogs selon la rétention du
+//	                  compte (30/60/90 j, N°65) + plafond 5 000,
 //	                  date le passage (db.LastSweep) ;
 //	enforceExpired  — commandes agent des expirations (Enforced),
 //	                  réparation limit-uptime, lots morts (N°26),
@@ -34,9 +35,9 @@ import (
 )
 
 // retentionSweepInterval — période du balayage de fond. La rétention
-// (90 j, cf. store.userLogRetention) se purge donc à l'heure près ; une
-// heure laisse largement le temps à un Save PostgreSQL complet entre
-// deux passages et reste insignifiant côté charge.
+// (30/60/90 j PAR COMPTE, cf. store.applyExpiry — N°65) se purge donc à
+// l'heure près ; une heure laisse largement le temps à un Save PostgreSQL
+// complet entre deux passages et reste insignifiant côté charge.
 const retentionSweepInterval = time.Hour
 
 // RunRetentionSweepForever — boucle du balayage (lancée en goroutine par
@@ -60,6 +61,6 @@ func (a *API) RunRetentionSweep() {
 	a.store.Save()
 	a.store.Unlock()
 	if purged > 0 {
-		log.Printf("rétention (90 j) : %d entrée(s) du journal utilisateurs purgée(s)", purged)
+		log.Printf("rétention (30/60/90 j par compte) : %d entrée(s) du journal utilisateurs purgée(s)", purged)
 	}
 }

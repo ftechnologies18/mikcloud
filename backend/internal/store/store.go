@@ -845,10 +845,12 @@ func (s *Store) Reload() (ReloadStats, error) {
 // À appeler sous verrou, au maximum toutes les 2 secondes.
 // ---------------------------------------------------------------------------
 
-// Rétention et volumétrie du journal utilisateurs (F3).
+// Rétention et volumétrie du journal utilisateurs (F3). N°65 : la rétention
+// est PAR COMPTE (tenant.logRetentionDays, 30/60/90 j) ; userLogRetention est
+// la valeur appliquée aux comptes SANS réglage explicite (défaut 90).
 const (
-	userLogRetention = 90 * 24 * time.Hour // purge au-delà de 90 jours
-	maxUserLogs      = 5000                // garde-fou volumétrie (mode JSON)
+	userLogRetention = time.Duration(model.DefaultLogRetentionDays) * 24 * time.Hour
+	maxUserLogs      = 5000 // garde-fou volumétrie (mode JSON)
 )
 
 // Tick — progression du temps simulé :
@@ -1107,8 +1109,9 @@ func kickLockedUsers(db *model.DB, userIdx, profileIdx map[string]int, now time.
 // Sweep — N°64 — point d'entrée du BALAYAGE PÉRIODIQUE (goroutine main.go,
 // 1 h + rattrapage au démarrage) : même moteur d'expiration/rétention que
 // Tick (applyExpiry) SANS la progression de la simulation (sessions, uptime,
-// télémétrie aléatoire). La purge des journaux (90 j + plafond 5 000) ne
-// dépend ainsi PLUS des seules lectures console : un compte dormant, jamais
+// télémétrie aléatoire). La purge des journaux (rétention 30/60/90 j PAR
+// COMPTE, N°65 + plafond 5 000) ne dépend ainsi PLUS des seules lectures
+// console : un compte dormant, jamais
 // consulté, est couvert aussi. Date le passage (db.LastSweep, preuve d'audit
 // via GET /) et renvoie le nombre d'entrées du journal purgées.
 // À appeler sous verrou ; le Save est à charge de l'appelant.
@@ -1128,7 +1131,8 @@ func Sweep(db *model.DB, now time.Time) int {
 //  2. politique de nettoyage du compte (expiryPolicyMode == "remove") :
 //     les utilisateurs « expired » dont l'expiration date de plus de
 //     expiryPolicyAfterDays jours sont supprimés du cloud (+ Activity résumé) ;
-//  3. purge des UserLogs de plus de 90 jours (rétention F3).
+//  3. purge des UserLogs selon la rétention DU COMPTE (30/60/90 j, N°65 ;
+//     défaut 90) + garde-fou volumétrie (5 000 entrées).
 //
 // Retour : accountID → usernames dont l'expiration vient d'être appliquée
 // (information disponible pour l'enforcement routeur — cf. enforceExpired).
@@ -1234,10 +1238,20 @@ func applyExpiry(db *model.DB, now time.Time) map[string][]string {
 		}
 	}
 
-	// 3. Rétention du journal utilisateurs (90 jours) + garde-fou volumétrie.
-	lim := now.Add(-userLogRetention).Format(time.RFC3339)
+	// 3. Rétention du journal utilisateurs — N°65 : 30/60/90 jours PAR COMPTE
+	// (tenant.logRetentionDays ; défaut 90 = userLogRetention) + garde-fou
+	// volumétrie global (5 000 dernières entrées).
+	cutoffs := make(map[string]string, len(db.SettingsByAccount))
+	for accID, s := range db.SettingsByAccount {
+		cutoffs[accID] = now.AddDate(0, 0, -s.Tenant.LogRetentionDaysEffective()).Format(time.RFC3339)
+	}
+	defLim := now.Add(-userLogRetention).Format(time.RFC3339)
 	keptLogs := db.UserLogs[:0]
 	for _, l := range db.UserLogs {
+		lim := defLim
+		if c, ok := cutoffs[l.AccountID]; ok {
+			lim = c
+		}
 		if l.At < lim {
 			continue
 		}

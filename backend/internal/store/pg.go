@@ -734,6 +734,9 @@ func (p *PG) ensureSchema() error {
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS portal_key TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS expiry_policy_mode TEXT NOT NULL DEFAULT 'keep'`,
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS expiry_policy_after_days INTEGER NOT NULL DEFAULT 30`,
+		// N°65 — rétention du journal utilisateurs PAR COMPTE (30/60/90 j,
+		// défaut 90 : la colonne reporte la valeur effective au premier Save).
+		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS log_retention_days INTEGER NOT NULL DEFAULT 90`,
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS board_name TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS free_hdd_mb INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS total_hdd_mb INTEGER NOT NULL DEFAULT 0`,
@@ -983,7 +986,8 @@ func (p *PG) loadSettings(db *model.DB) error {
                         sub_plan_id, sub_status, sub_period_start, sub_period_end, sub_last_amount,
                         sub_router_slots, sub_last_paid_at, last_tick, last_sweep,
                         platform_name, platform_register_open, platform_register_key, auto_import_router_users,
-                        join_button, portal_style, portal_welcome, portal_promos, portal_socials, portal_key
+                        join_button, portal_style, portal_welcome, portal_promos, portal_socials, portal_key,
+                        log_retention_days
                  FROM settings`)
 	if err != nil {
 		return err
@@ -1013,6 +1017,8 @@ func (p *PG) loadSettings(db *model.DB) error {
 			portalStyle, portalWelcome, portalPromos, portalSocials string
 			// N°56 - clé publique du portail (analytics pré-auth).
 			portalKey string
+			// N°65 - rétention du journal par compte (30/60/90 j, défaut 90).
+			logRetentionDays int
 			// I (paramètres plateforme) — uniquement sur le compte principal.
 			platformName         string
 			platformRegisterOpen bool
@@ -1024,7 +1030,7 @@ func (p *PG) loadSettings(db *model.DB) error {
 			&subPlanID, &subStatus, &subPeriodStart, &subPeriodEnd, &subLastAmount,
 			&subRouterSlots, &subLastPaidAt, &lastTick, &lastSweep,
 			&platformName, &platformRegisterOpen, &platformRegisterKey, &autoImport,
-			&joinButton, &portalStyle, &portalWelcome, &portalPromos, &portalSocials, &portalKey); err != nil {
+			&joinButton, &portalStyle, &portalWelcome, &portalPromos, &portalSocials, &portalKey, &logRetentionDays); err != nil {
 			return err
 		}
 		if accID == "" {
@@ -1062,6 +1068,9 @@ func (p *PG) loadSettings(db *model.DB) error {
 		// DEFAULT TRUE), le reglage du bouton « S'inscrire » survit aux
 		// redemarrages.
 		settings.Tenant.JoinButton = &joinButton
+		// N°65 - même pattern : valeur lue EXPLICITE (colonne NOT NULL
+		// DEFAULT 90), la rétention du journal survit aux redémarrages.
+		settings.Tenant.LogRetentionDays = &logRetentionDays
 		db.SettingsByAccount[accID] = settings
 		if lastTick.Valid && db.LastTick.IsZero() {
 			db.LastTick = lastTick.Time
@@ -1250,8 +1259,9 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
                                sub_plan_id, sub_status, sub_period_start, sub_period_end, sub_last_amount,
                                sub_router_slots, sub_last_paid_at, last_tick, last_sweep,
                                platform_name, platform_register_open, platform_register_key, auto_import_router_users, join_button,
-                               portal_style, portal_welcome, portal_promos, portal_socials, portal_key)
-                         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32)
+                               portal_style, portal_welcome, portal_promos, portal_socials, portal_key,
+                               log_retention_days)
+                         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33)
                          ON CONFLICT (id) DO UPDATE SET
                            account_id                = EXCLUDED.account_id,
                            tenant_name               = EXCLUDED.tenant_name,
@@ -1284,7 +1294,8 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
                            portal_welcome           = EXCLUDED.portal_welcome,
                            portal_promos            = EXCLUDED.portal_promos,
                            portal_socials           = EXCLUDED.portal_socials,
-                           portal_key               = EXCLUDED.portal_key`,
+                           portal_key               = EXCLUDED.portal_key,
+                           log_retention_days       = EXCLUDED.log_retention_days`,
 			accID, s.Tenant.Name, s.Tenant.Currency, s.Tenant.Timezone,
 			s.Plan.Name, s.Plan.MaxRouters, s.Plan.MaxUsers,
 			s.Tenant.WaveLink, s.Tenant.DNSName, s.Tenant.LogoURL, s.Tenant.BannerURL,
@@ -1294,7 +1305,7 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
 			s.Subscription.RouterSlots, s.Subscription.LastPaidAt, lastTick, lastSweep,
 			platName, platOpen, platKey, s.ImportAutoEnabled(), s.Tenant.JoinButtonEnabled(),
 			s.Tenant.PortalStyle, s.Tenant.PortalWelcome, s.Tenant.PortalPromos, s.Tenant.PortalSocials,
-			s.Tenant.PortalKey)
+			s.Tenant.PortalKey, s.Tenant.LogRetentionDaysEffective())
 		if err != nil {
 			return fmt.Errorf("pg sync settings (%s) : %w", accID, err)
 		}

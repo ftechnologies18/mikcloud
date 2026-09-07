@@ -488,6 +488,33 @@ type Tenant struct {
 	// P0 (audit Mikhmon) — F5 : politique de nettoyage des expirés.
 	ExpiryPolicyMode      string `json:"expiryPolicyMode"`      // "keep" (défaut) | "remove"
 	ExpiryPolicyAfterDays int    `json:"expiryPolicyAfterDays"` // défaut 30
+	// N°65 — rétention du journal utilisateurs PAR COMPTE (30/60/90 jours,
+	// défaut 90). Pointeur : nil = défaut 90 sans écrire le champ dans le JSON
+	// renvoyé (compatibilité zéro-migration pour les comptes existants, même
+	// pattern que JoinButton) ; la colonne Neon settings.log_retention_days
+	// (NOT NULL DEFAULT 90) reporte la valeur explicite au premier Save.
+	LogRetentionDays *int `json:"logRetentionDays,omitempty"`
+}
+
+// DefaultLogRetentionDays — rétention par défaut du journal utilisateurs
+// (F3), en jours. N°65 : chaque compte peut resserrer à 30/60 via
+// tenant.logRetentionDays ; 90 reste le comportement historique (N°64).
+const DefaultLogRetentionDays = 90
+
+// LogRetentionDaysEffective — valeur EFFECTIVE de la rétention du journal
+// pour un compte (nil ou valeur hors 30/60/90 = 90 jours : le comportement
+// N°64 est préservé pour les comptes existants — une valeur invalide glissée
+// en base ne peut jamais ouvrir une rétention illimitée).
+func (t Tenant) LogRetentionDaysEffective() int {
+	if t.LogRetentionDays == nil {
+		return DefaultLogRetentionDays
+	}
+	switch *t.LogRetentionDays {
+	case 30, 60, 90:
+		return *t.LogRetentionDays
+	default:
+		return DefaultLogRetentionDays
+	}
 }
 
 // Plan — plan d'abonnement SaaS (libellé hérité de l'ère pré-facturation ;

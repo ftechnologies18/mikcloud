@@ -24,6 +24,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { EmptyState } from "@/components/hotspot/empty-state";
 import { LoadingRows } from "@/components/hotspot/loading";
 import { PageHeader } from "@/components/hotspot/page-header";
+import { useSettings } from "@/components/hotspot/parts/sd-currency";
 import { api, apiDownload } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { formatDateTime } from "@/lib/hotspot/format";
@@ -93,6 +94,10 @@ export default function LogsView() {
     placeholderData: (previous) => previous,
   });
 
+  // N°65 — rétention effective du compte (absente du JSON = défaut 90, N°64).
+  const { data: settings } = useSettings();
+  const retentionDays = settings?.tenant.logRetentionDays ?? 90;
+
   const logs = pagedData?.data ?? [];
   const totalCount = pagedData?.total ?? 0;
   const maxPage = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
@@ -136,10 +141,13 @@ export default function LogsView() {
         }
       />
 
-      {/* N°64 — transparence rétention (audit) : 90 j + garde-fou volumétrie */}
+      {/* N°64/N°65 — transparence rétention (audit) : durée effective du compte
+          (30/60/90 j) + garde-fou volumétrie */}
       <div className="flex items-start gap-2.5 rounded-xl border border-chart-2/25 bg-chart-2/5 px-4 py-3">
         <ShieldCheck className="mt-0.5 size-4 shrink-0 text-chart-2 sm:mt-0" aria-hidden />
-        <p className="text-xs leading-relaxed text-muted-foreground">{t("logs.retentionNote")}</p>
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          {tf("logs.retentionNote", { days: retentionDays })}
+        </p>
       </div>
 
       {/* Barre de filtres */}

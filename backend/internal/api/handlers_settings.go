@@ -44,6 +44,9 @@ type tenantPut struct {
 	PortalWelcome *string            `json:"portalWelcome"`
 	PortalPromos  *[]portalPromoReq  `json:"portalPromos"`
 	PortalSocials *[]portalSocialReq `json:"portalSocials"`
+	// N°65 — rétention du journal utilisateurs (repli nested du champ plat :
+	// 30/60/90 j, défaut 90).
+	LogRetentionDays *int `json:"logRetentionDays"`
 }
 
 // portalPromoReq — une ligne de vitrine « hospitalité » (N°55).
@@ -90,6 +93,9 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		PortalWelcome *string            `json:"portalWelcome"`
 		PortalPromos  *[]portalPromoReq  `json:"portalPromos"`
 		PortalSocials *[]portalSocialReq `json:"portalSocials"`
+		// N°65 — rétention du journal utilisateurs (30/60/90 j ; nil = inchangé,
+		// défaut effectif 90).
+		LogRetentionDays *int `json:"logRetentionDays"`
 		// …et forme imbriquée tenant{…}.
 		Tenant *tenantPut `json:"tenant"`
 	}
@@ -110,6 +116,8 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	// N°55 — résolution plat > imbriqué des champs hospitalité.
 	portalStyle, portalWelcome := req.PortalStyle, req.PortalWelcome
 	portalPromos, portalSocials := req.PortalPromos, req.PortalSocials
+	// N°65 — même résolution plat > imbriqué pour la rétention du journal.
+	logRetentionDays := req.LogRetentionDays
 	if req.Tenant != nil {
 		if name == nil {
 			name = req.Tenant.Name
@@ -155,6 +163,9 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		}
 		if portalSocials == nil {
 			portalSocials = req.Tenant.PortalSocials
+		}
+		if logRetentionDays == nil {
+			logRetentionDays = req.Tenant.LogRetentionDays
 		}
 	}
 
@@ -319,6 +330,15 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Le nombre de jours doit être compris entre 0 et 365")
 		return
 	}
+	// N°65 — rétention du journal : exactement 30, 60 ou 90 jours (le contrat
+	// est borné côté serveur ; toute autre valeur est refusée).
+	if logRetentionDays != nil {
+		v := *logRetentionDays
+		if v != 30 && v != 60 && v != 90 {
+			writeErr(w, http.StatusBadRequest, "Rétention du journal invalide (30, 60 ou 90 jours)")
+			return
+		}
+	}
 
 	a.store.Lock()
 	db := a.store.Data()
@@ -364,6 +384,11 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if expiryAfterDays != nil {
 		settings.Tenant.ExpiryPolicyAfterDays = *expiryAfterDays
+	}
+	// N°65 — la rétention est posée explicitement (nil = inchangé ; la valeur
+	// effective par défaut reste 90 via Tenant.LogRetentionDaysEffective).
+	if logRetentionDays != nil {
+		settings.Tenant.LogRetentionDays = logRetentionDays
 	}
 	// N°46 — le réglage du bouton « S'inscrire » est posé explicitement
 	// (le nil reste « inchangé » ; défaut effectif ON via

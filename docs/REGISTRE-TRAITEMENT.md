@@ -15,7 +15,7 @@
 | # | Traitement | Finalité | Données | Base légale (réf. loi) | Durée |
 |---|---|---|---|---|---|
 | T1 | Gestion de compte SaaS | Inscription, authentification, 2FA | Identité (nom, identifiant), email, WhatsApp, pays/ville, mot de passe (bcrypt), secret TOTP, sessions | Contrat (art. 9 — consentement/contrat) | Durée du compte + 12 mois |
-| T2 | Gestion hotspot | Vouchers, utilisateurs hotspot, sessions, trafic | Identifiants hotspot, MAC/IP, volumes, horodatages | Contrat | Durée du compte |
+| T2 | Gestion hotspot | Vouchers, utilisateurs hotspot, sessions, trafic | Identifiants hotspot, MAC/IP, volumes, horodatages | Contrat | Durée du compte ; journal de connexion (login/IP/MAC) : 30/60/90 j selon réglage du compte (défaut 90 — N°65, purge automatique horaire) |
 | T3 | Journal d'activité & sécurité | Traçabilité, détection force brute (JSON `auth_failure` S2) | Identifiants de connexion, IP (premier hop XFF), user-agent, horodatage | Intérêt légitime (sécurité) | 12 mois max |
 | T4 | Facturation / abonnement | Essai 90 j, plans, paiements Wave/GeniusPay | Transactions, statut d'abonnement (aucun PAN stocké — passerelles externes) | Contrat + obligation légale | 5 ans (comptable) |
 | T5 | Notifications | Alertes opérationnelles (email/WhatsApp/Telegram) | Coordonnées du gérant | Contrat | Durée du compte |

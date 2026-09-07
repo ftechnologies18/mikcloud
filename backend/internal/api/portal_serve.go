@@ -182,6 +182,8 @@ func buildPortalConfig(db *model.DB, router *model.Router, r *http.Request) hotp
 		// N°46 — l'affichage du bouton « S'inscrire » est piloté par le
 		// réglage console (défaut effectif ON pour les comptes existants).
 		JoinEnabled: settings.Tenant.JoinButtonEnabled(),
+		// N°65 — rétention du journal du compte (note de confidentialité).
+		LogRetentionDays: settings.Tenant.LogRetentionDaysEffective(),
 	}
 	cfg.Style, cfg.Welcome, cfg.Promos, cfg.Socials = portalHospitality(settings.Tenant) // N°55
 	cfg.PortalKey = settings.Tenant.PortalKey                                            // N°56 — analytics pré-auth
@@ -289,8 +291,10 @@ func buildPortalConfigForSite(db *model.DB, site *model.WifiSite, router *model.
 		// prime sur le fallback, le réglage s'applique donc sans
 		// re-déploiement sur les portails des routeurs déjà déployés.
 		JoinEnabled: settings.Tenant.JoinButtonEnabled(),
-		WifiSlug:    site.Slug,
-		Active:      site.Active, // N°51 — état réel (peut être en pause)
+		// N°65 — rétention du journal du compte (note de confidentialité).
+		LogRetentionDays: settings.Tenant.LogRetentionDaysEffective(),
+		WifiSlug:         site.Slug,
+		Active:           site.Active, // N°51 — état réel (peut être en pause)
 	}
 	cfg.Style, cfg.Welcome, cfg.Promos, cfg.Socials = portalHospitality(settings.Tenant) // N°55
 	cfg.PortalKey = settings.Tenant.PortalKey                                            // N°56 — analytics pré-auth

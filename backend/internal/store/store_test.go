@@ -450,3 +450,48 @@ func TestSimulatedSessionTrafficDirection(t *testing.T) {
 		t.Fatalf("download (bytes-out=%d) doit dominer l'upload (bytes-in=%d) — sémantique RouterOS inversée ?", u.BytesOut, u.BytesIn)
 	}
 }
+
+// TestApplyExpiryLogRetentionPerAccount — N°65 : la purge du journal utilise
+// la rétention PAR COMPTE (30/60/90 j, défaut 90) — un log de 45 j survit
+// pour un compte à 90 j mais est purgé pour un compte à 30 j ; une valeur
+// invalide glissée en base retombe sur 90 j (jamais de rétention illimitée).
+func TestApplyExpiryLogRetentionPerAccount(t *testing.T) {
+	now := time.Now().UTC()
+	acc30, accDefault, accBad := "acc-ret-30", "acc-ret-def", "acc-ret-bad"
+	d30, dBad := 30, 45
+	db := model.DB{
+		SettingsByAccount: map[string]model.Settings{
+			acc30:      {Tenant: model.Tenant{LogRetentionDays: &d30}},
+			accDefault: {Tenant: model.Tenant{}},                        // nil → 90 j (défaut)
+			accBad:     {Tenant: model.Tenant{LogRetentionDays: &dBad}}, // invalide → 90 j
+		},
+	}
+	iso := func(daysAgo int) string { return now.AddDate(0, 0, -daysAgo).Format(time.RFC3339) }
+	db.UserLogs = []model.UserLog{
+		{ID: "l-a-old", AccountID: acc30, At: iso(45)},       // > 30 j → purgé
+		{ID: "l-a-new", AccountID: acc30, At: iso(10)},       // < 30 j → conservé
+		{ID: "l-b-mid", AccountID: accDefault, At: iso(45)},  // < 90 j → conservé
+		{ID: "l-b-old", AccountID: accDefault, At: iso(100)}, // > 90 j → purgé
+		{ID: "l-c-mid", AccountID: accBad, At: iso(45)},      // invalide → 90 j → conservé
+	}
+	applyExpiry(&db, now)
+	kept := map[string]bool{}
+	for _, l := range db.UserLogs {
+		kept[l.ID] = true
+	}
+	if kept["l-a-old"] {
+		t.Error("log de 45 j d'un compte à 30 j doit être purgé")
+	}
+	if !kept["l-a-new"] {
+		t.Error("log de 10 j d'un compte à 30 j doit être conservé")
+	}
+	if !kept["l-b-mid"] {
+		t.Error("log de 45 j d'un compte à 90 j (défaut) doit être conservé")
+	}
+	if kept["l-b-old"] {
+		t.Error("log de 100 j d'un compte à 90 j (défaut) doit être purgé")
+	}
+	if !kept["l-c-mid"] {
+		t.Error("valeur invalide (45) doit retomber sur 90 j — le log de 45 j est conservé")
+	}
+}

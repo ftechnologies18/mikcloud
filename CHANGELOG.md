@@ -5,6 +5,56 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-08 — N°65 : Rétention du journal paramétrable par compte (30/60/90 j, défaut 90)
+
+### N°65 — Journaux utilisateurs : la durée de conservation devient un réglage PAR COMPTE (recommandation 2 de l'audit rétention)
+
+- **Constat** : la rétention à 90 jours (N°64) était une constante globale
+  (`store.userLogRetention`) — tous les comptes subissaient la même durée,
+  alors que la minimisation (RGPD/ARTPD, loi ivoirienne 2013-450) appelle
+  un paramétrage par exploitant selon son besoin propre (litiges,
+  obligations locales, volume).
+- **Réglage par compte** (`tenant.logRetentionDays`, 30/60/90 j, défaut 90) :
+  - pattern **zéro-migration** du codebase (pointeur, cf. `joinButton`) :
+    nil = défaut 90 sans écrire le champ dans le JSON persisté — les
+    comptes existants gardent EXACTEMENT le comportement N°64 ; la colonne
+    Neon `settings.log_retention_days` (NOT NULL DEFAULT 90, `ALTER IF NOT
+    EXISTS`) reporte la valeur effective au premier Save ;
+  - contrat **borné côté serveur** : `PUT /api/settings` n'accepte que 30,
+    60 ou 90 (formes plate + imbriquée `tenant{…}`, mêmes résolutions
+    défensives que les autres réglages) — toute autre valeur est refusée
+    en 400 ; une valeur invalide glissée en base retombe sur 90
+    (`LogRetentionDaysEffective`, jamais de rétention illimitée) ;
+  - **moteur** : `applyExpiry` (étape 3) purge chaque log selon la rétention
+    de SON compte (cutoffs par `SettingsByAccount`) — le balayage
+    périodique N°64 (horaire + rattrapage boot) applique la valeur du
+    compte sans aucun changement de scheduling ; le garde-fou volumétrie
+    (5 000 dernières entrées) reste GLOBAL.
+- **Console** (section Paramètres → Général, propriétaire) : carte « Rétention
+  du journal » — sélecteur 30/60/90 jours (« 90 jours (défaut) » libellé),
+  hint reprenant la mécanique (purge horaire, note portail, plafond 5 000) ;
+  la **bannière de la vue Journal** devient dynamique (durée effective du
+  compte affichée, FR/EN).
+- **Portail captif** (`login.html`) : la note de confidentialité du footer
+  devient **dynamique** — « conservées N jours maximum » où N est la
+  rétention du compte, portée par le fallback inliné ET l'endpoint live
+  (`PortalConfig.LogRetentionDays`, mis à jour par `applyConfig` — les
+  portails déjà déployés reflètent le réglage sans re-déploiement ;
+  repli 90 pour les configs antérieures).
+- **Registre des traitements** (`docs/REGISTRE-TRAITEMENT.md`) : la durée de
+  la ligne T2 documente désormais le journal de connexion (30/60/90 j
+  selon réglage du compte, défaut 90, purge automatique horaire).
+- **Tests** : `TestSettingsLogRetention` (validation 30/60/90, refus 400 des
+  autres valeurs, nil = inchangé, repli nested, GET reflète),
+  `TestApplyExpiryLogRetentionPerAccount` (purge par compte : 45 j purgé à
+  30 j, conservé à 90 j, valeur invalide → 90) et
+  `TestPortalServeLogRetention` (login.html servi porte
+  `"logRetentionDays":30` + le span de la note dynamique).
+- **Portée** : backend (7 fichiers) + frontend (3 fichiers) + template
+  portail + registre ; ajout de champ purement additif au contrat
+  `PUT/GET /api/settings` et au bloc config du portail — aucun contrat
+  existant ne change.
+
 ## 2026-09-08 — N°64 : Balayage de rétention périodique + transparence (privacy/audit)
 
 ### N°64 — Journaux utilisateurs : la purge à 90 jours devient une garantie stricte, vérifiable et documentée

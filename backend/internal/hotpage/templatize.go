@@ -111,6 +111,11 @@ type PortalConfig struct {
 	// dans le bloc JSON pour que la page les affiche. Chaque offre porte le nom,
 	// le prix, la durée et le waveUrl pré-construit.
 	Offers []PortalOffer `json:"offers,omitempty"`
+	// N°65 — rétention du journal du compte, en jours (30/60/90, défaut 90) :
+	// alimente la note de confidentialité du portail (« données de connexion
+	// conservées N jours »). Portée par le fallback inliné ET l'endpoint live
+	// — le réglage s'applique aux portails déployés sans re-déploiement.
+	LogRetentionDays int `json:"logRetentionDays"`
 }
 
 // PortalPromo — une ligne de vitrine « hospitalité » (N°55) : un produit ou

@@ -18,7 +18,7 @@
 
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Building2, Languages } from "lucide-react";
+import { Building2, Languages, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
 import { api } from "@/lib/hotspot/api";
@@ -73,6 +73,7 @@ export default function SettingsView() {
         <OrganizationCard settings={data} />
         <div className="grid grid-cols-1 content-start gap-4 sm:gap-6">
           <LanguageCard />
+          <RetentionCard settings={data} />
         </div>
       </div>
     </div>
@@ -221,6 +222,76 @@ function OrganizationCard({ settings }: { settings: AppSettings }) {
       </CardContent>
       <CardFooter className="justify-end px-4 sm:px-6">
         <Button className="h-10" onClick={submitSettings} disabled={saveMutation.isPending || !form.name.trim()}>
+          {saveMutation.isPending ? t("common.saving") : t("common.save")}
+        </Button>
+      </CardFooter>
+    </Card>
+  );
+}
+
+// Carte Rétention du journal (N°65) — durée de conservation des journaux de
+// connexion du compte (30/60/90 j, défaut 90). La purge automatique horaire
+// (N°64) applique la valeur du compte ; la note de confidentialité du portail
+// captif et la bannière de la vue Journal la reflètent.
+function RetentionCard({ settings }: { settings: AppSettings }) {
+  const { t, tf } = useI18n();
+  const queryClient = useQueryClient();
+  // Absent du JSON tant que le réglage n'a pas été touché = 90 (N°64).
+  const effective = settings.tenant.logRetentionDays ?? 90;
+  const [days, setDays] = useState(String(effective));
+
+  const saveMutation = useMutation({
+    mutationFn: (value: number) =>
+      api<AppSettings>("/api/settings", {
+        method: "PUT",
+        // Corps défensif : champ plat + forme imbriquée tenant{…} (même
+        // convention que les autres réglages du compte).
+        body: { logRetentionDays: value, tenant: { logRetentionDays: value } },
+      }),
+    onSuccess: () => {
+      toast.success(t("settings.retentionSavedToast"));
+      void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return (
+    <Card className="gap-4 py-4 sm:py-6">
+      <CardHeader className="px-4 sm:px-6">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
+            <ShieldCheck className="size-4" />
+          </span>
+          {t("settings.retentionCard")}
+        </CardTitle>
+        <CardDescription>{t("settings.retentionCardDesc")}</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-4 px-4 sm:px-6">
+        <div className="grid gap-2">
+          <Label htmlFor="log-retention-days">{t("settings.retentionLabel")}</Label>
+          <Select value={days} onValueChange={setDays}>
+            <SelectTrigger id="log-retention-days" className="h-10 w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {[30, 60, 90].map((value) => (
+                <SelectItem key={value} value={String(value)}>
+                  {value === 90
+                    ? tf("settings.retentionDefaultOption", { days: value })
+                    : tf("settings.retentionOption", { days: value })}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs leading-relaxed text-muted-foreground">{t("settings.retentionHint")}</p>
+        </div>
+      </CardContent>
+      <CardFooter className="justify-end px-4 sm:px-6">
+        <Button
+          className="h-10"
+          onClick={() => saveMutation.mutate(Number(days))}
+          disabled={saveMutation.isPending}
+        >
           {saveMutation.isPending ? t("common.saving") : t("common.save")}
         </Button>
       </CardFooter>

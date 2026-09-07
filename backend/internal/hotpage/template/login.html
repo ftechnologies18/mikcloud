@@ -405,7 +405,8 @@
         .ftci-link:hover, .ftci-link:focus { color: var(--primary-dark); text-decoration: underline; }
 
         /* N°64 — transparence rétention (RGPD/ARTPD) : mention discrète du
-           portail, alignée sur la purge réelle (90 j, store.applyExpiry). */
+           portail, alignée sur la purge réelle (30/60/90 j PAR COMPTE,
+           store.applyExpiry — N°65 ; le nombre est mis à jour par applyConfig). */
         .privacy-note {
             color: var(--text-muted); font-size: 0.72rem;
             display: inline-flex; align-items: center; gap: 5px; line-height: 1.4;
@@ -649,10 +650,12 @@
                             <small><a href="https://ftci.fr/" target="_blank" rel="noopener" class="ftci-link">&copy; 2026 Freelance Technologies (FTCI)</a></small>
                         </div>
                         <div class="mt-1">
-                            <!-- N°64 — politique de confidentialité : rétention des journaux -->
+                            <!-- N°64/N°65 — politique de confidentialité : rétention des journaux.
+                                 La durée est PAR COMPTE : le span #privacy-days est mis à jour par
+                                 applyConfig depuis le réglage du gérant (30/60/90 j). -->
                             <small class="privacy-note">
                                 <i class="fas fa-lock" aria-hidden="true"></i>
-                                Données de connexion conservées 90 jours maximum, puis supprimées automatiquement
+                                Données de connexion conservées <span id="privacy-days">90</span> jours maximum, puis supprimées automatiquement
                             </small>
                         </div>
                     </div>
@@ -810,6 +813,16 @@
                 if (logoImg && cfg.logoUrl) {
                     logoImg.src = cfg.logoUrl;
                     logoImg.alt = 'Logo ' + cfg.tenantName;
+                }
+
+                // 1 bis. N°65 — rétention PAR COMPTE : la note de confidentialité
+                // du footer reflète le réglage du gérant (30/60/90 j).
+                // undefined (fallback inliné antérieur au N°65) = 90, le
+                // comportement historique N°64 est préservé.
+                var privacyDays = document.getElementById('privacy-days');
+                if (privacyDays) {
+                    var rd = parseInt(cfg.logRetentionDays, 10);
+                    privacyDays.textContent = (rd === 30 || rd === 60 || rd === 90) ? String(rd) : '90';
                 }
 
                 // 2. Bouton d'inscription (N°46) : l'affichage est piloté par le

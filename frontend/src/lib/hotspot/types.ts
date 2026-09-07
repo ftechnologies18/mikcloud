@@ -939,6 +939,11 @@ export interface AppSettings {
     expiryPolicyMode?: ExpiryPolicyMode;
     /** F1/F5 : suppression après N jours (1-365, défaut 30) quand mode = remove. */
     expiryPolicyAfterDays?: number;
+    /** N°65 : rétention du journal de connexion (30/60/90 jours, défaut 90).
+     * Absent du JSON tant que le réglage n'a pas été touché = 90 (comportement
+     * N°64) — la purge automatique horaire applique la valeur du compte et la
+     * note de confidentialité du portail captif la reflète. */
+    logRetentionDays?: number;
     /** Purge/résurgence : true (défaut) = les utilisateurs présents sur les
      * routeurs mais inconnus du cloud sont importés automatiquement à chaque
      * synchronisation agent ; false = jamais importés automatiquement (visibles

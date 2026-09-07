@@ -442,3 +442,52 @@ func TestPortalServeSecurityTenantInjection(t *testing.T) {
 		t.Error("le tenant name malveillant n'est pas échappé en \\u003c/script\\u003e dans le JSON")
 	}
 }
+
+// TestPortalServeLogRetention — N°65 : le login.html servi porte la rétention
+// du compte dans le bloc config (logRetentionDays) ET la note de
+// confidentialité dynamique (span #privacy-days, repli statique 90 mis à jour
+// par applyConfig côté client).
+func TestPortalServeLogRetention(t *testing.T) {
+	st, ts := newTestServerWithStore(t)
+	token := seedRouterWithAccount(t, st, "tok-retention", struct {
+		tenantName  string
+		wifiSlug    string
+		joinActive  bool
+		profileName string
+		profilePrc  int
+		waveLink    string
+		bannerUrl   string
+	}{tenantName: "Cyber Rétention"})
+
+	// Rétention resserrée à 30 j pour ce compte (réglage console).
+	st.Lock()
+	db := st.Data()
+	accID := "acc-portal-" + token
+	d30 := 30
+	s := db.SettingsByAccount[accID]
+	s.Tenant.LogRetentionDays = &d30
+	db.SettingsByAccount[accID] = s
+	st.Unlock()
+
+	resp, err := http.Get(ts.URL + "/portal/" + token + "/login.html")
+	if err != nil {
+		t.Fatalf("GET login.html : %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("statut %d, attendu 200", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	bodyStr := string(body)
+	// La config inlinée porte la rétention effective du compte.
+	if !strings.Contains(bodyStr, `"logRetentionDays":30`) {
+		t.Error("logRetentionDays=30 absent du bloc config du login.html servi")
+	}
+	// La note de confidentialité est dynamique : span présent, repli 90.
+	if !strings.Contains(bodyStr, `id="privacy-days"`) {
+		t.Error("span #privacy-days absent du login.html servi")
+	}
+	if !strings.Contains(bodyStr, ">90</span> jours maximum") {
+		t.Error("valeur de repli 90 absente de la note de confidentialité")
+	}
+}

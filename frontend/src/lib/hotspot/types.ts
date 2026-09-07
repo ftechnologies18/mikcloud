@@ -928,10 +928,13 @@ export interface AppSettings {
     portalStyle?: string;
     /** N°55 : message de bienvenue affiché en mode hospitalité (≤ 200 car.). */
     portalWelcome?: string;
-    /** N°55 : promos produits — JSON string [{title,desc,imageUrl,priceLabel}] ≤ 6. */
+    /** N°55 : promos produits — JSON string [{id?,title,desc,imageUrl,priceLabel,link?}] ≤ 6. */
     portalPromos?: string;
     /** N°55 : liens réseaux sociaux — JSON string [{label,url}] ≤ 4. */
     portalSocials?: string;
+    /** N°56 : clé publique du portail (analytics pré-auth) — 16 hex, générée
+     * côté serveur. Non secrète : elle n'ouvre aucun droit de lecture. */
+    portalKey?: string;
     /** F1/F5 : politique de nettoyage des utilisateurs expirés (défaut « keep »). */
     expiryPolicyMode?: ExpiryPolicyMode;
     /** F1/F5 : suppression après N jours (1-365, défaut 30) quand mode = remove. */
@@ -1545,12 +1548,31 @@ export interface WifiStatusResponse {
   offers?: WifiOffer[];
 }
 
-/** N°55 — une ligne de vitrine hospitalité (promos produits du portail). */
+/** N°55 — une ligne de vitrine hospitalité (promos produits du portail).
+ * N°56 : id (posé par le serveur, clé des compteurs analytics) et link
+ * (URL https optionnelle qui rend la carte cliquable — comptée « click »). */
 export interface PortalPromo {
+  id?: string;
   title: string;
   desc: string;
   imageUrl: string;
   priceLabel: string;
+  link?: string;
+}
+
+/** N°56 — compteurs analytics d'une promo (fenêtres jour / 7 jours / total). */
+export interface PromoStatsBucket {
+  day: number;
+  week: number;
+  total: number;
+}
+
+/** N°56 — réponse de GET /api/promos/stats. */
+export interface PromoStats {
+  today: string;
+  weekFrom: string;
+  promos: Array<{ id: string; title: string; impressions: PromoStatsBucket; clicks: PromoStatsBucket }>;
+  totals: { impression: PromoStatsBucket; click: PromoStatsBucket };
 }
 
 /** N°55 — un lien réseau social du portail hospitalité. */

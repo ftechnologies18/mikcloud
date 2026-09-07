@@ -897,6 +897,47 @@
                 });
             }
 
+            // ----------------------------------------------------------------
+            // N°56 — analytics du portail (impressions / clics par promo).
+            // Fire-and-forget TOTALEMENT silencieux : l'analytics ne doit
+            // JAMAIS gêner la connexion (aucun await, aucun message d'erreur,
+            // le catch avale tout). Déduplication double : client (un
+            // événement par type et par promo par chargement — mikTracked) ET
+            // serveur (un appareil = une ligne par promo et par jour — l'ID
+            // d'événement est déterministe côté API). clientKey : la MAC du
+            // portail (clientMac — même identité que le claim N°50).
+            // ----------------------------------------------------------------
+            var mikTracked = {};
+            var mikPortalCfg = null;
+            function mikTrack(kind, promoId) {
+                var c = mikPortalCfg;
+                if (!c || !c.apiBase || !c.portalKey || !promoId) return;
+                var k = kind + ':' + promoId;
+                if (mikTracked[k]) return;
+                mikTracked[k] = 1;
+                try {
+                    fetch(c.apiBase + '/api/portal/track', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ key: c.portalKey, promoId: promoId, kind: kind, clientKey: clientMac || '' }),
+                        keepalive: true
+                    }).catch(function () {});
+                } catch (e) { /* analytics best-effort */ }
+            }
+
+            // mikWatchPromos — déclare les cartes de vitrine visibles
+            // (impression). Rappelé après chaque rendu de la vitrine ; le
+            // marqueur data-promo-seen + mikTracked rendent le rappel no-op.
+            function mikWatchPromos() {
+                var cards = document.querySelectorAll('#mikcloud-hosp [data-promo-id]');
+                Array.prototype.forEach.call(cards, function (card) {
+                    var pid = card.getAttribute('data-promo-id');
+                    if (!pid || card.getAttribute('data-promo-seen') === '1') return;
+                    card.setAttribute('data-promo-seen', '1');
+                    mikTrack('impression', pid);
+                });
+            }
+
             // applyHospitality — bascule commerciale → hospitalité (N°55).
             // Réversible et idempotent : le mode commercial (défaut) ne touche
             // RIEN à la page historique ; un retour au mode commercial dé-masque
@@ -906,6 +947,7 @@
             // Compat navigateurs mobiles anciens : pas d'optional chaining,
             // Array.prototype.forEach.call sur les NodeList.
             function applyHospitality(cfg) {
+                mikPortalCfg = cfg; // N°56 — analytics : apiBase + portalKey du portail
                 var hosp = cfg.portalStyle === 'hospitality';
                 var infoContent = document.querySelector('.info-content');
                 var infoSection = document.querySelector('.info-section');
@@ -936,6 +978,7 @@
                         + '.hosp-section-title{color:#0f766e;font-weight:700;margin:14px 0 8px;font-size:15px;text-align:center;}'
                         + '.hosp-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}'
                         + '.hosp-card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.06);}'
+                        + 'a.hosp-card{text-decoration:none;color:inherit;display:block;}'
                         + '.hosp-card img{display:block;width:100%;height:110px;object-fit:cover;background:#f1f5f9;}'
                         + '.hosp-card-body{padding:8px 10px 10px;}'
                         + '.hosp-card-title{font-weight:700;color:#0f172a;font-size:14px;margin:0 0 2px;}'
@@ -975,18 +1018,30 @@
                         h += '<h5 class="hosp-section-title">Nos produits &amp; services</h5>';
                         h += '<div class="hosp-grid">';
                         promos.forEach(function (p) {
-                            h += '<div class="hosp-card">'
+                            // N°56 — id de promo (analytics) + lien optionnel : la
+                            // carte devient une ancre quand un lien existe, et son
+                            // ouverture est comptée « click » (onclick inline,
+                            // pattern onerror existant — compat vieux WebViews).
+                            var pid = p.id ? String(p.id) : '';
+                            var tag = p.link ? 'a href="' + escapeHtml(p.link) + '" target="_blank" rel="noopener"' : 'div';
+                            var clickAttr = (p.link && pid) ? ' onclick="mikTrack(\'click\',\'' + pid + '\')"' : '';
+                            var idAttr = pid ? ' data-promo-id="' + pid + '"' : '';
+                            h += '<' + tag + ' class="hosp-card"' + idAttr + clickAttr + '>'
                                 + (p.imageUrl ? '<img src="' + escapeHtml(p.imageUrl) + '" alt="' + escapeHtml(p.title || '') + '" loading="lazy" onerror="this.style.display=\'none\'">' : '')
                                 + '<div class="hosp-card-body">'
                                 + '<p class="hosp-card-title">' + escapeHtml(p.title || '') + '</p>'
                                 + (p.desc ? '<p class="hosp-card-desc">' + escapeHtml(p.desc) + '</p>' : '')
                                 + (p.priceLabel ? '<span class="hosp-card-price">' + escapeHtml(p.priceLabel) + '</span>' : '')
-                                + '</div></div>';
+                                + '</div></' + (p.link ? 'a' : 'div') + '>';
                         });
                         h += '</div>';
                     }
                     block.innerHTML = h;
                     infoContent.insertBefore(block, infoContent.firstChild);
+                    // N°56 — impressions : la vitrine vient d'être rendue ; on
+                    // déclare les cartes visibles après un court délai (rendu
+                    // + scroll initial). Dédup client + serveur (1/jour/appareil).
+                    setTimeout(mikWatchPromos, 600);
                 }
 
                 // 4) Réseaux sociaux de l'établissement (au-dessus du pied).

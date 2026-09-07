@@ -5,6 +5,46 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-09 — N°66 : limite d'appareils simultanés par compte revendeur (Mode Vente)
+
+### N°66 — Anti-partage du PIN : le gérant borne le nombre de téléphones connectés en même temps (demande utilisateur)
+- **Demande** : « donner la possibilité au gérant/propriétaire de limiter le
+  nombre d'appareils simultanés sur lesquels le compte revendeur peut se
+  connecter » — la cible est le COMPTE REVENDEUR (login PIN de la PWA Mode
+  Vente), pas l'utilisateur hotspot final (déjà couvert par `shared-users`
+  au niveau profil RouterOS).
+- **Nouvelle propriété `maxDevices` sur le revendeur** (0-20, 0 = illimité,
+  défaut 1 à la création via le formulaire) : settable à la création et à
+  l'édition dans la vue Revendeurs (champ « Appareils simultanés » avec
+  garde-fou 0-20 des deux côtés).
+- **Registre de sessions `sell_sessions`** (nouvelle table Neon) : un login
+  PIN d'un revendeur limité inscrit une session (jti embarqué dans le JWT,
+  user-agent + IP horodatés). Chaque requête `/api/sell/*` recontrôle la
+  présence de la session au registre — l'appareil évincé reçoit 401, que
+  la PWA traite comme une fin de session (retour à l'écran PIN).
+- **Politique d'éviction FIFO** : au-delà de la limite, le nouvel login
+  déconnecte l'appareil connecté depuis le plus longtemps ; **baisser la
+  limite déconnecte immédiatement les surnuméraires** (trim à l'édition) ;
+  **activer la limite (0 → N) révoque les tokens en vol** (sans jti → 401
+  « Session réinitialisée », le login suivant régularise l'appareil) ;
+  supprimer le revendeur purge son registre (aucun orphelin).
+- **Purge autonome** : les sessions plus vieilles que le TTL du token
+  (24 h) + 1 h de grâce sont purgées au login suivant du même revendeur —
+  registre borné, aucun balayage global, aucun cron.
+- **Compteur live sur la carte console** : « X/N appareils connectés »
+  (registre vivant) sous le téléphone du revendeur, seulement si une limite
+  est définie ; journal d'activité du compte trace chaque éviction.
+- **Compatibilité stricte** : `maxDevices = 0` (tous les revendeurs
+  existants) conserve le comportement historique — token stateless, aucune
+  écriture de registre, aucun contrôle par requête.
+- **Migrations Neon automatiques** (`ensureSchema`) : `resellers.max_devices`
+  (INTEGER NOT NULL DEFAULT 0) + table `sell_sessions` + index
+  `idx_sell_sessions_reseller` ; synchro différentielle étendue
+  (`sellSessionSpec`).
+- **Tests** (`sell_devices_test.go`) : éviction FIFO + trim à la baisse,
+  activation révoquant les tokens legacy (+ token forgé sans jti refusé),
+  illimité stateless intact, bornes de validation 400.
+
 ## 2026-09-08 — N°65 : Rétention du journal paramétrable par compte (30/60/90 j, défaut 90)
 
 ### N°65 — Journaux utilisateurs : la durée de conservation devient un réglage PAR COMPTE (recommandation 2 de l'audit rétention)

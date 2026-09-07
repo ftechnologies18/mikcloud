@@ -514,6 +514,10 @@ export interface Reseller {
   settlementsCount?: number;
   /** date du dernier versement (ISO). */
   lastSettlementAt?: string;
+  /** N°66 — limite d'appareils simultanés en Mode Vente (0 = illimité). */
+  maxDevices?: number;
+  /** N°66 — appareils Mode Vente actuellement connectés (registre, fenêtre TTL 24 h). */
+  activeDevices?: number;
 }
 
 /* ─── N°8 : rapport de fin de journée (GET /api/sell/day-report) ─── */

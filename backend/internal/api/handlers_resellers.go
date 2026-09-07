@@ -26,6 +26,9 @@ func sanitizeReseller(res model.Reseller) map[string]any {
 		// N°19 — mode de paiement (prépayé par défaut) + plafond de créance.
 		"paymentMode": map[bool]string{true: res.PaymentMode, false: "prepaid"}[res.PaymentMode != ""],
 		"debtCeiling": res.DebtCeiling,
+		// N°66 — limite d'appareils simultanés (0 = illimité). Le compteur
+		// activeDevices est ajouté par handleResellersList (lecture du registre).
+		"maxDevices": res.MaxDevices,
 	}
 }
 
@@ -37,6 +40,16 @@ func (a *API) handleResellersList(w http.ResponseWriter, r *http.Request) {
 	for _, res := range db.Resellers {
 		if res.AccountID == acc {
 			rs = append(rs, res)
+		}
+	}
+	// N°66 — appareils Mode Vente actuellement connectés (registre des
+	// sessions vivantes, fenêtre TTL) : alimente « X/N appareils » sur la
+	// carte console. Comptage sous le même verrou que la lecture.
+	activeDevices := map[string]int{}
+	cutoff := sellSessionsCutoff(time.Now().UTC())
+	for _, s := range db.SellSessions {
+		if s.AccountID == acc && s.IssuedAt > cutoff {
+			activeDevices[s.ResellerID]++
 		}
 	}
 	// N°8 — stats LIVE « stock vs vendus » (traçabilité anti-vol) :
@@ -130,6 +143,7 @@ func (a *API) handleResellersList(w http.ResponseWriter, r *http.Request) {
 		m["debt"] = ds.debt
 		m["settlementsCount"] = ds.settlements
 		m["lastSettlementAt"] = ds.lastSettlement
+		m["activeDevices"] = activeDevices[rs[i].ID]
 		out[i] = m
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -161,6 +175,8 @@ func (a *API) handleResellerCreate(w http.ResponseWriter, r *http.Request) {
 		// N°19 — mode de paiement : prepaid (défaut) | deposit (plafond requis).
 		PaymentMode string `json:"paymentMode"`
 		DebtCeiling int    `json:"debtCeiling"`
+		// N°66 — limite d'appareils simultanés en Mode Vente (0 = illimité).
+		MaxDevices int `json:"maxDevices"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
@@ -179,6 +195,11 @@ func (a *API) handleResellerCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Credit < 0 {
 		writeErr(w, http.StatusBadRequest, "Crédit initial invalide")
+		return
+	}
+	// N°66 — limite d'appareils : 0 (illimité) à 20.
+	if req.MaxDevices < 0 || req.MaxDevices > maxDevicesLimit {
+		writeErr(w, http.StatusBadRequest, fmt.Sprintf("Limite d'appareils invalide (0 à %d)", maxDevicesLimit))
 		return
 	}
 	// N°19 — mode de paiement : prépayé (défaut) ou dépôt-vente (plafond requis).
@@ -210,13 +231,13 @@ func (a *API) handleResellerCreate(w http.ResponseWriter, r *http.Request) {
 	reseller := model.Reseller{
 		ID: model.NewID("res-"), AccountID: acc, Name: name, Username: username, Phone: strings.TrimSpace(req.Phone),
 		Credit: req.Credit, VouchersSold: 0, Revenue: 0, Status: "active", CreatedAt: model.NowISO(),
-		PaymentMode: paymentMode, DebtCeiling: debtCeiling,
+		PaymentMode: paymentMode, DebtCeiling: debtCeiling, MaxDevices: req.MaxDevices,
 	}
 	if pin != "" {
 		reseller.PinHash = auth.HashPassword(pin, "")
 	}
 	db.Resellers = append(db.Resellers, reseller)
-	a.logActivityBy(r, db, acc, "reseller", "Revendeur "+reseller.Name+" créé"+pinNote(pin)+modeNote(paymentMode, debtCeiling))
+	a.logActivityBy(r, db, acc, "reseller", "Revendeur "+reseller.Name+" créé"+pinNote(pin)+modeNote(paymentMode, debtCeiling)+devicesNote(req.MaxDevices))
 	a.store.Save()
 	sanitized := sanitizeReseller(reseller)
 	a.store.Unlock()
@@ -238,6 +259,9 @@ func (a *API) handleResellerUpdate(w http.ResponseWriter, r *http.Request) {
 		// N°19 — bascule de mode de paiement + plafond de créance.
 		PaymentMode *string `json:"paymentMode"`
 		DebtCeiling *int    `json:"debtCeiling"`
+		// N°66 — limite d'appareils simultanés (0 = illimité ; une baisse
+		// déconnecte immédiatement les appareils surnuméraires).
+		MaxDevices *int `json:"maxDevices"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
@@ -247,6 +271,13 @@ func (a *API) handleResellerUpdate(w http.ResponseWriter, r *http.Request) {
 		p := strings.TrimSpace(*req.Pin)
 		if p != "" && !resellerPinPattern.MatchString(p) {
 			writeErr(w, http.StatusBadRequest, "PIN invalide : 4 à 6 chiffres")
+			return
+		}
+	}
+	// N°66 — validation de la limite d'appareils avant toute écriture.
+	if req.MaxDevices != nil {
+		if *req.MaxDevices < 0 || *req.MaxDevices > maxDevicesLimit {
+			writeErr(w, http.StatusBadRequest, fmt.Sprintf("Limite d'appareils invalide (0 à %d)", maxDevicesLimit))
 			return
 		}
 	}
@@ -320,6 +351,20 @@ func (a *API) handleResellerUpdate(w http.ResponseWriter, r *http.Request) {
 	modeChanged := newMode != res.PaymentMode || newCeiling != res.DebtCeiling
 	res.PaymentMode = newMode
 	res.DebtCeiling = newCeiling
+	// N°66 — application de la limite d'appareils : la BAISSE trimme le
+	// registre immédiatement (les tokens évincés reçoivent 401 à leur
+	// prochaine requête /api/sell/*) ; l'activation (0 → N) révoque les
+	// tokens sans jti en vol — le login suivant régularise l'appareil.
+	devicesChanged := false
+	if req.MaxDevices != nil && *req.MaxDevices != res.MaxDevices {
+		res.MaxDevices = *req.MaxDevices
+		devicesChanged = true
+	}
+	if evicted := trimSellSessionsLocked(db, res, time.Now().UTC()); len(evicted) > 0 {
+		a.logActivityBy(r, db, acc, "reseller", fmt.Sprintf(
+			"Revendeur %s — %d appareil(s) déconnecté(s) : limite d'appareils ramenée à %d",
+			res.Name, len(evicted), res.MaxDevices))
+	}
 	if req.Pin != nil {
 		p := strings.TrimSpace(*req.Pin)
 		if p == "" {
@@ -329,8 +374,8 @@ func (a *API) handleResellerUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	updated := *res
-	if modeChanged {
-		a.logActivityBy(r, db, acc, "reseller", "Revendeur "+updated.Name+" modifié"+modeNote(updated.PaymentMode, updated.DebtCeiling))
+	if modeChanged || devicesChanged {
+		a.logActivityBy(r, db, acc, "reseller", "Revendeur "+updated.Name+" modifié"+modeNote(updated.PaymentMode, updated.DebtCeiling)+devicesNote(updated.MaxDevices))
 	} else {
 		a.logActivityBy(r, db, acc, "reseller", "Revendeur "+updated.Name+" modifié")
 	}
@@ -426,6 +471,10 @@ func (a *API) handleResellerDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	name := res.Name
 	db.Resellers = append(db.Resellers[:idx], db.Resellers[idx+1:]...)
+	// N°66 — le revendeur part avec ses sessions Mode Vente : ses tokens
+	// survivants sont déjà bloqués par le garde d'existence (V4 ci-dessus),
+	// le registre ne doit pas garder d'orphelins.
+	purgedSessions := dropSellSessionsOfReseller(db, res.ID)
 	a.logActivityBy(r, db, acc, "reseller",
 		fmt.Sprintf("Revendeur %s supprimé — historique de %d transaction(s) purgé, %d voucher(s) détaché(s)",
 			name, purgedTx, detached))
@@ -433,6 +482,7 @@ func (a *API) handleResellerDelete(w http.ResponseWriter, r *http.Request) {
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "transactionsPurged": purgedTx, "vouchersDetached": detached,
+		"sellSessionsPurged": purgedSessions,
 	})
 }
 

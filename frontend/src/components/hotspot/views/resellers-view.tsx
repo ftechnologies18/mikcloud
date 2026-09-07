@@ -11,6 +11,7 @@ import {
   Pencil,
   Power,
   Share2,
+  Smartphone,
   Store,
   Trash2,
   UserPlus,
@@ -68,9 +69,10 @@ interface ResellerForm {
   pin: string; // N°8 — PIN Mode Vente (4-6 chiffres ; vide en édition = inchangé)
   paymentMode: "prepaid" | "deposit"; // N°19 — dépôt-vente : il vend puis verse
   debtCeiling: string;
+  maxDevices: string; // N°66 — limite d'appareils simultanés ("" ou "0" = illimité)
 }
 
-const EMPTY_FORM: ResellerForm = { name: "", username: "", phone: "", credit: "", pin: "", paymentMode: "prepaid", debtCeiling: "" };
+const EMPTY_FORM: ResellerForm = { name: "", username: "", phone: "", credit: "", pin: "", paymentMode: "prepaid", debtCeiling: "", maxDevices: "1" };
 
 function initialsOf(name: string): string {
   return name
@@ -132,7 +134,7 @@ export default function ResellersView() {
   };
 
   const createMutation = useMutation({
-    mutationFn: (payload: { name: string; username: string; phone: string; credit: number; pin?: string; paymentMode?: string; debtCeiling?: number }) =>
+    mutationFn: (payload: { name: string; username: string; phone: string; credit: number; pin?: string; paymentMode?: string; debtCeiling?: number; maxDevices?: number }) =>
       api<Reseller>("/api/resellers", { method: "POST", body: payload }),
     onSuccess: (reseller) => {
       toast.success(tf("resellers.createdToast", { name: reseller.name }));
@@ -144,7 +146,7 @@ export default function ResellersView() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: (payload: { id: string; name: string; phone: string; pin?: string; paymentMode?: string; debtCeiling?: number }) =>
+    mutationFn: (payload: { id: string; name: string; phone: string; pin?: string; paymentMode?: string; debtCeiling?: number; maxDevices?: number }) =>
       api<Reseller>(`/api/resellers/${payload.id}`, {
         method: "PUT",
         body: {
@@ -153,6 +155,7 @@ export default function ResellersView() {
           ...(payload.pin !== undefined ? { pin: payload.pin } : {}),
           ...(payload.paymentMode !== undefined ? { paymentMode: payload.paymentMode } : {}),
           ...(payload.debtCeiling !== undefined ? { debtCeiling: payload.debtCeiling } : {}),
+          ...(payload.maxDevices !== undefined ? { maxDevices: payload.maxDevices } : {}),
         },
       }),
     onSuccess: (reseller) => {
@@ -275,6 +278,7 @@ export default function ResellersView() {
       pin: "",
       paymentMode: reseller.paymentMode ?? "prepaid",
       debtCeiling: reseller.debtCeiling ? String(reseller.debtCeiling) : "",
+      maxDevices: String(reseller.maxDevices ?? 0),
     });
     setEditTarget(reseller);
   };
@@ -336,10 +340,22 @@ export default function ResellersView() {
     }
   }
 
+  // N°66 — parse/valide la limite d'appareils ("" = 0 = illimité, 1-20).
+  const parsedMaxDevices = form.maxDevices.trim() === "" ? 0 : Number(form.maxDevices);
+  const maxDevicesValid =
+    Number.isFinite(parsedMaxDevices) &&
+    Number.isInteger(parsedMaxDevices) &&
+    parsedMaxDevices >= 0 &&
+    parsedMaxDevices <= 20;
+
   const submitReseller = () => {
     const name = form.name.trim();
     if (!name) {
       toast.error(t("common.nameRequired"));
+      return;
+    }
+    if (!maxDevicesValid) {
+      toast.error(t("resellers.maxDevicesInvalid"));
       return;
     }
     if (editTarget) {
@@ -355,6 +371,7 @@ export default function ResellersView() {
         phone: form.phone.trim(),
         paymentMode: form.paymentMode,
         debtCeiling: form.paymentMode === "deposit" && Number.isFinite(ceiling) ? Math.round(ceiling) : 0,
+        maxDevices: Math.round(parsedMaxDevices),
         ...(pin ? { pin } : {}),
       });
       return;
@@ -382,6 +399,7 @@ export default function ResellersView() {
       credit: Number.isFinite(credit) && credit > 0 ? credit : 0,
       paymentMode: form.paymentMode,
       debtCeiling: form.paymentMode === "deposit" && Number.isFinite(ceiling) ? Math.round(ceiling) : 0,
+      maxDevices: Math.round(parsedMaxDevices),
       ...(pin ? { pin } : {}),
     });
   };
@@ -478,6 +496,16 @@ export default function ResellersView() {
                     )}
                   </div>
                   <p className="mt-0.5 truncate text-xs text-muted-foreground">{reseller.phone || "—"}</p>
+                  {/* N°66 — appareils Mode Vente connectés vs limite (anti-partage du PIN). */}
+                  {!!reseller.maxDevices && (
+                    <p className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
+                      <Smartphone className="size-3 shrink-0" aria-hidden />
+                      {tf("resellers.devicesInUse", {
+                        active: reseller.activeDevices ?? 0,
+                        max: reseller.maxDevices,
+                      })}
+                    </p>
+                  )}
                 </div>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -725,6 +753,23 @@ export default function ResellersView() {
                 {editTarget ? t("resellers.pinEditHint") : t("resellers.pinCreateHint")}
               </p>
             </div>
+            {/* N°66 — limite d'appareils simultanés : anti-partage du PIN Mode Vente. */}
+            <div className="grid gap-2">
+              <Label htmlFor="reseller-max-devices">{t("resellers.maxDevices")}</Label>
+              <Input
+                id="reseller-max-devices"
+                type="number"
+                min={0}
+                max={20}
+                inputMode="numeric"
+                value={form.maxDevices}
+                onChange={(event) => setForm((f) => ({ ...f, maxDevices: event.target.value.replace(/[^\d]/g, "") }))}
+                placeholder="1"
+              />
+              <p className="text-xs text-muted-foreground">
+                {editTarget ? t("resellers.maxDevicesEditHint") : t("resellers.maxDevicesHint")}
+              </p>
+            </div>
             {/* N°19 — mode de paiement : prépayé ou dépôt-vente (bascule à tout moment). */}
             <div className="grid gap-2">
               <Label>{t("resellers.mode")}</Label>
@@ -788,7 +833,7 @@ export default function ResellersView() {
             </Button>
             <Button
               onClick={submitReseller}
-              disabled={createMutation.isPending || updateMutation.isPending || !form.name.trim() || (!editTarget && !form.username.trim())}
+              disabled={createMutation.isPending || updateMutation.isPending || !form.name.trim() || (!editTarget && !form.username.trim()) || !maxDevicesValid}
             >
               {editTarget ? t("common.save") : t("resellers.createSubmit")}
             </Button>

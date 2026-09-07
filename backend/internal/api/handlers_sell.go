@@ -55,6 +55,12 @@ type sellVoucherItem struct {
 // le revendeur fantôme vendrait sans garde de plafond (findResellerScoped →
 // nil) et créerait des créances orphelines. La PWA Mode Vente traite ce 403
 // comme une fin de session (retour à l'écran PIN).
+//
+// N°66 — limite d'appareils simultanés : si le revendeur est limité
+// (MaxDevices > 0), le token doit en plus porter une session VIVANTE du
+// registre (jti). Réponse 401 (pas 403) : le client API considère le 401
+// comme une fin de session (logout automatique → retour à l'écran PIN),
+// ce qui est exactement la sémantique d'un appareil évincé.
 func (a *API) requireReseller(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		c := claimsFrom(r)
@@ -63,18 +69,28 @@ func (a *API) requireReseller(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		a.store.Lock()
-		exists := false
-		for i := range a.store.Data().Resellers {
-			if a.store.Data().Resellers[i].ID == c.Sub && a.store.Data().Resellers[i].AccountID == c.Acc {
-				exists = true
-				break
-			}
-		}
-		a.store.Unlock()
-		if !exists {
+		db := a.store.Data()
+		res := findResellerScoped(db, c.Sub, c.Acc)
+		if res == nil {
+			a.store.Unlock()
 			writeErr(w, http.StatusForbidden, "Session expirée : revendeur supprimé")
 			return
 		}
+		if res.MaxDevices > 0 {
+			// Token d'avant la limite (sans jti) : révoqué — le login suivant
+			// régularise l'appareil dans le registre.
+			if c.Jti == "" {
+				a.store.Unlock()
+				writeErr(w, http.StatusUnauthorized, "Session réinitialisée : limite d'appareils activée — reconnectez-vous")
+				return
+			}
+			if !sellSessionLiveLocked(db, c.Sub, c.Jti, sellSessionsCutoff(time.Now().UTC())) {
+				a.store.Unlock()
+				writeErr(w, http.StatusUnauthorized, "Appareil déconnecté : limite d'appareils simultanés atteinte")
+				return
+			}
+		}
+		a.store.Unlock()
 		next(w, r)
 	}
 }
@@ -161,7 +177,15 @@ func (a *API) handleResellerLogin(w http.ResponseWriter, r *http.Request) {
 
 	// ver=0 : le revendeur n'est pas un AdminUser — le garde de révocation
 	// S1-A3 du middleware ne s'applique pas au rôle « reseller ».
-	token := auth.Sign(a.secret, auth.NewClaims(res.ID, res.Name, "reseller", res.AccountID, 0))
+	claims := auth.NewClaims(res.ID, res.Name, "reseller", res.AccountID, 0)
+	// N°66 — revendeur limité : la session est inscrite au registre (jti
+	// embarqué dans le JWT) et l'appareil connecté depuis le plus longtemps
+	// au-delà de la limite est déconnecté (401 à sa prochaine requête).
+	// L'éviction est tracée dans le journal d'activité du compte.
+	if jti, _ := a.registerSellLogin(res.ID, res.AccountID, r); jti != "" {
+		claims.Jti = jti
+	}
+	token := auth.Sign(a.secret, claims)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token": token,
 		"reseller": map[string]any{

@@ -692,6 +692,21 @@ func (p *PG) ensureSchema() error {
 		`ALTER TABLE resellers     ADD COLUMN IF NOT EXISTS payment_mode TEXT NOT NULL DEFAULT 'prepaid'`,
 		`ALTER TABLE resellers     ADD COLUMN IF NOT EXISTS debt_ceiling INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE hotspot_users ADD COLUMN IF NOT EXISTS credit_sale BOOLEAN NOT NULL DEFAULT FALSE`,
+		// N°66 — limite d'appareils simultanés (Mode Vente) par revendeur :
+		// 0 = illimité (défaut, token stateless historique) ; N ≥ 1 = registre
+		// sell_sessions + jti embarqué dans le JWT (éviction de l'appareil
+		// connecté depuis le plus longtemps au-delà de la limite).
+		`ALTER TABLE resellers ADD COLUMN IF NOT EXISTS max_devices INTEGER NOT NULL DEFAULT 0`,
+		`CREATE TABLE IF NOT EXISTS sell_sessions (
+                        id          TEXT PRIMARY KEY,
+                        account_id  TEXT NOT NULL,
+                        reseller_id TEXT NOT NULL,
+                        issued_at   TEXT NOT NULL,
+                        last_seen   TEXT NOT NULL,
+                        user_agent  TEXT NOT NULL,
+                        ip          TEXT NOT NULL
+                )`,
+		`CREATE INDEX IF NOT EXISTS idx_sell_sessions_reseller ON sell_sessions (reseller_id)`,
 		// N (rapprochement doux) — utilisateur absent du dernier read_state du
 		// routeur (supprimé dans Winbox) : badge + action de resynchronisation.
 		`ALTER TABLE hotspot_users ADD COLUMN IF NOT EXISTS missing_on_router BOOLEAN NOT NULL DEFAULT FALSE`,
@@ -913,6 +928,7 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 		{"hotspot_users", func() error { return loadInto(p, &db.HotspotUsers, hotspotUserSpec) }},
 		{"batches", func() error { return loadInto(p, &db.Batches, batchSpec) }},
 		{"resellers", func() error { return loadInto(p, &db.Resellers, resellerSpec) }},
+		{"sell_sessions", func() error { return loadInto(p, &db.SellSessions, sellSessionSpec) }},
 		{"transactions", func() error { return loadInto(p, &db.Transactions, transactionSpec) }},
 		{"sessions", func() error { return loadInto(p, &db.Sessions, sessionSpec) }},
 		{"activity", func() error { return loadInto(p, &db.Activity, activitySpec) }},
@@ -1117,6 +1133,9 @@ func (p *PG) Sync(db *model.DB) error {
 		return err
 	}
 	if err := syncTable(tx, p.hashes, resellerSpec, db.Resellers); err != nil {
+		return err
+	}
+	if err := syncTable(tx, p.hashes, sellSessionSpec, db.SellSessions); err != nil {
 		return err
 	}
 	if err := syncTable(tx, p.hashes, transactionSpec, db.Transactions); err != nil {
@@ -1645,17 +1664,34 @@ var batchSpec = entitySpec[model.Batch]{
 
 var resellerSpec = entitySpec[model.Reseller]{
 	table: "resellers",
-	cols:  []string{"id", "name", "username", "phone", "credit", "vouchers_sold", "revenue", "status", "created_at", "account_id", "pin_hash", "payment_mode", "debt_ceiling"},
+	cols:  []string{"id", "name", "username", "phone", "credit", "vouchers_sold", "revenue", "status", "created_at", "account_id", "pin_hash", "payment_mode", "debt_ceiling", "max_devices"},
 	idOf:  func(x *model.Reseller) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Reseller, error) {
 		var x model.Reseller
-		err := r.Scan(&x.ID, &x.Name, &x.Username, &x.Phone, &x.Credit, &x.VouchersSold, &x.Revenue, &x.Status, &x.CreatedAt, &x.AccountID, &x.PinHash, &x.PaymentMode, &x.DebtCeiling)
+		err := r.Scan(&x.ID, &x.Name, &x.Username, &x.Phone, &x.Credit, &x.VouchersSold, &x.Revenue, &x.Status, &x.CreatedAt, &x.AccountID, &x.PinHash, &x.PaymentMode, &x.DebtCeiling, &x.MaxDevices)
 		return x, err
 	},
 	args: func(x *model.Reseller) []any {
-		return []any{x.ID, x.Name, x.Username, x.Phone, x.Credit, x.VouchersSold, x.Revenue, x.Status, x.CreatedAt, x.AccountID, x.PinHash, x.PaymentMode, x.DebtCeiling}
+		return []any{x.ID, x.Name, x.Username, x.Phone, x.Credit, x.VouchersSold, x.Revenue, x.Status, x.CreatedAt, x.AccountID, x.PinHash, x.PaymentMode, x.DebtCeiling, x.MaxDevices}
 	},
 	hashOf: hashEntity[model.Reseller],
+}
+
+// sellSessionSpec — N°66 : registre des sessions PIN Mode Vente (revendeurs
+// soumis à la limite d'appareils simultanés).
+var sellSessionSpec = entitySpec[model.SellSession]{
+	table: "sell_sessions",
+	cols:  []string{"id", "account_id", "reseller_id", "issued_at", "last_seen", "user_agent", "ip"},
+	idOf:  func(x *model.SellSession) string { return x.ID },
+	scan: func(r *sql.Rows) (model.SellSession, error) {
+		var x model.SellSession
+		err := r.Scan(&x.ID, &x.AccountID, &x.ResellerID, &x.IssuedAt, &x.LastSeen, &x.UserAgent, &x.IP)
+		return x, err
+	},
+	args: func(x *model.SellSession) []any {
+		return []any{x.ID, x.AccountID, x.ResellerID, x.IssuedAt, x.LastSeen, x.UserAgent, x.IP}
+	},
+	hashOf: hashEntity[model.SellSession],
 }
 
 var transactionSpec = entitySpec[model.Transaction]{
@@ -2089,6 +2125,7 @@ func (p *PG) rebuildHashes(db *model.DB) {
 		hotspotUserSpec.table:         hashRows(db.HotspotUsers, hotspotUserSpec),
 		batchSpec.table:               hashRows(db.Batches, batchSpec),
 		resellerSpec.table:            hashRows(db.Resellers, resellerSpec),
+		sellSessionSpec.table:         hashRows(db.SellSessions, sellSessionSpec),
 		transactionSpec.table:         hashRows(db.Transactions, transactionSpec),
 		sessionSpec.table:             hashRows(db.Sessions, sessionSpec),
 		activitySpec.table:            hashRows(db.Activity, activitySpec),

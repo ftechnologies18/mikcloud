@@ -16,18 +16,22 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// Claims — revendications du token : {sub, name, role, acc, ver, iat, exp}.
+// Claims — revendications du token : {sub, name, role, acc, ver, jti, iat, exp}.
 // Acc porte l'identifiant du compte SaaS du porteur (isolation multi-tenant).
 // Ver porte l'époque de session attendue par le serveur (révocation S1-A3) :
 // un token dont ver ≠ SessionEpoch de l'utilisateur est refusé immédiatement.
 // Les tokens émis avant l'introduction de ver se décodent ver=0 — compatibles
 // tant que l'utilisateur n'a pas subi de révocation (SessionEpoch 0).
+// Jti (N°66) identifie la session Mode Vente d'un revendeur soumis à la
+// limite d'appareils simultanés (cf. sell_sessions) : vide pour les tokens
+// console et les revendeurs illimités.
 type Claims struct {
 	Sub  string `json:"sub"`
 	Name string `json:"name"`
 	Role string `json:"role"`
 	Acc  string `json:"acc,omitempty"`
 	Ver  int    `json:"ver,omitempty"`
+	Jti  string `json:"jti,omitempty"`
 	Iat  int64  `json:"iat"`
 	Exp  int64  `json:"exp"`
 }

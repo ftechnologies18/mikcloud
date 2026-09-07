@@ -355,6 +355,29 @@ type Reseller struct {
 	// (le store sérialise via ces mêmes tags) mais TOUJOURS vidé par
 	// sanitizeReseller avant toute réponse API.
 	PinHash string `json:"pinHash,omitempty"`
+	// N°66 — limite d'appareils simultanés (Mode Vente) : nombre maximal
+	// de sessions PIN actives en même temps pour ce compte. 0 = illimité
+	// (comportement historique, token stateless sans registre). N ≥ 1 : le
+	// login enregistre une session (jti embarqué dans le JWT) et déconnecte
+	// l'appareil connecté depuis le plus longtemps au-delà de la limite.
+	MaxDevices int `json:"maxDevices"`
+}
+
+// SellSession — session PIN Mode Vente (N°66). Une entrée naît au login d'un
+// revendeur dont la limite d'appareils est active (MaxDevices > 0) ; son
+// identifiant (jti) est embarqué dans le JWT émis et recontrôlé à CHAQUE
+// requête /api/sell/* : un token dont la session a été évincée (limite
+// atteinte, limite baissée, revendeur supprimé) est refusé en 401. Les
+// sessions plus vieilles que le TTL du token + 1 h de grâce sont purgées au
+// login suivant du même revendeur (aucune éclosion silencieuse).
+type SellSession struct {
+	ID         string `json:"id"`        // jti du JWT (« dev-… »)
+	AccountID  string `json:"accountId"` // isolation multi-tenant
+	ResellerID string `json:"resellerId"`
+	IssuedAt   string `json:"issuedAt"`  // RFC3339 — clé d'éviction (FIFO login)
+	LastSeen   string `json:"lastSeen"`  // = issuedAt (réservé : LRU futur)
+	UserAgent  string `json:"userAgent"` // étiquette appareil, bornée 200 car.
+	IP         string `json:"ip"`
 }
 
 // Transaction — mouvement de portefeuille revendeur (credit | sale).
@@ -1225,9 +1248,12 @@ type DB struct {
 	// Abonnement récurrent par carte (Stripe via GeniusPay) — prélèvements
 	// automatiques, synchronisés avec l'API abonnements GeniusPay.
 	GeniusPaySubs []GeniusPaySub `json:"geniuspaySubs"`
-	Tenant        Tenant         `json:"tenant"`   // legacy mono-tenant
-	Settings      Settings       `json:"settings"` // legacy mono-tenant
-	LastTick      time.Time      `json:"lastTick"`
+	// N°66 — registre des sessions PIN Mode Vente (limite d'appareils
+	// simultanés par revendeur) — voir SellSession.
+	SellSessions []SellSession `json:"sellSessions"`
+	Tenant       Tenant        `json:"tenant"`   // legacy mono-tenant
+	Settings     Settings      `json:"settings"` // legacy mono-tenant
+	LastTick     time.Time     `json:"lastTick"`
 	// LastSweep — N°64 — horodatage du dernier BALAYAGE PÉRIODIQUE de
 	// rétention (goroutine main.go, 1 h) : purge des journaux utilisateurs
 	// à 90 j + expirations/nettoyages, indépendamment des visites console

@@ -5,6 +5,7 @@ package api
 import (
 	"net/http"
 	"sync"
+	"time"
 
 	"mikcloud/hotspot-api/internal/model"
 	"mikcloud/hotspot-api/internal/routeros"
@@ -329,11 +330,23 @@ func (a *API) Handler() http.Handler {
 // ---------------------------------------------------------------------------
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
+	// N°64 — preuve d'audit du balayage périodique de rétention : lecture
+	// brève sous verrou (une valeur). Vide = jamais balayé (impossible en
+	// pratique : rattrapage au démarrage du service).
+	a.store.Lock()
+	lastSweep := a.store.Data().LastSweep
+	a.store.Unlock()
+	sweepISO := ""
+	if !lastSweep.IsZero() {
+		sweepISO = lastSweep.UTC().Format(time.RFC3339)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":      true,
 		"service": "mikcloud-hotspot-api",
 		"version": "1.0.0",
 		"time":    model.NowISO(),
+		// N°64 — dernier passage du balayage (purge journaux 90 j, 1 h).
+		"lastSweepAt": sweepISO,
 	})
 }
 

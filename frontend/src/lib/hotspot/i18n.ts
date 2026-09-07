@@ -1309,6 +1309,7 @@ const fr: Record<string, string> = {
   // — logs (F3) —
   "logs.title": "Journal utilisateurs",
   "logs.description": "Connexions, déconnexions, expirations et kicks — mis à jour toutes les 10 secondes",
+  "logs.retentionNote": "Rétention : 90 jours maximum, purge automatique toutes les heures (même sans visite de la console). Garde-fou volumétrie : les 5 000 dernières entrées sont conservées — un site à fort trafic peut voir son journal élagué avant 90 jours.",
   "logs.searchPlaceholder": "Rechercher un utilisateur ou une IP…",
   "logs.searchLabel": "Rechercher dans le journal",
   "logs.filterByAction": "Filtrer par action",
@@ -3730,6 +3731,7 @@ const en: Record<string, string> = {
   // — logs —
   "logs.title": "User log",
   "logs.description": "Logins, logouts, expirations and kicks — refreshed every 10 seconds",
+  "logs.retentionNote": "Retention: 90 days maximum, automatic hourly sweep (even with no console visits). Volume cap: the last 5,000 entries are kept — a high-traffic site may see its log trimmed before 90 days.",
   "logs.searchPlaceholder": "Search for a user or IP…",
   "logs.searchLabel": "Search the log",
   "logs.filterByAction": "Filter by action",

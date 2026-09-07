@@ -5,6 +5,44 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-08 — N°64 : Balayage de rétention périodique + transparence (privacy/audit)
+
+### N°64 — Journaux utilisateurs : la purge à 90 jours devient une garantie stricte, vérifiable et documentée
+
+- **Constat** : la rétention du journal utilisateurs (90 j + plafond 5 000,
+  `applyExpiry`) ne s'exécutait qu'au fil des **lectures console**
+  (`store.Tick` en tête des handlers — balayage *paresseux*). Un compte
+  dormant, jamais consulté, conservait ses journaux connexion au-delà des
+  90 jours annoncés : la garantie n'était vraie que pour les comptes actifs.
+- **Balayage périodique** (`internal/api/retention.go`, goroutine `main.go`) :
+  - rattrapage **immédiat au démarrage** (le service Render redémarre
+    souvent — chaque boot nettoie ce qui doit l'être), puis passage
+    **toutes les heures** (`time.Tick`, pattern des fenêtres de rate-limit) ;
+  - le passage reprend EXACTEMENT le cœur commun des handlers —
+    `store.Sweep` (applyExpiry : expirations vouchers, politique « remove »,
+    purge UserLogs > 90 j + plafond 5 000) puis `enforceExpired` (commandes
+    agent, réparation limit-uptime, lots morts, inscriptions stalées 30 j) —
+    **sans** la progression de la simulation (sessions/uptime/télémétrie
+    restent au rythme des polls) ;
+  - purge **réelle** en base (Save → syncTable : les lignes `user_logs`
+    sont supprimées de PostgreSQL/Neon, pas seulement masquées).
+- **Preuve d'audit** : `db.LastSweep` (persistée, colonne
+  `settings.last_sweep`, même mécanique que `last_tick`) exposée par
+  `GET /` → `lastSweepAt` — un auditeur vérifie en un curl que le balayage
+  vit ; chaque purge non vide est tracée dans le log service.
+- **Transparence côté portail captif** (`login.html`) : note
+  confidentialité discrète dans le footer — « Données de connexion
+  conservées 90 jours maximum, puis supprimées automatiquement » (cadenas
+  teal) — alignée sur la purge réelle (RGPD/ARTPD, minimisation).
+- **Transparence côté console** (vue Journal utilisateurs) : bannière
+  technique `ShieldCheck` — 90 jours max + purge horaire même sans visite,
+  ET le garde-fou volumétrie : les 5 000 dernières entrées sont conservées,
+  un site à fort trafic peut voir son journal **élagué avant 90 jours**
+  (acceptable en privacy, à savoir pour l'audit technique). FR/EN.
+- **Portée** : backend Go (6 fichiers + `retention.go`) + frontend (2
+  fichiers) ; zéro changement de contrat API existant (ajout du seul champ
+  d'information `lastSweepAt` au healthcheck public `GET /`).
+
 ## 2026-09-08 — N°63 : Création de site WiFi en wizard 2 étapes animé
 
 ### N°63 — « Nouveau site WiFi » : le formulaire plat d'un bloc devient un wizard explicite (vue WiFi Jetable)

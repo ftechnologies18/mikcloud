@@ -6,7 +6,7 @@
 
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Download, Loader2, ScrollText, Search } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, Loader2, ScrollText, Search, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -135,6 +135,12 @@ export default function LogsView() {
           </Button>
         }
       />
+
+      {/* N°64 — transparence rétention (audit) : 90 j + garde-fou volumétrie */}
+      <div className="flex items-start gap-2.5 rounded-xl border border-chart-2/25 bg-chart-2/5 px-4 py-3">
+        <ShieldCheck className="mt-0.5 size-4 shrink-0 text-chart-2 sm:mt-0" aria-hidden />
+        <p className="text-xs leading-relaxed text-muted-foreground">{t("logs.retentionNote")}</p>
+      </div>
 
       {/* Barre de filtres */}
       <Card className="gap-0 py-0">

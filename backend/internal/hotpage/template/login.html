@@ -404,6 +404,14 @@
         .ftci-link { color: var(--text-muted); text-decoration: none; transition: color 0.2s; font-size: 0.78rem; }
         .ftci-link:hover, .ftci-link:focus { color: var(--primary-dark); text-decoration: underline; }
 
+        /* N°64 — transparence rétention (RGPD/ARTPD) : mention discrète du
+           portail, alignée sur la purge réelle (90 j, store.applyExpiry). */
+        .privacy-note {
+            color: var(--text-muted); font-size: 0.72rem;
+            display: inline-flex; align-items: center; gap: 5px; line-height: 1.4;
+        }
+        .privacy-note i { font-size: 0.62rem; color: var(--wa); opacity: 0.8; }
+
         /* Error alert */
         .alert-error {
             background: linear-gradient(135deg, #fef2f2, #fee2e2);
@@ -639,6 +647,13 @@
                         </a>
                         <div class="mt-2">
                             <small><a href="https://ftci.fr/" target="_blank" rel="noopener" class="ftci-link">&copy; 2026 Freelance Technologies (FTCI)</a></small>
+                        </div>
+                        <div class="mt-1">
+                            <!-- N°64 — politique de confidentialité : rétention des journaux -->
+                            <small class="privacy-note">
+                                <i class="fas fa-lock" aria-hidden="true"></i>
+                                Données de connexion conservées 90 jours maximum, puis supprimées automatiquement
+                            </small>
                         </div>
                     </div>
                 </div>

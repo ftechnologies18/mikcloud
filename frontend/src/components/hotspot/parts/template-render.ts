@@ -44,11 +44,18 @@ export const TEMPLATE_VARIABLES = [
  * isSamePasswordMode — vrai si le voucher a été généré en mode
  * « mot de passe = identifiant » (parité Mikhmon) : le ticket ne doit alors
  * afficher QUE le code, sans ligne mot de passe redondante.
+ *
+ * N°61 — garde défensive : `password` est requis par le contrat
+ * (/api/sell/stock), mais le comptoir offline démarre sur le SNAPSHOT
+ * localStorage — une entrée non conforme (écriture partielle, contrat
+ * futur) ne doit JAMAIS faire planter le lancement hors-ligne au
+ * moment où le revendeur a besoin de vendre. Donnée absente → false
+ * (la ligne mot de passe est simplement affichée vide, en dégradé).
  */
 export function isSamePasswordMode(
   voucher: Pick<HotspotUser, "username" | "password">,
 ): boolean {
-  return voucher.password.length > 0 && voucher.password === voucher.username;
+  return !!voucher.password && voucher.password.length > 0 && voucher.password === voucher.username;
 }
 
 /** Bloc conditionnel {{#password}}…{{/password}} — retiré en mode « même mot de

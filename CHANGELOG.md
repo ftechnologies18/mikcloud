@@ -5,6 +5,40 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-08 — N°61 : Mode Vente offline AU LANCEMENT — repli shell /sell + navigation bornée 4 s
+
+### N°61 — Le comptoir s'ouvre sans réseau, en tournée comme au comptoir (audit PWA, plan d'action 3/3 — P1)
+- **Constat (audit)** : le Mode Vente était vendable hors ligne (file
+  IndexedDB 409-safe + snapshots localStorage, N°8/UX R6) mais NON
+  DÉMARRABLE : la navigation `/sell` était network-first avec repli
+  `offline.html` — page générique « hors ligne », pas le comptoir. Et
+  sur un réseau captif MikroTik non authentifié, le fetch TCP/TLS peut
+  PENDRE 75 s+ : le revendeur restait sur un écran vide au lieu de son
+  comptoir. Les snapshots ne servaient que si l'app était déjà ouverte.
+- **Navigation /sell enrichie (SW)** : network-first BORNÉE à 4 s (race
+  `fetch` vs timeout) avec repli sur le **shell HTML /sell en cache** —
+  jamais `offline.html` pour le Mode Vente. Trois cas : réseau OK (≤ 4 s)
+  → réponse servie ET copie fraîche mise en cache pour le prochain
+  lancement hors ligne (réponse 2xx directe non-redirigée uniquement) ;
+  réseau tombé → repli IMMÉDIAT ; réseau captif pendu → repli à 4 s. Le
+  shell pré-rendu (`/sell` est une route statique) est pré-caché à
+  l'installation du SW et hydraté normalement — snapshots + file
+  IndexedDB prennent le relais côté client (timeout API 10 s déjà en
+  place sur me/stock/ventes/replay). Bénéficie directement à l'icône
+  PWA et au raccourci « Mode Vente » (N°60).
+- **Chirurgical** : les AUTRES navigations gardent le comportement du
+  N°8 (network-first → `offline.html`) — un timeout global les
+  dégraderait inutilement sur réseau lent légitime (2G : une page peut
+  légitimement prendre > 4 s).
+- **Garde défensive (`isSamePasswordMode`)** : le comptoir offline
+  démarre sur le snapshot localStorage — une entrée non conforme
+  (écriture partielle, contrat futur) ne doit jamais faire planter le
+  lancement hors-ligne au moment où le revendeur a besoin de vendre :
+  `password` absent → `false` (ligne mot de passe affichée vide, en
+  dégradé) au lieu d'un `TypeError` fatal.
+- **Frontend only** : aucun changement backend, aucune migration Neon,
+  CONTRACT-V2 inchangé.
+
 ## 2026-09-08 — N°59 : PWA « robustesse » — cache versionné par déploiement, stockage persistant, SW toujours frais
 
 ### N°59 — Sécurise la durée de vie de la PWA Mode Vente (audit PWA, plan d'action 1/3 — P0)

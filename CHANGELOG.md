@@ -5,6 +5,43 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-06 — N°55 : mode hospitalité du portail — la vitrine de l'établissement
+
+### N°55 — MikCloud ne présuppose plus que l'établissement VEND : le portail devient SA vitrine
+- **Constat** : le portail captif (héritage Mikhmon) affiche TOUJOURS une
+  grille tarifaire (1H 100 F → 30 j 3 000 F), un bandeau Wave et des services
+  génériques cybercafé — inadapté aux hôtels, maquis, cafés-glaciers, salons
+  et espaces événementiels qui OFFRENT la connexion pour fidéliser. Suite
+  directe de l'analyse N°52 (messages contextuels) et de la feuille de route.
+- **Deux modes, un seul moteur** (Option A de l'analyse — pas de template
+  dupliquée) : `tenant.portalStyle` = `commercial` (défaut, page historique
+  INTACTE) ou `hospitality` (vitrine de l'établissement). Bascule console,
+  appliquée SANS re-déploiement grâce au fetch live N°48.
+- **Portail (`login.html`)** — bloc 7 `applyHospitality` : masquage par classe
+  (slider pub générique, grille tarifaire hardcodée, Wave, services, offres
+  dynamiques) + injection de la vitrine (message de bienvenue, grille de
+  promos produits avec images R2, boutons réseaux sociaux). Réversible et
+  idempotent — compatible navigateurs mobiles anciens (pas d'optional
+  chaining).
+- **Backend** : `Tenant.PortalStyle/PortalWelcome/PortalPromos/PortalSocials`
+  (listes persistées en JSON) ; `PUT /api/settings` reçoit des LISTES
+  structurées et VALIDE tout côté serveur (≤ 6 promos — titre 1-60, desc ≤
+  160, prix ≤ 30, image https ≤ 300 car ; ≤ 4 liens sociaux https ≤ 200 ;
+  style borné ; bienvenue ≤ 200) puis sérialise — le client ne peut rien
+  injecter d'autre. `PortalConfig` transporte `portalStyle/portalWelcome/
+  portalPromos/portalSocials` (fallback inliné + fetch live), décodage JSON
+  tolérant (`portalHospitality` : JSON invalide ⇒ listes vides, page jamais
+  cassée).
+- **Migration Neon** : 4 colonnes idempotentes au boot
+  (`settings.portal_style`, `portal_welcome`, `portal_promos`,
+  `portal_socials`) — mécanique N°47/49/50, synchronisées au premier Save.
+- **Console** : carte « Portail : vitrine de l'établissement » (select mode,
+  textarea bienvenue, éditeur de promos structuré avec téléversement d'image
+  R2 par ligne — réutilise `apiUpload` N°53, éditeur de liens sociaux) ;
+  i18n fr/en (20 clés).
+- **Tests** : gofmt/vet/build propres, suite API + hotpage verte (le template
+  reste conforme aux marqueurs N°46), ESLint vert.
+
 ## 2026-09-06 — N°53 : stockage média Cloudflare R2 (fini les data URLs à rallonge)
 
 ### N°53 — les images du gérant vivent dans un vrai stockage objet

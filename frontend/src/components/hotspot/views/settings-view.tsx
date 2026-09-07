@@ -25,6 +25,7 @@ import {
   Languages,
   Router as RouterIcon,
   ShieldCheck,
+  Store,
   Ticket,
   UserPlus,
   X,
@@ -33,7 +34,7 @@ import { toast } from "sonner";
 
 import { api, apiUpload, updateSettings } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
-import type { AppSettings, ExpiryPolicyMode } from "@/lib/hotspot/types";
+import type { AppSettings, ExpiryPolicyMode, PortalPromo, PortalSocial } from "@/lib/hotspot/types";
 import { PageHeader } from "@/components/hotspot/page-header";
 import { SecurityCard, TwoFactorCard } from "@/components/hotspot/parts/security-cards";
 import { SETTINGS_QUERY_KEY, useSettings } from "@/components/hotspot/parts/sd-currency";
@@ -47,6 +48,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const CURRENCIES = ["FCFA", "EUR", "USD", "MAD", "XOF", "GBP", "CDF", "GNF"];
@@ -132,6 +134,11 @@ export default function SettingsView() {
 
             {/* Bannière du portail captif (N°45) — image tête de page login */}
             <PortalBannerCard settings={data} />
+
+            {/* Mode hospitalité du portail captif (N°55) — vitrine de
+                l'établissement (promos produits R2, bienvenue, réseaux
+                sociaux) à la place de la vitrine commerciale */}
+            <PortalHospitalityCard settings={data} />
 
             {/* Guide connexion routeur réel */}
             <Card className="gap-4 border-primary/20 bg-primary/5 py-4 sm:py-6 lg:col-span-2">
@@ -925,6 +932,298 @@ function PortalBannerCard({ settings }: { settings: AppSettings }) {
           {saveMutation.isPending ? t("common.saving") : t("common.save")}
         </Button>
       </CardFooter>
+    </Card>
+  );
+}
+
+// Carte Portail hospitalité (N°55) — le gérant choisit le MODE d'affichage du
+// portail captif : « commercial » (grille tarifaire + Wave, défaut) ou
+// « hospitality » (vitrine de son établissement : message de bienvenue, promos
+// produits avec images stockées dans R2 via N°53, liens réseaux sociaux).
+// Les listes sont éditées structurées ici et VALIDÉES/sérialisées côté
+// backend (≤ 6 promos, ≤ 4 liens, URLs https) — cf. handlers_settings.go.
+function PortalHospitalityCard({ settings }: { settings: AppSettings }) {
+  const { t } = useI18n();
+  const queryClient = useQueryClient();
+  const [style, setStyle] = useState(settings.tenant.portalStyle ?? "");
+  const [welcome, setWelcome] = useState(settings.tenant.portalWelcome ?? "");
+  const [promos, setPromos] = useState<PortalPromo[]>(() => {
+    try {
+      const parsed = JSON.parse(settings.tenant.portalPromos || "[]") as PortalPromo[];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+  const [socials, setSocials] = useState<PortalSocial[]>(() => {
+    try {
+      const parsed = JSON.parse(settings.tenant.portalSocials || "[]") as PortalSocial[];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+  const [uploadingIdx, setUploadingIdx] = useState<number | null>(null);
+
+  const saveMutation = useMutation({
+    mutationFn: () =>
+      api<AppSettings>("/api/settings", {
+        method: "PUT",
+        // Corps défensif (pattern VoucherCard) : champs plats + forme
+        // imbriquée tenant{…} — le plat prime côté backend.
+        body: {
+          portalStyle: style,
+          portalWelcome: welcome,
+          portalPromos: promos,
+          portalSocials: socials,
+          tenant: { portalStyle: style, portalWelcome: welcome, portalPromos: promos, portalSocials: socials },
+        },
+      }),
+    onSuccess: () => {
+      toast.success(t("settings.hosp.savedToast"));
+      void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  // Image d'une promo : téléversée vers R2 (N°53) — URL permanente https.
+  async function handlePromoImage(idx: number, file?: File) {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error(t("settings.logoNotImage"));
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error(t("settings.bannerTooBig"));
+      return;
+    }
+    setUploadingIdx(idx);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await apiUpload<{ url: string }>("/api/media", form, { timeoutMs: 60_000 });
+      setPromos((list) => list.map((it, i) => (i === idx ? { ...it, imageUrl: res.url } : it)));
+      toast.success(t("settings.bannerUploadOk"));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("settings.hosp.imageFail"));
+    } finally {
+      setUploadingIdx(null);
+    }
+  }
+
+  return (
+    <Card className="gap-4 py-4 sm:py-6">
+      <CardHeader className="px-4 sm:px-6">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
+            <Store className="size-4" />
+          </span>
+          {t("settings.hosp.card")}
+        </CardTitle>
+        <CardDescription>{t("settings.hosp.cardDesc")}</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-4 px-4 sm:px-6">
+        <div className="grid gap-2">
+          <Label htmlFor="portal-style">{t("settings.hosp.mode")}</Label>
+          <Select
+            value={style === "hospitality" ? "hospitality" : "commercial"}
+            onValueChange={(value) => setStyle(value === "hospitality" ? "hospitality" : "")}
+          >
+            <SelectTrigger id="portal-style" className="h-10">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="commercial">{t("settings.hosp.modeCommercial")}</SelectItem>
+              <SelectItem value="hospitality">{t("settings.hosp.modeHospitality")}</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">{t("settings.hosp.modeHint")}</p>
+        </div>
+
+        {style === "hospitality" && (
+          <>
+            <div className="grid gap-2">
+              <Label htmlFor="portal-welcome">{t("settings.hosp.welcome")}</Label>
+              <Textarea
+                id="portal-welcome"
+                className="min-h-[70px]"
+                maxLength={200}
+                value={welcome}
+                onChange={(event) => setWelcome(event.target.value)}
+                placeholder={t("settings.hosp.welcomePlaceholder")}
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <div className="flex items-center justify-between">
+                <Label>{t("settings.hosp.promos")}</Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={promos.length >= 6}
+                  onClick={() => setPromos((list) => [...list, { title: "", desc: "", imageUrl: "", priceLabel: "" }])}
+                >
+                  <ImagePlus className="size-4" />
+                  {t("settings.hosp.addPromo")}
+                </Button>
+              </div>
+              {promos.length === 0 && (
+                <p className="text-xs text-muted-foreground">{t("settings.hosp.promosEmpty")}</p>
+              )}
+              {promos.map((promo, idx) => (
+                <div key={idx} className="grid gap-2 rounded-lg border p-3">
+                  <div className="flex items-center gap-2">
+                    {promo.imageUrl ? (
+                      <img
+                        src={promo.imageUrl}
+                        alt={promo.title || `promo-${idx + 1}`}
+                        className="size-10 rounded-md object-cover"
+                        onError={(event) => {
+                          event.currentTarget.style.opacity = "0.3";
+                        }}
+                      />
+                    ) : (
+                      <span className="flex size-10 items-center justify-center rounded-md border bg-muted text-muted-foreground">
+                        <ImageIcon className="size-4" />
+                      </span>
+                    )}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={uploadingIdx === idx}
+                      onClick={() => document.getElementById(`promo-file-${idx}`)?.click()}
+                    >
+                      <ImagePlus className="size-4" />
+                      {uploadingIdx === idx ? t("settings.uploading") : t("settings.upload")}
+                    </Button>
+                    {promo.imageUrl && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => setPromos((list) => list.map((it, i) => (i === idx ? { ...it, imageUrl: "" } : it)))}
+                      >
+                        <X className="size-4" />
+                      </Button>
+                    )}
+                    <input
+                      id={`promo-file-${idx}`}
+                      type="file"
+                      accept="image/*"
+                      className="sr-only"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        event.target.value = "";
+                        void handlePromoImage(idx, file);
+                      }}
+                      aria-label={t("settings.bannerInputAria")}
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="ml-auto text-destructive hover:text-destructive"
+                      onClick={() => setPromos((list) => list.filter((_, i) => i !== idx))}
+                    >
+                      <X className="size-4" />
+                      {t("settings.remove")}
+                    </Button>
+                  </div>
+                  <Input
+                    className="h-9"
+                    maxLength={60}
+                    placeholder={t("settings.hosp.promoTitle")}
+                    value={promo.title}
+                    onChange={(event) =>
+                      setPromos((list) => list.map((it, i) => (i === idx ? { ...it, title: event.target.value } : it)))
+                    }
+                  />
+                  <Input
+                    className="h-9"
+                    maxLength={160}
+                    placeholder={t("settings.hosp.promoDesc")}
+                    value={promo.desc}
+                    onChange={(event) =>
+                      setPromos((list) => list.map((it, i) => (i === idx ? { ...it, desc: event.target.value } : it)))
+                    }
+                  />
+                  <Input
+                    className="h-9"
+                    maxLength={30}
+                    placeholder={t("settings.hosp.promoPrice")}
+                    value={promo.priceLabel}
+                    onChange={(event) =>
+                      setPromos((list) => list.map((it, i) => (i === idx ? { ...it, priceLabel: event.target.value } : it)))
+                    }
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div className="grid gap-2">
+              <div className="flex items-center justify-between">
+                <Label>{t("settings.hosp.socials")}</Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={socials.length >= 4}
+                  onClick={() => setSocials((list) => [...list, { label: "", url: "" }])}
+                >
+                  <UserPlus className="size-4" />
+                  {t("settings.hosp.addSocial")}
+                </Button>
+              </div>
+              {socials.length === 0 && (
+                <p className="text-xs text-muted-foreground">{t("settings.hosp.socialsEmpty")}</p>
+              )}
+              {socials.map((social, idx) => (
+                <div key={idx} className="flex flex-wrap items-center gap-2">
+                  <Input
+                    className="h-9 w-36"
+                    maxLength={30}
+                    placeholder={t("settings.hosp.socialLabel")}
+                    value={social.label}
+                    onChange={(event) =>
+                      setSocials((list) => list.map((it, i) => (i === idx ? { ...it, label: event.target.value } : it)))
+                    }
+                  />
+                  <Input
+                    className="h-9 min-w-0 flex-1"
+                    maxLength={200}
+                    placeholder="https://…"
+                    value={social.url}
+                    onChange={(event) =>
+                      setSocials((list) => list.map((it, i) => (i === idx ? { ...it, url: event.target.value } : it)))
+                    }
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive hover:text-destructive"
+                    onClick={() => setSocials((list) => list.filter((_, i) => i !== idx))}
+                  >
+                    <X className="size-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        <Button
+          type="button"
+          className="w-full sm:w-auto"
+          disabled={saveMutation.isPending}
+          onClick={() => saveMutation.mutate()}
+        >
+          {saveMutation.isPending ? t("common.saving") : t("common.save")}
+        </Button>
+      </CardContent>
     </Card>
   );
 }

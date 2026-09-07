@@ -877,6 +877,16 @@
                     var loginSectionB = document.querySelector('.login-section');
                     if (loginSectionB) loginSectionB.insertBefore(bannerWrap, loginSectionB.firstChild);
                 }
+
+                // 7. Mode hospitalité (N°55) : quand portalStyle vaut
+                // 'hospitality', la vitrine « vente de tickets » (slider pub
+                // générique, grille tarifaire hardcodée, Wave, services
+                // Mikhmon) s'efface au profit de celle de l'établissement :
+                // message de bienvenue, promos produits (images R2 via N°53)
+                // et liens réseaux sociaux. Mode commercial/défaut : page
+                // historique inchangée. Idempotent : le fetch live (N°48) peut
+                // rappeler applyConfig — injections par id, masquage par classe.
+                applyHospitality(cfg);
             }
 
             // escapeHtml — échappe <, >, &, ", ' pour insertion HTML safe.
@@ -885,6 +895,122 @@
                 return String(s).replace(/[&<>"']/g, function (c) {
                     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
                 });
+            }
+
+            // applyHospitality — bascule commerciale → hospitalité (N°55).
+            // Réversible et idempotent : le mode commercial (défaut) ne touche
+            // RIEN à la page historique ; un retour au mode commercial dé-masque
+            // les blocs d'origine et retire les injections (les blocs masqués
+            // sont CONSERVÉS dans le DOM — classe mikcloud-hosp-hidden, pas de
+            // delete : bascule console sans re-déploiement via le fetch live).
+            // Compat navigateurs mobiles anciens : pas d'optional chaining,
+            // Array.prototype.forEach.call sur les NodeList.
+            function applyHospitality(cfg) {
+                var hosp = cfg.portalStyle === 'hospitality';
+                var infoContent = document.querySelector('.info-content');
+                var infoSection = document.querySelector('.info-section');
+                if (!infoContent || !infoSection) return;
+
+                var block = document.getElementById('mikcloud-hosp');
+                var socials = document.getElementById('mikcloud-hosp-socials');
+                var styleTag = document.getElementById('mikcloud-hosp-style');
+
+                if (!hosp) {
+                    Array.prototype.forEach.call(document.querySelectorAll('.mikcloud-hosp-hidden'), function (el) {
+                        el.classList.remove('mikcloud-hosp-hidden');
+                    });
+                    if (block) block.remove();
+                    if (socials) socials.remove();
+                    if (styleTag) styleTag.remove();
+                    return;
+                }
+
+                // 1) CSS de la vitrine hospitalité (une seule fois), palette
+                // teal du design system de la page.
+                if (!styleTag) {
+                    styleTag = document.createElement('style');
+                    styleTag.id = 'mikcloud-hosp-style';
+                    styleTag.textContent = ''
+                        + '.mikcloud-hosp-hidden{display:none !important;}'
+                        + '.hosp-welcome{background:#f0fdfa;border:1px solid #0d9488;border-radius:10px;padding:10px 14px;margin:0 0 14px;color:#0f766e;font-weight:600;font-size:15px;text-align:center;}'
+                        + '.hosp-section-title{color:#0f766e;font-weight:700;margin:14px 0 8px;font-size:15px;text-align:center;}'
+                        + '.hosp-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}'
+                        + '.hosp-card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.06);}'
+                        + '.hosp-card img{display:block;width:100%;height:110px;object-fit:cover;background:#f1f5f9;}'
+                        + '.hosp-card-body{padding:8px 10px 10px;}'
+                        + '.hosp-card-title{font-weight:700;color:#0f172a;font-size:14px;margin:0 0 2px;}'
+                        + '.hosp-card-desc{color:#64748b;font-size:12px;margin:0 0 6px;line-height:1.35;}'
+                        + '.hosp-card-price{display:inline-block;background:#f0fdfa;color:#0f766e;border:1px solid #99f6e4;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:700;}'
+                        + '.hosp-socials{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin:10px 0 0;}'
+                        + '.hosp-social-btn{display:inline-block;padding:6px 14px;border-radius:999px;background:#0d9488;color:#fff !important;font-size:13px;font-weight:600;text-decoration:none;}';
+                    document.head.appendChild(styleTag);
+                }
+
+                // 2) Masquer la vitrine commerciale d'origine : slider pub
+                // générique, titres/grille tarifaire/services directs de
+                // .info-content, offres dynamiques (renderOffers) et Wave.
+                var slider = document.querySelector('.promo-slider');
+                if (slider) slider.classList.add('mikcloud-hosp-hidden');
+                Array.prototype.forEach.call(document.querySelectorAll('.offers-section, .offre-section'), function (el) {
+                    el.classList.add('mikcloud-hosp-hidden');
+                });
+                Array.prototype.forEach.call(infoContent.children, function (el) {
+                    var cls = el.className || '';
+                    if (cls.indexOf('row') >= 0 || cls.indexOf('mt-4') >= 0 || cls.indexOf('wave-banner') >= 0
+                        || cls.indexOf('section-title') >= 0 || cls.indexOf('section-sub') >= 0) {
+                        el.classList.add('mikcloud-hosp-hidden');
+                    }
+                });
+
+                // 3) Vitrine de l'établissement : bienvenue + promos produits.
+                if (!block) {
+                    block = document.createElement('div');
+                    block.id = 'mikcloud-hosp';
+                    var h = '';
+                    var welcome = cfg.portalWelcome
+                        || ('Bienvenue chez ' + (cfg.tenantName || 'nous') + ' — la connexion WiFi est offerte à nos clients.');
+                    h += '<div class="hosp-welcome">' + escapeHtml(welcome) + '</div>';
+                    var promos = Array.isArray(cfg.portalPromos) ? cfg.portalPromos : [];
+                    if (promos.length > 0) {
+                        h += '<h5 class="hosp-section-title">Nos produits &amp; services</h5>';
+                        h += '<div class="hosp-grid">';
+                        promos.forEach(function (p) {
+                            h += '<div class="hosp-card">'
+                                + (p.imageUrl ? '<img src="' + escapeHtml(p.imageUrl) + '" alt="' + escapeHtml(p.title || '') + '" loading="lazy" onerror="this.style.display=\'none\'">' : '')
+                                + '<div class="hosp-card-body">'
+                                + '<p class="hosp-card-title">' + escapeHtml(p.title || '') + '</p>'
+                                + (p.desc ? '<p class="hosp-card-desc">' + escapeHtml(p.desc) + '</p>' : '')
+                                + (p.priceLabel ? '<span class="hosp-card-price">' + escapeHtml(p.priceLabel) + '</span>' : '')
+                                + '</div></div>';
+                        });
+                        h += '</div>';
+                    }
+                    block.innerHTML = h;
+                    infoContent.insertBefore(block, infoContent.firstChild);
+                }
+
+                // 4) Réseaux sociaux de l'établissement (au-dessus du pied).
+                var socialList = Array.isArray(cfg.portalSocials) ? cfg.portalSocials : [];
+                if (socialList.length > 0) {
+                    if (!socials) {
+                        socials = document.createElement('div');
+                        socials.id = 'mikcloud-hosp-socials';
+                        var sh = '<h5 class="hosp-section-title">Suivez-nous</h5><div class="hosp-socials">';
+                        socialList.forEach(function (soc) {
+                            sh += '<a class="hosp-social-btn" href="' + escapeHtml(soc.url) + '" target="_blank" rel="noopener">' + escapeHtml(soc.label) + '</a>';
+                        });
+                        sh += '</div>';
+                        socials.innerHTML = sh;
+                        var footer = document.querySelector('.wa-link-container');
+                        if (footer) {
+                            infoSection.insertBefore(socials, footer);
+                        } else {
+                            infoSection.appendChild(socials);
+                        }
+                    }
+                } else if (socials) {
+                    socials.remove();
+                }
             }
 
             // renderOffers — remplace les cartes d'offres hardcodées par les

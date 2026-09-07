@@ -28,24 +28,16 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { PageHeader } from "@/components/hotspot/page-header";
 import { EmptyState } from "@/components/hotspot/empty-state";
 import { WifiPosterDialog } from "@/components/hotspot/parts/wifi-poster-dialog";
 import { copyToClipboard } from "@/components/hotspot/parts/uc-clipboard";
+// N°63 — dialog création/édition devenu WIZARD 2 étapes (le reste de la vue est inchangé).
+import { EMPTY_FORM, WifiSiteWizard, formFromSite, type SiteForm } from "@/components/hotspot/parts/wifi-site-wizard";
 import {
   api,
   apiDownload,
@@ -57,54 +49,7 @@ import {
   wifiGuestsCsvURL,
 } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
-import type { Profile, RouterDevice, WifiSite, WifiSitePayload } from "@/lib/hotspot/types";
-
-interface SiteForm {
-  name: string;
-  routerId: string;
-  profileId: string;
-  freeTimeMin: number;
-  freeDataMb: number;
-  marketingOptIn: boolean;
-  dailyPerPhone: number;
-  dailyPerMac: number;
-  dailyCap: number;
-  wifiSsid: string;
-  wifiPassword: string;
-  active: boolean;
-}
-
-function formFromSite(site: WifiSite): SiteForm {
-  return {
-    name: site.name,
-    routerId: site.routerId,
-    profileId: site.profileId,
-    freeTimeMin: site.freeTimeMin,
-    freeDataMb: site.freeDataMb,
-    marketingOptIn: site.marketingOptIn,
-    dailyPerPhone: site.dailyPerPhone,
-    dailyPerMac: site.dailyPerMac,
-    dailyCap: site.dailyCap,
-    wifiSsid: site.wifiSsid,
-    wifiPassword: site.wifiPassword,
-    active: site.active,
-  };
-}
-
-const EMPTY_FORM: SiteForm = {
-  name: "",
-  routerId: "",
-  profileId: "",
-  freeTimeMin: 30,
-  freeDataMb: 100,
-  marketingOptIn: true,
-  dailyPerPhone: 1,
-  dailyPerMac: 1,
-  dailyCap: 100,
-  wifiSsid: "",
-  wifiPassword: "",
-  active: true,
-};
+import type { Profile, RouterDevice, WifiSite } from "@/lib/hotspot/types";
 
 export default function WifiView() {
   const { t } = useI18n();
@@ -129,6 +74,8 @@ export default function WifiView() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<WifiSite | null>(null);
   const [form, setForm] = useState<SiteForm>(EMPTY_FORM);
+  // N°63 — remonte le wizard à chaque ouverture (étape 1 vierge) via la clé.
+  const [wizardNonce, setWizardNonce] = useState(0);
   const [guestsFor, setGuestsFor] = useState<WifiSite | null>(null);
   const [posterFor, setPosterFor] = useState<WifiSite | null>(null);
   const [saving, setSaving] = useState(false);
@@ -147,17 +94,19 @@ export default function WifiView() {
       routerId: routers?.[0]?.id ?? "",
       profileId: freeProfile?.id ?? "",
     });
+    setWizardNonce((n) => n + 1);
     setDialogOpen(true);
   };
 
   const openEdit = (site: WifiSite) => {
     setEditing(site);
     setForm(formFromSite(site));
+    setWizardNonce((n) => n + 1);
     setDialogOpen(true);
   };
 
   const saveMutation = useMutation({
-    mutationFn: async (payload: WifiSitePayload) => {
+    mutationFn: async (payload: SiteForm) => {
       if (editing) return updateWifiSite(editing.id, payload);
       return createWifiSite(payload);
     },
@@ -198,14 +147,12 @@ export default function WifiView() {
     onError: (err: Error) => toast.error(err.message),
   });
 
-  const onSubmit = async () => {
-    if (form.name.trim().length < 2 || !form.routerId || !form.profileId) {
-      toast.error(t("wifi.name"));
-      return;
-    }
+  const onSubmit = async (payload: SiteForm) => {
+    // Les trois requis (nom, routeur, profil) sont déjà garantis par l'étape 1
+    // du wizard — le payload part tel quel (nom trimmé par le wizard).
     setSaving(true);
     try {
-      await saveMutation.mutateAsync({ ...form, name: form.name.trim() });
+      await saveMutation.mutateAsync(payload);
     } finally {
       setSaving(false);
     }
@@ -339,173 +286,20 @@ export default function WifiView() {
         </div>
       )}
 
-      {/* Dialog création / édition — quotas AJUSTABLES par le gérant. */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>{editing ? t("wifi.edit") : t("wifi.create")}</DialogTitle>
-            <DialogDescription>{t("wifi.profileHint")}</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="wifi-name">{t("wifi.name")}</Label>
-              <Input
-                id="wifi-name"
-                value={form.name}
-                placeholder={t("wifi.namePh")}
-                maxLength={60}
-                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-              />
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label>{t("wifi.router")}</Label>
-                <Select
-                  value={form.routerId}
-                  onValueChange={(v) => setForm((f) => ({ ...f, routerId: v }))}
-                >
-                  <SelectTrigger aria-label={t("wifi.router")}>
-                    <SelectValue placeholder={t("wifi.router")} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(routers ?? []).map((r) => (
-                      <SelectItem key={r.id} value={r.id}>
-                        {r.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label>{t("wifi.profile")}</Label>
-                <Select
-                  value={form.profileId}
-                  onValueChange={(v) => setForm((f) => ({ ...f, profileId: v }))}
-                >
-                  <SelectTrigger aria-label={t("wifi.profile")}>
-                    <SelectValue placeholder={t("wifi.profile")} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(profiles ?? []).map((p) => (
-                      <SelectItem key={p.id} value={p.id}>
-                        {p.name} · {p.price} F
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="wifi-time">{t("wifi.freeTime")}</Label>
-                <Input
-                  id="wifi-time"
-                  type="number"
-                  min={0}
-                  value={form.freeTimeMin}
-                  onChange={(e) => setForm((f) => ({ ...f, freeTimeMin: Number(e.target.value) || 0 }))}
-                />
-                <p className="text-xs text-muted-foreground">{t("wifi.freeTimeHint")}</p>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="wifi-data">{t("wifi.freeData")}</Label>
-                <Input
-                  id="wifi-data"
-                  type="number"
-                  min={0}
-                  value={form.freeDataMb}
-                  onChange={(e) => setForm((f) => ({ ...f, freeDataMb: Number(e.target.value) || 0 }))}
-                />
-                <p className="text-xs text-muted-foreground">{t("wifi.freeDataHint")}</p>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="wifi-perphone">{t("wifi.perPhone")}</Label>
-                <Input
-                  id="wifi-perphone"
-                  type="number"
-                  min={1}
-                  max={10}
-                  value={form.dailyPerPhone}
-                  onChange={(e) => setForm((f) => ({ ...f, dailyPerPhone: Number(e.target.value) || 1 }))}
-                />
-                <p className="text-xs text-muted-foreground">{t("wifi.perPhoneHint")}</p>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="wifi-permac">{t("wifi.perMac")}</Label>
-                <Input
-                  id="wifi-permac"
-                  type="number"
-                  min={1}
-                  max={10}
-                  value={form.dailyPerMac}
-                  onChange={(e) => setForm((f) => ({ ...f, dailyPerMac: Number(e.target.value) || 1 }))}
-                />
-                <p className="text-xs text-muted-foreground">{t("wifi.perMacHint")}</p>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="wifi-cap">{t("wifi.dailyCap")}</Label>
-                <Input
-                  id="wifi-cap"
-                  type="number"
-                  min={1}
-                  max={1000}
-                  value={form.dailyCap}
-                  onChange={(e) => setForm((f) => ({ ...f, dailyCap: Number(e.target.value) || 100 }))}
-                />
-                <p className="text-xs text-muted-foreground">{t("wifi.dailyCapHint")}</p>
-              </div>
-            </div>
-            {/* N°49 — Réseau WiFi : alimente le QR de CONNEXION de l'affiche. */}
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="wifi-ssid">{t("wifi.ssid")}</Label>
-                <Input
-                  id="wifi-ssid"
-                  value={form.wifiSsid}
-                  placeholder="CYBER-ESPACE"
-                  maxLength={32}
-                  onChange={(e) => setForm((f) => ({ ...f, wifiSsid: e.target.value }))}
-                />
-                <p className="text-xs text-muted-foreground">{t("wifi.ssidHint")}</p>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="wifi-pass">{t("wifi.wifiPass")}</Label>
-                <Input
-                  id="wifi-pass"
-                  value={form.wifiPassword}
-                  placeholder={t("wifi.wifiPassPh")}
-                  maxLength={63}
-                  onChange={(e) => setForm((f) => ({ ...f, wifiPassword: e.target.value }))}
-                />
-                <p className="text-xs text-muted-foreground">{t("wifi.wifiPassHint")}</p>
-              </div>
-            </div>
-            <div className="flex items-center justify-between rounded-lg border p-3">
-              <div>
-                <Label htmlFor="wifi-optin">{t("wifi.optIn")}</Label>
-                <p className="text-xs text-muted-foreground">{t("wifi.optInHint")}</p>
-              </div>
-              <Switch
-                id="wifi-optin"
-                checked={form.marketingOptIn}
-                onCheckedChange={(v) => setForm((f) => ({ ...f, marketingOptIn: v }))}
-              />
-            </div>
-            <div className="flex items-center justify-between rounded-lg border p-3">
-              <Label htmlFor="wifi-active">{t("wifi.active")}</Label>
-              <Switch
-                id="wifi-active"
-                checked={form.active}
-                onCheckedChange={(v) => setForm((f) => ({ ...f, active: v }))}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button onClick={onSubmit} disabled={saving}>
-              {saving ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : null}
-              {editing ? t("common.save") : t("wifi.create")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* N°63 — création / édition en WIZARD 2 étapes (identité → offre) :
+          le formulaire plat d'un bloc est remplacé, payload identique. */}
+      <WifiSiteWizard
+        key={wizardNonce}
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        editing={editing}
+        form={form}
+        setForm={setForm}
+        routers={routers ?? []}
+        profiles={profiles ?? []}
+        saving={saving}
+        onSubmit={(payload) => void onSubmit(payload)}
+      />
 
       {/* Registre marketing (table + export CSV). */}
       <GuestsDialog site={guestsFor} onClose={() => setGuestsFor(null)} />

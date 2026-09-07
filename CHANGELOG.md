@@ -5,6 +5,42 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-08 — N°63 : Création de site WiFi en wizard 2 étapes animé
+
+### N°63 — « Nouveau site WiFi » : le formulaire plat d'un bloc devient un wizard explicite (vue WiFi Jetable)
+
+- **Constat** : la création/édition d'un site WiFi Jetable se faisait dans
+  un dialog d'UN BLOC de ~11 champs (nom, routeur, profil, temps, data,
+  limites anti-abus ×3, SSID, mot de passe, 2 switches) — un mur scrollable
+  (`max-h-[90vh] overflow-y-auto`) où les trois champs REQUIS se perdaient
+  au milieu des réglages optionnels.
+- **Wizard 2 étapes** (`parts/wifi-site-wizard.tsx`) :
+  - **Étape 1 « Le site »** — l'identité : nom, routeur, profil (les trois
+    requis). Bouton « Continuer » **grisé** tant que le socle est invalide
+    (validation live + coches vertes + erreur inline au blur sur le nom),
+    hints explicites si le compte n'a encore aucun routeur/profil ;
+  - **Étape 2 « L'offre »** — les réglages : quotas offerts, protections
+    anti-abus, réseau WiFi (SSID/mot de passe), switches — précédée d'un
+    **récapitulatif en puces** des choix de l'étape 1 (nom · routeur ·
+    profil) : le gérant voit son socle sans revenir en arrière.
+- **Animé** : stepper à connecteur qui se remplit (500 ms) et jalon 1
+  basculant en **✓ teal** dès l'étape 2 franchie ; transition
+  **directionnelle** entre étapes (slide avant en continu, slide inverse au
+  retour — `AnimatePresence` + `custom` direction) ; champs en cascade
+  (stagger 50 ms, cohérent avec le signup-modal) ; `useReducedMotion`
+  respecté (fondu seul, aucune translation).
+- **Explicite** : description du dialog par étape + mention « Étape n/2 »,
+  boutons « Continuer » / « Retour » / « Enregistrer » (édition) — Entrée
+  valide l'étape courante (form natif par étape).
+- **Chirurgical** : le payload POST/PUT est **identique à l'ancien dialog
+  plat** (12 champs, nom trimmé au submit — payload capturé au smoke) ;
+  l'état du formulaire reste chez le parent (`wifi-view.tsx`), le wizard
+  est remonté vierge à chaque ouverture via une clé nonce (aucun setState
+  en effet — règle react-hooks/set-state-in-effect). Création ET édition
+  passent par le même wizard (pré-remplissage intact).
+- **Périmètre** : 2 fichiers touchés + 1 créé, +12 clés i18n FR/EN
+  (`wifi.wiz.*`), zéro changement backend, zéro dépendance.
+
 ## 2026-09-08 — N°62 : Inscription publique /join simplifiée et interactive
 
 ### N°62 — 4 champs au lieu de 6, un formulaire qui réagit à chaque frappe (public /join/[token])

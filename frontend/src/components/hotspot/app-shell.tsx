@@ -33,7 +33,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { PaywallOverlay } from "@/components/hotspot/parts/paywall-overlay";
-import { useSubscription } from "@/components/hotspot/parts/sa-subscription-card";
 import { cn } from "@/lib/utils";
 import { api, fetchBillingRequests } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
@@ -390,16 +389,9 @@ function NavList() {
       const next = new Set(prev);
       if (next.has(labelKey)) next.delete(labelKey);
       else next.add(labelKey);
-      try {
-        localStorage.setItem("mikcloud-nav-collapsed", JSON.stringify([...next]));
-      } catch {
-        /* stockage indisponible — état de session uniquement */
-      }
       return next;
     });
   }
-  // O — état replié explicite de l'utilisateur (localStorage).
-  const lastAutoOpened = useRef<string | null>(null);
   // Console plateforme : navigation dédiée (cockpit opérateur) ; sinon la
   // navigation client habituelle. « accounts » n'est rendu qu'en mode client
   // pour l'admin plateforme (en mode plateforme, il est déjà dans sa section).
@@ -427,46 +419,44 @@ function NavList() {
     enabled: isPlatformMode,
   });
   const billingPending = billing?.pending ?? 0;
-  // O — naviguer vers une vue ROUVRE automatiquement sa section (l'utilisateur
-  // ne perd jamais son contexte) — mais il peut ensuite la replier
-  // volontairement : le toggle manuel reste maître tant que la vue ne change pas.
-  useEffect(() => {
-    const section = sections.find(
+  // O — auto-ouverture de la section active, calculée PENDANT LE RENDU
+  // (pattern React documenté « ajuster l'état quand une valeur dérivée
+  // change », remplace l'ancien effet setState — react-hooks/set-state-in-effect
+  // N°57-e) : naviguer vers une vue ROUVRE automatiquement sa section, mais
+  // le repli manuel reste maître tant que la section ne change pas (garde
+  // par comparaison de la dernière section auto-ouverte — même sémantique
+  // que l'ancien lastAutoOpened).
+  const [autoOpened, setAutoOpened] = useState<string | null>(null);
+  const activeSectionKey =
+    sections.find(
       (s) =>
         s.items.some((item) => item.id === navView) ||
         // N°57 — n'importe quelle section de la zone Paramètres ouvre la
         // section « Système » qui porte l'entrée de la zone.
         (isSettingsView(navView) && s.items.some((item) => item.id === "settings")),
-    );
-    if (section && lastAutoOpened.current !== section.labelKey) {
-      lastAutoOpened.current = section.labelKey;
-      setCollapsed((prev) => {
-        if (!prev.has(section.labelKey)) return prev; // déjà ouverte
-        const next = new Set(prev);
-        next.delete(section.labelKey);
-        try {
-          localStorage.setItem("mikcloud-nav-collapsed", JSON.stringify([...next]));
-        } catch {
-          /* ignore */
-        }
-        return next;
-      });
-    }
-    if (!section) lastAutoOpened.current = null;
-  }, [navView, sections]);
-  // M — statut d'abonnement du client pour le badge « Abonnement » de la
-  // sidebar : point vert (actif), ambre (échéance ≤ 7 j) ou rouge (expiré/
-  // suspendu) — rappel passif anti-churn, visible sans ouvrir la vue.
-  const { data: subView } = useSubscription();
-  let subDot: "ok" | "soon" | "bad" | null = null;
-  if (subView) {
-    if (subView.status === "expired" || subView.status === "suspended") {
-      subDot = "bad";
-    } else if (subView.subscription.periodEnd) {
-      const days = Math.ceil((new Date(subView.subscription.periodEnd).getTime() - Date.now()) / 86_400_000);
-      subDot = days <= 7 ? "soon" : "ok";
+    )?.labelKey ?? null;
+  if (activeSectionKey !== autoOpened) {
+    setAutoOpened(activeSectionKey);
+    if (activeSectionKey !== null && collapsed.has(activeSectionKey)) {
+      const next = new Set(collapsed);
+      next.delete(activeSectionKey);
+      setCollapsed(next);
     }
   }
+  // Persistance du repli (système externe localStorage) : effet PUR sans
+  // setState — couvre repli manuel ET auto-ouverture, réagit à chaque
+  // changement de « collapsed » (l'écriture initiale est idempotente).
+  useEffect(() => {
+    try {
+      localStorage.setItem("mikcloud-nav-collapsed", JSON.stringify([...collapsed]));
+    } catch {
+      /* stockage indisponible — état de session uniquement */
+    }
+  }, [collapsed]);
+  // N°57-e — plus de badge « Abonnement » ici : l'entrée nav dédiée a
+  // disparu (la facturation vit dans la zone Paramètres). Le statut reste
+  // visible passivement via le bandeau du dashboard (expiré / échéance
+  // proche) et le mur P5 (PaywallOverlay, autonome).
   return (
     <nav className="flex-1 space-y-1 overflow-y-auto px-3 pb-4" aria-label={t("nav.main")}>
       <ModeSwitch />
@@ -534,14 +524,6 @@ function NavList() {
                         )}
                         {item.id === "billingRequests" && billingPending > 0 && (
                           <span className="live-dot absolute -right-1 -top-1 block size-2 rounded-full bg-primary" aria-hidden />
-                        )}
-                        {item.id === "subscription" && subDot && (
-                          <span
-                            className={`live-dot absolute -right-1 -top-1 block size-2 rounded-full ${
-                              subDot === "bad" ? "bg-destructive" : subDot === "soon" ? "bg-amber-500" : "bg-emerald-500"
-                            }`}
-                            aria-hidden
-                          />
                         )}
                       </span>
                       <span className="flex-1 truncate text-left">{t(item.labelKey)}</span>

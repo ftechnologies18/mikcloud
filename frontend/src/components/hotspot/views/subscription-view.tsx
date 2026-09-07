@@ -1,8 +1,9 @@
 "use client";
 
-// Vue ABONNEMENT (M) — navigation dédiée pour le client (pas un onglet des
-// Paramètres) : le paiement étant manuel (Wave/mobile money), le renouvellement
-// est une tâche ACTIVE que le client doit exécuter avant chaque échéance.
+// Vue ABONNEMENT (M) — section dédiée de la zone Paramètres (N°57-e :
+// /app/settings/subscription, ex /app/subscription) : le paiement étant
+// manuel (Wave/mobile money), le renouvellement est une tâche ACTIVE que
+// le client doit exécuter avant chaque échéance.
 //   • Carte statut — formule, échéance, compte à rebours, CTA renouveler ;
 //   • Formules — SubscriptionCard existante (Essentiel vs Illimité, paiement) ;
 //   • Historique de facturation — factures payées (MC-2026-0001), chacune

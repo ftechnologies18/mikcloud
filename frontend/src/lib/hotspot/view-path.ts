@@ -22,6 +22,11 @@
 // L'ancienne racine /app/settings (et les anciens chemins canoniques
 // /app/settings/portal, /app/settings/templates) restent deep-linkables
 // via LEGACY_SLUG_VIEWS puis re-normalisés.
+//
+// N°57-e — l’Abonnement (vue dédiée M) rejoint la zone : /app/settings/
+// subscription. L’ancien chemin racine /app/subscription reste deep-linkable
+// (LEGACY_SLUG_VIEWS) puis re-normalisé — signets et historiques navigateur
+// conservés.
 
 import type { ViewId } from "./types";
 
@@ -35,7 +40,9 @@ export const APP_BASE_PATH = "/app";
 const VIEW_SLUGS: Record<ViewId, string> = {
   dashboard: "dashboard",
   sessions: "sessions",
-  subscription: "subscription",
+  // N°57-e — section Abonnement de la zone Paramètres (facturation de
+  // l’espace : formule, échéance, renouvellement, factures).
+  subscription: "settings/subscription",
   users: "users",
   registrations: "registrations",
   vouchers: "vouchers",
@@ -80,6 +87,8 @@ const LEGACY_SLUG_VIEWS: Record<string, ViewId> = {
   settings: "settings",
   "settings/portal": "portal",
   "settings/templates": "templates",
+  // N°57-e — ancien chemin racine de la vue Abonnement (pré-zone).
+  subscription: "subscription",
 };
 
 /** Chemin complet d'une vue : /app/<slug>, ou /app/<slug>/<détail> quand la

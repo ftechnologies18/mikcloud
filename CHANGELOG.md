@@ -5,6 +5,39 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-08 — N°57-e : l'Abonnement rejoint la zone Paramètres (7ᵉ section, ex /app/subscription)
+
+### N°57-e — Déplacement de la page Abonnement dans la zone Paramètres (demande utilisateur)
+- **Nouvelle section « Abonnement »** dans la sidebar de zone :
+  `/app/settings/subscription` (segment imbriqué, view-path). La vue
+  intégrale (carte statut + formules + historique de facturation, flux de
+  renouvellement Wave) vit désormais dans la zone, comme les autres
+  préoccupations back-office. Position : AVANT Équipe — l'ordre se lit
+  « identité → service → sécurité → infrastructure → alertes →
+  facturation → équipe ».
+- **Retrait de l'entrée nav dédiée** (section « Commercial » de la sidebar
+  principale) : la facturation n'est plus un module métier de première
+  ligne ; l'entrée unique « Paramètres » du menu Système y conduit. La
+  pastille de statut « anti-churn » de la sidebar principale est retirée
+  avec elle (le statut reste visible via le bandeau du dashboard et le mur
+  P5 PaywallOverlay).
+- **Général allégé** : la carte pont « Abonnement » (lecture + bouton
+  Gérer, créée en N°57-d quand la vue vivait hors zone) est retirée —
+  redondante avec la section sœur. Le Général reste Organisation + Langue.
+- **Bandeau dashboard corrigé** : le CTA « Renouveler » (expiré / échéance
+  proche) pointe DIRECTEMENT la section Abonnement (un clic au lieu de
+  Général → carte → Gérer).
+- **Contrat de rôles inchangé** : `GET /api/subscription` reste ouvert à
+  tous les rôles authentifiés (le gérant voit la section en lecture) ; les
+  actions de renouvellement/paiement restent rang 3 côté Go. La position
+  de la section (après Notifications) garantit que l'atterrissage du
+  gérant dans la zone reste Hotspot — aucun changement de destination.
+- **URLs compatibles** : l'ancien chemin racine `/app/subscription` reste
+  deep-linkable (LEGACY_SLUG_VIEWS) et re-normalisé en replace vers le
+  chemin canonique — signets et historiques navigateur conservés.
+- **Frontend only** : aucun changement backend, aucune migration Neon —
+  ViewIds, map VIEWS, garde-fous de rôles et serveur inchangés.
+
 ## 2026-09-08 — N°57-d : zone Paramètres — sections réorganisées (Général / Hotspot / Sécurité / Routeurs / Notifications / Équipe) + fiches routeurs sans modale
 
 ### N°57-d — Réorganisation experte des 6 sections (demande utilisateur) : une préoccupation = une section, le Portail et les Modèles deviennent des onglets du Hotspot

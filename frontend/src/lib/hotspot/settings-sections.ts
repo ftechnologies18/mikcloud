@@ -22,9 +22,19 @@
 // changent (view-path.ts). Les URLs historiques (/app/templates,
 // /app/settings/portal…) restent deep-linkables : la normalisation
 // d'app-route réécrit vers le chemin canonique.
+//
+// N°57-e — l’Abonnement rejoint la zone (7 sections) : la facturation de
+// l’espace (formule, échéance, renouvellement, factures) vit désormais
+// sous /app/settings/subscription, comme les autres préoccupations
+// back-office. L’ancienne vue racine /app/subscription reste deep-linkable
+// (re-normalisation app-route). Position : AVANT Équipe — l’ordre se lit
+// « identité → service → sécurité → infrastructure → alertes → facturation
+// → équipe » ; le gérant (rang 2, lecture seule du GET /api/subscription)
+// conserve son atterrissage Hotspot (la section ne devient jamais SA
+// première section accessible).
 
 import type { LucideIcon } from "lucide-react";
-import { Bell, Router as RouterIcon, Settings, ShieldCheck, UsersRound, Wifi } from "lucide-react";
+import { Bell, CreditCard, Router as RouterIcon, Settings, ShieldCheck, UsersRound, Wifi } from "lucide-react";
 import { canView } from "./roles";
 import type { ViewId } from "./types";
 
@@ -42,17 +52,22 @@ export interface SettingsSection {
 }
 
 /** Sections de la zone, dans l'ordre de la sidebar (N°57-d) : identité →
- * service WiFi → sécurité → infrastructure → alertes → équipe. L'accès
- * suit VIEW_MIN_RANK (rôles existants) : « Général », « Sécurité » et
- * « Équipe » restent propriétaire (rang 3) ; « Hotspot » (hors onglet
- * Expérience, masqué au gérant), « Routeurs » et « Notifications » sont
- * gérant+ (rang 2). */
+ * service WiFi → sécurité → infrastructure → alertes → facturation →
+ * équipe (N°57-e : Abonnement avant Équipe). L'accès suit VIEW_MIN_RANK
+ * (rôles existants) : « Général », « Sécurité » et « Équipe » restent
+ * propriétaire (rang 3) ; « Hotspot » (hors onglet Expérience, masqué au
+ * gérant), « Routeurs » et « Notifications » sont gérant+ (rang 2) ;
+ * « Abonnement » est en lecture pour tous les rôles authentifiés
+ * (GET /api/subscription sans restriction serveur — les ACTIONS de
+ * renouvellement/paiement restent rang 3, gardées côté Go). */
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { id: "settings", labelKey: "settings.tabGeneral", icon: Settings, views: ["settings"] },
   { id: "hotspot", labelKey: "settings.tabHotspot", icon: Wifi, views: ["hotspot", "portal", "templates"] },
   { id: "security", labelKey: "settings.tabAdvanced", icon: ShieldCheck, views: ["security"] },
   { id: "routers", labelKey: "nav.routers", icon: RouterIcon, views: ["routers"] },
   { id: "notifications", labelKey: "nav.notifications", icon: Bell, views: ["notifications"] },
+  // N°57-e — Abonnement : formule, échéance, renouvellement, factures.
+  { id: "subscription", labelKey: "nav.subscription", icon: CreditCard, views: ["subscription"] },
   { id: "team", labelKey: "nav.team", icon: UsersRound, views: ["team"] },
 ];
 

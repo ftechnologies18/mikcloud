@@ -5,7 +5,6 @@ import type { LucideIcon } from "lucide-react";
 import {
   BarChart3,
   Building2,
-  CreditCard,
   Gauge,
   LayoutDashboard,
   ReceiptText,
@@ -52,9 +51,10 @@ export const NAV_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
   {
     labelKey: "nav.section.commercial",
     items: [
-      // M — l'abonnement est une vue DÉDIÉE (pas un onglet des Paramètres) :
-      // échéance, renouvellement anticipé et factures téléchargeables.
-      { id: "subscription", labelKey: "nav.subscription", icon: CreditCard },
+      // N°57-e — l'Abonnement quitte la navigation principale : la
+      // facturation de l'espace vit désormais dans la zone Paramètres
+      // (/app/settings/subscription, section dédiée de la sidebar de zone).
+      // L'ancienne URL /app/subscription reste deep-linkable (re-normalisée).
       { id: "resellers", labelKey: "nav.resellers", icon: Store },
       // N°27 — WiFi jetable : mode d'accès offert des établissements.
       { id: "wifi", labelKey: "wifi.title", icon: Wifi },

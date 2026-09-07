@@ -2,8 +2,9 @@
 
 // Bannière d'abonnement du tableau de bord :
 //   • abonnement expiré → bandeau ambre PERSISTANT (non refermable) : la
-//     console est en LECTURE SEULE (gardes serveur P3), CTA vers la carte
-//     Abonnement (Paramètres) pour demander le renouvellement ;
+//     console est en LECTURE SEULE (gardes serveur P3), CTA vers la section
+//     Abonnement de la zone Paramètres (N°57-e) pour demander le
+//     renouvellement ;
 //   • échéance dans ≤ 7 jours → rappel doux refermable pour la session.
 // VERROU FACTURATION : le renouvellement est un flux PAYANT (demande + lien
 // Wave, activation par MikCloud après encaissement) — jamais un clic gratuit.
@@ -54,7 +55,7 @@ export function SubscriptionBanner() {
         <Button
           size="sm"
           className="shrink-0 self-start sm:self-center"
-          onClick={() => setView("settings")}
+          onClick={() => setView("subscription")}
         >
           {t("sub.banner.renew")}
         </Button>
@@ -91,7 +92,7 @@ export function SubscriptionBanner() {
             <Button variant="ghost" size="sm" onClick={() => setExpiringDismissed(true)}>
               {t("sub.banner.later")}
             </Button>
-            <Button size="sm" onClick={() => setView("settings")}>
+            <Button size="sm" onClick={() => setView("subscription")}>
               {t("sub.banner.renew")}
             </Button>
           </div>

@@ -7,27 +7,25 @@
 // cf. settings-sections.ts). Cette vue garde UNE préoccupation —
 // l'identité de l'espace — SANS onglet interne :
 //   • Organisation — nom, devise, fuseau horaire, lien Wave ;
-//   • Langue — préférence d'interface (appliquée immédiatement) ;
-//   • Abonnement — état réel (GET /api/subscription) + accès direct à la
-//     vue dédiée (contenu de lecture, pas de duplicate du flux de paiement).
+//   • Langue — préférence d'interface (appliquée immédiatement).
+// N°57-e — la carte pont « Abonnement » (accès direct à la vue dédiée,
+// créée en N°57-d quand l'Abonnement vivait HORS zone) est retirée : la
+// facturation est désormais une section SŒUR de la sidebar de zone
+// (/app/settings/subscription) — le pont devient redondant.
 // Les cartes métier hotspot (expiration, tickets, portail) vivent dans la
 // section Hotspot (parts/hotspot-cards.tsx), la sécurité dans la section
 // Sécurité (views/security-view.tsx).
 
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Building2, CreditCard, Languages } from "lucide-react";
+import { Building2, Languages } from "lucide-react";
 import { toast } from "sonner";
 
 import { api } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
-import { localeOf } from "@/lib/hotspot/i18n";
 import type { AppSettings } from "@/lib/hotspot/types";
 import { PageHeader } from "@/components/hotspot/page-header";
-import { useSubscription } from "@/components/hotspot/parts/sa-subscription-card";
 import { SETTINGS_QUERY_KEY, useSettings } from "@/components/hotspot/parts/sd-currency";
-import { useHotspotStore } from "@/lib/hotspot/store";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -38,13 +36,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 const CURRENCIES = ["FCFA", "EUR", "USD", "MAD", "XOF", "GBP", "CDF", "GNF"];
 const TIMEZONES = ["UTC", "Africa/Abidjan", "Africa/Dakar", "Africa/Casablanca", "Europe/Paris", "Europe/Brussels"];
-
-/** Libellé de formule — clés i18n existantes, identifiant brut en repli. */
-function planName(planId: string | undefined): string {
-  if (planId === "essentiel") return "Essentiel";
-  if (planId === "illimite") return "Illimité";
-  return planId || "—";
-}
 
 interface SettingsForm {
   name: string;
@@ -65,7 +56,6 @@ export default function SettingsView() {
           <Skeleton className="h-96 rounded-xl" />
           <div className="grid gap-4">
             <Skeleton className="h-64 rounded-xl" />
-            <Skeleton className="h-40 rounded-xl" />
           </div>
         </div>
       </div>
@@ -77,12 +67,12 @@ export default function SettingsView() {
       <PageHeader title={t("settings.tabGeneral")} description={t("settings.generalDesc")} />
 
       {/* Une préoccupation = une carte, aucune navigation interne : le
-          propriétaire voit tout le Général d'un coup d'œil. */}
+          propriétaire voit tout le Général d'un coup d'œil. N°57-e : la
+          facturation vit dans la section Abonnement (sidebar de zone). */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-6">
         <OrganizationCard settings={data} />
         <div className="grid grid-cols-1 content-start gap-4 sm:gap-6">
           <LanguageCard />
-          <SubscriptionCard />
         </div>
       </div>
     </div>
@@ -232,85 +222,6 @@ function OrganizationCard({ settings }: { settings: AppSettings }) {
       <CardFooter className="justify-end px-4 sm:px-6">
         <Button className="h-10" onClick={submitSettings} disabled={saveMutation.isPending || !form.name.trim()}>
           {saveMutation.isPending ? t("common.saving") : t("common.save")}
-        </Button>
-      </CardFooter>
-    </Card>
-  );
-}
-
-// Carte Abonnement (N°57-d) — contenu de LECTURE : état réel de l'espace
-// (GET /api/subscription) sans dupliquer le flux de paiement (renouvellement,
-// factures) qui vit dans la vue Abonnement dédiée (M).
-function SubscriptionCard() {
-  const { t, tf, lang } = useI18n();
-  const setView = useHotspotStore((s) => s.setView);
-  const { data, isLoading } = useSubscription();
-
-  const status = data?.status ?? "none";
-  const periodEnd = data?.subscription.periodEnd ?? "";
-  const routerCount = data?.routerCount ?? 0;
-
-  const df = new Intl.DateTimeFormat(localeOf(lang), { day: "2-digit", month: "short", year: "numeric" });
-  const statusBadge =
-    status === "active"
-      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-      : status === "expired" || status === "suspended"
-        ? "border-destructive/40 bg-destructive/10 text-destructive"
-        : "border-border bg-muted text-muted-foreground";
-
-  return (
-    <Card className="gap-4 py-4 sm:py-6">
-      <CardHeader className="px-4 sm:px-6">
-        <CardTitle className="flex items-center justify-between gap-2 text-base">
-          <span className="flex min-w-0 items-center gap-2">
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
-              <CreditCard className="size-4" />
-            </span>
-            <span className="truncate">{t("settings.subscriptionCard")}</span>
-          </span>
-          <Badge variant="outline" className={`shrink-0 text-[11px] font-semibold ${statusBadge}`}>
-            {status === "active"
-              ? t("sub.status.active")
-              : status === "expired"
-                ? t("sub.status.expired")
-                : status === "suspended"
-                  ? t("sub.status.suspended")
-                  : t("sub.status.none")}
-          </Badge>
-        </CardTitle>
-        <CardDescription>{t("settings.subscriptionCardDesc")}</CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-3 px-4 sm:grid-cols-2 sm:px-6">
-        {isLoading ? (
-          <Skeleton className="h-16 rounded-lg sm:col-span-2" />
-        ) : (
-          <>
-            <div className="flex min-h-14 items-center justify-between gap-3 rounded-lg border p-3">
-              <span className="text-sm text-muted-foreground">{t("sub.planWord")}</span>
-              <span className="text-sm font-semibold">{planName(data?.subscription.planId)}</span>
-            </div>
-            <div className="flex min-h-14 items-center justify-between gap-3 rounded-lg border p-3">
-              <span className="text-sm text-muted-foreground">{t("routers.title")}</span>
-              <span className="text-sm font-semibold tabular-nums">{routerCount}</span>
-            </div>
-            {periodEnd && (
-              <div className="flex min-h-14 items-center gap-3 rounded-lg border p-3 sm:col-span-2">
-                <span className="text-sm font-medium">
-                  {tf("sub.renewalOn", { date: df.format(new Date(periodEnd)) })}
-                </span>
-              </div>
-            )}
-          </>
-        )}
-      </CardContent>
-      <CardFooter className="px-4 sm:px-6">
-        <Button
-          type="button"
-          variant="outline"
-          className="h-10 w-full sm:w-auto"
-          onClick={() => setView("subscription")}
-        >
-          {t("settings.subscriptionManage")}
         </Button>
       </CardFooter>
     </Card>

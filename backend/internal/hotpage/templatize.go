@@ -102,6 +102,11 @@ type PortalConfig struct {
 	Promos []PortalPromo `json:"portalPromos,omitempty"`
 	// Socials — liens réseaux sociaux (≤ 4, https, validés côté API).
 	Socials []PortalSocial `json:"portalSocials,omitempty"`
+	// N°56 — clé publique du portail (analytics) : résout le compte pour
+	// POST /api/portal/track sans authentification (pré-auth du hotspot).
+	// NON secret par design (visible de chaque invité dans le bloc config) :
+	// elle ne permet que le dépôt d'événements bornés côté serveur.
+	PortalKey string `json:"portalKey,omitempty"`
 	// Offers — offres payantes du compte (profils à prix > 0), max 8. Sérialisées
 	// dans le bloc JSON pour que la page les affiche. Chaque offre porte le nom,
 	// le prix, la durée et le waveUrl pré-construit.
@@ -110,11 +115,18 @@ type PortalConfig struct {
 
 // PortalPromo — une ligne de vitrine « hospitalité » (N°55) : un produit ou
 // service mis en avant par l'établissement (image R2 optionnelle).
+// N°56 : ID (stable, sert de clé aux compteurs analytics — les promos
+// héritent d'un id aléatoire à l'enregistrement console, ou d'un id
+// déterministe dérivé du contenu pour les lignes héritées d'avant N°56) et
+// Link (URL https optionnelle : quand présente, la carte devient cliquable
+// et son ouverture est comptée comme un « click »).
 type PortalPromo struct {
+	ID         string `json:"id,omitempty"`
 	Title      string `json:"title"`
 	Desc       string `json:"desc,omitempty"`
 	ImageURL   string `json:"imageUrl,omitempty"`
 	PriceLabel string `json:"priceLabel,omitempty"`
+	Link       string `json:"link,omitempty"`
 }
 
 // PortalSocial — un lien réseau social affiché en pied du mode hospitalité.

@@ -85,7 +85,15 @@ func (a *API) authMiddleware(next http.Handler) http.Handler {
 		// captif charge ses images pré-authentification — même hôte que
 		// apiBase) ; le POST (téléversement) reste derrière le JWT gérant.
 		publicMedia := r.Method == http.MethodGet && strings.HasPrefix(path, "/api/media/")
-		if path == "/api/auth/login" || path == "/api/auth/register" || path == "/api/reseller/login" || path == "/api/webhooks/wave" || path == "/api/webhooks/geniuspay" || path == "/api/vitals" || strings.HasPrefix(path, "/api/join/") || publicWifi || publicMedia || !strings.HasPrefix(path, "/api/") {
+		// N°56 — analytics du portail : POST /api/portal/track est
+		// public (la page du portail dépose ses impressions/clics
+		// pré-authentification). La résolution du compte passe par la
+		// clé publique portalKey (non secrète, aucun droit de lecture)
+		// et le dépôt est borné : dédup journalière, quotas IP,
+		// plafond journalier (cf. handlers_promo_events.go). Uniquement
+		// ce POST exact — GET /api/promos/stats reste console.
+		publicPromoTrack := r.Method == http.MethodPost && path == "/api/portal/track"
+		if path == "/api/auth/login" || path == "/api/auth/register" || path == "/api/reseller/login" || path == "/api/webhooks/wave" || path == "/api/webhooks/geniuspay" || path == "/api/vitals" || strings.HasPrefix(path, "/api/join/") || publicWifi || publicMedia || publicPromoTrack || !strings.HasPrefix(path, "/api/") {
 			next.ServeHTTP(w, r)
 			return
 		}

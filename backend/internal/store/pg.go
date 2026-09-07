@@ -631,6 +631,22 @@ func (p *PG) ensureSchema() error {
 		`CREATE INDEX IF NOT EXISTS idx_wifi_guests_account ON wifi_guests (account_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_wifi_guests_site   ON wifi_guests (site_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_wifi_guests_phone  ON wifi_guests (phone)`,
+		// N°56 — analytics du portail hospitalité : journal des
+		// impressions/clics par promo. La déduplication (un appareil =
+		// une ligne par promo/jour/type) est portée par l'ID
+		// DÉTERMINISTE de la ligne (PK) — pas besoin d'index unique
+		// supplémentaire ; les index couvrent les lectures de stats.
+		`CREATE TABLE IF NOT EXISTS promo_events (
+                        id         TEXT PRIMARY KEY,
+                        account_id TEXT NOT NULL DEFAULT '',
+                        promo_id   TEXT NOT NULL DEFAULT '',
+                        kind       TEXT NOT NULL DEFAULT '',
+                        client_key TEXT NOT NULL DEFAULT '',
+                        day        TEXT NOT NULL DEFAULT '',
+                        created_at TEXT NOT NULL DEFAULT ''
+                )`,
+		`CREATE INDEX IF NOT EXISTS idx_promo_events_account ON promo_events (account_id, day)`,
+		`CREATE INDEX IF NOT EXISTS idx_promo_events_promo   ON promo_events (account_id, promo_id)`,
 		// N°47 — colonne ajoutée sur la table EXISTANTE : le CREATE TABLE IF NOT
 		// EXISTS ne fait rien sur une base déjà initialisée, et le chargement
 		// différentiel SELECT la colonne ⇒ sans ALTER, le store ne boot plus
@@ -708,6 +724,9 @@ func (p *PG) ensureSchema() error {
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS portal_welcome TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS portal_promos TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS portal_socials TEXT NOT NULL DEFAULT ''`,
+		// N°56 — clé publique du portail (analytics pré-auth) : générée
+		// une fois par compte côté Go (ensureSettings), simple TEXT.
+		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS portal_key TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS expiry_policy_mode TEXT NOT NULL DEFAULT 'keep'`,
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS expiry_policy_after_days INTEGER NOT NULL DEFAULT 30`,
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS board_name TEXT NOT NULL DEFAULT ''`,
@@ -905,6 +924,7 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 		{"registration_requests", func() error { return loadInto(p, &db.RegistrationRequests, registrationRequestSpec) }},
 		{"wifi_sites", func() error { return loadInto(p, &db.WifiSites, wifiSiteSpec) }},
 		{"wifi_guests", func() error { return loadInto(p, &db.WifiGuests, wifiGuestSpec) }},
+		{"promo_events", func() error { return loadInto(p, &db.PromoEvents, promoEventSpec) }},
 		{"settings", func() error { return p.loadSettings(db) }},
 	}
 	for _, st := range steps {
@@ -958,7 +978,7 @@ func (p *PG) loadSettings(db *model.DB) error {
                         sub_plan_id, sub_status, sub_period_start, sub_period_end, sub_last_amount,
                         sub_router_slots, sub_last_paid_at, last_tick,
                         platform_name, platform_register_open, platform_register_key, auto_import_router_users,
-                        join_button, portal_style, portal_welcome, portal_promos, portal_socials
+                        join_button, portal_style, portal_welcome, portal_promos, portal_socials, portal_key
                  FROM settings`)
 	if err != nil {
 		return err
@@ -984,6 +1004,8 @@ func (p *PG) loadSettings(db *model.DB) error {
 			joinButton bool
 			// N°55 - mode hospitalité du portail (style/bienvenue/promos/socials).
 			portalStyle, portalWelcome, portalPromos, portalSocials string
+			// N°56 - clé publique du portail (analytics pré-auth).
+			portalKey string
 			// I (paramètres plateforme) — uniquement sur le compte principal.
 			platformName         string
 			platformRegisterOpen bool
@@ -995,7 +1017,7 @@ func (p *PG) loadSettings(db *model.DB) error {
 			&subPlanID, &subStatus, &subPeriodStart, &subPeriodEnd, &subLastAmount,
 			&subRouterSlots, &subLastPaidAt, &lastTick,
 			&platformName, &platformRegisterOpen, &platformRegisterKey, &autoImport,
-			&joinButton, &portalStyle, &portalWelcome, &portalPromos, &portalSocials); err != nil {
+			&joinButton, &portalStyle, &portalWelcome, &portalPromos, &portalSocials, &portalKey); err != nil {
 			return err
 		}
 		if accID == "" {
@@ -1009,6 +1031,7 @@ func (p *PG) loadSettings(db *model.DB) error {
 				ExpiryPolicyMode: expiryMode, ExpiryPolicyAfterDays: expiryAfterDays,
 				PortalStyle: portalStyle, PortalWelcome: portalWelcome,
 				PortalPromos: portalPromos, PortalSocials: portalSocials,
+				PortalKey: portalKey,
 			},
 			Plan: model.Plan{Name: planName, MaxRouters: planMaxRouters, MaxUsers: planMaxUsers},
 			Subscription: model.Subscription{
@@ -1133,6 +1156,9 @@ func (p *PG) Sync(db *model.DB) error {
 	if err := syncTable(tx, p.hashes, wifiGuestSpec, db.WifiGuests); err != nil {
 		return err
 	}
+	if err := syncTable(tx, p.hashes, promoEventSpec, db.PromoEvents); err != nil {
+		return err
+	}
 	if err := p.syncSettings(tx, db); err != nil {
 		return err
 	}
@@ -1210,8 +1236,8 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
                                sub_plan_id, sub_status, sub_period_start, sub_period_end, sub_last_amount,
                                sub_router_slots, sub_last_paid_at, last_tick,
                                platform_name, platform_register_open, platform_register_key, auto_import_router_users, join_button,
-                               portal_style, portal_welcome, portal_promos, portal_socials)
-                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
+                               portal_style, portal_welcome, portal_promos, portal_socials, portal_key)
+                         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
                          ON CONFLICT (id) DO UPDATE SET
                            account_id                = EXCLUDED.account_id,
                            tenant_name               = EXCLUDED.tenant_name,
@@ -1242,7 +1268,8 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
                            portal_style             = EXCLUDED.portal_style,
                            portal_welcome           = EXCLUDED.portal_welcome,
                            portal_promos            = EXCLUDED.portal_promos,
-                           portal_socials           = EXCLUDED.portal_socials`,
+                           portal_socials           = EXCLUDED.portal_socials,
+                           portal_key               = EXCLUDED.portal_key`,
 			accID, s.Tenant.Name, s.Tenant.Currency, s.Tenant.Timezone,
 			s.Plan.Name, s.Plan.MaxRouters, s.Plan.MaxUsers,
 			s.Tenant.WaveLink, s.Tenant.DNSName, s.Tenant.LogoURL, s.Tenant.BannerURL,
@@ -1251,7 +1278,8 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
 			s.Subscription.PeriodEnd, s.Subscription.LastAmountFcfa,
 			s.Subscription.RouterSlots, s.Subscription.LastPaidAt, lastTick,
 			platName, platOpen, platKey, s.ImportAutoEnabled(), s.Tenant.JoinButtonEnabled(),
-			s.Tenant.PortalStyle, s.Tenant.PortalWelcome, s.Tenant.PortalPromos, s.Tenant.PortalSocials)
+			s.Tenant.PortalStyle, s.Tenant.PortalWelcome, s.Tenant.PortalPromos, s.Tenant.PortalSocials,
+			s.Tenant.PortalKey)
 		if err != nil {
 			return fmt.Errorf("pg sync settings (%s) : %w", accID, err)
 		}
@@ -1709,6 +1737,26 @@ var wifiGuestSpec = entitySpec[model.WifiGuest]{
 	hashOf: hashEntity[model.WifiGuest],
 }
 
+// promoEventSpec — N°56 : journal analytics du portail hospitalité
+// (impressions/clics par promo). Append-only avec ID déterministe : le même
+// (compte, promo, type, appareil, jour) réécrit la MÊME ligne (upsert no-op),
+// la diff syncTable la voit inchangée — re-POSTer un événement identique ne
+// coûte ni ligne ni écriture Neon.
+var promoEventSpec = entitySpec[model.PromoEvent]{
+	table: "promo_events",
+	cols:  []string{"id", "account_id", "promo_id", "kind", "client_key", "day", "created_at"},
+	idOf:  func(x *model.PromoEvent) string { return x.ID },
+	scan: func(r *sql.Rows) (model.PromoEvent, error) {
+		var x model.PromoEvent
+		err := r.Scan(&x.ID, &x.AccountID, &x.PromoID, &x.Kind, &x.ClientKey, &x.Day, &x.CreatedAt)
+		return x, err
+	},
+	args: func(x *model.PromoEvent) []any {
+		return []any{x.ID, x.AccountID, x.PromoID, x.Kind, x.ClientKey, x.Day, x.CreatedAt}
+	},
+	hashOf: hashEntity[model.PromoEvent],
+}
+
 // geniusPaySubSpec — abonnements récurrents carte (Stripe via GeniusPay).
 var geniusPaySubSpec = entitySpec[model.GeniusPaySub]{
 	table: "geniuspay_subs",
@@ -2032,6 +2080,7 @@ func (p *PG) rebuildHashes(db *model.DB) {
 		registrationRequestSpec.table: hashRows(db.RegistrationRequests, registrationRequestSpec),
 		wifiSiteSpec.table:            hashRows(db.WifiSites, wifiSiteSpec),
 		wifiGuestSpec.table:           hashRows(db.WifiGuests, wifiGuestSpec),
+		promoEventSpec.table:          hashRows(db.PromoEvents, promoEventSpec),
 	}
 	notifRows := make([]model.NotificationSettings, 0, len(db.NotifSettings))
 	for _, v := range db.NotifSettings {

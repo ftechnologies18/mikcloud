@@ -1573,6 +1573,9 @@ const fr: Record<string, string> = {
   // — settings —
   "settings.title": "Paramètres",
   "settings.description": "Configuration de votre espace MikCloud",
+  // N°57-c — bouton « Retour » de la sidebar de zone (ramène à la dernière
+  // vue métier visitée).
+  "settings.zone.back": "Retour",
   "settings.tabGeneral": "Général",
   "settings.tabHotspot": "Hotspot",
   "settings.tabAdvanced": "Sécurité",
@@ -3927,6 +3930,9 @@ const en: Record<string, string> = {
   // — settings —
   "settings.title": "Settings",
   "settings.description": "Your MikCloud workspace configuration",
+  // N°57-c — back button of the zone sidebar (returns to the last business
+  // view visited).
+  "settings.zone.back": "Back",
   "settings.tabGeneral": "General",
   "settings.tabHotspot": "Hotspot",
   "settings.tabAdvanced": "Security",

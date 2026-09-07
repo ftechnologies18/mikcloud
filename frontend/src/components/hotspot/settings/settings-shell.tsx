@@ -1,134 +1,98 @@
 "use client";
 
-// N°57 — Shell de la zone Paramètres (split-view).
+// N°57-c — Sidebar de la zone Paramètres : elle REMPLPLACE la sidebar
+// principale (jamais côte à côte).
 //
-// Layout : sidebar de sections à gauche (desktop ≥ lg) + panneau de contenu
-// à droite ; sur mobile/tablette la sidebar devient un bandeau horizontal
-// défilant de sections. Le panneau rend la vue active du store SANS LA
-// MODIFIER : chaque vue apporte son PageHeader (titre + description), son
-// chargement différé (map VIEWS de l'app-shell) et ses données — le contrat
-// des vues est inchangé.
+// Retour utilisateur sur N°57 (split-view) : la zone portait une sidebar
+// interne qui s'empilait sur la sidebar principale = 3 colonnes (« sidebar
+// dans sidebar », anti-pattern UX). Le pattern retenu (N°57-c) : quand une
+// vue de la zone est active, l'app-shell rend CETTE sidebar À LA PLACE de
+// NavList dans le même <aside> — le layout reste TOUJOURS à 2 colonnes
+// (sidebar + contenu). Un bouton « Retour » en tête ramène à la navigation
+// principale : il rouvre la dernière vue métier visitée (mémorisée par
+// l'app-shell), la sidebar principale reprend alors sa place.
 //
-// Style minimaliste épuré, adapté aux TOKENS du projet (shadcn/oklch —
-// mêmes variables que le reste de la console) : bordures fines, pas de fond
-// imposé sur le panneau, deux graisses seulement (normal/medium), accents
-// réservés à l'état actif (icône primaire). Aucune dépendance externe.
+// Le contrat des vues reste INCHANGÉ : le contenu rend la vue active du
+// store sans la modifier — chaque vue apporte son PageHeader (titre +
+// description), son chargement différé (map VIEWS de l'app-shell) et ses
+// données ; la section « Paramètres » (vue settings) conserve ses
+// sous-onglets internes Général / Hotspot / Avancé.
+//
+// Style : mêmes classes que NavList (items `sidebar-nav-item`, état actif
+// `nav-active`, icônes lucide) — la substitution est invisible au regard,
+// seule la liste change. Aucune dépendance externe.
 
+import { ArrowLeft } from "lucide-react";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { settingsSectionsFor } from "@/lib/hotspot/settings-sections";
 import { useHotspotStore } from "@/lib/hotspot/store";
-import type { ViewId } from "@/lib/hotspot/types";
 import { cn } from "@/lib/utils";
 
-/** Sidebar desktop — sections de la zone, item actif = vue courante du
- * store (la navigation pousse l'URL via la synchro store → URL d'app-route,
- * exactement comme la sidebar principale : pas de <Link>, même mécanique). */
-function SettingsSidebar({ activeId }: { activeId: ViewId }) {
-  const { t } = useI18n();
-  const setView = useHotspotStore((s) => s.setView);
-  const user = useHotspotStore((s) => s.user);
-  const sections = settingsSectionsFor(user?.role);
-  if (sections.length === 0) return null;
-  return (
-    <nav aria-label={t("nav.settings")} className="hidden w-56 shrink-0 lg:block">
-      {/* Sticky : la liste suit le défilement du panneau (contenu long des
-          sections Modèles/Routeurs) ; bornée au viewport, défilement propre
-          si l'écran est court. */}
-      <div className="lg:sticky lg:top-20 lg:max-h-[calc(100vh-6.5rem)] lg:overflow-y-auto">
-        <p className="px-3 pb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground/70">
-          {t("nav.settings")}
-        </p>
-        <ul className="space-y-0.5">
-          {sections.map((section) => {
-            const active = section.id === activeId;
-            return (
-              <li key={section.id}>
-                <button
-                  type="button"
-                  onClick={() => setView(section.id)}
-                  aria-current={active ? "page" : undefined}
-                  className={cn(
-                    "flex min-h-11 w-full items-center gap-3 rounded-lg px-3 py-2 text-sm outline-none transition-colors duration-150",
-                    "focus-visible:ring-2 focus-visible:ring-ring",
-                    active
-                      ? "bg-muted font-medium text-foreground"
-                      : "font-normal text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-                  )}
-                >
-                  <section.icon
-                    className={cn("size-4.5 shrink-0", active ? "text-primary" : "text-muted-foreground")}
-                    aria-hidden
-                  />
-                  <span className="truncate text-left">{t(section.labelKey)}</span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      </div>
-    </nav>
-  );
+export interface SettingsSidebarProps {
+  /** Sortie de la zone : rouvre la dernière vue métier visitée (la sidebar
+   * principale reprend sa place dans l'app-shell). */
+  onBack: () => void;
 }
 
-/** Bandeau horizontal défilant des sections — mobile/tablette (< lg) :
- * remplace la sidebar (cible tactile ≥ 44 px, défilement latéral sans wrap). */
-function SettingsTabsRow({ activeId }: { activeId: ViewId }) {
+/** Sidebar de la zone Paramètres — bouton Retour + sections (filtrées par
+ * rôle). Rendue par l'app-shell DANS le <aside> principal à la place de
+ * NavList (desktop) et dans le Sheet mobile (même substitution). L'item
+ * actif = vue courante du store ; la navigation pousse l'URL via la synchro
+ * store → URL d'app-route, exactement comme la sidebar principale : pas de
+ * <Link>, même mécanique. */
+export function SettingsSidebar({ onBack }: SettingsSidebarProps) {
   const { t } = useI18n();
   const setView = useHotspotStore((s) => s.setView);
+  const view = useHotspotStore((s) => s.view);
   const user = useHotspotStore((s) => s.user);
   const sections = settingsSectionsFor(user?.role);
   if (sections.length === 0) return null;
   return (
-    <div role="navigation" aria-label={t("nav.settings")} className="lg:hidden">
-      <p className="px-1 pb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground/70">
+    <nav className="flex-1 space-y-1 overflow-y-auto px-3 pb-4" aria-label={t("nav.settings")}>
+      {/* Bouton « Retour » — en tête, là où ModeSwitch siège dans la sidebar
+          principale : même place, même gabarit (repère stable au swap).
+          Mémorisée par l'app-shell, la destination est la dernière vue
+          métier visitée avant d'entrer dans la zone. */}
+      <button
+        type="button"
+        onClick={onBack}
+        className="sidebar-nav-item relative flex min-h-11 w-full items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium text-muted-foreground transition-all duration-200 hover:bg-accent/60 hover:text-foreground"
+      >
+        <span className="relative flex shrink-0 items-center">
+          <ArrowLeft className="size-4.5" aria-hidden />
+        </span>
+        <span className="flex-1 truncate text-left">{t("settings.zone.back")}</span>
+      </button>
+
+      {/* Libellé de zone — ancre « où suis-je » (la liste qui suit remplace
+          les sections métier de NavList). */}
+      <p className="px-2.5 pb-2 pt-1 text-xs font-medium uppercase tracking-wider text-muted-foreground/70">
         {t("nav.settings")}
       </p>
-      <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1">
+
+      <ul className="space-y-0.5">
         {sections.map((section) => {
-          const active = section.id === activeId;
+          const active = section.id === view;
           return (
-            <button
-              key={section.id}
-              type="button"
-              onClick={() => setView(section.id)}
-              aria-current={active ? "page" : undefined}
-              className={cn(
-                "flex min-h-11 shrink-0 items-center gap-2 rounded-full border px-4 py-2 text-sm outline-none transition-colors duration-150",
-                "focus-visible:ring-2 focus-visible:ring-ring",
-                active
-                  ? "border-border bg-muted font-medium text-foreground"
-                  : "border-border/60 bg-transparent font-normal text-muted-foreground hover:bg-muted/50 hover:text-foreground",
-              )}
-            >
-              <section.icon
-                className={cn("size-4 shrink-0", active ? "text-primary" : "text-muted-foreground")}
-                aria-hidden
-              />
-              <span className="whitespace-nowrap">{t(section.labelKey)}</span>
-            </button>
+            <li key={section.id}>
+              <button
+                type="button"
+                onClick={() => setView(section.id)}
+                aria-current={active ? "page" : undefined}
+                className={cn(
+                  "sidebar-nav-item relative flex min-h-11 w-full items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium transition-all duration-200",
+                  active ? "nav-active" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+                )}
+              >
+                <span className="relative flex shrink-0 items-center">
+                  <section.icon className="size-4.5" aria-hidden />
+                </span>
+                <span className="flex-1 truncate text-left">{t(section.labelKey)}</span>
+              </button>
+            </li>
           );
         })}
-      </div>
-    </div>
-  );
-}
-
-/** Shell split-view — enveloppe la vue active de la zone Paramètres.
- * Le children (transition + vue) est fourni par l'app-shell : ce composant
- * est un pur layout, il ne remonte PAS au changement de section — seule la
- * zone de contenu rejoue l'animation, la sidebar reste stable. */
-export function SettingsShell({ children }: { children: React.ReactNode }) {
-  const view = useHotspotStore((s) => s.view);
-  return (
-    <div className="flex flex-col gap-6 lg:flex-row lg:gap-0">
-      <SettingsSidebar activeId={view} />
-      <SettingsTabsRow activeId={view} />
-      {/* Panneau — bordure fine gauche (desktop) pour structurer, pas de fond
-          imposé ; largeur bornée pour la lisibilité des formulaires tout en
-          laissant respirer les grilles de cartes (Modèles, Routeurs). */}
-      <div className="min-w-0 max-w-5xl flex-1 lg:border-l lg:border-border/60 lg:pl-8">
-        {children}
-      </div>
-    </div>
+      </ul>
+    </nav>
   );
 }

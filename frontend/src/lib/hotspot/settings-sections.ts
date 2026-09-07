@@ -1,9 +1,10 @@
-// N°57 — Zone Paramètres (split-view) : regroupement des vues back-office.
+// N°57 — Zone Paramètres : regroupement des vues back-office.
 //
 // Le gérant reste concentré sur les modules métier (ventes, vouchers,
 // sessions, utilisateurs…) : les vues de configuration quittent la
 // navigation principale et vivent désormais sous /app/settings/<section>,
-// rendues dans un shell dédié (sidebar de sections + panneau de contenu —
+// rendues dans une sidebar dédiée qui REMPLACE la navigation principale
+// quand la zone est active (N°57-c — bouton Retour + sections,
 // components/hotspot/settings/settings-shell.tsx).
 //
 // Le contrat des vues est INCHANGÉ : chaque section conserve son ViewId

@@ -5,6 +5,41 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-07 — N°57-c : zone Paramètres — la sidebar de sections REMPLPLACE la sidebar principale (bouton Retour)
+
+### N°57-c — Deuxième correction UX (retour utilisateur) : fin définitive de la double colonne — la zone vit DANS la sidebar, pas à côté
+- **Retour utilisateur (2ᵉ itération)** : N°57 (split-view) empilait une
+  sidebar interne sur la sidebar principale = 3 colonnes (« sidebar dans
+  sidebar », anti-pattern UX) ; la première correction (N°57-b, sub-nav
+  horizontale de pills) a été ANNULÉE sur demande — le pattern retenu est
+  la **substitution** : quand une vue de la zone est active, la sidebar
+  des sections **prend la place de la navigation principale** dans le même
+  `<aside>` — le layout reste TOUJOURS à 2 colonnes (sidebar + contenu),
+  jamais 3.
+- **Bouton « Retour » en tête de la sidebar de zone** : ramène à la
+  **dernière vue métier visitée** (mémorisée par l'app-shell dans un ref
+  qui survit aux changements de section ; défaut dashboard pour une entrée
+  par lien direct `/app/settings/…`). La sidebar principale reprend alors
+  sa place — marque, carte utilisateur et crédit FTCI ne bougent pas : la
+  substitution est invisible au regard, seule la liste change (mêmes
+  classes `sidebar-nav-item` / `nav-active` que NavList).
+- **Substitution partout** : l'aside desktop ET le Sheet mobile rendent la
+  sidebar de zone à la place de NavList (burger → drawer de sections avec
+  Retour) ; le contenu rend la vue comme tout autre module (la zone ne
+  vit plus du tout dans le contenu : plus d'enveloppe, transition
+  identique). La section « Paramètres » (vue settings) conserve ses
+  sous-onglets internes Général / Hotspot / Sécurité.
+- **Contrat N°57 inchangé** : ViewIds, map VIEWS, chemins canoniques
+  `/app/settings/<section>`, redirections legacy deep-linkables,
+  garde-fou rôle, atterrissage adapté au rôle (gérant → première section
+  rang 2, propriétaire → racine). L'entrée « Paramètres » de la navigation
+  principale reste le point d'entrée de la substitution.
+- **Revert préalable** : le commit N°57-b (sub-nav horizontale) est
+  annulé proprement par `git revert` (l'historique public n'est jamais
+  réécrit) — N°57-c s'applique sur l'état N°57.
+- **Frontend only** : aucun changement backend — Vercel seul, zéro
+  déploiement Render, aucune migration Neon.
+
 ## 2026-09-07 — N°57 : zone Paramètres en split-view — le gérant reste sur les modules métier
 
 ### N°57 — Modèles, Routeurs, Portail, Notifications et Équipe quittent la navigation principale : une zone « Paramètres » dédiée les regroupe

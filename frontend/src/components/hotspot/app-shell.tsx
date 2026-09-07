@@ -45,7 +45,7 @@ import { useHotspotStore } from "@/lib/hotspot/store";
 import type { HotspotSession, ViewId } from "@/lib/hotspot/types";
 import { ThemeToggle } from "./theme-toggle";
 import { UserProfileDialog } from "./parts/user-profile-dialog";
-import { SettingsShell } from "./settings/settings-shell";
+import { SettingsSidebar } from "./settings/settings-shell";
 import { ActivityBell, LiveClock, SearchPalette } from "./parts/topbar-widgets";
 
 // Perf — vues en chargement différé : chaque vue = chunk distinct chargé à
@@ -147,9 +147,8 @@ const VIEWS: Record<ViewId, React.ComponentType> = {
 };
 
 /** Transition d'apparition de la vue active — fade + translation légère.
- * Extraite du rendu principal (N°57) : dans la zone Paramètres, le shell
- * split-view reste monté au changement de section, seule la vue rejoue la
- * transition (la sidebar des sections ne clignote pas). */
+ * Extraite du rendu principal (N°57) : identique zone Paramètres ou non
+ * (N°57-c — la zone vit dans la sidebar substituée, pas dans le contenu). */
 function ViewTransition({ viewKey, children }: { viewKey: ViewId; children: React.ReactNode }) {
   return (
     <AnimatePresence mode="wait">
@@ -465,9 +464,10 @@ function NavList() {
       {sections.map((section) => {
         // N°7 — chaque vue n'apparaît que si le rôle peut l'ouvrir
         // (miroir client des requireRole serveur ; comptes = admin plateforme).
-        // N°57 — l'entrée « Paramètres » ouvre la zone split-view : visible
-        // dès qu'UNE section est accessible au rôle (gérant comme
-        // propriétaire) — pas le seul rang « settings ».
+        // N°57 — l'entrée « Paramètres » ouvre la zone (dont la sidebar
+        // remplace alors cette navigation — N°57-c) : visible dès qu'UNE
+        // section est accessible au rôle (gérant comme propriétaire) —
+        // pas le seul rang « settings ».
         const items = section.items.filter(
           (item) =>
             item.id === "settings"
@@ -714,12 +714,26 @@ export default function AppShell() {
       ? PlatformOverviewView
       : DashboardView;
 
-  // N°57 — zone Paramètres : la vue active est rendue dans le shell
-  // split-view dédié (sidebar de sections + panneau) quand elle appartient
-  // à la zone ET que le rôle peut l'ouvrir (les liens directs interdits ont
-  // déjà été re-normalisés par le garde-fou URL d'app-route). En mode
-  // plateforme la zone n'existe pas (console dédiée).
+  // N°57-c — zone Paramètres : quand une vue de la zone est active, la
+  // sidebar de sections (bouton Retour + sections filtrées par rôle)
+  // REMPLACE NavList dans le même <aside> — le layout reste TOUJOURS à
+  // 2 colonnes (fin du « sidebar dans sidebar » de N°57) ; le contenu rend
+  // la vue comme tout autre module. Conditions : la vue appartient à la
+  // zone ET le rôle peut l'ouvrir (les liens directs interdits ont déjà
+  // été re-normalisés par le garde-fou URL d'app-route). En mode plateforme
+  // la zone n'existe pas (console dédiée).
   const zoneRender = isSettingsView(view) && canView(user?.role, view) && !platformMode;
+
+  // N°57-c — dernière vue MÉTIER visitée : destination du bouton « Retour »
+  // de la sidebar de zone. L'app-shell reste monté, le ref survit aux
+  // changements de section ; défaut dashboard pour une entrée par lien
+  // direct. Mis à jour à chaque sortie de zone — jamais pendant (on garde
+  // l'origine, même après un détour par plusieurs sections).
+  const returnViewRef = useRef<ViewId>("dashboard");
+  useEffect(() => {
+    if (!isSettingsView(view)) returnViewRef.current = view;
+  }, [view]);
+  const handleZoneBack = () => setView(returnViewRef.current);
 
   return (
     <div className="flex min-h-screen">
@@ -727,10 +741,13 @@ export default function AppShell() {
           S'affiche par-dessus toute la console, non refermable. */}
       <PaywallOverlay />
 
-      {/* Sidebar desktop — colonne de marque Aurora */}
+      {/* Sidebar desktop — colonne de marque Aurora. N°57-c : dans la zone
+          Paramètres, la sidebar de sections REMPLACE NavList (substitution
+          dans le même conteneur — le layout reste à 2 colonnes, la marque,
+          la carte utilisateur et le crédit FTCI restent en place). */}
       <aside className="sidebar-aurora fixed inset-y-0 left-0 z-30 hidden w-64 flex-col lg:flex">
         <BrandHeader />
-        <NavList />
+        {zoneRender ? <SettingsSidebar onBack={handleZoneBack} /> : <NavList />}
         <div className="px-3 pb-4">
           <UserCard />
           <FtciCredit className="mt-3 w-full text-center text-[10px] text-muted-foreground/70" />
@@ -745,7 +762,7 @@ export default function AppShell() {
             <SheetTitle className="sr-only">MikCloud</SheetTitle>
             <BrandHeader />
           </SheetHeader>
-          <NavList />
+          {zoneRender ? <SettingsSidebar onBack={handleZoneBack} /> : <NavList />}
           <div className="mt-auto px-4 pb-5 pt-2">
             <FtciCredit className="w-full text-center text-[10px] text-muted-foreground/70" />
           </div>
@@ -758,20 +775,12 @@ export default function AppShell() {
         <ImpersonationBanner />
         <main className="flex-1" aria-label={viewTitle(view, t)}>
           <div className="mx-auto max-w-7xl space-y-6 p-4 sm:p-6">
-            {/* N°57 — zone Paramètres : le shell (sidebar + panneau) reste
-                monté au changement de section, seule la vue rejoue la
-                transition — hors zone, comportement inchangé. */}
-            {zoneRender ? (
-              <SettingsShell>
-                <ViewTransition viewKey={view}>
-                  <ActiveView />
-                </ViewTransition>
-              </SettingsShell>
-            ) : (
-              <ViewTransition viewKey={view}>
-                <ActiveView />
-              </ViewTransition>
-            )}
+            {/* N°57-c — zone Paramètres : le contenu rend la vue comme tout
+                autre module (la zone vit dans la sidebar substituée, pas
+                dans le contenu) ; transition identique hors zone. */}
+            <ViewTransition viewKey={view}>
+              <ActiveView />
+            </ViewTransition>
           </div>
         </main>
       </div>

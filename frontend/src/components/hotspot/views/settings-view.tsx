@@ -31,7 +31,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-import { api, updateSettings } from "@/lib/hotspot/api";
+import { api, apiUpload, updateSettings } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
 import type { AppSettings, ExpiryPolicyMode } from "@/lib/hotspot/types";
 import { PageHeader } from "@/components/hotspot/page-header";
@@ -773,12 +773,17 @@ function PortalBannerCard({ settings }: { settings: AppSettings }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const [bannerUrl, setBannerUrl] = useState(settings.tenant.bannerUrl ?? "");
+  const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Téléversement : image ≤ 500 Ko encodée en data URL (contrat N°45 — la
-  // bannière tolère des fichiers plus lourds que le logo 300 Ko, c'est une
-  // image d'ambiance pleine largeur).
-  function handleBannerFile(event: React.ChangeEvent<HTMLInputElement>) {
+  // N°53 — Téléversement : l'image part dans le stockage cloud R2 (POST
+  // /api/media, ≤ 2 Mo, type sniffé côté serveur) et le champ reçoit une URL
+  // https PERMANENTE servie par le même hôte que l'API — donc joignable
+  // pré-authentification par le portail captif (walled-garden N°48). Repli
+  // dégradé si le stockage est indisponible (sandbox, R2 non configuré) :
+  // data URL intégrée ≤ 500 Ko, contrat N°45 inchangé — le gérant n'est
+  // jamais bloqué.
+  async function handleBannerFile(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     // Permet de re-sélectionner le même fichier après une erreur.
     event.target.value = "";
@@ -787,16 +792,33 @@ function PortalBannerCard({ settings }: { settings: AppSettings }) {
       toast.error(t("settings.logoNotImage"));
       return;
     }
-    if (file.size > 500 * 1024) {
+    if (file.size > 2 * 1024 * 1024) {
       toast.error(t("settings.bannerTooBig"));
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === "string") setBannerUrl(reader.result);
-    };
-    reader.onerror = () => toast.error(t("settings.logoReadError"));
-    reader.readAsDataURL(file);
+    setUploading(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await apiUpload<{ url: string }>("/api/media", form, { timeoutMs: 60_000 });
+      setBannerUrl(res.url);
+      toast.success(t("settings.bannerUploadOk"));
+    } catch {
+      // Repli N°45 : image intégrée au compte (≤ 500 Ko).
+      if (file.size <= 500 * 1024) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          if (typeof reader.result === "string") setBannerUrl(reader.result);
+        };
+        reader.onerror = () => toast.error(t("settings.logoReadError"));
+        reader.readAsDataURL(file);
+        toast.info(t("settings.bannerUploadFail"));
+      } else {
+        toast.error(t("settings.bannerUploadFailBig"));
+      }
+    } finally {
+      setUploading(false);
+    }
   }
 
   // Validation souple de l'URL collée : https:// requis (le portail et la
@@ -852,9 +874,10 @@ function PortalBannerCard({ settings }: { settings: AppSettings }) {
               variant="outline"
               className="h-10"
               onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
             >
               <ImagePlus className="size-4" />
-              {t("settings.upload")}
+              {uploading ? t("settings.uploading") : t("settings.upload")}
             </Button>
             {bannerUrl && (
               <Button

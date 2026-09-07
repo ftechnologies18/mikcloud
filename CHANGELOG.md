@@ -28,6 +28,43 @@ la CI puis se déploie automatiquement (frontend Vercel, backend Render).
   console le même soir (par téléphone 10 → 1, budget 100 → 10, preuve
   `429 site_cap`), sans changement de code.
 
+## 2026-09-06 — N°53 : stockage média Cloudflare R2 (fini les data URLs à rallonge)
+
+### N°53 — les images du gérant vivent dans un vrai stockage objet
+- **Pourquoi** : la bannière du portail (N°45) se téléversait en data URL
+  encodée EN BASE (≤ 500 Ko) — la charge gonfle la config inlinée du portail
+  et chaque lecture de settings ; les futures promos hospitalité (N°54)
+  exigent un stockage propre. Le placeholder « Cloudflare R2, à venir »
+  devient réel.
+- **Infrastructure** : compartiment R2 `mikcloud-media` créé sur le compte
+  Cloudflare du tenant (API REST), bucket privé — rien n'est public sauf ce
+  que le backend sert explicitement.
+- **Canal REST, zéro SDK** : le backend Go parle à l'API REST Cloudflare
+  (Bearer `R2_API_TOKEN`) au lieu de l'API S3/SigV4 — pas de nouvelle
+  dépendance (go.mod inchangé), un seul secret à configurer, PUT/GET par clé
+  suffisent pour des images ≤ 2 Mo.
+- **Backend** (`handlers_media.go`, NOUVEAU) :
+  - `POST /api/media` (auth gérant, multipart) : type MIME SNIFFÉ dans le
+    contenu (pas dans le nom), ≤ 2 Mo, clé `media/{compte}/{année}/{hex32}`
+    → 201 `{url, key, size, type}`. Non configuré ⇒ 503 `media_unconfigured`
+    (gracieux : la bannière N°45 en data URL reste disponible).
+  - `GET /api/media/{key...}` (PUBLIC) : clé validée par regex stricte,
+    Content-Type dérivé de l'extension, nosniff,
+    `Cache-Control: immutable` — les images du portail captif sont servies
+    par le MÊME hôte que `apiBase` (walled-garden N°48 déjà OK, zéro
+    entrée nouvelle).
+- **Frontend** (console > Bannière du portail) : le bouton « Téléverser »
+  pousse vers R2 et remplit le champ avec l'URL permanente (toast de
+  confirmation, bouton en état « Téléversement… »). Repli dégradé
+  automatique si le stockage est indisponible : data URL intégrée ≤ 500 Ko
+  (contrat N°45 inchangé) ou message d'erreur au-delà. i18n fr/en.
+- **Render** : env `R2_ACCOUNT_ID` / `R2_API_TOKEN` / `R2_BUCKET`
+  configurées via API.
+- **Zéro migration** : `bannerUrl` reste la seule donnée persistée.
+- **Tests** : `gofmt`/`go vet`/`go build` propres, suite API verte (70 s),
+  ESLint frontend vert ; canal R2 validé bout en bout (PUT/GET/suppression
+  d'objets de sonde, clés hiérarchiques incluses).
+
 ## 2026-09-06 — N°51 : la carte « WiFi offert » du portail suit l'état du site (activée → affichée, en pause → retirée)
 
 ### N°51 — portail dynamique : si le site WiFi est désactivé, la carte téléphone disparaît
@@ -271,7 +308,6 @@ la CI puis se déploie automatiquement (frontend Vercel, backend Render).
   l'anti-pattern §6 (la règle `dst-host` dans `walled-garden ip` n'est PAS
   inopérante en HTTPS : elle déclenche le sniff DNS — constat Mikhmon) ;
   `docs/CONTRACT-V2.md` addendum N°49.
-
 
 ## 2026-09-06 — N°46 : bouton « S'inscrire » du portail captif rendu dynamique (joinButton)
 
@@ -1092,7 +1128,6 @@ la CI puis se déploie automatiquement (frontend Vercel, backend Render).
   données purgées tant que le tombstone vit.
 
 ---
-
 
 ## 2026-09-04 — Phase D perf/UX : UI optimiste + deep-links de détail
 

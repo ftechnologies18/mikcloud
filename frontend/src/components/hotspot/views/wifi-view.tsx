@@ -110,7 +110,13 @@ export default function WifiView() {
   const { t } = useI18n();
   const queryClient = useQueryClient();
 
-  const { data, isLoading } = useQuery({ queryKey: ["/api/wifi/sites"], queryFn: fetchWifiSites });
+  // N°54 — refetch 30 s : le compteur « X / Y offerts aujourd'hui » reste
+  // vivant pendant que le gérant garde la vue ouverte.
+  const { data, isLoading } = useQuery({
+    queryKey: ["/api/wifi/sites"],
+    queryFn: fetchWifiSites,
+    refetchInterval: 30_000,
+  });
   const { data: routers } = useQuery({
     queryKey: ["/api/routers"],
     queryFn: () => api<RouterDevice[]>("/api/routers"),
@@ -236,6 +242,10 @@ export default function WifiView() {
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {sites.map((site) => {
             const st = stats[site.id] ?? { guestsToday: 0, optInTotal: 0 };
+            // N°54 — compteur/jauge du plafond journalier : le gérant voit
+            // d'un coup d'œil le budget offert restant (ambre ≥ 80 %, rouge épuisé).
+            const capRatio = site.dailyCap > 0 ? st.guestsToday / site.dailyCap : 1;
+            const capTone = capRatio >= 1 ? "bg-destructive" : capRatio >= 0.8 ? "bg-amber-500" : "bg-primary";
             return (
               <Card key={site.id} className="overflow-hidden">
                 <CardContent className="space-y-4 p-4">
@@ -259,10 +269,21 @@ export default function WifiView() {
                       </p>
                     </div>
                     <div className="rounded-lg bg-muted/50 p-2">
-                      <p className="text-xs text-muted-foreground">{t("wifi.guests")}</p>
+                      <p className="text-xs text-muted-foreground">{t("wifi.stats.capLabel")}</p>
                       <p className="font-medium">
-                        {st.guestsToday} {t("wifi.stats.today")}
+                        {st.guestsToday} / {site.dailyCap}{" "}
+                        <span className="text-xs font-normal text-muted-foreground">{t("wifi.stats.today")}</span>
                       </p>
+                      <div
+                        aria-hidden="true"
+                        className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-background"
+                        role="presentation"
+                      >
+                        <div
+                          className={`h-full rounded-full ${capTone}`}
+                          style={{ width: `${Math.min(100, Math.round(capRatio * 100))}%` }}
+                        />
+                      </div>
                     </div>
                   </div>
 
@@ -405,6 +426,7 @@ export default function WifiView() {
                   value={form.dailyPerPhone}
                   onChange={(e) => setForm((f) => ({ ...f, dailyPerPhone: Number(e.target.value) || 1 }))}
                 />
+                <p className="text-xs text-muted-foreground">{t("wifi.perPhoneHint")}</p>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="wifi-permac">{t("wifi.perMac")}</Label>
@@ -428,6 +450,7 @@ export default function WifiView() {
                   value={form.dailyCap}
                   onChange={(e) => setForm((f) => ({ ...f, dailyCap: Number(e.target.value) || 100 }))}
                 />
+                <p className="text-xs text-muted-foreground">{t("wifi.dailyCapHint")}</p>
               </div>
             </div>
             {/* N°49 — Réseau WiFi : alimente le QR de CONNEXION de l'affiche. */}

@@ -5,6 +5,29 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-07 — N°54 : console WiFi — plafonds journaliers renommés + compteur du jour
+
+### N°54 — plus jamais l'ambiguïté des plafonds : chaque champ dit QUI il limite, et le budget restant est visible
+- **Demande gérant** (retour terrain CYBER-ESPACE : 12 visiteurs pour un
+  plafond cru à 10, même téléphone re-claimé 3 fois sans blocage) — les trois
+  plafonds journaliers portaient des intitulés interchangeables et le réglage
+  réel n'était visible nulle part : libellés dédoublonnés + compteur temps réel.
+- **Libellés console dédoublonnés (fr/en)** : « Tickets max / téléphone / jour »
+  → **« Par numéro de téléphone »**, « Tickets max / appareil / jour » →
+  **« Par appareil (même WiFi) »**, « Budget gratuit / jour (tickets) » →
+  **« TOTAL offerts / jour (tous clients) »** ; nouveaux hints pédagogiques
+  (`perPhoneHint` : UN numéro = 1 ticket/jour avec 1 ; `dailyCapHint` : au-delà
+  le portail répond « épuisé » jusqu'à minuit) ; `perMacHint` conservé.
+- **Compteur du jour sur chaque carte site** : « 7 visiteurs aujourd'hui » →
+  **« 7 / 10 offerts aujourd'hui »** (`stats.guestsToday` vs `dailyCap`, déjà
+  servis par `GET /api/wifi/sites` — zéro changement backend) + jauge
+  du plafond (ambre ≥ 80 %, rouge épuisé, aria-hidden — le texte porte l'info) ;
+  la liste se rafraîchit toutes les 30 s (`refetchInterval`) = compteur vivant.
+- **Frontend only** : aucun déploiement Render requis — Vercel seul.
+- Contexte : correction immédiate des plafonds du site freezone faite en
+  console le même soir (par téléphone 10 → 1, budget 100 → 10, preuve
+  `429 site_cap`), sans changement de code.
+
 ## 2026-09-06 — N°51 : la carte « WiFi offert » du portail suit l'état du site (activée → affichée, en pause → retirée)
 
 ### N°51 — portail dynamique : si le site WiFi est désactivé, la carte téléphone disparaît

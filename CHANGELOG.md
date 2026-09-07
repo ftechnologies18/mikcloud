@@ -5,40 +5,6 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
-## 2026-09-07 — N°57-b : zone Paramètres — sub-nav horizontale (fin de la double sidebar)
-
-### N°57-b — Correction UX du retour utilisateur : la sidebar verticale interne de la zone disparaît au profit d'une rangée de pills
-- **Constat (retour utilisateur)** : N°57 rendait la zone dans un shell
-  split-view — sidebar verticale interne (w-56 sticky) + panneau de contenu,
-  empilée sur la sidebar principale de l'app = **3 colonnes**. Pattern
-  « sidebar dans sidebar » (anti-pattern UX) : deux niveaux de navigation
-  latérale se concurrencent, la sidebar interne empiète sur l'espace du
-  contenu, et la rangée d'onglets déjà présente dans les vues (Général /
-  Hotspot / Avancé) rendait la sidebar redondante.
-- **Une seule sidebar dans toute l'application** : la navigation interne de
-  la zone devient **horizontale** — une unique rangée de pills (Paramètres,
-  Routeurs, Portail, Modèles, Notifications, Équipe — filtrée par rôle)
-  sous un petit libellé de zone, une **bordure fine en dessous** pour
-  délimiter la navigation du contenu, puis le contenu occupe TOUTE la
-  largeur restante (plus de colonne centrale, plus de bordure gauche, plus
-  de max-w-5xl : les vues respirent comme les autres modules).
-- **Pills aux tokens du projet** : active = fond primaire (vert émeraude
-  `--primary`) + texte blanc + graisse medium ; inactives = texte gris,
-  survol fond léger ; icône lucide par section, `aria-current="page"`,
-  focus visible, cibles tactiles ≥ 44 px, `transition-colors 150 ms`.
-  Responsive : la rangée **défile horizontalement** (`overflow-x-auto`,
-  scrollbar fine globale déjà stylée) quand les pills ne tiennent pas —
-  même comportement desktop et mobile, un seul chemin de code.
-- **Contrat des vues inchangé** : la mécanique N°57 est conservée
-  (ViewIds, map VIEWS, chemins canoniques /app/settings/<section>,
-  redirections legacy, garde-fou rôle, atterrissage adapté) — seul le
-  layout du shell change (`settings-shell.tsx` réécrit : SettingsSidebar
-  et SettingsTabsRow supprimés, SettingsSubNav unique). Le shell ne se
-  remonte pas au changement de section : seule la vue rejoue la transition
-  (fade 200 ms), la rangée de pills reste stable.
-- **Frontend only** : aucun changement backend — Vercel seul, zéro
-  déploiement Render, aucune migration Neon.
-
 ## 2026-09-07 — N°57 : zone Paramètres en split-view — le gérant reste sur les modules métier
 
 ### N°57 — Modèles, Routeurs, Portail, Notifications et Équipe quittent la navigation principale : une zone « Paramètres » dédiée les regroupe

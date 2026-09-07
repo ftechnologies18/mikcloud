@@ -40,10 +40,12 @@ import { useI18n } from "@/lib/hotspot/i18n";
 import { NAV_PLATFORM_SECTIONS, NAV_SECTIONS } from "@/lib/hotspot/nav";
 import { roleLabel, userInitials } from "@/lib/hotspot/format";
 import { canView, isPlatformView } from "@/lib/hotspot/roles";
+import { isSettingsView, settingsLandingView, settingsSectionsFor } from "@/lib/hotspot/settings-sections";
 import { useHotspotStore } from "@/lib/hotspot/store";
 import type { HotspotSession, ViewId } from "@/lib/hotspot/types";
 import { ThemeToggle } from "./theme-toggle";
 import { UserProfileDialog } from "./parts/user-profile-dialog";
+import { SettingsShell } from "./settings/settings-shell";
 import { ActivityBell, LiveClock, SearchPalette } from "./parts/topbar-widgets";
 
 // Perf — vues en chargement différé : chaque vue = chunk distinct chargé à
@@ -144,6 +146,26 @@ const VIEWS: Record<ViewId, React.ComponentType> = {
   team: TeamView,
 };
 
+/** Transition d'apparition de la vue active — fade + translation légère.
+ * Extraite du rendu principal (N°57) : dans la zone Paramètres, le shell
+ * split-view reste monté au changement de section, seule la vue rejoue la
+ * transition (la sidebar des sections ne clignote pas). */
+function ViewTransition({ viewKey, children }: { viewKey: ViewId; children: React.ReactNode }) {
+  return (
+    <AnimatePresence mode="wait">
+      <motion.div
+        key={viewKey}
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -8 }}
+        transition={{ duration: 0.2, ease: "easeOut" }}
+      >
+        {children}
+      </motion.div>
+    </AnimatePresence>
+  );
+}
+
 /** En-tête de marque — logo + nom MikCloud. */
 function BrandHeader() {
   const { t } = useI18n();
@@ -231,7 +253,10 @@ function UserCard() {
             <UserRound className="size-4" />
             {t("shell.profile")}
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => setView(isPlatformMode ? "platformSettings" : "settings")} className="min-h-10">
+          <DropdownMenuItem
+            onClick={() => setView(isPlatformMode ? "platformSettings" : settingsLandingView(user?.role))}
+            className="min-h-10"
+          >
             <Settings className="size-4" />
             {t("shell.settings")}
           </DropdownMenuItem>
@@ -398,7 +423,13 @@ function NavList() {
   // ne perd jamais son contexte) — mais il peut ensuite la replier
   // volontairement : le toggle manuel reste maître tant que la vue ne change pas.
   useEffect(() => {
-    const section = sections.find((s) => s.items.some((item) => item.id === navView));
+    const section = sections.find(
+      (s) =>
+        s.items.some((item) => item.id === navView) ||
+        // N°57 — n'importe quelle section de la zone Paramètres ouvre la
+        // section « Système » qui porte l'entrée de la zone.
+        (isSettingsView(navView) && s.items.some((item) => item.id === "settings")),
+    );
     if (section && lastAutoOpened.current !== section.labelKey) {
       lastAutoOpened.current = section.labelKey;
       setCollapsed((prev) => {
@@ -434,8 +465,14 @@ function NavList() {
       {sections.map((section) => {
         // N°7 — chaque vue n'apparaît que si le rôle peut l'ouvrir
         // (miroir client des requireRole serveur ; comptes = admin plateforme).
+        // N°57 — l'entrée « Paramètres » ouvre la zone split-view : visible
+        // dès qu'UNE section est accessible au rôle (gérant comme
+        // propriétaire) — pas le seul rang « settings ».
         const items = section.items.filter(
-          (item) => (item.id !== "accounts" || isAdmin) && canView(user?.role, item.id),
+          (item) =>
+            item.id === "settings"
+              ? settingsSectionsFor(user?.role).length > 0
+              : (item.id !== "accounts" || isAdmin) && canView(user?.role, item.id),
         );
         if (items.length === 0) return null;
         // O — état replié explicite de l'utilisateur (localStorage) ; la
@@ -460,12 +497,19 @@ function NavList() {
             {open && (
               <ul className="space-y-0.5 pb-1">
                 {items.map((item) => {
-                  const active = item.id === navView;
+                  // N°57 — l'entrée « Paramètres » reste active sur TOUTE la
+                  // zone (l'utilisateur voit où il est), les autres items
+                  // surlignent leur vue exacte.
+                  const active = item.id === navView || (item.id === "settings" && isSettingsView(navView));
                 return (
                   <li key={item.id}>
                     <button
                       type="button"
-                      onClick={() => setView(item.id)}
+                      onClick={() =>
+                        // N°57 — l'entrée zone atterrit sur la première section
+                        // autorisée du rôle (gérant ≠ propriétaire).
+                        setView(item.id === "settings" ? settingsLandingView(user?.role) : item.id)
+                      }
                       aria-current={active ? "page" : undefined}
                       className={cn(
                         "sidebar-nav-item relative flex min-h-11 w-full items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium transition-all duration-200",
@@ -605,7 +649,10 @@ function Topbar() {
                   <UserRound className="size-4" />
                   {t("shell.profile")}
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setView(isPlatformMode ? "platformSettings" : "settings")} className="min-h-10">
+                <DropdownMenuItem
+                  onClick={() => setView(isPlatformMode ? "platformSettings" : settingsLandingView(user?.role))}
+                  className="min-h-10"
+                >
                   <Settings className="size-4" />
                   {t("shell.settings")}
                 </DropdownMenuItem>
@@ -667,6 +714,13 @@ export default function AppShell() {
       ? PlatformOverviewView
       : DashboardView;
 
+  // N°57 — zone Paramètres : la vue active est rendue dans le shell
+  // split-view dédié (sidebar de sections + panneau) quand elle appartient
+  // à la zone ET que le rôle peut l'ouvrir (les liens directs interdits ont
+  // déjà été re-normalisés par le garde-fou URL d'app-route). En mode
+  // plateforme la zone n'existe pas (console dédiée).
+  const zoneRender = isSettingsView(view) && canView(user?.role, view) && !platformMode;
+
   return (
     <div className="flex min-h-screen">
       {/* PaywallOverlay (P5) — mur total si compte suspendu (PeriodEnd + 30j).
@@ -704,17 +758,20 @@ export default function AppShell() {
         <ImpersonationBanner />
         <main className="flex-1" aria-label={viewTitle(view, t)}>
           <div className="mx-auto max-w-7xl space-y-6 p-4 sm:p-6">
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={view}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -8 }}
-                transition={{ duration: 0.2, ease: "easeOut" }}
-              >
+            {/* N°57 — zone Paramètres : le shell (sidebar + panneau) reste
+                monté au changement de section, seule la vue rejoue la
+                transition — hors zone, comportement inchangé. */}
+            {zoneRender ? (
+              <SettingsShell>
+                <ViewTransition viewKey={view}>
+                  <ActiveView />
+                </ViewTransition>
+              </SettingsShell>
+            ) : (
+              <ViewTransition viewKey={view}>
                 <ActiveView />
-              </motion.div>
-            </AnimatePresence>
+              </ViewTransition>
+            )}
           </div>
         </main>
       </div>

@@ -122,7 +122,7 @@ export default function PortalView() {
   });
 
   return (
-    <div className="space-y-6 p-4 sm:p-6">
+    <div className="space-y-6">
       <PageHeader
         title={t("portal.title")}
         description={t("portal.subtitle")}

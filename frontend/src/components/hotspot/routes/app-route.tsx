@@ -31,6 +31,8 @@ import { useEffect, useRef } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import AppShell from "@/components/hotspot/app-shell";
 import { useMounted } from "@/hooks/use-mounted";
+import { canView } from "@/lib/hotspot/roles";
+import { firstSettingsView, isSettingsView } from "@/lib/hotspot/settings-sections";
 import { useHotspotStore } from "@/lib/hotspot/store";
 import { APP_BASE_PATH, detailFromPath, viewFromPath, viewToPath } from "@/lib/hotspot/view-path";
 import { ShellFallback } from "./shell-fallback";
@@ -92,6 +94,23 @@ export default function AppRoute() {
     if (!pathname.startsWith(APP_BASE_PATH)) return; // transitions hors console : rien à faire
     const target = viewFromPath(pathname);
     if (target) {
+      // N°57 — section de la zone Paramètres refusée au rôle (lien direct
+      // /app/team d'un gérant, signet conservé après un changement de
+      // rôle) : replace vers la première section autorisée — aucune
+      // entrée d'historique, le bouton Retour n'est jamais piégé (même
+      // mécanique que les normalisations ci-dessous). Le rôle est lu
+      // dans le store (hors closure React, valeur toujours fraîche).
+      const role = useHotspotStore.getState().user?.role;
+      if (isSettingsView(target) && !canView(role, target)) {
+        const landing = firstSettingsView(role) ?? "dashboard";
+        if (useHotspotStore.getState().view !== landing) {
+          urlDriven.current = true;
+          useHotspotStore.getState().setView(landing);
+          urlDriven.current = false;
+        }
+        router.replace(viewToPath(landing), { scroll: false });
+        return;
+      }
       if (target !== useHotspotStore.getState().view) {
         urlDriven.current = true;
         useHotspotStore.getState().setView(target);

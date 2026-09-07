@@ -5,6 +5,52 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-07 — N°57 : zone Paramètres en split-view — le gérant reste sur les modules métier
+
+### N°57 — Modèles, Routeurs, Portail, Notifications et Équipe quittent la navigation principale : une zone « Paramètres » dédiée les regroupe
+- **Demande gérant** : la sidebar mélangeait modules métier (ventes, vouchers,
+  sessions, utilisateurs) et configuration technique (routeurs, portail,
+  modèles, alertes, équipe) — le gérant perdait son fil de travail. Toutes
+  les vues de configuration vivent désormais sous une zone dédiée
+  `/app/settings/<section>`, rendue en **split-view** : sidebar de sections à
+  gauche (desktop) / bandeau horizontal défilant (mobile), panneau de
+  contenu à droite avec transition douce — la sidebar ne se remonte pas au
+  changement de section.
+- **Refonte navigation principale** : la section « Infrastructure »
+  disparaît (Routeurs + Portail → zone), « Modèles » sort d'Exploitation,
+  « Équipe / Notifications / Paramètres » sortent d'Analyse ; une section
+  « Système » finale porte l'entrée unique **Paramètres**. La sidebar ne
+  montre plus que les modules métier : Exploitation (dashboard, sessions,
+  utilisateurs, vouchers, profils), Facturation & Ventes (abonnement,
+  revendeurs, WiFi), Analyse (rapports, journal, comptes), Système.
+- **Contrat des vues INCHANGÉ** : chaque ViewId, vue et route API restent
+  identiques (map `VIEWS` de l'app-shell intacte) — seul le chemin canonique
+  change (`view-path.ts` : segments imbriqués `settings/<section>`). Les
+  vues conservent leur PageHeader (titre + description), leur chargement
+  différé et leurs données ; la zone n'est qu'une enveloppe layout
+  (`settings/settings-shell.tsx`), style minimaliste épuré aux tokens du
+  projet (bordures fines, deux graisses, aucune nouvelle couleur, aucune
+  dépendance externe).
+- **URLs historiques deep-linkables** : `/app/templates`, `/app/routers`,
+  `/app/portal`, `/app/notifications`, `/app/team` résolvent toujours leur
+  vue (`LEGACY_SLUG_VIEWS`) puis sont re-normalisées en `replace` vers le
+  chemin canonique — zéro entrée d'historique parasite, le bouton Retour
+  n'est jamais piégé (même mécanique que la fusion N°30 « registrations »).
+- **Rôles respectés à l'atterrissage** : l'entrée « Paramètres » est visible
+  dès qu'UNE section est accessible au rôle ; le gérant (rang 2) atterrit
+  sur sa première section (Routeurs), le propriétaire (rang 3) sur la racine
+  (Général). Un lien direct vers une section interdite (p.ex. `/app/team`
+  d'un gérant) est re-normalisé en `replace` vers la première section
+  autorisée (garde-fou URL d'app-route, garde existant conservé). L'entrée
+  reste active sur toute la zone (l'utilisateur sait où il est).
+- **Entrées recâblées** : sidebar (filtre + atterrissage + surlignage zone),
+  palette de recherche (⌘K), menus profil (UserCard + Topbar mobile),
+  auto-ouverture de la section « Système » ; la cloche d'activité (rang 2 =
+  notifications) reste inchangée ; le padding double de la vue Portail est
+  retiré (le panneau de zone fournit déjà le sien).
+- **Frontend only** : aucun changement backend — Vercel seul, zéro
+  déploiement Render requis, aucune migration Neon (aucun changement de
+  schéma).
 ## 2026-09-07 — N°56 : analytics du portail — « votre menu vu 480 fois cette semaine »
 
 ### N°56 — impressions / clics par promo : l'argument de vente chiffré de l'hospitalité

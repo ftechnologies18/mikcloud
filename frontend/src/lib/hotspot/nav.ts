@@ -4,16 +4,12 @@
 import type { LucideIcon } from "lucide-react";
 import {
   BarChart3,
-  Bell,
   Building2,
   CreditCard,
   Gauge,
   LayoutDashboard,
-  Monitor,
-  Printer,
-  Radio,
   ReceiptText,
-  Router as RouterIcon,
+  Radio,
   ScrollText,
   Settings,
   ShieldCheck,
@@ -24,6 +20,7 @@ import {
   Wifi,
 } from "lucide-react";
 import { canView } from "./roles";
+import { settingsSectionsFor } from "./settings-sections";
 import type { ViewId } from "./types";
 
 export interface NavItem {
@@ -46,7 +43,9 @@ export const NAV_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
       // sidebar. ViewId « registrations » reste valide (URL
       // /app/registrations → hub Utilisateurs, onglet Inscriptions).
       { id: "vouchers", labelKey: "nav.vouchers", icon: Ticket },
-      { id: "templates", labelKey: "nav.templates", icon: Printer },
+      // N°57 — « Modèles » vit désormais dans la zone Paramètres
+      // (/app/settings/templates) : la sidebar ne montre plus que les
+      // modules métier.
       { id: "profiles", labelKey: "nav.profiles", icon: Gauge },
     ],
   },
@@ -61,15 +60,9 @@ export const NAV_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
       { id: "wifi", labelKey: "wifi.title", icon: Wifi },
     ],
   },
-  {
-    labelKey: "nav.section.infrastructure",
-    items: [
-      { id: "routers", labelKey: "nav.routers", icon: RouterIcon },
-      // N°35-d — portail captif : vue dédiée au déploiement automatique du
-      // portail sur les routeurs agents (aperçu + re-déploiement + journal).
-      { id: "portal", labelKey: "nav.portal", icon: Monitor },
-    ],
-  },
+  // N°57 — la section Infrastructure disparaît : Routeurs et Portail sont
+  // des vues de configuration, elles vivent dans la zone Paramètres
+  // (/app/settings/routers, /app/settings/portal).
   {
     labelKey: "nav.section.analysis",
     items: [
@@ -78,15 +71,25 @@ export const NAV_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
       // « Comptes » n'est visible que de l'admin plateforme (rôle admin) —
       // filtré au rendu (NavList + SearchPalette).
       { id: "accounts", labelKey: "nav.accounts", icon: Building2 },
-      { id: "team", labelKey: "nav.team", icon: UsersRound },
-      { id: "notifications", labelKey: "nav.notifications", icon: Bell },
-      { id: "settings", labelKey: "nav.settings", icon: Settings },
     ],
+  },
+  {
+    // N°57 — entrée unique de la zone Paramètres (split-view) : toutes les
+    // vues de configuration (général, routeurs, portail, modèles,
+    // notifications, équipe) vivent sous /app/settings/<section>. La
+    // destination s'adapte au rôle (cf. settings-sections.ts) : le gérant
+    // atterrit sur sa première section accessible, le propriétaire sur la
+    // racine de la zone.
+    labelKey: "nav.section.system",
+    items: [{ id: "settings", labelKey: "nav.settings", icon: Settings }],
   },
 ];
 
 /** Liste plate des items de nav pour la console ACTIVE — client par défaut,
- * plateforme quand l'admin y bascule (miroir canView dans les deux cas). */
+ * plateforme quand l'admin y bascule (miroir canView dans les deux cas).
+ * N°57 — l'entrée « Paramètres » est visible dès qu'UNE section de la zone
+ * est accessible au rôle (gérant : routeurs, portail, modèles,
+ * notifications ; propriétaire : toutes). */
 export function navItemsFor(
   role: string | undefined,
   isAdmin: boolean,
@@ -95,7 +98,11 @@ export function navItemsFor(
   const sections = mode === "platform" ? NAV_PLATFORM_SECTIONS : NAV_SECTIONS;
   return sections
     .flatMap((s) => s.items)
-    .filter((item) => (item.id !== "accounts" || isAdmin) && canView(role, item.id));
+    .filter((item) =>
+      item.id === "settings"
+        ? settingsSectionsFor(role).length > 0
+        : (item.id !== "accounts" || isAdmin) && canView(role, item.id),
+    );
 }
 
 /**

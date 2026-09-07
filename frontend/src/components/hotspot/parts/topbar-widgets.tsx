@@ -42,6 +42,7 @@ import { api } from "@/lib/hotspot/api";
 import { localeOf, useI18n } from "@/lib/hotspot/i18n";
 import { navItemsFor } from "@/lib/hotspot/nav";
 import { canView } from "@/lib/hotspot/roles";
+import { settingsLandingView } from "@/lib/hotspot/settings-sections";
 import { useHotspotStore } from "@/lib/hotspot/store";
 import type { Activity } from "@/lib/hotspot/types";
 
@@ -117,7 +118,10 @@ export function SearchPalette() {
   }, []);
 
   function go(id: Parameters<typeof setView>[0]) {
-    setView(id);
+    // N°57 — l'entrée « Paramètres » atterrit sur la première section
+    // autorisée du rôle (gérant → première section rang 2, propriétaire →
+    // racine de la zone) — jamais sur une vue que le serveur refuserait.
+    setView(id === "settings" ? settingsLandingView(user?.role) : id);
     setOpen(false);
   }
 

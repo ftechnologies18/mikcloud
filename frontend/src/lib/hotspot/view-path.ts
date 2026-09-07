@@ -6,13 +6,23 @@
 // synchronisation bidirectionnelle d'app-route.tsx. Le bouton Retour du
 // navigateur et les liens directs (/app/users…) deviennent fonctionnels sans
 // changer ni le store ni les vues.
+//
+// N°57 — zone Paramètres : les vues de configuration (modèles, routeurs,
+// portail, notifications, équipe) vivent sous /app/settings/<section>
+// (segment IMBRIQUÉ). Les chemins historiques (/app/templates, /app/team…)
+// restent deep-linkables : la vue est résolue via LEGACY_SLUG_VIEWS puis
+// l'URL est re-normalisée (replace, zéro entrée d'historique parasite) par
+// app-route — même mécanique que la fusion N°30 « registrations → hub ».
 
 import type { ViewId } from "./types";
 
 /** Préfixe de toutes les routes console. */
 export const APP_BASE_PATH = "/app";
 
-/** Segment d'URL de chaque vue — kebab-case dérivé de l'identifiant. */
+/** Segment d'URL de chaque vue — kebab-case dérivé de l'identifiant.
+ * N°57 : les vues de la zone Paramètres portent un segment IMBRIQUÉ
+ * « settings/<section> » ; « settings » est la racine de la zone (la vue
+ * Paramètres historique, onglets internes Général/Hotspot/Avancé). */
 const VIEW_SLUGS: Record<ViewId, string> = {
   dashboard: "dashboard",
   sessions: "sessions",
@@ -20,12 +30,12 @@ const VIEW_SLUGS: Record<ViewId, string> = {
   users: "users",
   registrations: "registrations",
   vouchers: "vouchers",
-  templates: "templates",
+  templates: "settings/templates",
   profiles: "profiles",
   resellers: "resellers",
   wifi: "wifi",
-  routers: "routers",
-  portal: "portal",
+  routers: "settings/routers",
+  portal: "settings/portal",
   reports: "reports",
   logs: "logs",
   platform: "platform",
@@ -34,14 +44,27 @@ const VIEW_SLUGS: Record<ViewId, string> = {
   platformSettings: "platform-settings",
   billingRequests: "billing-requests",
   accounts: "accounts",
-  notifications: "notifications",
+  notifications: "settings/notifications",
   settings: "settings",
-  team: "team",
+  team: "settings/team",
 };
 
 const SLUG_VIEWS: Record<string, ViewId> = Object.fromEntries(
   Object.entries(VIEW_SLUGS).map(([view, slug]) => [slug, view as ViewId]),
 );
+
+/** Slugs historiques (pré-N°57) des vues déplacées dans la zone Paramètres :
+ * /app/<slug> résout toujours vers sa vue (signets, historique navigateur,
+ * liens sortants) — app-route replace ensuite vers le chemin canonique
+ * /app/settings/<section>. Une section de zone inconnue (/app/settings/xyz)
+ * retombe quant à elle sur la racine « settings » par la résolution simple. */
+const LEGACY_SLUG_VIEWS: Record<string, ViewId> = {
+  templates: "templates",
+  routers: "routers",
+  portal: "portal",
+  notifications: "notifications",
+  team: "team",
+};
 
 /** Chemin complet d'une vue : /app/<slug>, ou /app/<slug>/<détail> quand la
  * vue expose un élément adressable (Phase D : utilisateur, lot, session).
@@ -54,15 +77,24 @@ export function viewToPath(view: ViewId, detail?: string): string {
 /** Vue cible d'un chemin — null si le chemin ne désigne pas une vue
  * (/app sans segment, slug inconnu, hors /app) : la vue courante du store
  * s'applique alors, et l'URL est re-normalisée par la synchro inverse.
- * Le 2e segment éventuel (détail) est ignoré ici : il appartient à la vue
- * (detailFromPath), la synchro de vue d'app-route reste inchangée. */
+ * N°57 : la paire de segments est essayée d'abord (settings/<section>) —
+ * les vues à détail (users/<id>, vouchers/<lot>) ne matchent jamais une
+ * paire connue ; puis le slug simple, y compris legacy (re-normalisé
+ * ensuite). Le 2e segment éventuel (détail) est ignoré ici : il appartient à
+ * la vue (detailFromPath), la synchro de vue d'app-route reste inchangée. */
 export function viewFromPath(pathname: string | null): ViewId | null {
   if (!pathname) return null;
   if (pathname === APP_BASE_PATH) return null;
   const prefix = `${APP_BASE_PATH}/`;
   if (!pathname.startsWith(prefix)) return null;
-  const slug = pathname.slice(prefix.length).split("/")[0];
-  return SLUG_VIEWS[slug] ?? null;
+  const segs = pathname.slice(prefix.length).split("/");
+  // Segment imbriqué — section de la zone Paramètres (settings/<section>).
+  if (segs.length >= 2) {
+    const nested = SLUG_VIEWS[`${segs[0]}/${segs[1]}`];
+    if (nested) return nested;
+  }
+  const slug = segs[0];
+  return SLUG_VIEWS[slug] ?? LEGACY_SLUG_VIEWS[slug] ?? null;
 }
 
 /** Vues exposant un détail adressable (Phase D) — les autres n'ont pas de

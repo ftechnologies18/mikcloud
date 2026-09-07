@@ -5,6 +5,61 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-08 — N°57-d : zone Paramètres — sections réorganisées (Général / Hotspot / Sécurité / Routeurs / Notifications / Équipe) + fiches routeurs sans modale
+
+### N°57-d — Réorganisation experte des 6 sections (demande utilisateur) : une préoccupation = une section, le Portail et les Modèles deviennent des onglets du Hotspot
+- **Sections de la sidebar de zone réorganisées** (la substitution N°57-c et
+  les 2 colonnes constantes sont conservées) : l'ancienne section
+  « Paramètres » (3 sous-onglets internes) est ÉCLATÉE en trois sections —
+  **Général** `/app/settings/general`, **Hotspot** `/app/settings/hotspot`,
+  **Sécurité** `/app/settings/security` — aux côtés de Routeurs,
+  Notifications et Équipe. Plus aucune navigation à 2 niveaux cachée dans
+  une section : une préoccupation = une section.
+- **Section Hotspot = hub à onglets** (pattern N°30 « users/registrations →
+  hub Utilisateurs ») : les vues Portail et Modèles deviennent les ONGLETS
+  du Hotspot — `/app/settings/hotspot` (Expérience, propriétaire),
+  `/app/settings/hotspot/portail` et `/app/settings/hotspot/modeles`
+  (gérant+). Chaque onglet reste un ViewId deep-linkable ; la section reste
+  surlignée sur ses trois onglets ; l'onglet Expérience (PUT /api/settings,
+  rang 3) est masqué au gérant qui atterrit sur Portail.
+- **Routeurs : cartes cliquables + fiche directe, plus de modale
+  d'inspection** (retour utilisateur) : la grille de cartes devient le
+  contrôle (clic / Entrée / Espace → fiche) ; la fiche routeur vit en PLEINE
+  PAGE (`/app/settings/routers/<id>`, adressable — Retour navigateur et
+  bouton « Tous les routeurs » font la même sortie, discipline 192ad9f) et
+  concentre toutes les actions (test, stats, import, réparation
+  walled-garden, script, édition, suppression). L'ancien RouterToolsDialog
+  (trafic temps réel, IP bindings, DHCP/hôtes/cookies/journal, système)
+  devient un PANNEAU INLINE (`RouterToolsPanel`) dans la fiche — les
+  dialogues restants sont des flux d'action (création, wizard agent,
+  réinstallation), pas des inspections.
+- **Général sans onglet interne** : Organisation (nom, devise, fuseau,
+  lien Wave), Langue (bascule immédiate) et une carte Abonnement de lecture
+  (état réel GET /api/subscription + accès direct à la vue dédiée — pas de
+  duplicate du flux de paiement).
+- **Sécurité sans onglet interne** : mot de passe + 2FA (cartes partagées
+  parts/security-cards, mêmes implémentations que la console plateforme)
+  et une carte « Activité récente » alimentée par le VRAI journal
+  (GET /api/activity, filtré comptes/système) — aucune donnée factice.
+- **Notifications : 3 domaines nommés** (sans onglet interne) : Règles
+  d'alerte (interrupteur + seuils + rapport quotidien), **Webhooks &
+  canaux** (Telegram, WhatsApp Cloud API, e-mail SMTP + test d'envoi),
+  Historique des envois — hiérarchie visuelle explicite là où les cartes
+  s'empilaient au même niveau.
+- **Équipe : gestion des membres repensée** : statistiques réelles
+  (membres / gérants / propriétaires, GET /api/team) + GRILLE DE CARTES
+  membres (avatar, @identifiant, « membre depuis », badge de rôle, actions
+  Modifier/Supprimer) ; la matrice des rôles devient une carte repère en
+  pied de page.
+- **URLs compatibles** : l'ancienne racine `/app/settings` (et les chemins
+  canoniques N°57-b/c `/app/settings/portal`, `/app/settings/templates`)
+  restent deep-linkables et sont re-normalisés (replace) vers les nouveaux
+  chemins ; les slugs historiques pré-N°57 (`/app/portal`, `/app/templates`…)
+  fonctionnent toujours. La résolution d'URL essaie le segment le plus long
+  d'abord (3 segments du hub, puis paire, puis slug simple).
+- **Frontend only** : aucun changement backend, aucune migration Neon —
+  Render sans objet, la CI déploie Vercel.
+
 ## 2026-09-07 — N°57-c : zone Paramètres — la sidebar de sections REMPLPLACE la sidebar principale (bouton Retour)
 
 ### N°57-c — Deuxième correction UX (retour utilisateur) : fin définitive de la double colonne — la zone vit DANS la sidebar, pas à côté

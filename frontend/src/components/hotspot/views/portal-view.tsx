@@ -1,6 +1,8 @@
 "use client";
 
-// N°35-d — vue « Portail » de la console MikCloud.
+// N°35-d — contenu « Portail » de la section Hotspot (N°57-d : ancienne vue
+// Portail autonome, désormais ONGLET du hub components/hotspot/views/
+// hotspot-view.tsx — /app/settings/hotspot/portail).
 //
 // Liste les routeurs en mode agent (les seuls qui déploient le portail captif
 // via la commande hotspot_files N°35-a). Pour chaque routeur :
@@ -11,7 +13,7 @@
 //   - journal des déploiements (filtré sur /Portail captif déployé|Re-déploiement/).
 //
 // Contrainte architecturale (audit N°35-d) : le portail est déployé par ROUTEUR,
-// pas par SITE WiFi. Cette vue est donc au niveau routeur, pas dans la console
+// pas par SITE WiFi. Ce contenu est donc au niveau routeur, pas dans la console
 // WiFi qui liste des sites. Un routeur peut être lié à 0, 1 ou N sites WiFi —
 // le branding affiché dans l'aperçu est résolu par buildPortalConfig (1er site
 // actif lié au routeur, ou branding par défaut du tenant si aucun site).
@@ -51,10 +53,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import { EmptyState } from "@/components/hotspot/empty-state";
-import { PageHeader } from "@/components/hotspot/page-header";
 import {
   AccountActivity,
   api,
@@ -77,7 +77,10 @@ function sigStatus(router: RouterDevice): "deployed" | "pending" | "never" {
   return "deployed";
 }
 
-export default function PortalView() {
+/** Contenu de l'onglet « Portail » du hub Hotspot (N°57-d) — tout le
+ * comportement de l'ancienne vue, sans son PageHeader (le hub porte le
+ * titre de section). */
+export function PortalContent() {
   const { t, tf } = useI18n();
   const queryClient = useQueryClient();
 
@@ -123,11 +126,6 @@ export default function PortalView() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title={t("portal.title")}
-        description={t("portal.subtitle")}
-      />
-
       {routers.length === 0 ? (
         <EmptyState
           icon={Monitor}

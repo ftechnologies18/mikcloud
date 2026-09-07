@@ -1,7 +1,13 @@
 "use client";
 
-// Vue Notifications — alertes routeur hors ligne / stock bas / rapport quotidien,
-// canaux Telegram + WhatsApp Cloud API + Email SMTP et historique des envois.
+// N°57-d — Vue « Notifications » de la zone Paramètres
+// (/app/settings/notifications), réorganisée en TROIS domaines nommés —
+// SANS onglet interne, tout visible d'un coup d'œil :
+//   1. Règles d'alerte — interrupteur, seuils (routeur hors ligne, stock),
+//      rapport quotidien (carte « Alertes », enregistrement global) ;
+//   2. Webhooks & canaux — les destinations : Telegram, WhatsApp Cloud API,
+//      e-mail SMTP (cartes canaux + test d'envoi) ;
+//   3. Historique des envois — journal réel (GET /api/notifications/log).
 // Contrat API : GET/PUT /api/notifications, POST /api/notifications/test,
 // GET /api/notifications/log (voir lib/hotspot/types.ts).
 
@@ -17,6 +23,7 @@ import {
   RefreshCw,
   Send,
   TriangleAlert,
+  Webhook,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { LucideIcon } from "lucide-react";
@@ -162,6 +169,32 @@ function NotifErrorCard({
   );
 }
 
+/* ─────────────────────────── En-tête de domaine (N°57-d) ─────────────────────────── */
+
+/** Titre de section — même gabarit que les cartes (pastille icône + libellé
+ * + description) : les trois domaines de la page se lisent d'un coup d'œil. */
+function SectionHeading({
+  icon: Icon,
+  title,
+  description,
+}: {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="flex items-start gap-3">
+      <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
+        <Icon className="size-4" aria-hidden />
+      </span>
+      <div className="min-w-0">
+        <h2 className="text-base font-semibold tracking-tight">{title}</h2>
+        <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>
+      </div>
+    </div>
+  );
+}
+
 /* ─────────────────────────── Réglages + canaux ─────────────────────────── */
 
 function NotificationsForm({ initial }: { initial: NotifSettings }) {
@@ -198,7 +231,7 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      {/* ─── Card Alertes : interrupteur général + seuils + rapport quotidien ─── */}
+      {/* ─── Domaine 1 : règles d'alerte (interrupteur + seuils + rapport) ─── */}
       <Card className="gap-4 py-4 sm:py-6">
         <CardHeader className="flex flex-row items-start justify-between gap-3 px-4 sm:px-6">
           <div className="min-w-0">
@@ -303,7 +336,8 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
         </CardContent>
       </Card>
 
-      {/* ─── Canaux de notification ─── */}
+      {/* ─── Domaine 2 : webhooks & canaux de diffusion ─── */}
+      <SectionHeading icon={Webhook} title={t("notif.section.channels")} description={t("notif.section.channelsDesc")} />
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         {/* Telegram */}
         <ChannelCard

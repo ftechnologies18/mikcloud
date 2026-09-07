@@ -5,14 +5,21 @@
 // Matrice : Propriétaire (tout) > Gérant (tout sauf équipe/réglages).
 // Le rôle « operator » a été retiré du produit. Chaque mutation est auditée
 // avec l'acteur (visible dans le journal d'activité).
+//
+// N°57-d — réorganisation de la gestion des membres : statistiques réelles
+// (membres / gérants / propriétaires) puis GRILLE DE CARTES membres (une
+// carte = une personne : avatar, @identifiant, ancienneté, rôle, actions)
+// — plus de liste à plat ; la matrice des rôles devient une carte repère
+// en pied de page. Données 100 % réelles (GET /api/team).
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, ShieldCheck, Trash2, UserPlus, Users } from "lucide-react";
+import { Loader2, Pencil, ShieldCheck, Trash2, UserPlus, Users } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { StatCard } from "@/components/hotspot/stat-card";
 import {
   Dialog,
   DialogContent,
@@ -227,6 +234,11 @@ export default function TeamView() {
 
   const df = new Intl.DateTimeFormat(localeOf(lang), { day: "2-digit", month: "short", year: "numeric" });
 
+  // Statistiques réelles — comptages directs de la liste serveur.
+  const members = data ?? [];
+  const owners = members.filter((m) => m.role === "owner" || m.role === "admin" || m.role === "platform_admin").length;
+  const managers = members.filter((m) => m.role === "manager").length;
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -240,7 +252,85 @@ export default function TeamView() {
         }
       />
 
-      {/* Résumé de la matrice des rôles */}
+      {/* N°57-d — statistiques de l'équipe (données réelles). */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <StatCard title={t("team.stat.members")} value={String(members.length)} icon={Users} />
+        <StatCard title={t("team.stat.managers")} value={String(managers)} icon={ShieldCheck} />
+        <StatCard title={t("team.stat.owners")} value={String(owners)} icon={Users} />
+      </div>
+
+      {isLoading ? (
+        <Card>
+          <LoadingRows rows={4} />
+        </Card>
+      ) : members.length === 0 ? (
+        <Card>
+          <EmptyState icon={Users} title={t("team.empty")} description={t("team.emptyDesc")} />
+        </Card>
+      ) : (
+        /* N°57-d — grille de cartes membres : une carte = une personne. */
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {members.map((m) => {
+            const self = m.id === user?.id;
+            return (
+              <Card key={m.id} className="py-0">
+                <CardContent className="flex h-full flex-col gap-4 p-4 sm:p-6">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <Avatar className="size-11 border">
+                        <AvatarFallback className="text-xs font-semibold">
+                          {userInitials(m.name)}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="min-w-0">
+                        <p className="flex items-center gap-2 truncate font-medium">
+                          <span className="truncate">{m.name}</span>
+                          {self && (
+                            <Badge variant="secondary" className="shrink-0 text-[10px]">
+                              {t("team.you")}
+                            </Badge>
+                          )}
+                        </p>
+                        <p className="truncate text-xs text-muted-foreground">@{m.username}</p>
+                      </div>
+                    </div>
+                    <RoleBadge role={m.role} />
+                  </div>
+
+                  <p className="text-xs text-muted-foreground">
+                    {tf("team.memberSince", { date: df.format(new Date(m.createdAt)) })}
+                  </p>
+
+                  <div className="mt-auto flex items-center gap-1 border-t pt-3">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-9"
+                      onClick={() => setDialog({ open: true, member: m })}
+                    >
+                      <Pencil className="size-3.5" />
+                      {t("common.edit")}
+                    </Button>
+                    {!self && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="ml-auto h-9 text-destructive hover:text-destructive"
+                        onClick={() => setConfirmDelete(m)}
+                      >
+                        <Trash2 className="size-3.5" />
+                        {t("common.delete")}
+                      </Button>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Matrice des rôles — carte repère en pied de page. */}
       <Card>
         <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:p-5">
           <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -252,72 +342,6 @@ export default function TeamView() {
           </div>
         </CardContent>
       </Card>
-
-      {isLoading ? (
-        <Card>
-          <LoadingRows rows={4} />
-        </Card>
-      ) : !data || data.length === 0 ? (
-        <Card>
-          <EmptyState icon={Users} title={t("team.empty")} description={t("team.emptyDesc")} />
-        </Card>
-      ) : (
-        <Card>
-          <CardContent className="p-0">
-            <ul className="divide-y">
-              {data.map((m) => {
-                const self = m.id === user?.id;
-                return (
-                  <li key={m.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:p-5">
-                    <div className="flex min-w-0 items-center gap-3">
-                      <Avatar className="size-9 border">
-                        <AvatarFallback className="text-xs">{userInitials(m.name)}</AvatarFallback>
-                      </Avatar>
-                      <div className="min-w-0">
-                        <p className="flex items-center gap-2 truncate font-medium">
-                          {m.name}
-                          {self && (
-                            <Badge variant="secondary" className="text-[10px]">
-                              {t("team.you")}
-                            </Badge>
-                          )}
-                        </p>
-                        <p className="truncate text-xs text-muted-foreground">
-                          @{m.username} · {df.format(new Date(m.createdAt))}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between gap-2 sm:justify-end">
-                      <RoleBadge role={m.role} />
-                      <div className="flex items-center gap-1">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setDialog({ open: true, member: m })}
-                          aria-label={t("common.edit")}
-                        >
-                          {t("common.edit")}
-                        </Button>
-                        {!self && (
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="size-8 text-destructive hover:text-destructive"
-                            onClick={() => setConfirmDelete(m)}
-                            aria-label={t("common.delete")}
-                          >
-                            <Trash2 className="size-4" />
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          </CardContent>
-        </Card>
-      )}
 
       {dialog.open && <MemberDialog open member={dialog.member} onClose={() => setDialog({ open: false, member: null })} />}
 

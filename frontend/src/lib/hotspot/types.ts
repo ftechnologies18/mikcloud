@@ -1248,6 +1248,8 @@ export type ViewId =
   | "accounts"
   | "notifications"
   | "settings"
+  | "hotspot" // N°57-d — section Hotspot de la zone (hub à onglets : expérience/portail/modèles)
+  | "security" // N°57-d — section Sécurité de la zone (mot de passe, 2FA, activité)
   | "team";
 
 /* ─── I (paramètres plateforme) : GET/PUT /api/admin/platform/settings ─── */

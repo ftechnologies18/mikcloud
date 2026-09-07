@@ -12,11 +12,10 @@
 // principale : il rouvre la dernière vue métier visitée (mémorisée par
 // l'app-shell), la sidebar principale reprend alors sa place.
 //
-// Le contrat des vues reste INCHANGÉ : le contenu rend la vue active du
-// store sans la modifier — chaque vue apporte son PageHeader (titre +
-// description), son chargement différé (map VIEWS de l'app-shell) et ses
-// données ; la section « Paramètres » (vue settings) conserve ses
-// sous-onglets internes Général / Hotspot / Avancé.
+// N°57-d — la section Hotspot est un HUB : son surlignage actif couvre ses
+// trois onglets (hotspot/portail/modèles) — la section reste « allumée »
+// pendant toute la navigation interne, exactement comme « Utilisateurs »
+// reste actif sur l'onglet Inscriptions (pattern N°30).
 //
 // Style : mêmes classes que NavList (items `sidebar-nav-item`, état actif
 // `nav-active`, icônes lucide) — la substitution est invisible au regard,
@@ -72,7 +71,9 @@ export function SettingsSidebar({ onBack }: SettingsSidebarProps) {
 
       <ul className="space-y-0.5">
         {sections.map((section) => {
-          const active = section.id === view;
+          // N°57-d — actif sur TOUTES les vues de la section : la section
+          // Hotspot reste surlignée sur ses onglets Portail/Modèles.
+          const active = section.views.includes(view);
           return (
             <li key={section.id}>
               <button

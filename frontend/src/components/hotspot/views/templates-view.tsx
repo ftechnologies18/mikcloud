@@ -1,11 +1,16 @@
 "use client";
 
-// Vue Modèles de vouchers (F2) — gabarits d'impression personnalisables :
+// N°57-d — contenu « Modèles » de la section Hotspot (anciennement vue
+// Modèles autonome, désormais ONGLET du hub components/hotspot/views/
+// hotspot-view.tsx — /app/settings/hotspot/modeles). Gabarits d'impression
+// personnalisables (F2) :
 // - liste des modèles (GET /api/templates) : nom, format (A4 / 58 mm / 80 mm),
 //   défaut, taille HTML, actions (éditer, définir par défaut, dupliquer, supprimer) ;
 // - éditeur : nom, format, bodyHtml (font mono) + chips de variables insérées au
 //   curseur + aperçu live (voucher d'exemple, QR réel) + presets MikCloud ;
 // - aperçu d'impression sur vouchers d'exemple (UcPrintDialog en mode modèle).
+// Le PageHeader de l'ancienne vue devient une barre d'outils compacte : le hub
+// porte déjà le titre de section, les actions restent accessibles en tête.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -63,7 +68,6 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { EmptyState } from "@/components/hotspot/empty-state";
-import { PageHeader } from "@/components/hotspot/page-header";
 import { useCurrency, useSettings } from "@/components/hotspot/parts/sd-currency";
 import {
   TEMPLATE_PRESETS,
@@ -417,7 +421,10 @@ function TemplateEditorDialog({ open, onOpenChange, template, ctx, sampleVoucher
 
 // ─── Vue ───
 
-export default function TemplatesView() {
+/** Contenu de l'onglet « Modèles » du hub Hotspot (N°57-d) — tout le
+ * comportement de l'ancienne vue ; les actions principales (aperçu,
+ * nouveau) vivent dans une barre d'outils compacte en tête d'onglet. */
+export function TemplatesContent() {
   const { t, tf, lang } = useI18n();
   const currency = useCurrency();
   const { data: settings } = useSettings();
@@ -521,22 +528,21 @@ export default function TemplatesView() {
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      <PageHeader
-        title={t("templates.title")}
-        description={t("templates.description")}
-        actions={
-          <>
-            <Button variant="outline" className="h-10" onClick={() => setPrintOpen(true)}>
-              <Printer className="size-4" />
-              {t("templates.preview")}
-            </Button>
-            <Button className="h-10" onClick={openCreate}>
-              <Plus className="size-4" />
-              {t("templates.new")}
-            </Button>
-          </>
-        }
-      />
+      {/* Barre d'outils de l'onglet (l'ancien PageHeader réduit à ses
+          actions : le hub porte le titre de section). */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="min-w-0 flex-1 text-sm text-muted-foreground">{t("templates.description")}</p>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <Button variant="outline" className="h-10" onClick={() => setPrintOpen(true)}>
+            <Printer className="size-4" />
+            {t("templates.preview")}
+          </Button>
+          <Button className="h-10" onClick={openCreate}>
+            <Plus className="size-4" />
+            {t("templates.new")}
+          </Button>
+        </div>
+      </div>
 
       {isLoading ? (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">

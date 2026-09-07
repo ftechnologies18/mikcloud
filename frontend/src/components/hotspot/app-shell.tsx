@@ -65,22 +65,25 @@ const ViewFallback = (
 const AccountsView = dynamic(() => import("./views/accounts-view"), { loading: () => ViewFallback });
 const BillingRequestsView = dynamic(() => import("./views/billing-requests-view"), { loading: () => ViewFallback });
 const DashboardView = dynamic(() => import("./views/dashboard-view"), { loading: () => ViewFallback });
+// N°57-d — hub Hotspot : « hotspot », « portal » et « templates » rendent la
+// MÊME page (onglet dérivé du ViewId — pattern N°30) : /app/settings/hotspot,
+// /app/settings/hotspot/portail et /app/settings/hotspot/modeles.
+const HotspotView = dynamic(() => import("./views/hotspot-view"), { loading: () => ViewFallback });
 const LogsView = dynamic(() => import("./views/logs-view"), { loading: () => ViewFallback });
 const NotificationsView = dynamic(() => import("./views/notifications-view"), { loading: () => ViewFallback });
 const PlatformLogsView = dynamic(() => import("./views/platform-logs-view"), { loading: () => ViewFallback });
 const PlatformOverviewView = dynamic(() => import("./views/platform-overview-view"), { loading: () => ViewFallback });
 const PlatformSettingsView = dynamic(() => import("./views/platform-settings-view"), { loading: () => ViewFallback });
 const PlatformTeamView = dynamic(() => import("./views/platform-team-view"), { loading: () => ViewFallback });
-const PortalView = dynamic(() => import("./views/portal-view"), { loading: () => ViewFallback });
 const ProfilesView = dynamic(() => import("./views/profiles-view"), { loading: () => ViewFallback });
 const ReportsView = dynamic(() => import("./views/reports-view"), { loading: () => ViewFallback });
 const ResellersView = dynamic(() => import("./views/resellers-view"), { loading: () => ViewFallback });
 const RoutersView = dynamic(() => import("./views/routers-view"), { loading: () => ViewFallback });
+const SecurityView = dynamic(() => import("./views/security-view"), { loading: () => ViewFallback });
 const SessionsView = dynamic(() => import("./views/sessions-view"), { loading: () => ViewFallback });
 const SettingsView = dynamic(() => import("./views/settings-view"), { loading: () => ViewFallback });
 const SubscriptionView = dynamic(() => import("./views/subscription-view"), { loading: () => ViewFallback });
 const TeamView = dynamic(() => import("./views/team-view"), { loading: () => ViewFallback });
-const TemplatesView = dynamic(() => import("./views/templates-view"), { loading: () => ViewFallback });
 // N°30 — hub fusionné : les vues « users » et « registrations » rendent la
 // MÊME page Utilisateurs (onglets Comptes / Inscriptions) — l'onglet actif
 // dérive du ViewId courant, les deux URLs restent deep-linkables.
@@ -98,7 +101,7 @@ function viewTitle(view: ViewId, t: (key: string) => string): string {
     users: "nav.users",
     registrations: "nav.registrations",
     vouchers: "nav.vouchers",
-    templates: "templates.title",
+    templates: "nav.templates",
     profiles: "nav.profiles",
     resellers: "nav.resellers",
     wifi: "wifi.title",
@@ -112,7 +115,9 @@ function viewTitle(view: ViewId, t: (key: string) => string): string {
     billingRequests: "billingRequests.title",
     accounts: "nav.accounts",
     notifications: "nav.notifications",
-    settings: "nav.settings",
+    settings: "settings.tabGeneral",
+    hotspot: "settings.tabHotspot",
+    security: "settings.tabAdvanced",
     team: "nav.team",
     platformSettings: "platformSettings.title",
   };
@@ -127,12 +132,15 @@ const VIEWS: Record<ViewId, React.ComponentType> = {
   users: UsersHubView,
   registrations: UsersHubView,
   vouchers: VouchersView,
-  templates: TemplatesView,
+  // N°57-d — hub Hotspot : les trois ViewIds pointent le même hub
+  // (Expérience / Portail / Modèles dérivent du ViewId, pattern N°30).
+  hotspot: HotspotView,
+  portal: HotspotView,
+  templates: HotspotView,
   profiles: ProfilesView,
   resellers: ResellersView,
   wifi: WifiView,
   routers: RoutersView,
-  portal: PortalView,
   reports: ReportsView,
   logs: LogsView,
   platform: PlatformOverviewView,
@@ -143,6 +151,7 @@ const VIEWS: Record<ViewId, React.ComponentType> = {
   accounts: AccountsView,
   notifications: NotificationsView,
   settings: SettingsView,
+  security: SecurityView,
   team: TeamView,
 };
 

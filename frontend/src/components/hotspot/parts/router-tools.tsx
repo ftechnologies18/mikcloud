@@ -1708,9 +1708,15 @@ function SystemTab({ router }: { router: RouterDevice }) {
   );
 }
 
-// ─── Dialogue principal ───
+// ─── Panneau principal (N°57-d) ───
 
-export function RouterToolsDialog({ router: snapshot, onClose }: { router: RouterDevice; onClose: () => void }) {
+// Retour utilisateur N°57-d : plus de fenêtre modale pour inspecter un
+// routeur — le panneau vit DANS la fiche routeur (page directe
+// /app/settings/routers/<id>, bouton Retour aux cartes). Même contenu
+// (onglets Trafic / Liaisons IP / Outils / Système), même routeur « vivant »
+// (poll 15 s partagé avec la liste), seul le conteneur change : un bloc
+// plein largeur en flux de page au lieu d'un overlay.
+export function RouterToolsPanel({ router: snapshot }: { router: RouterDevice }) {
   const { t, tf } = useI18n();
   // Routeur « vivant » : la vue Routeurs poll déjà ["/api/routers"] toutes les 15 s
   // (même queryKey → cache partagé). Si le routeur passe hors ligne ou disparaît
@@ -1723,60 +1729,56 @@ export function RouterToolsDialog({ router: snapshot, onClose }: { router: Route
   const router = routers?.find((r) => r.id === snapshot.id) ?? snapshot;
 
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="flex max-h-[90vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl">
-        <DialogHeader className="shrink-0 border-b px-4 pb-4 pt-5 sm:px-6">
-          <DialogTitle className="flex items-center gap-2 pr-8">
-            <Wrench className="size-5 shrink-0 text-primary" />
-            {tf("tools.dialogTitle", { name: router.name })}
-          </DialogTitle>
-          <DialogDescription>
-            <span className="flex flex-wrap items-center gap-2">
-              <StatusBadge status={router.mode} />
-              <StatusBadge status={router.status} dot />
-              <span>{t("tools.dialogDesc")}</span>
-            </span>
-          </DialogDescription>
-        </DialogHeader>
+    <div className="flex flex-col gap-0">
+      <div className="shrink-0 border-b px-1 pb-4">
+        <p className="flex flex-wrap items-center gap-2 text-sm font-semibold">
+          <Wrench className="size-4 shrink-0 text-primary" aria-hidden />
+          {tf("tools.dialogTitle", { name: router.name })}
+        </p>
+        <span className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <StatusBadge status={router.mode} />
+          <StatusBadge status={router.status} dot />
+          <span>{t("tools.dialogDesc")}</span>
+        </span>
+      </div>
 
-        <Tabs defaultValue="traffic" className="flex min-h-0 flex-1 flex-col gap-0">
-          <div className="shrink-0 overflow-x-auto px-4 py-3 sm:px-6">
-            <TabsList className="w-full min-w-max sm:w-fit">
-              <TabsTrigger value="traffic">
-                <Activity className="size-4" />
-                {t("tools.tabTraffic")}
-              </TabsTrigger>
-              <TabsTrigger value="bindings">
-                <Network className="size-4" />
-                {t("tools.tabBindings")}
-              </TabsTrigger>
-              <TabsTrigger value="tools">
-                <Wrench className="size-4" />
-                {t("tools.tabTools")}
-              </TabsTrigger>
-              <TabsTrigger value="system">
-                <Cpu className="size-4" />
-                {t("tools.tabSystem")}
-              </TabsTrigger>
-            </TabsList>
-          </div>
+      <Tabs defaultValue="traffic" className="flex min-h-0 flex-1 flex-col gap-0">
+        <div className="shrink-0 overflow-x-auto py-3">
+          <TabsList className="w-full min-w-max sm:w-fit">
+            <TabsTrigger value="traffic">
+              <Activity className="size-4" />
+              {t("tools.tabTraffic")}
+            </TabsTrigger>
+            <TabsTrigger value="bindings">
+              <Network className="size-4" />
+              {t("tools.tabBindings")}
+            </TabsTrigger>
+            <TabsTrigger value="tools">
+              <Wrench className="size-4" />
+              {t("tools.tabTools")}
+            </TabsTrigger>
+            <TabsTrigger value="system">
+              <Cpu className="size-4" />
+              {t("tools.tabSystem")}
+            </TabsTrigger>
+          </TabsList>
+        </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-5 sm:px-6">
-            <TabsContent value="traffic" className="mt-0">
-              <TrafficTab router={router} />
-            </TabsContent>
-            <TabsContent value="bindings" className="mt-0">
-              <IpBindingsTab router={router} />
-            </TabsContent>
-            <TabsContent value="tools" className="mt-0">
-              <ToolsTab router={router} />
-            </TabsContent>
-            <TabsContent value="system" className="mt-0">
-              <SystemTab router={router} />
-            </TabsContent>
-          </div>
-        </Tabs>
-      </DialogContent>
-    </Dialog>
+        <div className="min-h-0 flex-1 pb-1">
+          <TabsContent value="traffic" className="mt-0">
+            <TrafficTab router={router} />
+          </TabsContent>
+          <TabsContent value="bindings" className="mt-0">
+            <IpBindingsTab router={router} />
+          </TabsContent>
+          <TabsContent value="tools" className="mt-0">
+            <ToolsTab router={router} />
+          </TabsContent>
+          <TabsContent value="system" className="mt-0">
+            <SystemTab router={router} />
+          </TabsContent>
+        </div>
+      </Tabs>
+    </div>
   );
 }

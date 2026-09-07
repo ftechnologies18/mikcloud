@@ -37,6 +37,8 @@ const VIEW_MIN_RANK: Record<string, number> = {
   logs: 2,
   notifications: 2,
   settings: 3,
+  hotspot: 2, // N°57-d — hub Hotspot : l'expérience (PUT /api/settings, rang 3) y est masquée pour le gérant, l'onglet Portail/Modèles (rang 2) reste accessible
+  security: 3, // N°57-d — mot de passe + 2FA (ex-onglet Avancé de la vue Paramètres, rang 3)
   team: 3,
   accounts: 3, // + vérification isPlatformAdmin côté vue
 };

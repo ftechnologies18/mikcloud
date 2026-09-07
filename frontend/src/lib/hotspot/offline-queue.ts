@@ -35,6 +35,28 @@ const VERSION = 1;
 
 let dbPromise: Promise<IDBDatabase | null> | null = null;
 
+// N°59 — persistance du stockage (navigator.storage.persist()).
+// Sans elle, le navigateur peut ÉVICTIONNER l'IndexedDB sous pression
+// disque (Eviction en LRU quand le quota global se resserre) et emporter
+// la file des ventes en attente — c'est-à-dire de l'argent réel. Avec elle,
+// le stockage de l'app est marqué durable : il n'entre plus dans le calcul
+// d'éviction (Chrome : accord automatique si PWA installée ou engagement
+// élevé ; sinon promesse false, sans UI ni rejet). Idempotent et
+// strictement silencieux : API absente (Safari < 15.2, vieux navigateurs)
+// ou refus du navigateur = simple no-op, l'UX ne change jamais.
+let persistRequested = false;
+
+export function ensureStoragePersisted(): void {
+  if (persistRequested || typeof navigator === "undefined") return;
+  persistRequested = true; // une seule tentative par session suffit
+  try {
+    const maybe: unknown = navigator.storage?.persist?.();
+    if (maybe instanceof Promise) maybe.catch(() => {}); // refus ≠ erreur
+  } catch {
+    /* API absente : dégradation douce */
+  }
+}
+
 function openDb(): Promise<IDBDatabase | null> {
   if (typeof indexedDB === "undefined") return Promise.resolve(null);
   if (!dbPromise) {
@@ -64,6 +86,9 @@ function store(db: IDBDatabase, mode: IDBTransactionMode): IDBObjectStore {
 
 /** Met la vente en file (remplace une entrée existante du même voucher). */
 export async function queueSale(entry: QueuedSale): Promise<void> {
+  // N°59 — au moment précis où des ventes (de l'argent) entrent en zone
+  // critique, on (re)demande la persistance du stockage.
+  ensureStoragePersisted();
   const db = await openDb();
   if (!db) return;
   await new Promise<void>((resolve) => {

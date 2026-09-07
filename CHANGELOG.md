@@ -5,6 +5,48 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-08 — N°59 : PWA « robustesse » — cache versionné par déploiement, stockage persistant, SW toujours frais
+
+### N°59 — Sécurise la durée de vie de la PWA Mode Vente (audit PWA, plan d'action 1/3 — P0)
+- **Constat (audit)** : quatre fragilités de long terme. (1) Le cache SW
+  `"mikcloud-v2"` était FIGÉ : `public/sw.js` ne changeait jamais entre
+  déploiements → jamais de byte-diff → jamais de ré-activation → le
+  Cache Storage grossissait sans borne (bundles `/_next/static/<hash>`
+  remplacés à chaque build, jamais purgés). (2) Sans
+  `navigator.storage.persist()`, le navigateur peut ÉVICTIONNER
+  l'IndexedDB sous pression disque — et emporter la file des ventes hors
+  ligne (de l'argent réel). (3) Chrome ne vérifie le SW qu'au plus
+  1×/24 h : un déploiement n'était visible au comptoir que le lendemain.
+  (4) iOS < 15.4 n'ouvre l'app installée en standalone que via la meta
+  historique `apple-mobile-web-app-capable`, que Next 16 n'émet plus
+  (seule la forme moderne `mobile-web-app-capable` est servie — observé
+  en production).
+- **SW versionné par déploiement** : `public/sw.js` (statique) est
+  remplacé par une ROUTE HANDLER `src/app/sw.js/route.ts` (`force-static`,
+  pré-rendue au build) qui génère le script avec le SHA du déploiement
+  (`VERCEL_GIT_COMMIT_SHA`) : chaque déploiement produit un sw.js
+  différent → byte-diff → réinstallation → l'`activate()` EXISTANT purge
+  les caches des versions précédentes (croissance bornée). Stratégies
+  inchangées à 100 % (jamais `/api`, navigation network-first →
+  offline.html, statiques cache-first — vérifié par diff local : seul
+  `const CACHE` change) ; `Cache-Control: no-cache, must-revalidate`
+  explicite sur la réponse.
+- **Stockage persistant** : `ensureStoragePersisted()` (offline-queue.ts)
+  — `navigator.storage.persist()` silencieux et idempotent, appelé au
+  register du SW ET à chaque mise en file d'une vente hors ligne (le
+  moment précis où les données deviennent critiques). API absente ou
+  refus du navigateur = no-op strict, l'UX ne change jamais.
+- **SW toujours frais** : `registration.update()` au retour de visibilité
+  et au retour du réseau (throttle 30 min — un update sans changement
+  n'est qu'un GET conditionnel) : un déploiement devient visible au
+  premier rallumage d'écran, pas le lendemain.
+- **iOS < 15.4** : meta `apple-mobile-web-app-capable` explicite dans le
+  layout (hisée dans le `<head>` par React 19) aux côtés de la forme
+  moderne émise par Next — redondance voulue, ignorée des navigateurs
+  récents.
+- **Frontend only** : aucun changement backend, aucune migration Neon,
+  CONTRACT-V2 inchangé.
+
 ## 2026-09-08 — N°60 : PWA « installation riche » — manifest complet + CTA « Installer » in-app
 
 ### N°60 — Transforme l'installation PWA en parcours first-class (audit PWA, plan d'action 2/3)

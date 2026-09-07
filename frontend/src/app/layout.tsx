@@ -76,6 +76,14 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
+        {/* N°59 — meta pour iOS < 15.4 : ces versions ne lisent que la
+         * forme historique (préfixe apple-) pour ouvrir l'app installée en
+         * standalone — Next 16 n'émet plus que la forme moderne
+         * `mobile-web-app-capable` (observé en production), d'où cette
+         * balise explicite. React 19 la hisse automatiquement dans le
+         * <head>. Redondance voulue : les navigateurs modernes
+         * l'ignorent sans conflit. */}
+        <meta name="apple-mobile-web-app-capable" content="yes" />
         {/* Premier enfant du body : exécuté pendant le parsing, donc avant
          * tout paint du contenu — la vitrine n'apparaît jamais en PWA. */}
         <script dangerouslySetInnerHTML={{ __html: PWA_BOOT_SCRIPT }} />

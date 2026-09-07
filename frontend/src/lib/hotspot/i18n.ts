@@ -962,6 +962,19 @@ const fr: Record<string, string> = {
   "resellers.rechargeSubmit": "Recharger",
   "resellers.recharging": "Rechargement…",
   "resellers.rechargedToast": "Crédit mis à jour",
+  // N°58 — régularisation du solde prépayé (remboursement au revendeur).
+  "resellers.refund": "Régulariser le solde",
+  "resellers.refundTitle": "Régulariser le solde",
+  "resellers.refundDesc": "{name} — solde à rembourser : {credit}",
+  "resellers.refundAmount": "Montant remboursé ({currency})",
+  "resellers.refundAll": "Tout rembourser",
+  "resellers.refundNote": "Note (optionnelle)",
+  "resellers.refundNotePlaceholder": "Remboursement espèces, Wave, Orange Money…",
+  "resellers.refundAfter": "Crédit après remboursement :",
+  "resellers.refundSubmit": "Rembourser",
+  "resellers.refunding": "Remboursement…",
+  "resellers.refundedToast": "Solde remboursé — crédit restant : {credit}",
+  "resellers.refundHint": "Une fois le solde à zéro (et le stock rapatrié), la suppression du revendeur devient possible.",
 
   // — routers —
   "routers.title": "Routeurs MikroTik",
@@ -3342,6 +3355,19 @@ const en: Record<string, string> = {
   "resellers.rechargeSubmit": "Top up",
   "resellers.recharging": "Topping up…",
   "resellers.rechargedToast": "Credit updated",
+  // N°58 — prepaid balance settlement (refund to the reseller).
+  "resellers.refund": "Settle the balance",
+  "resellers.refundTitle": "Settle the balance",
+  "resellers.refundDesc": "{name} — balance to refund: {credit}",
+  "resellers.refundAmount": "Amount refunded ({currency})",
+  "resellers.refundAll": "Refund all",
+  "resellers.refundNote": "Note (optional)",
+  "resellers.refundNotePlaceholder": "Cash refund, Wave, Orange Money…",
+  "resellers.refundAfter": "Credit after refund:",
+  "resellers.refundSubmit": "Refund",
+  "resellers.refunding": "Refunding…",
+  "resellers.refundedToast": "Balance refunded — remaining credit: {credit}",
+  "resellers.refundHint": "Once the balance is zero (and stock returned), the reseller can be deleted.",
 
   // — routers —
   "routers.title": "MikroTik routers",

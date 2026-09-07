@@ -5,6 +5,35 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-08 — N°58 : régulariser le solde d'un revendeur prépayé — le remboursement manquant
+
+### N°58 — Action « Régulariser le solde » : boucler la boucle de suppression d'un revendeur portefeuille chargé
+- **Constat** : le garde-fou V1 (audit revendeurs) refuse la suppression d'un
+  revendeur non soldé (409 « reseller_not_settled » : crédit restant, créance
+  dépôt-vente, stock en attente) — juste et immuable. Mais le backend sait
+  débiter un portefeuille (`POST /api/resellers/{id}/credit` accepte les
+  montants négatifs, contrôle « Crédit insuffisant », journalise une
+  Transaction + entrée d'activité « Débit de X FCFA ») alors que la console
+  ne propose AUCUN chemin d'écriture : le dialogue « Recharger » filtre les
+  montants ≤ 0. La seule issue était un appel API à la main — irréaliste
+  pour un gérant.
+- **Action « Régulariser le solde »** (menu ⋮ d'un revendeur **prépayé dont
+  le crédit > 0** + raccourci sur sa carte, miroir du bouton « Encaisser »
+  des cartes dépôt-vente) : dialogue pré-rempli au solde entier — le but est
+  de ramener le crédit à zéro (remboursement au revendeur), dernière étape
+  avant une suppression possible. Montant libre borné au solde (bouton
+  « Tout rembourser »), note optionnelle (défaut backend : « Débit manuel »),
+  aperçu « Crédit après remboursement », rappel du garde-fou dans le
+  dialogue. Appel : même endpoint `/credit` avec montant négatif — aucune
+  route nouvelle, aucun changement de contrat.
+- **Cohérence comptable conservée** : le flux passe par la Transaction
+  existante (type « credit », montant négatif — visible dans le journal du
+  bas de page avec le signe −) et l'entrée d'activité ; le toast final
+  affiche le crédit restant ; cache revendeurs + transactions invalidé.
+- **Frontend only** : aucun changement backend (l'endpoint est conforme au
+  CONTRACT-V2 depuis l'audit V1), Vercel seul — zéro déploiement Render,
+  aucune migration Neon.
+
 ## 2026-09-08 — N°57-e : l'Abonnement rejoint la zone Paramètres (7ᵉ section, ex /app/subscription)
 
 ### N°57-e — Déplacement de la page Abonnement dans la zone Paramètres (demande utilisateur)

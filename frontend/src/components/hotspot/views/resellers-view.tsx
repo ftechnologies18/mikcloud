@@ -5,6 +5,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Banknote,
   HandCoins,
   MoreVertical,
   Pencil,
@@ -107,6 +108,10 @@ export default function ResellersView() {
   // N°19 v2 — source du versement : cash au guichet ou compensation avec le
   // crédit prépayé (avance dormante héritée de l'ère prépayée).
   const [settleMethod, setSettleMethod] = useState<"cash" | "credit">("cash");
+  // N°58 — régularisation du solde prépayé (remboursement au revendeur).
+  const [refundTarget, setRefundTarget] = useState<Reseller | null>(null);
+  const [refundAmount, setRefundAmount] = useState("");
+  const [refundNote, setRefundNote] = useState("");
   // N°19 V2 — reçu du dernier versement (partageable WhatsApp).
   const [receipt, setReceipt] = useState<{ name: string; amount: number; debtAfter: number; creditAfter?: number; method: "cash" | "credit"; at: string } | null>(null);
 
@@ -208,6 +213,23 @@ export default function ResellersView() {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  // N°58 — régularisation du solde prépayé : débit du portefeuille du
+  // revendeur (montant négatif via POST /api/resellers/{id}/credit — le
+  // backend journalise une Transaction « credit » + entrée d'activité).
+  const refundMutation = useMutation({
+    mutationFn: (payload: { id: string; amount: number; note?: string }) =>
+      api<{ reseller: Reseller; transaction: Transaction }>(`/api/resellers/${payload.id}/credit`, {
+        method: "POST",
+        body: { amount: -Math.abs(payload.amount), note: payload.note || undefined },
+      }),
+    onSuccess: (res) => {
+      toast.success(tf("resellers.refundedToast", { credit: formatCurrency(res.reseller.credit, currency, lang) }));
+      setRefundTarget(null);
+      invalidateResellers();
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   // N°19 — encaissement d'un versement (dépôt-vente) ; v2 : method=credit
   // compense la dette avec le crédit prépayé (aucun cash au guichet).
   const settleMutation = useMutation({
@@ -270,6 +292,15 @@ export default function ResellersView() {
     setSettleMethod("cash");
     setReceipt(null);
     setSettleTarget(reseller);
+  };
+
+  // N°58 — pré-remplit la régularisation avec le solde entier : le but est
+  // de ramener le crédit à zéro (remboursement au revendeur), dernière
+  // étape avant une suppression possible (garde-fou V1 du backend).
+  const openRefund = (reseller: Reseller) => {
+    setRefundAmount(String(reseller.credit));
+    setRefundNote("");
+    setRefundTarget(reseller);
   };
 
   // N°19 V2 — reçu de versement : partage WhatsApp ou presse-papiers.
@@ -377,6 +408,20 @@ export default function ResellersView() {
     settleMutation.mutate({ id: settleTarget.id, amount: Math.round(parsedSettle), note: settleNote.trim() || undefined, method: settleMethod });
   };
 
+  // N°58 — la régularisation est bornée par le solde disponible (un débit
+  // au-delà serait refusé par le backend : « Crédit insuffisant »).
+  const parsedRefund = Number(refundAmount);
+  const refundValid =
+    Number.isFinite(parsedRefund) &&
+    parsedRefund > 0 &&
+    !!refundTarget &&
+    Math.round(parsedRefund) <= refundTarget.credit;
+
+  const submitRefund = () => {
+    if (!refundTarget || !refundValid) return;
+    refundMutation.mutate({ id: refundTarget.id, amount: Math.round(parsedRefund), note: refundNote.trim() || undefined });
+  };
+
   return (
     <div className="space-y-4 sm:space-y-6">
       <PageHeader
@@ -448,10 +493,20 @@ export default function ResellersView() {
                         {t("resellers.settle")}
                       </DropdownMenuItem>
                     ) : (
-                      <DropdownMenuItem onClick={() => openCredit(reseller)}>
-                        <Wallet className="size-4" />
-                        {t("resellers.recharge")}
-                      </DropdownMenuItem>
+                      <>
+                        <DropdownMenuItem onClick={() => openCredit(reseller)}>
+                          <Wallet className="size-4" />
+                          {t("resellers.recharge")}
+                        </DropdownMenuItem>
+                        {/* N°58 — prépayé avec solde : régulariser (rembourser)
+                            pour débloquer la suppression (garde-fou V1). */}
+                        {reseller.credit > 0 && (
+                          <DropdownMenuItem onClick={() => openRefund(reseller)}>
+                            <Banknote className="size-4" />
+                            {t("resellers.refund")}
+                          </DropdownMenuItem>
+                        )}
+                      </>
                     )}
                     <DropdownMenuItem onClick={() => openEdit(reseller)}>
                       <Pencil className="size-4" />
@@ -491,7 +546,17 @@ export default function ResellersView() {
                   </div>
                 ) : (
                   <div className="rounded-lg border bg-muted/30 p-3">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">{t("resellers.creditAvailable")}</p>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs uppercase tracking-wide text-muted-foreground">{t("resellers.creditAvailable")}</p>
+                      {/* N°58 — raccourci carte : régulariser le solde (miroir
+                          du bouton « Encaisser » des cartes dépôt-vente). */}
+                      {reseller.credit > 0 && (
+                        <Button variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => openRefund(reseller)}>
+                          <Banknote className="size-3.5" />
+                          {t("resellers.refundSubmit")}
+                        </Button>
+                      )}
+                    </div>
                     <p className={cn("mt-1 text-xl font-semibold tabular-nums", creditClass(reseller.credit))}>
                       {formatCurrency(reseller.credit, currency, lang)}
                     </p>
@@ -935,6 +1000,71 @@ export default function ResellersView() {
                 </Button>
               </>
             )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* N°58 — Régularisation du solde prépayé (remboursement) */}
+      <Dialog open={!!refundTarget} onOpenChange={(open) => !open && setRefundTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("resellers.refundTitle")}</DialogTitle>
+            <DialogDescription>
+              {refundTarget
+                ? tf("resellers.refundDesc", {
+                    name: refundTarget.name,
+                    credit: formatCurrency(refundTarget.credit, currency, lang),
+                  })
+                : null}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4">
+            <div className="grid gap-2">
+              <Label htmlFor="refund-amount">{tf("resellers.refundAmount", { currency })}</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="refund-amount"
+                  type="number"
+                  min={1}
+                  value={refundAmount}
+                  onChange={(event) => setRefundAmount(event.target.value)}
+                  placeholder="5000"
+                />
+                {refundTarget && refundTarget.credit > 0 && (
+                  <Button type="button" variant="outline" onClick={() => setRefundAmount(String(refundTarget.credit))}>
+                    {t("resellers.refundAll")}
+                  </Button>
+                )}
+              </div>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="refund-note">{t("resellers.refundNote")}</Label>
+              <Input
+                id="refund-note"
+                value={refundNote}
+                onChange={(event) => setRefundNote(event.target.value)}
+                placeholder={t("resellers.refundNotePlaceholder")}
+              />
+            </div>
+            {refundTarget && refundValid && (
+              <p className="rounded-lg border bg-muted/40 px-3 py-2 text-sm">
+                {t("resellers.refundAfter")}{" "}
+                <span className="font-semibold text-primary">
+                  {formatCurrency(Math.max(refundTarget.credit - Math.round(parsedRefund), 0), currency, lang)}
+                </span>
+              </p>
+            )}
+            {/* N°58 — rappel du garde-fou : le décompte final débloque la
+                suppression (le 409 « reseller_not_settled » cite le crédit). */}
+            <p className="text-xs text-muted-foreground">{t("resellers.refundHint")}</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRefundTarget(null)}>
+              {t("common.cancel")}
+            </Button>
+            <Button onClick={submitRefund} disabled={!refundValid || refundMutation.isPending}>
+              {refundMutation.isPending ? t("resellers.refunding") : t("resellers.refundSubmit")}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

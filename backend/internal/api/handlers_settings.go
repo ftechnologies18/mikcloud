@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"mikcloud/hotspot-api/internal/model"
 )
 
 func (a *API) handleSettingsGet(w http.ResponseWriter, r *http.Request) {
@@ -45,11 +47,16 @@ type tenantPut struct {
 }
 
 // portalPromoReq — une ligne de vitrine « hospitalité » (N°55).
+// N°56 : ID (posé par le serveur au premier enregistrement, conservé ensuite —
+// c'est la clé des compteurs analytics) et Link (URL https optionnelle qui
+// rend la carte cliquable sur le portail ; son ouverture est comptée « click »).
 type portalPromoReq struct {
+	ID         string `json:"id"`
 	Title      string `json:"title"`
 	Desc       string `json:"desc"`
 	ImageURL   string `json:"imageUrl"`
 	PriceLabel string `json:"priceLabel"`
+	Link       string `json:"link"`
 }
 
 // portalSocialReq — un lien réseau social (N°55).
@@ -193,10 +200,12 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 			return "", fmt.Errorf("au plus 6 promos")
 		}
 		type promo struct {
+			ID         string `json:"id,omitempty"`
 			Title      string `json:"title"`
-			Desc       string `json:"desc"`
-			ImageURL   string `json:"imageUrl"`
-			PriceLabel string `json:"priceLabel"`
+			Desc       string `json:"desc,omitempty"`
+			ImageURL   string `json:"imageUrl,omitempty"`
+			PriceLabel string `json:"priceLabel,omitempty"`
+			Link       string `json:"link,omitempty"`
 		}
 		out := make([]promo, 0, len(list))
 		for _, it := range list {
@@ -219,7 +228,26 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 			if len(price) > 30 {
 				return "", fmt.Errorf("prix trop long (30 caractères max)")
 			}
-			out = append(out, promo{Title: title, Desc: desc, ImageURL: img, PriceLabel: price})
+			// N°56 — ID : conservé tel quel s'il est déjà bien formé
+			// (le round-trip console GET→PUT ne doit JAMAIS
+			// régénérer les ids, sinon les compteurs analytics
+			// repartiraient de zéro à chaque enregistrement) ; sinon
+			// un id aléatoire est posé (premier enregistrement d'une
+			// ligne, y compris les lignes envoyées sans id par un
+			// appelant API). Link : https only, comme l'image (le
+			// portail captive est mixte-content-free).
+			id := strings.TrimSpace(it.ID)
+			if id != "" && !promoIDValid(id) {
+				return "", fmt.Errorf("id de promo invalide")
+			}
+			if id == "" {
+				id = model.NewID("p")
+			}
+			link := strings.TrimSpace(it.Link)
+			if link != "" && (!strings.HasPrefix(link, "https://") || len(link) > 300) {
+				return "", fmt.Errorf("lien de promo invalide (https://, 300 caractères max)")
+			}
+			out = append(out, promo{ID: id, Title: title, Desc: desc, ImageURL: img, PriceLabel: price, Link: link})
 		}
 		if len(out) == 0 {
 			return "", nil // liste vidée = promos retirées

@@ -18,11 +18,14 @@ import {
   BadgeCheck,
   Building2,
   CalendarClock,
+  Eye,
   Globe,
   ImagePlus,
   Image as ImageIcon,
   Images,
   Languages,
+  Link as LinkIcon,
+  MousePointerClick,
   Router as RouterIcon,
   ShieldCheck,
   Store,
@@ -34,7 +37,7 @@ import { toast } from "sonner";
 
 import { api, apiUpload, updateSettings } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
-import type { AppSettings, ExpiryPolicyMode, PortalPromo, PortalSocial } from "@/lib/hotspot/types";
+import type { AppSettings, ExpiryPolicyMode, PortalPromo, PortalSocial, PromoStats } from "@/lib/hotspot/types";
 import { PageHeader } from "@/components/hotspot/page-header";
 import { SecurityCard, TwoFactorCard } from "@/components/hotspot/parts/security-cards";
 import { SETTINGS_QUERY_KEY, useSettings } from "@/components/hotspot/parts/sd-currency";
@@ -965,6 +968,17 @@ function PortalHospitalityCard({ settings }: { settings: AppSettings }) {
   });
   const [uploadingIdx, setUploadingIdx] = useState<number | null>(null);
 
+  // N°56 — analytics de la vitrine : impressions/clics par promo. Chargé
+  // quand la carte est ouverte en mode hospitalité ; rafraîchi après chaque
+  // enregistrement (invalidation SETTINGS_QUERY_KEY + refetch à l'ouverture).
+  const statsQuery = useQuery({
+    queryKey: ["promo-stats"],
+    queryFn: () => api<PromoStats>("/api/promos/stats"),
+    enabled: style === "hospitality" && promos.length > 0,
+    staleTime: 30_000,
+  });
+  const stats = statsQuery.data;
+
   const saveMutation = useMutation({
     mutationFn: () =>
       api<AppSettings>("/api/settings", {
@@ -1159,9 +1173,67 @@ function PortalHospitalityCard({ settings }: { settings: AppSettings }) {
                       setPromos((list) => list.map((it, i) => (i === idx ? { ...it, priceLabel: event.target.value } : it)))
                     }
                   />
+                  <div className="relative">
+                    <LinkIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      className="h-9 pl-8"
+                      maxLength={300}
+                      inputMode="url"
+                      placeholder={t("settings.hosp.promoLink")}
+                      value={promo.link ?? ""}
+                      onChange={(event) =>
+                        setPromos((list) => list.map((it, i) => (i === idx ? { ...it, link: event.target.value } : it)))
+                      }
+                    />
+                  </div>
                 </div>
               ))}
             </div>
+
+            {/* N°56 — analytics : « votre menu vu N fois cette semaine ». Les
+                compteurs démarrent dès les premières connexions au portail. */}
+            {promos.length > 0 && (
+              <div className="grid gap-2 rounded-lg border bg-muted/30 p-3">
+                <div className="flex items-center gap-2">
+                  <Eye className="size-4 text-primary" />
+                  <span className="text-sm font-semibold">{t("settings.hosp.statsTitle")}</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="ml-auto h-8 px-2 text-xs"
+                    disabled={statsQuery.isFetching}
+                    onClick={() => void statsQuery.refetch()}
+                  >
+                    {statsQuery.isFetching ? t("common.refreshing") : t("common.refresh")}
+                  </Button>
+                </div>
+                {stats && (
+                  <p className="text-sm text-primary font-medium">
+                    {t("settings.hosp.statsHeadline").replace("{n}", String(stats.totals.impression.week))}
+                  </p>
+                )}
+                {stats && stats.totals.impression.week === 0 && (
+                  <p className="text-xs text-muted-foreground">{t("settings.hosp.statsEmpty")}</p>
+                )}
+                {stats?.promos.map((p) => (
+                  <div key={p.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                    <span className="font-medium text-foreground min-w-0 truncate max-w-full sm:max-w-[16rem]">{p.title || p.id}</span>
+                    <span className="inline-flex items-center gap-1 text-muted-foreground">
+                      <Eye className="size-3" />
+                      {t("settings.hosp.statsViews").replace("{w}", String(p.impressions.week)).replace("{t}", String(p.impressions.total))}
+                    </span>
+                    {p.clicks.week > 0 && (
+                      <span className="inline-flex items-center gap-1 text-muted-foreground">
+                        <MousePointerClick className="size-3" />
+                        {t("settings.hosp.statsClicks").replace("{w}", String(p.clicks.week)).replace("{t}", String(p.clicks.total))}
+                      </span>
+                    )}
+                  </div>
+                ))}
+                <p className="text-xs text-muted-foreground">{t("settings.hosp.statsHint")}</p>
+              </div>
+            )}
 
             <div className="grid gap-2">
               <div className="flex items-center justify-between">

@@ -1151,6 +1151,56 @@ Migration boot idempotente : `settings.portal_style`, `portal_welcome`,
   injection vitrine (bienvenue, promos avec images R2, socials) ; commercial =
   retrait des injections et dé-masquage (réversible, idempotent).
 
+## N°56 — Analytics du portail (impressions / clics par promo)
+
+### Modèle
+```go
+Tenant.PortalKey  string // clé publique du portail (16 hex, générée ensureSettings)
+model.PromoEvent  // {ID, AccountID, PromoID, Kind, ClientKey, Day, CreatedAt}
+db.PromoEvents    // []PromoEvent — journal borné (rétention 90 j, ≤ 12 000 lignes)
+```
+Migration boot idempotente : table `promo_events` (PK `id`, index
+`account_id,day` + `account_id,promo_id`) + colonne `settings.portal_key`.
+
+### Endpoints
+- `POST /api/portal/track` — **PUBLIC** (whitelist `authMiddleware` exacte +
+  CORS ouverte dans `corsMiddleware`, pattern portail WiFi). Corps
+  `{key, promoId, kind: impression|click, clientKey?}`. Réponse **204 dans
+  tous les cas** (succès, doublon, clé inconnue, promo absente, quota) :
+  aucun oracle. Résolution du compte par `tenant.portalKey` (non secrète,
+  aucun droit de lecture). `clientKey` = MAC normalisée (portail) ou repli
+  `ip:<IP>` serveur.
+- `GET /api/promos/stats` — console (`requireRole(2)`) : `{today, weekFrom,
+  promos: [{id,title,impressions:{day,week,total},clicks:{day,week,total}}],
+  totals}` — semaine = 7 jours glissants UTC ; lecture mémoire sous verrou.
+
+### Règles anti-gonflement (contractuelles)
+1. **Dédup** : ID d'événement DÉTERMINISTE
+   `e + sha256(acc|promo|kind|clientKey|day)[:20]` — un appareil = une ligne
+   par promo/jour/type ; re-POST = no-op.
+2. **Existence** : seuls les `promoId` présents dans `tenant.portalPromos`
+   (id posé `p…` ou déterministe `h…` — même règle que
+   `portalHospitality`) sont acceptés.
+3. **Quota IP** : limiter dédié NAT-friendly 300/10 min + 3000/24 h.
+4. **Plafonds** : 3 000 événements/compte/jour ; rétention 90 jours ;
+   journal ≤ 12 000 lignes (`prunePromoEvents`, suppressions répercutées en
+   Neon par la diff syncTable).
+
+### IDs de promos (analytics)
+- `PUT /api/settings` : id aléatoire `p` + hex posé au 1er enregistrement,
+  **conservé** si bien formé (`promoIDValid`, `^[ph][0-9a-f]{7,12}$`) — le
+  round-trip console ne régénère JAMAIS (sinon compteurs remis à zéro).
+  Id malformé → 400.
+- Lignes héritées (sans id, pré-N°56) : id déterministe
+  `h + sha256(title|desc|img|price)[:8]` calculé à la LECTURE
+  (`portalHospitality`, `promoIDsOf`) — tracking immédiat sans ré-save.
+- Nouveau champ promo **`link`** (https ≤ 300) : carte cliquable
+  (`a.hosp-card`, target _blank) ; ouverture = événement `click`.
+- Portail : cartes `data-promo-id`, `mikTrack()` fetch keepalive silencieux,
+  `mikWatchPromos()` après rendu, dédup client `mikTracked`, `clientKey` =
+  `clientMac`. Console : champ Lien par promo + panneau « Analyse de la
+  vitrine » (headline semaine + vues/clics par ligne).
+
 ## PLAN DE FICHIERS
 
 ### Backend (Go)

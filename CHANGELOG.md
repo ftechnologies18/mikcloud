@@ -5,6 +5,79 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-07 — N°56 : analytics du portail — « votre menu vu 480 fois cette semaine »
+
+### N°56 — impressions / clics par promo : l'argument de vente chiffré de l'hospitalité
+- **Constat** : la vitrine N°55 affiche les produits de l'établissement, mais
+  le gérant ne sait pas si elle SERT à quelque chose. L'argument commercial
+  décisif (« votre menu a été vu 480 fois cette semaine ») demande deux
+  compteurs honnêtes : impressions (carte visible sur le portail) et clics
+  (ouverture du lien). C'est aussi l'outil de pilotage : quelle ligne de
+  vitrine attire, quelle image convertit.
+- **Deux endpoints** :
+  - `POST /api/portal/track` — PUBLIC (pré-auth du hotspot, whitelist
+    middleware + CORS ouverte, même statut que le portail WiFi N°28/35-c).
+    La page dépose `{key, promoId, kind: impression|click, clientKey}` ;
+    résolution du compte par la **clé publique du portail**
+    (`tenant.portalKey`, 16 hex générée par `ensureSettings`, embarquée dans
+    le bloc config — NON secrète par design : elle n'ouvre AUCUN droit de
+    lecture). Réponse 204 dans TOUS les cas (aucun oracle).
+  - `GET /api/promos/stats` — console (JWT, manager et plus) : par promo
+    (jour / 7 jours glissants / total) + totaux, lu en mémoire (zéro requête
+    Neon sur le chemin chaud).
+- **Garde-fous anti-gonflement** (la metric doit rester HONNÊTE) :
+  1. dédup par **ID d'événement déterministe** `sha256(compte|promo|type|appareil|jour)`
+     — un même appareil ne compte qu'UNE fois par promo et par jour ; le
+     refresh-spam ne gonfle rien et le re-POST est un no-op (upsert Neon
+     identique, diff syncTable le voit inchangé) ;
+  2. seuls les `promoId` EXISTANTS dans la vitrine du compte sont acceptés ;
+  3. limiter IP dédié NAT-friendly (300/10 min + 3000/24 h — pattern N°50) ;
+  4. plafonds 3 000 événements/compte/jour, rétention 90 jours, journal
+     mémoire ≤ 12 000 lignes (`prunePromoEvents` — les suppressions sont
+     répercutées en Neon par la diff).
+- **IDs de promos stables** : `PUT /api/settings` pose un id aléatoire
+  (`p` + hex) à la première enregistrement et le CONSERVE au round-trip
+  console (le GET→PUT ne doit jamais régénérer — sinon les compteurs
+  repartiraient de zéro). Les lignes héritées d'avant N°56 (jamais
+  ré-enregistrées) reçoivent un id DÉTERMINISTE dérivé du contenu (`h` +
+  hash) côté lecture (`portalHospitality` / `promoIDsOf`) : le portail peut
+  tracker sans attendre un ré-enregistrement.
+- **Nouveau champ promo `link`** (https ≤ 300, validé) : la carte devient
+  cliquable (target `_blank`) quand un lien existe — menu PDF, commande
+  WhatsApp, page Facebook… — et son ouverture est comptée « click ». Sans
+  lien, la carte reste informative (impressions seules).
+- **Portail (`login.html`)** : cartes `data-promo-id`, ancre `a.hosp-card`
+  (CSS dédié), `mikTrack()` fire-and-forget TOTALEMENT silencieux
+  (`fetch keepalive`, catch-all — l'analytics ne doit jamais gêner la
+  connexion), `mikWatchPromos()` après rendu de la vitrine (dédup client
+  `mikTracked`), `onclick` inline (pattern `onerror` existant — compat vieux
+  WebViews). `clientKey` = MAC du portail (`clientMac`, même identité que le
+  claim N°50), repli IP serveur.
+- **Console** : carte « Portail : vitrine de l'établissement » enrichie —
+  champ **Lien** par promo + panneau **Analyse de la vitrine** (« Vos
+  produits ont été vu N fois cette semaine », vues/clics par ligne, bouton
+  Actualiser, définitions impression/clic). i18n FR/EN (7 clés).
+- **Persistance** : table `promo_events` (DDL idempotent boot : PK id + 2
+  index compte/promo) + colonne `settings.portal_key` — pattern maison
+  (mémoire moteur, Neon durable, diff différentielle).
+- **🔥 Correctif incident N°55 (découvert pendant N°56)** : l'UPSERT
+  `syncSettings` comptait 31 colonnes pour 30 expressions VALUES — le
+  pattern maison (id et account_id partagent `$1`) avait été perdu lors de
+  l'ajout des colonnes hospitalité. Conséquence : CHAQUE `Save()` échouait
+  en production depuis le déploiement N°55 (parse error PostgreSQL →
+  rollback TOTAL de la transaction de synchro → Neon ne recevait plus
+  AUCUNE écriture, tout tournant sur la mémoire — régression silencieuse,
+  les réponses API restant correctes). Correctif : `VALUES ($1, $1, $2…$31)`
+  (32 colonnes / 32 expressions / 31 paramètres) + test statique
+  `TestSyncSettingsSQLConsistency` qui verrouille l'invariant
+  colonnes = expressions, id/account_id partagés, SET complet — toute
+  récidive au prochain ajout de colonne sera attrapée par la CI.
+- **Tests** : `TestPromoTrackDedupeAndStats` (dédup, dépôts invalides
+  silencieux, stats, 401 sans token), `TestPromoStatsBuckets`
+  (jour/semaine/total, orphelin exclu), `TestPromoIDsStableOnRoundTrip`
+  (ids stables, lien http refusé, id falsifié refusé). Suite backend verte.
+ (N°56-2 — analytics du portail : vitrine trackée (impressions/clics), cartes cliquables et analyse dans la console)
+
 ## 2026-09-07 — N°54 : console WiFi — plafonds journaliers renommés + compteur du jour
 
 ### N°54 — plus jamais l'ambiguïté des plafonds : chaque champ dit QUI il limite, et le budget restant est visible
@@ -27,7 +100,6 @@ la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 - Contexte : correction immédiate des plafonds du site freezone faite en
   console le même soir (par téléphone 10 → 1, budget 100 → 10, preuve
   `429 site_cap`), sans changement de code.
-
 ## 2026-09-06 — N°55 : mode hospitalité du portail — la vitrine de l'établissement
 
 ### N°55 — MikCloud ne présuppose plus que l'établissement VEND : le portail devient SA vitrine

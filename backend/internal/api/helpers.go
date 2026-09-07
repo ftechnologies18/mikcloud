@@ -3,6 +3,8 @@
 package api
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -231,6 +233,14 @@ func normalizeHotspotLoginUrl(raw string) (string, bool) {
 // (à appeler sous verrou ; la création est persistée par le Save de l'appelant).
 func ensureSettings(db *model.DB, acc string) model.Settings {
 	if s, ok := db.SettingsByAccount[acc]; ok {
+		// N°56 — la clé publique du portail est générée au premier accès :
+		// elle vit ensuite dans settings (colone portal_key) et ne change plus.
+		// La persistance suit le Save suivant (check-in agent, mutation console)
+		// — le portail ne tracke que si la clé est déjà posée et cohérente.
+		if s.Tenant.PortalKey == "" {
+			s.Tenant.PortalKey = newPortalKey()
+			db.SettingsByAccount[acc] = s
+		}
 		return s
 	}
 	name := "MikCloud"
@@ -244,6 +254,7 @@ func ensureSettings(db *model.DB, acc string) model.Settings {
 		Tenant: model.Tenant{
 			Name: name, Currency: "XOF", Timezone: "Africa/Abidjan",
 			ExpiryPolicyMode: "keep", ExpiryPolicyAfterDays: 30,
+			PortalKey: newPortalKey(), // N°56 — analytics du portail hospitalité
 		},
 		Plan: model.Plan{Name: "Essai", MaxRouters: "1", MaxUsers: "Illimité"},
 	}
@@ -252,6 +263,18 @@ func ensureSettings(db *model.DB, acc string) model.Settings {
 	}
 	db.SettingsByAccount[acc] = s
 	return s
+}
+
+// newPortalKey — clé publique du portail (N°56) : 16 hex minuscules. NON
+// secrète par design (embarquée dans la config de chaque portail) : elle
+// n'ouvre aucun droit de lecture, seulement le dépôt d'événements analytics
+// bornés (dédup + quotas cf. handlers_promo_events.go).
+func newPortalKey() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return hex.EncodeToString([]byte(model.NowISO()))[:16]
+	}
+	return hex.EncodeToString(b)
 }
 
 // ---------------------------------------------------------------------------

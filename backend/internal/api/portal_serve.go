@@ -116,14 +116,26 @@ func portalHospitality(t model.Tenant) (style, welcome string, promos []hotpage.
 	style, welcome = t.PortalStyle, t.PortalWelcome
 	if t.PortalPromos != "" {
 		var raw []struct {
+			ID         string `json:"id"`
 			Title      string `json:"title"`
 			Desc       string `json:"desc"`
 			ImageURL   string `json:"imageUrl"`
 			PriceLabel string `json:"priceLabel"`
+			Link       string `json:"link"`
 		}
 		if json.Unmarshal([]byte(t.PortalPromos), &raw) == nil {
 			for _, it := range raw {
-				promos = append(promos, hotpage.PortalPromo{Title: it.Title, Desc: it.Desc, ImageURL: it.ImageURL, PriceLabel: it.PriceLabel})
+				// N°56 — chaque promo part avec un ID : celui posé à
+				// l'enregistrement console (stable), ou à défaut un id
+				// déterministe dérivé du contenu (lignes héritées
+				// d'avant N°56, jamais ré-enregistrées). Sans id, la
+				// carte resterait hors analytics — le gérant perdrait
+				// ses compteurs jusqu'au prochain enregistrement.
+				id := it.ID
+				if id == "" {
+					id = promoFallbackID(it.Title, it.Desc, it.ImageURL, it.PriceLabel)
+				}
+				promos = append(promos, hotpage.PortalPromo{ID: id, Title: it.Title, Desc: it.Desc, ImageURL: it.ImageURL, PriceLabel: it.PriceLabel, Link: it.Link})
 			}
 		}
 	}
@@ -172,6 +184,7 @@ func buildPortalConfig(db *model.DB, router *model.Router, r *http.Request) hotp
 		JoinEnabled: settings.Tenant.JoinButtonEnabled(),
 	}
 	cfg.Style, cfg.Welcome, cfg.Promos, cfg.Socials = portalHospitality(settings.Tenant) // N°55
+	cfg.PortalKey = settings.Tenant.PortalKey                                            // N°56 — analytics pré-auth
 	// WifiSlug — 1er site WiFi actif lié à ce routeur.
 	for i := range db.WifiSites {
 		s := &db.WifiSites[i]
@@ -280,6 +293,7 @@ func buildPortalConfigForSite(db *model.DB, site *model.WifiSite, router *model.
 		Active:      site.Active, // N°51 — état réel (peut être en pause)
 	}
 	cfg.Style, cfg.Welcome, cfg.Promos, cfg.Socials = portalHospitality(settings.Tenant) // N°55
+	cfg.PortalKey = settings.Tenant.PortalKey                                            // N°56 — analytics pré-auth
 	if origin := publicFrontendURL(r); origin != "" {
 		cfg.WifiURL = origin + "/wifi/" + site.Slug
 	}

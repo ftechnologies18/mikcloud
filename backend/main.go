@@ -157,6 +157,11 @@ func corsMiddleware(next http.Handler) http.Handler {
 		publicWifiCORS := strings.HasPrefix(r.URL.Path, "/api/wifi/site/") &&
 			!strings.HasSuffix(r.URL.Path, "/sites") &&
 			!strings.HasSuffix(r.URL.Path, "/guests")
+		// N°56 — track analytics du portail : même logique que le
+		// portail WiFi — l'origine de la page (le routeur) est
+		// imprévisible, l'endpoint est public par design (clé
+		// publique + dédup + quotas), CORS ouverte à toute origine.
+		publicPromoCORS := r.URL.Path == "/api/portal/track"
 		switch {
 		case open:
 			w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -164,6 +169,9 @@ func corsMiddleware(next http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Add("Vary", "Origin")
 		case origin != "" && publicWifiCORS:
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Add("Vary", "Origin")
+		case origin != "" && publicPromoCORS:
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.Header().Add("Vary", "Origin")
 		}

@@ -26,12 +26,16 @@ type API struct {
 	// journaliers (téléphone/MAC/site) : un attaquant qui tourne sur des
 	// numéros falsifiés est coupé AVANT toute création de voucher.
 	wifiClaim *signupLimiter
-	vitals    *telemetry.Collector // B2 — Core Web Vitals (nil = collecte désactivée)
+	// N°56 — quota du track analytics du portail (public) : bornes larges
+	// car NAT-friendly (une page = ≤ 12 événements ; un établissement
+	// entier partage une IP) — 300/10 min + 3000/24 h par IP.
+	portalTrack *signupLimiter
+	vitals      *telemetry.Collector // B2 — Core Web Vitals (nil = collecte désactivée)
 }
 
 // New construit l'API.
 func New(s *store.Store, jwtSecret string) *API {
-	return &API{store: s, secret: jwtSecret, gws: map[string]routeros.Gateway{}, pinLock: newPinLimiter(), signup: newSignupLimiter(), join: newSignupLimiter(), wifiClaim: newSignupLimiterLimits(20, 100)}
+	return &API{store: s, secret: jwtSecret, gws: map[string]routeros.Gateway{}, pinLock: newPinLimiter(), signup: newSignupLimiter(), join: newSignupLimiter(), wifiClaim: newSignupLimiterLimits(20, 100), portalTrack: newSignupLimiterLimits(300, 3000)}
 }
 
 // Handler — mux complet, protégé par le middleware d'authentification.
@@ -296,6 +300,14 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/wifi/site/{slug}", a.handleWifiSiteInfo)
 	mux.HandleFunc("POST /api/wifi/site/{slug}/claim", a.handleWifiClaim)
 	mux.HandleFunc("GET /api/wifi/site/{slug}/status", a.handleWifiStatus)
+	// N°56 — analytics du portail hospitalité : dépôt PUBLIC des
+	// événements impressions/clics (la page du portail est pré-auth ;
+	// résolution de compte par la clé publique portalKey, dédup + quotas
+	// serveur cf. handlers_promo_events.go) et lecture CONSOLE des
+	// agrégats (« votre menu vu 480 fois cette semaine »).
+	mux.HandleFunc("POST /api/portal/track", a.handlePromoTrack)
+	mux.HandleFunc("GET /api/promos/stats", a.requireRole(2, a.handlePromoStats))
+
 	// N°35-c — config LIVE du portail captif (fetch hybride cloud/local).
 	// Public (pas de JWT, pas de token agent) — appelé par login.html au
 	// chargement. CORS ouverte à toute origine (cf. corsMiddleware).

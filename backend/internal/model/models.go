@@ -477,6 +477,14 @@ type Tenant struct {
 	PortalPromos string `json:"portalPromos,omitempty"`
 	// Liens réseaux sociaux — JSON [{label,url}] ≤ 4 (WhatsApp, Facebook…).
 	PortalSocials string `json:"portalSocials,omitempty"`
+	// N°56 — clé publique du portail (16 hex, générée une fois par compte) :
+	// identifiant NON secret embarqué dans la config du portail captif
+	// (bloc mikcloud-config, visible de chaque invité par design) qui
+	// permet au track analytics (POST /api/portal/track) de résoudre le
+	// compte SANS authentification (pré-auth du hotspot). Elle n'ouvre
+	// AUCUN droit de lecture : uniquement le dépôt d'événements
+	// impressions/clics, dédupliqués et bornés côté serveur.
+	PortalKey string `json:"portalKey,omitempty"`
 	// P0 (audit Mikhmon) — F5 : politique de nettoyage des expirés.
 	ExpiryPolicyMode      string `json:"expiryPolicyMode"`      // "keep" (défaut) | "remove"
 	ExpiryPolicyAfterDays int    `json:"expiryPolicyAfterDays"` // défaut 30
@@ -1011,6 +1019,27 @@ type WifiGuest struct {
 	IP  string `json:"ip,omitempty"`
 }
 
+// PromoEvent — N°56 : un événement analytics du portail captif (mode
+// hospitalité). Deux seuls types : "impression" (la carte promo est devenue
+// visible à l'écran) et "click" (l'invité a ouvert le lien de la carte).
+//
+// L'ID est DÉTERMINISTE (hash de compte|promo|type|appareil|jour) : un même
+// appareil ne compte qu'UNE fois par promo et par jour — re-POSTer un
+// événement identique est un no-op idempotent (l'upsert Neon écrase la même
+// ligne, la diff syncTable la voit inchangée). C'est le garde-fou principal
+// contre le gonflement des compteurs (refresh-spam d'un invité) : la metric
+// « vu 480 fois cette semaine » compte des VUES-APPAREIL-JOUR, honnêtes et
+// stables, pas des rafraîchissements.
+type PromoEvent struct {
+	ID        string `json:"id"` // hash déterministe (voir ci-dessus)
+	AccountID string `json:"accountId"`
+	PromoID   string `json:"promoId"`   // id de la ligne de vitrine (stable)
+	Kind      string `json:"kind"`      // "impression" | "click"
+	ClientKey string `json:"clientKey"` // MAC normalisée ou "ip:x.x.x.x"
+	Day       string `json:"day"`       // jour UTC "2006-01-02" (fenêtre de dédup)
+	CreatedAt string `json:"createdAt"` // première occurrence (RFC3339)
+}
+
 // NormalizeWifiSlug — normalise un nom d'établissement en slug public
 // (minuscules, espaces/ponctuation → tiret, trim des tirets, max 48 chars).
 // Renvoie "" si aucun caractère exploitable.
@@ -1162,6 +1191,10 @@ type DB struct {
 	// N°28 — WiFi jetable : sites publics + registre marketing visiteurs.
 	WifiSites  []WifiSite  `json:"wifiSites"`
 	WifiGuests []WifiGuest `json:"wifiGuests"`
+	// N°56 — analytics du portail hospitalité (impressions/clics par promo).
+	// Journal borné : déduplication par (compte, promo, type, appareil, jour)
+	// + rétention 90 jours + plafond mémoire (voir prunePromoEvents).
+	PromoEvents []PromoEvent `json:"promoEvents"`
 	// Abonnement récurrent par carte (Stripe via GeniusPay) — prélèvements
 	// automatiques, synchronisés avec l'API abonnements GeniusPay.
 	GeniusPaySubs []GeniusPaySub `json:"geniuspaySubs"`

@@ -5,6 +5,42 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-08 — N°62 : Inscription publique /join simplifiée et interactive
+
+### N°62 — 4 champs au lieu de 6, un formulaire qui réagit à chaque frappe (public /join/[token])
+
+- **Simplification demandée** : les champs **« Message (facultatif) »** et
+  **« Confirmer le mot de passe »** sont supprimés. Le contrat backend
+  n'exigeait ni l'un ni l'autre (le message y a toujours été optionnel, la
+  confirmation n'existait que côté client) — le POST n'envoie plus la clé
+  `message` : **zéro changement backend**, CONTRACT inchangé. Le nombre
+  d'interactions demandées au visiteur du QR code passe de 6 champs à 4.
+- **Compensation de la confirmation supprimée** (anti-coquille) :
+  jauge de **robustesse du mot de passe** (4 segments animés + libellé
+  Faible/Moyen/Solide/Excellent, rouge tant que le plancher de 8 n'est pas
+  atteint) et bouton **« copier le mot de passe »** directement dans le
+  champ (icône passe à ✓ 1,5 s, toast de confirmation) — le visiteur peut
+  sauvegarder son mot de passe dès sa saisie, avant même de soumettre.
+- **Interactivité** : validation **live au blur** (champ non vide →
+  même schéma zod que la soumission, erreur qui apparaît/disparaît en
+  direct), **barre de progression** `0/4 → 4/4` (role="progressbar"
+  i18n, largeur animée), **coche verte** par champ valide, **focus +
+  scroll automatiques sur la première erreur** à la soumission (fini la
+  chasse à l'erreur à l'aveugle sur mobile), erreurs inline animées
+  (framer-motion, 180 ms), indices `enterKeyHint` clavier mobile
+  (next / go), bouton de soumission tactile (active:scale).
+- **Modernisation visuelle** : icônes de tête de champ (User / Phone /
+  AtSign / KeyRound), cibles 48 px, bloc « mode de connexion + notice »
+  fusionné en une carte compacte teal, carte portée (shadow-lg).
+- **Correction d'incohérence repérée au passage** : le placeholder du mot
+  de passe annonçait « 6 caractères minimum » alors que la règle (backend
+  N°33 et message d'erreur) est **8** — placeholder corrigé FR/EN.
+- **Chirurgical** : 2 fichiers frontend (`join-form.tsx`, `i18n.ts`),
+  +314/−170. Clés i18n obsolètes retirées (`confirmPassword*`, `message*`,
+  `err.confirm`, `err.message` — FR + EN), nouvelles clés (robustesse,
+  copie, progression). Écrans post-soumission, kiosque N°33, honeypot
+  anti-bots, MAC anti-abus et quotas : inchangés.
+
 ## 2026-09-08 — N°61 : Mode Vente offline AU LANCEMENT — repli shell /sell + navigation bornée 4 s
 
 ### N°61 — Le comptoir s'ouvre sans réseau, en tournée comme au comptoir (audit PWA, plan d'action 3/3 — P1)

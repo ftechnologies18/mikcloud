@@ -74,12 +74,12 @@ export const NAV_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
     ],
   },
   {
-    // N°57 — entrée unique de la zone Paramètres (split-view) : toutes les
-    // vues de configuration (général, routeurs, portail, modèles,
-    // notifications, équipe) vivent sous /app/settings/<section>. La
-    // destination s'adapte au rôle (cf. settings-sections.ts) : le gérant
-    // atterrit sur sa première section accessible, le propriétaire sur la
-    // racine de la zone.
+    // N°57 — entrée unique de la zone Paramètres (sub-nav horizontale
+    // N°57-b) : toutes les vues de configuration (général, routeurs,
+    // portail, modèles, notifications, équipe) vivent sous
+    // /app/settings/<section>. La destination s'adapte au rôle
+    // (cf. settings-sections.ts) : le gérant atterrit sur sa première
+    // section accessible, le propriétaire sur la racine de la zone.
     labelKey: "nav.section.system",
     items: [{ id: "settings", labelKey: "nav.settings", icon: Settings }],
   },

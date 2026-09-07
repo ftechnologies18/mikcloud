@@ -148,8 +148,8 @@ const VIEWS: Record<ViewId, React.ComponentType> = {
 
 /** Transition d'apparition de la vue active — fade + translation légère.
  * Extraite du rendu principal (N°57) : dans la zone Paramètres, le shell
- * split-view reste monté au changement de section, seule la vue rejoue la
- * transition (la sidebar des sections ne clignote pas). */
+ * (sub-nav horizontale N°57-b) reste monté au changement de section, seule
+ * la vue rejoue la transition (la rangée de pills ne clignote pas). */
 function ViewTransition({ viewKey, children }: { viewKey: ViewId; children: React.ReactNode }) {
   return (
     <AnimatePresence mode="wait">
@@ -465,9 +465,9 @@ function NavList() {
       {sections.map((section) => {
         // N°7 — chaque vue n'apparaît que si le rôle peut l'ouvrir
         // (miroir client des requireRole serveur ; comptes = admin plateforme).
-        // N°57 — l'entrée « Paramètres » ouvre la zone split-view : visible
-        // dès qu'UNE section est accessible au rôle (gérant comme
-        // propriétaire) — pas le seul rang « settings ».
+        // N°57 — l'entrée « Paramètres » ouvre la zone (sub-nav horizontale
+        // N°57-b) : visible dès qu'UNE section est accessible au rôle
+        // (gérant comme propriétaire) — pas le seul rang « settings ».
         const items = section.items.filter(
           (item) =>
             item.id === "settings"
@@ -714,11 +714,11 @@ export default function AppShell() {
       ? PlatformOverviewView
       : DashboardView;
 
-  // N°57 — zone Paramètres : la vue active est rendue dans le shell
-  // split-view dédié (sidebar de sections + panneau) quand elle appartient
-  // à la zone ET que le rôle peut l'ouvrir (les liens directs interdits ont
-  // déjà été re-normalisés par le garde-fou URL d'app-route). En mode
-  // plateforme la zone n'existe pas (console dédiée).
+  // N°57 — zone Paramètres : la vue active est rendue dans le shell dédié
+  // (sub-nav horizontale de sections + contenu pleine largeur, N°57-b) quand
+  // elle appartient à la zone ET que le rôle peut l'ouvrir (les liens
+  // directs interdits ont déjà été re-normalisés par le garde-fou URL
+  // d'app-route). En mode plateforme la zone n'existe pas (console dédiée).
   const zoneRender = isSettingsView(view) && canView(user?.role, view) && !platformMode;
 
   return (
@@ -758,9 +758,9 @@ export default function AppShell() {
         <ImpersonationBanner />
         <main className="flex-1" aria-label={viewTitle(view, t)}>
           <div className="mx-auto max-w-7xl space-y-6 p-4 sm:p-6">
-            {/* N°57 — zone Paramètres : le shell (sidebar + panneau) reste
-                monté au changement de section, seule la vue rejoue la
-                transition — hors zone, comportement inchangé. */}
+            {/* N°57 — zone Paramètres : le shell (sub-nav horizontale +
+                contenu) reste monté au changement de section, seule la vue
+                rejoue la transition — hors zone, comportement inchangé. */}
             {zoneRender ? (
               <SettingsShell>
                 <ViewTransition viewKey={view}>

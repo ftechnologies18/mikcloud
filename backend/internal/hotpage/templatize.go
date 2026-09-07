@@ -92,10 +92,35 @@ type PortalConfig struct {
 	// page de login. data URL image ≤ 500 Ko OU URL https:// (Cloudflare R2).
 	// Vide = pas de bannière — la page n'insère rien.
 	BannerURL string `json:"bannerUrl,omitempty"`
+	// N°55 — mode hospitalité : quand Style vaut « hospitality », la page
+	// masque la vitrine commerciale (grille tarifaire + Wave) et affiche le
+	// message de bienvenue, les promos produits (images R2 via N°53) et les
+	// liens réseaux sociaux. Vide OU « commercial » = portail historique.
+	Style   string `json:"portalStyle,omitempty"`
+	Welcome string `json:"portalWelcome,omitempty"`
+	// Promos — vitrine produits de l'établissement (≤ 6, validées côté API).
+	Promos []PortalPromo `json:"portalPromos,omitempty"`
+	// Socials — liens réseaux sociaux (≤ 4, https, validés côté API).
+	Socials []PortalSocial `json:"portalSocials,omitempty"`
 	// Offers — offres payantes du compte (profils à prix > 0), max 8. Sérialisées
 	// dans le bloc JSON pour que la page les affiche. Chaque offre porte le nom,
 	// le prix, la durée et le waveUrl pré-construit.
 	Offers []PortalOffer `json:"offers,omitempty"`
+}
+
+// PortalPromo — une ligne de vitrine « hospitalité » (N°55) : un produit ou
+// service mis en avant par l'établissement (image R2 optionnelle).
+type PortalPromo struct {
+	Title      string `json:"title"`
+	Desc       string `json:"desc,omitempty"`
+	ImageURL   string `json:"imageUrl,omitempty"`
+	PriceLabel string `json:"priceLabel,omitempty"`
+}
+
+// PortalSocial — un lien réseau social affiché en pied du mode hospitalité.
+type PortalSocial struct {
+	Label string `json:"label"`
+	URL   string `json:"url"`
 }
 
 // PortalOffer — une offre payante du compte, vue par la page du portail.

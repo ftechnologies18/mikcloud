@@ -461,6 +461,22 @@ type Tenant struct {
 	// `settings.join_button` (NOT NULL DEFAULT TRUE) reporte la valeur
 	// explicite au premier Save.
 	JoinButton *bool `json:"joinButton,omitempty"`
+	// N°55 — mode hospitalité du portail captif. MikCloud sert deux usages :
+	// la vente de tickets (commercial, défaut — grille tarifaire + Wave) ET
+	// l'offre gratuite de fidélisation (hôtel, maquis, café-glacier, salon…)
+	// où le portail devient une vitrine des produits/services de
+	// l'établissement. "" OU "commercial" = portail historique ;
+	// "hospitality" = grille tarifaire/Wave masquée, remplacée par le
+	// message de bienvenue, les promos produits (images R2 via N°53) et
+	// les liens réseaux sociaux.
+	PortalStyle string `json:"portalStyle,omitempty"` // "" | "commercial" | "hospitality"
+	// Message de bienvenue affiché en tête du mode hospitalité (≤ 200 car.).
+	PortalWelcome string `json:"portalWelcome,omitempty"`
+	// Promos produits — JSON [{title,desc,imageUrl,priceLabel}] ≤ 6 items
+	// (structurés, persistés en string : pattern N°55, pas de table dédiée).
+	PortalPromos string `json:"portalPromos,omitempty"`
+	// Liens réseaux sociaux — JSON [{label,url}] ≤ 4 (WhatsApp, Facebook…).
+	PortalSocials string `json:"portalSocials,omitempty"`
 	// P0 (audit Mikhmon) — F5 : politique de nettoyage des expirés.
 	ExpiryPolicyMode      string `json:"expiryPolicyMode"`      // "keep" (défaut) | "remove"
 	ExpiryPolicyAfterDays int    `json:"expiryPolicyAfterDays"` // défaut 30

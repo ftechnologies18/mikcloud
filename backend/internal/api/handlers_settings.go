@@ -3,6 +3,8 @@
 package api
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 )
@@ -35,6 +37,25 @@ type tenantPut struct {
 	// Audit purge/résurgence — repli nested du champ plat (corps défensif
 	// du front : les deux formes sont envoyées, le plat prime).
 	AutoImportRouterUsers *bool `json:"autoImportRouterUsers"`
+	// N°55 — repli nested des champs hospitalité (cf. req plats).
+	PortalStyle   *string            `json:"portalStyle"`
+	PortalWelcome *string            `json:"portalWelcome"`
+	PortalPromos  *[]portalPromoReq  `json:"portalPromos"`
+	PortalSocials *[]portalSocialReq `json:"portalSocials"`
+}
+
+// portalPromoReq — une ligne de vitrine « hospitalité » (N°55).
+type portalPromoReq struct {
+	Title      string `json:"title"`
+	Desc       string `json:"desc"`
+	ImageURL   string `json:"imageUrl"`
+	PriceLabel string `json:"priceLabel"`
+}
+
+// portalSocialReq — un lien réseau social (N°55).
+type portalSocialReq struct {
+	Label string `json:"label"`
+	URL   string `json:"url"`
 }
 
 func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
@@ -56,9 +77,16 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		// Audit purge/résurgence — import automatique des utilisateurs
 		// créés hors MikCloud (nil = inchangé ; défaut effectif ON).
 		AutoImportRouterUsers *bool `json:"autoImportRouterUsers"`
+		// N°55 — mode hospitalité du portail captif (cf. model.Tenant) :
+		// style, message de bienvenue, promos produits et liens sociaux.
+		PortalStyle   *string            `json:"portalStyle"`
+		PortalWelcome *string            `json:"portalWelcome"`
+		PortalPromos  *[]portalPromoReq  `json:"portalPromos"`
+		PortalSocials *[]portalSocialReq `json:"portalSocials"`
 		// …et forme imbriquée tenant{…}.
 		Tenant *tenantPut `json:"tenant"`
 	}
+
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
 		return
@@ -72,6 +100,9 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	joinButton := req.JoinButton
 	// Audit purge — même résolution plat > imbriqué pour le réglage d'import.
 	autoImport := req.AutoImportRouterUsers
+	// N°55 — résolution plat > imbriqué des champs hospitalité.
+	portalStyle, portalWelcome := req.PortalStyle, req.PortalWelcome
+	portalPromos, portalSocials := req.PortalPromos, req.PortalSocials
 	if req.Tenant != nil {
 		if name == nil {
 			name = req.Tenant.Name
@@ -105,6 +136,18 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		}
 		if autoImport == nil {
 			autoImport = req.Tenant.AutoImportRouterUsers
+		}
+		if portalStyle == nil {
+			portalStyle = req.Tenant.PortalStyle
+		}
+		if portalWelcome == nil {
+			portalWelcome = req.Tenant.PortalWelcome
+		}
+		if portalPromos == nil {
+			portalPromos = req.Tenant.PortalPromos
+		}
+		if portalSocials == nil {
+			portalSocials = req.Tenant.PortalSocials
 		}
 	}
 
@@ -141,6 +184,109 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Politique d'expiration invalide (keep ou remove)")
 		return
 	}
+	// N°55 — validations hospitalité : style borné, bienvenue courte, promos
+	// ≤ 6 (titres/descriptions/prix bornés, image https ou R2 via /api/media),
+	// socials ≤ 4 (URL https). Le JSON final est resérialisé côté serveur —
+	// le client ne peut rien injecter d'autre que ces champs validés.
+	encodePromos := func(list []portalPromoReq) (string, error) {
+		if len(list) > 6 {
+			return "", fmt.Errorf("au plus 6 promos")
+		}
+		type promo struct {
+			Title      string `json:"title"`
+			Desc       string `json:"desc"`
+			ImageURL   string `json:"imageUrl"`
+			PriceLabel string `json:"priceLabel"`
+		}
+		out := make([]promo, 0, len(list))
+		for _, it := range list {
+			title := strings.TrimSpace(it.Title)
+			if title == "" || len(title) > 60 {
+				return "", fmt.Errorf("titre de promo requis (1-60 caractères)")
+			}
+			desc := strings.TrimSpace(it.Desc)
+			if len(desc) > 160 {
+				return "", fmt.Errorf("description de promo trop longue (160 caractères max)")
+			}
+			img := strings.TrimSpace(it.ImageURL)
+			if img != "" && !strings.HasPrefix(img, "https://") {
+				return "", fmt.Errorf("image de promo invalide : URL https:// requise")
+			}
+			if len(img) > 300 {
+				return "", fmt.Errorf("URL d'image trop longue")
+			}
+			price := strings.TrimSpace(it.PriceLabel)
+			if len(price) > 30 {
+				return "", fmt.Errorf("prix trop long (30 caractères max)")
+			}
+			out = append(out, promo{Title: title, Desc: desc, ImageURL: img, PriceLabel: price})
+		}
+		if len(out) == 0 {
+			return "", nil // liste vidée = promos retirées
+		}
+		b, err := json.Marshal(out)
+		if err != nil {
+			return "", err
+		}
+		return string(b), nil
+	}
+	encodeSocials := func(list []portalSocialReq) (string, error) {
+		if len(list) > 4 {
+			return "", fmt.Errorf("au plus 4 liens sociaux")
+		}
+		type social struct {
+			Label string `json:"label"`
+			URL   string `json:"url"`
+		}
+		out := make([]social, 0, len(list))
+		for _, it := range list {
+			label := strings.TrimSpace(it.Label)
+			url := strings.TrimSpace(it.URL)
+			if label == "" || len(label) > 30 {
+				return "", fmt.Errorf("libellé de lien requis (1-30 caractères)")
+			}
+			if !strings.HasPrefix(url, "https://") || len(url) > 200 {
+				return "", fmt.Errorf("URL de lien invalide (https://, 200 caractères max)")
+			}
+			out = append(out, social{Label: label, URL: url})
+		}
+		if len(out) == 0 {
+			return "", nil
+		}
+		b, err := json.Marshal(out)
+		if err != nil {
+			return "", err
+		}
+		return string(b), nil
+	}
+	if portalStyle != nil {
+		v := strings.TrimSpace(*portalStyle)
+		if v != "" && v != "commercial" && v != "hospitality" {
+			writeErr(w, http.StatusBadRequest, "Style de portail invalide (commercial ou hospitality)")
+			return
+		}
+	}
+	if portalWelcome != nil && len(strings.TrimSpace(*portalWelcome)) > 200 {
+		writeErr(w, http.StatusBadRequest, "Message de bienvenue trop long (200 caractères max)")
+		return
+	}
+	var promosJSON, socialsJSON string
+	if portalPromos != nil {
+		v, err := encodePromos(*portalPromos)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "Promos invalides : "+err.Error())
+			return
+		}
+		promosJSON = v
+	}
+	if portalSocials != nil {
+		v, err := encodeSocials(*portalSocials)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "Liens sociaux invalides : "+err.Error())
+			return
+		}
+		socialsJSON = v
+	}
 	if expiryAfterDays != nil && (*expiryAfterDays < 0 || *expiryAfterDays > 365) {
 		writeErr(w, http.StatusBadRequest, "Le nombre de jours doit être compris entre 0 et 365")
 		return
@@ -170,6 +316,20 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if bannerURL != nil {
 		settings.Tenant.BannerURL = strings.TrimSpace(*bannerURL) // vide = bannière retirée
+	}
+	// N°55 — application des champs hospitalité (les listes arrivent déjà
+	// sérialisées/validées ci-dessus ; nil = inchangé, liste vide = retirée).
+	if portalStyle != nil {
+		settings.Tenant.PortalStyle = strings.TrimSpace(*portalStyle) // vide = commercial (défaut)
+	}
+	if portalWelcome != nil {
+		settings.Tenant.PortalWelcome = strings.TrimSpace(*portalWelcome)
+	}
+	if portalPromos != nil {
+		settings.Tenant.PortalPromos = promosJSON
+	}
+	if portalSocials != nil {
+		settings.Tenant.PortalSocials = socialsJSON
 	}
 	if expiryMode != nil {
 		settings.Tenant.ExpiryPolicyMode = *expiryMode

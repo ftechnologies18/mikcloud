@@ -702,6 +702,12 @@ func (p *PG) ensureSchema() error {
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS logo_url TEXT NOT NULL DEFAULT ''`,
 		// N°45 — bannière du portail captif (data URL ≤ 500 Ko ou URL https R2).
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS banner_url TEXT NOT NULL DEFAULT ''`,
+		// N°55 — mode hospitalité du portail (style, bienvenue, promos et
+		// réseaux sociaux en JSON ; pattern colonnes à-plats du repo).
+		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS portal_style TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS portal_welcome TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS portal_promos TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS portal_socials TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS expiry_policy_mode TEXT NOT NULL DEFAULT 'keep'`,
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS expiry_policy_after_days INTEGER NOT NULL DEFAULT 30`,
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS board_name TEXT NOT NULL DEFAULT ''`,
@@ -952,7 +958,7 @@ func (p *PG) loadSettings(db *model.DB) error {
                         sub_plan_id, sub_status, sub_period_start, sub_period_end, sub_last_amount,
                         sub_router_slots, sub_last_paid_at, last_tick,
                         platform_name, platform_register_open, platform_register_key, auto_import_router_users,
-                        join_button
+                        join_button, portal_style, portal_welcome, portal_promos, portal_socials
                  FROM settings`)
 	if err != nil {
 		return err
@@ -976,6 +982,8 @@ func (p *PG) loadSettings(db *model.DB) error {
 			autoImport bool
 			// N°46 - reglage du bouton « S'inscrire » du portail (defaut ON).
 			joinButton bool
+			// N°55 - mode hospitalité du portail (style/bienvenue/promos/socials).
+			portalStyle, portalWelcome, portalPromos, portalSocials string
 			// I (paramètres plateforme) — uniquement sur le compte principal.
 			platformName         string
 			platformRegisterOpen bool
@@ -987,7 +995,7 @@ func (p *PG) loadSettings(db *model.DB) error {
 			&subPlanID, &subStatus, &subPeriodStart, &subPeriodEnd, &subLastAmount,
 			&subRouterSlots, &subLastPaidAt, &lastTick,
 			&platformName, &platformRegisterOpen, &platformRegisterKey, &autoImport,
-			&joinButton); err != nil {
+			&joinButton, &portalStyle, &portalWelcome, &portalPromos, &portalSocials); err != nil {
 			return err
 		}
 		if accID == "" {
@@ -999,6 +1007,8 @@ func (p *PG) loadSettings(db *model.DB) error {
 				WaveLink: waveLink, DNSName: dnsName, LogoURL: logoURL,
 				BannerURL:        bannerURL,
 				ExpiryPolicyMode: expiryMode, ExpiryPolicyAfterDays: expiryAfterDays,
+				PortalStyle: portalStyle, PortalWelcome: portalWelcome,
+				PortalPromos: portalPromos, PortalSocials: portalSocials,
 			},
 			Plan: model.Plan{Name: planName, MaxRouters: planMaxRouters, MaxUsers: planMaxUsers},
 			Subscription: model.Subscription{
@@ -1199,8 +1209,9 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
                                dns_name, logo_url, banner_url, expiry_policy_mode, expiry_policy_after_days,
                                sub_plan_id, sub_status, sub_period_start, sub_period_end, sub_last_amount,
                                sub_router_slots, sub_last_paid_at, last_tick,
-                               platform_name, platform_register_open, platform_register_key, auto_import_router_users, join_button)
-                         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
+                               platform_name, platform_register_open, platform_register_key, auto_import_router_users, join_button,
+                               portal_style, portal_welcome, portal_promos, portal_socials)
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
                          ON CONFLICT (id) DO UPDATE SET
                            account_id                = EXCLUDED.account_id,
                            tenant_name               = EXCLUDED.tenant_name,
@@ -1227,7 +1238,11 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
                            platform_register_open    = EXCLUDED.platform_register_open,
                            platform_register_key    = EXCLUDED.platform_register_key,
                            auto_import_router_users = EXCLUDED.auto_import_router_users,
-                           join_button              = EXCLUDED.join_button`,
+                           join_button              = EXCLUDED.join_button,
+                           portal_style             = EXCLUDED.portal_style,
+                           portal_welcome           = EXCLUDED.portal_welcome,
+                           portal_promos            = EXCLUDED.portal_promos,
+                           portal_socials           = EXCLUDED.portal_socials`,
 			accID, s.Tenant.Name, s.Tenant.Currency, s.Tenant.Timezone,
 			s.Plan.Name, s.Plan.MaxRouters, s.Plan.MaxUsers,
 			s.Tenant.WaveLink, s.Tenant.DNSName, s.Tenant.LogoURL, s.Tenant.BannerURL,
@@ -1235,7 +1250,8 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
 			s.Subscription.PlanID, s.Subscription.Status, s.Subscription.PeriodStart,
 			s.Subscription.PeriodEnd, s.Subscription.LastAmountFcfa,
 			s.Subscription.RouterSlots, s.Subscription.LastPaidAt, lastTick,
-			platName, platOpen, platKey, s.ImportAutoEnabled(), s.Tenant.JoinButtonEnabled())
+			platName, platOpen, platKey, s.ImportAutoEnabled(), s.Tenant.JoinButtonEnabled(),
+			s.Tenant.PortalStyle, s.Tenant.PortalWelcome, s.Tenant.PortalPromos, s.Tenant.PortalSocials)
 		if err != nil {
 			return fmt.Errorf("pg sync settings (%s) : %w", accID, err)
 		}

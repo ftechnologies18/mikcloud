@@ -1125,6 +1125,32 @@ dégradé automatique : stockage indisponible ⇒ data URL intégrée ≤ 500 Ko
 (contrat N°45 inchangé), sinon message d'erreur. `bannerUrl` reste la
 seule donnée persistée — aucun changement de schéma, aucune migration Neon.
 
+## N°55 — Mode hospitalité du portail (vitrine de l'établissement)
+
+### Modèle (ajouts Tenant)
+```go
+Tenant.PortalStyle  string // "" | "commercial" | "hospitality" ("" = défaut commercial)
+Tenant.PortalWelcome string // message de bienvenue (≤ 200 car.)
+Tenant.PortalPromos string // JSON [{title,desc,imageUrl,priceLabel}] ≤ 6 (validé API)
+Tenant.PortalSocials string // JSON [{label,url}] ≤ 4 (https, validé API)
+```
+Migration boot idempotente : `settings.portal_style`, `portal_welcome`,
+`portal_promos`, `portal_socials` (TEXT NOT NULL DEFAULT '').
+
+### Règles
+- `PUT /api/settings` : reçoit `portalStyle` (string), `portalWelcome`
+  (string), `portalPromos` ([]{title,desc,imageUrl,priceLabel}),
+  `portalSocials` ([]{label,url}) — plats + nested `tenant{…}`, plat prime.
+  Validation serveur stricte puis sérialisation JSON ; client ne contrôle que
+  ces champs. Liste vide = retrait. `nil` = inchangé.
+- `PortalConfig` (fallback inliné + fetch live) : champs `portalStyle`,
+  `portalWelcome`, `portalPromos[]`, `portalSocials[]` — décodage tolérant
+  (`portalHospitality`, JSON invalide ⇒ listes vides).
+- Portail `login.html` : `applyHospitality(cfg)` — hospitality = masquage par
+  classe (`mikcloud-hosp-hidden`) de slider/grille/Wave/services/offers +
+  injection vitrine (bienvenue, promos avec images R2, socials) ; commercial =
+  retrait des injections et dé-masquage (réversible, idempotent).
+
 ## PLAN DE FICHIERS
 
 ### Backend (Go)

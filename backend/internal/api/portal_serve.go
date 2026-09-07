@@ -30,6 +30,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"os"
 	"path"
@@ -107,6 +108,39 @@ func isTextAsset(p string) bool {
 	return false
 }
 
+// portalHospitality — décode le branding hospitalité du tenant (N°55).
+// Les listes sont persistées en JSON (model.Tenant.PortalPromos/Socials) :
+// un JSON invalide ou un champ vide donne des listes vides — la page reste
+// cohérente (mode commercial ou hospitalité sans vitrine), jamais cassée.
+func portalHospitality(t model.Tenant) (style, welcome string, promos []hotpage.PortalPromo, socials []hotpage.PortalSocial) {
+	style, welcome = t.PortalStyle, t.PortalWelcome
+	if t.PortalPromos != "" {
+		var raw []struct {
+			Title      string `json:"title"`
+			Desc       string `json:"desc"`
+			ImageURL   string `json:"imageUrl"`
+			PriceLabel string `json:"priceLabel"`
+		}
+		if json.Unmarshal([]byte(t.PortalPromos), &raw) == nil {
+			for _, it := range raw {
+				promos = append(promos, hotpage.PortalPromo{Title: it.Title, Desc: it.Desc, ImageURL: it.ImageURL, PriceLabel: it.PriceLabel})
+			}
+		}
+	}
+	if t.PortalSocials != "" {
+		var raw []struct {
+			Label string `json:"label"`
+			URL   string `json:"url"`
+		}
+		if json.Unmarshal([]byte(t.PortalSocials), &raw) == nil {
+			for _, it := range raw {
+				socials = append(socials, hotpage.PortalSocial{Label: it.Label, URL: it.URL})
+			}
+		}
+	}
+	return style, welcome, promos, socials
+}
+
 // buildPortalConfig — construit le PortalConfig pour le compte propriétaire
 // du routeur, à partir du store. À appeler SOUS VERROU (lit db.SettingsByAccount,
 // db.WifiSites, db.JoinLinks, db.Profiles).
@@ -137,6 +171,7 @@ func buildPortalConfig(db *model.DB, router *model.Router, r *http.Request) hotp
 		// réglage console (défaut effectif ON pour les comptes existants).
 		JoinEnabled: settings.Tenant.JoinButtonEnabled(),
 	}
+	cfg.Style, cfg.Welcome, cfg.Promos, cfg.Socials = portalHospitality(settings.Tenant) // N°55
 	// WifiSlug — 1er site WiFi actif lié à ce routeur.
 	for i := range db.WifiSites {
 		s := &db.WifiSites[i]
@@ -244,6 +279,7 @@ func buildPortalConfigForSite(db *model.DB, site *model.WifiSite, router *model.
 		WifiSlug:    site.Slug,
 		Active:      site.Active, // N°51 — état réel (peut être en pause)
 	}
+	cfg.Style, cfg.Welcome, cfg.Promos, cfg.Socials = portalHospitality(settings.Tenant) // N°55
 	if origin := publicFrontendURL(r); origin != "" {
 		cfg.WifiURL = origin + "/wifi/" + site.Slug
 	}

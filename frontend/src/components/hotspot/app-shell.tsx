@@ -39,7 +39,7 @@ import { useI18n } from "@/lib/hotspot/i18n";
 import { NAV_PLATFORM_SECTIONS, NAV_SECTIONS } from "@/lib/hotspot/nav";
 import { roleLabel, userInitials } from "@/lib/hotspot/format";
 import { canView, isPlatformView } from "@/lib/hotspot/roles";
-import { isSettingsView, settingsLandingView, settingsSectionsFor } from "@/lib/hotspot/settings-sections";
+import { isSettingsView, settingsLandingView } from "@/lib/hotspot/settings-sections";
 import { useHotspotStore } from "@/lib/hotspot/store";
 import type { HotspotSession, ViewId } from "@/lib/hotspot/types";
 import { ThemeToggle } from "./theme-toggle";
@@ -427,14 +427,12 @@ function NavList() {
   // par comparaison de la dernière section auto-ouverte — même sémantique
   // que l'ancien lastAutoOpened).
   const [autoOpened, setAutoOpened] = useState<string | null>(null);
+  // N°57-f — l'entrée nav « Paramètres » a disparu (accès unique : menu
+  // utilisateur) : la section active est simplement celle qui porte la vue
+  // métier courante (en zone Paramètres, cette NavList n'est pas rendue —
+  // remplacée par la sidebar de zone, N°57-c).
   const activeSectionKey =
-    sections.find(
-      (s) =>
-        s.items.some((item) => item.id === navView) ||
-        // N°57 — n'importe quelle section de la zone Paramètres ouvre la
-        // section « Système » qui porte l'entrée de la zone.
-        (isSettingsView(navView) && s.items.some((item) => item.id === "settings")),
-    )?.labelKey ?? null;
+    sections.find((s) => s.items.some((item) => item.id === navView))?.labelKey ?? null;
   if (activeSectionKey !== autoOpened) {
     setAutoOpened(activeSectionKey);
     if (activeSectionKey !== null && collapsed.has(activeSectionKey)) {
@@ -463,15 +461,10 @@ function NavList() {
       {sections.map((section) => {
         // N°7 — chaque vue n'apparaît que si le rôle peut l'ouvrir
         // (miroir client des requireRole serveur ; comptes = admin plateforme).
-        // N°57 — l'entrée « Paramètres » ouvre la zone (dont la sidebar
-        // remplace alors cette navigation — N°57-c) : visible dès qu'UNE
-        // section est accessible au rôle (gérant comme propriétaire) —
-        // pas le seul rang « settings ».
+        // N°57-f — plus d'entrée « Paramètres » ici : la zone vit derrière le
+        // menu utilisateur (UserCard/menu profil) et la substitution N°57-c.
         const items = section.items.filter(
-          (item) =>
-            item.id === "settings"
-              ? settingsSectionsFor(user?.role).length > 0
-              : (item.id !== "accounts" || isAdmin) && canView(user?.role, item.id),
+          (item) => (item.id !== "accounts" || isAdmin) && canView(user?.role, item.id),
         );
         if (items.length === 0) return null;
         // O — état replié explicite de l'utilisateur (localStorage) ; la
@@ -496,19 +489,12 @@ function NavList() {
             {open && (
               <ul className="space-y-0.5 pb-1">
                 {items.map((item) => {
-                  // N°57 — l'entrée « Paramètres » reste active sur TOUTE la
-                  // zone (l'utilisateur voit où il est), les autres items
-                  // surlignent leur vue exacte.
-                  const active = item.id === navView || (item.id === "settings" && isSettingsView(navView));
+                  const active = item.id === navView;
                 return (
                   <li key={item.id}>
                     <button
                       type="button"
-                      onClick={() =>
-                        // N°57 — l'entrée zone atterrit sur la première section
-                        // autorisée du rôle (gérant ≠ propriétaire).
-                        setView(item.id === "settings" ? settingsLandingView(user?.role) : item.id)
-                      }
+                      onClick={() => setView(item.id)}
                       aria-current={active ? "page" : undefined}
                       className={cn(
                         "sidebar-nav-item relative flex min-h-11 w-full items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium transition-all duration-200",

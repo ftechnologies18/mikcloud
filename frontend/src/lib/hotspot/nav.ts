@@ -19,7 +19,6 @@ import {
   Wifi,
 } from "lucide-react";
 import { canView } from "./roles";
-import { settingsSectionsFor } from "./settings-sections";
 import type { ViewId } from "./types";
 
 export interface NavItem {
@@ -73,24 +72,18 @@ export const NAV_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
       { id: "accounts", labelKey: "nav.accounts", icon: Building2 },
     ],
   },
-  {
-    // N°57 — entrée unique de la zone Paramètres : toutes les vues de
-    // configuration (général, routeurs, portail, modèles, notifications,
-    // équipe) vivent sous /app/settings/<section> — en zone active, la
-    // sidebar de sections REMPLPLACE la navigation principale (N°57-c).
-    // La destination s'adapte au rôle (cf. settings-sections.ts) : le
-    // gérant atterrit sur sa première section accessible, le propriétaire
-    // sur la racine de la zone.
-    labelKey: "nav.section.system",
-    items: [{ id: "settings", labelKey: "nav.settings", icon: Settings }],
-  },
+  // N°57-f — la section « Système » disparaît : l'entrée « Paramètres »
+  // était un doublon du menu utilisateur (UserCard / menu profil topbar),
+  // qui reste LE point d'entrée de la zone. La sidebar ne montre plus que
+  // les modules métier ; la zone Paramètres vit par substitution de
+  // sidebar (N°57-c) une fois ouverte (User menu, URL directe, bandeau
+  // d'abonnement du dashboard).
 ];
 
 /** Liste plate des items de nav pour la console ACTIVE — client par défaut,
  * plateforme quand l'admin y bascule (miroir canView dans les deux cas).
- * N°57 — l'entrée « Paramètres » est visible dès qu'UNE section de la zone
- * est accessible au rôle (gérant : routeurs, portail, modèles,
- * notifications ; propriétaire : toutes). */
+ * N°57-f — la zone Paramètres n'y figure plus : son accès unique est le
+ * menu utilisateur (settingsLandingView adapte la destination au rôle). */
 export function navItemsFor(
   role: string | undefined,
   isAdmin: boolean,
@@ -99,11 +92,7 @@ export function navItemsFor(
   const sections = mode === "platform" ? NAV_PLATFORM_SECTIONS : NAV_SECTIONS;
   return sections
     .flatMap((s) => s.items)
-    .filter((item) =>
-      item.id === "settings"
-        ? settingsSectionsFor(role).length > 0
-        : (item.id !== "accounts" || isAdmin) && canView(role, item.id),
-    );
+    .filter((item) => (item.id !== "accounts" || isAdmin) && canView(role, item.id));
 }
 
 /**

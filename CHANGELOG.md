@@ -5,6 +5,34 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-08 — N°57-f : l'entrée « Paramètres » quitte la sidebar principale (accès unique : menu utilisateur)
+
+### N°57-f — Retrait de l'entrée nav « Paramètres » (demande utilisateur : déjà présente dans le menu utilisateur)
+- **Section « Système » retirée de la sidebar principale** : l'entrée
+  « Paramètres » y doublonnait le menu utilisateur (UserCard en pied de
+  sidebar desktop, menu profil du topbar sur mobile), qui devient LE point
+  d'entrée de la zone — moins de redondance, une sidebar 100 % modules
+  métier (exploitation, commercial, analyse).
+- **Menu utilisateur inchangé** : « Paramètres » (icône engrenage) y ouvre
+  la zone via `settingsLandingView(role)` — le propriétaire atterrit sur
+  Général, le gérant sur sa première section accessible (Hotspot) ; en
+  mode plateforme il ouvre les paramètres plateforme. La UserCard reste
+  visible en zone (pied de sidebar) : on peut ré-atterrir dans la zone
+  sans repasser par le Retour.
+- **Palette de recherche (⌘K) alignée** : elle reflète la sidebar
+  (modules métier uniquement) — « Paramètres » n'y figure plus ; la
+  recherche de vues de configuration passe par les URLs directes
+  (deep-linkables, historique de la palette).
+- **Zone inchangée** : le pattern N°57-c (substitution de sidebar + bouton
+  Retour), les 7 sections N°57-d/e, les chemins canoniques et legacy, les
+  garde-fous de rôles (client et serveur) et le bandeau d'abonnement du
+  dashboard (CTA direct) restent en l'état — seule la porte d'entrée de la
+  nav principale disparaît.
+- **Nettoyage** : branche `settings` de `navItemsFor` et clauses de
+  surlignage/atterrissage associées (NavList) retirées — code mort sinon.
+- **Frontend only** : aucun changement backend, aucune migration Neon —
+  ViewIds, map VIEWS et contrat de rôles inchangés.
+
 ## 2026-09-08 — N°58 : régulariser le solde d'un revendeur prépayé — le remboursement manquant
 
 ### N°58 — Action « Régulariser le solde » : boucler la boucle de suppression d'un revendeur portefeuille chargé

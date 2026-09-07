@@ -73,6 +73,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { api, apiDownload, ApiError } from "@/lib/hotspot/api";
+import { PwaInstallCta } from "@/components/pwa-install-cta";
 import {
   SellPrintDialog,
   type SellPrintScope,
@@ -1052,9 +1053,11 @@ export default function SellShell() {
   };
 
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-lg flex-col bg-background">
-      {/* En-tête revendeur */}
-      <header className="sticky top-0 z-10 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+    <div className="mx-auto flex min-h-dvh w-full max-w-lg flex-col bg-background pwa-safe-bottom">
+      {/* En-tête revendeur — N°60 : pwa-safe-top compense l'encoche iOS
+          (viewport-fit cover + status bar black-translucent) : le fond de
+          l'en-tête couvre la découpe, le contenu reste sous la zone système. */}
+      <header className="pwa-safe-top sticky top-0 z-10 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
         <div className="flex items-center gap-3 px-4 py-3">
           <Image src="/logo.png" alt="MikCloud" width={36} height={36} className="rounded-lg" priority />
           <div className="min-w-0 flex-1">
@@ -1113,6 +1116,11 @@ export default function SellShell() {
           </div>
         </div>
       </header>
+
+      {/* N°60 — PWA : le revendeur connecté (token persistant) ne repasse
+          jamais par le login : sans CTA ici, il ne verrait JAMAIS le bouton
+          d'installation. Caché si déjà installé/standalone ou rejeté. */}
+      <PwaInstallCta />
 
       {/* État réseau + clôture de journée */}
       <div

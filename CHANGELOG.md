@@ -5,6 +5,46 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-08 — N°60 : PWA « installation riche » — manifest complet + CTA « Installer » in-app
+
+### N°60 — Transforme l'installation PWA en parcours first-class (audit PWA, plan d'action 2/3)
+- **Constat (audit)** : la PWA est installable depuis le N°8, mais
+  l'installation reste un parcours au hasard — mini-infobar Chrome
+  (supprimée définitivement par Chrome après quelques rejets), aucun
+  accompagnement iOS (Safari n'émet AUCUN événement d'installation),
+  manifest sans identité ni captures : Android n'affiche jamais le
+  dialogue d'installation riche.
+- **Manifest complet** : `id: "/"` (identité STABLE — un futur changement de
+  `start_url`/`scope` ne dupliquera plus l'icône chez les revendeurs déjà
+  installés) ; `launch_handler: focus-existing` (un lien MikCloud ouvert
+  depuis WhatsApp focus l'instance existante plutôt qu'une nouvelle
+  fenêtre) ; **3 captures d'écran réelles** de la production servies depuis
+  `/screenshots/` (login mobile 780×1688, vitrine mobile 780×1688 —
+  `form_factor: narrow`, login desktop 1280×800 — `wide`) : Android
+  affiche désormais le dialogue d'installation riche ; **2 raccourcis**
+  long-press sur l'icône : « Mode Vente » (/sell) et « Console » (/app),
+  routes gardant leurs redirections d'authentification.
+- **CTA « Installer » in-app** (`pwa-install-cta.tsx`) : l'événement
+  `beforeinstallprompt` est capté AVANT l'hydratation (script inline du
+  layout, slot `window.__mikBip` — l'événement peut partir avant le montage
+  React, aucun n'est perdu) → bouton natif Chrome/Edge/Android ;
+  **feuille d'instructions iOS** (Partager → « Sur l'écran d'accueil » →
+  Ajouter, 3 étapes iconifiées) car Safari n'émet aucun événement ;
+  détection iPadOS 13+ (Mac desktop masqué par multi-touch) ; toast de
+  confirmation sur `appinstalled` ; rejet persistant (localStorage —
+  l'utilisateur garde la main, l'installation via le menu du navigateur
+  reste possible). Emplacements : login (funnel commun) ET en-tête du Mode
+  Vente — le revendeur au token persistant ne repasse jamais par le login.
+- **Plein écran sur encoches** : `viewport-fit: cover` + utilitaires
+  `env(safe-area-inset-*)` (globals.css) appliqués aux shells mobiles
+  (login, Mode Vente) — la barre `black-translucent` du N°8 cesse de
+  chevaucher le contenu. Sans viewport-fit, `env()` vaut 0 : zéro effet en
+  navigateur classique.
+- **Accessibilité** : `maximum-scale: 1` retiré du viewport (le zoom pincé
+  est rétabli — conforme WCAG 2.1 AA 1.4.4 ; iOS l'ignorait déjà).
+- **Frontend only** : aucun changement backend, aucune migration Neon,
+  CONTRACT-V2 inchangé.
+
 ## 2026-09-08 — N°57-g : sidebar principale réorganisée — 4 catégories homogènes (Supervision / Hotspot / Personnes / Analyse)
 
 ### N°57-g — Réorganisation experte des vues et catégories de la navigation métier (demande utilisateur)

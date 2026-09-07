@@ -2409,6 +2409,19 @@ const fr: Record<string, string> = {
   "joinPage.approved.redirectIn": "Ouverture du portail dans {seconds} s",
   "joinPage.approved.connectNow": "Se connecter maintenant",
   "joinPage.approved.stayHere": "Rester sur cette page",
+
+  // — pwa (N°60 : installation de l'app) —
+  "pwa.install.title": "Installer MikCloud",
+  "pwa.install.desc": "Un geste depuis l'écran d'accueil — la console et le Mode Vente s'ouvrent plein écran, même réseau instable.",
+  "pwa.install.button": "Installer",
+  "pwa.install.later": "Plus tard",
+  "pwa.installed": "MikCloud est installé sur votre écran d'accueil",
+  "pwa.ios.title": "Installer sur iPhone / iPad",
+  "pwa.ios.desc": "Safari n'offre pas de bouton d'installation — trois petits gestes suffisent.",
+  "pwa.ios.step1": "Appuyez sur l'icône de partage en bas de l'écran",
+  "pwa.ios.step2": "Choisissez « Sur l'écran d'accueil »",
+  "pwa.ios.step3": "Appuyez sur « Ajouter » — MikCloud s'installe",
+  "pwa.ios.done": "Compris",
 };
 
 // ─── Dictionnaire EN (traduction opérateur télécom, simple et pro) ───
@@ -4800,6 +4813,19 @@ const en: Record<string, string> = {
   "joinPage.approved.redirectIn": "Opening the portal in {seconds}s",
   "joinPage.approved.connectNow": "Connect now",
   "joinPage.approved.stayHere": "Stay on this page",
+
+  // — pwa (N°60 : app install) —
+  "pwa.install.title": "Install MikCloud",
+  "pwa.install.desc": "One tap from your home screen — the console and Sell Mode open full screen, even on an unstable network.",
+  "pwa.install.button": "Install",
+  "pwa.install.later": "Later",
+  "pwa.installed": "MikCloud is now installed on your home screen",
+  "pwa.ios.title": "Install on iPhone / iPad",
+  "pwa.ios.desc": "Safari has no install button — three quick steps are all it takes.",
+  "pwa.ios.step1": "Tap the share icon at the bottom of the screen",
+  "pwa.ios.step2": "Choose “Add to Home Screen”",
+  "pwa.ios.step3": "Tap “Add” — MikCloud installs",
+  "pwa.ios.done": "Got it",
 };
 
 // ─── Résolution ───

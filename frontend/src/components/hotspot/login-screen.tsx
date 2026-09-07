@@ -7,6 +7,7 @@ import { Eye, EyeOff, Loader2, ShieldCheck, Store, Ticket, Wifi } from "lucide-r
 import { toast } from "sonner";
 
 import { FtciCredit } from "@/components/ftci-credit";
+import { PwaInstallCta } from "@/components/pwa-install-cta";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -249,7 +250,10 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
   }
 
   return (
-    <div className="grid min-h-screen lg:grid-cols-[1.08fr_1fr]">
+    // N°60 — pwa-safe-top : en PWA iOS (status bar black-translucent +
+    // viewport-fit cover), le contenu coule sous l'encoche — le padding
+    // compense. En navigateur classique, env() vaut 0 : aucun effet.
+    <div className="pwa-safe-top grid min-h-screen lg:grid-cols-[1.08fr_1fr]">
       <BrandPanel />
 
       {/* Colonne formulaire */}
@@ -457,6 +461,19 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
                 </Button>
               </motion.div>
             )}
+          </motion.div>
+
+          {/* N°60 — PWA : la barre d'installation vit sous la carte de
+              connexion (funnel commun console + Mode Vente — la mini-infobar
+              Chrome est suspendue par le script du layout, c'est CE CTA qui
+              la remplace). Disparaît dès que l'app est installée/standalone. */}
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.35, duration: 0.4, ease: "easeOut" }}
+            className="w-full"
+          >
+            <PwaInstallCta />
           </motion.div>
 
           <motion.p

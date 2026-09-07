@@ -663,3 +663,14 @@
 html.pwa-standalone:not(.pwa-ready) main {
   visibility: hidden;
 }
+
+/* N°60 — PWA safe-areas : viewport-fit=cover (layout) fait couler le contenu
+ * sous les encoches et bords arrondis iOS (status bar black-translucent).
+ * Ces utilitaires compensent sur les shells mobiles (login, Mode Vente).
+ * Sans viewport-fit — navigateur classique — env() vaut 0 : aucun effet. */
+.pwa-safe-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+.pwa-safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}

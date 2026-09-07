@@ -33,6 +33,14 @@ export const metadata: Metadata = {
   appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "MikCloud" },
 };
 
+// N°60 — capture PRÉ-hydratation de beforeinstallprompt : Chrome peut
+// émettre l'événement avant que le composant client (PwaInstallCta) ne
+// monte. Ce script le met de côté sur window.__mikBip — le CTA le relit au
+// montage, aucun événement perdu. preventDefault() suspend la mini-infobar
+// native : c'est notre CTA in-app (login + Mode Vente) qui la remplace, aux
+// endroits où l'utilisateur agit réellement.
+const PWA_BIP_SCRIPT = `try{addEventListener("beforeinstallprompt",function(e){e.preventDefault();window.__mikBip=e})}catch(e){}`;
+
 // N°8 — PWA : classe posée AVANT le premier paint quand l'app est lancée
 // depuis l'écran d'accueil (standalone). Combinée à la règle
 // `pwa-standalone:not(.pwa-ready)` de globals.css, elle masque le HTML
@@ -48,7 +56,13 @@ export const viewport: Viewport = {
   ],
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
+  // N°60 — plein écran sur les encoches/bords iOS (status bar
+  // black-translucent du N°8) : le contenu coule sous la découpe, compensé
+  // par les utilitaires env(safe-area-inset-*) de globals.css sur les shells
+  // mobiles. Sans viewport-fit, env() vaut 0 : zéro effet en navigateur.
+  viewportFit: "cover",
+  // maximumScale: 1 RETIRÉ (N°60) — il bloquait le zoom pincé, contraire
+  // WCAG 2.1 AA (1.4.4 Resize Text) ; iOS l'ignorait déjà depuis iOS 10.
 };
 
 export default function RootLayout({
@@ -65,6 +79,10 @@ export default function RootLayout({
         {/* Premier enfant du body : exécuté pendant le parsing, donc avant
          * tout paint du contenu — la vitrine n'apparaît jamais en PWA. */}
         <script dangerouslySetInnerHTML={{ __html: PWA_BOOT_SCRIPT }} />
+        {/* N°60 — capture beforeinstallprompt avant l'hydratation (le CTA
+         * relit window.__mikBip au montage). Doit être posé tout aussi tôt :
+         * l'événement suit de près le chargement. */}
+        <script dangerouslySetInnerHTML={{ __html: PWA_BIP_SCRIPT }} />
         {API_BASE ? (
           <>
             <link rel="preconnect" href={API_BASE} crossOrigin="anonymous" />

@@ -116,6 +116,17 @@ type PortalConfig struct {
 	// conservées N jours »). Portée par le fallback inliné ET l'endpoint live
 	// — le réglage s'applique aux portails déployés sans re-déploiement.
 	LogRetentionDays int `json:"logRetentionDays"`
+	// N°69 — consentement marketing : l'interrupteur « Me tenir informé »
+	// est proposé sur le claim du portail (login.html) quand le site WiFi
+	// l'a activé (WifiSite.MarketingOptIn, réglage console du wizard).
+	// Sérialisé SANS omitempty — même raison que JoinEnabled/Active :
+	// true/false doit toujours être EXPLICITE (avec omitempty, un false
+	// omis serait lu « undefined ≠ false » côté page et l'interrupteur
+	// réapparaîtrait malgré le réglage du gérant). Les portails déployés
+	// avant N°69 n'embarquent pas le champ : undefined = false = pas
+	// d'interrupteur (comportement historique du portail, optIn:false en
+	// dur) — le fetch live corrige au chargement.
+	MarketingOptIn bool `json:"marketingOptIn"`
 }
 
 // PortalPromo — une ligne de vitrine « hospitalité » (N°55) : un produit ou

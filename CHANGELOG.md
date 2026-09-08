@@ -5,6 +5,68 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-08 — N°69 : opt-in marketing explicite (interrupteur) au claim WiFi — /wifi + portail captif
+
+### N°69 — Consentement marketing légalement valable sur les DEUX surfaces de claim (demande utilisateur)
+- **Demande** : le claim du WiFi jetable collecte le numéro de téléphone, mais
+  sans opt-in valable le registre est inutilisable pour le marketing. Pas de
+  case à cocher (l'ancienne était PRÉ-COCHÉE — consentement juridiquement
+  nul, Planet49/CJUE + loi ivoirienne n°2013-450), pas de cadeau/promesse,
+  pas de double bouton : un **interrupteur discret**, OFF par défaut.
+- **Page `/wifi/{slug}`** : la case pré-cochée est remplacée par un
+  **interrupteur shadcn** « Me tenir informé des actualités — 2 messages/mois
+  · STOP gratuit à tout moment » — OFF PAR DÉFAUT (consentement **univoque** :
+  l'action affirmative du visiteur crée le consentement), finalité + fréquence
+  + moyen de retrait annoncés dans le libellé (**éclairé**), toute la ligne
+  tactile, ne rien toucher = refus sans pénalité — le code arrive pareil
+  (**libre**). Affiché seulement si le site a le marketing activé
+  (réglage console du wizard, défaut ON).
+- **Portail captif `login.html`** : même interrupteur (~30 lignes CSS pur,
+  compatible routeur, focus visible) rendu dans le formulaire de claim inline
+  quand `cfg.marketingOptIn === true` — l'ancien `optIn: false` EN DUR (zéro
+  consentement collecté sur la voie portail) est remplacé par l'état réel de
+  l'interrupteur. Propagation aux portails déployés par la config LIVE
+  (endpoint + fallback inliné, `HotspotFilesSig` au check-in ≤ 45 s) ;
+  `undefined` (portails antérieurs) = false = pas d'interrupteur, le fetch
+  live corrige au chargement.
+- **Preuve opposable** : nouvelle colonne `WifiGuest.OptInAt` (RFC3339) —
+  QUI a consenti, QUAND, via quel geste. L'état suit le **NUMÉRO** (toutes
+  les lignes du registre du même téléphone portent le même état), pas la
+  ligne du jour. Migrations Neon idempotentes (ALTER `opt_in_at`, spec
+  Load/Sync 14 colonnes — pattern N°47/N°50, zéro impact comptes existants).
+- **Héritage + upgrade** : un numéro déjà consenti garde son consentement
+  (claim du lendemain interrupteur non touché ⇒ héritage — ne rien toucher
+  n'est pas un retrait) ; au re-claim idempotent du même jour, poser
+  l'interrupteur ENREGISTRE le consentement immédiatement (upgrade, même
+  code). Le sens inverse n'existe PAS par omission — le retrait est
+  explicite.
+- **Retrait symétrique « Ne plus recevoir »** : carte code de `/wifi` —
+  ligne d'état discrète « Vous recevez les actualités · Ne plus recevoir »
+  (1 geste, exactement comme le consentement), silencieuse si non abonné.
+  `POST /api/wifi/site/{slug}/consent` PUBLIC, mêmes gardes que le claim :
+  rate-limit wifiClaim (20/10 min + 100/24 h par IP), honeypot « website »
+  (succès factice aux bots, zéro écriture), validation téléphone 8-15
+  chiffres, réduction par `site.MarketingOptIn` (marketing éteint ⇒ un
+  opt-in sauvage ne s'enregistre pas). Retire TOUTES les lignes du numéro +
+  efface la preuve ; possible même site en pause/compte expiré (un droit de
+  retrait ne se suspend jamais). Journal d'activité côté gérant
+  (activation/retrait, téléphone masqué).
+- **Console gérant** : registre invités — le ✓ opt-in porte la date de
+  preuve (`optInAt`, tooltip horodatage) ; export CSV colonne
+  `opt_in_since` (la « base marketing » légale = filtre optIn + cette
+  colonne, « - » si retiré/jamais consenti).
+- **Contrat API** : claim + status renvoient `optIn` (état EFFECTIF du
+  numéro, héritage inclus) — la carte code l'affiche même à un re-scan sans
+  nouveau claim. `PortalConfig.MarketingOptIn` sérialisé SANS omitempty
+  (false toujours explicite), posé par les DEUX builders (token agent +
+  slug live).
+- **Tests Go** : 7 nouveaux cas — interrupteur OFF/ON (preuve RFC3339),
+  réduction par MarketingOptIn, upgrade au re-claim idempotent, héritage,
+  retrait + ré-activation via /consent (+ /status suit le numéro), gardes
+  (400/404/honeypot/réduction), CSV opt_in_since + omitempty JSON ;
+  template servi `marketingOptIn` true ET false explicite + interrupteur
+  embarqué. i18n : page visiteur déjà 100 % FR (convention existante).
+
 ## 2026-09-08 — N°68 : « Mot de passe oublié ? » (lien e-mail à usage unique)
 
 ### N°68 — Réinitialisation du mot de passe depuis l'écran de connexion (demande utilisateur)

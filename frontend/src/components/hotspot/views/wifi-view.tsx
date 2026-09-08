@@ -380,7 +380,17 @@ function GuestsDialog({ site, onClose }: { site: WifiSite | null; onClose: () =>
                       {new Date(g.createdAt).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })}
                     </td>
                     <td className="p-2 font-mono">+{g.phone}</td>
-                    <td className="p-2">{g.optIn ? "✓" : "—"}</td>
+                    <td className="p-2">
+                      {/* N°69 — la date de preuve (optInAt) accompagne le ✓ :
+                          le gérant voit QUAND le consentement a été posé. */}
+                      {g.optIn ? (
+                        <span title={g.optInAt ? new Date(g.optInAt).toLocaleString("fr-FR") : undefined}>
+                          ✓{g.optInAt ? ` ${new Date(g.optInAt).toLocaleDateString("fr-FR")}` : ""}
+                        </span>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
                     <td className="p-2 font-mono">{g.code}</td>
                   </tr>
                 ))}

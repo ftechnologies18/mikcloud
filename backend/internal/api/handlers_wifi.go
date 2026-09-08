@@ -195,6 +195,40 @@ func (a *API) handleWifiSiteInfo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// wifiPhoneConsented — N°69 : état de consentement courant d'un numéro sur
+// un compte. L'état suit le NUMÉRO (pas la ligne du jour) : une bascule via
+// /consent met à jour TOUTES les lignes du téléphone, donc « une ligne au
+// true » = consentement actif. À appeler sous verrou.
+func wifiPhoneConsented(db *model.DB, acc, phone string) bool {
+	for i := range db.WifiGuests {
+		if db.WifiGuests[i].AccountID == acc && db.WifiGuests[i].Phone == phone && db.WifiGuests[i].OptIn {
+			return true
+		}
+	}
+	return false
+}
+
+// wifiSetPhoneConsent — N°69 : pose l'état de consentement sur TOUTES les
+// lignes d'un numéro du compte (l'état suit le numéro — cf. type WifiGuest).
+// Retourne le nombre de lignes mises à jour. À appeler sous verrou ;
+// l'appellant décide du Save.
+func wifiSetPhoneConsent(db *model.DB, acc, phone string, optIn bool) int {
+	n := 0
+	for i := range db.WifiGuests {
+		g := &db.WifiGuests[i]
+		if g.AccountID != acc || g.Phone != phone {
+			continue
+		}
+		g.OptIn = optIn
+		g.OptInAt = ""
+		if optIn {
+			g.OptInAt = model.NowISO()
+		}
+		n++
+	}
+	return n
+}
+
 // handleWifiClaim — cœur du mode : valide le téléphone, applique les plafonds
 // (idempotence téléphone/jour, budget site/jour), émet UN ticket gratuit et
 // enregistre le visiteur (registre marketing). Renvoie le code + le lien de
@@ -325,6 +359,22 @@ func (a *API) handleWifiClaim(w http.ResponseWriter, r *http.Request) {
 	for i := len(today) - 1; i >= 0; i-- {
 		v := wifiResolveVoucher(db, &today[i])
 		if wifiVoucherUsable(v) {
+			// N°69 — UPGRADE au re-claim idempotent : le visiteur qui pose
+			// l'interrupteur au re-scan (même jour) voit son consentement
+			// enregistré immédiatement, sans attendre un nouveau ticket au
+			// lendemain. Le sens inverse (retrait) reste EXPLICITE via
+			// POST /consent : ne pas toucher l'interrupteur n'est pas un
+			// retrait — un consentement posé reste acquis (loi 2013-450 : le
+			// retrait doit être aussi aisé que le consentement, tous deux
+			// sont des actions dédiées, jamais une omission).
+			guestOptIn := wifiPhoneConsented(db, site.AccountID, phone)
+			if req.OptIn && site.MarketingOptIn && !guestOptIn {
+				wifiSetPhoneConsent(db, site.AccountID, phone, true)
+				guestOptIn = true
+				a.logActivityBy(r, db, site.AccountID, "wifi",
+					fmt.Sprintf("WiFi jetable «%s» : consentement marketing activé par %s", site.Name, maskPhone(phone)))
+				a.store.Save()
+			}
 			a.store.Unlock()
 			writeJSON(w, http.StatusOK, map[string]any{
 				"duplicate":     true,
@@ -335,6 +385,7 @@ func (a *API) handleWifiClaim(w http.ResponseWriter, r *http.Request) {
 				"dataQuotaMb":   v.DataQuotaMb,
 				"profileName":   v.ProfileName,
 				"siteName":      site.Name,
+				"optIn":         guestOptIn, // N°69 — état marketing du numéro (carte code)
 			})
 			return
 		}
@@ -418,12 +469,26 @@ func (a *API) handleWifiClaim(w http.ResponseWriter, r *http.Request) {
 		Price: profileCopy.Price, SellingPrice: profileCopy.SellingPrice,
 		DataQuotaMb: dataMb, TimeLimitMin: timeMin,
 	}
+	// N°69 — consentement marketing explicite : l'interrupteur posé par le
+	// visiteur (portail login.html OU page /wifi). Aucune case pré-cochée
+	// n'existe plus — false est l'état par défaut, l'action affirmative
+	// (interrupteur posé) crée le consentement + sa preuve horodatée.
+	// Héritage : un numéro déjà consenti garde son consentement (ne pas
+	// toucher l'interrupteur ≠ se désinscrire — le retrait est explicite via
+	// POST /consent, cf. handleWifiConsent).
+	optIn := req.OptIn && site.MarketingOptIn
+	if !optIn && wifiPhoneConsented(db, site.AccountID, phone) {
+		optIn = true
+	}
 	guest := model.WifiGuest{
 		ID: model.NewID("wg-"), AccountID: site.AccountID,
 		SiteID: site.ID, SiteName: site.Name, Phone: phone,
-		OptIn:     req.OptIn && site.MarketingOptIn, // opt-in tracé seulement si la case est proposée
+		OptIn:     optIn,
 		VoucherID: voucher.ID, Code: code, Day: dayKey, CreatedAt: model.NowISO(),
 		Mac: mac, IP: ip, // N°50 — empreintes anti-abus (audit gérant)
+	}
+	if optIn {
+		guest.OptInAt = model.NowISO() // N°69 — preuve horodatée du consentement
 	}
 	isAgent := routerCopy.Mode == "agent"
 	if isAgent {
@@ -537,6 +602,7 @@ func (a *API) handleWifiClaim(w http.ResponseWriter, r *http.Request) {
 		"dataQuotaMb":   dataMb,
 		"profileName":   voucher.ProfileName,
 		"siteName":      site.Name,
+		"optIn":         guest.OptIn, // N°69 — état marketing du numéro (carte code)
 	})
 }
 
@@ -610,6 +676,10 @@ func (a *API) handleWifiStatus(w http.ResponseWriter, r *http.Request) {
 	settings := ensureSettings(db, site.AccountID)
 	dayKey := model.WifiDayKey(settings.Tenant.Timezone, time.Now().UTC())
 	resp := map[string]any{"state": "none", "active": site.Active}
+	// N°69 — l'état marketing suit le NUMÉRO (toutes lignes confondues, pas
+	// seulement le jour courant) : la carte code de la page /wifi l'affiche
+	// (lien « Ne plus recevoir ») même à un re-scan sans nouveau claim.
+	resp["optIn"] = wifiPhoneConsented(db, site.AccountID, phone)
 	if site.Active && a.subscriptionGuardStateLocked(site.AccountID).Status != "expired" {
 		resp["offers"] = wifiOffers(db, site)
 	}
@@ -638,6 +708,77 @@ func (a *API) handleWifiStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleWifiConsent — N°69 : bascule du consentement marketing d'un numéro
+// (le retrait « Ne plus recevoir » de la carte code /wifi, un éventuel
+// opt-in post-claim). Endpoint PUBLIC — mêmes gardes que le claim :
+//
+//   - rate-limit du bucket wifiClaim (20/10 min + 100/24 h par IP) ;
+//   - honeypot « website » (champ invisible ; un bot rempli reçoit un
+//     succès FACTICE, rien n'est écrit) ;
+//   - validation stricte du téléphone (8-15 chiffres) ;
+//   - optIn=true réduit par site.MarketingOptIn (le marketing éteint sur
+//     le site ⇒ l'interrupteur n'est pas proposé, un opt-in sauvage ne
+//     s'enregistre pas — symétrie exacte avec le claim).
+//
+// Sémantique : l'état suit le NUMÉRO — TOUTES les lignes du registre du
+// téléphone passent à l'état demandé (le retrait est immédiat et complet,
+// l'opt-in pose sa preuve horodatée OptInAt). Le retrait reste possible
+// même site en pause ou compte expiré : un droit de retrait ne se suspend
+// jamais. Réponse : {"ok":true,"optIn":<état effectif>,"updated":<lignes>}.
+func (a *API) handleWifiConsent(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	var req struct {
+		Phone string `json:"phone"`
+		OptIn bool   `json:"optIn"`
+		// N°50/N°69 — honeypot « website » (champ invisible ; un bot rempli
+		// reçoit un succès FACTICE, rien n'est écrit) — même contrat que le claim.
+		Website string `json:"website"`
+	}
+	if err := decodeBody(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
+		return
+	}
+	if ok, retry := a.wifiClaim.allow(clientIP(r)); !ok {
+		w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())+1))
+		writeErr(w, http.StatusTooManyRequests, "Trop de tentatives — réessayez plus tard")
+		return
+	}
+	phone := model.NormalizeWifiPhone(req.Phone)
+	if phone == "" {
+		writeErr(w, http.StatusBadRequest, "Numéro de téléphone invalide (8 à 15 chiffres, indicatif inclus)")
+		return
+	}
+	a.store.Lock()
+	db := a.store.Data()
+	site := findWifiSiteBySlug(db, slug)
+	if site == nil {
+		a.store.Unlock()
+		writeErr(w, http.StatusNotFound, "Site WiFi introuvable")
+		return
+	}
+	// Honeypot (même contrat que le claim) : succès FACTICE — même forme
+	// JSON, aucune écriture, aucun indice sur le filtre.
+	if strings.TrimSpace(req.Website) != "" {
+		a.store.Unlock()
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "optIn": req.OptIn, "updated": 1})
+		return
+	}
+	optIn := req.OptIn && site.MarketingOptIn
+	updated := wifiSetPhoneConsent(db, site.AccountID, phone, optIn)
+	if updated > 0 {
+		state := "retiré"
+		if optIn {
+			state = "activé"
+		}
+		a.logActivityBy(r, db, site.AccountID, "wifi",
+			fmt.Sprintf("WiFi jetable «%s» : consentement marketing %s par %s (%d ligne(s))",
+				site.Name, state, maskPhone(phone), updated))
+		a.store.Save()
+	}
+	a.store.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "optIn": optIn, "updated": updated})
 }
 
 // handleWifiPortal — N°35-c : config LIVE du portail captif pour le site
@@ -1066,7 +1207,10 @@ func (a *API) handleWifiGuests(w http.ResponseWriter, r *http.Request) {
 
 	if export == "csv" {
 		var sb strings.Builder
-		sb.WriteString("date;telephone;appareil;ip;opt_in;code;site\r\n") // N°50 — appareil (MAC) + ip pour l'audit anti-abus
+		// N°69 — opt_in_since : preuve horodatée du consentement
+		// (colonne vide « - » = jamais consenti / retiré). La base
+		// marketing légale du gérant = filtre optIn + cette colonne.
+		sb.WriteString("date;telephone;appareil;ip;opt_in;opt_in_since;code;site\r\n") // N°50 — appareil (MAC) + ip pour l'audit anti-abus
 		for _, g := range rows {
 			sb.WriteString(g.CreatedAt)
 			sb.WriteByte(';')
@@ -1080,6 +1224,12 @@ func (a *API) handleWifiGuests(w http.ResponseWriter, r *http.Request) {
 				sb.WriteString("oui")
 			} else {
 				sb.WriteString("non")
+			}
+			sb.WriteByte(';')
+			if g.OptInAt != "" {
+				sb.WriteString(g.OptInAt)
+			} else {
+				sb.WriteString("-")
 			}
 			sb.WriteByte(';')
 			sb.WriteString(g.Code)

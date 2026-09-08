@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import {
   ArrowRight,
+  Bell,
   Check,
   Copy,
   Loader2,
@@ -25,11 +26,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { copyToClipboard } from "@/components/hotspot/parts/uc-clipboard";
 import {
   claimWifiCode,
   fetchWifiSiteInfo,
   fetchWifiStatus,
+  wifiConsent,
 } from "@/lib/hotspot/api";
 import { ApiError } from "@/lib/hotspot/api";
 import type { WifiOffer, WifiSiteInfo } from "@/lib/hotspot/types";
@@ -46,7 +49,17 @@ export function WifiGuestPage({ slug }: { slug: string }) {
   const [fatal, setFatal] = useState("");
 
   const [phone, setPhone] = useState("");
-  const [optIn, setOptIn] = useState(true);
+  // N°69 — interrupteur de consentement marketing : OFF PAR DÉFAUT (jamais
+  // pré-posé : un consentement univoque, loi ivoirienne n°2013-450/ARTCI).
+  // Un RÉGLAGE, pas une case à cocher — le geste affirmatif = le visiteur le
+  // pose ; ne rien toucher = refus sans pénalité (le code arrive pareil).
+  const [optIn, setOptIn] = useState(false);
+  // N°69 — état marketing EFFECTIF du numéro (réponse claim/status, héritage
+  // inclus) + dernier téléphone connu : alimentent la ligne d'état et le lien
+  // « Ne plus recevoir » de la carte code (retrait 1 geste, symétrique).
+  const [guestOptIn, setGuestOptIn] = useState(false);
+  const [lastPhone, setLastPhone] = useState("");
+  const [withdrawing, setWithdrawing] = useState(false);
   const [claiming, setClaiming] = useState(false);
   // N°50 — honeypot « website » : champ invisible, jamais rempli par un
   // humain ; si un bot le remplit, l'API répond un succès factice.
@@ -90,8 +103,10 @@ export function WifiGuestPage({ slug }: { slug: string }) {
   // Statut du ticket du jour pour un téléphone donné (re-scan du QR).
   const refreshStatus = useCallback(
     async (p: string) => {
+      setLastPhone(p);
       const st = await fetchWifiStatus(slug, p);
       setOffers(st.offers ?? []);
+      setGuestOptIn(Boolean(st.optIn));
       if (st.state === "active" && st.code) {
         setCode(st.code);
         setLoginUrl(st.loginUrl ?? "");
@@ -146,6 +161,8 @@ export function WifiGuestPage({ slug }: { slug: string }) {
         website: honeypot || undefined,
       });
       remember(digits);
+      setLastPhone(digits);
+      setGuestOptIn(Boolean(res.optIn));
       setCode(res.code);
       setLoginUrl(res.loginUrl);
       setTimeMin(res.timeLimitMin);
@@ -176,6 +193,24 @@ export function WifiGuestPage({ slug }: { slug: string }) {
       setCopied(true);
       toast.success("Code copié");
       setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  // N°69 — retrait « Ne plus recevoir » : 1 geste, symétrique du
+  // consentement (l'interrupteur posé au claim). Retire TOUTES les lignes
+  // du numéro (l'état suit le téléphone, cf. handleWifiConsent).
+  const onWithdraw = async () => {
+    if (!lastPhone) return;
+    setWithdrawing(true);
+    try {
+      await wifiConsent(slug, { phone: lastPhone, optIn: false });
+      setGuestOptIn(false);
+      toast.success("Vous ne recevrez plus les actualités");
+    } catch (err) {
+      if (err instanceof ApiError) toast.error(err.message);
+      else toast.error("Connexion au service impossible — réessayez");
+    } finally {
+      setWithdrawing(false);
     }
   };
 
@@ -270,10 +305,7 @@ export function WifiGuestPage({ slug }: { slug: string }) {
                 </p>
               </div>
               {quotaLabel ? (
-                <p className="text-xs text-muted-foreground">
-                  Offert : {quotaLabel}
-                  {info.marketingOptIn ? " · Merci !" : ""}
-                </p>
+                <p className="text-xs text-muted-foreground">Offert : {quotaLabel}</p>
               ) : null}
               <div className="grid gap-2">
                 <Button size="lg" className="h-12 text-base" onClick={onCopy}>
@@ -301,6 +333,24 @@ export function WifiGuestPage({ slug }: { slug: string }) {
                   Saisissez ce code sur la page de connexion du WiFi.
                 </p>
               )}
+              {/* N°69 — état marketing du numéro, discret et factuel : le
+                  retrait « Ne plus recevoir » coûte UN geste, exactement
+                  comme le consentement (symétrie loi 2013-450). Silence total
+                  quand le numéro n&apos;est pas abonné — pas de relance. */}
+              {info.marketingOptIn && guestOptIn && lastPhone ? (
+                <div className="flex flex-wrap items-center justify-center gap-1.5 text-xs text-muted-foreground">
+                  <Bell className="size-3 shrink-0" aria-hidden="true" />
+                  <span>Vous recevez les actualités</span>
+                  <button
+                    type="button"
+                    onClick={onWithdraw}
+                    disabled={withdrawing}
+                    className="underline underline-offset-2 transition-colors hover:text-foreground disabled:opacity-50"
+                  >
+                    {withdrawing ? "Un instant…" : "Ne plus recevoir"}
+                  </button>
+                </div>
+              ) : null}
               <button
                 className="mx-auto flex items-center gap-1.5 text-xs text-muted-foreground underline-offset-2 hover:underline"
                 onClick={() => {
@@ -404,18 +454,25 @@ export function WifiGuestPage({ slug }: { slug: string }) {
                   </p>
                 </div>
                 {info.marketingOptIn ? (
-                  <label className="flex items-start gap-2 text-sm" htmlFor="wifi-consent">
-                    <input
-                      id="wifi-consent"
-                      type="checkbox"
-                      checked={optIn}
-                      onChange={(e) => setOptIn(e.target.checked)}
-                      className="mt-0.5 size-4"
-                    />
-                    <span className="text-muted-foreground">
-                      J&apos;accepte de recevoir les offres et actualités de l&apos;établissement
-                      (désinscription à tout moment).
+                  /* N°69 — interrupteur de consentement : un RÉGLAGE, pas une
+                     case. OFF par défaut (consentement univoque — l&apos;ancienne
+                     case pré-cochée était juridiquement NULLE), finalité +
+                     fréquence + STOP annoncées (consentement éclairé), toute
+                     la ligne est tactile (cible ≥ 44 px). */
+                  <label className="flex cursor-pointer items-start justify-between gap-3 rounded-lg border bg-muted/40 px-3 py-2.5 transition-colors hover:bg-muted/60">
+                    <span className="space-y-0.5">
+                      <span className="block text-sm leading-snug">
+                        Me tenir informé des actualités
+                      </span>
+                      <span className="block text-[11px] leading-snug text-muted-foreground">
+                        2 messages/mois · STOP gratuit à tout moment
+                      </span>
                     </span>
+                    <Switch
+                      checked={optIn}
+                      onCheckedChange={setOptIn}
+                      aria-label="Me tenir informé des actualités de l'établissement"
+                    />
                   </label>
                 ) : null}
                 <Button type="submit" size="lg" className="h-12 w-full text-base" disabled={claiming}>

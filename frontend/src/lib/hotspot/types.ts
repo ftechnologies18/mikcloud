@@ -1481,6 +1481,8 @@ export interface WifiGuest {
   siteName: string;
   phone: string;
   optIn: boolean;
+  /** N°69 — preuve horodatée du consentement marketing (RFC3339, vide = non/retiré). */
+  optInAt?: string;
   voucherId: string;
   code: string;
   day: string;
@@ -1543,6 +1545,15 @@ export interface WifiOffer {
   timeLimitMin: number;
 }
 
+/** POST /api/wifi/site/{slug}/consent — N°69 : bascule du consentement
+ * marketing du numéro (retrait « Ne plus recevoir », un éventuel opt-in).
+ * Public, mêmes gardes que le claim (rate-limit + honeypot website). */
+export interface WifiConsentResponse {
+  ok: boolean;
+  optIn: boolean;
+  updated: number;
+}
+
 /** POST /api/wifi/site/{slug}/claim — code délivré au visiteur. */
 export interface WifiClaimResponse {
   duplicate: boolean;
@@ -1552,6 +1563,8 @@ export interface WifiClaimResponse {
   dataQuotaMb: number;
   profileName?: string;
   siteName?: string;
+  /** N°69 — état marketing EFFECTIF du numéro après le claim (héritage inclus). */
+  optIn?: boolean;
 }
 
 /** GET /api/wifi/site/{slug}/status — état du ticket du jour. */
@@ -1563,6 +1576,8 @@ export interface WifiStatusResponse {
   timeLimitMin?: number;
   dataQuotaMb?: number;
   offers?: WifiOffer[];
+  /** N°69 — état marketing courant du numéro (suit le numéro, pas le jour). */
+  optIn?: boolean;
 }
 
 /** N°55 — une ligne de vitrine hospitalité (promos produits du portail).

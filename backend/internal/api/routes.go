@@ -308,6 +308,10 @@ func (a *API) Handler() http.Handler {
 	// gérant (CRUD sites, registre marketing).
 	mux.HandleFunc("GET /api/wifi/site/{slug}", a.handleWifiSiteInfo)
 	mux.HandleFunc("POST /api/wifi/site/{slug}/claim", a.handleWifiClaim)
+	// N°69 — bascule du consentement marketing d'un numéro (retrait
+	// « Ne plus recevoir » de la carte code /wifi, opt-in post-claim).
+	// Public, mêmes gardes que le claim (rate-limit + honeypot).
+	mux.HandleFunc("POST /api/wifi/site/{slug}/consent", a.handleWifiConsent)
 	mux.HandleFunc("GET /api/wifi/site/{slug}/status", a.handleWifiStatus)
 	// N°56 — analytics du portail hospitalité : dépôt PUBLIC des
 	// événements impressions/clics (la page du portail est pré-auth ;

@@ -491,3 +491,71 @@ func TestPortalServeLogRetention(t *testing.T) {
 		t.Error("valeur de repli 90 absente de la note de confidentialité")
 	}
 }
+
+// TestPortalServeMarketingOptIn — N°69 : le login.html servi porte
+// marketingOptIn du site WiFi dans le bloc config (fallback inliné — le
+// fetch live prime ensuite au chargement), la valeur est TOUJOURS explicite
+// (true comme false), et le template embarque l'interrupteur du claim
+// (mc-optin + .mc-consent — rendu conditionnel côté client).
+func TestPortalServeMarketingOptIn(t *testing.T) {
+	st, ts := newTestServerWithStore(t)
+	token := seedRouterWithAccount(t, st, "tok-n67", struct {
+		tenantName  string
+		wifiSlug    string
+		joinActive  bool
+		profileName string
+		profilePrc  int
+		waveLink    string
+		bannerUrl   string
+	}{tenantName: "Cyber N67", wifiSlug: "cyber-n67"})
+
+	// Marketing ACTIVÉ sur le site lié (réglage console du gérant).
+	st.Lock()
+	for i := range st.Data().WifiSites {
+		if st.Data().WifiSites[i].Slug == "cyber-n67" {
+			st.Data().WifiSites[i].MarketingOptIn = true
+		}
+	}
+	st.Unlock()
+
+	resp, err := http.Get(ts.URL + "/portal/" + token + "/login.html")
+	if err != nil {
+		t.Fatalf("GET login.html : %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("statut %d, attendu 200", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	bodyStr := string(body)
+	if !strings.Contains(bodyStr, `"marketingOptIn":true`) {
+		t.Error("marketingOptIn=true absent du bloc config du login.html servi")
+	}
+	// Le template embarque l'interrupteur du claim (CSS + rendu JS
+	// conditionnel cfg.marketingOptIn === true).
+	if !strings.Contains(bodyStr, "mc-consent") {
+		t.Error("classe .mc-consent absente du login.html servi (interrupteur N°69)")
+	}
+	if !strings.Contains(bodyStr, "mc-optin") {
+		t.Error("id mc-optin absent du login.html servi (interrupteur N°69)")
+	}
+
+	// Marketing ÉTEINT : false EXPLICITE dans la config (undefined ≠ false
+	// côté page réafficherait l'interrupteur malgré le réglage du gérant).
+	st.Lock()
+	for i := range st.Data().WifiSites {
+		if st.Data().WifiSites[i].Slug == "cyber-n67" {
+			st.Data().WifiSites[i].MarketingOptIn = false
+		}
+	}
+	st.Unlock()
+	resp2, err := http.Get(ts.URL + "/portal/" + token + "/login.html")
+	if err != nil {
+		t.Fatalf("GET login.html 2 : %v", err)
+	}
+	defer resp2.Body.Close()
+	body2, _ := io.ReadAll(resp2.Body)
+	if !strings.Contains(string(body2), `"marketingOptIn":false`) {
+		t.Error("marketingOptIn=false (explicite) absent du bloc config — un false omis ferait réapparaître l'interrupteur")
+	}
+}

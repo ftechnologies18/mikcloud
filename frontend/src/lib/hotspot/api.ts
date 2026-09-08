@@ -447,6 +447,7 @@ export function invoiceURL(id: string): string {
 
 import type {
   WifiClaimResponse,
+  WifiConsentResponse,
   WifiGuest,
   WifiSite,
   WifiSiteInfo,
@@ -496,12 +497,27 @@ export async function fetchWifiSiteInfo(slug: string): Promise<WifiSiteInfo> {
 
 /** claimWifiCode — émission du code gratuit (idempotent par téléphone/jour).
  * N°50 : mac (appareil, quand la page est ouverte depuis le portail) alimente
- * le plafond par appareil ; website = honeypot (toujours vide côté UI). */
+ * le plafond par appareil ; website = honeypot (toujours vide côté UI).
+ * N°69 : optIn = état de l'interrupteur « Me tenir informé » (OFF par défaut
+ * — jamais de case pré-cochée, consentement univoque). */
 export async function claimWifiCode(
   slug: string,
   body: { phone: string; optIn: boolean; mac?: string; website?: string },
 ): Promise<WifiClaimResponse> {
   return apiAnon<WifiClaimResponse>(`/api/wifi/site/${encodeURIComponent(slug)}/claim`, {
+    method: "POST",
+    body,
+  });
+}
+
+/** wifiConsent — N°69 : bascule du consentement marketing du numéro (le
+ * retrait « Ne plus recevoir » de la carte code, un éventuel opt-in).
+ * website = honeypot (toujours vide côté UI, même contrat que le claim). */
+export async function wifiConsent(
+  slug: string,
+  body: { phone: string; optIn: boolean; website?: string },
+): Promise<WifiConsentResponse> {
+  return apiAnon<WifiConsentResponse>(`/api/wifi/site/${encodeURIComponent(slug)}/consent`, {
     method: "POST",
     body,
   });

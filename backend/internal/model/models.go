@@ -1100,6 +1100,14 @@ type WifiGuest struct {
 	// claims antérieurs au N°50 ou sans MAC (page /wifi scannée hors portail).
 	Mac string `json:"mac,omitempty"`
 	IP  string `json:"ip,omitempty"`
+	// OptInAt — N°69 : horodatage RFC3339 du consentement marketing
+	// explicite du numéro (interrupteur posé par le visiteur au claim, ou
+	// bascule via POST /api/wifi/site/{slug}/consent). C'est la PREUVE
+	// opposable exigée par la loi ivoirienne n°2013-450 (ARTCI) : qui,
+	// quand, quoi. Vide = jamais consenti OU retrait effectué (OptIn à
+	// false) — l'état courant suit le NUMÉRO (toutes les lignes du même
+	// téléphone portent le même état, cf. handleWifiConsent).
+	OptInAt string `json:"optInAt,omitempty"`
 }
 
 // PromoEvent — N°56 : un événement analytics du portail captif (mode

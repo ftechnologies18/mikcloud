@@ -413,6 +413,38 @@
         }
         .privacy-note i { font-size: 0.62rem; color: var(--wa); opacity: 0.8; }
 
+        /* N°69 — interrupteur de consentement marketing du claim WiFi offert :
+           un RÉGLAGE, pas une case à cocher. OFF par défaut (aucun pré-cochage :
+           un consentement univoque, loi ivoirienne n°2013-450/ARTCI), le geste
+           affirmatif = le visiteur le pose. Fréquence + STOP annoncées dans le
+           libellé (consentement éclairé) ; ne rien toucher = refus sans
+           pénalité (le code arrive pareil). Affiché seulement si le site a
+           activé le marketing (cfg.marketingOptIn, réglage console). */
+        .mc-consent {
+            display: flex; align-items: flex-start; gap: 10px;
+            margin: 10px 0 0; padding: 0;
+            font-size: 0.8rem; color: #0f766e;
+            cursor: pointer; user-select: none; -webkit-user-select: none;
+            line-height: 1.35;
+        }
+        .mc-consent em { font-style: normal; font-size: 0.7rem; color: #6b7280; }
+        .mc-consent input[type="checkbox"] {
+            appearance: none; -webkit-appearance: none; -moz-appearance: none;
+            flex: none; margin: 0; position: relative;
+            width: 40px; height: 22px; border-radius: 11px;
+            background: #cbd5e1; border: none; outline: none;
+            transition: background 0.2s ease; cursor: pointer;
+        }
+        .mc-consent input[type="checkbox"]::after {
+            content: ''; position: absolute; top: 2px; left: 2px;
+            width: 18px; height: 18px; border-radius: 50%;
+            background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.35);
+            transition: left 0.2s ease;
+        }
+        .mc-consent input[type="checkbox"]:checked { background: #0d9488; }
+        .mc-consent input[type="checkbox"]:checked::after { left: 20px; }
+        .mc-consent input[type="checkbox"]:focus-visible { box-shadow: 0 0 0 3px rgba(13,148,136,0.35); }
+
         /* Error alert */
         .alert-error {
             background: linear-gradient(135deg, #fef2f2, #fee2e2);
@@ -1144,6 +1176,16 @@
                     'Recevoir' +
                     '</button>' +
                     '</div>' +
+                    /* N°69 — interrupteur de consentement marketing : OFF par
+                       défaut (consentement univoque, ARTCI/loi 2013-450), posé
+                       seulement si le site a activé le marketing
+                       (cfg.marketingOptIn — undefined = false pour les fallback
+                       inlinés antérieurs au N°69). */
+                    (cfg.marketingOptIn === true ?
+                    '<label class="mc-consent" for="mc-optin">' +
+                    '<input type="checkbox" id="mc-optin" />' +
+                    '<span>Me tenir informé des actualités<br/><em>2 messages/mois · STOP gratuit à tout moment</em></span>' +
+                    '</label>' : '') +
                     /* N°50 — honeypot : champ invisible (hors écran, non
                        tabulable) qu'un bot remplira ; l'API répond alors un
                        succès factice sans créer le ticket. */
@@ -1170,13 +1212,17 @@
                     // N°50 — mac : identité de l'appareil ($(mac-esc) résolue par
                     // le routeur, lue plus haut) → plafond anti-abus par appareil ;
                     // website : honeypot (toujours vide pour un vrai client).
+                    // N°69 — optIn : état de l'interrupteur « Me tenir informé »
+                    // (absent = false : marketing éteint sur le site, ou fallback
+                    // inliné antérieur au N°69 — l'ancien optIn:false en dur).
+                    var optInEl = document.getElementById('mc-optin');
                     var mcWebsite = document.getElementById('mc-website');
                     fetch(claimUrl, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             phone: phone,
-                            optIn: false,
+                            optIn: optInEl ? optInEl.checked : false,
                             mac: clientMac || '',
                             website: mcWebsite ? mcWebsite.value : ''
                         })

@@ -193,6 +193,10 @@ func buildPortalConfig(db *model.DB, router *model.Router, r *http.Request) hotp
 		if s.AccountID == acc && s.RouterID == router.ID && s.Active {
 			cfg.WifiSlug = s.Slug
 			cfg.Active = true // N°51 — site actif lié trouvé → carte claim affichée
+			// N°69 — l'interrupteur de consentement marketing du
+			// claim portail suit le réglage du site (fallback inliné
+			// + endpoint live, même pilotage que la carte claim).
+			cfg.MarketingOptIn = s.MarketingOptIn
 			// WifiURL — construit à partir de l'origine publique (frontend Vercel).
 			// Pour l'instant, on dérive du Host de la requête si c'est une origine
 			// connue (mikcloud.ftci.fr), sinon on laisse vide (la page utilisera
@@ -293,8 +297,11 @@ func buildPortalConfigForSite(db *model.DB, site *model.WifiSite, router *model.
 		JoinEnabled: settings.Tenant.JoinButtonEnabled(),
 		// N°65 — rétention du journal du compte (note de confidentialité).
 		LogRetentionDays: settings.Tenant.LogRetentionDaysEffective(),
-		WifiSlug:         site.Slug,
-		Active:           site.Active, // N°51 — état réel (peut être en pause)
+		// N°69 — interrupteur de consentement marketing du claim portail
+		// (état réel du site, même pilotage que Active).
+		MarketingOptIn: site.MarketingOptIn,
+		WifiSlug:       site.Slug,
+		Active:         site.Active, // N°51 — état réel (peut être en pause)
 	}
 	cfg.Style, cfg.Welcome, cfg.Promos, cfg.Socials = portalHospitality(settings.Tenant) // N°55
 	cfg.PortalKey = settings.Tenant.PortalKey                                            // N°56 — analytics pré-auth

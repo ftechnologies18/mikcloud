@@ -464,6 +464,9 @@ func (p *PG) ensureSchema() error {
                         whatsapp_phone_id   TEXT NOT NULL DEFAULT '',
                         whatsapp_to         TEXT NOT NULL DEFAULT '',
                         email_enabled       BOOLEAN NOT NULL DEFAULT FALSE,
+                        email_provider      TEXT NOT NULL DEFAULT '', -- '' | smtp | resend (N°67)
+                        resend_api_key      TEXT NOT NULL DEFAULT '',
+                        resend_from         TEXT NOT NULL DEFAULT '',
                         smtp_host           TEXT NOT NULL DEFAULT '',
                         smtp_port           INTEGER NOT NULL DEFAULT 0,
                         smtp_user           TEXT NOT NULL DEFAULT '',
@@ -707,6 +710,12 @@ func (p *PG) ensureSchema() error {
                         ip          TEXT NOT NULL
                 )`,
 		`CREATE INDEX IF NOT EXISTS idx_sell_sessions_reseller ON sell_sessions (reseller_id)`,
+		// N°67 — Resend (API HTTP https://resend.com) comme fournisseur
+		// alternatif du canal e-mail : le provider choisit entre SMTP
+		// direct (défaut, '') et l'API Resend (clé secrète par compte).
+		`ALTER TABLE notif_settings ADD COLUMN IF NOT EXISTS email_provider TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE notif_settings ADD COLUMN IF NOT EXISTS resend_api_key TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE notif_settings ADD COLUMN IF NOT EXISTS resend_from TEXT NOT NULL DEFAULT ''`,
 		// N (rapprochement doux) — utilisateur absent du dernier read_state du
 		// routeur (supprimé dans Winbox) : badge + action de resynchronisation.
 		`ALTER TABLE hotspot_users ADD COLUMN IF NOT EXISTS missing_on_router BOOLEAN NOT NULL DEFAULT FALSE`,
@@ -2062,7 +2071,8 @@ var notifSettingsSpec = entitySpec[model.NotificationSettings]{
 	table: "notif_settings",
 	cols: []string{"id", "enabled", "telegram_enabled", "telegram_bot_token", "telegram_chat_id",
 		"whatsapp_enabled", "whatsapp_token", "whatsapp_phone_id", "whatsapp_to",
-		"email_enabled", "smtp_host", "smtp_port", "smtp_user", "smtp_pass", "email_to",
+		"email_enabled", "email_provider", "resend_api_key", "resend_from",
+		"smtp_host", "smtp_port", "smtp_user", "smtp_pass", "email_to",
 		"offline_after_sec", "low_stock_threshold", "daily_report", "report_hour",
 		"last_report_date", "stock_alert_state", "account_id"},
 	idOf: func(x *model.NotificationSettings) string { return x.AccountID },
@@ -2071,7 +2081,8 @@ var notifSettingsSpec = entitySpec[model.NotificationSettings]{
 		var stockState string
 		err := r.Scan(&x.AccountID, &x.Enabled, &x.TelegramEnabled, &x.TelegramBotToken, &x.TelegramChatID,
 			&x.WhatsAppEnabled, &x.WhatsAppToken, &x.WhatsAppPhoneID, &x.WhatsAppTo,
-			&x.EmailEnabled, &x.SMTPHost, &x.SMTPPort, &x.SMTPUser, &x.SMTPPass, &x.EmailTo,
+			&x.EmailEnabled, &x.EmailProvider, &x.ResendAPIKey, &x.ResendFrom,
+			&x.SMTPHost, &x.SMTPPort, &x.SMTPUser, &x.SMTPPass, &x.EmailTo,
 			&x.OfflineAfterSec, &x.LowStockThreshold, &x.DailyReport, &x.ReportHour,
 			&x.LastReportDate, &stockState, &x.AccountID)
 		if err != nil {
@@ -2091,7 +2102,8 @@ var notifSettingsSpec = entitySpec[model.NotificationSettings]{
 		}
 		return []any{x.AccountID, x.Enabled, x.TelegramEnabled, x.TelegramBotToken, x.TelegramChatID,
 			x.WhatsAppEnabled, x.WhatsAppToken, x.WhatsAppPhoneID, x.WhatsAppTo,
-			x.EmailEnabled, x.SMTPHost, x.SMTPPort, x.SMTPUser, x.SMTPPass, x.EmailTo,
+			x.EmailEnabled, x.EmailProvider, x.ResendAPIKey, x.ResendFrom,
+			x.SMTPHost, x.SMTPPort, x.SMTPUser, x.SMTPPass, x.EmailTo,
 			x.OfflineAfterSec, x.LowStockThreshold, x.DailyReport, x.ReportHour,
 			x.LastReportDate, stockState, x.AccountID}
 	},

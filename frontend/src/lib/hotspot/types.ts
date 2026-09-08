@@ -880,12 +880,18 @@ export interface NotifSettings {
   whatsappPhoneId: string;
   /** Numéro destinataire, format international sans « + » ni espaces (ex. 2250700000000). */
   whatsappTo: string;
-  // Email SMTP
+  // Email — fournisseur choisi : SMTP direct ou API Resend (N°67).
   emailEnabled: boolean;
+  /** Fournisseur normalisé par le serveur : "smtp" (défaut historique) ou "resend". */
+  emailProvider: "smtp" | "resend";
   smtpHost: string;
   smtpPort: number;
   smtpUser: string;
   smtpPassSet: boolean;
+  /** Clé API Resend déjà configurée côté serveur (la valeur ne part jamais). */
+  resendApiKeySet: boolean;
+  /** Expéditeur Resend — vide → MikCloud <onboarding@resend.dev>. */
+  resendFrom: string;
   emailTo: string;
   // Règles d'alerte
   /** Routeur considéré hors ligne après N secondes sans check-in (défaut 135 = 3 × 45 s). */

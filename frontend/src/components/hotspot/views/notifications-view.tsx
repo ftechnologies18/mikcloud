@@ -6,7 +6,7 @@
 //   1. Règles d'alerte — interrupteur, seuils (routeur hors ligne, stock),
 //      rapport quotidien (carte « Alertes », enregistrement global) ;
 //   2. Webhooks & canaux — les destinations : Telegram, WhatsApp Cloud API,
-//      e-mail SMTP (cartes canaux + test d'envoi) ;
+//      e-mail (SMTP direct ou API Resend N°67 — cartes canaux + test d'envoi) ;
 //   3. Historique des envois — journal réel (GET /api/notifications/log).
 // Contrat API : GET/PUT /api/notifications, POST /api/notifications/test,
 // GET /api/notifications/log (voir lib/hotspot/types.ts).
@@ -71,16 +71,20 @@ interface NotifForm extends NotifSettings {
   telegramBotToken: string;
   whatsappToken: string;
   smtpPass: string;
+  resendApiKey: string;
 }
 
 function toForm(settings: NotifSettings): NotifForm {
   return {
     ...settings,
+    // Le serveur normalise déjà, défense en profondeur côté formulaire.
+    emailProvider: settings.emailProvider === "resend" ? "resend" : "smtp",
     offlineAfterSec: settings.offlineAfterSec > 0 ? settings.offlineAfterSec : DEFAULT_OFFLINE_SEC,
     lowStockThreshold: settings.lowStockThreshold > 0 ? settings.lowStockThreshold : DEFAULT_LOW_STOCK,
     telegramBotToken: "",
     whatsappToken: "",
     smtpPass: "",
+    resendApiKey: "",
   };
 }
 
@@ -94,10 +98,12 @@ function toPayload(form: NotifForm) {
     whatsappPhoneId: form.whatsappPhoneId.trim(),
     whatsappTo: form.whatsappTo.trim(),
     emailEnabled: form.emailEnabled,
+    emailProvider: form.emailProvider,
     smtpHost: form.smtpHost.trim(),
     smtpPort: Math.min(65535, Math.max(1, Math.round(form.smtpPort || 587))),
     smtpUser: form.smtpUser.trim(),
     emailTo: form.emailTo.trim(),
+    resendFrom: form.resendFrom.trim(),
     offlineAfterSec: Math.max(60, Math.round(form.offlineAfterSec || DEFAULT_OFFLINE_SEC)),
     lowStockThreshold: Math.max(1, Math.round(form.lowStockThreshold || DEFAULT_LOW_STOCK)),
     dailyReport: form.dailyReport,
@@ -105,6 +111,7 @@ function toPayload(form: NotifForm) {
     telegramBotToken: form.telegramBotToken.trim() || undefined,
     whatsappToken: form.whatsappToken.trim() || undefined,
     smtpPass: form.smtpPass || undefined,
+    resendApiKey: form.resendApiKey.trim() || undefined,
   };
 }
 
@@ -226,8 +233,14 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
     (form.whatsappTokenSet || form.whatsappToken.trim() !== "") &&
     form.whatsappPhoneId.trim() !== "" &&
     form.whatsappTo.trim() !== "";
+  // Email : les champs requis dépendent du fournisseur (N°67) — SMTP a besoin
+  // d'un hôte + port, Resend d'une clé API (déjà stockée ou fraîchement saisie).
+  const emailResendConfigured =
+    (form.resendApiKeySet || form.resendApiKey.trim() !== "") && form.emailTo.trim() !== "";
   const emailConfigured =
-    form.smtpHost.trim() !== "" && form.smtpPort > 0 && form.emailTo.trim() !== "";
+    form.emailProvider === "resend"
+      ? emailResendConfigured
+      : form.smtpHost.trim() !== "" && form.smtpPort > 0 && form.emailTo.trim() !== "";
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -423,10 +436,10 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
           </div>
         </ChannelCard>
 
-        {/* Email SMTP */}
+        {/* Email — SMTP direct ou API Resend (N°67) */}
         <ChannelCard
           icon={Mail}
-          title="Email SMTP"
+          title={t("notif.emailCardTitle")}
           description={t("notif.emailDesc")}
           enabled={form.emailEnabled}
           onEnabledChange={(v) => setForm((f) => ({ ...f, emailEnabled: v }))}
@@ -434,53 +447,102 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
           testing={testMutation.isPending && testMutation.variables === "email"}
           onTest={() => testMutation.mutate("email")}
         >
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_100px]">
-            <div className="grid gap-2">
-              <Label htmlFor="smtp-host">{t("notif.smtpHost")}</Label>
-              <Input
-                id="smtp-host"
-                placeholder="smtp.gmail.com"
-                value={form.smtpHost}
-                onChange={(e) => setForm((f) => ({ ...f, smtpHost: e.target.value }))}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="smtp-port">{t("notif.smtpPort")}</Label>
-              <Input
-                id="smtp-port"
-                type="number"
-                min={1}
-                max={65535}
-                inputMode="numeric"
-                placeholder="587"
-                value={form.smtpPort || ""}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, smtpPort: e.target.value === "" ? 0 : Number(e.target.value) }))
-                }
-              />
-            </div>
-          </div>
+          {/* Fournisseur du canal e-mail : SMTP direct (défaut) ou API Resend. */}
           <div className="grid gap-2">
-            <Label htmlFor="smtp-user">{t("notif.smtpUser")}</Label>
-            <Input
-              id="smtp-user"
-              autoComplete="off"
-              placeholder="alertes@mondomaine.ci"
-              value={form.smtpUser}
-              onChange={(e) => setForm((f) => ({ ...f, smtpUser: e.target.value }))}
-            />
+            <Label htmlFor="email-provider">{t("notif.emailProvider")}</Label>
+            <Select
+              value={form.emailProvider}
+              onValueChange={(v) =>
+                setForm((f) => ({ ...f, emailProvider: v === "resend" ? "resend" : "smtp" }))
+              }
+            >
+              <SelectTrigger id="email-provider" className="h-10">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="smtp">{t("notif.emailProviderSmtp")}</SelectItem>
+                <SelectItem value="resend">{t("notif.emailProviderResend")}</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
-          <div className="grid gap-2">
-            <Label htmlFor="smtp-pass">{t("notif.smtpPass")}</Label>
-            <Input
-              id="smtp-pass"
-              type="password"
-              autoComplete="new-password"
-              placeholder={form.smtpPassSet ? t("notif.secretConfigured") : "••••••••"}
-              value={form.smtpPass}
-              onChange={(e) => setForm((f) => ({ ...f, smtpPass: e.target.value }))}
-            />
-          </div>
+
+          {form.emailProvider === "resend" ? (
+            <>
+              <div className="grid gap-2">
+                <Label htmlFor="resend-key">{t("notif.resendApiKey")}</Label>
+                <Input
+                  id="resend-key"
+                  type="password"
+                  autoComplete="off"
+                  placeholder={form.resendApiKeySet ? t("notif.secretConfigured") : "re_…"}
+                  value={form.resendApiKey}
+                  onChange={(e) => setForm((f) => ({ ...f, resendApiKey: e.target.value }))}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="resend-from">{t("notif.resendFrom")}</Label>
+                <Input
+                  id="resend-from"
+                  placeholder="MikCloud <alertes@mondomaine.ci>"
+                  value={form.resendFrom}
+                  onChange={(e) => setForm((f) => ({ ...f, resendFrom: e.target.value }))}
+                />
+                <p className="text-xs text-muted-foreground">{t("notif.resendFromHint")}</p>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_100px]">
+                <div className="grid gap-2">
+                  <Label htmlFor="smtp-host">{t("notif.smtpHost")}</Label>
+                  <Input
+                    id="smtp-host"
+                    placeholder="smtp.gmail.com"
+                    value={form.smtpHost}
+                    onChange={(e) => setForm((f) => ({ ...f, smtpHost: e.target.value }))}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="smtp-port">{t("notif.smtpPort")}</Label>
+                  <Input
+                    id="smtp-port"
+                    type="number"
+                    min={1}
+                    max={65535}
+                    inputMode="numeric"
+                    placeholder="587"
+                    value={form.smtpPort || ""}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, smtpPort: e.target.value === "" ? 0 : Number(e.target.value) }))
+                    }
+                  />
+                </div>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="smtp-user">{t("notif.smtpUser")}</Label>
+                <Input
+                  id="smtp-user"
+                  autoComplete="off"
+                  placeholder="alertes@mondomaine.ci"
+                  value={form.smtpUser}
+                  onChange={(e) => setForm((f) => ({ ...f, smtpUser: e.target.value }))}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="smtp-pass">{t("notif.smtpPass")}</Label>
+                <Input
+                  id="smtp-pass"
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder={form.smtpPassSet ? t("notif.secretConfigured") : "••••••••"}
+                  value={form.smtpPass}
+                  onChange={(e) => setForm((f) => ({ ...f, smtpPass: e.target.value }))}
+                />
+              </div>
+            </>
+          )}
+
+          {/* Destinataire — commun aux deux fournisseurs. */}
           <div className="grid gap-2">
             <Label htmlFor="smtp-to">{t("notif.recipient")}</Label>
             <Input

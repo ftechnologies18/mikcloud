@@ -1,7 +1,7 @@
 // Package notify — sendeurs multi-canaux (Telegram, WhatsApp Cloud API, Email
-// SMTP) + livraison des notifications MikCloud. Fonctions libres sans état :
-// utilisables depuis le moniteur (goroutine) comme depuis les handlers API
-// (test de canal).
+// SMTP direct ou API Resend) + livraison des notifications MikCloud. Fonctions
+// libres sans état : utilisables depuis le moniteur (goroutine) comme depuis
+// les handlers API (test de canal).
 package notify
 
 import (
@@ -25,6 +25,15 @@ import (
 // le service plusieurs minutes si un canal est injoignable).
 const httpTimeout = 12 * time.Second
 
+// resendEndpoint — API d'envoi Resend. Variable de package : les tests la
+// remplacent par un serveur httptest local (aucun réseau réel en CI).
+var resendEndpoint = "https://api.resend.com/emails"
+
+// resendDefaultFrom — expéditeur par défaut quand ResendFrom est vide : le
+// domaine d'essai Resend ne délivre qu'à l'adresse du propriétaire du compte
+// Resend ; en production, renseignez ResendFrom avec un domaine vérifié.
+const resendDefaultFrom = "MikCloud <onboarding@resend.dev>"
+
 // Kinds de notification (colonne kind de NotificationLog).
 const (
 	KindRouterOffline = "router_offline"
@@ -34,6 +43,15 @@ const (
 	KindTest          = "test"
 )
 
+// EmailProviderOf — fournisseur du canal e-mail normalisé : "resend" ou
+// "smtp" (défaut historique, y compris valeur vide ou inconnue).
+func EmailProviderOf(cfg *model.NotificationSettings) string {
+	if strings.EqualFold(strings.TrimSpace(cfg.EmailProvider), "resend") {
+		return "resend"
+	}
+	return "smtp"
+}
+
 // Configured — le canal demandé est activé ET suffisamment renseigné.
 func Configured(cfg *model.NotificationSettings, channel string) bool {
 	switch channel {
@@ -42,7 +60,13 @@ func Configured(cfg *model.NotificationSettings, channel string) bool {
 	case "whatsapp":
 		return cfg.WhatsAppEnabled && cfg.WhatsAppToken != "" && cfg.WhatsAppPhoneID != "" && cfg.WhatsAppTo != ""
 	case "email":
-		return cfg.EmailEnabled && cfg.SMTPHost != "" && cfg.EmailTo != ""
+		if !cfg.EmailEnabled || cfg.EmailTo == "" {
+			return false
+		}
+		if EmailProviderOf(cfg) == "resend" {
+			return cfg.ResendAPIKey != ""
+		}
+		return cfg.SMTPHost != ""
 	}
 	return false
 }
@@ -70,7 +94,12 @@ func Deliver(cfg *model.NotificationSettings, kind, title, body, onlyChannel str
 		logs = append(logs, logEntry(cfg, "whatsapp", kind, title, body, err))
 	}
 	if try("email") && Configured(cfg, "email") {
-		err := sendEmail(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPass, cfg.EmailTo, title, body)
+		var err error
+		if EmailProviderOf(cfg) == "resend" {
+			err = sendEmailResend(cfg.ResendAPIKey, cfg.ResendFrom, cfg.EmailTo, title, body)
+		} else {
+			err = sendEmail(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPass, cfg.EmailTo, title, body)
+		}
 		logs = append(logs, logEntry(cfg, "email", kind, title, body, err))
 	}
 	if len(logs) == 0 {
@@ -170,8 +199,57 @@ func sendWhatsApp(accessToken, phoneNumberID, to, title, body string) error {
 }
 
 // ---------------------------------------------------------------------------
-// Email — SMTP direct (TLS implicite sur 465, STARTTLS sinon)
+// Email — Resend (API HTTP) puis SMTP direct (TLS implicite sur 465, STARTTLS
+// sinon). Le fournisseur est choisi par NotificationSettings.EmailProvider.
 // ---------------------------------------------------------------------------
+
+// sendEmailResend — POST /emails de l'API Resend (https://resend.com/docs).
+// Un statut 2xx (202 Accepted en pratique) suffit : l'identifiant renvoyé
+// n'est pas conservé (l'historique notif_log trace le résultat côté MikCloud).
+func sendEmailResend(apiKey, from, to, title, body string) error {
+	from = strings.TrimSpace(from)
+	if from == "" {
+		from = resendDefaultFrom
+	}
+	payload, err := json.Marshal(map[string]any{
+		"from":    from,
+		"to":      []string{to},
+		"subject": title,
+		"text":    body,
+	})
+	if err != nil {
+		return fmt.Errorf("resend : payload : %w", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, resendEndpoint, bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("resend : requête invalide : %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: httpTimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("resend injoignable : %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	// Corps d'erreur Resend : {"name":"…","message":"…"} (clé invalide,
+	// expéditeur non vérifié, limite de débit…) — message repris tel quel.
+	var out struct {
+		Name    string `json:"name"`
+		Message string `json:"message"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	if msg := strings.TrimSpace(out.Message); msg != "" {
+		return fmt.Errorf("resend : %s", msg)
+	}
+	if out.Name != "" {
+		return fmt.Errorf("resend : %s", out.Name)
+	}
+	return fmt.Errorf("resend : HTTP %d", resp.StatusCode)
+}
 
 func sendEmail(host string, port int, user, pass, to, title, body string) error {
 	if port <= 0 || port > 65535 {

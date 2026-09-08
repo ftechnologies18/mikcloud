@@ -1,5 +1,5 @@
 // Package api — notifications : réglages des canaux (Telegram, WhatsApp Cloud
-// API, Email SMTP), test d'envoi et historique.
+// API, Email — SMTP direct ou API Resend), test d'envoi et historique.
 //
 //	GET  /api/notifications        → réglages du compte (secrets masqués)
 //	PUT  /api/notifications        → mise à jour (secret vide = conservé)
@@ -44,12 +44,16 @@ type notifView struct {
 	WhatsAppPhoneID  string `json:"whatsappPhoneId"`
 	WhatsAppTo       string `json:"whatsappTo"`
 
-	EmailEnabled bool   `json:"emailEnabled"`
-	SMTPHost     string `json:"smtpHost"`
-	SMTPPort     int    `json:"smtpPort"`
-	SMTPUser     string `json:"smtpUser"`
-	SMTPPassSet  bool   `json:"smtpPassSet"`
-	EmailTo      string `json:"emailTo"`
+	EmailEnabled  bool   `json:"emailEnabled"`
+	EmailProvider string `json:"emailProvider"` // smtp | resend (normalisé, jamais vide)
+	SMTPHost      string `json:"smtpHost"`
+	SMTPPort      int    `json:"smtpPort"`
+	SMTPUser      string `json:"smtpUser"`
+	SMTPPassSet   bool   `json:"smtpPassSet"`
+	// Resend (N°67) — la clé API ne part JAMAIS, seul le booléen l'annonce.
+	ResendAPIKeySet bool   `json:"resendApiKeySet"`
+	ResendFrom      string `json:"resendFrom"`
+	EmailTo         string `json:"emailTo"`
 
 	OfflineAfterSec   int  `json:"offlineAfterSec"`
 	LowStockThreshold int  `json:"lowStockThreshold"`
@@ -71,12 +75,15 @@ func viewOf(cfg model.NotificationSettings) notifView {
 		WhatsAppPhoneID:  cfg.WhatsAppPhoneID,
 		WhatsAppTo:       cfg.WhatsAppTo,
 
-		EmailEnabled: cfg.EmailEnabled,
-		SMTPHost:     cfg.SMTPHost,
-		SMTPPort:     cfg.SMTPPort,
-		SMTPUser:     cfg.SMTPUser,
-		SMTPPassSet:  cfg.SMTPPass != "",
-		EmailTo:      cfg.EmailTo,
+		EmailEnabled:    cfg.EmailEnabled,
+		EmailProvider:   notify.EmailProviderOf(&cfg),
+		SMTPHost:        cfg.SMTPHost,
+		SMTPPort:        cfg.SMTPPort,
+		SMTPUser:        cfg.SMTPUser,
+		SMTPPassSet:     cfg.SMTPPass != "",
+		ResendAPIKeySet: cfg.ResendAPIKey != "",
+		ResendFrom:      cfg.ResendFrom,
+		EmailTo:         cfg.EmailTo,
 
 		OfflineAfterSec:   cfg.OfflineAfterSec,
 		LowStockThreshold: cfg.LowStockThreshold,
@@ -100,12 +107,15 @@ type notifPutPayload struct {
 	WhatsAppPhoneID *string `json:"whatsappPhoneId"`
 	WhatsAppTo      *string `json:"whatsappTo"`
 
-	EmailEnabled *bool   `json:"emailEnabled"`
-	SMTPHost     *string `json:"smtpHost"`
-	SMTPPort     *int    `json:"smtpPort"`
-	SMTPUser     *string `json:"smtpUser"`
-	SMTPPass     *string `json:"smtpPass"`
-	EmailTo      *string `json:"emailTo"`
+	EmailEnabled  *bool   `json:"emailEnabled"`
+	EmailProvider *string `json:"emailProvider"` // "smtp" | "resend" (toute autre valeur → smtp)
+	SMTPHost      *string `json:"smtpHost"`
+	SMTPPort      *int    `json:"smtpPort"`
+	SMTPUser      *string `json:"smtpUser"`
+	SMTPPass      *string `json:"smtpPass"`
+	ResendAPIKey  *string `json:"resendApiKey"`
+	ResendFrom    *string `json:"resendFrom"`
+	EmailTo       *string `json:"emailTo"`
 
 	OfflineAfterSec   *int  `json:"offlineAfterSec"`
 	LowStockThreshold *int  `json:"lowStockThreshold"`
@@ -178,6 +188,15 @@ func applyNotifPut(cfg *model.NotificationSettings, req *notifPutPayload) {
 	if req.EmailEnabled != nil {
 		cfg.EmailEnabled = *req.EmailEnabled
 	}
+	// Fournisseur du canal e-mail (N°67) : toute valeur autre que "resend"
+	// retombe sur SMTP ("" = smtp, défaut historique conservé en base).
+	if req.EmailProvider != nil {
+		if strings.EqualFold(strings.TrimSpace(*req.EmailProvider), "resend") {
+			cfg.EmailProvider = "resend"
+		} else {
+			cfg.EmailProvider = ""
+		}
+	}
 	if req.SMTPHost != nil {
 		cfg.SMTPHost = strings.TrimSpace(*req.SMTPHost)
 	}
@@ -189,6 +208,16 @@ func applyNotifPut(cfg *model.NotificationSettings, req *notifPutPayload) {
 	}
 	if req.SMTPPass != nil && *req.SMTPPass != "" {
 		cfg.SMTPPass = *req.SMTPPass
+	}
+	// Clé API Resend : secret — vide/absent = valeur stockée conservée
+	// (même contrat que le mot de passe SMTP et les tokens Telegram/WhatsApp).
+	if req.ResendAPIKey != nil && strings.TrimSpace(*req.ResendAPIKey) != "" {
+		cfg.ResendAPIKey = strings.TrimSpace(*req.ResendAPIKey)
+	}
+	// Expéditeur Resend : champ ORDINAIRE (pas un secret) — vide = efface,
+	// le sendeur retombe alors sur l'expéditeur par défaut.
+	if req.ResendFrom != nil {
+		cfg.ResendFrom = strings.TrimSpace(*req.ResendFrom)
 	}
 	if req.EmailTo != nil {
 		cfg.EmailTo = strings.TrimSpace(*req.EmailTo)

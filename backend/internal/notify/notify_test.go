@@ -1,21 +1,27 @@
 // Tests du package notify — constructeurs purs et décision de canal
-// UNIQUEMENT. AUCUN envoi réseau réel (Telegram/WhatsApp/SMTP ne sont jamais
-// appelés : Deliver est testé uniquement avec AUCUN canal configuré, ce qui
-// court-circuite tous les sendeurs).
+// UNIQUEMENT. AUCUN envoi réseau réel : Telegram/WhatsApp/SMTP ne sont jamais
+// appelés (Deliver est testé uniquement avec AUCUN canal configuré, ce qui
+// court-circuite tous les sendeurs) et Resend est testé contre un serveur
+// httptest local (endpoint de package substitué).
 //
 // Couverture :
 //   - Configured / HasAnyChannel : conditions exactes d'activation par canal
-//     (champs requis, canal inconnu) ;
+//     (champs requis, canal inconnu, fournisseur resend N°67) ;
 //   - Deliver sans canal : entrée « system » explicite avec l'erreur
 //     « aucun canal configuré » (traçabilité de l'historique) ;
 //   - logEntry : statut sent/error + message d'erreur ;
 //   - buildMessage : MIME texte, sujet encodé B-UTF-8 (accents), CRLF ;
+//   - sendEmailResend (N°67) : Bearer + payload JSON + from par défaut /
+//     explicite, erreurs Resend reprises telles quelles, repli HTTP ;
 //   - helpers de mise en forme du moniteur : currencyLabel, formatDuration,
 //     strconvI, stockMessage, buildDailyReport (données fixes, heure fixe).
 package notify
 
 import (
 	"encoding/base64"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -119,6 +125,118 @@ func TestBuildMessage(t *testing.T) {
 	// Corps en fin de message après la ligne vide.
 	if !strings.HasSuffix(msg, "Routeur hors ligne\n\nLe routeur A ne répond plus.\n") {
 		t.Fatalf("corps du message incorrect : %q", msg)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Resend (N°67) — fournisseur du canal e-mail : dispatch + sendeur HTTP
+// (endpoint remplacé par un serveur httptest : aucun réseau réel).
+// ---------------------------------------------------------------------------
+
+func TestEmailProviderOf(t *testing.T) {
+	cas := map[string]string{"": "smtp", "smtp": "smtp", "resend": "resend", "RESEND": "resend", " Resend ": "resend", "autre": "smtp"}
+	for in, want := range cas {
+		cfg := &model.NotificationSettings{EmailProvider: in}
+		if got := EmailProviderOf(cfg); got != want {
+			t.Fatalf("EmailProviderOf(%q) = %q, attendu %q", in, got, want)
+		}
+	}
+}
+
+func TestConfiguredResend(t *testing.T) {
+	// Resend complet : clé API + destinataire + interrupteurs.
+	rs := &model.NotificationSettings{EmailEnabled: true, EmailProvider: "resend", ResendAPIKey: "re_x", EmailTo: "a@b.ci"}
+	if !Configured(rs, "email") {
+		t.Fatal("resend complet doit être configuré")
+	}
+	if Configured(&model.NotificationSettings{EmailEnabled: true, EmailProvider: "resend", EmailTo: "a@b.ci"}, "email") {
+		t.Fatal("resend sans clé API ne doit pas être configuré")
+	}
+	if Configured(&model.NotificationSettings{EmailEnabled: true, EmailProvider: "resend", ResendAPIKey: "re_x"}, "email") {
+		t.Fatal("resend sans destinataire ne doit pas être configuré")
+	}
+	if Configured(&model.NotificationSettings{EmailProvider: "resend", ResendAPIKey: "re_x", EmailTo: "a@b.ci"}, "email") {
+		t.Fatal("resend canal désactivé ne doit pas être configuré")
+	}
+	// La clé SMTP ne doit PAS suffire au provider resend.
+	if Configured(&model.NotificationSettings{EmailEnabled: true, EmailProvider: "resend", SMTPHost: "smtp.x.ci", EmailTo: "a@b.ci"}, "email") {
+		t.Fatal("provider resend + hôte SMTP ne doit pas être configuré sans clé API")
+	}
+}
+
+func TestSendEmailResend(t *testing.T) {
+	var gotAuth, gotPath, gotFrom, gotSubject, gotTo, gotText string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth, gotPath = r.Header.Get("Authorization"), r.URL.Path
+		var p struct {
+			From    string   `json:"from"`
+			To      []string `json:"to"`
+			Subject string   `json:"subject"`
+			Text    string   `json:"text"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&p)
+		gotFrom, gotSubject, gotTo, gotText = p.From, p.Subject, strings.Join(p.To, ","), p.Text
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"id":"email-123"}`))
+	}))
+	defer srv.Close()
+	old := resendEndpoint
+	resendEndpoint = srv.URL
+	defer func() { resendEndpoint = old }()
+
+	// From vide → expéditeur par défaut (onboarding@resend.dev).
+	if err := sendEmailResend("re_test", "", "dest@example.ci", "Sujet é", "Corps"); err != nil {
+		t.Fatalf("envoi accepté attendu, obtenu %v", err)
+	}
+	if gotAuth != "Bearer re_test" {
+		t.Fatalf("autorisation Bearer attendue, obtenue %q", gotAuth)
+	}
+	if gotPath != "/" {
+		t.Fatalf("chemin inattendu : %q", gotPath)
+	}
+	if gotFrom != resendDefaultFrom {
+		t.Fatalf("from vide doit tomber sur le défaut, obtenu %q", gotFrom)
+	}
+	if gotSubject != "Sujet é" || gotTo != "dest@example.ci" || gotText != "Corps" {
+		t.Fatalf("payload incorrect : sujet=%q to=%q text=%q", gotSubject, gotTo, gotText)
+	}
+
+	// From explicite conservé tel quel.
+	if err := sendEmailResend("re_test", "MikCloud <alertes@ftci.fr>", "dest@example.ci", "T", "B"); err != nil {
+		t.Fatalf("envoi avec from explicite attendu, obtenu %v", err)
+	}
+	if gotFrom != "MikCloud <alertes@ftci.fr>" {
+		t.Fatalf("from explicite doit être conservé, obtenu %q", gotFrom)
+	}
+}
+
+func TestSendEmailResendError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"name":"validation_error","message":"from doit être un domaine vérifié"}`))
+	}))
+	defer srv.Close()
+	old := resendEndpoint
+	resendEndpoint = srv.URL
+	defer func() { resendEndpoint = old }()
+
+	err := sendEmailResend("re_test", "x@nonverifie.ci", "dest@example.ci", "T", "B")
+	if err == nil {
+		t.Fatal("une erreur était attendue (HTTP 403)")
+	}
+	if !strings.Contains(err.Error(), "domaine vérifié") {
+		t.Fatalf("message d'erreur Resend doit être repris tel quel, obtenu %v", err)
+	}
+
+	// Erreur SANS message JSON lisible → repli HTTP <code>.
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv2.Close()
+	resendEndpoint = srv2.URL
+	err = sendEmailResend("re_test", "", "dest@example.ci", "T", "B")
+	if err == nil || !strings.Contains(err.Error(), "500") {
+		t.Fatalf("repli HTTP 500 attendu, obtenu %v", err)
 	}
 }
 

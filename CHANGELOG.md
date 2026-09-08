@@ -5,6 +5,47 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-09 — N°67 : Resend comme fournisseur du canal e-mail (alternative à SMTP)
+
+### N°67 — Notifications par e-mail via l'API Resend (demande utilisateur)
+- **Demande** : « je souhaite implémenté resend » — intégrer le service
+  d'e-mail Resend (https://resend.com) au système de notifications.
+- **Fournisseur e-mail choisissable par compte** : le canal e-mail de la vue
+  Paramètres → Notifications gagne un sélecteur « Fournisseur » — **SMTP
+  direct** (comportement historique, défaut) ou **Resend (API)**. Les deux
+  partagent le même destinataire, les mêmes règles d'alerte (routeur hors
+  ligne, stock bas, rapport quotidien), le même test d'envoi et le même
+  historique (`channel: email`).
+- **Backend** (`internal/notify`) : `sendEmailResend` — POST
+  `https://api.resend.com/emails` (Authorization Bearer, JSON from/to/subject/
+  text), timeout borné 12 s comme les autres canaux, messages d'erreur Resend
+  repris tels quels (« clé invalide », « domaine non vérifié », rate limit) ;
+  expéditeur vide → `MikCloud <onboarding@resend.dev>` (domaine d'essai :
+  ne délivre qu'au propriétaire du compte Resend). `Deliver` et `Configured`
+  dispatchent selon `EmailProvider` — le moniteur automatique
+  (routeurs/stock/rapport) bénéficie du provider sans autre changement.
+- **Contrat des secrets inchangé** : la clé API Resend est stockée par compte
+  dans `notif_settings`, **jamais renvoyée par l'API** (seul le booléen
+  `resendApiKeySet` l'annonce) ; un PUT avec champ vide conserve la valeur
+  stockée (même contrat que le mot de passe SMTP et les tokens
+  Telegram/WhatsApp). L'expéditeur `resendFrom` est un champ ordinaire
+  (vidable). Toute valeur de provider autre que `resend` retombe sur SMTP.
+- **Migrations Neon automatiques** (ensureSchema au boot, idempotentes) :
+  `notif_settings.email_provider`, `resend_api_key`, `resend_from`
+  (TEXT NOT NULL DEFAULT '') ; `notifSettingsSpec` étendu (25 colonnes) —
+  compatibilité stricte : les comptes existants restent sur SMTP
+  (`email_provider = ''`), aucune donnée migrée.
+- **Frontend** : carte « E-mail » de la vue Notifications — sélecteur
+  shadcn/ui, champs Resend (clé API masquée + placeholder « configuré »,
+  expéditeur avec aide sur le domaine vérifié) ou champs SMTP selon le
+  fournisseur, destinataire commun ; garde « prêt pour test » adaptée par
+  fournisseur ; i18n FR/EN (9 clés neuves + `emailDesc` généralisée).
+- **Tests** (`internal/notify`) : `EmailProviderOf` (normalisation y compris
+  casse/espaces), `Configured` provider resend (clé requise, SMTP ne suffit
+  pas, canal désactivé), `sendEmailResend` contre un serveur httptest (Bearer,
+  payload JSON, from par défaut/explicite, erreurs JSON reprises, repli HTTP).
+  Aucun réseau réel en CI.
+
 ## 2026-09-09 — N°66 : limite d'appareils simultanés par compte revendeur (Mode Vente)
 
 ### N°66 — Anti-partage du PIN : le gérant borne le nombre de téléphones connectés en même temps (demande utilisateur)

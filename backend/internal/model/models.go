@@ -709,7 +709,16 @@ type NotificationSettings struct {
 	WhatsAppToken   string `json:"whatsappToken,omitempty"`
 	WhatsAppPhoneID string `json:"whatsappPhoneId,omitempty"`
 	WhatsAppTo      string `json:"whatsappTo,omitempty"`
-	// Email — SMTP direct (STARTTLS 587 / TLS implicite 465)
+	// Email — SMTP direct (STARTTLS 587 / TLS implicite 465) ou API Resend
+	// (https://resend.com). EmailProvider choisit le fournisseur du canal :
+	// "" ou "smtp" → SMTP direct (défaut historique), "resend" → API HTTP
+	// Resend (la clé est un secret par compte, idem mot de passe SMTP).
+	EmailProvider string `json:"emailProvider,omitempty"`
+	ResendAPIKey  string `json:"resendApiKey,omitempty"`
+	// ResendFrom — expéditeur Resend, ex. « MikCloud <alertes@ftci.fr> » ;
+	// vide → « MikCloud <onboarding@resend.dev> » (domaine d'essai Resend :
+	// ne délivre qu'à l'adresse du propriétaire du compte Resend).
+	ResendFrom   string `json:"resendFrom,omitempty"`
 	EmailEnabled bool   `json:"emailEnabled"`
 	SMTPHost     string `json:"smtpHost,omitempty"`
 	SMTPPort     int    `json:"smtpPort,omitempty"`

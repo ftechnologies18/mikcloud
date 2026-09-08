@@ -41,6 +41,10 @@ const (
 	KindLowStock      = "low_stock"
 	KindDailyReport   = "daily_report"
 	KindTest          = "test"
+	// KindPasswordReset — N°68 : e-mail transactionnel « Mot de passe
+	// oublié ? » (lien de réinitialisation). Pas un canal d'alerte : envoyé à
+	// la demande, hors moniteur automatique.
+	KindPasswordReset = "password_reset"
 )
 
 // EmailProviderOf — fournisseur du canal e-mail normalisé : "resend" ou
@@ -106,6 +110,36 @@ func Deliver(cfg *model.NotificationSettings, kind, title, body, onlyChannel str
 		logs = append(logs, logEntry(cfg, "system", kind, title, body, errors.New("aucun canal configuré")))
 	}
 	return logs
+}
+
+// LogEntry — trace normalisée d'un envoi, exposée aux handlers pour les
+// envois TRANSACTIONNELS effectués hors Deliver (N°68 : réinitialisation de
+// mot de passe — même format d'historique que les notifications).
+func LogEntry(cfg *model.NotificationSettings, channel, kind, title, body string, err error) model.NotificationLog {
+	return logEntry(cfg, channel, kind, title, body, err)
+}
+
+// EmailCredentialsOK — N°68 : le fournisseur e-mail du compte est
+// renseigné (clé Resend ou hôte SMTP), SANS exiger EmailEnabled ni EmailTo
+// (interrupteurs des alertes automatiques) : les e-mails transactionnels
+// précisent leur propre destinataire.
+func EmailCredentialsOK(cfg *model.NotificationSettings) bool {
+	if EmailProviderOf(cfg) == "resend" {
+		return strings.TrimSpace(cfg.ResendAPIKey) != ""
+	}
+	return strings.TrimSpace(cfg.SMTPHost) != ""
+}
+
+// SendEmailTo — N°68 : envoi e-mail transactionnel — même mécanique que le
+// canal e-mail des notifications (Resend ou SMTP selon le provider du
+// compte), mais le DESTINATAIRE est fourni par l'appelant (ex. mot de passe
+// oublié → l'e-mail enregistré du compte). Aucune écriture de journal :
+// c'est l'appelant qui trace (il connaît le kind et le contexte).
+func SendEmailTo(cfg *model.NotificationSettings, to, title, body string) error {
+	if EmailProviderOf(cfg) == "resend" {
+		return sendEmailResend(cfg.ResendAPIKey, cfg.ResendFrom, to, title, body)
+	}
+	return sendEmail(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPass, to, title, body)
 }
 
 // logEntry — trace d'un envoi (status sent/error + message d'erreur).

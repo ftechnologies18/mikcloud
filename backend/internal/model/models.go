@@ -757,12 +757,36 @@ type NotificationLog struct {
 	ID        string `json:"id"`
 	AccountID string `json:"accountId"`
 	Channel   string `json:"channel"` // telegram | whatsapp | email | system
-	Kind      string `json:"kind"`    // router_offline | router_back | low_stock | daily_report | test | settings
+	Kind      string `json:"kind"`    // router_offline | router_back | low_stock | daily_report | test | settings | password_reset
 	Title     string `json:"title"`
 	Body      string `json:"body,omitempty"`
 	Status    string `json:"status"` // sent | error
 	Error     string `json:"error,omitempty"`
 	At        string `json:"at"`
+}
+
+// PasswordReset — N°68 : demande de réinitialisation du mot de passe console
+// (« Mot de passe oublié ? » de l'écran de connexion). L'utilisateur saisit
+// l'e-mail enregistré à la création de son compte ; le propriétaire du compte
+// correspondant reçoit un lien UNIQUE et ÉPHÉMÈRE vers /reset-password.
+//   - TokenHash : SHA-256 hex du token envoyé par e-mail — le token en clair
+//     n'est JAMAIS persisté (une fuite de la base ne permet aucune
+//     réutilisation) ;
+//   - ExpiresAt : expiration stricte (TTL 60 minutes) ;
+//   - UsedAt : consommation à usage unique (le lien sert UNE fois, puis il est
+//     définitivement mort — une nouvelle demande invalide les liens en attente
+//     du même compte) ;
+//   - CreatedIP : audit de l'origine de la demande (même usage que CreatedIP
+//     des inscriptions, jamais exposé par l'API).
+type PasswordReset struct {
+	ID        string `json:"id"`
+	AccountID string `json:"accountId"`
+	UserID    string `json:"userId"`
+	TokenHash string `json:"tokenHash"`
+	ExpiresAt string `json:"expiresAt"`
+	UsedAt    string `json:"usedAt,omitempty"`
+	CreatedAt string `json:"createdAt"`
+	CreatedIP string `json:"createdIp,omitempty"`
 }
 
 // BillingRequest — demande de souscription / renouvellement d'abonnement
@@ -1260,9 +1284,13 @@ type DB struct {
 	// N°66 — registre des sessions PIN Mode Vente (limite d'appareils
 	// simultanés par revendeur) — voir SellSession.
 	SellSessions []SellSession `json:"sellSessions"`
-	Tenant       Tenant        `json:"tenant"`   // legacy mono-tenant
-	Settings     Settings      `json:"settings"` // legacy mono-tenant
-	LastTick     time.Time     `json:"lastTick"`
+	// N°68 — demandes de réinitialisation de mot de passe (« Mot de passe
+	// oublié ? ») : token hashé, expiration 60 min, usage unique — voir
+	// PasswordReset. Borné par prunePasswordResetsLocked.
+	PasswordResets []PasswordReset `json:"passwordResets"`
+	Tenant         Tenant          `json:"tenant"`   // legacy mono-tenant
+	Settings       Settings        `json:"settings"` // legacy mono-tenant
+	LastTick       time.Time       `json:"lastTick"`
 	// LastSweep — N°64 — horodatage du dernier BALAYAGE PÉRIODIQUE de
 	// rétention (goroutine main.go, 1 h) : purge des journaux utilisateurs
 	// à 90 j + expirations/nettoyages, indépendamment des visites console

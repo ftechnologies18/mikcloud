@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import ForgotPasswordModal from "@/components/hotspot/parts/forgot-password-modal";
 import { ApiError, api } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { useHotspotStore } from "@/lib/hotspot/store";
@@ -174,6 +175,9 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
   const [sellPin, setSellPin] = useState("");
   const [sellLoading, setSellLoading] = useState(false);
 
+  // N°68 — « Mot de passe oublié ? » : modale de demande de lien e-mail.
+  const [forgotOpen, setForgotOpen] = useState(false);
+
 
   // Micro-feedback d'erreur : la carte de verre tremble (sans remonter les onglets).
   const [scope, animate] = useAnimate();
@@ -258,6 +262,8 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
 
       {/* Colonne formulaire */}
       <section className="bg-glow relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-4 py-10 sm:px-8">
+        {/* Modale « Mot de passe oublié ? » (N°68) — survit au-dessus de tout. */}
+        <ForgotPasswordModal open={forgotOpen} onOpenChange={setForgotOpen} />
         {/* Lien retour vers la landing page (si appelé depuis la landing) */}
         {onBack && (
           <button
@@ -356,6 +362,16 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
                         className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
                       >
                         {showPassword ? <EyeOff className="size-4" aria-hidden /> : <Eye className="size-4" aria-hidden />}
+                      </button>
+                    </div>
+                    {/* N°68 — lien d'entrée du parcours de réinitialisation. */}
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => setForgotOpen(true)}
+                        className="text-xs font-medium text-muted-foreground transition-colors hover:text-primary hover:underline focus-visible:outline-none focus-visible:underline"
+                      >
+                        {t("login.forgot", "Mot de passe oublié ?")}
                       </button>
                     </div>
                   </motion.div>

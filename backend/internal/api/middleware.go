@@ -93,7 +93,13 @@ func (a *API) authMiddleware(next http.Handler) http.Handler {
 		// plafond journalier (cf. handlers_promo_events.go). Uniquement
 		// ce POST exact — GET /api/promos/stats reste console.
 		publicPromoTrack := r.Method == http.MethodPost && path == "/api/portal/track"
-		if path == "/api/auth/login" || path == "/api/auth/register" || path == "/api/reseller/login" || path == "/api/webhooks/wave" || path == "/api/webhooks/geniuspay" || path == "/api/vitals" || strings.HasPrefix(path, "/api/join/") || publicWifi || publicMedia || publicPromoTrack || !strings.HasPrefix(path, "/api/") {
+		// N°68 — « Mot de passe oublié ? » : demande de lien e-mail et
+		// consommation du lien sont publics (le secret du parcours
+		// voyage dans le token du lien, hashé en base — jamais de JWT
+		// puisqu'on a oublié... le mot de passe). Le quota IP (S3) et
+		// l'expiration/usage unique bornent l'abus.
+		publicPasswordReset := path == "/api/auth/forgot-password" || path == "/api/auth/reset-password"
+		if path == "/api/auth/login" || path == "/api/auth/register" || path == "/api/reseller/login" || path == "/api/webhooks/wave" || path == "/api/webhooks/geniuspay" || path == "/api/vitals" || strings.HasPrefix(path, "/api/join/") || publicWifi || publicMedia || publicPromoTrack || publicPasswordReset || !strings.HasPrefix(path, "/api/") {
 			next.ServeHTTP(w, r)
 			return
 		}

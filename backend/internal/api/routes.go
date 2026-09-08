@@ -31,12 +31,16 @@ type API struct {
 	// car NAT-friendly (une page = ≤ 12 événements ; un établissement
 	// entier partage une IP) — 300/10 min + 3000/24 h par IP.
 	portalTrack *signupLimiter
-	vitals      *telemetry.Collector // B2 — Core Web Vitals (nil = collecte désactivée)
+	// N°68 — quota des demandes de réinitialisation de mot de passe (public) :
+	// 5/10 min + 20/24 h par IP — les e-mails de lien sont des envois RÉELS
+	// (Resend/SMTP), le flood est coupé avant d'atteindre le fournisseur.
+	reset  *signupLimiter
+	vitals *telemetry.Collector // B2 — Core Web Vitals (nil = collecte désactivée)
 }
 
 // New construit l'API.
 func New(s *store.Store, jwtSecret string) *API {
-	return &API{store: s, secret: jwtSecret, gws: map[string]routeros.Gateway{}, pinLock: newPinLimiter(), signup: newSignupLimiter(), join: newSignupLimiter(), wifiClaim: newSignupLimiterLimits(20, 100), portalTrack: newSignupLimiterLimits(300, 3000)}
+	return &API{store: s, secret: jwtSecret, gws: map[string]routeros.Gateway{}, pinLock: newPinLimiter(), signup: newSignupLimiter(), join: newSignupLimiter(), wifiClaim: newSignupLimiterLimits(20, 100), portalTrack: newSignupLimiterLimits(300, 3000), reset: newSignupLimiter()}
 }
 
 // Handler — mux complet, protégé par le middleware d'authentification.
@@ -60,6 +64,10 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/auth/2fa/setup", a.handleTOTPSetup)
 	mux.HandleFunc("POST /api/auth/2fa/activate", a.handleTOTPActivate)
 	mux.HandleFunc("POST /api/auth/2fa/disable", a.handleTOTPDisable)
+	// N°68 — « Mot de passe oublié ? » : demande de lien e-mail (public,
+	// quota IP) puis consommation du lien (usage unique, 60 min).
+	mux.HandleFunc("POST /api/auth/forgot-password", a.handleForgotPassword)
+	mux.HandleFunc("POST /api/auth/reset-password", a.handleResetPassword)
 
 	// N°7 — équipe & rôles (owner uniquement ; le super-admin plateforme est
 	// traité owner sur le compte consulté).

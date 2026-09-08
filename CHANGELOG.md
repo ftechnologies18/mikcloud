@@ -5,7 +5,75 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
-## 2026-09-09 — N°67 : Resend comme fournisseur du canal e-mail (alternative à SMTP)
+## 2026-09-08 — N°68 : « Mot de passe oublié ? » (lien e-mail à usage unique)
+
+### N°68 — Réinitialisation du mot de passe depuis l'écran de connexion (demande utilisateur)
+- **Demande** : option « mot de passe oublié » en fenêtre modale sur la page
+  de connexion ; l'utilisateur saisit l'e-mail enregistré à la création de son
+  compte — e-mail inconnu → signalé ; sinon réception d'un lien de
+  réinitialisation valable une durée déterminée (60 minutes) et utilisable
+  une seule fois.
+- **Modale (login)** : lien « Mot de passe oublié ? » sous le champ mot de
+  passe de l'onglet Console → `ForgotPasswordModal` (composant
+  `parts/forgot-password-modal`) — saisie e-mail validée localement, envoi
+  `POST /api/auth/forgot-password`, toast d'erreur (le message du backend
+  signale explicitement « Aucun compte n'est associé à cet e-mail »), écran de
+  confirmation après envoi (durée de validité + rappel anti-spam). Cohérence
+  visuelle avec la modale d'inscription (mêmes animations, carte qui tremble
+  en erreur).
+- **Page publique `/reset-password?token=…`** : consommation du lien e-maillé
+  — mobile-first (ouvert depuis un client mail : colonne centrée max-w-md,
+  safe-area iOS, cibles ≥ 44 px, bascule de langue FR/EN, même coquille que
+  `/join/[token]`) — nouveau mot de passe + confirmation (miroir client de la
+  politique S2), affichage optionnel, états succès (retour /login) et lien
+  invalide/expiré/déjà utilisé (carte d'état + raison du backend).
+- **Backend** (`internal/api/password_reset.go`) :
+  - `POST /api/auth/forgot-password` {email} — public, quota IP (5/10 min +
+    20/24 h, même limiteur que l'inscription S3) : compte recherché par e-mail
+    (trim + insensible à la casse), compte désactivé → 403, token aléatoire
+    256 bits base64url **stocké HASHÉ en SHA-256** (le clair n'est jamais
+    persisté — une fuite de la base ne permet aucune réinitialisation),
+    expiration 60 minutes, e-mail transactionnel (sujet, lien, durée, mention
+    usage unique, avertissement « si vous n'êtes pas à l'origine… ») ;
+  - `POST /api/auth/reset-password` {token, password} — public : hash →
+    recherche, **usage unique** (UsedAt), **expiration stricte**, politique S2
+    centralisée (10 caractères, denylist, ≠ identifiant), bcrypt +
+    `PasswordSetByUser` (protège contre l'override ADMIN_PASSWORD), **révocation
+    de TOUTES les sessions** (SessionEpoch++, même garde que le changement de
+    mot de passe classique), journal d'activité des deux étapes ;
+  - une nouvelle demande **invalide les liens en attente** du même compte (un
+    seul lien vivant) ; purge paresseuse des lignes > 24 h (registre borné,
+    sans cron) ; origine du lien : APP_PUBLIC_URL > origine de la requête **si
+    autorisée (ALLOWED_ORIGIN)** > URL canonique du frontend — jamais une
+    origine forgeable (anti-phishing du lien).
+- **E-mails transactionnels** (`internal/notify`) : `SendEmailTo` (Resend ou
+  SMTP selon le provider du compte — N°67 — avec destinataire fourni par
+  l'appelant) + `EmailCredentialsOK` (identifiants seuls, sans exiger
+  EmailEnabled/EmailTo des alertes) + `KindPasswordReset`. Chaîne
+  d'expédition : réglages e-mail du COMPTE demandeur, à défaut ceux du compte
+  principal (plateforme) — en production le compte principal est déjà
+  configuré Resend depuis N°67 : **les clients n'ont rien à régler**, le lien
+  part dès le déploiement. Historique `notif_log` (kind `password_reset`,
+    statut sent/error) pour chaque envoi.
+- **Migrations Neon automatiques** (ensureSchema au boot, idempotentes) :
+  nouvelle table `password_resets` (8 colonnes, PK id) + 2 index
+  (account_id, token_hash) — table additive, invisible pour les versions
+  antérieures du backend ; `passwordResetSpec` (Load/Sync/rebuildHashes).
+- **Sécurité** : routes publiques ajoutées à l'allowlist du middleware
+  d'authentification ; envoi réseau hors verrou du store (règle du moniteur) ;
+  réponse « 503 Envoi d'e-mail indisponible » si aucun fournisseur configuré ;
+  429 + Retry-After au-delà du quota IP.
+- **Périmètre assumé** : la réinitialisation cible le PROPRIÉTAIRE du compte
+  (porteur de l'e-mail d'inscription) — les membres d'équipe passent par leur
+  gérant, l'admin plateforme (sans e-mail de compte) garde les canaux
+  ADMIN_PASSWORD/support.
+- **Compatibilité** : aucun changement de contrat existant (login, register,
+  /api/auth/password inchangés) ; tests Go dédiés (10 cas : inconnu 404,
+  désactivé 403, sans fournisseur 503, flux complet, invalidation par nouvelle
+  demande, expiration, denylist, quota 429, origine du lien, token non
+  persisté en clair).
+
+## 2026-09-08 (00h11 UTC) — N°67 : Resend comme fournisseur du canal e-mail (alternative à SMTP)
 
 ### N°67 — Notifications par e-mail via l'API Resend (demande utilisateur)
 - **Demande** : « je souhaite implémenté resend » — intégrer le service

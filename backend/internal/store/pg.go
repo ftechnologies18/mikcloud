@@ -710,6 +710,22 @@ func (p *PG) ensureSchema() error {
                         ip          TEXT NOT NULL
                 )`,
 		`CREATE INDEX IF NOT EXISTS idx_sell_sessions_reseller ON sell_sessions (reseller_id)`,
+		// N°68 — « Mot de passe oublié ? » : liens de réinitialisation
+		// e-mail (token stocké HASHÉ en SHA-256, expiration 60 min,
+		// usage unique). Nouvelle table additive — aucun impact sur les
+		// versions antérieures du backend.
+		`CREATE TABLE IF NOT EXISTS password_resets (
+                        id         TEXT PRIMARY KEY,
+                        account_id TEXT NOT NULL,
+                        user_id    TEXT NOT NULL,
+                        token_hash TEXT NOT NULL,
+                        expires_at TEXT NOT NULL,
+                        used_at    TEXT NOT NULL DEFAULT '',
+                        created_at TEXT NOT NULL,
+                        created_ip TEXT NOT NULL DEFAULT ''
+                )`,
+		`CREATE INDEX IF NOT EXISTS idx_password_resets_account ON password_resets (account_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_password_resets_token  ON password_resets (token_hash)`,
 		// N°67 — Resend (API HTTP https://resend.com) comme fournisseur
 		// alternatif du canal e-mail : le provider choisit entre SMTP
 		// direct (défaut, '') et l'API Resend (clé secrète par compte).
@@ -938,6 +954,7 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 		{"batches", func() error { return loadInto(p, &db.Batches, batchSpec) }},
 		{"resellers", func() error { return loadInto(p, &db.Resellers, resellerSpec) }},
 		{"sell_sessions", func() error { return loadInto(p, &db.SellSessions, sellSessionSpec) }},
+		{"password_resets", func() error { return loadInto(p, &db.PasswordResets, passwordResetSpec) }},
 		{"transactions", func() error { return loadInto(p, &db.Transactions, transactionSpec) }},
 		{"sessions", func() error { return loadInto(p, &db.Sessions, sessionSpec) }},
 		{"activity", func() error { return loadInto(p, &db.Activity, activitySpec) }},
@@ -1145,6 +1162,9 @@ func (p *PG) Sync(db *model.DB) error {
 		return err
 	}
 	if err := syncTable(tx, p.hashes, sellSessionSpec, db.SellSessions); err != nil {
+		return err
+	}
+	if err := syncTable(tx, p.hashes, passwordResetSpec, db.PasswordResets); err != nil {
 		return err
 	}
 	if err := syncTable(tx, p.hashes, transactionSpec, db.Transactions); err != nil {
@@ -1703,6 +1723,23 @@ var sellSessionSpec = entitySpec[model.SellSession]{
 	hashOf: hashEntity[model.SellSession],
 }
 
+// passwordResetSpec — N°68 : liens de réinitialisation de mot de passe
+// (token hashé SHA-256, TTL 60 min, usage unique).
+var passwordResetSpec = entitySpec[model.PasswordReset]{
+	table: "password_resets",
+	cols:  []string{"id", "account_id", "user_id", "token_hash", "expires_at", "used_at", "created_at", "created_ip"},
+	idOf:  func(x *model.PasswordReset) string { return x.ID },
+	scan: func(r *sql.Rows) (model.PasswordReset, error) {
+		var x model.PasswordReset
+		err := r.Scan(&x.ID, &x.AccountID, &x.UserID, &x.TokenHash, &x.ExpiresAt, &x.UsedAt, &x.CreatedAt, &x.CreatedIP)
+		return x, err
+	},
+	args: func(x *model.PasswordReset) []any {
+		return []any{x.ID, x.AccountID, x.UserID, x.TokenHash, x.ExpiresAt, x.UsedAt, x.CreatedAt, x.CreatedIP}
+	},
+	hashOf: hashEntity[model.PasswordReset],
+}
+
 var transactionSpec = entitySpec[model.Transaction]{
 	table: "transactions",
 	cols:  []string{"id", "type", "reseller_id", "reseller_name", "amount", "note", "at", "account_id"},
@@ -2138,6 +2175,7 @@ func (p *PG) rebuildHashes(db *model.DB) {
 		batchSpec.table:               hashRows(db.Batches, batchSpec),
 		resellerSpec.table:            hashRows(db.Resellers, resellerSpec),
 		sellSessionSpec.table:         hashRows(db.SellSessions, sellSessionSpec),
+		passwordResetSpec.table:       hashRows(db.PasswordResets, passwordResetSpec),
 		transactionSpec.table:         hashRows(db.Transactions, transactionSpec),
 		sessionSpec.table:             hashRows(db.Sessions, sessionSpec),
 		activitySpec.table:            hashRows(db.Activity, activitySpec),

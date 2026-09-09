@@ -5,6 +5,61 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-09 — N°70 : page publique /legal/confidentialité + case « politique de confidentialité » à l'inscription
+
+### N°70 — Conformité pré-lancement : publier la politique de confidentialité (registre des traitements §6.1, dernier TODO technique bloquant)
+- **Demande** : le registre des traitements (docs/REGISTRE-TRAITEMENT.md §6)
+  conditionne le lancement commercial à la publication de la politique sur une
+  page publique (`/legal/confidentialite`) **liée depuis l'inscription (case à
+  cocher)** — droit à l'information, loi 2013-450. Depuis N°69, le téléphone
+  des invités WiFi est collecté avec opt-in prouvé : la base légale tient, mais
+  l'information publique manquait.
+- **Page `/legal/confidentialite`** : composant **serveur** (contenu statique,
+  zéro JavaScript client, métadonnées title/description/keywords pour le
+  référencement), mobile-first (tables en défilement horizontal, cibles
+  tactiles ≥ 44 px), thèmes jour/nuit via tokens existants, FR par convention
+  des pages visiteurs (**la version française fait foi**, la loi de référence
+  est ivoirienne). Contenu fidèle au registre : traitements **T1-T6**
+  (T6 = marketing WiFi N°69 : consentement art. 9, OFF par défaut, retrait
+  symétrique « Ne plus recevoir », durée jusqu'au retrait/suppression du
+  site), sous-traitants (Neon UE eu-central-1 / Render / Vercel / Wave &
+  GeniusPay — aucune donnée carte ne transite), stockage local (localStorage
+  `mikcloud-auth` session de travail + file IndexedDB du Mode Vente purgée
+  après synchronisation ; aucun traceur tiers, pas de profilage), sécurité
+  (bcrypt coût 12, JWT 24 h révocables, 2FA TOTP, TLS/HSTS, CORS fail-closed,
+  sauvegardes AES-256-GCM avec test de restauration hebdomadaire, journalisation
+  des échecs d'auth, rate limiting, chaîne auditée), droits (information,
+  accès/portabilité CSV + export complet chiffré sur demande, rectification,
+  suppression anonymisée sous 30 j — comptabilité anonymisée 5 ans —,
+  opposition/limitation, réclamation CDP/ARTCI), violations (qualification
+  48 h, **notification ARTCI/CDP 72 h**, information des personnes si risque
+  élevé), contact `privacy@mikcloud.ftci.fr` (registre §6.2). En-tête avec
+  logo + retour accueil ; pied collant en bas de fenêtre (min-h-screen flex +
+  mt-auto) avec crédit FTCI et mention du responsable de traitement.
+- **Registre enrichi (même commit)** : ligne **T6** ajoutée — le traitement
+  marketing de N°69 (téléphone + `opt_in_at`) n'était pas encore consigné ;
+  §2 complété du stockage IndexedDB du Mode Vente (N°61) ; §6.1 marqué fait,
+  §6.2 précisé (boîte mail à activer côté opérateur). La source de vérité du
+  contenu de la page EST le registre : toute évolution future doit être
+  répercutée dans les DEUX fichiers du même commit.
+- **Inscription (wizard étape 2)** : case « J'ai lu et j'accepte la
+  politique de confidentialité » avec lien vers la page (nouvel onglet —
+  le formulaire en cours n'est pas perdu), **« Créer mon compte » reste
+  désactivé sans acceptation** (canSubmitStep2), réinitialisée avec les
+  autres champs à la fermeture ; clés i18n FR/EN
+  (`signup.privacyPrefix` / `signup.privacyLink`).
+- **Vitrine** : lien « Politique de confidentialité » / « Privacy policy »
+  dans le pied de page (libellé via `landing-copy.ts` fr + en, à côté du
+  crédit FTCI, focus visible).
+- **Portail captif inchangé volontairement** : la note de confidentialité
+  dynamique (N°65 : jours de rétention réels par compte) reste LA mention du
+  portail ; `/legal` n'est lié que depuis des surfaces NON captives (vitrine,
+  inscription) — aucun walled-garden supplémentaire à ouvrir, zéro impact
+  routeur.
+- **Zéro backend / zéro migration** : page statique frontend uniquement —
+  aucun changement de schéma Neon (convergence au boot inchangée), pas de
+  redéploiement Render attendu (diff limité à `frontend/` + `docs/`).
+
 ## 2026-09-08 — N°69 : opt-in marketing explicite (interrupteur) au claim WiFi — /wifi + portail captif
 
 ### N°69 — Consentement marketing légalement valable sur les DEUX surfaces de claim (demande utilisateur)

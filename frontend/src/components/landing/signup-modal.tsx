@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, type FormEvent } from "react";
+import Link from "next/link";
 import { motion, useAnimate, useReducedMotion, type Variants } from "framer-motion";
 import { ArrowLeft, ArrowRight, Check, Eye, EyeOff, Loader2, MapPin, Rocket, ShieldCheck, User } from "lucide-react";
 import { toast } from "sonner";
@@ -13,6 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -67,6 +69,10 @@ export default function SignupModal({ open, onOpenChange }: SignupModalProps) {
   const [country, setCountry] = useState("");
   const [city, setCity] = useState("");
 
+  // N°70 — consentement éclairé à la politique de confidentialité (registre
+  // §6.1 : case à cocher à l'inscription, liée vers /legal/confidentialite).
+  const [privacyAccepted, setPrivacyAccepted] = useState(false);
+
   const [loading, setLoading] = useState(false);
   const [scope, animate] = useAnimate();
   const reduce = useReducedMotion();
@@ -86,6 +92,7 @@ export default function SignupModal({ open, onOpenChange }: SignupModalProps) {
     setPhone("");
     setCountry("");
     setCity("");
+    setPrivacyAccepted(false);
     setStep(1);
   }
 
@@ -103,7 +110,7 @@ export default function SignupModal({ open, onOpenChange }: SignupModalProps) {
     password.length >= 10;
   const emailValid = EMAIL_RE.test(email.trim());
   const phoneValid = phoneDigits.length >= 8 && phoneDigits.length <= 15;
-  const canSubmitStep2 = emailValid && phoneValid && country !== "";
+  const canSubmitStep2 = emailValid && phoneValid && country !== "" && privacyAccepted;
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -350,6 +357,36 @@ export default function SignupModal({ open, onOpenChange }: SignupModalProps) {
                 "signup.profileNote",
                 "Ces informations restent confidentielles et servent au support et à la segmentation.",
               )}
+            </motion.div>
+
+            {/* N°70 — case politique de confidentialité : sans elle, « Créer mon
+                compte » reste désactivé (information AVANT l'adhésion, cf.
+                registre des traitements §6.1 — droit à l'information). */}
+            <motion.div
+              variants={rise}
+              className="flex items-start gap-2.5 rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5"
+            >
+              <Checkbox
+                id="signup-privacy"
+                checked={privacyAccepted}
+                onCheckedChange={(v) => setPrivacyAccepted(v === true)}
+                disabled={loading}
+                className="mt-0.5"
+              />
+              <Label
+                htmlFor="signup-privacy"
+                className="cursor-pointer text-xs font-normal leading-relaxed text-muted-foreground"
+              >
+                {t("signup.privacyPrefix", "J'ai lu et j'accepte la")}{" "}
+                <Link
+                  href="/legal/confidentialite"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-medium text-primary underline underline-offset-2 transition-opacity hover:opacity-80"
+                >
+                  {t("signup.privacyLink", "politique de confidentialité")}
+                </Link>
+              </Label>
             </motion.div>
 
             <motion.div variants={rise} className="flex gap-2">

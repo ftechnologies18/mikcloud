@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type ComponentType } from "react";
+import Link from "next/link";
 import { motion, useReducedMotion, type Variants } from "framer-motion";
 import { FtciCredit } from "@/components/ftci-credit";
 import {
@@ -644,7 +645,17 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
           <Separator className="my-8" />
 
           <div className="flex flex-col items-center justify-between gap-4 text-center sm:flex-row sm:text-left">
-            <FtciCredit className="text-xs text-muted-foreground" />
+            {/* N°70 — lien public vers la politique de confidentialité
+                (registre §6.1) à côté du crédit FTCI. */}
+            <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
+              <FtciCredit className="text-xs text-muted-foreground" />
+              <Link
+                href="/legal/confidentialite"
+                className="text-xs text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {copy.footer.legal}
+              </Link>
+            </div>
             <div className="flex flex-col items-center gap-1 text-xs text-muted-foreground sm:items-end">
               <a href={`mailto:${copy.footer.contact}`} className="hover:text-foreground">
                 {copy.footer.contact}

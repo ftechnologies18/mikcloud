@@ -19,6 +19,7 @@
 | T3 | Journal d'activité & sécurité | Traçabilité, détection force brute (JSON `auth_failure` S2) | Identifiants de connexion, IP (premier hop XFF), user-agent, horodatage | Intérêt légitime (sécurité) | 12 mois max |
 | T4 | Facturation / abonnement | Essai 90 j, plans, paiements Wave/GeniusPay | Transactions, statut d'abonnement (aucun PAN stocké — passerelles externes) | Contrat + obligation légale | 5 ans (comptable) |
 | T5 | Notifications | Alertes opérationnelles (email/WhatsApp/Telegram) | Coordonnées du gérant | Contrat | Durée du compte |
+| T6 | Communications marketing WiFi (N°69) | Envoi d'actualités/offres par le gestionnaire du site (opt-in explicite, OFF par défaut, retrait symétrique) | Numéro de téléphone, preuve horodatée du consentement (`wifi_guests.opt_in_at`) | Consentement (art. 9) | Jusqu'au retrait (« Ne plus recevoir », effet immédiat) ou suppression du site |
 
 ## 2. Sous-traitants / destinataires
 
@@ -31,7 +32,9 @@
 
 Aucune revente ni partage publicitaire des données : **pas de profilage**,
 pas de cookies publicitaires (stockage local limité à la session de travail :
-token, langue, préférences UI — localStorage `mikcloud-auth`).
+token, langue, préférences UI — localStorage `mikcloud-auth` ; Mode Vente
+hors ligne : file locale de ventes en attente de synchronisation — IndexedDB,
+purgée dès la reconnexion, N°61).
 
 ## 3. Droits des personnes (procédures S4)
 
@@ -66,10 +69,13 @@ personnes si risque élevé → journal de l'incident (cf.
 
 ## 6. À faire avant lancement (opérateur)
 
-1. Publier la présente politique sur une page publique du frontend
-   (`/legal/confidentialite`) et la lier depuis l'inscription (case à cocher).
+1. **Fait (N°70, 2026-09-09)** — politique publiée sur
+   `/legal/confidentialite` (contenu = présent registre + T6), liée depuis
+   l'inscription (case à cocher, refus = inscription bloquée) et le pied de
+   la vitrine.
 2. Nommer le responsable du traitement (l'opérateur MikCloud) et l'adresse
-   de contact privacy (ex. `privacy@mikcloud.ftci.fr`).
+   de contact privacy (ex. `privacy@mikcloud.ftci.fr` — **publiée par N°70 ;
+   la boîte mail reste à créer/activer côté opérateur**).
 3. Effectuer la déclaration/traitement à la CDP si le périmètre l'exige
    (2013-450 : régime de déclaration).
 4. Annexer les DPA (contrats de sous-traitance) Neon/Render/Vercel.

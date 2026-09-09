@@ -123,6 +123,8 @@ export interface LandingCopy {
     copyright: string;
     contact: string;
     location: string;
+    /** N°70 — libellé du lien vers /legal/confidentialite (politique de confidentialité). */
+    legal: string;
   };
 }
 
@@ -475,6 +477,7 @@ const fr: LandingCopy = {
     copyright: "© 2026 FTCI — Freelance Technologies Côte d'Ivoire",
     contact: "freelancetechnologies.ci@gmail.com",
     location: "Abidjan, Côte d'Ivoire · Afrique de l'Ouest, Centrale et de l'Est",
+    legal: "Politique de confidentialité",
   },
 };
 
@@ -826,6 +829,7 @@ const en: LandingCopy = {
     copyright: "© 2026 FTCI — Freelance Technologies Côte d'Ivoire",
     contact: "freelancetechnologies.ci@gmail.com",
     location: "Abidjan, Côte d'Ivoire · West, Central and East Africa",
+    legal: "Privacy policy",
   },
 };
 

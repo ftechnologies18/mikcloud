@@ -102,10 +102,11 @@ func (a *API) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 	a.store.Unlock()
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"mode":   h.Mode,   // postgresql (production) | json (développement)
-		"sync":   h.Sync,   // compteurs différentiels — null en mode JSON
-		"neon":   h.Neon,   // contact + keep-alive — null en mode JSON
-		"tables": h.Tables, // lignes mémoire vs répliquées par table
-		"agents": agents,   // fraîcheur check-ins + file de commandes
+		"mode":      h.Mode,                              // postgresql (production) | json (développement)
+		"sync":      h.Sync,                              // compteurs différentiels — null en mode JSON
+		"neon":      h.Neon,                              // contact + keep-alive — null en mode JSON
+		"tables":    h.Tables,                            // lignes mémoire vs répliquées par table
+		"agents":    agents,                              // fraîcheur check-ins + file de commandes
+		"bandwidth": a.egress.snapshot(time.Now().UTC()), // N°72 — octets sortis du jour, par catégorie (borne basse : corps uniquement)
 	})
 }

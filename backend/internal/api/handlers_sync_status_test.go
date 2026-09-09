@@ -163,6 +163,31 @@ func TestSyncStatusContract(t *testing.T) {
 	if s, _ := agents["lastCheckIn"].(string); s == "" {
 		t.Fatalf("lastCheckIn attendu (routeur fraîchement vu), obtenu %v", agents["lastCheckIn"])
 	}
+
+	// Bande passante (N°72) : 5 catégories canoniques dans l'ordre, la
+	// requête en cours est déjà comptée en « console » (startRequest AVANT
+	// le handler) — le rapport se mesure lui-même.
+	bw, ok := out["bandwidth"].(map[string]any)
+	if !ok {
+		t.Fatalf("bloc bandwidth absent : %v", out["bandwidth"])
+	}
+	bwCats, ok := bw["categories"].([]any)
+	if !ok || len(bwCats) != 5 {
+		t.Fatalf("5 catégories attendues, obtenu %v", bwCats)
+	}
+	if first, _ := bwCats[0].(map[string]any); first["name"] != "agents" {
+		t.Fatalf("ordre canonique attendu (agents en tête), obtenu %v", bwCats[0])
+	}
+	if bw["totalRequests"].(float64) < 1 {
+		t.Fatalf("la requête en cours doit être comptée : %v", bw["totalRequests"])
+	}
+	for _, e := range bwCats {
+		if m, ok := e.(map[string]any); ok && m["name"] == "console" {
+			if m["requests"].(float64) < 1 {
+				t.Fatalf("catégorie console non comptée : %v", m)
+			}
+		}
+	}
 }
 
 // TestSyncStatusAgentOffline — un agent vu il y a plus d'OnlineWindow

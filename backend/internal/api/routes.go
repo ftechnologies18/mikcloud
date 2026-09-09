@@ -36,11 +36,16 @@ type API struct {
 	// (Resend/SMTP), le flood est coupé avant d'atteindre le fournisseur.
 	reset  *signupLimiter
 	vitals *telemetry.Collector // B2 — Core Web Vitals (nil = collecte désactivée)
+	// N°72 — bande passante sortante du jour (octets de corps de réponse
+	// par catégorie : agents / portail / medias / console / autre), exposée
+	// dans GET /api/admin/sync-status. Le quota Render (5 Go/mois gratuit)
+	// avait été épuisé en ~9 jours SANS qu'aucune métrique n'existe.
+	egress *egressStats
 }
 
 // New construit l'API.
 func New(s *store.Store, jwtSecret string) *API {
-	return &API{store: s, secret: jwtSecret, gws: map[string]routeros.Gateway{}, pinLock: newPinLimiter(), signup: newSignupLimiter(), join: newSignupLimiter(), wifiClaim: newSignupLimiterLimits(20, 100), portalTrack: newSignupLimiterLimits(300, 3000), reset: newSignupLimiter()}
+	return &API{store: s, secret: jwtSecret, gws: map[string]routeros.Gateway{}, pinLock: newPinLimiter(), signup: newSignupLimiter(), join: newSignupLimiter(), wifiClaim: newSignupLimiterLimits(20, 100), portalTrack: newSignupLimiterLimits(300, 3000), reset: newSignupLimiter(), egress: newEgressStats()}
 }
 
 // Handler — mux complet, protégé par le middleware d'authentification.
@@ -339,7 +344,13 @@ func (a *API) Handler() http.Handler {
 	// Fallback API -> 404 JSON
 	mux.HandleFunc("/api/", a.handleAPINotFound)
 
-	return a.authMiddleware(mux)
+	// N°72 — chaîne de sortie : compteur egress (httpstats.go) AU-DESSUS
+	// du compresseur gzip (gzip.go) lui-même au-dessus de l'auth : les
+	// octets comptés sont ceux réellement écrits sur le réseau (après
+	// compression), et les 401 du middleware d'authentification sont
+	// compressées comme le reste. Les clients sans Accept-Encoding
+	// (agents RouterOS /tool fetch) ne sont jamais compressés.
+	return a.observeEgress(gzipMiddleware(a.authMiddleware(mux)))
 }
 
 // ---------------------------------------------------------------------------

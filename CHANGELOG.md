@@ -5,6 +5,102 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-09 — N°72 : optimisation bande passante — compression gzip de toutes les réponses textuelles + compteur egress journalier par catégorie (agents/portail/médias/console/autre) dans la carte « Santé de la persistance » + entretien des ressources routeurs espacé (15 s → 60 s)
+
+### N°72 — Tenir le plancher free de Render (5 Go/mois) jusqu'aux premiers clients payants — incident du jour : quota épuisé en ~9 jours, workspace suspendu automatiquement
+- **Incident déclencheur** : Render a suspendu le workspace « FTech CI » (plan
+  Hobby : 5 Go de bande passante sortante gratuits par mois) — email « Workspace
+  suspended — free bandwidth », quota épuisé en ~9 jours du mois calendaire alors
+  que seuls deux clients sont en essai 90 jours. Diagnostic établi sur le code : la
+  bande passante mesure le trafic du SERVICE backend 24 h/24 — check-ins agents
+  45 s, read_states déclenchés par les consoles, médias proxifiés R2, status
+  polling des invités, bots d'Internet sur le domaine public — PAS le nombre de
+  clients MikCloud ; et deux absences rendaient la situation invisible : AUCUNE
+  réponse n'était compressée, AUCUNE métrique d'egress n'existait. N°72 attaque
+  les deux fronts : diviser les volumes (gzip ÷4-8 sur tout le texte) et piloter
+  (compteur quotidien par catégorie, dans la carte déjà rafraîchie 15 s du N°71).
+- **Backend — compression HTTP (internal/api/gzip.go, NOUVEAU)** : gzipMiddleware
+  posé dans API.Handler() au-dessus de l'auth : compresser UNIQUEMENT les clients
+  qui annoncent « Accept-Encoding: gzip » (navigateurs : oui ; agents RouterOS
+  /tool fetch : non — le protocole texte des check-ins 45 s reste strictement
+  inchangé), UNIQUEMENT les types compressibles (text/, JSON, JS, CSS, XML, SVG —
+  jamais images ni polices, déjà compressées), JAMAIS les statuts sans corps (204
+  du track analytics portail, 304) ; « Vary: Accept-Encoding » posé par Add (le
+  CORS peut déjà avoir posé « Vary: Origin »), Content-Length supprimé ;
+  décision au PREMIER Write avec reniflage http.DetectContentType si le handler
+  n'a pas posé de Content-Type. Piège découvert et corrigé en construisant la
+  feature : la convention du code (writeJSON/serveFile) appelle WriteHeader AVANT
+  d'écrire le corps — engager la réponse à ce moment aurait expédié les en-têtes
+  de compression APRÈS leur envoi (silencieusement ignorés par net/http : corps
+  gzip sans en-tête, illisible) → le gzipWriter RETIENT le statut et ne l'émet
+  qu'au moment de la décision, garantissant des en-têtes définitifs ; pool
+  sync.Pool de compresseurs (une requête compressée = un Reset, pas une
+  allocation) ; Flush() délégué par précaution (aucun flux temps réel
+  n'existe, polling partout).
+- **Backend — compteur egress (internal/api/httpstats.go, NOUVEAU)** :
+  egressStats compte les octets de CORPS réellement écrits sur le réseau (monté
+  AU-DESSUS du compresseur : les octets comptés sont les octets compressés, donc
+  la réalité facturée) + une requête par requête servie (un 204 reste une
+  requête), par CINQ catégories qui matérialisent le décompte de l'incident :
+  agents (/agent/*, check-ins + fichiers portail hybride), portail (endpoints
+  publics des invités /api/wifi/site/* + track + /portal/{token}), medias
+  (/api/media/*, proxy R2), console (le reste de /api/*), autre (santé, 404 des
+  bots) ; verrou dédié jamais pris pendant un handler (incrémentations aux
+  Write, hors de tout verrou du store) ; reset au changement de jour UTC (la
+  fenêtre de facturation Render est calée sur le mois calendaire UTC) ; le total
+  est une BORNE BASSE documentée (en-têtes HTTP non mesurables côté application,
+  ~200-500 o par réponse en plus).
+- **Endpoint** : GET /api/admin/sync-status (N°71) enrichi d'un bloc
+  « bandwidth » {day, totalRequests, totalBytes, categories[5]} — catégories dans
+  l'ordre canonique, toujours 5 (contrat stable), absentes = zéro ; la requête
+  en cours est comptée en « console » (startRequest AVANT le handler) : le
+  rapport se mesure lui-même.
+- **Frontend — carte Maintenance** : bloc « Bande passante sortante » dans la
+  carte « Santé de la persistance » (SyncStatusCard) : total du jour
+  formatBytes (o/Ko/Mo localisés, séparateur décimal fr/en) + nombre de
+  requêtes, répartition par catégorie (Agents/Portail/Médias/Console/Autre),
+  hint explicite « corps uniquement, borne basse du quota Render » ; i18n FR/EN
+  6+6 clés platformSettings.syncHealth.bw* ; types BandwidthSnapshot/
+  BandwidthCat. ET use-router-resources.ts : l'entretien des ressources routeur
+  (pools/files/serveurs des formulaires) passe de 15 s à 60 s — chaque re-poll
+  en mode agent finit par déclencher une commande read_resources (trafic 24 h/24
+  pour des listes qui changent rarement) ; le re-poll accéléré 5 s pendant
+  qu'une commande est en file reste inchangé (borné par le check-in ≤ 45 s) :
+  la réactivité des formulaires ne bouge pas, staleTime aligné à 60 s.
+- **Positionnement architectural** : les middlewares de main.go (CORS
+  fail-closed, securityHeaders, limitBody, rate-limit S1-S6, log) restent
+  AU-DESSUS de la chaîne N°72 (observeEgress → gzip → auth) : les réponses
+  propres de ces middlewares (preflight 204 CORS, 429 du limiteur) ne sont ni
+  compressées ni comptées — volume nul ou marginal, et la chaîne de sécurité
+  n'est pas touchée.
+- **Tests Go 11 nouveaux** (gzip_test.go : compression réelle du JSON santé
+  avec corps décompressé IDENTIQUE au corps clair + en-têtes Content-Encoding/
+  Vary ; la réponse volumineuse sync-status est effectivement PLUS PETITE
+  compressée (la promesse ÷4-8, prouvée) et reste du JSON valide après
+  décompression ; 204 du track jamais compressé ; binaire jamais compressé ;
+  parsing Accept-Encoding avec/sans q= ; filtre des Content-Type ;
+  httpstats_test.go : classification des 19 chemins pivots (miroir du découpage
+  public/console de l'allowlist — « /api/wifi/site/ » ne matche ni « /sites »
+  ni « /guests »), compteurs + ordre canonique + reset journalier UTC,
+  comptage réel au travers du serveur (la santé GET / écrit en « autre », la
+  requête sync-status se compte elle-même en « console ») ;
+  handlers_sync_status_test.go étendu : le contrat JSON de N°71 vérifie
+  désormais le bloc bandwidth (5 catégories, ordre, totalRequests ≥ 1,
+  console.requests ≥ 1).
+- **Vérifié localement comme la CI** : gofmt tabulations (vide), go vet, go
+  build, go test paquet api COMPLET (tous les tests existants traversent
+  désormais le middleware gzip — la décompression transparente du client de test
+  valide l'équivalence octet par octet), -race sur les nouveaux tests, paquet
+  store inchangé vert ; frontend eslint 0, tsgo 0, next build ✓ (mêmes 13
+  routes) ; E2E navigateur : backend Go :4000 (binaire frais — un premier
+  passage E2E avait exposé le piège WriteHeader avec l'ancien binaire) +
+  frontend build prod :3001, login admin plateforme → Paramètres plateforme →
+  Maintenance → bloc « Bande passante sortante » aux valeurs réelles (total
+  « 938 o · 11 requêtes », répartition console comptée depuis le boot, hint
+  complet), collapsible 30 tables N°71 intact, console navigateur zéro erreur
+  JavaScript, mobile 390 px scrollWidth 390 sans débordement, captures
+  desktop + mobile.
+
 ## 2026-09-09 — N°71 : santé de la persistance — endpoint GET /api/admin/sync-status + carte « Santé de la persistance » (console plateforme, onglet Maintenance) + geniuspay_subs intégré à la synchro différentielle
 
 ### N°71 — Instrumenter deux flux silencieux : la synchro différentielle FNV-1a → Neon et les agents routeur (demande utilisateur, application directe de la leçon d'architecture)

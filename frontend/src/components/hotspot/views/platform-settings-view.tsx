@@ -43,7 +43,7 @@ import {
   updatePlatformSettings,
 } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
-import { formatDateTime, timeAgo } from "@/lib/hotspot/format";
+import { formatBytes, formatDateTime, timeAgo } from "@/lib/hotspot/format";
 import type {
   AccountPurgeStats,
   PlatformSettingsResponse,
@@ -122,6 +122,22 @@ interface SyncStatusSync {
   lastErrorAt?: string;
 }
 
+// N°72 — bloc « bandwidth » de sync-status : octets de CORPS de réponse
+// servis depuis minuit UTC, par catégorie (agents / portail / medias /
+// console / autre) — borne basse du quota Render (en-têtes non comptés).
+interface BandwidthCat {
+  name: string;
+  requests: number;
+  bytes: number;
+}
+
+interface BandwidthSnapshot {
+  day: string;
+  totalRequests: number;
+  totalBytes: number;
+  categories: BandwidthCat[];
+}
+
 interface SyncStatus {
   mode: "postgresql" | "json";
   sync: SyncStatusSync | null;
@@ -139,6 +155,7 @@ interface SyncStatus {
     commandsStale: number;
     lastCheckIn?: string;
   };
+  bandwidth: BandwidthSnapshot;
 }
 
 const SYNC_STATUS_KEY = ["/api/admin/sync-status"] as const;
@@ -525,6 +542,11 @@ function SyncStatusCard() {
   const sync = data?.sync ?? null;
   const neon = data?.neon ?? null;
   const agents = data?.agents ?? null;
+  // N°72 — volumétrie d'une catégorie de bande passante (« — » si absente).
+  const catBytes = (name: string): string => {
+    const cat = data?.bandwidth?.categories.find((c) => c.name === name);
+    return cat ? formatBytes(cat.bytes, lang) : "—";
+  };
   const totalRows = data?.tables.reduce((sum, tb) => sum + tb.rows, 0) ?? 0;
   const totalMirrored = data?.tables.reduce((sum, tb) => sum + (tb.mirrored ?? 0), 0) ?? 0;
 
@@ -655,6 +677,34 @@ function SyncStatusCard() {
                     value={timeAgo(agents.lastCheckIn, lang)}
                   />
                 )}
+              </div>
+            )}
+
+            {data.bandwidth && (
+              <div className="grid gap-2">
+                <p className="text-sm font-medium">{t("platformSettings.syncHealth.bwTitle")}</p>
+                <StatRow
+                  label={t("platformSettings.syncHealth.bwToday")}
+                  value={tf("platformSettings.syncHealth.bwTotal", {
+                    mo: formatBytes(data.bandwidth.totalBytes, lang),
+                    req: data.bandwidth.totalRequests.toLocaleString(
+                      lang === "fr" ? "fr-FR" : "en-US",
+                    ),
+                  })}
+                />
+                <StatRow
+                  label={t("platformSettings.syncHealth.bwBreakdown")}
+                  value={tf("platformSettings.syncHealth.bwCats", {
+                    agents: catBytes("agents"),
+                    portail: catBytes("portail"),
+                    medias: catBytes("medias"),
+                    console: catBytes("console"),
+                    other: catBytes("autre"),
+                  })}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t("platformSettings.syncHealth.bwHint")}
+                </p>
               </div>
             )}
 

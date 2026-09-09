@@ -91,8 +91,13 @@ export function useRouterResources(routers: RouterDevice[] | undefined, routerId
       };
     },
     enabled: targets.length > 0,
-    // Re-poll accéléré tant qu'un check-in agent est attendu, sinon entretien.
-    refetchInterval: (query) => (query.state.data?.queued ? 5_000 : 15_000),
-    staleTime: 30_000,
+    // N°72 — bande passante : l'entretien passe de 15 s à 60 s (les pools/
+    // files/serveurs d'un routeur changent rarement ; chaque re-poll en mode
+    // agent déclenche tôt ou tard une commande read_resources → du trafic
+    // 24 h/24). Le re-poll accéléré 5 s tant qu'une commande est en file
+    // reste inchangé : borné par le check-in (≤ 45 s) — la réactivité des
+    // formulaires ne bouge pas.
+    refetchInterval: (query) => (query.state.data?.queued ? 5_000 : 60_000),
+    staleTime: 60_000,
   });
 }

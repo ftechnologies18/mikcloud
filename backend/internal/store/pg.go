@@ -33,6 +33,10 @@ const maxRowsPerStatement = 200
 type PG struct {
 	db     *sql.DB
 	hashes map[string]map[string]uint64
+	// N°71 — instrumentation santé de la synchro (syncstats.go) et mode du
+	// keep-alive mémorisé pour le diagnostic (vide = keep-alive désactivé).
+	stats  syncStats
+	kaMode string
 
 	// lastWrite — horodatage (unix, atomic) du dernier contact CONFIRMÉ avec
 	// Neon (ping d'ouverture, Load, Sync, ping du keep-alive). Base de la
@@ -141,6 +145,7 @@ func (p *PG) StartKeepAlive(mode string) {
 		log.Printf("pg keep-alive : mode %q ignoré (valeurs : off|on|business)", mode)
 		return
 	}
+	p.kaMode = mode // N°71 — mémorisé pour le diagnostic santé (sync-status)
 	if p.kaStop != nil {
 		return // déjà démarré
 	}
@@ -1140,99 +1145,121 @@ func (p *PG) loadSettings(db *model.DB) error {
 // Sync compare l'état mémoire aux empreintes de la dernière synchronisation
 // réussie et applique les différences en une transaction :
 // upserts des lignes nouvelles/modifiées, suppressions des disparues.
-func (p *PG) Sync(db *model.DB) error {
+func (p *PG) Sync(db *model.DB) (err error) {
+	// N°71 — instrumentation santé : le defer alimente les compteurs exposés
+	// par GET /api/admin/sync-status (tentatives/succès/échecs, durée,
+	// volumétrie du delta). Aucun verrou supplémentaire sur le chemin
+	// critique : les compteurs ont leur micro-verrou (syncstats.go) et Save
+	// tient déjà le verrou global du store au moment de l'appel.
+	start := time.Now()
+	delta := syncDelta{}
+	defer func() {
+		if err != nil {
+			p.stats.recordFailure(err, time.Since(start))
+			return
+		}
+		p.stats.recordSuccess(delta, time.Since(start))
+	}()
 	tx, err := p.db.Begin()
 	if err != nil {
 		return fmt.Errorf("pg sync (begin) : %w", err)
 	}
 	defer tx.Rollback() // no-op si Commit réussit
 
-	if err := syncTable(tx, p.hashes, accountSpec, db.Accounts); err != nil {
+	if err := syncTable(tx, p.hashes, accountSpec, db.Accounts, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, adminSpec, db.Users); err != nil {
+	if err := syncTable(tx, p.hashes, adminSpec, db.Users, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, routerSpec, db.Routers); err != nil {
+	if err := syncTable(tx, p.hashes, routerSpec, db.Routers, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, profileSpec, db.Profiles); err != nil {
+	if err := syncTable(tx, p.hashes, profileSpec, db.Profiles, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, hotspotUserSpec, db.HotspotUsers); err != nil {
+	if err := syncTable(tx, p.hashes, hotspotUserSpec, db.HotspotUsers, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, batchSpec, db.Batches); err != nil {
+	if err := syncTable(tx, p.hashes, batchSpec, db.Batches, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, resellerSpec, db.Resellers); err != nil {
+	if err := syncTable(tx, p.hashes, resellerSpec, db.Resellers, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, sellSessionSpec, db.SellSessions); err != nil {
+	if err := syncTable(tx, p.hashes, sellSessionSpec, db.SellSessions, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, passwordResetSpec, db.PasswordResets); err != nil {
+	if err := syncTable(tx, p.hashes, passwordResetSpec, db.PasswordResets, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, transactionSpec, db.Transactions); err != nil {
+	if err := syncTable(tx, p.hashes, transactionSpec, db.Transactions, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, sessionSpec, db.Sessions); err != nil {
+	if err := syncTable(tx, p.hashes, sessionSpec, db.Sessions, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, activitySpec, db.Activity); err != nil {
+	if err := syncTable(tx, p.hashes, activitySpec, db.Activity, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, saleSpec, db.Sales); err != nil {
+	if err := syncTable(tx, p.hashes, saleSpec, db.Sales, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, commandSpec, db.Commands); err != nil {
+	if err := syncTable(tx, p.hashes, commandSpec, db.Commands, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, templateSpec, db.Templates); err != nil {
+	if err := syncTable(tx, p.hashes, templateSpec, db.Templates, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, userLogSpec, db.UserLogs); err != nil {
+	if err := syncTable(tx, p.hashes, userLogSpec, db.UserLogs, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, ipBindingSpec, db.IPBindings); err != nil {
+	if err := syncTable(tx, p.hashes, ipBindingSpec, db.IPBindings, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, schedulerTaskSpec, db.SchedulerTasks); err != nil {
+	if err := syncTable(tx, p.hashes, schedulerTaskSpec, db.SchedulerTasks, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, trafficSpec, db.Traffic); err != nil {
+	if err := syncTable(tx, p.hashes, trafficSpec, db.Traffic, &delta); err != nil {
 		return err
 	}
 	notifRows := make([]model.NotificationSettings, 0, len(db.NotifSettings))
 	for _, v := range db.NotifSettings {
 		notifRows = append(notifRows, v)
 	}
-	if err := syncTable(tx, p.hashes, notifSettingsSpec, notifRows); err != nil {
+	if err := syncTable(tx, p.hashes, notifSettingsSpec, notifRows, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, notifLogSpec, db.NotifLog); err != nil {
+	if err := syncTable(tx, p.hashes, notifLogSpec, db.NotifLog, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, billingRequestSpec, db.BillingRequests); err != nil {
+	if err := syncTable(tx, p.hashes, billingRequestSpec, db.BillingRequests, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, purgeTombstoneSpec, db.PurgeTombstones); err != nil {
+	if err := syncTable(tx, p.hashes, purgeTombstoneSpec, db.PurgeTombstones, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, joinLinkSpec, db.JoinLinks); err != nil {
+	if err := syncTable(tx, p.hashes, joinLinkSpec, db.JoinLinks, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, registrationRequestSpec, db.RegistrationRequests); err != nil {
+	if err := syncTable(tx, p.hashes, registrationRequestSpec, db.RegistrationRequests, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, wifiSiteSpec, db.WifiSites); err != nil {
+	if err := syncTable(tx, p.hashes, wifiSiteSpec, db.WifiSites, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, wifiGuestSpec, db.WifiGuests); err != nil {
+	if err := syncTable(tx, p.hashes, wifiGuestSpec, db.WifiGuests, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, promoEventSpec, db.PromoEvents); err != nil {
+	if err := syncTable(tx, p.hashes, promoEventSpec, db.PromoEvents, &delta); err != nil {
+		return err
+	}
+	// N°71 — geniuspay_subs intègre la synchro différentielle : la spec
+	// existait (table chargée au boot) mais échappait à Sync — les abonnements
+	// carte créés en mémoire (avec a.store.Save() !) disparaissaient donc au
+	// redémarrage. La clé primaire « uuid » (≠ « id ») est désormais portée
+	// par la machinerie générique (cols[0] = cible ON CONFLICT, cf. upsertRows).
+	if err := syncTable(tx, p.hashes, geniusPaySubSpec, db.GeniusPaySubs, &delta); err != nil {
 		return err
 	}
 	if err := p.syncSettings(tx, db); err != nil {
@@ -1375,7 +1402,8 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
 // ---------------------------------------------------------------------------
 
 // entitySpec — description d'une table : colonnes (cols[0] est TOUJOURS la
-// clé primaire « id »), extraction d'id, lecture et écriture d'une ligne.
+// clé primaire — « id » partout, « uuid » pour geniuspay_subs), extraction
+// d'id, lecture et écriture d'une ligne.
 type entitySpec[T any] struct {
 	table  string
 	cols   []string
@@ -1405,7 +1433,7 @@ func loadInto[T any](p *PG, out *[]T, spec entitySpec[T]) error {
 // syncTable — différentiel : détecte ajouts/modifications (comparaison
 // d'empreintes) et disparitions (id absents), applique le tout, puis rafraîchit
 // le cache UNIQUEMENT en cas de succès (un échec sera retenté au Save suivant).
-func syncTable[T any](tx *sql.Tx, hashes map[string]map[string]uint64, spec entitySpec[T], rows []T) error {
+func syncTable[T any](tx *sql.Tx, hashes map[string]map[string]uint64, spec entitySpec[T], rows []T, delta *syncDelta) error {
 	cached := hashes[spec.table]
 	if cached == nil {
 		cached = map[string]uint64{}
@@ -1433,11 +1461,13 @@ func syncTable[T any](tx *sql.Tx, hashes map[string]map[string]uint64, spec enti
 		if err := upsertRows(tx, spec, changed); err != nil {
 			return err
 		}
+		delta.changed += len(changed) // N°71 — volumétrie (comptée si écrite)
 	}
 	if len(removed) > 0 {
-		if err := deleteRows(tx, spec.table, removed); err != nil {
+		if err := deleteRows(tx, spec.table, spec.cols[0], removed); err != nil {
 			return err
 		}
+		delta.removed += len(removed) // N°71 — volumétrie (comptée si écrite)
 	}
 
 	// Cache rafraîchi uniquement après succès des écritures.
@@ -1462,8 +1492,9 @@ func hashEntity[T any](v *T) uint64 {
 	return h.Sum64()
 }
 
-// deleteRows — DELETE ... WHERE id IN (…) par blocs de 500.
-func deleteRows(tx *sql.Tx, table string, ids []string) error {
+// deleteRows — DELETE ... WHERE <clé> IN (…) par blocs de 500. La clé est
+// cols[0] de la spec (« id » partout, « uuid » pour geniuspay_subs — N°71).
+func deleteRows(tx *sql.Tx, table, key string, ids []string) error {
 	for start := 0; start < len(ids); start += 500 {
 		end := min(start+500, len(ids))
 		chunk := ids[start:end]
@@ -1473,7 +1504,7 @@ func deleteRows(tx *sql.Tx, table string, ids []string) error {
 			ph[i] = "$" + strconv.Itoa(i+1)
 			args[i] = id
 		}
-		q := `DELETE FROM ` + table + ` WHERE id IN (` + strings.Join(ph, ",") + `)`
+		q := `DELETE FROM ` + table + ` WHERE ` + key + ` IN (` + strings.Join(ph, ",") + `)`
 		if _, err := tx.Exec(q, args...); err != nil {
 			return fmt.Errorf("suppression %s : %w", table, err)
 		}
@@ -1515,7 +1546,9 @@ func upsertRows[T any](tx *sql.Tx, spec entitySpec[T], rows []T) error {
 			sb.WriteByte(')')
 			args = append(args, spec.args(&chunk[i])...)
 		}
-		sb.WriteString(` ON CONFLICT (id) DO UPDATE SET ` + setClause)
+		// N°71 — cible de conflit = cols[0] (clé primaire : « id » pour 28
+		// tables, « uuid » pour geniuspay_subs) au lieu du « id » en dur.
+		sb.WriteString(` ON CONFLICT (` + spec.cols[0] + `) DO UPDATE SET ` + setClause)
 
 		if _, err := tx.Exec(sb.String(), args...); err != nil {
 			return fmt.Errorf("upsert %s : %w", spec.table, err)
@@ -2201,6 +2234,7 @@ func (p *PG) rebuildHashes(db *model.DB) {
 		wifiSiteSpec.table:            hashRows(db.WifiSites, wifiSiteSpec),
 		wifiGuestSpec.table:           hashRows(db.WifiGuests, wifiGuestSpec),
 		promoEventSpec.table:          hashRows(db.PromoEvents, promoEventSpec),
+		geniusPaySubSpec.table:        hashRows(db.GeniusPaySubs, geniusPaySubSpec),
 	}
 	notifRows := make([]model.NotificationSettings, 0, len(db.NotifSettings))
 	for _, v := range db.NotifSettings {

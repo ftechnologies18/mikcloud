@@ -8,7 +8,8 @@
 //                   (parts/security-cards — une seule implémentation pour les
 //                   deux vues ; l'ancien formulaire dupliqué, plus pauvre, a
 //                   été retiré ; la langue vit dans le menu utilisateur) ;
-//   • Maintenance — rechargement base, nettoyage démo, et purge des données
+//   • Maintenance — santé de la persistance (N°71), rechargement base,
+//                   nettoyage démo, et purge des données
 //                   FUSIONNÉE : l'ancienne « Purge globale des données » et la
 //                   « Purge ciblée par compte » étaient deux cartes jumelles
 //                   (même grille de catégories, même confirmation, deux moteurs
@@ -20,7 +21,9 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Activity,
   AlertTriangle,
+  ChevronDown,
   Database,
   Eraser,
   Loader2,
@@ -40,6 +43,7 @@ import {
   updatePlatformSettings,
 } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
+import { formatDateTime, timeAgo } from "@/lib/hotspot/format";
 import type {
   AccountPurgeStats,
   PlatformSettingsResponse,
@@ -69,6 +73,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -80,6 +85,14 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const PLATFORM_SETTINGS_KEY = ["/api/admin/platform/settings"] as const;
@@ -93,6 +106,42 @@ interface ReloadStats {
   routers: number;
   sessions: number;
 }
+
+// N°71 — réponse de GET /api/admin/sync-status : santé de la persistance.
+// sync et neon sont null en mode JSON local (pas de synchro différentielle).
+interface SyncStatusSync {
+  attempts: number;
+  successes: number;
+  failures: number;
+  consecutiveFailures: number;
+  lastSuccessAt?: string;
+  lastSuccessMs: number;
+  lastChangedRows: number;
+  lastRemovedRows: number;
+  lastError?: string;
+  lastErrorAt?: string;
+}
+
+interface SyncStatus {
+  mode: "postgresql" | "json";
+  sync: SyncStatusSync | null;
+  neon: { lastContactAt?: string; keepAliveMode: string } | null;
+  tables: { table: string; rows: number; mirrored?: number }[];
+  agents: {
+    routers: number;
+    routersAgent: number;
+    routersReal: number;
+    routersSimulated: number;
+    routersOnline: number;
+    routersConflict: number;
+    commandsQueued: number;
+    commandsSent: number;
+    commandsStale: number;
+    lastCheckIn?: string;
+  };
+}
+
+const SYNC_STATUS_KEY = ["/api/admin/sync-status"] as const;
 
 // Réponse de GET /api/admin/purge/stats — compteurs GLOBAUX (tous comptes)
 // par catégorie de purge. Les routeurs réels (realRouters) sont informatifs :
@@ -232,6 +281,7 @@ export default function PlatformSettingsView() {
         <TabsContent value="maintenance">
           <div className="grid gap-4 lg:grid-cols-2">
             <DatabaseCard />
+            <SyncStatusCard />
             <DemoCleanupCard />
             <DataPurgeCard />
           </div>
@@ -437,6 +487,248 @@ function DatabaseCard() {
         </Button>
       </CardFooter>
     </Card>
+  );
+}
+
+/* ─── Santé de la persistance (GET /api/admin/sync-status, N°71) ─── */
+// Diagnostic READ-ONLY de deux flux silencieux : la synchro différentielle
+// FNV-1a mémoire → Neon (compteurs, volumétrie du dernier delta, erreurs,
+// dérive lignes/répliques) et les agents routeur (fraîcheur des check-ins,
+// file de commandes, zombies). Actualisé automatiquement toutes les 15 s.
+function SyncStatusCard() {
+  const { t, tf, lang } = useI18n();
+  const { data, isLoading, error } = useQuery({
+    queryKey: SYNC_STATUS_KEY,
+    queryFn: () => api<SyncStatus>("/api/admin/sync-status"),
+    refetchInterval: 15_000,
+  });
+
+  if (error) {
+    return (
+      <Card className="gap-4 py-4 sm:py-6">
+        <CardHeader className="px-4 sm:px-6">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
+              <Activity className="size-4" />
+            </span>
+            {t("platformSettings.syncHealth.title")}
+          </CardTitle>
+          <CardDescription>{t("platformSettings.syncHealth.desc")}</CardDescription>
+        </CardHeader>
+        <CardContent className="px-4 text-sm text-destructive sm:px-6">
+          {error instanceof Error ? error.message : t("platformSettings.syncHealth.loadError")}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const sync = data?.sync ?? null;
+  const neon = data?.neon ?? null;
+  const agents = data?.agents ?? null;
+  const totalRows = data?.tables.reduce((sum, tb) => sum + tb.rows, 0) ?? 0;
+  const totalMirrored = data?.tables.reduce((sum, tb) => sum + (tb.mirrored ?? 0), 0) ?? 0;
+
+  return (
+    <Card className="gap-4 py-4 sm:py-6">
+      <CardHeader className="px-4 sm:px-6">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
+            <Activity className="size-4" />
+          </span>
+          {t("platformSettings.syncHealth.title")}
+        </CardTitle>
+        <CardDescription>{t("platformSettings.syncHealth.desc")}</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-4 px-4 sm:px-6">
+        {isLoading || !data ? (
+          <div className="grid gap-2">
+            <Skeleton className="h-5 w-44" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </div>
+        ) : (
+          <>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant={data.mode === "postgresql" ? "default" : "secondary"}>
+                {data.mode === "postgresql"
+                  ? t("platformSettings.syncHealth.modePostgres")
+                  : t("platformSettings.syncHealth.modeJson")}
+              </Badge>
+              {sync && sync.consecutiveFailures > 0 && (
+                <Badge variant="destructive">
+                  {tf("platformSettings.syncHealth.failingBadge", {
+                    count: sync.consecutiveFailures,
+                  })}
+                </Badge>
+              )}
+              {agents && agents.routersConflict > 0 && (
+                <Badge variant="destructive">
+                  {tf("platformSettings.syncHealth.conflictBadge", {
+                    count: agents.routersConflict,
+                  })}
+                </Badge>
+              )}
+            </div>
+
+            {data.mode === "json" && (
+              <p className="text-sm text-muted-foreground">
+                {t("platformSettings.syncHealth.jsonHint")}
+              </p>
+            )}
+
+            {sync && (
+              <div className="grid gap-2">
+                <StatRow
+                  label={t("platformSettings.syncHealth.lastSync")}
+                  value={
+                    sync.lastSuccessAt
+                      ? `${timeAgo(sync.lastSuccessAt, lang)} · ${formatDateTime(sync.lastSuccessAt, lang)}`
+                      : t("platformSettings.syncHealth.neverSynced")
+                  }
+                />
+                <StatRow
+                  label={t("platformSettings.syncHealth.duration")}
+                  value={tf("platformSettings.syncHealth.ms", { ms: sync.lastSuccessMs })}
+                />
+                <StatRow
+                  label={t("platformSettings.syncHealth.delta")}
+                  value={tf("platformSettings.syncHealth.deltaRows", {
+                    changed: sync.lastChangedRows,
+                    removed: sync.lastRemovedRows,
+                  })}
+                />
+                <StatRow
+                  label={t("platformSettings.syncHealth.counters")}
+                  value={tf("platformSettings.syncHealth.countersValue", {
+                    attempts: sync.attempts,
+                    successes: sync.successes,
+                    failures: sync.failures,
+                  })}
+                />
+                {neon && (
+                  <StatRow
+                    label={t("platformSettings.syncHealth.neonContact")}
+                    value={
+                      neon.lastContactAt
+                        ? timeAgo(neon.lastContactAt, lang)
+                        : t("platformSettings.syncHealth.neverSynced")
+                    }
+                  />
+                )}
+                {neon && (
+                  <StatRow
+                    label={t("platformSettings.syncHealth.keepAlive")}
+                    value={tf("platformSettings.syncHealth.keepAliveMode", {
+                      mode: neon.keepAliveMode,
+                    })}
+                  />
+                )}
+              </div>
+            )}
+
+            {agents && (
+              <div className="grid gap-2">
+                <p className="text-sm font-medium">{t("platformSettings.syncHealth.agents")}</p>
+                <StatRow
+                  label={t("platformSettings.syncHealth.agentsOnline")}
+                  value={tf("platformSettings.syncHealth.agentsOf", {
+                    online: agents.routersOnline,
+                    total: agents.routersAgent,
+                  })}
+                />
+                <StatRow
+                  label={t("platformSettings.syncHealth.commandsQueued")}
+                  value={String(agents.commandsQueued)}
+                />
+                <StatRow
+                  label={t("platformSettings.syncHealth.commandsSent")}
+                  value={String(agents.commandsSent)}
+                />
+                <StatRow
+                  label={t("platformSettings.syncHealth.commandsStale")}
+                  value={String(agents.commandsStale)}
+                />
+                {agents.lastCheckIn && (
+                  <StatRow
+                    label={t("platformSettings.syncHealth.lastCheckIn")}
+                    value={timeAgo(agents.lastCheckIn, lang)}
+                  />
+                )}
+              </div>
+            )}
+
+            {sync && sync.lastError && (
+              <div className="grid gap-1 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm">
+                <p className="flex items-center gap-2 font-medium text-destructive">
+                  <TriangleAlert className="size-4 shrink-0" />
+                  {tf("platformSettings.syncHealth.failing", {
+                    count: sync.consecutiveFailures,
+                  })}
+                </p>
+                <p className="break-all font-mono text-xs opacity-80">{sync.lastError}</p>
+              </div>
+            )}
+
+            <Collapsible>
+              <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-medium hover:bg-muted/50">
+                <span>
+                  {data.mode === "json"
+                    ? tf("platformSettings.syncHealth.tablesSummaryJson", { rows: totalRows })
+                    : tf("platformSettings.syncHealth.tablesSummary", {
+                        rows: totalRows,
+                        mirrored: totalMirrored,
+                      })}
+                </span>
+                <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <div className="mt-2 max-h-64 overflow-y-auto rounded-lg border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="h-9">
+                          {t("platformSettings.syncHealth.tableName")}
+                        </TableHead>
+                        <TableHead className="h-9 text-right">
+                          {t("platformSettings.syncHealth.rows")}
+                        </TableHead>
+                        <TableHead className="h-9 text-right">
+                          {t("platformSettings.syncHealth.mirrored")}
+                        </TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {data.tables.map((tb) => (
+                        <TableRow key={tb.table}>
+                          <TableCell className="py-1.5 font-mono text-xs">{tb.table}</TableCell>
+                          <TableCell className="py-1.5 text-right tabular-nums">
+                            {tb.rows}
+                          </TableCell>
+                          <TableCell className="py-1.5 text-right tabular-nums">
+                            {tb.mirrored ?? "—"}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// StatRow — ligne « libellé → valeur » des diagnostics de santé (N°71).
+function StatRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="text-right font-medium">{value}</span>
+    </div>
   );
 }
 

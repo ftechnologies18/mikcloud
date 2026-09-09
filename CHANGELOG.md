@@ -5,6 +5,75 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-09 — N°71 : santé de la persistance — endpoint GET /api/admin/sync-status + carte « Santé de la persistance » (console plateforme, onglet Maintenance) + geniuspay_subs intégré à la synchro différentielle
+
+### N°71 — Instrumenter deux flux silencieux : la synchro différentielle FNV-1a → Neon et les agents routeur (demande utilisateur, application directe de la leçon d'architecture)
+- **Demande** : la synchro différentielle ne laissait AUCUNE trace observable — un échec
+  n'existait que dans une ligne de journal Render, et rien ne disait à l'opérateur si Neon
+  recevait bien les deltas, à quel rythme, ni combien de lignes voyageaient. Avant le
+  lancement commercial, « est-ce que mes données tiennent si Render redémarre ? » ne doit
+  pas dépendre d'un tail de logs. L'endpoint rend la leçon d'architecture OPÉRABLE.
+- **Backend — compteurs (internal/store/syncstats.go, NOUVEAU)** : `syncStats` —
+  micro-verrou dédié, jamais tenu pendant une transaction SQL (ordre store.mu → stats.mu
+  toujours le même : aucun interblocement, aucune contention mesurable sur le chemin
+  critique) : tentatives/succès/échecs, chaîne d'échecs consécutifs, horodatage + durée +
+  volumétrie (lignes upsertées/supprimées) du DERNIER delta réussi, dernière erreur bornée
+  à 500 caractères. `Store.SyncHealth()` photographie sous verrou : mode
+  (postgresql|json), compteurs, dernier contact Neon CONFIRMÉ (`lastWrite`, existant mais
+  jamais exposé), mode du keep-alive (mémorisé au démarrage), et par table les lignes
+  MÉMOIRE vs RÉPLIQUÉES (taille du cache d'empreintes) — une dérive qui persiste signale
+  une synchro qui n'aboutit plus alors que l'état continue d'évoluer.
+- **Backend — instrumentation (pg.go)** : `PG.Sync` passe en retour nommé + defer (corps
+  transactionnel inchangé, aucun verrou ajouté) ; `syncTable` porte un `*syncDelta`
+  rempli uniquement pour les lignes réellement écrites (cohérent avec le rafraîchissement
+  du cache après succès) ; `upsertRows`/`deleteRows` généralisés : cible de conflit et
+  colonne de suppression = `cols[0]` de la spec au lieu du « id » codé en dur.
+- **BUG CORRIGÉ (détecté en construisant N°71)** : la table `geniuspay_subs` (abonnements
+  carte Stripe via GeniusPay) était CHARGÉE au boot (loadInto + spec existante) mais
+  échappait à la synchro différentielle — sa clé primaire « uuid » (≠ « id ») ne passait
+  pas le ON CONFLICT codé en dur. Conséquence : les abonnements créés en mémoire (avec
+  `a.store.Save()` bien appelé, handlers_subscription_stripe.go) DISPARAISSAIENT au
+  redémarrage. Correctif : machinerie générique ci-dessus + enregistrement dans `Sync` ET
+  `rebuildHashes` — zéro migration (la table existait déjà au schéma idempotent), les
+  lignes éventuelles convergent au premier Save.
+- **Backend — endpoint GET /api/admin/sync-status (handlers_sync_status.go, NOUVEAU)** :
+  double garde identique à /overview (requireRole(3) à l'enregistrement + isPlatformAdmin,
+  401/403 testés) ; réponse `{mode, sync|null, neon|null, tables, agents}` — STRICTEMENT
+  READ-ONLY (aucune mutation, aucun verrou nouveau) ; bloc agents calculé dans le package
+  api (propriétaire des constantes de fraîcheur) : routeurs par mode, agents en ligne par
+  FRAÎCHEUR du check-in (< OnlineWindow 3 min — la vérité est le LastSeen, pas le champ
+  Status posé au dernier passage), conflits d'identité S6, file de commandes
+  (queued/sent/zombies > staleSentLimit 10 min), dernier check-in.
+- **Frontend — carte « Santé de la persistance » (platform-settings-view.tsx, onglet
+  Maintenance, 2ᵉ position)** : TanStack Query (rafraîchissement auto 15 s), Badge mode
+  (PostgreSQL (Neon) | Fichier local (développement) + hint dédié en mode JSON), lignes
+  StatRow (dernière synchro ago · date, durée, delta ±, tentatives/succès/échecs, dernier
+  contact Neon, keep-alive), bloc agents (en ligne X/Y mode agent, file, envoyées,
+  zombies, dernier check-in), alerte destructive avec dernière erreur en mono quand la
+  chaîne d'échecs > 0, badges échecs consécutifs et conflits S6, Collapsible « N lignes en
+  mémoire · M répliquées » → tableau scrollable (max-h-64) Table/Lignes/Répliquées (« — »
+  hors mode différentiel), skeletons en chargement, i18n FR/EN 32+32 clés
+  (platformSettings.syncHealth.*).
+- **Tests Go (7 fonctions nouvelles)** : store — TestSyncStatsRecordAndSnapshot
+  (compteurs, chaîne d'échecs remise à zéro, volumétrie du dernier delta, recordFailure
+  nil no-op), TestSyncStatsErrorBorne (troncature 500), TestSyncHealthJSONMode (mode json
+  : sync/neon absents, 30 tables, mirrored omis), TestLiveTableRowsConcordance (30
+  entrées uniques = 29 différentielles + settings — tripwire si une table est ajoutée à
+  Sync sans être listée) ; api — TestSyncStatusRoleMatrix (401 sans jeton, 403 owner
+  client « Réservé », 403 manager « rôle insuffisant », 200 plateforme),
+  TestSyncStatusContract (mode json, sync/neon null, 30 tables aux comptes exacts du seed,
+  agents 1/1 en ligne, file 1/2 dont 1 zombie, lastCheckIn renseigné),
+  TestSyncStatusAgentOffline (agent vu il y a 30 min : 1 agent / 0 en ligne).
+- **Vérifié localement comme la CI + navigateur** : gofmt TABULATIONS conforme, go vet
+  0 erreur, build ✓ ; eslint EXIT 0, tsgo --noEmit EXIT 0, next build ✓ ; E2E
+  agent-browser (backend Go mode JSON port 4000 + frontend dev port 3001, admin
+  plateforme) : login → console → Paramètres plateforme → onglet Maintenance → carte
+  complète (Badge « Fichier local (développement) » + hint, agents « 1 / 1 (mode
+  agent) », file 1, envoyées 2, zombies 1, check-in « il y a 19 s »), Collapsible ouvert →
+  tableau des 30 tables (admin_users 1, routers 1, commands 3, « — » répliquées), console
+  ZÉRO erreur, mobile 390 px scrollWidth 390 (aucun débordement), captures desktop +
+  mobile.
+
 ## 2026-09-09 — N°70 : page publique /legal/confidentialité + case « politique de confidentialité » à l'inscription
 
 ### N°70 — Conformité pré-lancement : publier la politique de confidentialité (registre des traitements §6.1, dernier TODO technique bloquant)

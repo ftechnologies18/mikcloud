@@ -234,6 +234,11 @@ func (a *API) Handler() http.Handler {
 	// Console plateforme (super-admin MikCloud, multi-comptes).
 	mux.HandleFunc("GET /api/admin/overview", a.requireRole(3, a.handleAdminOverview))
 	mux.HandleFunc("GET /api/admin/activity", a.requireRole(3, a.handleAdminActivity))
+	// N°71 — santé de la persistance (synchro différentielle FNV-1a → Neon) et
+	// des agents : diagnostic READ-ONLY pour l'opérateur (dernier sync,
+	// volumétrie du delta, erreurs, dérive mémoire/miroir, file de commandes).
+	// Voir handlers_sync_status.go.
+	mux.HandleFunc("GET /api/admin/sync-status", a.requireRole(3, a.handleSyncStatus))
 	// I (paramètres plateforme) — config globale du SaaS (nom, inscriptions).
 	mux.HandleFunc("GET /api/admin/platform/settings", a.requireRole(3, a.handlePlatformSettingsGet))
 	mux.HandleFunc("PUT /api/admin/platform/settings", a.requireRole(3, a.handlePlatformSettingsPut))

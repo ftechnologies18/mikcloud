@@ -5,6 +5,52 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-09 — N°72-fix : seuil de rentabilité gzip (1 024 o, réponses plus petites servies en clair) + tests métier en « Accept-Encoding: identity » + timeout go test -race porté de 22 à 30 min en CI
+
+### N°72-fix — La CI N°72 a heurté le timeout global « go test -race -timeout 22m » (22 min 38 s contre 18 min 02 s au N°71) : le client de test de net/http annonce « Accept-Encoding: gzip » TOUT SEUL
+- **Diagnostic** : chaque réponse de CHAQUE test de la suite -race était
+  compressée par le nouveau middleware puis décompressée par le transport de
+  test — des milliers de compressions/décompressions sous le détecteur de
+  courses ont ajouté ~4,5 minutes au paquet api (N°71 : 18 min, marge 4 ;
+  N°72 : timeout atteint au milieu de TestSignupQuotaE2E, aucun test en
+  échec, aucun blocage : panic « test timed out after 22m0s », un seul test
+  en cours de 22 s).
+- **gzip.go — seuil de rentabilité (gzipMinBody = 1 024 o)** : le gzipWriter
+  BUFFÉRISE désormais les octets tant que le corps peut rester sous le seuil ;
+  passé le seuil, la décision tombe (en-têtes + statut retenu + tampon sur la
+  voie choisie) — sous le seuil, la réponse sort en clair : le gain du deflate
+  sur quelques centaines d'octets ne paie ni l'en-tête gzip + le CRC, ni le
+  CPU des deux côtés. En production cela ne retire que des micro-réponses
+  (401, 204, statuts courts — le login 393 o sort en clair) ; les corps qui
+  PÈSENT (listes, portail, exports, sync-status : 2 Ko → 484 o compressés,
+  -75 % mesuré) restent compressés. WriteHeader continue de retenir le
+  statut (correctif du piège d'en-têtes expédiés avant leur pose) ; Flush()
+  force la décision sur le tampon courant ; close() tranche le corps resté
+  sous le seuil (en clair) et émet le statut retenu.
+- **handlers_test.go — doJSON passe en « Accept-Encoding: identity »** : les
+  tests métier observent le chemin NON compressé (comme avant N°72) — sans
+  cet en-tête, le transport standard de net/http annonce gzip tout seul et
+  la suite -race paie la compression de chaque réponse ; le chemin compressé
+  a ses tests DÉDIÉS (gzip_test.go, doGzipReq qui pose l'en-tête à la main).
+- **ci.yml — timeout 22 m → 30 m** : la suite -race du paquet api grossit
+  avec les features (N°71 : 18 min ; N°72 : 22+ min) ; la marge doit survivre
+  aux ajouts de tests, pas seulement au prochain commit.
+- **Tests adaptés/nouveau** : TestGzipSkipsTinyResponses (la santé GET /
+  sous le seuil sort en clair même avec gzip demandé, corps IDENTIQUE au
+  chemin identity) ; TestGzipWriterBuffersThenCompresses NOUVEAU (rien ne
+  part sous le seuil, la décision tombe au franchissement, le corps compressé
+  contient EXACTEMENT les octets écrits — aucune perte au tampon, statut
+  retenu émis) ; TestGzipBigJSONActuallyShrinks inchangé et toujours vert
+  (sync-status ≥ seuil → compressé) ; 204/binaire/parsing inchangés verts.
+- **Vérifié localement** : gofmt, go vet, go build ; tests ciblés verts ;
+  paquet api COMPLET vert (99 s) ; validation réelle sur serveur lancé :
+  sync-status avec Accept-Encoding: gzip → Content-Encoding: gzip + 484 o
+  (vs ~2 Ko clair, -75 %) et corps gunzip = JSON ; login 393 o → Content-Length
+  393 en clair (aucun en-tête de compression) ; E2E navigateur re-validé :
+  carte « Bande passante sortante » toujours fonctionnelle (« 337 o ·
+  9 requêtes » au compteur du jour), aucune régression frontend (aucun
+  fichier frontend touché par le fix).
+
 ## 2026-09-09 — N°72 : optimisation bande passante — compression gzip de toutes les réponses textuelles + compteur egress journalier par catégorie (agents/portail/médias/console/autre) dans la carte « Santé de la persistance » + entretien des ressources routeurs espacé (15 s → 60 s)
 
 ### N°72 — Tenir le plancher free de Render (5 Go/mois) jusqu'aux premiers clients payants — incident du jour : quota épuisé en ~9 jours, workspace suspendu automatiquement

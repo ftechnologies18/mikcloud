@@ -94,25 +94,37 @@ func gzipMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// gzipWriter — décide de la compression au PREMIER Write ; le statut
-// reçu via WriteHeader est RETENU jusqu'à cette décision. En effet la
-// convention du code (writeJSON, serveFile) appelle WriteHeader AVANT
-// d'écrire le corps : si le statut engageait immédiatement la réponse,
-// les en-têtes de compression (Content-Encoding, Vary, Content-Length)
-// posés ensuite seraient silencieusement IGNORÉS par net/http — le corps
-// partirait compressé sans en-tête, illisible pour le client. Retenir le
-// statut garantit que la réponse part avec ses en-têtes définitifs.
+// gzipMinBody — seuil de rentabilité de la compression (N°72-fix) :
+// en dessous, gzip ne gagne rien (en-tête gzip + CRC mangent le maigre
+// gain du deflate sur quelques centaines d'octets) et coûte du CPU des
+// deux côtés. Les réponses plus petites sortent en clair — compressibles
+// ou non. En production cela ne retire que des micro-réponses (401, 204,
+// statuts courts) ; en test, cela évite de compresser les milliers de
+// petites réponses de la suite sous -race (la CI N°72 avait doublé le
+// temps du paquet api et heurté le timeout go test).
+const gzipMinBody = 1024
+
+// gzipWriter — décide de la compression au PREMIER Write, RETIENT le
+// statut reçu via WriteHeader jusqu'à la décision et BUFFÉRISE les octets
+// tant que le corps peut rester sous le seuil. La convention du code
+// (writeJSON, serveFile) appelle WriteHeader AVANT d'écrire le corps :
+// engager la réponse à ce moment expédierait les en-têtes de compression
+// (Content-Encoding, Vary, Content-Length) APRÈS leur envoi — ignorés
+// silencieusement par net/http, le corps partirait compressé sans
+// en-tête, illisible. Retenir statut ET premiers octets garantit une
+// réponse complète et cohérente.
 type gzipWriter struct {
 	http.ResponseWriter
 	gz      *gzip.Writer // nil tant que la compression n'est pas activée
 	decided bool         // la décision (compresser ou non) est prise
 	status  int          // statut retenu (0 = non reçu / déjà émis)
+	pending []byte       // octets retenus tant que le seuil n'est pas tranché
 }
 
 // WriteHeader — les statuts sans corps (204 No Content du track
 // analytics, 304) et les 1xx partent immédiatement en clair : rien à
-// compresser. Tout autre statut est RETENU (émis au Write ou au close,
-// avec les en-têtes définitifs).
+// compresser. Tout autre statut est RETENU (émis à la décision, avec
+// les en-têtes définitifs).
 func (g *gzipWriter) WriteHeader(code int) {
 	if code == http.StatusNoContent || code == http.StatusNotModified || code < http.StatusOK {
 		g.decided = true
@@ -132,29 +144,44 @@ func (g *gzipWriter) emitStatus() {
 	}
 }
 
-// Write — premier appel : décide selon le Content-Type (posé par le
-// handler ; sinon reniflé sur les octets ; rien à écrire → en clair),
-// pose les en-têtes de variante, émet le statut retenu, puis route les
-// octets vers le compresseur ou la sortie directe.
+// decide — tranche la compression sur le corps retenu : Content-Type
+// (posé par le handler ; sinon reniflé), compressibilité ET seuil de
+// rentabilité. Pose les en-têtes de variante, émet le statut retenu,
+// écrit le tampon sur la voie choisie (compresseur ou sortie directe).
+func (g *gzipWriter) decide() {
+	g.decided = true
+	ct := g.Header().Get("Content-Type")
+	if ct == "" {
+		ct = http.DetectContentType(g.pending)
+	}
+	if compressibleContentType(ct) && len(g.pending) >= gzipMinBody {
+		g.Header().Add("Vary", "Accept-Encoding")
+		g.Header().Del("Content-Length") // la longueur change avec gzip
+		g.Header().Set("Content-Encoding", "gzip")
+		g.gz, _ = gzipPool.Get().(*gzip.Writer)
+		g.gz.Reset(g.ResponseWriter)
+	}
+	g.emitStatus()
+	if g.gz != nil {
+		_, _ = g.gz.Write(g.pending)
+	} else {
+		_, _ = g.ResponseWriter.Write(g.pending)
+	}
+	g.pending = nil
+}
+
+// Write — retient les octets tant que la décision n'est pas prise (le
+// corps peut encore rester sous le seuil de rentabilité) ; dès que le
+// seuil est atteint la décision tombe (en-têtes + statut retenu +
+// tampon), puis les octets suivent la voie choisie.
 func (g *gzipWriter) Write(p []byte) (int, error) {
 	if !g.decided {
-		g.decided = true
-		ct := g.Header().Get("Content-Type")
-		if ct == "" {
-			if len(p) == 0 {
-				// Rien à écrire : rien à compresser.
-				return g.ResponseWriter.Write(p)
-			}
-			ct = http.DetectContentType(p)
+		g.pending = append(g.pending, p...)
+		if len(g.pending) < gzipMinBody {
+			return len(p), nil
 		}
-		if compressibleContentType(ct) {
-			g.Header().Add("Vary", "Accept-Encoding")
-			g.Header().Del("Content-Length") // la longueur change avec gzip
-			g.Header().Set("Content-Encoding", "gzip")
-			g.gz, _ = gzipPool.Get().(*gzip.Writer)
-			g.gz.Reset(g.ResponseWriter)
-		}
-		g.emitStatus()
+		g.decide()
+		return len(p), nil
 	}
 	if g.gz == nil {
 		return g.ResponseWriter.Write(p)
@@ -162,10 +189,14 @@ func (g *gzipWriter) Write(p []byte) (int, error) {
 	return g.gz.Write(p)
 }
 
-// Flush — vide le compresseur puis délègue : aucun flux temps réel
-// n'existe aujourd'hui (polling partout), la méthode n'est là que pour
-// ne pas briser un futur handler qui demanderait http.Flusher.
+// Flush — force la décision sur le tampon courant puis délègue : aucun
+// flux temps réel n'existe aujourd'hui (polling partout), la méthode
+// n'est là que pour ne pas briser un futur handler qui appellerait
+// http.Flusher.
 func (g *gzipWriter) Flush() {
+	if !g.decided && g.pending != nil {
+		g.decide()
+	}
 	if g.gz != nil {
 		_ = g.gz.Flush()
 	}
@@ -174,10 +205,13 @@ func (g *gzipWriter) Flush() {
 	}
 }
 
-// close — émet le statut retenu (handler muet : WriteHeader sans
-// corps écrit), ferme le compresseur (CRC final) et le rend au pool.
-// Sans compression activée : simple émission du statut retenu.
+// close — dernière chance de décider (corps resté sous le seuil : il
+// sort en clair), émet le statut retenu (handler muet), ferme le
+// compresseur (CRC final) et le rend au pool.
 func (g *gzipWriter) close() {
+	if !g.decided && g.pending != nil {
+		g.decide()
+	}
 	g.decided = true
 	g.emitStatus()
 	if g.gz != nil {

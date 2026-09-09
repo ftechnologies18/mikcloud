@@ -49,37 +49,69 @@ func doGzipReq(t *testing.T, ts *httptest.Server, method, path, token, acceptEnc
 	return resp, string(raw)
 }
 
-// TestGzipCompressesJSON — un client navigateur (Accept-Encoding: gzip)
-// reçoit la santé GET / compressée ; le corps décompressé est IDENTIQUE au
-// corps servi en clair, et les en-têtes annoncent la variante.
-func TestGzipCompressesJSON(t *testing.T) {
+// TestGzipSkipsTinyResponses — les réponses sous le seuil de
+// rentabilité (gzipMinBody) sortent en clair même si le client demandait
+// gzip : le gain du deflate sur quelques centaines d'octets ne paie pas
+// l'en-tête gzip + le CRC, ni le CPU des deux côtés. Le corps est
+// IDENTIQUE au chemin clair.
+func TestGzipSkipsTinyResponses(t *testing.T) {
 	_, ts := newTestServerWithStore(t)
 
-	respPlain, plain := doGzipReq(t, ts, http.MethodGet, "/", "", "identity", "")
-	if ce := respPlain.Header.Get("Content-Encoding"); ce != "" {
-		t.Fatalf("identity : aucune compression attendue, Content-Encoding=%q", ce)
-	}
-	if !strings.Contains(plain, `"service"`) {
-		t.Fatalf("réponse santé inattendue : %s", plain)
-	}
-
 	respGz, gzBody := doGzipReq(t, ts, http.MethodGet, "/", "", "gzip", "")
-	if ce := respGz.Header.Get("Content-Encoding"); ce != "gzip" {
-		t.Fatalf("Content-Encoding « gzip » attendu, obtenu %q", ce)
+	if ce := respGz.Header.Get("Content-Encoding"); ce != "" {
+		t.Fatalf("petite réponse : aucun Content-Encoding attendu, obtenu %q", ce)
 	}
-	if vary := respGz.Header.Get("Vary"); !strings.Contains(vary, "Accept-Encoding") {
-		t.Fatalf("Vary doit citer Accept-Encoding, obtenu %q", vary)
+	if !strings.Contains(gzBody, `"service"`) {
+		t.Fatalf("le corps doit être servi en clair : %s", gzBody)
 	}
-	zr, err := gzip.NewReader(strings.NewReader(gzBody))
+	_, plain := doGzipReq(t, ts, http.MethodGet, "/", "", "identity", "")
+	if gzBody != plain {
+		t.Fatalf("corps identiques attendus\nclair : %s\ngzip : %s", plain, gzBody)
+	}
+}
+
+// TestGzipWriterBuffersThenCompresses — le tampon retient les octets
+// tant que le corps est sous le seuil ; dès qu'il le dépasse, la
+// décision tombe (en-têtes + statut retenu) et le corps complet part
+// compressé — les octets écrits AVANT la décision sont dans le flux
+// compressé, rien n'est perdu ni doublé.
+func TestGzipWriterBuffersThenCompresses(t *testing.T) {
+	rec := httptest.NewRecorder()
+	gw := &gzipWriter{ResponseWriter: rec}
+	gw.Header().Set("Content-Type", "application/json; charset=utf-8")
+	gw.WriteHeader(http.StatusOK)
+	// 900 octets : sous le seuil — rien n'est encore parti.
+	chunk := strings.Repeat("a", 900)
+	if _, err := gw.Write([]byte(chunk)); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Body.Len() != 0 {
+		t.Fatalf("sous le seuil, rien ne doit partir : %d octets déjà écrits", rec.Body.Len())
+	}
+	// 900 de plus : le seuil est franchi — décision, en-têtes, compression.
+	if _, err := gw.Write([]byte(chunk)); err != nil {
+		t.Fatal(err)
+	}
+	gw.close()
+	if ce := rec.Header().Get("Content-Encoding"); ce != "gzip" {
+		t.Fatalf("Content-Encoding gzip attendu au-delà du seuil, obtenu %q", ce)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("statut retenu 200 attendu, obtenu %d", rec.Code)
+	}
+	zr, err := gzip.NewReader(rec.Body)
 	if err != nil {
 		t.Fatalf("corps gzip illisible : %v", err)
 	}
 	decoded, err := io.ReadAll(zr)
 	if err != nil {
-		t.Fatalf("décompression impossible : %v", err)
+		t.Fatal(err)
 	}
-	if string(decoded) != plain {
-		t.Fatalf("le corps décompressé doit être IDENTIQUE au corps clair\nclair : %s\ngzip : %s", plain, decoded)
+	if len(decoded) != 1800 {
+		t.Fatalf("1800 octets attendus après décompression, obtenu %d", len(decoded))
+	}
+	if string(decoded) != chunk+chunk {
+		t.Fatal("le corps compressé doit contenir EXACTEMENT les octets écrits (aucune perte au tampon)")
 	}
 }
 

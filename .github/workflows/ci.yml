@@ -50,7 +50,10 @@ jobs:
         run: go vet ./...
 
       - name: Tests (go test)
-        run: go test -race -timeout 22m ./...
+        # N°72-fix : 30 min — la suite -race du paquet api grossit avec les
+        # features (N°71 : 18 min ; N°72 : timeout à 22 min) ; la marge doit
+        # survivre aux ajouts de tests, pas seulement au prochain commit.
+        run: go test -race -timeout 30m ./...
 
       - name: Compilation
         run: go build -o /tmp/mikcloud-server .

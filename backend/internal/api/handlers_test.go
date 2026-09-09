@@ -79,6 +79,13 @@ func doJSON(t *testing.T, ts *httptest.Server, method, path, token string, body 
 		t.Fatalf("requête impossible : %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// N°72-fix — les tests métier observent le chemin NON compressé (comme
+	// avant N°72) : sans cet en-tête, le transport standard de net/http
+	// annonce « Accept-Encoding: gzip » tout seul, le serveur compresse
+	// chaque réponse et la suite -race ralentit de plusieurs minutes (la
+	// CI N°72 a heurté le timeout go test). Le chemin compressé a ses tests
+	// dédiés (gzip_test.go, doGzipReq).
+	req.Header.Set("Accept-Encoding", "identity")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}

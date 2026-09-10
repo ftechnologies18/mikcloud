@@ -108,9 +108,10 @@ func TestApplyReadStateCompleteStillDeduces(t *testing.T) {
 	}
 }
 
-// TestBuildReadStateReportsTruncFlag — le script généré porte le drapeau
-// trunc et les bornes relevées (500/250) : le cloud et le script restent
-// synchrones sur le protocole v4.
+// TestBuildReadStateReportsTruncFlag — le script généré (v5, N°76) porte la
+// pagination : fenêtre [start, start+count) sur l'index du parc, total exact,
+// sessions RÉSERVÉES au chunk final, stotal partout. Le cloud et le script
+// restent synchrones sur le protocole v5.
 func TestBuildReadStateReportsTruncFlag(t *testing.T) {
 	b := agent.Builder{BaseURL: "https://cloud.example", Token: "tok"}
 	script, err := b.ScriptFor(model.Command{ID: "c-rs", Kind: model.CmdReadState})
@@ -118,16 +119,33 @@ func TestBuildReadStateReportsTruncFlag(t *testing.T) {
 		t.Fatalf("script read_state : %v", err)
 	}
 	for _, want := range []string{
-		"$rn < 500", "$rsn < 250",
-		":if ($rn >= 500) do={ :set rtrunc \"true\" }",
-		":if ($rsn >= 250) do={ :set rtrunc \"true\" }",
-		`."&trunc=". $rtrunc`,
+		"$n >= 0 && $n < 500",                               // fenêtre de base
+		":local mikTotal [:len $mikIds]",                    // total exact du parc
+		":if (500 < $mikTotal) do={ :set rtrunc \"true\" }", // trunc = il reste des chunks
+		":if (500 >= $mikTotal) do={",                       // sessions au chunk final seulement
+		"&total=\". $mikTotal .\"&start=0&count=500",        // fenêtre rapportée
+		"&stotal=\". $rstotal",                              // total sessions partout
+		"&trunc=\". $rtrunc",
 	} {
 		if !strings.Contains(script, want) {
-			t.Fatalf("script read_state v4 : fragment %q absent du script généré", want)
+			t.Fatalf("script read_state v5 : fragment %q absent du script généré", want)
+		}
+	}
+	// Chunk non-base : la fenêtre est inlinée depuis le payload.
+	chunk, err := b.ScriptFor(model.Command{ID: "c-rs2", Kind: model.CmdReadState,
+		Payload: map[string]any{"start": 500, "count": 500}})
+	if err != nil {
+		t.Fatalf("script chunk : %v", err)
+	}
+	for _, want := range []string{
+		"$n >= 500 && $n < 1000",
+		"&start=500&count=500",
+	} {
+		if !strings.Contains(chunk, want) {
+			t.Fatalf("script chunk v5 : fragment %q absent", want)
 		}
 	}
 	if strings.Contains(script, "$rn < 150") || strings.Contains(script, "$rsn < 100") {
-		t.Fatal("script read_state v4 : les anciennes bornes 150/100 ne doivent plus apparaître")
+		t.Fatal("script read_state v5 : les anciennes bornes 150/100 ne doivent plus apparaître")
 	}
 }

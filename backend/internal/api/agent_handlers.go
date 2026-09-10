@@ -472,6 +472,59 @@ func queueCommandLocked(db *model.DB, acc, routerID, kind string, payload map[st
 	return &db.Commands[len(db.Commands)-1]
 }
 
+// queueReadChunkLocked — N°76 — enfile un CHUNK (fenêtre [start, start+count))
+// d'un cycle read_state. Ne passe PAS par la dédup base de queueCommandLocked :
+// les chunks d'un cycle coexistent en file ; la dédup par OFFSET évite le
+// doublon (reprise zombie N°73 : la commande sent redevient queued, jamais
+// dupliquée).
+func queueReadChunkLocked(db *model.DB, acc, routerID string, start, count int) *model.Command {
+	for i := range db.Commands {
+		c := &db.Commands[i]
+		if c.RouterID == routerID && c.Kind == model.CmdReadState && c.Status == "queued" &&
+			int(plPayloadInt(c.Payload, "start")) == start {
+			return c
+		}
+	}
+	cmd := model.Command{
+		ID:        model.NewID("c-"),
+		RouterID:  routerID,
+		AccountID: acc,
+		Kind:      model.CmdReadState,
+		Payload:   map[string]any{"start": start, "count": count},
+		Status:    "queued",
+		CreatedAt: model.NowISO(),
+	}
+	db.Commands = append(db.Commands, cmd)
+	return &db.Commands[len(db.Commands)-1]
+}
+
+// queueReadCycleRestLocked — N°76 — au résultat du chunk 0, enfile d'un coup
+// TOUTES les fenêtres restantes du cycle (≤ MaxReadChunks fenêtres au total) :
+// servies au check-in suivant par paquets de 10 (limite FIFO/check-in), le
+// cycle progresse sans intervention même en veille.
+func queueReadCycleRestLocked(db *model.DB, router *model.Router, total, count int) {
+	winCap := agent.MaxReadChunks * count
+	for s := count; s < total && s < winCap; s += count {
+		queueReadChunkLocked(db, router.AccountID, router.ID, s, count)
+	}
+}
+
+// queueReadStateFreshLocked — N°76 — enfile un read_state de BASE (chunk 0) si
+// et seulement si AUCUN cycle n'est en cours pour ce routeur (aucun read_state
+// queued/sent — chunks compris). Un cycle paginé en cours EST déjà une
+// synchronisation : le casser par un chunk 0 concurrent désordonnerait
+// l'accumulateur (chunks orphelins). Retourne la commande enfilée, ou le
+// cycle en cours (l'appelant y lit l'ID — la fraîcheur viendra de lui).
+func queueReadStateFreshLocked(db *model.DB, router *model.Router) *model.Command {
+	for i := range db.Commands {
+		c := &db.Commands[i]
+		if c.RouterID == router.ID && c.Kind == model.CmdReadState && (c.Status == "queued" || c.Status == "sent") {
+			return c // cycle en cours : ne pas le casser
+		}
+	}
+	return queueCommandLocked(db, router.AccountID, router.ID, model.CmdReadState, map[string]any{})
+}
+
 // profileRef — construit la référence compacte d'un profil pour les payloads.
 func profileRef(p model.Profile) map[string]any {
 	return map[string]any{
@@ -695,11 +748,19 @@ func (a *API) ensureReadStateDue(db *model.DB, router *model.Router) {
 		c := &db.Commands[i]
 		if c.RouterID == router.ID && c.Kind == model.CmdReadState &&
 			(c.Status == "queued" || c.Status == "sent") {
-			return // déjà en file ou en vol : rien à faire
+			return // déjà en file ou en vol (chunks compris) : rien à faire
 		}
 	}
 	last, ok := a.readStateDone[router.ID]
-	if ok && time.Since(last) < readStateMinInterval {
+	// N°76 — cadence adaptée à la taille du parc : un cycle paginé de N
+	// chunks coûte N scripts servis — l'intervalle minimum est multiplié
+	// par N (un parc de 3 500 users se réconcilie toutes les ~14 min :
+	// même régime egress que N°75, réconciliation enfin réelle).
+	interval := readStateMinInterval
+	if n := a.readStateChunks[router.ID]; n > 1 {
+		interval = readStateMinInterval * time.Duration(n)
+	}
+	if ok && time.Since(last) < interval {
 		return // pas encore dû
 	}
 	queueCommandLocked(db, router.AccountID, router.ID, model.CmdReadState, map[string]any{})
@@ -938,9 +999,18 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 	cmd.DoneAt = model.NowISO()
 	res := map[string]any{}
 	for k, vs := range vals {
-		if len(vs) > 0 && k != "token" {
-			res[k] = vs[0]
+		if len(vs) == 0 || k == "token" {
+			continue
 		}
+		// N°76 — les listes brutes (users d'un chunk de read_state,
+		// sessions) sont consommées par applyReadState AVANT ceci : ne
+		// pas les persister dans Result (l'historique de commandes
+		// gonflait de ~17 Ko par chunk — des Mo/jour de resynchronisation
+		// Neon pour un parc de 3 500 users). Seuls les compteurs restent.
+		if k == "users" || k == "sessions" {
+			continue
+		}
+		res[k] = vs[0]
 	}
 	cmd.Result = res
 	// P1 (audit Mikhmon) — F8 : le rapport ping arrive en valeurs formulaire
@@ -951,16 +1021,38 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case cmd.Kind == model.CmdReadState && ok:
-		a.applyReadState(db, router, vals)
-		a.logActivity(db, router.AccountID, "router", "Routeur «"+router.Name+"» synchronisé ("+
-			strconv.Itoa(router.ActiveSessions)+" session(s) active(s), "+strconv.Itoa(router.HotspotUsers)+" utilisateur(s))")
+		// N°76 — cycle paginé : les chunks intermédiaires ne comptent
+		// ni pour la cadence (readStateDone au FINAL seulement — sinon
+		// le cadenceur re-enfilerait pendant le cycle) ni pour le
+		// journal (7 lignes/cycle pour un parc de 3 500 users = bruit).
+		final, synced := a.applyReadState(db, router, vals)
+		if final {
+			a.readStateDone[router.ID] = time.Now().UTC()
+			if a.readStateChunks == nil {
+				a.readStateChunks = map[string]int{}
+			}
+			chunks := 1
+			if tot, ok := parseReportInt(vals.Get("total")); ok && tot > 0 {
+				chunks = (tot + agent.ReadChunkSize - 1) / agent.ReadChunkSize
+				if chunks < 1 {
+					chunks = 1
+				}
+				if chunks > agent.MaxReadChunks {
+					chunks = agent.MaxReadChunks // cadence bornée même sur total malformé
+				}
+			}
+			a.readStateChunks[router.ID] = chunks // cadence adaptée à la taille du parc
+		}
+		if synced {
+			a.logActivity(db, router.AccountID, "router", "Routeur «"+router.Name+"» synchronisé ("+
+				strconv.Itoa(router.ActiveSessions)+" session(s) active(s), "+strconv.Itoa(router.HotspotUsers)+" utilisateur(s))")
+		}
 		// N°74 — télémétrie cadencée : plus de re-enfilement inconditionnel
 		// ici (l'ancienne boucle servait un read_state à CHAQUE check-in,
 		// 24 h/24). Le cadenceur du check-in suivant (ensureReadStateDue,
 		// handleAgentCmd) re-file dès que l'intervalle minimum est écoulé ;
 		// les commandes d'écriture ci-dessous re-enfilent TOUJOURS
 		// immédiatement (fraîcheur post-action préservée).
-		a.readStateDone[router.ID] = time.Now().UTC()
 	case cmd.Kind == model.CmdImportHotspot && ok:
 		summary, more := a.applyImportHotspot(db, router, *cmd, vals)
 		if more {
@@ -1015,7 +1107,11 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 		} else {
 			a.logActivity(db, router.AccountID, "router", "Commande "+cmd.Kind+" exécutée sur «"+router.Name+"»")
 		}
-		queueCommandLocked(db, router.AccountID, router.ID, model.CmdReadState, map[string]any{})
+		// N°76 — fraîcheur post-écriture : via la garde de cycle (un
+		// read_state paginé en cours est DÉJÀ la synchronisation — le
+		// casser désordonnerait l'accumulateur ; cf.
+		// queueReadStateFreshLocked).
+		queueReadStateFreshLocked(db, router)
 	default:
 		a.logActivity(db, router.AccountID, "router", "Commande "+cmd.Kind+" ÉCHOUÉE sur «"+router.Name+"» ("+vals.Get("message")+")")
 	}

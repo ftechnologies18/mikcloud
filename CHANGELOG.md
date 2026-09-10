@@ -5,6 +5,72 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-10 — N°76 : read_state PAGINÉ — la réconciliation des grands parcs revit (faux badges ProMax WIFI, compteur de parc gelé)
+
+### N°76 — Contexte : 3 334 faux badges « absent du routeur » en production
+Constaté sur le compte **ProMax WIFI** (3 478 vouchers actifs) : 3 334 users
+actifs badgés « absent du routeur » à tort + 31 « used » badgés + compteur de
+parc du routeur **gelé à 150**. Origine en deux temps : (1) avant N°75, le
+rapport read_state bornait la liste à 150 users — tout user au-delà passait
+« absent » à tort (le badge est persistant en base) ; (2) N°75 a relevé la
+borne à 500 et gelé honnêtement TOUTE déduction au-delà (ni pose ni levée) —
+correct pour empêcher de nouveaux faux badges, mais fatal aux EXISTANTS : le
+rapport d'un parc de 3 478 users étant tronqué EN PERMANENCE, la
+réconciliation ne tournait plus JAMAIS — les faux badges étaient prisonniers
+à vie et la fonctionnalité (détecter un voucher supprimé dans Winbox mais
+actif au cloud) était désactivée de facto pour tous les grands parcs.
+
+### Le read_state devient PAGINÉ (pattern import_hotspot, éprouvé en prod)
+- **Script v5** : chaque commande rapporte une FENÊTRE `[start, start+count)`
+  du parc (count = 500, inliné par Go) + le **total exact** du parc + le total
+  exact de sessions (`stotal`) ; les **sessions ne sont rapportées que par le
+  chunk final** (les intermédiaires n'alourdissent pas leur POST pour rien).
+- **Cycle automatique** : au résultat du chunk 0, le cloud enfile d'un coup
+  TOUTES les fenêtres restantes (≤ 20 = 10 000 users) — servies au check-in
+  suivant par paquets de 10 (limite FIFO/check-in), sans réveiller les
+  routeurs en veille (les chunks restent du balayage : pas de ping-pong
+  45 s ↔ 180 s). Un cycle de 3 500 users s'exécute en ~2 check-ins.
+- **Complétude vérifiée avant d'appliquer** : les chunks s'accumulent
+  (union des usernames + offsets reçus) ; la réconciliation (badges, import
+  inconnus, diff sessions) ne s'applique **QU'AU CYCLE COMPLET** — un chunk
+  perdu (blip réseau, reboot routeur) abandonne le cycle SANS AUCUNE
+  déduction : l'honnêteté N°75 reste LA règle, elle est désormais atteignable.
+  Cycle cassé = relance au cadenceur suivant (auto-réparation).
+- **Réparation automatique des faux badges existants** : le premier cycle
+  complet post-déploiement trouve les users sur le routeur → 3 334 badges
+  levés d'un coup sur ProMax, sans chirurgie de base. Les badges des
+  vouchers non actifs (used/expired) — artefacts des rapports tronqués —
+  sont levés au passage (le badge n'a de sens que pour un user actif).
+- **Compteurs enfin exacts** : `HotspotUsers` = total exact rapporté par
+  chaque chunk (plus jamais gelé à une borne), `ActiveSessions` = `stotal`
+  exact même quand la liste de sessions est bornée à 250 (le diff est alors
+  suspendu, pas le compteur).
+- **Grâce anti-faux-badge étendue à la durée du cycle** : un user créé
+  PENDANT le cycle (sa fenêtre d'index déjà rapportée) ne peut pas être
+  badgé — la grâce passe de 2 min à 2 min + chunks × pas du scheduler.
+- **Cadence adaptée à la taille du parc** : l'intervalle minimum entre cycles
+  devient 2 min × nb_chunks (un parc de 3 500 users se réconcilie toutes les
+  ~14 min) — le coût egress des scripts servis reste dans le régime N°75.
+- **Fraîcheur post-écriture et re-sync manuelle protégées** : un cycle en
+  cours EST une synchronisation — il n'est plus cassé par un chunk 0
+  concurrent (`queueReadStateFreshLocked`) qui désordonnerait l'accumulateur.
+- **Allègement de l'historique de commandes** : les listes brutes (users
+  d'un chunk ~17 Ko, sessions) ne sont plus persistées dans `Result` — des
+  Mo/jour de resynchronisation Neon en moins pour les grands parcs, seuls
+  les compteurs restent.
+- **Bornes** : par chunk 500 users (~20 Ko POST, loin de la limite RouterOS
+  ~64 Ko) ; absolue 20 chunks (10 000 users) — au-delà, compteurs exacts
+  mais aucune déduction (le rapport ne sera jamais complet : honnêteté).
+  Sessions toujours bornées à 250 par rapport (diff suspendu au-delà).
+
+### Tests
+9 nouveaux (cycle complet ProMax lève la masse des faux badges, chunk perdu
+= déduction refusée, orphelins inertes, mono-chunk inchangé, sessions
+tronquées = état conservé + compteur exact, grâce cycle, import inconnus du
+cycle complet, borne absolue, cadence adaptée ×2) + garde-fous fraîcheur et
+script v5 (fenêtres inlinées, total/stotal rapportés) + contrat v4 legacy
+(trunc sans total) et v4 complet inchangés. Suite complète 11 paquets verts.
+
 ## 2026-09-10 — N°75 : veille adaptative des agents, amaigrissement du portail (-66 %), ETag console, durcissement sécurité et 2 bugs (Wave hardcodé, cap 150)
 
 ### N°75 — Contexte : livraison de la file d'attente de l'audit (capacité 0 $)

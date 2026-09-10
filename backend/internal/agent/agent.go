@@ -674,22 +674,50 @@ func header(cmd model.Command) string {
 // Builders par kind
 // ---------------------------------------------------------------------------
 
-// buildReadState — v4 (N°75) : en plus de la télémétrie, des utilisateurs
-// et des sessions actives, le rapport contient :
-//   - board / freehdd / totalhdd : nom de carte + disque en Mo. La division
-//     octets → Mo se fait CÔTÉ SCRIPT (free-hdd-space/total-hdd-space sont des
-//     octets ; [:tonum] peut échouer sur un appareil sans disque → fallback 0
-//     via on-error) — le rapport reste compact et le cloud stocke des Mo tels
-//     quels dans Router.BoardName/FreeHddMb/TotalHddMb ;
-//   - ifaces=name:rx:tx;… : compteurs CUMULÉS rx-byte/tx-byte de /interface,
-//     8 interfaces running maximum (le cloud calcule les débits par diff) ;
-//   - trunc=true|false (N°75) : le rapport est TRONQUÉ — le parc dépasse les
-//     bornes anti-payload (500 users / 250 sessions actives). Le cloud ne doit
-//     RIEN déduire des absents (ni badge MissingOnRouter, ni diff sessions :
-//     les faux logouts en cascade cassaient le journal). Les bornes v2
-//     (150/100) faisaient mentir la réconciliation dès 151 utilisateurs :
-//     tout user cloud au-delà passait « absent du routeur » à tort.
+// ReadChunkSize — N°76 — nombre d'utilisateurs hotspot rapportés par commande
+// read_state. La réconciliation des grands parcs est PAGINÉE : le script
+// rapporte une fenêtre [start, start+count) du parc + le total exact, et le
+// cloud enchaîne les chunks jusqu'au rapport complet (pattern import_hotspot,
+// éprouvé en production). La taille garde le corps POST (http-data) loin de la
+// limite RouterOS (~64 Ko) : 500 entrées « name|profile|disabled; » ≈ 20 Ko.
+const ReadChunkSize = 500
+
+// MaxReadChunks — borne ABSOLUE de chunks par cycle read_state (20 × 500 =
+// 10 000 users). Au-delà, le cloud n'enchaîne plus : le rapport ne sera jamais
+// complet, il reste honnête (aucune déduction sur les absents — comportement
+// trunc N°75) plutôt que de mentir sur un parc hors d'atteinte du protocole.
+const MaxReadChunks = 20
+
+// buildReadState — v5 (N°76) : télémétrie + rapport PAGINÉ des utilisateurs.
+// Motivation : v4 (N°75) bornait le rapport à 500 users et gelait TOUTE
+// déduction au-delà (badge « absent du routeur » ni posé ni levé) — les faux
+// badges posés avant N°75 sur un parc de 3 478 users (cap v2 : 150) restaient
+// prisonniers à vie : le rapport était tronqué en PERMANENCE, la
+// réconciliation ne tournait plus jamais. v5 découpe le parc en fenêtres :
+//   - total=<nb total d'users sur le routeur> : compteur EXACT rapporté par
+//     chaque chunk — le cloud connaît le vrai parc dès le 1er ;
+//   - start/count : fenêtre [start, start+count) du parc, inlinés par Go
+//     depuis le payload de la commande ; out=<entrées émises> ;
+//   - sessions : rapportées UNIQUEMENT par le chunk final (start+count >=
+//     total) — les chunks intermédiaires n'alourdissent pas leur POST pour
+//     rien ; stotal (total de sessions actives) est rapporté par tous ;
+//   - trunc=true|false : il RESTE des chunks (start+count < total) —
+//     informatif (le cloud décide sur total/start/count, pas sur le drapeau).
+//
+// v4 (N°75) : board/freehdd/totalhdd en Mo côté script ; ifaces (8 running,
+// compteurs cumulés → débits par diff côté cloud). v2 : le gel honnête des
+// déductions sur rapport incomplet reste LA règle (chunk perdu = cycle
+// abandonné sans déduction, la complétude est vérifiée avant d'appliquer).
 func (b Builder) buildReadState(cmd model.Command) string {
+	start := int(plInt64(cmd.Payload, "start"))
+	count := int(plInt64(cmd.Payload, "count"))
+	if start < 0 {
+		start = 0
+	}
+	if count <= 0 || count > ReadChunkSize {
+		count = ReadChunkSize
+	}
+	end := start + count
 	var sb strings.Builder
 	sb.WriteString(header(cmd))
 	sb.WriteString(`:local rsres [/system resource get]
@@ -705,25 +733,35 @@ func (b Builder) buildReadState(cmd model.Command) string {
   :set rfreehdd ([:tonum [:tostr ($rsres->"free-hdd-space")]] / 1048576)
   :set rtotalhdd ([:tonum [:tostr ($rsres->"total-hdd-space")]] / 1048576)
 } on-error={ :set rfreehdd 0; :set rtotalhdd 0 }
+:local mikIds [/ip hotspot user find]
+:local mikTotal [:len $mikIds]
 :local rusr ""
-:local rn 0
-:local rtrunc "false"
-:foreach u in=[/ip hotspot user find] do={
-  :if ($rn < 500) do={
+:local rout 0
+:local n 0
+:foreach u in=$mikIds do={
+  :if ($n >= @@START@@ && $n < @@END@@) do={
     :set rusr ($rusr . [:tostr [/ip hotspot user get $u name]] . "|" . [:tostr [/ip hotspot user get $u profile]] . "|" . [:tostr [/ip hotspot user get $u disabled]] . ";")
-    :set rn ($rn + 1)
+    :set rout ($rout + 1)
   }
+  :set n ($n + 1)
 }
-:if ($rn >= 500) do={ :set rtrunc "true" }
+:local rtrunc "false"
+:if (@@END@@ < $mikTotal) do={ :set rtrunc "true" }
+:local rstotal [:len [/ip hotspot active find]]
 :local rsess ""
 :local rsn 0
-:foreach a in=[/ip hotspot active find] do={
-  :if ($rsn < 250) do={
-    :set rsess ($rsess . [:tostr [/ip hotspot active get $a user]] . "|" . [:tostr [/ip hotspot active get $a address]] . "|" . [:tostr [/ip hotspot active get $a uptime]] . "|" . [:tostr [/ip hotspot active get $a bytes-in]] . "|" . [:tostr [/ip hotspot active get $a bytes-out]] . ";")
-    :set rsn ($rsn + 1)
+:if (@@END@@ >= $mikTotal) do={
+  :foreach a in=[/ip hotspot active find] do={
+    :if ($rsn < 250) do={
+      :set rsess ($rsess . [:tostr [/ip hotspot active get $a user]] . "|" . [:tostr [/ip hotspot active get $a address]] . "|" . [:tostr [/ip hotspot active get $a uptime]] . "|" . [:tostr [/ip hotspot active get $a bytes-in]] . "|" . [:tostr [/ip hotspot active get $a bytes-out]] . ";")
+      :set rsn ($rsn + 1)
+    }
   }
 }
-:if ($rsn >= 250) do={ :set rtrunc "true" }
+:local rsesspart ("&stotal=". $rstotal)
+:if (@@END@@ >= $mikTotal) do={
+  :set rsesspart ("&stotal=". $rstotal ."&sessions=". $rsess)
+}
 :local rif ""
 :do {
   :local rin 0
@@ -740,8 +778,14 @@ func (b Builder) buildReadState(cmd model.Command) string {
 	sb.WriteString(`/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
 		`" http-method=post http-data=("cmd=` + cmd.ID +
 		`&status=ok&version=". $rver ."&uptime=". $rup ."&cpu=". $rcpu ."&freemem=". $rmem ."&totalmem=". $rmemb` +
-		` ."&board=". $rboard ."&freehdd=". $rfreehdd ."&totalhdd=". $rtotalhdd ."&users=". $rusr ."&sessions=". $rsess ."&ifaces=". $rif ."&trunc=". $rtrunc) output=none` + "\n")
-	return sb.String()
+		` ."&board=". $rboard ."&freehdd=". $rfreehdd ."&totalhdd=". $rtotalhdd` +
+		` ."&total=". $mikTotal ."&start=@@START@@&count=@@COUNT@@&out=". $rout` +
+		` ."&users=". $rusr . $rsesspart ."&ifaces=". $rif ."&trunc=". $rtrunc) output=none` + "\n")
+	// Placeholders substitués en dernier : une seule chaîne brute lisible,
+	// aucune concaténation au milieu du script (le pattern @@VAR@@ ne peut
+	// pas apparaître par accident dans une commande RouterOS).
+	out := strings.NewReplacer("@@START@@", strconv.Itoa(start), "@@END@@", strconv.Itoa(end), "@@COUNT@@", strconv.Itoa(count)).Replace(sb.String())
+	return out
 }
 
 func (b Builder) buildUserAdd(cmd model.Command) string {

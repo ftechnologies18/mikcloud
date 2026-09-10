@@ -27,7 +27,110 @@ import (
 //     (un utilisateur déjà présent n'est pas re-journalisé) ;
 //   - Suivi data : bytes-in/out des sessions actives cumulés par deltas dans
 //     les compteurs du user (BytesIn/BytesOut — miroir du limit-bytes-total).
-func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values) {
+//
+// readStateAccum — N°76 — état d'un cycle read_state PAGINÉ en cours pour un
+// routeur : union des entrées rapportées par les chunks reçus + complétude par
+// offset de fenêtre. La réconciliation (badges, import inconnus, diff
+// sessions) ne s'applique QU'AU CYCLE COMPLET — un chunk perdu abandonne le
+// cycle sans AUCUNE déduction. Accédé uniquement sous le verrou du store.
+type readStateAccum struct {
+	startedAt time.Time
+	lastAt    time.Time
+	total     int
+	chunkSize int
+	starts    map[int]bool        // offsets de fenêtres reçues
+	entries   map[string][]string // username (minuscule) → entrée name|profile|disabled
+}
+
+// parseReportInt — entier de rapport agent : « présent » ≠ 0 (un total de 0
+// est une valeur légitime — routeur vide) ; borné contre les absurdités.
+func parseReportInt(s string) (int, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, false
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 0 || n > 10_000_000 {
+		return 0, false
+	}
+	return n, true
+}
+
+// mergeReadEntries — union des entrées d'un chunk dans l'accumulateur du
+// cycle (idempotent : un chunk re-rapporté par la reprise zombie N°73 ne
+// fait qu'écraser les mêmes clés).
+func mergeReadEntries(acc *readStateAccum, entries [][]string) {
+	for _, e := range entries {
+		if len(e) == 0 {
+			continue
+		}
+		name := agent.SanitizeName(e[0])
+		if name == "" || name == "-" {
+			continue
+		}
+		acc.entries[strings.ToLower(name)] = e
+	}
+}
+
+// accEntries — entrées accumulées du cycle (ordre indifférent : import et
+// badges travaillent par nom).
+func accEntries(acc *readStateAccum) [][]string {
+	out := make([][]string, 0, len(acc.entries))
+	for _, e := range acc.entries {
+		out = append(out, e)
+	}
+	return out
+}
+
+// readAccFor — accumulateur du cycle en cours de ce routeur : créé au chunk 0,
+// retrouvé pour les suivants ; nil si le cycle est cassé (chunk 0 perdu,
+// redémarrage cloud, re-queue zombie tardif) — le chunk est alors INERT
+// (télémétrie seule). Purge au passage les accumulateurs périmés des autres
+// routeurs (garde-fou mémoire : un cycle ne fuit jamais).
+func (a *API) readAccFor(router *model.Router, start, count, total int, now time.Time) *readStateAccum {
+	if a.readAcc == nil {
+		a.readAcc = map[string]*readStateAccum{}
+	}
+	for id, acc := range a.readAcc {
+		if id != router.ID && acc.lastAt.Before(now.Add(-readStateAccumStale)) {
+			delete(a.readAcc, id)
+		}
+	}
+	if start == 0 {
+		acc := &readStateAccum{startedAt: now, lastAt: now, total: total, chunkSize: count,
+			starts: map[int]bool{}, entries: map[string][]string{}}
+		a.readAcc[router.ID] = acc
+		return acc
+	}
+	acc := a.readAcc[router.ID]
+	if acc == nil || acc.lastAt.Before(now.Add(-readStateAccumStale)) || acc.total != total || acc.chunkSize != count {
+		return nil
+	}
+	acc.lastAt = now
+	return acc
+}
+
+// readStateGrace — N°76 — grâce anti-faux-badge des users récents : la
+// commande user_add peut être en file (ou en vol) pendant que le cycle paginé
+// rapporte déjà les fenêtres couvrant sa position dans le parc — le
+// badger serait un faux positif garanti. La grâce couvre donc 2 min + la
+// durée d'exécution pire cas du cycle (1 check-in par chunk au pas du
+// scheduler : généreux par construction — les chunks partent par 10 par
+// check-in ; trop longue ne fait que retarder un badge, jamais le forger).
+func readStateGrace(router *model.Router, paged bool, total, count int) time.Duration {
+	if !paged || count <= 0 || total <= count {
+		return 2 * time.Minute
+	}
+	chunks := (total + count - 1) / count
+	if chunks < 1 {
+		chunks = 1
+	}
+	return 2*time.Minute + time.Duration(chunks)*time.Duration(router.SchedulerSecEffective())*time.Second
+}
+
+func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values) (final, synced bool) {
+	// — Télémétrie système : chaque chunk rapporte la même, application
+	// idempotente (dernier écrit gagne). —
 	if v := strings.TrimSpace(vals.Get("version")); v != "" {
 		if len(v) > 32 {
 			v = v[:32]
@@ -51,19 +154,105 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 		router.TotalHddMb = v
 	}
 
-	// Users : "name|profile|disabled;…"
+	// — N°76 — paramètres de pagination du rapport v5 :
+	// total = parc EXACT (chaque chunk) ; start/count = fenêtre ; stotal =
+	// total de sessions actives (exact lui aussi, même si la liste est
+	// bornée à 250 entrées). —
+	total, totalOK := parseReportInt(vals.Get("total"))
+	start := int(parseInt64(vals.Get("start")))
+	count := int(parseInt64(vals.Get("count")))
+	stotal, stotalOK := parseReportInt(vals.Get("stotal"))
+	paged := totalOK && count > 0
+	winCap := agent.MaxReadChunks * count // fenêtres max d'un cycle (borne absolue)
+	final = !paged || start+count >= total || (paged && start+count >= winCap)
+	// v4 legacy : rapport SANS total marqué trunc → gel honnête intégral
+	// (N°75 inchangé — le parseur ne doit jamais transformer un silence
+	// en mensonge).
+	truncated := !paged && vals.Get("trunc") == "true"
+
 	userEntries := splitAgentList(vals.Get("users"))
-	// N°75 — rapport tronqué : le script read_state borne le rapport à
-	// 500 users / 250 sessions actives (limite anti-payload du POST
-	// RouterOS, ~64 Ko). Au-delà, la liste rapportée est INCOMPLÈTE :
-	// compter/en déduire quoi que ce soit produirait des faux positifs.
-	// Les compteurs restent à leur dernière valeur honnête, les
-	// décisions (badge absent, diff sessions) sont différées au prochain
-	// rapport complet.
-	truncated := vals.Get("trunc") == "true"
-	if !truncated {
+
+	// Compteur parc : total exact (v5, chaque chunk) ; à défaut nombre
+	// d'entrées (v4 complet) ; gelé si tronqué (v4).
+	if totalOK {
+		router.HotspotUsers = total
+	} else if !truncated {
 		router.HotspotUsers = len(userEntries)
 	}
+	// Compteur sessions : stotal exact (v5, chaque chunk).
+	if stotalOK {
+		router.ActiveSessions = stotal
+	}
+
+	now := time.Now().UTC()
+
+	if truncated {
+		// v4 tronqué : RIEN n'est déduit des absents (N°75 inchangé).
+		applyAgentTraffic(db, router, vals.Get("ifaces"), now)
+		return final, false
+	}
+
+	if paged && !final {
+		// — Chunk intermédiaire : accumulation + enfilement de la suite.
+		// ZÉRO déduction (ni badge, ni import, ni sessions) : la liste
+		// rapportée n'est qu'une fenêtre du parc.
+		if acc := a.readAccFor(router, start, count, total, now); acc != nil {
+			mergeReadEntries(acc, userEntries)
+			acc.starts[start] = true // complétude du cycle (vérifiée au final)
+			if start == 0 {
+				queueReadCycleRestLocked(db, router, total, count)
+			}
+		}
+		applyAgentTraffic(db, router, vals.Get("ifaces"), now)
+		return false, false
+	}
+
+	// — Chunk FINAL (ou rapport v4 complet) : évaluer la complétude du cycle. —
+	complete := true
+	if paged {
+		if total > winCap {
+			// Parc au-delà de la borne absolue (20 × 500) : le cycle est
+			// incomplet PAR CONSTRUCTION — honnêteté : aucune déduction
+			// (comportement trunc N°75), compteurs exacts posés plus haut.
+			complete = false
+			delete(a.readAcc, router.ID)
+		} else if start == 0 {
+			// Cycle mono-chunk (total ≤ count) : le rapport EST la complétude.
+			delete(a.readAcc, router.ID)
+		} else {
+			acc := a.readAcc[router.ID]
+			if acc == nil || acc.lastAt.Before(now.Add(-readStateAccumStale)) ||
+				acc.total != total || acc.chunkSize != count {
+				// Chunk 0 perdu ou cycle désynchronisé (redémarrage cloud,
+				// re-queue zombie tardif…) : complétude INDÉMONTRABLE →
+				// aucune déduction.
+				complete = false
+				delete(a.readAcc, router.ID)
+			} else {
+				mergeReadEntries(acc, userEntries)
+				acc.starts[start] = true
+				for s := 0; s < total; s += count {
+					if !acc.starts[s] {
+						complete = false
+						break
+					}
+				}
+				if complete {
+					userEntries = accEntries(acc)
+				}
+				delete(a.readAcc, router.ID)
+			}
+		}
+	}
+
+	if !complete {
+		// Cycle incomplet : compteurs exacts (posés plus haut), état des
+		// badges/sessions/users CONSERVÉ — le prochain cycle tranchera.
+		applyAgentTraffic(db, router, vals.Get("ifaces"), now)
+		return final, false
+	}
+
+	// — RÉCONCILIATION COMPLÈTE (rapport v4 entier ou cycle v5 assemblé). —
 
 	// Audit purge/résurgence — tombstones du compte + réglage d'import
 	// automatique. Un username tombstoné (purgé par l'admin) n'est JAMAIS
@@ -116,55 +305,54 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 	}
 	router.UnknownOnRouter = unknownCount // volatile : recomposé à chaque read_state
 
-	// N (rapprochement doux) — utilisateurs du cloud absents de CE read_state :
-	// marqués « absent du routeur » (badge + action de resynchronisation).
 	// Le cloud reste le registre durable : RIEN n'est supprimé automatiquement.
 	// Garde-fous anti-faux-positifs :
 	//   - statut actif ou disabled uniquement (used/expired = absence attendue) ;
-	//   - grâce de 2 minutes après création (commande user_add encore en file) ;
+	//   - grâce après création (la commande user_add peut être en file —
+	//     N°76 : la grâce couvre la durée du CYCLE paginé, cf. readStateGrace) ;
 	//   - le badge se lève tout seul au read_state suivant si l'utilisateur
 	//     réapparaît (recréation manuelle dans Winbox, par exemple).
-	// N°75 — rapport tronqué : les absents de la liste ne sont PAS des
-	// absents du routeur. On ne touche à AUCUN badge (ni pose, ni levée)
-	// tant que le rapport n'est pas complet.
-	grace := time.Now().UTC().Add(-2 * time.Minute).Format(time.RFC3339)
-	if !truncated {
-		for i := range db.HotspotUsers {
-			u := &db.HotspotUsers[i]
-			if u.RouterID != router.ID {
-				continue
+	grace := now.Add(-readStateGrace(router, paged, total, count)).Format(time.RFC3339)
+	for i := range db.HotspotUsers {
+		u := &db.HotspotUsers[i]
+		if u.RouterID != router.ID {
+			continue
+		}
+		if u.Status != "active" && u.Status != "disabled" {
+			// N°76 — le badge n'a de sens que pour un user CENSÉ être sur le
+			// routeur : un voucher used/expired/allocated porteur d'un badge
+			// (artefact des rapports tronqués pré-N°75) est levé ici —
+			// 31 users « used » badgés à vie constatés sur le parc ProMax.
+			if u.MissingOnRouter {
+				u.MissingOnRouter = false
 			}
-			if u.Status != "active" && u.Status != "disabled" {
-				continue
+			continue
+		}
+		if onRouter[strings.ToLower(u.Username)] {
+			if u.MissingOnRouter {
+				u.MissingOnRouter = false // réapparu — badge levé
 			}
-			if onRouter[strings.ToLower(u.Username)] {
-				if u.MissingOnRouter {
-					u.MissingOnRouter = false // réapparu — badge levé
-				}
-				continue
-			}
-			if u.CreatedAt > grace {
-				continue // trop récent : la commande d'ajout peut être en file
-			}
-			if !u.MissingOnRouter {
-				u.MissingOnRouter = true
-			}
+			continue
+		}
+		if u.CreatedAt > grace {
+			continue // trop récent : la commande d'ajout peut être en file
+		}
+		if !u.MissingOnRouter {
+			u.MissingOnRouter = true
 		}
 	}
 
 	// Sessions actives : "user|ip|uptime|bytes-in|bytes-out;…" (script v3).
-	// N°75 — rapport tronqué : le diff sessions sur une liste incomplète
-	// fabrique des logouts en cascade (les sessions au-delà de la borne
-	// « disparaissent » puis « réapparaissent » au rapport suivant).
-	// On CONSERVE l'état précédent en l'état — trafic inclus (les deltas
-	// d'octets reprendront au rapport complet, la garde anti-décroissance
-	// absorbe le saut).
-	now := time.Now().UTC()
-	if truncated {
-		applyAgentTraffic(db, router, vals.Get("ifaces"), now)
-		return
-	}
+	// N°76 — la liste n'est rapportée que par le chunk final et reste
+	// bornée à 250 : au-delà (stotal > 250), le diff fabrique des logouts
+	// en cascade — l'état précédent est conservé en l'état (compteur
+	// exact posé via stotal, trafic inclus, la garde anti-décroissance
+	// absorbe le saut au prochain rapport complet).
 	sessEntries := splitAgentList(vals.Get("sessions"))
+	if stotalOK && stotal > len(sessEntries) {
+		applyAgentTraffic(db, router, vals.Get("ifaces"), now)
+		return final, true
+	}
 	router.ActiveSessions = len(sessEntries)
 	userIDs := map[string]string{}
 	for i := range db.HotspotUsers {
@@ -282,6 +470,7 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 
 	// F6 — trafic : diff des compteurs cumulés par interface.
 	applyAgentTraffic(db, router, vals.Get("ifaces"), now)
+	return final, true
 }
 
 // logRouterUserEvent — journalise un login/logout détecté par diff de sessions

@@ -49,6 +49,21 @@ type API struct {
 	// readStateMinInterval ; les re-sync manuelles et post-écriture restent
 	// immédiates. Accédé UNIQUEMENT sous le verrou du store.
 	readStateDone map[string]time.Time
+	// N°76 — read_state PAGINÉ : accumulateur des chunks reçus par routeur
+	// (union des usernames + complétude par offset). Un cycle complet =
+	// len(starts) chunks couvrant [0, total) ; la réconciliation (badges,
+	// import inconnus, diff sessions) ne s'applique QU'AU RAPPORT COMPLET —
+	// un chunk perdu abandonne le cycle sans AUCUNE déduction (honnêteté
+	// v2/v4 : rien n'est pire qu'un badge mensonger). Accédé UNIQUEMENT sous
+	// le verrou du store (applyReadState est toujours appelée sous verrou).
+	readAcc map[string]*readStateAccum
+	// N°76 — cadence adaptée à la taille du parc : nombre de chunks du dernier
+	// cycle complet par routeur. L'intervalle minimum devient
+	// readStateMinInterval × max(1, chunks) : un parc de 3 500 users (7 chunks)
+	// se réconcilie toutes les ~14 min au lieu de 2 min — le coût egress des
+	// scripts servus (7 × ~2 Ko par cycle) reste dans le régime N°75.
+	// Accédé UNIQUEMENT sous le verrou du store.
+	readStateChunks map[string]int
 	// N°75 — veille adaptative : signaux d'attention VOLATILS (jamais
 	// persistés — un redémarrage repart en mode rapide partout, le plus
 	// sûr). Clés « acc:<id> » (requête console authentifiée du compte) et
@@ -69,9 +84,15 @@ type API struct {
 // peu plus tard), les expirations restent servies à chaque check-in.
 const readStateMinInterval = 2 * time.Minute
 
+// readStateAccumStale — N°76 — un cycle paginé inachevé depuis plus de 15 min
+// est abandonné silencieusement (l'accumulateur est purgé au prochain chunk 0
+// du routeur) : un routeur qui a perdu son cycle relancera de toute façon un
+// cycle complet au cadenceur, l'accumulateur ne doit jamais fuiter en mémoire.
+const readStateAccumStale = 15 * time.Minute
+
 // New construit l'API.
 func New(s *store.Store, jwtSecret string) *API {
-	return &API{store: s, secret: jwtSecret, gws: map[string]routeros.Gateway{}, pinLock: newPinLimiter(), signup: newSignupLimiter(), join: newSignupLimiter(), wifiClaim: newSignupLimiterLimits(20, 100), portalTrack: newSignupLimiterLimits(300, 3000), reset: newSignupLimiter(), egress: newEgressStats(), readStateDone: map[string]time.Time{}, attn: map[string]time.Time{}}
+	return &API{store: s, secret: jwtSecret, gws: map[string]routeros.Gateway{}, pinLock: newPinLimiter(), signup: newSignupLimiter(), join: newSignupLimiter(), wifiClaim: newSignupLimiterLimits(20, 100), portalTrack: newSignupLimiterLimits(300, 3000), reset: newSignupLimiter(), egress: newEgressStats(), readStateDone: map[string]time.Time{}, readAcc: map[string]*readStateAccum{}, readStateChunks: map[string]int{}, attn: map[string]time.Time{}}
 }
 
 // Handler — mux complet, protégé par le middleware d'authentification.

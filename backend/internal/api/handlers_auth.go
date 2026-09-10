@@ -42,14 +42,15 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var id, name, username, role, salt, hash, accID string
 	var accName, accStatus string
 	var epoch int
-	var user *model.AdminUser
+	var totpEnabled bool  // N°74 — capture par VALEUR : l'ancien pointeur user
+	var totpSecret string // survit au Unlock et était lu en course (B2 audit)
 	for i := range a.store.Data().Users {
 		u := &a.store.Data().Users[i]
 		if strings.EqualFold(u.Username, req.Username) {
 			id, name, username, role, salt, hash = u.ID, u.Name, u.Username, u.Role, u.Salt, u.PasswordHash
 			accID = u.AccountID
 			epoch = u.SessionEpoch
-			user = u
+			totpEnabled, totpSecret = u.TOTPEnabled, u.TOTPSecret
 			break
 		}
 	}
@@ -82,12 +83,12 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// alors la saisie) ; code erroné → réponse générique (aucun oracle) +
 	// journal de raison fine côté serveur. Le contrôle arrive APRÈS la
 	// vérification du mot de passe : aucun contour du mot de passe.
-	if user != nil && user.TOTPEnabled {
+	if totpEnabled {
 		if strings.TrimSpace(req.Code) == "" {
 			writeErrCode(w, http.StatusUnauthorized, "totp_required", "Code d'authentification à deux facteurs requis", nil)
 			return
 		}
-		if !verifyTOTP(user.TOTPSecret, req.Code) {
+		if !verifyTOTP(totpSecret, req.Code) {
 			a.logAuthFailure(r, "console", req.Username, "bad_totp")
 			writeErr(w, http.StatusBadRequest, "Identifiants invalides")
 			return
@@ -100,10 +101,21 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Migration transparente : ancien hash SHA-256 → bcrypt au premier login.
-	if user != nil && auth.IsLegacyHash(hash) {
+	// N°74 — le hachage bcrypt se fait HORS verrou, et l'écriture retombe sur
+	// l'utilisateur RE-TROUVÉ sous verrou : l'ancien pointeur capturé avant
+	// l'Unlock pouvait pointer dans une tranche réallouée par une inscription
+	// concurrente — la migration était alors silencieusement perdue (B2).
+	if id != "" && auth.IsLegacyHash(hash) {
+		newHash := auth.HashPassword(req.Password, "")
 		a.store.Lock()
-		user.PasswordHash = auth.HashPassword(req.Password, "")
-		user.Salt = ""
+		for i := range a.store.Data().Users {
+			u := &a.store.Data().Users[i]
+			if u.ID == id {
+				u.PasswordHash = newHash
+				u.Salt = ""
+				break
+			}
+		}
 		a.store.Save()
 		a.store.Unlock()
 	}
@@ -118,7 +130,7 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 		"user": map[string]any{
 			"id": id, "name": name, "username": username, "role": role,
 			"accountId": accID, "accountName": accName,
-			"totpEnabled": user != nil && user.TOTPEnabled,
+			"totpEnabled": totpEnabled,
 		},
 	})
 }
@@ -161,22 +173,41 @@ func (a *API) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Le nouveau mot de passe doit être différent de l'actuel")
 		return
 	}
+	// N°74 — bcrypt hors verrou (coût 12 : ~200-500 ms sur le CPU mutualisé
+	// qui ne gèlent plus TOUTE l'API — check-ins agents, claims WiFi publics,
+	// autres consoles). Même discipline que handleLogin : capture des valeurs
+	// sous verrou, hachage dehors, re-validation atomique à l'écriture.
+	a.store.Lock()
+	var salt, hash string
+	for i := range a.store.Data().Users {
+		u := &a.store.Data().Users[i]
+		if u.ID == claims.Sub {
+			salt, hash = u.Salt, u.PasswordHash
+			break
+		}
+	}
+	a.store.Unlock()
+	// Message unique pour utilisateur inconnu et mot de passe incorrect (pas d'oracle).
+	if hash == "" || !auth.CheckPassword(req.CurrentPassword, salt, hash) {
+		writeErr(w, http.StatusBadRequest, "Mot de passe actuel incorrect")
+		return
+	}
+	newHash := auth.HashPassword(req.NewPassword, "") // bcrypt : sel intégré — hors verrou
 	a.store.Lock()
 	db := a.store.Data()
-	var user *model.AdminUser
+	user := (*model.AdminUser)(nil)
 	for i := range db.Users {
 		if db.Users[i].ID == claims.Sub {
 			user = &db.Users[i]
 			break
 		}
 	}
-	// Message unique pour utilisateur inconnu et mot de passe incorrect (pas d'oracle).
-	if user == nil || !auth.CheckPassword(req.CurrentPassword, user.Salt, user.PasswordHash) {
+	if user == nil { // disparu entre-temps (suppression concurrente) — pas d'oracle
 		a.store.Unlock()
 		writeErr(w, http.StatusBadRequest, "Mot de passe actuel incorrect")
 		return
 	}
-	user.PasswordHash = auth.HashPassword(req.NewPassword, "") // bcrypt : sel intégré
+	user.PasswordHash = newHash
 	user.Salt = ""
 	user.PasswordSetByUser = true
 	user.SessionEpoch++ // S1-A3 — révoque TOUTES les sessions (dont la courante)
@@ -310,6 +341,10 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	city := strings.TrimSpace(req.City)
 
+	// N°74 — hachage bcrypt AVANT le verrou : l'inscription est publique
+	// (rate-limit 12/min/IP mais distribuée, plusieurs gèles/s de TOUTE
+	// l'API étaient possibles) — le coût 12 (~200-500 ms) passe hors verrou.
+	passwordHash := auth.HashPassword(req.Password, "")
 	a.store.Lock()
 	db := a.store.Data()
 	// Unicité GLOBALE des usernames console (toutes consoles confondues).
@@ -355,7 +390,7 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 		Name:         name,
 		Username:     username,
 		Role:         "owner",
-		PasswordHash: auth.HashPassword(req.Password, ""),
+		PasswordHash: passwordHash,
 		CreatedAt:    model.NowISO(),
 	}
 	db.Users = append(db.Users, u)

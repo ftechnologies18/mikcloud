@@ -29,6 +29,16 @@ type Client struct {
 
 const commandTimeout = 10 * time.Second
 
+// maxWordBytes — N°74 — plafond de sûreté d'un mot du protocole. L'ancien
+// readLength acceptait TOUTE longueur annoncée (encodage 7 bits continu,
+// jusqu'à ~63 bits) et readWord allouait make([]byte, n) SANS borne : un
+// routeur compromis (ou un flux corrompu/MITM sur le port 8728 en TCP clair)
+// annonçant 2^40 octets déclenchait une allocation fatale « out of memory »
+// — non rattrapable, mort du process (512 Mo sur Render free). Aucun mot
+// légitime du protocole RouterOS n'approche 4 Mio (les réponses de listes
+// réelles font quelques Ko par ligne).
+const maxWordBytes = 4 << 20 // 4 Mio
+
 // Dial ouvre une connexion TCP et s'authentifie :
 //   - RouterOS v6.43+ : envoi direct de =name= / =password=
 //   - fallback anciens firmware : challenge MD5 (!done avec =ret=)
@@ -196,6 +206,12 @@ func readLength(r *bufio.Reader) (int, error) {
 			return 0, err
 		}
 		n = n<<7 | int(b&0x7F)
+		// N°74 — plafond + débordement : une longueur négative (débordement
+		// du int par continuation 7 bits malveillante) ou au-delà de
+		// maxWordBytes est refusée AVANT toute allocation.
+		if n < 0 || n > maxWordBytes {
+			return 0, fmt.Errorf("longueur de mot illisible (%d) — flux corrompu ou hôte hostile", n)
+		}
 		if b&0x80 == 0 {
 			return n, nil
 		}

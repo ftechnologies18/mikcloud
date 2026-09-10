@@ -18,11 +18,15 @@ import (
 )
 
 func TestLengthRoundtrip(t *testing.T) {
+	// N°74 — la gamme s'arrête au plafond de sûreté maxWordBytes (4 Mio) :
+	// un mot légitime du protocole ne l'approche jamais, et une longueur
+	// au-delà est refusée AVANT allocation (l'ancienne boucle repoussait
+	// 0xFFFFFFF = 256 Mio, désormais hors contrat par design).
 	valeurs := []int{
 		0, 1, 5, 0x7E, 0x7F, // 1 octet
 		0x80, 0x81, 0xFF, 0x3FFF, // 2 octets
 		0x4000, 0xFFFF, 0x1FFFFF, // 3 octets
-		0x200000, 0xFFFFFFF, // 4 octets
+		0x200000, maxWordBytes - 1, maxWordBytes, // 4 octets, jusqu'au plafond inclus
 	}
 	for _, n := range valeurs {
 		var buf bytes.Buffer
@@ -39,6 +43,21 @@ func TestLengthRoundtrip(t *testing.T) {
 		}
 		if got != n {
 			t.Fatalf("aller-retour longueur : %d → %d", n, got)
+		}
+	}
+	// N°74 — au-delà du plafond : refus net, pas d'allocation (un routeur
+	// hostile qui annonce une longueur démesurée est coupé à la frontière).
+	for _, n := range []int{maxWordBytes + 1, 0xFFFFFFF} {
+		var buf bytes.Buffer
+		w := bufio.NewWriter(&buf)
+		if err := writeLength(w, n); err != nil {
+			t.Fatalf("writeLength(%d) : %v", n, err)
+		}
+		if err := w.Flush(); err != nil {
+			t.Fatalf("flush : %v", err)
+		}
+		if _, err := readLength(bufio.NewReader(&buf)); err == nil {
+			t.Fatalf("readLength(%d) : refus attendu au-delà du plafond de sûreté", n)
 		}
 	}
 	// Bornes d'encodage : < 0x80 = 1 octet, 0x80 = 2 octets (0x81 0x00).

@@ -28,6 +28,18 @@ import (
 // maxRowsPerStatement — bornes d'insertion multi-lignes (limite PostgreSQL : 65535 paramètres).
 const maxRowsPerStatement = 200
 
+// syncTimeout — N°74 — borne de durée d'UNE synchronisation Save(). Le
+// diagnostic de robustesse a montré que Sync s'exécute SOUS LE VERROU GLOBAL
+// du store SANS AUCUN timeout SQL : un Neon gelé (compute en réveil lent,
+// partition réseau, transaction bloquée) tenait le mutex indéfiniment —
+// toutes les requêtes, y compris le health check Render (GET /), se
+// bloquaient → crash-loop du service. BeginTx(ctx) borne TOUTE la durée de
+// vie de la transaction (statements + commit) : l'expiration annule la
+// transaction en base ET libère l'appelant, qui retente au Save suivant (les
+// empreintes ne sont rafraîchies qu'après succès — aucun delta perdu). 20 s =
+// ~8× le temps mesuré en production (2,6 s) ; seul un incident réel l'atteint.
+const syncTimeout = 20 * time.Second
+
 // PG — backend PostgreSQL : pool de connexions + empreintes (hash FNV-1a) de la
 // dernière synchronisation réussie, par table, pour calculer les différences.
 type PG struct {
@@ -159,26 +171,36 @@ func (p *PG) StartKeepAlive(mode string) {
 			case <-p.kaStop:
 				return
 			case now := <-ticker.C:
-				if mode == "business" && !inBusinessHours(now.UTC()) {
-					continue
-				}
-				if now.Sub(time.Unix(p.lastWrite.Load(), 0)) < keepAliveQuietWindow {
-					continue // activité réelle suffisante : Neon est éveillé
-				}
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				err := p.db.PingContext(ctx)
-				cancel()
-				if err != nil {
-					// Un ping peut échouer sur un compute en cours de réveil ;
-					// le tick suivant réessaie. Log borné (1/h) pour ne pas
-					// noyer les journaux Render si Neon est indisponible.
-					if time.Since(lastFailLog) > time.Hour {
-						lastFailLog = time.Now()
-						log.Printf("pg keep-alive : ping échoué (%v) — nouvelle tentative dans 1 min", err)
+				// N°74 — le tick est protégé : une panique du keep-alive ne
+				// doit pas tuer sa propre goroutine à vie (Neon s'endormait
+				// alors définitivement sans que rien ne le signale).
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							log.Printf("pg keep-alive : panique récupérée : %v", r)
+						}
+					}()
+					if mode == "business" && !inBusinessHours(now.UTC()) {
+						return
 					}
-					continue
-				}
-				p.touchDB()
+					if now.Sub(time.Unix(p.lastWrite.Load(), 0)) < keepAliveQuietWindow {
+						return // activité réelle suffisante : Neon est éveillé
+					}
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					err := p.db.PingContext(ctx)
+					cancel()
+					if err != nil {
+						// Un ping peut échouer sur un compute en cours de réveil ;
+						// le tick suivant réessaie. Log borné (1/h) pour ne pas
+						// noyer les journaux Render si Neon est indisponible.
+						if time.Since(lastFailLog) > time.Hour {
+							lastFailLog = time.Now()
+							log.Printf("pg keep-alive : ping échoué (%v) — nouvelle tentative dans 1 min", err)
+						}
+						return
+					}
+					p.touchDB()
+				}()
 			}
 		}
 	}()
@@ -1160,98 +1182,103 @@ func (p *PG) Sync(db *model.DB) (err error) {
 		}
 		p.stats.recordSuccess(delta, time.Since(start))
 	}()
-	tx, err := p.db.Begin()
+	// N°74 — contexte borné : un Neon gelé ne peut plus tenir le verrou global
+	// du store indéfiniment (cf. syncTimeout) — l'incident se résout en une
+	// erreur retournée, retentée au Save suivant.
+	ctx, cancel := context.WithTimeout(context.Background(), syncTimeout)
+	defer cancel()
+	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("pg sync (begin) : %w", err)
 	}
 	defer tx.Rollback() // no-op si Commit réussit
 
-	if err := syncTable(tx, p.hashes, accountSpec, db.Accounts, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, accountSpec, db.Accounts, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, adminSpec, db.Users, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, adminSpec, db.Users, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, routerSpec, db.Routers, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, routerSpec, db.Routers, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, profileSpec, db.Profiles, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, profileSpec, db.Profiles, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, hotspotUserSpec, db.HotspotUsers, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, hotspotUserSpec, db.HotspotUsers, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, batchSpec, db.Batches, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, batchSpec, db.Batches, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, resellerSpec, db.Resellers, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, resellerSpec, db.Resellers, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, sellSessionSpec, db.SellSessions, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, sellSessionSpec, db.SellSessions, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, passwordResetSpec, db.PasswordResets, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, passwordResetSpec, db.PasswordResets, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, transactionSpec, db.Transactions, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, transactionSpec, db.Transactions, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, sessionSpec, db.Sessions, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, sessionSpec, db.Sessions, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, activitySpec, db.Activity, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, activitySpec, db.Activity, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, saleSpec, db.Sales, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, saleSpec, db.Sales, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, commandSpec, db.Commands, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, commandSpec, db.Commands, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, templateSpec, db.Templates, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, templateSpec, db.Templates, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, userLogSpec, db.UserLogs, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, userLogSpec, db.UserLogs, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, ipBindingSpec, db.IPBindings, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, ipBindingSpec, db.IPBindings, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, schedulerTaskSpec, db.SchedulerTasks, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, schedulerTaskSpec, db.SchedulerTasks, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, trafficSpec, db.Traffic, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, trafficSpec, db.Traffic, &delta); err != nil {
 		return err
 	}
 	notifRows := make([]model.NotificationSettings, 0, len(db.NotifSettings))
 	for _, v := range db.NotifSettings {
 		notifRows = append(notifRows, v)
 	}
-	if err := syncTable(tx, p.hashes, notifSettingsSpec, notifRows, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, notifSettingsSpec, notifRows, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, notifLogSpec, db.NotifLog, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, notifLogSpec, db.NotifLog, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, billingRequestSpec, db.BillingRequests, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, billingRequestSpec, db.BillingRequests, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, purgeTombstoneSpec, db.PurgeTombstones, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, purgeTombstoneSpec, db.PurgeTombstones, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, joinLinkSpec, db.JoinLinks, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, joinLinkSpec, db.JoinLinks, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, registrationRequestSpec, db.RegistrationRequests, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, registrationRequestSpec, db.RegistrationRequests, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, wifiSiteSpec, db.WifiSites, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, wifiSiteSpec, db.WifiSites, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, wifiGuestSpec, db.WifiGuests, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, wifiGuestSpec, db.WifiGuests, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(tx, p.hashes, promoEventSpec, db.PromoEvents, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, promoEventSpec, db.PromoEvents, &delta); err != nil {
 		return err
 	}
 	// N°71 — geniuspay_subs intègre la synchro différentielle : la spec
@@ -1259,10 +1286,10 @@ func (p *PG) Sync(db *model.DB) (err error) {
 	// carte créés en mémoire (avec a.store.Save() !) disparaissaient donc au
 	// redémarrage. La clé primaire « uuid » (≠ « id ») est désormais portée
 	// par la machinerie générique (cols[0] = cible ON CONFLICT, cf. upsertRows).
-	if err := syncTable(tx, p.hashes, geniusPaySubSpec, db.GeniusPaySubs, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, geniusPaySubSpec, db.GeniusPaySubs, &delta); err != nil {
 		return err
 	}
-	if err := p.syncSettings(tx, db); err != nil {
+	if err := p.syncSettings(ctx, tx, db); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -1277,7 +1304,7 @@ func (p *PG) Sync(db *model.DB) (err error) {
 // suit le cycle de vie de son compte (suppression de compte client, retrait
 // du compte principal…). last_tick (valeur globale du moteur de simulation)
 // est répliquée sur chaque ligne.
-func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
+func (p *PG) syncSettings(ctx context.Context, tx *sql.Tx, db *model.DB) error {
 	accExists := map[string]bool{}
 	for i := range db.Accounts {
 		accExists[db.Accounts[i].ID] = true
@@ -1298,7 +1325,7 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
 	// mémoire (table accounts) est supprimée — une ligne settings suit le
 	// cycle de vie de son compte (suppression de compte client, retrait du
 	// compte principal…).
-	rows, err := tx.Query(`SELECT DISTINCT account_id FROM settings WHERE account_id <> ''`)
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT account_id FROM settings WHERE account_id <> ''`)
 	if err != nil {
 		return fmt.Errorf("pg sync settings (lecture orphelins) : %w", err)
 	}
@@ -1317,7 +1344,7 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
 	}
 	for _, acc := range present {
 		if !accExists[acc] {
-			if _, err := tx.Exec(`DELETE FROM settings WHERE account_id = $1`, acc); err != nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM settings WHERE account_id = $1`, acc); err != nil {
 				return fmt.Errorf("pg sync settings (suppression orphelin %s) : %w", acc, err)
 			}
 		}
@@ -1335,7 +1362,7 @@ func (p *PG) syncSettings(tx *sql.Tx, db *model.DB) error {
 		if s.Platform != nil {
 			platName, platOpen, platKey = s.Platform.Name, s.Platform.RegisterOpen, s.Platform.RegisterKey
 		}
-		_, err := tx.Exec(
+		_, err := tx.ExecContext(ctx,
 			`INSERT INTO settings (id, account_id, tenant_name, tenant_currency, tenant_timezone, plan_name, plan_max_routers, plan_max_users, wave_link,
                                dns_name, logo_url, banner_url, expiry_policy_mode, expiry_policy_after_days,
                                sub_plan_id, sub_status, sub_period_start, sub_period_end, sub_last_amount,
@@ -1433,7 +1460,7 @@ func loadInto[T any](p *PG, out *[]T, spec entitySpec[T]) error {
 // syncTable — différentiel : détecte ajouts/modifications (comparaison
 // d'empreintes) et disparitions (id absents), applique le tout, puis rafraîchit
 // le cache UNIQUEMENT en cas de succès (un échec sera retenté au Save suivant).
-func syncTable[T any](tx *sql.Tx, hashes map[string]map[string]uint64, spec entitySpec[T], rows []T, delta *syncDelta) error {
+func syncTable[T any](ctx context.Context, tx *sql.Tx, hashes map[string]map[string]uint64, spec entitySpec[T], rows []T, delta *syncDelta) error {
 	cached := hashes[spec.table]
 	if cached == nil {
 		cached = map[string]uint64{}
@@ -1458,13 +1485,13 @@ func syncTable[T any](tx *sql.Tx, hashes map[string]map[string]uint64, spec enti
 	}
 
 	if len(changed) > 0 {
-		if err := upsertRows(tx, spec, changed); err != nil {
+		if err := upsertRows(ctx, tx, spec, changed); err != nil {
 			return err
 		}
 		delta.changed += len(changed) // N°71 — volumétrie (comptée si écrite)
 	}
 	if len(removed) > 0 {
-		if err := deleteRows(tx, spec.table, spec.cols[0], removed); err != nil {
+		if err := deleteRows(ctx, tx, spec.table, spec.cols[0], removed); err != nil {
 			return err
 		}
 		delta.removed += len(removed) // N°71 — volumétrie (comptée si écrite)
@@ -1494,7 +1521,7 @@ func hashEntity[T any](v *T) uint64 {
 
 // deleteRows — DELETE ... WHERE <clé> IN (…) par blocs de 500. La clé est
 // cols[0] de la spec (« id » partout, « uuid » pour geniuspay_subs — N°71).
-func deleteRows(tx *sql.Tx, table, key string, ids []string) error {
+func deleteRows(ctx context.Context, tx *sql.Tx, table, key string, ids []string) error {
 	for start := 0; start < len(ids); start += 500 {
 		end := min(start+500, len(ids))
 		chunk := ids[start:end]
@@ -1505,7 +1532,7 @@ func deleteRows(tx *sql.Tx, table, key string, ids []string) error {
 			args[i] = id
 		}
 		q := `DELETE FROM ` + table + ` WHERE ` + key + ` IN (` + strings.Join(ph, ",") + `)`
-		if _, err := tx.Exec(q, args...); err != nil {
+		if _, err := tx.ExecContext(ctx, q, args...); err != nil {
 			return fmt.Errorf("suppression %s : %w", table, err)
 		}
 	}
@@ -1514,7 +1541,7 @@ func deleteRows(tx *sql.Tx, table, key string, ids []string) error {
 
 // upsertRows — INSERT ... ON CONFLICT (id) DO UPDATE par blocs multi-lignes
 // (une seule requête pour jusqu'à 200 lignes → un seul aller-retour réseau).
-func upsertRows[T any](tx *sql.Tx, spec entitySpec[T], rows []T) error {
+func upsertRows[T any](ctx context.Context, tx *sql.Tx, spec entitySpec[T], rows []T) error {
 	n := len(spec.cols)
 	// Clause SET de l'upsert (toutes les colonnes sauf la clé).
 	sets := make([]string, 0, n-1)
@@ -1550,7 +1577,7 @@ func upsertRows[T any](tx *sql.Tx, spec entitySpec[T], rows []T) error {
 		// tables, « uuid » pour geniuspay_subs) au lieu du « id » en dur.
 		sb.WriteString(` ON CONFLICT (` + spec.cols[0] + `) DO UPDATE SET ` + setClause)
 
-		if _, err := tx.Exec(sb.String(), args...); err != nil {
+		if _, err := tx.ExecContext(ctx, sb.String(), args...); err != nil {
 			return fmt.Errorf("upsert %s : %w", spec.table, err)
 		}
 	}

@@ -684,6 +684,27 @@ func (a *API) handleAgentRegister(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ensureReadStateDue — N°74 — cadenceur de la télémétrie read_state. Enfile
+// un read_state pour CE routeur si : (1) aucun n'est déjà en file ou en vol
+// (statuts queued/sent), ET (2) le dernier appliqué date de plus de
+// readStateMinInterval (ou aucun depuis le boot : premier check-in). À
+// appeler sous le verrou du store, depuis handleAgentCmd — la commande est
+// servie dans LE MÊME check-in (elle rejoint la FIFO juste avant le service).
+func (a *API) ensureReadStateDue(db *model.DB, router *model.Router) {
+	for i := range db.Commands {
+		c := &db.Commands[i]
+		if c.RouterID == router.ID && c.Kind == model.CmdReadState &&
+			(c.Status == "queued" || c.Status == "sent") {
+			return // déjà en file ou en vol : rien à faire
+		}
+	}
+	last, ok := a.readStateDone[router.ID]
+	if ok && time.Since(last) < readStateMinInterval {
+		return // pas encore dû
+	}
+	queueCommandLocked(db, router.AccountID, router.ID, model.CmdReadState, map[string]any{})
+}
+
 // ---------------------------------------------------------------------------
 // GET /agent/cmd — défilement de la file et génération du script
 // ---------------------------------------------------------------------------
@@ -774,6 +795,13 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 	// remise en file pour re-exécution au check-in courant. Lectures
 	// idempotentes uniquement : jamais les écritures (double exécution).
 	requeueStaleReadsLocked(db, router.ID)
+
+	// N°74 — télémétrie cadencée : un read_state est enfilé si (et seulement
+	// si) le dernier appliqué date de plus de readStateMinInterval et qu'aucun
+	// n'est déjà en file/en vol. Avant : la boucle re-enfilait à CHAQUE
+	// résultat (45 s, 24 h/24) — le plus gros poste de bande passante agents
+	// pour des snapshots que personne ne consultait la nuit.
+	a.ensureReadStateDue(db, router)
 
 	// File FIFO : commandes en attente (max 10 par check-in)
 	queued := []model.Command{}
@@ -919,11 +947,13 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 		a.applyReadState(db, router, vals)
 		a.logActivity(db, router.AccountID, "router", "Routeur «"+router.Name+"» synchronisé ("+
 			strconv.Itoa(router.ActiveSessions)+" session(s) active(s), "+strconv.Itoa(router.HotspotUsers)+" utilisateur(s))")
-		// P1 (audit Mikhmon) — F6/F8 : télémétrie CONTINUE. Le read_state
-		// suivant est enfilé dès maintenant (dédupliqué par
-		// queueCommandLocked) : chaque check-in (≤ 45 s) rapporte un état
-		// frais — trafic, carte, disque, sessions.
-		queueCommandLocked(db, router.AccountID, router.ID, model.CmdReadState, map[string]any{})
+		// N°74 — télémétrie cadencée : plus de re-enfilement inconditionnel
+		// ici (l'ancienne boucle servait un read_state à CHAQUE check-in,
+		// 24 h/24). Le cadenceur du check-in suivant (ensureReadStateDue,
+		// handleAgentCmd) re-file dès que l'intervalle minimum est écoulé ;
+		// les commandes d'écriture ci-dessous re-enfilent TOUJOURS
+		// immédiatement (fraîcheur post-action préservée).
+		a.readStateDone[router.ID] = time.Now().UTC()
 	case cmd.Kind == model.CmdImportHotspot && ok:
 		summary, more := a.applyImportHotspot(db, router, *cmd, vals)
 		if more {

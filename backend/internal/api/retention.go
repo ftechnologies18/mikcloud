@@ -29,6 +29,7 @@ package api
 
 import (
 	"log"
+	"runtime/debug"
 	"time"
 
 	"mikcloud/hotspot-api/internal/store"
@@ -42,10 +43,21 @@ const retentionSweepInterval = time.Hour
 
 // RunRetentionSweepForever — boucle du balayage (lancée en goroutine par
 // main.go) : rattrapage immédiat au démarrage, puis passage périodique.
+// N°74 — chaque passage est protégé : une panique du balayage est journalisée
+// et la boucle REPART à l'heure suivante (avant : mort de la goroutine à vie
+// — la rétention ne s'exécutait plus jamais, silencieusement).
 func (a *API) RunRetentionSweepForever() {
-	a.RunRetentionSweep()
-	for range time.Tick(retentionSweepInterval) {
+	sweep := func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("rétention : panique récupérée (reprise à l'heure suivante) : %v\n%s", r, debug.Stack())
+			}
+		}()
 		a.RunRetentionSweep()
+	}
+	sweep()
+	for range time.Tick(retentionSweepInterval) {
+		sweep()
 	}
 }
 
@@ -55,11 +67,11 @@ func (a *API) RunRetentionSweepForever() {
 func (a *API) RunRetentionSweep() {
 	now := time.Now().UTC()
 	a.store.Lock()
+	defer a.store.Unlock() // N°74 — libération garantie, même sur panique
 	db := a.store.Data()
 	purged := store.Sweep(db, now)
 	a.enforceExpired(db) // même passage commun que les lectures console
 	a.store.Save()
-	a.store.Unlock()
 	if purged > 0 {
 		log.Printf("rétention (30/60/90 j par compte) : %d entrée(s) du journal utilisateurs purgée(s)", purged)
 	}

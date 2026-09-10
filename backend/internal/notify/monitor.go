@@ -16,6 +16,8 @@
 package notify
 
 import (
+	"log"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"time"
@@ -44,26 +46,57 @@ func NewService(st *store.Store) *Service {
 }
 
 // Run lance la boucle de surveillance (à appeler dans une goroutine).
+// N°74 — chaque tick est protégé : une panique de surveillance est journalisée
+// et la boucle REPART au tick suivant (avant : mort du moniteur à vie, et le
+// verrou du store restait pris si la panique était entre Lock et Unlock).
 func (s *Service) Run() {
 	time.Sleep(5 * time.Second) // laisser le serveur HTTP démarrer proprement
 	for {
-		s.tick()
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("moniteur : panique récupérée (reprise au tick suivant) : %v\n%s", r, debug.Stack())
+				}
+			}()
+			s.tick()
+		}()
 		time.Sleep(pollEvery)
 	}
 }
 
 // outboxItem — notification collectée sous verrou, délivrée hors verrou.
+// N°74 — avant, l'envoi réseau (Deliver) était appelé PENDANT la collecte sous
+// verrou : un canal injoignable (SMTP muet ~2 min, Telegram en timeout 12 s)
+// gelait TOUTE l'API (check-ins agents, claims WiFi publics, consoles) le
+// temps de la tentative. La structure ne portait que les logs déjà écrits ;
+// elle porte désormais le message À envoyer, la délivrance a lieu après le
+// déverrouillage.
 type outboxItem struct {
-	cfg  model.NotificationSettings
-	logs []model.NotificationLog
+	cfg   model.NotificationSettings
+	kind  string
+	title string
+	body  string
 }
 
-// tick — un passage complet de surveillance.
+// tick — un passage complet de surveillance : collecte sous verrou (avec
+// libération garantie par defer), puis délivrance réseau HORS verrou.
 func (s *Service) tick() {
-	now := time.Now().UTC()
+	outbox := s.collect(time.Now().UTC())
+	// Délivrance hors verrou (réseau), puis écriture de l'historique.
+	for i := range outbox {
+		logs := Deliver(&outbox[i].cfg, outbox[i].kind, outbox[i].title, outbox[i].body, "")
+		s.appendLogs(logs)
+	}
+}
+
+// collect — phase sous verrou du passage de surveillance : décisions
+// (offline/rappels/stock/rapport) et constitution de l'outbox. Le verrou est
+// libéré par un defer — il survit même à une panique interne (N°74).
+func (s *Service) collect(now time.Time) []outboxItem {
 	var outbox []outboxItem
 
 	s.st.Lock()
+	defer s.st.Unlock()
 	db := s.st.Data()
 	changed := false
 
@@ -99,13 +132,11 @@ func (s *Service) tick() {
 				s.notifiedOffline[r.ID] = now
 				if cfg.Enabled && HasAnyChannel(&cfg) {
 					away := now.Sub(seen).Round(time.Minute)
-					outbox = append(outbox, outboxItem{cfg: cfg, logs: nil})
-					outbox[len(outbox)-1].logs = Deliver(&cfg, KindRouterOffline,
-						"🔴 Routeur hors ligne — "+r.Name,
-						"Le routeur «"+r.Name+"» ("+routerSiteLabel(r)+") ne répond plus depuis "+
-							formatDuration(away)+".\nDernier contact : "+formatTimeAbidjan(seen)+".\n"+
-							"Les clients ne peuvent plus se connecter : vérifiez l'alimentation, la liaison Internet ou le scheduler mikcloud.",
-						"")
+					outbox = append(outbox, outboxItem{cfg: cfg, kind: KindRouterOffline,
+						title: "🔴 Routeur hors ligne — " + r.Name,
+						body: "Le routeur «" + r.Name + "» (" + routerSiteLabel(r) + ") ne répond plus depuis " +
+							formatDuration(away) + ".\nDernier contact : " + formatTimeAbidjan(seen) + ".\n" +
+							"Les clients ne peuvent plus se connecter : vérifiez l'alimentation, la liaison Internet ou le scheduler mikcloud."})
 				}
 			}
 			continue
@@ -116,12 +147,10 @@ func (s *Service) tick() {
 			s.notifiedOffline[r.ID] = now
 			if cfg.Enabled && HasAnyChannel(&cfg) {
 				away := now.Sub(seen).Round(time.Minute)
-				outbox = append(outbox, outboxItem{cfg: cfg, logs: nil})
-				outbox[len(outbox)-1].logs = Deliver(&cfg, KindRouterOffline,
-					"⏳ Toujours hors ligne — "+r.Name,
-					"Le routeur «"+r.Name+"» est toujours injoignable depuis "+
-						formatDuration(away)+". Pensez à prévenir les revendeurs du site.",
-					"")
+				outbox = append(outbox, outboxItem{cfg: cfg, kind: KindRouterOffline,
+					title: "⏳ Toujours hors ligne — " + r.Name,
+					body: "Le routeur «" + r.Name + "» est toujours injoignable depuis " +
+						formatDuration(away) + ". Pensez à prévenir les revendeurs du site."})
 			}
 		}
 	}
@@ -142,12 +171,10 @@ func (s *Service) tick() {
 			}
 			cfg := store.GetOrCreateNotifSettings(db, r.AccountID)
 			if cfg.Enabled && HasAnyChannel(&cfg) {
-				outbox = append(outbox, outboxItem{cfg: cfg, logs: nil})
-				outbox[len(outbox)-1].logs = Deliver(&cfg, KindRouterBack,
-					"🟢 Routeur de retour en ligne — "+r.Name,
-					"Le routeur «"+r.Name+"» (« "+routerSiteLabel(r)+" ») répond de nouveau "+
-						"(check-in reçu à "+formatTimeAbidjan(now)+"). Tout est normal.",
-					"")
+				outbox = append(outbox, outboxItem{cfg: cfg, kind: KindRouterBack,
+					title: "🟢 Routeur de retour en ligne — " + r.Name,
+					body: "Le routeur «" + r.Name + "» (« " + routerSiteLabel(r) + " ») répond de nouveau " +
+						"(check-in reçu à " + formatTimeAbidjan(now) + "). Tout est normal."})
 			}
 		}
 	}
@@ -220,8 +247,7 @@ func (s *Service) tick() {
 			continue
 		}
 		title, body := stockMessage(r, info[0], state, cfg.LowStockThreshold)
-		outbox = append(outbox, outboxItem{cfg: cfg, logs: nil})
-		outbox[len(outbox)-1].logs = Deliver(&cfg, KindLowStock, title, body, "")
+		outbox = append(outbox, outboxItem{cfg: cfg, kind: KindLowStock, title: title, body: body})
 	}
 
 	// 4) Rapport journalier (heure UTC = heure d'Abidjan, GMT+0 sans DST).
@@ -243,20 +269,14 @@ func (s *Service) tick() {
 		store.SetNotifSettings(db, cfg)
 		changed = true
 		if HasAnyChannel(&cfg) {
-			outbox = append(outbox, outboxItem{cfg: cfg, logs: nil})
-			outbox[len(outbox)-1].logs = Deliver(&cfg, KindDailyReport, title, body, "")
+			outbox = append(outbox, outboxItem{cfg: cfg, kind: KindDailyReport, title: title, body: body})
 		}
 	}
 
 	if changed {
 		s.st.Save()
 	}
-	s.st.Unlock()
-
-	// Délivrance hors verrou (réseau), puis écriture de l'historique.
-	for _, item := range outbox {
-		s.appendLogs(item.logs)
-	}
+	return outbox
 }
 
 // appendLogs — écrit l'historique sous verrou (persisté + purgé par compte).

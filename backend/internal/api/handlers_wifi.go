@@ -192,7 +192,7 @@ func (a *API) handleWifiSiteInfo(w http.ResponseWriter, r *http.Request) {
 		resp["offers"] = wifiOffers(db, &siteCopy)
 	}
 	a.store.Unlock()
-	writeJSON(w, http.StatusOK, resp)
+	writeJSONCacheable(w, r, http.StatusOK, resp) // N°74 — ETag/304 : branding stable re-téléchargé pour rien à chaque page
 }
 
 // wifiPhoneConsented — N°69 : état de consentement courant d'un numéro sur
@@ -843,7 +843,7 @@ func (a *API) handleWifiPortal(w http.ResponseWriter, r *http.Request) {
 		cfg = buildPortalConfig(db, router, r)
 	}
 	a.store.Unlock()
-	writeJSON(w, http.StatusOK, cfg)
+	writeJSONCacheable(w, r, http.StatusOK, cfg) // N°74 — ETag/304 : la config live est stable des heures durant
 }
 
 // ---------------------------------------------------------------------------

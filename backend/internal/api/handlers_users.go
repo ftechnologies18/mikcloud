@@ -19,6 +19,58 @@ func (a *API) handleUsersList(w http.ResponseWriter, r *http.Request) {
 	a.usersList(w, r, "")
 }
 
+// handleVouchersStats — GET /api/vouchers/stats (N°74). Compteurs de stock
+// calculés côté SERVEUR sur l'ensemble des vouchers du compte (mêmes filtres
+// que la liste, sans pagination) : {active, used, expired, allocated,
+// stockValue, total}. Avant : la vue Vouchers téléchargeait jusqu'à 200
+// objets HotspotUser COMPLETS toutes les 20 s pour dériver 5 compteurs côté
+// client — ~10-15 Ko gzip par poll (le plus gros poste « console » mesuré) ET
+// des compteurs FAUX dès que le stock dépassait le plafond pageSize 200 (le
+// comptage client ne voyait que la première page).
+func (a *API) handleVouchersStats(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
+	q := r.URL.Query()
+	q.Set("kind", "voucher")
+	q.Del("page")
+	q.Del("pageSize")
+	now := time.Now().UTC()
+	a.store.Lock()
+	db := a.store.Data()
+	// Même moteur que la liste : expiration à jour puis filtres.
+	store.Tick(db, now)
+	a.enforceExpired(db)
+	filtered := filterUsers(db, acc, q, now)
+	a.store.Unlock()
+
+	active, used, expired, disabled, allocated, stockValue := 0, 0, 0, 0, 0, 0
+	for i := range filtered {
+		u := &filtered[i]
+		switch u.Status {
+		case "active":
+			active++
+			stockValue += u.Price
+		case "used":
+			used++
+		case "expired":
+			expired++
+		case "disabled":
+			disabled++
+		}
+		if u.ResellerID != "" {
+			allocated++
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"active":     active,
+		"used":       used,
+		"expired":    expired,
+		"disabled":   disabled,
+		"allocated":  allocated,
+		"stockValue": stockValue,
+		"total":      len(filtered),
+	})
+}
+
 // maskResellerCodes — la console gérant ne révèle JAMAIS les codes des tickets
 // attribués à un revendeur (anti-« vente en direct » : le gérant ne peut plus
 // dicter ni copier depuis les listes un ticket qui ne lui appartient pas — la

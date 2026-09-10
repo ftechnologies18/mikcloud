@@ -337,7 +337,38 @@ func (a *API) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
-	user.PasswordHash = auth.HashPassword(req.Password, "") // bcrypt : sel intégré
+	// N°74 — hachage bcrypt hors verrou (coût 12 : ~200-500 ms qui ne gèlent
+	// plus toute l'API), puis re-validation atomique avant l'écriture : le
+	// lien doit toujours être libre et l'utilisateur toujours présent.
+	userID := user.ID
+	a.store.Unlock()
+	newHash := auth.HashPassword(req.Password, "") // bcrypt : sel intégré
+	a.store.Lock()
+	db = a.store.Data()
+	row, user = nil, nil
+	for i := range db.PasswordResets {
+		if db.PasswordResets[i].TokenHash == hash {
+			row = &db.PasswordResets[i]
+			break
+		}
+	}
+	for i := range db.Users {
+		if db.Users[i].ID == userID {
+			user = &db.Users[i]
+			break
+		}
+	}
+	if row == nil || row.UsedAt != "" || user == nil {
+		a.store.Unlock()
+		writeErr(w, http.StatusBadRequest, "Lien invalide ou déjà utilisé — demandez un nouveau lien")
+		return
+	}
+	if exp, err := time.Parse(time.RFC3339, row.ExpiresAt); err == nil && time.Now().UTC().After(exp) {
+		a.store.Unlock()
+		writeErr(w, http.StatusBadRequest, "Ce lien a expiré — demandez un nouveau lien")
+		return
+	}
+	user.PasswordHash = newHash
 	user.Salt = ""
 	user.PasswordSetByUser = true // protège contre l'override ADMIN_PASSWORD
 	user.SessionEpoch++           // S1-A3 — révoque TOUTES les sessions

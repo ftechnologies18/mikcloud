@@ -302,14 +302,23 @@ func sendEmail(host string, port int, user, pass, to, title, body string) error 
 		hostname = host
 	}
 
+	// N°74 — deadlines PARTOUT : tls.Dial (465) et smtp.SendMail (587)
+	// n'avaient AUCUN timeout — un serveur SMTP muet tenait la connexion
+	// ~2 min par tentative (timeout TCP OS), durée pendant laquelle
+	// l'appelant attendait. Borne : 10 s d'établissement, 25 s de session.
+	const dialTimeout = 10 * time.Second
+	const sessionDeadline = 25 * time.Second
+
 	if port == 465 {
 		// TLS implicite (ex. certains hébergeurs mail ivoiriens sur 465).
-		conn, err := tls.Dial("tcp", addr, &tls.Config{ServerName: hostname})
+		conn, err := tls.DialWithDialer(&net.Dialer{Timeout: dialTimeout}, "tcp", addr, &tls.Config{ServerName: hostname})
 		if err != nil {
 			return fmt.Errorf("email : connexion TLS : %w", err)
 		}
+		_ = conn.SetDeadline(time.Now().Add(sessionDeadline))
 		client, err := smtp.NewClient(conn, hostname)
 		if err != nil {
+			_ = conn.Close()
 			return fmt.Errorf("email : %w", err)
 		}
 		defer client.Close()
@@ -319,8 +328,30 @@ func sendEmail(host string, port int, user, pass, to, title, body string) error 
 		return smtpSend(client, from, to, msg)
 	}
 
-	// STARTTLS (587 et autres) : smtp.SendMail négocie StartTLS quand annoncé.
-	return smtp.SendMail(addr, auth, from, []string{to}, msg)
+	// STARTTLS (587 et autres) : négociation StartTLS quand le serveur
+	// l'annonce (même sémantique que smtp.SendMail, avec deadlines).
+	conn, err := net.DialTimeout("tcp", addr, dialTimeout)
+	if err != nil {
+		return fmt.Errorf("email : connexion : %w", err)
+	}
+	_ = conn.SetDeadline(time.Now().Add(sessionDeadline))
+	client, err := smtp.NewClient(conn, hostname)
+	if err != nil {
+		_ = conn.Close()
+		return fmt.Errorf("email : %w", err)
+	}
+	defer client.Close()
+	if ok, _ := client.Extension("StartTLS"); ok {
+		if err := client.StartTLS(&tls.Config{ServerName: hostname}); err != nil {
+			return fmt.Errorf("email : STARTTLS : %w", err)
+		}
+	}
+	if user != "" {
+		if err := client.Auth(auth); err != nil {
+			return fmt.Errorf("email : authentification : %w", err)
+		}
+	}
+	return smtpSend(client, from, to, msg)
 }
 
 // smtpSend — MAIL FROM/RCPT/DATA sur un client déjà connecté et authentifié.

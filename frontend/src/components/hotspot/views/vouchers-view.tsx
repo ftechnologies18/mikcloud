@@ -5,7 +5,7 @@
 // Quick print (F12) : bouton « Réimpression rapide » qui réimprime le dernier
 // lot imprimé (localStorage "mikcloud-last-batch", écrit par uc-print-dialog).
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -137,6 +137,18 @@ function shortBatch(batchId: string): string {
   return batchId.split("-").pop() || batchId;
 }
 
+// VouchersStats — N°74 — compteurs de stock renvoyés par GET /api/vouchers/stats
+// (calcul serveur sur l'ensemble du stock, plus de plafond pageSize 200).
+type VouchersStats = {
+  active: number;
+  used: number;
+  expired: number;
+  disabled: number;
+  allocated: number;
+  stockValue: number;
+  total: number;
+};
+
 export default function VouchersView() {
   const { t, tf, lang } = useI18n();
   const currency = useCurrency();
@@ -230,22 +242,23 @@ export default function VouchersView() {
     staleTime: 5 * 60_000,
   });
 
-  // Statistiques globales (page large sans filtre) — statuts + valeur du stock actif.
+  // Statistiques globales (page large sans filtre) — compteurs calculés côté
+  // SERVEUR (N°74) : l'ancien poll pageSize:500 téléchargeait jusqu'à 200
+  // objets complets toutes les 20 s (~10-15 Ko gzip) et comptait FAUX dès que
+  // le stock dépassait le plafond pageSize 200. La réponse est un objet
+  // compact {active, used, expired, allocated, stockValue, total} (~150 o).
   const { data: statsData, isLoading: statsLoading } = useQuery({
     queryKey: ["/api/vouchers", "stats"],
-    queryFn: () => api<PagedUsers>("/api/vouchers", { params: { pageSize: 500 } }),
+    queryFn: () => api<VouchersStats>("/api/vouchers/stats"),
     refetchInterval: 20_000,
   });
 
-  const stats = useMemo(() => statsData?.data ?? [], [statsData]);
-  const activeCount = stats.filter((v) => v.status === "active").length;
-  const usedCount = stats.filter((v) => v.status === "used").length;
-  const expiredCount = stats.filter((v) => v.status === "expired").length;
+  const activeCount = statsData?.active ?? 0;
+  const usedCount = statsData?.used ?? 0;
+  const expiredCount = statsData?.expired ?? 0;
   // N°23 (W3/W4) — visibilité du stock confié aux revendeurs.
-  const allocatedCount = stats.filter((v) => v.resellerId).length;
-  const stockValue = stats
-    .filter((v) => v.status === "active")
-    .reduce((acc, v) => acc + v.price, 0);
+  const allocatedCount = statsData?.allocated ?? 0;
+  const stockValue = statsData?.stockValue ?? 0;
 
   // Liste paginée filtrée
   const statusParam = statusFilter === "all" ? undefined : statusFilter;

@@ -24,6 +24,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -428,5 +429,56 @@ func TestRateLimitGlobalInstanceCap(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("healthcheck hors plafond global, obtenu %d", rec.Code)
 		}
+	}
+}
+
+// TestRecoverMiddlewareConvertsPanicAndSurvives — N°74 : toute panique de la
+// chaîne devient un 500 propre (le recover la convertit), la requête
+// suivante passe (le verrou du store survit : les defer des handlers se
+// déroulent à la remontée), et http.ErrAbortHandler traverse SANS être
+// converti (contrat net/http pour les abandons de pipeline).
+func TestRecoverMiddlewareConvertsPanicAndSurvives(t *testing.T) {
+	var mu sync.Mutex // simule le verrou global du store (discipline identique)
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock() // comme les handlers post-N°74
+		if r.URL.Query().Get("panic") == "1" {
+			panic("panique de test — handler défaillant")
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := httptest.NewServer(recoverMiddleware(inner))
+	defer srv.Close()
+
+	// 1) La panique devient 500 — pas une connexion coupée brute.
+	resp, err := http.Get(srv.URL + "/?panic=1")
+	if err != nil {
+		t.Fatalf("requête paniquée : %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("500 attendu après panique, %d obtenu", resp.StatusCode)
+	}
+
+	// 2) La requête suivante passe : verrou vivant, service vivant.
+	resp2, err := http.Get(srv.URL + "/")
+	if err != nil {
+		t.Fatalf("requête suivante : %v", err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("200 attendu après l'incident, %d obtenu", resp2.StatusCode)
+	}
+
+	// 3) http.ErrAbortHandler traverse SANS être converti (contrat net/http).
+	abort := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		panic(http.ErrAbortHandler)
+	})
+	srv2 := httptest.NewServer(recoverMiddleware(abort))
+	defer srv2.Close()
+	resp3, err := http.Get(srv2.URL)
+	if err == nil {
+		resp3.Body.Close()
+		t.Fatal("ErrAbortHandler doit interrompre la réponse (connexion close), pas un 200")
 	}
 }

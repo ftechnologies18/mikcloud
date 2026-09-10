@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -117,7 +118,7 @@ func main() {
 	// HTTP-poll, le tableau de bord en polling.
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           handler,
+		Handler:           recoverMiddleware(handler), // N°74 — filet de panique en tête de chaîne
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       60 * time.Second,
 		WriteTimeout:      60 * time.Second,
@@ -128,6 +129,37 @@ func main() {
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("serveur : %v", err)
 	}
+}
+
+// recoverMiddleware — N°74 — filet de sécurité anti-panique EN TÊTE de chaîne.
+//
+// L'audit de robustesse a montré que TOUT le backend converge vers le verrou
+// global du store : une panique survenant entre un Lock() et son Unlock()
+// (déverrouillage manuel avec early-returns dans la quasi-totalité des
+// handlers) laisse le mutex verrouillé À VIE — toutes les requêtes suivantes
+// se bloquent, le health check Render échoue, le service meurt en crash-loop.
+// net/http rattrapait certes déjà les paniques de handlers (connexion coupée,
+// process vivant), mais la classe « mutex mort » restait fatale.
+//
+// Ce middleware convertit toute panique de la chaîne (middlewares + handlers)
+// en 500 propre + trace complète dans le log service : les defer des handlers
+// se déroulent à la remontée, donc un éventuel Unlock différé s'exécute —
+// le verrou survit à la panique.
+func recoverMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				if rec == http.ErrAbortHandler {
+					panic(rec) // abort de pipeline voulu par net/http — ne pas convertir
+				}
+				log.Printf("PANIQUE récupérée (%s %s) : %v\n%s", r.Method, r.URL.Path, rec, debug.Stack())
+				w.Header().Set("Content-Type", "application/json; charset=utf-8")
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`{"error":"Erreur interne — réessayez"}`))
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
 }
 
 // corsMiddleware — CORS restreint : ALLOWED_ORIGIN liste d'origines autorisées
@@ -185,6 +217,11 @@ func corsMiddleware(next http.Handler) http.Handler {
 		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		// N°74 — le préflight OPTIONS est mis en cache par le navigateur : chaque
+		// POST cross-origin du portail (track analytics, claim WiFi) était DOUBLÉ
+		// par une requête OPTIONS non cachée — jusqu'à 12 requêtes sur 6 utiles
+		// par page en mode hospitalité. 24 h : borne haute fetch spec (sans credentials).
+		w.Header().Set("Access-Control-Max-Age", "86400")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -231,10 +268,20 @@ const maxBodyBytes = 2 << 20
 //     referme la connexion (aucune accumulation mémoire possible).
 func limitBody(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Body != nil {
-			r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+		// N°74 — cohérence des bornes : l'upload média (handleMediaUpload)
+		// accepte 2 Mio de données + 1 Mio de marge d'encodage multipart
+		// (3 Mio au total) — le plafond GLOBAL de 2 Mio le contredisait :
+		// une image légitime de ~1,9 Mio pouvait prendre un 413 de la barrière
+		// externe avant d'atteindre la validation du handler. /api/media
+		// reçoit la borne cohérente, le reste conserve 2 Mio.
+		limit := int64(maxBodyBytes)
+		if strings.HasPrefix(r.URL.Path, "/api/media") {
+			limit = maxBodyBytes + (1 << 20)
 		}
-		if r.ContentLength > maxBodyBytes {
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
+		}
+		if r.ContentLength > limit {
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
 			w.WriteHeader(http.StatusRequestEntityTooLarge)
 			_, _ = w.Write([]byte(`{"error":"Corps de requête trop volumineux (limite 2 Mio)"}`))
@@ -405,6 +452,21 @@ func logRequests(next http.Handler) http.Handler {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
-		log.Printf("%s %s -> %d (%s)", r.Method, r.URL.Path, rec.status, time.Since(start).Round(time.Millisecond))
+		log.Printf("%s %s -> %d (%s)", r.Method, maskLogPath(r.URL.Path), rec.status, time.Since(start).Round(time.Millisecond))
 	})
+}
+
+// maskLogPath — N°74 — le chemin /portal/{token}/fichier expose le token
+// d'agent (32 car., identifiant secret du routeur) dans les logs du service
+// (rétention 7 j, visibles opérateur). Même discipline que les préfixes de
+// l'agent (agent.Preview) : le segment token est remplacé par «***».
+func maskLogPath(p string) string {
+	if !strings.HasPrefix(p, "/portal/") {
+		return p
+	}
+	rest := strings.TrimPrefix(p, "/portal/")
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		return "/portal/***" + rest[i:]
+	}
+	return "/portal/***"
 }

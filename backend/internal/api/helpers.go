@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -30,6 +31,42 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// writeJSONCacheable — N°74 — writeJSON + validation croisée ETag/304.
+//
+// Cible : les GET publics quasi statiques du portail (config live
+// /api/wifi/site/{slug}/portal, branding /api/wifi/site/{slug}) dont le
+// contenu est stable des heures durant. Sans validateur, CHAQUE chargement
+// de page re-téléchargeait l'intégralité du corps — y compris les pires cas
+// de bannières data-URL (jusqu'à ~800 Ko bruts par page). Avec ETag :
+//   - le navigateur STOCKE la réponse (Cache-Control: no-cache — stockage
+//     autorisé, revalidation obligatoire) ;
+//   - au rechargement, il envoie If-None-Match → 304 sans corps (~200 o
+//     d'en-têtes) tant que le contenu n'a pas changé ;
+//   - un changement de branding change le hash → 200 avec le nouveau corps.
+//
+// L'ETag porte sur le corps NON compressé (gzip.go laisse les 304 passer en
+// clair et pose Vary: Accept-Encoding — chaque client revalide la variante
+// qu'il a stockée, les deux représentations restent cohérentes).
+func writeJSONCacheable(w http.ResponseWriter, r *http.Request, status int, v any) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "Réponse impossible à sérialiser")
+		return
+	}
+	h := fnv.New64a()
+	_, _ = h.Write(b)
+	etag := `"` + hex.EncodeToString(h.Sum(nil)) + `"`
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Cache-Control", "no-cache") // stocké, revalidé à chaque fois
+	if m := r.Header.Get("If-None-Match"); m != "" && strings.Contains(m, etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_, _ = w.Write(b)
 }
 
 func writeErr(w http.ResponseWriter, status int, msg string) {

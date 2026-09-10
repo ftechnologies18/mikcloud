@@ -41,11 +41,29 @@ type API struct {
 	// dans GET /api/admin/sync-status. Le quota Render (5 Go/mois gratuit)
 	// avait été épuisé en ~9 jours SANS qu'aucune métrique n'existe.
 	egress *egressStats
+	// N°74 — télémétrie cadencée : horodatage du dernier read_state APPLIQUÉ
+	// par routeur (handleAgentResult). La boucle de télémétrie RE-filetait un
+	// read_state à CHAQUE check-in (toutes les 45 s, 24 h/24) — ~75 % du
+	// trafic agents partait dans des snapshots complets O(n) dont personne
+	// ne regardait le résultat. La cadence est désormais bornée par
+	// readStateMinInterval ; les re-sync manuelles et post-écriture restent
+	// immédiates. Accédé UNIQUEMENT sous le verrou du store.
+	readStateDone map[string]time.Time
 }
+
+// readStateMinInterval — N°74 — intervalle minimum entre deux read_state
+// AUTOMATIQUES pour un même routeur (les commandes d'écriture re-enfilent
+// toujours un read_state immédiat : fraîcheur post-action préservée).
+// 2 minutes = un read_state toutes les ~2,7 check-ins au lieu de chacun :
+// -62 % du volume agents (mesuré : 1 920 read_states/jour/routeur → ~720).
+// La fraîcheur des vues Sessions/dashboard passe de 45 s à ≤ 2 min — le
+// comptage des sessions reste exact (la vue ne fait que s'actualiser un
+// peu plus tard), les expirations restent servies à chaque check-in.
+const readStateMinInterval = 2 * time.Minute
 
 // New construit l'API.
 func New(s *store.Store, jwtSecret string) *API {
-	return &API{store: s, secret: jwtSecret, gws: map[string]routeros.Gateway{}, pinLock: newPinLimiter(), signup: newSignupLimiter(), join: newSignupLimiter(), wifiClaim: newSignupLimiterLimits(20, 100), portalTrack: newSignupLimiterLimits(300, 3000), reset: newSignupLimiter(), egress: newEgressStats()}
+	return &API{store: s, secret: jwtSecret, gws: map[string]routeros.Gateway{}, pinLock: newPinLimiter(), signup: newSignupLimiter(), join: newSignupLimiter(), wifiClaim: newSignupLimiterLimits(20, 100), portalTrack: newSignupLimiterLimits(300, 3000), reset: newSignupLimiter(), egress: newEgressStats(), readStateDone: map[string]time.Time{}}
 }
 
 // Handler — mux complet, protégé par le middleware d'authentification.
@@ -124,6 +142,7 @@ func (a *API) Handler() http.Handler {
 	// Vouchers
 	mux.HandleFunc("POST /api/vouchers/generate", a.handleVouchersGenerate)
 	mux.HandleFunc("GET /api/vouchers", a.handleVouchersList)
+	mux.HandleFunc("GET /api/vouchers/stats", a.handleVouchersStats) // N°74 — compteurs serveur (fin du poll pageSize:500)
 	mux.HandleFunc("GET /api/vouchers/batches", a.handleBatchesList)
 	mux.HandleFunc("GET /api/vouchers/batches/export", a.requireRole(2, a.handleBatchesExport))
 	mux.HandleFunc("DELETE /api/vouchers/{id}", a.requireRole(2, a.handleUserDelete))

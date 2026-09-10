@@ -5,6 +5,152 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-10 — N°74 : audit de robustesse + optimisation — le backend ne peut plus geler (5 correctifs structurels) et la bande passante agents chute de ~62 %
+
+### N°74 — Contexte : audit d'expert complet (portail hybride, console, chaîne agents, robustesse) après l'incident de quota du 8-10/09
+- **Audit (4 axes en parallèle)** : le portail captif (chaîne complète d'une
+  session, cache, gzip, robustesse cold start), la console (inventaire
+  exhaustif du polling React Query, poids des payloads, ETag), le protocole
+  agent (payloads exacts au octet, cadence, robustesse) et la fiabilité du
+  backend (verrous, I/O, paniques, sécurité). Constats majeurs : TOUT le
+  backend converge vers un verrou global derrière lequel on faisait de
+  l'I/O réseau (Neon sans timeout, notifications, SMTP nu), AUCUN recover
+  n'existait (une panique entre Lock et Unlock = mutex mort à vie = service
+  mort), read_state était servi à CHAQUE check-in 45 s (24 h/24) alors que
+  personne ne regarde ces snapshots la nuit, et la vue Vouchers téléchargeait
+  200 objets complets toutes les 20 s pour 5 compteurs (faux au-delà de 200
+  tickets).
+- **Découverte mesurée** : RouterOS /tool fetch ENVOIE bien
+  « Accept-Encoding: gzip » — la preuve arithmétique tient dans les compteurs
+  N°72 (427 Ko mesurés sur 3 h 17 pour 2 routeurs ≈ l'hypothèse « gzip
+  actif », l'hypothèse « sans gzip » prédirait 1,1 Mo) ; les commentaires
+  « jamais compressés » de gzip.go/routes.go sont corrigés par cette entrée
+  (le gzip agents fonctionne, il ne faut plus le compter comme gain futur).
+
+### Robustesse — le service ne peut plus geler ni mourir d'une panique
+- **recoverMiddleware (main.go, en tête de chaîne)** : toute panique de la
+  chaîne (middlewares + handlers) devient un 500 propre + trace complète
+  dans le log service — les defer des handlers se déroulent à la remontée,
+  donc un Unlock différé s'exécute et LE VERROU SURVIT À LA PANIQUE (avant :
+  mutex mort à vie → health check Render en échec → crash-loop du service).
+  http.ErrAbortHandler traverse sans être converti (contrat net/http). Les
+  goroutines de fond reçoivent le même filet : moniteur de notifications
+  (notify/monitor.go Run — reprise au tick suivant), balayage de rétention
+  (api/retention.go RunRetentionSweepForever — reprise à l'heure suivante)
+  et keep-alive Neon (store/pg.go — le ping protégé ne meurt plus à vie).
+- **Sync Neon sous contexte borné (store/pg.go)** : BeginTx(ctx, nil) avec
+  syncTimeout = 20 s (~8× le temps mesuré en production, 2,6 s) sur TOUTE la
+  transaction (29 tables + settings : statements + commit) — un Neon gelé
+  (compute en réveil lent, partition réseau) ne peut plus tenir le verrou
+  global indéfiniment : l'incident se résout en une erreur retournée,
+  retentée au Save suivant (les empreintes différentielles ne sont
+  rafraîchies qu'après succès — aucun delta perdu). Tous les appels passent
+  en ExecContext/QueryContext (upsertRows, deleteRows, syncSettings).
+- **Moniteur de notifications : le réseau sort enfin du verrou
+  (notify/monitor.go)** : tick() est scindé en collect() (sous verrou, avec
+  defer Unlock garanti — il survit même à une panique interne) puis
+  délivrance Deliver() HORS verrou. L'en-tête du fichier le promettait déjà
+  (« Les envois réseau ne sont JAMAIS faits sous verrou ») —
+  l'implémentation ne le respectait pas : un SMTP muet tenait ~2 min PAR
+  tentative, toutes les 30 s, sous le verrou que partagent check-ins agents,
+  claims WiFi publics et consoles.
+- **SMTP avec deadlines (notify/notify.go)** : tls.Dial → tls.DialWithDialer
+  (10 s d'établissement) + SetDeadline (25 s de session) sur 465 ;
+  smtp.SendMail (aucun timeout possible) remplacé par un flux manuel borné
+  (net.DialTimeout + smtp.NewClient + StartTLS + Auth) sur 587 — même
+  sémantique, mêmes messages d'erreur, jamais de connexion muete.
+- **bcrypt hors verrou (3 handlers)** : handlePasswordChange,
+  handleRegister et handleResetPassword faisaient un hachage/vérification
+  bcrypt (coût 12 ≈ 200-500 ms sur le CPU mutualisé Render) SOUS le verrou
+  global — les endpoints publics (register, reset) permettaient à un
+  attaquant distribué de geler toute l'API plusieurs fois par seconde. Le
+  pattern de handleLogin (capture des valeurs sous verrou, hachage dehors,
+  re-validation atomique à l'écriture) est désormais appliqué partout. Au
+  passage, la course B2 de handleLogin est corrigée : l'ancien pointeur
+  « user » capturé avant Unlock servait à lire TOTP et à écrire la
+  migration de hash APRÈS re-lock — une inscription concurrente pouvait
+  réallouer la tranche Users et perdre silencieusement l'écriture ; les
+  valeurs sont capturées, et la migration re-trouve l'utilisateur par ID.
+- **readWord plafonné (routeros/protocol.go)** : readLength acceptait toute
+  longueur annoncée (encodage 7 bits, jusqu'à ~63 bits) et readWord
+  allouait make([]byte, n) SANS borne — un routeur compromis (ou un flux
+  MITM sur le port 8728 en TCP clair) annonçant 2^40 octets déclenchait une
+  allocation fatale non rattrapable (OOM kill sur les 512 Mo). Plafond
+  maxWordBytes = 4 Mio (aucun mot légitime n'en approche) + rejet des
+  débordements (n < 0) AVANT allocation.
+- **GOMEMLIMIT=400MiB (Dockerfile)** : le runtime Go ignore la limite du
+  conteneur — le GC attend ~2× le tas vivant avant d'accélérer, trop tard
+  face à l'OOM-kill Render à 512 Mo. Plafond SOFT à 400 MiB (le process ne
+  meurt pas s'il doit dépasser, le GC fait tout son possible en dessous).
+
+### Optimisation bande passante — le plus gros poste agents divisé, la console allégée
+- **Télémétrie read_state cadencée (agent_handlers.go + routes.go)** : la
+  boucle re-enfilait un read_state (snapshot complet O(n) : users, sessions,
+  8 ifaces + télémétrie) à CHAQUE résultat — toutes les 45 s, 24 h/24,
+  ~1 920 snapshots/jour/routeur dont la grande majorité ne servait à rien
+  (la nuit, les comptes sans console ouverte). Nouveau cadenceur
+  ensureReadStateDue : un read_state automatique n'est enfilé que si le
+  dernier appliqué date de plus de readStateMinInterval (2 min) et qu'aucun
+  n'est déjà en file/en vol — soit ~720 snapshots/jour au lieu de 1 920
+  (−62 % du volume agents, ~1 Mo/jour/routeur économisé). La fraîcheur qui
+  COMPTE est préservée : les commandes d'écriture re-enfilent TOUJOURS un
+  read_state immédiat (fraîcheur post-action), le bouton « Synchroniser »
+  reste immédiat, les expirations restent servies à CHAQUE check-in, et le
+  premier check-in après boot reste instantané. Les vues Sessions/dashboard
+  passent d'une fraîcheur de 45 s à ≤ 2 min (le comptage reste exact).
+- **GET /api/vouchers/stats (nouveau) + vue Vouchers allégée** : les
+  compteurs de stock (actifs/consommés/expirés/alloués/valeur du stock)
+  sont calculés côté SERVEUR sur l'ensemble du stock et renvoyés en un
+  objet compact (~150 o) — avant, la vue téléchargeait jusqu'à 200 objets
+  HotspotUser COMPLETS toutes les 20 s (~10-15 Ko gzip, le plus gros poste
+  « console » mesuré) ET les compteurs étaient FAUX dès que le stock
+  dépassait le plafond pageSize 200 (le comptage client ne voyait que la
+  première page). Frontend : la query stats pointe le nouvel endpoint
+  (queryKey ["/api/vouchers","stats"] conservé — l'invalidation existante
+  continue de fonctionner).
+- **ETag/304 sur les GET publics du portail (helpers.go writeJSONCacheable
+  + handlers_wifi.go)** : la config live
+  (GET /api/wifi/site/{slug}/portal) et le branding
+  (GET /api/wifi/site/{slug}) reçoivent un ETag (FNV-64 du corps) et
+  Cache-Control: no-cache — le navigateur STOCKE la réponse et la
+  revalide (If-None-Match → 304 sans corps) au lieu de re-télécharger
+  l'intégralité à CHAQUE chargement de page. Enjeu mesuré : ces endpoints
+  transportent les logo/bannière du compte — jusqu'à ~800 Ko bruts par
+  chargement dans le pire cas data-URL (500 Ko bannière + 300 Ko logo) ;
+  dès la deuxième visite d'un même appareil, le coût tombe à ~200 o.
+  L'ETag porte sur le corps non compressé ; le middleware gzip laisse les
+  304 passer en clair et pose Vary — chaque client revalide la variante
+  stockée (les deux représentations restent cohérentes).
+- **Access-Control-Max-Age: 86400 (main.go)** : les préflights OPTIONS des
+  POST cross-origin du portail (track analytics, claim WiFi — jusqu'à
+  12 requêtes sur 6 utiles par page en mode hospitalité) sont mis en cache
+  par le navigateur pour 24 h (borne haute fetch spec pour des requêtes
+  sans credentials).
+- **Tokens d'agent masqués dans les logs (main.go logRequests)** : le chemin
+  /portal/{token}/fichier écrivait le token 192 bits complet dans le log
+  service à chaque fetch de déploiement — le segment est remplacé par «***»
+  (même discipline que agent.Preview côté agent).
+
+### Tests — 12 nouveaux, suite complète verte
+- read_state_throttle_test.go (5) : boot → enfile immédiat ; read_state
+  frais → pas de re-file ; périmé → re-file ; déjà queued/sent → jamais de
+  doublon ; cadence PAR routeur (un autre routeur en file ne bloque pas).
+- etag_stats_test.go (4) : contrat writeJSONCacheable (200+ETag+no-cache,
+  304 sans corps sur concordance, 200 complet sur divergence) ; ETag au
+  TRAVERS de la chaîne gzip/egress/sécurité (le 304 passe en clair et
+  répète l'ETag) ; compteurs serveur exacts (6 statuts + stockValue = prix
+  des actifs uniquement, kind voucher uniquement, périmètre compte
+  uniquement) ; 401 sans jeton.
+- monitor_test.go (1) : deux ticks consécutifs sans deadlock (le defer
+  Unlock de collect joue — sinon le second passerait en timeout).
+- main_test.go (1) : recoverMiddleware convertit une panique en 500, la
+  requête suivante passe (verrou vivant), ErrAbortHandler traverse.
+- protocol_test.go : l'aller-retour des longueurs s'arrête au plafond
+  (inclus) et les longueurs au-delà (0xFFFFFFF) sont REFUSÉES — nouveau
+  contrat de sûreté.
+- Vérifié localement : gofmt/vet/build propres, `go test ./...` complet
+  vert (11 paquets, api 102 s), frontend eslint 0 + tsgo 0 + next build ✓.
+
 ## 2026-09-10 — N°73 : fermeture des zombies « sent » orphelins — un rapport perdu n'affiche plus « 1 zombie » à vie dans la carte Maintenance
 
 ### N°73 — Racine vécue en production : la suspension de quota du 8-10/09 a laissé un user_remove « sent » sans rapport, que RIEN ne fermait

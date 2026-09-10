@@ -5,6 +5,46 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-10 — N°73 : fermeture des zombies « sent » orphelins — un rapport perdu n'affiche plus « 1 zombie » à vie dans la carte Maintenance
+
+### N°73 — Racine vécue en production : la suspension de quota du 8-10/09 a laissé un user_remove « sent » sans rapport, que RIEN ne fermait
+- **Diagnostic (cas réel du 10/09)** : au réveil post-suspension, le sweep de
+  rattrapage a filé 9 user_remove d'expiration ; 8 ont rapporté, 1 (« 45Y3 »,
+  routeur CYBER S.C) a perdu SEUL son POST /agent/result (blip réseau au
+  check-in). Or les écritures ne sont JAMAIS re-exécutées
+  (requeueStaleReadsLocked ne reprend que les commandes idempotentes —
+  double-exécution interdite, choix assumé), enforceExpired marque
+  Enforced=true DÈS la mise en file (correct : pas de re-file sauvage), et
+  purgeOldCommands ne balayait que done/error : la commande restait « sent »
+  À VIE — compteur « zombies » de la carte Maintenance figé à 1 pour
+  toujours, et l'issue réelle (exécutée ou non sur le routeur) invérifiable
+  depuis le cloud. Le cas a été réparé à la main (suppression console du
+  voucher → NOUVELLE commande user_remove, exécutée et confirmée en 11 s ;
+  vérifié au read_state suivant : l'utilisateur a bien disparu du routeur)
+  — mais la lacune STRUCTURELLE restait : aucun chemin de fermeture pour un
+  « sent » muet.
+- **purgeOldCommands (agent_handlers.go) — fermeture en deux phases** : un
+  « sent » dont le SentAt dépasse 7 jours est clos « error » avec le message
+  « rapport perdu (zombie « sent » fermé après 7 j sans retour) » et
+  DoneAt = maintenant — visible 7 jours dans l'historique (l'opérateur
+  constate la fermeture et l'issue inconnue), puis balayé par le nettoyage
+  existant comme tout done/error ancien. Le statut « error » (et non
+  « done ») est le seul honnête : l'issue réelle côté routeur est inconnue.
+- **Garde-fous conservés** : les « queued » ne sont PAS touchées (un routeur
+  muet qui revient les exécute et les rapporte normalement — seul le
+  « sent » sans rapport est une fuite) ; les sent récents gardent leur
+  fenêtre de reprise idempotente (10 min) puis d'observation ; fenêtre de
+  7 j alignée sur le nettoyage existant des commandes terminées ; la
+  comparaison d'horodatages passe en UTC explicite (NowISO est UTC — le
+  lim local d'origine ne pouvait diverger que sur un serveur non UTC).
+- **Tests** : TestPurgeOldCommandsClosesAncientSentZombies (zombie ancien
+  fermé error + DoneAt + message, PAS supprimé ; sent récent intact ;
+  queued ancienne intacte) ; TestPurgeOldCommandsSweepsClosedZombies
+  (seconde phase : zombie fermé au cycle précédent et done de plus de 7 j
+  balayés ; error récent conservé).
+- **Vérifié localement** : gofmt, go vet, go build ; tests ciblés verts ;
+  paquet api COMPLET vert (99 s).
+
 ## 2026-09-09 — N°72-fix : seuil de rentabilité gzip (1 024 o, réponses plus petites servies en clair) + tests métier en « Accept-Encoding: identity » + timeout go test -race porté de 22 à 30 min en CI
 
 ### N°72-fix — La CI N°72 a heurté le timeout global « go test -race -timeout 22m » (22 min 38 s contre 18 min 02 s au N°71) : le client de test de net/http annonce « Accept-Encoding: gzip » TOUT SEUL

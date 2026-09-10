@@ -488,8 +488,37 @@ func profileRef(p model.Profile) map[string]any {
 }
 
 // purgeOldCommands — supprime les commandes terminées de plus de 7 jours (sous verrou).
+//
+// N°73 — ferme d'abord les zombies « sent » orphelins de plus de 7 jours :
+// un rapport perdu (blip réseau entre l'exécution routeur et le POST
+// /agent/result, fenêtre de suspension plateforme, reboot du routeur en
+// plein check-in…) laissait la commande « sent » À VIE — les écritures ne
+// sont jamais re-exécutées (cf. requeueStaleReadsLocked : seules les
+// idempotentes repartent en file, double-exécution interdite) et RIEN ne
+// fermait ces lignes : le compteur « zombies » de la carte Maintenance
+// affichait éternellement une commande à l'issue réelle inconnue (vécu au
+// réveil post-suspension du 10/09 : un user_remove dont SEUL le rapport
+// avait été perdu). Après 7 jours sans retour, la commande est close
+// « error » avec un message explicite et DoneAt = maintenant : visible
+// 7 jours dans l'historique (l'opérateur constate la fermeture), puis
+// balayée par le nettoyage ci-dessous comme tout done/error ancien —
+// double phase. Le statut « error » (et non « done ») est le seul
+// honnête : l'issue réelle côté routeur est inconnue.
+//
+// Les « queued » ne sont PAS touchées : un routeur muet qui revient les
+// exécute et les rapporte normalement — seul le « sent » sans rapport est
+// une fuite. Les sent récents gardent leur fenêtre de reprise
+// idempotente (10 min) puis d'observation.
 func purgeOldCommands(db *model.DB) {
-	lim := time.Now().Add(-7 * 24 * time.Hour).Format(time.RFC3339)
+	lim := time.Now().UTC().Add(-7 * 24 * time.Hour).Format(time.RFC3339)
+	for i := range db.Commands {
+		c := &db.Commands[i]
+		if c.Status == "sent" && c.SentAt != "" && c.SentAt < lim {
+			c.Status = "error"
+			c.Result = map[string]any{"message": "rapport perdu (zombie « sent » fermé après 7 j sans retour)"}
+			c.DoneAt = model.NowISO()
+		}
+	}
 	kept := db.Commands[:0]
 	for _, c := range db.Commands {
 		if (c.Status == "done" || c.Status == "error") && c.DoneAt != "" && c.DoneAt < lim {

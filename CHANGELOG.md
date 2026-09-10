@@ -5,6 +5,79 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-10 — N°77 : veilleur d'invités + priorité des actionnables — le claim du portail redevient rapide (45 s → 1-2 min → ≤ 20 s)
+
+### N°77 — Contexte : le claim gratuit devenu très lent (rentabilité menacée)
+Constat production juste après N°75/N°76 : le **claim gratuit du portail captif
+est passé de ~45 s à 1-2 minutes** avant validation après saisie du numéro.
+Un invité qui attend plus d'une minute en salle finit par abandonner — pour
+la cible cœur (restaurants, maquis, cafés, buvettes), c'est l'expérience
+première du produit qui se dégrade. Deux causes empilées, toutes deux issues
+des optimisations de capacité :
+- **la veille N°75** : un routeur endormi (pas de console ouverte) ne sert le
+  claim du portail qu'à son prochain check-in — le marqueur d'attention ne
+  peut pas RÉVEILLER un routeur qui n'appelle pas. Moyenne ~90 s, pire cas
+  180 s (un cycle complet de veille) ;
+- **les chunks read_state N°76** : un parc de 3 500 users enfile jusqu'à 10
+  chunks d'un coup, TOUJOURS plus anciens qu'un claim fraîchement posé (ils
+  sont créés au début du cycle) — le FIFO pur leur donnait les 10 slots du
+  check-in, et le claim attendait un check-in DE PLUS avant de s'exécuter
+  derrière ~30 s de scripts de lecture.
+
+### Correctif 1 — le veilleur d'invités (scheduler `mikcloud-watch`)
+- **Tick 20 s conditionné** : à chaque tick, le veilleur compte les hôtes
+  hotspot **non autorisés** (`!authorized && !bypassed && !blocked`) — un hôte
+  non autorisé = un appareil connecté SANS session = un invité est SUR le
+  portail, son claim est imminent ou en cours. Si > 0 → check-in complet ;
+  si 0 → **RIEN** (aucun octet émis : l'économie de veille N°75 — ~6
+  Mo/mois/routeur, des centaines de routeurs sur le plan gratuit — est
+  préservée intégralement, l'attention ne coûte que ~1,2 Ko/min PENDANT
+  qu'un invité est réellement sur le portail).
+- **Fichier PROPRE au veilleur** (`mikcloud-watch.rsc`, jamais le dst-path du
+  scheduler principal) : les deux check-ins tournent en parallèle (20 s vs
+  45/180 s) et leurs fenêtres se chevaucheront forcément — deux fetchs
+  concurrents ne peuvent pas s'écraser mutuellement le fichier (un import
+  de fichier à moitié réécrit tue les commandes du même check-in).
+- **Déploiement** : posé directement par l'install des NOUVEAUX agents
+  (l'invité du premier soir n'attend pas la convergence) + commande
+  `watcher_ensure` (remove-then-add idempotent) qui converge le parc EXISTANT
+  au premier check-in — pattern walled-garden : le drapeau `Router.WatcherOK`
+  (persisté en base, colonne `watcher_ok`) n'est posé qu'au retour « ok » du
+  routeur, un échec ou un veilleur effacé à la main est re-filé au check-in
+  suivant (auto-réparation).
+- **Exclusions** : `bypassed` (binding MAC permanent — sinon le veilleur
+  tirerait 24 h/24 pour l'appareil du gérant) et `blocked` (banni du login —
+  aucun claim ne viendra de lui).
+
+### Correctif 2 — priorité des actionnables dans le batch du check-in
+Nouvel ordre de service : **actionnables** (écritures métier, claim,
+`watcher_ensure`, outils console) → **chunks read_state** (idempotents,
+cadencés, ré-enfilés par la boucle zombie) → **walled_garden/hotspot_files**
+(fermeture de marche inchangée — une ligne avortée ne doit pas tuer ce qui la
+suit). Le claim s'exécute EN PREMIER dans le script du check-in au lieu de
+ramper derrière la réconciliation d'un grand parc.
+
+### Résultat
+Le claim d'un invité est servi en **≤ 20 s pendant sa fenêtre portail**, sans
+réveiller l'économie de veille (0 octet émis sans invité) : les deux leviers
+de capacité N°75/N°76 (des centaines de routeurs au plan gratuit, des parcs
+de 10 000 users réconciliés) restent entiers, l'expérience invité revient à
+son niveau antérieur — mieux : elle devient indépendante du mode veille.
+
+### Tests
+5 nouveaux (`agent_watch_test.go`) : mise en file/dédup/drapeau/routeur simulé
+de `ensureWatcherLocked` ; forme du script (scheduler `mikcloud-watch`,
+intervalle, garde d'hôtes, fichier propre, double échappement `on-event`
+conforme au pattern `buildSchedulerAdd` éprouvé, remove-then-add idempotent) ;
+l'install déploie le veilleur ; la priorité du batch (7 chunks anciens + un
+claim récent → le claim servi EN PREMIER, ≤ 10 commandes) ; E2E complet
+(check-in → déploiement → rapport « ok » → `WatcherOK` posé → silence au
+check-in suivant). En passant, 3 bugs des NOUVEAUX tests eux-mêmes corrigés
+avant livraison (forme échappée du `dst-path`, collecte des KINDS — pas des
+IDs — dans l'ordre servi, horodatages de graines réellement au passé et
+rapport `status=ok` explicite). Vérifié comme la CI : gofmt/vet/build,
+suite complète 11 paquets verts, `-race` ciblé vert.
+
 ## 2026-09-10 — N°76 : read_state PAGINÉ — la réconciliation des grands parcs revit (faux badges ProMax WIFI, compteur de parc gelé)
 
 ### N°76 — Contexte : 3 334 faux badges « absent du routeur » en production

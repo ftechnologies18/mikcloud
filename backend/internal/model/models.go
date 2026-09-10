@@ -210,6 +210,17 @@ type Router struct {
 	// routeurs sur le plan gratuit. Posé au retour « ok » de la commande
 	// scheduler_set, jamais à la mise en file.
 	SchedulerSec int `json:"schedulerSec,omitempty"`
+	// N°77 — veilleur d'invités : vrai quand le scheduler mikcloud-watch
+	// (check-in 20 s pendant qu'un hôte non autorisé est présent — un
+	// invité est SUR le portail, claim imminent) est CONFIRMÉ déployé sur
+	// ce routeur. Faux = routeur antérieur au N°77 ou dernier déploiement
+	// échoué → le check-in suivant re-file watcher_ensure (pattern
+	// walled-garden : auto-réparant, posé au retour « ok » uniquement).
+	// Constat production N°77 : la veille N°75 rendait le PREMIER claim
+	// d'un routeur endormi lent (45 s → 1-2 min d'attente — un invité en
+	// salle n'attend pas) ; le veilleur restaure un check-in ≤ 20 s
+	// PENDANT la fenêtre invité sans coût idle (0 octet émis sans invité).
+	WatcherOK bool `json:"watcherOK,omitempty"`
 }
 
 // SchedulerSecEffective — pas de scheduler connu du routeur (N°75). 0 =
@@ -933,6 +944,7 @@ const (
 	CmdProfileSet      = "profile_set"      // v2 : applique/retire le verrou « 1er appareil » (on-login de liaison MAC) sur un profil
 	CmdWalledGarden    = "walled_garden"    // N°29 : walled-garden d'inscription publique (runbook N°27-D automatisé)
 	CmdHotspotFiles    = "hotspot_files"    // N°35 : déploiement automatique du portail captif (login.html, status.html, assets) — pattern walled_garden
+	CmdWatcherEnsure   = "watcher_ensure"   // N°77 : veilleur d'invités — scheduler mikcloud-watch (check-in 20 s quand un hôte non autorisé est présent)
 )
 
 // ---------------------------------------------------------------------------

@@ -737,6 +737,31 @@ func (a *API) handleAgentRegister(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ensureWatcherLocked — N°77 — veilleur d'invités : garantit que le scheduler
+// mikcloud-watch est déployé sur ce routeur (check-in 20 s pendant qu'un hôte
+// non autorisé est présent — un invité est SUR le portail, son claim est servi
+// en ≤ 20 s au lieu d'attendre le réveil du scheduler principal, jusqu'à 180 s
+// de veille N°75). Pattern walled-garden/scheduler_set : le drapeau
+// Router.WatcherOK n'est posé qu'au retour « ok » de la commande — jamais à la
+// mise en file. Faux/absent = routeur antérieur au N°77, échec, ou veilleur
+// effacé à la main → re-file au check-in suivant (auto-réparation). À appeler
+// sous le verrou du store depuis handleAgentCmd.
+func (a *API) ensureWatcherLocked(db *model.DB, router *model.Router) {
+	if router.Mode != "agent" || router.WatcherOK {
+		return
+	}
+	// Un déploiement déjà en file ou en vol suffit — le rapport tranchera
+	// (ok → WatcherOK posé, error → re-file au check-in suivant).
+	for i := range db.Commands {
+		c := &db.Commands[i]
+		if c.RouterID == router.ID && c.Kind == model.CmdWatcherEnsure &&
+			(c.Status == "queued" || c.Status == "sent") {
+			return
+		}
+	}
+	queueCommandLocked(db, router.AccountID, router.ID, model.CmdWatcherEnsure, map[string]any{})
+}
+
 // ensureReadStateDue — N°74 — cadenceur de la télémétrie read_state. Enfile
 // un read_state pour CE routeur si : (1) aucun n'est déjà en file ou en vol
 // (statuts queued/sent), ET (2) le dernier appliqué date de plus de
@@ -871,35 +896,43 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 	// FIFO de CE check-in.
 	a.ensureSchedulerIntervalLocked(db, router)
 
-	// File FIFO : commandes en attente (max 10 par check-in)
-	queued := []model.Command{}
-	for i := range db.Commands {
-		if db.Commands[i].RouterID == router.ID && db.Commands[i].Status == "queued" {
-			queued = append(queued, db.Commands[i])
-			if len(queued) >= 10 {
-				break
-			}
-		}
-	}
-	sort.Slice(queued, func(i, j int) bool { return queued[i].CreatedAt < queued[j].CreatedAt })
-	// N°31-c — le (ou les) chunk(s) walled_garden FERMENT la marche : si une
-	// de ses lignes avorte l'import RouterOS (constat prod 2026-09-05 — chunk
-	// muet 2×/2×, commandes du même fichier tuées avec lui), les commandes
-	// métier/télémétrie du même check-in continuent de vivre. Le
-	// walled_garden est idempotent et repris par la boucle zombie N°31.
-	// N°35 — hotspot_files ferme la marche APRÈS walled_garden, pour la
-	// même raison (un fetch avorté ne doit pas tuer les autres commandes du
-	// même check-in) : le portail est idempotent et repris par la boucle zombie.
+	// N°77 — veilleur d'invités : converge le parc existant en UN check-in
+	// (WatcherOK absent = routeur antérieur au N°77 → watcher_ensure en
+	// file, servi dans CE check-in) puis se tait tant que le retour « ok »
+	// n'est pas démenti. Le veilleur rend le claim ≤ 20 s pendant la
+	// fenêtre invité SANS réveiller la veille (0 octet émis sans invité).
+	a.ensureWatcherLocked(db, router)
+
+	// File FIFO : commandes en attente (max 10 par check-in).
+	//
+	// N°77 — PRIORITÉ AUX ACTIONNABLES : un parc de 3 500 users enfile
+	// jusqu'à 10 chunks read_state d'un coup (N°76) — TOUJOURS plus
+	// anciens qu'un claim fraîchement posé (ils sont créés au début du
+	// cycle) : l'ancien FIFO pur leur donnait les 10 slots du check-in et
+	// le claim attendait UN CHECK-IN DE PLUS (jusqu'à +180 s en veille)
+	// puis s'exécutait derrière ~30 s de scripts de lecture. Nouvel
+	// ordre : actionnables (écritures métier, claim, outils console,
+	// veilleur) → chunks read_state (idempotents, cadencés, ré-enfilés
+	// par la boucle zombie) → walled_garden/hotspot_files (fermeture
+	// habituelle : une ligne avortée ne doit pas tuer ce qui la suit).
+	prio := []model.Command{}
+	reads := []model.Command{}
 	deferred := []model.Command{}
-	rest := make([]model.Command, 0, len(queued))
-	for _, c := range queued {
-		switch c.Kind {
+	for i := range db.Commands {
+		if db.Commands[i].RouterID != router.ID || db.Commands[i].Status != "queued" {
+			continue
+		}
+		switch db.Commands[i].Kind {
+		case model.CmdReadState:
+			reads = append(reads, db.Commands[i])
 		case model.CmdWalledGarden, model.CmdHotspotFiles:
-			deferred = append(deferred, c)
+			deferred = append(deferred, db.Commands[i])
 		default:
-			rest = append(rest, c)
+			prio = append(prio, db.Commands[i])
 		}
 	}
+	sort.Slice(prio, func(i, j int) bool { return prio[i].CreatedAt < prio[j].CreatedAt })
+	sort.Slice(reads, func(i, j int) bool { return reads[i].CreatedAt < reads[j].CreatedAt })
 	// Au sein des différés, walled_garden avant hotspot_files (le walled-garden
 	// doit être en place pour que le portail puisse appeler l'API cloud pré-auth).
 	sort.SliceStable(deferred, func(i, j int) bool {
@@ -909,7 +942,10 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 		// walled_garden (N°29) < hotspot_files (N°35) : ordre par numéro de vague.
 		return deferred[i].Kind == model.CmdWalledGarden
 	})
-	queued = append(rest, deferred...)
+	queued := append(append(prio, reads...), deferred...)
+	if len(queued) > 10 {
+		queued = queued[:10]
+	}
 
 	b := agent.Builder{BaseURL: base, Token: token}
 	var chunks []string
@@ -1103,6 +1139,15 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 					}
 					a.logActivity(db, router.AccountID, "router", "Cadence agent de «"+router.Name+"» : mode "+pas)
 				}
+			}
+		} else if cmd.Kind == model.CmdWatcherEnsure {
+			// N°77 — veilleur déployé et CONFIRMÉ par le routeur :
+			// le drapeau n'est posé qu'ici (pattern walled-garden /
+			// scheduler_set — vérité routeur uniquement). Un échec
+			// reste WatcherOK=false → re-file au check-in suivant.
+			if !router.WatcherOK {
+				router.WatcherOK = true
+				a.logActivity(db, router.AccountID, "router", "Veilleur d'invités déployé sur «"+router.Name+"» — claim du portail servi en ≤ 20 s")
 			}
 		} else {
 			a.logActivity(db, router.AccountID, "router", "Commande "+cmd.Kind+" exécutée sur «"+router.Name+"»")

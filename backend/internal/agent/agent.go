@@ -28,6 +28,27 @@ const ScriptFilename = "mikcloud-cmd.rsc"
 // SchedulerName — nom du scheduler créé sur le routeur.
 const SchedulerName = "mikcloud-agent"
 
+// WatcherName — N°77 — nom du scheduler VEILLEUR d'invités créé sur le routeur.
+const WatcherName = "mikcloud-watch"
+
+// WatcherFilename — N°77 — fichier de commandes propre au veilleur (jamais le
+// même dst-path que le scheduler principal : deux check-ins concurrents ne
+// peuvent pas s'écraser mutuellement le fichier — le veilleur tire toutes les
+// 20 s pendant qu'un invité est NON autorisé, le principal suit son pas 45 s /
+// 180 s ; leurs fenêtres d'exécution se chevaucheront forcément).
+const WatcherFilename = "mikcloud-watch.rsc"
+
+// WatcherIntervalSec — N°77 — pas du veilleur. 20 s : un invité qui vient de
+// se connecter (hôte hotspot non autorisé = l'appareil est SUR le portail)
+// obtient son check-in en ≤ 20 s au lieu d'attendre le réveil du scheduler
+// principal (jusqu'à 180 s de veille N°75 — constat production : claim gratuit
+// passé de ~45 s à 1-2 min, découragement des invités en restaurant/maquis).
+// Coût : STRICTEMENT nul à l'arrêt (le tick compte les hôtes non autorisés et
+// s'arrête là — aucun octet émis), ~400 o par tick SEULEMENT pendant qu'un
+// invité est réellement sur le portail (~1,2 Ko/min d'attention). La capacité
+// « plan gratuit » gagnée par la veille N°75 est préservée intégralement.
+const WatcherIntervalSec = 20
+
 // WalledGardenMarker — commentaire des règles walled-garden posées par
 // MikCloud (N°29 — runbook N°27-D automatisé). L'idempotence s'appuie dessus :
 // seules les règles portant ce marqueur sont remplacées — les règles
@@ -280,6 +301,19 @@ func InstallScript(baseURL, token, routerName string, wgDomains ...string) strin
       :put "MIKCLOUD : agent installe. Prochaine connexion au cloud dans 45 s max."
       :log info "MikCloud: agent installe, check-in dans 45s"
     }
+
+    :do {
+      /system scheduler remove [find name="` + WatcherName + `"]
+    } on-error={}
+
+    :do {
+      /system scheduler add name="` + WatcherName + `" interval=` + strconv.Itoa(WatcherIntervalSec) + `s start-time=startup on-event="` + rosEscape(watcherOnEvent(urlEsc, tokEsc)) + `"
+      :put "MIKCLOUD : veilleur d'invites installe (check-in 20 s quand un invite est sur le portail)."
+      :log info "MikCloud: veilleur d'invites installe"
+    } on-error={
+      :put "MIKCLOUD : veilleur d'invites non installe (le claim reste servi au pas du scheduler principal)."
+    }
+
 ` + walledGardenInstallBlock(wgDomains) + `  }
 } on-error={
   :log error "MikCloud: erreur pendant l'installation de l'agent"
@@ -452,6 +486,8 @@ func (b Builder) ScriptFor(cmd model.Command) (string, error) {
 		return b.buildSchedulerSet(cmd), nil
 	case model.CmdSchedulerRemove:
 		return b.buildSchedulerRemove(cmd), nil
+	case model.CmdWatcherEnsure:
+		return b.buildWatcherEnsure(cmd), nil
 	case model.CmdReboot:
 		return b.buildPower(cmd, "reboot"), nil
 	case model.CmdShutdown:
@@ -687,6 +723,53 @@ const ReadChunkSize = 500
 // complet, il reste honnête (aucune déduction sur les absents — comportement
 // trunc N°75) plutôt que de mentir sur un parc hors d'atteinte du protocole.
 const MaxReadChunks = 20
+
+// watcherOnEvent — N°77 — corps UNE LIGNE (séparateurs « ; », formes valides
+// en import .rsc — même sérialisation que buildSchedulerAdd) du on-event du
+// veilleur d'invités. Reçoit l'URL et le token DÉJÀ échappés pour le niveau de
+// citation INTERNE (le corps contient ses propres chaînes quotées) ; l'appelant
+// ré-échappe le corps entier pour le niveau on-event="…" (double échappement
+// assumé et correct : chaque niveau de citation décode le sien).
+//
+// Sémantique : à chaque tick (20 s), compter les hôtes hotspot NON autorisés —
+// un hôte non autorisé = un appareil connecté qui n'a PAS encore de session :
+// c'est exactement la fenêtre « invité sur le portail, claim imminent ou en
+// cours ». Si > 0 → check-in complet (fichier PROPRE au veilleur, jamais le
+// dst-path du scheduler principal : deux fetchs concurrents ne peuvent pas
+// s'écraser le fichier). Si 0 → RIEN (aucun octet émis — la veille N°75 garde
+// ses 6 Mo/mois). Exclusions : bypassed (binding MAC permanent — sinon le
+// veilleur tirerait 24 h/24 pour un appareil du gérant) et blocked (banni du
+// login : aucun claim ne viendra de lui).
+func watcherOnEvent(urlEsc, tokEsc string) string {
+	return ":do { " +
+		":local mkgw 0; " +
+		":do { :set mkgw [/ip hotspot host print count-only where !authorized && !bypassed && !blocked] } on-error={ :set mkgw 0 }; " +
+		":if ($mkgw > 0) do={ " +
+		":local mkwf \"yes\"; " +
+		":do { /tool fetch url=\"" + urlEsc + "/agent/cmd?token=" + tokEsc + "\" dst-path=\"" + WatcherFilename + "\" } on-error={ :set mkwf \"no\" }; " +
+		":if ($mkwf = \"yes\") do={ :delay 2s; /import file-name=\"" + WatcherFilename + "\" } " +
+		"} " +
+		"} on-error={}"
+}
+
+// buildWatcherEnsure — N°77 — déploie (ou redéploie) le veilleur d'invités sur
+// un routeur agent : remove-then-add idempotent, rapporté comme toute commande.
+// Servi aux routeurs dont WatcherOK est faux (ensureWatcherLocked au check-in —
+// pattern walled_garden : convergence automatique du parc existant en UN
+// check-in, re-file tant que le retour « ok » n'est pas arrivé).
+func (b Builder) buildWatcherEnsure(cmd model.Command) string {
+	urlEsc := rosEscape(strings.TrimRight(b.BaseURL, "/"))
+	tokEsc := rosEscape(b.Token)
+	okVar := "ok" + idSafe(cmd.ID)
+	var sb strings.Builder
+	sb.WriteString(header(cmd))
+	sb.WriteString(":local " + okVar + " true\n")
+	sb.WriteString(":do {\n  /system scheduler remove [find name=\"" + WatcherName + "\"]\n} on-error={}\n")
+	sb.WriteString(":do {\n  /system scheduler add name=\"" + WatcherName + "\" interval=" + strconv.Itoa(WatcherIntervalSec) + "s start-time=startup on-event=\"" +
+		rosEscape(watcherOnEvent(urlEsc, tokEsc)) + "\"\n} on-error={ :set " + okVar + " false }\n")
+	sb.WriteString(b.resultLines(cmd.ID, okVar, nil))
+	return sb.String()
+}
 
 // buildReadState — v5 (N°76) : télémétrie + rapport PAGINÉ des utilisateurs.
 // Motivation : v4 (N°75) bornait le rapport à 500 users et gelait TOUTE

@@ -224,7 +224,14 @@ func (a *API) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	// N°10 — courbe 24 h RÉELLE : connexions/heure agrégées depuis les
 	// UserLogs (simulation + agent), dans le fuseau du compte. Un compte
 	// sans activité affiche zéro — honnête par construction.
-	writeJSON(w, http.StatusOK, map[string]any{
+	//
+	// N°75 — ETag/304 : le dashboard est le PLUS GROS poste du trafic
+	// console (la vue poll plusieurs fois/minute tant qu'elle est
+	// ouverte). Le corps est stable entre deux changements de données :
+	// le navigateur revalide (If-None-Match) et reçoit un 304 sans corps
+	// (~200 o d'en-têtes) au lieu de re-télécharger l'intégralité.
+	// Corps déterministe : les maps Go sont triées par encoding/json.
+	writeJSONCacheable(w, r, http.StatusOK, map[string]any{
 		"kpis":             kpis,
 		"sites":            sites,
 		"sessionsTimeline": timeline,

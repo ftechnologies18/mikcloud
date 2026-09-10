@@ -41,7 +41,10 @@ func (a *API) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].StartedAt > sessions[j].StartedAt })
-	writeJSON(w, http.StatusOK, sessions)
+	// N°75 — ETag/304 : la vue Sessions poll tant qu'elle est ouverte ;
+	// le corps ne change qu'au read_state suivant (~2 min). Revalidation
+	// navigateur → 304 sans corps entre deux rafraîchissements de données.
+	writeJSONCacheable(w, r, http.StatusOK, sessions)
 }
 
 func (a *API) handleSessionKick(w http.ResponseWriter, r *http.Request) {

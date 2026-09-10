@@ -53,7 +53,17 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 
 	// Users : "name|profile|disabled;…"
 	userEntries := splitAgentList(vals.Get("users"))
-	router.HotspotUsers = len(userEntries)
+	// N°75 — rapport tronqué : le script read_state borne le rapport à
+	// 500 users / 250 sessions actives (limite anti-payload du POST
+	// RouterOS, ~64 Ko). Au-delà, la liste rapportée est INCOMPLÈTE :
+	// compter/en déduire quoi que ce soit produirait des faux positifs.
+	// Les compteurs restent à leur dernière valeur honnête, les
+	// décisions (badge absent, diff sessions) sont différées au prochain
+	// rapport complet.
+	truncated := vals.Get("trunc") == "true"
+	if !truncated {
+		router.HotspotUsers = len(userEntries)
+	}
 
 	// Audit purge/résurgence — tombstones du compte + réglage d'import
 	// automatique. Un username tombstoné (purgé par l'admin) n'est JAMAIS
@@ -114,30 +124,46 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 	//   - grâce de 2 minutes après création (commande user_add encore en file) ;
 	//   - le badge se lève tout seul au read_state suivant si l'utilisateur
 	//     réapparaît (recréation manuelle dans Winbox, par exemple).
+	// N°75 — rapport tronqué : les absents de la liste ne sont PAS des
+	// absents du routeur. On ne touche à AUCUN badge (ni pose, ni levée)
+	// tant que le rapport n'est pas complet.
 	grace := time.Now().UTC().Add(-2 * time.Minute).Format(time.RFC3339)
-	for i := range db.HotspotUsers {
-		u := &db.HotspotUsers[i]
-		if u.RouterID != router.ID {
-			continue
-		}
-		if u.Status != "active" && u.Status != "disabled" {
-			continue
-		}
-		if onRouter[strings.ToLower(u.Username)] {
-			if u.MissingOnRouter {
-				u.MissingOnRouter = false // réapparu — badge levé
+	if !truncated {
+		for i := range db.HotspotUsers {
+			u := &db.HotspotUsers[i]
+			if u.RouterID != router.ID {
+				continue
 			}
-			continue
-		}
-		if u.CreatedAt > grace {
-			continue // trop récent : la commande d'ajout peut être en file
-		}
-		if !u.MissingOnRouter {
-			u.MissingOnRouter = true
+			if u.Status != "active" && u.Status != "disabled" {
+				continue
+			}
+			if onRouter[strings.ToLower(u.Username)] {
+				if u.MissingOnRouter {
+					u.MissingOnRouter = false // réapparu — badge levé
+				}
+				continue
+			}
+			if u.CreatedAt > grace {
+				continue // trop récent : la commande d'ajout peut être en file
+			}
+			if !u.MissingOnRouter {
+				u.MissingOnRouter = true
+			}
 		}
 	}
 
 	// Sessions actives : "user|ip|uptime|bytes-in|bytes-out;…" (script v3).
+	// N°75 — rapport tronqué : le diff sessions sur une liste incomplète
+	// fabrique des logouts en cascade (les sessions au-delà de la borne
+	// « disparaissent » puis « réapparaissent » au rapport suivant).
+	// On CONSERVE l'état précédent en l'état — trafic inclus (les deltas
+	// d'octets reprendront au rapport complet, la garde anti-décroissance
+	// absorbe le saut).
+	now := time.Now().UTC()
+	if truncated {
+		applyAgentTraffic(db, router, vals.Get("ifaces"), now)
+		return
+	}
 	sessEntries := splitAgentList(vals.Get("sessions"))
 	router.ActiveSessions = len(sessEntries)
 	userIDs := map[string]string{}
@@ -230,7 +256,6 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 
 	// F3 — nouvelles sessions (non appariées) → login ; sessions précédentes
 	// non retrouvées → logout.
-	now := time.Now().UTC()
 	for i := range live {
 		if !matched[i] {
 			logRouterUserEvent(db, router, live[i], "login", now)

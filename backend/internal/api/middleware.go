@@ -186,6 +186,15 @@ func (a *API) authMiddleware(next http.Handler) http.Handler {
 				}
 			}
 		}
+		// N°75 — veille adaptative : une requête console AUTHENTIFIÉE
+		// marque le compte « sous attention » — ses routeurs restent en
+		// mode rapide (45 s) tant que quelqu'un l'utilise (fenêtre 10 min
+		// après le DERNIER signal). Les endpoints publics du portail
+		// marquent le routeur du site directement dans leurs handlers.
+		// Verrou dédié, aucune section critique tenue ici.
+		if claims.Acc != "" {
+			a.markAttention("acc:" + claims.Acc)
+		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), claimsCtxKey{}, claims)))
 	})
 }

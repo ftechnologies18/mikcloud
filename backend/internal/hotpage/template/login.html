@@ -578,16 +578,23 @@
                     </div>
 
                     <div class="info-content">
+                        <!-- N°75 — la vitrine tarifaire est un PLACEHOLDER piloté par la
+                             config : les cartes statiques ne portent AUCUN lien marchand
+                             (href="#" + data-mik-offer) — renderOffers les épouse aux
+                             offres LIVE du compte (libellés + prix + lien Wave DU COMPTE)
+                             ou les retire. Plus jamais de paiement vers un marchand tiers
+                             par défaut (bug : comptes sans waveLink → invités facturés au
+                             marchand de l'opérateur). -->
                         <div class="wave-banner">
                             <span class="wave-logo" aria-hidden="true"></span>
                             <span>Paiement par <strong>Wave</strong> accepté</span>
                         </div>
 
-                        <h5 class="section-title">Nos Offres</h5>
-                        <p class="section-sub">Des formules pour tous les besoins</p>
-                        <div class="row">
+                        <h5 class="section-title" data-mik-offers-title="1">Nos Offres</h5>
+                        <p class="section-sub" data-mik-offers-sub="1">Des formules pour tous les besoins</p>
+                        <div class="row" data-mik-offers-grid="1">
                             <div class="col-6">
-                                <a class="creative-card card-teal" href="https://pay.wave.com/m/M_5Mg9EG61ZHDF/c/ci/?amount=100" target="_blank" rel="noopener">
+                                <a class="creative-card card-teal" href="#" data-mik-offer="1">
                                     <i class="fas fa-clock creative-icon"></i>
                                     <div class="creative-time">1 Heure</div>
                                     <div class="creative-price">100 F</div>
@@ -595,7 +602,7 @@
                                 </a>
                             </div>
                             <div class="col-6">
-                                <a class="creative-card card-rose" href="https://pay.wave.com/m/M_5Mg9EG61ZHDF/c/ci/?amount=200" target="_blank" rel="noopener">
+                                <a class="creative-card card-rose" href="#" data-mik-offer="1">
                                     <span class="new-badge">Nouveau</span>
                                     <i class="fas fa-hourglass-half creative-icon"></i>
                                     <div class="creative-time">6 Heures</div>
@@ -604,7 +611,7 @@
                                 </a>
                             </div>
                             <div class="col-6">
-                                <a class="creative-card card-green" href="https://pay.wave.com/m/M_5Mg9EG61ZHDF/c/ci/?amount=300" target="_blank" rel="noopener">
+                                <a class="creative-card card-green" href="#" data-mik-offer="1">
                                     <i class="fas fa-sun creative-icon"></i>
                                     <div class="creative-time">24 Heures</div>
                                     <div class="creative-price">300 F</div>
@@ -612,7 +619,7 @@
                                 </a>
                             </div>
                             <div class="col-6">
-                                <a class="creative-card card-orange" href="https://pay.wave.com/m/M_5Mg9EG61ZHDF/c/ci/?amount=500" target="_blank" rel="noopener">
+                                <a class="creative-card card-orange" href="#" data-mik-offer="1">
                                     <span class="new-badge">Nouveau</span>
                                     <i class="fas fa-calendar-day creative-icon"></i>
                                     <div class="creative-time">3 Jours</div>
@@ -621,7 +628,7 @@
                                 </a>
                             </div>
                             <div class="col-6">
-                                <a class="creative-card card-amber" href="https://pay.wave.com/m/M_5Mg9EG61ZHDF/c/ci/?amount=1000" target="_blank" rel="noopener">
+                                <a class="creative-card card-amber" href="#" data-mik-offer="1">
                                     <i class="fas fa-calendar-week creative-icon"></i>
                                     <div class="creative-time">7 Jours</div>
                                     <div class="creative-price">1000 F</div>
@@ -629,7 +636,7 @@
                                 </a>
                             </div>
                             <div class="col-6">
-                                <a class="creative-card card-violet" href="https://pay.wave.com/m/M_5Mg9EG61ZHDF/c/ci/?amount=1500" target="_blank" rel="noopener">
+                                <a class="creative-card card-violet" href="#" data-mik-offer="1">
                                     <span class="new-badge">Nouveau</span>
                                     <i class="fas fa-calendar-alt creative-icon"></i>
                                     <div class="creative-time">15 Jours</div>
@@ -638,7 +645,7 @@
                                 </a>
                             </div>
                             <div class="col-12">
-                                <a class="card-featured" href="https://pay.wave.com/m/M_5Mg9EG61ZHDF/c/ci/?amount=3000" target="_blank" rel="noopener">
+                                <a class="card-featured" href="#" data-mik-offer="1">
                                     <span class="featured-tag">Meilleure offre</span>
                                     <i class="fas fa-crown creative-icon"></i>
                                     <div>
@@ -753,25 +760,28 @@
         if (document.login && document.login.username) { document.login.username.focus(); }
         document.title = window.location.hostname + " > Connexion";
 
-        // Deep link Wave sur Android (sélecteur corrigé : a[href*=] )
+        // Deep link Wave sur Android — DÉLÉGATION document-level (N°75) :
+        // l'ancienne liaison au chargement ne voyait que les liens présents
+        // dans le HTML statique ; les href posés dynamiquement par
+        // renderOffers (offres LIVE du compte) n'en bénéficiaient jamais.
+        // La délégation attrape TOUT clic sur une ancre pay.wave.com, quelle
+        // que soit la date de pose de son href.
         (function () {
             var isAndroid = /android/i.test(navigator.userAgent || '');
             if (!isAndroid) return;
-            window.__waveIntentTest = function (url) {
-                return 'intent://' + url.replace(/^https?:\/\//, '') +
+            document.addEventListener('click', function (ev) {
+                var el = ev.target;
+                while (el && el.nodeType === 1 && el.tagName !== 'A') {
+                    el = el.parentNode;
+                }
+                if (!el || el.nodeType !== 1 || el.tagName !== 'A') return;
+                var href = el.getAttribute('href') || '';
+                if (href.indexOf('pay.wave.com') < 0) return;
+                ev.preventDefault();
+                window.location.href = 'intent://' + href.replace(/^https?:\/\//, '') +
                     '#Intent;scheme=https;package=com.wave.personal;S.browser_fallback_url=' +
-                    encodeURIComponent(url) + ';end';
-            };
-            var links = document.querySelectorAll('a[href*="pay.wave.com"]');
-            for (var i = 0; i < links.length; i++) {
-                (function (a) {
-                    a.addEventListener('click', function (ev) {
-                        ev.preventDefault();
-                        var webUrl = a.getAttribute('href');
-                        window.location.href = window.__waveIntentTest(webUrl);
-                    });
-                })(links[i]);
-            }
+                    encodeURIComponent(href) + ';end';
+            }, false);
         })();
     </script>
     <!-- N°35-b — config MikCloud embarquée (portail hybride Cloud/Local).
@@ -895,13 +905,12 @@
                 // formulaire (téléphone → code → auto-login) est seul maintenu :
                 // action directe, zéro redondance.
 
-                // 4. Offres dynamiques : remplace les liens Wave hardcodés par les
-                // profils live du compte. On cible les cartes d'offre existantes
-                // (sélecteur .offer-card) — si elles existent, on les remplace ;
-                // sinon, on insère une nouvelle section offres.
-                if (cfg.offers && cfg.offers.length > 0) {
-                    renderOffers(cfg);
-                }
+                // 4. Offres dynamiques (N°75) : TOUJOURS exécuté — c'est lui
+                // qui retire la vitrine tarifaire quand le compte n'a AUCUNE
+                // offre payable en ligne (ancien comportement : les 7 cartes
+                // hardcodées au marchand de l'opérateur restaient cliquables
+                // → les invités payaient le MAUVAIS marchand).
+                renderOffers(cfg);
 
                 // 5. Claim inline (N°51 : piloté par l'état du site) : si un slug
                 // WiFi est configuré ET le site actif, on ajoute un formulaire de
@@ -1128,32 +1137,124 @@
                 }
             }
 
-            // renderOffers — remplace les cartes d'offres hardcodées par les
-            // offres live (price + waveUrl pré-construit). Préserve le style
-            // existant (cards) en réutilisant la structure HTML.
-            function renderOffers(cfg) {
-                var container = document.querySelector('.offers-section, .offre-section, [data-offers]');
-                if (!container) {
-                    // Pas de section offres existante — on en crée une après le
-                    // formulaire de login.
-                    container = document.createElement('div');
-                    container.className = 'offers-section';
-                    container.style.cssText = 'margin-top:20px;';
-                    var loginSection = document.querySelector('.login-section');
-                    if (loginSection) loginSection.appendChild(container);
+            // -----------------------------------------------------------------
+            // N°75 — offres LIVE : helpers de rendu de la vitrine tarifaire.
+            // Les cartes statiques du template sont des PLACEHOLDERS sans lien
+            // marchand : chaque carte i épouse la i-ème offre PAYABLE du compte.
+            // -----------------------------------------------------------------
+
+            // mikValidityLabel — libellé humain d'une validité en minutes.
+            function mikValidityLabel(min) {
+                var m = parseInt(min, 10);
+                if (!m || m <= 0 || isNaN(m)) return 'Ticket';
+                if (m < 60) return m + ' Min';
+                if (m < 1440) {
+                    var h = Math.round(m / 60);
+                    return h + (h > 1 ? ' Heures' : ' Heure');
                 }
-                // On ne remplace QUE les liens pay.wave.com (les offres MikCloud),
-                // pas les autres cartes. Chaque offre live trouve son lien Wave.
-                var existingLinks = container.querySelectorAll('a[href*="pay.wave.com"]');
-                cfg.offers.forEach(function (offer, i) {
-                    if (!offer.waveUrl) return; // pas de waveUrl = pas de paiement online
-                    if (existingLinks[i]) {
-                        existingLinks[i].setAttribute('href', offer.waveUrl);
-                        // Met à jour le libellé du prix si présent.
-                        var priceEl = existingLinks[i].querySelector('.price, [data-price]');
-                        if (priceEl) priceEl.textContent = offer.priceFcfa + ' F';
-                    }
+                var d = Math.round(m / 1440);
+                return d + (d > 1 ? ' Jours' : ' Jour');
+            }
+
+            // mikColumnOf — remonte au conteneur de colonne Bootstrap de la carte
+            // (masquer la carte seule laisserait un vide structural).
+            function mikColumnOf(el) {
+                var p = el ? el.parentNode : null;
+                while (p && p.nodeType === 1 && p !== document.body) {
+                    var cls = p.className || '';
+                    if (cls.indexOf('col-6') >= 0 || cls.indexOf('col-12') >= 0) return p;
+                    p = p.parentNode;
+                }
+                return null;
+            }
+
+            // mikOffersVisible — montre ou retire la vitrine tarifaire
+            // (grille + titres + bandeau Wave). RÉVERSIBLE : le fetch live
+            // peut rappeler applyConfig (le gérant configure son lien marchand
+            // → la vitrine réapparaît sans re-déploiement).
+            function mikOffersVisible(show) {
+                var els = document.querySelectorAll('[data-mik-offers-grid], [data-mik-offers-title], [data-mik-offers-sub], .wave-banner');
+                Array.prototype.forEach.call(els, function (el) {
+                    el.style.display = show ? '' : 'none';
                 });
+            }
+
+            // renderOffers — N°75 : épouse les offres LIVE du compte. Chaque
+            // carte data-mik-offer affiche l'offre payable correspondante :
+            // libellé de durée, PRIX et lien Wave DU COMPTE mis à jour (l'ancien
+            // code ne changeait que le href — les prix affichés restaient ceux
+            // du template : l'invité voyait « 100 F » et payait le montant réel
+            // du profil chez Wave). Offre sans waveUrl = pas de paiement en
+            // ligne possible = carte masquée (JAMAIS un lien vers un autre
+            // marchand). Carte orpheline (moins d'offres que de slots) =
+            // masquée. Aucune offre payable = vitrine ENTIERE retirée.
+            function renderOffers(cfg) {
+                var offers = (cfg && Array.isArray(cfg.offers)) ? cfg.offers : [];
+                var payable = [];
+                offers.forEach(function (o) {
+                    if (o && o.waveUrl) payable.push(o);
+                });
+                var cards = document.querySelectorAll('[data-mik-offer]');
+
+                if (cards.length === 0) {
+                    // Template sans vitrine statique : on en crée une minimale
+                    // pour les offres payables (même styles .creative-card).
+                    if (payable.length === 0) return;
+                    var wrap = document.querySelector('[data-mik-offers-grid]');
+                    if (!wrap) {
+                        var info = document.querySelector('.info-content');
+                        if (!info) return;
+                        wrap = document.createElement('div');
+                        wrap.className = 'row';
+                        wrap.setAttribute('data-mik-offers-grid', '1');
+                        info.appendChild(wrap);
+                    }
+                    payable.forEach(function (o) {
+                        var col = document.createElement('div');
+                        col.className = 'col-6';
+                        var a = document.createElement('a');
+                        a.className = 'creative-card card-teal';
+                        a.setAttribute('data-mik-offer', '1');
+                        a.setAttribute('href', o.waveUrl);
+                        a.setAttribute('target', '_blank');
+                        a.setAttribute('rel', 'noopener');
+                        var pf = parseInt(o.priceFcfa, 10);
+                        if (isNaN(pf)) pf = 0;
+                        a.innerHTML = '<i class="fas fa-ticket creative-icon"></i>' +
+                            '<div class="creative-time">' + escapeHtml(mikValidityLabel(o.validityMin)) + '</div>' +
+                            '<div class="creative-price">' + pf + ' F</div>' +
+                            '<span class="pay-btn"><span class="pay-ico" aria-hidden="true"></span> Payer</span>';
+                        col.appendChild(a);
+                        wrap.appendChild(col);
+                    });
+                    mikOffersVisible(true);
+                    return;
+                }
+
+                Array.prototype.forEach.call(cards, function (card, i) {
+                    var o = payable[i];
+                    var col = mikColumnOf(card);
+                    if (!o) {
+                        // Pas d'offre payable pour ce slot : la carte disparaît
+                        // (un prix affiché sans lien honnête est pire qu'un vide).
+                        if (col) col.style.display = 'none';
+                        else card.style.display = 'none';
+                        return;
+                    }
+                    if (col) col.style.display = '';
+                    var timeEl = card.querySelector('.creative-time, .featured-time');
+                    if (timeEl) timeEl.textContent = mikValidityLabel(o.validityMin);
+                    var priceEl = card.querySelector('.creative-price, .featured-price');
+                    if (priceEl) {
+                        var pf = parseInt(o.priceFcfa, 10);
+                        if (isNaN(pf)) pf = 0;
+                        priceEl.textContent = pf + ' F';
+                    }
+                    card.setAttribute('href', o.waveUrl);
+                    card.setAttribute('target', '_blank');
+                    card.setAttribute('rel', 'noopener');
+                });
+                mikOffersVisible(payable.length > 0);
             }
 
             // renderClaimForm — formulaire de téléphone en tête du login-section.
@@ -1307,8 +1408,8 @@
                     return;
                 }
                 var tries = 0;
-                var MAX_TRIES = 24; // 24 × 5 s = 2 min
-                showClaimStatus('Code ' + code + ' reçu — activation sur le routeur (jusqu\'à ~45 s)...', 'info');
+                var MAX_TRIES = 60; // 60 × 5 s = 5 min (N°75 : le routeur peut être en veille — premier claim après idle ≤ 3 min)
+                showClaimStatus('Code ' + code + ' reçu — activation sur le routeur (quelques instants)...', 'info');
                 var statusUrl = cfg.apiBase + '/api/wifi/site/' + encodeURIComponent(cfg.wifiSlug) + '/status?phone=' + encodeURIComponent(phone);
                 var timer = setInterval(function () {
                     tries++;

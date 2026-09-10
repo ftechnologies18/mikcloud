@@ -60,7 +60,11 @@ func agentSnapshotLocked(db *model.DB, now time.Time) agentSnapshot {
 			snap.RoutersConflict++
 		}
 		if seen, err := time.Parse(time.RFC3339, r.LastSeen); err == nil {
-			if r.Mode == "agent" && now.Sub(seen) < OnlineWindow {
+			// N°75 — fenêtre élargie au régime de veille adaptative :
+			// 3 × le pas du scheduler du routeur (un agent endormi à
+			// 180 s reste « en ligne » ; le plafond historique de 3 min
+			// s'applique aux routeurs actifs à 45 s).
+			if r.Mode == "agent" && now.Sub(seen) < agentOnlineWindow(r) {
 				snap.RoutersOnline++
 			}
 			if seen.After(lastSeen) {

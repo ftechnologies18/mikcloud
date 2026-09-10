@@ -8,6 +8,10 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o server .
 
 FROM alpine:3.20
+# N°75 — ca-certificates : prérequis du sslmode=verify-full vers Neon (racines
+# publiques pour la validation de la chaîne de certification). Sans elles, le
+# driver pgx refuse la connexion TLS stricte → la synchro casse au démarrage.
+RUN apk add --no-cache ca-certificates
 RUN adduser -D -u 10001 mikcloud
 WORKDIR /app
 COPY --from=builder /app/server /app/server

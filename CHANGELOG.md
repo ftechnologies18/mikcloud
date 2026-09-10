@@ -5,6 +5,152 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-10 — N°75 : veille adaptative des agents, amaigrissement du portail (-66 %), ETag console, durcissement sécurité et 2 bugs (Wave hardcodé, cap 150)
+
+### N°75 — Contexte : livraison de la file d'attente de l'audit (capacité 0 $)
+Après l'analyse de capacité N°74/N°15 (mur bande passante ~100 routeurs sur le
+plan gratuit Render), livraison des 5 optimisations structurelles restantes +
+2 bugs fonctionnels découverts par l'audit, dont un qui facturait les invités
+au MAUVAIS marchand Wave.
+
+### Veille adaptative des agents — le cloud pilote le pas des routeurs (45 s ↔ 180 s)
+- **Avant** : le scheduler MikCloud posé à l'installation tourne à 45 s à
+  JAMAIS — 1 920 check-ins/jour/routeur quel que soit l'usage. **Après** : à
+  chaque check-in, le cloud décide — 45 s quand le routeur est « sous
+  attention » (console du compte ouverte : toute requête console
+  authentifiée marque le compte via le middleware d'auth ; invité sur le
+  portail : chargement de page, claim et poll de statut marquent le routeur
+  du site ; commandes métier en file), sinon 180 s de veille. La bascule est
+  une commande `scheduler_set` ORDINAIRE (même FIFO, même garantie de
+  livraison, même fermeture zombie) ; le retour « ok » du routeur échoe
+  l'intervalle appliqué et pose `Router.SchedulerSec` — la vérité vient
+  toujours du routeur, pattern walled-garden/portail.
+- **Piège évité (découvert en traçant le flux)** : le cadenceur read_state
+  N°74 (2 min) file TOUJERS une commande au moment de décider — compter
+  toutes les commandes en file aurait fait ping-ponger les routeurs
+  45 s ↔ 180 s à CHAQUE check-in. Seules les commandes ACTIONNABLES
+  (user_add, kick, etc.) réveillent ; les balayages (read_state,
+  walled_garden, hotspot_files) sont servis en veille sans dommage.
+- **Intégrité** : le seuil « hors ligne » devient max(réglage compte,
+  3 × le pas) — `model.Router.EffectiveOfflineAfter`, partagé par le
+  moniteur de notifications et la fenêtre en ligne du sync-status (un
+  routeur endormi ne flappe plus « hors ligne » entre deux check-ins).
+  Latence de réveil : pire cas un cycle de veille (3 min) ; la page de
+  claim du portail attend désormais 5 min (60 × 5 s) au lieu de 2 min.
+  Débit : ~6 Mo/mois/routeur en veille → capacité ~350-450 routeurs sur le
+  plan gratuit (vs ~100 avant).
+- **Rate-limit /agent/\*** (le protocole était explicitement hors limiteur) :
+  par TOKEN (les sites derrière NAT partagent une IP) — cmd 60/min,
+  result 600/min/IP (le token voyage dans le corps POST, illisible au
+  niveau middleware sans consommer le body), register 6/min/IP, garde IP
+  transverse 600/min sur tout /agent/* (borne la mémoire contre les floods
+  à tokens aléatoires). Le 429 agent est en TEXTE (contrat textuel de
+  /agent/cmd).
+
+### Amaigrissement du portail — 2,30 Mo → 0,79 Mo déployés par routeur (-66 %)
+- **TTF inutiles retirés** (648 Ko) : fa-solid/fa-brands/fa-regular/
+  fa-v4compatibility .ttf ne sont fetchés que par les navigateurs
+  pré-2015 (les woff2 servent à tout le parc hotspot 2026).
+- **Webfonts sous-ensembleés aux icônes UTILISÉES** : extraction
+  automatique des classes fa- des 8 pages (parseur complet du CSS FA6 —
+  piège : les alias sont des sélecteurs MULTIPLES `.fa-ticket-alt:before,
+  .fa-ticket-simple:before{…}`, une extraction mono-sélecteur ratait 9
+  icônes), puis pyftsubset : fa-solid 150 Ko → 4,1 Ko (37 icônes),
+  fa-brands 108 Ko → 680 o (WhatsApp seul), fa-regular et fa-v4compat
+  supprimés (jamais référencés par les pages). Complétude VÉRIFIÉE par
+  script (37/37 codepoints présents).
+- **Images recompressées** : logo.png 291 Ko → 14,6 Ko (320 px, palette 256
+  avec alpha — affiché à ~64-90 px dans l'en-tête), pubs 388 Ko → 133 Ko
+  (720 px, q72 progressif).
+- **README.md du template déplacé hors de template/** : il était DÉPLOYÉ
+  aux routeurs par DefaultFiles() (8 Ko de documentation sur chaque
+  routeur client). La signature de contenu re-pousse automatiquement le
+  portail amaigri vers tout le parc au check-in suivant.
+
+### ETag console — le plus gros poste restant du trafic console
+- GET /api/dashboard et GET /api/sessions passent en `writeJSONCacheable`
+  (N°74) : corps déterministe + `Cache-Control: no-cache` + ETag fnv64 → le
+  navigateur de la console revalide automatiquement (If-None-Match) et
+  reçoit un 304 sans corps entre deux changements de données, au lieu de
+  re-télécharger l'intégralité (mesure pointe : 1,5 Mo/777 req de trafic
+  console). Les mutations de Tick/expirations restent exécutées — seule la
+  réponse est conditionnelle.
+
+### Durcissement sécurité
+- **secretbox étendu** : les secrets de notification
+  (telegram_bot_token, whatsapp_token, resend_api_key, smtp_pass) et le
+  secret 2FA (admin_users.totp_secret) sont désormais chiffrés au repos
+  (AES-256-GCM), lecture = déchiffrement / écriture = chiffrement dans les
+  specs pg, migration one-shot des valeurs en clair au démarrage
+  (migrateSealSecretColumns), scellement du snapshot JSON (mode dev).
+  L'empreinte de synchro reste calculée sur l'état mémoire clair — aucune
+  tempête de réécriture.
+- **Bug caché n°3 corrigé (persistance 2FA)** : `AdminUser.TOTPSecret`
+  porte `json:"-"` → l'empreinte de synchro (json.Marshal) l'EXCLUAIT —
+  un changement de secret ne déclenchait AUCUN upsert (la 2FA n'était
+  persistée que par effet de bord du flip TOTPEnabled : un redémarrage
+  entre /2fa/setup et /2fa/activate perdait le secret, et le mode JSON
+  dev ne le persistait JAMAIS). Empreinte dédiée via shadow struct qui
+  EXPOSE le secret au marshal (uniquement pour le hash — jamais sérialisé
+  ailleurs).
+- **TLS strict vers Neon** : sslmode=verify-full par défaut (validation
+  chaîne + hostname ; « require » chiffrait mais acceptait n'importe quel
+  certificat — usurpation d'endpoint possible sur le segment réseau).
+  PRÉVALIDÉ contre le Neon de production depuis l'environnement de dev
+  (verify-full OK sur l'endpoint pooler). Échappatoires : sslmode= dans
+  l'URL, ou MIKCLOUD_PG_SSLMODE (urgence sans re-déploiement).
+  L'image Docker Alpine embarque désormais ca-certificates (prérequis
+  des racines publiques — sans elles, verify-full casserait la synchro).
+
+### Bug 1 — offres Wave hardcodées : les invités payaient le MAUVAIS marchand
+- **Constat** : login.html portait 7 cartes d'offre pointant en dur vers le
+  marchand Wave de l'OPÉRATEUR (M_5Mg9EG61ZHDF — FTCI, 100→3000 F). Un
+  compte sans waveLink voyait ses invités PAYER l'opérateur ; pire,
+  renderOffers ne remplaçait que le href SANS mettre à jour les prix
+  (sélecteur `.price` alors que la classe réelle est `.creative-price`) :
+  l'invité voyait « 100 F » et payait le montant réel du profil chez Wave ;
+  les cartes orphelines (moins d'offres que 7 slots) restaient cliquables
+  vers le mauvais marchand ; et le deep-link Android ne se liait qu'aux
+  liens présents au chargement (les href dynamiques n'en bénéficiaient
+  jamais).
+- **Correctif** : les 7 cartes statiques deviennent des PLACEHOLDERS sans
+  lien marchand (`href="#"` + data-mik-offer) ; renderOffers réécrit —
+  chaque carte épouse l'offre PAYABLE correspondante (libellé de durée
+  humain, PRIX et lien Wave DU COMPTE mis à jour), les offres sans waveUrl
+  et les cartes orphelines sont MASQUÉES, et la vitrine entière (grille +
+  titres + bandeau Wave) se retire quand le compte n'a AUCUNE offre
+  payable en ligne (réversible : configurer le lien marchand la fait
+  réapparaître via le fetch live, sans re-déploiement). Le deep-link
+  Android passe en DÉLÉGATION document-level (attrape tout clic sur une
+  ancre pay.wave.com, quelle que soit la date de pose du href). Test
+  garde-fou : le template ne doit JAMAIS contenir d'URL marchand Wave.
+
+### Bug 2 — cap 150 users du read_state : réconciliation mensongère au-delà
+- **Constat** : le script read_state bornait le rapport à 150 users / 100
+  sessions ; applyReadState marquait MissingOnRouter tout user cloud
+  absent de la liste → au-delà de 150 utilisateurs sur le routeur, FAUX
+  badges « absent du routeur » en cascade, et le diff sessions générait des
+  logouts fantômes au-delà de 100 sessions actives.
+- **Correctif (double volet)** : bornes portées à 500 users / 250 sessions
+  (le script est généré par le CLOUD à chaque commande — la correction
+  s'applique à tout le parc dès le déploiement, aucun versionnage agent) ;
+  le rapport porte désormais `trunc=true` quand il est tronqué, et le
+  cloud NE DÉDUIT RIEN des absents — ni badge MissingOnRouter (ni posé ni
+  levé), ni diff sessions (état conservé), ni compteurs (dernière valeur
+  honnête gardée). L'honnêteté du rapport prime sur le comptage.
+
+### Tests
+- 12 nouveaux : veille adaptative ×6 (bascule veille, attention console/
+  portail/expirée, piège des commandes de balayage, dédup, seuil offline,
+  et un END-TO-END complet check-in → rapport → réveil console), troncature
+  read_state ×3 (déductions différées, comportement historique intact,
+  script v4), ETag console ×2 (dashboard + sessions, 200/304/mutation),
+  template Wave ×2 (aucun marchand hardcodé + placeholders complets),
+  limiteur agent ×2 (isolation par token + 429 texte) ; ancien contrat du
+  test « /agent/cmd illimité » mis au nouveau contrat N°75 ; suite
+  complète 11 paquets VERTS (api 103 s), -race ciblé vert, gofmt/vet
+  propres.
+
 ## 2026-09-10 — N°74 : audit de robustesse + optimisation — le backend ne peut plus geler (5 correctifs structurels) et la bande passante agents chute de ~62 %
 
 ### N°74 — Contexte : audit d'expert complet (portail hybride, console, chaîne agents, robustesse) après l'incident de quota du 8-10/09

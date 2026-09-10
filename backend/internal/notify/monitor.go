@@ -122,7 +122,10 @@ func (s *Service) collect(now time.Time) []outboxItem {
 			continue
 		}
 		cfg := store.GetOrCreateNotifSettings(db, r.AccountID)
-		expired := now.Sub(seen) > time.Duration(cfg.OfflineAfterSec)*time.Second
+		// N°75 — seuil élargi au régime de veille adaptative : 3 × le pas
+		// du scheduler (un routeur endormi à 180 s serait sinon marqué hors
+		// ligne entre deux check-ins — fausse alerte à chaque sieste).
+		expired := now.Sub(seen) > r.EffectiveOfflineAfter(cfg.OfflineAfterSec)
 
 		if r.Status == "online" {
 			if expired {

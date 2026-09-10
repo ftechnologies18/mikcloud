@@ -386,13 +386,26 @@ func TestRateLimitGlobalAPI(t *testing.T) {
 		t.Fatalf("13e requête sur /api/auth/login doit être limitée (429), obtenu %d", rec.Code)
 	}
 
-	// Les routes hors /api/ (poll agent, healthcheck) restent hors périmètre.
-	for i := 0; i < 200; i++ {
+	// N°75 — /agent/* a SES propres fenêtres (par token d'agent, cf.
+	// TestAgentRateLimitPerToken) et ne consomme AUCUN scope /api/* :
+	// 60 check-ins du même token passent, la 61e est coupée, et un autre
+	// token repart sur une fenêtre neuve.
+	for i := 0; i < 60; i++ {
 		rec := httptest.NewRecorder()
-		limited.ServeHTTP(rec, req("POST", "/agent/cmd", nil))
+		limited.ServeHTTP(rec, req("GET", "/agent/cmd?token=tok-x", nil))
 		if rec.Code != http.StatusOK {
-			t.Fatalf("/agent/cmd doit rester hors limiteur, obtenu %d à la requête %d", rec.Code, i+1)
+			t.Fatalf("check-in %d du token X doit passer (limite 60/min), obtenu %d", i+1, rec.Code)
 		}
+	}
+	rec = httptest.NewRecorder()
+	limited.ServeHTTP(rec, req("GET", "/agent/cmd?token=tok-x", nil))
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("61e check-in du token X doit être limité (429), obtenu %d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	limited.ServeHTTP(rec, req("GET", "/agent/cmd?token=tok-y", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("un autre token démarre une fenêtre neuve, obtenu %d", rec.Code)
 	}
 }
 
@@ -480,5 +493,72 @@ func TestRecoverMiddlewareConvertsPanicAndSurvives(t *testing.T) {
 	if err == nil {
 		resp3.Body.Close()
 		t.Fatal("ErrAbortHandler doit interrompre la réponse (connexion close), pas un 200")
+	}
+}
+
+// TestAgentRateLimitPerToken — N°75 — /agent/cmd : la clé du limiteur est le
+// TOKEN (les sites derrière NAT partagent une IP), 60 req/min. Un autre
+// token (autre routeur derrière la MÊME IP) garde sa fenêtre propre, et la
+// garde IP transverse (600/min sur tout /agent/*) reste au-dessus du trafic
+// légitime agrégé d'un site multi-routeurs.
+func TestAgentRateLimitPerToken(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	limited := authRateLimit(next)
+
+	get := func(path string) int {
+		rec := httptest.NewRecorder()
+		limited.ServeHTTP(rec, req("GET", path, nil))
+		return rec.Code
+	}
+
+	// 60 check-ins du même token passent, le 61e est coupé (429 texte).
+	for i := 1; i <= 60; i++ {
+		if code := get("/agent/cmd?token=tok-a"); code != http.StatusOK {
+			t.Fatalf("check-in %d du token A doit passer, obtenu %d", i, code)
+		}
+	}
+	if code := get("/agent/cmd?token=tok-a"); code != http.StatusTooManyRequests {
+		t.Fatalf("61e check-in du token A doit être limité, obtenu %d", code)
+	}
+
+	// Autre token, même IP : fenêtre propre (isolation par routeur).
+	if code := get("/agent/cmd?token=tok-b"); code != http.StatusOK {
+		t.Fatalf("le token B (même IP) démarre une fenêtre neuve, obtenu %d", code)
+	}
+
+	// register : borne serrée par IP (installations ponctuelles).
+	for i := 1; i <= 6; i++ {
+		if code := get("/agent/register?token=tok-c"); code != http.StatusOK {
+			t.Fatalf("register %d doit passer, obtenu %d", i, code)
+		}
+	}
+	if code := get("/agent/register?token=tok-c"); code != http.StatusTooManyRequests {
+		t.Fatalf("7e register doit être limité, obtenu %d", code)
+	}
+
+	// Le reste de l'API n'est pas impacté par les fenêtres agent.
+	if code := get("/api/routers"); code != http.StatusOK {
+		t.Fatalf("/api/routers reste hors périmètre agent, obtenu %d", code)
+	}
+}
+
+// TestAgentRateLimitRejectsText — le 429 du protocole agent est en TEXTE
+// (contrat textuel de /agent/cmd) avec Retry-After.
+func TestAgentRateLimitRejectsText(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	limited := authRateLimit(next)
+	for i := 0; i < 60; i++ {
+		limited.ServeHTTP(httptest.NewRecorder(), req("GET", "/agent/cmd?token=tok-txt", nil))
+	}
+	rec := httptest.NewRecorder()
+	limited.ServeHTTP(rec, req("GET", "/agent/cmd?token=tok-txt", nil))
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("429 attendu, obtenu %d", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
+		t.Fatalf("le 429 agent doit être text/plain, obtenu %q", ct)
+	}
+	if ra := rec.Header().Get("Retry-After"); ra != "60" {
+		t.Fatalf("Retry-After: 60 attendu, obtenu %q", ra)
 	}
 }

@@ -302,6 +302,10 @@ func (a *API) handleWifiClaim(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "Routeur du site WiFi introuvable — contactez le gérant")
 		return
 	}
+	// N°75 — veille adaptative : un invité est SUR le portail de ce site —
+	// son routeur repasse en mode rapide (le claim qui suit est servi en
+	// 45 s, pas au prochain cycle de veille).
+	a.markAttention("rt:" + router.ID)
 	routerCopy := *router
 	profileCopy := *profile
 	settings := ensureSettings(db, site.AccountID)
@@ -673,6 +677,10 @@ func (a *API) handleWifiStatus(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "Site WiFi introuvable")
 		return
 	}
+	// N°75 — veille adaptative : la page de claim POLL ce statut toutes les 5 s
+	// — chaque poll marque le routeur du site (l'attente de provisioning garde
+	// le mode rapide, l'auto-login n'attend pas un cycle de veille).
+	a.markAttention("rt:" + site.RouterID)
 	settings := ensureSettings(db, site.AccountID)
 	dayKey := model.WifiDayKey(settings.Tenant.Timezone, time.Now().UTC())
 	resp := map[string]any{"state": "none", "active": site.Active}
@@ -834,6 +842,10 @@ func (a *API) handleWifiPortal(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
+	// N°75 — veille adaptative : chaque chargement du portail (invité qui
+	// vient de se connecter au WiFi) marque le routeur du site — il sera
+	// en mode rapide à son prochain check-in, AVANT le claim éventuel.
+	a.markAttention("rt:" + site.RouterID)
 	cfg := buildPortalConfigForSite(db, site, router, r)
 	if !site.Active && router != nil {
 		// N°51 — site en pause : config fraîche du ROUTEUR (1er site actif

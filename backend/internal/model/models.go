@@ -201,6 +201,42 @@ type Router struct {
 	// textes) re-file automatiquement — le gérant change sa config dans la
 	// console, l'agent re-déploie tout seul au prochain check-in (≤ 45 s).
 	HotspotFilesSig string `json:"hotspotFilesSig,omitempty"`
+	// N°75 — veille adaptative : intervalle ACTUEL (secondes) du scheduler
+	// MikCloud sur ce routeur. 0 = état antérieur au N°75 (l'installation
+	// pose 45 s — traité comme 45). Le cloud décide du pas à chaque
+	// check-in : 45 s quand le routeur est « sous attention » (console
+	// ouverte, commandes en jeu, invité sur le portail), sinon la veille
+	// (180 s) — la capacité bande passante passe de ~100 à ~350-450
+	// routeurs sur le plan gratuit. Posé au retour « ok » de la commande
+	// scheduler_set, jamais à la mise en file.
+	SchedulerSec int `json:"schedulerSec,omitempty"`
+}
+
+// SchedulerSecEffective — pas de scheduler connu du routeur (N°75). 0 =
+// état antérieur au correctif : l'installation posait 45 s.
+func (r *Router) SchedulerSecEffective() int {
+	if r.SchedulerSec <= 0 {
+		return 45
+	}
+	return r.SchedulerSec
+}
+
+// EffectiveOfflineAfter — N°75 — seuil « hors ligne » effectif d'un routeur
+// agent : le réglage du compte (OfflineAfterSec, défaut 135 s = 3 × 45 s) OU
+// 3 × son pas de scheduler, LE PLUS GRAND des deux. Un routeur en veille
+// (180 s) serait sinon marqué hors ligne entre deux check-ins — fausses
+// alertes « Routeur hors ligne » à chaque sieste. Partagé par le moniteur
+// de notifications (package notify) et le sync-status (package api) : la
+// formule vit ici, avec le modèle, pour éviter un import croisé.
+func (r *Router) EffectiveOfflineAfter(cfgOfflineSec int) time.Duration {
+	if cfgOfflineSec <= 0 {
+		cfgOfflineSec = 135
+	}
+	effective := cfgOfflineSec
+	if v := 3 * r.SchedulerSecEffective(); v > effective {
+		effective = v
+	}
+	return time.Duration(effective) * time.Second
 }
 
 // Profile — profil hotspot (débit, durée, prix, validité).

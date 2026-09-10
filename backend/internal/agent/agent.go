@@ -674,7 +674,7 @@ func header(cmd model.Command) string {
 // Builders par kind
 // ---------------------------------------------------------------------------
 
-// buildReadState — v2 (P1, F6/F8) : en plus de la télémétrie, des utilisateurs
+// buildReadState — v4 (N°75) : en plus de la télémétrie, des utilisateurs
 // et des sessions actives, le rapport contient :
 //   - board / freehdd / totalhdd : nom de carte + disque en Mo. La division
 //     octets → Mo se fait CÔTÉ SCRIPT (free-hdd-space/total-hdd-space sont des
@@ -682,7 +682,13 @@ func header(cmd model.Command) string {
 //     via on-error) — le rapport reste compact et le cloud stocke des Mo tels
 //     quels dans Router.BoardName/FreeHddMb/TotalHddMb ;
 //   - ifaces=name:rx:tx;… : compteurs CUMULÉS rx-byte/tx-byte de /interface,
-//     8 interfaces running maximum (le cloud calcule les débits par diff).
+//     8 interfaces running maximum (le cloud calcule les débits par diff) ;
+//   - trunc=true|false (N°75) : le rapport est TRONQUÉ — le parc dépasse les
+//     bornes anti-payload (500 users / 250 sessions actives). Le cloud ne doit
+//     RIEN déduire des absents (ni badge MissingOnRouter, ni diff sessions :
+//     les faux logouts en cascade cassaient le journal). Les bornes v2
+//     (150/100) faisaient mentir la réconciliation dès 151 utilisateurs :
+//     tout user cloud au-delà passait « absent du routeur » à tort.
 func (b Builder) buildReadState(cmd model.Command) string {
 	var sb strings.Builder
 	sb.WriteString(header(cmd))
@@ -701,20 +707,23 @@ func (b Builder) buildReadState(cmd model.Command) string {
 } on-error={ :set rfreehdd 0; :set rtotalhdd 0 }
 :local rusr ""
 :local rn 0
+:local rtrunc "false"
 :foreach u in=[/ip hotspot user find] do={
-  :if ($rn < 150) do={
+  :if ($rn < 500) do={
     :set rusr ($rusr . [:tostr [/ip hotspot user get $u name]] . "|" . [:tostr [/ip hotspot user get $u profile]] . "|" . [:tostr [/ip hotspot user get $u disabled]] . ";")
     :set rn ($rn + 1)
   }
 }
+:if ($rn >= 500) do={ :set rtrunc "true" }
 :local rsess ""
 :local rsn 0
 :foreach a in=[/ip hotspot active find] do={
-  :if ($rsn < 100) do={
+  :if ($rsn < 250) do={
     :set rsess ($rsess . [:tostr [/ip hotspot active get $a user]] . "|" . [:tostr [/ip hotspot active get $a address]] . "|" . [:tostr [/ip hotspot active get $a uptime]] . "|" . [:tostr [/ip hotspot active get $a bytes-in]] . "|" . [:tostr [/ip hotspot active get $a bytes-out]] . ";")
     :set rsn ($rsn + 1)
   }
 }
+:if ($rsn >= 250) do={ :set rtrunc "true" }
 :local rif ""
 :do {
   :local rin 0
@@ -731,7 +740,7 @@ func (b Builder) buildReadState(cmd model.Command) string {
 	sb.WriteString(`/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
 		`" http-method=post http-data=("cmd=` + cmd.ID +
 		`&status=ok&version=". $rver ."&uptime=". $rup ."&cpu=". $rcpu ."&freemem=". $rmem ."&totalmem=". $rmemb` +
-		` ."&board=". $rboard ."&freehdd=". $rfreehdd ."&totalhdd=". $rtotalhdd ."&users=". $rusr ."&sessions=". $rsess ."&ifaces=". $rif) output=none` + "\n")
+		` ."&board=". $rboard ."&freehdd=". $rfreehdd ."&totalhdd=". $rtotalhdd ."&users=". $rusr ."&sessions=". $rsess ."&ifaces=". $rif ."&trunc=". $rtrunc) output=none` + "\n")
 	return sb.String()
 }
 
@@ -1216,20 +1225,44 @@ func (b Builder) buildSchedulerAdd(cmd model.Command) string {
 }
 
 // buildSchedulerSet — F10 : set [find name=…] disabled=yes|no.
+// N°75 — veille adaptative : le payload peut porter intervalSec (borné
+// [45, 900] par défense en profondeur — le cloud est le seul émetteur mais
+// un payload corrompu ne doit jamais espacer le scheduler au-delà du
+// raisonnable) : la commande devient la bascule de pas du scheduler MikCloud
+// (45 s actif ↔ 240 s veille), pilotée par le cloud à chaque check-in.
+// L'outil F10 (disabled) garde son comportement historique.
 func (b Builder) buildSchedulerSet(cmd model.Command) string {
 	name := SanitizeName(plStr(cmd.Payload, "name"))
 	set := `/system scheduler set [find name="` + rosEscape(name) + `"]`
+	iv := 0
+	if raw := int(plInt64(cmd.Payload, "intervalSec")); raw > 0 {
+		iv = raw
+		if iv < 45 {
+			iv = 45
+		}
+		if iv > 900 {
+			iv = 900
+		}
+		set += " interval=" + strconv.Itoa(iv) + "s"
+	}
 	if plBool(cmd.Payload, "disabled") {
 		set += " disabled=yes"
 	} else {
 		set += " disabled=no"
+	}
+	// N°75 — le RAPPORT échoe l'intervalle réellement appliqué : le cloud
+	// pose Router.SchedulerSec depuis cette valeur (vérité routeur, pas
+	// le payload émis — une commande en file peut être périmée).
+	extra := map[string]string{}
+	if iv > 0 {
+		extra["intervalSec"] = strconv.Itoa(iv)
 	}
 	okVar := "ok" + idSafe(cmd.ID)
 	var sb strings.Builder
 	sb.WriteString(header(cmd))
 	sb.WriteString(":local " + okVar + " true\n")
 	sb.WriteString(":do { " + set + " } on-error={ :set " + okVar + " false }\n")
-	sb.WriteString(b.resultLines(cmd.ID, okVar, nil))
+	sb.WriteString(b.resultLines(cmd.ID, okVar, extra))
 	return sb.String()
 }
 

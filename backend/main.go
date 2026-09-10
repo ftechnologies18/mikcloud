@@ -303,10 +303,20 @@ func limitBody(next http.Handler) http.Handler {
 //   - plafond GLOBAL par instance de 900 requêtes/minute sur /api/* (suivi
 //     S1-A2) : insensible à l'usurpation de X-Forwarded-For, il borne le
 //     débit total même si un attaquant forge des IP pour échapper aux
-//     buckets par IP.
+//     buckets par IP ;
+//   - N°75 — /agent/* (protocole des routeurs, historiquement hors
+//     périmètre) : par TOKEN d'agent (les sites derrière NAT partagent une
+//     IP — la clé pertinente est le routeur, pas l'origine) + garde IP
+//     transverse. Un check-in légitime = 1,33 req/min à 45 s (moins en veille
+//     N°75) : cmd 60/min par token = ~45× la marge ; result 120/min (rafales
+//     de rapports au check-in chargé) ; register 6/min par IP (installation
+//     manuelle ponctuelle). La garde IP 300/min sur tout /agent/* borne la
+//     mémoire du limiteur contre les floods à tokens aléatoires (un bucket
+//     par token forgé, purgé au bout de la fenêtre — l'IP de la source, elle,
+//     est coupée bien avant).
 //
 // Les routes /agent/* (poll 45 s des routeurs, cadence fixe) et le healthcheck
-// restent hors périmètre.
+// restent hors périmètre du limiteur /api/*.
 //
 // Derrière la passerelle (Render/Caddy), l'IP client vient du PREMIER hop
 // de X-Forwarded-For — celui posé par le proxy de confiance (cf. clientIP).
@@ -353,39 +363,9 @@ func authRateLimit(next http.Handler) http.Handler {
 		return "", 0
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Sécurité S1 (suivi A2) — plafond GLOBAL par instance : certaines
-		// plates-formes relais transmettent le XFF du client (sondes
-		// production : 15 XFF forgés → 15 buckets distincts), donc un
-		// attaquant délibéré peut forger des IP pour échapper aux buckets par
-		// IP. Ce compteur unique, insensible à toute usurpation d'en-tête,
-		// borne le débit total admis par l'instance — la rotation d'IP ne le
-		// contourne pas. 900/min ≈ 15 req/s soutenues, très au-dessus du
-		// trafic légitime agrégé (consoles en polling, exports) — uniquement
-		// les floods sont coupés.
-		globalOK := true
-		mu.Lock()
-		if strings.HasPrefix(r.URL.Path, "/api/") {
-			now := time.Now()
-			gb := buckets["global|*"]
-			if gb == nil || now.After(gb.reset) {
-				gb = &bucket{reset: now.Add(time.Minute)}
-				buckets["global|*"] = gb
-			}
-			gb.count++
-			if gb.count > 900 {
-				globalOK = false
-			}
-		}
-		mu.Unlock()
-		if !globalOK {
-			w.Header().Set("Retry-After", "60")
-			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			w.WriteHeader(http.StatusTooManyRequests)
-			_, _ = w.Write([]byte(`{"error":"Trop de requêtes — réessayez dans une minute"}`))
-			return
-		}
-		if scope, limit := scopeFor(r.URL.Path); scope != "" {
-			key := scope + "|" + clientIP(r)
+		// allow — comptage d'un bucket de fenêtre (1 min) ; true si la requête
+		// passe. Verrou court, jamais tenu pendant un handler.
+		allow := func(key string, limit int) bool {
 			mu.Lock()
 			now := time.Now()
 			b := buckets[key]
@@ -396,7 +376,60 @@ func authRateLimit(next http.Handler) http.Handler {
 			b.count++
 			ok := b.count <= limit
 			mu.Unlock()
-			if !ok {
+			return ok
+		}
+
+		// N°75 — protocole agent : par token quand il est lisible (cmd : query
+		// string), par IP sinon (result : le token voyage dans le corps POST,
+		// illisible au niveau middleware sans consommer le body ; register :
+		// installation ponctuelle). Réponse 429 en TEXTE (le contrat des
+		// endpoints agent est textuel — le fetch RouterOS échoue proprement,
+		// retenté au tick suivant).
+		if strings.HasPrefix(r.URL.Path, "/agent/") {
+			ip := clientIP(r)
+			if !allow("agent-ip|"+ip, 600) {
+				rejectAgent(w)
+				return
+			}
+			switch {
+			case strings.HasPrefix(r.URL.Path, "/agent/cmd"):
+				if !allow("agent-cmd|"+r.URL.Query().Get("token"), 60) {
+					rejectAgent(w)
+					return
+				}
+			case strings.HasPrefix(r.URL.Path, "/agent/result"):
+				if !allow("agent-result|"+ip, 600) {
+					rejectAgent(w)
+					return
+				}
+			case strings.HasPrefix(r.URL.Path, "/agent/register"):
+				if !allow("agent-register|"+ip, 6) {
+					rejectAgent(w)
+					return
+				}
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Sécurité S1 (suivi A2) — plafond GLOBAL par instance : certaines
+		// plates-formes relais transmettent le XFF du client (sondes
+		// production : 15 XFF forgés → 15 buckets distincts), donc un
+		// attaquant délibéré peut forger des IP pour échapper aux buckets par
+		// IP. Ce compteur unique, insensible à toute usurpation d'en-tête,
+		// borne le débit total admis par l'instance — la rotation d'IP ne le
+		// contourne pas. 900/min ≈ 15 req/s soutenues, très au-dessus du
+		// trafic légitime agrégé (consoles en polling, exports) — uniquement
+		// les floods sont coupés.
+		if strings.HasPrefix(r.URL.Path, "/api/") && !allow("global|*", 900) {
+			w.Header().Set("Retry-After", "60")
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":"Trop de requêtes — réessayez dans une minute"}`))
+			return
+		}
+		if scope, limit := scopeFor(r.URL.Path); scope != "" {
+			if !allow(scope+"|"+clientIP(r), limit) {
 				w.Header().Set("Retry-After", "60")
 				w.Header().Set("Content-Type", "application/json; charset=utf-8")
 				w.WriteHeader(http.StatusTooManyRequests)
@@ -406,6 +439,15 @@ func authRateLimit(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// rejectAgent — 429 du protocole agent : corps texte (le contrat de /agent/cmd
+// est textuel — un JSON d'erreur serait juste du bruit dans le log routeur).
+func rejectAgent(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", "60")
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusTooManyRequests)
+	_, _ = w.Write([]byte("# mikcloud: trop de requetes - reessayez dans une minute\n"))
 }
 
 // clientIP — l'adresse client réelle (X-Forwarded-For derrière un reverse proxy,

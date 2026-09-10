@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -62,13 +63,26 @@ type PG struct {
 // OpenPG ouvre le pool, attend que la base réponde (cold start Neon) et crée le
 // schéma si nécessaire (DDL idempotent).
 func OpenPG(databaseURL string) (*PG, error) {
-	// Neon exige TLS ; on ajoute sslmode=require si l'URL n'en précise pas.
+	// N°75 — TLS STRICT : sslmode=verify-full par défaut (validation de la
+	// chaîne de certification + correspondance du nom d'hôte). L'ancien
+	// « require » chiffrait le transport mais acceptait N'IMPORTE QUEL
+	// certificat : un attaquant positionné sur le segment réseau
+	// Render→Neon pouvait se faire passer pour la base (usurpation de
+	// l'endpoint). Échappatoires volontaires : un sslmode= explicite dans
+	// l'URL, ou la variable MIKCLOUD_PG_SSLMODE (urgence opérationnelle
+	// sans re-déploiement — ex. souci de chaîne de certification de
+	// l'hébergeur). L'image de production embarque ca-certificates
+	// (Dockerfile) — prérequis des racines publiques.
 	if !strings.Contains(databaseURL, "sslmode=") {
+		mode := strings.TrimSpace(os.Getenv("MIKCLOUD_PG_SSLMODE"))
+		if mode == "" {
+			mode = "verify-full"
+		}
 		sep := "?"
 		if strings.Contains(databaseURL, "?") {
 			sep = "&"
 		}
-		databaseURL += sep + "sslmode=require"
+		databaseURL += sep + "sslmode=" + mode
 	}
 
 	db, err := sql.Open("pgx", databaseURL)
@@ -814,6 +828,9 @@ func (p *PG) ensureSchema() error {
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS board_name TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS free_hdd_mb INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS total_hdd_mb INTEGER NOT NULL DEFAULT 0`,
+		// N°75 — veille adaptative : intervalle courant du scheduler MikCloud
+		// sur ce routeur (0 = antérieur au N°75 → 45 s implicites).
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS scheduler_sec INTEGER NOT NULL DEFAULT 0`,
 		// Sécurité S6 — détection d'identité routeur dupliquée (conflit
 		// inter-comptes, cf. internal/api/agent_handlers.go).
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS identity_conflict BOOLEAN NOT NULL DEFAULT FALSE`,
@@ -1020,6 +1037,9 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 	// Sécurité P0 #6 — chiffre au repos les mots de passe routeur encore en
 	// clair (base antérieure au correctif), AVANT que les handlers ne s'exécutent.
 	p.migrateSealRouterPasswords()
+	// N°75 — même passe pour les secrets de notification et 2FA (tokens
+	// bots, clé Resend, mot de passe SMTP, secret TOTP).
+	p.migrateSealSecretColumns()
 
 	// Les tris applicatifs sont faits en Go (sort.Slice dans les handlers),
 	// l'ordre de lecture n'a donc aucune importance.
@@ -1613,12 +1633,39 @@ var adminSpec = entitySpec[model.AdminUser]{
 	scan: func(r *sql.Rows) (model.AdminUser, error) {
 		var u model.AdminUser
 		err := r.Scan(&u.ID, &u.Name, &u.Username, &u.Role, &u.PasswordHash, &u.Salt, &u.CreatedAt, &u.AccountID, &u.PasswordSetByUser, &u.EnvPasswordHash, &u.SessionEpoch, &u.TOTPSecret, &u.TOTPEnabled)
+		// N°75 — le secret 2FA est stocké chiffré (AES-256-GCM) :
+		// lecture = déchiffrement (passthrough si valeur antérieure,
+		// migration assurée par migrateSealSecretColumns).
+		u.TOTPSecret = secretbox.Decrypt(u.TOTPSecret)
 		return u, err
 	},
 	args: func(u *model.AdminUser) []any {
-		return []any{u.ID, u.Name, u.Username, u.Role, u.PasswordHash, u.Salt, u.CreatedAt, u.AccountID, u.PasswordSetByUser, u.EnvPasswordHash, u.SessionEpoch, u.TOTPSecret, u.TOTPEnabled}
+		return []any{u.ID, u.Name, u.Username, u.Role, u.PasswordHash, u.Salt, u.CreatedAt, u.AccountID, u.PasswordSetByUser, u.EnvPasswordHash, u.SessionEpoch, secretbox.Encrypt(u.TOTPSecret), u.TOTPEnabled}
 	},
-	hashOf: hashEntity[model.AdminUser],
+	// N°75 — empreinte QUI COUVRE LE SECRET 2FA : le modèle porte
+	// json:"-" sur TOTPSecret (le secret ne sort jamais des réponses API),
+	// mais hashEntity marshalle en JSON — sans cette ombre, un changement
+	// de secret ne changeait PAS l'empreinte → AUCUN upsert → le secret
+	// n'était persisté que par effet de bord du flip TOTPEnabled (un
+	// redémarrage entre /2fa/setup et /2fa/activate le perdait).
+	hashOf: adminUserHash,
+}
+
+// adminUserHashShadow — ombre de AdminUser EXPOSANT TOTPSecret au marshal
+// (uniquement pour l'empreinte de synchro — jamais sérialisée ailleurs).
+type adminUserHashShadow struct {
+	model.AdminUser
+	TOTPSecret string `json:"totpSecret,omitempty"`
+}
+
+func adminUserHash(u *model.AdminUser) uint64 {
+	b, err := json.Marshal(adminUserHashShadow{AdminUser: *u, TOTPSecret: u.TOTPSecret})
+	if err != nil {
+		return 0
+	}
+	h := fnv.New64a()
+	h.Write(b)
+	return h.Sum64()
 }
 
 var routerSpec = entitySpec[model.Router]{
@@ -1626,14 +1673,14 @@ var routerSpec = entitySpec[model.Router]{
 	cols: []string{"id", "name", "host", "port", "username", "password", "mode", "status",
 		"version", "uptime_sec", "cpu_load", "hotspot_users", "active_sessions", "created_at",
 		"hotspot_login_url", "agent_token_hash", "token_preview", "last_seen", "account_id",
-		"board_name", "free_hdd_mb", "total_hdd_mb", "identity_conflict", "walled_garden_sig", "walled_garden_applied_at", "hotspot_files_sig"},
+		"board_name", "free_hdd_mb", "total_hdd_mb", "identity_conflict", "walled_garden_sig", "walled_garden_applied_at", "hotspot_files_sig", "scheduler_sec"},
 	idOf: func(x *model.Router) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Router, error) {
 		var x model.Router
 		err := r.Scan(&x.ID, &x.Name, &x.Host, &x.Port, &x.Username, &x.Password, &x.Mode, &x.Status,
 			&x.Version, &x.UptimeSec, &x.CPULoad, &x.HotspotUsers, &x.ActiveSessions, &x.CreatedAt,
 			&x.HotspotLoginUrl, &x.AgentTokenHash, &x.TokenPreview, &x.LastSeen, &x.AccountID,
-			&x.BoardName, &x.FreeHddMb, &x.TotalHddMb, &x.IdentityConflict, &x.WalledGardenSig, &x.WalledGardenAppliedAt, &x.HotspotFilesSig)
+			&x.BoardName, &x.FreeHddMb, &x.TotalHddMb, &x.IdentityConflict, &x.WalledGardenSig, &x.WalledGardenAppliedAt, &x.HotspotFilesSig, &x.SchedulerSec)
 		// Sécurité P0 #6 — le mot de passe routeur est stocké chiffré
 		// (AES-256-GCM) : lecture = déchiffrement (passthrough si valeur
 		// antérieure au correctif, migration assurée par
@@ -1649,7 +1696,7 @@ var routerSpec = entitySpec[model.Router]{
 		return []any{x.ID, x.Name, x.Host, x.Port, x.Username, secretbox.Encrypt(x.Password), x.Mode, x.Status,
 			x.Version, x.UptimeSec, x.CPULoad, x.HotspotUsers, x.ActiveSessions, x.CreatedAt,
 			x.HotspotLoginUrl, x.AgentTokenHash, x.TokenPreview, x.LastSeen, x.AccountID,
-			x.BoardName, x.FreeHddMb, x.TotalHddMb, x.IdentityConflict, x.WalledGardenSig, x.WalledGardenAppliedAt, x.HotspotFilesSig}
+			x.BoardName, x.FreeHddMb, x.TotalHddMb, x.IdentityConflict, x.WalledGardenSig, x.WalledGardenAppliedAt, x.HotspotFilesSig, x.SchedulerSec}
 	},
 	hashOf: hashEntity[model.Router],
 }
@@ -1693,6 +1740,60 @@ func (p *PG) migrateSealRouterPasswords() {
 	}
 	if len(todo) > 0 {
 		log.Printf("secretbox: migration P0 #6 terminée — %d mot(s) de passe routeur chiffré(s)", len(todo))
+	}
+}
+
+// migrateSealSecretColumns — N°75 — passe de démarrage (idempotente) :
+// chiffre les secrets de notification (tokens bots Telegram/WhatsApp, clé
+// Resend, mot de passe SMTP) et les secrets 2FA (admin_users.totp_secret)
+// encore stockés en clair (base antérieure au correctif). Sans cette passe,
+// les valeurs existantes resteraient en clair à vie : l'empreinte de synchro
+// ne voit aucune différence entre clair et chiffré (elle porte l'état mémoire
+// clair des deux côtés) — seules les NOUVELLES écritures chiffreraient.
+func (p *PG) migrateSealSecretColumns() {
+	for _, c := range []struct{ table, col, label string }{
+		{"notif_settings", "telegram_bot_token", "token Telegram"},
+		{"notif_settings", "whatsapp_token", "token WhatsApp"},
+		{"notif_settings", "resend_api_key", "clé Resend"},
+		{"notif_settings", "smtp_pass", "mot de passe SMTP"},
+		{"admin_users", "totp_secret", "secret 2FA"},
+	} {
+		rows, err := p.db.Query(fmt.Sprintf("SELECT id, %s FROM %s WHERE %s <> ''", c.col, c.table, c.col))
+		if err != nil {
+			log.Printf("secretbox: lecture %s.%s impossible (%v) — retentée à l'écriture suivante", c.table, c.col, err)
+			continue
+		}
+		type plain struct {
+			id  string
+			val string
+		}
+		var todo []plain
+		for rows.Next() {
+			var t plain
+			if err := rows.Scan(&t.id, &t.val); err != nil {
+				rows.Close()
+				break
+			}
+			if t.val != "" && !secretbox.IsEncrypted(t.val) {
+				todo = append(todo, t)
+			}
+		}
+		rows.Close()
+		done := 0
+		for _, t := range todo {
+			enc := secretbox.Encrypt(t.val)
+			if enc == "" || !secretbox.IsEncrypted(enc) {
+				continue // refus d'écrire un pseudo-chiffré (cf. secretbox.Encrypt)
+			}
+			if _, err := p.db.Exec(fmt.Sprintf("UPDATE %s SET %s = $1 WHERE id = $2", c.table, c.col), enc, t.id); err != nil {
+				log.Printf("secretbox: chiffrement %s de %s différé (%v)", c.label, t.id, err)
+				continue
+			}
+			done++
+		}
+		if done > 0 {
+			log.Printf("secretbox: N°75 — %d %s chiffré(s) au repos (%s.%s)", done, c.label, c.table, c.col)
+		}
 	}
 }
 
@@ -2195,6 +2296,13 @@ var notifSettingsSpec = entitySpec[model.NotificationSettings]{
 		if stockState != "" {
 			_ = json.Unmarshal([]byte(stockState), &x.StockAlertState)
 		}
+		// N°75 — secrets de notification chiffrés au repos : lecture =
+		// déchiffrement (passthrough si valeur antérieure au correctif,
+		// migration assurée par migrateSealSecretColumns).
+		x.TelegramBotToken = secretbox.Decrypt(x.TelegramBotToken)
+		x.WhatsAppToken = secretbox.Decrypt(x.WhatsAppToken)
+		x.ResendAPIKey = secretbox.Decrypt(x.ResendAPIKey)
+		x.SMTPPass = secretbox.Decrypt(x.SMTPPass)
 		return x, nil
 	},
 	args: func(x *model.NotificationSettings) []any {
@@ -2204,10 +2312,15 @@ var notifSettingsSpec = entitySpec[model.NotificationSettings]{
 				stockState = string(b)
 			}
 		}
-		return []any{x.AccountID, x.Enabled, x.TelegramEnabled, x.TelegramBotToken, x.TelegramChatID,
-			x.WhatsAppEnabled, x.WhatsAppToken, x.WhatsAppPhoneID, x.WhatsAppTo,
-			x.EmailEnabled, x.EmailProvider, x.ResendAPIKey, x.ResendFrom,
-			x.SMTPHost, x.SMTPPort, x.SMTPUser, x.SMTPPass, x.EmailTo,
+		// N°75 — écriture = chiffrement des secrets de notification
+		// (tokens bots Telegram/WhatsApp, clé Resend, mot de passe
+		// SMTP). L'empreinte (hashOf) reste calculée sur l'état mémoire
+		// clair — comme les mots de passe routeur, la valeur chiffrée
+		// (nonce aléatoire) ne provoque aucune réécriture en boucle.
+		return []any{x.AccountID, x.Enabled, x.TelegramEnabled, secretbox.Encrypt(x.TelegramBotToken), x.TelegramChatID,
+			x.WhatsAppEnabled, secretbox.Encrypt(x.WhatsAppToken), x.WhatsAppPhoneID, x.WhatsAppTo,
+			x.EmailEnabled, x.EmailProvider, secretbox.Encrypt(x.ResendAPIKey), x.ResendFrom,
+			x.SMTPHost, x.SMTPPort, x.SMTPUser, secretbox.Encrypt(x.SMTPPass), x.EmailTo,
 			x.OfflineAfterSec, x.LowStockThreshold, x.DailyReport, x.ReportHour,
 			x.LastReportDate, stockState, x.AccountID}
 	},

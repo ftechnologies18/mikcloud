@@ -123,7 +123,7 @@ func New(dir string) (*Store, error) {
 			log.Printf("store: db.json illisible (%v) — état de mise en service (aucune donnée démo)", err)
 			s.db = BuildEmptyState()
 		} else {
-			unsealRouterPasswords(&db)
+			unsealSecrets(&db)
 			s.db = &db
 			s.ensureSlices()
 			// Un ancien db.json mono-tenant (champs legacy tenant/settings, sans
@@ -708,10 +708,15 @@ func (s *Store) Data() *model.DB { return s.db }
 // Sécurité P0 #6 — chiffrement au repos des identifiants routeur (mode JSON)
 // ---------------------------------------------------------------------------
 
-// sealedSnapshot renvoie une COPIE superficielle de l'état dont les mots de
-// passe routeur sont chiffrés, pour la sérialisation JSON. La mémoire vivante
-// reste en clair (aucun handler à modifier) ; la copie est jetable et ne sert
-// qu'au marshal.
+// sealedSnapshot renvoie une COPIE superficielle de l'état dont les secrets
+// sont chiffrés, pour la sérialisation JSON. La mémoire vivante reste en clair
+// (aucun handler à modifier) ; la copie est jetable et ne sert qu'au marshal.
+//
+// N°75 — en plus des mots de passe routeur, les secrets de notification
+// (tokens bots, clé Resend, mot de passe SMTP) sont scellés. Le secret 2FA
+// (AdminUser.TOTPSecret) porte json:"-" : il n'est PAS sérialisable en mode
+// JSON (limitation assumée du mode dev — la production PostgreSQL le
+// chiffre et le persiste, empreinte dédiée incluse).
 func sealedSnapshot(db *model.DB) *model.DB {
 	clone := *db
 	clone.Routers = make([]model.Router, len(db.Routers))
@@ -719,14 +724,31 @@ func sealedSnapshot(db *model.DB) *model.DB {
 		r.Password = secretbox.Encrypt(r.Password)
 		clone.Routers[i] = r
 	}
+	if db.NotifSettings != nil {
+		clone.NotifSettings = make(map[string]model.NotificationSettings, len(db.NotifSettings))
+		for k, v := range db.NotifSettings {
+			v.TelegramBotToken = secretbox.Encrypt(v.TelegramBotToken)
+			v.WhatsAppToken = secretbox.Encrypt(v.WhatsAppToken)
+			v.ResendAPIKey = secretbox.Encrypt(v.ResendAPIKey)
+			v.SMTPPass = secretbox.Encrypt(v.SMTPPass)
+			clone.NotifSettings[k] = v
+		}
+	}
 	return &clone
 }
 
-// unsealRouterPasswords déchiffre en place les mots de passe routeur d'un état
-// issu du JSON (valeurs antérieures au correctif : passthrough transparent).
-func unsealRouterPasswords(db *model.DB) {
+// unsealSecrets déchiffre en place les secrets d'un état issu du JSON
+// (valeurs antérieures au correctif : passthrough transparent).
+func unsealSecrets(db *model.DB) {
 	for i := range db.Routers {
 		db.Routers[i].Password = secretbox.Decrypt(db.Routers[i].Password)
+	}
+	for k, v := range db.NotifSettings {
+		v.TelegramBotToken = secretbox.Decrypt(v.TelegramBotToken)
+		v.WhatsAppToken = secretbox.Decrypt(v.WhatsAppToken)
+		v.ResendAPIKey = secretbox.Decrypt(v.ResendAPIKey)
+		v.SMTPPass = secretbox.Decrypt(v.SMTPPass)
+		db.NotifSettings[k] = v
 	}
 }
 
@@ -811,7 +833,7 @@ func (s *Store) Reload() (ReloadStats, error) {
 		if err := json.Unmarshal(data, fresh); err != nil {
 			return ReloadStats{}, fmt.Errorf("fichier illisible : %w", err)
 		}
-		unsealRouterPasswords(fresh)
+		unsealSecrets(fresh)
 		db = fresh
 	}
 

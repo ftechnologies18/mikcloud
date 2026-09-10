@@ -49,6 +49,14 @@ type API struct {
 	// readStateMinInterval ; les re-sync manuelles et post-écriture restent
 	// immédiates. Accédé UNIQUEMENT sous le verrou du store.
 	readStateDone map[string]time.Time
+	// N°75 — veille adaptative : signaux d'attention VOLATILS (jamais
+	// persistés — un redémarrage repart en mode rapide partout, le plus
+	// sûr). Clés « acc:<id> » (requête console authentifiée du compte) et
+	// « rt:<id> » (portail/claim sur le routeur). Verrou dédié, jamais
+	// imbriqué avec le verrou du store (le marqueur console est posé
+	// depuis le middleware d'auth, hors section critique).
+	attnMu sync.Mutex
+	attn   map[string]time.Time
 }
 
 // readStateMinInterval — N°74 — intervalle minimum entre deux read_state
@@ -63,7 +71,7 @@ const readStateMinInterval = 2 * time.Minute
 
 // New construit l'API.
 func New(s *store.Store, jwtSecret string) *API {
-	return &API{store: s, secret: jwtSecret, gws: map[string]routeros.Gateway{}, pinLock: newPinLimiter(), signup: newSignupLimiter(), join: newSignupLimiter(), wifiClaim: newSignupLimiterLimits(20, 100), portalTrack: newSignupLimiterLimits(300, 3000), reset: newSignupLimiter(), egress: newEgressStats(), readStateDone: map[string]time.Time{}}
+	return &API{store: s, secret: jwtSecret, gws: map[string]routeros.Gateway{}, pinLock: newPinLimiter(), signup: newSignupLimiter(), join: newSignupLimiter(), wifiClaim: newSignupLimiterLimits(20, 100), portalTrack: newSignupLimiterLimits(300, 3000), reset: newSignupLimiter(), egress: newEgressStats(), readStateDone: map[string]time.Time{}, attn: map[string]time.Time{}}
 }
 
 // Handler — mux complet, protégé par le middleware d'authentification.

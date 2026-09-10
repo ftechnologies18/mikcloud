@@ -803,6 +803,13 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 	// pour des snapshots que personne ne consultait la nuit.
 	a.ensureReadStateDue(db, router)
 
+	// N°75 — veille adaptative : décide du pas du scheduler (45 s si le
+	// routeur est sous attention — console ouverte sur son compte, invité
+	// sur son portail, commandes en attente — sinon 240 s de veille) et
+	// enfile la bascule si l'état connu diverge. La commande rejoint la
+	// FIFO de CE check-in.
+	a.ensureSchedulerIntervalLocked(db, router)
+
 	// File FIFO : commandes en attente (max 10 par check-in)
 	queued := []model.Command{}
 	for i := range db.Commands {
@@ -984,6 +991,27 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 			files := agent.HotspotFilesFromPayload(cmd.Payload)
 			a.logActivity(db, router.AccountID, "router", "Portail captif déployé sur «"+router.Name+"» ("+
 				strconv.Itoa(len(files))+" fichier(s) — login.html, status.html, assets)")
+		} else if cmd.Kind == model.CmdSchedulerSet {
+			// N°75 — veille adaptative : le pas du scheduler est CONFIRMÉ
+			// par le routeur (le RAPPORT échoe l'intervalle appliqué —
+			// vérité routeur, pas le payload émis ; pattern walled-garden).
+			// Un échec est retenté au check-in suivant.
+			if iv, err := strconv.Atoi(vals.Get("intervalSec")); err == nil && iv > 0 {
+				if iv < 45 {
+					iv = 45
+				}
+				if iv > 900 {
+					iv = 900
+				}
+				if iv != router.SchedulerSec {
+					router.SchedulerSec = iv
+					pas := "rapide (45 s)"
+					if iv >= agentSleepSec {
+						pas = "veille (" + strconv.Itoa(iv) + " s)"
+					}
+					a.logActivity(db, router.AccountID, "router", "Cadence agent de «"+router.Name+"» : mode "+pas)
+				}
+			}
 		} else {
 			a.logActivity(db, router.AccountID, "router", "Commande "+cmd.Kind+" exécutée sur «"+router.Name+"»")
 		}

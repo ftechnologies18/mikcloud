@@ -5,6 +5,59 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-12 — N°79 : l'e-mail « Mot de passe oublié » devient un courriel brandé HTML « Aurora Emerald » (mode clair) — transport deux pièces Resend html + SMTP multipart/alternative
+
+### N°79 — Contexte : un lien fonctionnel, un e-mail texte brut
+Le parcours N°68 (mot de passe oublié) fonctionnait parfaitement côté
+sécurité (token 256 bits hashé, usage unique, 60 minutes) mais le courriel
+partait en **texte brut** : Resend ne recevait que le champ `text`, le SMTP
+un `text/plain` nu. À l'arrivée dans une boîte Gmail/Outlook, MikCloud se
+présentait comme un script — aucune couleur, aucun logo, aucun bouton : pour
+un SaaS qui vit de la confiance (les e-mails de réinitialisation sont LA
+première cible du phishing), l'identité visuelle de l'app devait voyager
+jusqu'à la boîte de réception.
+
+### Transport — deux pièces MIME chez les deux fournisseurs
+`notify.SendEmailTo` gagne un corps HTML (paramètre `htmlBody`, ignoré si
+vide) : **Resend** reçoit désormais `text` + `html` dans le payload (champ
+`html` omis quand vide — payload inchangé pour les notifications texte) ;
+**SMTP** passe en `multipart/alternative` texte PUIS HTML (frontière dédiée,
+chaque client affiche sa meilleure pièce, les clients sans HTML tombent sur
+le texte) ; `buildMessage` conserve le chemin texte pur à l'identique quand
+aucun HTML n'est fourni (notifications automatiques inchangées).
+
+### Gabarit « Aurora Emerald » — l'identité de la console en mode clair
+`password_reset_email.go` (NOUVEAU) rend le courriel aux couleurs du
+frontend (globals.css) : fond **papier menthe #F4F9F5**, carte blanche, encre
+émeraude #102019, bandeau + liseré au **dégradé signature émeraude→teal**
+(#009558 → #008687, replis unis #008B57 pour les clients sans gradients),
+**wordmark duotone** « Mik » blanc + « Cloud » menthe clair (lisible même
+logo bloqué), `<meta name="color-scheme" content="light">` + couleurs
+explicites sur chaque contenant (les clients sombres n'inversent rien).
+Le clin d'œil produit : le lien vit dans un **TICKET pointillé** façon
+voucher MikCloud — étiquette « LIEN SÉCURISÉ · USAGE UNIQUE », pastille
+« ⏱ 60 MIN », phrase explicite sous le bouton ; bouton bulletproof
+(td bgcolor + a inline-block, cliquable partout) + **repli du lien en
+clair** (word-break), note de sécurité « vous n'êtes pas à l'origine… » sur
+fond menthe doux, pied de page avec lien du site et mention automatique.
+Compatibilité e-mail : tables `role="presentation"`, styles 100 % inline,
+600 px fluides, échappement HTML de tout contenu utilisateur (nom, compte,
+identifiant — le lien est échappé pour href ET affichage), logo servi depuis
+l'origine résolue du frontend (APP_PUBLIC_URL/ALLOWED_ORIGIN → mikcloud.ftci.fr
+en prod, localhost en dev), pré-en-tête caché pour l'aperçu de boîte.
+Taille du HTML : ~6 Ko (bien sous les seuils de troncage Gmail).
+
+### Vérifications
+Tests : notify étendu (payload Resend AVEC/SANS clé `html`, multipart
+texte-puis-HTML + frontière fermée + ordre des pièces) ; password_reset
+étendu (stub 5 paramètres, le courriel capturé part en DEUX pièces — le
+texte de repli ET le HTML avec lien, couleurs, mentions contractuelles) ;
+2 tests NOUVEAUX purs sur les gabarits (contrat complet : identité, mentions,
+échappement anti-injection — un nom « <script> » reste du texte affiché —,
+lien ≥ 2 occurrences, libellés texte N°68 au mot près) ; suite complète
+11 paquets verts, -race ciblé vert, gofmt/vet/build propres ; rendu vérifié
+au navigateur desktop 800 px + mobile 390 px (aucun débordement, bouton
+entier, ticket intact, contraste pied assombri #6B7F76 pour WCAG).
 ## 2026-09-11 — N°78-bis : le login reste lent après N°78 — mise à niveau opportuniste du coût bcrypt + synchro Postgres divisée par deux
 
 ### N°78-bis — Contexte : la promesse N°78 non tenue, mesurée en production

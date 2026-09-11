@@ -7,9 +7,11 @@
 //     compte : génération d'un token aléatoire 256 bits, stocké HASHÉ
 //     (SHA-256), expiration 60 minutes, puis e-mail de réinitialisation via
 //     le canal e-mail du compte (Resend ou SMTP — N°67) ou, à défaut, celui
-//     du compte principal (plateforme). Sinon : réponse explicite « aucun
-//     compte associé » (choix produit assumé : l'utilisateur est GUIDÉ, pas
-//     laissé dans le doute — le quota IP borne le sondage d'adresses).
+//     du compte principal (plateforme). N°79 : le courriel part en deux
+//     pièces (texte de repli + HTML brandé « Aurora Emerald »). Sinon :
+//     réponse explicite « aucun compte associé » (choix produit assumé :
+//     l'utilisateur est GUIDÉ, pas laissé dans le doute — le quota IP borne
+//     le sondage d'adresses).
 //  2. POST /api/auth/reset-password {token, password} — consommation du lien
 //     : usage UNIQUE (UsedAt), expiration stricte, politique S2 (10
 //     caractères + denylist + ≠ username), révocation de TOUTES les sessions
@@ -73,7 +75,7 @@ var generateResetToken = func() (string, error) {
 }
 
 // sendResetEmail — envoi de l'e-mail (indirection pour les tests : aucun
-// réseau en CI).
+// réseau en CI). N°79 : (cfg, destinataire, sujet, corps TEXTE, corps HTML).
 var sendResetEmail = notify.SendEmailTo
 
 // hashResetToken — SHA-256 hex du token (seule forme persistée).
@@ -234,17 +236,20 @@ func (a *API) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 	accEmail, accName, ownerName, ownerUsername := acc.Email, acc.Name, owner.Name, owner.Username
 	a.store.Unlock()
 
-	// ---- Phase 2 (hors verrou) : envoi réseau.
-	link := passwordResetLinkBase(r) + "/reset-password?token=" + url.QueryEscape(token)
+	// ---- Phase 2 (hors verrou) : envoi réseau — corps TEXTE (repli des
+	// clients sans HTML) et corps HTML brandé « Aurora Emerald » (N°79).
+	base := passwordResetLinkBase(r)
+	link := base + "/reset-password?token=" + url.QueryEscape(token)
 	title := "MikCloud — Réinitialisation de votre mot de passe"
-	var body strings.Builder
-	body.WriteString("Bonjour " + ownerName + ",\n\n")
-	body.WriteString("Vous (ou quelqu'un utilisant cette adresse) avez demandé la réinitialisation du mot de passe du compte MikCloud « " + accName + " » (identifiant : " + ownerUsername + ").\n\n")
-	body.WriteString("Choisissez votre nouveau mot de passe via ce lien, valable " + minutesLabel(passwordResetTTL) + " et utilisable une seule fois :\n\n")
-	body.WriteString(link + "\n\n")
-	body.WriteString("Si vous n'êtes pas à l'origine de cette demande, ignorez simplement cet e-mail : votre mot de passe actuel reste inchangé.\n\n")
-	body.WriteString("— MikCloud")
-	err = sendResetEmail(&senderCfg, accEmail, title, body.String())
+	mail := resetEmailData{
+		OwnerName:    ownerName,
+		AccountName:  accName,
+		Username:     ownerUsername,
+		Link:         link,
+		TTLMinutes:   int(passwordResetTTL.Minutes()),
+		FrontendBase: base,
+	}
+	err = sendResetEmail(&senderCfg, accEmail, title, buildResetEmailText(mail), buildResetEmailHTML(mail))
 
 	// ---- Phase 3 (verrou) : trace d'historique (même format que N°67).
 	entry := notify.LogEntry(&senderCfg, "email", notify.KindPasswordReset, title, "", err)
@@ -264,8 +269,8 @@ func (a *API) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "expiresInMin": int(passwordResetTTL.Minutes())})
 }
 
-// minutesLabel — « 60 minutes » (libellé du corps d'e-mail, en français —
-// contractuel avec l'i18n du front qui affiche la même durée).
+// minutesLabel — « 60 minutes » (libellé des journaux d'activité, en
+// français — contractuel avec l'i18n du front qui affiche la même durée).
 func minutesLabel(d time.Duration) string {
 	return strconv.Itoa(int(d.Minutes())) + " minutes"
 }

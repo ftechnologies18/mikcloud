@@ -97,7 +97,7 @@ type errTest struct{}
 func (errTest) Error() string { return "erreur simulée" }
 
 func TestBuildMessage(t *testing.T) {
-	msg := string(buildMessage("from@example.ci", "to@example.ci", "Routeur hors ligne", "Le routeur A ne répond plus."))
+	msg := string(buildMessage("from@example.ci", "to@example.ci", "Routeur hors ligne", "Le routeur A ne répond plus.", ""))
 	for _, attendu := range []string{
 		"From: MikCloud <from@example.ci>",
 		"To: <to@example.ci>",
@@ -125,6 +125,32 @@ func TestBuildMessage(t *testing.T) {
 	// Corps en fin de message après la ligne vide.
 	if !strings.HasSuffix(msg, "Routeur hors ligne\n\nLe routeur A ne répond plus.\n") {
 		t.Fatalf("corps du message incorrect : %q", msg)
+	}
+}
+
+// TestBuildMessageHTML — N°79 : htmlBody fourni → multipart/alternative
+// texte + HTML (chaque pièce dans l'ordre text/plain PUIS text/html — les
+// clients affichent la DERNIÈRE pièce qu'ils savent rendre), frontière fermée.
+func TestBuildMessageHTML(t *testing.T) {
+	msg := string(buildMessage("from@example.ci", "to@example.ci", "Mot de passe", "Corps texte.", "<p>Corps HTML.</p>"))
+	if !strings.Contains(msg, "Content-Type: multipart/alternative; boundary=\"=_mikcloud-alt-7C4F2A\"") {
+		t.Fatalf("en-tête multipart absent : %q", msg[:200])
+	}
+	plain := strings.Index(msg, "Content-Type: text/plain; charset=UTF-8")
+	html := strings.Index(msg, "Content-Type: text/html; charset=UTF-8")
+	if plain < 0 || html < 0 || plain > html {
+		t.Fatalf("les pièces texte (%d) puis HTML (%d) sont attendues dans cet ordre", plain, html)
+	}
+	if !strings.Contains(msg, "Corps texte.") || !strings.Contains(msg, "<p>Corps HTML.</p>") {
+		t.Fatal("le texte ET le HTML doivent être embarqués")
+	}
+	if !strings.HasSuffix(msg, "--=_mikcloud-alt-7C4F2A--\r\n") {
+		t.Fatalf("frontière de fermeture absente, fin : %q", msg[len(msg)-60:])
+	}
+	// La pièce texte précède le HTML (texte de repli lisible dans les
+	// clients sans HTML — multipart/alternative : dernier gagnant).
+	if strings.Index(msg, "Corps texte.") > strings.Index(msg, "<p>Corps HTML.</p>") {
+		t.Fatal("la pièce texte doit précéder la pièce HTML")
 	}
 }
 
@@ -165,7 +191,7 @@ func TestConfiguredResend(t *testing.T) {
 }
 
 func TestSendEmailResend(t *testing.T) {
-	var gotAuth, gotPath, gotFrom, gotSubject, gotTo, gotText string
+	var gotAuth, gotPath, gotFrom, gotSubject, gotTo, gotText, gotHTML string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth, gotPath = r.Header.Get("Authorization"), r.URL.Path
 		var p struct {
@@ -173,9 +199,10 @@ func TestSendEmailResend(t *testing.T) {
 			To      []string `json:"to"`
 			Subject string   `json:"subject"`
 			Text    string   `json:"text"`
+			HTML    string   `json:"html"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&p)
-		gotFrom, gotSubject, gotTo, gotText = p.From, p.Subject, strings.Join(p.To, ","), p.Text
+		gotFrom, gotSubject, gotTo, gotText, gotHTML = p.From, p.Subject, strings.Join(p.To, ","), p.Text, p.HTML
 		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte(`{"id":"email-123"}`))
 	}))
@@ -184,8 +211,9 @@ func TestSendEmailResend(t *testing.T) {
 	resendEndpoint = srv.URL
 	defer func() { resendEndpoint = old }()
 
-	// From vide → expéditeur par défaut (onboarding@resend.dev).
-	if err := sendEmailResend("re_test", "", "dest@example.ci", "Sujet é", "Corps"); err != nil {
+	// From vide → expéditeur par défaut (onboarding@resend.dev) ; sans
+	// HTML, le payload ne porte PAS la clé (décodeur → chaîne vide).
+	if err := sendEmailResend("re_test", "", "dest@example.ci", "Sujet é", "Corps", ""); err != nil {
 		t.Fatalf("envoi accepté attendu, obtenu %v", err)
 	}
 	if gotAuth != "Bearer re_test" {
@@ -200,13 +228,20 @@ func TestSendEmailResend(t *testing.T) {
 	if gotSubject != "Sujet é" || gotTo != "dest@example.ci" || gotText != "Corps" {
 		t.Fatalf("payload incorrect : sujet=%q to=%q text=%q", gotSubject, gotTo, gotText)
 	}
+	if gotHTML != "" {
+		t.Fatalf("sans corps HTML la clé \"html\" doit être absente, obtenu %q", gotHTML)
+	}
 
-	// From explicite conservé tel quel.
-	if err := sendEmailResend("re_test", "MikCloud <alertes@ftci.fr>", "dest@example.ci", "T", "B"); err != nil {
+	// From explicite conservé tel quel + N°79 : le HTML est transmis tel
+	// quel dans le payload (pièce text/html chez Resend).
+	if err := sendEmailResend("re_test", "MikCloud <alertes@ftci.fr>", "dest@example.ci", "T", "B", "<p>HTML brandé</p>"); err != nil {
 		t.Fatalf("envoi avec from explicite attendu, obtenu %v", err)
 	}
 	if gotFrom != "MikCloud <alertes@ftci.fr>" {
 		t.Fatalf("from explicite doit être conservé, obtenu %q", gotFrom)
+	}
+	if gotHTML != "<p>HTML brandé</p>" {
+		t.Fatalf("corps HTML attendu dans le payload, obtenu %q", gotHTML)
 	}
 }
 
@@ -220,7 +255,7 @@ func TestSendEmailResendError(t *testing.T) {
 	resendEndpoint = srv.URL
 	defer func() { resendEndpoint = old }()
 
-	err := sendEmailResend("re_test", "x@nonverifie.ci", "dest@example.ci", "T", "B")
+	err := sendEmailResend("re_test", "x@nonverifie.ci", "dest@example.ci", "T", "B", "")
 	if err == nil {
 		t.Fatal("une erreur était attendue (HTTP 403)")
 	}
@@ -234,7 +269,7 @@ func TestSendEmailResendError(t *testing.T) {
 	}))
 	defer srv2.Close()
 	resendEndpoint = srv2.URL
-	err = sendEmailResend("re_test", "", "dest@example.ci", "T", "B")
+	err = sendEmailResend("re_test", "", "dest@example.ci", "T", "B", "")
 	if err == nil || !strings.Contains(err.Error(), "500") {
 		t.Fatalf("repli HTTP 500 attendu, obtenu %v", err)
 	}

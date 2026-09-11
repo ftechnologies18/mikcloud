@@ -99,10 +99,12 @@ func Deliver(cfg *model.NotificationSettings, kind, title, body, onlyChannel str
 	}
 	if try("email") && Configured(cfg, "email") {
 		var err error
+		// Notifications automatiques : corps texte seul (le HTML
+		// brandé est réservé aux e-mails transactionnels — N°79).
 		if EmailProviderOf(cfg) == "resend" {
-			err = sendEmailResend(cfg.ResendAPIKey, cfg.ResendFrom, cfg.EmailTo, title, body)
+			err = sendEmailResend(cfg.ResendAPIKey, cfg.ResendFrom, cfg.EmailTo, title, body, "")
 		} else {
-			err = sendEmail(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPass, cfg.EmailTo, title, body)
+			err = sendEmail(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPass, cfg.EmailTo, title, body, "")
 		}
 		logs = append(logs, logEntry(cfg, "email", kind, title, body, err))
 	}
@@ -133,13 +135,16 @@ func EmailCredentialsOK(cfg *model.NotificationSettings) bool {
 // SendEmailTo — N°68 : envoi e-mail transactionnel — même mécanique que le
 // canal e-mail des notifications (Resend ou SMTP selon le provider du
 // compte), mais le DESTINATAIRE est fourni par l'appelant (ex. mot de passe
-// oublié → l'e-mail enregistré du compte). Aucune écriture de journal :
-// c'est l'appelant qui trace (il connaît le kind et le contexte).
-func SendEmailTo(cfg *model.NotificationSettings, to, title, body string) error {
+// oublié → l'e-mail enregistré du compte). N°79 : textBody est la version
+// texte (repli des clients sans HTML, pièce text/plain du multipart) et
+// htmlBody la version brandée (pièce text/html — ignorée si vide). Aucune
+// écriture de journal : c'est l'appelant qui trace (il connaît le kind et
+// le contexte).
+func SendEmailTo(cfg *model.NotificationSettings, to, title, textBody, htmlBody string) error {
 	if EmailProviderOf(cfg) == "resend" {
-		return sendEmailResend(cfg.ResendAPIKey, cfg.ResendFrom, to, title, body)
+		return sendEmailResend(cfg.ResendAPIKey, cfg.ResendFrom, to, title, textBody, htmlBody)
 	}
-	return sendEmail(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPass, to, title, body)
+	return sendEmail(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPass, to, title, textBody, htmlBody)
 }
 
 // logEntry — trace d'un envoi (status sent/error + message d'erreur).
@@ -240,21 +245,27 @@ func sendWhatsApp(accessToken, phoneNumberID, to, title, body string) error {
 // sendEmailResend — POST /emails de l'API Resend (https://resend.com/docs).
 // Un statut 2xx (202 Accepted en pratique) suffit : l'identifiant renvoyé
 // n'est pas conservé (l'historique notif_log trace le résultat côté MikCloud).
-func sendEmailResend(apiKey, from, to, title, body string) error {
+// N°79 : htmlBody non vide → champ "html" du payload (Resend délivre alors
+// text ET html — chaque client affiche sa meilleure pièce).
+func sendEmailResend(apiKey, from, to, title, textBody, htmlBody string) error {
 	from = strings.TrimSpace(from)
 	if from == "" {
 		from = resendDefaultFrom
 	}
-	payload, err := json.Marshal(map[string]any{
+	payload := map[string]any{
 		"from":    from,
 		"to":      []string{to},
 		"subject": title,
-		"text":    body,
-	})
+		"text":    textBody,
+	}
+	if strings.TrimSpace(htmlBody) != "" {
+		payload["html"] = htmlBody
+	}
+	b, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("resend : payload : %w", err)
 	}
-	req, err := http.NewRequest(http.MethodPost, resendEndpoint, bytes.NewReader(payload))
+	req, err := http.NewRequest(http.MethodPost, resendEndpoint, bytes.NewReader(b))
 	if err != nil {
 		return fmt.Errorf("resend : requête invalide : %w", err)
 	}
@@ -285,7 +296,7 @@ func sendEmailResend(apiKey, from, to, title, body string) error {
 	return fmt.Errorf("resend : HTTP %d", resp.StatusCode)
 }
 
-func sendEmail(host string, port int, user, pass, to, title, body string) error {
+func sendEmail(host string, port int, user, pass, to, title, textBody, htmlBody string) error {
 	if port <= 0 || port > 65535 {
 		port = 587
 	}
@@ -295,7 +306,7 @@ func sendEmail(host string, port int, user, pass, to, title, body string) error 
 		from = to // cas rare : relais local sans authentification
 	}
 
-	msg := buildMessage(from, to, title, body)
+	msg := buildMessage(from, to, title, textBody, htmlBody)
 	auth := smtp.PlainAuth("", user, pass, host)
 	hostname, _, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -375,18 +386,42 @@ func smtpSend(client *smtp.Client, from, to string, msg []byte) error {
 	return client.Quit()
 }
 
-// buildMessage — message MIME texte simple ; le sujet est encodé en B-UTF-8
-// pour survivre aux accents (« Routeur hors ligne », noms ivoiriens…).
-func buildMessage(from, to, title, body string) []byte {
+// buildMessage — message MIME : texte simple, ou multipart/alternative
+// texte + HTML quand htmlBody est fourni (N°79 — chaque client affiche sa
+// meilleure pièce, les clients sans HTML tombent sur le texte) ; le sujet est
+// encodé en B-UTF-8 pour survivre aux accents (« Routeur hors ligne », noms
+// ivoiriens…).
+func buildMessage(from, to, title, textBody, htmlBody string) []byte {
 	subject := "=?UTF-8?B?" + base64.StdEncoding.EncodeToString([]byte(title)) + "?="
 	var sb strings.Builder
 	sb.WriteString("From: MikCloud <" + from + ">\r\n")
 	sb.WriteString("To: <" + to + ">\r\n")
 	sb.WriteString("Subject: " + subject + "\r\n")
 	sb.WriteString("MIME-Version: 1.0\r\n")
+	if strings.TrimSpace(htmlBody) == "" {
+		sb.WriteString("Content-Type: text/plain; charset=UTF-8\r\n")
+		sb.WriteString("Content-Transfer-Encoding: 8bit\r\n")
+		sb.WriteString("\r\n")
+		sb.WriteString(title + "\n\n" + textBody + "\n")
+		return []byte(sb.String())
+	}
+	// Frontière MIME : littérale volontairement exotique — elle ne peut
+	// apparaître ni dans le texte ni dans le HTML brandé (contrôlé).
+	const boundary = "=_mikcloud-alt-7C4F2A"
+	sb.WriteString("Content-Type: multipart/alternative; boundary=\"" + boundary + "\"\r\n")
+	sb.WriteString("\r\n")
+	sb.WriteString("--" + boundary + "\r\n")
 	sb.WriteString("Content-Type: text/plain; charset=UTF-8\r\n")
 	sb.WriteString("Content-Transfer-Encoding: 8bit\r\n")
 	sb.WriteString("\r\n")
-	sb.WriteString(title + "\n\n" + body + "\n")
+	sb.WriteString(title + "\n\n" + textBody + "\n")
+	sb.WriteString("\r\n")
+	sb.WriteString("--" + boundary + "\r\n")
+	sb.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
+	sb.WriteString("Content-Transfer-Encoding: 8bit\r\n")
+	sb.WriteString("\r\n")
+	sb.WriteString(htmlBody)
+	sb.WriteString("\r\n")
+	sb.WriteString("--" + boundary + "--\r\n")
 	return []byte(sb.String())
 }

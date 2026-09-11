@@ -15,7 +15,9 @@
 //   - historique : entrée notif_log kind=password_reset ;
 //   - résolution de l'origine du lien : APP_PUBLIC_URL > origine ALLOWED
 //     (prod) > toute origine (dev) > URL canonique ;
-//   - quota IP : 5/10 min, la 6e tentative → 429 + Retry-After.
+//   - quota IP : 5/10 min, la 6e tentative → 429 + Retry-After ;
+//   - N°79 : courriel en deux pièces (texte de repli + gabarit HTML brandé
+//     « Aurora Emerald » — identité, mentions, échappement anti-injection).
 //
 // AUCUNE connexion réseau : le sendeur e-mail est remplacé par un stub.
 package api
@@ -38,15 +40,17 @@ type sentEmail struct {
 	to    string
 	title string
 	body  string
+	html  string
 }
 
 // resetCapture — enregistrement des envois du stub e-mail.
 type resetCapture struct{ calls []sentEmail }
 
-// stubEmail — remplace sendResetEmail : capture l'appel, succès inconditionnel.
-func stubEmail(cap *resetCapture) func(*model.NotificationSettings, string, string, string) error {
-	return func(cfg *model.NotificationSettings, to, title, body string) error {
-		cap.calls = append(cap.calls, sentEmail{*cfg, to, title, body})
+// stubEmail — remplace sendResetEmail : capture l'appel (corps TEXTE + corps
+// HTML — N°79), succès inconditionnel.
+func stubEmail(cap *resetCapture) func(*model.NotificationSettings, string, string, string, string) error {
+	return func(cfg *model.NotificationSettings, to, title, textBody, htmlBody string) error {
+		cap.calls = append(cap.calls, sentEmail{*cfg, to, title, textBody, htmlBody})
 		return nil
 	}
 }
@@ -207,6 +211,27 @@ func TestForgotPasswordFullFlow(t *testing.T) {
 	}
 	if sent.cfg.ResendAPIKey != "re_test_key" {
 		t.Fatalf("fournisseur du compte non utilisé : %+v", sent.cfg)
+	}
+	// N°79 — le courriel part en DEUX pièces : le texte de repli ET le
+	// gabarit HTML brandé (même lien, mêmes mentions contractuelles).
+	if !strings.Contains(sent.html, "/reset-password?token=token-alpha-123") {
+		t.Fatalf("lien manquant dans le HTML : %q", sent.html)
+	}
+	for _, attendu := range []string{
+		"Mik",            // wordmark
+		"#F4F9F5",        // papier menthe Aurora Emerald
+		"#008B57",        // émeraude (repli uni du dégradé)
+		"60 MIN",         // pastille du ticket
+		"USAGE UNIQUE",   // étiquette du ticket
+		"une seule fois", // phrase explicite sous le bouton
+		"reset-password", // route du lien
+	} {
+		if !strings.Contains(sent.html, attendu) {
+			t.Fatalf("%q attendu dans le HTML brandé", attendu)
+		}
+	}
+	if len(sent.html) < 3000 {
+		t.Fatalf("gabarit HTML suspectement court (%d octets)", len(sent.html))
 	}
 
 	// 2. Base : le token en CLAIR n'existe pas, son hash si.
@@ -390,5 +415,85 @@ func TestPasswordResetLinkBase(t *testing.T) {
 	}
 	if got := passwordResetLinkBase(req("ftp://bof")); got != defaultFrontendURL {
 		t.Fatalf("origine non http : %q reçue", got)
+	}
+}
+
+// TestBuildResetEmailHTML — N°79 : contrat du gabarit HTML brandé « Aurora
+// Emerald » : identité (papier menthe, émeraude, wordmark), mentions
+// contractuelles (durée, usage unique), lien échappé deux fois (href + texte),
+// échappement HTML du contenu utilisateur (anti-injection), logo servi depuis
+// l'origine du frontend, pièces MIME absentes (le gabarit est le CORPS).
+func TestBuildResetEmailHTML(t *testing.T) {
+	d := resetEmailData{
+		OwnerName:    "Awa <Testuse>",
+		AccountName:  "Maquis «Le Baobab» & Fils",
+		Username:     "awa68",
+		Link:         "https://mikcloud.ftci.fr/reset-password?token=abc%2Fdef",
+		TTLMinutes:   60,
+		FrontendBase: "https://mikcloud.ftci.fr/",
+	}
+	htmlBody := buildResetEmailHTML(d)
+
+	for _, attendu := range []string{
+		"<!DOCTYPE html>",
+		`<html lang="fr">`,
+		`content="light"`, // mode clair garanti
+		"#F4F9F5",         // papier menthe
+		"#008B57",         // émeraude (replis unis)
+		"linear-gradient(135deg,#009558 0%,#008687 100%)", // dégradé signature
+		"Mik<span", // wordmark duotone
+		`src="https://mikcloud.ftci.fr/logo.png"`, // logo du frontend
+		`href="https://mikcloud.ftci.fr/reset-password?token=abc%2Fdef"`,
+		"⏱ 60 MIN", // pastille du ticket
+		"LIEN SÉCURISÉ · USAGE UNIQUE",
+		"Awa &lt;Testuse&gt;",           // nom échappé
+		"Maquis «Le Baobab» &amp; Fils", // compte échappé (guillemets OK)
+		"Réinitialisez votre mot de passe",
+		"mikcloud.ftci.fr", // étiquette du pied
+	} {
+		if !strings.Contains(htmlBody, attendu) {
+			t.Fatalf("attendu dans le gabarit : %q", attendu)
+		}
+	}
+	for _, interdit := range []string{
+		"Awa <Testuse>",         // le nom brut ne doit JAMAIS apparaître
+		"& Fils",                // esperluette brute interdite en HTML
+		"=_mikcloud-alt-7C4F2A", // frontière MIME : hors du gabarit
+		"Content-Type:",         // pas d'en-tête MIME dans le corps
+	} {
+		if strings.Contains(htmlBody, interdit) {
+			t.Fatalf("interdit dans le gabarit : %q", interdit)
+		}
+	}
+	// Le lien de repli en clair est présent (bouton non cliquable chez
+	// certains clients) — échappé pour l'affichage.
+	if strings.Count(htmlBody, d.Link) < 2 {
+		t.Fatal("le lien doit figurer au moins deux fois (bouton + repli)")
+	}
+}
+
+// TestBuildResetEmailText — N°79 : le texte de repli porte les libellés
+// N°68 au mot près (le multipart sert les clients sans HTML).
+func TestBuildResetEmailText(t *testing.T) {
+	d := resetEmailData{
+		OwnerName:    "Awa",
+		AccountName:  "Maquis Baobab",
+		Username:     "awa68",
+		Link:         "https://mikcloud.ftci.fr/reset-password?token=t",
+		TTLMinutes:   60,
+		FrontendBase: "https://mikcloud.ftci.fr",
+	}
+	txt := buildResetEmailText(d)
+	for _, attendu := range []string{
+		"Bonjour Awa,",
+		"compte MikCloud « Maquis Baobab » (identifiant : awa68)",
+		"valable 60 minutes et utilisable une seule fois",
+		d.Link,
+		"votre mot de passe actuel reste inchangé",
+		"— MikCloud",
+	} {
+		if !strings.Contains(txt, attendu) {
+			t.Fatalf("attendu dans le texte de repli : %q", attendu)
+		}
 	}
 }

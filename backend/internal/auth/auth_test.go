@@ -5,7 +5,7 @@
 //     (3 segments, en-tête HS256) ;
 //   - rejets : token expiré, mauvais secret, payload altéré, format invalide,
 //     base64/json illisible ;
-//   - mots de passe : HashPassword (bcrypt coût 12, sel ignoré), CheckPassword
+//   - mots de passe : HashPassword (bcrypt coût 10, sel ignoré), CheckPassword
 //     (bcrypt + migration ancien hash hexadécimal sha256(salt||password)),
 //     IsLegacyHash, NewSalt.
 package auth

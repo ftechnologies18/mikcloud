@@ -53,11 +53,28 @@ interface ApiOptions {
   method?: "GET" | "POST" | "PUT" | "DELETE";
   body?: unknown;
   params?: Record<string, string | number | undefined>;
-  /** UX R6 — délai max (ms) avant abandon : un réseau mobile peut stall une
-   * requête indéfiniment (socket demi-ouvert) — ni succès ni échec. Passé le
-   * délai, fetch rejette (DOMException) : l'appelant traite ça comme une
-   * erreur réseau (file hors-ligne / fallback cache). */
+  /** UX R6 / N°78 — délai max (ms) avant abandon : un réseau mobile peut
+   * stall une requête indéfiniment (socket demi-ouvert) — ni succès ni
+   * échec. Chaque variante a son DÉFAUT (api/apiAnon 20 s, apiUpload 60 s,
+   * apiDownload 120 s) ; passer timeoutMs explicite prime sur le défaut,
+   * timeoutMs: 0 désactive (attente infinie). Passé le délai, fetch rejette
+   * (DOMException) : l'appelant traite ça comme une erreur réseau
+   * (file hors-ligne / fallback cache). */
   timeoutMs?: number;
+}
+
+/**
+ * N°78 — signal d'annulation avec défaut par variante. AbortSignal.timeout
+ * quand il existe (navigateurs modernes), repli manuel AbortController +
+ * minuteur sinon. `0`/undefined→fallback, `0` explicite = désactivé.
+ */
+function timeoutSignal(ms: number | undefined, fallback: number): AbortSignal | undefined {
+  const delay = ms === undefined ? fallback : ms;
+  if (!delay || !Number.isFinite(delay) || delay <= 0) return undefined;
+  if (typeof AbortSignal.timeout === "function") return AbortSignal.timeout(delay);
+  const ctrl = new AbortController();
+  setTimeout(() => ctrl.abort(), delay);
+  return ctrl.signal;
 }
 
 function buildUrl(path: string, params?: ApiOptions["params"]): string {
@@ -90,10 +107,7 @@ export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
     headers,
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     cache: "no-store",
-    signal:
-      opts.timeoutMs && typeof AbortSignal.timeout === "function"
-        ? AbortSignal.timeout(opts.timeoutMs)
-        : undefined,
+    signal: timeoutSignal(opts.timeoutMs, 20_000),
   });
 
   if (res.status === 401) {
@@ -137,10 +151,7 @@ export async function apiUpload<T>(path: string, form: FormData, opts: ApiOption
     headers,
     body: form,
     cache: "no-store",
-    signal:
-      opts.timeoutMs && typeof AbortSignal.timeout === "function"
-        ? AbortSignal.timeout(opts.timeoutMs)
-        : undefined,
+    signal: timeoutSignal(opts.timeoutMs, 60_000),
   });
 
   if (res.status === 401) {
@@ -179,10 +190,7 @@ export async function apiAnon<T>(path: string, opts: ApiOptions = {}): Promise<T
     headers,
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     cache: "no-store",
-    signal:
-      opts.timeoutMs && typeof AbortSignal.timeout === "function"
-        ? AbortSignal.timeout(opts.timeoutMs)
-        : undefined,
+    signal: timeoutSignal(opts.timeoutMs, 20_000),
   });
   let data: unknown = null;
   try {
@@ -200,12 +208,17 @@ export async function apiAnon<T>(path: string, opts: ApiOptions = {}): Promise<T
   return data as T;
 }
 
-/** apiDownload — télécharge un fichier (CSV, PDF…) renvoyé par l'API, avec token. */
+/** apiDownload — télécharge un fichier (CSV, PDF…) renvoyé par l'API, avec token.
+ * N°78 — délai max 120 s par défaut (gros exports). */
 export async function apiDownload(path: string, filename: string, params?: ApiOptions["params"]): Promise<void> {
   const token = useHotspotStore.getState().token;
   const headers: Record<string, string> = {};
   if (token) headers["Authorization"] = `Bearer ${token}`;
-  const res = await fetch(buildUrl(path, params), { headers, cache: "no-store" });
+  const res = await fetch(buildUrl(path, params), {
+    headers,
+    cache: "no-store",
+    signal: timeoutSignal(undefined, 120_000),
+  });
   if (!res.ok) {
     let message = `Erreur ${res.status}`;
     try {
@@ -577,6 +590,7 @@ export async function fetchRouterPortalPreview(routerId: string): Promise<string
     method: "GET",
     headers,
     cache: "no-store",
+    signal: timeoutSignal(undefined, 20_000),
   });
   if (res.status === 401) {
     useHotspotStore.getState().logout();

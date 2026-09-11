@@ -654,6 +654,209 @@
   }
 }
 
+/* ─── N°78 — Micro-animations CSS du chemin critique (login, shell) ───
+ * Remplacement de framer-motion sur les composants statiques du bundle
+ * initial : mêmes gestuelles (cascade des champs, anneaux du logo, orbes
+ * dérivants, shake d'erreur) en @keyframes natives — ~44 Ko gzip de moins
+ * au chargement de /app et /login. Les vues différées (next/dynamic)
+ * conservent framer-motion, payé dans leur chunk dédié. */
+
+/* Entrée : montée légère — champs de formulaire en cascade (animation-delay
+ * en cascade inline, ex-framer stagger), en-têtes, CTA PWA. */
+@keyframes mik-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* Entrée : fondu pur — pieds de page, encart démo. */
+@keyframes mik-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+/* Entrée : carte de verre du login / paywall (montée + tassement léger). */
+@keyframes mik-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(26px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* Transition de vue de la console (fade + translation légère). */
+@keyframes mik-view-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* Anneaux de pulsation autour du logo — signal « en ligne ». */
+@keyframes mik-pulse-ring {
+  0% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  100% {
+    transform: scale(1.85);
+    opacity: 0;
+  }
+}
+/* Orbes dérivants du panneau branding (desktop). */
+@keyframes mik-drift-a {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  33% {
+    transform: translate(36px, 28px);
+  }
+  66% {
+    transform: translate(-12px, -8px);
+  }
+}
+@keyframes mik-drift-b {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  33% {
+    transform: translate(-30px, -24px);
+  }
+  66% {
+    transform: translate(10px, 6px);
+  }
+}
+/* Orbe respirant côté formulaire. */
+@keyframes mik-orb-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  50% {
+    transform: scale(1.12);
+    opacity: 1;
+  }
+}
+/* Erreur de connexion : la carte de verre tremble. */
+@keyframes mik-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-10px);
+  }
+  40% {
+    transform: translateX(10px);
+  }
+  60% {
+    transform: translateX(-6px);
+  }
+  80% {
+    transform: translateX(6px);
+  }
+}
+/* Bascule d'icône de thème (rotation douce, ex-AnimatePresence). */
+@keyframes mik-icon-in {
+  from {
+    transform: rotate(-70deg) scale(0.7);
+    opacity: 0;
+  }
+  to {
+    transform: rotate(0deg) scale(1);
+    opacity: 1;
+  }
+}
+
+.mik-rise {
+  animation: mik-rise 0.38s ease-out both;
+}
+.mik-fade {
+  animation: mik-fade 0.4s ease-out both;
+}
+.mik-card-in {
+  animation: mik-card-in 0.5s ease-out both;
+}
+.mik-view-in {
+  animation: mik-view-in 0.2s ease-out both;
+}
+/* Base invisible : sans animation (préférence réduire-moution), l'anneau
+ * ne reste pas figé à mi-course — il disparaît, comme l'ancien
+ * useReducedMotion() qui ne rendait pas les anneaux. */
+.mik-pulse-ring {
+  opacity: 0;
+  animation: mik-pulse-ring 2.8s ease-out infinite;
+}
+.mik-drift-a {
+  animation: mik-drift-a 22s ease-in-out infinite;
+}
+.mik-drift-b {
+  animation: mik-drift-b 18s ease-in-out infinite;
+  animation-delay: 1.5s;
+}
+.mik-orb-pulse {
+  animation: mik-orb-pulse 14s ease-in-out infinite;
+}
+.mik-shake {
+  animation: mik-shake 0.45s ease-in-out;
+}
+.mik-icon-in {
+  animation: mik-icon-in 0.25s ease-out;
+}
+
+/* Pression tactile des boutons d'envoi (ex whileHover/whileTap). */
+.mik-press {
+  transition: transform 0.18s ease;
+}
+.mik-press:hover {
+  transform: scale(1.015);
+}
+.mik-press:active {
+  transform: scale(0.97);
+}
+/* Survol des atouts du panneau branding (ex whileHover y:-3, ressort). */
+.mik-hover-lift {
+  transition: transform 0.22s cubic-bezier(0.34, 1.3, 0.4, 1);
+}
+.mik-hover-lift:hover {
+  transform: translateY(-3px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mik-rise,
+  .mik-fade,
+  .mik-card-in,
+  .mik-view-in,
+  .mik-pulse-ring,
+  .mik-drift-a,
+  .mik-drift-b,
+  .mik-orb-pulse,
+  .mik-shake,
+  .mik-icon-in {
+    animation: none;
+  }
+  .mik-press:hover,
+  .mik-press:active,
+  .mik-hover-lift:hover {
+    transform: none;
+  }
+}
+
 /* N°8 — PWA : ouverture directe sur le login (pas la vitrine publique).
  * Le script inline du layout pose .pwa-standalone avant le premier paint ;
  * le contenu prérendu de la landing reste donc invisible pendant la fenêtre

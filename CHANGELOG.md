@@ -5,6 +5,74 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-11 — N°78 : latence au chargement — login 4-7 s → ~1 s (bcrypt), bundle initial −19 % (i18n EN différé + framer-motion hors chemin critique)
+
+### N°78 — Contexte : audit de latence chiffré (3 couches empilées)
+L'audit de production a mesuré sur le parcours réel : **login à 4,3-7,6 s**
+(3 essais reproductibles + navigateur), **bundle JS initial /app à 409 Ko
+gzip / 1,32 Mo brut** (dont i18n FR+EN ~76 Ko gz embarquées en permanence et
+framer-motion ~44 Ko gz pour des transitions de 0,2 s), et des appels API
+intermittents à 2-2,7 s par à-coups de contention CPU sur le 0,1 vCPU du plan
+Render gratuit. Le frontend étant bien architecturé (code-splitting, SW
+propre, préchauffe), les gains étaient dans le payload initial et le backend
+CPU — pas dans une refonte.
+
+### Correctif 1 — bcrypt coût 12 → 10 (backend)
+`HashPassword` passait chaque login à la moulinette bcrypt coût 12 : ≈ 250 ms
+sur un CPU normal, **4-7 s sur le 0,1 vCPU throttlé de Render** — calcul pur,
+à chaque session fraîche. Le coût 10 reste ≥ 2^10 tours de bcrypt (sécurité
+amplement suffisante pour ce service) et divise le temps par ~4 : login attendu
+**~1-1,7 s** après déploiement. Aucune migration : `CompareHashAndPassword`
+lit le coût EMBARQUÉ dans le hash — les comptes existants (coût 12) restent
+vérifiés, les nouveaux hash naissent à 10.
+
+### Correctif 2 — dictionnaire anglais en chargement asynchrone (frontend)
+Les ~430 clés EN (~2 500 lignes) vivaient dans le bundle initial : chaque
+utilisateur français (quasi tout le parc, Côte d'Ivoire) payait ~37 Ko gzip
+pour une langue qu'il n'affiche jamais. Le dictionnaire EN est extrait vers
+`i18n-en.ts`, chargé par `import()` dynamique UNIQUEMENT quand la langue
+active est EN (promesse mémoïsée `ensureEnDict()`, échec réseau → repli
+silencieux sur le français — le contrat historique « clé EN manquante → FR »
+est conservé ; le hook `useI18n()` amorce le chargement et re-rend à
+l'arrivée). Bonus : clés `login.noAccount` / `login.createAccount` promues
+dans les DEUX dictionnaires (les replis inline étaient toujours en français).
+
+### Correctif 3 — framer-motion hors du chemin critique (frontend)
+5 composants statiques du bundle initial convertis en @keyframes CSS
+(`mik-*`, globals.css, bloc `prefers-reduced-motion` complet) : écran de
+connexion (cascade des champs par `animation-delay`, anneaux du logo, orbes
+dérivants, shake d'erreur relancé par retrait/reflow/rajout de classe — le
+focus des champs est préservé), modale « mot de passe oublié », shell de la
+console (transition de vue `mik-view-in`, sortie instantanée), bascule de
+thème, paywall. Les vues différées (next/dynamic) conservent framer-motion,
+payé dans leur chunk dédié. Résultat mesuré : **bundle initial 330 Ko gzip /
+1,08 Mo brut / 18 fichiers** (avant : 409 Ko / 1,32 Mo / 19) — **−79 Ko
+gzip (−19 %)**, dont le dict EN (37 Ko) et framer-motion (44 Ko) sortis des
+chunks initiaux ; les utilisateurs EN téléchargent le leur à la demande.
+
+### Correctif 4 — timeouts fetch par variante (frontend)
+Un réseau mobile peut stall une requête indéfiniment (socket demi-ouvert) :
+sans délai, un appel pendait pour toujours. Nouveau helper `timeoutSignal()`
+avec défaut par variante : **api/apiAnon 20 s, apiUpload 60 s, apiDownload
+120 s** (+ aperçu portail 20 s) ; `timeoutMs` explicite prime sur le défaut,
+`timeoutMs: 0` désactive ; `AbortSignal.timeout` garde son repli manuel
+(AbortController + minuteur) pour les navigateurs anciens.
+
+### Correctif 5 — refresh ciblé sur les requêtes actives (frontend)
+Le bouton « Actualiser » déclenchait `invalidateQueries()` SANS filtre : la
+rafale invalidait aussi les requêtes INACTIVES des vues non consultées
+(6+ refetchs inutiles au 0,1 vCPU Render). Désormais :
+`invalidateQueries({ type: "active" })` — seuls les composants MONTÉS se
+rafraîchissent, le polling reste tranquille.
+
+### Vérifications
+Typecheck, lint et build production verts ; **11 paquets Go verts**
+(gofmt/vet propres) ; E2E Playwright 9/9 verts ; parcours navigateur complet
+(login FR rendu, animations CSS conformes, bascule EN avec chunk asynchrone
+chargé et UI re-rendue en anglais, login admin réel, navigation Comptes avec
+transition CSS, bouton Actualiser sans erreur, retour FR) — zéro erreur
+console/page à chaque étape.
+
 ## 2026-09-10 — N°77 : veilleur d'invités + priorité des actionnables — le claim du portail redevient rapide (45 s → 1-2 min → ≤ 20 s)
 
 ### N°77 — Contexte : le claim gratuit devenu très lent (rentabilité menacée)

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { motion } from "framer-motion";
 import { Check, CreditCard, Lock, LogOut, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 
@@ -113,12 +112,9 @@ export function PaywallOverlay() {
         <div className="absolute bottom-0 right-1/4 size-80 rounded-full bg-destructive/20 blur-[100px]" />
       </div>
 
-      <motion.div
-        initial={{ opacity: 0, y: 20, scale: 0.98 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ duration: 0.5, ease: "easeOut" }}
-        className="relative z-10 w-full max-w-3xl"
-      >
+      {/* N°78 — entrée en CSS pur (mik-card-in) : framer-motion hors du
+       * bundle initial de la console. */}
+      <div className="mik-card-in relative z-10 w-full max-w-3xl">
         <Card className="border-destructive/30 shadow-2xl">
           <CardHeader className="text-center pb-4">
             <div className="mx-auto mb-4 grid size-14 place-items-center rounded-2xl bg-destructive/10 text-destructive">
@@ -263,7 +259,7 @@ export function PaywallOverlay() {
             </div>
           </CardContent>
         </Card>
-      </motion.div>
+      </div>
     </div>
   );
 }

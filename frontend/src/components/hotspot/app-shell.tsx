@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Image from "next/image";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AnimatePresence, motion } from "framer-motion";
 import {
   ChevronDown,
   ChevronsUpDown,
@@ -156,20 +155,15 @@ const VIEWS: Record<ViewId, React.ComponentType> = {
 
 /** Transition d'apparition de la vue active — fade + translation légère.
  * Extraite du rendu principal (N°57) : identique zone Paramètres ou non
- * (N°57-c — la zone vit dans la sidebar substituée, pas dans le contenu). */
+ * (N°57-c — la zone vit dans la sidebar substituée, pas dans le contenu).
+ * N°78 — framer-motion retiré du bundle initial : l'entrée est une
+ * @keyframe CSS (mik-view-in) ; la sortie est instantanée (démontage
+ * direct par React via key), ce qui remplace l'ancien mode="wait". */
 function ViewTransition({ viewKey, children }: { viewKey: ViewId; children: React.ReactNode }) {
   return (
-    <AnimatePresence mode="wait">
-      <motion.div
-        key={viewKey}
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: -8 }}
-        transition={{ duration: 0.2, ease: "easeOut" }}
-      >
-        {children}
-      </motion.div>
-    </AnimatePresence>
+    <div key={viewKey} className="mik-view-in">
+      {children}
+    </div>
   );
 }
 
@@ -555,7 +549,11 @@ function Topbar() {
   const isPlatformMode = shellMode === "platform";
 
   function handleRefresh() {
-    void queryClient.invalidateQueries();
+    // N°78 — refresh ciblé : seules les requêtes ACTIVES (composants montés)
+    // sont invalidées — plus la rafale historique de refetchs sur des vues
+    // non consultées (polling tranquille, moins de contention sur le
+    // 0,1 vCPU Render).
+    void queryClient.invalidateQueries({ type: "active" });
     toast.success(t("shell.refreshed"));
   }
 

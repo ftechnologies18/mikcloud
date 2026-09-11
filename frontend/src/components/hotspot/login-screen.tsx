@@ -1,8 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Image from "next/image";
-import { motion, useAnimate, useReducedMotion, type Variants } from "framer-motion";
 import { Eye, EyeOff, Loader2, ShieldCheck, Store, Ticket, Wifi } from "lucide-react";
 import { toast } from "sonner";
 
@@ -18,34 +17,25 @@ import { useI18n } from "@/lib/hotspot/i18n";
 import { useHotspotStore } from "@/lib/hotspot/store";
 import type { AuthResponse } from "@/lib/hotspot/types";
 
+// N°78 — framer-motion retiré du chemin critique (écran de connexion =
+// bundle initial) : les micro-animations vivent en @keyframes CSS
+// (globals.css, classes mik-*) avec animation-delay en cascade pour
+// reproduire l'ancien stagger (0,04 s + 0,07 s par enfant).
+
 // Le bloc démo n'existe qu'en mode passerelle sandbox (pas de NEXT_PUBLIC_API_BASE).
 // En production (Vercel → Render), il laisse place à la bascule inscription.
 const SHOW_DEMO = !process.env.NEXT_PUBLIC_API_BASE;
 
-/* Micro-animations : champs en cascade à chaque changement d'onglet. */
-const stagger: Variants = {
-  hidden: {},
-  show: { transition: { staggerChildren: 0.07, delayChildren: 0.04 } },
-};
-const rise: Variants = {
-  hidden: { opacity: 0, y: 14 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.38, ease: "easeOut" } },
-};
-
 /* Anneaux de pulsation autour du logo — signal « en ligne ». */
 function PulseRings() {
-  const reduce = useReducedMotion();
-  if (reduce) return null;
   return (
     <>
       {[0, 1.3].map((delay) => (
-        <motion.span
+        <span
           key={delay}
           aria-hidden
-          className="pointer-events-none absolute inset-0 rounded-3xl border border-primary/40"
-          initial={{ scale: 1, opacity: 0.55 }}
-          animate={{ scale: 1.85, opacity: 0 }}
-          transition={{ duration: 2.8, repeat: Infinity, delay, ease: "easeOut" }}
+          className="mik-pulse-ring pointer-events-none absolute inset-0 rounded-3xl border border-primary/40"
+          style={{ animationDelay: `${delay}s` }}
         />
       ))}
     </>
@@ -55,7 +45,6 @@ function PulseRings() {
 /* Panneau branding animé — colonne gauche (desktop uniquement). */
 function BrandPanel() {
   const { t } = useI18n();
-  const reduce = useReducedMotion();
 
   const features = [
     { icon: Wifi, title: "login.hero.f1.title", desc: "login.hero.f1.desc" },
@@ -68,36 +57,27 @@ function BrandPanel() {
     <aside className="login-brand relative hidden flex-col justify-between overflow-hidden p-10 lg:flex xl:p-14">
       {/* Décor : grille technique + orbes dérivants */}
       <div aria-hidden className="login-grid absolute inset-0" />
-      <motion.div
+      <div
         aria-hidden
-        className="absolute -left-28 top-[10%] size-[26rem] rounded-full bg-primary/20 blur-3xl"
-        animate={reduce ? undefined : { x: [0, 36, -12, 0], y: [0, 28, -8, 0] }}
-        transition={{ duration: 22, repeat: Infinity, ease: "easeInOut" }}
+        className="mik-drift-a absolute -left-28 top-[10%] size-[26rem] rounded-full bg-primary/20 blur-3xl"
       />
-      <motion.div
+      <div
         aria-hidden
-        className="absolute -right-24 bottom-[6%] size-[22rem] rounded-full bg-emerald-500/10 blur-3xl"
-        animate={reduce ? undefined : { x: [0, -30, 10, 0], y: [0, -24, 6, 0] }}
-        transition={{ duration: 18, repeat: Infinity, ease: "easeInOut", delay: 1.5 }}
+        className="mik-drift-b absolute -right-24 bottom-[6%] size-[22rem] rounded-full bg-emerald-500/10 blur-3xl"
       />
 
-      <motion.div
-        variants={stagger}
-        initial="hidden"
-        animate="show"
-        className="relative z-10 flex h-full flex-col justify-between gap-10"
-      >
+      <div className="relative z-10 flex h-full flex-col justify-between gap-10">
         {/* Badge plateforme */}
-        <motion.div variants={rise}>
+        <div className="mik-rise" style={{ animationDelay: "0.04s" }}>
           <span className="glass-chip inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-xs font-medium tracking-wide text-primary">
             <span className="live-dot size-1.5 rounded-full bg-primary" aria-hidden />
             {t("login.hero.badge")}
           </span>
-        </motion.div>
+        </div>
 
         {/* Identité produit */}
-        <motion.div variants={stagger} className="max-w-lg">
-          <motion.div variants={rise} className="relative w-fit">
+        <div className="max-w-lg">
+          <div className="mik-rise relative w-fit" style={{ animationDelay: "0.11s" }}>
             <PulseRings />
             <Image
               src="/logo.png"
@@ -107,31 +87,35 @@ function BrandPanel() {
               priority
               className="relative z-10 rounded-2xl shadow-2xl shadow-primary/25"
             />
-          </motion.div>
-          <motion.h1
-            variants={rise}
-            className="mt-7 bg-gradient-to-br from-primary via-emerald-300 to-teal-200 bg-clip-text text-4xl font-semibold tracking-tight text-transparent xl:text-5xl"
+          </div>
+          <h1
+            className="mik-rise mt-7 bg-gradient-to-br from-primary via-emerald-300 to-teal-200 bg-clip-text text-4xl font-semibold tracking-tight text-transparent xl:text-5xl"
+            style={{ animationDelay: "0.18s" }}
           >
             MikCloud
-          </motion.h1>
-          <motion.p variants={rise} className="mt-3 text-lg font-medium text-foreground/90">
+          </h1>
+          <p
+            className="mik-rise mt-3 text-lg font-medium text-foreground/90"
+            style={{ animationDelay: "0.25s" }}
+          >
             {t("login.hero.title")}
-          </motion.p>
-          <motion.p variants={rise} className="mt-2 text-sm leading-relaxed text-muted-foreground">
+          </p>
+          <p
+            className="mik-rise mt-2 text-sm leading-relaxed text-muted-foreground"
+            style={{ animationDelay: "0.32s" }}
+          >
             {t("login.hero.subtitle")}
-          </motion.p>
-        </motion.div>
+          </p>
+        </div>
 
         {/* Atouts + copyright */}
-        <motion.div variants={stagger}>
-          <motion.ul variants={stagger} className="grid gap-3 xl:grid-cols-2">
-            {features.map((f) => (
-              <motion.li
+        <div>
+          <ul className="grid gap-3 xl:grid-cols-2">
+            {features.map((f, i) => (
+              <li
                 key={f.title}
-                variants={rise}
-                whileHover={{ y: -3 }}
-                transition={{ type: "spring", stiffness: 320, damping: 22 }}
-                className="glass-chip flex items-start gap-3 rounded-xl p-3.5"
+                className="mik-rise mik-hover-lift glass-chip flex items-start gap-3 rounded-xl p-3.5"
+                style={{ animationDelay: `${0.11 + i * 0.07}s` }}
               >
                 <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
                   <f.icon className="size-4.5" aria-hidden />
@@ -140,17 +124,17 @@ function BrandPanel() {
                   <span className="block text-sm font-medium">{t(f.title)}</span>
                   <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">{t(f.desc)}</span>
                 </span>
-              </motion.li>
+              </li>
             ))}
-          </motion.ul>
-          <motion.p variants={rise} className="mt-8 text-xs text-muted-foreground/70">
+          </ul>
+          <p className="mik-rise mt-8 text-xs text-muted-foreground/70" style={{ animationDelay: "0.46s" }}>
             {t("login.footer")}
-          </motion.p>
-          <motion.p variants={rise} className="mt-2">
+          </p>
+          <p className="mik-rise mt-2" style={{ animationDelay: "0.53s" }}>
             <FtciCredit className="text-xs text-muted-foreground/80" />
-          </motion.p>
-        </motion.div>
-      </motion.div>
+          </p>
+        </div>
+      </div>
     </aside>
   );
 }
@@ -178,13 +162,16 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
   // N°68 — « Mot de passe oublié ? » : modale de demande de lien e-mail.
   const [forgotOpen, setForgotOpen] = useState(false);
 
-
-  // Micro-feedback d'erreur : la carte de verre tremble (sans remonter les onglets).
-  const [scope, animate] = useAnimate();
+  // Micro-feedback d'erreur : la carte de verre tremble (N°78 — relance CSS
+  // par retrait/retour forcé/rajout de la classe sur le MÊME nœud DOM, le
+  // focus des champs est préservé).
+  const cardRef = useRef<HTMLDivElement>(null);
   function shakeCard() {
-    if (scope.current) {
-      void animate(scope.current, { x: [0, -10, 10, -6, 6, 0] }, { duration: 0.45, ease: "easeInOut" });
-    }
+    const el = cardRef.current;
+    if (!el) return;
+    el.classList.remove("mik-shake");
+    void el.offsetWidth; // reflow : réarme l'animation sans démonter la carte
+    el.classList.add("mik-shake");
   }
 
   const canLogin =
@@ -275,20 +262,16 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
           </button>
         )}
         {/* Orbe discret côté formulaire */}
-        <motion.div
+        <div
           aria-hidden
-          className="absolute -bottom-24 -right-32 size-[26rem] rounded-full bg-primary/10 blur-3xl"
-          animate={{ scale: [1, 1.12, 1], opacity: [0.7, 1, 0.7] }}
-          transition={{ duration: 14, repeat: Infinity, ease: "easeInOut" }}
+          className="mik-orb-pulse absolute -bottom-24 -right-32 size-[26rem] rounded-full bg-primary/10 blur-3xl"
         />
 
         <div className="relative z-10 flex w-full max-w-md flex-1 flex-col items-center justify-center">
           {/* En-tête branding compact (mobile / tablette) */}
-          <motion.div
-            initial={{ opacity: 0, y: 18 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.45, ease: "easeOut" }}
-            className="mb-8 flex flex-col items-center text-center lg:hidden"
+          <div
+            className="mik-rise mb-8 flex flex-col items-center text-center lg:hidden"
+            style={{ animationDuration: "0.45s" }}
           >
             <div className="relative w-fit">
               <PulseRings />
@@ -303,15 +286,13 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
             </div>
             <h1 className="mt-4 text-2xl font-semibold tracking-tight">MikCloud</h1>
             <p className="mt-1 text-sm text-muted-foreground">{t("login.tagline")}</p>
-          </motion.div>
+          </div>
 
           {/* Carte de verre */}
-          <motion.div
-            ref={scope}
-            initial={{ opacity: 0, y: 26, scale: 0.985 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            transition={{ duration: 0.5, ease: "easeOut", delay: 0.08 }}
-            className="glass-card w-full rounded-2xl p-6 sm:p-8"
+          <div
+            ref={cardRef}
+            className="mik-card-in glass-card w-full rounded-2xl p-6 sm:p-8"
+            style={{ animationDelay: "0.08s" }}
           >
             <div className="mb-6 hidden lg:block">
               <h2 className="text-xl font-semibold tracking-tight">{t("login.form.title")}</h2>
@@ -330,8 +311,8 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
               </TabsList>
 
               <TabsContent value="login">
-                <motion.form variants={stagger} initial="hidden" animate="show" onSubmit={handleLogin} className="space-y-4">
-                  <motion.div variants={rise} className="space-y-2">
+                <form onSubmit={handleLogin} className="space-y-4">
+                  <div className="mik-rise space-y-2" style={{ animationDelay: "0.04s" }}>
                     <Label htmlFor="login-username">{t("login.username")}</Label>
                     <Input
                       id="login-username"
@@ -341,8 +322,8 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
                       onChange={(e) => setUsername(e.target.value)}
                       disabled={loginLoading}
                     />
-                  </motion.div>
-                  <motion.div variants={rise} className="space-y-2">
+                  </div>
+                  <div className="mik-rise space-y-2" style={{ animationDelay: "0.11s" }}>
                     <Label htmlFor="login-password">{t("login.password")}</Label>
                     <div className="relative">
                       <Input
@@ -374,9 +355,9 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
                         {t("login.forgot", "Mot de passe oublié ?")}
                       </button>
                     </div>
-                  </motion.div>
+                  </div>
                   {awaitingTotp && (
-                    <motion.div variants={rise} className="space-y-2">
+                    <div className="mik-rise space-y-2" style={{ animationDelay: "0.18s" }}>
                       <Label htmlFor="login-totp">{t("login.totpCode")}</Label>
                       <Input
                         id="login-totp"
@@ -390,32 +371,35 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
                         className="text-center font-mono tracking-[0.4em]"
                       />
                       <p className="text-xs text-muted-foreground">{t("login.totpHint")}</p>
-                    </motion.div>
+                    </div>
                   )}
-                  <motion.div variants={rise} whileHover={{ scale: 1.015 }} whileTap={{ scale: 0.97 }}>
+                  <div className="mik-rise mik-press" style={{ animationDelay: "0.25s" }}>
                     <Button type="submit" className="w-full shadow-lg shadow-primary/25" disabled={!canLogin}>
                       {loginLoading && <Loader2 className="size-4 animate-spin" />}
                       {awaitingTotp ? t("login.totpSubmit") : t("login.tabLogin")}
                     </Button>
-                  </motion.div>
-                </motion.form>
+                  </div>
+                </form>
               </TabsContent>
 
               {onSignUp && (
-                <motion.p variants={rise} className="text-center text-sm text-muted-foreground">
+                <p className="mik-rise text-center text-sm text-muted-foreground" style={{ animationDelay: "0.32s" }}>
                   {t("login.noAccount", "Pas encore de compte ?")}{" "}
                   <button onClick={onSignUp} className="font-medium text-primary hover:underline">
                     {t("login.createAccount", "Créer mon compte")}
                   </button>
-                </motion.p>
+                </p>
               )}
 
               <TabsContent value="sell">
-                <motion.form variants={stagger} initial="hidden" animate="show" onSubmit={handleSellLogin} className="space-y-4">
-                  <motion.p variants={rise} className="glass-chip rounded-lg px-3 py-2 text-xs text-muted-foreground">
+                <form onSubmit={handleSellLogin} className="space-y-4">
+                  <p
+                    className="mik-rise glass-chip rounded-lg px-3 py-2 text-xs text-muted-foreground"
+                    style={{ animationDelay: "0.04s" }}
+                  >
                     {t("login.sellHint")}
-                  </motion.p>
-                  <motion.div variants={rise} className="space-y-2">
+                  </p>
+                  <div className="mik-rise space-y-2" style={{ animationDelay: "0.11s" }}>
                     <Label htmlFor="sell-username">{t("login.sellUsername")}</Label>
                     <Input
                       id="sell-username"
@@ -425,8 +409,8 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
                       onChange={(e) => setSellUsername(e.target.value)}
                       disabled={sellLoading}
                     />
-                  </motion.div>
-                  <motion.div variants={rise} className="space-y-2">
+                  </div>
+                  <div className="mik-rise space-y-2" style={{ animationDelay: "0.18s" }}>
                     <Label htmlFor="sell-pin">{t("login.sellPin")}</Label>
                     <Input
                       id="sell-pin"
@@ -440,25 +424,20 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
                       onChange={(e) => setSellPin(e.target.value.replace(/\D/g, ""))}
                       disabled={sellLoading}
                     />
-                  </motion.div>
-                  <motion.div variants={rise} whileHover={{ scale: 1.015 }} whileTap={{ scale: 0.97 }}>
+                  </div>
+                  <div className="mik-rise mik-press" style={{ animationDelay: "0.25s" }}>
                     <Button type="submit" className="w-full shadow-lg shadow-primary/25" disabled={!canSell}>
                       {sellLoading && <Loader2 className="size-4 animate-spin" />}
                       <Store className="size-4" />
                       {t("login.sellSubmit")}
                     </Button>
-                  </motion.div>
-                </motion.form>
+                  </div>
+                </form>
               </TabsContent>
             </Tabs>
 
             {SHOW_DEMO && (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ delay: 0.4, duration: 0.4 }}
-                className="glass-chip mt-6 flex items-center justify-between gap-3 rounded-xl px-3 py-2.5"
-              >
+              <div className="mik-fade glass-chip mt-6 flex items-center justify-between gap-3 rounded-xl px-3 py-2.5" style={{ animationDelay: "0.4s" }}>
                 <p className="text-xs text-muted-foreground">
                   {t("login.demoPrefix")}
                   <span className="font-medium text-foreground">admin / {t("login.demoPasswordHint", "mot de passe défini par la plateforme")}</span>
@@ -475,39 +454,27 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
                 >
                   {t("login.useDemo")}
                 </Button>
-              </motion.div>
+              </div>
             )}
-          </motion.div>
+          </div>
 
           {/* N°60 — PWA : la barre d'installation vit sous la carte de
               connexion (funnel commun console + Mode Vente — la mini-infobar
               Chrome est suspendue par le script du layout, c'est CE CTA qui
               la remplace). Disparaît dès que l'app est installée/standalone. */}
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.35, duration: 0.4, ease: "easeOut" }}
-            className="w-full"
-          >
+          <div className="mik-rise w-full" style={{ animationDelay: "0.35s", animationDuration: "0.4s" }}>
             <PwaInstallCta />
-          </motion.div>
+          </div>
 
-          <motion.p
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.55, duration: 0.4 }}
-            className="mt-6 text-center text-xs text-muted-foreground lg:hidden"
+          <p
+            className="mik-fade mt-6 text-center text-xs text-muted-foreground lg:hidden"
+            style={{ animationDelay: "0.55s" }}
           >
             {t("login.footer")}
-          </motion.p>
-          <motion.p
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.6, duration: 0.4 }}
-            className="mt-2 text-center lg:hidden"
-          >
+          </p>
+          <p className="mik-fade mt-2 text-center lg:hidden" style={{ animationDelay: "0.6s" }}>
             <FtciCredit className="text-xs text-muted-foreground/80" />
-          </motion.p>
+          </p>
         </div>
       </section>
     </div>

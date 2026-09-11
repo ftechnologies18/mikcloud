@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { useTheme } from "next-themes";
-import { AnimatePresence, motion } from "framer-motion";
 import { Moon, Sun } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -10,8 +9,11 @@ import { useI18n } from "@/lib/hotspot/i18n";
 
 /**
  * Bascule Nuit ☾ / Jour ☀ — identité duale MikCloud « Aurora Emerald ».
- * Rotation douce Framer Motion entre les deux icônes (monté→éviter le
- * mismatch SSR : rendu neutre jusqu'à ce que le thème soit résolu).
+ * Rotation douce entre les deux icônes en CSS pur (N°78 : keyframe
+ * mik-icon-in — framer-motion hors du bundle initial ; le montage par
+ * `key` rejoue l'animation à chaque bascule, la sortie est instantanée) —
+ * éviter le mismatch SSR : rendu neutre jusqu'à ce que le thème soit
+ * résolu.
  */
 export function ThemeToggle() {
   const { resolvedTheme, setTheme } = useTheme();
@@ -37,18 +39,9 @@ export function ThemeToggle() {
       title={t(isDark ? "theme.toLight" : "theme.toDark")}
     >
       {mounted ? (
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.span
-            key={isDark ? "moon" : "sun"}
-            initial={{ rotate: -70, opacity: 0, scale: 0.7 }}
-            animate={{ rotate: 0, opacity: 1, scale: 1 }}
-            exit={{ rotate: 70, opacity: 0, scale: 0.7 }}
-            transition={{ duration: 0.25, ease: "easeOut" }}
-            className="flex"
-          >
-            {isDark ? <Moon className="size-4.5" aria-hidden /> : <Sun className="size-4.5" aria-hidden />}
-          </motion.span>
-        </AnimatePresence>
+        <span key={isDark ? "moon" : "sun"} className="mik-icon-in flex">
+          {isDark ? <Moon className="size-4.5" aria-hidden /> : <Sun className="size-4.5" aria-hidden />}
+        </span>
       ) : (
         <Sun className="size-4.5" aria-hidden />
       )}

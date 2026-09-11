@@ -7,8 +7,7 @@
 //     une seule utilisation) — écran de confirmation + rappel anti-spam.
 // La consommation du lien vit sur la page publique /reset-password.
 
-import { useState, type FormEvent } from "react";
-import { motion, useAnimate, useReducedMotion, type Variants } from "framer-motion";
+import { useRef, useState, type FormEvent } from "react";
 import { CheckCircle2, KeyRound, Loader2, Mail, MailCheck } from "lucide-react";
 import { toast } from "sonner";
 
@@ -25,15 +24,9 @@ import { Label } from "@/components/ui/label";
 import { ApiError, api } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
 
-/* Micro-animations : champs en cascade (cohérent avec login-screen). */
-const stagger: Variants = {
-  hidden: {},
-  show: { transition: { staggerChildren: 0.07, delayChildren: 0.04 } },
-};
-const rise: Variants = {
-  hidden: { opacity: 0, y: 14 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.38, ease: "easeOut" } },
-};
+/* N°78 — micro-animations en CSS pur (classes mik-* de globals.css,
+ * cascade par animation-delay — cohérent avec login-screen) : framer-motion
+ * ne fait plus partie du bundle initial de l'écran de connexion. */
 
 /* Validation e-mail RFC simple (miroir du backend, message plus tôt). */
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -53,13 +46,14 @@ export default function ForgotPasswordModal({ open, onOpenChange }: ForgotPasswo
   const [loading, setLoading] = useState(false);
   // « form » : saisie ; « sent » : confirmation (le lien est parti).
   const [sentTo, setSentTo] = useState<string | null>(null);
-  const [scope, animate] = useAnimate();
-  const reduce = useReducedMotion();
+  const formRef = useRef<HTMLFormElement>(null);
 
   function shakeCard() {
-    if (scope.current && !reduce) {
-      void animate(scope.current, { x: [0, -10, 10, -6, 6, 0] }, { duration: 0.45, ease: "easeInOut" });
-    }
+    const el = formRef.current;
+    if (!el) return;
+    el.classList.remove("mik-shake");
+    void el.offsetWidth; // reflow : réarme l'animation sur le même nœud
+    el.classList.add("mik-shake");
   }
 
   function handleOpenChange(next: boolean) {
@@ -110,15 +104,12 @@ export default function ForgotPasswordModal({ open, onOpenChange }: ForgotPasswo
               <DialogDescription>{t("forgot.desc")}</DialogDescription>
             </DialogHeader>
 
-            <motion.form
-              ref={scope}
-              variants={stagger}
-              initial="hidden"
-              animate="show"
+            <form
+              ref={formRef}
               onSubmit={handleSubmit}
               className="space-y-4 pt-2"
             >
-              <motion.div variants={rise} className="space-y-2">
+              <div className="mik-rise space-y-2" style={{ animationDelay: "0.04s" }}>
                 <Label htmlFor="forgot-email">{t("forgot.email", "Adresse e-mail")}</Label>
                 <div className="relative">
                   <Mail className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
@@ -141,15 +132,15 @@ export default function ForgotPasswordModal({ open, onOpenChange }: ForgotPasswo
                     {t("forgot.emailInvalid", "Adresse e-mail invalide")}
                   </p>
                 )}
-              </motion.div>
+              </div>
 
-              <motion.div variants={rise} whileHover={{ scale: 1.015 }} whileTap={{ scale: 0.97 }}>
+              <div className="mik-rise mik-press" style={{ animationDelay: "0.11s" }}>
                 <Button type="submit" className="w-full shadow-lg shadow-primary/25" disabled={!canSubmit}>
                   {loading ? <Loader2 className="size-4 animate-spin" /> : <MailCheck className="size-4" />}
                   {loading ? t("forgot.sending", "Envoi…") : t("forgot.submit", "Envoyer le lien")}
                 </Button>
-              </motion.div>
-            </motion.form>
+              </div>
+            </form>
           </>
         ) : (
           <div className="flex flex-col items-center gap-4 py-6 text-center" role="status">

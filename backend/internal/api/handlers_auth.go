@@ -100,12 +100,18 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "Compte désactivé — contactez le support")
 		return
 	}
-	// Migration transparente : ancien hash SHA-256 → bcrypt au premier login.
+	// Migration transparente : ancien hash SHA-256 → bcrypt au premier login,
+	// et mise à niveau opportuniste du coût bcrypt (N°78-bis).
 	// N°74 — le hachage bcrypt se fait HORS verrou, et l'écriture retombe sur
 	// l'utilisateur RE-TROUVÉ sous verrou : l'ancien pointeur capturé avant
 	// l'Unlock pouvait pointer dans une tranche réallouée par une inscription
 	// concurrente — la migration était alors silencieusement perdue (B2).
-	if id != "" && auth.IsLegacyHash(hash) {
+	// N°78-bis — la condition couvre AUSSI la mise à niveau opportuniste du
+	// coût bcrypt : les hash coût 12 créés avant l'abaissement à 10 vérifient
+	// encore à la vitesse coût 12 (le coût vit DANS le hash) — au login
+	// réussi le mot de passe clair est sous la main, on re-hache au coût
+	// courant une fois pour toutes.
+	if id != "" && (auth.IsLegacyHash(hash) || auth.NeedsBcryptRehash(hash)) {
 		newHash := auth.HashPassword(req.Password, "")
 		a.store.Lock()
 		for i := range a.store.Data().Users {
@@ -120,9 +126,15 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 		a.store.Unlock()
 	}
 	// N°7 — audit : trace la connexion réussie (acteur = qui se connecte).
+	// N°78-bis — la ligne de journal vit en mémoire : le Save immédiat
+	// déclenchait une synchro PostgreSQL complète (~2,8 s sur le 0,1 vCPU
+	// Render — la trace d'audit ne justifie pas de faire attendre le login).
+	// Elle est persistée par la PROCHAINE mutation réelle — au plus tard le
+	// check-in d'un agent (≤ 45 s avec un routeur en ligne, qui persiste son
+	// touchAgent). Perte maximale en cas de crash dans cette fenêtre : une
+	// ligne de journal, sans impact métier.
 	a.store.Lock()
 	a.logActivityBy(r, a.store.Data(), accID, "system", "Connexion de "+username+" («"+role+"»)")
-	a.store.Save()
 	a.store.Unlock()
 	token := auth.Sign(a.secret, auth.NewClaims(id, name, role, accID, epoch))
 	writeJSON(w, http.StatusOK, map[string]any{

@@ -164,6 +164,23 @@ func (a *API) handleResellerLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	// PIN correct : l'historique d'échecs du revendeur est effacé.
 	a.pinLock.reset(res.ID)
+	// N°78-bis — mise à niveau opportuniste du coût bcrypt du PIN : les PIN
+	// hachés avant l'abaissement 12 → 10 vérifient encore à la vitesse
+	// coût 12 (le coût vit DANS le hash) — au login réussi le PIN clair est
+	// sous la main, on re-hache au coût courant une fois pour toutes.
+	if auth.NeedsBcryptRehash(pinHash) {
+		newPinHash := auth.HashPassword(req.Pin, "")
+		a.store.Lock()
+		for i := range a.store.Data().Resellers {
+			c := &a.store.Data().Resellers[i]
+			if c.ID == res.ID {
+				c.PinHash = newPinHash
+				break
+			}
+		}
+		a.store.Save()
+		a.store.Unlock()
+	}
 	if res.Status != "active" {
 		a.logAuthFailure(r, "reseller_pin", req.Username, "reseller_disabled")
 		writeErr(w, http.StatusForbidden, "Compte revendeur désactivé")

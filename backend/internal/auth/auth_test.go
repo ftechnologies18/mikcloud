@@ -7,7 +7,8 @@
 //     base64/json illisible ;
 //   - mots de passe : HashPassword (bcrypt coût 10, sel ignoré), CheckPassword
 //     (bcrypt + migration ancien hash hexadécimal sha256(salt||password)),
-//     IsLegacyHash, NewSalt.
+//     IsLegacyHash, NeedsBcryptRehash (mise à niveau opportuniste du coût
+//     bcrypt au login — N°78-bis), NewSalt.
 package auth
 
 import (
@@ -18,6 +19,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 // claimsT — claims de référence pour les tests.
@@ -207,6 +210,31 @@ func TestCheckPasswordLegacySHA256(t *testing.T) {
 	}
 	if IsLegacyHash(HashPassword("x", "")) {
 		t.Fatal("un hash bcrypt ne doit PAS être signalé legacy")
+	}
+}
+
+func TestNeedsBcryptRehash(t *testing.T) {
+	// N°78-bis — un hash au coût courant ne réclame rien ; un hash coût 12
+	// (créé avant l'abaissement) réclame la mise à niveau ; un hash legacy
+	// ou illisible est laissé à IsLegacyHash (jamais signalé ici).
+	h10 := HashPassword("clair", "")
+	if NeedsBcryptRehash(h10) {
+		t.Fatal("un hash au coût courant ne doit pas réclamer de re-hash")
+	}
+	h12, err := bcrypt.GenerateFromPassword([]byte("clair"), 12)
+	if err != nil {
+		t.Fatalf("génération bcrypt coût 12 : %v", err)
+	}
+	if !NeedsBcryptRehash(string(h12)) {
+		t.Fatal("un hash coût 12 doit réclamer la mise à niveau opportuniste")
+	}
+	if NeedsBcryptRehash("") {
+		t.Fatal("un hash vide n'est pas exploitable — pas de re-hash (legacy)")
+	}
+	salt := "sel"
+	sum := sha256.Sum256([]byte(salt + "mdp"))
+	if NeedsBcryptRehash(hex.EncodeToString(sum[:])) {
+		t.Fatal("un hash legacy ne doit PAS passer par NeedsBcryptRehash (IsLegacyHash s'en occupe)")
 	}
 }
 

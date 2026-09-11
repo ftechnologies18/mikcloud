@@ -5,6 +5,54 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-11 — N°78-bis : le login reste lent après N°78 — mise à niveau opportuniste du coût bcrypt + synchro Postgres divisée par deux
+
+### N°78-bis — Contexte : la promesse N°78 non tenue, mesurée en production
+Après le déploiement de N°78 (bcrypt 10), le login restait à 3,6-4,8 s.
+Deux causes découvertes en production (instrumentation N°71
+`/api/admin/sync-status` + lecture directe des hash en base Neon) :
+- **les hash existants vérifient au coût EMBARQUÉ** : l'abaissement 12 → 10
+  ne profitait qu'aux NOUVEAUX hash — les comptes créés avant (les deux
+  clients essai : `lerobuste`, `cybersc25`) vérifiaient encore à la vitesse
+  coût 12 à chaque login (seul l'admin était épargné : `applyAdminOverride`
+  le re-hache au démarrage avec le coût courant) ;
+- **la synchro PostgreSQL du login coûtait 2,8 s** : le Save déclenché par
+  la simple ligne de journal « Connexion de X » re-marshale TOUTES les
+  lignes de TOUTES les tables (3 651 utilisateurs hotspot, ~15 Mo de JSON)
+  — **deux fois** (détection de changements PUIS rafraîchissement du cache
+  d'empreintes) — sur le 0,1 vCPU Render (`sync.lastSuccessMs = 2809` pour
+  `lastChangedRows = 1`).
+
+### Correctif 1 — mise à niveau opportuniste du coût bcrypt au login
+Nouveau `auth.NeedsBcryptRehash(hash)` : true si le hash bcrypt existe mais
+a été produit à un coût ≠ coût courant. La migration transparente du login
+(qui couvrait les anciens hash SHA-256) couvre désormais AUSSI ce cas : au
+login réussi, le mot de passe clair est re-haché au coût courant et persisté
+— une fois pour toutes. Même traitement pour le PIN du Mode Vente
+(`handleResellerLogin`). Chaque compte existant paie UN dernier login lent
+(coût 12 + écriture), puis ~1 s pour toujours.
+
+### Correctif 2 — la ligne de journal du login ne déclenche plus de synchro
+La trace d'audit « Connexion de X » vit en mémoire et est persistée par la
+prochaine mutation réelle — au plus tard le check-in d'un agent (≤ 45 s avec
+un routeur en ligne, qui persiste son touchAgent). Perte maximale en cas de
+crash dans cette fenêtre : une ligne de journal, sans impact métier. Le login
+ne paie plus du tout la synchro complète.
+
+### Correctif 3 — le double marshal de syncTable éliminé
+`syncTable` calculait l'empreinte FNV de chaque ligne DEUX fois par synchro
+(une pour détecter les changements, une pour rafraîchir le cache après les
+écritures). Les empreintes calculées sont désormais réutilisées — chaque
+synchro de CHAQUE endpoint mutant passe de ~2,8 s à ~1,4 s sur le parc
+actuel (3 651 utilisateurs hotspot), et la moitié des allocations GC part
+avec.
+
+### Vérifications
+gofmt/vet propres, 11 paquets Go verts dont le nouveau `TestNeedsBcryptRehash`
+(coût courant → false, coût 12 → true, vide/legacy → false : laissé à
+IsLegacyHash) ; E2E Playwright non impactés (aucun changement de contrat
+API — vérifiés par la CI).
+
 ## 2026-09-11 — N°78 : latence au chargement — login 4-7 s → ~1 s (bcrypt), bundle initial −19 % (i18n EN différé + framer-motion hors chemin critique)
 
 ### N°78 — Contexte : audit de latence chiffré (3 couches empilées)

@@ -95,19 +95,38 @@ func NewSalt() string {
 	return hex.EncodeToString(b)
 }
 
-// HashPassword — bcrypt coût 10 (le sel est intégré au hash : le paramètre
-// salt est ignoré, gardé pour la compatibilité des signatures d'appel).
-// Coût abaissé de 12 à 10 (N°78) : sur le 0,1 vCPU du plan Render gratuit,
-// un hash coût 12 prenait 4-7 s et un coût 10 reste ≥ 2^10 tours de
-// bcrypt — vérification ~4× plus rapide, sécurité amplement suffisante pour
-// ce service. Les hash existants coût 12 restent vérifiés sans migration
-// (CompareHashAndPassword lit le coût embarqué dans le hash).
+// bcryptCost — coût bcrypt courant. N°78 : abaissé de 12 à 10 — sur le
+// 0,1 vCPU du plan Render gratuit, un hash coût 12 prenait 4-7 s de
+// vérification et un coût 10 reste ≥ 2^10 tours de bcrypt : ~4× plus
+// rapide, sécurité amplement suffisante pour ce service.
+const bcryptCost = 10
+
+// HashPassword — bcrypt au coût courant (le sel est intégré au hash : le
+// paramètre salt est ignoré, gardé pour la compatibilité des signatures
+// d'appel). Les hash existants coût 12 restent vérifiés sans migration
+// (CompareHashAndPassword lit le coût embarqué dans le hash) — la mise à
+// niveau opportuniste vit au login (cf. NeedsBcryptRehash).
 func HashPassword(password, _ string) string {
-	b, err := bcrypt.GenerateFromPassword([]byte(password), 10)
+	b, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
 	if err != nil {
 		return ""
 	}
 	return string(b)
+}
+
+// NeedsBcryptRehash — true si le hash bcrypt existant a été produit avec un
+// coût différent du coût courant. N°78-bis : la vérification bcrypt tourne
+// au coût EMBARQUÉ dans le hash (CompareHashAndPassword l'y lit), donc les
+// comptes créés avant l'abaissement 12 → 10 paient encore 4-7 s de CPU à
+// CHAQUE login sur le 0,1 vCPU Render. Le moment sûr de re-hacher est le
+// login réussi : le mot de passe clair est sous la main, une seule
+// écriture, et l'utilisateur repart au coût courant pour toujours.
+func NeedsBcryptRehash(hash string) bool {
+	cost, err := bcrypt.Cost([]byte(hash))
+	if err != nil {
+		return false // pas un hash bcrypt exploitable (legacy : IsLegacyHash)
+	}
+	return cost != bcryptCost
 }
 
 // CheckPassword vérifie un mot de passe contre un hash bcrypt ($2a/$2b/$2y)

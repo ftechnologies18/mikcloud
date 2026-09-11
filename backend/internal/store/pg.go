@@ -1492,11 +1492,18 @@ func syncTable[T any](ctx context.Context, tx *sql.Tx, hashes map[string]map[str
 	}
 
 	seen := make(map[string]struct{}, len(rows))
+	// N°78-bis — les empreintes calculées pour la détection de changements
+	// sont RÉUTILISÉES pour le rafraîchissement du cache : l'ancien code
+	// re-marshalait chaque ligne une 2ᵉ fois (json.Marshal + FNV) après les
+	// écritures — sur le 0,1 vCPU Render, chaque synchro payait deux fois le
+	// prix d'un parc de 3 500+ utilisateurs hotspot (~2,8 s → ~1,4 s).
+	fresh := make(map[string]uint64, len(rows))
 	var changed []T
 	for i := range rows {
 		id := spec.idOf(&rows[i])
 		seen[id] = struct{}{}
 		h := spec.hashOf(&rows[i])
+		fresh[id] = h
 		if old, ok := cached[id]; !ok || old != h {
 			changed = append(changed, rows[i])
 		}
@@ -1521,12 +1528,13 @@ func syncTable[T any](ctx context.Context, tx *sql.Tx, hashes map[string]map[str
 		delta.removed += len(removed) // N°71 — volumétrie (comptée si écrite)
 	}
 
-	// Cache rafraîchi uniquement après succès des écritures.
+	// Cache rafraîchi uniquement après succès des écritures — depuis les
+	// empreintes DÉJÀ CALCULÉES (plus aucun marshal ni idOf rejoué).
 	for id := range cached {
 		delete(cached, id)
 	}
-	for i := range rows {
-		cached[spec.idOf(&rows[i])] = spec.hashOf(&rows[i])
+	for id, h := range fresh {
+		cached[id] = h
 	}
 	return nil
 }

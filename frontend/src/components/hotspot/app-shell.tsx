@@ -74,6 +74,9 @@ const PlatformOverviewView = dynamic(() => import("./views/platform-overview-vie
 const PlatformSettingsView = dynamic(() => import("./views/platform-settings-view"), { loading: () => ViewFallback });
 const PlatformTeamView = dynamic(() => import("./views/platform-team-view"), { loading: () => ViewFallback });
 const ProfilesView = dynamic(() => import("./views/profiles-view"), { loading: () => ViewFallback });
+// N°83 — vue Protection : l'état de sécurité du WiFi (verdict + 3 cartes
+// SafeWiFi/Shield/FamilyGuard) vit dans la navigation principale.
+const ProtectionView = dynamic(() => import("./views/protection-view"), { loading: () => ViewFallback });
 const ReportsView = dynamic(() => import("./views/reports-view"), { loading: () => ViewFallback });
 const ResellersView = dynamic(() => import("./views/resellers-view"), { loading: () => ViewFallback });
 const RoutersView = dynamic(() => import("./views/routers-view"), { loading: () => ViewFallback });
@@ -95,6 +98,7 @@ function viewTitle(view: ViewId, t: (key: string) => string): string {
   const keys: Record<ViewId, string> = {
     dashboard: "nav.dashboard",
     sessions: "nav.sessions",
+    protection: "nav.protection",
     subscription: "sub.title",
     users: "nav.users",
     registrations: "nav.registrations",
@@ -125,6 +129,9 @@ function viewTitle(view: ViewId, t: (key: string) => string): string {
 const VIEWS: Record<ViewId, React.ComponentType> = {
   dashboard: DashboardView,
   sessions: SessionsView,
+  // N°83 — vue Protection : verdict + 3 cartes sécurité (routeur adressable
+  // /app/protection/<id>).
+  protection: ProtectionView,
   subscription: SubscriptionView,
   // N°30 — les deux ViewIds pointent le même hub (onglet dérivé du ViewId).
   users: UsersHubView,

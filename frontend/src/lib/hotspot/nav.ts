@@ -47,6 +47,10 @@ export const NAV_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
     items: [
       { id: "dashboard", labelKey: "nav.dashboard", icon: LayoutDashboard },
       { id: "sessions", labelKey: "nav.sessions", icon: Radio },
+      // N°83 — la protection sort de la zone Paramètres : les modules
+      // sécurité (SafeWiFi/Shield/FamilyGuard) sont des arguments de vente,
+      // pas des réglages — ils vivent à 1 clic du tableau de bord.
+      { id: "protection", labelKey: "nav.protection", icon: ShieldCheck },
     ],
   },
   {

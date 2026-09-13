@@ -24,6 +24,7 @@ export function roleRank(role: string): number {
 const VIEW_MIN_RANK: Record<string, number> = {
   dashboard: 1,
   sessions: 1,
+  protection: 2, // N°83 — vue Protection : statut + contrôles sécurité (miroir de l'ancien onglet Système de la fiche routeur, gérant+ ; PUT safewifi/shield/familyguard derrière le JWT + accountScope)
   users: 1,
   registrations: 2, // N°27 — file des demandes + liens (API requireRole(2) : manager+)
   vouchers: 1,

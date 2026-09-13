@@ -40,6 +40,10 @@ export const APP_BASE_PATH = "/app";
 const VIEW_SLUGS: Record<ViewId, string> = {
   dashboard: "dashboard",
   sessions: "sessions",
+  // N°83 — vue Protection : l'état de sécurité du WiFi (verdict + 3 cartes
+  // SafeWiFi/Shield/FamilyGuard) vit dans la navigation principale — un
+  // argument de vente ne s'enterre pas dans la zone Paramètres.
+  protection: "protection",
   // N°57-e — section Abonnement de la zone Paramètres (facturation de
   // l’espace : formule, échéance, renouvellement, factures).
   subscription: "settings/subscription",
@@ -133,8 +137,10 @@ export function viewFromPath(pathname: string | null): ViewId | null {
 /** Vues exposant un détail adressable (Phase D, N°57-d) — les autres n'ont
  * pas de 2e segment valide : app-route re-normalise ces chemins orphelins.
  * N°57-d : « routers » expose la FICHE routeur (carte cliquable → page de
- * détail, /app/settings/routers/<id> — plus de modale d'inspection). */
-const DETAIL_VIEWS: ReadonlySet<ViewId> = new Set<ViewId>(["users", "vouchers", "sessions", "routers"]);
+ * détail, /app/settings/routers/<id> — plus de modale d'inspection).
+ * N°83 : « protection » adresse le routeur sélectionné (le CTA du résumé
+ * de l'onglet Système ouvre CE routeur, /app/protection/<id>). */
+const DETAIL_VIEWS: ReadonlySet<ViewId> = new Set<ViewId>(["users", "vouchers", "sessions", "routers", "protection"]);
 
 /** Identifiant de détail d'un chemin /app/<slug>/<détail> — null si absent
  * ou si la vue n'expose pas de détail. Ne lit QUE le segment suivant le

@@ -37,6 +37,7 @@ import { PageHeader } from "@/components/hotspot/page-header";
 import { StatCard } from "@/components/hotspot/stat-card";
 import { StatusBadge } from "@/components/hotspot/status-badge";
 import { SubscriptionBanner } from "@/components/hotspot/parts/sa-subscription-banner";
+import { ProtectionBanner } from "@/components/hotspot/parts/protection-banner";
 import { api } from "@/lib/hotspot/api";
 import { localeOf, useI18n } from "@/lib/hotspot/i18n";
 import { formatCurrency, timeAgo } from "@/lib/hotspot/format";
@@ -208,6 +209,11 @@ export default function DashboardView() {
       {/* Bannière abonnement (v1 bienveillante) : expiré → rappel persistant,
           échéance ≤ 7 j → rappel doux. Accès jamais bloqué. */}
       <SubscriptionBanner />
+
+      {/* N°83 — bandeau Protection : le rappel quotidien de la valeur —
+          verdict global du parc + CTA vers la vue Protection. Aucun bandeau
+          sans routeur en mode agent (comptes vides : zéro bruit). */}
+      <ProtectionBanner />
 
       {/* KPIs */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">

@@ -1253,6 +1253,7 @@ export interface SchedulerRow {
 export type ViewId =
   | "dashboard"
   | "sessions"
+  | "protection" // N°83 — vue Protection : verdict + 3 cartes sécurité (SafeWiFi/Shield/FamilyGuard) d'un routeur
   | "subscription"
   | "users"
   | "registrations"

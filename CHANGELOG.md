@@ -5,6 +5,101 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-13 — N°83 : la Protection sort de l'ombre — vue « Protection » dans la navigation principale, bandeau sur le tableau de bord et vocabulaire vendeur — les modules sécurité deviennent des arguments de vente visibles en un clic
+
+### N°83 — Contexte : des arguments de vente enterrés dans une zone de configuration
+Constat du gérant du projet, vérifié dans le code : les 3 modules sécurité
+(SafeWiFi N°80, Shield N°81, FamilyGuard N°82) vivaient au fond du 4e onglet
+« Système » de la fiche routeur, elle-même au fond de la zone Paramètres —
+**5 à 6 interactions et 3 changements de contexte** pour toucher les seules
+fonctions qui différencient MikCloud d'un simple outil à vouchers. Le tableau
+de bord affichait 6 KPI métier et **zéro** état de protection : un gérant qui
+se connecte chaque matin ne voyait jamais que son WiFi était protégé — ou ne
+l'était pas. La cible réelle (gérants de maquis/cybercafés ivoiriens,
+mobile-first, sans notion réseau) ne trouvera jamais ce qu'elle ne voit pas.
+Plan UX/UI proposé puis validé : (1) une vue « Protection » dans la section
+Supervision de la sidebar principale ; (2) un bandeau de protection sur le
+tableau de bord (rappel quotidien de la valeur + CTA) ; (3) un vocabulaire
+vendeur en bénéfices gérant. HomeNet (réseau privé non-hotspot) reste en
+attente du feu vert — rien n'a été touché au-delà du périmètre validé.
+
+### Produit — le verdict en 5 secondes, les contrôles à portée de main
+Nouvelle vue `/app/protection` (3e item de Supervision, icône bouclier) :
+**verdict par routeur calculé automatiquement** — « Bien protégé » (3/3
+modules actifs), « À renforcer » (partiel), « Non protégé » (0/3) — avec le
+compte « n/3 protections actives ». Les 3 cartes (Sites dangereux bloqués,
+Anti-piratage du WiFi, Couvre-feu internet) sont **actionnables directement
+dans la vue**, sans navigation imbriquée. Mono-routeur : l'étape de sélection
+est sautée (le cas de la quasi-totalité des comptes) ; multi-sites : sélecteur
+shadcn dont la sélection vit dans l'URL (`/app/protection/<id>`, pattern
+fiche routeur — Retour navigateur et liens directs fonctionnels, segment
+orphelin re-normalisé). L'onglet Système de la fiche routeur garde un
+**résumé compact** (verdict + 3 lignes d'état + CTA « Ouvrir la vue
+Protection » qui rouvre CE routeur) — **aucun contrôle dupliqué**. Le tableau
+de bord gagne le bandeau Protection sous la bannière abonnement : vert et
+fier quand tout est actif, ambre avec CTA « Renforcez la protection » sinon,
+« Votre WiFi n'est pas protégé » au pire — **aucun bandeau sans routeur en
+mode agent** (comptes vides : zéro bruit visuel).
+
+### Technique — 100 % frontend, le verdict calcule ce que l'API expose déjà
+Aucun endpoint neuf, aucune migration, **zéro octet supplémentaire pour le
+parc** : le verdict lit les champs de `GET /api/routers` (`safeWifiLevel`,
+`shieldLevel`, `familyGuardSpec` — livrés par N°80/81/82). Helpers purs dans
+`lib/hotspot/protection.ts` (source unique partagée vue/bandeau/résumé) :
+`safeWifiLevelOf`, `shieldOn`, `parseFamilyGuardSpec` + `familyGuardActiveNow`
+(déplacés de router-tools.tsx, miroir exact de `FamilyGuardConfig.ActiveAt`
+côté Go — UTC, passage de minuit, jour de début), `protectionScore`,
+`protectionVerdict`. Les 3 cartes quittent router-tools.tsx pour
+`parts/protection-cards.tsx` (code N°80/81/82 inchangé : mêmes mutations,
+toasts, invalidations `["/api/routers","/api/dashboard"]`, gardes mode
+agent) + `ProtectionVerdictBadge` et `ProtectionSummaryCard` ; le bandeau
+vit dans `parts/protection-banner.tsx` (cache partagé `["/api/routers"]`,
+rafraîchi 60 s — l'état change rarement, les mutations invalident la clé).
+Enregistrement complet de la vue : ViewId `protection` (types.ts), slug
+`/app/protection` + vue adressable (view-path.ts, DETAIL_VIEWS), rang
+minimal 2 gérant+ (roles.ts — miroir de l'ancien onglet Système de la fiche
+routeur et des PUT `safewifi|shield|familyguard` derrière JWT + accountScope),
+entrée Supervision de NAV_SECTIONS (nav.ts — la palette de recherche topbar
+la suit automatiquement), import dynamique + map VIEWS + aria de vue
+(app-shell.tsx). Économie N°75 préservée : aucune requête agent n'est
+déclenchée par la vue, le check-in reste le seul canal.
+
+### Vocabulaire — parler gérant, pas ingénieur
+Les clés i18n `tools.*` restent stables (zéro refonte de code), leurs valeurs
+passent en bénéfices : « Protection WiFi public » → **« Sites dangereux
+bloqués »** (« Vos clients naviguent sans virus ni arnaques : les sites piégés
+sont bloqués avant d'atteindre leurs téléphones »), « Bouclier réseau » →
+**« Anti-piratage du WiFi »** (« Personne ne peut s'introduire dans votre
+routeur depuis le WiFi public : les outils des pirates sont neutralisés »),
+« Couvre-feu internet » conservé (« L'internet s'éteint quand vous le
+décidez : la nuit, à la fermeture, pendant les heures d'étude. Les vouchers
+restent valides »). Les résolveurs et ports techniques (Quad9, AdGuard,
+Winbox, 8291…) disparaissent des libellés — la transparence des limites
+reste (footnotes « se répare seul », « le WiFi reste opérationnel »).
+Nouvelles clés `protection.*` (verdicts, bandeau, résumé, sélecteur) :
+**21 clés FR + 21 EN**, parité des dictionnaires vérifiée 2454/2454.
+
+### Vérifications — le parcours complet prouvé en conditions réelles
+eslint 0, tsgo 0, build production ✓ (13 routes), go vet/build backend
+inchangé ✓. E2E navigateur autonome (binaire Go + `next start` enfants du
+script, backend JSON frais) : inscription gérant + 2 routeurs agents (plan
+passé en illimité via l'API plateforme P2 pour l'exercice multi-sites) →
+login réel → **bandeau dashboard « Votre WiFi n'est pas protégé » + 0/6 · 2
+routeurs** → CTA « Gérer la protection » → vue `/app/protection` (verdict
+« Non protégé », 0/3, sélecteur rendu, 3 cartes au vocabulaire vendeur) →
+activation Shield + SafeWiFi « Menaces bloquées » depuis la vue (toasts,
+verdict « À renforcer », 2/3) → sélecteur vers le 2ᵉ routeur (verdict 0/3,
+URL adressable) → fiche routeur → onglet Système → **résumé compact sans
+contrôle dupliqué** → CTA « Ouvrir la vue Protection » → retour ciblé sur le
+1ᵉʳ routeur → bandeau dashboard mis à jour « Renforcez la protection » 2/6 →
+**check-in agent simulé : commandes safewifi ET shield servies, rapports
+vérifiés (rules=2, rules=5 hs=1), signatures posées, second check-in
+silencieux** → mobile 390 px scrollWidth=390 sans débordement → **0 erreur
+console**. Suite Playwright « Mode Vente » du repo : **9/9 verts** (ports
+ponctuellement patchés 3015 car le bac à sable occupe 3000, fichiers
+restaurés — diff git vide vérifié). Contrôle visuel VLM de la capture :
+aucun défaut (alignements, contrastes, grille 3 colonnes confirmés).
+
 ## 2026-09-13 — N°82 : FamilyGuard — couvre-feu internet du WiFi public (fenêtre horaire programmée) — Phase 3 de la roadmap sécurité, lancement commercial différé au premier revenu
 
 ### N°82 — Contexte : la gamme sécurité manquait le QUAND

@@ -183,6 +183,12 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 	if stotalOK {
 		router.ActiveSessions = stotal
 	}
+	// N°97 — hôtes tenant une IP (authentifiés + zombies), rapporté par
+	// chaque chunk comme stotal : alimente l'occupation du pool IP
+	// (PoolHosts / PoolCap → alerte « pool plein » du moniteur).
+	if h, okH := parseReportInt(vals.Get("hosts")); okH {
+		router.PoolHosts = h
+	}
 
 	now := time.Now().UTC()
 

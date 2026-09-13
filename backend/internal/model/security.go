@@ -52,6 +52,7 @@ const (
 	CmdShield          = "shield"           // N°81 : bouclier réseau du WiFi public — administration du routeur et vecteurs malveillants bloqués pour les clients (règles filter marquées mikcloud-shield, idempotent)
 	CmdFamilyGuard     = "familyguard"      // N°82 : couvre-feu internet du WiFi public — fenêtre horaire pendant laquelle l'internet des clients est coupé (règles filter marquées mikcloud-familyguard, idempotent)
 	CmdAntiVpn         = "antivpn"          // N°88 : bloque-VPN du WiFi public — VPN et tunnels standards (GRE, ESP, IKE, L2TP, PPTP, OpenVPN, WireGuard, WARP, Tor) coupés pour les clients (règles filter marquées mikcloud-antivpn, idempotent)
+	CmdPoolDoctor      = "pool_doctor"      // N°97 : docteur du pool d'adresses IP du hotspot — diagnostic (pools/serveurs/profils/hôtes) + recyclage des IP zombies (login/idle/keepalive-timeout, address-per-mac=1) + extension de capacité optionnelle (range 10.77.0.0/21) ; idempotent, objets marqués mikcloud-pool
 )
 
 // N°80 — niveaux SafeWiFi (filtrage DNS du WiFi public par redirection).

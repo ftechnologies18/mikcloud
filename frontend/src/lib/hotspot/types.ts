@@ -295,6 +295,16 @@ export interface RouterDevice {
   /** N°88 AntiVPN : bloque-VPN du WiFi public du site
    * ("" ou absent = antérieur au N°88 → désactivé). off | on. */
   antiVpnLevel?: string;
+  /** N°97 docteur pool IP : capacité totale (adresses) des pools du hotspot,
+   * 0 ou absent = jamais diagnostiqué (occupation ni affichée ni alertée). */
+  poolCap?: number;
+  /** N°97 : hôtes tenant une IP (authentifiés + zombies), rafraîchi à chaque
+   * synchronisation. L'écart poolHosts - activeSessions = IP zombies. */
+  poolHosts?: number;
+  /** N°97 : ranges du pool actif (affichage, vérité routeur). */
+  poolRanges?: string;
+  /** N°97 : date du dernier diagnostic pool (RFC3339). */
+  poolDoctorAt?: string;
 }
 
 /** Réponse de création d'un routeur en mode agent (script + token à copier). */

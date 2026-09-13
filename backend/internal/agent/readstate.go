@@ -211,6 +211,8 @@ func (b Builder) buildReadState(cmd model.Command) string {
 :local rtrunc "false"
 :if (@@END@@ < $mikTotal) do={ :set rtrunc "true" }
 :local rstotal [:len [/ip hotspot active find]]
+:local rhosts 0
+:do { :set rhosts [/ip hotspot host print count-only] } on-error={}
 :local rsess ""
 :local rsn 0
 :if (@@END@@ >= $mikTotal) do={
@@ -221,9 +223,9 @@ func (b Builder) buildReadState(cmd model.Command) string {
     }
   }
 }
-:local rsesspart ("&stotal=". $rstotal)
+:local rsesspart ("&stotal=". $rstotal ."&hosts=". $rhosts)
 :if (@@END@@ >= $mikTotal) do={
-  :set rsesspart ("&stotal=". $rstotal ."&sessions=". $rsess)
+  :set rsesspart ("&stotal=". $rstotal ."&hosts=". $rhosts ."&sessions=". $rsess)
 }
 :local rif ""
 :do {

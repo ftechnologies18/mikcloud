@@ -5,6 +5,91 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-14 — N°97 : docteur du pool d'adresses IP — l'épuisement « no more free addresses from pool » des heures de pointe est diagnostiqué, recyclé et alerté
+
+### N°97 — Contexte : la panne qui frappe les clients PAYANTS au pire moment
+Capture gérant du 13/09 (WhatsApp) : un client sur le portail captif affiche
+« cannot assign ip address — no more free addresses from pool ». Diagnostic
+certain : le pool d'adresses IP du hotspot RouterOS est ÉPUISÉ aux heures de
+pointe. Trois causes conjointes, classées : (1) pool trop petit — un /24 =
+254 adresses partagées entre les clients payants ET tous les appareils à
+portée qui réclament une IP AVANT login (le portail captif exige une IP pour
+s'afficher) ; (2) « zombies » — RouterOS conserve l'hôte et son IP
+indéfiniment quand login-timeout n'est pas posé (défaut : aucun), les
+téléphones en connexion auto qui ne se connectent jamais squattent le pool ;
+(3) address-per-mac=2 par défaut — un même appareil peut prendre deux
+adresses. Le correctif routeur immédiat avait été livré au gérant en analyse
+(commandes Winbox) ; N°97 l'INDUSTRIALISE dans MikCloud en trois couches.
+
+### Produit — trois couches, du diagnostic à l'alerte
+- COUCHE 1 (commande agent pool_doctor, .rsc idempotent) : DIAGNOSTIC
+  (lecture seule — pools + ranges, serveurs + timeouts, profils +
+  address-pool/address-per-mac, hôtes, sessions) ; RECYCLAGE (login-timeout
+  5m, idle-timeout 10m, keepalive-timeout 2m sur les serveurs hotspot,
+  address-per-mac=1 sur les profils — libère les IP zombies SANS toucher au
+  subnet, le cookie hotspot re-connecte l'usager au réveil de son écran,
+  le solde du ticket est intact) ; EXTENSION opt-in (range dédié
+  10.77.0.10-10.77.7.254 ≈ 2 037 IP ajouté au pool de chaque profil, IP
+  secondaire 10.77.0.1/21 sur l'interface hotspot, entrée hotspot network
+  masquerade, règle NAT mikcloud-pool-nat en match src seul — aucune
+  interface WAN à deviner ; clients connectés non déconnectés, seules les
+  NOUVELLES attributions tirent du range étendu). Tokens pilotés par payload
+  assainis en bloc (anti-injection .rsc), valeurs rapportées nettoyées des
+  séparateurs du protocole (fonction mikClean dans le script).
+- COUCHE 2 (mesure continue) : read_state rapporte hosts (hôtes tenant une
+  IP) à chaque chunk ; le check-in AUTO-DIAGNOSTIQUE (lecture pure,
+  recyclage/extension OFF — le cloud ne modifie jamais la config de son
+  propre chef) tout routeur agent dont PoolCap est nul ou dont le diagnostic
+  dépasse 7 jours (pattern ensureWatcher) ; le rapport pose PoolCap
+  (capacité calculée des ranges — formats a-b et CIDR), PoolHosts,
+  PoolRanges, PoolDoctorAt.
+- COUCHE 3 (alerte) : le moniteur 30 s calcule l'occupation PoolHosts/
+  PoolCap — high ≥ 80 %, full ≥ 95 % — notification Telegram/WhatsApp/
+  e-mail (kind pool_alert) à CHAQUE transition (anti-spam mémorisé en base,
+  pattern stock), message qui NOMME l'action (Outils routeur → Système →
+  Docteur pool) et cite l'erreur terrain. Capacité inconnue → aucune alerte
+  (jamais de pourcentage inventé).
+
+### Console — carte « Pool d'adresses IP » (Outils routeur → Système)
+Jauge d'occupation colorée par seuil (vert < 80, ambre ≥ 80, destructif
+  ≥ 95) + compteur IP occupées + zombies (PoolHosts − sessions actives) +
+  ranges du pool (vérité routeur) ; boutons « Recycler les IP zombies »
+  (inclus d'office dans chaque docteur) et « Étendre le pool »
+  (AlertDialog explicite — range, IP secondaire, network, NAT, idempotence) ;
+  mode agent : POST + poll de la commande (pattern ping F8, ≤ 120 s) puis
+  invalidation [/api/routers, dashboard] ; simulé : diagnostic synthétique
+  honnête (254 IP, sessions + 40 % zombies) ; mode API directe : carte
+  muette (matrice §0). i18n : 18 clés × 2 langues (tools.pool.*).
+
+### Technique
+- Backend : CmdPoolDoctor (model/security.go) ; builder agent/pooldoctor.go
+  (mikClean, sanitiseRosToken) ; dispatch ScriptFor + vague différée 97 en
+  fermeture ; applyPoolDoctor (agent_pool.go : ParsePoolCapacity, rangeCapacity,
+  parseDoctorPools/Referenced) ; ensurePoolDoctorLocked au check-in ;
+  handleRouterPoolDoctor (POST /api/routers/{id}/pool-doctor, rôle ≥ manager,
+  garde compte expiré, body {extend?}) ; read_state +param hosts ;
+  Router.PoolCap/PoolHosts/PoolRanges/PoolDoctorAt ; NotificationSettings.
+  PoolAlertState ; moniteur §3-b + poolMessage ; persistance : routers +
+  4 colonnes, notif_settings + pool_alert_state (JSON), migrations
+  idempotentes.
+- Tests : 5 agent (formes du script, hostile payload, défauts, custom) +
+  8 api (capacité/ranges malformés, ensure never/fresh/8j/simulé, rapport
+  appliqué, endpoint agent/simulé/real/404, read_state hosts, dispatch) +
+  2 notify (transitions high→full→calme avec anti-spam, silence sans
+  capacité/sans canal) — suite complète verte, -race inclus.
+- Vérification navigateur (stack réelle : backend Go :4000 + next :3016,
+  Playwright) : login gérant → fiche routeur agent → Système → carte pool ;
+  état « capacité non mesurée » → BOUCLE AGENT COMPLÈTE (check-in tire le
+  pool_doctor auto, rapport POST /agent/result, PoolCap posé) → clic
+  « Recycler » (indicateur en cours, check-in suivant sert le script
+  login-timeout=5m + address-per-mac=1, rapport appliqué, toast) → jauge
+  140/253 · 55 % · zombies · ranges affichés ; 11/11 contrôles verts,
+  0 erreur console, capture VLM conforme (coquille « Répuisement » signalée
+  par le VLM était une erreur de LECTURE, la clé FR est correcte).
+- Déploiement attendu : Vercel (carte console + i18n) ET Render (commande
+  agent + moniteur + migrations colonnes au démarrage) — un diff backend/
+  existe cette fois (contrairement aux N°94/96).
+
 ## 2026-09-14 — N°96 : refonte UX/UI de la vue Protection — l'état de sécurité devient littéralement « en un coup d'œil » : anneau de score n/4 dans le héros, encart pédagogique nommant les modules à activer, chips d'état par carte, notes « Bon à savoir » en popover et grille 2 colonnes
 
 ### N°96 — Contexte : la promesse affichée, pas encore tenue

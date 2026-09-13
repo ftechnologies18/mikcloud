@@ -86,7 +86,8 @@ var routerSpec = entitySpec[model.Router]{
 		"safewifi_level", "safewifi_sig", "safewifi_applied_at",
 		"shield_level", "shield_sig", "shield_applied_at",
 		"familyguard_spec", "familyguard_sig", "familyguard_applied_at",
-		"antivpn_level", "antivpn_sig", "antivpn_applied_at"},
+		"antivpn_level", "antivpn_sig", "antivpn_applied_at",
+		"pool_cap", "pool_hosts", "pool_ranges", "pool_doctor_at"},
 	idOf: func(x *model.Router) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Router, error) {
 		var x model.Router
@@ -97,7 +98,8 @@ var routerSpec = entitySpec[model.Router]{
 			&x.SafeWifiLevel, &x.SafeWifiSig, &x.SafeWifiAppliedAt,
 			&x.ShieldLevel, &x.ShieldSig, &x.ShieldAppliedAt,
 			&x.FamilyGuardSpec, &x.FamilyGuardSig, &x.FamilyGuardAppliedAt,
-			&x.AntiVpnLevel, &x.AntiVpnSig, &x.AntiVpnAppliedAt)
+			&x.AntiVpnLevel, &x.AntiVpnSig, &x.AntiVpnAppliedAt,
+			&x.PoolCap, &x.PoolHosts, &x.PoolRanges, &x.PoolDoctorAt)
 		// Sécurité P0 #6 — le mot de passe routeur est stocké chiffré
 		// (AES-256-GCM) : lecture = déchiffrement (passthrough si valeur
 		// antérieure au correctif, migration assurée par
@@ -117,7 +119,8 @@ var routerSpec = entitySpec[model.Router]{
 			x.SafeWifiLevel, x.SafeWifiSig, x.SafeWifiAppliedAt,
 			x.ShieldLevel, x.ShieldSig, x.ShieldAppliedAt,
 			x.FamilyGuardSpec, x.FamilyGuardSig, x.FamilyGuardAppliedAt,
-			x.AntiVpnLevel, x.AntiVpnSig, x.AntiVpnAppliedAt}
+			x.AntiVpnLevel, x.AntiVpnSig, x.AntiVpnAppliedAt,
+			x.PoolCap, x.PoolHosts, x.PoolRanges, x.PoolDoctorAt}
 	},
 	hashOf: hashEntity[model.Router],
 }
@@ -655,22 +658,26 @@ var notifSettingsSpec = entitySpec[model.NotificationSettings]{
 		"email_enabled", "email_provider", "resend_api_key", "resend_from",
 		"smtp_host", "smtp_port", "smtp_user", "smtp_pass", "email_to",
 		"offline_after_sec", "low_stock_threshold", "daily_report", "report_hour",
-		"last_report_date", "stock_alert_state", "account_id"},
+		"last_report_date", "stock_alert_state", "pool_alert_state", "account_id"},
 	idOf: func(x *model.NotificationSettings) string { return x.AccountID },
 	scan: func(r *sql.Rows) (model.NotificationSettings, error) {
 		var x model.NotificationSettings
 		var stockState string
+		var poolState string
 		err := r.Scan(&x.AccountID, &x.Enabled, &x.TelegramEnabled, &x.TelegramBotToken, &x.TelegramChatID,
 			&x.WhatsAppEnabled, &x.WhatsAppToken, &x.WhatsAppPhoneID, &x.WhatsAppTo,
 			&x.EmailEnabled, &x.EmailProvider, &x.ResendAPIKey, &x.ResendFrom,
 			&x.SMTPHost, &x.SMTPPort, &x.SMTPUser, &x.SMTPPass, &x.EmailTo,
 			&x.OfflineAfterSec, &x.LowStockThreshold, &x.DailyReport, &x.ReportHour,
-			&x.LastReportDate, &stockState, &x.AccountID)
+			&x.LastReportDate, &stockState, &poolState, &x.AccountID)
 		if err != nil {
 			return x, err
 		}
 		if stockState != "" {
 			_ = json.Unmarshal([]byte(stockState), &x.StockAlertState)
+		}
+		if poolState != "" {
+			_ = json.Unmarshal([]byte(poolState), &x.PoolAlertState)
 		}
 		// N°75 — secrets de notification chiffrés au repos : lecture =
 		// déchiffrement (passthrough si valeur antérieure au correctif,
@@ -688,6 +695,14 @@ var notifSettingsSpec = entitySpec[model.NotificationSettings]{
 				stockState = string(b)
 			}
 		}
+		poolState := ""
+		if x.PoolAlertState != nil {
+			if b, err := json.Marshal(x.PoolAlertState); err != nil {
+				poolState = ""
+			} else {
+				poolState = string(b)
+			}
+		}
 		// N°75 — écriture = chiffrement des secrets de notification
 		// (tokens bots Telegram/WhatsApp, clé Resend, mot de passe
 		// SMTP). L'empreinte (hashOf) reste calculée sur l'état mémoire
@@ -698,7 +713,7 @@ var notifSettingsSpec = entitySpec[model.NotificationSettings]{
 			x.EmailEnabled, x.EmailProvider, secretbox.Encrypt(x.ResendAPIKey), x.ResendFrom,
 			x.SMTPHost, x.SMTPPort, x.SMTPUser, secretbox.Encrypt(x.SMTPPass), x.EmailTo,
 			x.OfflineAfterSec, x.LowStockThreshold, x.DailyReport, x.ReportHour,
-			x.LastReportDate, stockState, x.AccountID}
+			x.LastReportDate, stockState, poolState, x.AccountID}
 	},
 	hashOf: hashEntity[model.NotificationSettings],
 }

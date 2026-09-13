@@ -498,6 +498,13 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 	// auto-réparation 6 h).
 	a.ensureAntiVpnLocked(db, router)
 
+	// N°97 — docteur pool IP : auto-DIAGNOSTIC (lecture seule) quand la
+	// capacité n'a jamais été mesurée ou n'est plus fraîche — alimente
+	// PoolCap/PoolHosts pour l'alerte « pool plein » aux heures de pointe.
+	// Les corrections (recyclage/extension) restent des gestes explicites
+	// du gérant via POST /api/routers/{id}/pool-doctor.
+	a.ensurePoolDoctorLocked(db, router)
+
 	// File FIFO : commandes en attente (max 10 par check-in).
 	//
 	// N°77 — PRIORITÉ AUX ACTIONNABLES : un parc de 3 500 users enfile
@@ -520,7 +527,7 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 		switch db.Commands[i].Kind {
 		case model.CmdReadState:
 			reads = append(reads, db.Commands[i])
-		case model.CmdWalledGarden, model.CmdHotspotFiles, model.CmdSafeWifi, model.CmdShield, model.CmdFamilyGuard, model.CmdAntiVpn:
+		case model.CmdWalledGarden, model.CmdHotspotFiles, model.CmdSafeWifi, model.CmdShield, model.CmdFamilyGuard, model.CmdAntiVpn, model.CmdPoolDoctor:
 			deferred = append(deferred, db.Commands[i])
 		default:
 			prio = append(prio, db.Commands[i])
@@ -531,9 +538,9 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 	// Au sein des différés, walled_garden avant hotspot_files (le walled-garden
 	// doit être en place pour que le portail puisse appeler l'API cloud pré-auth),
 	// puis safewifi (N°80), shield (N°81), familyguard (N°82) et antivpn
-	// (N°88) en fermeture :
+	// (N°88) en fermeture, pool_doctor (N°97, lecture seule) en toute fin :
 	// ces protections ne dépendent d'aucune autre commande — par ordre de
-	// vague : 29 < 35 < 80 < 81 < 82 < 88).
+	// vague : 29 < 35 < 80 < 81 < 82 < 88 < 97).
 	deferredWave := func(k string) int {
 		switch k {
 		case model.CmdWalledGarden:
@@ -546,8 +553,10 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 			return 81
 		case model.CmdFamilyGuard:
 			return 82
+		case model.CmdAntiVpn:
+			return 88
 		}
-		return 88 // CmdAntiVpn
+		return 97 // CmdPoolDoctor (diagnostic pur : fermeture, ne bloque rien)
 	}
 	sort.SliceStable(deferred, func(i, j int) bool {
 		wi, wj := deferredWave(deferred[i].Kind), deferredWave(deferred[j].Kind)
@@ -714,6 +723,13 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 		} else {
 			a.logActivity(db, router.AccountID, "router", "Import depuis «"+router.Name+"» terminé : "+summary)
 		}
+	case cmd.Kind == model.CmdPoolDoctor && ok:
+		// N°97 — docteur pool IP : le rapport pose PoolCap/PoolRanges/
+		// PoolHosts/PoolDoctorAt (vérité routeur). Un échec est silencieux
+		// côté file : l'auto-diagnostiqueur du check-in re-file au cycle
+		// suivant tant que PoolCap reste nul.
+		summary := a.applyPoolDoctor(db, router, vals)
+		a.logActivity(db, router.AccountID, "router", "Routeur «"+router.Name+"» — "+summary)
 	case ok:
 		if cmd.Kind == model.CmdWalledGarden {
 			// N°29 — configuration appliquée et CONFIRMÉE par le routeur :

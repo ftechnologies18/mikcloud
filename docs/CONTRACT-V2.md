@@ -568,6 +568,62 @@ type SchedulerTask struct {
 
 ---
 
+---
+
+## N°97 — Docteur du pool d'adresses IP du hotspot [P1]
+
+### Contexte
+Épuisement du pool IP aux heures de pointe : le portail affiche
+`cannot assign ip address - no more free addresses from pool` aux CLIENTS
+PAYANTS. Causes : pool /24 trop petit (254 IP partagées avec les appareils
+non connectés qui reçoivent une IP AVANT login), hôtes « zombies » conservés
+indéfiniment (login-timeout absent par défaut), address-per-mac=2 par défaut.
+
+### Route
+- `POST /api/routers/{id}/pool-doctor` (rôle ≥ manager, garde compte
+  expiré) — corps optionnel `{ "extend": true|false }` (défaut false) :
+  - simulated : diagnostic synthétique (PoolCap=254, PoolHosts=sessions+40 %,
+    PoolRanges, PoolDoctorAt) → `{ok, poolCap, poolHosts, usagePct, message}` ;
+  - agent : enfile la commande `pool_doctor` avec
+    `{recycle: true, extend}` → `{queued, commandId, message}` — le
+    recyclage est TOUJOURS inclus (aucun subnet touché), l'extension est
+    l'opt-in explicite ;
+  - real : 400 (matrice §0).
+
+### Commande agent `pool_doctor` (idempotente, script .rsc)
+- DIAGNOSTIC (toujours) : rapporte `pools=nom|ranges;…`,
+  `servers=n|profil|interface|login-timeout|idle-timeout|keepalive;…`,
+  `profiles=n|address-pool|address-per-mac;…`, `hosts`, `active` — le cloud
+  en tire PoolCap (capacité des pools RÉFÉRENCÉS, formats `a-b` et CIDR),
+  PoolHosts, PoolRanges, PoolDoctorAt ;
+- RECYCLAGE (payload recycle) : `/ip hotspot set [find]
+  login-timeout=5m idle-timeout=10m keepalive-timeout=2m` + `/ip hotspot
+  profile set [find] address-per-mac=1` ;
+- EXTENSION (payload extend) : range dédié `10.77.0.10-10.77.7.254` ajouté
+  au pool de chaque profil (+ pool dédié `mikcloud-pool` créé pour un profil
+  sans pool), IP secondaire `10.77.0.1/21` sur l'interface hotspot, entrée
+  `/ip hotspot network add address=10.77.0.0/21 masquerade=yes`, règle NAT
+  `mikcloud-pool-nat` (chain=srcnat src-address=10.77.0.0/21
+  action=masquerade) — tout marqué/idempotent, clients connectés
+  non déconnectés.
+- Auto-diagnostic du check-in : tout routeur agent dont PoolCap est nul ou
+  dont le diagnostic dépasse 7 jours reçoit un pool_doctor en DIAGNOSTIC
+  PUR (recycle/extend OFF — le cloud ne modifie jamais la configuration de
+  son propre chef). Vague différée 97 (fermeture du batch, ne bloque rien).
+
+### Mesure continue + alerte
+- `read_state` rapporte `hosts` à chaque chunk → Router.PoolHosts.
+- Moniteur 30 s : occupation = PoolHosts/PoolCap — `high` ≥ 80 %, `full`
+  ≥ 95 % — notification `pool_alert` (Telegram/WhatsApp/e-mail) à chaque
+  transition, anti-spam mémorisé (NotificationSettings.PoolAlertState,
+  JSON en colonne notif_settings.pool_alert_state). Capacité inconnue
+  (PoolCap=0) → aucune alerte.
+
+### Modèle (nouvelles colonnes routers)
+`PoolCap int`, `PoolHosts int`, `PoolRanges text`,
+`PoolDoctorAt text` — migrations idempotentes, `omitempty` (absent tant
+que jamais diagnostiqué).
+
 ## F13 — Marge : prix de vente vs coût [P2]
 
 ### Modèle

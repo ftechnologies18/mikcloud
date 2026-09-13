@@ -45,6 +45,11 @@ const (
 	// oublié ? » (lien de réinitialisation). Pas un canal d'alerte : envoyé à
 	// la demande, hors moniteur automatique.
 	KindPasswordReset = "password_reset"
+	// KindPoolAlert — N°97 : alerte occupation du pool d'adresses IP du
+	// hotspot (≥ 80 % « high », ≥ 95 % « full ») — l'épuisement « no more
+	// free addresses from pool » frappe les clients payants aux heures de
+	// pointe, l'alerte devance la panne.
+	KindPoolAlert = "pool_alert"
 )
 
 // EmailProviderOf — fournisseur du canal e-mail normalisé : "resend" ou

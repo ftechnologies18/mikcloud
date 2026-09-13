@@ -211,6 +211,25 @@ type Router struct {
 	// N°88 — horodatage (RFC3339) de la dernière application confirmée :
 	// auto-réparation périodique (pattern walled-garden N°49).
 	AntiVpnAppliedAt string `json:"antiVpnAppliedAt,omitempty"`
+
+	// N°97 — Docteur pool IP (épuisement « no more free addresses from
+	// pool » aux heures de pointe) :
+	// PoolCap — capacité TOTALE (adresses) des pools référencés par les
+	// profils hotspot, calculée par le cloud depuis les ranges rapportés
+	// (pool_doctor). 0 = jamais diagnostiqué → l'occupation n'est ni
+	// affichée ni alertée (honnêteté : sans capacité connue, aucun
+	// pourcentage inventé).
+	PoolCap int `json:"poolCap,omitempty"`
+	// PoolHosts — hôtes tenant une IP (authentifiés + zombies) —
+	// rafraîchi à chaque read_state (paramètre hosts), posé aussi par
+	// le docteur. L'écart PoolHosts - ActiveSessions = IP zombies.
+	PoolHosts int `json:"poolHosts,omitempty"`
+	// PoolRanges — ranges du pool actif (affichage console, « ; » entre
+	// pools, « , » entre ranges) — vérité routeur du dernier diagnostic.
+	PoolRanges string `json:"poolRanges,omitempty"`
+	// PoolDoctorAt — RFC3339 du dernier diagnostic pool confirmé (auto-
+	// diagnostiqueur du check-in, re-filé passé PoolDoctorRefresh).
+	PoolDoctorAt string `json:"poolDoctorAt,omitempty"`
 }
 
 // SchedulerSecEffective — pas de scheduler connu du routeur (N°75). 0 =

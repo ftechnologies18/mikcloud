@@ -84,6 +84,9 @@ type NotificationSettings struct {
 	LastReportDate string `json:"lastReportDate,omitempty"`
 	// État anti-spam stock : routerID → "low" | "empty" (dernier état notifié)
 	StockAlertState map[string]string `json:"stockAlertState,omitempty"`
+	// N°97 — état anti-spam pool IP : routerID → "high" (≥ 80 %) |
+	// "full" (≥ 95 %) (dernier état notifié — même mécanique que le stock).
+	PoolAlertState map[string]string `json:"poolAlertState,omitempty"`
 }
 
 // Normalize applique les défauts et bornes (appelé avant chaque lecture/écriture).

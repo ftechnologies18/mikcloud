@@ -35,6 +35,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ProtectionSummaryCard } from "@/components/hotspot/parts/protection-cards";
+import { PoolDoctorCard } from "@/components/hotspot/parts/router-tools/pool-card";
 import { api } from "@/lib/hotspot/api";
 import { t as translate, useI18n } from "@/lib/hotspot/i18n";
 import type { Lang } from "@/lib/hotspot/i18n";
@@ -376,6 +377,10 @@ export function SystemTab({ router }: { router: RouterDevice }) {
           (/app/protection) : l'onglet Système garde un résumé compact avec
           lien — aucun contrôle dupliqué. */}
       <ProtectionSummaryCard router={router} />
+      {/* N°97 — docteur pool IP : jauge d'occupation + recyclage zombies +
+          extension (l'épuisement « no more free addresses from pool » aux
+          heures de pointe). */}
+      <PoolDoctorCard router={router} />
       <PingCard router={router} />
       <SchedulerCard router={router} />
       <PowerCard router={router} />

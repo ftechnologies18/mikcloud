@@ -253,6 +253,65 @@ func (s *Service) collect(now time.Time) []outboxItem {
 		outbox = append(outbox, outboxItem{cfg: cfg, kind: KindLowStock, title: title, body: body})
 	}
 
+	// 3-b) N°97 — occupation du pool d'adresses IP du hotspot : l'épuisement
+	// (« cannot assign ip address - no more free addresses from pool ») frappe
+	// les clients PAYANTS aux heures de pointe. PoolCap (posé par le docteur
+	// pool, auto-diagnostiqué au check-in) + PoolHosts (rafraîchi par chaque
+	// read_state) → état ok / high (≥ 80 %) / full (≥ 95 %), même mécanique
+	// anti-spam que le stock : une notification par transition, mémorisée en
+	// base. Capacité inconnue (PoolCap=0 : routeur jamais diagnostiqué) →
+	// aucune alerte (jamais de pourcentage inventé).
+	setPoolState := func(acc, routerID, state string) {
+		if db.NotifSettings == nil {
+			db.NotifSettings = map[string]model.NotificationSettings{}
+		}
+		st0 := db.NotifSettings[acc]
+		if st0.PoolAlertState == nil {
+			st0.PoolAlertState = map[string]string{}
+		}
+		if state == "" {
+			delete(st0.PoolAlertState, routerID)
+		} else {
+			st0.PoolAlertState[routerID] = state
+		}
+		db.NotifSettings[acc] = st0
+	}
+	for i := range db.Routers {
+		r := &db.Routers[i]
+		if accDisabled[r.AccountID] || r.PoolCap <= 0 {
+			continue
+		}
+		cfg := store.GetOrCreateNotifSettings(db, r.AccountID)
+		if !cfg.Enabled {
+			continue
+		}
+		usage := 0
+		if r.PoolHosts > 0 {
+			usage = r.PoolHosts * 100 / r.PoolCap
+			if usage > 100 {
+				usage = 100
+			}
+		}
+		state := ""
+		switch {
+		case usage >= 95:
+			state = "full"
+		case usage >= 80:
+			state = "high"
+		}
+		prev := cfg.PoolAlertState[r.ID]
+		if state == prev {
+			continue
+		}
+		setPoolState(r.AccountID, r.ID, state)
+		changed = true
+		if state == "" || !HasAnyChannel(&cfg) {
+			continue
+		}
+		title, body := poolMessage(r, usage, r.PoolHosts, r.PoolCap, state)
+		outbox = append(outbox, outboxItem{cfg: cfg, kind: KindPoolAlert, title: title, body: body})
+	}
+
 	// 4) Rapport journalier (heure UTC = heure d'Abidjan, GMT+0 sans DST).
 	today := now.Format("2006-01-02")
 	for i := range db.Accounts {
@@ -396,6 +455,23 @@ func stockMessage(r *model.Router, available int, state string, threshold int) (
 	return "📦 Stock de vouchers bas — " + r.Name,
 		"Il ne reste que " + strconvI(available) + " voucher(s) sur «" + r.Name +
 			"» (seuil d'alerte : " + strconvI(threshold) + ").\nPrévoyez un nouveau lot avant la rupture."
+}
+
+// poolMessage — N°97 — message d'alerte d'occupation du pool IP. Le gérant
+// est prévenu AVANT l'épuisement (80 %) : l'action est nommée (Outils
+// routeur → Système → docteur pool : recycler/étendre).
+func poolMessage(r *model.Router, usage, hosts, capacity int, state string) (string, string) {
+	if state == "full" {
+		return "🚨 Pool IP plein — " + r.Name,
+			"Le pool d'adresses IP de «" + r.Name + "» est saturé (" + strconvI(hosts) + "/" + strconvI(capacity) +
+				" — " + strconvI(usage) + " %).\n" +
+				"Les nouveaux clients ne peuvent plus obtenir d'adresse IP (erreur « no more free addresses from pool »).\n" +
+				"Outils routeur → Système → Docteur pool : étendez le pool (+ ~2 000 IP) maintenant."
+	}
+	return "📶 Pool IP presque plein — " + r.Name,
+		"Le pool d'adresses IP de «" + r.Name + "» atteint " + strconvI(usage) + " % (" +
+			strconvI(hosts) + "/" + strconvI(capacity) + ").\n" +
+			"Aux heures de pointe il risque de saturer : Outils routeur → Système → Docteur pool (recycler les IP zombies, étendre si besoin)."
 }
 
 // buildDailyReport — rapport quotidien d'un compte (ventes, utilisateurs,

@@ -285,6 +285,9 @@ export interface RouterDevice {
   /** N°80 SafeWiFi : niveau de protection DNS du WiFi public du site
    * ("" ou absent = antérieur au N°80 → désactivée). off | threats | family. */
   safeWifiLevel?: string;
+  /** N°81 Shield : bouclier réseau du WiFi public du site
+   * ("" ou absent = antérieur au N°81 → désactivé). off | on. */
+  shieldLevel?: string;
 }
 
 /** Réponse de création d'un routeur en mode agent (script + token à copier). */

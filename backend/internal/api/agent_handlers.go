@@ -57,6 +57,8 @@ func (a *API) registerAgentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/routers/{id}/repair-walled-garden", a.handleRouterRepairWalledGarden)
 	// N°80 — SafeWiFi : niveau de protection DNS du WiFi public (console).
 	mux.HandleFunc("PUT /api/routers/{id}/safewifi", a.handleRouterSetSafeWifi)
+	// N°81 — Shield : bouclier réseau du WiFi public (console).
+	mux.HandleFunc("PUT /api/routers/{id}/shield", a.handleRouterSetShield)
 }
 
 // ---------------------------------------------------------------------------
@@ -347,6 +349,7 @@ var staleSentReadKinds = map[string]bool{
 	model.CmdWalledGarden:  true, // N°31 : idempotent (marqueur mikcloud-wg)
 	model.CmdHotspotFiles:  true, // N°35 : idempotent (surcharge atomique des fichiers du portail)
 	model.CmdSafeWifi:      true, // N°80 : idempotent (marqueur mikcloud-safewifi — remove-then-add)
+	model.CmdShield:        true, // N°81 : idempotent (marqueur mikcloud-shield — remove-then-add)
 }
 
 // staleSentLimit — au-delà de cette ancienneté sans rapport, une commande
@@ -848,6 +851,91 @@ func (a *API) ensureSafeWifiLocked(db *model.DB, router *model.Router) {
 	})
 }
 
+// shieldRulesVersion — sel de version des règles FILTER Shield (pattern
+// safeWifiRulesVersion N°80) : toute évolution de la FORME des règles
+// (nouveau port, nouveau marquage, règle supplémentaire par hotspot)
+// change ce sel → chaque routeur en ligne reçoit la mise à niveau
+// automatiquement à son premier check-in.
+const shieldRulesVersion = "sh-v1"
+
+// shieldRefresh — cadence d'auto-réparation (pattern N°49) : à
+// configuration IDENTIQUE, le bloc shield est re-filé périodiquement.
+// Idempotent (remove-then-add des seules règles marquées) : répare une
+// règle effacée localement (ménage, restauration de backup) au plus
+// tard 6 h après, et suit un renommage d'interface du hotspot.
+const shieldRefresh = 6 * time.Hour
+
+// shieldRulesPerHotspot — règles posées par serveur hotspot quand le
+// bouclier est actif (2 input + 3 forward). La vérification du retour
+// l'utilise avec le compte de hotspots RAPPORTÉ par le routeur.
+const shieldRulesPerHotspot = 5
+
+// shieldSig — signature courte et stable d'un niveau Shield (hash du
+// niveau + sel de version des règles) : elle distingue « déjà appliqué
+// sur ce routeur » d'« à (re)appliquer » sans table supplémentaire.
+func shieldSig(level string) string {
+	return agent.HashToken(shieldRulesVersion + "|" + level)[:16]
+}
+
+// shieldFresh — vrai si la config actuelle a été CONFIRMÉE appliquée
+// récemment. Vide ou illisible → re-file prudent (pattern shieldFresh ≈
+// safeWifiFresh).
+func shieldFresh(router *model.Router) bool {
+	if router.ShieldAppliedAt == "" {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, router.ShieldAppliedAt)
+	if err != nil {
+		return false
+	}
+	return time.Since(t) < shieldRefresh
+}
+
+// shieldLevelLabel — libellé court d'un niveau pour le journal d'activité.
+func shieldLevelLabel(level string) string {
+	if level == model.ShieldOn {
+		return "bouclier actif"
+	}
+	return "bouclier désactivé"
+}
+
+// ensureShieldLocked — N°81 : converge le bouclier réseau du WiFi public,
+// sous verrou, depuis handleAgentCmd (contrat exact de ensureSafeWifiLocked
+// N°80) :
+//   - niveau "off" JAMAIS utilisé (sig vide) : RIEN — un routeur
+//     antérieur au N°81 dont le gérant n'ouvre jamais la carte ne
+//     consomme aucun octet (économie de veille N°75 entière) ;
+//   - niveau actif ou déjà utilisé : si la signature courante diffère
+//     de la config appliquée ou si l'application n'est plus fraîche,
+//     la commande shield rejoint la file (deferred bucket, fermeture) ;
+//   - une commande en file/en vol suffit — le rapport tranchera (ok →
+//     sig posée après vérification 5 règles × hotspots, error → re-file
+//     au check-in suivant).
+func (a *API) ensureShieldLocked(db *model.DB, router *model.Router) {
+	if router.Mode != "agent" {
+		return
+	}
+	level := router.ShieldLevelEffective()
+	if level == model.ShieldOff && router.ShieldSig == "" {
+		return // jamais utilisé : aucune commande
+	}
+	sig := shieldSig(level)
+	if router.ShieldSig == sig && shieldFresh(router) {
+		return // déjà appliqué avec ce niveau exact, et récemment
+	}
+	for i := range db.Commands {
+		c := &db.Commands[i]
+		if c.RouterID == router.ID && c.Kind == model.CmdShield &&
+			(c.Status == "queued" || c.Status == "sent") {
+			return // une mise à jour est déjà en vol
+		}
+	}
+	queueCommandLocked(db, router.AccountID, router.ID, model.CmdShield, map[string]any{
+		"level": level,
+		"sig":   sig,
+	})
+}
+
 // ensureReadStateDue — N°74 — cadenceur de la télémétrie read_state. Enfile
 // un read_state pour CE routeur si : (1) aucun n'est déjà en file ou en vol
 // (statuts queued/sent), ET (2) le dernier appliqué date de plus de
@@ -995,6 +1083,11 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 	// auto-réparation périodique (safeWifiRefresh, pattern N°49).
 	a.ensureSafeWifiLocked(db, router)
 
+	// N°81 — Shield : converge le bouclier réseau du WiFi public — même
+	// contrat (silence si jamais utilisé, re-file au changement,
+	// auto-réparation 6 h).
+	a.ensureShieldLocked(db, router)
+
 	// File FIFO : commandes en attente (max 10 par check-in).
 	//
 	// N°77 — PRIORITÉ AUX ACTIONNABLES : un parc de 3 500 users enfile
@@ -1017,7 +1110,7 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 		switch db.Commands[i].Kind {
 		case model.CmdReadState:
 			reads = append(reads, db.Commands[i])
-		case model.CmdWalledGarden, model.CmdHotspotFiles, model.CmdSafeWifi:
+		case model.CmdWalledGarden, model.CmdHotspotFiles, model.CmdSafeWifi, model.CmdShield:
 			deferred = append(deferred, db.Commands[i])
 		default:
 			prio = append(prio, db.Commands[i])
@@ -1027,16 +1120,18 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(reads, func(i, j int) bool { return reads[i].CreatedAt < reads[j].CreatedAt })
 	// Au sein des différés, walled_garden avant hotspot_files (le walled-garden
 	// doit être en place pour que le portail puisse appeler l'API cloud pré-auth),
-	// safewifi en fermeture (N°80 : la protection ne dépend d'aucune autre
-	// commande — par ordre de vague : 29 < 35 < 80).
+	// puis safewifi (N°80) et shield (N°81) en fermeture : ces protections ne
+	// dépendent d'aucune autre commande — par ordre de vague : 29 < 35 < 80 < 81).
 	deferredWave := func(k string) int {
 		switch k {
 		case model.CmdWalledGarden:
 			return 29
 		case model.CmdHotspotFiles:
 			return 35
+		case model.CmdSafeWifi:
+			return 80
 		}
-		return 80 // CmdSafeWifi
+		return 81 // CmdShield
 	}
 	sort.SliceStable(deferred, func(i, j int) bool {
 		wi, wj := deferredWave(deferred[i].Kind), deferredWave(deferred[j].Kind)
@@ -1275,6 +1370,31 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 					router.SafeWifiAppliedAt = model.NowISO()
 				}
 				a.logActivity(db, router.AccountID, "router", "Protection WiFi public ("+safeWifiLevelLabel(level)+") appliquée sur «"+router.Name+"»")
+			}
+		} else if cmd.Kind == model.CmdShield {
+			// N°81 — bouclier appliqué et CONFIRMÉ par le routeur : la
+			// signature n'est posée que si le COMPTE de règles marquées
+			// rapporté correspond à 5 règles × le nombre de serveurs
+			// hotspots RAPPORTÉ (le script énumère les interfaces sur le
+			// routeur — vérité routeur, pattern N°80), et uniquement si le
+			// niveau rapporté est TOUJOURS courant.
+			level := agent.ShieldLevelFromPayload(cmd.Payload)
+			want := 0
+			if level != model.ShieldOff {
+				if hs, ok := parseReportInt(vals.Get("hs")); ok {
+					want = shieldRulesPerHotspot * hs
+				} else {
+					want = -1 // hs illisible : vérification impossible → pas de sig
+				}
+			}
+			if got, ok := parseReportInt(vals.Get("rules")); ok && got == want {
+				if level == router.ShieldLevelEffective() {
+					if sig, _ := cmd.Payload["sig"].(string); sig != "" {
+						router.ShieldSig = sig
+					}
+					router.ShieldAppliedAt = model.NowISO()
+				}
+				a.logActivity(db, router.AccountID, "router", "Bouclier réseau ("+shieldLevelLabel(level)+") appliqué sur «"+router.Name+"»")
 			}
 		} else {
 			a.logActivity(db, router.AccountID, "router", "Commande "+cmd.Kind+" exécutée sur «"+router.Name+"»")

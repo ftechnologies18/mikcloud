@@ -605,6 +605,32 @@ export async function setRouterSafeWifi(
   );
 }
 
+/* — N°81 : Shield (bouclier réseau du WiFi public) — */
+
+/** Niveau du bouclier Shield d'un site (cf. RouterDevice.shieldLevel). */
+export type ShieldLevel = "off" | "on";
+
+/** SetRouterShieldResponse — réponse du PUT /api/routers/{id}/shield. */
+export interface SetRouterShieldResponse {
+  ok: boolean;
+  level: ShieldLevel;
+  message: string;
+}
+
+/** setRouterShield — N°81 : active ou désactive le bouclier réseau du
+ * WiFi public du site. La commande shield est servie au check-in suivant
+ * du routeur (≤ 45 s) ; le retour « ok » vérifié (compte de règles
+ * marquées == 5 × hotspots rapportés) confirme l'application. */
+export async function setRouterShield(
+  routerId: string,
+  level: ShieldLevel,
+): Promise<SetRouterShieldResponse> {
+  return api<SetRouterShieldResponse>(
+    `/api/routers/${encodeURIComponent(routerId)}/shield`,
+    { method: "PUT", body: { level } },
+  );
+}
+
 /** fetchRouterPortalPreview — récupère le HTML personnalisé de login.html
  * pour un routeur agent, à injecter dans une iframe srcDoc (aperçu console).
  * Retourne le HTML brut (text/html). */

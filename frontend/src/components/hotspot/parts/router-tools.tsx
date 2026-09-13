@@ -85,7 +85,7 @@ import { EmptyState } from "@/components/hotspot/empty-state";
 import { ChartTooltip } from "@/components/hotspot/parts/sd-chart-tooltip";
 import { StatusBadge } from "@/components/hotspot/status-badge";
 import { cn } from "@/lib/utils";
-import { api, ApiError, setRouterSafeWifi, type SafeWifiLevel } from "@/lib/hotspot/api";
+import { api, ApiError, setRouterSafeWifi, setRouterShield, type SafeWifiLevel, type ShieldLevel } from "@/lib/hotspot/api";
 import { localeOf, t as translate, useI18n } from "@/lib/hotspot/i18n";
 import type { Lang } from "@/lib/hotspot/i18n";
 import { useChartPalette } from "@/lib/hotspot/chart-theme";
@@ -1794,11 +1794,73 @@ function SafeWifiCard({ router }: { router: RouterDevice }) {
   );
 }
 
+function ShieldCard({ router }: { router: RouterDevice }) {
+  const { t, tf } = useI18n();
+  const queryClient = useQueryClient();
+
+  const current: ShieldLevel = router.shieldLevel === "on" ? "on" : "off";
+
+  const levelMutation = useMutation({
+    mutationFn: (level: ShieldLevel) => setRouterShield(router.id, level),
+    onSuccess: (res) => {
+      toast.success(tf("tools.shield.appliedToast", { name: router.name }), {
+        description: res.message,
+      });
+      for (const key of ["/api/routers", "/api/dashboard"]) {
+        void queryClient.invalidateQueries({ queryKey: [key] });
+      }
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const on = current === "on";
+  const Icon = on ? ShieldCheck : ShieldOff;
+
+  return (
+    <Card className="gap-0 py-0">
+      <CardContent className="p-4 sm:p-5">
+        <div className="flex items-start gap-2">
+          <Shield className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
+          <div>
+            <h3 className="text-sm font-semibold">{t("tools.shield.title")}</h3>
+            <p className="mt-0.5 text-xs text-muted-foreground">{t("tools.shield.desc")}</p>
+          </div>
+        </div>
+
+        <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border p-3">
+          <div className="flex min-w-0 items-start gap-2">
+            <Icon
+              className={cn("mt-0.5 size-4 shrink-0", on ? "text-primary" : "text-muted-foreground")}
+              aria-hidden
+            />
+            <span className="min-w-0">
+              <span className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium">{t("tools.shield.toggle")}</span>
+                {on && <Badge className="h-5 px-1.5 text-[11px]">{t("tools.shield.activeBadge")}</Badge>}
+              </span>
+              <span className="mt-0.5 block text-xs text-muted-foreground">{t("tools.shield.toggleDesc")}</span>
+            </span>
+          </div>
+          <Switch
+            checked={on}
+            onCheckedChange={(v) => levelMutation.mutate(v ? "on" : "off")}
+            disabled={levelMutation.isPending || router.mode !== "agent"}
+            aria-label={t("tools.shield.toggle")}
+          />
+        </div>
+
+        <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">{t("tools.shield.footnote")}</p>
+      </CardContent>
+    </Card>
+  );
+}
+
 function SystemTab({ router }: { router: RouterDevice }) {
   return (
     <div className="space-y-4">
       <SystemInfoCard router={router} />
       <SafeWifiCard router={router} />
+      <ShieldCard router={router} />
       <PingCard router={router} />
       <SchedulerCard router={router} />
       <PowerCard router={router} />

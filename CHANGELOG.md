@@ -5,6 +5,91 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-13 — N°81 : Shield — bouclier réseau du WiFi public (ports d'administration + vecteurs malveillants bloqués) — Phase 2 de la roadmap sécurité
+
+### N°81 — Contexte : le WiFi public expose le routeur ET les clients
+Phase 2 de la roadmap sécurité validée. SafeWiFi (N°80) filtre les noms
+de domaine dangereux ; restait la couche RÉSEAU : un client connecté au
+WiFi public peut tenter l'administration du routeur (Winbox, SSH,
+telnet, API — le vecteur d'attaque classique d'un hotspot), et les
+appareils infectés se propagent par SMB/NetBIOS vers les autres clients
+et le réseau du gérant (caisse, NAS). Promesse produit inchangée : une
+protection SANS réglage technique, sur tout le parc (MIPS 128 Mo
+compris), à 0 FCFA d'infrastructure, non intrusive — le réseau du
+gérant et le routeur lui-même ne changent pas de comportement.
+
+### Technique — cinq règles filter par hotspot, interface lue sur le routeur
+`buildShield` (agent) pose, après retrait idempotent des règles marquées
+`mikcloud-shield`, exactement **5 règles filter par serveur hotspot**,
+en tête de chaîne (`place-before=0`) et ciblées sur `in-interface` =
+l'interface du hotspot **lue sur le routeur au moment de l'exécution**
+(`:foreach h in=[/ip hotspot find]` → `/ip hotspot get $h interface`) :
+le script s'adapte à toute topologie (wlan1, bridge-hotspot…) et suit un
+renommage d'interface à la réparation 6 h. Les règles : input ×2 —
+**administration bloquée depuis le WiFi** (tcp 21/22/23/8291/8728/8729,
+udp 8728/8729) ; forward ×3 — **connexions invalides droppées**,
+**SMB/NetBIOS bloqués** (tcp 135-139/445, udp 137-139). Le réseau du
+gérant (hors interface hotspot) et le trafic propre du routeur
+(`chain=output` : check-in agent, DNS sortant) ne sont **jamais
+touchés** — `/ip firewall nat` et `/ip dns` non plus (SafeWiFi N°80
+reste maître du port 53). Coût : 0 Mo de RAM (des règles filter, pas
+d'état), 0 FCFA. Limites documentées (MVP) : le blindage couvre le
+trafic IPv4 traversant le routeur — l'isolation L2 de deux appareils
+d'un même pont relève du réglage du pont (`use-ip-firewall`, coûteux
+sur MIPS), hors de portée d'un MVP non intrusif ; l'administration reste
+possible depuis MikCloud (agent, connexions sortantes) et depuis le LAN
+du gérant.
+
+### Modèle — un booléen par routeur, trois colonnes idempotentes
+`Router` gagne `ShieldLevel` (off/on ; `""` = antérieur au N°81 → off
+implicite), `ShieldSig` et `ShieldAppliedAt` — `ALTER TABLE ADD COLUMN
+IF NOT EXISTS` ×3, pattern SafeWiFi N°80. L'API console :
+`PUT /api/routers/{id}/shield` `{level}` (validation stricte off/on,
+scope compte, agent-only, garde P3, journal d'activité avec l'acteur).
+
+### Convergence — silence si jamais utilisé, vérification 5 règles × hotspots
+`ensureShieldLocked` au check-in, contrat exact du N°80 : off + sig vide
+= jamais utilisé → **RIEN** (économie N°75 entière) ; signature = hash
+(sel `sh-v1` + niveau), re-file au changement et à l'évolution du sel,
+auto-réparation 6 h (`shieldRefresh`, pattern N°49). `CmdShield`
+rejoint `staleSentReadKinds` (idempotent) et le bucket différé en
+FERMETURE du batch (vagues 29 < 35 < 80 < **81**). Le rapport du script
+échoe DEUX valeurs dynamiques — le compte de règles marquées présentes
+ET le nombre de serveurs hotspots trouvés — et la signature n'est posée
+que si **rules == 5 × hotspots rapportés** (le cloud ne connaît pas la
+topologie : c'est le routeur qui la rapporte, vérité routeur), et
+uniquement si le niveau rapporté est toujours courant. Un `hs` illisible
+→ vérification impossible → pas de sig → re-file prudent.
+
+### Console — une carte à bascule dans l'onglet Système
+`ShieldCard` sous `SafeWifiCard` (outils routeur → Système) : Switch
+« Activer le bouclier » + badge « Actif » + footnote de disponibilité
+(réseau du gérant intact, administrable via MikCloud/LAN) ;
+`shieldLevel` sur `RouterDevice`, `setRouterShield` dans api.ts,
+7 clés i18n FR + 7 EN (« Bouclier réseau »).
+
+### Vérifications
+Tests : 9 nouveaux — 3 agent (niveau on : retrait idempotent puis 5
+règles filter par hotspot avec interface dynamique et place-before=0,
+ports admin/malveillants présents, rapport rules+hs dynamique, jamais
+nat ni dns ; off/inconnu : retrait seul ; normalisation du payload) ;
+6 api (silence si jamais utilisé, convergence complète activation puis
+échec puis réparation 6 h, retrait après extinction, vérification
+5×hotspots avec hs illisible → échec et niveau périmé → jamais figé,
+sel de version, ordre du batch 29<35<80<81). Suite complète 11 paquets
+verts, -race ciblé vert, gofmt/vet/build propres ; frontend eslint 0,
+tsgo 0, build production ✓ ; E2E Playwright 9/9 verts. Vérification
+navigateur bout-en-bout (Playwright autonome : backend + frontend
+enfants du script, le bac à sable tuant les processus entre les
+invocations) : login gérant réel → onglet Système → cartes SafeWiFi +
+Shield rendues → bascule du Switch → toast + shieldLevel persisté →
+check-in agent simulé → script shield servi (13 356 octets) → rapport
+rules=5 hs=1 → signature posée — 0 erreur console. ⚠️ Piège E2E local
+documenté : le build de test DOIT être fait avec
+`NEXT_PUBLIC_API_BASE=http://localhost:4000` (comme la CI) — sans lui,
+`API_BASE` vide active le mode passerelle sandbox (`XTransformPort=4000`
+sur localhost) et les appels UI tombent en 404 sur Next.js.
+
 ## 2026-09-13 — N°80 : SafeWiFi — protection DNS du WiFi public (filtrage par redirection, 3 niveaux) — Phase 1 de la roadmap sécurité
 
 ### N°80 — Contexte : le WiFi public du client est la première porte d'entrée des menaces

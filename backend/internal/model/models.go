@@ -243,6 +243,27 @@ type Router struct {
 	// ménage ou une restauration de backup est recréée au plus tard
 	// safeWifiRefresh plus tard). Pattern walled-garden N°49.
 	SafeWifiAppliedAt string `json:"safeWifiAppliedAt,omitempty"`
+
+	// N°81 — Shield (bouclier réseau du WiFi public) : état du blindage
+	// choisi par le gérant pour ce site. "" = état antérieur au N°81
+	// (traité comme "off" — aucune commande filée : un routeur dont le
+	// gérant n'ouvre jamais la carte ne consomme rien, pattern N°80).
+	//   off : aucun blindage ;
+	//   on  : administration du routeur (winbox, ssh, telnet, api) et
+	//         vecteurs malveillants (SMB/NetBIOS, connexions invalides)
+	//         bloqués pour les clients du WiFi public.
+	ShieldLevel string `json:"shieldLevel,omitempty"`
+	// N°81 — signature de la config Shield DÉJÀ APPLIQUÉE avec succès sur
+	// ce routeur (hash du niveau + sel de version des règles filter).
+	// Vide → rien d'appliqué : le check-in suivant re-file la commande
+	// shield. Posée au retour « ok » VÉRIFIÉ — le routeur échoe le compte
+	// de règles marquées mikcloud-shield ET le nombre de serveurs hotspots
+	// trouvés (5 règles par hotspot ; vérité routeur, pattern N°80).
+	ShieldSig string `json:"shieldSig,omitempty"`
+	// N°81 — horodatage (RFC3339) de la dernière application confirmée :
+	// auto-réparation périodique (règles recréées au plus tard
+	// shieldRefresh plus tard). Pattern walled-garden N°49.
+	ShieldAppliedAt string `json:"shieldAppliedAt,omitempty"`
 }
 
 // SchedulerSecEffective — pas de scheduler connu du routeur (N°75). 0 =
@@ -968,6 +989,7 @@ const (
 	CmdHotspotFiles    = "hotspot_files"    // N°35 : déploiement automatique du portail captif (login.html, status.html, assets) — pattern walled_garden
 	CmdWatcherEnsure   = "watcher_ensure"   // N°77 : veilleur d'invités — scheduler mikcloud-watch (check-in 20 s quand un hôte non autorisé est présent)
 	CmdSafeWifi        = "safewifi"         // N°80 : protection DNS du WiFi public — redirection du port 53 vers un résolveur filtrant (règles marquées mikcloud-safewifi, idempotent)
+	CmdShield          = "shield"           // N°81 : bouclier réseau du WiFi public — administration du routeur et vecteurs malveillants bloqués pour les clients (règles filter marquées mikcloud-shield, idempotent)
 )
 
 // N°80 — niveaux SafeWiFi (filtrage DNS du WiFi public par redirection).
@@ -991,6 +1013,26 @@ func (r *Router) SafeWifiLevelEffective() string {
 		return SafeWifiOff
 	}
 	return r.SafeWifiLevel
+}
+
+// N°81 — niveaux Shield (bouclier réseau du WiFi public).
+const (
+	ShieldOff = "off" // aucun blindage
+	ShieldOn  = "on"  // administration du routeur et vecteurs malveillants bloqués pour les clients WiFi
+)
+
+// ValidShieldLevel — vrai si le niveau fait partie du contrat N°81.
+func ValidShieldLevel(l string) bool {
+	return l == ShieldOff || l == ShieldOn
+}
+
+// ShieldLevelEffective — niveau de blindage courant de ce routeur,
+// normalisé ("" ou valeur inconnue = état antérieur au N°81 → off).
+func (r *Router) ShieldLevelEffective() string {
+	if !ValidShieldLevel(r.ShieldLevel) {
+		return ShieldOff
+	}
+	return r.ShieldLevel
 }
 
 // ---------------------------------------------------------------------------

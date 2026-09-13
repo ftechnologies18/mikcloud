@@ -5,6 +5,50 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-13 — N°84-bis : TestVouchersStatsServerSide devient déterministe — le test flaky « active = 2, voulu 3 » déraciné (routeur du semis en mode real, la simulation de Tick ne le touche plus)
+
+### N°84-bis — Contexte : le run CI de N°84 a échoué sur un test backend que N°84 ne touchait pas
+Le push N°84 (100 % frontend : next.config, login-screen, api.ts, i18n,
+package.json, workflows, docs) a fait rougir le job « Backend Go » sur
+`TestVouchersStatsServerSide` — `etag_stats_test.go:138 : active = 2,
+voulu 3`. Diagnostic : **flakiness préexistant sans lien avec N°84**,
+reproduit et déraciné. Mécanisme : le test sème 3 vouchers actifs sur le
+routeur SIMULÉ de `seedWifiEnv` ; le moteur de démo de `store.Tick`
+crée une session aléatoire (~30 % par appel) depuis un voucher actif sans
+session sur un routeur simulé — sémantique 1er login : `Status → "used"`
++ `UsedAt` + ancrage de validité + vente comptée au revendeur le cas
+échéant. Deux garde-fous masquaient le défaut : (1) la garde de Tick
+(skip si < 2 s depuis le dernier tick) — en local rapide, l'écart
+register→stats reste sous la garde, Tick ne tourne jamais, test vert ;
+(2) la probabilité de 30 %. En CI `-race` (runner lent), l'écart DÉPASSE
+la garde : Tick démarre et une exécution sur ~ trois flippe un des 3
+actifs. Reproduction locale : `go test -race -run TestVouchersStatsServerSide
+-count=30` → échecs « active = 2, voulu 3 » ; le même -count sans -race
+(40 runs) → 40 verts — signature exacte du défaut timing-dépendant.
+
+### Correctif — le routeur du semis passe en mode "real", la simulation n'a plus de prise
+Après `seedWifiEnv`, le test bascule le routeur `rt-wifi-test` en mode
+`"real"` avant de semir les vouchers. Justification (lue dans le code) :
+le moteur de sessions de Tick ne touche QUE les routeurs `simulated`
+(les sessions des routeurs réels vivent au rythme du read_state, aucune
+dynamique simulée — audit clignotement) ; `enforceExpired` ne file des
+commandes qu'aux routeurs `agent` (mode real : le statut cloud suffit) ;
+`applyExpiry` et les filtres/compteurs de `/api/vouchers/stats` sont
+indépendants du mode routeur. Le test garde donc exactement la même
+couverture (filtres kind/account/holder, statuts résolus, stockValue)
+sur un semis désormais immuable. Aucune ligne de production touchée —
+le défaut vivait dans le HARNES de test, pas dans le moteur (le
+comportement simulé « 1er login → used » est voulu, c'est la démo).
+
+### Vérifications
+`go test -race -run TestVouchersStatsServerSide -count=40` → 40/40 verts
+(110 s, déterministe — contre ~1 échec sur 3 avant) ; suite backend
+complète `-race -timeout 30m` : 11 paquets verts (api 406 s) ; gofmt/vet
+propres. Périmètre : 1 fichier de test, 0 ligne de production, 0
+endpoint, 0 migration — déploiement Render attendu (diff backend/) mais
+artefact fonctionnellement identique (les tests ne sont pas compilés
+dans le binaire).
+
 ## 2026-09-13 — N°84 : hygiène pré-lancement — le build Vercel type-checke, les cold boots deviennent invisibles, 16 dépendances mortes évacuées
 
 ### N°84 — Contexte : trois faiblesses structurelles repérées à l'audit de lancement

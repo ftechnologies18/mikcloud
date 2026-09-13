@@ -114,6 +114,26 @@ func TestVouchersStatsServerSide(t *testing.T) {
 	token, accID, _ := registerAccount(t, ts, "gerant-stats-vouchers", "")
 	routerID, _ := seedWifiEnv(t, st, accID)
 
+	// N°84-bis — déterminisme du semis. seedWifiEnv pose un routeur SIMULÉ :
+	// or Tick anime les routeurs simulés (session aléatoire ~30 % par appel,
+	// 1er login → Status "used" + UsedAt, parité routeur). En local rapide,
+	// la garde de Tick (skip si < 2 s depuis le dernier) neutralise la
+	// simulation entre le register et l'appel stats ; en CI -race (lente),
+	// l'écart DÉPASSE la garde : Tick démarrait et flipait un des 3 actifs
+	// (reproduit : ~1 échec sur 3 en -count sous -race, « active = 2, voulu
+	// 3 » — échec réel observé en CI sur le run N°84, sans lien avec ses
+	// changements 100 % frontend). Mode "real" : le moteur de sessions ne
+	// touche QUE les simulated, enforceExpired ne file des commandes qu'aux
+	// agents — les compteurs de stock testés (filtres + statuts résolus)
+	// sont indépendants du mode routeur.
+	st.Lock()
+	for i := range st.Data().Routers {
+		if st.Data().Routers[i].ID == routerID {
+			st.Data().Routers[i].Mode = "real"
+		}
+	}
+	st.Unlock()
+
 	future := time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339)
 	past := time.Now().UTC().Add(-24 * time.Hour).Format(time.RFC3339)
 	st.Lock()

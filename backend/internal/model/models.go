@@ -1,109 +1,7 @@
 // Package model — types partagés MikCloud, alignés sur le contrat API (voir worklog.md).
 package model
 
-import (
-	"crypto/rand"
-	"encoding/hex"
-	"math/big"
-	"regexp"
-	"strings"
-	"time"
-)
-
-// CodeCharset — alphabet sans caractères ambigus (pas de 0/1/I/L/O) pour les vouchers.
-const CodeCharset = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
-
-// NewID génère un identifiant court lisible (ex. "u-9f3c1a2b4d5e").
-func NewID(prefix string) string {
-	b := make([]byte, 6)
-	if _, err := rand.Read(b); err != nil {
-		return prefix + hex.EncodeToString([]byte(time.Now().UTC().Format("150405.000000000")))
-	}
-	return prefix + hex.EncodeToString(b)
-}
-
-// RandomCode génère un code alphanumérique de n caractères sans caractères ambigus.
-func RandomCode(n int) string {
-	var sb strings.Builder
-	max := big.NewInt(int64(len(CodeCharset)))
-	for i := 0; i < n; i++ {
-		idx, err := rand.Int(rand.Reader, max)
-		if err != nil {
-			idx = big.NewInt(0)
-		}
-		sb.WriteByte(CodeCharset[idx.Int64()])
-	}
-	return sb.String()
-}
-
-// Presets de charset pour les codes de vouchers — inspirés du User Manager
-// MikroTik (« abcd », « ABCD », « aBcD », « 5ab2C34d », « 5AB2C34D », « 5aB2c34D »).
-// Tous les alphabets excluent les caractères ambigus (0/1/I/L/O) : les codes
-// restent lisibles sur un ticket imprimé ou lus à voix haute par un revendeur.
-const (
-	CharsetDefault = ""    // chiffres + majuscules sûres (CodeCharset, recommandé)
-	CharsetLower   = "abc" // minuscules            — preset « abcd »
-	CharsetUpper   = "ABC" // majuscules            — preset « ABCD »
-	CharsetLetters = "aBc" // lettres min + maj     — preset « aBcD »
-	CharsetDigLow  = "5ab" // chiffres + minuscules — preset « 5ab2c34d »
-	CharsetDigUp   = "5AB" // chiffres + majuscules — preset « 5AB2C34D »
-	CharsetDigMix  = "5aB" // chiffres + lettres    — preset « 5aB2c34D »
-	// Parité Mikhmon : jeu « 1234 » (chiffres purs, très demandé pour les
-	// codes courts revendus par les revendeurs). Alphabet = digitSafe (sans
-	// 0/1) pour conserver la règle « zéro caractère ambigu » de MikCloud.
-	CharsetNum = "num" // chiffres purs          — preset « 1234 »
-)
-
-const (
-	lowerSafe = "abcdefghijkmnpqrstuvwxyz" // sans l, o
-	upperSafe = "ABCDEFGHJKMNPQRSTUVWXYZ"  // sans I, L, O
-	digitSafe = "23456789"                 // sans 0, 1
-)
-
-// CharsetAlphabets associe chaque preset à son alphabet (sans ambiguïtés).
-var CharsetAlphabets = map[string]string{
-	CharsetDefault: digitSafe + upperSafe,
-	CharsetLower:   lowerSafe,
-	CharsetUpper:   upperSafe,
-	CharsetLetters: lowerSafe + upperSafe,
-	CharsetDigLow:  digitSafe + lowerSafe,
-	CharsetDigUp:   digitSafe + upperSafe,
-	CharsetDigMix:  digitSafe + lowerSafe + upperSafe,
-	CharsetNum:     digitSafe,
-}
-
-// RandomCodeFrom génère un code de n caractères dans l'alphabet du preset
-// demandé (charset vide ou inconnu → alphabet MikCloud par défaut).
-func RandomCodeFrom(n int, charset string) string {
-	alphabet, ok := CharsetAlphabets[charset]
-	if !ok || alphabet == "" {
-		alphabet = CodeCharset
-	}
-	var sb strings.Builder
-	max := big.NewInt(int64(len(alphabet)))
-	for i := 0; i < n; i++ {
-		idx, err := rand.Int(rand.Reader, max)
-		if err != nil {
-			idx = big.NewInt(0)
-		}
-		sb.WriteByte(alphabet[idx.Int64()])
-	}
-	return sb.String()
-}
-
-// RandomMAC génère une adresse MAC aléatoire "AA:BB:CC:DD:EE:FF".
-func RandomMAC() string {
-	b := make([]byte, 6)
-	_, _ = rand.Read(b)
-	parts := make([]string, 6)
-	for i, x := range b {
-		parts[i] = strings.ToUpper(hex.EncodeToString([]byte{x}))
-	}
-	return strings.Join(parts, ":")
-}
-
-// NowISO retourne l'heure courante au format RFC3339 (UTC).
-func NowISO() string { return time.Now().UTC().Format(time.RFC3339) }
+import "time"
 
 // ---------------------------------------------------------------------------
 // Types métier (réponses JSON strictement conformes au contrat TS)
@@ -113,6 +11,9 @@ func NowISO() string { return time.Now().UTC().Format(time.RFC3339) }
 // compte principal porte TOUJOURS cet ID (migrations déterministes) : il hérite
 // des données de l'ère mono-tenant et ne peut pas être désactivé.
 const AccountMainID = "acc-main"
+
+// Account — compte client SaaS (isolation multi-tenant). Chaque entité métier
+// porte un AccountID : un compte ne voit et ne modifie que ses données.
 
 // Account — compte client SaaS (isolation multi-tenant). Chaque entité métier
 // porte un AccountID : un compte ne voit et ne modifie que ses données.
@@ -128,6 +29,8 @@ type Account struct {
 	Country string `json:"country,omitempty"` // code ISO 3166-1 alpha-2 (CI, SN, NG…) ou "other"
 	City    string `json:"city,omitempty"`
 }
+
+// Router — équipement MikroTik géré (simulé, réel ou agent). Password non exposé dans l'API.
 
 // Router — équipement MikroTik géré (simulé, réel ou agent). Password non exposé dans l'API.
 type Router struct {
@@ -309,12 +212,23 @@ type Router struct {
 
 // SchedulerSecEffective — pas de scheduler connu du routeur (N°75). 0 =
 // état antérieur au correctif : l'installation posait 45 s.
+
+// SchedulerSecEffective — pas de scheduler connu du routeur (N°75). 0 =
+// état antérieur au correctif : l'installation posait 45 s.
 func (r *Router) SchedulerSecEffective() int {
 	if r.SchedulerSec <= 0 {
 		return 45
 	}
 	return r.SchedulerSec
 }
+
+// EffectiveOfflineAfter — N°75 — seuil « hors ligne » effectif d'un routeur
+// agent : le réglage du compte (OfflineAfterSec, défaut 135 s = 3 × 45 s) OU
+// 3 × son pas de scheduler, LE PLUS GRAND des deux. Un routeur en veille
+// (180 s) serait sinon marqué hors ligne entre deux check-ins — fausses
+// alertes « Routeur hors ligne » à chaque sieste. Partagé par le moniteur
+// de notifications (package notify) et le sync-status (package api) : la
+// formule vit ici, avec le modèle, pour éviter un import croisé.
 
 // EffectiveOfflineAfter — N°75 — seuil « hors ligne » effectif d'un routeur
 // agent : le réglage du compte (OfflineAfterSec, défaut 135 s = 3 × 45 s) OU
@@ -333,6 +247,8 @@ func (r *Router) EffectiveOfflineAfter(cfgOfflineSec int) time.Duration {
 	}
 	return time.Duration(effective) * time.Second
 }
+
+// Profile — profil hotspot (débit, durée, prix, validité).
 
 // Profile — profil hotspot (débit, durée, prix, validité).
 type Profile struct {
@@ -374,12 +290,18 @@ type Profile struct {
 // ValidityMinutes — durée de validité effective du profil en minutes.
 // Extension parité Mikhmon : ValidityMin (> 0) prime sur ValidityDays
 // (champ historique du contrat V2, conservé pour rétro-compatibilité).
+
+// ValidityMinutes — durée de validité effective du profil en minutes.
+// Extension parité Mikhmon : ValidityMin (> 0) prime sur ValidityDays
+// (champ historique du contrat V2, conservé pour rétro-compatibilité).
 func (p Profile) ValidityMinutes() int {
 	if p.ValidityMin > 0 {
 		return p.ValidityMin
 	}
 	return p.ValidityDays * 1440
 }
+
+// HotspotUser — utilisateur hotspot régulier ou voucher.
 
 // HotspotUser — utilisateur hotspot régulier ou voucher.
 type HotspotUser struct {
@@ -446,6 +368,8 @@ type HotspotUser struct {
 }
 
 // Session — session hotspot active.
+
+// Session — session hotspot active.
 type Session struct {
 	ID          string `json:"id"`
 	AccountID   string `json:"accountId"`
@@ -463,6 +387,8 @@ type Session struct {
 	BytesIn  int64 `json:"bytesIn"`
 	BytesOut int64 `json:"bytesOut"`
 }
+
+// Reseller — revendeur avec portefeuille.
 
 // Reseller — revendeur avec portefeuille.
 type Reseller struct {
@@ -501,6 +427,14 @@ type Reseller struct {
 // atteinte, limite baissée, revendeur supprimé) est refusé en 401. Les
 // sessions plus vieilles que le TTL du token + 1 h de grâce sont purgées au
 // login suivant du même revendeur (aucune éclosion silencieuse).
+
+// SellSession — session PIN Mode Vente (N°66). Une entrée naît au login d'un
+// revendeur dont la limite d'appareils est active (MaxDevices > 0) ; son
+// identifiant (jti) est embarqué dans le JWT émis et recontrôlé à CHAQUE
+// requête /api/sell/* : un token dont la session a été évincée (limite
+// atteinte, limite baissée, revendeur supprimé) est refusé en 401. Les
+// sessions plus vieilles que le TTL du token + 1 h de grâce sont purgées au
+// login suivant du même revendeur (aucune éclosion silencieuse).
 type SellSession struct {
 	ID         string `json:"id"`        // jti du JWT (« dev-… »)
 	AccountID  string `json:"accountId"` // isolation multi-tenant
@@ -510,6 +444,8 @@ type SellSession struct {
 	UserAgent  string `json:"userAgent"` // étiquette appareil, bornée 200 car.
 	IP         string `json:"ip"`
 }
+
+// Transaction — mouvement de portefeuille revendeur (credit | sale).
 
 // Transaction — mouvement de portefeuille revendeur (credit | sale).
 type Transaction struct {
@@ -526,11 +462,17 @@ type Transaction struct {
 // Rôles d'équipe (N°7) — hiérarchie de privilèges croissante. Le rôle
 // « admin » historique (= super-admin plateforme) devient RolePlatformAdmin ;
 // « admin » reste accepté en lecture pour les tokens/JWT existants.
+
+// Rôles d'équipe (N°7) — hiérarchie de privilèges croissante. Le rôle
+// « admin » historique (= super-admin plateforme) devient RolePlatformAdmin ;
+// « admin » reste accepté en lecture pour les tokens/JWT existants.
 const (
 	RoleManager       = "manager"        // gérant : tout le compte SAUF équipe et réglages/billing
 	RoleOwner         = "owner"          // propriétaire du compte : tout, y compris équipe
 	RolePlatformAdmin = "platform_admin" // super-admin MikCloud (multi-comptes)
 )
+
+// Activity — journal d'activité/audit (N°7 : trace QUI a agi, pas seulement quoi).
 
 // Activity — journal d'activité/audit (N°7 : trace QUI a agi, pas seulement quoi).
 type Activity struct {
@@ -544,6 +486,8 @@ type Activity struct {
 	ActorID   string `json:"actorId,omitempty"`
 	ActorName string `json:"actorName,omitempty"`
 }
+
+// Sale — vente de vouchers (par lot), attribuée au routeur (site) émetteur.
 
 // Sale — vente de vouchers (par lot), attribuée au routeur (site) émetteur.
 type Sale struct {
@@ -563,6 +507,8 @@ type Sale struct {
 	Cost         int `json:"cost"`
 	SellingTotal int `json:"selling"`
 }
+
+// Batch — lot de vouchers générés en une fois (traçabilité complète).
 
 // Batch — lot de vouchers générés en une fois (traçabilité complète).
 type Batch struct {
@@ -588,1177 +534,3 @@ type Batch struct {
 }
 
 // Tenant — infos du tenant.
-type Tenant struct {
-	Name     string `json:"name"`
-	Currency string `json:"currency"`
-	Timezone string `json:"timezone"`
-	// Wave CI — lien marchand pay.wave.com (ex. https://pay.wave.com/m/M_xxx/c/ci/)
-	// composé avec /amount/<montant>/ pour les demandes de paiement.
-	WaveLink string `json:"waveLink,omitempty"`
-	// P0 (audit Mikhmon) — F2 : personnalisation voucher.
-	DNSName string `json:"dnsName,omitempty"` // ex. wifi.mondomaine.ci
-	LogoURL string `json:"logoUrl,omitempty"` // data URL image ≤ 300 Ko
-	// Bannière du portail captif (N°45) : image affichée en tête de la page
-	// de login. Deux formes acceptées — data URL `data:image/…` ≤ 500 Ko
-	// (upload console) ou URL https:// (Cloudflare R2, session suivante).
-	// Vide = aucune bannière (portail sans image tête).
-	BannerURL string `json:"bannerUrl,omitempty"`
-	// Bouton « S'inscrire » du portail captif (N°46) : quand activé (valeur
-	// effective par défaut : nil OU true), la page de login affiche le
-	// bouton « S'inscrire » pointant vers le lien d'inscription publique
-	// actif lié au routeur (quota MAC N°33). Quand désactivé (false),
-	// AUCUN bouton d'inscription n'est rendu — le reliquat Mikhmon
-	// « Scanner un QR Code » (lien externe sans fonction métier) est
-	// retiré de la page. Pointeur : nil = défaut ON sans écrire le champ
-	// dans le JSON renvoyé (compatibilité zéro-migration, même pattern
-	// que Settings.AutoImportRouterUsers) ; la colonne Neon
-	// `settings.join_button` (NOT NULL DEFAULT TRUE) reporte la valeur
-	// explicite au premier Save.
-	JoinButton *bool `json:"joinButton,omitempty"`
-	// N°55 — mode hospitalité du portail captif. MikCloud sert deux usages :
-	// la vente de tickets (commercial, défaut — grille tarifaire + Wave) ET
-	// l'offre gratuite de fidélisation (hôtel, maquis, café-glacier, salon…)
-	// où le portail devient une vitrine des produits/services de
-	// l'établissement. "" OU "commercial" = portail historique ;
-	// "hospitality" = grille tarifaire/Wave masquée, remplacée par le
-	// message de bienvenue, les promos produits (images R2 via N°53) et
-	// les liens réseaux sociaux.
-	PortalStyle string `json:"portalStyle,omitempty"` // "" | "commercial" | "hospitality"
-	// Message de bienvenue affiché en tête du mode hospitalité (≤ 200 car.).
-	PortalWelcome string `json:"portalWelcome,omitempty"`
-	// Promos produits — JSON [{title,desc,imageUrl,priceLabel}] ≤ 6 items
-	// (structurés, persistés en string : pattern N°55, pas de table dédiée).
-	PortalPromos string `json:"portalPromos,omitempty"`
-	// Liens réseaux sociaux — JSON [{label,url}] ≤ 4 (WhatsApp, Facebook…).
-	PortalSocials string `json:"portalSocials,omitempty"`
-	// N°56 — clé publique du portail (16 hex, générée une fois par compte) :
-	// identifiant NON secret embarqué dans la config du portail captif
-	// (bloc mikcloud-config, visible de chaque invité par design) qui
-	// permet au track analytics (POST /api/portal/track) de résoudre le
-	// compte SANS authentification (pré-auth du hotspot). Elle n'ouvre
-	// AUCUN droit de lecture : uniquement le dépôt d'événements
-	// impressions/clics, dédupliqués et bornés côté serveur.
-	PortalKey string `json:"portalKey,omitempty"`
-	// P0 (audit Mikhmon) — F5 : politique de nettoyage des expirés.
-	ExpiryPolicyMode      string `json:"expiryPolicyMode"`      // "keep" (défaut) | "remove"
-	ExpiryPolicyAfterDays int    `json:"expiryPolicyAfterDays"` // défaut 30
-	// N°65 — rétention du journal utilisateurs PAR COMPTE (30/60/90 jours,
-	// défaut 90). Pointeur : nil = défaut 90 sans écrire le champ dans le JSON
-	// renvoyé (compatibilité zéro-migration pour les comptes existants, même
-	// pattern que JoinButton) ; la colonne Neon settings.log_retention_days
-	// (NOT NULL DEFAULT 90) reporte la valeur explicite au premier Save.
-	LogRetentionDays *int `json:"logRetentionDays,omitempty"`
-}
-
-// DefaultLogRetentionDays — rétention par défaut du journal utilisateurs
-// (F3), en jours. N°65 : chaque compte peut resserrer à 30/60 via
-// tenant.logRetentionDays ; 90 reste le comportement historique (N°64).
-const DefaultLogRetentionDays = 90
-
-// LogRetentionDaysEffective — valeur EFFECTIVE de la rétention du journal
-// pour un compte (nil ou valeur hors 30/60/90 = 90 jours : le comportement
-// N°64 est préservé pour les comptes existants — une valeur invalide glissée
-// en base ne peut jamais ouvrir une rétention illimitée).
-func (t Tenant) LogRetentionDaysEffective() int {
-	if t.LogRetentionDays == nil {
-		return DefaultLogRetentionDays
-	}
-	switch *t.LogRetentionDays {
-	case 30, 60, 90:
-		return *t.LogRetentionDays
-	default:
-		return DefaultLogRetentionDays
-	}
-}
-
-// Plan — plan d'abonnement SaaS (libellé hérité de l'ère pré-facturation ;
-// maintenu pour compatibilité d'affichage, l'état réel vit dans Subscription).
-type Plan struct {
-	Name       string `json:"name"`
-	MaxRouters string `json:"maxRouters"`
-	MaxUsers   string `json:"maxUsers"`
-}
-
-// Subscription — état d'abonnement SaaS d'un compte. PlanID vide = ère bêta
-// (aucune formule souscrite). PeriodEnd vide = non expirant.
-type Subscription struct {
-	PlanID      string `json:"planId"`      // "" (bêta) | essentiel | illimite
-	Status      string `json:"status"`      // active | expired
-	PeriodStart string `json:"periodStart"` // RFC3339
-	PeriodEnd   string `json:"periodEnd"`   // RFC3339 — "" = non expirant
-	// LastAmountFcfa — montant de la période en cours : Essentiel =
-	// 1 250 F × routeurs enregistrés au moment de la souscription, Illimité = forfait.
-	LastAmountFcfa int `json:"lastAmountFcfa"`
-	// P2/P3 (console plateforme) — RouterSlots : nombre de routeurs couverts
-	// par une période Essentiel (quota réel vérifié côté serveur à la
-	// création de routeur ; 0 = non plafonné : bêta, illimité, plateforme).
-	// LastPaidAt : date RFC3339 du dernier paiement marqué par la plateforme
-	// (vide = période en attente de paiement — indicatif, sans blocage).
-	RouterSlots int    `json:"routerSlots,omitempty"`
-	LastPaidAt  string `json:"lastPaidAt,omitempty"`
-}
-
-// SaasPlan — formule d'abonnement MikCloud (catalogue public de la console).
-type SaasPlan struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	PriceFcfa int    `json:"priceFcfa"`
-	Period    string `json:"period"`    // mois | an
-	PerRouter bool   `json:"perRouter"` // true : prix × routeurs enregistrés
-	Unlimited bool   `json:"unlimited"` // routeurs illimités
-	Tagline   string `json:"tagline"`
-	Badge     string `json:"badge,omitempty"`
-}
-
-// SaasPlans — catalogue des formules MikCloud (marché FCFA concurrentiel).
-//   - Essentiel : 1 250 F/mois/routeur — acquisition, sans engagement, le gérant
-//     paie au fil de sa croissance (remboursé par 4-5 tickets 24 h vendus).
-//   - Illimité : 12 000 F/an, routeurs illimités — arme de conquête :
-//     1 000 F/mois équivalent, 2 mois offerts vs Essentiel (−20 % à 1 routeur,
-//     −92 % à 10 routeurs), verrouille 12 mois et fait consolider tous les sites.
-var SaasPlans = []SaasPlan{
-	{
-		ID: "essentiel", Name: "Essentiel", PriceFcfa: 1250, Period: "mois",
-		PerRouter: true, Tagline: "Payez au fil de votre croissance",
-		Badge: "Sans engagement",
-	},
-	{
-		ID: "illimite", Name: "Illimité", PriceFcfa: 12000, Period: "an",
-		Unlimited: true, Tagline: "Tous vos routeurs, un seul prix",
-		Badge: "2 mois offerts · −20 %",
-	},
-}
-
-// PlanByID — retrouve une formule du catalogue par son identifiant.
-func PlanByID(id string) (SaasPlan, bool) {
-	for _, p := range SaasPlans {
-		if p.ID == id {
-			return p, true
-		}
-	}
-	return SaasPlan{}, false
-}
-
-// Settings — paramètres du tenant (tenant + plan + abonnement).
-type Settings struct {
-	Tenant       Tenant       `json:"tenant"`
-	Plan         Plan         `json:"plan"`
-	Subscription Subscription `json:"subscription"`
-	// I (paramètres plateforme) — N'EST UTILISÉ QUE SUR LE COMPTE PRINCIPAL
-	// (AccountMainID) : configuration globale du SaaS vue par l'admin
-	// plateforme. Ignoré pour les comptes clients.
-	Platform *PlatformConfig `json:"platform,omitempty"`
-	// AutoImportRouterUsers — réglage par compte (audit purge/résurgence) :
-	// quand activé (valeur effective par défaut : nil OU true), les
-	// utilisateurs hotspot présents sur un routeur AGENT mais inconnus du
-	// cloud sont importés automatiquement à chaque read_state (découverte
-	// des comptes créés dans Winbox). Quand désactivé (false), le read_state
-	// ne crée RIEN : les comptes hors MikCloud sont comptés dans
-	// Router.UnknownOnRouter pour adoption manuelle (outil d'import).
-	// Pointeur : nil = défaut ON sans écrire le champ dans le JSON persisté
-	// (compatibilité zéro-migration pour les comptes existants).
-	AutoImportRouterUsers *bool `json:"autoImportRouterUsers,omitempty"`
-}
-
-// ImportAutoEnabled — valeur EFFECTIVE du réglage d'import automatique pour un
-// compte (nil = ON : comportement historique préservé, zéro surprise).
-func (s Settings) ImportAutoEnabled() bool {
-	return s.AutoImportRouterUsers == nil || *s.AutoImportRouterUsers
-}
-
-// JoinButtonEnabled — valeur EFFECTIVE du réglage du bouton « S'inscrire »
-// du portail captif (N°46) pour un compte (nil = ON : comportement historique
-// préservé, zéro-migration pour les comptes existants).
-func (t Tenant) JoinButtonEnabled() bool {
-	return t.JoinButton == nil || *t.JoinButton
-}
-
-// PlatformConfig — configuration globale de la plateforme MikCloud (vivante
-// sur les settings du compte principal). Gérée depuis la console plateforme
-// (vue Paramètres plateforme), persistée en PostgreSQL — plus besoin de
-// redéployer Render pour ouvrir/fermer les inscriptions.
-type PlatformConfig struct {
-	// Nom affiché du SaaS (login, footer) — défaut "MikCloud".
-	Name string `json:"name"`
-	// RegisterOpen : auto-inscription publique autorisée sans clé.
-	// Priorité de handleRegister : env REGISTER_KEY (si définie) > cette clé.
-	RegisterOpen bool `json:"registerOpen"`
-	// RegisterKey : clé d'invitation requise quand RegisterOpen = false
-	// ("" = pas de clé → inscriptions totalement fermées).
-	RegisterKey string `json:"registerKey,omitempty"`
-}
-
-// AdminUser — compte d'accès à la console (login), rattaché à un compte SaaS.
-type AdminUser struct {
-	ID           string `json:"id"`
-	AccountID    string `json:"accountId"`
-	Name         string `json:"name"`
-	Username     string `json:"username"`
-	Role         string `json:"role"`
-	PasswordHash string `json:"passwordHash"`
-	Salt         string `json:"salt"`
-	CreatedAt    string `json:"createdAt"`
-	// PasswordSetByUser — true quand le mot de passe a été modifié par
-	// l'utilisateur via POST /api/auth/password : applyAdminOverride ne
-	// l'écrase alors PAS (sauf si la variable ADMIN_PASSWORD change).
-	PasswordSetByUser bool `json:"passwordSetByUser,omitempty"`
-	// EnvPasswordHash — hash du DERNIER mot de passe appliqué par la
-	// variable d'environnement ADMIN_PASSWORD. Sert à détecter un
-	// changement d'intention de l'opérateur (env modifiée) par rapport à
-	// un mot de passe changé par l'utilisateur depuis la console.
-	EnvPasswordHash string `json:"envPasswordHash,omitempty"`
-	// SessionEpoch — compteur de révocation des sessions (sécurité S1-A3).
-	// Incrémenté à chaque opération sensible (changement de mot de passe,
-	// réinitialisation par l'owner, changement de rôle) : tout token JWT
-	// portant un claim « ver » ≠ SessionEpoch est refusé IMMÉDIATEMENT par
-	// le middleware — sans attendre l'expiration naturelle (24 h). La
-	// suppression du membre rend l'utilisateur introuvable : refus aussi.
-	// Valeur 0 = aucune révocation (compatible tokens antérieurs au
-	// correctif, décodés avec ver=0).
-	SessionEpoch int `json:"sessionEpoch,omitempty"`
-	// TOTPSecret — secret 2FA (base32, RFC 6238 — sécurité S4). JAMAIS
-	// sérialisé en JSON (tag « - ») : il n'apparaît que dans la réponse de
-	// /api/auth/2fa/setup, au moment du pairage.
-	TOTPSecret string `json:"-"`
-	// TOTPEnabled — 2FA active : le login exige alors un code à 6 chiffres.
-	TOTPEnabled bool `json:"totpEnabled,omitempty"`
-}
-
-// NotificationSettings — canaux et règles d'alerte d'un compte SaaS. Les
-// secrets (tokens, mot de passe SMTP) sont stockés mais JAMAIS renvoyés par
-// l'API (l'API expose uniquement des booléens « …Set ») ; un PUT avec un
-// champ secret vide conserve la valeur existante.
-type NotificationSettings struct {
-	AccountID string `json:"accountId"`
-	Enabled   bool   `json:"enabled"` // interrupteur général des alertes automatiques
-	// Telegram — bot API (https://core.telegram.org/bots)
-	TelegramEnabled  bool   `json:"telegramEnabled"`
-	TelegramBotToken string `json:"telegramBotToken,omitempty"`
-	TelegramChatID   string `json:"telegramChatId,omitempty"`
-	// WhatsApp Cloud API (Meta Graph)
-	WhatsAppEnabled bool   `json:"whatsappEnabled"`
-	WhatsAppToken   string `json:"whatsappToken,omitempty"`
-	WhatsAppPhoneID string `json:"whatsappPhoneId,omitempty"`
-	WhatsAppTo      string `json:"whatsappTo,omitempty"`
-	// Email — SMTP direct (STARTTLS 587 / TLS implicite 465) ou API Resend
-	// (https://resend.com). EmailProvider choisit le fournisseur du canal :
-	// "" ou "smtp" → SMTP direct (défaut historique), "resend" → API HTTP
-	// Resend (la clé est un secret par compte, idem mot de passe SMTP).
-	EmailProvider string `json:"emailProvider,omitempty"`
-	ResendAPIKey  string `json:"resendApiKey,omitempty"`
-	// ResendFrom — expéditeur Resend, ex. « MikCloud <alertes@ftci.fr> » ;
-	// vide → « MikCloud <onboarding@resend.dev> » (domaine d'essai Resend :
-	// ne délivre qu'à l'adresse du propriétaire du compte Resend).
-	ResendFrom   string `json:"resendFrom,omitempty"`
-	EmailEnabled bool   `json:"emailEnabled"`
-	SMTPHost     string `json:"smtpHost,omitempty"`
-	SMTPPort     int    `json:"smtpPort,omitempty"`
-	SMTPUser     string `json:"smtpUser,omitempty"`
-	SMTPPass     string `json:"smtpPass,omitempty"`
-	EmailTo      string `json:"emailTo,omitempty"`
-	// Règles d'alerte
-	OfflineAfterSec   int  `json:"offlineAfterSec"`   // sans check-in depuis X s → hors ligne (défaut 135 = 3 × 45 s)
-	LowStockThreshold int  `json:"lowStockThreshold"` // vouchers actifs restants < X → alerte stock (défaut 25)
-	DailyReport       bool `json:"dailyReport"`       // rapport quotidien
-	ReportHour        int  `json:"reportHour"`        // heure d'envoi (UTC = Abidjan GMT+0), défaut 20
-	// État interne anti-spam : dernier jour de rapport envoyé (YYYY-MM-DD)
-	LastReportDate string `json:"lastReportDate,omitempty"`
-	// État anti-spam stock : routerID → "low" | "empty" (dernier état notifié)
-	StockAlertState map[string]string `json:"stockAlertState,omitempty"`
-}
-
-// Normalize applique les défauts et bornes (appelé avant chaque lecture/écriture).
-func (s *NotificationSettings) Normalize() {
-	switch {
-	case s.OfflineAfterSec == 0:
-		s.OfflineAfterSec = 135
-	case s.OfflineAfterSec < 60:
-		s.OfflineAfterSec = 60
-	}
-	if s.LowStockThreshold == 0 {
-		s.LowStockThreshold = 25
-	}
-	if s.ReportHour < 0 || s.ReportHour > 23 {
-		s.ReportHour = 20
-	}
-}
-
-// NotificationLog — trace d'un envoi de notification (historique console).
-type NotificationLog struct {
-	ID        string `json:"id"`
-	AccountID string `json:"accountId"`
-	Channel   string `json:"channel"` // telegram | whatsapp | email | system
-	Kind      string `json:"kind"`    // router_offline | router_back | low_stock | daily_report | test | settings | password_reset
-	Title     string `json:"title"`
-	Body      string `json:"body,omitempty"`
-	Status    string `json:"status"` // sent | error
-	Error     string `json:"error,omitempty"`
-	At        string `json:"at"`
-}
-
-// PasswordReset — N°68 : demande de réinitialisation du mot de passe console
-// (« Mot de passe oublié ? » de l'écran de connexion). L'utilisateur saisit
-// l'e-mail enregistré à la création de son compte ; le propriétaire du compte
-// correspondant reçoit un lien UNIQUE et ÉPHÉMÈRE vers /reset-password.
-//   - TokenHash : SHA-256 hex du token envoyé par e-mail — le token en clair
-//     n'est JAMAIS persisté (une fuite de la base ne permet aucune
-//     réutilisation) ;
-//   - ExpiresAt : expiration stricte (TTL 60 minutes) ;
-//   - UsedAt : consommation à usage unique (le lien sert UNE fois, puis il est
-//     définitivement mort — une nouvelle demande invalide les liens en attente
-//     du même compte) ;
-//   - CreatedIP : audit de l'origine de la demande (même usage que CreatedIP
-//     des inscriptions, jamais exposé par l'API).
-type PasswordReset struct {
-	ID        string `json:"id"`
-	AccountID string `json:"accountId"`
-	UserID    string `json:"userId"`
-	TokenHash string `json:"tokenHash"`
-	ExpiresAt string `json:"expiresAt"`
-	UsedAt    string `json:"usedAt,omitempty"`
-	CreatedAt string `json:"createdAt"`
-	CreatedIP string `json:"createdIp,omitempty"`
-}
-
-// BillingRequest — demande de souscription / renouvellement d'abonnement
-// créée par un compte client (verrou du cycle de facturation, POST
-// /api/subscription). Complète le journal (type billing) par une FILE
-// actionnable dans la console plateforme : chaque demande porte un statut,
-// une référence de paiement (appariement webhook Wave) et sa résolution.
-type BillingRequest struct {
-	ID         string `json:"id"`
-	AccountID  string `json:"accountId"`
-	PlanID     string `json:"planId"`     // essentiel | illimite
-	PlanName   string `json:"planName"`   // libellé figé à la demande
-	AmountFcfa int    `json:"amountFcfa"` // montant attendu (moyen actif — wave par défaut)
-	// BaseAmountFcfa — net cible de la PLATEFORME (prix catalogue, hors frais
-	// de paiement). Les montants débités (Wave / carte) en sont dérivés par
-	// répercussion des frais GeniusPay (handlers_pricing.go). 0 = demande
-	// antérieure à la répercussion (montant = net historique).
-	BaseAmountFcfa int `json:"baseAmountFcfa,omitempty"`
-	// PayMethod — moyen de paiement ACTIF de la demande : "wave" (défaut,
-	// remise mobile money) ou "card" (prix de liste). Basculé à chaque
-	// initiation ; le webhook fixe le moyen effectivement payé.
-	PayMethod   string `json:"payMethod,omitempty"`
-	PeriodLabel string `json:"periodLabel"` // « 1 mois » | « 1 an »
-	RouterCount int    `json:"routerCount"` // assiette au moment de la demande
-	// Ref — référence de paiement publique (MC-XXXXXXXX), renvoyée au client
-	// et attendue dans le webhook Wave pour l'appariement automatique.
-	Ref string `json:"ref"`
-	// GatewayRef — référence de la transaction GeniusPay (MTX-…), remplie
-	// quand le client a initié le paiement Wave en ligne (POST
-	// /api/subscription/pay). Repli d'appariement du webhook GeniusPay.
-	GatewayRef string `json:"gatewayRef,omitempty"`
-	Status     string `json:"status"` // pending | done | cancelled
-	CreatedAt  string `json:"createdAt"`
-	ResolvedAt string `json:"resolvedAt,omitempty"`
-	// ResolvedBy — nom de l'admin plateforme ou « webhook Wave ».
-	ResolvedBy string `json:"resolvedBy,omitempty"`
-	Note       string `json:"note,omitempty"`
-	// PaidVia — manual (fiche/file plateforme) | wave (webhook) ; vide sur
-	// les demandes annulées.
-	PaidVia string `json:"paidVia,omitempty"`
-}
-
-// GeniusPaySub — abonnement RÉCURRENT par carte bancaire (Stripe via
-// GeniusPay). Créé une fois par le client (POST /api/subscription/stripe),
-// débité automatiquement à chaque échéance par Stripe ; chaque facture payée
-// (webhook subscription.payment_succeeded, ou resynchronisation au retour du
-// client) active/empile la période MikCloud correspondante — la source unique
-// du calcul de période reste applySubscriptionLocked.
-type GeniusPaySub struct {
-	// UUID — identifiant GeniusPay (sub_…), clé primaire locale.
-	UUID      string `json:"uuid"`
-	AccountID string `json:"accountId"`
-	PlanID    string `json:"planId"`   // essentiel | illimite
-	PlanName  string `json:"planName"` // libellé figé à la création
-	Cycle     string `json:"cycle"`    // monthly | yearly
-	// AmountFcfa — montant FIXE débité par cycle (assiette figée à la création :
-	// Essentiel = 1 250 F × routeurs, Illimité = 12 000 F). Slots — routeurs
-	// couverts (essentiel). Status — pending|trialing|active|past_due|paused|
-	// cancelled|expired.
-	AmountFcfa    int    `json:"amountFcfa"`
-	Slots         int    `json:"slots"`
-	Status        string `json:"status"`
-	CustomerName  string `json:"customerName,omitempty"`
-	CustomerEmail string `json:"customerEmail,omitempty"`
-	Phone         string `json:"phone,omitempty"`
-	NextBilling   string `json:"nextBilling,omitempty"` // prochaine échéance (AAAA-MM-JJ)
-	// LastInvoiceAt — paid_at de la DERNIÈRE facture APPLIQUÉE (idempotence du
-	// webhook et des resynchronisations).
-	LastInvoiceAt string `json:"lastInvoiceAt,omitempty"`
-	LastRenewalAt string `json:"lastRenewalAt,omitempty"`
-	CreatedAt     string `json:"createdAt"`
-	UpdatedAt     string `json:"updatedAt,omitempty"`
-	CancelledAt   string `json:"cancelledAt,omitempty"`
-}
-
-// Kinds de commandes agent (routeur -> cloud en HTTP-poll).
-const (
-	CmdReadState    = "read_state"    // télémétrie + users + sessions actives
-	CmdUserAdd      = "user_add"      // créer un utilisateur hotspot
-	CmdVoucherBatch = "voucher_batch" // créer un lot de vouchers
-	CmdUserRemove   = "user_remove"   // supprimer un/des utilisateurs
-	CmdUserSet      = "user_set"      // modifier (nom/profil/password/disabled)
-	CmdKick         = "kick"          // fermer une session active
-	CmdUserReset    = "user_reset"    // remettre à zéro les compteurs d'un utilisateur (F4)
-)
-
-// P1 (audit Mikhmon) — kinds de commandes agent des vagues F6-F10.
-// Le résultat de chaque commande est rapporté via POST /agent/result et stocké
-// dans Command.Result (les outils F9/F10 mettent en cache leurs lignes dans la
-// clé "data" — relue tant que la commande est done depuis < 120 s).
-const (
-	CmdPing            = "ping"             // F8 : test de latence (/ping count=4 as-value)
-	CmdIpbindingAdd    = "ipbinding_add"    // F7 : /ip hotspot ip-binding add
-	CmdIpbindingSet    = "ipbinding_set"    // F7 : /ip hotspot ip-binding set
-	CmdIpbindingRemove = "ipbinding_remove" // F7 : /ip hotspot ip-binding remove
-	CmdReadDhcp        = "read_dhcp"        // F9 : /ip dhcp-server lease print
-	CmdReadHosts       = "read_hosts"       // F9 : /ip hotspot host print
-	CmdReadCookies     = "read_cookies"     // F9 : /ip hotspot cookie print
-	CmdReadLog         = "read_log"         // F9 : /log print where topics~"hotspot"
-	CmdReadScheduler   = "read_scheduler"   // F10 : /system scheduler print
-	CmdReadResources   = "read_resources"   // Parité Mikhmon : noms /ip pool + /queue simple + /ip hotspot
-	CmdSchedulerAdd    = "scheduler_add"    // F10 : /system scheduler add
-	CmdSchedulerSet    = "scheduler_set"    // F10 : /system scheduler set (disabled)
-	CmdSchedulerRemove = "scheduler_remove" // F10 : /system scheduler remove
-	CmdReboot          = "reboot"           // F10 : /system reboot
-	CmdShutdown        = "shutdown"         // F10 : /system shutdown
-	CmdImportHotspot   = "import_hotspot"   // import initial : lecture paginée des profils + utilisateurs existants sur le routeur
-	CmdProfileSet      = "profile_set"      // v2 : applique/retire le verrou « 1er appareil » (on-login de liaison MAC) sur un profil
-	CmdWalledGarden    = "walled_garden"    // N°29 : walled-garden d'inscription publique (runbook N°27-D automatisé)
-	CmdHotspotFiles    = "hotspot_files"    // N°35 : déploiement automatique du portail captif (login.html, status.html, assets) — pattern walled_garden
-	CmdWatcherEnsure   = "watcher_ensure"   // N°77 : veilleur d'invités — scheduler mikcloud-watch (check-in 20 s quand un hôte non autorisé est présent)
-	CmdSafeWifi        = "safewifi"         // N°80 : protection DNS du WiFi public — redirection du port 53 vers un résolveur filtrant (règles marquées mikcloud-safewifi, idempotent) ; N°85 : durcie — NAT en tête de table, DoT/DoH bloqués, IPv6 coupé (best-effort)
-	CmdShield          = "shield"           // N°81 : bouclier réseau du WiFi public — administration du routeur et vecteurs malveillants bloqués pour les clients (règles filter marquées mikcloud-shield, idempotent)
-	CmdFamilyGuard     = "familyguard"      // N°82 : couvre-feu internet du WiFi public — fenêtre horaire pendant laquelle l'internet des clients est coupé (règles filter marquées mikcloud-familyguard, idempotent)
-	CmdAntiVpn         = "antivpn"          // N°88 : bloque-VPN du WiFi public — VPN et tunnels standards (GRE, ESP, IKE, L2TP, PPTP, OpenVPN, WireGuard, WARP, Tor) coupés pour les clients (règles filter marquées mikcloud-antivpn, idempotent)
-)
-
-// N°80 — niveaux SafeWiFi (filtrage DNS du WiFi public par redirection).
-// Le niveau est choisi par le gérant dans la console et converge via la
-// commande safewifi au check-in suivant (pattern walled-garden).
-const (
-	SafeWifiOff     = "off"     // aucune protection
-	SafeWifiThreats = "threats" // malwares, phishing, arnaques (Quad9)
-	SafeWifiFamily  = "family"  // + contenus adultes, publicités (AdGuard Family)
-)
-
-// ValidSafeWifiLevel — vrai si le niveau fait partie du contrat N°80.
-func ValidSafeWifiLevel(l string) bool {
-	return l == SafeWifiOff || l == SafeWifiThreats || l == SafeWifiFamily
-}
-
-// SafeWifiLevelEffective — niveau de filtrage courant de ce routeur,
-// normalisé ("" ou valeur inconnue = état antérieur au N°80 → off).
-func (r *Router) SafeWifiLevelEffective() string {
-	if !ValidSafeWifiLevel(r.SafeWifiLevel) {
-		return SafeWifiOff
-	}
-	return r.SafeWifiLevel
-}
-
-// N°81 — niveaux Shield (bouclier réseau du WiFi public).
-const (
-	ShieldOff = "off" // aucun blindage
-	ShieldOn  = "on"  // administration du routeur et vecteurs malveillants bloqués pour les clients WiFi
-)
-
-// ValidShieldLevel — vrai si le niveau fait partie du contrat N°81.
-func ValidShieldLevel(l string) bool {
-	return l == ShieldOff || l == ShieldOn
-}
-
-// ShieldLevelEffective — niveau de blindage courant de ce routeur,
-// normalisé ("" ou valeur inconnue = état antérieur au N°81 → off).
-func (r *Router) ShieldLevelEffective() string {
-	if !ValidShieldLevel(r.ShieldLevel) {
-		return ShieldOff
-	}
-	return r.ShieldLevel
-}
-
-// N°88 — niveaux AntiVPN (bloque-VPN du WiFi public). Le niveau est
-// choisi par le gérant dans la console et converge via la commande
-// antivpn au check-in suivant (pattern walled-garden).
-const (
-	AntiVpnOff = "off" // aucun blocage
-	AntiVpnOn  = "on"  // VPN et tunnels standards coupés pour les clients WiFi
-)
-
-// ValidAntiVpnLevel — vrai si le niveau fait partie du contrat N°88.
-func ValidAntiVpnLevel(l string) bool {
-	return l == AntiVpnOff || l == AntiVpnOn
-}
-
-// AntiVpnLevelEffective — niveau de blocage courant de ce routeur,
-// normalisé ("" ou valeur inconnue = état antérieur au N°88 → off).
-func (r *Router) AntiVpnLevelEffective() string {
-	if !ValidAntiVpnLevel(r.AntiVpnLevel) {
-		return AntiVpnOff
-	}
-	return r.AntiVpnLevel
-}
-
-// ---------------------------------------------------------------------------
-// N°82 — FamilyGuard : couvre-feu internet du WiFi public (logique pure)
-// ---------------------------------------------------------------------------
-//
-// Le gérant programme une fenêtre horaire (ex. 22:00 → 06:00 tous les
-// soirs) pendant laquelle l'internet du WiFi public est coupé. Complète la
-// gamme sécurité : SafeWiFi (N°80) filtre QUOI (menaces, contenus),
-// Shield (N°81) protège CONTRE QUI (administration, propagation), FamilyGuard
-// décide QUAND l'internet est accessible (nuit, heures de fermeture, salle
-// familiale).
-//
-// ARBITRAGE (documenté) : l'ÉTAT désiré — couvre-feu en cours ou non — est
-// calculé PAR LE CLOUD à chaque check-in, en UTC (== heure d'Abidjan GMT,
-// la Côte d'Ivoire n'applique pas l'heure d'été). L'horloge routeur N'est
-// PAS consultée : un routeur sans NTP (fréquent sur le terrain) verrait le
-// couvre-feu partir à la mauvaise heure via le paramètre natif time= de
-// RouterOS. Contrepartie assumée : la bascule s'applique au check-in
-// suivant (≤ 45 s console ouverte — attention N°75, ≤ 180 s en veille),
-// et un routeur hors-ligne qui revient converge immédiatement vers
-// l'état « maintenant » (aucune commande périmée en attente).
-
-// FamilyGuardConfig — fenêtre du couvre-feu, forme structurée.
-type FamilyGuardConfig struct {
-	Enabled bool   // false : configuré mais désactivé (la fenêtre est conservée)
-	Start   string // "HH:MM" début (inclus)
-	End     string // "HH:MM" fin (EXCLU — la fenêtre s'arrête à 06:00, pas 06:00:59)
-	Days    string // "1111111" — lundi→dimanche, '1' = la fenêtre DÉMARRE ce jour
-}
-
-// familyGuardDayCount — indices de la chaîne Days (lundi = 0).
-const familyGuardDayCount = 7
-
-// familyGuardMinutes — "HH:MM" → minutes depuis minuit ; ok=false si mal formé.
-func familyGuardMinutes(hhmm string) (int, bool) {
-	if len(hhmm) != 5 || hhmm[2] != ':' {
-		return 0, false
-	}
-	h := int(hhmm[0]-'0')*10 + int(hhmm[1]-'0')
-	m := int(hhmm[3]-'0')*10 + int(hhmm[4]-'0')
-	if h > 23 || m > 59 {
-		return 0, false
-	}
-	return h*60 + m, true
-}
-
-// ValidFamilyGuardConfig — validation stricte : heures bien formées,
-// début ≠ fin (une fenêtre nulle est ambiguë), exactement 7 jours 0/1 dont
-// au moins un actif (sinon rien ne se déclenche jamais).
-func ValidFamilyGuardConfig(c FamilyGuardConfig) bool {
-	s, okS := familyGuardMinutes(c.Start)
-	e, okE := familyGuardMinutes(c.End)
-	if !okS || !okE || s == e {
-		return false
-	}
-	if len(c.Days) != familyGuardDayCount {
-		return false
-	}
-	anyDay := false
-	for i := 0; i < familyGuardDayCount; i++ {
-		if c.Days[i] != '0' && c.Days[i] != '1' {
-			return false
-		}
-		if c.Days[i] == '1' {
-			anyDay = true
-		}
-	}
-	return anyDay
-}
-
-// SpecString — forme canonique persistée dans Router.FamilyGuardSpec :
-// "1|22:00|06:00|1111111".
-func (c FamilyGuardConfig) SpecString() string {
-	enabled := "0"
-	if c.Enabled {
-		enabled = "1"
-	}
-	return enabled + "|" + c.Start + "|" + c.End + "|" + c.Days
-}
-
-// ParseFamilyGuardSpec — "" → ok=false (jamais utilisé). Toute forme
-// invalide → ok=false (défense : la colonne ne reçoit que des specs
-// validés par le handler, mais le parse reste strict).
-func ParseFamilyGuardSpec(s string) (FamilyGuardConfig, bool) {
-	parts := strings.Split(s, "|")
-	if len(parts) != 4 {
-		return FamilyGuardConfig{}, false
-	}
-	c := FamilyGuardConfig{Enabled: parts[0] == "1", Start: parts[1], End: parts[2], Days: parts[3]}
-	return c, ValidFamilyGuardConfig(c)
-}
-
-// ActiveAt — vrai si `now` tombe dans la fenêtre du couvre-feu.
-// Sémantique des jours : un jour positionné est le jour de DÉBUT de la
-// fenêtre — « vendredi » + 22:00→06:00 couvre vendredi 22:00 → samedi 06:00
-// (la portion après minuit appartient à la fenêtre PARTIE la veille, même
-// si le samedi n'est pas coché).
-func (c FamilyGuardConfig) ActiveAt(now time.Time) bool {
-	if !c.Enabled {
-		return false
-	}
-	s, okS := familyGuardMinutes(c.Start)
-	e, okE := familyGuardMinutes(c.End)
-	if !okS || !okE || s == e {
-		return false
-	}
-	day := (int(now.Weekday()) + 6) % familyGuardDayCount // lundi=0 … dimanche=6
-	m := now.Hour()*60 + now.Minute()
-	if s < e {
-		// fenêtre intra-jour : 08:00 → 12:00
-		return m >= s && m < e && c.Days[day] == '1'
-	}
-	// fenêtre franchissant minuit : 22:00 → 06:00 — active si on est
-	// dans la portion du soir (jour de début) OU celle du matin (jour
-	// de début = veille).
-	prev := (day + familyGuardDayCount - 1) % familyGuardDayCount
-	return (m >= s && c.Days[day] == '1') || (m < e && c.Days[prev] == '1')
-}
-
-// ---------------------------------------------------------------------------
-// P0/P1 (audit Mikhmon) — nouveaux types (contrat V2 : F2/F3/F6/F7/F10)
-// ---------------------------------------------------------------------------
-
-// VoucherTemplate — modèle d'impression de vouchers (F2). Le rendu des
-// variables {{…}} se fait côté CLIENT à l'impression ; le corps est stocké
-// tel quel (scripts retirés à la sauvegarde — voir SanitizeTemplateHTML).
-type VoucherTemplate struct {
-	ID        string `json:"id"`
-	AccountID string `json:"accountId"`
-	Name      string `json:"name"`     // 1-60 caractères
-	Format    string `json:"format"`   // "a4" | "58mm" | "80mm"
-	BodyHTML  string `json:"bodyHtml"` // ≤ 20 000 caractères, styles inline
-	IsDefault bool   `json:"isDefault"`
-	CreatedAt string `json:"createdAt"`
-}
-
-// UserLog — journal utilisateurs (F3) : login / logout / expire / kick.
-type UserLog struct {
-	ID         string `json:"id"`
-	AccountID  string `json:"accountId"`
-	UserID     string `json:"userId"`
-	Username   string `json:"username"`
-	Action     string `json:"action"` // "login" | "logout" | "expire" | "kick"
-	RouterID   string `json:"routerId"`
-	RouterName string `json:"routerName"`
-	IP         string `json:"ip"`
-	MAC        string `json:"mac"`
-	At         string `json:"at"`
-}
-
-// IfaceTraffic — compteur cumulé et débit instantané d'une interface (F6).
-type IfaceTraffic struct {
-	Name    string `json:"name"`
-	RxBytes int64  `json:"rxBytes"` // compteurs cumulés
-	TxBytes int64  `json:"txBytes"`
-	RxBps   int64  `json:"rxBps"` // débit calculé
-	TxBps   int64  `json:"txBps"`
-}
-
-// TrafficPoint — point d'historique de trafic, somme toutes interfaces (F6).
-type TrafficPoint struct {
-	T     string `json:"t"` // RFC3339
-	RxBps int64  `json:"rxBps"`
-	TxBps int64  `json:"txBps"`
-}
-
-// RouterTraffic — trafic temps réel d'un routeur (F6). Une entrée par
-// routeur : ID = RouterID (pattern de persistance : clé primaire "id").
-type RouterTraffic struct {
-	ID         string         `json:"id"` // = RouterID
-	RouterID   string         `json:"routerId"`
-	AccountID  string         `json:"accountId"`
-	UpdatedAt  string         `json:"updatedAt"`
-	Interfaces []IfaceTraffic `json:"interfaces"` // détail courant par interface
-	History    []TrafficPoint `json:"history"`    // 60 derniers points (somme interfaces)
-}
-
-// IPBinding — règle hotspot IP binding (F7) : bypass ou blocage par MAC.
-type IPBinding struct {
-	ID        string `json:"id"`
-	AccountID string `json:"accountId"`
-	RouterID  string `json:"routerId"`
-	MAC       string `json:"mac"`     // "AA:BB:CC:DD:EE:FF"
-	Address   string `json:"address"` // IP optionnelle
-	Comment   string `json:"comment"`
-	Type      string `json:"type"` // "bypassed" | "blocked"
-	Disabled  bool   `json:"disabled"`
-	CreatedAt string `json:"createdAt"`
-}
-
-// SchedulerTask — tâche planifiée du routeur (F10), source cloud.
-type SchedulerTask struct {
-	ID        string `json:"id"`
-	AccountID string `json:"accountId"`
-	RouterID  string `json:"routerId"`
-	Name      string `json:"name"`
-	Interval  string `json:"interval"` // affichage RouterOS ex. "45s", "1d"
-	OnEvent   string `json:"onEvent"`
-	Disabled  bool   `json:"disabled"`
-	CreatedAt string `json:"createdAt"`
-}
-
-// scriptTagPattern — blocs <script>…</script> (insensible à la casse,
-// multi-lignes) retirés des corps de templates à la sauvegarde.
-var scriptTagPattern = regexp.MustCompile(`(?is)<script\b[^>]*>.*?(</script\s*>|$)`)
-
-// SanitizeTemplateHTML retire les blocs <script>…</script> (y compris un
-// bloc non fermé, jusqu'à la fin) du corps d'un modèle de voucher : le rendu
-// se fait côté client à l'impression, aucune exécution de script n'est attendue.
-func SanitizeTemplateHTML(s string) string {
-	return strings.TrimSpace(scriptTagPattern.ReplaceAllString(s, ""))
-}
-
-// Command — ordre déposé par le cloud, récupéré puis exécuté par l'agent.
-type Command struct {
-	ID        string         `json:"id"`
-	RouterID  string         `json:"routerId"`
-	AccountID string         `json:"accountId"`
-	Kind      string         `json:"kind"`
-	Payload   map[string]any `json:"payload,omitempty"`
-	Status    string         `json:"status"` // queued | sent | done | error
-	Result    map[string]any `json:"result,omitempty"`
-	CreatedAt string         `json:"createdAt"`
-	SentAt    string         `json:"sentAt,omitempty"`
-	DoneAt    string         `json:"doneAt,omitempty"`
-}
-
-// PurgeTombstone — marqueur anti-résurgence (audit purge) : posé par la purge
-// admin pour CHAQUE username supprimé du cloud. La synchronisation agent
-// (applyReadState) refuse de ré-importer un username tombstoné : le routeur
-// réel garde ses /ip hotspot user après une purge, sans marqueur ils
-// réapparaîtraient dans le cloud à la première synchro (résurgence constatée
-// en production). Le tombstone EXPIRE (TTL — cf. PurgeTombstoneTTL) ou se
-// LÈVE quand l'opérateur recrée volontairement le même username dans MikCloud :
-// la découverte Winbox fonctionne à nouveau sans rien perdre.
-type PurgeTombstone struct {
-	ID        string `json:"id"`
-	AccountID string `json:"accountId"`
-	// Username en MINUSCULES (comparaison insensible à la casse avec les
-	// rapports agent — RouterOS est sensible à la casse mais l'agent
-	// remonte les noms tels quels ; le cloud normalise en lower).
-	Username  string `json:"username"`
-	PurgedAt  string `json:"purgedAt"`
-	ExpiresAt string `json:"expiresAt"`
-}
-
-// PurgeTombstoneTTL — durée de vie d'un tombstone : au-delà, l'import
-// automatique redevient possible (fenêtre de 30 jours, largement au-delà de
-// tout cycle de synchro agent — un routeur hors-ligne pendant la purge ne
-// peut pas ressusciter les données à son retour).
-const PurgeTombstoneTTL = 30 * 24 * time.Hour
-
-// ---------------------------------------------------------------------------
-// N°28 — WiFi Jetable : mode d'accès offert aux établissements (restaurants,
-// cafés, salons de coiffure, maquis, buvettes). Le client scanne un QR code,
-// laisse son numéro (marketing opt-in), reçoit un code à quota gratuit
-// (limit-uptime / limit-bytes-total côté routeur) directement sur la page
-// publique, puis bascule en 1 clic vers une offre payante au-delà du quota.
-// ---------------------------------------------------------------------------
-
-// WifiSite — un établissement proposant le WiFi jetable. Le slug identifie
-// la page publique /wifi/{slug} encodée dans le QR code affiché sur les
-// tables (UNICITÉ GLOBALE : l'URL publique ne porte pas le compte).
-// FreeTimeMin / FreeDataMb = quotas gratuits surchargés à l'émission
-// (0 = hériter du profil) ; DailyPerPhone / DailyCap = garde-fous anti-abus
-// (budget gratuit du gérant) ; Active = bascule 1 clic du gérant.
-// N°49 : WifiSSID (+ WifiPassword si le réseau est WPA) alimente le QR de
-// CONNEXION de l'affiche — format universel « WIFI:T:...;S:...;P:...;; »,
-// scanné par l'appareil photo (iOS 11+ / Android 10+) : le téléphone
-// propose de rejoindre le réseau, puis le portail captif inline (N°48)
-// prend le relais (numéro → code → en ligne). Vide = affiche limitée au
-// QR page web (/wifi/{slug}).
-type WifiSite struct {
-	ID             string `json:"id"`
-	AccountID      string `json:"accountId"`
-	Name           string `json:"name"`
-	Slug           string `json:"slug"`
-	RouterID       string `json:"routerId"`
-	RouterName     string `json:"routerName"`
-	ProfileID      string `json:"profileId"`
-	ProfileName    string `json:"profileName"`
-	FreeTimeMin    int64  `json:"freeTimeMin"`    // minutes offertes (0 = hériter profil)
-	FreeDataMb     int64  `json:"freeDataMb"`     // Mo offerts (0 = hériter profil)
-	MarketingOptIn bool   `json:"marketingOptIn"` // case consentement affichée
-	DailyPerPhone  int    `json:"dailyPerPhone"`  // tickets max / téléphone / jour
-	DailyPerMac    int    `json:"dailyPerMac"`    // N°50 — tickets max / appareil (MAC) / jour
-	DailyCap       int    `json:"dailyCap"`       // budget gratuit : tickets max / site / jour
-	WifiSSID       string `json:"wifiSsid"`       // N°49 — SSID du réseau du hotspot (QR de connexion, ≤ 32 car. 802.11)
-	WifiPassword   string `json:"wifiPassword"`   // N°49 — mot de passe WPA (≤ 63 car., vide = réseau ouvert)
-	Active         bool   `json:"active"`
-	CreatedAt      string `json:"createdAt"`
-}
-
-// WifiGuest — registre marketing + anti-abus : une ligne = un code délivré.
-// Day (AAAA-MM-JJ, fuseau du compte) alimente les plafonds journaliers et
-// l'idempotence « même téléphone + même jour ⇒ même code ».
-type WifiGuest struct {
-	ID        string `json:"id"`
-	AccountID string `json:"accountId"`
-	SiteID    string `json:"siteId"`
-	SiteName  string `json:"siteName"`
-	Phone     string `json:"phone"` // E.164 chiffres sans "+" (ex. 2250707080909)
-	OptIn     bool   `json:"optIn"`
-	VoucherID string `json:"voucherId"`
-	Code      string `json:"code"`
-	Day       string `json:"day"`
-	CreatedAt string `json:"createdAt"`
-	// ClaimCmdID — N°47 : ID de la commande voucher_batch émise par le claim
-	// (mode agent uniquement). Le portail l'utilise via /status (champ
-	// « provisioned ») pour n'auto-loguer le visiteur qu'une fois le code
-	// réellement appliqué au routeur (anti-course du check-in ≤ 45 s).
-	// Vide en mode simulated/real (application immédiate).
-	ClaimCmdID string `json:"claimCmdId,omitempty"`
-	// N°50 — empreintes anti-abus du claim : MAC normalisée (claim depuis le
-	// portail, qui injecte $(mac-esc)) et IP client (premier hop XFF). Le
-	// téléphone reste la clé métier ; MAC/IP alimentent le plafond par
-	// appareil (DailyPerMac) et l'audit anti-abus du gérant. Vides pour les
-	// claims antérieurs au N°50 ou sans MAC (page /wifi scannée hors portail).
-	Mac string `json:"mac,omitempty"`
-	IP  string `json:"ip,omitempty"`
-	// OptInAt — N°69 : horodatage RFC3339 du consentement marketing
-	// explicite du numéro (interrupteur posé par le visiteur au claim, ou
-	// bascule via POST /api/wifi/site/{slug}/consent). C'est la PREUVE
-	// opposable exigée par la loi ivoirienne n°2013-450 (ARTCI) : qui,
-	// quand, quoi. Vide = jamais consenti OU retrait effectué (OptIn à
-	// false) — l'état courant suit le NUMÉRO (toutes les lignes du même
-	// téléphone portent le même état, cf. handleWifiConsent).
-	OptInAt string `json:"optInAt,omitempty"`
-}
-
-// PromoEvent — N°56 : un événement analytics du portail captif (mode
-// hospitalité). Deux seuls types : "impression" (la carte promo est devenue
-// visible à l'écran) et "click" (l'invité a ouvert le lien de la carte).
-//
-// L'ID est DÉTERMINISTE (hash de compte|promo|type|appareil|jour) : un même
-// appareil ne compte qu'UNE fois par promo et par jour — re-POSTer un
-// événement identique est un no-op idempotent (l'upsert Neon écrase la même
-// ligne, la diff syncTable la voit inchangée). C'est le garde-fou principal
-// contre le gonflement des compteurs (refresh-spam d'un invité) : la metric
-// « vu 480 fois cette semaine » compte des VUES-APPAREIL-JOUR, honnêtes et
-// stables, pas des rafraîchissements.
-type PromoEvent struct {
-	ID        string `json:"id"` // hash déterministe (voir ci-dessus)
-	AccountID string `json:"accountId"`
-	PromoID   string `json:"promoId"`   // id de la ligne de vitrine (stable)
-	Kind      string `json:"kind"`      // "impression" | "click"
-	ClientKey string `json:"clientKey"` // MAC normalisée ou "ip:x.x.x.x"
-	Day       string `json:"day"`       // jour UTC "2006-01-02" (fenêtre de dédup)
-	CreatedAt string `json:"createdAt"` // première occurrence (RFC3339)
-}
-
-// NormalizeWifiSlug — normalise un nom d'établissement en slug public
-// (minuscules, espaces/ponctuation → tiret, trim des tirets, max 48 chars).
-// Renvoie "" si aucun caractère exploitable.
-func NormalizeWifiSlug(name string) string {
-	s := strings.ToLower(strings.TrimSpace(name))
-	s = strings.Map(func(r rune) rune {
-		switch {
-		case r >= 'a' && r <= 'z' || r >= '0' && r <= '9':
-			return r
-		case r == ' ' || r == '-' || r == '_' || r == '.' || r == '\'':
-			return '-'
-		default:
-			// Accentué / autre : supprimé (é→"", è→""… suffisant pour un slug court).
-			return -1
-		}
-	}, s)
-	// collapse des tirets
-	for strings.Contains(s, "--") {
-		s = strings.ReplaceAll(s, "--", "-")
-	}
-	s = strings.Trim(s, "-")
-	if len(s) > 48 {
-		s = strings.Trim(s[:48], "-")
-	}
-	return s
-}
-
-// NormalizeWifiPhone — normalise un téléphone visiteur : chiffres seuls
-// (E.164 sans "+"). Si le numéro comporte 10 chiffres et commence par 01,
-// 05 ou 07 (format local Côte d'Ivoire), il est automatiquement préfixé par
-// l'indicatif 225 — les visiteurs saisissent usuellement leur numéro sans
-// indicatif sur les affiches locales. Renvoie "" si invalide (8 à 15 chiffres
-// après normalisation).
-func NormalizeWifiPhone(phone string) string {
-	var sb strings.Builder
-	for _, r := range phone {
-		if r >= '0' && r <= '9' {
-			sb.WriteRune(r)
-		}
-	}
-	s := sb.String()
-	if len(s) == 10 && (strings.HasPrefix(s, "01") || strings.HasPrefix(s, "05") || strings.HasPrefix(s, "07")) {
-		s = "225" + s
-	}
-	if len(s) < 8 || len(s) > 15 {
-		return ""
-	}
-	return s
-}
-
-// WifiDayKey — clé de jour (AAAA-MM-JJ) dans le fuseau du compte (tenant
-// timezone) : base des plafonds journaliers du WiFi jetable. Fuseau inconnu
-// → UTC (comportement neutre, sans panic).
-func WifiDayKey(timezone string, t time.Time) string {
-	loc, err := time.LoadLocation(timezone)
-	if err != nil || loc == nil {
-		loc = time.UTC
-	}
-	return t.In(loc).Format("2006-01-02")
-}
-
-// JoinLink — N°27 — lien d'inscription publique (campus, écoles,
-// administration, entreprise) : le gérant le crée depuis la console, la
-// console l'encode en QR (URL /join/{token}). Le token est stocké côté
-// serveur — révocable instantanément, compteur d'usages, expiration :
-// aucun JWT, le lien FAIT l'authentification de la page publique.
-type JoinLink struct {
-	ID        string `json:"id"`
-	AccountID string `json:"accountId"`
-	Name      string `json:"name"` // ex. « Rentrée 2026 — Bâtiment A »
-	Token     string `json:"token"`
-	// Pré-attribution optionnelle : profil et routeur imposés par le lien
-	// (validation 1 clic). autoValidate exige les deux (mode kiosque).
-	ProfileID     string `json:"profileId,omitempty"`
-	ProfileName   string `json:"profileName,omitempty"`
-	RouterID      string `json:"routerId,omitempty"`
-	RouterName    string `json:"routerName,omitempty"`
-	AutoValidate  bool   `json:"autoValidate"`
-	MaxUses       int    `json:"maxUses"` // nombre max de SOUMISSIONS, 0 = illimité
-	Uses          int    `json:"uses"`
-	ExpiresAt     string `json:"expiresAt,omitempty"`
-	Revoked       bool   `json:"revoked"`
-	CreatedBy     string `json:"createdBy,omitempty"`
-	CreatedByName string `json:"createdByName,omitempty"`
-	CreatedAt     string `json:"createdAt"`
-}
-
-// RegistrationRequest — N°27 — demande d'inscription publique en attente de
-// validation par le gérant. L'utilisateur choisit son couple « nom
-// d'utilisateur & mot de passe » (mode RÉGULIER, distinct des vouchers qui
-// restent verrouillés username = password). Le mot de passe n'est conservé
-// que le temps de la décision : VIDÉ à l'approbation comme au refus.
-type RegistrationRequest struct {
-	ID              string `json:"id"`
-	AccountID       string `json:"accountId"`
-	LinkID          string `json:"linkId"`
-	LinkName        string `json:"linkName"`
-	FullName        string `json:"fullName"`
-	Phone           string `json:"phone"`
-	DesiredUsername string `json:"desiredUsername"`
-	Password        string `json:"password"`
-	Message         string `json:"message,omitempty"` // message libre de l'utilisateur
-	Status          string `json:"status"`            // pending | approved | rejected
-	RejectionReason string `json:"rejectionReason,omitempty"`
-	ReviewedBy      string `json:"reviewedBy,omitempty"`
-	ReviewedByName  string `json:"reviewedByName,omitempty"`
-	ReviewedAt      string `json:"reviewedAt,omitempty"`
-	UserID          string `json:"userId,omitempty"` // utilisateur créé à l'approbation
-	CreatedIP       string `json:"createdIp,omitempty"`
-	CreatedMac      string `json:"createdMac,omitempty"` // N°33 — MAC de l'appareil (?mac= page login routeur), si fournie
-	CreatedAt       string `json:"createdAt"`
-}
-
-// DB — base de données persistée en JSON.
-//   - Accounts/SettingsByAccount : modèle multi-tenant (source de vérité) ;
-//   - Tenant/Settings : champs LEGACY mono-tenant, uniquement lus pour migrer
-//     un ancien db.json — vidés après migration puis ignorés.
-type DB struct {
-	Accounts          []Account           `json:"accounts"`
-	SettingsByAccount map[string]Settings `json:"settingsByAccount"`
-	Users             []AdminUser         `json:"users"`
-	Routers           []Router            `json:"routers"`
-	Profiles          []Profile           `json:"profiles"`
-	HotspotUsers      []HotspotUser       `json:"hotspotUsers"`
-	Batches           []Batch             `json:"batches"`
-	Resellers         []Reseller          `json:"resellers"`
-	Transactions      []Transaction       `json:"transactions"`
-	Sessions          []Session           `json:"sessions"`
-	Activity          []Activity          `json:"activity"`
-	Sales             []Sale              `json:"sales"`
-	Commands          []Command           `json:"commands"`
-	// P0/P1 (audit Mikhmon) — nouvelles collections.
-	Templates      []VoucherTemplate `json:"templates"`      // F2
-	UserLogs       []UserLog         `json:"userLogs"`       // F3
-	IPBindings     []IPBinding       `json:"ipBindings"`     // F7
-	SchedulerTasks []SchedulerTask   `json:"schedulerTasks"` // F10
-	Traffic        []RouterTraffic   `json:"traffic"`        // F6
-	// Tier 1 — notifications multi-canaux.
-	NotifSettings map[string]NotificationSettings `json:"notifSettings"` // accountId → réglages
-	NotifLog      []NotificationLog               `json:"notifLog"`
-	// Facturation (verrou du cycle) — file des demandes de souscription /
-	// renouvellement, actionnable depuis la console plateforme.
-	BillingRequests []BillingRequest `json:"billingRequests"`
-	// Tombstones de purge (audit purge/résurgence) — voir PurgeTombstone.
-	PurgeTombstones []PurgeTombstone `json:"purgeTombstones"`
-	// N°27 — inscriptions publiques par QR : liens d'invitation + demandes.
-	JoinLinks            []JoinLink            `json:"joinLinks"`
-	RegistrationRequests []RegistrationRequest `json:"registrationRequests"`
-	// N°28 — WiFi jetable : sites publics + registre marketing visiteurs.
-	WifiSites  []WifiSite  `json:"wifiSites"`
-	WifiGuests []WifiGuest `json:"wifiGuests"`
-	// N°56 — analytics du portail hospitalité (impressions/clics par promo).
-	// Journal borné : déduplication par (compte, promo, type, appareil, jour)
-	// + rétention 90 jours + plafond mémoire (voir prunePromoEvents).
-	PromoEvents []PromoEvent `json:"promoEvents"`
-	// Abonnement récurrent par carte (Stripe via GeniusPay) — prélèvements
-	// automatiques, synchronisés avec l'API abonnements GeniusPay.
-	GeniusPaySubs []GeniusPaySub `json:"geniuspaySubs"`
-	// N°66 — registre des sessions PIN Mode Vente (limite d'appareils
-	// simultanés par revendeur) — voir SellSession.
-	SellSessions []SellSession `json:"sellSessions"`
-	// N°68 — demandes de réinitialisation de mot de passe (« Mot de passe
-	// oublié ? ») : token hashé, expiration 60 min, usage unique — voir
-	// PasswordReset. Borné par prunePasswordResetsLocked.
-	PasswordResets []PasswordReset `json:"passwordResets"`
-	Tenant         Tenant          `json:"tenant"`   // legacy mono-tenant
-	Settings       Settings        `json:"settings"` // legacy mono-tenant
-	LastTick       time.Time       `json:"lastTick"`
-	// LastSweep — N°64 — horodatage du dernier BALAYAGE PÉRIODIQUE de
-	// rétention (goroutine main.go, 1 h) : purge des journaux utilisateurs
-	// à 90 j + expirations/nettoyages, indépendamment des visites console
-	// (le Tick paresseux des handlers ne datait QUE ces lectures-là).
-	// Preuve d'audit exposée par GET / (lastSweepAt). Même mécanique de
-	// persistance que LastTick (colonne settings.last_sweep).
-	LastSweep time.Time `json:"lastSweep"`
-}
-
-// voucherExpired — expiration « calculée » d'un voucher : validité (ExpiresAt)
-// dépassée OU quota temps cumulé (limit-uptime, reflété au cloud via
-// uptimeUsedSec) épuisé. Indépendant du statut stocké. expiresAt vide =
-// voucher jamais connecté (validité ancrée au 1er login) : pas d'échéance
-// par date.
-func voucherExpired(u *HotspotUser, now time.Time) bool {
-	if u.Kind != "voucher" {
-		return false
-	}
-	if u.ExpiresAt != "" {
-		if exp, err := time.Parse(time.RFC3339, u.ExpiresAt); err == nil && now.After(exp) {
-			return true
-		}
-	}
-	if u.TimeLimitMin > 0 && u.UptimeUsedSec >= u.TimeLimitMin*60 {
-		return true
-	}
-	return false
-}
-
-// TimeLimitParityGraceSec — tolérance de parité (secondes) entre le cumul
-// cloud d'uptime et la coupure ROUTEUR limit-uptime. La session disparaît du
-// read_state APRÈS la coupure : le dernier échantillon rapporté peut manquer
-// la limite de jusqu'à un intervalle de lecture (scheduler agent = 45 s).
-// Sans tolérance, un voucher coupé par le routeur resterait « utilisé » à
-// jamais — aucun logout ultérieur ne viendrait combler le déficit de quelques
-// secondes. Dans cette fenêtre, la déconnexion observée EST l'épuisement du
-// quota : le cumul est aligné sur la limite (accumulateUptime +
-// RepairTimeLimitParity).
-const TimeLimitParityGraceSec = 60
-
-// RepairTimeLimitParity — réparation idempotente des vouchers dont la session
-// a été coupée par le routeur (limit-uptime atteint) mais dont le cumul cloud
-// est resté juste SOUS la limite (déficit d'échantillonnage ≤ intervalle de
-// lecture). Sans réparation, ces tickets restent affichés « utilisés » alors
-// qu'ils sont inutilisables (le routeur refuse la reconnexion) — ils ne
-// passeraient « expirés » qu'à l'échéance de leur validité. Règle : sans
-// session live, un voucher dont le cumul est dans la fenêtre de grâce sous la
-// limite est aligné sur la limite — voucherExpired le repasse alors « expiré »
-// dès le prochain affichage. Renvoie le nombre de vouchers realignés.
-// À appeler sous verrou.
-func RepairTimeLimitParity(db *DB) int {
-	live := make(map[string]bool, len(db.Sessions))
-	for _, s := range db.Sessions {
-		if s.UserID != "" {
-			live[s.UserID] = true // session en cours : le routeur n'a pas encore coupé
-		}
-	}
-	n := 0
-	for i := range db.HotspotUsers {
-		u := &db.HotspotUsers[i]
-		if u.Kind != "voucher" || u.TimeLimitMin <= 0 || live[u.ID] {
-			continue
-		}
-		if u.Status != "active" && u.Status != "used" {
-			continue // disabled/expired : déjà hors service côté stockage
-		}
-		limit := u.TimeLimitMin * 60
-		if u.UptimeUsedSec > 0 && u.UptimeUsedSec < limit && limit-u.UptimeUsedSec <= TimeLimitParityGraceSec {
-			u.UptimeUsedSec = limit
-			n++
-		}
-	}
-	return n
-}
-
-// AnchorVoucherValidity — ancre la validité d'un voucher à son PREMIER login :
-// expiresAt = 1er login + validité du profil COURANT (parité routeur : le
-// profil est lu à l'authentification). Appelé au 1er login détecté (agent)
-// et à l'ouverture de session simulée. Un ticket jamais connecté n'a pas
-// d'expiresAt (reste « actif » en stock indéfiniment) ; profil introuvable
-// ou validité nulle : expiresAt reste vide (pas d'échéance par date).
-// À appeler sous verrou. Renvoie true si l'ancrage a été posé.
-func AnchorVoucherValidity(db *DB, u *HotspotUser, now time.Time) bool {
-	if u.Kind != "voucher" || u.ExpiresAt != "" {
-		return false
-	}
-	for i := range db.Profiles {
-		p := &db.Profiles[i]
-		if p.ID == u.ProfileID && p.AccountID == u.AccountID {
-			if v := p.ValidityMinutes(); v > 0 {
-				u.ExpiresAt = now.Add(time.Duration(v) * time.Minute).Format(time.RFC3339)
-				return true
-			}
-			return false
-		}
-	}
-	return false
-}
-
-// EffectiveStatus retourne le statut réel d'un utilisateur :
-//   - un voucher (actif ou utilisé en base) dont la validité est dépassée ou
-//     dont le quota temps est épuisé est renvoyé "expired" ;
-//   - un voucher "active" en base mais déjà connecté au moins une fois
-//     (UsedAt renseigné, ex. réactivé après désactivation) est renvoyé "used".
-//
-// Les autres statuts et les utilisateurs réguliers sont renvoyés tels quels.
-// Pour l'AFFICHAGE, utiliser ResolvedStatus (5 états priorisés).
-func EffectiveStatus(u *HotspotUser, now time.Time) string {
-	if u.Kind == "voucher" && u.Status != "disabled" && voucherExpired(u, now) {
-		return "expired"
-	}
-	if u.Status == "active" && u.UsedAt != "" {
-		return "used"
-	}
-	return u.Status
-}
-
-// ResolvedStatus — statut AFFICHÉ (5 états priorisés) :
-//
-//  1. expired  — validité dépassée ou quota temps épuisé (calculé) ;
-//  2. disabled — désactivation manuelle ;
-//  3. online   — session live au dernier read_state (≤ 45 s de latence) ;
-//  4. used     — déjà connecté au moins une fois, hors ligne ;
-//  5. active   — jamais connecté (disponible).
-//
-// `online` provient de la carte des sessions live (voir onlineSessions, api).
-func ResolvedStatus(u *HotspotUser, online bool, now time.Time) string {
-	if u.Kind == "voucher" && voucherExpired(u, now) {
-		return "expired"
-	}
-	switch u.Status {
-	case "expired":
-		return "expired"
-	case "disabled":
-		return "disabled"
-	}
-	if online {
-		return "online"
-	}
-	if u.UsedAt != "" {
-		return "used"
-	}
-	return u.Status
-}

@@ -15,21 +15,30 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"mikcloud/hotspot-api/internal/model"
 	"regexp"
 	"strconv"
 	"strings"
-
-	"mikcloud/hotspot-api/internal/model"
 )
 
 // ScriptFilename — nom du fichier de commandes sur le routeur.
 const ScriptFilename = "mikcloud-cmd.rsc"
 
 // SchedulerName — nom du scheduler créé sur le routeur.
+
+// SchedulerName — nom du scheduler créé sur le routeur.
 const SchedulerName = "mikcloud-agent"
 
 // WatcherName — N°77 — nom du scheduler VEILLEUR d'invités créé sur le routeur.
+
+// WatcherName — N°77 — nom du scheduler VEILLEUR d'invités créé sur le routeur.
 const WatcherName = "mikcloud-watch"
+
+// WatcherFilename — N°77 — fichier de commandes propre au veilleur (jamais le
+// même dst-path que le scheduler principal : deux check-ins concurrents ne
+// peuvent pas s'écraser mutuellement le fichier — le veilleur tire toutes les
+// 20 s pendant qu'un invité est NON autorisé, le principal suit son pas 45 s /
+// 180 s ; leurs fenêtres d'exécution se chevaucheront forcément).
 
 // WatcherFilename — N°77 — fichier de commandes propre au veilleur (jamais le
 // même dst-path que le scheduler principal : deux check-ins concurrents ne
@@ -47,191 +56,22 @@ const WatcherFilename = "mikcloud-watch.rsc"
 // s'arrête là — aucun octet émis), ~400 o par tick SEULEMENT pendant qu'un
 // invité est réellement sur le portail (~1,2 Ko/min d'attention). La capacité
 // « plan gratuit » gagnée par la veille N°75 est préservée intégralement.
+
+// WatcherIntervalSec — N°77 — pas du veilleur. 20 s : un invité qui vient de
+// se connecter (hôte hotspot non autorisé = l'appareil est SUR le portail)
+// obtient son check-in en ≤ 20 s au lieu d'attendre le réveil du scheduler
+// principal (jusqu'à 180 s de veille N°75 — constat production : claim gratuit
+// passé de ~45 s à 1-2 min, découragement des invités en restaurant/maquis).
+// Coût : STRICTEMENT nul à l'arrêt (le tick compte les hôtes non autorisés et
+// s'arrête là — aucun octet émis), ~400 o par tick SEULEMENT pendant qu'un
+// invité est réellement sur le portail (~1,2 Ko/min d'attention). La capacité
+// « plan gratuit » gagnée par la veille N°75 est préservée intégralement.
 const WatcherIntervalSec = 20
 
 // WalledGardenMarker — commentaire des règles walled-garden posées par
 // MikCloud (N°29 — runbook N°27-D automatisé). L'idempotence s'appuie dessus :
 // seules les règles portant ce marqueur sont remplacées — les règles
 // personnelles du gérant sont préservées.
-const WalledGardenMarker = "mikcloud-wg"
-
-// SafeWifiMarker — commentaire des règles NAT posées par SafeWiFi (N°80 —
-// protection DNS du WiFi public). Même contrat d'idempotence : seules les
-// règles portant ce marqueur sont retirées puis recréées — les règles du
-// gérant sont préservées.
-const SafeWifiMarker = "mikcloud-safewifi"
-
-// Résolveurs filtrants publics (anycast, gratuits) par niveau N°80 :
-//
-//	threats : Quad9 — malwares, phishing, arnaques ;
-//	family  : AdGuard Family — + contenus adultes, publicités.
-const (
-	SafeWifiDNSQuad9         = "9.9.9.9"
-	SafeWifiDNSAdGuardFamily = "94.140.14.15"
-)
-
-// SafeWifiResolver — adresse du résolveur filtrant d'un niveau. Toute valeur
-// inconnue retombe sur Quad9 : en cas de doute, le filtrage minimal protège.
-func SafeWifiResolver(level string) string {
-	if level == model.SafeWifiFamily {
-		return SafeWifiDNSAdGuardFamily
-	}
-	return SafeWifiDNSQuad9
-}
-
-// SafeWifiDoHList — nom de l'address-list (v4 ET v6) des endpoints DoH
-// publics bloqués depuis le WiFi public quand un filtrage est actif (N°85).
-const SafeWifiDoHList = "mikcloud-safewifi-doh"
-
-// SafeWifiDoHIPv4 — endpoints DoH (DNS-over-HTTPS, tcp/443) des grands
-// résolveurs publics, toutes variantes confondues (filtrées ou non) : quand
-// un niveau de filtrage est actif, ces adresses sont injoignables depuis le
-// WiFi public — les navigateurs en mode « DNS sécurisé » automatique et les
-// systèmes configurés en DoH retombent alors sur le DNS simple (port 53 →
-// redirigé → filtré). Y compris le DoH du résolveur du niveau choisi : son
-// chemin parallèle échapperait à la vérification du cloud. Jeu du chat et
-// de la souris assumé et documenté : un endpoint DoH exotique hors liste
-// reste joignable ; un VPN contourne toute protection DNS (limite MVP).
-var SafeWifiDoHIPv4 = []string{
-	// Cloudflare (1.1.1.1 / 1.0.0.1 / cloudflare-dns.com)
-	"1.1.1.1", "1.0.0.1", "104.16.248.249", "104.16.249.249",
-	// Google (dns.google)
-	"8.8.8.8", "8.8.4.4",
-	// Quad9 (filtré ET non filtré)
-	"9.9.9.9", "149.112.112.112", "9.9.9.10", "149.112.112.10",
-	// AdGuard (default, family, non filtré)
-	"94.140.14.14", "94.140.15.15", "94.140.14.15", "94.140.15.16",
-	"94.140.14.140", "94.140.14.141",
-	// OpenDNS (+ FamilyShield)
-	"208.67.222.222", "208.67.220.220", "208.67.222.123", "208.67.220.123",
-	// CleanBrowsing, Yandex, Comodo, DNS.SB
-	"185.228.168.9", "185.228.169.9",
-	"77.88.8.8", "77.88.8.1",
-	"8.26.56.26", "8.20.247.20",
-	"185.222.222.222", "45.11.45.11",
-}
-
-// SafeWifiDoHIPv6 — mêmes endpoints DoH, en IPv6 : le NAT SafeWiFi est IPv4
-// (/ip firewall nat) — le DNS IPv6 ne le traverse pas. Quand un filtrage est
-// actif, le DNS IPv6 (tcp+udp 53) et le DoT/DoH IPv6 sont COUPÉS depuis le
-// WiFi public : l'appareil retombe sur le chemin IPv4, redirigé → filtré.
-// Contre-mesure best-effort (on-error silencieux) : un routeur sans pile
-// IPv6 n'a rien à couper — il n'a pas non plus d'échappatoire IPv6.
-var SafeWifiDoHIPv6 = []string{
-	"2606:4700:4700::1111", "2606:4700:4700::1001", // Cloudflare
-	"2001:4860:4860::8888", "2001:4860:4860::8844", // Google
-	"2620:fe::fe", "2620:fe::9", // Quad9
-	"2a10:50c0::ad1:ff", "2a10:50c0::ad2:ff", // AdGuard
-	"2620:119:35::35", "2620:119:53::53", // OpenDNS
-}
-
-// SafeWifiFilterRulesPerHotspot — règles FILTER IPv4 posées par serveur
-// hotspot quand un filtrage est actif (N°85) : DoT (tcp/853) + DoH (tcp/443
-// vers la liste SafeWifiDoHList). La vérification du retour compte ces
-// règles — le compte attendu dépend donc du nombre de hotspots RAPPORTÉ.
-const SafeWifiFilterRulesPerHotspot = 2
-
-// SafeWifiRulesExpected — compte TOTAL d'objets marqués attendu côté routeur
-// pour un niveau actif : 2 règles NAT + les entrées de la liste DoH v4 +
-// SafeWifiFilterRulesPerHotspot règles par serveur hotspot. Miroir exact du
-// comptage du script (nat + filter + address-list, IPv4 uniquement —
-// l'IPv6 est best-effort, non comptée).
-func SafeWifiRulesExpected(hotspots int) int {
-	return 2 + len(SafeWifiDoHIPv4) + SafeWifiFilterRulesPerHotspot*hotspots
-}
-
-// SafeWifiLevelFromPayload — niveau d'une commande safewifi, normalisé
-// ("" ou valeur inconnue → off : le script ne pose alors aucune règle).
-func SafeWifiLevelFromPayload(p map[string]any) string {
-	if s, _ := p["level"].(string); model.ValidSafeWifiLevel(s) {
-		return s
-	}
-	return model.SafeWifiOff
-}
-
-// ShieldMarker — commentaire des règles FILTER posées par Shield (N°81 —
-// bouclier réseau du WiFi public). Même contrat d'idempotence : seules
-// les règles portant ce marqueur sont retirées puis recréées — les
-// règles du gérant sont préservées.
-const ShieldMarker = "mikcloud-shield"
-
-// N°81 — ports bloqués pour les clients du WiFi public :
-//   - administration du routeur (tcp) : ftp, ssh, telnet, winbox, api ;
-//   - api en udp (8728/8729 répondent aussi en udp) ;
-//   - propagation de malwares (SMB/NetBIOS, tcp et udp) — les vecteurs
-//     de mouvement latéral classiques des réseaux partagés.
-const (
-	ShieldAdminTCPPorts   = "21,22,23,8291,8728,8729"
-	ShieldAdminUDPPorts   = "8728,8729"
-	ShieldMalwareTCPPorts = "135,137,138,139,445"
-	ShieldMalwareUDPPorts = "137,138,139"
-)
-
-// ShieldLevelFromPayload — niveau d'une commande shield, normalisé
-// ("" ou valeur inconnue → off : le script ne pose alors aucune règle).
-func ShieldLevelFromPayload(p map[string]any) string {
-	if s, _ := p["level"].(string); model.ValidShieldLevel(s) {
-		return s
-	}
-	return model.ShieldOff
-}
-
-// FamilyGuardMarker — commentaire des règles FILTER posées par FamilyGuard
-// (N°82 — couvre-feu internet du WiFi public). Même contrat d'idempotence :
-// seules les règles portant ce marqueur sont retirées puis recréées — les
-// règles du gérant sont préservées.
-const FamilyGuardMarker = "mikcloud-familyguard"
-
-// FamilyGuardActiveFromPayload — état demandé par la commande familyguard
-// (couvre-feu en cours ou non). L'état est calculé PAR LE CLOUD au moment de
-// la mise en file (UTC == heure d'Abidjan, sans DST) : l'horloge routeur
-// n'est jamais consultée (un routeur sans NTP verrait le couvre-feu partir
-// à la mauvaise heure via le paramètre natif time=). Le payload normalise
-// au repli prudent false.
-func FamilyGuardActiveFromPayload(p map[string]any) bool {
-	b, _ := p["active"].(bool)
-	return b
-}
-
-// AntiVpnMarker — commentaire des règles FILTER posées par AntiVPN (N°88 —
-// bloque-VPN du WiFi public). Même contrat d'idempotence : seules les
-// règles portant ce marqueur sont retirées puis recréées — les règles du
-// gérant sont préservées.
-const AntiVpnMarker = "mikcloud-antivpn"
-
-// N°88 — canaux des tunnels VPN coupés pour les clients du WiFi public.
-// Choix L4 délibéré (MVP honnête — pas de DPI sur un routeur 128 Mo) :
-//   - protocoles : GRE (47, tunnels PPTP/data) et ESP (50, IPsec/IKEv2 —
-//     le « Ajouter un VPN » natif Android/iOS) ;
-//   - UDP : 500/4500 (IKE + NAT-T), 1701 (L2TP), 1194 (OpenVPN),
-//     51820 (WireGuard), 2408 (Cloudflare WARP) ;
-//   - TCP : 1723 (PPTP), 1194 (OpenVPN), 9001/9030 (Tor ORPort/DirPort).
-//
-// Ce que le module ne touche JAMAIS : le port 53 (SafeWiFi N°80 reste
-// maître du DNS), le NTP (123) et l'UDP 443 (appels WhatsApp — critiques
-// en Côte d'Ivoire — et QUIC) : la limite résiduelle (un tunnel camouflé
-// en HTTPS pur, ex. certains clients obfusqués) est écrite noir sur
-// blanc dans la footnote du module — un MVP ne vend pas de DPI.
-const (
-	AntiVpnUDPPorts = "500,4500,1701,1194,51820,2408"
-	AntiVpnTCPPorts = "1723,1194,9001,9030"
-)
-
-// AntiVpnLevelFromPayload — niveau d'une commande antivpn, normalisé
-// ("" ou valeur inconnue → off : le script ne pose alors aucune règle).
-func AntiVpnLevelFromPayload(p map[string]any) string {
-	if s, _ := p["level"].(string); model.ValidAntiVpnLevel(s) {
-		return s
-	}
-	return model.AntiVpnOff
-}
-
-// AntiVpnRulesPerHotspot — règles FILTER IPv4 posées par serveur hotspot
-// quand le bloque-VPN est actif (N°88) : GRE + ESP + ports UDP + ports
-// TCP. La vérification du retour compte ces règles — le compte attendu
-// dépend donc du nombre de hotspots RAPPORTÉ (pattern Shield N°81 : le
-// cloud importe cette constante, source unique).
-const AntiVpnRulesPerHotspot = 4
 
 // ---------------------------------------------------------------------------
 // Tokens
@@ -247,10 +87,14 @@ func NewToken() (string, error) {
 }
 
 // HashToken — SHA-256 hexadécimal du token (seul stockage côté cloud).
+
+// HashToken — SHA-256 hexadécimal du token (seul stockage côté cloud).
 func HashToken(token string) string {
 	h := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(h[:])
 }
+
+// Preview retourne les 4 premiers caractères du token pour l'affichage.
 
 // Preview retourne les 4 premiers caractères du token pour l'affichage.
 func Preview(token string) string {
@@ -259,6 +103,18 @@ func Preview(token string) string {
 	}
 	return token
 }
+
+// ---------------------------------------------------------------------------
+// Échappement / assainissement RouterOS
+// ---------------------------------------------------------------------------
+
+// rosEscape échappe une valeur pour une chaîne RouterOS entre guillemets.
+// Sécurité (audit P0 #14) : le « $ » est échappé lui aussi. Sans lui, une
+// valeur utilisateur contenant « $… » (mot de passe, commentaire, nom…)
+// déclenchait l'interpolation de variables RouterOS à l'exécution du script —
+// injection d'expression. rosScriptValue (valeurs de propriété) la traite
+// déjà ; strings.NewReplacer fait une passe unique, donc les remplacements
+// ne se ré-échappent pas entre eux.
 
 // ---------------------------------------------------------------------------
 // Échappement / assainissement RouterOS
@@ -285,6 +141,16 @@ func rosEscape(s string) string {
 // illisible) renvoie true — on ne bloque jamais un parc legacy dont la
 // version n'a pas encore été remontée ; c'est le garde du REGISTER (la
 // version y est toujours envoyée) qui fait le tri à l'installation.
+
+// VersionAtLeast — true si la version RouterOS déclarée est ≥ major.minor.
+// Sécurité (audit P0 #5) : les agents valident strictement le TLS du cloud,
+// ce qui exige RouterOS ≥ 7.19 (première version embarquant les certificats
+// racine nécessaires à la validation Let's Encrypt). Tolère les suffixes
+// d'édition (« 7.19.6 (stable) », « 7.20beta4 », « 7.19rc1 ») : seuls les
+// deux premiers nombres sont comparés. Une version non analysable (vide,
+// illisible) renvoie true — on ne bloque jamais un parc legacy dont la
+// version n'a pas encore été remontée ; c'est le garde du REGISTER (la
+// version y est toujours envoyée) qui fait le tri à l'installation.
 func VersionAtLeast(v string, major, minor int) bool {
 	m := versionNumRe.FindStringSubmatch(strings.TrimSpace(v))
 	if m == nil {
@@ -296,6 +162,9 @@ func VersionAtLeast(v string, major, minor int) bool {
 }
 
 var versionNumRe = regexp.MustCompile(`^(\d+)\.(\d+)`)
+
+// SanitizeName assainit un nom (utilisateur ou profil) pour le routeur :
+// caractères [A-Za-z0-9._-] conservés, le reste devient "-", 48 caractères max.
 
 // SanitizeName assainit un nom (utilisateur ou profil) pour le routeur :
 // caractères [A-Za-z0-9._-] conservés, le reste devient "-", 48 caractères max.
@@ -317,6 +186,8 @@ func SanitizeName(s string) string {
 }
 
 // idSafe retourne un suffixe de variable RouterOS valide depuis un id de commande.
+
+// idSafe retourne un suffixe de variable RouterOS valide depuis un id de commande.
 func idSafe(id string) string {
 	var sb strings.Builder
 	for _, c := range id {
@@ -327,6 +198,8 @@ func idSafe(id string) string {
 	}
 	return sb.String()
 }
+
+// rosMinutes convertit des minutes en durée RouterOS ("90m", "24h", "3d").
 
 // rosMinutes convertit des minutes en durée RouterOS ("90m", "24h", "3d").
 func rosMinutes(m int) string {
@@ -342,6 +215,31 @@ func rosMinutes(m int) string {
 		return fmt.Sprintf("%dm", m)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Scripts
+// ---------------------------------------------------------------------------
+
+// InstallScript — le script de provisionning complet (1 collage dans Winbox).
+//
+// Le script est collé dans la console (Terminal Winbox), pas importé comme
+// fichier .rsc : le parseur console y est nettement plus fragile. Règles
+// respectées ici (issues d'incidents réels) :
+//   - les :local top-level meurent entre deux commandes collées → TOUT le
+//     corps est enveloppé dans UN SEUL bloc :do { … } exécuté comme une
+//     commande unique (les :local y survivent) ;
+//   - les corps de bloc one-line « do={ :set x y } » sont rejetés par le
+//     parseur console de certaines versions (« syntax error ») → tous les
+//     corps sont multi-lignes ;
+//   - « :set v false » (booléen nu) est fragile → drapeaux en "yes"/"no" ;
+//   - [/system device-mode get …] renvoie un booléen OU une chaîne
+//     ("yes"/"no") selon la version : comparer explicitement à false/"no"/
+//     "false" (un « ! » sur "no" — chaîne non vide — serait faux) ;
+//   - « output=none » ne sauvegarde PAS le fichier téléchargé (doc MikroTik
+//     : « none - do not store downloaded data ») → le check-in utilise
+//     dst-path seul (output par défaut = file), sinon l'import échoue ;
+//   - les :global RouterOS ne survivent pas à coup sûr à un reboot → URL et
+//     token sont INLINÉS dans l'on-event : le scheduler est auto-suffisant.
 
 // ---------------------------------------------------------------------------
 // Scripts
@@ -500,125 +398,22 @@ func InstallScript(baseURL, token, routerName string, wgDomains ...string) strin
 }
 
 // NopScript — réponse quand il n'y a rien à faire (l'import ne fait rien).
+
+// NopScript — réponse quand il n'y a rien à faire (l'import ne fait rien).
 func NopScript() string { return "# mikcloud nop\n" }
 
 // ImportChunkSize — nombre d'utilisateurs hotspot lus par commande
 // import_hotspot. L'import est paginé : si le routeur a plus d'utilisateurs,
 // le résultat du chunk en file le suivant (voir applyImportHotspot). La taille
 // garde le corps POST (http-data) loin de la limite RouterOS (~64 Ko).
-const ImportChunkSize = 300
-
-// ImportProfilesMax — nombre de profils hotspot lus par commande (les profils
-// sont peu nombreux en pratique ; 60 couvre très largement).
-const ImportProfilesMax = 60
-
-// buildImportHotspot — lecture paginée des données EXISTANTES du routeur pour
-// les importer dans le cloud (profils + utilisateurs hotspot).
-//
-// Format du rapport (POST /agent/result, form-encodé) :
-//
-//	profiles=name|rate-limit|shared-users|session-timeout;…
-//	users=name|profile|disabled|comment|limit-bytes-total;…
-//	total=<nb total d'utilisateurs sur le routeur>
-//
-// Garde-fous : les champs name/profile contenant un séparateur du protocole
-// (| ; & = %) font sauter l'entrée ; le commentaire est tronqué à 60 caractères
-// et neutralisé s'il contient un séparateur. La pagination (start/count inlinés
-// par Go) découpe les utilisateurs par lots d'ImportChunkSize.
-func (b Builder) buildImportHotspot(cmd model.Command) string {
-	start := int(plInt64(cmd.Payload, "start"))
-	count := int(plInt64(cmd.Payload, "count"))
-	if count <= 0 {
-		count = ImportChunkSize
-	}
-	var sb strings.Builder
-	sb.WriteString(header(cmd))
-	sb.WriteString(`:local mikProf ""
-:do {
-  :local pn 0
-  :foreach p in=[/ip hotspot user profile find] do={
-    :if ($pn < ` + fmt.Sprintf("%d", ImportProfilesMax) + `) do={
-      :local nm [:tostr [/ip hotspot user profile get $p name]]
-      :local rl ""
-      :do {
-        :set rl [:tostr [/ip hotspot user profile get $p rate-limit]]
-      } on-error={}
-      :local sh "1"
-      :do {
-        :set sh [:tostr [/ip hotspot user profile get $p shared-users]]
-      } on-error={}
-      :local st ""
-      :do {
-        :set st [:tostr [/ip hotspot user profile get $p session-timeout]]
-      } on-error={}
-      :if ([:len $nm] > 0) do={
-        :set mikProf ($mikProf . $nm . "|" . $rl . "|" . $sh . "|" . $st . ";")
-      }
-      :set pn ($pn + 1)
-    }
-  }
-} on-error={}
-:local mikIds [/ip hotspot user find]
-:local mikTotal [:len $mikIds]
-:local mikUsr ""
-:local mikOut 0
-:local n 0
-:foreach u in=$mikIds do={
-  :if ($n >= ` + fmt.Sprintf("%d", start) + ` && $n < (` + fmt.Sprintf("%d", start) + ` + ` + fmt.Sprintf("%d", count) + `)) do={
-    :local nm [:tostr [/ip hotspot user get $u name]]
-    :local pf ""
-    :do {
-      :set pf [:tostr [/ip hotspot user get $u profile]]
-    } on-error={}
-    :local ds "false"
-    :do {
-      :set ds [:tostr [/ip hotspot user get $u disabled]]
-    } on-error={}
-    :local cm ""
-    :do {
-      :set cm [:tostr [/ip hotspot user get $u comment]]
-    } on-error={}
-    :local lb "0"
-    :do {
-      :set lb [:tostr [/ip hotspot user get $u limit-bytes-total]]
-    } on-error={}
-    :local bad false
-    :if ([:typeof [:find $nm "|"]] != "nil") do={ :set bad true }
-    :if ([:typeof [:find $nm ";"]] != "nil") do={ :set bad true }
-    :if ([:typeof [:find $nm "&"]] != "nil") do={ :set bad true }
-    :if ([:typeof [:find $nm "="]] != "nil") do={ :set bad true }
-    :if ([:typeof [:find $nm "%"]] != "nil") do={ :set bad true }
-    :if ([:typeof [:find $pf "|"]] != "nil") do={ :set bad true }
-    :if ([:typeof [:find $pf ";"]] != "nil") do={ :set bad true }
-    :if ([:typeof [:find $pf "&"]] != "nil") do={ :set bad true }
-    :if ([:typeof [:find $pf "="]] != "nil") do={ :set bad true }
-    :if ([:typeof [:find $pf "%"]] != "nil") do={ :set bad true }
-    :if ([:len $cm] > 60) do={ :set cm [:pick $cm 0 60] }
-    :if ([:typeof [:find $cm "|"]] != "nil") do={ :set cm "-" }
-    :if ([:typeof [:find $cm ";"]] != "nil") do={ :set cm "-" }
-    :if ([:typeof [:find $cm "&"]] != "nil") do={ :set cm "-" }
-    :if ([:typeof [:find $cm "="]] != "nil") do={ :set cm "-" }
-    :if ([:typeof [:find $cm "%"]] != "nil") do={ :set cm "-" }
-    :if ([:typeof [:find $cm "+"]] != "nil") do={ :set cm "-" }
-    :if (!$bad && [:len $nm] > 0) do={
-      :set mikUsr ($mikUsr . $nm . "|" . $pf . "|" . $ds . "|" . $cm . "|" . $lb . ";")
-      :set mikOut ($mikOut + 1)
-    }
-  }
-  :set n ($n + 1)
-}
-`)
-	sb.WriteString(`/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
-		`" http-method=post http-data=("cmd=` + cmd.ID +
-		`&status=ok&total=". $mikTotal ."&out=". $mikOut ."&profiles=". $mikProf ."&users=". $mikUsr) output=none` + "\n")
-	return sb.String()
-}
 
 // Builder construit les scripts de commandes pour un routeur donné.
 type Builder struct {
 	BaseURL string
 	Token   string
 }
+
+// ScriptFor retourne le script .rsc d'une commande (erreur si kind inconnu).
 
 // ScriptFor retourne le script .rsc d'une commande (erreur si kind inconnu).
 func (b Builder) ScriptFor(cmd model.Command) (string, error) {
@@ -692,11 +487,15 @@ func (b Builder) ScriptFor(cmd model.Command) (string, error) {
 }
 
 // resultLines — les deux branches de rapport (ok / error) d'une commande.
+
+// resultLines — les deux branches de rapport (ok / error) d'une commande.
 func (b Builder) resultLines(cmdID string, okVar string, extraOK map[string]string) string {
 	ok := b.reportLine(cmdID, true, extraOK)
 	ko := b.reportLine(cmdID, false, map[string]string{"message": "echec sur le routeur"})
 	return ":if ($" + okVar + ") do={\n  " + ok + "\n} else={\n  " + ko + "\n}\n"
 }
+
+// reportLine — le /tool fetch qui rapporte le résultat d'une commande.
 
 // reportLine — le /tool fetch qui rapporte le résultat d'une commande.
 func (b Builder) reportLine(cmdID string, ok bool, extra map[string]string) string {
@@ -714,6 +513,8 @@ func (b Builder) reportLine(cmdID string, ok bool, extra map[string]string) stri
 	return `/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
 		`" http-method=post http-data=("` + data + `") output=none`
 }
+
+// urlEscape — encodage minimal sûr pour les valeurs d'URL (http-data).
 
 // urlEscape — encodage minimal sûr pour les valeurs d'URL (http-data).
 func urlEscape(s string) string {
@@ -742,150 +543,6 @@ func urlEscape(s string) string {
 // JAMAIS relu par le cloud (import = name|profile|disabled) : la liaison MAC
 // reste un état local au routeur. Une seule ligne : les valeurs de propriété
 // RouterOS sont embarquées entre guillemets (voir rosScriptValue).
-const onLoginLockScript = `:do {:local m $"caller-id";:local u $user;:if ([:len $m] > 0) do={:local e [/ip hotspot user find name=$u];:if ([:len $e] > 0) do={:local c [:tostr [/ip hotspot user get $e comment]];:local i [:find $c "mikcloud_lock:"];:if ([:typeof $i] = "nil") do={:if ([:len $c] = 0) do={/ip hotspot user set $e comment=("mikcloud_lock:" . $m)} else={/ip hotspot user set $e comment=($c . " mikcloud_lock:" . $m)}} else={:local lm [:pick $c ($i + 14) [:len $c]];:if ($lm != $m) do={/ip hotspot active remove [find user=$u]}}}}} on-error={ :log info "mikcloud: liaison mac ignoree" }`
-
-// rosScriptValue — échappe un SCRIPT RouterOS pour l'embarquer dans une valeur
-// de propriété entre guillemets (ex. on-login) : le script interne doit
-// survivre au parsing de la ligne externe ($, " et \ protégés).
-func rosScriptValue(s string) string {
-	s = strings.ReplaceAll(s, `\`, `\\`)
-	s = strings.ReplaceAll(s, `"`, `\"`)
-	s = strings.ReplaceAll(s, `$`, `\$`)
-	return s
-}
-
-// profileEnsureLine — garantit que le profil du cloud existe sur le routeur
-// avec ses paramètres EXACTS : add (création) puis set (alignement si le
-// profil existait déjà — créé dans Winbox ou par un import). Sans ce set, un
-// profil préexistant sans session-timeout restait sans timeout → les vouchers
-// n'expiraient jamais. Le set est inconditionnel : sur un profil absent,
-// `set [find …]` sans résultat est un no-op silencieux en RouterOS, jamais
-// une erreur. Deux lignes indépendantes plutôt qu'un :do imbriqué : une
-// erreur de l'add n'empêche jamais le set. Renvoie TROIS lignes terminées (add, set, quota rétroactif des utilisateurs existants).
-func profileEnsureLine(p ProfileRef) string {
-	add := `/ip hotspot user profile add name="` + rosEscape(p.Name) + `"` +
-		profileAddParams(p)
-	return ":do { " + add + " } on-error={ :log info \"mikcloud: profil " +
-		rosEscape(p.Name) + " deja present, mise a jour\" }\n" +
-		profileSetLine(p.Name, p) + profileUserLimitLine(p)
-}
-
-// profileAddParams — paramètres de CRÉATION d'un profil. Une clé absente du
-// payload n'est pas écrite ; le verrou « 1er appareil » seulement s'il est actif.
-func profileAddParams(p ProfileRef) string {
-	s := ""
-	if p.HasRate && p.RateLimit != "" {
-		s += ` rate-limit="` + rosEscape(p.RateLimit) + `"`
-	}
-	if p.HasTimeout && p.SessionTimeoutMin > 0 {
-		s += " session-timeout=" + rosMinutes(p.SessionTimeoutMin)
-	}
-	if p.HasShared && p.SharedUsers > 0 {
-		s += fmt.Sprintf(" shared-users=%d", p.SharedUsers)
-	}
-	if p.HasPool && p.AddressPool != "" {
-		s += ` address-pool="` + rosEscape(p.AddressPool) + `"`
-	}
-	if p.HasQueue && p.ParentQueue != "" {
-		s += ` parent-queue="` + rosEscape(p.ParentQueue) + `"`
-	}
-	if p.LockFirstDevice {
-		s += ` on-login="` + rosScriptValue(onLoginLockScript) + `"`
-	}
-	return s
-}
-
-// profileSetLine — ligne `set` qui aligne le profil routeur sur le cloud
-// (session-timeout, rate-limit, shared-users, verrou « 1er appareil »).
-// Une clé ABSENTE du payload (commande héritée) n'est JAMAIS effacée : sans
-// ce garde-fou, un set partiel remettrait session-timeout à 0 et les vouchers
-// liés n'expireraient plus.
-func profileSetLine(name string, p ProfileRef) string {
-	s := `/ip hotspot user profile set [find name="` + rosEscape(name) + `"]`
-	if p.HasRate {
-		s += ` rate-limit="` + rosEscape(p.RateLimit) + `"`
-	}
-	if p.HasTimeout {
-		if st := rosMinutes(p.SessionTimeoutMin); st != "" {
-			s += " session-timeout=" + st
-		} else {
-			s += ` session-timeout=0s`
-		}
-	}
-	if p.HasShared && p.SharedUsers > 0 {
-		s += fmt.Sprintf(" shared-users=%d", p.SharedUsers)
-	}
-	if p.HasPool {
-		if p.AddressPool != "" {
-			s += ` address-pool="` + rosEscape(p.AddressPool) + `"`
-		} else {
-			s += ` address-pool=none`
-		}
-	}
-	if p.HasQueue {
-		if p.ParentQueue != "" {
-			s += ` parent-queue="` + rosEscape(p.ParentQueue) + `"`
-		} else {
-			s += ` parent-queue=none`
-		}
-	}
-	if p.LockFirstDevice {
-		s += ` on-login="` + rosScriptValue(onLoginLockScript) + `"`
-	} else {
-		s += ` on-login=""`
-	}
-	return ":do { " + s + " } on-error={ :log info \"mikcloud: profil " + rosEscape(name) + " inaccessible\" }\n"
-}
-
-// profileUserLimitLine — applique RÉTROACTIVEMENT le quota de temps du profil
-// (limit-uptime) à tous les utilisateurs hotspot DÉJÀ PRÉSENTS sur le routeur
-// sous ce profil : les vouchers créés avant l'introduction du quota n'en
-// portaient pas et, après la coupe de session, le même code repartait pour une
-// session complète à chaque reconnexion. `set [find profile=…]` sans résultat
-// est un no-op silencieux ; un utilisateur dont le cumul dépasse déjà la limite
-// est refusé dès l'application (le routeur compare uptime-used à limit-uptime
-// à l'authentification, cookie MAC compris). Aucune ligne si la durée est
-// absente du payload ou nulle : on n'efface JAMAIS un quota que le payload ne
-// portait pas (cf. flags Has*).
-func profileUserLimitLine(p ProfileRef) string {
-	if !p.HasTimeout || p.SessionTimeoutMin <= 0 {
-		return ""
-	}
-	// Cible uniquement les utilisateurs SANS quota (limit-uptime=0s) : les
-	// vouchers portent désormais leur propre limit-uptime par lot (parité
-	// Mikhmon) — un set global écraserait ces quotas individuels.
-	s := `/ip hotspot user set [find where profile="` + rosEscape(p.Name) + `" && limit-uptime=0s] limit-uptime=` + rosMinutes(p.SessionTimeoutMin)
-	return ":do { " + s + " } on-error={ :log info \"mikcloud: quota temps profil " + rosEscape(p.Name) + " inaccessible\" }\n"
-}
-
-// buildProfileSet — v2 : synchronise UN profil routeur sur l'état du cloud :
-// verrou « 1er appareil » (on-login), rate-limit, session-timeout et
-// shared-users. Profil absent = no-op silencieux (il sera créé AVEC les bons
-// paramètres à la prochaine création d'utilisateur) : la commande reste un
-// succès, l'état du cloud fait foi.
-func (b Builder) buildProfileSet(cmd model.Command) string {
-	name := SanitizeName(plStr(cmd.Payload, "name"))
-	p := ProfileRef{
-		Name:              name,
-		RateLimit:         plStr(cmd.Payload, "rateLimit"),
-		SessionTimeoutMin: int(plInt64(cmd.Payload, "sessionTimeoutMin")),
-		SharedUsers:       int(plInt64(cmd.Payload, "sharedUsers")),
-		LockFirstDevice:   plBool(cmd.Payload, "lockFirstDevice"),
-		AddressPool:       plStr(cmd.Payload, "addressPool"),
-		ParentQueue:       plStr(cmd.Payload, "parentQueue"),
-		HasRate:           plHas(cmd.Payload, "rateLimit"),
-		HasTimeout:        plHas(cmd.Payload, "sessionTimeoutMin"),
-		HasShared:         plHas(cmd.Payload, "sharedUsers"),
-		HasPool:           plHas(cmd.Payload, "addressPool"),
-		HasQueue:          plHas(cmd.Payload, "parentQueue"),
-	}
-	var sb strings.Builder
-	sb.WriteString(header(cmd))
-	sb.WriteString(profileSetLine(name, p))
-	sb.WriteString(profileUserLimitLine(p))
-	sb.WriteString(b.reportLine(cmd.ID, true, nil) + "\n")
-	return sb.String()
-}
 
 // header — commentaire d'audit d'une commande (parsé aussi par le simulateur).
 func header(cmd model.Command) string {
@@ -902,650 +559,6 @@ func header(cmd model.Command) string {
 // cloud enchaîne les chunks jusqu'au rapport complet (pattern import_hotspot,
 // éprouvé en production). La taille garde le corps POST (http-data) loin de la
 // limite RouterOS (~64 Ko) : 500 entrées « name|profile|disabled; » ≈ 20 Ko.
-const ReadChunkSize = 500
-
-// MaxReadChunks — borne ABSOLUE de chunks par cycle read_state (20 × 500 =
-// 10 000 users). Au-delà, le cloud n'enchaîne plus : le rapport ne sera jamais
-// complet, il reste honnête (aucune déduction sur les absents — comportement
-// trunc N°75) plutôt que de mentir sur un parc hors d'atteinte du protocole.
-const MaxReadChunks = 20
-
-// watcherOnEvent — N°77 — corps UNE LIGNE (séparateurs « ; », formes valides
-// en import .rsc — même sérialisation que buildSchedulerAdd) du on-event du
-// veilleur d'invités. Reçoit l'URL et le token DÉJÀ échappés pour le niveau de
-// citation INTERNE (le corps contient ses propres chaînes quotées) ; l'appelant
-// ré-échappe le corps entier pour le niveau on-event="…" (double échappement
-// assumé et correct : chaque niveau de citation décode le sien).
-//
-// Sémantique : à chaque tick (20 s), compter les hôtes hotspot NON autorisés —
-// un hôte non autorisé = un appareil connecté qui n'a PAS encore de session :
-// c'est exactement la fenêtre « invité sur le portail, claim imminent ou en
-// cours ». Si > 0 → check-in complet (fichier PROPRE au veilleur, jamais le
-// dst-path du scheduler principal : deux fetchs concurrents ne peuvent pas
-// s'écraser le fichier). Si 0 → RIEN (aucun octet émis — la veille N°75 garde
-// ses 6 Mo/mois). Exclusions : bypassed (binding MAC permanent — sinon le
-// veilleur tirerait 24 h/24 pour un appareil du gérant) et blocked (banni du
-// login : aucun claim ne viendra de lui).
-func watcherOnEvent(urlEsc, tokEsc string) string {
-	return ":do { " +
-		":local mkgw 0; " +
-		":do { :set mkgw [/ip hotspot host print count-only where !authorized && !bypassed && !blocked] } on-error={ :set mkgw 0 }; " +
-		":if ($mkgw > 0) do={ " +
-		":local mkwf \"yes\"; " +
-		":do { /tool fetch url=\"" + urlEsc + "/agent/cmd?token=" + tokEsc + "\" dst-path=\"" + WatcherFilename + "\" } on-error={ :set mkwf \"no\" }; " +
-		":if ($mkwf = \"yes\") do={ :delay 2s; /import file-name=\"" + WatcherFilename + "\" } " +
-		"} " +
-		"} on-error={}"
-}
-
-// buildWatcherEnsure — N°77 — déploie (ou redéploie) le veilleur d'invités sur
-// un routeur agent : remove-then-add idempotent, rapporté comme toute commande.
-// Servi aux routeurs dont WatcherOK est faux (ensureWatcherLocked au check-in —
-// pattern walled_garden : convergence automatique du parc existant en UN
-// check-in, re-file tant que le retour « ok » n'est pas arrivé).
-func (b Builder) buildWatcherEnsure(cmd model.Command) string {
-	urlEsc := rosEscape(strings.TrimRight(b.BaseURL, "/"))
-	tokEsc := rosEscape(b.Token)
-	okVar := "ok" + idSafe(cmd.ID)
-	var sb strings.Builder
-	sb.WriteString(header(cmd))
-	sb.WriteString(":local " + okVar + " true\n")
-	sb.WriteString(":do {\n  /system scheduler remove [find name=\"" + WatcherName + "\"]\n} on-error={}\n")
-	sb.WriteString(":do {\n  /system scheduler add name=\"" + WatcherName + "\" interval=" + strconv.Itoa(WatcherIntervalSec) + "s start-time=startup on-event=\"" +
-		rosEscape(watcherOnEvent(urlEsc, tokEsc)) + "\"\n} on-error={ :set " + okVar + " false }\n")
-	sb.WriteString(b.resultLines(cmd.ID, okVar, nil))
-	return sb.String()
-}
-
-// buildSafeWifi — N°80 : protection DNS du WiFi public (SafeWiFi) —
-// durcie N°85 : le DNS filtré devient le SEUL chemin de sortie.
-//
-// Principe : deux règles NAT dst-nat réécrivent TOUT le port 53 transitant
-// par le routeur (requêtes des clients vers n'importe quel résolveur, y
-// compris celles adressées au routeur lui-même) vers le résolveur filtrant
-// du niveau. Le DNS PROPRE du routeur n'est pas touché (son trafic part en
-// chain=output, hors dstnat) : le check-in agent et la résolution locale
-// restent intacts quel que soit l'état du résolveur filtrant — la
-// disponibilité du site prime sur la stricteté du filtrage, et /ip dns
-// n'est JAMAIS modifié.
-//
-// Durcissement N°85 — le constat terrain qui l'impose : un site adulte
-// restait accessible sur un routeur « Protection familles » active. Trois
-// échappatoires à fermer, une par une :
-//
-//  1. ORDRE DES RÈGLES — les règles NAT se posaient en FIN de table : une
-//     règle dstnat antérieure (redirect DNS hérité d'une config Mikhmon ou
-//     d'un tutoriel hotspot) interceptait le port 53 AVANT MikCloud,
-//     silencieusement — la signature ne comptait que la PRÉSENCE des
-//     règles marquées (rules=2), jamais leur EFFECTIVITÉ. Désormais
-//     place-before=0 : tête de table, rien ne passe devant (miroir Shield
-//     N°81 / FamilyGuard N°82). Bump du sel sw-v1 → sw-v2 : tout le parc
-//     reçoit la nouvelle forme au check-in suivant, sans intervention.
-//
-//  2. DNS CHIFFRÉ — DoT (tcp/853, « DNS privé » Android) est bloqué depuis
-//     l'interface hotspot ; DoH (tcp/443 vers les endpoints publics connus,
-//     liste SafeWifiDoHList) est bloqué de même : l'appareil retombe sur le
-//     DNS simple → redirigé → filtré. Limite résiduelle documentée : un
-//     endpoint DoH exotique hors liste reste joignable, un VPN contourne
-//     toute protection DNS (DPI hors de portée d'un routeur 128 Mo).
-//
-//  3. IPv6 — le NAT SafeWiFi est IPv4 : un appareil dual-stack résolvait
-//     en IPv6, hors de portée des règles. Désormais DNS IPv6 (tcp+udp 53),
-//     DoT et DoH IPv6 sont coupés depuis l'interface hotspot : repli IPv4,
-//     redirigé → filtré. Best-effort (on-error silencieux) : un routeur
-//     sans pile IPv6 n'a ni règles à poser ni échappatoire à fermer.
-//
-//     off      : retire les règles et listes marquées (retour à l'état antérieur) ;
-//     threats  : Quad9 (malwares, phishing, arnaques) ;
-//     family   : AdGuard Family (+ contenus adultes, publicités).
-//
-// Idempotent : seuls les objets marqués "mikcloud-safewifi" sont remplacés
-// (NAT + FILTER v4, listes DoH v4/v6, règles IPv6), ceux du gérant sont
-// conservés. Le rapport échoe le compte d'objets marqués IPv4 présents
-// APRÈS application (nat + filter + address-list — vérité routeur : le
-// cloud ne pose la signature que si ce compte est exact) ET le nombre de
-// serveurs hotspots trouvés (pattern Shield N°81 : le compte attendu en
-// dépend).
-func (b Builder) buildSafeWifi(cmd model.Command) string {
-	level := SafeWifiLevelFromPayload(cmd.Payload)
-	okVar := "ok" + idSafe(cmd.ID)
-	var sb strings.Builder
-	sb.WriteString(header(cmd))
-	sb.WriteString(":local " + okVar + " true\n")
-	// Retraits idempotents — IPv4 (NAT, FILTER, liste DoH)…
-	sb.WriteString(":do {\n  /ip firewall nat remove [find comment=\"" + SafeWifiMarker + "\"]\n} on-error={}\n")
-	sb.WriteString(":do {\n  /ip firewall filter remove [find comment=\"" + SafeWifiMarker + "\"]\n} on-error={}\n")
-	sb.WriteString(":do {\n  /ip firewall address-list remove [find list=\"" + SafeWifiDoHList + "\"]\n} on-error={}\n")
-	// …et IPv6 (best-effort : sans pile IPv6, rien à retirer, rien à fermer).
-	sb.WriteString(":do {\n  /ipv6 firewall filter remove [find comment=\"" + SafeWifiMarker + "\"]\n} on-error={}\n")
-	sb.WriteString(":do {\n  /ipv6 firewall address-list remove [find list=\"" + SafeWifiDoHList + "\"]\n} on-error={}\n")
-	sb.WriteString(":local swn 0\n")
-	if level != model.SafeWifiOff {
-		dns := SafeWifiResolver(level)
-		// 1. NAT en TÊTE de table (N°85) : une règle dstnat antérieure —
-		// redirect DNS hérité d'une config Mikhmon/tutoriel — ne peut plus
-		// prendre le port 53 avant les règles MikCloud.
-		sb.WriteString(":do {\n  /ip firewall nat add chain=dstnat place-before=0 action=dst-nat to-addresses=" + dns +
-			" to-ports=53 protocol=udp dst-port=53 comment=\"" + SafeWifiMarker + "\"\n} on-error={ :set " + okVar + " false }\n")
-		sb.WriteString(":do {\n  /ip firewall nat add chain=dstnat place-before=0 action=dst-nat to-addresses=" + dns +
-			" to-ports=53 protocol=tcp dst-port=53 comment=\"" + SafeWifiMarker + "\"\n} on-error={ :set " + okVar + " false }\n")
-		// 2a. Liste DoH IPv4 — endpoints publics connus (bloqués en tcp/443).
-		for _, ip := range SafeWifiDoHIPv4 {
-			sb.WriteString(":do {\n  /ip firewall address-list add list=\"" + SafeWifiDoHList + "\" address=" + ip +
-				"\n} on-error={ :set " + okVar + " false }\n")
-		}
-		// 2b. Liste DoH IPv6 (best-effort).
-		for _, ip := range SafeWifiDoHIPv6 {
-			sb.WriteString(":do {\n  /ipv6 firewall address-list add list=\"" + SafeWifiDoHList + "\" address=" + ip +
-				"\n} on-error={}\n")
-		}
-		// 2c/3. Par serveur hotspot : DoT et DoH coupés (v4), DNS IPv6, DoT et
-		// DoH IPv6 coupés (v6, best-effort) — l'interface est lue SUR le
-		// routeur (pattern N°81 : s'adapte à toute topologie et suit un
-		// renommage d'interface à la réparation 6 h suivante).
-		sb.WriteString(":foreach h in=[/ip hotspot find] do={\n")
-		sb.WriteString("  :set swn ($swn + 1)\n")
-		sb.WriteString("  :local swi [/ip hotspot get $h interface]\n")
-		sb.WriteString("  :do {\n    /ip firewall filter add chain=forward place-before=0 in-interface=$swi action=drop protocol=tcp dst-port=853 comment=\"" + SafeWifiMarker +
-			"\"\n  } on-error={ :set " + okVar + " false }\n")
-		sb.WriteString("  :do {\n    /ip firewall filter add chain=forward place-before=0 in-interface=$swi action=drop protocol=tcp dst-port=443 dst-address-list=" + SafeWifiDoHList +
-			" comment=\"" + SafeWifiMarker + "\"\n  } on-error={ :set " + okVar + " false }\n")
-		sb.WriteString("  :do {\n    /ipv6 firewall filter add chain=forward place-before=0 in-interface=$swi action=drop protocol=tcp dst-port=53 comment=\"" + SafeWifiMarker +
-			"\"\n  } on-error={}\n")
-		sb.WriteString("  :do {\n    /ipv6 firewall filter add chain=forward place-before=0 in-interface=$swi action=drop protocol=udp dst-port=53 comment=\"" + SafeWifiMarker +
-			"\"\n  } on-error={}\n")
-		sb.WriteString("  :do {\n    /ipv6 firewall filter add chain=forward place-before=0 in-interface=$swi action=drop protocol=tcp dst-port=853 comment=\"" + SafeWifiMarker +
-			"\"\n  } on-error={}\n")
-		sb.WriteString("  :do {\n    /ipv6 firewall filter add chain=forward place-before=0 in-interface=$swi action=drop protocol=tcp dst-port=443 dst-address-list=" + SafeWifiDoHList +
-			" comment=\"" + SafeWifiMarker + "\"\n  } on-error={}\n")
-		sb.WriteString("}\n")
-	}
-	// Rapport — vérité routeur : le compte d'objets marqués IPv4 présents
-	// après application (NAT + FILTER + liste DoH — valeur DYNAMIQUE
-	// calculée côté routeur, pattern fetchResultData : le cloud ne croit que
-	// ce que le routeur rapporte) ET le nombre de serveurs hotspots trouvés
-	// (pattern Shield N°81 : le compte attendu en dépend).
-	sb.WriteString(":local swr ([:len [/ip firewall nat find comment=\"" + SafeWifiMarker + "\"]] + [:len [/ip firewall filter find comment=\"" + SafeWifiMarker +
-		"\"]] + [:len [/ip firewall address-list find list=\"" + SafeWifiDoHList + "\"]])\n")
-	ok := `/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
-		`" http-method=post http-data=("cmd=` + urlEscape(cmd.ID) + `&status=ok&rules=". $swr . "&hs=". $swn) output=none`
-	ko := b.reportLine(cmd.ID, false, map[string]string{"message": "echec des regles de protection sur le routeur"})
-	sb.WriteString(":if ($" + okVar + ") do={\n  " + ok + "\n} else={\n  " + ko + "\n}\n")
-	return sb.String()
-}
-
-// buildShield — N°81 : bouclier réseau du WiFi public (Shield).
-//
-// Principe : cinq règles FILTER par serveur hotspot du routeur, posées
-// en TÊTE de chaîne (place-before=0) et ciblées sur l'INTERFACE du
-// hotspot — le réseau du gérant (LAN) et le trafic propre du routeur
-// (chain=output : check-in agent, DNS sortant) ne sont JAMAIS touchés :
-//
-//	input   ×2 : ports d'administration (winbox, ssh, telnet, api, ftp)
-//	            inaccessibles DEPUIS le WiFi public ;
-//	forward ×3 : connexions invalides, SMB et NetBIOS bloqués pour les
-//	            appareils des clients (vecteurs de propagation des
-//	            malwares sur réseau partagé) et vers le réseau du gérant.
-//
-//	L'interface du hotspot est lue SUR le routeur (foreach /ip hotspot
-//	find) : le script s'adapte à toute topologie (wlan1,
-//	bridge-hotspot…) et suit un renommage d'interface à la prochaine
-//	réparation 6 h (vérité routeur, pattern fetchResultData).
-//
-//	off : retire les règles marquées (retour à l'état antérieur).
-//
-// Idempotent : seules les règles marquées "mikcloud-shield" sont
-// remplacées, celles du gérant sont conservées. Le rapport échoe le
-// nombre de règles marquées présentes APRÈS application ET le nombre
-// de serveurs hotspots trouvés — le cloud ne pose la signature que si
-// rules == 5 × hotspots (2 input + 3 forward par hotspot).
-//
-// Limites documentées (MVP) : le blindage s'applique au trafic IPv4
-// traversant le routeur — l'isolation L2 de deux appareils d'un même
-// pont (client-à-client sans traverser le routeur) relève du réglage
-// du pont (use-ip-firewall, coûteux sur MIPS), hors de portée d'un MVP
-// non intrusif ; l'administration reste possible depuis MikCloud
-// (agent, connexions sortantes) et depuis le réseau local du gérant.
-func (b Builder) buildShield(cmd model.Command) string {
-	level := ShieldLevelFromPayload(cmd.Payload)
-	okVar := "ok" + idSafe(cmd.ID)
-	var sb strings.Builder
-	sb.WriteString(header(cmd))
-	sb.WriteString(":local " + okVar + " true\n")
-	sb.WriteString(":do {\n  /ip firewall filter remove [find comment=\"" + ShieldMarker + "\"]\n} on-error={}\n")
-	sb.WriteString(":local shn 0\n")
-	if level != model.ShieldOff {
-		sb.WriteString(":foreach h in=[/ip hotspot find] do={\n")
-		sb.WriteString("  :set shn ($shn + 1)\n")
-		sb.WriteString("  :local shi [/ip hotspot get $h interface]\n")
-		sb.WriteString("  :do {\n    /ip firewall filter add chain=input place-before=0 in-interface=$shi action=drop protocol=tcp dst-port=" + ShieldAdminTCPPorts +
-			" comment=\"" + ShieldMarker + "\"\n  } on-error={ :set " + okVar + " false }\n")
-		sb.WriteString("  :do {\n    /ip firewall filter add chain=input place-before=0 in-interface=$shi action=drop protocol=udp dst-port=" + ShieldAdminUDPPorts +
-			" comment=\"" + ShieldMarker + "\"\n  } on-error={ :set " + okVar + " false }\n")
-		sb.WriteString("  :do {\n    /ip firewall filter add chain=forward place-before=0 in-interface=$shi action=drop connection-state=invalid comment=\"" + ShieldMarker + "\"\n  } on-error={ :set " + okVar + " false }\n")
-		sb.WriteString("  :do {\n    /ip firewall filter add chain=forward place-before=0 in-interface=$shi action=drop protocol=tcp dst-port=" + ShieldMalwareTCPPorts +
-			" comment=\"" + ShieldMarker + "\"\n  } on-error={ :set " + okVar + " false }\n")
-		sb.WriteString("  :do {\n    /ip firewall filter add chain=forward place-before=0 in-interface=$shi action=drop protocol=udp dst-port=" + ShieldMalwareUDPPorts +
-			" comment=\"" + ShieldMarker + "\"\n  } on-error={ :set " + okVar + " false }\n")
-		sb.WriteString("}\n")
-	}
-	// Rapport — vérité routeur : le compte de règles marquées présentes
-	// après application ET le nombre de serveurs hotspots trouvés (valeurs
-	// DYNAMIQUES calculées côté routeur, pattern fetchResultData : le
-	// cloud ne croit que ce que le routeur rapporte).
-	sb.WriteString(":local shr [:len [/ip firewall filter find comment=\"" + ShieldMarker + "\"]]\n")
-	ok := `/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
-		`" http-method=post http-data=("cmd=` + urlEscape(cmd.ID) + `&status=ok&rules=". $shr . "&hs=". $shn) output=none`
-	ko := b.reportLine(cmd.ID, false, map[string]string{"message": "echec des regles du bouclier sur le routeur"})
-	sb.WriteString(":if ($" + okVar + ") do={\n  " + ok + "\n} else={\n  " + ko + "\n}\n")
-	return sb.String()
-}
-
-// buildFamilyGuard — N°82 : couvre-feu internet du WiFi public (FamilyGuard).
-//
-// Principe : pendant la fenêtre programmée par le gérant (ex. 22:00 → 06:00),
-// UNE règle FILTER par serveur hotspot coupe l'internet des clients —
-// chain=forward ciblée sur l'INTERFACE du hotspot, lue SUR le routeur
-// (foreach /ip hotspot find — s'adapte à toute topologie, pattern N°81),
-// posée en tête de chaîne (place-before=0, au-dessus d'un éventuel fasttrack
-// d'établies : les connexions EN COURS sont coupées immédiatement, pas seulement
-// les nouvelles), action=reject reject-with=icmp-network-unreachable (échec
-// immédiat côté appareil — pas de navigateur qui tourne dans le vide).
-//
-// La page du portail captif reste accessible (chain=input, servie par le
-// routeur) : les vouchers restent validables pendant le couvre-feu, seul
-// l'internet est coupé. Le réseau du gérant (LAN, hors interface hotspot)
-// et le trafic propre du routeur (chain=output : check-in agent, DNS) ne
-// sont JAMAIS touchés ; /ip firewall nat et /ip dns non plus (SafeWiFi N°80
-// reste maître du port 53).
-//
-// L'ÉTAT (active=true/false) est calculé PAR LE CLOUD au moment de la mise
-// en file (l'horloge de référence, en UTC == heure d'Abidjan) : le script
-// ne consulte JAMAIS l'horloge routeur (un routeur sans NTP verrait le
-// couvre-feu partir à la mauvaise heure). La bascule s'applique au check-in
-// suivant (≤ 45 s console ouverte, ≤ 180 s en veille).
-//
-//	active=false : retire les règles marquées (retour à l'état antérieur) ;
-//	active=true  : les repose — exactement 1 règle par serveur hotspot.
-//
-// Idempotent : seules les règles marquées "mikcloud-familyguard" sont
-// remplacées. Le rapport échoe le nombre de règles marquées présentes APRÈS
-// application ET le nombre de serveurs hotspots trouvés (vérité routeur —
-// le cloud ne pose la signature que si rules == 1 × hotspots, 0 sinon).
-//
-// 0 Mo de RAM routeur (règle sans état), 0 FCFA d'infrastructure —
-// compatible MIPS 128 Mo (RB951Ui-2HnD).
-func (b Builder) buildFamilyGuard(cmd model.Command) string {
-	active := FamilyGuardActiveFromPayload(cmd.Payload)
-	okVar := "ok" + idSafe(cmd.ID)
-	var sb strings.Builder
-	sb.WriteString(header(cmd))
-	sb.WriteString(":local " + okVar + " true\n")
-	sb.WriteString(":do {\n  /ip firewall filter remove [find comment=\"" + FamilyGuardMarker + "\"]\n} on-error={}\n")
-	sb.WriteString(":local fgn 0\n")
-	if active {
-		sb.WriteString(":foreach fgh in=[/ip hotspot find] do={\n")
-		sb.WriteString("  :set fgn ($fgn + 1)\n")
-		sb.WriteString("  :local fgi [/ip hotspot get $fgh interface]\n")
-		sb.WriteString("  :do {\n    /ip firewall filter add chain=forward place-before=0 in-interface=$fgi action=reject reject-with=icmp-network-unreachable comment=\"" + FamilyGuardMarker + "\"\n  } on-error={ :set " + okVar + " false }\n")
-		sb.WriteString("}\n")
-	}
-	// Rapport — vérité routeur : le compte de règles marquées présentes
-	// après application ET le nombre de serveurs hotspots trouvés
-	// (valeurs DYNAMIQUES côté routeur, pattern fetchResultData).
-	sb.WriteString(":local fgr [:len [/ip firewall filter find comment=\"" + FamilyGuardMarker + "\"]]\n")
-	ok := `/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
-		`" http-method=post http-data=("cmd=` + urlEscape(cmd.ID) + `&status=ok&rules=". $fgr . "&hs=". $fgn) output=none`
-	ko := b.reportLine(cmd.ID, false, map[string]string{"message": "echec des regles du couvre-feu sur le routeur"})
-	sb.WriteString(":if ($" + okVar + ") do={\n  " + ok + "\n} else={\n  " + ko + "\n}\n")
-	return sb.String()
-}
-
-// buildAntiVpn — N°88 : bloque-VPN du WiFi public (AntiVPN).
-//
-// Principe : QUATRE règles FILTER par serveur hotspot du routeur, posées
-// en TÊTE de chaîne (place-before=0, au-dessus d'un éventuel fasttrack :
-// les tunnels EN COURS sont coupés immédiatement, pas seulement les
-// nouveaux) et ciblées sur l'INTERFACE du hotspot, lue SUR le routeur
-// (foreach /ip hotspot find — s'adapte à toute topologie et suit un
-// renommage d'interface à la réparation 6 h suivante, pattern N°81) :
-//
-//	GRE (47) : tunnels PPTP et encapsulations GRE ;
-//	ESP (50) : IPsec/IKEv2 natif (« Ajouter un VPN » Android/iOS) ;
-//	UDP      : 500/4500 (IKE, NAT-T), 1701 (L2TP), 1194 (OpenVPN),
-//	           51820 (WireGuard), 2408 (Cloudflare WARP) ;
-//	TCP      : 1723 (PPTP), 1194 (OpenVPN), 9001/9030 (Tor).
-//
-// Ce que le module ne touche JAMAIS : le port 53 (SafeWiFi N°80 reste
-// maître du DNS), le NTP (123) et l'UDP 443 (appels WhatsApp — critiques
-// en Côte d'Ivoire — et QUIC). La limite résiduelle (un tunnel camouflé
-// en HTTPS pur) est documentée dans la footnote du module : un MVP ne
-// vend pas de DPI.
-//
-// IPv6 : miroir best-effort (pattern N°85) — mêmes coupures en /ipv6
-// firewall filter, on-error silencieux : un routeur sans pile IPv6 n'a
-// ni règles à poser ni échappatoire à fermer. Non comptées au rapport.
-//
-//	off : retire les règles marquées (retour à l'état antérieur).
-//
-// Idempotent : seules les règles marquées "mikcloud-antivpn" sont
-// remplacées, celles du gérant sont conservées. Le rapport échoe le
-// compte de règles marquées IPv4 présentes APRÈS application ET le
-// nombre de serveurs hotspots trouvés — le cloud ne pose la signature
-// que si rules == 4 × hotspots (pattern Shield N°81).
-func (b Builder) buildAntiVpn(cmd model.Command) string {
-	level := AntiVpnLevelFromPayload(cmd.Payload)
-	okVar := "ok" + idSafe(cmd.ID)
-	var sb strings.Builder
-	sb.WriteString(header(cmd))
-	sb.WriteString(":local " + okVar + " true\n")
-	sb.WriteString(":do {\n  /ip firewall filter remove [find comment=\"" + AntiVpnMarker + "\"]\n} on-error={}\n")
-	sb.WriteString(":do {\n  /ipv6 firewall filter remove [find comment=\"" + AntiVpnMarker + "\"]\n} on-error={}\n")
-	sb.WriteString(":local avn 0\n")
-	if level != model.AntiVpnOff {
-		sb.WriteString(":foreach h in=[/ip hotspot find] do={\n")
-		sb.WriteString("  :set avn ($avn + 1)\n")
-		sb.WriteString("  :local avi [/ip hotspot get $h interface]\n")
-		sb.WriteString("  :do {\n    /ip firewall filter add chain=forward place-before=0 in-interface=$avi action=drop protocol=gre comment=\"" + AntiVpnMarker +
-			"\"\n  } on-error={ :set " + okVar + " false }\n")
-		sb.WriteString("  :do {\n    /ip firewall filter add chain=forward place-before=0 in-interface=$avi action=drop protocol=50 comment=\"" + AntiVpnMarker +
-			"\"\n  } on-error={ :set " + okVar + " false }\n")
-		sb.WriteString("  :do {\n    /ip firewall filter add chain=forward place-before=0 in-interface=$avi action=drop protocol=udp dst-port=" + AntiVpnUDPPorts +
-			" comment=\"" + AntiVpnMarker + "\"\n  } on-error={ :set " + okVar + " false }\n")
-		sb.WriteString("  :do {\n    /ip firewall filter add chain=forward place-before=0 in-interface=$avi action=drop protocol=tcp dst-port=" + AntiVpnTCPPorts +
-			" comment=\"" + AntiVpnMarker + "\"\n  } on-error={ :set " + okVar + " false }\n")
-		// IPv6 best-effort (pattern N°85) : sans pile IPv6, rien à couper —
-		// on-error silencieux, non compté au rapport.
-		sb.WriteString("  :do {\n    /ipv6 firewall filter add chain=forward place-before=0 in-interface=$avi action=drop protocol=gre comment=\"" + AntiVpnMarker +
-			"\"\n  } on-error={}\n")
-		sb.WriteString("  :do {\n    /ipv6 firewall filter add chain=forward place-before=0 in-interface=$avi action=drop protocol=50 comment=\"" + AntiVpnMarker +
-			"\"\n  } on-error={}\n")
-		sb.WriteString("  :do {\n    /ipv6 firewall filter add chain=forward place-before=0 in-interface=$avi action=drop protocol=udp dst-port=" + AntiVpnUDPPorts +
-			" comment=\"" + AntiVpnMarker + "\"\n  } on-error={}\n")
-		sb.WriteString("  :do {\n    /ipv6 firewall filter add chain=forward place-before=0 in-interface=$avi action=drop protocol=tcp dst-port=" + AntiVpnTCPPorts +
-			" comment=\"" + AntiVpnMarker + "\"\n  } on-error={}\n")
-		sb.WriteString("}\n")
-	}
-	// Rapport — vérité routeur : le compte de règles marquées IPv4
-	// présentes après application ET le nombre de serveurs hotspots
-	// trouvés (valeurs DYNAMIQUES calculées côté routeur, pattern
-	// fetchResultData / Shield N°81 : le cloud ne croit que ce que le
-	// routeur rapporte).
-	sb.WriteString(":local avr [:len [/ip firewall filter find comment=\"" + AntiVpnMarker + "\"]]\n")
-	ok := `/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
-		`" http-method=post http-data=("cmd=` + urlEscape(cmd.ID) + `&status=ok&rules=". $avr . "&hs=". $avn) output=none`
-	ko := b.reportLine(cmd.ID, false, map[string]string{"message": "echec du bloque-vpn sur le routeur"})
-	sb.WriteString(":if ($" + okVar + ") do={\n  " + ok + "\n} else={\n  " + ko + "\n}\n")
-	return sb.String()
-}
-
-// buildReadState — v5 (N°76) : télémétrie + rapport PAGINÉ des utilisateurs.
-// Motivation : v4 (N°75) bornait le rapport à 500 users et gelait TOUTE
-// déduction au-delà (badge « absent du routeur » ni posé ni levé) — les faux
-// badges posés avant N°75 sur un parc de 3 478 users (cap v2 : 150) restaient
-// prisonniers à vie : le rapport était tronqué en PERMANENCE, la
-// réconciliation ne tournait plus jamais. v5 découpe le parc en fenêtres :
-//   - total=<nb total d'users sur le routeur> : compteur EXACT rapporté par
-//     chaque chunk — le cloud connaît le vrai parc dès le 1er ;
-//   - start/count : fenêtre [start, start+count) du parc, inlinés par Go
-//     depuis le payload de la commande ; out=<entrées émises> ;
-//   - sessions : rapportées UNIQUEMENT par le chunk final (start+count >=
-//     total) — les chunks intermédiaires n'alourdissent pas leur POST pour
-//     rien ; stotal (total de sessions actives) est rapporté par tous ;
-//   - trunc=true|false : il RESTE des chunks (start+count < total) —
-//     informatif (le cloud décide sur total/start/count, pas sur le drapeau).
-//
-// v4 (N°75) : board/freehdd/totalhdd en Mo côté script ; ifaces (8 running,
-// compteurs cumulés → débits par diff côté cloud). v2 : le gel honnête des
-// déductions sur rapport incomplet reste LA règle (chunk perdu = cycle
-// abandonné sans déduction, la complétude est vérifiée avant d'appliquer).
-func (b Builder) buildReadState(cmd model.Command) string {
-	start := int(plInt64(cmd.Payload, "start"))
-	count := int(plInt64(cmd.Payload, "count"))
-	if start < 0 {
-		start = 0
-	}
-	if count <= 0 || count > ReadChunkSize {
-		count = ReadChunkSize
-	}
-	end := start + count
-	var sb strings.Builder
-	sb.WriteString(header(cmd))
-	sb.WriteString(`:local rsres [/system resource get]
-:local rver [:tostr ($rsres->"version")]
-:local rup [:tostr ($rsres->"uptime")]
-:local rcpu [:tostr ($rsres->"cpu-load")]
-:local rmem [:tostr ($rsres->"free-memory")]
-:local rmemb [:tostr ($rsres->"total-memory")]
-:local rboard [:tostr ($rsres->"board-name")]
-:local rfreehdd 0
-:local rtotalhdd 0
-:do {
-  :set rfreehdd ([:tonum [:tostr ($rsres->"free-hdd-space")]] / 1048576)
-  :set rtotalhdd ([:tonum [:tostr ($rsres->"total-hdd-space")]] / 1048576)
-} on-error={ :set rfreehdd 0; :set rtotalhdd 0 }
-:local mikIds [/ip hotspot user find]
-:local mikTotal [:len $mikIds]
-:local rusr ""
-:local rout 0
-:local n 0
-:foreach u in=$mikIds do={
-  :if ($n >= @@START@@ && $n < @@END@@) do={
-    :set rusr ($rusr . [:tostr [/ip hotspot user get $u name]] . "|" . [:tostr [/ip hotspot user get $u profile]] . "|" . [:tostr [/ip hotspot user get $u disabled]] . ";")
-    :set rout ($rout + 1)
-  }
-  :set n ($n + 1)
-}
-:local rtrunc "false"
-:if (@@END@@ < $mikTotal) do={ :set rtrunc "true" }
-:local rstotal [:len [/ip hotspot active find]]
-:local rsess ""
-:local rsn 0
-:if (@@END@@ >= $mikTotal) do={
-  :foreach a in=[/ip hotspot active find] do={
-    :if ($rsn < 250) do={
-      :set rsess ($rsess . [:tostr [/ip hotspot active get $a user]] . "|" . [:tostr [/ip hotspot active get $a address]] . "|" . [:tostr [/ip hotspot active get $a uptime]] . "|" . [:tostr [/ip hotspot active get $a bytes-in]] . "|" . [:tostr [/ip hotspot active get $a bytes-out]] . ";")
-      :set rsn ($rsn + 1)
-    }
-  }
-}
-:local rsesspart ("&stotal=". $rstotal)
-:if (@@END@@ >= $mikTotal) do={
-  :set rsesspart ("&stotal=". $rstotal ."&sessions=". $rsess)
-}
-:local rif ""
-:do {
-  :local rin 0
-  :foreach ifv in=[/interface find] do={
-    :if ($rin < 8) do={
-      :if ([:tostr [/interface get $ifv running]] = "true") do={
-        :set rif ($rif . [:tostr [/interface get $ifv name]] . ":" . [:tostr [/interface get $ifv rx-byte]] . ":" . [:tostr [/interface get $ifv tx-byte]] . ";")
-        :set rin ($rin + 1)
-      }
-    }
-  }
-} on-error={ :set rif "" }
-`)
-	sb.WriteString(`/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
-		`" http-method=post http-data=("cmd=` + cmd.ID +
-		`&status=ok&version=". $rver ."&uptime=". $rup ."&cpu=". $rcpu ."&freemem=". $rmem ."&totalmem=". $rmemb` +
-		` ."&board=". $rboard ."&freehdd=". $rfreehdd ."&totalhdd=". $rtotalhdd` +
-		` ."&total=". $mikTotal ."&start=@@START@@&count=@@COUNT@@&out=". $rout` +
-		` ."&users=". $rusr . $rsesspart ."&ifaces=". $rif ."&trunc=". $rtrunc) output=none` + "\n")
-	// Placeholders substitués en dernier : une seule chaîne brute lisible,
-	// aucune concaténation au milieu du script (le pattern @@VAR@@ ne peut
-	// pas apparaître par accident dans une commande RouterOS).
-	out := strings.NewReplacer("@@START@@", strconv.Itoa(start), "@@END@@", strconv.Itoa(end), "@@COUNT@@", strconv.Itoa(count)).Replace(sb.String())
-	return out
-}
-
-func (b Builder) buildUserAdd(cmd model.Command) string {
-	name := SanitizeName(plStr(cmd.Payload, "name"))
-	pass := plStr(cmd.Payload, "password")
-	prof := plProfile(cmd.Payload, "profile")
-	comment := plStr(cmd.Payload, "comment")
-	quota := plInt64(cmd.Payload, "limitBytesTotal")
-	// Parité Mikhmon : limit-uptime du voucher (minutes) — le payload prime,
-	// sinon héritage du session-timeout du profil (0 = illimité).
-	uptime := plInt64(cmd.Payload, "limitUptimeMin")
-	if uptime <= 0 && prof.HasTimeout && prof.SessionTimeoutMin > 0 {
-		uptime = int64(prof.SessionTimeoutMin)
-	}
-	server := plStr(cmd.Payload, "server")
-	okVar := "ok" + idSafe(cmd.ID)
-	var sb strings.Builder
-	sb.WriteString(header(cmd))
-	sb.WriteString(":local " + okVar + " true\n")
-	sb.WriteString(profileEnsureLine(prof))
-	line := `/ip hotspot user add name="` + rosEscape(name) + `"`
-	if pass != "" {
-		line += ` password="` + rosEscape(pass) + `"`
-	}
-	line += ` profile="` + rosEscape(prof.Name) + `"`
-	// Quota de temps TOTAL du ticket (parité Mikhmon) : limit-uptime du
-	// voucher (override par lot) ou, à défaut, la durée du profil. Une fois
-	// le cumul épuisé, le routeur refuse la reconnexion (« no more time »).
-	if uptime > 0 {
-		line += " limit-uptime=" + rosMinutes(int(uptime))
-	}
-	// Parité Mikhmon : serveur hotspot RouterOS visé ("all" ou nom précis).
-	if server != "" {
-		line += ` server="` + rosEscape(server) + `"`
-	}
-	if quota > 0 {
-		// Quota de données : limit-bytes-total (in + out cumulés, in/out laissés à 0).
-		line += fmt.Sprintf(" limit-bytes-total=%d", quota)
-	}
-	if comment != "" {
-		line += ` comment="` + rosEscape(comment) + `"`
-	}
-	sb.WriteString(":do { " + line + " } on-error={ :set " + okVar + " false }\n")
-	sb.WriteString(b.resultLines(cmd.ID, okVar, nil))
-	return sb.String()
-}
-
-func (b Builder) buildVoucherBatch(cmd model.Command) string {
-	prof := plProfile(cmd.Payload, "profile")
-	users := plUserList(cmd.Payload, "users")
-	batch := plStr(cmd.Payload, "batch")
-	custom := plStr(cmd.Payload, "comment")
-	quota := plInt64(cmd.Payload, "limitBytesTotal")
-	// Parité Mikhmon : limit-uptime par lot (minutes) — le payload prime,
-	// sinon héritage du session-timeout du profil (0 = illimité).
-	uptime := plInt64(cmd.Payload, "limitUptimeMin")
-	if uptime <= 0 && prof.HasTimeout && prof.SessionTimeoutMin > 0 {
-		uptime = int64(prof.SessionTimeoutMin)
-	}
-	server := plStr(cmd.Payload, "server")
-	okVar := "ok" + idSafe(cmd.ID)
-	// Commentaire router : la traçabilité MikCloud (lot) reste toujours présente ;
-	// le commentaire libre du gérant est préfixé devant s'il existe.
-	comment := ""
-	switch {
-	case custom != "" && batch != "":
-		comment = custom + " · mikcloud:" + batch
-	case custom != "":
-		comment = custom
-	case batch != "":
-		comment = "mikcloud:" + batch
-	}
-	var sb strings.Builder
-	sb.WriteString(header(cmd))
-	sb.WriteString(":local " + okVar + " true\n")
-	sb.WriteString(profileEnsureLine(prof))
-	for _, u := range users {
-		line := `/ip hotspot user add name="` + rosEscape(SanitizeName(u.Name)) + `" password="` + rosEscape(u.Password) +
-			`" profile="` + rosEscape(prof.Name) + `"`
-		// Quota de temps TOTAL du ticket (parité Mikhmon, cf. buildUserAdd) :
-		// limit-uptime du lot (override) ou du profil ; cumul épuisé = refus.
-		if uptime > 0 {
-			line += " limit-uptime=" + rosMinutes(int(uptime))
-		}
-		// Parité Mikhmon : serveur hotspot RouterOS visé ("all" ou nom précis).
-		if server != "" {
-			line += ` server="` + rosEscape(server) + `"`
-		}
-		if quota > 0 {
-			// Quota de données du lot (ex. « 5 Go = 500 F ») : limit-bytes-total
-			// en octets — le routeur déconnecte le voucher une fois épuisé.
-			line += fmt.Sprintf(" limit-bytes-total=%d", quota)
-		}
-		if comment != "" {
-			line += ` comment="` + rosEscape(comment) + `"`
-		}
-		sb.WriteString(":do { " + line + " } on-error={ :log warning \"mikcloud: add voucher echoue\" }\n")
-	}
-	sb.WriteString(b.resultLines(cmd.ID, okVar, map[string]string{"created": fmt.Sprintf("%d", len(users))}))
-	return sb.String()
-}
-
-func (b Builder) buildUserRemove(cmd model.Command) string {
-	names := plStrList(cmd.Payload, "names")
-	okVar := "ok" + idSafe(cmd.ID)
-	var sb strings.Builder
-	sb.WriteString(header(cmd))
-	sb.WriteString(":local " + okVar + " true\n")
-	for _, n := range names {
-		sn := rosEscape(SanitizeName(n))
-		sb.WriteString(":do { /ip hotspot user remove [find name=\"" + sn + "\"] } on-error={ :set " + okVar + " false }\n")
-		sb.WriteString(":do { /ip hotspot active remove [find user=\"" + sn + "\"] } on-error={ :log info \"mikcloud: session deja fermee\" }\n")
-	}
-	sb.WriteString(b.resultLines(cmd.ID, okVar, nil))
-	return sb.String()
-}
-
-func (b Builder) buildUserSet(cmd model.Command) string {
-	old := SanitizeName(plStr(cmd.Payload, "oldName"))
-	name := SanitizeName(plStr(cmd.Payload, "name"))
-	prof := plProfile(cmd.Payload, "profile")
-	okVar := "ok" + idSafe(cmd.ID)
-	if old == "" {
-		old = name
-	}
-	set := `/ip hotspot user set [find name="` + rosEscape(old) + `"]`
-	if name != "" && name != old {
-		set += ` name="` + rosEscape(name) + `"`
-	}
-	if prof.Name != "" {
-		set += ` profile="` + rosEscape(prof.Name) + `"`
-	}
-	if pw := plStr(cmd.Payload, "password"); pw != "" {
-		set += ` password="` + rosEscape(pw) + `"`
-	}
-	if plBool(cmd.Payload, "disabled") {
-		set += " disabled=yes"
-	} else if plHas(cmd.Payload, "disabled") {
-		set += " disabled=no"
-	}
-	var sb strings.Builder
-	sb.WriteString(header(cmd))
-	sb.WriteString(":local " + okVar + " true\n")
-	sb.WriteString(":do { " + set + " } on-error={ :set " + okVar + " false }\n")
-	sb.WriteString(b.resultLines(cmd.ID, okVar, nil))
-	return sb.String()
-}
-
-func (b Builder) buildKick(cmd model.Command) string {
-	user := rosEscape(SanitizeName(plStr(cmd.Payload, "user")))
-	var sb strings.Builder
-	sb.WriteString(header(cmd))
-	sb.WriteString(":do { /ip hotspot active remove [find user=\"" + user + "\"] } on-error={ :log info \"mikcloud: session introuvable\" }\n")
-	sb.WriteString(b.reportLine(cmd.ID, true, nil) + "\n")
-	return sb.String()
-}
-
-// buildUserReset — F4 : remet à zéro les compteurs (bytes/uptime) d'un
-// utilisateur hotspot côté routeur (/ip hotspot user reset-counters).
-func (b Builder) buildUserReset(cmd model.Command) string {
-	name := rosEscape(SanitizeName(plStr(cmd.Payload, "name")))
-	okVar := "ok" + idSafe(cmd.ID)
-	var sb strings.Builder
-	sb.WriteString(header(cmd))
-	sb.WriteString(":local " + okVar + " true\n")
-	sb.WriteString(":do { /ip hotspot user reset-counters [find name=\"" + name + "\"] } on-error={ :set " + okVar + " false }\n")
-	sb.WriteString(b.resultLines(cmd.ID, okVar, nil))
-	return sb.String()
-}
 
 // ---------------------------------------------------------------------------
 // Builders P1 (audit Mikhmon) — F6/F7/F8/F9/F10
@@ -1570,6 +583,11 @@ func (b Builder) fetchResultData(cmdID, okVar string) string {
 	ko := b.reportLine(cmdID, false, map[string]string{"message": "lecture impossible sur le routeur"})
 	return ":if ($" + okVar + ") do={\n  " + ok + "\n} else={\n  " + ko + "\n}\n"
 }
+
+// buildPing — F8 : /ping count=4 as-value → sent/received/minMs/avgMs/maxMs.
+// Robustesse vieux ROS : la conversion time→ms essaie la division arithmétique
+// (ROS7) puis retombe sur l'analyse de la chaîne « Nms » ; chaque étape est
+// isolée dans un :do on-error. Une perte (timeout) ne compte pas comme reçue.
 
 // buildPing — F8 : /ping count=4 as-value → sent/received/minMs/avgMs/maxMs.
 // Robustesse vieux ROS : la conversion time→ms essaie la division arithmétique
@@ -1626,581 +644,6 @@ func (b Builder) buildPing(cmd model.Command) string {
 
 // buildIpbindingAdd — F7 : /ip hotspot ip-binding add (mac requise, type
 // bypassed|blocked, address/comment optionnels).
-func (b Builder) buildIpbindingAdd(cmd model.Command) string {
-	mac := strings.TrimSpace(plStr(cmd.Payload, "mac"))
-	address := strings.TrimSpace(plStr(cmd.Payload, "address"))
-	comment := plStr(cmd.Payload, "comment")
-	typ := plStr(cmd.Payload, "type")
-	if typ != "blocked" {
-		typ = "bypassed"
-	}
-	line := `/ip hotspot ip-binding add mac-address="` + rosEscape(mac) + `" type=` + typ
-	if address != "" {
-		line += ` address="` + rosEscape(address) + `"`
-	}
-	if comment != "" {
-		line += ` comment="` + rosEscape(comment) + `"`
-	}
-	okVar := "ok" + idSafe(cmd.ID)
-	var sb strings.Builder
-	sb.WriteString(header(cmd))
-	sb.WriteString(":local " + okVar + " true\n")
-	sb.WriteString(":do { " + line + " } on-error={ :set " + okVar + " false }\n")
-	sb.WriteString(b.resultLines(cmd.ID, okVar, nil))
-	return sb.String()
-}
-
-// buildIpbindingSet — F7 : set [find mac-address=…] disabled=yes|no (+address).
-func (b Builder) buildIpbindingSet(cmd model.Command) string {
-	mac := strings.TrimSpace(plStr(cmd.Payload, "mac"))
-	set := `/ip hotspot ip-binding set [find mac-address="` + rosEscape(mac) + `"]`
-	if plHas(cmd.Payload, "disabled") {
-		if plBool(cmd.Payload, "disabled") {
-			set += " disabled=yes"
-		} else {
-			set += " disabled=no"
-		}
-	}
-	if address := strings.TrimSpace(plStr(cmd.Payload, "address")); address != "" {
-		set += ` address="` + rosEscape(address) + `"`
-	}
-	okVar := "ok" + idSafe(cmd.ID)
-	var sb strings.Builder
-	sb.WriteString(header(cmd))
-	sb.WriteString(":local " + okVar + " true\n")
-	sb.WriteString(":do { " + set + " } on-error={ :set " + okVar + " false }\n")
-	sb.WriteString(b.resultLines(cmd.ID, okVar, nil))
-	return sb.String()
-}
-
-// buildIpbindingRemove — F7 : remove [find mac-address=…].
-func (b Builder) buildIpbindingRemove(cmd model.Command) string {
-	mac := strings.TrimSpace(plStr(cmd.Payload, "mac"))
-	okVar := "ok" + idSafe(cmd.ID)
-	var sb strings.Builder
-	sb.WriteString(header(cmd))
-	sb.WriteString(":local " + okVar + " true\n")
-	sb.WriteString(":do { /ip hotspot ip-binding remove [find mac-address=\"" + rosEscape(mac) + "\"] } on-error={ :set " + okVar + " false }\n")
-	sb.WriteString(b.resultLines(cmd.ID, okVar, nil))
-	return sb.String()
-}
-
-// buildReadDhcp — F9 : /ip dhcp-server lease → mac|address|host|expires|status.
-func (b Builder) buildReadDhcp(cmd model.Command) string {
-	okVar := "ok" + idSafe(cmd.ID)
-	var sb strings.Builder
-	sb.WriteString(header(cmd))
-	sb.WriteString(":local " + okVar + " true\n:local rdata \"\"\n")
-	sb.WriteString(":do {\n  :local rn 0\n")
-	sb.WriteString("  :foreach le in=[/ip dhcp-server lease find] do={\n")
-	sb.WriteString("    :if ($rn < 100) do={\n")
-	sb.WriteString(`      :set rdata ($rdata . [:tostr [/ip dhcp-server lease get $le mac-address]] . "|" . [:tostr [/ip dhcp-server lease get $le address]] . "|" . [:tostr [/ip dhcp-server lease get $le host-name]] . "|" . [:tostr [/ip dhcp-server lease get $le expires-after]] . "|" . [:tostr [/ip dhcp-server lease get $le status]] . ";")` + "\n")
-	sb.WriteString("      :set rn ($rn + 1)\n")
-	sb.WriteString("    }\n  }\n")
-	sb.WriteString("} on-error={ :set " + okVar + " false }\n")
-	sb.WriteString(b.fetchResultData(cmd.ID, okVar))
-	return sb.String()
-}
-
-// buildReadHosts — F9 : /ip hotspot host → mac|address|server|uptime|authorized
-// (authorized=true si l'hôte est bypassed).
-func (b Builder) buildReadHosts(cmd model.Command) string {
-	okVar := "ok" + idSafe(cmd.ID)
-	var sb strings.Builder
-	sb.WriteString(header(cmd))
-	sb.WriteString(":local " + okVar + " true\n:local rdata \"\"\n")
-	sb.WriteString(":do {\n  :local rn 0\n")
-	sb.WriteString("  :foreach he in=[/ip hotspot host find] do={\n")
-	sb.WriteString("    :if ($rn < 100) do={\n")
-	sb.WriteString("      :local hauth \"false\"\n")
-	sb.WriteString("      :if ([:tostr [/ip hotspot host get $he bypassed]] = \"true\") do={ :set hauth \"true\" }\n")
-	sb.WriteString(`      :set rdata ($rdata . [:tostr [/ip hotspot host get $he mac-address]] . "|" . [:tostr [/ip hotspot host get $he address]] . "|" . [:tostr [/ip hotspot host get $he server]] . "|" . [:tostr [/ip hotspot host get $he uptime]] . "|" . $hauth . ";")` + "\n")
-	sb.WriteString("      :set rn ($rn + 1)\n")
-	sb.WriteString("    }\n  }\n")
-	sb.WriteString("} on-error={ :set " + okVar + " false }\n")
-	sb.WriteString(b.fetchResultData(cmd.ID, okVar))
-	return sb.String()
-}
-
-// buildReadCookies — F9 : /ip hotspot cookie → user|mac|expires.
-func (b Builder) buildReadCookies(cmd model.Command) string {
-	okVar := "ok" + idSafe(cmd.ID)
-	var sb strings.Builder
-	sb.WriteString(header(cmd))
-	sb.WriteString(":local " + okVar + " true\n:local rdata \"\"\n")
-	sb.WriteString(":do {\n  :local rn 0\n")
-	sb.WriteString("  :foreach ce in=[/ip hotspot cookie find] do={\n")
-	sb.WriteString("    :if ($rn < 50) do={\n")
-	sb.WriteString(`      :set rdata ($rdata . [:tostr [/ip hotspot cookie get $ce user]] . "|" . [:tostr [/ip hotspot cookie get $ce mac-address]] . "|" . [:tostr [/ip hotspot cookie get $ce expires-in]] . ";")` + "\n")
-	sb.WriteString("      :set rn ($rn + 1)\n")
-	sb.WriteString("    }\n  }\n")
-	sb.WriteString("} on-error={ :set " + okVar + " false }\n")
-	sb.WriteString(b.fetchResultData(cmd.ID, okVar))
-	return sb.String()
-}
-
-// buildReadLog — F9 : /log where topics~"hotspot" → time|topics|message,
-// 50 DERNIÈRES lignes seulement (le /log find va du plus ancien au plus
-// récent : on saute les ltotal-50 premières). Les « | » et « ; » des messages
-// sont remplacés par des espaces avant concaténation.
-func (b Builder) buildReadLog(cmd model.Command) string {
-	okVar := "ok" + idSafe(cmd.ID)
-	var sb strings.Builder
-	sb.WriteString(header(cmd))
-	sb.WriteString(":local " + okVar + " true\n:local rdata \"\"\n")
-	sb.WriteString(":do {\n")
-	sb.WriteString("  :local lall [/log find where topics~\"hotspot\"]\n")
-	sb.WriteString("  :local ltotal [:len $lall]\n")
-	sb.WriteString("  :local lstart 0\n")
-	sb.WriteString("  :if ($ltotal > 50) do={ :set lstart ($ltotal - 50) }\n")
-	sb.WriteString("  :local li 0\n")
-	sb.WriteString("  :foreach le in=$lall do={\n")
-	sb.WriteString("    :if ($li >= $lstart) do={\n")
-	sb.WriteString("      :local lmsg [:tostr [/log get $le message]]\n")
-	sb.WriteString("      :local lmsgc \"\"\n")
-	sb.WriteString("      :if ([:len $lmsg] > 0) do={\n")
-	sb.WriteString("        :for lx from=0 to=([:len $lmsg] - 1) do={\n")
-	sb.WriteString("          :local lch [:pick $lmsg $lx ($lx + 1)]\n")
-	sb.WriteString("          :if ($lch = \"|\" || $lch = \";\") do={ :set lch \" \" }\n")
-	sb.WriteString("          :set lmsgc ($lmsgc . $lch)\n")
-	sb.WriteString("        }\n")
-	sb.WriteString("      }\n")
-	sb.WriteString(`      :set rdata ($rdata . [:tostr [/log get $le time]] . "|" . [:tostr [/log get $le topics]] . "|" . $lmsgc . ";")` + "\n")
-	sb.WriteString("    }\n")
-	sb.WriteString("    :set li ($li + 1)\n")
-	sb.WriteString("  }\n")
-	sb.WriteString("} on-error={ :set " + okVar + " false }\n")
-	sb.WriteString(b.fetchResultData(cmd.ID, okVar))
-	return sb.String()
-}
-
-// buildReadScheduler — F10 : /system scheduler → name|interval|disabled|onevent.
-// Le on-event est assaini (« | », « ; », « : » et retours à la ligne → espaces).
-func (b Builder) buildReadScheduler(cmd model.Command) string {
-	okVar := "ok" + idSafe(cmd.ID)
-	var sb strings.Builder
-	sb.WriteString(header(cmd))
-	sb.WriteString(":local " + okVar + " true\n:local rdata \"\"\n")
-	sb.WriteString(":do {\n  :local rn 0\n")
-	sb.WriteString("  :foreach se in=[/system scheduler find] do={\n")
-	sb.WriteString("    :if ($rn < 100) do={\n")
-	sb.WriteString("      :local sev [:tostr [/system scheduler get $se on-event]]\n")
-	sb.WriteString("      :local sevc \"\"\n")
-	sb.WriteString("      :if ([:len $sev] > 0) do={\n")
-	sb.WriteString("        :for sx from=0 to=([:len $sev] - 1) do={\n")
-	sb.WriteString("          :local sch [:pick $sev $sx ($sx + 1)]\n")
-	sb.WriteString("          :if ($sch = \"|\" || $sch = \";\" || $sch = \":\") do={ :set sch \" \" }\n")
-	sb.WriteString("          :set sevc ($sevc . $sch)\n")
-	sb.WriteString("        }\n")
-	sb.WriteString("      }\n")
-	sb.WriteString(`      :set rdata ($rdata . [:tostr [/system scheduler get $se name]] . "|" . [:tostr [/system scheduler get $se interval]] . "|" . [:tostr [/system scheduler get $se disabled]] . "|" . $sevc . ";")` + "\n")
-	sb.WriteString("      :set rn ($rn + 1)\n")
-	sb.WriteString("    }\n  }\n")
-	sb.WriteString("} on-error={ :set " + okVar + " false }\n")
-	sb.WriteString(b.fetchResultData(cmd.ID, okVar))
-	return sb.String()
-}
-
-// buildReadResources — Parité Mikhmon : noms des ressources RouterOS utiles
-// aux formulaires — pools d'adresses (/ip pool), files parent (/queue simple,
-// hors files dynamiques) et serveurs hotspot (/ip hotspot). Chaque entrée est
-// rapportée « kind|name; » (pool|queue|server), relu par parseResourcesRows.
-func (b Builder) buildReadResources(cmd model.Command) string {
-	okVar := "ok" + idSafe(cmd.ID)
-	var sb strings.Builder
-	sb.WriteString(header(cmd))
-	sb.WriteString(":local " + okVar + " true\n:local rdata \"\"\n")
-	sb.WriteString(":do {\n  :local rn 0\n")
-	sb.WriteString("  :foreach pe in=[/ip pool find] do={\n")
-	sb.WriteString("    :if ($rn < 60) do={\n")
-	sb.WriteString(`      :set rdata ($rdata . "pool|" . [:tostr [/ip pool get $pe name]] . ";")` + "\n")
-	sb.WriteString("      :set rn ($rn + 1)\n")
-	sb.WriteString("    }\n  }\n")
-	sb.WriteString("  :local qn 0\n")
-	sb.WriteString("  :foreach qe in=[/queue simple find] do={\n")
-	sb.WriteString("    :if ($qn < 60) do={\n")
-	sb.WriteString("      :if ([:tostr [/queue simple get $qe dynamic]] = \"false\") do={\n")
-	sb.WriteString(`        :set rdata ($rdata . "queue|" . [:tostr [/queue simple get $qe name]] . ";")` + "\n")
-	sb.WriteString("      }\n")
-	sb.WriteString("      :set qn ($qn + 1)\n")
-	sb.WriteString("    }\n  }\n")
-	sb.WriteString("  :local hn 0\n")
-	sb.WriteString("  :foreach he in=[/ip hotspot find] do={\n")
-	sb.WriteString("    :if ($hn < 20) do={\n")
-	sb.WriteString(`      :set rdata ($rdata . "server|" . [:tostr [/ip hotspot get $he name]] . ";")` + "\n")
-	sb.WriteString("      :set hn ($hn + 1)\n")
-	sb.WriteString("    }\n  }\n")
-	sb.WriteString("} on-error={ :set " + okVar + " false }\n")
-	sb.WriteString(b.fetchResultData(cmd.ID, okVar))
-	return sb.String()
-}
-
-// intervalPattern — durée RouterOS simple (« 45s », « 5m », « 1h », « 2d », « 1w »).
-var intervalPattern = regexp.MustCompile(`^[0-9]+[smhdw]$`)
-
-// buildSchedulerAdd — F10 : /system scheduler add name/interval/on-event.
-// Le handler a validé le format ; le builder reste défensif (interval hors
-// format → 45s, nom assaini via SanitizeName).
-func (b Builder) buildSchedulerAdd(cmd model.Command) string {
-	name := SanitizeName(plStr(cmd.Payload, "name"))
-	interval := strings.TrimSpace(plStr(cmd.Payload, "interval"))
-	if !intervalPattern.MatchString(interval) {
-		interval = "45s"
-	}
-	onEvent := plStr(cmd.Payload, "onEvent")
-	okVar := "ok" + idSafe(cmd.ID)
-	line := `/system scheduler add name="` + rosEscape(name) + `" interval="` + rosEscape(interval) +
-		`" on-event="` + rosEscape(onEvent) + `"`
-	var sb strings.Builder
-	sb.WriteString(header(cmd))
-	sb.WriteString(":local " + okVar + " true\n")
-	sb.WriteString(":do { " + line + " } on-error={ :set " + okVar + " false }\n")
-	sb.WriteString(b.resultLines(cmd.ID, okVar, nil))
-	return sb.String()
-}
-
-// buildSchedulerSet — F10 : set [find name=…] disabled=yes|no.
-// N°75 — veille adaptative : le payload peut porter intervalSec (borné
-// [45, 900] par défense en profondeur — le cloud est le seul émetteur mais
-// un payload corrompu ne doit jamais espacer le scheduler au-delà du
-// raisonnable) : la commande devient la bascule de pas du scheduler MikCloud
-// (45 s actif ↔ 240 s veille), pilotée par le cloud à chaque check-in.
-// L'outil F10 (disabled) garde son comportement historique.
-func (b Builder) buildSchedulerSet(cmd model.Command) string {
-	name := SanitizeName(plStr(cmd.Payload, "name"))
-	set := `/system scheduler set [find name="` + rosEscape(name) + `"]`
-	iv := 0
-	if raw := int(plInt64(cmd.Payload, "intervalSec")); raw > 0 {
-		iv = raw
-		if iv < 45 {
-			iv = 45
-		}
-		if iv > 900 {
-			iv = 900
-		}
-		set += " interval=" + strconv.Itoa(iv) + "s"
-	}
-	if plBool(cmd.Payload, "disabled") {
-		set += " disabled=yes"
-	} else {
-		set += " disabled=no"
-	}
-	// N°75 — le RAPPORT échoe l'intervalle réellement appliqué : le cloud
-	// pose Router.SchedulerSec depuis cette valeur (vérité routeur, pas
-	// le payload émis — une commande en file peut être périmée).
-	extra := map[string]string{}
-	if iv > 0 {
-		extra["intervalSec"] = strconv.Itoa(iv)
-	}
-	okVar := "ok" + idSafe(cmd.ID)
-	var sb strings.Builder
-	sb.WriteString(header(cmd))
-	sb.WriteString(":local " + okVar + " true\n")
-	sb.WriteString(":do { " + set + " } on-error={ :set " + okVar + " false }\n")
-	sb.WriteString(b.resultLines(cmd.ID, okVar, extra))
-	return sb.String()
-}
-
-// buildSchedulerRemove — F10 : remove [find name=…].
-func (b Builder) buildSchedulerRemove(cmd model.Command) string {
-	name := SanitizeName(plStr(cmd.Payload, "name"))
-	okVar := "ok" + idSafe(cmd.ID)
-	var sb strings.Builder
-	sb.WriteString(header(cmd))
-	sb.WriteString(":local " + okVar + " true\n")
-	sb.WriteString(":do { /system scheduler remove [find name=\"" + rosEscape(name) + "\"] } on-error={ :set " + okVar + " false }\n")
-	sb.WriteString(b.resultLines(cmd.ID, okVar, nil))
-	return sb.String()
-}
-
-// buildPower — F10 : rapport ok IMMÉDIATEMENT (le /tool fetch est bloquant :
-// le résultat part AVANT l'exécution) puis /system reboot (ou shutdown).
-// La commande est rapportée « done » au cloud, qui enfile un read_state : le
-// routeur re-synchronisera son état au check-in suivant son redémarrage.
-func (b Builder) buildPower(cmd model.Command, action string) string {
-	var sb strings.Builder
-	sb.WriteString(header(cmd))
-	sb.WriteString(b.reportLine(cmd.ID, true, map[string]string{"action": action}) + "\n")
-	sb.WriteString(":delay 1s\n")
-	sb.WriteString(":do { /system " + action + " } on-error={ :log warning \"mikcloud: " + action + " impossible\" }\n")
-	return sb.String()
-}
-
-// ---------------------------------------------------------------------------
-// N°29 — walled-garden d'inscription publique (runbook N°27-D automatisé)
-// ---------------------------------------------------------------------------
-
-// SanitizeWGDomain — hôte walled-garden sûr : minuscules, [a-z0-9._-] plus un
-// suffixe de port NUMÉRIQUE (déploiements non standard), 253 caractères max.
-// Tout le reste est refusé : ces valeurs sont injectées dans un script
-// RouterOS (défense en profondeur, rosEscape reste appliqué à l'écriture).
-func SanitizeWGDomain(s string) string {
-	s = strings.ToLower(strings.TrimSpace(s))
-	if s == "" || len(s) > 253 {
-		return ""
-	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '.' || c == '-' || c == ':') {
-			return ""
-		}
-	}
-	if i := strings.IndexByte(s, ':'); i >= 0 { // port numérique uniquement
-		port := s[i+1:]
-		if port == "" || len(port) > 5 {
-			return ""
-		}
-		for j := 0; j < len(port); j++ {
-			if port[j] < '0' || port[j] > '9' {
-				return ""
-			}
-		}
-	}
-	return s
-}
-
-// WalledGardenDomainsFromPayload — les domaines d'une commande walled_garden
-// ([]any JSON ou []string mémoire, cf. plStrList), assainis.
-func WalledGardenDomainsFromPayload(p map[string]any) []string {
-	raw := plStrList(p, "domains")
-	out := make([]string, 0, len(raw))
-	for _, d := range raw {
-		if d = SanitizeWGDomain(d); d != "" {
-			out = append(out, d)
-		}
-	}
-	return out
-}
-
-// walledGardenInstallBlock — bloc walled-garden du script d'INSTALLATION
-// (N°29) : la page d'inscription publique /join/{token} et l'API qu'elle
-// appelle restent joignables AVANT authentification depuis le WiFi du hotspot
-// (le scan du QR fonctionne sur place, cf. docs/RUNBOOK-WALLED-GARDEN.md).
-// Idempotent : seules les règles marquées "mikcloud-wg" sont remplacées.
-// Corps multi-lignes (règle du parseur console — cf. en-tête InstallScript).
-// Vide si aucun domaine annoncé par le déploiement.
-func walledGardenInstallBlock(domains []string) string {
-	if len(domains) == 0 {
-		return ""
-	}
-	var sb strings.Builder
-	sb.WriteString("\n    # Walled-garden d'inscription publique (N°27/N°29) : la page /join et\n")
-	sb.WriteString("    # son API restent joignables AVANT authentification — le scan du QR\n")
-	sb.WriteString("    # fonctionne depuis le WiFi du hotspot. Seules les règles marquées\n")
-	sb.WriteString("    # \"" + WalledGardenMarker + "\" sont remplacées, les vôtres sont conservées.\n")
-	sb.WriteString("    :do {\n      /ip hotspot walled-garden remove [find comment=\"" + WalledGardenMarker + " page\"]\n    } on-error={}\n")
-	sb.WriteString("    :do {\n      /ip hotspot walled-garden ip remove [find comment=\"" + WalledGardenMarker + " page\"]\n    } on-error={}\n")
-	sb.WriteString("    :do {\n      /ip hotspot walled-garden remove [find comment=\"" + WalledGardenMarker + " dns\"]\n    } on-error={}\n")
-	for _, d := range domains {
-		sb.WriteString("    :do {\n      :if ([:len [/ip hotspot walled-garden find comment=\"" + WalledGardenMarker + " page\" dst-host=\"" + rosEscape(d) + "\"]] = 0) do={ /ip hotspot walled-garden add action=allow dst-host=\"" + rosEscape(d) + "\" comment=\"" + WalledGardenMarker + " page\" }\n    } on-error={}\n")
-		// N°48 — miroir ip (action=accept, cf. N°31-d) : couverture HTTPS.
-		sb.WriteString("    :do {\n      :if ([:len [/ip hotspot walled-garden ip find comment=\"" + WalledGardenMarker + " page\" dst-host=\"" + rosEscape(d) + "\"]] = 0) do={ /ip hotspot walled-garden ip add action=accept dst-host=\"" + rosEscape(d) + "\" comment=\"" + WalledGardenMarker + " page\" }\n    } on-error={}\n")
-	}
-	// N°48 — règles « api » (variante ip, action=accept, dst-host) : la
-	// variante proxy ci-dessus ne voit que le HTTP pur (port 80) — or l'API
-	// (claim, /portal, /join) est en HTTPS (Render/Vercel). Sans règles ip,
-	// le TLS 443 pré-auth restait bloqué par le hotspot → le fetch du claim
-	// échouait côté client (« Service WiFi offert momentanément indisponible
-	// »). Pas de restriction de port : couvre TCP 80/443 ET UDP 443 (QUIC).
-	sb.WriteString("    :do {\n      /ip hotspot walled-garden ip remove [find comment=\"" + WalledGardenMarker + " api\"]\n    } on-error={}\n")
-	for _, d := range domains {
-		sb.WriteString("    :do {\n      :if ([:len [/ip hotspot walled-garden ip find comment=\"" + WalledGardenMarker + " api\" dst-host=\"" + rosEscape(d) + "\"]] = 0) do={ /ip hotspot walled-garden ip add action=accept dst-host=\"" + rosEscape(d) + "\" comment=\"" + WalledGardenMarker + " api\" }\n    } on-error={}\n")
-	}
-	sb.WriteString("    :do {\n      /ip hotspot walled-garden ip remove [find comment=\"" + WalledGardenMarker + " dns\"]\n    } on-error={}\n")
-	sb.WriteString("    :do {\n      :if ([:len [/ip hotspot walled-garden ip find comment=\"" + WalledGardenMarker + " dns\" protocol=udp]] = 0) do={ /ip hotspot walled-garden ip add action=accept protocol=udp dst-port=53 comment=\"" + WalledGardenMarker + " dns\" }\n    } on-error={}\n")
-	sb.WriteString("    :do {\n      :if ([:len [/ip hotspot walled-garden ip find comment=\"" + WalledGardenMarker + " dns\" protocol=tcp]] = 0) do={ /ip hotspot walled-garden ip add action=accept protocol=tcp dst-port=53 comment=\"" + WalledGardenMarker + " dns\" }\n    } on-error={}\n")
-	return sb.String()
-}
-
-// buildWalledGarden — N°29 : applique le walled-garden d'inscription publique
-// sur un routeur AGENT déjà en ligne (le script d'installation le fait pour
-// les routeurs neufs). Idempotent : les règles marquées sont remplacées, les
-// autres préservées. Les 2 règles DNS (udp/tcp 53) garantissent que la
-// résolution traverse le routeur même pour les clients avec DNS codé en dur —
-// le matching par domaine du walled-garden s'appuie sur le reniflement DNS.
-// Rapport : domains = nombre de règles page/api réellement posées.
-// N°32 — TRAÇAGE : une variable RouterOS « step » est posée avant chaque bloc
-// à risque et embarquée dans le rapport d'erreur (concaténation console
-// « . $step », construct d'expression identique au « (“…”) » prouvé) — le
-// constat prod du 05/09 (3× echec_sur_le_routeur sur le script « propre »,
-// alors que le même script à 5 domaines passe) exige de savoir QUELLE ligne
-// échoue sans accès console au routeur client.
-func (b Builder) buildWalledGarden(cmd model.Command) string {
-	domains := WalledGardenDomainsFromPayload(cmd.Payload)
-	okVar := "ok" + idSafe(cmd.ID)
-	var sb strings.Builder
-	sb.WriteString(header(cmd))
-	// N°31-c — BATTEMENT DE CŒUR : le script confirme SA LIVRAISON avant
-	// d'attaquer les lignes à risque (construct « status=started », identique
-	// aux fetch de rapport — prouvé 849+ fois). Si l'import meurt ensuite sur
-	// une ligne que ce RouterOS rejette, le cloud sait au moins que le
-	// fichier est ARRIVÉ — l'ancien silence total rendait tout diagnostic
-	// impossible (constat prod : 2 livraisons sans AUCUN signal).
-	sb.WriteString(`/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
-		`" http-method=post http-data=("cmd=` + urlEscape(cmd.ID) + `&status=started") output=none` + "\n")
-	sb.WriteString(":local " + okVar + " true\n")
-	sb.WriteString(`:local step "start"` + "\n")
-	step := func(s string) { sb.WriteString(`:set step "` + s + `"` + "\n") }
-	// N°31-c — find EXACT (même classe syntaxique que `find name="..."` des
-	// user_remove — prouvé 4×) au lieu du regex `comment~"..."` — suspect
-	// n°1 du blocage d'import constaté en prod (chunk muet 2×/2×, commandes
-	// du même check-in tuées avec lui). Nos règles portent EXACTEMENT les
-	// commentaires ci-dessous : la suppression exacte est complète.
-	// N°31-e — removes SILENCIEUX (best-effort) : une règle « en usage » par
-	// les clients du hotspot (flux DNS permanents sur les règles DNS — constat
-	// prod 18:26→18:30 : 6 re-filés error d’affilée) ne doit PAS faire
-	// échouer la mise à jour : le service prime sur le ménage.
-	step("rm-page")
-	sb.WriteString(":do { /ip hotspot walled-garden remove [find comment=\"" + WalledGardenMarker + " page\"] } on-error={}\n")
-	step("rm-api-ip")
-	sb.WriteString(":do { /ip hotspot walled-garden ip remove [find comment=\"" + WalledGardenMarker + " api\"] } on-error={}\n")
-	step("rm-dns-ip")
-	sb.WriteString(":do { /ip hotspot walled-garden ip remove [find comment=\"" + WalledGardenMarker + " dns\"] } on-error={}\n")
-	// N°31-e — adds CONDITIONNELS à l’absence : si le remove vient d’échouer,
-	// la règle existe DÉJÀ (service assuré) → skip — PAS de doublon, PAS
-	// d’erreur. Seule une vraie erreur d’add met okVar à false.
-	// N°32 — chaque bloc à risque est précédé de :set step : le rapport
-	// d’erreur embarque la ligne fautive (« &step=" . $step ») — diagnostic
-	// sans accès console (les removes étant best-effort, seuls les adds
-	// peuvent porter okVar à false).
-	// N°31-d — action=ACCEPT (et NON allow) sur walled-garden ip : la table
-	// n’accepte que accept|drop|reject (doc officielle HotSpot) — « allow »
-	// est une erreur de validation console qui rejetait TOUT le fichier
-	// d’import (constat prod : 4 livraisons muettes, rien ne s’exécutait).
-	for i, d := range domains {
-		step("add-page-" + strconv.Itoa(i+1))
-		sb.WriteString(":do { :if ([:len [/ip hotspot walled-garden find comment=\"" + WalledGardenMarker + " page\" dst-host=\"" + rosEscape(d) + "\"]] = 0) do={ /ip hotspot walled-garden add action=allow dst-host=\"" + rosEscape(d) + "\" comment=\"" + WalledGardenMarker + " page\" } } on-error={ :set " + okVar + " false }\n")
-	}
-	// N°48 — règles « api » (variante ip) : le HTTPS pré-auth passe ICI, pas
-	// dans la variante proxy (page) qui ne voit que le HTTP pur. La variante
-	// ip n'accepte que accept|drop|reject (N°31-d) → action=accept ; le
-	// matching dst-host s'appuie sur le reniflement DNS (les règles DNS
-	// ci-dessous garantissent que la résolution transite par le routeur,
-	// même pour les clients avec DNS codé en dur).
-	for i, d := range domains {
-		step("add-api-" + strconv.Itoa(i+1))
-		sb.WriteString(":do { :if ([:len [/ip hotspot walled-garden ip find comment=\"" + WalledGardenMarker + " api\" dst-host=\"" + rosEscape(d) + "\"]] = 0) do={ /ip hotspot walled-garden ip add action=accept dst-host=\"" + rosEscape(d) + "\" comment=\"" + WalledGardenMarker + " api\" } } on-error={ :set " + okVar + " false }\n")
-	}
-	step("add-dns-udp")
-	sb.WriteString(":do { :if ([:len [/ip hotspot walled-garden ip find comment=\"" + WalledGardenMarker + " dns\" protocol=udp]] = 0) do={ /ip hotspot walled-garden ip add action=accept protocol=udp dst-port=53 comment=\"" + WalledGardenMarker + " dns\" } } on-error={ :set " + okVar + " false }\n")
-	step("add-dns-tcp")
-	sb.WriteString(":do { :if ([:len [/ip hotspot walled-garden ip find comment=\"" + WalledGardenMarker + " dns\" protocol=tcp]] = 0) do={ /ip hotspot walled-garden ip add action=accept protocol=tcp dst-port=53 comment=\"" + WalledGardenMarker + " dns\" } } on-error={ :set " + okVar + " false }\n")
-	ok := b.reportLine(cmd.ID, true, map[string]string{"domains": strconv.Itoa(len(domains))})
-	ko := `/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
-		`" http-method=post http-data=("cmd=` + urlEscape(cmd.ID) + `&status=error&message=echec_sur_le_routeur&step=" . $step) output=none`
-	sb.WriteString(":if ($" + okVar + ") do={\n  " + ok + "\n} else={\n  " + ko + "\n}\n")
-	return sb.String()
-}
-
-// HotspotFilesFromPayload — la liste ordonnée des fichiers à déployer pour
-// une commande hotspot_files. Chaque entrée porte le chemin RELATIF
-// (login.html, status.html, css/bootstrap.min.css, …) qui sert à la fois de
-// clé de signature et de dst-path côté routeur (sous le dossier hotspot/).
-func HotspotFilesFromPayload(p map[string]any) []string {
-	raw := plStrList(p, "files")
-	out := make([]string, 0, len(raw))
-	for _, f := range raw {
-		if f = sanitizePortalPath(f); f != "" {
-			out = append(out, f)
-		}
-	}
-	return out
-}
-
-// sanitizePortalPath — n'accepte qu'un chemin RELATIF sans remontée (pas de
-// « .. », pas de « / » initial) et un charset sûr : la cible côté routeur est
-// toujours hotspot/<path>, et le fetch ne doit JAMAIS sortir de ce dossier
-// (sécurité défense en profondeur même si la source est déjà validée cloud).
-func sanitizePortalPath(p string) string {
-	p = strings.TrimSpace(p)
-	if p == "" || strings.HasPrefix(p, "/") {
-		return ""
-	}
-	for _, seg := range strings.Split(p, "/") {
-		if seg == "" || seg == "." || seg == ".." {
-			return ""
-		}
-		for i := 0; i < len(seg); i++ {
-			c := seg[i]
-			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-				c == '-' || c == '_' || c == '.') {
-				return ""
-			}
-		}
-	}
-	return p
-}
-
-// buildHotspotFiles — N°35 : déploiement automatique du portail captif sur un
-// routeur AGENT déjà en ligne. Le cloud sert les fichiers personnalisés par
-// compte (branding, offres, textes, slug WiFi, lien join) via
-// GET /portal/{token}/{path} (mêmes hôtes que l'agent, TLS strict hérité,
-// déjà walled-gardenés N°29). L'agent fait un /tool fetch par fichier (RouterOS
-// n'a PAS d'extracteur ZIP natif — architecture un-fetch-par-fichier, ~30
-// fetchs par déploiement). Ordre séquentiel : assets (css/js/img/webfonts)
-// d'abord, status.html et pages auxiliaires ensuite, login.html EN DERNIER
-// pour l'atomicité — un client qui ouvre login.html pendant le déploiement
-// chargera la nouvelle page qui référence des assets déjà en place.
-//
-// Pattern calqué sur buildWalledGarden (N°29-N°32) :
-//   - battement de cœur status=started AVANT les fetchs (preuve de livraison) ;
-//   - variable step posée avant chaque bloc à risque (diagnostic sans console) ;
-//   - on-error={} par fichier (un fetch échoué ne tue pas les autres) ;
-//   - okVar global, rapport ok si tous les fetchs ont réussi ;
-//   - reprise zombie 10 min via staleSentReadKinds (idempotent par surcharge) ;
-//   - signature posée au retour « ok » uniquement (handleAgentResult).
-//
-// Le dossier hotspot/ DOIT exister côté routeur (pré-requis manuel one-shot :
-// /ip hotspot profile set html-directory=hotspot). Si absent, le 1er fetch
-// échoue → okVar false → rapport step="mkdir" ou "fetch-<path>" → re-file au
-// check-in suivant (max 3 re-tries puis error avec activity log).
-func (b Builder) buildHotspotFiles(cmd model.Command) string {
-	files := HotspotFilesFromPayload(cmd.Payload)
-	okVar := "ok" + idSafe(cmd.ID)
-	var sb strings.Builder
-	sb.WriteString(header(cmd))
-	// Battement de cœur N°31-c : prouve la livraison du .rsc avant les fetchs.
-	sb.WriteString(`/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
-		`" http-method=post http-data=("cmd=` + urlEscape(cmd.ID) + `&status=started") output=none` + "\n")
-	sb.WriteString(":local " + okVar + " true\n")
-	sb.WriteString(`:local step "start"` + "\n")
-	step := func(s string) { sb.WriteString(`:set step "` + s + `"` + "\n") }
-
-	// Pré-requis : s'assurer que le dossier hotspot/ existe. /file mkdir est
-	// idempotent sous RouterOS 7+ (renvoie une erreur bénigne si déjà là → on-error={}).
-	// Côté < 7.x, la commande n'existe pas : le fetch créera lui-même le
-	// sous-dossier à la première écriture (comportement RouterOS) — si mkdir
-	// échoue, on continue quand même : le fetch décide.
-	step("mkdir")
-	sb.WriteString(`:do { /file mkdir "hotspot" } on-error={}` + "\n")
-
-	base := strings.TrimRight(b.BaseURL, "/") + "/portal/" + urlEscape(b.Token) + "/"
-	// N°35 — ordre séquentiel pour atomicité : assets d'abord, login.html en
-	// dernier. L'appelant (ensureHotspotFilesLocked) a déjà trié la liste dans
-	// cet ordre ; on dépile simplement.
-	// urlPathEscape échappe chaque segment du path SÉPARÉMENT (pour préserver
-	// les « / » qui séparent css/, js/, img/, webfonts/ — urlEscape encode
-	// « / » en %2F, ce qui casserait l'URL côté routeur).
-	for i, f := range files {
-		step("fetch-" + strconv.Itoa(i+1))
-		// Remove best-effort du fichier précédent (surcharge) puis fetch du
-		// nouveau. Si remove échoue (fichier absent la 1re fois), on
-		// continue. Si fetch échoue → okVar false, mais les autres fetchs
-		// continuent : un seul fichier cassé ne doit pas tout bloquer —
-		// le routeur garde l'ancienne version des autres, et la reprise
-		// zombie 10 min re-tentera le fichier fauteur.
-		dst := "hotspot/" + f
-		sb.WriteString(`:do { /file remove "` + rosEscape(dst) + `" } on-error={}` + "\n")
-		sb.WriteString(`:do { /tool fetch url="` + base + urlPathEscape(f) +
-			`" dst-path="` + rosEscape(dst) + `" } on-error={ :set ` + okVar + " false }\n")
-	}
-	step("done")
-	ok := b.reportLine(cmd.ID, true, map[string]string{"files": strconv.Itoa(len(files))})
-	ko := `/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
-		`" http-method=post http-data=("cmd=` + urlEscape(cmd.ID) + `&status=error&message=echec_sur_le_routeur&step=" . $step) output=none`
-	sb.WriteString(":if ($" + okVar + ") do={\n  " + ok + "\n} else={\n  " + ko + "\n}\n")
-	return sb.String()
-}
 
 // urlPathEscape — échappe un path composé de segments séparés par « / » en
 // préservant les « / » (contrairement à urlEscape qui les encode en %2F).
@@ -2219,6 +662,10 @@ func urlPathEscape(p string) string {
 	}
 	return strings.Join(out, "/")
 }
+
+// ---------------------------------------------------------------------------
+// Accès typés au payload (map[string]any)
+// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Accès typés au payload (map[string]any)
@@ -2247,6 +694,8 @@ func plHas(p map[string]any, k string) bool {
 }
 
 // plInt64 lit un entier du payload (JSON → float64, mémoire → int / int64).
+
+// plInt64 lit un entier du payload (JSON → float64, mémoire → int / int64).
 func plInt64(p map[string]any, k string) int64 {
 	switch v := p[k].(type) {
 	case float64:
@@ -2260,89 +709,6 @@ func plInt64(p map[string]any, k string) int64 {
 }
 
 // ProfileRef — référence compacte d'un profil pour les scripts.
-type ProfileRef struct {
-	Name              string
-	RateLimit         string
-	SessionTimeoutMin int
-	SharedUsers       int
-	LockFirstDevice   bool
-	// Parité Mikhmon : address-pool / parent-queue RouterOS ("" = none).
-	AddressPool string
-	ParentQueue string
-	// Présence des clés dans le payload : une commande héritée peut n'exporter
-	// que le nom (voire le verrou) — dans ce cas le set ne doit PAS toucher au
-	// rate-limit/session-timeout/shared-users du routeur (jamais d'effacement
-	// accidentel d'un paramètre que le payload ne portait pas).
-	HasRate    bool
-	HasTimeout bool
-	HasShared  bool
-	HasPool    bool
-	HasQueue   bool
-}
-
-func plProfile(p map[string]any, k string) ProfileRef {
-	m, ok := p[k].(map[string]any)
-	if !ok {
-		return ProfileRef{}
-	}
-	ref := ProfileRef{Name: plStr(m, "name"), RateLimit: plStr(m, "rateLimit")}
-	// Tolérant aux DEUX formes : payload en mémoire (int Go) ou relu du JSON
-	// (float64). L'assertion float64 seule perdait sessionTimeoutMin sur le
-	// chemin live (payload construit par le handler avec des int) → profils
-	// créés SANS session-timeout, vouchers sans expiration (incident 31/08).
-	if _, ok := m["rateLimit"]; ok {
-		ref.HasRate = true
-	}
-	if _, ok := m["sessionTimeoutMin"]; ok {
-		ref.HasTimeout = true
-		ref.SessionTimeoutMin = int(plInt64(m, "sessionTimeoutMin"))
-	}
-	if _, ok := m["sharedUsers"]; ok {
-		ref.HasShared = true
-		ref.SharedUsers = int(plInt64(m, "sharedUsers"))
-	}
-	ref.LockFirstDevice = plBool(m, "lockFirstDevice")
-	if _, ok := m["addressPool"]; ok {
-		ref.HasPool = true
-		ref.AddressPool = plStr(m, "addressPool")
-	}
-	if _, ok := m["parentQueue"]; ok {
-		ref.HasQueue = true
-		ref.ParentQueue = plStr(m, "parentQueue")
-	}
-	return ref
-}
-
-// VoucherRef — ligne de voucher pour un batch.
-type VoucherRef struct {
-	Name     string
-	Password string
-}
-
-func plUserList(p map[string]any, k string) []VoucherRef {
-	// Le payload peut venir de la mémoire (types concrets Go : []map[string]any)
-	// ou d'une relecture JSON ([]any) — accepter les deux formes.
-	collect := func(items []any) []VoucherRef {
-		out := make([]VoucherRef, 0, len(items))
-		for _, it := range items {
-			if m, ok := it.(map[string]any); ok {
-				out = append(out, VoucherRef{Name: plStr(m, "name"), Password: plStr(m, "password")})
-			}
-		}
-		return out
-	}
-	if raw, ok := p[k].([]any); ok {
-		return collect(raw)
-	}
-	if raw2, ok := p[k].([]map[string]any); ok {
-		items := make([]any, 0, len(raw2))
-		for _, it := range raw2 {
-			items = append(items, it)
-		}
-		return collect(items)
-	}
-	return nil
-}
 
 func plStrList(p map[string]any, k string) []string {
 	// Même tolérance que plUserList : []any (JSON) ou []string (mémoire).

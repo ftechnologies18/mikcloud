@@ -1,0 +1,566 @@
+// Moteur de synchro différentielle FNV-1a vers PostgreSQL (Sync, tables génériques, upsert/delete).
+// Extrait du monolithe pg.go (N°88) — même package, contenu inchangé.
+package store
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"hash/fnv"
+	"mikcloud/hotspot-api/internal/model"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// maxRowsPerStatement — bornes d'insertion multi-lignes (limite PostgreSQL : 65535 paramètres).
+const maxRowsPerStatement = 200
+
+// syncTimeout — N°74 — borne de durée d'UNE synchronisation Save(). Le
+// diagnostic de robustesse a montré que Sync s'exécute SOUS LE VERROU GLOBAL
+// du store SANS AUCUN timeout SQL : un Neon gelé (compute en réveil lent,
+// partition réseau, transaction bloquée) tenait le mutex indéfiniment —
+// toutes les requêtes, y compris le health check Render (GET /), se
+// bloquaient → crash-loop du service. BeginTx(ctx) borne TOUTE la durée de
+// vie de la transaction (statements + commit) : l'expiration annule la
+// transaction en base ET libère l'appelant, qui retente au Save suivant (les
+// empreintes ne sont rafraîchies qu'après succès — aucun delta perdu). 20 s =
+// ~8× le temps mesuré en production (2,6 s) ; seul un incident réel l'atteint.
+
+// syncTimeout — N°74 — borne de durée d'UNE synchronisation Save(). Le
+// diagnostic de robustesse a montré que Sync s'exécute SOUS LE VERROU GLOBAL
+// du store SANS AUCUN timeout SQL : un Neon gelé (compute en réveil lent,
+// partition réseau, transaction bloquée) tenait le mutex indéfiniment —
+// toutes les requêtes, y compris le health check Render (GET /), se
+// bloquaient → crash-loop du service. BeginTx(ctx) borne TOUTE la durée de
+// vie de la transaction (statements + commit) : l'expiration annule la
+// transaction en base ET libère l'appelant, qui retente au Save suivant (les
+// empreintes ne sont rafraîchies qu'après succès — aucun delta perdu). 20 s =
+// ~8× le temps mesuré en production (2,6 s) ; seul un incident réel l'atteint.
+const syncTimeout = 20 * time.Second
+
+// PG — backend PostgreSQL : pool de connexions + empreintes (hash FNV-1a) de la
+// dernière synchronisation réussie, par table, pour calculer les différences.
+
+// ---------------------------------------------------------------------------
+// Synchronisation différentielle (appelée par Store.Save, sous verrou)
+// ---------------------------------------------------------------------------
+
+// Sync compare l'état mémoire aux empreintes de la dernière synchronisation
+// réussie et applique les différences en une transaction :
+// upserts des lignes nouvelles/modifiées, suppressions des disparues.
+func (p *PG) Sync(db *model.DB) (err error) {
+	// N°71 — instrumentation santé : le defer alimente les compteurs exposés
+	// par GET /api/admin/sync-status (tentatives/succès/échecs, durée,
+	// volumétrie du delta). Aucun verrou supplémentaire sur le chemin
+	// critique : les compteurs ont leur micro-verrou (syncstats.go) et Save
+	// tient déjà le verrou global du store au moment de l'appel.
+	start := time.Now()
+	delta := syncDelta{}
+	defer func() {
+		if err != nil {
+			p.stats.recordFailure(err, time.Since(start))
+			return
+		}
+		p.stats.recordSuccess(delta, time.Since(start))
+	}()
+	// N°74 — contexte borné : un Neon gelé ne peut plus tenir le verrou global
+	// du store indéfiniment (cf. syncTimeout) — l'incident se résout en une
+	// erreur retournée, retentée au Save suivant.
+	ctx, cancel := context.WithTimeout(context.Background(), syncTimeout)
+	defer cancel()
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("pg sync (begin) : %w", err)
+	}
+	defer tx.Rollback() // no-op si Commit réussit
+
+	if err := syncTable(ctx, tx, p.hashes, accountSpec, db.Accounts, &delta); err != nil {
+		return err
+	}
+	if err := syncTable(ctx, tx, p.hashes, adminSpec, db.Users, &delta); err != nil {
+		return err
+	}
+	if err := syncTable(ctx, tx, p.hashes, routerSpec, db.Routers, &delta); err != nil {
+		return err
+	}
+	if err := syncTable(ctx, tx, p.hashes, profileSpec, db.Profiles, &delta); err != nil {
+		return err
+	}
+	if err := syncTable(ctx, tx, p.hashes, hotspotUserSpec, db.HotspotUsers, &delta); err != nil {
+		return err
+	}
+	if err := syncTable(ctx, tx, p.hashes, batchSpec, db.Batches, &delta); err != nil {
+		return err
+	}
+	if err := syncTable(ctx, tx, p.hashes, resellerSpec, db.Resellers, &delta); err != nil {
+		return err
+	}
+	if err := syncTable(ctx, tx, p.hashes, sellSessionSpec, db.SellSessions, &delta); err != nil {
+		return err
+	}
+	if err := syncTable(ctx, tx, p.hashes, passwordResetSpec, db.PasswordResets, &delta); err != nil {
+		return err
+	}
+	if err := syncTable(ctx, tx, p.hashes, transactionSpec, db.Transactions, &delta); err != nil {
+		return err
+	}
+	if err := syncTable(ctx, tx, p.hashes, sessionSpec, db.Sessions, &delta); err != nil {
+		return err
+	}
+	if err := syncTable(ctx, tx, p.hashes, activitySpec, db.Activity, &delta); err != nil {
+		return err
+	}
+	if err := syncTable(ctx, tx, p.hashes, saleSpec, db.Sales, &delta); err != nil {
+		return err
+	}
+	if err := syncTable(ctx, tx, p.hashes, commandSpec, db.Commands, &delta); err != nil {
+		return err
+	}
+	if err := syncTable(ctx, tx, p.hashes, templateSpec, db.Templates, &delta); err != nil {
+		return err
+	}
+	if err := syncTable(ctx, tx, p.hashes, userLogSpec, db.UserLogs, &delta); err != nil {
+		return err
+	}
+	if err := syncTable(ctx, tx, p.hashes, ipBindingSpec, db.IPBindings, &delta); err != nil {
+		return err
+	}
+	if err := syncTable(ctx, tx, p.hashes, schedulerTaskSpec, db.SchedulerTasks, &delta); err != nil {
+		return err
+	}
+	if err := syncTable(ctx, tx, p.hashes, trafficSpec, db.Traffic, &delta); err != nil {
+		return err
+	}
+	notifRows := make([]model.NotificationSettings, 0, len(db.NotifSettings))
+	for _, v := range db.NotifSettings {
+		notifRows = append(notifRows, v)
+	}
+	if err := syncTable(ctx, tx, p.hashes, notifSettingsSpec, notifRows, &delta); err != nil {
+		return err
+	}
+	if err := syncTable(ctx, tx, p.hashes, notifLogSpec, db.NotifLog, &delta); err != nil {
+		return err
+	}
+	if err := syncTable(ctx, tx, p.hashes, billingRequestSpec, db.BillingRequests, &delta); err != nil {
+		return err
+	}
+	if err := syncTable(ctx, tx, p.hashes, purgeTombstoneSpec, db.PurgeTombstones, &delta); err != nil {
+		return err
+	}
+	if err := syncTable(ctx, tx, p.hashes, joinLinkSpec, db.JoinLinks, &delta); err != nil {
+		return err
+	}
+	if err := syncTable(ctx, tx, p.hashes, registrationRequestSpec, db.RegistrationRequests, &delta); err != nil {
+		return err
+	}
+	if err := syncTable(ctx, tx, p.hashes, wifiSiteSpec, db.WifiSites, &delta); err != nil {
+		return err
+	}
+	if err := syncTable(ctx, tx, p.hashes, wifiGuestSpec, db.WifiGuests, &delta); err != nil {
+		return err
+	}
+	if err := syncTable(ctx, tx, p.hashes, promoEventSpec, db.PromoEvents, &delta); err != nil {
+		return err
+	}
+	// N°71 — geniuspay_subs intègre la synchro différentielle : la spec
+	// existait (table chargée au boot) mais échappait à Sync — les abonnements
+	// carte créés en mémoire (avec a.store.Save() !) disparaissaient donc au
+	// redémarrage. La clé primaire « uuid » (≠ « id ») est désormais portée
+	// par la machinerie générique (cols[0] = cible ON CONFLICT, cf. upsertRows).
+	if err := syncTable(ctx, tx, p.hashes, geniusPaySubSpec, db.GeniusPaySubs, &delta); err != nil {
+		return err
+	}
+	if err := p.syncSettings(ctx, tx, db); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("pg sync (commit) : %w", err)
+	}
+	p.touchDB() // écriture confirmée — le keep-alive saute ses pings inutiles
+	return nil
+}
+
+// syncSettings écrit une ligne par compte de SettingsByAccount (upsert par
+// id = account_id) et supprime les lignes orphelines : une ligne settings
+// suit le cycle de vie de son compte (suppression de compte client, retrait
+// du compte principal…). last_tick (valeur globale du moteur de simulation)
+// est répliquée sur chaque ligne.
+
+// syncSettings écrit une ligne par compte de SettingsByAccount (upsert par
+// id = account_id) et supprime les lignes orphelines : une ligne settings
+// suit le cycle de vie de son compte (suppression de compte client, retrait
+// du compte principal…). last_tick (valeur globale du moteur de simulation)
+// est répliquée sur chaque ligne.
+func (p *PG) syncSettings(ctx context.Context, tx *sql.Tx, db *model.DB) error {
+	accExists := map[string]bool{}
+	for i := range db.Accounts {
+		accExists[db.Accounts[i].ID] = true
+	}
+	// Le compte principal est TOUJOURS préservé : il porte la config
+	// plateforme (Settings.Platform — nom du SaaS, inscriptions) même s'il
+	// n'a pas de ligne dans la table accounts (base de mise en service vide).
+	accExists[model.AccountMainID] = true
+	// Élagage mémoire : les réglages d'un compte disparu (rechargés au boot
+	// par loadSettings depuis des lignes orphelines) sont retirés de l'état —
+	// l'upsert ci-dessous ne doit PAS les réécrire.
+	for accID := range db.SettingsByAccount {
+		if !accExists[accID] {
+			delete(db.SettingsByAccount, accID)
+		}
+	}
+	// Orphelins : toute ligne dont le compte n'existe PLUS dans l'état
+	// mémoire (table accounts) est supprimée — une ligne settings suit le
+	// cycle de vie de son compte (suppression de compte client, retrait du
+	// compte principal…).
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT account_id FROM settings WHERE account_id <> ''`)
+	if err != nil {
+		return fmt.Errorf("pg sync settings (lecture orphelins) : %w", err)
+	}
+	present := []string{}
+	for rows.Next() {
+		var acc string
+		if err := rows.Scan(&acc); err != nil {
+			rows.Close()
+			return fmt.Errorf("pg sync settings (scan orphelins) : %w", err)
+		}
+		present = append(present, acc)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("pg sync settings (orphelins) : %w", err)
+	}
+	for _, acc := range present {
+		if !accExists[acc] {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM settings WHERE account_id = $1`, acc); err != nil {
+				return fmt.Errorf("pg sync settings (suppression orphelin %s) : %w", acc, err)
+			}
+		}
+	}
+
+	lastTick := sql.NullTime{Time: db.LastTick, Valid: !db.LastTick.IsZero()}
+	// N°64 — date du balayage périodique, même logique de persistance.
+	lastSweep := sql.NullTime{Time: db.LastSweep, Valid: !db.LastSweep.IsZero()}
+	for accID, s := range db.SettingsByAccount {
+		// I (paramètres plateforme) — la config globale ne vit que sur le
+		// compte principal ; les autres lignes écrivent les valeurs neutres.
+		var platName string
+		var platOpen bool
+		var platKey string
+		if s.Platform != nil {
+			platName, platOpen, platKey = s.Platform.Name, s.Platform.RegisterOpen, s.Platform.RegisterKey
+		}
+		_, err := tx.ExecContext(ctx,
+			`INSERT INTO settings (id, account_id, tenant_name, tenant_currency, tenant_timezone, plan_name, plan_max_routers, plan_max_users, wave_link,
+                               dns_name, logo_url, banner_url, expiry_policy_mode, expiry_policy_after_days,
+                               sub_plan_id, sub_status, sub_period_start, sub_period_end, sub_last_amount,
+                               sub_router_slots, sub_last_paid_at, last_tick, last_sweep,
+                               platform_name, platform_register_open, platform_register_key, auto_import_router_users, join_button,
+                               portal_style, portal_welcome, portal_promos, portal_socials, portal_key,
+                               log_retention_days)
+                         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33)
+                         ON CONFLICT (id) DO UPDATE SET
+                           account_id                = EXCLUDED.account_id,
+                           tenant_name               = EXCLUDED.tenant_name,
+                           tenant_currency           = EXCLUDED.tenant_currency,
+                           tenant_timezone           = EXCLUDED.tenant_timezone,
+                           plan_name                 = EXCLUDED.plan_name,
+                           plan_max_routers          = EXCLUDED.plan_max_routers,
+                           plan_max_users            = EXCLUDED.plan_max_users,
+                           wave_link                 = EXCLUDED.wave_link,
+                           dns_name                  = EXCLUDED.dns_name,
+                           logo_url                  = EXCLUDED.logo_url,
+                           banner_url                = EXCLUDED.banner_url,
+                           expiry_policy_mode        = EXCLUDED.expiry_policy_mode,
+                           expiry_policy_after_days  = EXCLUDED.expiry_policy_after_days,
+                           sub_plan_id               = EXCLUDED.sub_plan_id,
+                           sub_status                = EXCLUDED.sub_status,
+                           sub_period_start          = EXCLUDED.sub_period_start,
+                           sub_period_end            = EXCLUDED.sub_period_end,
+                           sub_last_amount           = EXCLUDED.sub_last_amount,
+                           sub_router_slots          = EXCLUDED.sub_router_slots,
+                           sub_last_paid_at          = EXCLUDED.sub_last_paid_at,
+                           last_tick                 = EXCLUDED.last_tick,
+                           last_sweep                = EXCLUDED.last_sweep,
+                           platform_name             = EXCLUDED.platform_name,
+                           platform_register_open    = EXCLUDED.platform_register_open,
+                           platform_register_key    = EXCLUDED.platform_register_key,
+                           auto_import_router_users = EXCLUDED.auto_import_router_users,
+                           join_button              = EXCLUDED.join_button,
+                           portal_style             = EXCLUDED.portal_style,
+                           portal_welcome           = EXCLUDED.portal_welcome,
+                           portal_promos            = EXCLUDED.portal_promos,
+                           portal_socials           = EXCLUDED.portal_socials,
+                           portal_key               = EXCLUDED.portal_key,
+                           log_retention_days       = EXCLUDED.log_retention_days`,
+			accID, s.Tenant.Name, s.Tenant.Currency, s.Tenant.Timezone,
+			s.Plan.Name, s.Plan.MaxRouters, s.Plan.MaxUsers,
+			s.Tenant.WaveLink, s.Tenant.DNSName, s.Tenant.LogoURL, s.Tenant.BannerURL,
+			s.Tenant.ExpiryPolicyMode, s.Tenant.ExpiryPolicyAfterDays,
+			s.Subscription.PlanID, s.Subscription.Status, s.Subscription.PeriodStart,
+			s.Subscription.PeriodEnd, s.Subscription.LastAmountFcfa,
+			s.Subscription.RouterSlots, s.Subscription.LastPaidAt, lastTick, lastSweep,
+			platName, platOpen, platKey, s.ImportAutoEnabled(), s.Tenant.JoinButtonEnabled(),
+			s.Tenant.PortalStyle, s.Tenant.PortalWelcome, s.Tenant.PortalPromos, s.Tenant.PortalSocials,
+			s.Tenant.PortalKey, s.Tenant.LogRetentionDaysEffective())
+		if err != nil {
+			return fmt.Errorf("pg sync settings (%s) : %w", accID, err)
+		}
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Outillage générique : specs de tables, diff, upserts multi-lignes
+// (fonctions libres : les méthodes Go ne peuvent pas introduire de paramètres
+// de type — c'est une restriction du langage)
+// ---------------------------------------------------------------------------
+
+// entitySpec — description d'une table : colonnes (cols[0] est TOUJOURS la
+// clé primaire — « id » partout, « uuid » pour geniuspay_subs), extraction
+// d'id, lecture et écriture d'une ligne.
+
+// ---------------------------------------------------------------------------
+// Outillage générique : specs de tables, diff, upserts multi-lignes
+// (fonctions libres : les méthodes Go ne peuvent pas introduire de paramètres
+// de type — c'est une restriction du langage)
+// ---------------------------------------------------------------------------
+
+// entitySpec — description d'une table : colonnes (cols[0] est TOUJOURS la
+// clé primaire — « id » partout, « uuid » pour geniuspay_subs), extraction
+// d'id, lecture et écriture d'une ligne.
+type entitySpec[T any] struct {
+	table  string
+	cols   []string
+	idOf   func(*T) string
+	scan   func(*sql.Rows) (T, error)
+	args   func(*T) []any
+	hashOf func(*T) uint64
+}
+
+// loadInto — SELECT des colonnes explicites → tranche typée.
+
+// loadInto — SELECT des colonnes explicites → tranche typée.
+func loadInto[T any](p *PG, out *[]T, spec entitySpec[T]) error {
+	rows, err := p.db.Query(`SELECT ` + strings.Join(spec.cols, ", ") + ` FROM ` + spec.table)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		v, err := spec.scan(rows)
+		if err != nil {
+			return err
+		}
+		*out = append(*out, v)
+	}
+	return rows.Err()
+}
+
+// syncTable — différentiel : détecte ajouts/modifications (comparaison
+// d'empreintes) et disparitions (id absents), applique le tout, puis rafraîchit
+// le cache UNIQUEMENT en cas de succès (un échec sera retenté au Save suivant).
+
+// syncTable — différentiel : détecte ajouts/modifications (comparaison
+// d'empreintes) et disparitions (id absents), applique le tout, puis rafraîchit
+// le cache UNIQUEMENT en cas de succès (un échec sera retenté au Save suivant).
+func syncTable[T any](ctx context.Context, tx *sql.Tx, hashes map[string]map[string]uint64, spec entitySpec[T], rows []T, delta *syncDelta) error {
+	cached := hashes[spec.table]
+	if cached == nil {
+		cached = map[string]uint64{}
+		hashes[spec.table] = cached
+	}
+
+	seen := make(map[string]struct{}, len(rows))
+	// N°78-bis — les empreintes calculées pour la détection de changements
+	// sont RÉUTILISÉES pour le rafraîchissement du cache : l'ancien code
+	// re-marshalait chaque ligne une 2ᵉ fois (json.Marshal + FNV) après les
+	// écritures — sur le 0,1 vCPU Render, chaque synchro payait deux fois le
+	// prix d'un parc de 3 500+ utilisateurs hotspot (~2,8 s → ~1,4 s).
+	fresh := make(map[string]uint64, len(rows))
+	var changed []T
+	for i := range rows {
+		id := spec.idOf(&rows[i])
+		seen[id] = struct{}{}
+		h := spec.hashOf(&rows[i])
+		fresh[id] = h
+		if old, ok := cached[id]; !ok || old != h {
+			changed = append(changed, rows[i])
+		}
+	}
+	var removed []string
+	for id := range cached {
+		if _, ok := seen[id]; !ok {
+			removed = append(removed, id)
+		}
+	}
+
+	if len(changed) > 0 {
+		if err := upsertRows(ctx, tx, spec, changed); err != nil {
+			return err
+		}
+		delta.changed += len(changed) // N°71 — volumétrie (comptée si écrite)
+	}
+	if len(removed) > 0 {
+		if err := deleteRows(ctx, tx, spec.table, spec.cols[0], removed); err != nil {
+			return err
+		}
+		delta.removed += len(removed) // N°71 — volumétrie (comptée si écrite)
+	}
+
+	// Cache rafraîchi uniquement après succès des écritures — depuis les
+	// empreintes DÉJÀ CALCULÉES (plus aucun marshal ni idOf rejoué).
+	for id := range cached {
+		delete(cached, id)
+	}
+	for id, h := range fresh {
+		cached[id] = h
+	}
+	return nil
+}
+
+// hashEntity — empreinte FNV-1a de la sérialisation JSON (l'ordre des champs
+// d'une struct est stable en Go → déterministe).
+
+// hashEntity — empreinte FNV-1a de la sérialisation JSON (l'ordre des champs
+// d'une struct est stable en Go → déterministe).
+func hashEntity[T any](v *T) uint64 {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return 0
+	}
+	h := fnv.New64a()
+	h.Write(b)
+	return h.Sum64()
+}
+
+// deleteRows — DELETE ... WHERE <clé> IN (…) par blocs de 500. La clé est
+// cols[0] de la spec (« id » partout, « uuid » pour geniuspay_subs — N°71).
+
+// deleteRows — DELETE ... WHERE <clé> IN (…) par blocs de 500. La clé est
+// cols[0] de la spec (« id » partout, « uuid » pour geniuspay_subs — N°71).
+func deleteRows(ctx context.Context, tx *sql.Tx, table, key string, ids []string) error {
+	for start := 0; start < len(ids); start += 500 {
+		end := min(start+500, len(ids))
+		chunk := ids[start:end]
+		ph := make([]string, len(chunk))
+		args := make([]any, len(chunk))
+		for i, id := range chunk {
+			ph[i] = "$" + strconv.Itoa(i+1)
+			args[i] = id
+		}
+		q := `DELETE FROM ` + table + ` WHERE ` + key + ` IN (` + strings.Join(ph, ",") + `)`
+		if _, err := tx.ExecContext(ctx, q, args...); err != nil {
+			return fmt.Errorf("suppression %s : %w", table, err)
+		}
+	}
+	return nil
+}
+
+// upsertRows — INSERT ... ON CONFLICT (id) DO UPDATE par blocs multi-lignes
+// (une seule requête pour jusqu'à 200 lignes → un seul aller-retour réseau).
+
+// upsertRows — INSERT ... ON CONFLICT (id) DO UPDATE par blocs multi-lignes
+// (une seule requête pour jusqu'à 200 lignes → un seul aller-retour réseau).
+func upsertRows[T any](ctx context.Context, tx *sql.Tx, spec entitySpec[T], rows []T) error {
+	n := len(spec.cols)
+	// Clause SET de l'upsert (toutes les colonnes sauf la clé).
+	sets := make([]string, 0, n-1)
+	for _, c := range spec.cols[1:] {
+		sets = append(sets, c+` = EXCLUDED.`+c)
+	}
+	setClause := strings.Join(sets, ", ")
+
+	for start := 0; start < len(rows); start += maxRowsPerStatement {
+		end := min(start+maxRowsPerStatement, len(rows))
+		chunk := rows[start:end]
+
+		var sb strings.Builder
+		args := make([]any, 0, len(chunk)*n)
+		k := 0
+		sb.WriteString(`INSERT INTO ` + spec.table + ` (` + strings.Join(spec.cols, ", ") + `) VALUES `)
+		for i := range chunk {
+			if i > 0 {
+				sb.WriteByte(',')
+			}
+			sb.WriteByte('(')
+			for j := 0; j < n; j++ {
+				if j > 0 {
+					sb.WriteByte(',')
+				}
+				k++
+				sb.WriteString("$" + strconv.Itoa(k))
+			}
+			sb.WriteByte(')')
+			args = append(args, spec.args(&chunk[i])...)
+		}
+		// N°71 — cible de conflit = cols[0] (clé primaire : « id » pour 28
+		// tables, « uuid » pour geniuspay_subs) au lieu du « id » en dur.
+		sb.WriteString(` ON CONFLICT (` + spec.cols[0] + `) DO UPDATE SET ` + setClause)
+
+		if _, err := tx.ExecContext(ctx, sb.String(), args...); err != nil {
+			return fmt.Errorf("upsert %s : %w", spec.table, err)
+		}
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Specs concrètes des 10 tables entité.
+// IMPORTANT : l'ordre des colonnes doit rester strictement identique entre
+// cols, scan et args.
+// ---------------------------------------------------------------------------
+
+// accountSpec — comptes clients SaaS (isolation multi-tenant).
+
+// rebuildHashes — reconstruit le cache d'empreintes à partir d'un état mémoire
+// (après un Load ou un seed initial).
+func (p *PG) rebuildHashes(db *model.DB) {
+	p.hashes = map[string]map[string]uint64{
+		accountSpec.table:             hashRows(db.Accounts, accountSpec),
+		adminSpec.table:               hashRows(db.Users, adminSpec),
+		routerSpec.table:              hashRows(db.Routers, routerSpec),
+		profileSpec.table:             hashRows(db.Profiles, profileSpec),
+		hotspotUserSpec.table:         hashRows(db.HotspotUsers, hotspotUserSpec),
+		batchSpec.table:               hashRows(db.Batches, batchSpec),
+		resellerSpec.table:            hashRows(db.Resellers, resellerSpec),
+		sellSessionSpec.table:         hashRows(db.SellSessions, sellSessionSpec),
+		passwordResetSpec.table:       hashRows(db.PasswordResets, passwordResetSpec),
+		transactionSpec.table:         hashRows(db.Transactions, transactionSpec),
+		sessionSpec.table:             hashRows(db.Sessions, sessionSpec),
+		activitySpec.table:            hashRows(db.Activity, activitySpec),
+		saleSpec.table:                hashRows(db.Sales, saleSpec),
+		commandSpec.table:             hashRows(db.Commands, commandSpec),
+		templateSpec.table:            hashRows(db.Templates, templateSpec),
+		userLogSpec.table:             hashRows(db.UserLogs, userLogSpec),
+		ipBindingSpec.table:           hashRows(db.IPBindings, ipBindingSpec),
+		schedulerTaskSpec.table:       hashRows(db.SchedulerTasks, schedulerTaskSpec),
+		trafficSpec.table:             hashRows(db.Traffic, trafficSpec),
+		notifLogSpec.table:            hashRows(db.NotifLog, notifLogSpec),
+		billingRequestSpec.table:      hashRows(db.BillingRequests, billingRequestSpec),
+		purgeTombstoneSpec.table:      hashRows(db.PurgeTombstones, purgeTombstoneSpec),
+		joinLinkSpec.table:            hashRows(db.JoinLinks, joinLinkSpec),
+		registrationRequestSpec.table: hashRows(db.RegistrationRequests, registrationRequestSpec),
+		wifiSiteSpec.table:            hashRows(db.WifiSites, wifiSiteSpec),
+		wifiGuestSpec.table:           hashRows(db.WifiGuests, wifiGuestSpec),
+		promoEventSpec.table:          hashRows(db.PromoEvents, promoEventSpec),
+		geniusPaySubSpec.table:        hashRows(db.GeniusPaySubs, geniusPaySubSpec),
+	}
+	notifRows := make([]model.NotificationSettings, 0, len(db.NotifSettings))
+	for _, v := range db.NotifSettings {
+		notifRows = append(notifRows, v)
+	}
+	p.hashes[notifSettingsSpec.table] = hashRows(notifRows, notifSettingsSpec)
+}
+
+// hashRows — empreintes indexées par id.
+
+// hashRows — empreintes indexées par id.
+func hashRows[T any](rows []T, spec entitySpec[T]) map[string]uint64 {
+	m := make(map[string]uint64, len(rows))
+	for i := range rows {
+		m[spec.idOf(&rows[i])] = spec.hashOf(&rows[i])
+	}
+	return m
+}

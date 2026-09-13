@@ -25,13 +25,15 @@ import (
 )
 
 func TestSyncSettingsSQLConsistency(t *testing.T) {
-	src, err := readSourceFile("pg.go")
+	// N°89 — syncSettings vit désormais dans pg_sync.go (éclatement du
+	// monolithe pg.go) : le garde-fou lit le fichier qui porte le littéral.
+	src, err := readSourceFile("pg_sync.go")
 	if err != nil {
 		t.Fatalf("lecture du source impossible : %v", err)
 	}
 	i := strings.Index(src, "INSERT INTO settings")
 	if i < 0 {
-		t.Fatal("bloc INSERT INTO settings introuvable dans pg.go")
+		t.Fatal("bloc INSERT INTO settings introuvable dans pg_sync.go")
 	}
 	// Le littéral SQL s'arrête au prochain backtick (la clause SET EXCLUDED
 	// en fait partie — elle précède la fermeture du littéral).

@@ -5,6 +5,62 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-13 — N°89 : éclatement des monolithes Go — les 4 plus gros fichiers du backend (1 709 à 2 445 lignes, enrichis du N°88) deviennent 31 fichiers par domaine, même package, zéro sémantique changée, suite -race complète verte
+
+### N°89 — Contexte : la suite de l'audit « fichiers monolithiques » (après N°87)
+Les quatre plus gros fichiers du backend concentraient des domaines
+entiers : models.go (1 764 l. — 39 types tous domaines confondus + les
+niveaux AntiVPN), pg.go (2 445 l. — connexion, DDL 750 l., chargement,
+moteur de synchro et specs), agent.go (2 364 l. — cœur de l'agent +
+générateurs des 7 modules dont le tout nouveau buildAntiVpn),
+agent_handlers.go (1 709 l. — routes, file, vérification sécurité des
+5 modules). Le remède Go est mécanique et sûr : découpage en fichiers
+du MÊME package (aucun identifiant ne change de portée), le
+compilateur et la suite -race garantissent l'équivalence stricte.
+
+### Technique — découpage scripté par plages de déclarations, rejoué sur N°88
+Génération 100 % scriptée : segmentation aux déclarations de haut
+niveau (func/type/var/const, commentaires doc attachés), affectation
+par plages de lignes auditées, écriture SANS imports puis régénération
+goimports, assertions de couverture (chaque déclaration dans
+exactement une cible). model → 10 fichiers (ids, models, tenant,
+admin, billing, security — y compris AntiVpnOff/On et
+AntiVpnLevelEffective, entities, wifi, join, db) ; store → 5 (pg,
+pg_schema DDL+migrations — y compris les colonnes antivpn_*, pg_load,
+pg_sync moteur, pg_specs — y compris routerSpec antivpn) ; agent → 12
+(agent cœur, safewifi, shield, familyguard, ANTIVPN dédié miroir des
+trois autres modules de sécurité, walledgarden, hotspot_files,
+profiles, users, readstate, scheduler, ipbindings) ; api → 4
+(agent_handlers routes+handlers, agent_queue, agent_security —
+y compris ensureAntiVpnLocked et les signatures av-v1, agent_identity).
+Plus gros fichier résultant : pg_schema.go 880 l. (ensureSchema est
+UNE fonction DDL indivisible sans refactoring réel — documenté).
+Un garde-fou statique adapté : pg_settings_sql_test.go (N°56) lit le
+littéral SQL de l'UPSERT settings DANS SON FICHIER SOURCE — il pointe
+désormais vers pg_sync.go où syncSettings a déménagé (l'invariant
+vérifié est inchangé). Zéro endpoint, zéro route, zéro migration, zéro
+contrat changés ; les tests N°88 (agent/antivpn_test.go,
+api/antivpn_test.go) et handlers_antivpn.go ne bougent pas — ils
+trouvent buildAntiVpn dans son nouveau fichier, même package.
+
+Note de session : l'éclatement avait été préparé sur le N°87 quand le
+N°88 (AntiVPN, autre session) a atterri sur main en parallèle — le
+découpage a été REJOUÉ intégralement sur l'état post-N°88 (les
+ajouts AntiVPN répartis dans les fichiers cibles naturels), la
+validation complète repassée, et le commit renuméroté N°89.
+
+### Vérifications
+go build ./... vert ; go vet ./... vert ; gofmt -l . vide ;
+go test -race -timeout 30m ./... : 12 paquets verts (api 404 s,
+store 10,7 s, agent 1 s) Y COMPRIS les tests AntiVPN N°88 et le
+garde-fou SQL adapté ; aucune référence de chemin ni go:embed ne
+dépend des anciens fichiers (hotpage embed inchangé, seul test
+concerné adapté) ; déploiement attendu : Render UNIQUEMENT (diff
+backend/ — le job deploy-render déploie, l'artefact est
+fonctionnellement identique à celui du N°88 : même code, mêmes
+identifiants, fichiers réorganisés) ; Vercel redéploie un artefact
+identique pour le diff CHANGELOG.
+
 ## 2026-09-13 — N°88 : AntiVPN — le bloque-VPN ferme la dernière échappatoire connue de la Protection : les VPN et tunnels standards (WireGuard, OpenVPN, IPsec, PPTP/L2TP, WARP, Tor) sont coupés depuis le WiFi public, 4e module de la vue Protection, pendant que la navigation, l'heure des téléphones et les appels WhatsApp restent intacts
 
 ### N°88 — Contexte : la footnote N°85 disait la vérité, N°88 la referme

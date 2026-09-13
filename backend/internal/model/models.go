@@ -231,12 +231,13 @@ type Router struct {
 	//   family   : + contenus adultes, publicités (AdGuard Family).
 	SafeWifiLevel string `json:"safeWifiLevel,omitempty"`
 	// N°80 — signature de la config SafeWiFi DÉJÀ APPLIQUÉE avec succès
-	// sur ce routeur (hash du niveau + sel de version des règles NAT).
+	// sur ce routeur (hash du niveau + sel de version des règles).
 	// Vide → rien d'appliqué (ou dernier échec) : le check-in suivant
 	// re-file la commande safewifi. Posée au retour « ok » VÉRIFIÉ — le
-	// routeur échoe le compte de règles marquées mikcloud-safewifi
-	// présentes après application (vérité routeur, pattern
-	// scheduler_set N°75 : 2 en filtrage actif, 0 sinon).
+	// routeur échoe le compte d'objets marqués mikcloud-safewifi présents
+	// après application (vérité routeur, pattern scheduler_set N°75 ;
+	// N°85 : 2 règles NAT + liste DoH v4 + 2 règles FILTER par serveur
+	// hotspot rapporté, 0 sinon).
 	SafeWifiSig string `json:"safeWifiSig,omitempty"`
 	// N°80 — horodatage (RFC3339) de la dernière application confirmée :
 	// auto-réparation périodique (une règle effacée localement par un
@@ -1007,7 +1008,7 @@ const (
 	CmdWalledGarden    = "walled_garden"    // N°29 : walled-garden d'inscription publique (runbook N°27-D automatisé)
 	CmdHotspotFiles    = "hotspot_files"    // N°35 : déploiement automatique du portail captif (login.html, status.html, assets) — pattern walled_garden
 	CmdWatcherEnsure   = "watcher_ensure"   // N°77 : veilleur d'invités — scheduler mikcloud-watch (check-in 20 s quand un hôte non autorisé est présent)
-	CmdSafeWifi        = "safewifi"         // N°80 : protection DNS du WiFi public — redirection du port 53 vers un résolveur filtrant (règles marquées mikcloud-safewifi, idempotent)
+	CmdSafeWifi        = "safewifi"         // N°80 : protection DNS du WiFi public — redirection du port 53 vers un résolveur filtrant (règles marquées mikcloud-safewifi, idempotent) ; N°85 : durcie — NAT en tête de table, DoT/DoH bloqués, IPv6 coupé (best-effort)
 	CmdShield          = "shield"           // N°81 : bouclier réseau du WiFi public — administration du routeur et vecteurs malveillants bloqués pour les clients (règles filter marquées mikcloud-shield, idempotent)
 	CmdFamilyGuard     = "familyguard"      // N°82 : couvre-feu internet du WiFi public — fenêtre horaire pendant laquelle l'internet des clients est coupé (règles filter marquées mikcloud-familyguard, idempotent)
 )

@@ -1,10 +1,13 @@
 package api
 
-// Tests N°80 — SafeWiFi : convergence au check-in (ensure), signature
+// Tests N°80/N°85 — SafeWiFi : convergence au check-in (ensure), signature
 // vérifiée au retour (vérité routeur), silence des routeurs qui n'ont
-// jamais ouvert la carte, et priorité dans le batch du check-in.
+// jamais ouvert la carte, et priorité dans le batch du check-in. Le compte
+// attendu au retour (N°85) : 2 règles NAT + liste DoH v4 + 2 règles FILTER
+// par serveur hotspot rapporté — pattern Shield N°81.
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -157,55 +160,74 @@ func TestSafeWifiRetireApresExtinction(t *testing.T) {
 	}
 }
 
-// TestSafeWifiResultVerified — la signature n'est posée que si le COMPTE de
-// règles marquées rapporté par le routeur correspond au niveau attendu :
-// 2 en filtrage actif, 0 sinon. Un compte divergent reste sans sig.
+// TestSafeWifiResultVerified — la signature n'est posée que si le COMPTE
+// d'objets marqués rapporté par le routeur correspond au niveau attendu :
+// 2 NAT + liste DoH v4 + 2 règles par hotspot en filtrage actif, 0 sinon.
+// Un compte divergent — ou un hs illisible — reste sans sig.
 func TestSafeWifiResultVerified(t *testing.T) {
 	sig := safeWifiSig(model.SafeWifiFamily)
 	cmd := model.Command{ID: "c-sw", Kind: model.CmdSafeWifi,
 		Payload: map[string]any{"level": model.SafeWifiFamily, "sig": sig}}
 
-	if !safeWifiResultVerified(&cmd, model.SafeWifiFamily, "2") {
-		t.Fatal("family + 2 règles rapportées : la vérification doit passer")
+	want := agent.SafeWifiRulesExpected(2)
+	if !safeWifiResultVerified(&cmd, model.SafeWifiFamily, strconv.Itoa(want), 2) {
+		t.Fatalf("family + %d objets rapportés (2 hotspots) : la vérification doit passer", want)
 	}
-	if safeWifiResultVerified(&cmd, model.SafeWifiFamily, "0") {
-		t.Fatal("family + 0 règle rapportée : la vérification doit échouer")
+	if safeWifiResultVerified(&cmd, model.SafeWifiFamily, "0", 2) {
+		t.Fatal("family + 0 objet rapporté : la vérification doit échouer")
 	}
-	if safeWifiResultVerified(&cmd, model.SafeWifiFamily, "1") {
-		t.Fatal("compte divergent (1) : la vérification doit échouer")
+	if safeWifiResultVerified(&cmd, model.SafeWifiFamily, strconv.Itoa(want-1), 2) {
+		t.Fatal("compte divergent (attendu − 1) : la vérification doit échouer")
+	}
+	if safeWifiResultVerified(&cmd, model.SafeWifiFamily, strconv.Itoa(want), 1) {
+		t.Fatal("compte conforme mais hs divergent (2 rapportés, 1 attendu) : la vérification doit échouer")
+	}
+	// hs illisible (paramètre absent du rapport) → vérification impossible.
+	if safeWifiResultVerified(&cmd, model.SafeWifiFamily, strconv.Itoa(want), -1) {
+		t.Fatal("hs illisible : la vérification doit échouer (pattern Shield N°81)")
 	}
 	offCmd := model.Command{ID: "c-sw", Kind: model.CmdSafeWifi,
 		Payload: map[string]any{"level": model.SafeWifiOff, "sig": safeWifiSig(model.SafeWifiOff)}}
-	if !safeWifiResultVerified(&offCmd, model.SafeWifiOff, "0") {
-		t.Fatal("off + 0 règle rapportée : la vérification doit passer")
+	if !safeWifiResultVerified(&offCmd, model.SafeWifiOff, "0", 0) {
+		t.Fatal("off + 0 objet rapporté : la vérification doit passer")
 	}
-	if safeWifiResultVerified(&offCmd, model.SafeWifiOff, "2") {
-		t.Fatal("off + règles résiduelles : la vérification doit échouer")
+	if safeWifiResultVerified(&offCmd, model.SafeWifiOff, "2", 0) {
+		t.Fatal("off + objets résiduels : la vérification doit échouer")
 	}
 }
 
-// safeWifiResultVerified — extrait de handleAgentResult (branche N°80) :
-// vrai si le compte de règles marquées rapporté correspond au niveau de la
-// commande ET si ce niveau est toujours le niveau courant du routeur.
-func safeWifiResultVerified(cmd *model.Command, currentLevel, reported string) bool {
+// safeWifiResultVerified — extrait de handleAgentResult (branche N°80,
+// durcie N°85) : vrai si le compte d'objets marqués rapporté correspond au
+// niveau de la commande ET si ce niveau est toujours le niveau courant du
+// routeur. hs < 0 simule un paramètre hs absent/illisible (want = -1, la
+// vérification est impossible → pas de sig).
+func safeWifiResultVerified(cmd *model.Command, currentLevel, reported string, hs int) bool {
 	level := agent.SafeWifiLevelFromPayload(cmd.Payload)
 	if level != currentLevel {
 		return false
 	}
 	want := 0
 	if level != model.SafeWifiOff {
-		want = 2
+		if hs < 0 {
+			return false // hs illisible : vérification impossible → pas de sig
+		}
+		want = agent.SafeWifiRulesExpected(hs)
 	}
 	got, ok := parseReportInt(reported)
 	return ok && got == want
 }
 
 // TestSafeWifiSigVersioned — le sel de version garantit qu'une évolution de
-// la FORME des règles est re-poussée au parc entier (garde-fou N°48).
+// la FORME des règles est re-poussée au parc entier (garde-fou N°48). Le
+// bump sw-v1 → sw-v2 (N°85 : place-before, DoT/DoH, IPv6) doit changer la
+// signature d'un niveau déjà appliqué.
 func TestSafeWifiSigVersioned(t *testing.T) {
 	legacy := agent.HashToken(model.SafeWifiFamily)[:16] // formule sans sel
 	if s := safeWifiSig(model.SafeWifiFamily); s == legacy {
 		t.Fatal("safeWifiSig sans sel de version : un correctif de règles ne serait jamais re-poussé (régression N°48)")
+	}
+	if v1 := agent.HashToken("sw-v1|" + model.SafeWifiFamily)[:16]; safeWifiSig(model.SafeWifiFamily) == v1 {
+		t.Fatal("sw-v2 doit différer de sw-v1 : le parc resterait sur l'ancienne forme de règles (régression N°85)")
 	}
 	if safeWifiSig(model.SafeWifiThreats) == safeWifiSig(model.SafeWifiFamily) {
 		t.Fatal("des niveaux distincts doivent produire des signatures distinctes")

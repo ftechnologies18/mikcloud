@@ -771,13 +771,16 @@ func (a *API) ensureWatcherLocked(db *model.DB, router *model.Router) {
 	queueCommandLocked(db, router.AccountID, router.ID, model.CmdWatcherEnsure, map[string]any{})
 }
 
-// safeWifiRulesVersion — sel de version des règles NAT SafeWiFi : toute
+// safeWifiRulesVersion — sel de version des règles SafeWiFi : toute
 // évolution de la FORME des règles (changement de résolveur, nouveau
 // marquage, champs supplémentaires) change ce sel → chaque routeur en
 // ligne reçoit la mise à niveau automatiquement à son premier check-in
 // (ensureSafeWifiLocked voit un mismatch → re-file). Pattern walled-garden
-// N°48.
-const safeWifiRulesVersion = "sw-v1"
+// N°48. sw-v2 (N°85) : règles NAT en tête de table (place-before=0, une
+// règle dstnat antérieure ne peut plus passer devant), blocage DoT
+// (tcp/853) et DoH (tcp/443 vers liste mikcloud-safewifi-doh) par
+// serveur hotspot, coupure DNS/DoT/DoH IPv6 (best-effort).
+const safeWifiRulesVersion = "sw-v2"
 
 // safeWifiRefresh — cadence d'auto-réparation (pattern N°49) : à
 // configuration IDENTIQUE, le bloc safewifi est re-filé périodiquement. Le
@@ -1483,9 +1486,12 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 		} else if cmd.Kind == model.CmdSafeWifi {
 			// N°80 — protection appliquée et CONFIRMÉE par le
 			// routeur : la signature n'est posée que si le COMPTE
-			// de règles marquées rapporté correspond au niveau
-			// attendu (2 en filtrage actif, 0 sinon — vérité
-			// routeur, pattern scheduler_set). Et uniquement si le
+			// d'objets marqués rapporté correspond au niveau
+			// attendu (N°85 : 2 règles NAT + les entrées de la
+			// liste DoH v4 + 2 règles FILTER par serveur hotspot
+			// rapporté — 0 sinon ; vérité routeur, pattern
+			// scheduler_set ET pattern Shield N°81 : le compte
+			// dépend du parc réel du routeur). Et uniquement si le
 			// niveau rapporté correspond TOUJOURS au niveau
 			// courant : un gérant qui change d'avis pendant le vol
 			// ne doit pas voir un niveau périmé figé — le check-in
@@ -1493,7 +1499,11 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 			level := agent.SafeWifiLevelFromPayload(cmd.Payload)
 			want := 0
 			if level != model.SafeWifiOff {
-				want = 2
+				if hs, ok := parseReportInt(vals.Get("hs")); ok {
+					want = agent.SafeWifiRulesExpected(hs)
+				} else {
+					want = -1 // hs illisible : vérification impossible → pas de sig
+				}
 			}
 			if got, ok := parseReportInt(vals.Get("rules")); ok && got == want {
 				if level == router.SafeWifiLevelEffective() {

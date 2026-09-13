@@ -1224,7 +1224,7 @@ export const enDict: Record<string, string> = {
   "tools.safewifi.levelFamilyDesc": "Threats, plus adult content and ads blocked. Ideal for family venues.",
   "tools.safewifi.activeBadge": "Active",
   "tools.safewifi.appliedToast": "Internet protection for “{name}” updated",
-  "tools.safewifi.footnote": "Protection applies at the router's next check-in (≤ 45 s) and self-repairs after an outage. WiFi keeps working even if the filter is unavailable.",
+  "tools.safewifi.footnote": "Protection applies at the router's next check-in (≤ 45 s) and self-repairs after an outage. WiFi keeps working even if the filter is unavailable. Known bypass paths are closed: Android Private DNS and browser secure DNS are blocked so the filter applies; only a VPN can still get around it.",
   "tools.shield.title": "WiFi anti-hacking",
   "tools.shield.desc": "Nobody can break into your router from the public WiFi: hackers' tools are neutralized.",
   "tools.shield.toggle": "Enable protection",

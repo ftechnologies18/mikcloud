@@ -5,6 +5,73 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-13 — N°85 : SafeWiFi durci — le DNS filtré devient le SEUL chemin de sortie — une règle dstnat antérieure ne peut plus passer devant, le DNS chiffré connu (DoT/DoH) et l'IPv6 sont coupés depuis le WiFi public
+
+### N°85 — Contexte : un site adulte accessible sur un routeur « Protection familles » active
+Constat du gérant, vérifié sur le routeur client : xvideos.com restait
+accessible depuis le WiFi public d'un site en niveau « family » (AdGuard
+Family), protection confirmée appliquée (rules=2, sig posée). L'enquête a
+établi que le résolveur fonctionne (AdGuard Family bloque bien xvideos.com —
+prouvé par requête DNS directe : IP de blocage 94.140.14.35 renvoyée) et que
+les 2 règles NAT existaient réellement sur le routeur. La faille était
+ailleurs : trois échappatoires, dont une de NOTRE fait :
+(1) les règles NAT se posaient en FIN de table — une règle dstnat
+antérieure (redirect DNS hérité d'une config Mikhmon ou d'un tutoriel
+hotspot) interceptait le port 53 AVANT MikCloud, silencieusement : la
+signature ne comptait que la PRÉSENCE des règles marquées (rules=2), jamais
+leur EFFECTIVITÉ ; (2) le DNS chiffré — DoT (tcp/853, « DNS privé »
+Android) et DoH (tcp/443 navigateurs) — contourne toute redirection de
+port 53 (limite documentée du MVP N°80) ; (3) l'IPv6 — le NAT est IPv4, un
+appareil dual-stack résolvait hors de portée des règles. Un blocage qui ne
+tient pas sa promesse est pire que pas de blocage : il vend une sécurité
+fictive. Le durcissement ferme les trois échappatoires connues.
+
+### Technique — quatre corrections, un seul contrat d'API inchangé
+buildSafeWifi (agent.go) : (1) les 2 règles NAT dst-nat passent en TÊTE de
+table (place-before=0 — miroir Shield N°81 / FamilyGuard N°82) ; (2) par
+serveur hotspot (interface lue SUR le routeur, foreach /ip hotspot find —
+pattern N°81), 2 règles FILTER : DoT tcp/853 drop + DoH tcp/443 drop vers
+l'address-list mikcloud-safewifi-doh (24 endpoints publics v4 : Cloudflare,
+Google, Quad9 filtré ET non filtré, AdGuard default/family/non-filtré,
+OpenDNS+FamilyShield, CleanBrowsing, Yandex, Comodo, DNS.SB — les
+navigateurs en mode automatique retombent sur le DNS simple quand leur DoH
+échoue : port 53 → redirigé → filtré) ; (3) IPv6 best-effort : DNS v6
+(tcp+udp 53), DoT v6 (tcp/853) et DoH v6 (tcp/443 vers la liste v6 de 10
+endpoints) coupés depuis l'interface hotspot (/ipv6 firewall) — on-error
+silencieux : un routeur sans pile IPv6 n'a ni règles à poser ni
+échappatoire à fermer ; (4) retraits idempotents étendus aux FILTER et aux
+listes (v4+v6) — plus d'objets orpheliers au passage à off. Rapport : le
+compte d'objets marqués IPv4 (nat + filter + address-list, valeur
+DYNAMIQUE côté routeur) ET le nombre de hotspots (pattern Shield N°81) ;
+la vérification cloud exige rules == 2 + len(listeDoHv4) + 2×hs rapporté
+(agent.SafeWifiRulesExpected — hs illisible → pas de sig, re-file
+prudent). Bump du sel sw-v1 → sw-v2 : tout le parc reçoit la nouvelle
+forme au check-in suivant (≤ 45 s console ouverte, ≤ 180 s en veille),
+sans intervention — CYBER S.C (family) et ProMax WIFI (threats) inclus.
+Zéro endpoint neuf, zéro migration, zéro changement de contrat
+(PUT /api/routers/{id}/safewifi {level} inchangé) — la console ne voit
+aucune différence, le routeur change de bras de fer.
+
+### Vocabulaire — la promesse devient honnête
+La footnote de la carte (tools.safewifi.footnote FR/EN) dit désormais la
+vérité complète : les échappatoires connues sont fermées (DNS privé
+Android et DNS sécurisé navigateur bloqués pour que le filtre s'applique),
+seul un VPN peut encore contourner — limite résiduelle assumée et écrite
+noir sur blanc (un endpoint DoH exotique hors liste reste joignable, le
+DPI est hors de portée d'un routeur 128 Mo).
+
+### Vérifications — localement comme la CI
+gofmt/vet/build verts ; go test -race complet : 12 paquets verts (api
+397 s sous -race, agent 1 s) dont les tests SafeWiFi étendus — 2 dst-nat
+place-before=0 par niveau actif, présence de chaque endpoint DoH v4 dans
+la liste, blocages DoT/DoH/IPv6 par hotspot, off ne pose AUCUN objet
+(NAT/FILTER/address-list) et retire la liste DoH, rapport rules+hs
+dynamique, SafeWifiRulesExpected miroir du comptage, sig sw-v2 ≠ sw-v1
+(garde-fou re-pousse N°48), vérification du retour : compte exact requis,
+hs divergent ou illisible → pas de sig. Frontend : eslint 0, tsgo 0,
+build production 13 routes. API contractuelle inchangée — aucun test E2E
+n'avait à bouger.
+
 ## 2026-09-13 — N°84-bis : TestVouchersStatsServerSide devient déterministe — le test flaky « active = 2, voulu 3 » déraciné (routeur du semis en mode real, la simulation de Tick ne le touche plus)
 
 ### N°84-bis — Contexte : le run CI de N°84 a échoué sur un test backend que N°84 ne touchait pas

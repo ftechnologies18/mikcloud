@@ -1237,7 +1237,7 @@ const fr: Record<string, string> = {
   "tools.safewifi.levelFamilyDesc": "Les menaces, plus les contenus adultes et les publicités bloqués. Idéal en salle familiale.",
   "tools.safewifi.activeBadge": "Actif",
   "tools.safewifi.appliedToast": "Protection internet de « {name} » mise à jour",
-  "tools.safewifi.footnote": "La protection s'applique au prochain point de contact du routeur (≤ 45 s) et se répare seule en cas de coupure. Le WiFi reste opérationnel même si le filtre est indisponible.",
+  "tools.safewifi.footnote": "La protection s'applique au prochain point de contact du routeur (≤ 45 s) et se répare seule en cas de coupure. Le WiFi reste opérationnel même si le filtre est indisponible. Les échappatoires connues sont fermées : le DNS privé Android et le DNS sécurisé des navigateurs sont bloqués pour que le filtre s'applique ; seul un VPN peut encore le contourner.",
   "tools.shield.title": "Anti-piratage du WiFi",
   "tools.shield.desc": "Personne ne peut s'introduire dans votre routeur depuis le WiFi public : les outils des pirates sont neutralisés.",
   "tools.shield.toggle": "Activer la protection",

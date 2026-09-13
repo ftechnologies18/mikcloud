@@ -15,6 +15,15 @@ export type TransactionType = "credit" | "sale" | "debt" | "settlement";
 export type SaleChannel = "direct" | "reseller";
 export type AccountStatus = "active" | "disabled";
 
+/**
+ * Usage d'un compte SaaS (N°98 — produit bi-mode). Un compte EST hotspot OU
+ * homenet : il ne bascule pas (le cas « je gère un cyber ET ma maison » =
+ * deux comptes). Phase 1 = plomberie : la colonne existe, la session la
+ * transporte, les endpoints produit hotspot refusent homenet (404) — la
+ * coquille de navigation dédiée arrive en Phase 2.
+ */
+export type AccountUsage = "hotspot" | "homenet";
+
 export interface AuthUser {
   id: string;
   name: string;
@@ -23,6 +32,9 @@ export interface AuthUser {
   /** Compte SaaS auquel l'utilisateur est rattaché (multi-tenant). */
   accountId?: string;
   accountName?: string;
+  /** N°98 — usage du compte (hotspot | homenet). Absent ou vide = hotspot
+   * (comportement historique : l'admin plateforme n'a pas de compte client). */
+  usage?: AccountUsage | "";
   /** 2FA TOTP active (sécurité S4). */
   totpEnabled?: boolean;
 }
@@ -83,6 +95,9 @@ export interface AccountSummary {
   owner: string;
   /** Santé de l'abonnement SaaS du compte (console plateforme). */
   subscription?: "active" | "expired" | "essai";
+  /** N°98 — usage du compte : la console plateforme segmente Hotspot/HomeNet
+   * (support, relances, roadmap produit). Absent = hotspot (ère pré-colonne). */
+  usage?: AccountUsage;
   /** F (signup enrichi) — contact propriétaire + segmentation géographique. */
   email?: string;
   phone?: string;
@@ -124,6 +139,8 @@ export interface AccountDetail {
   name: string;
   status: AccountStatus;
   createdAt: string;
+  /** N°98 — usage du compte (la fiche l'affiche et permet la bascule). */
+  usage?: AccountUsage;
   owner: {
     id: string;
     name: string;

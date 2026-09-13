@@ -106,4 +106,13 @@ export const enAccounts: Record<string, string> = {
   "accounts.delete.confirmHint": "Type “{name}” to confirm",
   "accounts.delete.confirm": "Delete permanently",
   "accounts.delete.deletedToast": "Account {name} deleted",
+  // N°98 — account usage (Hotspot vs HomeNet, dual product Phase 1).
+  "accounts.usage": "Usage",
+  "accounts.usageHotspot": "Hotspot",
+  "accounts.usageHomeNet": "HomeNet",
+  "accounts.fieldUsage": "Account usage",
+  "accounts.usageHint": "Hotspot: public paid networks (vouchers, resellers). HomeNet: private home networks — in preparation, test accounts.",
+  "accounts.usageToast": "Usage of account {name}: {usage}",
+  "accounts.usageError": "Could not change the account usage",
+  "accounts.usageChange": "Change account usage",
 };

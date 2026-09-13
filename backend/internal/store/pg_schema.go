@@ -198,6 +198,15 @@ func (p *PG) ensureSchema() error {
 		`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS phone   TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS country TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS city    TEXT NOT NULL DEFAULT ''`,
+		// N°98 — usage du compte (Hotspot vs HomeNet, Phase 1 du
+		// produit bi-mode) : « hotspot » par défaut — tout le parc
+		// existant reste sur le produit historique, la colonne ne
+		// change RIEN tant que personne ne la pose à « homenet »
+		// (seuls la console plateforme et l'API admin le peuvent).
+		// Même mécanique idempotente que N°47 : sans l'ALTER, le
+		// SELECT différentiel de la nouvelle colonne ne boote pas
+		// (SQLSTATE 42703) sur les bases préexistantes.
+		`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS usage TEXT NOT NULL DEFAULT 'hotspot'`,
 		// P0/P1 (audit Mikhmon) — nouvelles collections.
 		`CREATE TABLE IF NOT EXISTS voucher_templates (
                         id         TEXT PRIMARY KEY,

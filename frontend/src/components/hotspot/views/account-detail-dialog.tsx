@@ -27,14 +27,16 @@ import {
   deleteClientAccount,
   fetchAccountDetail,
   impersonateAccount,
+  setAccountUsage,
   updateAccountSubscription,
 } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { useHotspotStore } from "@/lib/hotspot/store";
-import type { AccountSummary, SubscriptionInfo } from "@/lib/hotspot/types";
+import type { AccountSummary, AccountUsage, SubscriptionInfo } from "@/lib/hotspot/types";
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/hotspot/format";
 import { useCurrency } from "@/components/hotspot/parts/sd-currency";
 import { StatusBadge } from "@/components/hotspot/status-badge";
+import { UsageBadge } from "@/components/hotspot/usage-badge";
 import { ACCOUNTS_QUERY_KEY } from "./accounts-view";
 import {
   AlertDialog,
@@ -415,6 +417,19 @@ export function AccountDetailDialog({
     retry: false,
   });
 
+  // N°98 — bascule d'usage (hotspot ⇄ homenet) : plateau uniquement, effet
+  // immédiat sur les gardes API. Réversible d'un clic (aucune donnée n'est
+  // détruite : les endpoints produit redeviennent accessibles au retour).
+  const usageMutation = useMutation({
+    mutationFn: (usage: AccountUsage) => setAccountUsage(account.id, usage),
+    onSuccess: (_res, usage) => {
+      toast.success(tf("accounts.usageToast", { name: account.name, usage: usage === "homenet" ? t("accounts.usageHomeNet") : t("accounts.usageHotspot") }));
+      void queryClient.invalidateQueries({ queryKey: accountDetailKey(account.id) });
+      void queryClient.invalidateQueries({ queryKey: ACCOUNTS_QUERY_KEY });
+    },
+    onError: (err: Error) => toast.error(t("accounts.usageError")),
+  });
+
   const copyUsername = async (value: string) => {
     try {
       await navigator.clipboard.writeText(value);
@@ -490,6 +505,30 @@ export function AccountDetailDialog({
                       </Field>
                       <Field label={t("common.status")}>
                         <StatusBadge status={data.status} dot />
+                      </Field>
+                      {/* N°98 — usage du compte : badge + bascule plateforme. */}
+                      <Field label={t("accounts.usage")}>
+                        <div className="flex items-center gap-2">
+                          <UsageBadge usage={data.usage} />
+                          <Select
+                            value={data.usage ?? "hotspot"}
+                            onValueChange={(v) => usageMutation.mutate(v as AccountUsage)}
+                            disabled={usageMutation.isPending}
+                          >
+                            <SelectTrigger
+                              className="h-8 w-auto gap-1 text-xs"
+                              aria-label={t("accounts.usageChange")}
+                              disabled={usageMutation.isPending}
+                            >
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="hotspot">{t("accounts.usageHotspot")}</SelectItem>
+                              <SelectItem value="homenet">{t("accounts.usageHomeNet")}</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          {usageMutation.isPending && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
+                        </div>
                       </Field>
                       <Field label={t("accounts.detail.created")}>
                         {formatDate(data.createdAt, lang)}

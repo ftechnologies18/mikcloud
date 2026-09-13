@@ -211,7 +211,22 @@ func migrateMultiTenant(db *model.DB) bool {
 				Name:      name,
 				Status:    "active",
 				CreatedAt: model.NowISO(),
+				// N°98 — le compte principal hérite des données
+				// de l'ère mono-tenant : du HOTSPOT par définition.
+				Usage: model.AccountUsageHotspot,
 			})
+			changed = true
+		}
+	}
+
+	// N°98 — usage des comptes : les comptes créés avant la colonne
+	// (bases JSON de dev, états injectés par des tests) n'ont pas
+	// d'usage → « hotspot » (produit historique — le comportement
+	// d'avant la colonne, strictement). La synchro différentielle
+	// persiste la valeur au premier Save qui suit.
+	for i := range db.Accounts {
+		if db.Accounts[i].Usage == "" {
+			db.Accounts[i].Usage = model.AccountUsageHotspot
 			changed = true
 		}
 	}

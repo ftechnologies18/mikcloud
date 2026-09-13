@@ -251,6 +251,12 @@ func (a *API) handleAdminAccountCreate(w http.ResponseWriter, r *http.Request) {
 		Phone    string `json:"phone"`
 		Country  string `json:"country"`
 		City     string `json:"city"`
+		// N°98 — usage du compte (hotspot | homenet). Contrairement à
+		// l'inscription PUBLIQUE (hotspot seul en Phase 1), la console
+		// plateforme peut créer directement un compte homenet —
+		// c'est le chemin de test de la Phase 2 (coquille de
+		// navigation) avant l'ouverture publique.
+		Usage string `json:"usage"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
@@ -279,6 +285,17 @@ func (a *API) handleAdminAccountCreate(w http.ResponseWriter, r *http.Request) {
 	// Sécurité S2 — politique centralisée (10 caractères, denylist, ≠ username).
 	if msg := passwordPolicyViolation(req.Password, username); msg != "" {
 		writeErr(w, http.StatusBadRequest, msg)
+		return
+	}
+
+	// N°98 — usage du compte : vide → « hotspot » (défaut historique) ;
+	// toute autre valeur que hotspot|homenet est refusée.
+	usage := strings.ToLower(strings.TrimSpace(req.Usage))
+	if usage == "" {
+		usage = model.AccountUsageHotspot
+	}
+	if usage != model.AccountUsageHotspot && usage != model.AccountUsageHomeNet {
+		writeErr(w, http.StatusBadRequest, "Mode de compte inconnu (hotspot | homenet)")
 		return
 	}
 
@@ -317,6 +334,7 @@ func (a *API) handleAdminAccountCreate(w http.ResponseWriter, r *http.Request) {
 		Phone:     phoneNorm,
 		Country:   strings.ToLower(strings.TrimSpace(req.Country)),
 		City:      strings.TrimSpace(req.City),
+		Usage:     usage, // N°98 — hotspot | homenet (défaut hotspot)
 	}
 	db.Accounts = append(db.Accounts, acc)
 	u := model.AdminUser{

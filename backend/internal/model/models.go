@@ -28,6 +28,14 @@ type Account struct {
 	Phone   string `json:"phone,omitempty"`   // WhatsApp de préférence, format E.164 sans +
 	Country string `json:"country,omitempty"` // code ISO 3166-1 alpha-2 (CI, SN, NG…) ou "other"
 	City    string `json:"city,omitempty"`
+	// N°98 — usage du compte : « hotspot » (réseaux publics payants — le
+	// produit historique) ou « homenet » (réseaux privés domestiques).
+	// Le champ s'appelle usage et JAMAIS mode : Router.Mode désigne déjà le
+	// mode de CONNEXION au routeur (agent/API) — collision de vocabulaire
+	// évitée dès la conception. Défaut « hotspot » : tout le parc existant
+	// reste sur le produit historique (colonne posée par ALTER idempotent,
+	// zéro changement visible — Phase 1 = plomberie seulement).
+	Usage string `json:"usage,omitempty"`
 }
 
 // Router — équipement MikroTik géré (simulé, réel ou agent). Password non exposé dans l'API.
@@ -492,6 +500,15 @@ const (
 	RoleManager       = "manager"        // gérant : tout le compte SAUF équipe et réglages/billing
 	RoleOwner         = "owner"          // propriétaire du compte : tout, y compris équipe
 	RolePlatformAdmin = "platform_admin" // super-admin MikCloud (multi-comptes)
+)
+
+// Usages de compte SaaS (N°98) — un compte EST hotspot OU homenet, il ne
+// bascule pas (contrairement à la console plateforme qui se choisit par
+// rôle). Le cas « je gère un cyber ET ma maison » = deux comptes (comme
+// deux espaces Slack), pas un mode hybride.
+const (
+	AccountUsageHotspot = "hotspot" // réseaux publics payants — vouchers, revendeurs, Mode Vente
+	AccountUsageHomeNet = "homenet" // réseaux privés domestiques — appareils, famille, couvre-feu
 )
 
 // Activity — journal d'activité/audit (N°7 : trace QUI a agi, pas seulement quoi).

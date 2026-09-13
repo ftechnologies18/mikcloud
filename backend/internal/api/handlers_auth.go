@@ -40,7 +40,7 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	a.store.Lock()
 	var id, name, username, role, salt, hash, accID string
-	var accName, accStatus string
+	var accName, accStatus, accUsage string
 	var epoch int
 	var totpEnabled bool  // N°74 — capture par VALEUR : l'ancien pointeur user
 	var totpSecret string // survit au Unlock et était lu en course (B2 audit)
@@ -59,6 +59,12 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 			acc := &a.store.Data().Accounts[i]
 			if acc.ID == accID {
 				accName, accStatus = acc.Name, acc.Status
+				// N°98 — usage du compte (hotspot | homenet) : transporté par la
+				// SESSION (réponse login) — la coquille de navigation Phase 2 en
+				// décidera. Vide pour l'admin plateforme (opérateur sans compte
+				// client — pas d'usage). Relecture à CHAQUE requête gardée côté
+				// requireUsage : la bascule admin agit sans attendre les 24 h du JWT.
+				accUsage = normalizeAccountUsage(acc.Usage)
 				break
 			}
 		}
@@ -142,6 +148,7 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 		"user": map[string]any{
 			"id": id, "name": name, "username": username, "role": role,
 			"accountId": accID, "accountName": accName,
+			"usage":       accUsage,
 			"totpEnabled": totpEnabled,
 		},
 	})
@@ -281,6 +288,14 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 		Phone    string `json:"phone"`   // WhatsApp de préférence, format E.164 sans +
 		Country  string `json:"country"` // code ISO alpha-2 (CI, SN, NG…) ou "other"
 		City     string `json:"city"`
+		// N°98 — usage du compte demandé. Le contrat le fixe dès
+		// maintenant, mais l'inscription publique n'accepte (pour
+		// l'instant) que « hotspot » : la coquille de navigation
+		// HomeNet (Phase 2) n'existe pas encore — un compte
+		// « homenet » créé aujourd'hui verrait la console hotspot
+		// avec des endpoints produit refusés (404). Phase 2 élargira
+		// la liste blanche quand la sidebar dédiée existera.
+		Usage string `json:"usage"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
@@ -353,6 +368,23 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	city := strings.TrimSpace(req.City)
 
+	// N°98 — usage du compte : seul « hotspot » est ouvert à l'inscription
+	// publique (Phase 1 — plomberie invisible) ; « homenet » arrive avec
+	// sa coquille de navigation (Phase 2). Valeur vide = défaut « hotspot »
+	// (les clients HTTP existants ne changent pas d'un octet).
+	usage := strings.ToLower(strings.TrimSpace(req.Usage))
+	if usage == "" {
+		usage = model.AccountUsageHotspot
+	}
+	if usage != model.AccountUsageHotspot {
+		if usage == model.AccountUsageHomeNet {
+			writeErr(w, http.StatusBadRequest, "L'inscription HomeNet n'est pas encore ouverte — créez un compte Hotspot")
+		} else {
+			writeErr(w, http.StatusBadRequest, "Mode de compte inconnu")
+		}
+		return
+	}
+
 	// N°74 — hachage bcrypt AVANT le verrou : l'inscription est publique
 	// (rate-limit 12/min/IP mais distribuée, plusieurs gèles/s de TOUTE
 	// l'API étaient possibles) — le coût 12 (~200-500 ms) passe hors verrou.
@@ -394,6 +426,7 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 		Phone:     phone,
 		Country:   country,
 		City:      city,
+		Usage:     usage, // N°98 — « hotspot » (seule valeur acceptée en public)
 	}
 	db.Accounts = append(db.Accounts, acc)
 	u := model.AdminUser{
@@ -439,6 +472,7 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 		"user": map[string]any{
 			"id": u.ID, "name": u.Name, "username": u.Username, "role": u.Role,
 			"accountId": acc.ID, "accountName": acc.Name,
+			"usage": acc.Usage, // N°98 — transporté par la session dès la création
 		},
 	})
 }
@@ -487,10 +521,13 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 	} else if accID == "" && !isPlatform {
 		accID = model.AccountMainID
 	}
-	accName := ""
+	accName, accUsage := "", ""
 	for i := range db.Accounts {
 		if db.Accounts[i].ID == accID {
 			accName = db.Accounts[i].Name
+			// N°98 — usage du compte consulté (vide pour l'admin
+			// plateforme sans compte client).
+			accUsage = normalizeAccountUsage(db.Accounts[i].Usage)
 			break
 		}
 	}
@@ -509,6 +546,7 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 		"user": map[string]any{
 			"id": id, "name": name, "username": username, "role": role,
 			"accountId": accID, "accountName": accName,
+			"usage":       accUsage,
 			"totpEnabled": totpEnabled,
 		},
 	})

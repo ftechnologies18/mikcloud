@@ -13,6 +13,7 @@ import type {
   AccountDetail,
   AccountStatus,
   AccountSummary,
+  AccountUsage,
   AppSettings,
   AuthResponse,
   AuthUser,
@@ -292,6 +293,13 @@ export async function setAccountStatus(id: string, status: AccountStatus): Promi
   return api<{ ok: boolean }>(`/api/admin/accounts/${id}/status`, { method: "POST", body: { status } });
 }
 
+/** setAccountUsage — N°98 : change l'usage d'un compte (hotspot ⇄ homenet).
+ * Plateforme uniquement — effet immédiat sur les gardes API (le serveur relit
+ * l'usage à chaque requête, pas au login). */
+export async function setAccountUsage(id: string, usage: AccountUsage): Promise<{ ok: boolean }> {
+  return api<{ ok: boolean }>(`/api/admin/accounts/${id}/usage`, { method: "PUT", body: { usage } });
+}
+
 // ---------------------------------------------------------------------------
 // Console plateforme (super-admin MikCloud — multi-comptes)
 // ---------------------------------------------------------------------------
@@ -302,11 +310,14 @@ export async function fetchPlatformOverview(): Promise<PlatformOverview> {
 }
 
 /** createClientAccount — crée un compte client complet (compte + owner).
- * Les identifiants renvoyés doivent être remis au client. */
+ * Les identifiants renvoyés doivent être remis au client. N°98 — usage
+ * optionnel (défaut « hotspot ») : c'est le chemin de test des comptes
+ * HomeNet en Phase 1 (l'inscription publique, elle, reste hotspot seul). */
 export async function createClientAccount(payload: {
   name: string;
   username: string;
   password: string;
+  usage?: AccountUsage;
 }): Promise<{ account: { id: string; name: string; status: string; createdAt: string }; owner: { username: string; role: string } }> {
   return api("/api/admin/accounts", { method: "POST", body: payload });
 }

@@ -5,6 +5,122 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-14 — N°98 — Hotspot/HomeNet Phase 1 « la plomberie invisible » : la colonne accounts.usage existe (ALTER idempotent, défaut « hotspot » — tout le parc existant reste sur le produit historique, zéro changement visible), la session transporte l'usage (login/register/me/impersonation), la garde serveur requireUsage refuse les endpoints produit HOTSPOT aux comptes homenet (404, effet immédiat sans re-login), et la console plateforme segmente : colonne Usage + badges + bascule (PUT /api/admin/accounts/{id}/usage)
+
+### N°98 — Contexte : deux clients, deux mondes, un produit
+Décision produit du gérant (analyse d'expert validée) : MikCloud doit
+servir DEUX marchés — les gérants de hotspot publics (le produit
+historique : vouchers, revendeurs, Mode Vente) ET les foyers avec un
+routeur MikroTik (HomeNet : appareils, famille, couvre-feu). Un client
+HomeNet face à « Vouchers » et « Revendeurs » se demande si l'outil est
+pour lui — perte de confiance immédiate. La séparation des consoles
+(Phase 2 : sidebars dédiées) ne sera JAMAIS le garde : un compte
+homenet qui forgerait des appels vers /api/vouchers doit être refusé
+par le SERVEUR. Phase 1 = toute la plomberie, ZÉRO changement visible
+pour les deux routeurs clients réels (l'inscription publique continue
+de ne créer que du hotspot — le formulaire est inchangé, le contrat
+POST /api/auth/register accepte « usage » mais n'autorise que
+« hotspot » tant que la coquille HomeNet n'existe pas).
+
+### Technique — le champ s'appelle usage, JAMAIS mode
+- MODÈLE : model.Account.Usage + constantes AccountUsageHotspot /
+  AccountUsageHomeNet. Le nom est une décision de conception :
+  Router.Mode désigne déjà le mode de CONNEXION au routeur
+  (agent/API) — « mode » aurait créé une collision de vocabulaire
+  irrécupérable dans l'API, les scripts RouterOS et les échanges
+  support. Un compte EST hotspot OU homenet : il ne bascule pas
+  (le cas « je gère un cyber ET ma maison » = deux comptes, comme
+  deux espaces Slack — l'identité produit n'est pas un réglage).
+- BASE : ALTER TABLE accounts ADD COLUMN IF NOT EXISTS usage TEXT
+  NOT NULL DEFAULT 'hotspot' — mécanique idempotente N°47 (sans
+  l'ALTER, le SELECT différentiel de la nouvelle colonne ne boote
+  pas, SQLSTATE 42703). accountSpec gagne la colonne (cols/scan/
+  args alignés) ; la synchro différentielle persiste les valeurs au
+  premier Save. migrateMultiTenant normalise les usages vides
+  (bases JSON de dev, états pré-colonne) → « hotspot ».
+- SESSION : login, register, /api/auth/me et l'impersonation
+  transportent « usage » dans l'objet user (vide pour l'admin
+  plateforme — opérateur sans compte client). La coquille Phase 2
+  lira la même clé partout.
+- GARDE requireUsage (usage_guard.go) : miroir de requireRole —
+  « l'UI masque, le serveur refuse ». Répond 404 (pas 403) : pour le
+  client légitime guidé par SA console, la fonctionnalité n'existe
+  simplement pas, et on ne révèle ni l'endpoint ni la taxonomie des
+  comptes à un curieux. L'usage est RELU sous verrou à CHAQUE requête
+  gardée (pas au login) : la bascule admin agît sans attendre
+  l'expiration des JWT (24 h). Exemption plateforme (session support
+  comprise) : le garde sépare les CLIENTS, pas l'opérateur du SaaS —
+  même choix que guardAccountWrite. Repli défensif : usage vide ou
+  inconnu = hotspot (comportement d'avant la colonne), compte
+  introuvable = hotspot.
+- CÂBLAGE (routes.go) : 65 endpoints produit enveloppés
+  requireUsage(hotspot) — Mode Vente (8, autour de requireReseller),
+  profils (4), utilisateurs hotspot (12), vouchers (10), liens
+  d'inscription + file de validation (8), revendeurs (6),
+  ventes/rapports/comptabilité/Wave (5), modèles (4), journaux
+  utilisateurs (2), analytics portail (1), WiFi jetable console (5).
+  Restent OUVERTS aux deux usages (pont de données Phase 2) :
+  dashboard, routeurs et tous leurs outils, sessions, protection,
+  réglages, activité, équipe, abonnements, notifications, médias,
+  stats/horaires. Les routes PUBLIQUES (/api/join/{token},
+  /api/reseller/login, portail WiFi par slug) ne sont pas gardées :
+  sans JWT, pas de compte à vérifier — leur accès se borne par le
+  token du lien ou le slug.
+- BASCULE ADMIN : PUT /api/admin/accounts/{id}/usage (handleAdminAccountUsage)
+  — le SEUL point de bascule en Phase 1 (l'identité produit d'un
+  compte ne se change pas côté client). Idempotent (même valeur → ok
+  sans écriture ni journal), journalisé, refus du compte principal
+  (l'ID est réservé : données de l'ère mono-tenant = hotspot —
+  réponse déterministe AVANT même la recherche) et des valeurs
+  inconnues (400 bad_usage). handleAdminAccountCreate accepte
+  « homenet » (le chemin de TEST de la Phase 2), l'inscription
+  publique le refuse explicitement (400, message honnête
+  « L'inscription HomeNet n'est pas encore ouverte »).
+- CONSOLE PLATEFORME : liste des comptes (GET /api/admin/accounts)
+  et fiche détail exposent « usage » ; côté front — colonne Usage
+  dans la table, composant partagé UsageBadge (émeraude Hotspot /
+  ambre HomeNet — même patron que StatusBadge, fichier dédié pour
+  éviter la dépendance circulaire accounts-view ↔ detail-dialog),
+  select « Usage du compte » dans le dialog de création, champ
+  Usage + bascule par select dans la fiche (mutation + invalidation
+  liste ET fiche, toast). AuthUser.usage et AccountSummary.usage /
+  AccountDetail.usage typés (AccountUsage) — la coquille Phase 2
+  lira le store persisté.
+
+### Vérifié localement comme la CI
+gofmt vide ; go vet OK ; go build OK ; go test complet 12 paquets
+VERTS sans -race PUIS AVEC -race (api 432 s) — dont la suite dédiée
+usage_guard_test.go : contrat d'inscription publique (absent=hotspot,
+homenet=400, inconnu=400), usage transporté par register/login/me,
+création admin valide/refuse, garde (10 endpoints produit 404 pour
+homenet, 5 endpoints partagés 200, même token), exemption session
+support via impersonation RÉELLE, bascule (effet immédiat même token,
+idempotence, 400/403/404 nominaux, liste expose usage), normalisation
+(store Reload + repli défensif garde), helpers purs. Frontend :
+eslint 0 ; tsgo 0 ; build production 13 routes. Parcours navigateur
+complet (backend Go :4000 mode dev JSON + next dev :3016, golden path
+API 16/16 par HTTP réel, login UI admin → /app → vue Comptes) :
+colonne Usage entre Abonnement et Créé le, badges Hotspot/HomeNet
+conformes, fiche « Maison Test » + bascule HomeNet→Hotspot→HomeNet en
+direct (badge, toast, journal), dialog de création avec select et
+aide, mobile 390 px sans débordement de page (scrollWidth 390 — la
+table défile dans son conteneur comme avant, 11 colonnes au lieu de
+10) ; 0 erreur console/page hors 403 PRÉEXISTANT de GET
+/api/subscription pour l'admin plateforme sans compte client (handler
+non modifié, route non gardée — artefact du bandeau SA de la console
+plateforme, constaté avant N°98) ; contrôle VLM des 5 captures
+conforme. Mobile : la capture statique montre la table tronquée dans
+son conteneur — comportement overflow-x-auto préexistant (défilement
+au doigt), aucune régression de mise en page.
+
+### Déploiement attendu
+Render (backend/ modifié — la migration ALTER s'applique au boot,
+idempotente) + Vercel. Zéro action gérant : les deux routeurs clients
+réels restent « hotspot » par défaut, l'inscription publique continue
+de créer du hotspot, RIEN ne change à l'œil. Premier test HomeNet
+quand le gérant voudra : console plateforme → Comptes → créer un
+compte avec Usage « homenet » (ou basculer un compte de test) —
+l'effet des gardes est immédiat.
 ## 2026-09-14 — N°97 : docteur du pool d'adresses IP — l'épuisement « no more free addresses from pool » des heures de pointe est diagnostiqué, recyclé et alerté
 
 ### N°97 — Contexte : la panne qui frappe les clients PAYANTS au pire moment

@@ -128,20 +128,31 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/team/{id}", a.requireRole(3, a.handleTeamUpdate))
 	mux.HandleFunc("DELETE /api/team/{id}", a.requireRole(3, a.handleTeamDelete))
 
+	// N°98 — Phase 1 Hotspot/HomeNet : les familles PRODUIT HOTSPOT (Mode
+	// Vente, profils, utilisateurs hotspot, vouchers, inscriptions publiques,
+	// revendeurs, ventes/comptabilité, modèles, journaux utilisateurs, WiFi
+	// jetable, analytics portail) sont enveloppées de requireUsage(hotspot) :
+	// un compte « homenet » reçoit 404 — la fonctionnalité n'existe pas pour
+	// lui (cf. usage_guard.go). Les familles PARTAGÉES (dashboard, routeurs et
+	// outils, sessions, protection, réglages, activité, équipe, abonnements,
+	// notifications, médias) restent ouvertes aux deux usages — c'est le pont
+	// de données de la Phase 2 (la Protection en tête). Les routes PUBLIQUES
+	// (/api/join/{token}, /api/reseller/login, portail WiFi) ne sont pas
+	// gardées : sans JWT, pas de compte à vérifier.
 	// N°8 — Mode Vente (PWA revendeur, token scopé role=reseller).
 	mux.HandleFunc("POST /api/reseller/login", a.handleResellerLogin)
-	mux.HandleFunc("GET /api/sell/me", a.requireReseller(a.handleSellMe))
-	mux.HandleFunc("GET /api/sell/stock", a.requireReseller(a.handleSellStock))
-	mux.HandleFunc("POST /api/sell/{id}/sold", a.requireReseller(a.handleSellSold))
+	mux.HandleFunc("GET /api/sell/me", a.requireUsage(model.AccountUsageHotspot, a.requireReseller(a.handleSellMe)))
+	mux.HandleFunc("GET /api/sell/stock", a.requireUsage(model.AccountUsageHotspot, a.requireReseller(a.handleSellStock)))
+	mux.HandleFunc("POST /api/sell/{id}/sold", a.requireUsage(model.AccountUsageHotspot, a.requireReseller(a.handleSellSold)))
 	// N°20 — retour de stock initié par le revendeur (rendre des tickets au gérant).
-	mux.HandleFunc("POST /api/sell/return", a.requireReseller(a.handleSellReturn))
+	mux.HandleFunc("POST /api/sell/return", a.requireUsage(model.AccountUsageHotspot, a.requireReseller(a.handleSellReturn)))
 	// N°21 — transfert de stock entre revendeurs (Mode Vente, fusion UX avec
 	// le retour : même sélection de tickets, destination pair au lieu du gérant).
-	mux.HandleFunc("GET /api/sell/peers", a.requireReseller(a.handleSellPeers))
-	mux.HandleFunc("POST /api/sell/transfer", a.requireReseller(a.handleSellTransfer))
-	mux.HandleFunc("GET /api/sell/day-report", a.requireReseller(a.handleSellDayReport))
+	mux.HandleFunc("GET /api/sell/peers", a.requireUsage(model.AccountUsageHotspot, a.requireReseller(a.handleSellPeers)))
+	mux.HandleFunc("POST /api/sell/transfer", a.requireUsage(model.AccountUsageHotspot, a.requireReseller(a.handleSellTransfer)))
+	mux.HandleFunc("GET /api/sell/day-report", a.requireUsage(model.AccountUsageHotspot, a.requireReseller(a.handleSellDayReport)))
 	// P3-d — export comptable « journal de caisse » (CSV Excel, date passée admise).
-	mux.HandleFunc("GET /api/sell/day-report.csv", a.requireReseller(a.handleSellDayReportCSV))
+	mux.HandleFunc("GET /api/sell/day-report.csv", a.requireUsage(model.AccountUsageHotspot, a.requireReseller(a.handleSellDayReportCSV)))
 
 	// Dashboard
 	mux.HandleFunc("GET /api/dashboard", a.handleDashboard)
@@ -155,66 +166,66 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/routers/{id}/stats", a.handleRouterStats)
 
 	// Profils
-	mux.HandleFunc("GET /api/profiles", a.handleProfilesList)
-	mux.HandleFunc("POST /api/profiles", a.requireRole(2, a.handleProfileCreate))
-	mux.HandleFunc("PUT /api/profiles/{id}", a.requireRole(2, a.handleProfileUpdate))
-	mux.HandleFunc("DELETE /api/profiles/{id}", a.requireRole(2, a.handleProfileDelete))
+	mux.HandleFunc("GET /api/profiles", a.requireUsage(model.AccountUsageHotspot, a.handleProfilesList))
+	mux.HandleFunc("POST /api/profiles", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleProfileCreate)))
+	mux.HandleFunc("PUT /api/profiles/{id}", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleProfileUpdate)))
+	mux.HandleFunc("DELETE /api/profiles/{id}", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleProfileDelete)))
 
 	// Utilisateurs hotspot
-	mux.HandleFunc("GET /api/users", a.handleUsersList)
-	mux.HandleFunc("POST /api/users", a.handleUserCreate)
-	mux.HandleFunc("PUT /api/users/{id}", a.handleUserUpdate)
-	mux.HandleFunc("DELETE /api/users/{id}", a.requireRole(2, a.handleUserDelete))
-	mux.HandleFunc("POST /api/users/{id}/enable", a.handleUserEnable)
-	mux.HandleFunc("POST /api/users/{id}/disable", a.handleUserDisable)
+	mux.HandleFunc("GET /api/users", a.requireUsage(model.AccountUsageHotspot, a.handleUsersList))
+	mux.HandleFunc("POST /api/users", a.requireUsage(model.AccountUsageHotspot, a.handleUserCreate))
+	mux.HandleFunc("PUT /api/users/{id}", a.requireUsage(model.AccountUsageHotspot, a.handleUserUpdate))
+	mux.HandleFunc("DELETE /api/users/{id}", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleUserDelete)))
+	mux.HandleFunc("POST /api/users/{id}/enable", a.requireUsage(model.AccountUsageHotspot, a.handleUserEnable))
+	mux.HandleFunc("POST /api/users/{id}/disable", a.requireUsage(model.AccountUsageHotspot, a.handleUserDisable))
 
 	// Vouchers
-	mux.HandleFunc("POST /api/vouchers/generate", a.handleVouchersGenerate)
-	mux.HandleFunc("GET /api/vouchers", a.handleVouchersList)
-	mux.HandleFunc("GET /api/vouchers/stats", a.handleVouchersStats) // N°74 — compteurs serveur (fin du poll pageSize:500)
-	mux.HandleFunc("GET /api/vouchers/batches", a.handleBatchesList)
-	mux.HandleFunc("GET /api/vouchers/batches/export", a.requireRole(2, a.handleBatchesExport))
-	mux.HandleFunc("DELETE /api/vouchers/{id}", a.requireRole(2, a.handleUserDelete))
-	mux.HandleFunc("POST /api/vouchers/batch/{batchId}/delete", a.requireRole(2, a.handleVouchersBatchDelete))
-	mux.HandleFunc("POST /api/vouchers/batch/{batchId}/transfer", a.requireRole(2, a.handleVouchersBatchTransfer))
+	mux.HandleFunc("POST /api/vouchers/generate", a.requireUsage(model.AccountUsageHotspot, a.handleVouchersGenerate))
+	mux.HandleFunc("GET /api/vouchers", a.requireUsage(model.AccountUsageHotspot, a.handleVouchersList))
+	mux.HandleFunc("GET /api/vouchers/stats", a.requireUsage(model.AccountUsageHotspot, a.handleVouchersStats)) // N°74 — compteurs serveur (fin du poll pageSize:500)
+	mux.HandleFunc("GET /api/vouchers/batches", a.requireUsage(model.AccountUsageHotspot, a.handleBatchesList))
+	mux.HandleFunc("GET /api/vouchers/batches/export", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleBatchesExport)))
+	mux.HandleFunc("DELETE /api/vouchers/{id}", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleUserDelete)))
+	mux.HandleFunc("POST /api/vouchers/batch/{batchId}/delete", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleVouchersBatchDelete)))
+	mux.HandleFunc("POST /api/vouchers/batch/{batchId}/transfer", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleVouchersBatchTransfer)))
 	// N°22 — impression tracée : seul canal de sortie des codes des tickets
 	// revendeur depuis la console (les listes les masquent désormais).
-	mux.HandleFunc("POST /api/vouchers/print", a.requireRole(2, a.handleVouchersPrint))
+	mux.HandleFunc("POST /api/vouchers/print", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleVouchersPrint)))
 	// N°23 (W6) — reprise gérant : reprendre au revendeur du stock invendu.
-	mux.HandleFunc("POST /api/vouchers/reprise", a.requireRole(2, a.handleVouchersReprise))
+	mux.HandleFunc("POST /api/vouchers/reprise", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleVouchersReprise)))
 
 	// N°27 — inscriptions publiques (QR) : /api/join/{token} est PUBLIC
 	// (whitelist middleware) — le token du lien fait l'accès. La gestion des
 	// liens et la file de validation restent derrière le JWT (manager et plus).
 	mux.HandleFunc("GET /api/join/{token}", a.handleJoinInfo)
 	mux.HandleFunc("POST /api/join/{token}", a.handleJoinSubmit)
-	mux.HandleFunc("GET /api/join-links", a.requireRole(2, a.handleJoinLinksList))
-	mux.HandleFunc("POST /api/join-links", a.requireRole(2, a.handleJoinLinkCreate))
-	mux.HandleFunc("PUT /api/join-links/{id}", a.requireRole(2, a.handleJoinLinkUpdate))
-	mux.HandleFunc("DELETE /api/join-links/{id}", a.requireRole(2, a.handleJoinLinkDelete))
-	mux.HandleFunc("GET /api/registrations", a.requireRole(2, a.handleRegistrationsList))
-	mux.HandleFunc("POST /api/registrations/{id}/approve", a.requireRole(2, a.handleRegistrationApprove))
-	mux.HandleFunc("POST /api/registrations/{id}/reject", a.requireRole(2, a.handleRegistrationReject))
-	mux.HandleFunc("DELETE /api/registrations/{id}", a.requireRole(2, a.handleRegistrationDelete))
+	mux.HandleFunc("GET /api/join-links", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleJoinLinksList)))
+	mux.HandleFunc("POST /api/join-links", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleJoinLinkCreate)))
+	mux.HandleFunc("PUT /api/join-links/{id}", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleJoinLinkUpdate)))
+	mux.HandleFunc("DELETE /api/join-links/{id}", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleJoinLinkDelete)))
+	mux.HandleFunc("GET /api/registrations", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleRegistrationsList)))
+	mux.HandleFunc("POST /api/registrations/{id}/approve", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleRegistrationApprove)))
+	mux.HandleFunc("POST /api/registrations/{id}/reject", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleRegistrationReject)))
+	mux.HandleFunc("DELETE /api/registrations/{id}", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleRegistrationDelete)))
 
 	// Sessions
 	mux.HandleFunc("GET /api/sessions", a.handleSessionsList)
 	mux.HandleFunc("DELETE /api/sessions/{id}", a.handleSessionKick)
 
 	// Revendeurs
-	mux.HandleFunc("GET /api/resellers", a.requireRole(2, a.handleResellersList))
-	mux.HandleFunc("POST /api/resellers", a.requireRole(2, a.handleResellerCreate))
-	mux.HandleFunc("PUT /api/resellers/{id}", a.requireRole(2, a.handleResellerUpdate))
-	mux.HandleFunc("DELETE /api/resellers/{id}", a.requireRole(2, a.handleResellerDelete))
-	mux.HandleFunc("POST /api/resellers/{id}/credit", a.requireRole(2, a.handleResellerCredit))
-	mux.HandleFunc("POST /api/resellers/{id}/settle", a.requireRole(2, a.handleResellerSettle))
+	mux.HandleFunc("GET /api/resellers", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleResellersList)))
+	mux.HandleFunc("POST /api/resellers", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleResellerCreate)))
+	mux.HandleFunc("PUT /api/resellers/{id}", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleResellerUpdate)))
+	mux.HandleFunc("DELETE /api/resellers/{id}", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleResellerDelete)))
+	mux.HandleFunc("POST /api/resellers/{id}/credit", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleResellerCredit)))
+	mux.HandleFunc("POST /api/resellers/{id}/settle", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleResellerSettle)))
 
 	// Divers
-	mux.HandleFunc("GET /api/transactions", a.requireRole(2, a.handleTransactionsList))
-	mux.HandleFunc("GET /api/reports", a.requireRole(2, a.handleReports))
-	mux.HandleFunc("GET /api/accounting", a.requireRole(2, a.handleAccounting))
-	mux.HandleFunc("GET /api/accounting/export", a.requireRole(2, a.handleAccountingExport))
-	mux.HandleFunc("GET /api/wave/link", a.requireRole(2, a.handleWaveLink))
+	mux.HandleFunc("GET /api/transactions", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleTransactionsList)))
+	mux.HandleFunc("GET /api/reports", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleReports)))
+	mux.HandleFunc("GET /api/accounting", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleAccounting)))
+	mux.HandleFunc("GET /api/accounting/export", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleAccountingExport)))
+	mux.HandleFunc("GET /api/wave/link", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleWaveLink)))
 	mux.HandleFunc("GET /api/stats/hourly", a.handleStatsHourly)
 
 	mux.HandleFunc("GET /api/activity", a.requireRole(2, a.handleActivityList))
@@ -280,6 +291,9 @@ func (a *API) Handler() http.Handler {
 	// P2 — fiche client, attribution/renouvellement d'abonnement, suppression.
 	mux.HandleFunc("GET /api/admin/accounts/{id}", a.requireRole(3, a.handleAdminAccountDetail))
 	mux.HandleFunc("PUT /api/admin/accounts/{id}/subscription", a.requireRole(3, a.handleAdminAccountSubscription))
+	// N°98 — usage du compte (Hotspot ⇄ HomeNet) : le SEUL point de bascule
+	// en Phase 1 (l'identité produit d'un compte ne se change pas côté client).
+	mux.HandleFunc("PUT /api/admin/accounts/{id}/usage", a.requireRole(3, a.handleAdminAccountUsage))
 	mux.HandleFunc("DELETE /api/admin/accounts/{id}", a.requireRole(3, a.handleAdminAccountDelete))
 	// Bascule support : ouvrir la console d'un compte client à la demande
 	// (token scoping le compte, rôle plateforme conservé, action tracée).
@@ -311,21 +325,21 @@ func (a *API) Handler() http.Handler {
 	// handlers_templates.go, handlers_userlogs.go, handlers_users_ops.go ;
 	// moteur d'enforcement F1 et filtres sessions live dans helpers.go)
 	// Modèles de vouchers (F2)
-	mux.HandleFunc("GET /api/templates", a.handleTemplatesList)
-	mux.HandleFunc("POST /api/templates", a.requireRole(2, a.handleTemplateCreate))
-	mux.HandleFunc("PUT /api/templates/{id}", a.requireRole(2, a.handleTemplateUpdate))
-	mux.HandleFunc("DELETE /api/templates/{id}", a.requireRole(2, a.handleTemplateDelete))
+	mux.HandleFunc("GET /api/templates", a.requireUsage(model.AccountUsageHotspot, a.handleTemplatesList))
+	mux.HandleFunc("POST /api/templates", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleTemplateCreate)))
+	mux.HandleFunc("PUT /api/templates/{id}", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleTemplateUpdate)))
+	mux.HandleFunc("DELETE /api/templates/{id}", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleTemplateDelete)))
 	// Journal utilisateurs (F3)
-	mux.HandleFunc("GET /api/user-logs", a.requireRole(2, a.handleUserLogsList))
-	mux.HandleFunc("GET /api/user-logs/export", a.requireRole(2, a.handleUserLogsExport))
+	mux.HandleFunc("GET /api/user-logs", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleUserLogsList)))
+	mux.HandleFunc("GET /api/user-logs/export", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleUserLogsExport)))
 	// Actions utilisateurs (F4/F5)
-	mux.HandleFunc("POST /api/users/{id}/reset-stats", a.handleUserResetStats)
-	mux.HandleFunc("POST /api/users/{id}/extend", a.handleUserExtend)
+	mux.HandleFunc("POST /api/users/{id}/reset-stats", a.requireUsage(model.AccountUsageHotspot, a.handleUserResetStats))
+	mux.HandleFunc("POST /api/users/{id}/extend", a.requireUsage(model.AccountUsageHotspot, a.handleUserExtend))
 	// N — resynchronisation utilisateur « absent du routeur » (rapprochement doux).
-	mux.HandleFunc("POST /api/users/{id}/resync", a.requireRole(2, a.handleUserResync))
-	mux.HandleFunc("GET /api/users/export", a.requireRole(2, a.handleUsersExport))
-	mux.HandleFunc("POST /api/users/cleanup", a.requireRole(2, a.handleUsersCleanup))
-	mux.HandleFunc("POST /api/users/bulk", a.handleUsersBulk)
+	mux.HandleFunc("POST /api/users/{id}/resync", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleUserResync)))
+	mux.HandleFunc("GET /api/users/export", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleUsersExport)))
+	mux.HandleFunc("POST /api/users/cleanup", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleUsersCleanup)))
+	mux.HandleFunc("POST /api/users/bulk", a.requireUsage(model.AccountUsageHotspot, a.handleUsersBulk))
 
 	// P1 (audit Mikhmon) — voir docs/CONTRACT-V2.md (F6 à F10, découpage :
 	// handlers_routers.go, handlers_ipbindings.go, handlers_commands.go,
@@ -379,17 +393,17 @@ func (a *API) Handler() http.Handler {
 	// serveur cf. handlers_promo_events.go) et lecture CONSOLE des
 	// agrégats (« votre menu vu 480 fois cette semaine »).
 	mux.HandleFunc("POST /api/portal/track", a.handlePromoTrack)
-	mux.HandleFunc("GET /api/promos/stats", a.requireRole(2, a.handlePromoStats))
+	mux.HandleFunc("GET /api/promos/stats", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handlePromoStats)))
 
 	// N°35-c — config LIVE du portail captif (fetch hybride cloud/local).
 	// Public (pas de JWT, pas de token agent) — appelé par login.html au
 	// chargement. CORS ouverte à toute origine (cf. corsMiddleware).
 	mux.HandleFunc("GET /api/wifi/site/{slug}/portal", a.handleWifiPortal)
-	mux.HandleFunc("GET /api/wifi/sites", a.requireRole(2, a.handleWifiSitesList))
-	mux.HandleFunc("POST /api/wifi/sites", a.requireRole(2, a.handleWifiSiteCreate))
-	mux.HandleFunc("PUT /api/wifi/sites/{id}", a.requireRole(2, a.handleWifiSiteUpdate))
-	mux.HandleFunc("DELETE /api/wifi/sites/{id}", a.requireRole(2, a.handleWifiSiteDelete))
-	mux.HandleFunc("GET /api/wifi/guests", a.requireRole(2, a.handleWifiGuests))
+	mux.HandleFunc("GET /api/wifi/sites", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleWifiSitesList)))
+	mux.HandleFunc("POST /api/wifi/sites", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleWifiSiteCreate)))
+	mux.HandleFunc("PUT /api/wifi/sites/{id}", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleWifiSiteUpdate)))
+	mux.HandleFunc("DELETE /api/wifi/sites/{id}", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleWifiSiteDelete)))
+	mux.HandleFunc("GET /api/wifi/guests", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleWifiGuests)))
 
 	// Fallback API -> 404 JSON
 	mux.HandleFunc("/api/", a.handleAPINotFound)

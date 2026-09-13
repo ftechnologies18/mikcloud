@@ -205,8 +205,10 @@ func (a *API) handleAdminAccountDetail(w http.ResponseWriter, r *http.Request) {
 		"name":      acc.Name,
 		"status":    acc.Status,
 		"createdAt": acc.CreatedAt,
-		"owner":     ownerOut,
-		"team":      team,
+		// N°98 — usage du compte (la fiche l'affiche et permet la bascule).
+		"usage": normalizeAccountUsage(acc.Usage),
+		"owner": ownerOut,
+		"team":  team,
 		"subscription": subscriptionOut{
 			PlanID: sub.PlanID, PlanName: planName, Status: status,
 			PeriodStart: sub.PeriodStart, PeriodEnd: sub.PeriodEnd,
@@ -487,6 +489,9 @@ func (a *API) handleAdminImpersonate(w http.ResponseWriter, r *http.Request) {
 		"user": map[string]any{
 			"id": claims.Sub, "name": adminName, "username": adminUsername,
 			"role": model.RolePlatformAdmin, "accountId": id, "accountName": acc.Name,
+			// N°98 — la session support transporte l'usage du compte consulté
+			// (la coquille Phase 2 lira la même clé que login/me/register).
+			"usage": normalizeAccountUsage(acc.Usage),
 		},
 	})
 }
@@ -530,13 +535,16 @@ func (a *API) handleAdminAccounts(w http.ResponseWriter, r *http.Request) {
 		Revenue30d int `json:"revenue30d"`
 	}
 	type accountRow struct {
-		ID           string       `json:"id"`
-		Name         string       `json:"name"`
-		Status       string       `json:"status"`
-		CreatedAt    string       `json:"createdAt"`
-		Owner        string       `json:"owner"`
-		Subscription string       `json:"subscription"` // active | expired | beta
-		Stats        accountStats `json:"stats"`
+		ID           string `json:"id"`
+		Name         string `json:"name"`
+		Status       string `json:"status"`
+		CreatedAt    string `json:"createdAt"`
+		Owner        string `json:"owner"`
+		Subscription string `json:"subscription"` // active | expired | beta
+		// N°98 — usage du compte : la console plateforme segmente
+		// Hotspot / HomeNet (support, relances, roadmap produit).
+		Usage string       `json:"usage"` // hotspot | homenet
+		Stats accountStats `json:"stats"`
 	}
 
 	stats := map[string]*accountStats{}
@@ -617,7 +625,9 @@ func (a *API) handleAdminAccounts(w http.ResponseWriter, r *http.Request) {
 		}
 		rows = append(rows, accountRow{
 			ID: acc.ID, Name: acc.Name, Status: acc.Status, CreatedAt: acc.CreatedAt,
-			Owner: owners[acc.ID], Subscription: sub, Stats: *stats[acc.ID],
+			Owner: owners[acc.ID], Subscription: sub,
+			Usage: normalizeAccountUsage(acc.Usage), // N°98
+			Stats: *stats[acc.ID],
 		})
 	}
 	a.store.Unlock()
@@ -669,4 +679,65 @@ func (a *API) handleAdminAccountStatus(w http.ResponseWriter, r *http.Request) {
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleAdminAccountUsage — N°98 : la plateforme change l'usage d'un compte
+// (hotspot ⇄ homenet), PUT /api/admin/accounts/{id}/usage. C'est le SEUL
+// point de bascule en Phase 1 : l'usage est l'identité PRODUIT du compte,
+// elle ne se change pas depuis la console du client (et l'inscription
+// publique ne crée que du hotspot tant que la coquille HomeNet — Phase 2 —
+// n'est pas livrée).
+//
+// Effet immédiat (la garde relit l'usage à CHAQUE requête, pas au login) :
+// les endpoints produit hotspot passent de 200 à 404 pour ce compte — et
+// réciproquement pour les futurs endpoints homenet. Idempotent (même valeur
+// → ok sans écriture ni journal). Le compte principal est refusé : ses
+// données sont celles de l'ère mono-tenant, donc du hotspot.
+func (a *API) handleAdminAccountUsage(w http.ResponseWriter, r *http.Request) {
+	if !isPlatformAdmin(r) {
+		writeErrCode(w, http.StatusForbidden, "forbidden", "Réservé aux administrateurs de la plateforme", nil)
+		return
+	}
+	id := r.PathValue("id")
+	var req struct {
+		Usage string `json:"usage"`
+	}
+	if err := decodeBody(r, &req); err != nil {
+		writeErrCode(w, http.StatusBadRequest, "bad_request", "Corps de requête invalide", nil)
+		return
+	}
+	usage := strings.ToLower(strings.TrimSpace(req.Usage))
+	if usage != model.AccountUsageHotspot && usage != model.AccountUsageHomeNet {
+		writeErrCode(w, http.StatusBadRequest, "bad_usage", "Usage inconnu (hotspot | homenet)", nil)
+		return
+	}
+	// Le compte principal est refusé AVANT même la recherche : l'ID est
+	// réservé (données de l'ère mono-tenant = hotspot) — réponse déterministe
+	// même sur un état où il n'existe pas encore.
+	if id == model.AccountMainID {
+		writeErrCode(w, http.StatusBadRequest, "main_account",
+			"Le compte principal ne peut pas changer d'usage (données hotspot historiques)", nil)
+		return
+	}
+	a.store.Lock()
+	db := a.store.Data()
+	var acc *model.Account
+	for i := range db.Accounts {
+		if db.Accounts[i].ID == id {
+			acc = &db.Accounts[i]
+			break
+		}
+	}
+	if acc == nil {
+		a.store.Unlock()
+		writeErrCode(w, http.StatusNotFound, "not_found", "Compte introuvable", nil)
+		return
+	}
+	if acc.Usage != usage {
+		acc.Usage = usage
+		a.logActivityBy(r, db, acc.ID, "compte", "Usage du compte « "+acc.Name+" » : "+usage)
+		a.store.Save()
+	}
+	a.store.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "usage": usage})
 }

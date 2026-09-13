@@ -27,11 +27,12 @@ import {
 } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { useHotspotStore } from "@/lib/hotspot/store";
-import type { AccountStatus, AccountSummary } from "@/lib/hotspot/types";
+import type { AccountStatus, AccountSummary, AccountUsage } from "@/lib/hotspot/types";
 import { formatCurrency, formatDate } from "@/lib/hotspot/format";
 import { EmptyState } from "@/components/hotspot/empty-state";
 import { PageHeader } from "@/components/hotspot/page-header";
 import { StatusBadge } from "@/components/hotspot/status-badge";
+import { UsageBadge } from "@/components/hotspot/usage-badge";
 import { useCurrency } from "@/components/hotspot/parts/sd-currency";
 import { AccountDetailDialog } from "./account-detail-dialog";
 import {
@@ -57,6 +58,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
@@ -106,6 +114,10 @@ export default function AccountsView() {
   const [accName, setAccName] = useState("");
   const [accUsername, setAccUsername] = useState("");
   const [accPassword, setAccPassword] = useState("");
+  // N°98 — usage du compte créé (défaut « hotspot ») : le seul chemin de
+  // création de comptes HomeNet en Phase 1 (l'inscription publique reste
+  // hotspot seul tant que la coquille Phase 2 n'existe pas).
+  const [accUsage, setAccUsage] = useState<AccountUsage>("hotspot");
   const [createdCreds, setCreatedCreds] = useState<{ name: string; username: string; password: string } | null>(null);
   const [copied, setCopied] = useState<"username" | "password" | null>(null);
 
@@ -149,6 +161,7 @@ export default function AccountsView() {
         name: accName.trim(),
         username: accUsername.trim().toLowerCase(),
         password: accPassword,
+        usage: accUsage,
       }),
     onSuccess: (res) => {
       toast.success(tf("accounts.createdToast", { name: res.account.name }));
@@ -157,6 +170,7 @@ export default function AccountsView() {
       setAccName("");
       setAccUsername("");
       setAccPassword("");
+      setAccUsage("hotspot");
       void queryClient.invalidateQueries({ queryKey: ACCOUNTS_QUERY_KEY });
     },
     onError: (error: Error) => toast.error(error.message),
@@ -237,6 +251,8 @@ export default function AccountsView() {
                     <TableHead className="text-muted-foreground">{t("accounts.owner")}</TableHead>
                     <TableHead className="text-muted-foreground">{t("common.status")}</TableHead>
                     <TableHead className="text-muted-foreground">{t("accounts.subscription")}</TableHead>
+                    {/* N°98 — usage du compte : segmentation Hotspot/HomeNet. */}
+                    <TableHead className="text-muted-foreground">{t("accounts.usage")}</TableHead>
                     <TableHead className="text-muted-foreground">{t("accounts.created")}</TableHead>
                     <TableHead className="text-right text-muted-foreground">{t("accounts.users")}</TableHead>
                     <TableHead className="text-right text-muted-foreground">{t("accounts.routers")}</TableHead>
@@ -266,6 +282,10 @@ export default function AccountsView() {
                         </TableCell>
                         <TableCell>
                           <SubscriptionBadge state={account.subscription} />
+                        </TableCell>
+                        {/* N°98 — usage du compte (badge émeraude/ambre). */}
+                        <TableCell>
+                          <UsageBadge usage={account.usage} />
                         </TableCell>
                         <TableCell className="text-muted-foreground">{formatDate(account.createdAt, lang)}</TableCell>
                         <TableCell className="text-right tabular-nums">{account.stats.users}</TableCell>
@@ -372,6 +392,21 @@ export default function AccountsView() {
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">{t("accounts.passwordHint")}</p>
+            </div>
+            {/* N°98 — usage du compte : le seul chemin de création HomeNet en
+                Phase 1 (tests de la coquille Phase 2 avant ouverture publique). */}
+            <div className="space-y-2">
+              <Label htmlFor="acc-usage">{t("accounts.fieldUsage")}</Label>
+              <Select value={accUsage} onValueChange={(v) => setAccUsage(v as AccountUsage)}>
+                <SelectTrigger id="acc-usage" className="h-10 w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="hotspot">{t("accounts.usageHotspot")}</SelectItem>
+                  <SelectItem value="homenet">{t("accounts.usageHomeNet")}</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">{t("accounts.usageHint")}</p>
             </div>
           </div>
           <DialogFooter>

@@ -19,15 +19,18 @@ import (
 // accountSpec — comptes clients SaaS (isolation multi-tenant).
 var accountSpec = entitySpec[model.Account]{
 	table: "accounts",
-	cols:  []string{"id", "name", "status", "created_at", "email", "phone", "country", "city"},
-	idOf:  func(x *model.Account) string { return x.ID },
+	// N°98 — colonne usage en fin de liste (Hotspot vs HomeNet) : l'ordre
+	// cols/scan/args reste aligné, et l'ALTER idempotent du schéma garantit
+	// la colonne sur les bases préexistantes (défaut « hotspot »).
+	cols: []string{"id", "name", "status", "created_at", "email", "phone", "country", "city", "usage"},
+	idOf: func(x *model.Account) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Account, error) {
 		var x model.Account
-		err := r.Scan(&x.ID, &x.Name, &x.Status, &x.CreatedAt, &x.Email, &x.Phone, &x.Country, &x.City)
+		err := r.Scan(&x.ID, &x.Name, &x.Status, &x.CreatedAt, &x.Email, &x.Phone, &x.Country, &x.City, &x.Usage)
 		return x, err
 	},
 	args: func(x *model.Account) []any {
-		return []any{x.ID, x.Name, x.Status, x.CreatedAt, x.Email, x.Phone, x.Country, x.City}
+		return []any{x.ID, x.Name, x.Status, x.CreatedAt, x.Email, x.Phone, x.Country, x.City, x.Usage}
 	},
 	hashOf: hashEntity[model.Account],
 }

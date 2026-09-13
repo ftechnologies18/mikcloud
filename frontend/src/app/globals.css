@@ -408,6 +408,30 @@
     linear-gradient(165deg, oklch(0.205 0.02 172), oklch(0.146 0.014 170) 55%, oklch(0.165 0.045 166));
 }
 
+/* N°94 — lisibilité Jour : le panneau branding est TOUJOURS sombre (dégradé
+   profond, signature), mais ses textes suivent les tokens du thème actif —
+   en mode clair l'encre devenait sombre sur fond nuit (sous-titre et
+   descriptions illisibles) et les puces de verre Jour (blanc 50 %)
+   délavaient les 4 cartes atouts. Le panneau force donc localement les
+   tokens « sur fond nuit » : les utilitaires (text-muted-foreground,
+   text-primary, dégradés du wordmark…) résolvent les variables ICI, et la
+   déclaration `color` rend l'encre héritée claire pour les intitulés sans
+   classe couleur. Mode Nuit : aucun effet (sélecteur html:not(.dark)). */
+html:not(.dark) .login-brand {
+  color: var(--foreground);
+  --foreground: oklch(0.975 0.005 160);
+  --muted-foreground: oklch(0.82 0.02 168);
+  --primary: oklch(0.72 0.155 163);
+  --grad-a: oklch(0.72 0.16 158);
+  --grad-b: oklch(0.68 0.13 195);
+}
+/* Les verres du panneau reprennent la teinte Nuit (voile blanc translucide
+   sur fond sombre) — les 4 cartes atouts restent lisibles en mode Jour. */
+html:not(.dark) .login-brand .glass-chip {
+  border-color: oklch(1 0 0 / 0.1);
+  background: oklch(1 0 0 / 0.055);
+}
+
 /* Grille technique en surimpression (masquée sur les bords) */
 .login-grid {
   background-image:
@@ -418,10 +442,13 @@
   mask-image: radial-gradient(ellipse 90% 85% at 45% 40%, black 25%, transparent 80%);
 }
 
-/* Carte de verre : flou arrière + liseré lumineux + ombre profonde (duale) */
+/* Carte de verre : flou arrière + liseré lumineux + ombre profonde (duale).
+   N°94 — Jour : opacité et liseré renforcés (78 % / 22 %) : sur fond papier
+   menthe, la carte flottait en 62 % — frontière trop faible pour situer le
+   formulaire d'un coup d'œil. */
 .glass-card {
-  border: 1px solid oklch(0.35 0.06 165 / 14%);
-  background: oklch(1 0 0 / 0.62);
+  border: 1px solid oklch(0.35 0.06 165 / 22%);
+  background: oklch(1 0 0 / 0.78);
   -webkit-backdrop-filter: blur(22px) saturate(1.4);
   backdrop-filter: blur(22px) saturate(1.4);
   box-shadow:

@@ -5,6 +5,59 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-13 — N°94 : écran de connexion — mention « © 2025 MikCloud » retirée + lisibilité Jour des cartes (panneau branding et carte formulaire)
+
+### N°94 — Contexte : demande du gérant (capture d'écran à l'appui)
+Deux retours sur l'écran /login : (1) la mention « © 2025 MikCloud —
+Connectez vos routeurs MikroTik en toute simplicité » doit disparaître —
+le crédit FTCI reste la seule ligne de pied ; (2) en mode clair, les
+cartes sont pénibles à lire. L'enquête remonte au panneau branding :
+`.login-brand` est TOUJOURS sombre (dégradé zinc→émeraude, signature —
+aucune variante Jour n'a jamais existé) alors que ses textes suivent les
+tokens du thème actif. En mode Jour : encre sombre sur fond nuit (le
+sous-titre du héros et les descriptions des 4 cartes atouts devenaient
+quasi illisibles) et les puces de verre Jour (blanc 50 %) délavaient les
+cartes en cartons gris clair sans contraste — exactement ce que montrait
+la capture.
+
+### Technique — tokens « sur fond nuit » scopés + verre nuit + carte formulaire affirmée
+- Suppression : les deux paragraphes `t("login.footer")` (panneau
+  branding desktop + pied mobile) ; le crédit FTCI conserve l'emplacement
+  et le rythme d'animation (mt-8/mt-6, délai 0,46 s/0,55 s). La clé i18n
+  `login.footer` est retirée des DEUX langues (parité préservée —
+  2 459/2 459) ; zéro autre consommateur (grep e2e/src vide).
+- Lisibilité Jour : `html:not(.dark) .login-brand` force localement les
+  tokens « sur fond nuit » (--foreground encre claire, --muted-foreground
+  0,82, --primary émeraude lumineux 0,72, --grad-a/--grad-b du wordmark) —
+  les utilitaires Tailwind (text-muted-foreground, text-primary,
+  from-primary…) résolvent les variables À l'intérieur du panneau, et la
+  déclaration `color` rend l'encre héritée claire pour les intitulés sans
+  classe couleur ; `html:not(.dark) .login-brand .glass-chip` reprend le
+  verre Nuit (voile blanc 5,5 % + liseré blanc 10 %) pour les 4 cartes
+  atouts et le badge plateforme. Mode Nuit : AUCUN effet (les deux règles
+  sont sous `html:not(.dark)` — sélecteurs spécifiques, aucune collision
+  avec `.dark .glass-chip` global). Contrastes obtenus : titres ≈ 11:1,
+  descriptions ≈ 7,7:1, badge ≈ 5,8:1 (WCAG AA atteint partout).
+- Carte formulaire (`.glass-card`, utilisée UNIQUEMENT par /login — zéro
+  effet de bord) : Jour renforcé — opacité 62 % → 78 %, liseré 14 % →
+  22 % : sur fond papier menthe, la frontière du formulaire se situe
+  d'un coup d'œil. Variante Nuit inchangée.
+
+### Vérifié
+eslint 0 ; tsgo 0 ; build production typecheck actif 13 routes ; parcours
+navigateur (Playwright local, stack réelle : backend Go :4000 + next
+start :3016, thème injecté via localStorage) : mode clair desktop
+1440 px (4 cartes titres+descriptions lisibles, héros et sous-titre
+nets, frontière formulaire affirmée), clair mobile 390 px (aucun
+débordement, pied FTCI seul), sombre desktop (non-régression intégrale),
+onglet Mode Vente cliquable et lisible ; « © 2025 MikCloud » absent du
+DOM dans les 4 contextes, FTCI présent ; 0 erreur console/page (le 404
+locale du beacon /api/vitals est un artefact de build sans
+NEXT_PUBLIC_API_BASE — absent en production) ; contrôle VLM des 4
+captures : RAS. Zéro endpoint, zéro route, zéro migration ; 1 clé i18n
+retirée par langue. Déploiement attendu : Vercel UNIQUEMENT (Render
+saute — aucun diff backend/).
+
 ## 2026-09-13 — N°93 : SafeWiFi réparé — le portail captif redevient détectable avant le login : le durcissement N°85 détournait AUSSI le DNS des clients non authentifiés, privant l'OS de résolution pré-auth (plus de popup de connexion, régression production CYBER-ESPACE SC) — deux règles redirect vers le servlet DNS natif du hotspot restaurent le comportement RouterOS sans rouvrir l'échappatoire filtrage
 
 ### N°93 — Contexte : une régression de disponibilité, pas de sécurité

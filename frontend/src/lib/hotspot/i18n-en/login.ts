@@ -22,7 +22,6 @@ export const enLogin: Record<string, string> = {
   "login.logoAlt": "MikCloud logo — cloud, WiFi signal and MikroTik router",
   "login.demoPrefix": "Demo: ",
   "login.useDemo": "Use demo account",
-  "login.footer": "© 2025 MikCloud — Connect your MikroTik routers with ease",
   "login.noAccount": "No account yet?",
   "login.createAccount": "Create my account",
   "login.form.title": "Welcome back!",

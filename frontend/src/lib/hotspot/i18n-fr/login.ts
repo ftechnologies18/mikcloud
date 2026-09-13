@@ -22,7 +22,6 @@ export const frLogin: Record<string, string> = {
   "login.logoAlt": "Logo MikCloud — nuage, signal WiFi et routeur MikroTik",
   "login.demoPrefix": "Démo : ",
   "login.useDemo": "Utiliser le compte démo",
-  "login.footer": "© 2025 MikCloud — Connectez vos routeurs MikroTik en toute simplicité",
   "login.noAccount": "Pas encore de compte ?",
   "login.createAccount": "Créer mon compte",
   "login.form.title": "Bon retour !",

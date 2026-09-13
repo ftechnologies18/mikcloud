@@ -149,10 +149,9 @@ function BrandPanel() {
               </li>
             ))}
           </ul>
-          <p className="mik-rise mt-8 text-xs text-muted-foreground/70" style={{ animationDelay: "0.46s" }}>
-            {t("login.footer")}
-          </p>
-          <p className="mik-rise mt-2" style={{ animationDelay: "0.53s" }}>
+          {/* N°94 — mention « © 2025 MikCloud — Connectez vos routeurs… »
+              retirée : seul subsiste le crédit FTCI, ancré au même emplacement. */}
+          <p className="mik-rise mt-8" style={{ animationDelay: "0.46s" }}>
             <FtciCredit className="text-xs text-muted-foreground/80" />
           </p>
         </div>
@@ -510,13 +509,8 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
             <PwaInstallCta />
           </div>
 
-          <p
-            className="mik-fade mt-6 text-center text-xs text-muted-foreground lg:hidden"
-            style={{ animationDelay: "0.55s" }}
-          >
-            {t("login.footer")}
-          </p>
-          <p className="mik-fade mt-2 text-center lg:hidden" style={{ animationDelay: "0.6s" }}>
+          {/* N°94 — idem mobile : une seule ligne de pied, le crédit FTCI. */}
+          <p className="mik-fade mt-6 text-center lg:hidden" style={{ animationDelay: "0.55s" }}>
             <FtciCredit className="text-xs text-muted-foreground/80" />
           </p>
         </div>

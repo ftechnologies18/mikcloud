@@ -137,10 +137,13 @@ type Router struct {
 	// sur ce routeur (hash du niveau + sel de version des règles).
 	// Vide → rien d'appliqué (ou dernier échec) : le check-in suivant
 	// re-file la commande safewifi. Posée au retour « ok » VÉRIFIÉ — le
+	// re-file la commande safewifi. Posée au retour « ok » VÉRIFIÉ — le
 	// routeur échoe le compte d'objets marqués mikcloud-safewifi présents
-	// après application (vérité routeur, pattern scheduler_set N°75 ;
-	// N°85 : 2 règles NAT + liste DoH v4 + 2 règles FILTER par serveur
-	// hotspot rapporté, 0 sinon).
+	// après application ET, depuis le N°95, leur disposition réelle en
+	// table NAT (layout RRDD — boucliers pré-auth au-dessus des dst-nat ;
+	// vérité routeur, pattern scheduler_set N°75 ; N°93 : 4 règles NAT +
+	// liste DoH v4 + 2 règles FILTER par serveur hotspot rapporté, 0
+	// sinon).
 	SafeWifiSig string `json:"safeWifiSig,omitempty"`
 	// N°80 — horodatage (RFC3339) de la dernière application confirmée :
 	// auto-réparation périodique (une règle effacée localement par un

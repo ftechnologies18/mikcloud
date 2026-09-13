@@ -1,11 +1,14 @@
 package api
 
-// Tests N°80/N°85/N°93 — SafeWiFi : convergence au check-in (ensure),
-// signature vérifiée au retour (vérité routeur), silence des routeurs qui
-// n'ont jamais ouvert la carte, et priorité dans le batch du check-in. Le
-// compte attendu au retour (N°93) : 4 règles NAT (2 dst-nat + 2 boucliers
-// pré-auth) + liste DoH v4 + 2 règles FILTER par serveur hotspot rapporté
-// — pattern Shield N°81.
+// Tests N°80/N°85/N°93/N°95 — SafeWiFi : convergence au check-in (ensure),
+// signature vérifiée au retour (vérité routeur — compte ET disposition
+// des règles NAT depuis le N°95), silence des routeurs qui n'ont jamais
+// ouvert la carte, et priorité dans le batch du check-in. Le compte
+// attendu au retour (N°93) : 4 règles NAT (2 dst-nat + 2 boucliers
+// pré-auth) + liste DoH v4 + 2 règles FILTER par serveur hotspot
+// rapporté — pattern Shield N°81 ; la disposition attendue (N°95) :
+// SafeWifiNatLayout (RRDD — les boucliers précèdent les dst-nat, sinon
+// le portail captif meurt en silence, post-mortem CYBER-ESPACE SC).
 
 import (
 	"strconv"
@@ -162,78 +165,101 @@ func TestSafeWifiRetireApresExtinction(t *testing.T) {
 }
 
 // TestSafeWifiResultVerified — la signature n'est posée que si le COMPTE
-// d'objets marqués rapporté par le routeur correspond au niveau attendu :
-// 4 NAT (2 dst-nat + 2 boucliers pré-auth N°93) + liste DoH v4 + 2 règles
-// par hotspot en filtrage actif, 0 sinon. Un compte divergent — ou un hs
-// illisible — reste sans sig.
+// d'objets marqués rapporté par le routeur correspond au niveau attendu
+// ET si la DISPOSITION NAT rapportée (layout, N°95) est exacte : 4 NAT
+// (2 dst-nat + 2 boucliers pré-auth N°93, boucliers AU-DESSUS —
+// SafeWifiNatLayout N°95) + liste DoH v4 + 2 règles par hotspot en
+// filtrage actif, 0 sinon. Un compte divergent, un hs illisible — ou
+// une disposition inversée/absente — reste sans sig.
 func TestSafeWifiResultVerified(t *testing.T) {
 	sig := safeWifiSig(model.SafeWifiFamily)
 	cmd := model.Command{ID: "c-sw", Kind: model.CmdSafeWifi,
 		Payload: map[string]any{"level": model.SafeWifiFamily, "sig": sig}}
 
 	want := agent.SafeWifiRulesExpected(2)
-	if !safeWifiResultVerified(&cmd, model.SafeWifiFamily, strconv.Itoa(want), 2) {
-		t.Fatalf("family + %d objets rapportés (2 hotspots) : la vérification doit passer", want)
+	if !safeWifiResultVerified(&cmd, model.SafeWifiFamily, strconv.Itoa(want), 2, agent.SafeWifiNatLayout) {
+		t.Fatalf("family + %d objets rapportés (2 hotspots) + layout exact : la vérification doit passer", want)
 	}
-	if safeWifiResultVerified(&cmd, model.SafeWifiFamily, "0", 2) {
+	if safeWifiResultVerified(&cmd, model.SafeWifiFamily, "0", 2, agent.SafeWifiNatLayout) {
 		t.Fatal("family + 0 objet rapporté : la vérification doit échouer")
 	}
-	if safeWifiResultVerified(&cmd, model.SafeWifiFamily, strconv.Itoa(want-1), 2) {
+	if safeWifiResultVerified(&cmd, model.SafeWifiFamily, strconv.Itoa(want-1), 2, agent.SafeWifiNatLayout) {
 		t.Fatal("compte divergent (attendu − 1) : la vérification doit échouer")
 	}
-	if safeWifiResultVerified(&cmd, model.SafeWifiFamily, strconv.Itoa(want), 1) {
+	if safeWifiResultVerified(&cmd, model.SafeWifiFamily, strconv.Itoa(want), 1, agent.SafeWifiNatLayout) {
 		t.Fatal("compte conforme mais hs divergent (2 rapportés, 1 attendu) : la vérification doit échouer")
 	}
+	// N°95 — disposition : un compte conforme avec des boucliers SOUS les
+	// dst-nat est EXACTEMENT le post-mortem CYBER-ESPACE SC du N°93 :
+	// compter sans vérifier l'ordre a laissé un portail captif mort passer
+	// pour une application réussie (rules=34, sig posée).
+	if safeWifiResultVerified(&cmd, model.SafeWifiFamily, strconv.Itoa(want), 2, "DDRR") {
+		t.Fatal("compte conforme mais disposition inversée (DDRR — boucliers sous les dst-nat) : la vérification doit échouer (post-mortem N°93)")
+	}
+	if safeWifiResultVerified(&cmd, model.SafeWifiFamily, strconv.Itoa(want), 2, "") {
+		t.Fatal("compte conforme mais disposition absente (rapport forme sw-v3) : la vérification doit échouer — un ordre non prouvé n'est pas signé")
+	}
 	// hs illisible (paramètre absent du rapport) → vérification impossible.
-	if safeWifiResultVerified(&cmd, model.SafeWifiFamily, strconv.Itoa(want), -1) {
+	if safeWifiResultVerified(&cmd, model.SafeWifiFamily, strconv.Itoa(want), -1, agent.SafeWifiNatLayout) {
 		t.Fatal("hs illisible : la vérification doit échouer (pattern Shield N°81)")
 	}
 	offCmd := model.Command{ID: "c-sw", Kind: model.CmdSafeWifi,
 		Payload: map[string]any{"level": model.SafeWifiOff, "sig": safeWifiSig(model.SafeWifiOff)}}
-	if !safeWifiResultVerified(&offCmd, model.SafeWifiOff, "0", 0) {
+	if !safeWifiResultVerified(&offCmd, model.SafeWifiOff, "0", 0, "") {
 		t.Fatal("off + 0 objet rapporté : la vérification doit passer")
 	}
-	if safeWifiResultVerified(&offCmd, model.SafeWifiOff, "2", 0) {
+	if safeWifiResultVerified(&offCmd, model.SafeWifiOff, "2", 0, "") {
 		t.Fatal("off + objets résiduels : la vérification doit échouer")
 	}
 }
 
 // safeWifiResultVerified — extrait de handleAgentResult (branche N°80,
-// durcie N°85) : vrai si le compte d'objets marqués rapporté correspond au
-// niveau de la commande ET si ce niveau est toujours le niveau courant du
-// routeur. hs < 0 simule un paramètre hs absent/illisible (want = -1, la
-// vérification est impossible → pas de sig).
-func safeWifiResultVerified(cmd *model.Command, currentLevel, reported string, hs int) bool {
+// durcie N°85, ordre vérifié N°95) : vrai si le compte d'objets marqués
+// rapporté correspond au niveau de la commande, si la DISPOSITION NAT
+// rapportée (layout) est exacte ET si ce niveau est toujours le niveau
+// courant du routeur. hs < 0 simule un paramètre hs absent/illisible
+// (want = -1, la vérification est impossible → pas de sig). layout
+// simulé : agent.SafeWifiNatLayout (forme N°95 exacte), \"DDRR\"
+// (boucliers sous les dst-nat — post-mortem N°93), \"\" (rapport forme
+// sw-v3 sans disposition, ou off sans règle NAT marquée).
+func safeWifiResultVerified(cmd *model.Command, currentLevel, reported string, hs int, layout string) bool {
 	level := agent.SafeWifiLevelFromPayload(cmd.Payload)
 	if level != currentLevel {
 		return false
 	}
 	want := 0
+	wantLayout := ""
 	if level != model.SafeWifiOff {
 		if hs < 0 {
 			return false // hs illisible : vérification impossible → pas de sig
 		}
 		want = agent.SafeWifiRulesExpected(hs)
+		wantLayout = agent.SafeWifiNatLayout
 	}
 	got, ok := parseReportInt(reported)
-	return ok && got == want
+	return ok && got == want && layout == wantLayout
 }
 
 // TestSafeWifiSigVersioned — le sel de version garantit qu'une évolution de
 // la FORME des règles est re-poussée au parc entier (garde-fou N°48). Le
-// bump sw-v2 → sw-v3 (N°93 : bouclier pré-auth, correction de la régression
-// portail captif du N°85) doit changer la signature d'un niveau déjà
-// appliqué — le parc entier recevra la correction au check-in suivant.
+// bump sw-v3 → sw-v4 (N°95 : ordre boucliers→dst-nat imposé par move et
+// vérifié par layout — correction du post-mortem N°93 dont les boucliers
+// se posaient SOUS les dst-nat) doit changer la signature d'un niveau
+// déjà appliqué — le parc entier recevra la correction au check-in
+// suivant le déploiement Render.
 func TestSafeWifiSigVersioned(t *testing.T) {
 	legacy := agent.HashToken(model.SafeWifiFamily)[:16] // formule sans sel
 	if s := safeWifiSig(model.SafeWifiFamily); s == legacy {
 		t.Fatal("safeWifiSig sans sel de version : un correctif de règles ne serait jamais re-poussé (régression N°48)")
 	}
 	if v1 := agent.HashToken("sw-v1|" + model.SafeWifiFamily)[:16]; safeWifiSig(model.SafeWifiFamily) == v1 {
-		t.Fatal("sw-v3 doit différer de sw-v1 : le parc resterait sur la forme initiale des règles (régression N°85)")
+		t.Fatal("sw-v4 doit différer de sw-v1 : le parc resterait sur la forme initiale des règles (régression N°85)")
 	}
 	if v2 := agent.HashToken("sw-v2|" + model.SafeWifiFamily)[:16]; safeWifiSig(model.SafeWifiFamily) == v2 {
-		t.Fatal("sw-v3 doit différer de sw-v2 : le parc resterait sur la forme N°85 qui prive les clients non authentifiés de DNS — portail captif mort (régression N°93)")
+		t.Fatal("sw-v4 doit différer de sw-v2 : le parc resterait sur la forme N°85 qui prive les clients non authentifiés de DNS — portail captif mort")
+	}
+	if v3 := agent.HashToken("sw-v3|" + model.SafeWifiFamily)[:16]; safeWifiSig(model.SafeWifiFamily) == v3 {
+		t.Fatal("sw-v4 doit différer de sw-v3 : le parc resterait sur la forme N°93 dont les boucliers se posaient SOUS les dst-nat — portail captif toujours mort (post-mortem CYBER-ESPACE SC)")
 	}
 	if safeWifiSig(model.SafeWifiThreats) == safeWifiSig(model.SafeWifiFamily) {
 		t.Fatal("des niveaux distincts doivent produire des signatures distinctes")

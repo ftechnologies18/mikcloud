@@ -5,6 +5,83 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-14 — N°95 : SafeWiFi — l'ordre des règles NAT devient déterministe et vérifié : le N°93 avait livré les bons boucliers au mauvais étage (la table réelle de CYBER-ESPACE SC inversait la théorie « place-before=0 empile en ordre inverse » — boucliers SOUS les dst-nat, ERR_NAME_NOT_RESOLVED sur le dns-name du portail), un bloc move explicite + la disposition rapportée (layout=RRDD) referment la régression portail captif pour de bon
+
+### N°95 — Contexte : des règles correctes… dans le mauvais ordre
+Retour du gérant après le déploiement du N°93 : le portail captif de
+CYBER-ESPACE SC ne s'affiche TOUJOURS pas. Le print terrain
+(/ip firewall nat print) a apporté la preuve : les quatre règles NAT
+marquées sont bien posées (boucliers compris — la convergence sw-v3 a
+opéré), mais dans l'ordre [dst-nat udp, dst-nat tcp, redirect udp,
+redirect tcp] — les boucliers SOUS les dst-nat. La théorie du N°93
+(« place-before=0 empile en ordre inverse : le dernier ajouté est le
+plus haut ; on émet les dst-nat d'abord pour que les boucliers
+finissent au-dessus ») est FAUSSE sur ce RouterOS : la table réelle
+conserve l'ORDRE D'ÉMISSION. Conséquence exacte : le DNS d'un client NON
+authentifié matche la dst-nat inconditionnelle (règles 0/1) AVANT le
+bouclier — part en forward vers 94.140.14.15 (AdGuard Family), rejeté
+par hs-unauth (rien hors walled-garden n'est accepté pré-auth) → plus
+de résolution pré-login. La capture du téléphone client l'a confirmé
+mot pour mot : le hotspot redirige BIEN vers
+http://cyberscwifi.net/login?dst=… (le dns-name Mikhmon du profil — la
+détection de portail fonctionne), mais la page meurt sur
+net::ERR_NAME_NOT_RESOLVED : le dns-name local n'est résolvable que par
+le servlet DNS natif (64872), que les dst-nat privent de requêtes. Et
+pire : la signature était POSÉE — rules=34 conforme — un compte exact
+cachait un ordre inversé. Compter les règles ne prouve pas leur ordre ;
+l'ordre, c'est la disponibilité du portail captif.
+
+### Technique — l'ordre imposé (move) puis prouvé (layout), jamais supposé
+Trois changements dans buildSafeWifi (agent/safewifi.go), calqués sur la
+leçon du post-mortem :
+- ÉMISSION : les boucliers pré-auth sont désormais émis AVANT les
+  dst-nat — l'ordre d'émission EST l'ordre de table observé sur le
+  terrain, le move devient quasiment un no-op sur un routeur sain ;
+- IMPOSITION : un bloc move explicite rend la disposition déterministe
+  quelle que soit la sémantique de place-before du RouterOS visé : la
+  première dst-nat en ordre de table sert d'ancre (swtgt), chaque
+  bouclier est déplacé DEVANT elle, puis les autres dst-nat sont
+  regroupées devant la même ancre — bloc final [R,R,D,D] contigu,
+  au-dessus des règles dynamiques du hotspot. Échec du réordonnancement
+  des boucliers → swnat false → garde N°93 (retrait complet de la
+  famille : le portail reste servi par le servlet natif, la commande
+  re-file) ; le regroupement des dst-nat est best-effort ;
+- PREUVE : le rapport échoe la disposition RÉELLE des règles NAT
+  marquées en ordre de table (layout — une lettre par règle : R =
+  redirect pré-auth, D = dst-nat), calculée APRÈS le réordonnancement :
+  &layout=RRDD attendu. Côté cloud (agent_handlers.go), la signature
+  n'est posée que si le compte ET la disposition sont exacts
+  (SafeWifiNatLayout = « RRDD », miroir de len == SafeWifiNatRules) : un
+  ordre réel inversé — ou un rapport de la forme sw-v3 sans disposition —
+  ne peut plus JAMAIS passer pour une application réussie. Bump du sel
+  sw-v3 → sw-v4 (garde-fou N°48) : tout le parc reçoit la correction au
+  check-in suivant le déploiement Render (≤ 45 s console ouverte /
+  ≤ 180 s en veille), sans intervention. Contrat PUT inchangé, zéro
+  migration (aucune colonne), zéro diff frontend, /ip dns toujours
+  intouché (doctrine N°80 : le check-in agent ne dépend jamais du
+  résolveur filtrant).
+
+### Vérifié localement comme la CI
+gofmt/vet/build verts ; go test complet 12 paquets verts SANS -race PUIS
+AVEC -race (api 401 s) ; tests agent/safewifi_test.go étendus (boucliers
+émis AVANT les dst-nat — l'ordre d'émission est l'ordre de table observé
+; ancre swtgt présente ; 2 blocs move ; rapport échoant
+rules+hs+layout ; calcul swlay D/R présent ; miroir
+SafeWifiNatLayout == « RRDD » et len == SafeWifiNatRules) ; tests
+api/safewifi_test.go étendus (compte conforme + disposition inversée
+DDRR → échec — le post-mortem exact du N°93 ; disposition absente
+(rapport sw-v3) → échec ; off + layout vide → passe ; sw-v4 ≠ sw-v3 ≠
+sw-v2 ≠ sw-v1 ≠ formule sans sel). Script RouterOS généré inspecté
+intégralement (ON family : retraits idempotents → 2 boucliers → 2
+dst-nat → move déterministe ancré sur swtgt → garde → liste DoH 28
+entrées → foreach hotspot DoT/DoH v4 + miroir IPv6 → rapport dynamique
+rules+hs+layout ; OFF : retraits seuls → rapport rules=0, layout vide).
+Déploiements attendus : Render SEULEMENT (backend/ touché) — la sig
+sw-v3 stockée devient mismatch au check-in de chaque routeur protégé →
+re-file → correction posée et confirmée par rules=34 ET layout=RRDD ;
+Vercel artefact identique (zéro diff frontend) ; la CI joue le même
+gate que localement.
+
 ## 2026-09-13 — N°94 : écran de connexion — mention « © 2025 MikCloud » retirée + lisibilité Jour des cartes (panneau branding et carte formulaire)
 
 ### N°94 — Contexte : demande du gérant (capture d'écran à l'appui)

@@ -1,5 +1,5 @@
 // SafeWiFi — génération du script RouterOS de filtrage DNS (DNS chiffré et IPv6 coupés, N°85).
-// Extrait du monolithe agent.go (N°88) — même package, contenu inchangé.
+// Extrait du monolithe agent.go (N°88) — même package ; ordre NAT déterministe et vérifié N°95.
 package agent
 
 import (
@@ -134,6 +134,23 @@ const SafeWifiFilterRulesPerHotspot = 2
 // vérification du retour compte ces règles — via SafeWifiRulesExpected.
 const SafeWifiNatRules = 4
 
+// SafeWifiNatLayout — N°95 : disposition attendue des règles NAT
+// marquées, en ORDRE DE TABLE — une lettre par règle (R = redirect
+// pré-auth vers le servlet DNS natif, D = dst-nat vers le résolveur
+// filtrant). Le portail captif EXIGE que les boucliers précèdent les
+// dst-nat : une dst-nat inconditionnelle placée au-dessus détourne
+// AUSSI le DNS des clients NON authentifiés vers l'IP externe du
+// résolveur — rejetée par hs-unauth, la résolution pré-login meurt
+// et le dns-name du portail devient ERR_NAME_NOT_RESOLVED (post-mortem
+// CYBER-ESPACE SC : le N°93 supposait « place-before=0 empile en ordre
+// inverse », la table réelle conservait l'ordre d'émission — boucliers
+// SOUS les dst-nat). Le script impose désormais l'ordre par un move
+// explicite PUIS rapporte la disposition réelle : le cloud ne pose la
+// signature que si elle vaut exactement SafeWifiNatLayout — l'ordre
+// cesse d'être une hypothèse, il devient une donnée vérifiée (vérité
+// routeur).
+const SafeWifiNatLayout = "RRDD"
+
 // SafeWifiRulesExpected — compte TOTAL d'objets marqués attendu côté routeur
 // pour un niveau actif : SafeWifiNatRules règles NAT + les entrées de la
 // liste DoH v4 + SafeWifiFilterRulesPerHotspot règles par serveur hotspot.
@@ -220,20 +237,46 @@ func SafeWifiLevelFromPayload(p map[string]any) string {
 // authentifiés SANS rouvrir l'échappatoire N°85 : DEUX règles redirect
 // « hotspot=from-client,!auth » (le matcher NATIF du hotspot, utilisé par
 // ses propres règles dynamiques) renvoient le port 53 pré-login vers le
-// servlet 64872 — posées APRÈS les dst-nat dans le script, donc
-// AU-DESSUS d'elles dans la table (place-before=0 empile en ordre
-// inverse). Le servlet répond lui-même (noms locaux + domaines publics,
-// upstream non filtré — un invité ne peut de toute façon rien ouvrir hors
-// walled-garden avant le login) ; dès l'authentification, le matcher ne
-// matche plus et le DNS transite par les dst-nat → résolveur filtrant :
-// la promesse N°85 est intégralement conservée pour tout ce qui est
-// authentifié, ainsi que pour le LAN du gérant et tout DNS externe. Garde
-// de disponibilité : si la famille NAT échoue à la pose (p.ex. matcher
-// absent d'une version exotique), le script RETIRE les règles marquées de
-// la famille — le portail reste servi par le servlet natif (doctrine N°80
-// : la disponibilité prime) et le rapport échoue → re-file au check-in
-// suivant. Bump du sel sw-v2 → sw-v3 : tout le parc corrige au check-in
-// suivant.
+// servlet 64872. Le servlet répond lui-même (noms locaux + domaines
+// publics, upstream non filtré — un invité ne peut de toute façon rien
+// ouvrir hors walled-garden avant le login) ; dès l'authentification, le
+// matcher ne matche plus et le DNS transite par les dst-nat → résolveur
+// filtrant : la promesse N°85 est intégralement conservée pour tout ce
+// qui est authentifié, ainsi que pour le LAN du gérant et tout DNS
+// externe. Garde de disponibilité : si la famille NAT échoue à la pose
+// (p.ex. matcher absent d'une version exotique), le script RETIRE les
+// règles marquées de la famille — le portail reste servi par le servlet
+// natif (doctrine N°80 : la disponibilité prime) et le rapport échoue →
+// re-file au check-in suivant.
+//
+// Post-mortem N°95 — le N°93 a été livré avec une théorie d'empilement
+// FAUSSE : « place-before=0 empile en ordre inverse — le dernier ajouté
+// est le plus haut ». La table RÉELLE de CYBER-ESPACE SC a conservé
+// l'ordre d'ÉMISSION : les boucliers se sont posés SOUS les dst-nat
+// (règles 2/3 sous 0/1 du print terrain), le DNS pré-login est resté
+// capté par les dst-nat → forward vers l'IP externe du résolveur →
+// rejeté par hs-unauth → net::ERR_NAME_NOT_RESOLVED sur le dns-name du
+// portail (cyberscwifi.net) : la page de login ne s'est jamais chargée,
+// la régression N°85 n'était PAS corrigée sur le terrain.
+//
+// Correctif N°95 : l'ordre cesse d'être une hypothèse. Le script :
+//  1. émet les boucliers AVANT les dst-nat (l'ordre d'émission EST
+//     l'ordre de table observé — le move devient quasiment un no-op) ;
+//  2. IMPOSE la disposition par un bloc move explicite : chaque
+//     bouclier est déplacé DEVANT la première dst-nat (ancre swtgt),
+//     puis les autres dst-nat sont regroupées devant la même ancre —
+//     disposition finale [R,R,D,D] suivie des règles dynamiques du
+//     hotspot, QUELLE QUE SOIT la sémantique de place-before du
+//     RouterOS visé ;
+//  3. RAPPORTE la disposition réelle des règles marquées (layout, une
+//     lettre par règle en ordre de table) : le cloud ne pose la
+//     signature que si elle vaut exactement SafeWifiNatLayout.
+//
+// La leçon du post-mortem : vérifier la PRÉSENCE des règles ne suffit
+// pas — un compte conforme (rules=34) cachait un ordre inversé qui
+// tuait le portail en silence ; l'ordre fait partie de la vérité
+// routeur. Bump du sel sw-v3 → sw-v4 : tout le parc corrige au
+// check-in suivant.
 //
 //	off      : retire les règles et listes marquées (retour à l'état antérieur) ;
 //	threats  : Quad9 (malwares, phishing, arnaques) ;
@@ -268,33 +311,71 @@ func (b Builder) buildSafeWifi(cmd model.Command) string {
 	sb.WriteString(":local swnat true\n")
 	if level != model.SafeWifiOff {
 		dns := SafeWifiResolver(level)
-		// 1. NAT en TÊTE de table (N°85) : une règle dstnat antérieure —
-		// redirect DNS hérité d'une config Mikhmon/tutoriel — ne peut plus
-		// prendre le port 53 avant les règles MikCloud. Ajoutées en
-		// PREMIER, elles se retrouvent SOUS le bouclier pré-auth posé
-		// juste après (place-before=0 empile en ordre inverse : le
-		// dernier ajouté est le plus haut) — l'ordre final voulu est
-		// bouclier PUIS dst-nat.
-		sb.WriteString(":do {\n  /ip firewall nat add chain=dstnat place-before=0 action=dst-nat to-addresses=" + dns +
-			" to-ports=53 protocol=udp dst-port=53 comment=\"" + SafeWifiMarker + "\"\n} on-error={ :set swnat false }\n")
-		sb.WriteString(":do {\n  /ip firewall nat add chain=dstnat place-before=0 action=dst-nat to-addresses=" + dns +
-			" to-ports=53 protocol=tcp dst-port=53 comment=\"" + SafeWifiMarker + "\"\n} on-error={ :set swnat false }\n")
-		// 1-bis. N°93 — bouclier pré-authentification : DEUX règles
-		// redirect matcher hotspot=from-client,!auth (le matcher NATIF
-		// du hotspot, utilisé par ses propres règles dynamiques —
-		// manuel « Hotspot customisation ») renvoyant le port 53 des
-		// clients NON authentifiés vers le servlet DNS interne 64872,
-		// accepté pré-login par hs-input. Posées APRÈS les dst-nat
-		// ci-dessus → AU-DESSUS dans la table : le DNS pré-login
-		// redevient natif (résolution + détection du portail captif),
-		// tandis que tout client AUTHENTIFIÉ — le matcher ne matche
-		// plus — conserve le chemin dst-nat → résolveur filtrant
-		// (promesse N°85 intacte), de même que le LAN du gérant et
-		// tout DNS externe.
+		// 1. Boucliers pré-authentification N°93 — émis en PREMIER :
+		// l'ordre d'émission EST l'ordre de table observé sur le terrain
+		// (post-mortem CYBER-ESPACE SC du N°93 : la théorie « place-before=0
+		// empile en ordre inverse » était FAUSSE — émettre les boucliers
+		// APRÈS les dst-nat les posait SOUS elles, le DNS pré-login restait
+		// capté → ERR_NAME_NOT_RESOLVED sur le dns-name du portail). DEUX
+		// règles redirect matcher hotspot=from-client,!auth (le matcher NATIF
+		// du hotspot, utilisé par ses propres règles dynamiques — manuel
+		// « Hotspot customisation ») renvoient le port 53 des clients NON
+		// authentifiés vers le servlet DNS interne 64872, accepté pré-login
+		// par hs-input. Tout client AUTHENTIFIÉ — le matcher ne matche plus
+		// — conserve le chemin dst-nat → résolveur filtrant (promesse N°85
+		// intacte), de même que le LAN du gérant et tout DNS externe.
 		sb.WriteString(":do {\n  /ip firewall nat add chain=dstnat place-before=0 hotspot=from-client,!auth action=redirect to-ports=" + SafeWifiHotspotDnsPort +
 			" protocol=udp dst-port=53 comment=\"" + SafeWifiMarker + "\"\n} on-error={ :set swnat false }\n")
 		sb.WriteString(":do {\n  /ip firewall nat add chain=dstnat place-before=0 hotspot=from-client,!auth action=redirect to-ports=" + SafeWifiHotspotDnsPort +
 			" protocol=tcp dst-port=53 comment=\"" + SafeWifiMarker + "\"\n} on-error={ :set swnat false }\n")
+		// 2. dst-nat vers le résolveur filtrant (N°80/N°85) — en TÊTE de table
+		// (place-before=0) : une règle dstnat antérieure — redirect DNS hérité
+		// d'une config Mikhmon/tutoriel — ne peut pas prendre le port 53 avant
+		// les règles MikCloud. L'ordre final voulu (bouclier PUIS dst-nat,
+		// règles dynamiques du hotspot dessous) n'est PAS laissé à l'ordre
+		// d'émission : il est IMPOSÉ par le bloc move N°95 qui suit et
+		// VÉRIFIÉ par le layout du rapport — plus jamais de régression
+		// silencieuse d'ordonnancement.
+		sb.WriteString(":do {\n  /ip firewall nat add chain=dstnat place-before=0 action=dst-nat to-addresses=" + dns +
+			" to-ports=53 protocol=udp dst-port=53 comment=\"" + SafeWifiMarker + "\"\n} on-error={ :set swnat false }\n")
+		sb.WriteString(":do {\n  /ip firewall nat add chain=dstnat place-before=0 action=dst-nat to-addresses=" + dns +
+			" to-ports=53 protocol=tcp dst-port=53 comment=\"" + SafeWifiMarker + "\"\n} on-error={ :set swnat false }\n")
+		// 3. N°95 — réordonnancement DÉTERMINISTE de la famille NAT : quelle
+		// que soit la sémantique de place-before du RouterOS visé (ordre
+		// d'émission, empilement inverse — les deux existent selon versions),
+		// la disposition finale est IMPOSÉE : chaque bouclier est déplacé
+		// DEVANT la première dst-nat (ancre swtgt, première dst-nat en ordre
+		// de table), puis les autres dst-nat sont regroupées devant la même
+		// ancre — bloc final [R,R,D,D] contigu, au-dessus des règles
+		// dynamiques du hotspot. Échec du réordonnancement des boucliers →
+		// swnat false → garde ci-dessous (retrait complet : le portail reste
+		// servi par le servlet natif) ; le regroupement des dst-nat est
+		// best-effort (un échec ne change pas la disposition boucliers/
+		// dst-nat).
+		sb.WriteString(":local swtgt \"\"\n" +
+			":if ($swnat) do={\n" +
+			"  :do {\n" +
+			"    :foreach r in=[/ip firewall nat find comment=\"" + SafeWifiMarker + "\"] do={\n" +
+			"      :if (($swtgt = \"\") && ([/ip firewall nat get $r action] = \"dst-nat\")) do={ :set swtgt $r }\n" +
+			"    }\n" +
+			"  } on-error={ :set swnat false }\n" +
+			"  :if ($swtgt != \"\") do={\n" +
+			"    :do {\n" +
+			"      :foreach r in=[/ip firewall nat find comment=\"" + SafeWifiMarker + "\"] do={\n" +
+			"        :if ([/ip firewall nat get $r action] != \"dst-nat\") do={\n" +
+			"          /ip firewall nat move numbers=$r destination=$swtgt\n" +
+			"        }\n" +
+			"      }\n" +
+			"    } on-error={ :set swnat false }\n" +
+			"    :do {\n" +
+			"      :foreach r in=[/ip firewall nat find comment=\"" + SafeWifiMarker + "\"] do={\n" +
+			"        :if (($r != $swtgt) && ([/ip firewall nat get $r action] = \"dst-nat\")) do={\n" +
+			"          /ip firewall nat move numbers=$r destination=$swtgt\n" +
+			"        }\n" +
+			"      }\n" +
+			"    } on-error={}\n" +
+			"  }\n" +
+			"}\n")
 		// N°93 — garde de disponibilité : échec de pose dans la
 		// famille NAT (p.ex. matcher absent d'une version RouterOS
 		// exotique) → retrait complet des règles marquées de la
@@ -338,12 +419,30 @@ func (b Builder) buildSafeWifi(cmd model.Command) string {
 	// Rapport — vérité routeur : le compte d'objets marqués IPv4 présents
 	// après application (NAT + FILTER + liste DoH — valeur DYNAMIQUE
 	// calculée côté routeur, pattern fetchResultData : le cloud ne croit que
-	// ce que le routeur rapporte) ET le nombre de serveurs hotspots trouvés
-	// (pattern Shield N°81 : le compte attendu en dépend).
+	// ce que le routeur rapporte), le nombre de serveurs hotspots trouvés
+	// (pattern Shield N°81 : le compte attendu en dépend) ET, depuis le
+	// N°95, la disposition RÉELLE des règles NAT marquées en ordre de
+	// table (layout : R = redirect pré-auth, D = dst-nat — une lettre par
+	// règle) : le cloud ne pose la signature que si les boucliers
+	// précèdent les dst-nat (SafeWifiNatLayout). Leçon du post-mortem
+	// N°93 : compter les règles ne prouve pas leur ordre — et l'ordre,
+	// c'est la disponibilité du portail captif.
 	sb.WriteString(":local swr ([:len [/ip firewall nat find comment=\"" + SafeWifiMarker + "\"]] + [:len [/ip firewall filter find comment=\"" + SafeWifiMarker +
 		"\"]] + [:len [/ip firewall address-list find list=\"" + SafeWifiDoHList + "\"]])\n")
+	// N°95 — disposition réelle (layout) : une lettre par règle NAT
+	// marquée, en ordre de table — calculée APRÈS le réordonnancement,
+	// juste avant le rapport : c'est la vérité routeur, pas l'intention
+	// du script.
+	sb.WriteString(":local swlay \"\"\n")
+	sb.WriteString(":foreach r in=[/ip firewall nat find comment=\"" + SafeWifiMarker + "\"] do={\n")
+	sb.WriteString("  :if ([/ip firewall nat get $r action] = \"dst-nat\") do={\n")
+	sb.WriteString("    :set swlay ($swlay . \"D\")\n")
+	sb.WriteString("  } else={\n")
+	sb.WriteString("    :set swlay ($swlay . \"R\")\n")
+	sb.WriteString("  }\n")
+	sb.WriteString("}\n")
 	ok := `/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
-		`" http-method=post http-data=("cmd=` + urlEscape(cmd.ID) + `&status=ok&rules=". $swr . "&hs=". $swn) output=none`
+		`" http-method=post http-data=("cmd=` + urlEscape(cmd.ID) + `&status=ok&rules=". $swr . "&hs=". $swn . "&layout=". $swlay) output=none`
 	ko := b.reportLine(cmd.ID, false, map[string]string{"message": "echec des regles de protection sur le routeur"})
 	sb.WriteString(":if ($" + okVar + ") do={\n  " + ok + "\n} else={\n  " + ko + "\n}\n")
 	return sb.String()

@@ -777,21 +777,29 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 			// + 2 règles FILTER par serveur hotspot rapporté — 0
 			// sinon ; vérité routeur, pattern scheduler_set ET
 			// pattern Shield N°81 : le compte dépend du parc réel
-			// du routeur). Et uniquement si le niveau rapporté
+			// du routeur) ET, depuis le N°95, si la DISPOSITION des
+			// règles NAT marquées rapportée est exacte : boucliers
+			// pré-auth AU-DESSUS des dst-nat (SafeWifiNatLayout).
+			// Le post-mortem CYBER-ESPACE SC du N°93 a prouvé qu'un
+			// compte conforme peut cacher un ordre inversé —
+			// boucliers sous les dst-nat — qui tue le portail captif
+			// en silence. Et uniquement si le niveau rapporté
 			// correspond TOUJOURS au niveau courant : un gérant
 			// qui change d'avis pendant le vol ne doit pas voir
 			// un niveau périmé figé — le check-in suivant re-file
 			// la différence.
 			level := agent.SafeWifiLevelFromPayload(cmd.Payload)
 			want := 0
+			wantLayout := ""
 			if level != model.SafeWifiOff {
 				if hs, ok := parseReportInt(vals.Get("hs")); ok {
 					want = agent.SafeWifiRulesExpected(hs)
 				} else {
 					want = -1 // hs illisible : vérification impossible → pas de sig
 				}
+				wantLayout = agent.SafeWifiNatLayout
 			}
-			if got, ok := parseReportInt(vals.Get("rules")); ok && got == want {
+			if got, ok := parseReportInt(vals.Get("rules")); ok && got == want && vals.Get("layout") == wantLayout {
 				if level == router.SafeWifiLevelEffective() {
 					if sig, _ := cmd.Payload["sig"].(string); sig != "" {
 						router.SafeWifiSig = sig

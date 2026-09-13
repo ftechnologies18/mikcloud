@@ -254,13 +254,20 @@ func ensureWalledGardenLocked(db *model.DB, router *model.Router, domains []stri
 // (tcp/853) et DoH (tcp/443 vers liste mikcloud-safewifi-doh) par
 // serveur hotspot, coupure DNS/DoT/DoH IPv6 (best-effort). sw-v3 (N°93) :
 // bouclier pré-authentification — DEUX règles redirect
-// hotspot=from-client,!auth vers le servlet DNS natif du hotspot (64872)
-// posées AU-DESSUS des dst-nat : le DNS des clients NON authentifiés
-// redevient natif (le portail captif redevient détectable pré-login,
-// régression CYBER-ESPACE SC), sans rouvrir l'échappatoire N°85 pour tout
-// ce qui est authentifié ; garde de retrait de la famille NAT en cas
-// d'échec de pose.
-const safeWifiRulesVersion = "sw-v3"
+// hotspot=from-client,!auth vers le servlet DNS natif du hotspot
+// (64872), destinées à siéger AU-DESSUS des dst-nat (le DNS des
+// clients NON authentifiés redevient natif, le portail captif
+// redevient détectable pré-login), sans rouvrir l'échappatoire N°85
+// pour tout ce qui est authentifié ; garde de retrait de la famille
+// NAT en cas d'échec de pose. sw-v4 (N°95) : l'ordre
+// bouclier→dst-nat — supposé par la théorie « place-before=0 empile
+// en ordre inverse » du N°93 et DÉMENTI par la table réelle de
+// CYBER-ESPACE SC (ordre d'émission conservé — boucliers SOUS les
+// dst-nat, ERR_NAME_NOT_RESOLVED sur le dns-name du portail) —
+// devient IMPOSÉ par un bloc move explicite et VÉRIFIÉ : le rapport
+// échoe la disposition réelle des règles NAT marquées (layout), le
+// cloud ne signe que si elle vaut exactement SafeWifiNatLayout.
+const safeWifiRulesVersion = "sw-v4"
 
 // safeWifiRefresh — cadence d'auto-réparation (pattern N°49) : à
 // configuration IDENTIQUE, le bloc safewifi est re-filé périodiquement. Le

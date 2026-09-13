@@ -1,24 +1,31 @@
 package agent
 
-// Tests N°80/N°85/N°93 — script SafeWiFi (protection DNS du WiFi public
-// par redirection, durcie : tête de table NAT, DoT/DoH coupés, IPv6
-// neutralisé, bouclier pré-auth vers le servlet DNS natif du hotspot).
-// Le contrat :
-//   - niveau actif : retrait idempotent PUIS exactement quatre règles NAT
-//     en TÊTE de table (place-before=0) marquées mikcloud-safewifi — 2
-//     dst-nat (udp + tcp) vers LE résolveur du niveau, puis 2 redirect
-//     hotspot=from-client,!auth vers le servlet DNS natif (64872) posées
-//     AU-DESSUS (ajoutées après → empilées au sommet) ; la liste DoH v4
-//     complète ; et par serveur hotspot : DoT (tcp/853) et DoH (tcp/443 →
-//     liste) coupés, plus les coupures IPv6 (DNS, DoT, DoH) best-effort ;
+// Tests N°80/N°85/N°93/N°95 — script SafeWiFi (protection DNS du WiFi
+// public par redirection, durcie : tête de table NAT, DoT/DoH coupés,
+// IPv6 neutralisé, bouclier pré-auth vers le servlet DNS natif du
+// hotspot, ordre des règles IMPOSÉ par move et RAPPORTÉ). Le contrat :
+//   - niveau actif : retrait idempotent PUIS exactement quatre règles
+//     NAT en TÊTE de table (place-before=0) marquées mikcloud-safewifi —
+//     2 boucliers pré-auth (udp + tcp) vers le servlet DNS natif (64872)
+//     ÉMIS EN PREMIER + 2 dst-nat (udp + tcp) vers LE résolveur du
+//     niveau ; la liste DoH v4 complète ; et par serveur hotspot : DoT
+//     (tcp/853) et DoH (tcp/443 → liste) coupés, plus les coupures IPv6
+//     (DNS, DoT, DoH) best-effort ;
 //   - le bouclier pré-auth est la correction N°93 : sans lui, le DNS d'un
 //     client NON authentifié partait en forward vers l'IP externe du
 //     résolveur → rejeté par hs-unauth → plus de détection de portail ;
+//   - l'ORDRE bouclier AU-DESSUS des dst-nat est la correction N°95 : le
+//     post-mortem CYBER-ESPACE SC a démenti « place-before=0 empile en
+//     ordre inverse » (la table réelle conserve l'ordre d'émission) — le
+//     script émet les boucliers d'abord, IMPOSE l'ordre par un move
+//     explicite vers la première dst-nat et RAPPORTE la disposition
+//     réelle (layout) ;
 //   - /ip dns n'est JAMAIS touché : le DNS propre du routeur (check-in
 //     agent) ne doit pas dépendre de la disponibilité du résolveur filtrant ;
 //   - niveau off (ou inconnu) : retrait seul — aucune règle posée ;
 //   - le rapport échoe le compte d'objets marqués IPv4 PRÉSENTS après
-//     application ET le nombre de serveurs hotspots (vérité routeur).
+//     application, le nombre de serveurs hotspots ET la disposition NAT
+//     (vérité routeur).
 
 import (
 	"strings"
@@ -58,14 +65,23 @@ func TestSafeWifiScriptActiveLevels(t *testing.T) {
 			t.Errorf("niveau %s : %d règles redirect pré-auth (matcher hotspot), attendu 2 (udp+tcp) — sans ce bouclier le portail captif n'est plus détectable avant le login (régression N°85 corrigée N°93)", tc.level, got)
 		}
 		if got := strings.Count(s, `place-before=0 hotspot=from-client,!auth action=redirect`); got != 2 {
-			t.Errorf("niveau %s : %d boucliers pré-auth en tête de table, attendu 2 — ils doivent couvrir les dst-nat (place-before=0 empile en ordre inverse)", tc.level, got)
+			t.Errorf("niveau %s : %d boucliers pré-auth en tête de table, attendu 2 — posés via place-before=0, ordre final garanti par le move N°95", tc.level, got)
 		}
-		// N°93 — ordre d'émission : les boucliers sont AJOUTÉS après les
-		// dst-nat dans le script → posés AU-DESSUS dans la table (le
-		// dernier place-before=0 empile au sommet). L'inverse laisserait
-		// le DNS pré-auth capté par les dst-nat → portail mort.
-		if io, ic := strings.Index(s, `hotspot=from-client,!auth action=redirect to-ports=`+SafeWifiHotspotDnsPort), strings.Index(s, `action=dst-nat to-addresses=`+tc.dns); io < 0 || ic < 0 || io <= ic {
-			t.Errorf("niveau %s : les boucliers pré-auth doivent être émis APRÈS les dst-nat (index redirect=%d, dst-nat=%d) pour se poser au-dessus", tc.level, io, ic)
+		// N°95 — ordre DÉTERMINISTE : le post-mortem CYBER-ESPACE SC a démenti
+		// la théorie « place-before=0 empile en ordre inverse » (la table
+		// réelle conserve l'ordre d'émission → boucliers SOUS les dst-nat →
+		// DNS pré-login capté → ERR_NAME_NOT_RESOLVED sur le dns-name du
+		// portail). Le script émet les boucliers AVANT les dst-nat ET impose
+		// l'ordre par un move explicite : chaque bouclier est déplacé DEVANT
+		// la première dst-nat (ancre swtgt), les autres dst-nat suivent.
+		if io, ic := strings.Index(s, `hotspot=from-client,!auth action=redirect to-ports=`+SafeWifiHotspotDnsPort), strings.Index(s, `action=dst-nat to-addresses=`+tc.dns); io < 0 || ic < 0 || io > ic {
+			t.Errorf("niveau %s : les boucliers pré-auth doivent être émis AVANT les dst-nat (index redirect=%d, dst-nat=%d) — l'ordre d'émission est l'ordre de table observé (post-mortem N°93)", tc.level, io, ic)
+		}
+		if !strings.Contains(s, `:set swtgt $r`) {
+			t.Errorf("niveau %s : la recherche de la première dst-nat (ancre du réordonnancement) manque", tc.level)
+		}
+		if got := strings.Count(s, `/ip firewall nat move numbers=$r destination=$swtgt`); got != 2 {
+			t.Errorf("niveau %s : %d blocs move de réordonnancement, attendu 2 (boucliers puis dst-nat restantes) — sans eux l'ordre resterait une hypothèse (post-mortem N°93)", tc.level, got)
 		}
 		// N°93 — garde de disponibilité : échec de pose dans la famille
 		// NAT → retrait complet des règles marquées de la famille (le
@@ -116,8 +132,11 @@ func TestSafeWifiScriptActiveLevels(t *testing.T) {
 		if strings.Contains(s, "/ip dns set") {
 			t.Errorf("niveau %s : le script ne doit PAS toucher /ip dns (disponibilité du check-in agent)", tc.level)
 		}
-		if !strings.Contains(s, `&rules=". $swr . "&hs=". $swn`) {
-			t.Errorf("niveau %s : le rapport doit échoer le compte d'objets ET le nombre de hotspots DYNAMIQUES (vérité routeur, pattern Shield N°81)", tc.level)
+		if !strings.Contains(s, `&rules=". $swr . "&hs=". $swn . "&layout=". $swlay)`) {
+			t.Errorf("niveau %s : le rapport doit échoer le compte d'objets, le nombre de hotspots ET la disposition NAT (layout, vérité routeur N°95)", tc.level)
+		}
+		if !strings.Contains(s, `:set swlay ($swlay . "D")`) || !strings.Contains(s, `:set swlay ($swlay . "R")`) {
+			t.Errorf("niveau %s : le calcul de la disposition NAT (layout) manque — le cloud ne peut pas vérifier l'ordre réel des règles", tc.level)
 		}
 	}
 }
@@ -175,6 +194,12 @@ func TestSafeWifiRulesExpected(t *testing.T) {
 	}
 	if SafeWifiNatRules != 4 {
 		t.Errorf("SafeWifiNatRules = %d, attendu 4 (2 dst-nat + 2 boucliers pré-auth N°93) — le miroir du comptage serait faux", SafeWifiNatRules)
+	}
+	if SafeWifiNatLayout != "RRDD" {
+		t.Errorf("SafeWifiNatLayout = %q, attendu \"RRDD\" — les boucliers pré-auth doivent précéder les dst-nat (post-mortem N°93 : un ordre inversé tue le portail captif en silence)", SafeWifiNatLayout)
+	}
+	if len(SafeWifiNatLayout) != SafeWifiNatRules {
+		t.Errorf("len(SafeWifiNatLayout) = %d, attendu SafeWifiNatRules = %d — une lettre par règle NAT marquée, sinon le miroir du rapport est faux", len(SafeWifiNatLayout), SafeWifiNatRules)
 	}
 	if SafeWifiRulesExpected(0) == SafeWifiRulesExpected(1) {
 		t.Error("le compte attendu doit dépendre du nombre de hotspots (pattern Shield N°81)")

@@ -5,6 +5,61 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-13 — N°91 : éclatement de sell-shell (1 827 l.) — le Mode Vente PWA devient un shell d'état de 945 l. + 4 fichiers, anti-fuite et hors-ligne intacts, E2E 9/9 + parcours navigateur complet
+
+### N°91 — Contexte : deuxième vue de la série (après N°90 vouchers-view)
+sell-shell.tsx était la 2ᵉ plus grosse vue (1 827 l. — 20 useState,
+useInfiniteQuery paginé + 3 useQuery + 3 useMutation, replay hors-ligne
+IndexedDB, partages Web Share/clipboard, 770 l. de JSX). Même remède
+conservateur que N°90 : l'état, les requêtes, les mutations, le replay et
+les partages RESTENT au shell ; le rendu déménage vers la présentation.
+Filet de sécurité idéal : la suite E2E Playwright du Mode Vente (9 tests
+navigateur) couvre exactement ce flux.
+
+### Technique — helpers module-level + carte + section stock + dialogs
+sell-shell.tsx (945 l.) garde TOUTE la logique (login PIN via store,
+optimiste Phase D sur les pages InfiniteData, replay 409-safe, garde
+N°39 anti-race sur la recherche exhaustive, snapshots localStorage UX R6,
+partages) + header/stats/footer ; le rendu déménage dans sell/ :
+- helpers.ts (267 l.) — les 230 l. de types de contrat et fonctions
+  MODULE-LEVEL existantes (SellVoucher/StockPage/SellMe/SellPeer…,
+  filterPagedStock, useOnline, store externe de la vue R1
+  subscribeView/getViewSnapshot, caches readCache/writeCache,
+  isNetworkError, expiresSoon, VIA_*/viaIcon, fmtDay, groupStock) —
+  transfert pur, aucun identifiant ne change de portée ;
+- voucher-card.tsx (144 l.) — la carte ticket UX R1 (code masqué,
+  badges expire-bientôt/en-file, mode retour = checkbox anti-misclick,
+  bouton Vendu) — les spinners de mutation deviennent des props
+  (sellPendingId calculé au shell) ;
+- stock-section.tsx (403 l.) — le bloc <main> : squelettes, état vide,
+  barre du stock + bascule de vue + imprimer, recherche R3, bannière
+  vente auto, bannière file hors-ligne, les DEUX vues (groupée
+  profil → lot avec sélection par lot, ou plate « récents »), pagination
+  « Afficher plus » — la file passe en Set d'ids (queuedIds) pour les
+  chips et la bannière ;
+- dialogs.tsx (483 l.) — les 4 dialogs : rapport de journée (ventilation
+  par canal, dépôt-vente, export CSV, partage), confirmation de vente
+  (UX R2, code muet), reçu anti-fuite (seule porte de sortie du code),
+  sortie de stock N°20/N°21 (retour gérant OU transfert — les ids
+  sélectionnés restent capturés au shell via fermetures onReturn/
+  onTransfer, jamais passés vides).
+
+### Vérifications
+eslint 0 ; tsgo 0 ; build production typecheck actif : 13 routes ;
+E2E Playwright COMPLÈTE sur stack locale (port 3015 patché puis restauré) :
+9/9 verts — login PIN, pagination « Afficher plus », recherche exhaustive
+2ᵉ page (garde N°39 re-testée), vente tactile (code masqué avant
+confirmation, reçu partageable après), rapport + export CSV comptable ;
+parcours navigateur autonome (agent-browser) sur l'état semé par l'E2E
+(revendeur prépayé, 60 tickets) : login PIN → comptoir (crédit 35 400
+XOF, vue groupée, bannière auto) ; vente complète → reçu avec code
+révélé (EEKDZ) APRÈS confirmation ; mode retour → « Sélectionner tout le
+lot » → barre sticky (60 sélectionnés, 12 000 XOF) → dialog retour
+(destination, recrédit affiché) → annulation propre ; rapport de
+journée rendu ; 0 erreur console/page ; contrôle VLM : RAS. Zéro
+endpoint, zéro route, zéro migration, zéro clé i18n. Déploiement attendu :
+Vercel UNIQUEMENT (aucun diff backend/ — Render saute).
+
 ## 2026-09-13 — N°90 : éclatement de vouchers-view (1 893 l.) — la plus grosse vue du frontend devient un shell d'état de 866 l. + 4 fichiers de présentation, zéro déplacement d'état, parcours navigateur vérifié de bout en bout
 
 ### N°90 — Contexte : la suite volontaire de l'audit « fichiers monolithiques » (après N°87 i18n et N°89 Go)

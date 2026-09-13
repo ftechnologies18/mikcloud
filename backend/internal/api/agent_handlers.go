@@ -55,6 +55,8 @@ func (a *API) registerAgentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/routers/{id}/portal-preview", a.handleRouterPortalPreview)
 	// N°49 — walled-garden : réparation forcée (console gérant).
 	mux.HandleFunc("POST /api/routers/{id}/repair-walled-garden", a.handleRouterRepairWalledGarden)
+	// N°80 — SafeWiFi : niveau de protection DNS du WiFi public (console).
+	mux.HandleFunc("PUT /api/routers/{id}/safewifi", a.handleRouterSetSafeWifi)
 }
 
 // ---------------------------------------------------------------------------
@@ -344,6 +346,7 @@ var staleSentReadKinds = map[string]bool{
 	model.CmdPing:          true,
 	model.CmdWalledGarden:  true, // N°31 : idempotent (marqueur mikcloud-wg)
 	model.CmdHotspotFiles:  true, // N°35 : idempotent (surcharge atomique des fichiers du portail)
+	model.CmdSafeWifi:      true, // N°80 : idempotent (marqueur mikcloud-safewifi — remove-then-add)
 }
 
 // staleSentLimit — au-delà de cette ancienneté sans rapport, une commande
@@ -762,6 +765,89 @@ func (a *API) ensureWatcherLocked(db *model.DB, router *model.Router) {
 	queueCommandLocked(db, router.AccountID, router.ID, model.CmdWatcherEnsure, map[string]any{})
 }
 
+// safeWifiRulesVersion — sel de version des règles NAT SafeWiFi : toute
+// évolution de la FORME des règles (changement de résolveur, nouveau
+// marquage, champs supplémentaires) change ce sel → chaque routeur en
+// ligne reçoit la mise à niveau automatiquement à son premier check-in
+// (ensureSafeWifiLocked voit un mismatch → re-file). Pattern walled-garden
+// N°48.
+const safeWifiRulesVersion = "sw-v1"
+
+// safeWifiRefresh — cadence d'auto-réparation (pattern N°49) : à
+// configuration IDENTIQUE, le bloc safewifi est re-filé périodiquement. Le
+// bloc étant idempotent (remove-then-add des seules règles marquées), ce
+// re-file répare une règle effacée localement (ménage Mikhmon, restauration
+// de backup) au plus tard 6 h après, sans intervention.
+const safeWifiRefresh = 6 * time.Hour
+
+// safeWifiSig — signature courte et stable d'un niveau SafeWiFi (hash du
+// niveau + sel de version des règles) : elle distingue « déjà appliqué sur
+// ce routeur » d'« à (re)appliquer » sans table supplémentaire.
+func safeWifiSig(level string) string {
+	return agent.HashToken(safeWifiRulesVersion + "|" + level)[:16]
+}
+
+// safeWifiFresh — vrai si la config actuelle a été CONFIRMÉE appliquée
+// récemment. Vide ou illisible → re-file prudent (pattern walledGardenFresh).
+func safeWifiFresh(router *model.Router) bool {
+	if router.SafeWifiAppliedAt == "" {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, router.SafeWifiAppliedAt)
+	if err != nil {
+		return false
+	}
+	return time.Since(t) < safeWifiRefresh
+}
+
+// safeWifiLevelLabel — libellé court d'un niveau pour le journal d'activité.
+func safeWifiLevelLabel(level string) string {
+	switch level {
+	case model.SafeWifiThreats:
+		return "menaces bloquées"
+	case model.SafeWifiFamily:
+		return "filtrage famille"
+	}
+	return "protection désactivée"
+}
+
+// ensureSafeWifiLocked — N°80 : converge la protection DNS du WiFi public,
+// sous verrou, depuis handleAgentCmd. Trois cas de figure :
+//   - niveau "off" JAMAIS utilisé (sig vide) : RIEN — un routeur antérieur
+//     au N°80 dont le gérant n'ouvre jamais la carte ne consomme aucun
+//     octet (l'économie de veille N°75 reste entière) ;
+//   - niveau actif ou déjà utilisé : si la signature courante diffère de la
+//     config appliquée (changement de niveau, évolution du sel de version)
+//     ou si l'application n'est plus fraîche, la commande safewifi rejoint
+//     la file — servie dans CE check-in (deferred bucket, fermeture) ;
+//   - une commande en file/en vol suffit — le rapport tranchera (ok → sig
+//     posée après vérification du compte de règles, error → re-file au
+//     check-in suivant).
+func (a *API) ensureSafeWifiLocked(db *model.DB, router *model.Router) {
+	if router.Mode != "agent" {
+		return
+	}
+	level := router.SafeWifiLevelEffective()
+	if level == model.SafeWifiOff && router.SafeWifiSig == "" {
+		return // jamais utilisé : aucun filtrage, aucune commande
+	}
+	sig := safeWifiSig(level)
+	if router.SafeWifiSig == sig && safeWifiFresh(router) {
+		return // déjà appliqué avec ce niveau exact, et récemment
+	}
+	for i := range db.Commands {
+		c := &db.Commands[i]
+		if c.RouterID == router.ID && c.Kind == model.CmdSafeWifi &&
+			(c.Status == "queued" || c.Status == "sent") {
+			return // une mise à jour est déjà en vol
+		}
+	}
+	queueCommandLocked(db, router.AccountID, router.ID, model.CmdSafeWifi, map[string]any{
+		"level": level,
+		"sig":   sig,
+	})
+}
+
 // ensureReadStateDue — N°74 — cadenceur de la télémétrie read_state. Enfile
 // un read_state pour CE routeur si : (1) aucun n'est déjà en file ou en vol
 // (statuts queued/sent), ET (2) le dernier appliqué date de plus de
@@ -903,6 +989,12 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 	// fenêtre invité SANS réveiller la veille (0 octet émis sans invité).
 	a.ensureWatcherLocked(db, router)
 
+	// N°80 — SafeWiFi : converge la protection DNS du WiFi public — rien
+	// pour un routeur qui n'a jamais ouvert la carte (économie N°75
+	// préservée), re-file automatique au changement de niveau, et
+	// auto-réparation périodique (safeWifiRefresh, pattern N°49).
+	a.ensureSafeWifiLocked(db, router)
+
 	// File FIFO : commandes en attente (max 10 par check-in).
 	//
 	// N°77 — PRIORITÉ AUX ACTIONNABLES : un parc de 3 500 users enfile
@@ -925,7 +1017,7 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 		switch db.Commands[i].Kind {
 		case model.CmdReadState:
 			reads = append(reads, db.Commands[i])
-		case model.CmdWalledGarden, model.CmdHotspotFiles:
+		case model.CmdWalledGarden, model.CmdHotspotFiles, model.CmdSafeWifi:
 			deferred = append(deferred, db.Commands[i])
 		default:
 			prio = append(prio, db.Commands[i])
@@ -934,13 +1026,24 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(prio, func(i, j int) bool { return prio[i].CreatedAt < prio[j].CreatedAt })
 	sort.Slice(reads, func(i, j int) bool { return reads[i].CreatedAt < reads[j].CreatedAt })
 	// Au sein des différés, walled_garden avant hotspot_files (le walled-garden
-	// doit être en place pour que le portail puisse appeler l'API cloud pré-auth).
-	sort.SliceStable(deferred, func(i, j int) bool {
-		if deferred[i].Kind == deferred[j].Kind {
-			return deferred[i].CreatedAt < deferred[j].CreatedAt
+	// doit être en place pour que le portail puisse appeler l'API cloud pré-auth),
+	// safewifi en fermeture (N°80 : la protection ne dépend d'aucune autre
+	// commande — par ordre de vague : 29 < 35 < 80).
+	deferredWave := func(k string) int {
+		switch k {
+		case model.CmdWalledGarden:
+			return 29
+		case model.CmdHotspotFiles:
+			return 35
 		}
-		// walled_garden (N°29) < hotspot_files (N°35) : ordre par numéro de vague.
-		return deferred[i].Kind == model.CmdWalledGarden
+		return 80 // CmdSafeWifi
+	}
+	sort.SliceStable(deferred, func(i, j int) bool {
+		wi, wj := deferredWave(deferred[i].Kind), deferredWave(deferred[j].Kind)
+		if wi != wj {
+			return wi < wj
+		}
+		return deferred[i].CreatedAt < deferred[j].CreatedAt
 	})
 	queued := append(append(prio, reads...), deferred...)
 	if len(queued) > 10 {
@@ -1148,6 +1251,30 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 			if !router.WatcherOK {
 				router.WatcherOK = true
 				a.logActivity(db, router.AccountID, "router", "Veilleur d'invités déployé sur «"+router.Name+"» — claim du portail servi en ≤ 20 s")
+			}
+		} else if cmd.Kind == model.CmdSafeWifi {
+			// N°80 — protection appliquée et CONFIRMÉE par le
+			// routeur : la signature n'est posée que si le COMPTE
+			// de règles marquées rapporté correspond au niveau
+			// attendu (2 en filtrage actif, 0 sinon — vérité
+			// routeur, pattern scheduler_set). Et uniquement si le
+			// niveau rapporté correspond TOUJOURS au niveau
+			// courant : un gérant qui change d'avis pendant le vol
+			// ne doit pas voir un niveau périmé figé — le check-in
+			// suivant re-file la différence.
+			level := agent.SafeWifiLevelFromPayload(cmd.Payload)
+			want := 0
+			if level != model.SafeWifiOff {
+				want = 2
+			}
+			if got, ok := parseReportInt(vals.Get("rules")); ok && got == want {
+				if level == router.SafeWifiLevelEffective() {
+					if sig, _ := cmd.Payload["sig"].(string); sig != "" {
+						router.SafeWifiSig = sig
+					}
+					router.SafeWifiAppliedAt = model.NowISO()
+				}
+				a.logActivity(db, router.AccountID, "router", "Protection WiFi public ("+safeWifiLevelLabel(level)+") appliquée sur «"+router.Name+"»")
 			}
 		} else {
 			a.logActivity(db, router.AccountID, "router", "Commande "+cmd.Kind+" exécutée sur «"+router.Name+"»")

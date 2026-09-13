@@ -835,6 +835,13 @@ func (p *PG) ensureSchema() error {
 		// sur ce routeur (posé au retour « ok » de watcher_ensure uniquement —
 		// pattern walled-garden : un échec re-file au check-in suivant).
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS watcher_ok BOOLEAN NOT NULL DEFAULT FALSE`,
+		// N°80 — SafeWiFi : niveau de filtrage DNS du WiFi public
+		// (off/threats/family ; "" = antérieur au N°80 → off implicite
+		// sans commande), signature de la config appliquée et horodatage
+		// de la dernière confirmation (pattern walled-garden N°29/N°49).
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS safewifi_level TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS safewifi_sig TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS safewifi_applied_at TEXT NOT NULL DEFAULT ''`,
 		// Sécurité S6 — détection d'identité routeur dupliquée (conflit
 		// inter-comptes, cf. internal/api/agent_handlers.go).
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS identity_conflict BOOLEAN NOT NULL DEFAULT FALSE`,
@@ -1685,14 +1692,16 @@ var routerSpec = entitySpec[model.Router]{
 	cols: []string{"id", "name", "host", "port", "username", "password", "mode", "status",
 		"version", "uptime_sec", "cpu_load", "hotspot_users", "active_sessions", "created_at",
 		"hotspot_login_url", "agent_token_hash", "token_preview", "last_seen", "account_id",
-		"board_name", "free_hdd_mb", "total_hdd_mb", "identity_conflict", "walled_garden_sig", "walled_garden_applied_at", "hotspot_files_sig", "scheduler_sec", "watcher_ok"},
+		"board_name", "free_hdd_mb", "total_hdd_mb", "identity_conflict", "walled_garden_sig", "walled_garden_applied_at", "hotspot_files_sig", "scheduler_sec", "watcher_ok",
+		"safewifi_level", "safewifi_sig", "safewifi_applied_at"},
 	idOf: func(x *model.Router) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Router, error) {
 		var x model.Router
 		err := r.Scan(&x.ID, &x.Name, &x.Host, &x.Port, &x.Username, &x.Password, &x.Mode, &x.Status,
 			&x.Version, &x.UptimeSec, &x.CPULoad, &x.HotspotUsers, &x.ActiveSessions, &x.CreatedAt,
 			&x.HotspotLoginUrl, &x.AgentTokenHash, &x.TokenPreview, &x.LastSeen, &x.AccountID,
-			&x.BoardName, &x.FreeHddMb, &x.TotalHddMb, &x.IdentityConflict, &x.WalledGardenSig, &x.WalledGardenAppliedAt, &x.HotspotFilesSig, &x.SchedulerSec, &x.WatcherOK)
+			&x.BoardName, &x.FreeHddMb, &x.TotalHddMb, &x.IdentityConflict, &x.WalledGardenSig, &x.WalledGardenAppliedAt, &x.HotspotFilesSig, &x.SchedulerSec, &x.WatcherOK,
+			&x.SafeWifiLevel, &x.SafeWifiSig, &x.SafeWifiAppliedAt)
 		// Sécurité P0 #6 — le mot de passe routeur est stocké chiffré
 		// (AES-256-GCM) : lecture = déchiffrement (passthrough si valeur
 		// antérieure au correctif, migration assurée par
@@ -1708,7 +1717,8 @@ var routerSpec = entitySpec[model.Router]{
 		return []any{x.ID, x.Name, x.Host, x.Port, x.Username, secretbox.Encrypt(x.Password), x.Mode, x.Status,
 			x.Version, x.UptimeSec, x.CPULoad, x.HotspotUsers, x.ActiveSessions, x.CreatedAt,
 			x.HotspotLoginUrl, x.AgentTokenHash, x.TokenPreview, x.LastSeen, x.AccountID,
-			x.BoardName, x.FreeHddMb, x.TotalHddMb, x.IdentityConflict, x.WalledGardenSig, x.WalledGardenAppliedAt, x.HotspotFilesSig, x.SchedulerSec, x.WatcherOK}
+			x.BoardName, x.FreeHddMb, x.TotalHddMb, x.IdentityConflict, x.WalledGardenSig, x.WalledGardenAppliedAt, x.HotspotFilesSig, x.SchedulerSec, x.WatcherOK,
+			x.SafeWifiLevel, x.SafeWifiSig, x.SafeWifiAppliedAt}
 	},
 	hashOf: hashEntity[model.Router],
 }

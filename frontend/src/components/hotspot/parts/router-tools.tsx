@@ -12,6 +12,7 @@ import {
   Activity,
   ArrowDown,
   ArrowUp,
+  Baby,
   CircuitBoard,
   Clock,
   Cookie,
@@ -26,6 +27,9 @@ import {
   RefreshCw,
   RotateCcw,
   Router as RouterIcon,
+  Shield,
+  ShieldCheck,
+  ShieldOff,
   Trash2,
   TriangleAlert,
   Users,
@@ -81,7 +85,7 @@ import { EmptyState } from "@/components/hotspot/empty-state";
 import { ChartTooltip } from "@/components/hotspot/parts/sd-chart-tooltip";
 import { StatusBadge } from "@/components/hotspot/status-badge";
 import { cn } from "@/lib/utils";
-import { api, ApiError } from "@/lib/hotspot/api";
+import { api, ApiError, setRouterSafeWifi, type SafeWifiLevel } from "@/lib/hotspot/api";
 import { localeOf, t as translate, useI18n } from "@/lib/hotspot/i18n";
 import type { Lang } from "@/lib/hotspot/i18n";
 import { useChartPalette } from "@/lib/hotspot/chart-theme";
@@ -1697,10 +1701,104 @@ function PowerCard({ router }: { router: RouterDevice }) {
   );
 }
 
+// ─── N°80 — SafeWiFi (protection DNS du WiFi public) ───
+
+// safeWifiLevels — les trois niveaux du contrat N°80, dans l'ordre du
+// curseur de protection (aucune → menaces → famille). Icône et clés i18n par
+// niveau ; l'état actif vient du routeur (poll 15 s de la fiche).
+const safeWifiLevels: {
+  level: SafeWifiLevel;
+  icon: typeof Shield;
+  nameKey: string;
+  descKey: string;
+}[] = [
+  { level: "off", icon: ShieldOff, nameKey: "tools.safewifi.levelOff", descKey: "tools.safewifi.levelOffDesc" },
+  {
+    level: "threats",
+    icon: ShieldCheck,
+    nameKey: "tools.safewifi.levelThreats",
+    descKey: "tools.safewifi.levelThreatsDesc",
+  },
+  { level: "family", icon: Baby, nameKey: "tools.safewifi.levelFamily", descKey: "tools.safewifi.levelFamilyDesc" },
+];
+
+function SafeWifiCard({ router }: { router: RouterDevice }) {
+  const { t, tf } = useI18n();
+  const queryClient = useQueryClient();
+
+  const current: SafeWifiLevel =
+    router.safeWifiLevel === "threats" || router.safeWifiLevel === "family" ? router.safeWifiLevel : "off";
+
+  const levelMutation = useMutation({
+    mutationFn: (level: SafeWifiLevel) => setRouterSafeWifi(router.id, level),
+    onSuccess: (res) => {
+      toast.success(tf("tools.safewifi.appliedToast", { name: router.name }), {
+        description: res.message,
+      });
+      for (const key of ["/api/routers", "/api/dashboard"]) {
+        void queryClient.invalidateQueries({ queryKey: [key] });
+      }
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  return (
+    <Card className="gap-0 py-0">
+      <CardContent className="p-4 sm:p-5">
+        <div className="flex items-start gap-2">
+          <Shield className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
+          <div>
+            <h3 className="text-sm font-semibold">{t("tools.safewifi.title")}</h3>
+            <p className="mt-0.5 text-xs text-muted-foreground">{t("tools.safewifi.desc")}</p>
+          </div>
+        </div>
+
+        <div className="mt-3 space-y-2" role="radiogroup" aria-label={t("tools.safewifi.title")}>
+          {safeWifiLevels.map(({ level, icon: Icon, nameKey, descKey }) => {
+            const active = current === level;
+            return (
+              <button
+                key={level}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                disabled={levelMutation.isPending || router.mode !== "agent"}
+                onClick={() => !active && levelMutation.mutate(level)}
+                className={cn(
+                  "flex w-full items-start gap-3 rounded-lg border p-3 text-left transition-colors",
+                  "min-h-11 disabled:cursor-not-allowed disabled:opacity-50",
+                  active
+                    ? "border-primary bg-primary/5"
+                    : "border-border hover:border-muted-foreground/30 hover:bg-muted/60",
+                )}
+              >
+                <Icon
+                  className={cn("mt-0.5 size-4 shrink-0", active ? "text-primary" : "text-muted-foreground")}
+                  aria-hidden
+                />
+                <span className="min-w-0">
+                  <span className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-medium">{t(nameKey)}</span>
+                    {active && <Badge className="h-5 px-1.5 text-[11px]">{t("tools.safewifi.activeBadge")}</Badge>}
+                  </span>
+                  <span className="mt-0.5 block text-xs text-muted-foreground">{t(descKey)}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">{t("tools.safewifi.footnote")}</p>
+      </CardContent>
+    </Card>
+  );
+}
+
 function SystemTab({ router }: { router: RouterDevice }) {
   return (
     <div className="space-y-4">
       <SystemInfoCard router={router} />
+      <SafeWifiCard router={router} />
       <PingCard router={router} />
       <SchedulerCard router={router} />
       <PowerCard router={router} />

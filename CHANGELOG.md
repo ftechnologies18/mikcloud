@@ -5,6 +5,89 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-13 — N°80 : SafeWiFi — protection DNS du WiFi public (filtrage par redirection, 3 niveaux) — Phase 1 de la roadmap sécurité
+
+### N°80 — Contexte : le WiFi public du client est la première porte d'entrée des menaces
+La roadmap sécurité (validée) partait d'un constat terrain : les sites
+servis — restaurants, maquis, cafés, cybercafés — offrent un WiFi public
+où les clients du gérant exposent leurs téléphones aux sites piégés,
+logiciels malveillants et arnaques, et où une salle familiale n'a aucun
+contrôle sur les contenus adultes. La promesse produit : une protection
+SANS réglage technique, fonctionnelle sur tout le parc (du hAP ax³ ARM64
+au RB951Ui-2HnD MIPS 128 Mo), à 0 FCFA d'infrastructure — l'objectif
+« 0 coût jusqu'au premier client payant » reste la contrainte maîtresse.
+MVP validé : le **filtrage DNS par redirection** (le filtrage s'exécute
+chez le résolveur public anycast, pas sur le routeur) — l'IPS/DPI/AV
+on-router restent proscrits (hors de portée d'un 128 Mo).
+
+### Technique — deux règles NAT, 0 Mo de RAM, 0 FCFA
+`buildSafeWifi` (agent) pose, après le retrait idempotent des règles
+marquées `mikcloud-safewifi`, exactement deux règles `dst-nat` (udp + tcp
+port 53) réécrivant TOUT le DNS transitant vers le résolveur du niveau :
+`threats` → **Quad9 9.9.9.9** (malwares, phishing, arnaques) ;
+`family` → **AdGuard Family 94.140.14.15** (+ contenus adultes,
+publicités) ; `off` → retrait seul (retour à l'état antérieur). **`/ip dns`
+n'est JAMAIS touché** : le DNS propre du routeur part en `chain=output`,
+hors dstnat — le check-in agent et la résolution locale restent intacts
+quel que soit l'état du résolveur filtrant (la disponibilité du site prime
+sur la stricteté du filtrage). Coût routeur : deux règles NAT, aucune
+mémoire supplémentaire (MIPS 128 Mo compris) ; coût cloud : rien (résolveurs
+publics anycast gratuits). Le rapport échoe le compte de règles marquées
+PRÉSENTES après application (valeur dynamique — vérité routeur, pattern
+fetchResultData). Limite documentée : DoH (port 443) contourne la
+redirection — un filtrage par requête exigerait un DPI hors de portée ;
+l'immense majorité des appareils en salle utilise le DNS du DHCP.
+
+### Modèle — un niveau par routeur, trois colonnes idempotentes
+`Router` gagne `SafeWifiLevel` (off/threats/family ; `""` = antérieur au
+N°80 → traité comme off), `SafeWifiSig` (signature de la config appliquée
+avec succès) et `SafeWifiAppliedAt` (auto-réparation périodique) —
+`ALTER TABLE ADD COLUMN IF NOT EXISTS` ×3 dans `ensureSchema`, pattern
+`watcher_ok` N°77. Pas de tables supplémentaires : le MVP est un niveau
+par site, pas des groupes d'appareils (simplification assumée de la
+spécification initiale — le besoin réel d'un gérant de salon est « tout le
+WiFi » ou « rien »).
+
+### Convergence walled-garden — silence si jamais utilisé, auto-réparation 6 h
+`ensureSafeWifiLocked` (check-in) : niveau `off` + signature vide =
+JAMAIS utilisé → **RIEN**, aucun octet filé — l'économie de veille N°75
+reste entière pour un parc qui n'ouvre pas la carte. Sinon : signature =
+hash(sel `sw-v1` + niveau) ; elle n'est posée qu'au retour « ok » VÉRIFIÉ
+(compte de règles marquées rapporté == attendu : 2 en filtrage actif,
+0 sinon) ET uniquement si le niveau rapporté est TOUJOURS courant (un
+gérant qui change d'avis pendant le vol ne voit pas un niveau périmé
+figé). Re-file automatique au changement de niveau, à l'évolution du sel
+de version (toute évolution future de la forme des règles reconverge tout
+le parc) et périodiquement (`safeWifiRefresh` 6 h — une règle effacée par
+un ménage local ou une restauration de backup est recréée au plus tard
+6 h après, pattern N°49). `CmdSafeWifi` rejoint `staleSentReadKinds`
+(idempotent) et le bucket différé en FERMETURE du batch (vague 80 :
+29 < 35 < 80 — la protection ne dépend d'aucune autre commande).
+
+### API et console — un point d'entrée, une carte
+Backend : `PUT /api/routers/{id}/safewifi` `{level}` (validation stricte
+off/threats/family, scope compte, agent-only, garde P3 abonnement expiré,
+journal d'activité avant/après avec l'acteur). La signature ne bouge pas à
+l'écriture : c'est `ensureSafeWifiLocked` qui voit la différence au
+check-in suivant et file la commande — servie ≤ 45 s (console ouverte =
+attention N°75) ou ≤ 180 s (veille). Frontend : `SafeWifiCard` dans
+l'onglet Système des outils routeur — radiogroup trois niveaux avec
+descriptions, badge « Actif », toast de confirmation, footnote de
+disponibilité ; `safeWifiLevel` sur `RouterDevice`, 12 clés i18n FR + 12
+EN (« Protection WiFi public »).
+
+### Vérifications
+Tests : 9 nouveaux — 3 agent (niveau actif : retrait idempotent PUIS
+exactement 2 règles dst-nat udp+tcp vers LE résolveur du niveau, jamais
+`/ip dns set`, rapport dynamique `rules` ; off/valeur inconnue : retrait
+seul ; résolveurs par niveau) ; 6 api (silence total si jamais utilisé,
+convergence complète niveau actif puis changement, retrait des règles
+après extinction, signature posée seulement si compte de règles exact +
+niveau courant, sel de version dans la signature, ordre du batch :
+safewifi en fermeture après walled_garden/hotspot_files). Suite complète
+11 paquets verts, -race ciblé vert, gofmt/vet/build propres ; frontend
+eslint 0, tsgo 0, build production ✓ ; E2E Playwright 9/9 verts.
+
 ## 2026-09-12 — N°79 : l'e-mail « Mot de passe oublié » devient un courriel brandé HTML « Aurora Emerald » (mode clair) — transport deux pièces Resend html + SMTP multipart/alternative
 
 ### N°79 — Contexte : un lien fonctionnel, un e-mail texte brut

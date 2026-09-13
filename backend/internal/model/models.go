@@ -221,6 +221,28 @@ type Router struct {
 	// salle n'attend pas) ; le veilleur restaure un check-in ≤ 20 s
 	// PENDANT la fenêtre invité sans coût idle (0 octet émis sans invité).
 	WatcherOK bool `json:"watcherOK,omitempty"`
+	// N°80 — SafeWiFi (protection DNS du WiFi public) : niveau de filtrage
+	// choisi par le gérant pour ce site. "" = état antérieur au N°80
+	// (traité comme "off" — aucun filtrage, AUCUNE commande filée : un
+	// routeur dont le gérant n'ouvre jamais la carte ne consomme rien,
+	// l'économie de veille N°75 reste entière).
+	//   off      : aucune protection ;
+	//   threats  : malwares, phishing, arnaques (résolveur Quad9) ;
+	//   family   : + contenus adultes, publicités (AdGuard Family).
+	SafeWifiLevel string `json:"safeWifiLevel,omitempty"`
+	// N°80 — signature de la config SafeWiFi DÉJÀ APPLIQUÉE avec succès
+	// sur ce routeur (hash du niveau + sel de version des règles NAT).
+	// Vide → rien d'appliqué (ou dernier échec) : le check-in suivant
+	// re-file la commande safewifi. Posée au retour « ok » VÉRIFIÉ — le
+	// routeur échoe le compte de règles marquées mikcloud-safewifi
+	// présentes après application (vérité routeur, pattern
+	// scheduler_set N°75 : 2 en filtrage actif, 0 sinon).
+	SafeWifiSig string `json:"safeWifiSig,omitempty"`
+	// N°80 — horodatage (RFC3339) de la dernière application confirmée :
+	// auto-réparation périodique (une règle effacée localement par un
+	// ménage ou une restauration de backup est recréée au plus tard
+	// safeWifiRefresh plus tard). Pattern walled-garden N°49.
+	SafeWifiAppliedAt string `json:"safeWifiAppliedAt,omitempty"`
 }
 
 // SchedulerSecEffective — pas de scheduler connu du routeur (N°75). 0 =
@@ -945,7 +967,31 @@ const (
 	CmdWalledGarden    = "walled_garden"    // N°29 : walled-garden d'inscription publique (runbook N°27-D automatisé)
 	CmdHotspotFiles    = "hotspot_files"    // N°35 : déploiement automatique du portail captif (login.html, status.html, assets) — pattern walled_garden
 	CmdWatcherEnsure   = "watcher_ensure"   // N°77 : veilleur d'invités — scheduler mikcloud-watch (check-in 20 s quand un hôte non autorisé est présent)
+	CmdSafeWifi        = "safewifi"         // N°80 : protection DNS du WiFi public — redirection du port 53 vers un résolveur filtrant (règles marquées mikcloud-safewifi, idempotent)
 )
+
+// N°80 — niveaux SafeWiFi (filtrage DNS du WiFi public par redirection).
+// Le niveau est choisi par le gérant dans la console et converge via la
+// commande safewifi au check-in suivant (pattern walled-garden).
+const (
+	SafeWifiOff     = "off"     // aucune protection
+	SafeWifiThreats = "threats" // malwares, phishing, arnaques (Quad9)
+	SafeWifiFamily  = "family"  // + contenus adultes, publicités (AdGuard Family)
+)
+
+// ValidSafeWifiLevel — vrai si le niveau fait partie du contrat N°80.
+func ValidSafeWifiLevel(l string) bool {
+	return l == SafeWifiOff || l == SafeWifiThreats || l == SafeWifiFamily
+}
+
+// SafeWifiLevelEffective — niveau de filtrage courant de ce routeur,
+// normalisé ("" ou valeur inconnue = état antérieur au N°80 → off).
+func (r *Router) SafeWifiLevelEffective() string {
+	if !ValidSafeWifiLevel(r.SafeWifiLevel) {
+		return SafeWifiOff
+	}
+	return r.SafeWifiLevel
+}
 
 // ---------------------------------------------------------------------------
 // P0/P1 (audit Mikhmon) — nouveaux types (contrat V2 : F2/F3/F6/F7/F10)

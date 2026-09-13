@@ -282,6 +282,9 @@ export interface RouterDevice {
    * ces comptes ne sont pas importés automatiquement (réglage
    * autoImportRouterUsers) : adoption manuelle via l'outil d'import. */
   unknownOnRouter?: number;
+  /** N°80 SafeWiFi : niveau de protection DNS du WiFi public du site
+   * ("" ou absent = antérieur au N°80 → désactivée). off | threats | family. */
+  safeWifiLevel?: string;
 }
 
 /** Réponse de création d'un routeur en mode agent (script + token à copier). */

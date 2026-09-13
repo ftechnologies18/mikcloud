@@ -55,6 +55,39 @@ const WatcherIntervalSec = 20
 // personnelles du gérant sont préservées.
 const WalledGardenMarker = "mikcloud-wg"
 
+// SafeWifiMarker — commentaire des règles NAT posées par SafeWiFi (N°80 —
+// protection DNS du WiFi public). Même contrat d'idempotence : seules les
+// règles portant ce marqueur sont retirées puis recréées — les règles du
+// gérant sont préservées.
+const SafeWifiMarker = "mikcloud-safewifi"
+
+// Résolveurs filtrants publics (anycast, gratuits) par niveau N°80 :
+//
+//	threats : Quad9 — malwares, phishing, arnaques ;
+//	family  : AdGuard Family — + contenus adultes, publicités.
+const (
+	SafeWifiDNSQuad9         = "9.9.9.9"
+	SafeWifiDNSAdGuardFamily = "94.140.14.15"
+)
+
+// SafeWifiResolver — adresse du résolveur filtrant d'un niveau. Toute valeur
+// inconnue retombe sur Quad9 : en cas de doute, le filtrage minimal protège.
+func SafeWifiResolver(level string) string {
+	if level == model.SafeWifiFamily {
+		return SafeWifiDNSAdGuardFamily
+	}
+	return SafeWifiDNSQuad9
+}
+
+// SafeWifiLevelFromPayload — niveau d'une commande safewifi, normalisé
+// ("" ou valeur inconnue → off : le script ne pose alors aucune règle).
+func SafeWifiLevelFromPayload(p map[string]any) string {
+	if s, _ := p["level"].(string); model.ValidSafeWifiLevel(s) {
+		return s
+	}
+	return model.SafeWifiOff
+}
+
 // ---------------------------------------------------------------------------
 // Tokens
 // ---------------------------------------------------------------------------
@@ -488,6 +521,8 @@ func (b Builder) ScriptFor(cmd model.Command) (string, error) {
 		return b.buildSchedulerRemove(cmd), nil
 	case model.CmdWatcherEnsure:
 		return b.buildWatcherEnsure(cmd), nil
+	case model.CmdSafeWifi:
+		return b.buildSafeWifi(cmd), nil
 	case model.CmdReboot:
 		return b.buildPower(cmd, "reboot"), nil
 	case model.CmdShutdown:
@@ -768,6 +803,56 @@ func (b Builder) buildWatcherEnsure(cmd model.Command) string {
 	sb.WriteString(":do {\n  /system scheduler add name=\"" + WatcherName + "\" interval=" + strconv.Itoa(WatcherIntervalSec) + "s start-time=startup on-event=\"" +
 		rosEscape(watcherOnEvent(urlEsc, tokEsc)) + "\"\n} on-error={ :set " + okVar + " false }\n")
 	sb.WriteString(b.resultLines(cmd.ID, okVar, nil))
+	return sb.String()
+}
+
+// buildSafeWifi — N°80 : protection DNS du WiFi public (SafeWiFi).
+//
+// Principe : deux règles NAT dst-nat réécrivent TOUT le port 53 transitant
+// par le routeur (requêtes des clients vers n'importe quel résolveur, y
+// compris celles adressées au routeur lui-même) vers le résolveur filtrant
+// du niveau. Le DNS PROPRE du routeur n'est pas touché (son trafic part en
+// chain=output, hors dstnat) : le check-in agent et la résolution locale
+// restent intacts quel que soit l'état du résolveur filtrant — la
+// disponibilité du site prime sur la stricteté du filtrage, et /ip dns
+// n'est JAMAIS modifié.
+//
+//	off      : retire les règles marquées (retour à l'état antérieur) ;
+//	threats  : Quad9 (malwares, phishing, arnaques) ;
+//	family   : AdGuard Family (+ contenus adultes, publicités).
+//
+// Idempotent : seules les règles marquées "mikcloud-safewifi" sont
+// remplacées, celles du gérant sont conservées. Le rapport échoe le nombre
+// de règles marquées présentes APRÈS application (vérité routeur : le cloud
+// ne pose la signature que si ce compte est exact — 2 en filtrage actif,
+// 0 sinon).
+//
+// Limite documentée (MVP) : DoH (DNS over HTTPS, port 443) contourne la
+// redirection — un filtrage par requête nécessiterait un DPI hors de portée
+// d'un routeur 128 Mo. L'immense majorité des appareils en salon utilise le
+// DNS du DHCP : la redirection couvre le besoin réel.
+func (b Builder) buildSafeWifi(cmd model.Command) string {
+	level := SafeWifiLevelFromPayload(cmd.Payload)
+	okVar := "ok" + idSafe(cmd.ID)
+	var sb strings.Builder
+	sb.WriteString(header(cmd))
+	sb.WriteString(":local " + okVar + " true\n")
+	sb.WriteString(":do {\n  /ip firewall nat remove [find comment=\"" + SafeWifiMarker + "\"]\n} on-error={}\n")
+	if level != model.SafeWifiOff {
+		dns := SafeWifiResolver(level)
+		sb.WriteString(":do {\n  /ip firewall nat add chain=dstnat action=dst-nat to-addresses=" + dns +
+			" to-ports=53 protocol=udp dst-port=53 comment=\"" + SafeWifiMarker + "\"\n} on-error={ :set " + okVar + " false }\n")
+		sb.WriteString(":do {\n  /ip firewall nat add chain=dstnat action=dst-nat to-addresses=" + dns +
+			" to-ports=53 protocol=tcp dst-port=53 comment=\"" + SafeWifiMarker + "\"\n} on-error={ :set " + okVar + " false }\n")
+	}
+	// Rapport — vérité routeur : le compte de règles marquées présentes
+	// après application (valeur DYNAMIQUE calculée côté routeur, pattern
+	// fetchResultData : le cloud ne croit que ce que le routeur rapporte).
+	sb.WriteString(":local swr [:len [/ip firewall nat find comment=\"" + SafeWifiMarker + "\"]]\n")
+	ok := `/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
+		`" http-method=post http-data=("cmd=` + urlEscape(cmd.ID) + `&status=ok&rules=". $swr) output=none`
+	ko := b.reportLine(cmd.ID, false, map[string]string{"message": "echec des regles de protection sur le routeur"})
+	sb.WriteString(":if ($" + okVar + ") do={\n  " + ok + "\n} else={\n  " + ko + "\n}\n")
 	return sb.String()
 }
 

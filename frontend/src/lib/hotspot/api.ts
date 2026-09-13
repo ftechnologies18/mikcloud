@@ -579,6 +579,32 @@ export async function repairRouterWalledGarden(routerId: string): Promise<Repair
   );
 }
 
+/* — N°80 : SafeWiFi (protection DNS du WiFi public) — */
+
+/** Niveau de protection SafeWiFi d'un site (cf. RouterDevice.safeWifiLevel). */
+export type SafeWifiLevel = "off" | "threats" | "family";
+
+/** SetRouterSafeWifiResponse — réponse du PUT /api/routers/{id}/safewifi. */
+export interface SetRouterSafeWifiResponse {
+  ok: boolean;
+  level: SafeWifiLevel;
+  message: string;
+}
+
+/** setRouterSafeWifi — N°80 : change le niveau de protection DNS du WiFi
+ * public du site. La commande safewifi est servie au check-in suivant du
+ * routeur (≤ 45 s, console ouverte = attention N°75) ; le retour « ok »
+ * vérifié (compte de règles marquées rapporté) confirme l'application. */
+export async function setRouterSafeWifi(
+  routerId: string,
+  level: SafeWifiLevel,
+): Promise<SetRouterSafeWifiResponse> {
+  return api<SetRouterSafeWifiResponse>(
+    `/api/routers/${encodeURIComponent(routerId)}/safewifi`,
+    { method: "PUT", body: { level } },
+  );
+}
+
 /** fetchRouterPortalPreview — récupère le HTML personnalisé de login.html
  * pour un routeur agent, à injecter dans une iframe srcDoc (aperçu console).
  * Retourne le HTML brut (text/html). */

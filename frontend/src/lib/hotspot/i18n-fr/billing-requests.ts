@@ -1,0 +1,38 @@
+// Fragment FR du domaine « billingRequests » — clés préfixées "billingRequests.".
+// Extrait du monolithe i18n.ts (N°87) ; l'ordre des clés suit le fichier d'origine.
+// Ne pas importer directement : passer par l'agrégateur (fusion + logique de résolution).
+
+export const frBillingRequests: Record<string, string> = {
+  "billingRequests.title": "Demandes de renouvellement",
+  "billingRequests.description": "File des demandes d'abonnement des clients — encaissement suivi par référence, activation en un clic, webhook Wave possible.",
+  "billingRequests.loadError": "Impossible de charger les demandes",
+  "billingRequests.pendingTitle": "En attente ({n})",
+  "billingRequests.historyTitle": "Historique des demandes traitées",
+  "billingRequests.empty": "Aucune demande en attente",
+  "billingRequests.emptyDesc": "Quand un client choisit une formule, sa demande arrive ici avec sa référence de paiement.",
+  "billingRequests.historyEmpty": "Aucune demande traitée",
+  "billingRequests.activate": "Encaisser & activer",
+  "billingRequests.reject": "Rejeter",
+  "billingRequests.activateTitle": "Encaisser la demande {ref} ?",
+  "billingRequests.activateDesc": "{plan} — {amount} / {period} · {routers} routeur(s) · compte {name}. La période est activée immédiatement (les mêmes règles que la fiche client s'appliquent).",
+  "billingRequests.markPaid": "Marquer encaissé",
+  "billingRequests.markPaidHint": "Décochez seulement si l'accès est accordé sans paiement reçu.",
+  "billingRequests.noteLabel": "Note interne (optionnelle)",
+  "billingRequests.notePlaceholder": "Ex. : paiement Wave reçu ce jour…",
+  "billingRequests.rejectTitle": "Rejeter la demande {ref} ?",
+  "billingRequests.rejectDesc": "Aucun abonnement ne sera activé. Le client verra la réponse dans le journal de son compte.",
+  "billingRequests.confirmActivate": "Encaisser & activer",
+  "billingRequests.confirmReject": "Rejeter la demande",
+  "billingRequests.activatedToast": "Demande {ref} encaissée — abonnement activé",
+  "billingRequests.rejectedToast": "Demande {ref} rejetée",
+  "billingRequests.error": "Action impossible",
+  "billingRequests.routers": "{n} routeur(s)",
+  "billingRequests.accountDisabled": "Désactivé",
+  "billingRequests.by": "par {who}",
+  "billingRequests.via.wave": "via Wave",
+  "billingRequests.via.manual": "via plateforme",
+  "billingRequests.via.geniuspay": "via Wave (paiement en ligne)",
+  "billingRequests.status.pending": "En attente",
+  "billingRequests.status.done": "Traitée",
+  "billingRequests.status.cancelled": "Rejetée",
+};

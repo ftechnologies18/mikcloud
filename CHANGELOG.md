@@ -5,6 +5,52 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-13 — N°87 : éclatement des dictionnaires i18n — les deux plus gros fichiers du projet (2 702 + 2 589 lignes) deviennent 90 fragments par domaine fusionnés par deux agrégateurs, contenu vérifié identique clé par clé
+
+### N°87 — Contexte : l'audit « fichiers monolithiques »
+Suite des points d'attention de l'audit pré-lancement (après N°84) :
+`i18n.ts` (2 702 lignes, 167 Ko) et `i18n-en.ts` (2 589 lignes, 150 Ko)
+étaient les deux plus gros fichiers du projet — et les plus TOUCHÉS :
+chaque fonctionnalité ajoute des clés FR/EN, chaque commit de texte
+nécessitait d'éditer un monolithe de 2 600+ lignes (source réelle
+d'erreurs d'édition — la session précédente a subi une duplication
+silencieuse en plein MultiEdit). L'éclatement était le refactor au
+meilleur rapport valeur/risque : données pures, plat, parité FR/EN
+vérifiable mécaniquement, zéro logique déplacée.
+
+### Technique — 90 fragments + 2 agrégateurs, API publique inchangée
+Chaque domaine de préfixe devient un fichier : une clé `foo.bar` vit
+dans `i18n-fr/foo.ts` (FR) et `i18n-en/foo.ts` (EN) — 45 domaines par
+langue, 2 460 clés chacun. Les agrégateurs `i18n.ts` (224 lignes) et
+`i18n-en.ts` (108 lignes) importent les fragments et fusionnent par
+spread : API publique strictement inchangée (`t`, `tf`, `localeOf`,
+`useI18n`, `ensureEnDict`, `Lang`) — aucun des ~40 fichiers
+consommateurs n'a bougé. Le lazy-load EN (N°78, ~37 Ko gzip hors bundle
+initial) est conservé : le chunk dynamique `i18n-en` embarque
+simplement ses fragments. L'ordre d'insertion des clés change
+(regroupement par domaine) SANS effet : la résolution ne fait que des
+lookups directs, aucune itération sur le dictionnaire (vérifié par
+grep). Génération 100 % scriptée (jamais à la main) : parseur à
+machine à états gérant entrées mono-lignes, valeurs multi-lignes
+(4 clés `portal.*`) et commentaires attachés à l'entrée suivante ;
+auto-vérification intégrée : les fragments générés sont re-parsés,
+re-fusionnés et comparés CLÉ POUR CLÉ (valeur source brute) avec le
+dictionnaire d'origine — 2 460/2 460 identiques des deux côtés, zéro
+clé perdue, dupliquée ou altérée. Note CONTRACT-V2 (F11) mise à jour.
+
+### Vérifications
+Vérification scriptée du contenu (ci-dessus) ; eslint 0 ; tsgo 0 ;
+build production avec typecheck actif — 13 routes ; E2E Playwright
+complète sur stack locale (backend Go port 4000, frontend build
+NEXT_PUBLIC_API_BASE=http://localhost:4000, port front patché 3015 le
+temps du run puis restauré — piège N°81 respecté) : **9/9 verts**
+(bootstrap, cycle revendeur ×3, Mode Vente ×5 — login PIN, pagination,
+recherche, vente tactile, rapport + CSV) — les textes i18n réels
+s'affichent dans le navigateur ; parité FR/EN re-vérifiée par le
+script (mêmes clés des deux côtés avant comme après) ; déploiement
+attendu : Vercel uniquement (diff frontend/docs — Render saute,
+aucun diff backend/).
+
 ## 2026-09-13 — N°86 : Keep-alive — l'Option A (UptimeRobot) est en place : le monitor HTTP 5 min élimine l'hibernation Render, le workflow GitHub est désactivé (conservé comme repli) et le runbook reflète la vérité opérationnelle
 
 ### N°86 — Contexte : la recommandation du runbook est exécutée

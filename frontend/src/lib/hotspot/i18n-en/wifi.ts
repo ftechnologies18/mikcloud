@@ -1,0 +1,78 @@
+// Fragment EN du domaine « wifi » — clés préfixées "wifi.".
+// Extrait du monolithe i18n-en.ts (N°87) ; l'ordre des clés suit le fichier d'origine.
+// Ne pas importer directement : passer par l'agrégateur (fusion + logique de résolution).
+
+export const enWifi: Record<string, string> = {
+
+  // — N°27 WiFi jetable —
+  "wifi.title": "Disposable WiFi",
+  "wifi.subtitle": "Free WiFi for your venues — restaurants, cafés, hair salons, maquis and bars. Guests scan a QR, leave their number and get their code.",
+  "wifi.create": "New WiFi site",
+  "wifi.empty": "No disposable WiFi site yet",
+  "wifi.emptyHint": "Create a site to offer WiFi to your guests: table QR codes, free-quota codes, phone numbers captured for marketing.",
+  "wifi.name": "Venue name",
+  "wifi.namePh": "Fofi's Maquis",
+  "wifi.router": "Router",
+  "wifi.profile": "Free quota (profile)",
+  "wifi.profileHint": "The profile price is the cost of each free WiFi — 0 F recommended.",
+  "wifi.newProfile": "New quota",
+  "wifi.freeTime": "Free time (min)",
+  "wifi.freeTimeHint": "0 = inherit from profile",
+  "wifi.freeData": "Free data (MB)",
+  "wifi.freeDataHint": "0 = inherit from profile",
+
+  // N°54 — see fr block: the three daily caps now say WHO they limit.
+  "wifi.perPhone": "Per phone number",
+  "wifi.perPhoneHint": "Tickets ONE number can get in a day (1 = a single free Wi-Fi per number)",
+  "wifi.perMac": "Per device (same Wi-Fi)",
+  "wifi.perMacHint": "Stops one device rotating phone numbers (portal claim)",
+  "wifi.dailyCap": "TOTAL free / day (all clients)",
+  "wifi.dailyCapHint": "Site-wide cap: beyond it the portal answers 'out for today' until midnight",
+  "wifi.optIn": "Ask marketing consent",
+  "wifi.optInHint": "Checkbox shown to the guest — numbers exportable (opt-in).",
+  "wifi.active": "Free WiFi enabled",
+  "wifi.publicUrl": "Public URL",
+  "wifi.copyUrl": "Copy URL",
+  "wifi.poster": "QR poster",
+  "wifi.guests": "Guest register",
+  "wifi.stats.capLabel": "Daily cap",
+  "wifi.stats.today": "given away today",
+  "wifi.stats.optin": "total opt-ins",
+  "wifi.edit": "Edit",
+  "wifi.delete": "Delete",
+  "wifi.deleteConfirm": "Delete this site and its guest register? Tickets already issued follow their quotas.",
+  "wifi.csv": "Export CSV",
+  "wifi.guest.date": "Date",
+  "wifi.guest.phone": "Phone",
+  "wifi.guest.optin": "Opt-in",
+  "wifi.guest.code": "Code",
+  "wifi.guest.site": "Site",
+  "wifi.saved": "WiFi site saved",
+  "wifi.deleted": "WiFi site deleted",
+
+  // — N°63 wizard 2 steps —
+  "wifi.wiz.step1": "The site",
+  "wifi.wiz.step2": "The offer",
+  "wifi.wiz.step1Desc": "Venue identity — name, router and base quota.",
+  "wifi.wiz.step2Desc": "Free offer, Wi-Fi network and anti-abuse guards.",
+  "wifi.wiz.stepOf": "Step {n}/2",
+  "wifi.wiz.continue": "Continue",
+  "wifi.wiz.back": "Back",
+  "wifi.wiz.err.name": "At least 2 characters.",
+  "wifi.wiz.noRouter": "No router — add one first in the Routers tab.",
+  "wifi.wiz.noProfile": "No profile — create one first in the Quotas tab.",
+  "wifi.wiz.recap": "Step 1 summary",
+  "wifi.quota": "Offer",
+  "wifi.postTitle": "Free WiFi",
+  "wifi.postScan": "Scan, get your code, connect",
+  "wifi.postFoot": "Offered by the venue — beyond the quota, switch to a paid offer.",
+
+  // — N°49 WiFi connection QR —
+  "wifi.ssid": "WiFi network SSID",
+  "wifi.ssidHint": "As it appears on the customer's phone — used by the poster's connection QR.",
+  "wifi.wifiPass": "WiFi password (optional)",
+  "wifi.wifiPassPh": "Empty if the network is open",
+  "wifi.wifiPassHint": "Set: the QR joins the protected (WPA) network.",
+  "wifi.postWifi": "Scan: the WiFi connects by itself",
+  "wifi.postWifiHint": "The WiFi Offert page opens on arrival — just enter your number.",
+};

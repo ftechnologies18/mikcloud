@@ -595,6 +595,10 @@ type SchedulerTask struct {
 ### i18n (approche maison légère — next-intl n'est PAS utilisé)
 - `src/lib/hotspot/i18n.ts` : dictionnaire `fr` (existant, extraction) + `en` (traduction),
   ~250 clés aplaties `nav.dashboard`, `users.title`…
+  > N°87 — éclatement : les dictionnaires vivent désormais en fragments par domaine
+  > (`src/lib/hotspot/i18n-fr/<domaine>.ts` et `i18n-en/<domaine>.ts`, 45 domaines,
+  > 2 460 clés chacun) fusionnés par les agrégateurs `i18n.ts` / `i18n-en.ts` —
+  > API publique, règles de résolution et lazy-load EN (N°78) inchangés.
 - Hook `useI18n()` : langue depuis `useHotspotStore` (nouveau champ `lang` persisté
   localStorage via zustand persist — attention à ne pas casser l'existant).
 - Sélecteur : carte « Langue » dans Paramètres (RadioGroup FR/EN) — langue par défaut : fr.

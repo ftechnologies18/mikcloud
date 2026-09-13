@@ -1,0 +1,38 @@
+// Fragment EN du domaine « billingRequests » — clés préfixées "billingRequests.".
+// Extrait du monolithe i18n-en.ts (N°87) ; l'ordre des clés suit le fichier d'origine.
+// Ne pas importer directement : passer par l'agrégateur (fusion + logique de résolution).
+
+export const enBillingRequests: Record<string, string> = {
+  "billingRequests.title": "Renewal requests",
+  "billingRequests.description": "Queue of client subscription requests — payments tracked by reference, one-click activation, Wave webhook ready.",
+  "billingRequests.loadError": "Failed to load requests",
+  "billingRequests.pendingTitle": "Pending ({n})",
+  "billingRequests.historyTitle": "Processed request history",
+  "billingRequests.empty": "No pending request",
+  "billingRequests.emptyDesc": "When a client picks a plan, the request lands here with its payment reference.",
+  "billingRequests.historyEmpty": "No processed request yet",
+  "billingRequests.activate": "Collect & activate",
+  "billingRequests.reject": "Reject",
+  "billingRequests.activateTitle": "Collect request {ref}?",
+  "billingRequests.activateDesc": "{plan} — {amount} / {period} · {routers} router(s) · account {name}. The period is activated immediately (same rules as the client record).",
+  "billingRequests.markPaid": "Mark as paid",
+  "billingRequests.markPaidHint": "Uncheck only if access is granted without a received payment.",
+  "billingRequests.noteLabel": "Internal note (optional)",
+  "billingRequests.notePlaceholder": "E.g.: Wave payment received today…",
+  "billingRequests.rejectTitle": "Reject request {ref}?",
+  "billingRequests.rejectDesc": "No subscription will be activated. The client sees the answer in their account journal.",
+  "billingRequests.confirmActivate": "Collect & activate",
+  "billingRequests.confirmReject": "Reject request",
+  "billingRequests.activatedToast": "Request {ref} collected — subscription activated",
+  "billingRequests.rejectedToast": "Request {ref} rejected",
+  "billingRequests.error": "Action failed",
+  "billingRequests.routers": "{n} router(s)",
+  "billingRequests.accountDisabled": "Disabled",
+  "billingRequests.by": "by {who}",
+  "billingRequests.via.wave": "via Wave",
+  "billingRequests.via.manual": "via platform",
+  "billingRequests.via.geniuspay": "via Wave (online payment)",
+  "billingRequests.status.pending": "Pending",
+  "billingRequests.status.done": "Processed",
+  "billingRequests.status.cancelled": "Rejected",
+};

@@ -10,12 +10,16 @@
 //   - « Étendre le pool » (confirmation explicite) : ajoute le range
 //     dédié 10.77.0.0/21 (~2 037 IP) au pool du profil + IP secondaire +
 //     entrée network masquerade + règle NAT marquée.
+// N°99 — switch « Auto-réparation » (mode agent) : le gérant autorise le
+// cloud à recycler les zombies LUI-MÊME à chaque transition d'alerte
+// (≥ 80 %/≥ 95 %) — un geste initial, plus jamais de clic. L'extension
+// reste manuelle (geste topologique à confirmation explicite).
 // Mode agent : POST + poll GET /api/commands/{id} (pattern ping F8).
 // Simulé : réponse immédiate. Mode API directe : carte muette (§0).
 
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Activity, Gauge, Loader2, Sparkles } from "lucide-react";
+import { Activity, Gauge, Loader2, Sparkles, Wand2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -30,6 +34,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/hotspot/api";
 import { tf as translateF, t as translate, useI18n } from "@/lib/hotspot/i18n";
 import type { Lang } from "@/lib/hotspot/i18n";
@@ -109,6 +114,23 @@ export function PoolDoctorCard({ router }: { router: RouterDevice }) {
       }
       setConfirmExtend(false);
       for (const key of ["/api/routers", "/api/routers/" + router.id, "/api/dashboard"]) {
+        void queryClient.invalidateQueries({ queryKey: [key] });
+      }
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  // N°99 — bascule de l'auto-réparation (mode agent uniquement : la
+  // commande qui en découle attend un agent pour l'exécuter).
+  const autoMutation = useMutation({
+    mutationFn: (auto: boolean) =>
+      api<{ ok: boolean; auto: boolean }>(`/api/routers/${router.id}/pool-auto`, {
+        method: "PUT",
+        body: { auto },
+      }),
+    onSuccess: (res) => {
+      toast.success(res.auto ? t("tools.pool.autoOnToast") : t("tools.pool.autoOffToast"));
+      for (const key of ["/api/routers", "/api/routers/" + router.id]) {
         void queryClient.invalidateQueries({ queryKey: [key] });
       }
     },
@@ -197,6 +219,46 @@ export function PoolDoctorCard({ router }: { router: RouterDevice }) {
               <Gauge className="size-4" />
               {t("tools.pool.extend")}
             </Button>
+          </div>
+        )}
+
+        {/* N°99 — auto-réparation (mode agent : la commande a besoin d'un
+            agent pour l'exécuter — un switch sans exécutant serait une
+            promesse morte). */}
+        {router.mode === "agent" && (
+          <div className="mt-4 flex flex-col gap-2 rounded-lg border border-border/70 bg-muted/40 p-3 sm:flex-row sm:items-start sm:gap-4">
+            <div className="flex min-w-0 flex-1 items-start gap-3">
+              <Wand2 className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
+              <div className="min-w-0">
+                <label
+                  htmlFor="pool-auto-switch"
+                  className="text-sm font-medium leading-tight"
+                >
+                  {t("tools.pool.auto")}
+                </label>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {t("tools.pool.autoDesc")}
+                </p>
+                {router.poolAutoPending && (
+                  <p
+                    className="mt-1.5 flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400"
+                    role="status"
+                  >
+                    <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                    {t("tools.pool.autoPending")}
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="flex shrink-0 items-center ps-7 sm:ps-0">
+              <Switch
+                id="pool-auto-switch"
+                checked={router.poolAuto === true}
+                onCheckedChange={(checked) => autoMutation.mutate(checked)}
+                disabled={autoMutation.isPending}
+                aria-label={t("tools.pool.auto")}
+              />
+            </div>
           </div>
         )}
 

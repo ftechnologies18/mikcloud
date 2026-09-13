@@ -371,3 +371,166 @@ func TestApplyPoolDoctorProMaxCase(t *testing.T) {
 		t.Fatalf("le pool de l'interface non-hotspot ne doit pas apparaître : %q", router.PoolRanges)
 	}
 }
+
+// ─── N°99 — auto-réparation du pool (opt-in par routeur) ───
+
+// TestPoolAutoPendingQueuesRecycle — le pending posé par le moniteur (switch
+// « Auto-réparation » actif + transition de pression) file le RECYCLAGE des
+// IP zombies au check-in, journalise l'action, consomme le flag — et
+// JAMAIS l'extension (geste topologique à confirmation humaine).
+func TestPoolAutoPendingQueuesRecycle(t *testing.T) {
+	a := newWatchAPI()
+	db := &model.DB{}
+	router := poolDoctorRouter()
+	router.PoolAuto = true
+	router.PoolAutoPending = true
+	router.PoolCap = 254
+	router.PoolHosts = 210 // 82 % — pression qui a déclenché la marque
+	// Diagnostic d'hier : l'auto-réparation prime sur la fraîcheur (un
+	// signal de pression forte ne doit PAS attendre 7 jours).
+	router.PoolDoctorAt = time.Now().UTC().Add(-24 * time.Hour).Format(time.RFC3339)
+
+	a.ensurePoolDoctorLocked(db, router)
+	cmd := findQueuedByKind(db, model.CmdPoolDoctor)
+	if cmd == nil {
+		t.Fatal("pending posé : le recyclage doit être en file")
+	}
+	if recycle, _ := cmd.Payload["recycle"].(bool); !recycle {
+		t.Error("auto-réparation : recycle=true attendu")
+	}
+	if extend, _ := cmd.Payload["extend"].(bool); extend {
+		t.Error("auto-réparation : JAMAIS extend (geste topologique humain)")
+	}
+	if router.PoolAutoPending {
+		t.Error("le pending doit être consommé au filage")
+	}
+	if len(db.Activity) != 1 || !strings.Contains(db.Activity[0].Message, "Auto-réparation") {
+		t.Fatalf("l'action doit être journalisée (moteur interne) : %+v", db.Activity)
+	}
+	if db.Activity[0].AccountID != router.AccountID {
+		t.Error("l'activité doit être posée sur le compte du routeur")
+	}
+
+	// Le tick suivant (pression toujours haute, mémoire de transition dans
+	// le moniteur) : plus de pending → le veilleur redevient silencieux —
+	// le diagnostic d'hier a été RAFRAÎCHI par le rapport du recyclage ;
+	// simulons ce rapport avant de re-vérifier le silence.
+	router.PoolDoctorAt = model.NowISO()
+	db.Commands = nil
+	a.ensurePoolDoctorLocked(db, router)
+	if findQueuedByKind(db, model.CmdPoolDoctor) != nil {
+		t.Fatal("plus de pending + diagnostic frais : aucune commande attendue (anti-boucle)")
+	}
+}
+
+// TestPoolAutoPendingWaitsWhenCommandInFlight — une commande pool_doctor
+// déjà en file/en vol garde le pending EN ATTENTE (il sera filé au check-in
+// suivant) : jamais de file doublée.
+func TestPoolAutoPendingWaitsWhenCommandInFlight(t *testing.T) {
+	a := newWatchAPI()
+	db := &model.DB{}
+	router := poolDoctorRouter()
+	router.PoolAutoPending = true
+
+	db.Commands = append(db.Commands, model.Command{
+		ID: "c-inflight", RouterID: router.ID, AccountID: router.AccountID,
+		Kind: model.CmdPoolDoctor, Payload: map[string]any{"recycle": false, "extend": false},
+		Status: "queued", CreatedAt: model.NowISO(),
+	})
+
+	a.ensurePoolDoctorLocked(db, router)
+	n := 0
+	for _, c := range db.Commands {
+		if c.Kind == model.CmdPoolDoctor {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("commande en vol : %d commandes pool_doctor, attendu 1", n)
+	}
+	if !router.PoolAutoPending {
+		t.Fatal("le pending doit rester posé tant que la commande est en vol")
+	}
+}
+
+// TestRouterPoolAutoEndpoint — PUT /api/routers/{id}/pool-auto : bascule,
+// idempotence, purge du pending à la désactivation, refus des non-agent.
+func TestRouterPoolAutoEndpoint(t *testing.T) {
+	st, ts := newTestServerWithStore(t)
+	ownerToken, accID, _ := registerAccount(t, ts, "gerant-pool-auto", "")
+
+	st.Lock()
+	st.Data().Routers = append(st.Data().Routers, model.Router{
+		ID: "r-auto", AccountID: accID, Name: "Auto Pool", Mode: "agent", Status: "online",
+		PoolAutoPending: true, // le moniteur avait marqué une pression
+	})
+	st.Save()
+	st.Unlock()
+
+	// Activation.
+	status, out := doJSON(t, ts, "PUT", "/api/routers/r-auto/pool-auto", ownerToken, map[string]any{"auto": true})
+	if status != http.StatusOK {
+		t.Fatalf("statut %d (%v), attendu 200", status, out)
+	}
+	if out["auto"] != true {
+		t.Fatalf("réponse %v : auto attendu", out)
+	}
+	st.Lock()
+	router := findRouterScoped(st.Data(), "r-auto", accID)
+	on := router.PoolAuto
+	pending := router.PoolAutoPending
+	st.Unlock()
+	if !on {
+		t.Fatal("PoolAuto doit être persisté")
+	}
+	if !pending {
+		t.Fatal("l'activation ne purge PAS un pending existant (la pression est toujours là)")
+	}
+
+	// Idempotence : re-activer ne journalise pas deux fois.
+	status, _ = doJSON(t, ts, "PUT", "/api/routers/r-auto/pool-auto", ownerToken, map[string]any{"auto": true})
+	if status != http.StatusOK {
+		t.Fatalf("idempotence : statut %d, attendu 200", status)
+	}
+
+	// Désactivation : coupure nette (le pending part avec).
+	status, _ = doJSON(t, ts, "PUT", "/api/routers/r-auto/pool-auto", ownerToken, map[string]any{"auto": false})
+	if status != http.StatusOK {
+		t.Fatalf("désactivation : statut %d, attendu 200", status)
+	}
+	st.Lock()
+	router = findRouterScoped(st.Data(), "r-auto", accID)
+	on = router.PoolAuto
+	pending = router.PoolAutoPending
+	st.Unlock()
+	if on || pending {
+		t.Fatalf("désactivation : PoolAuto=%v pending=%v, attendu false/false (coupure nette)", on, pending)
+	}
+
+	// Routeur inconnu → 404.
+	status, _ = doJSON(t, ts, "PUT", "/api/routers/r-auto-x/pool-auto", ownerToken, map[string]any{"auto": true})
+	if status != http.StatusNotFound {
+		t.Fatalf("routeur inconnu : statut %d, attendu 404", status)
+	}
+}
+
+// TestRouterPoolAutoEndpointNonAgent — le switch promet une commande agent :
+// simulé et API directe refusés (400, message honnête).
+func TestRouterPoolAutoEndpointNonAgent(t *testing.T) {
+	st, ts := newTestServerWithStore(t)
+	ownerToken, accID, _ := registerAccount(t, ts, "gerant-pool-auto-na", "")
+
+	st.Lock()
+	st.Data().Routers = append(st.Data().Routers,
+		model.Router{ID: "r-auto-sim", AccountID: accID, Name: "Sim", Mode: "simulated", Status: "online"},
+		model.Router{ID: "r-auto-real", AccountID: accID, Name: "Direct", Mode: "real", Status: "online"})
+	st.Save()
+	st.Unlock()
+
+	for _, id := range []string{"r-auto-sim", "r-auto-real"} {
+		status, out := doJSON(t, ts, "PUT", "/api/routers/"+id+"/pool-auto", ownerToken, map[string]any{"auto": true})
+		if status != http.StatusBadRequest {
+			t.Fatalf("%s : statut %d (%v), attendu 400", id, status, out)
+		}
+	}
+}

@@ -100,3 +100,55 @@ func parseBodyBool(r *http.Request, key string) bool {
 	}
 	return false
 }
+
+// handleRouterPoolAuto — N°99 — PUT /api/routers/{id}/pool-auto
+// { "auto": true|false } : bascule l'auto-réparation du pool (opt-in par
+// routeur, switch de la carte « Pool d'adresses IP »). Activée : à chaque
+// transition d'alerte high/full (≥ 80 %/≥ 95 %) le moniteur marque le
+// routeur et le check-in suivant enfile le recyclage des IP zombies sans
+// geste humain — l'EXTENSION de pool reste toujours manuelle (geste
+// topologique à confirmation explicite). Idempotent, journalisé.
+func (a *API) handleRouterPoolAuto(w http.ResponseWriter, r *http.Request) {
+	if !a.guardAccountWrite(w, r) {
+		return
+	}
+	acc := accountScope(r)
+	id := r.PathValue("id")
+	auto := parseBodyBool(r, "auto")
+
+	a.store.Lock()
+	db := a.store.Data()
+	cur := findRouterScoped(db, id, acc)
+	if cur == nil {
+		a.store.Unlock()
+		writeErr(w, http.StatusNotFound, "Routeur introuvable")
+		return
+	}
+	if cur.Mode != "agent" {
+		// L'auto-réparation enfile une commande AGENT — sans agent pour
+		// l'exécuter, le switch serait une promesse morte (simulated : pas
+		// de file ; real : matrice §0).
+		msg := "L'auto-réparation s'applique aux routeurs agent uniquement"
+		if cur.Mode == "real" {
+			msg = realModeUnsupported
+		}
+		a.store.Unlock()
+		writeErr(w, http.StatusBadRequest, msg)
+		return
+	}
+	if cur.PoolAuto == auto {
+		a.store.Unlock() // idempotent : re-cliquer ne journalise pas deux fois
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "auto": auto})
+		return
+	}
+	cur.PoolAuto = auto
+	if !auto {
+		cur.PoolAutoPending = false // coupure nette : plus rien ne part sans le switch
+	}
+	name := cur.Name
+	a.logActivityBy(r, db, acc, "router", "Auto-réparation du pool IP "+
+		map[bool]string{true: "activée", false: "désactivée"}[auto]+" sur «"+name+"»")
+	a.store.Save()
+	a.store.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "auto": auto})
+}

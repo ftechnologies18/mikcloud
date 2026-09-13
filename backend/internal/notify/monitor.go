@@ -38,11 +38,18 @@ type Service struct {
 	st *store.Store
 	// notifiedOffline — routerID → dernier envoi de notification de panne.
 	notifiedOffline map[string]time.Time
+	// N°99 — autoPoolMarked — routerID → dernier état de pression pool pour
+	// lequel l'auto-réparation a déjà été marquée (anti-boucle : une marque
+	// par TRANSITION, indépendante de PoolAlertState qui n'est suivi que si
+	// les notifications du compte sont actives). Transitoire : après un
+	// redémarrage du cloud, une pression toujours haute re-marque UNE fois —
+	// borné, jamais de file inondée (leçon N°97-ter).
+	autoPoolMarked map[string]string
 }
 
 // NewService crée le moniteur attaché au store.
 func NewService(st *store.Store) *Service {
-	return &Service{st: st, notifiedOffline: map[string]time.Time{}}
+	return &Service{st: st, notifiedOffline: map[string]time.Time{}, autoPoolMarked: map[string]string{}}
 }
 
 // Run lance la boucle de surveillance (à appeler dans une goroutine).
@@ -282,9 +289,6 @@ func (s *Service) collect(now time.Time) []outboxItem {
 			continue
 		}
 		cfg := store.GetOrCreateNotifSettings(db, r.AccountID)
-		if !cfg.Enabled {
-			continue
-		}
 		usage := 0
 		if r.PoolHosts > 0 {
 			usage = r.PoolHosts * 100 / r.PoolCap
@@ -298,6 +302,35 @@ func (s *Service) collect(now time.Time) []outboxItem {
 			state = "full"
 		case usage >= 80:
 			state = "high"
+		}
+
+		// N°99 — auto-réparation opt-in du pool : quand la pression FRANCHIT un
+		// seuil (transition, pas état) sur un routeur agent dont le gérant a
+		// activé le switch, le recyclage des IP zombies part SANS geste humain.
+		// Marquage (PoolAutoPending) consommé au check-in par
+		// ensurePoolDoctorLocked — jamais l'extension (geste topologique).
+		// Indépendant des canaux de notification : l'auto-réparation est un
+		// réglage DÉDIÉ du routeur ; sans canal, l'action a lieu et reste
+		// tracée (journal d'activité au filage). Anti-boucle : une marque par
+		// transition (mémoire propre, la file N°97-ter reste protégée).
+		if state != "" && r.PoolAuto && r.Mode == "agent" {
+			if s.autoPoolMarked[r.ID] != state {
+				s.autoPoolMarked[r.ID] = state
+				if !r.PoolAutoPending {
+					r.PoolAutoPending = true
+					changed = true
+				}
+				if cfg.Enabled && HasAnyChannel(&cfg) {
+					title, body := poolAutoMessage(r, usage, r.PoolHosts, r.PoolCap, state)
+					outbox = append(outbox, outboxItem{cfg: cfg, kind: KindPoolAuto, title: title, body: body})
+				}
+			}
+		} else if state == "" {
+			delete(s.autoPoolMarked, r.ID) // retour au calme : la prochaine montée re-marquera
+		}
+
+		if !cfg.Enabled {
+			continue // N°97 : le suivi d'alerte suit le réglage des notifications
 		}
 		prev := cfg.PoolAlertState[r.ID]
 		if state == prev {
@@ -455,6 +488,25 @@ func stockMessage(r *model.Router, available int, state string, threshold int) (
 	return "📦 Stock de vouchers bas — " + r.Name,
 		"Il ne reste que " + strconvI(available) + " voucher(s) sur «" + r.Name +
 			"» (seuil d'alerte : " + strconvI(threshold) + ").\nPrévoyez un nouveau lot avant la rupture."
+}
+
+// poolAutoMessage — N°99 — confirmation d'auto-réparation : le gérant sait
+// que le cloud a agi seul (parce qu'il l'y a autorisé) et quoi faire si la
+// pression ne retombe pas (l'extension reste un geste humain).
+func poolAutoMessage(r *model.Router, usage, hosts, capacity int, state string) (string, string) {
+	if state == "full" {
+		return "🤖 Pool IP plein — auto-réparation lancée — " + r.Name,
+			"Le pool de «" + r.Name + "» est saturé (" + strconvI(hosts) + "/" + strconvI(capacity) +
+				" — " + strconvI(usage) + " %). L'auto-réparation est lancée : le recyclage des IP zombies sera appliqué " +
+				"au prochain point de contact du routeur (≤ 45 s), sans action de votre part.\n" +
+				"Si des clients voient encore « no more free addresses from pool », étendez le pool : Outils routeur → " +
+				"Système → Étendre le pool (+ ~2 000 IP)."
+	}
+	return "🤖 Pool IP à " + strconvI(usage) + " % — auto-réparation lancée — " + r.Name,
+		"L'occupation du pool de «" + r.Name + "» a atteint " + strconvI(usage) + " % (" + strconvI(hosts) + "/" + strconvI(capacity) +
+			"), l'auto-réparation est lancée : le recyclage des IP zombies sera appliqué au prochain point de " +
+			"contact du routeur (≤ 45 s), sans action de votre part.\n" +
+			"Si la pression reste haute après le recyclage, étendez le pool : Outils routeur → Système → Étendre le pool."
 }
 
 // poolMessage — N°97 — message d'alerte d'occupation du pool IP. Le gérant

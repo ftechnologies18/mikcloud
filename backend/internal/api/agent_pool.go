@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -237,6 +238,16 @@ func poolUsagePct(r *model.Router) int {
 // autre — l'ancienne condition re-filait la commande à CHAQUE check-in,
 // soit toutes les 20 s avec le veilleur d'invités (constat production
 // ProMax WIFI : file + journal inondés de ~180 commandes/heure).
+//
+// N°99 — EXCEPTION consentie : PoolAutoPending (posé par le moniteur quand
+// la pression du pool franchit 80/95 % sur un routeur dont le gérant a
+// activé le switch « Auto-réparation ») file le RECYCLAGE des IP zombies
+// sans geste humain. Le nuage n'agit toujours pas de son propre chef : le
+// gérant l'y a autorisé explicitement, par routeur, et l'action reste
+// bornée (recyclage seul, JAMAIS l'extension — geste topologique à
+// confirmation explicite ; une marque par transition d'alerte, l'anti-boucle
+// vit dans le moniteur). Journalisée dans l'activité au filage.
+//
 // À appeler sous le verrou du store.
 func (a *API) ensurePoolDoctorLocked(db *model.DB, router *model.Router) {
 	if router.Mode != "agent" {
@@ -246,9 +257,33 @@ func (a *API) ensurePoolDoctorLocked(db *model.DB, router *model.Router) {
 		c := &db.Commands[i]
 		if c.RouterID == router.ID && c.Kind == model.CmdPoolDoctor &&
 			(c.Status == "queued" || c.Status == "sent") {
-			return // déjà en file ou en vol
+			return // déjà en file ou en vol : l'auto-réparation attendra le prochain check-in
 		}
 	}
+
+	// N°99 — auto-réparation en attente : recyclage AVANT le diagnostic de
+	// fraîcheur (une pression high/full est un signal fort, même avec un
+	// diagnostic d'hier). Le flag est consommé ICI : si la commande échoue,
+	// la pression restera haute mais la mémoire de transition (moniteur)
+	// interdit tout re-filage en boucle — la prochaine remontée de pression
+	// après un retour au calme re-marquera.
+	if router.PoolAutoPending {
+		router.PoolAutoPending = false
+		queueCommandLocked(db, router.AccountID, router.ID, model.CmdPoolDoctor,
+			map[string]any{"recycle": true, "extend": false})
+		pct := poolUsagePct(router)
+		db.Activity = append([]model.Activity{{
+			ID: model.NewID("act-"), AccountID: router.AccountID, Type: "router",
+			Message: "Auto-réparation pool IP : recyclage des IP zombies envoyé sur «" + router.Name +
+				"» (occupation " + strconv.Itoa(pct) + " % — switch Auto-réparation actif)",
+			At: model.NowISO(), // acteur vide = moteur interne (cf. model.Activity)
+		}}, db.Activity...)
+		if len(db.Activity) > 500 {
+			db.Activity = db.Activity[:500]
+		}
+		return
+	}
+
 	if router.PoolDoctorAt != "" {
 		if at, err := time.Parse(time.RFC3339, router.PoolDoctorAt); err == nil {
 			if time.Since(at) < agent.PoolDoctorRefresh {

@@ -322,6 +322,13 @@ export interface RouterDevice {
   poolRanges?: string;
   /** N°97 : date du dernier diagnostic pool (RFC3339). */
   poolDoctorAt?: string;
+  /** N°99 : auto-réparation du pool activée par le gérant (switch de la carte
+   * Pool d'adresses IP) — à chaque transition d'alerte (≥ 80 %/≥ 95 %) le
+   * recyclage des IP zombies part sans geste humain. */
+  poolAuto?: boolean;
+  /** N°99 : auto-réparation marquée par le moniteur, en attente du check-in
+   * qui filera le recyclage (affiché « en attente d'application »). */
+  poolAutoPending?: boolean;
 }
 
 /** Réponse de création d'un routeur en mode agent (script + token à copier). */

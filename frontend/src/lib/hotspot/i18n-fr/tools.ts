@@ -236,4 +236,9 @@ export const frTools: Record<string, string> = {
 "tools.pool.agentNote": "Application au prochain check-in du routeur (≤ 45 s) ; le recyclage des IP zombies est inclus.",
 "tools.pool.extendConfirm": "Étendre le pool",
 "tools.pool.gaugeAria": "Occupation du pool : {pct} pour cent",
+"tools.pool.auto": "Auto-réparation",
+"tools.pool.autoDesc": "Quand l'occupation franchit 80 %, le recyclage des IP zombies part seul — plus aucun clic. L'extension du pool reste une action manuelle (confirmation obligatoire).",
+"tools.pool.autoOnToast": "Auto-réparation activée — le recyclage partira seul à la prochaine alerte (≥ 80 %)",
+"tools.pool.autoOffToast": "Auto-réparation désactivée — plus rien ne part sans vous",
+"tools.pool.autoPending": "Auto-réparation déclenchée — application au prochain point de contact du routeur (≤ 45 s)…",
 };

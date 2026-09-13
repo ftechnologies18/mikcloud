@@ -655,6 +655,11 @@ func (p *PG) ensureSchema() error {
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS pool_hosts INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS pool_ranges TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS pool_doctor_at TEXT NOT NULL DEFAULT ''`,
+		// N°99 — auto-réparation opt-in du pool : switch du gérant
+		// (PoolAuto) + marqueur d'auto-réparation en attente du
+		// check-in (PoolAutoPending, cf. internal/api/agent_pool.go).
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS pool_auto BOOLEAN NOT NULL DEFAULT FALSE`,
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS pool_auto_pending BOOLEAN NOT NULL DEFAULT FALSE`,
 		// N°97 — état anti-spam alerte pool (routerID → high|full), JSON
 		// sérialisé comme stock_alert_state.
 		`ALTER TABLE notif_settings ADD COLUMN IF NOT EXISTS pool_alert_state TEXT NOT NULL DEFAULT ''`,

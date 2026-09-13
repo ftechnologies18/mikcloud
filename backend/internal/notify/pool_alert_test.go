@@ -134,6 +134,156 @@ func TestPoolAlertSilentWithoutCapacityOrChannel(t *testing.T) {
 	st.Unlock()
 }
 
+// poolAutoNotifs — extrait les confirmations d'auto-réparation (kind pool_auto).
+func poolAutoNotifs(outbox []outboxItem) []outboxItem {
+	var out []outboxItem
+	for _, item := range outbox {
+		if item.kind == KindPoolAuto {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+// TestPoolAutoRepairMarksPendingOnTransition — N°99 : à la transition de
+// pression (high/full) un routeur agent dont le gérant a activé le switch
+// est MARQUÉ (PoolAutoPending — le check-in filera le recyclage) et le
+// gérant reçoit UNE confirmation par transition. Anti-boucle (leçon
+// N°97-ter) : le flag consommé n'est JAMAIS re-posé tant que la pression
+// n'est pas redescendue puis remontée.
+func TestPoolAutoRepairMarksPendingOnTransition(t *testing.T) {
+	st, svc, router := seedPoolRouter(t, 254, 210) // 82 % → high
+	now := time.Now().UTC()
+	st.Lock()
+	router.PoolAuto = true // switch activé par le gérant
+	st.Unlock()
+
+	// Transition ok → high : pending posé + UNE confirmation.
+	st.Lock()
+	router.PoolAutoPending = false
+	st.Unlock()
+	items := poolAutoNotifs(svc.collect(now))
+	if len(items) != 1 {
+		t.Fatalf("premier passage : %d confirmation(s) auto, attendu 1", len(items))
+	}
+	if !containsStr(items[0].title, "auto-réparation") || !containsStr(items[0].body, "82 %") {
+		t.Errorf("confirmation inattendue : %q / %q", items[0].title, items[0].body)
+	}
+	st.Lock()
+	pending := router.PoolAutoPending
+	st.Unlock()
+	if !pending {
+		t.Fatal("PoolAutoPending doit être posé à la transition high")
+	}
+
+	// Même pression au tick suivant : RIEN (anti-spam par transition).
+	if items = poolAutoNotifs(svc.collect(now.Add(30 * time.Second))); len(items) != 0 {
+		t.Fatalf("pression inchangée : %d confirmation(s), attendu 0", len(items))
+	}
+
+	// Le check-in a consommé le pending (recyclage filé) MAIS la pression
+	// reste haute : le marquage ne re-part PAS (sinon ~80 commandes/heure —
+	// exactement l'inondation N°97-ter).
+	st.Lock()
+	router.PoolAutoPending = false
+	st.Unlock()
+	if items = poolAutoNotifs(svc.collect(now.Add(time.Minute))); len(items) != 0 {
+		t.Fatalf("pression haute après consommation : %d confirmation(s), attendu 0", len(items))
+	}
+	st.Lock()
+	pending = router.PoolAutoPending
+	st.Unlock()
+	if pending {
+		t.Fatal("le pending consommé ne doit PAS être re-posé tant que la pression ne redescend pas")
+	}
+
+	// Aggravation high → full : NOUVELLE transition → confirmation (le
+	// pending reste éteint si le recyclage est déjà en vol — pas de file
+	// doublée : une seule commande queued à la fois côté check-in).
+	st.Lock()
+	router.PoolHosts = 245 // 96 % → full
+	st.Unlock()
+	if items = poolAutoNotifs(svc.collect(now.Add(90 * time.Second))); len(items) != 1 {
+		t.Fatalf("passage à full : %d confirmation(s), attendu 1", len(items))
+	}
+	if !containsStr(items[0].body, "no more free addresses") {
+		t.Errorf("la confirmation full doit citer l'erreur terrain : %q", items[0].body)
+	}
+
+	// Retour au calme PUIS re-montée : la mémoire est purgée au calme, la
+	// prochaine montée re-marque (nouveau cycle de zombies à recycler).
+	st.Lock()
+	router.PoolHosts = 100
+	st.Unlock()
+	svc.collect(now.Add(2 * time.Minute))
+	st.Lock()
+	router.PoolHosts = 210
+	st.Unlock()
+	if items = poolAutoNotifs(svc.collect(now.Add(3 * time.Minute))); len(items) != 1 {
+		t.Fatalf("re-montée après calme : %d confirmation(s), attendu 1", len(items))
+	}
+	st.Lock()
+	pending = router.PoolAutoPending
+	st.Unlock()
+	if !pending {
+		t.Fatal("le pending doit être re-posé à la nouvelle montée")
+	}
+}
+
+// TestPoolAutoRepairRequiresOptInAndAgent — N°99 : sans switch (comportement
+// N°97 inchangé — le cloud n'agit jamais de son propre chef) ni en mode
+// simulé, aucune marque n'est posée.
+func TestPoolAutoRepairRequiresOptInAndAgent(t *testing.T) {
+	// Switch OFF : pression haute, rien ne part.
+	st, svc, router := seedPoolRouter(t, 254, 210)
+	svc.collect(time.Now().UTC())
+	st.Lock()
+	pending := router.PoolAutoPending
+	st.Unlock()
+	if pending {
+		t.Fatal("sans switch (PoolAuto=false), aucun pending ne doit être posé (doctrine N°97)")
+	}
+
+	// Mode simulé : le switch n'a personne pour exécuter la commande.
+	st.Lock()
+	router.PoolAuto = true
+	router.Mode = "simulated"
+	st.Unlock()
+	if items := poolAutoNotifs(svc.collect(time.Now().UTC())); len(items) != 0 {
+		t.Fatalf("mode simulé : %d confirmation(s), attendu 0", len(items))
+	}
+	st.Lock()
+	pending = router.PoolAutoPending
+	st.Unlock()
+	if pending {
+		t.Fatal("en mode simulé, aucun pending ne doit être posé")
+	}
+}
+
+// TestPoolAutoRepairWorksWithoutChannels — N°99 : l'auto-réparation est un
+// réglage DÉDIÉ du routeur : sans canal de notification, l'action a quand
+// même lieu (pending posé) — mais sans confirmation envoyée.
+func TestPoolAutoRepairWorksWithoutChannels(t *testing.T) {
+	st, svc, router := seedPoolRouter(t, 254, 210)
+	st.Lock()
+	router.PoolAuto = true
+	cfg := store.GetOrCreateNotifSettings(st.Data(), "acc-pool")
+	cfg.TelegramEnabled = false
+	cfg.TelegramBotToken = ""
+	store.SetNotifSettings(st.Data(), cfg)
+	st.Unlock()
+
+	if items := poolAutoNotifs(svc.collect(time.Now().UTC())); len(items) != 0 {
+		t.Fatalf("sans canal : %d confirmation(s), attendu 0", len(items))
+	}
+	st.Lock()
+	pending := router.PoolAutoPending
+	st.Unlock()
+	if !pending {
+		t.Fatal("sans canal, le pending doit quand même être posé (réglage dédié du routeur)")
+	}
+}
+
 func containsStr(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {

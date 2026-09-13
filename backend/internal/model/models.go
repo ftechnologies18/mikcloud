@@ -238,6 +238,16 @@ type Router struct {
 	// PoolDoctorAt — RFC3339 du dernier diagnostic pool confirmé (auto-
 	// diagnostiqueur du check-in, re-filé passé PoolDoctorRefresh).
 	PoolDoctorAt string `json:"poolDoctorAt,omitempty"`
+	// N°99 — auto-réparation du pool (opt-in gérant, switch de la carte
+	// « Pool d'adresses IP ») : à la transition d'alerte high/full le
+	// moniteur marque PoolAutoPending, et le check-in suivant enfile le
+	// recyclage des IP zombies SANS geste humain (jamais l'extension —
+	// geste topologique à confirmation explicite).
+	PoolAuto bool `json:"poolAuto,omitempty"`
+	// PoolAutoPending — auto-réparation demandée par le moniteur, en
+	// attente du check-in qui la filera (consommé au filage ; reste posé
+	// tant qu'une commande pool_doctor est en file ou en vol).
+	PoolAutoPending bool `json:"poolAutoPending,omitempty"`
 }
 
 // SchedulerSecEffective — pas de scheduler connu du routeur (N°75). 0 =

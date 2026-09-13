@@ -90,7 +90,8 @@ var routerSpec = entitySpec[model.Router]{
 		"shield_level", "shield_sig", "shield_applied_at",
 		"familyguard_spec", "familyguard_sig", "familyguard_applied_at",
 		"antivpn_level", "antivpn_sig", "antivpn_applied_at",
-		"pool_cap", "pool_hosts", "pool_ranges", "pool_doctor_at"},
+		"pool_cap", "pool_hosts", "pool_ranges", "pool_doctor_at",
+		"pool_auto", "pool_auto_pending"},
 	idOf: func(x *model.Router) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Router, error) {
 		var x model.Router
@@ -102,7 +103,7 @@ var routerSpec = entitySpec[model.Router]{
 			&x.ShieldLevel, &x.ShieldSig, &x.ShieldAppliedAt,
 			&x.FamilyGuardSpec, &x.FamilyGuardSig, &x.FamilyGuardAppliedAt,
 			&x.AntiVpnLevel, &x.AntiVpnSig, &x.AntiVpnAppliedAt,
-			&x.PoolCap, &x.PoolHosts, &x.PoolRanges, &x.PoolDoctorAt)
+			&x.PoolCap, &x.PoolHosts, &x.PoolRanges, &x.PoolDoctorAt, &x.PoolAuto, &x.PoolAutoPending)
 		// Sécurité P0 #6 — le mot de passe routeur est stocké chiffré
 		// (AES-256-GCM) : lecture = déchiffrement (passthrough si valeur
 		// antérieure au correctif, migration assurée par
@@ -123,7 +124,7 @@ var routerSpec = entitySpec[model.Router]{
 			x.ShieldLevel, x.ShieldSig, x.ShieldAppliedAt,
 			x.FamilyGuardSpec, x.FamilyGuardSig, x.FamilyGuardAppliedAt,
 			x.AntiVpnLevel, x.AntiVpnSig, x.AntiVpnAppliedAt,
-			x.PoolCap, x.PoolHosts, x.PoolRanges, x.PoolDoctorAt}
+			x.PoolCap, x.PoolHosts, x.PoolRanges, x.PoolDoctorAt, x.PoolAuto, x.PoolAutoPending}
 	},
 	hashOf: hashEntity[model.Router],
 }

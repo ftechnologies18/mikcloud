@@ -370,6 +370,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/routers/{id}/shutdown", a.requireRole(2, a.handleRouterShutdown))
 	// N°97 — docteur pool IP (épuisement heures de pointe)
 	mux.HandleFunc("POST /api/routers/{id}/pool-doctor", a.requireRole(2, a.handleRouterPoolDoctor))
+	// N°99 — auto-réparation du pool (opt-in par routeur)
+	mux.HandleFunc("PUT /api/routers/{id}/pool-auto", a.requireRole(2, a.handleRouterPoolAuto))
 
 	// B2 « Speed App UX » — Core Web Vitals (voir handlers_vitals.go) :
 	// collecte publique (beacon text/plain sans preflight, vitrine anonyme

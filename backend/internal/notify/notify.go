@@ -50,6 +50,12 @@ const (
 	// free addresses from pool » frappe les clients payants aux heures de
 	// pointe, l'alerte devance la panne.
 	KindPoolAlert = "pool_alert"
+	// KindPoolAuto — N°99 : confirmation d'action automatique — l'auto-
+	// réparation du pool a été déclenchée sur transition d'alerte (opt-in
+	// du gérant, switch « Auto-réparation » de la carte pool) : le
+	// recyclage des IP zombies sera appliqué au prochain check-in SANS
+	// geste humain ; l'extension de pool reste manuelle (topologie).
+	KindPoolAuto = "pool_auto"
 )
 
 // EmailProviderOf — fournisseur du canal e-mail normalisé : "resend" ou

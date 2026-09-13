@@ -5,6 +5,95 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-14 — N°99 : auto-réparation du pool IP — la correction de l'épuisement devient automatique (opt-in par routeur)
+
+### N°99 — Contexte : « pourquoi cette correction n'est pas automatique ? »
+Question du gérant après N°97 : le docteur pool diagnostique, mesure et
+alerte automatiquement, mais le RECYCLAGE des IP zombies demandait un clic
+(« Recycler les IP zombies »). Trois réponses honnêtes motivaient ce choix :
+(1) le recyclage pose des timeouts PERMANENTS sur le routeur (login-timeout
+5m, idle-timeout 10m, keepalive 2m, address-per-mac=1) — une fois appliqué,
+le routeur recycle seul ses zombies en continu, l'action n'était donc pas
+« à chaque fois » mais une fois par routeur ; (2) la doctrine « le cloud ne
+modifie jamais la config de son propre chef » protège des équipements de
+production clients ; (3) le recyclage change une politique MÉTIER visible
+(déconnexion d'un appareil inactif après 10 min — décision du gérant, pas
+du cloud). N°99 transforme ce compromis : l'auto-réparation devient un
+OPT-IN par routeur — le gérant l'active une fois, le cloud recycle ensuite
+seul à chaque alerte.
+
+### Produit
+- SWITCH « AUTO-RÉPARATION » sur la carte Pool d'adresses IP (Outils
+  routeur → Système, mode agent uniquement — la commande a besoin d'un
+  agent pour l'exécuter) : activé, à chaque TRANSITION d'alerte (≥ 80 %
+  high, ≥ 95 % full) le moniteur marque le routeur et le check-in suivant
+  (≤ 45 s) enfile le recyclage des IP zombies SANS geste humain ;
+  désactivé, coupure nette (pending purgé, plus rien ne part).
+- JAMAIS l'extension automatiquement : ajouter le range 10.77.0.0/21
+  change la TOPOLOGIE réseau (IP secondaire + NAT) — un conflit avec un
+  plan d'adressage client ne se détecte pas automatiquement, le geste
+  reste humain avec confirmation explicite.
+- La notification pool_auto (« 🤖 auto-réparation lancée ») confirme
+  l'action automatique (le gérant sait que le cloud a agi seul — parce
+  qu'il l'y a autorisé) et nomme le geste suivant si la pression reste
+  haute (étendre le pool). L'action est aussi journalisée dans l'activité
+  (« Auto-réparation pool IP : recyclage des IP zombies envoyé… »).
+- État « en attente d'application » visible sur la carte (poolAutoPending
+  entre la marque du moniteur et le check-in qui la sert).
+
+### Technique
+- MODÈLE : Router.PoolAuto (opt-in persisté) + Router.PoolAutoPending
+  (marque transitoire consommée au filage) ; 2 colonnes routers
+  (ALTER idempotent, BOOLEAN DEFAULT FALSE — pattern WatcherOK).
+- MONITEUR (notify) : à la transition de pression, si PoolAuto && mode
+  agent → PoolAutoPending + notification dédiée (KindPoolAuto) ; anti-
+  boucle par mémoire de transition PROPRE au Service (autoPoolMarked —
+  une marque par transition high/full, purgée au retour au calme) : le
+  flag consommé n'est JAMAIS re-posé tant que la pression n'est pas
+  redescendue puis remontée (leçon N°97-ter : jamais ~80 commandes/heure).
+  Indépendant des canaux : sans canal configuré, l'action a quand même
+  lieu (réglage DÉDIÉ du routeur) et reste tracée en activité.
+- VEILLEUR (api/agent_pool.go) : ensurePoolDoctorLocked file le recyclage
+  (recycle=true, extend=false) AVANT le contrôle de fraîcheur du
+  diagnostic (un signal de pression forte ne doit pas attendre 7 jours) ;
+  garde « déjà en file/en vol » inchangée (le pending attend le prochain
+  check-in, jamais de file doublée) ; journalisation d'activité au filage
+  (acteur vide = moteur interne).
+- ENDPOINT : PUT /api/routers/{id}/pool-auto { auto: bool } — idempotent
+  (re-cliquer ne journalise pas deux fois), rôle ≥ manager, compte
+  expiré refusé, non-agent rejeté 400 (message honnête), désactivation
+  purge le pending (coupure nette).
+- Front : types RouterDevice.poolAuto/poolAutoPending ; switch + mutation
+  + invalidations dans pool-card.tsx ; 5 clés i18n × 2 (parité 235/235
+  sur le fragment tools).
+
+### Tests & vérification
+- 3 tests moniteur (transition → pending + notif ; anti-boucle après
+  consommation ; opt-in + mode agent requis ; fonctionne sans canal) ;
+  4 tests API (pending → recyclage filé + journalisé + jamais extend ;
+  commande en vol → pending en attente ; endpoint bascule/idempotence/
+  coupure nette/404 ; non-agent 400). Suite complète 12 paquets verts
+  sans -race PUIS AVEC -race (api 453 s).
+- Vérification navigateur sur stack réelle (backend :4000 + next :3016)
+  25/25 : inscription → routeur agent → boucle agent COMPLÈTE (check-in
+  → diagnostic 210/253 = 83 % → jauge ambre + zombies) → switch OFF par
+  défaut → activation (toast + persistance) → attente moniteur 35 s →
+  PoolAutoPending posé → check-in suivant sert le recyclage AUTO (le
+  script contient « set [find] login-timeout » — preuve du geste
+  config) → rapport recycled=yes → jauge retombée 120/253 VERTE →
+  switch toujours ON après reload → activité « Auto-réparation pool
+  IP… occupation 83 % » tracée → mobile 390 px sans débordement →
+  0 erreur console/page.
+- Diagnostic pur re-vérifié : le script servi NE contient PAS les set
+  de timeouts (le mot-clé login-timeout du GET de lecture ne compte
+  pas — critère sur « set [find] login-timeout »).
+
+### Zéro action gérant requise
+Le comportement par défaut ne change PAS (opt-in) : les routeurs
+existant restent en recyclage manuel tant que le gérant n'active pas le
+switch. Rien à faire pour les deux routeurs de production — activer le
+switch est un choix (recommandé pour les sites denses).
+
 ## 2026-09-14 — N°97-ter : pool_doctor en production — la capacité vient aussi du DHCP du bridge, et l'auto-diagnostic ne boucle plus
 
 ### N°97-ter — Contexte : les deux découvertes de la première heure de production

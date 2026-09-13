@@ -5,6 +5,55 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-13 — N°86 : Keep-alive — l'Option A (UptimeRobot) est en place : le monitor HTTP 5 min élimine l'hibernation Render, le workflow GitHub est désactivé (conservé comme repli) et le runbook reflète la vérité opérationnelle
+
+### N°86 — Contexte : la recommandation du runbook est exécutée
+Le gérant a créé le compte UptimeRobot Free (≈ 5 min, 0 $, sans carte
+bancaire) et posé le monitor prescrit par le runbook §2 : HTTP(s),
+interval 5 minutes, `https://mikcloud.onrender.com/`. Preuve d'efficacité
+mesurée le jour même : dernier ping GitHub Actions à 11:06 UTC (retards
+plateforme habituels — 5 h 17 entre les runs 114 et 115) ; à 13:18 UTC,
+`GET /` répond HTTP 200 en 0,25 s sans cold boot — et structurellement,
+une cadence de 5 min est inférieure au seuil d'hibernation Render
+(15 min) : le service ne peut plus s'endormir. Le cron GitHub devenait
+redondant : désactivé conformément au runbook (« Après activation »),
+conservé dans le dépôt comme repli. La défense contre les cold boots est
+désormais en profondeur : (1) UptimeRobot en couche primaire (élimine
+l'hibernation, sonde de disponibilité avec historique en bonus),
+(2) la couche frontend N°84 (réveil proactif + rejeu patient du login —
+tout cold boot résiduel, p.ex. pendant un déploiement, reste quasi
+invisible), (3) le workflow GitHub en repli dormant (réactivable en une
+commande si le compte tiers est un jour abandonné).
+
+### Technique — zéro code, zéro endpoint, zéro migration
+Trois fichiers documentaires. RUNBOOK-KEEPALIVE.md : statut en tête
+(Option A ACTIVE, date, hiérarchie des trois couches), section 2
+retitrée « ACTIVÉE le 2026-09-13 » avec activation effective et preuve
+mesurée, remplacement de « Après activation » (consigne) par le récit
+de la désactivation réelle (commande, HTTP 204, état `disabled_manually`
+vérifié, procédure de réactivation, avertissement « pousser le fichier
+ne le réactive pas »), note Option B, recommandation passée au passé
+composé, sources d'historique de §5 hiérarchisées (UptimeRobot primaire).
+keepalive.yml : bannière « ⛔ DÉSACTIVÉ le 2026-09-13 » en tête (raison,
+commandes de réactivation, même avertissement) — le fichier reste
+syntaxiquement identique (commentaires seuls). CHANGELOG.md : cette
+entrée. La désactivation effective a été effectuée AVANT le commit, par
+l'API GitHub (PUT `/repos/ftechnologies18/mikcloud/actions/workflows/
+keepalive.yml/disable` → 204, état vérifié : keepalive `disabled_manually`,
+ci.yml et backup.yml toujours actifs).
+
+### Vérifications
+État des workflows GitHub vérifié par API après désactivation (keepalive
+`disabled_manually` ; CI et backup actifs). Render : GET / HTTP 200 en
+0,25 s à 13:18 UTC, soit 2 h 12 après le dernier ping GitHub — service
+resté éveillé sans l'aide du cron. Neon : connexion pgx contrôlée,
+compteurs vivants (commands en croissance, preuve de synchro
+différentielle active). Déploiements attendus de ce commit : Vercel
+redéploie un artefact fonctionnellement identique (diff docs
+uniquement) ; Render NE redéploie PAS (le job deploy-render détecte
+l'absence de diff sous `backend/` et saute) ; la CI tourne à vide sur
+du texte (aucun code touché).
+
 ## 2026-09-13 — N°85 : SafeWiFi durci — le DNS filtré devient le SEUL chemin de sortie — une règle dstnat antérieure ne peut plus passer devant, le DNS chiffré connu (DoT/DoH) et l'IPv6 sont coupés depuis le WiFi public
 
 ### N°85 — Contexte : un site adulte accessible sur un routeur « Protection familles » active

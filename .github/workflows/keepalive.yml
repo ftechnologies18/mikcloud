@@ -1,5 +1,17 @@
 # Keep-alive Render — anti-hibernation (plan gratuit).
 #
+# ⛔ DÉSACTIVÉ le 2026-09-13 (état GitHub : disabled_manually) — l'Option A
+# du runbook (docs/RUNBOOK-KEEPALIVE.md) est EN PLACE : monitor externe
+# UptimeRobot, check HTTP toutes les 5 min sur https://mikcloud.onrender.com/.
+# La cadence (5 min) est structurellement inférieure au seuil d'hibernation
+# Render (15 min) : ce cron redondant ne servait plus qu'à consommer des
+# minutes Actions. CONSERVÉ comme repli — si le compte UptimeRobot est un
+# jour abandonné, le réactiver :
+#     gh workflow enable keepalive.yml
+#     (ou PUT /repos/ftechnologies18/mikcloud/actions/workflows/keepalive.yml/enable)
+# NB : pousser une modification de ce fichier ne le réactive PAS — l'état
+# disabled vit côté GitHub, pas dans le dépôt.
+#
 # ⚠️ FIABILITÉ MESURÉE (sept. 2026) : GitHub Actions exécute ce cron avec des
 # retards plateforme de 99 à 288 min (moyenne ≈ 2 h 50 sur 15 runs), contre
 # 10 min nominale. Le plan FREE de Render suspend le service après ~15 min

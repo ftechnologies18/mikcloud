@@ -5,6 +5,15 @@
 > coûte **30 à 90 s** au premier visiteur (boot conteneur + rechargement
 > complet de l'état depuis Neon).
 
+> **STATUT (2026-09-13) : Option A ACTIVE** — monitor UptimeRobot Free
+> (HTTP, toutes les 5 min) posé sur `https://mikcloud.onrender.com/` par le
+> gérant ; le workflow GitHub est **désactivé** (§2, conservé comme repli).
+> Défense en profondeur : (1) UptimeRobot élimine l'hibernation, (2) la
+> couche frontend N°84 (§1-bis) rend tout cold boot résiduel (p.ex. pendant
+> un déploiement) quasi invisible, (3) le workflow GitHub dort en repli
+> (réactivable en une commande). Option B (Render Starter) reste le
+> correctif de fond au premier trafic réel payant.
+
 ## 1. Constat mesuré (septembre 2026)
 
 Le workflow GitHub Actions `.github/workflows/keepalive.yml` pings
@@ -48,7 +57,7 @@ Ces deux garde-fous rendent les cold boots résiduels quasi invisibles ;
 les options A/B ci-dessous restent les correctifs de fond (availability
 continue, pas juste tolérance à l'éveil).
 
-## 2. Option A — Monitor externe UptimeRobot (gratuit, recommandé)
+## 2. Option A — Monitor externe UptimeRobot (gratuit) — **ACTIVÉE le 2026-09-13**
 
 UptimeRobot Free : **50 monitors, checks HTTP toutes les 5 min, 0 $, sans
 carte bancaire**. Indépendant de GitHub → fiabilité réelle de 5 min, ce qui
@@ -69,17 +78,40 @@ atteintes).
 4. Sauvegarder. Après 2-3 checks (10-15 min), le service Render passe
    `running` et **ne se resuspend plus**.
 
-### Après activation
+### Activation effective (2026-09-13)
 
-Désactiver le workflow GitHub (devenu redondant) :
+Le gérant a créé le compte et posé le monitor exactement comme prescrit
+ci-dessus (≈ 5 min de manipulation, 0 $). Preuve d'efficacité mesurée le
+jour même :
+
+- dernier ping GitHub Actions à **11:06 UTC** (retards plateforme
+  habituels — 5 h 17 entre les runs 114 et 115) ;
+- à **13:18 UTC**, `GET /` répond **HTTP 200 en 0,25 s** sans cold boot —
+  le service est resté éveillé sans l'aide du cron GitHub ;
+- structurellement : une cadence de 5 min < seuil d'hibernation de 15 min,
+  le service ne peut plus s'endormir.
+
+### Workflow GitHub — désactivé le 2026-09-13 (fait)
+
+Conformément au plan initial, le cron GitHub redondant a été désactivé
+(le workflow reste DANS le dépôt comme repli) :
 
 ```bash
 gh workflow disable keepalive.yml
-# ou : onglet GitHub → Actions → Keep-alive Render → ⋯ → Disable workflow
+# ou l'API : PUT /repos/ftechnologies18/mikcloud/actions/workflows/keepalive.yml/disable
+# → HTTP 204, état vérifié ensuite : disabled_manually
+# (ci.yml et backup.yml restent actifs)
 ```
 
-Ne pas le supprimer du dépôt : il sert de repli si le compte UptimeRobot est
-abandonné (il suffit de le réactiver).
+Réactivation (si le compte UptimeRobot est un jour abandonné — vérifier
+alors l'historique de pannes du monitor avant de le supprimer) :
+
+```bash
+gh workflow enable keepalive.yml
+```
+
+NB : pousser une modification du fichier `keepalive.yml` ne le réactive
+PAS — l'état disabled vit côté GitHub, pas dans le dépôt.
 
 ## 3. Option B — Upgrade Render Starter (~7 $/mois)
 
@@ -103,6 +135,10 @@ git commit -m "N°XX — Render Starter : suppression du keep-alive devenu inuti
   (cold boot 30-90 s à chaque visite espacée).
 - Ou dès qu'un domaine de production série est mis en avant.
 
+> NB (2026-09-13) : l'Option A couvre désormais ce besoin à 0 $ — l'Option B
+> redevient pertinente au premier trafic réel payant ou si le gérant veut
+> se passer de tout compte tiers.
+
 ## 4. Table de décision
 
 | Critère | A — UptimeRobot Free | B — Render Starter |
@@ -113,8 +149,8 @@ git commit -m "N°XX — Render Starter : suppression du keep-alive devenu inuti
 | Sonde/alertes de disponibilité | Inclus (bonus) | Dashboard Render seul |
 | Effort | ~5 min (créer le compte) | ~1 min + suppression workflow |
 
-**Recommandation : Option A immédiatement** (gratuit, 5 min), Option B au
-premier signe de trafic réel.
+**Recommandation : Option A immédiatement** (gratuit, 5 min) — **faite le
+2026-09-13** ; Option B au premier signe de trafic réel payant.
 
 ## 5. Vérification du bon fonctionnement
 
@@ -123,7 +159,8 @@ premier signe de trafic réel.
 time curl -s -o /dev/null -w '%{http_code}\n' https://mikcloud.onrender.com/
 # → HTTP 200 en < 1 s : service éveillé (un cold boot donnerait 30-90 s).
 
-# Historique du monitor UptimeRobot : onglet Response Time / Logs.
+# Historique du monitor UptimeRobot : onglet Response Time / Logs
+#   (PRIMAIRE depuis le 2026-09-13 — c'est LA sonde de disponibilité).
 # Historique GitHub : onglet Actions → Keep-alive Render
-#   (résumé de run : statut + latence mesurée depuis N°84).
+#   (historique jusqu'au 13/09/2026 11:06 UTC — workflow désormais désactivé).
 ```

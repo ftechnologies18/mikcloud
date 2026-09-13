@@ -1,16 +1,37 @@
 "use client";
 
-// N°83 — Cartes de protection : les 3 modules sécurité (SafeWiFi N°80,
-// Shield N°81, FamilyGuard N°82) quittent le 4e onglet « Système » de la
-// fiche routeur et vivent désormais dans la vue Protection (sidebar
-// principale, /app/protection) — un argument de vente ne s'enterre pas
-// dans une zone de configuration.
+// N°96 — Refonte UX/UI des cartes de protection (vue /app/protection).
 //
-// Le code est le MÊME que celui livré en N°80/81/82 (mutations, toasts,
-// invalidations, gardes mode agent) : seul le foyer change. L'onglet
-// Système de la fiche routeur garde un RÉSUMÉ compact avec lien (aucun
-// contrôle dupliqué). Le vocabulaire des clés tools.* est reformulé en
-// bénéfices gérant (Mouvement 3 du plan N°83) — les clés restent stables.
+// Historique : N°83 a fait sortir les modules du 4e onglet « Système » de
+// la fiche routeur (la protection est un argument de vente, elle vit à 1
+// clic de l'atterrissage) ; N°88 y a ajouté la 4e carte (Bloque-VPN). Le
+// contenu grandissait mais la forme restait celle d'un formulaire : 4 cartes
+// identiques à plat, l'état ne se lisait qu'en parcourant chaque
+// interrupteur, les footnotes honnêtes (N°85/88) formaient des murs de
+// texte 11 px, le score « n/4 » vivait en texte brut.
+//
+// Cette refonte conserve 100 % des comportements (mêmes mutations, toasts,
+// invalidations ["/api/routers" + "/api/dashboard"], gardes mode agent,
+// éditeur FamilyGuard complet envoyé par le Switch) et change la
+// présentation :
+//   • ProtectionScoreRing — anneau SVG n/4 coloré par verdict, exposé au
+//     héros de la vue (N°96) : l'état du site se lit en une seconde ;
+//   • ModuleCard — en-tête commun : icône d'IDENTITÉ par module (ShieldCheck
+//     filtrage, Lock anti-piratage, MoonStar couvre-feu, GlobeLock VPN)
+//     teintée selon l'état (primaire = actif, neutre = inactif), chip d'état
+//     (niveau SafeWiFi / Actif / Inactif) et note « Bon à savoir » en
+//     popover — l'honnêteté des footnotes reste, à un clic au lieu d'un mur ;
+//   • SafeWiFi — coche de sélection dans chaque option + pastille
+//     « Recommandé » sur « Menaces bloquées » (le défaut raisonnable pour
+//     tout WiFi public) ;
+//   • FamilyGuard — interrupteur séparé du PLANNING (heures + jours +
+//     enregistrer) groupé dans un bloc bordé ;
+//   • grilles : la vue passe en md:grid-cols-2 — SafeWiFi porte 3 options
+//     et FamilyGuard un éditeur complet, 4 colonnes les compressaient.
+//
+// Le résumé compact de l'onglet Système (ProtectionSummaryCard, fiche
+// routeur) est conservé tel quel : même source de calcul (protection.ts),
+// mêmes clés, CTA vers cette vue.
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -18,15 +39,20 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight,
   Baby,
+  Check,
   Clock,
   Globe,
   GlobeLock,
+  Info,
   Loader2,
+  Lock,
   MoonStar,
   Shield,
   ShieldCheck,
   ShieldOff,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import type { ReactNode } from "react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -34,6 +60,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import {
@@ -86,11 +113,156 @@ export function ProtectionVerdictBadge({ verdict }: { verdict: ProtectionVerdict
   );
 }
 
+// ─── Anneau de score (N°96) ───
+
+/** Couleur d'arc selon le verdict — miroir VERDICT_STYLES (primaire /
+ * ambre / destructif), appliquée à l'attribut SVG stroke via utilitaire
+ * Tailwind (stroke-<couleur> résout la variable du thème). */
+const SCORE_STROKE: Record<ProtectionVerdict, string> = {
+  protected: "stroke-primary",
+  partial: "stroke-amber-500",
+  unprotected: "stroke-destructive",
+};
+
+/** Anneau de score n/4 — la jauge du héros de la vue Protection. Le score
+ * compte des MODULES (pas un pourcentage de « sécurité », notion qui
+ * n'existerait pas) : la valeur « n/4 » au centre dit la vérité, l'arc la
+ * rend visible à 3 mètres. role="img" + libellé complet pour les lecteurs
+ * d'écran (l'arc est décoratif, aria-hidden). */
+export function ProtectionScoreRing({ score, verdict }: { score: number; verdict: ProtectionVerdict }) {
+  const { tf } = useI18n();
+  const n = Math.max(0, Math.min(4, score));
+  const circumference = 2 * Math.PI * 33;
+  return (
+    <div
+      role="img"
+      aria-label={tf("protection.scoreAria", { n })}
+      className="relative flex size-20 shrink-0 items-center justify-center"
+    >
+      <svg viewBox="0 0 80 80" className="size-full -rotate-90" aria-hidden>
+        <circle cx="40" cy="40" r="33" fill="none" strokeWidth="7" className="stroke-border" />
+        <circle
+          cx="40"
+          cy="40"
+          r="33"
+          fill="none"
+          strokeWidth="7"
+          strokeLinecap="round"
+          className={cn("transition-[stroke-dasharray] duration-500 ease-out", SCORE_STROKE[verdict])}
+          style={{ strokeDasharray: `${(n / 4) * circumference} ${circumference}` }}
+        />
+      </svg>
+      <span className="absolute inset-0 flex items-center justify-center" aria-hidden>
+        <span className="flex items-baseline gap-0.5">
+          <span className="text-xl font-bold leading-none tabular-nums">{n}</span>
+          <span className="text-[10px] font-medium text-muted-foreground">/4</span>
+        </span>
+      </span>
+    </div>
+  );
+}
+
+// ─── Briques communes des cartes modules (N°96) ───
+
+/** Chip d'état d'une carte module — « Actif » (primaire, point plein) /
+ * « Inactif » (neutre) / nom du niveau SafeWiFi. Lisible à 5 m, remplace
+ * la lecture de chaque interrupteur pour scanner la vue. */
+function ModuleStateChip({ on, label }: { on: boolean; label: string }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium",
+        on ? "border-primary/25 bg-primary/10 text-primary" : "border-border bg-muted text-muted-foreground",
+      )}
+    >
+      <span className={cn("size-1.5 rounded-full", on ? "bg-primary" : "bg-muted-foreground/50")} aria-hidden />
+      {label}
+    </span>
+  );
+}
+
+/** Note « Bon à savoir » — la footnote honnête d'un module (convergence
+ * ≤ 45 s, auto-réparation, limites connues N°85/88) passe du mur de texte
+ * 11 px à un popover à un clic : l'information reste, le bruit visuel
+ * disparaît. Mêmes clés tools.*.footnote, zéro contenu réécrit. */
+function FootnoteNote({ footnote }: { footnote: string }) {
+  const { t } = useI18n();
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-7 text-muted-foreground hover:text-foreground"
+          aria-label={t("protection.detailsTitle")}
+        >
+          <Info className="size-4" aria-hidden />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-80">
+        <p className="text-sm font-semibold">{t("protection.detailsTitle")}</p>
+        <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{footnote}</p>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/** Coquille commune des 4 cartes : en-tête identité (icône teintée selon
+ * l'état + titre + bénéfice) avec chip d'état et note, puis les contrôles
+ * du module en children. L'API visuelle reste celle de l'app (Card
+ * gap-0 py-0, CardContent p-4 sm:p-5 — pattern maison). */
+function ModuleCard({
+  icon: Icon,
+  on,
+  title,
+  desc,
+  stateLabel,
+  footnote,
+  children,
+}: {
+  icon: LucideIcon;
+  on: boolean;
+  title: string;
+  desc: string;
+  stateLabel: string;
+  footnote: string;
+  children: ReactNode;
+}) {
+  return (
+    <Card className="gap-0 py-0">
+      <CardContent className="flex flex-col p-4 sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
+          <div className="flex min-w-0 flex-1 items-start gap-3">
+            <span
+              className={cn(
+                "flex size-9 shrink-0 items-center justify-center rounded-lg transition-colors",
+                on ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground",
+              )}
+            >
+              <Icon className="size-4.5" aria-hidden />
+            </span>
+            <div className="min-w-0">
+              <h3 className="text-sm font-semibold leading-snug">{title}</h3>
+              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{desc}</p>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
+            <ModuleStateChip on={on} label={stateLabel} />
+            <FootnoteNote footnote={footnote} />
+          </div>
+        </div>
+        <div className="mt-4">{children}</div>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─── SafeWiFi (N°80) ───
 
 const safeWifiLevels: {
   level: SafeWifiLevel;
-  icon: typeof Shield;
+  icon: LucideIcon;
   nameKey: string;
   descKey: string;
 }[] = [
@@ -118,55 +290,76 @@ export function SafeWifiCard({ router }: { router: RouterDevice }) {
     onError: (err: Error) => toast.error(err.message),
   });
 
-  return (
-    <Card className="gap-0 py-0">
-      <CardContent className="p-4 sm:p-5">
-        <div className="flex items-start gap-2">
-          <Shield className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
-          <div>
-            <h3 className="text-sm font-semibold">{t("tools.safewifi.title")}</h3>
-            <p className="mt-0.5 text-xs text-muted-foreground">{t("tools.safewifi.desc")}</p>
-          </div>
-        </div>
+  // Chip d'état : le niveau courant (« Menaces bloquées » / « Protection
+  // familles ») ou « Inactif » — l'état de ce module à 3 niveaux se lit
+  // sans ouvrir la carte.
+  const stateLabel =
+    current === "threats"
+      ? t("tools.safewifi.levelThreats")
+      : current === "family"
+        ? t("tools.safewifi.levelFamily")
+        : t("protection.stateOff");
 
-        <div className="mt-3 space-y-2" role="radiogroup" aria-label={t("tools.safewifi.title")}>
-          {safeWifiLevels.map(({ level, icon: Icon, nameKey, descKey }) => {
-            const active = current === level;
-            return (
-              <button
-                key={level}
-                type="button"
-                role="radio"
-                aria-checked={active}
-                disabled={levelMutation.isPending || router.mode !== "agent"}
-                onClick={() => !active && levelMutation.mutate(level)}
+  return (
+    <ModuleCard
+      icon={ShieldCheck}
+      on={current !== "off"}
+      title={t("tools.safewifi.title")}
+      desc={t("tools.safewifi.desc")}
+      stateLabel={stateLabel}
+      footnote={t("tools.safewifi.footnote")}
+    >
+      <div className="space-y-2" role="radiogroup" aria-label={t("tools.safewifi.title")}>
+        {safeWifiLevels.map(({ level, icon: Icon, nameKey, descKey }) => {
+          const active = current === level;
+          return (
+            <button
+              key={level}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              disabled={levelMutation.isPending || router.mode !== "agent"}
+              onClick={() => !active && levelMutation.mutate(level)}
+              className={cn(
+                "flex w-full items-start gap-3 rounded-lg border p-3 text-left transition-colors",
+                "min-h-11 disabled:cursor-not-allowed disabled:opacity-50",
+                active
+                  ? "border-primary bg-primary/5"
+                  : "border-border hover:border-muted-foreground/30 hover:bg-muted/60",
+              )}
+            >
+              <Icon
+                className={cn("mt-0.5 size-4 shrink-0", active ? "text-primary" : "text-muted-foreground")}
+                aria-hidden
+              />
+              <span className="min-w-0 flex-1">
+                <span className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium">{t(nameKey)}</span>
+                  {level === "threats" && !active && (
+                    <Badge
+                      variant="outline"
+                      className="h-5 border-amber-500/40 px-1.5 text-[11px] text-amber-700 dark:text-amber-300"
+                    >
+                      {t("protection.recommended")}
+                    </Badge>
+                  )}
+                </span>
+                <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">{t(descKey)}</span>
+              </span>
+              <span
+                aria-hidden
                 className={cn(
-                  "flex w-full items-start gap-3 rounded-lg border p-3 text-left transition-colors",
-                  "min-h-11 disabled:cursor-not-allowed disabled:opacity-50",
-                  active
-                    ? "border-primary bg-primary/5"
-                    : "border-border hover:border-muted-foreground/30 hover:bg-muted/60",
+                  "mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border transition-colors",
+                  active ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/30",
                 )}
               >
-                <Icon
-                  className={cn("mt-0.5 size-4 shrink-0", active ? "text-primary" : "text-muted-foreground")}
-                  aria-hidden
-                />
-                <span className="min-w-0">
-                  <span className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-medium">{t(nameKey)}</span>
-                    {active && <Badge className="h-5 px-1.5 text-[11px]">{t("tools.safewifi.activeBadge")}</Badge>}
-                  </span>
-                  <span className="mt-0.5 block text-xs text-muted-foreground">{t(descKey)}</span>
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
-        <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">{t("tools.safewifi.footnote")}</p>
-      </CardContent>
-    </Card>
+                {active && <Check className="size-3" strokeWidth={3} />}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </ModuleCard>
   );
 }
 
@@ -192,44 +385,43 @@ export function ShieldCard({ router }: { router: RouterDevice }) {
   });
 
   const on = current === "on";
-  const Icon = on ? ShieldCheck : ShieldOff;
+  const RowIcon = on ? ShieldCheck : ShieldOff;
 
   return (
-    <Card className="gap-0 py-0">
-      <CardContent className="p-4 sm:p-5">
-        <div className="flex items-start gap-2">
-          <Shield className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
-          <div>
-            <h3 className="text-sm font-semibold">{t("tools.shield.title")}</h3>
-            <p className="mt-0.5 text-xs text-muted-foreground">{t("tools.shield.desc")}</p>
-          </div>
-        </div>
-
-        <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border p-3">
-          <div className="flex min-w-0 items-start gap-2">
-            <Icon
-              className={cn("mt-0.5 size-4 shrink-0", on ? "text-primary" : "text-muted-foreground")}
-              aria-hidden
-            />
-            <span className="min-w-0">
-              <span className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-medium">{t("tools.shield.toggle")}</span>
-                {on && <Badge className="h-5 px-1.5 text-[11px]">{t("tools.shield.activeBadge")}</Badge>}
-              </span>
-              <span className="mt-0.5 block text-xs text-muted-foreground">{t("tools.shield.toggleDesc")}</span>
-            </span>
-          </div>
-          <Switch
-            checked={on}
-            onCheckedChange={(v) => levelMutation.mutate(v ? "on" : "off")}
-            disabled={levelMutation.isPending || router.mode !== "agent"}
-            aria-label={t("tools.shield.toggle")}
+    <ModuleCard
+      icon={Lock}
+      on={on}
+      title={t("tools.shield.title")}
+      desc={t("tools.shield.desc")}
+      stateLabel={on ? t("tools.shield.activeBadge") : t("protection.stateOff")}
+      footnote={t("tools.shield.footnote")}
+    >
+      <div
+        className={cn(
+          "flex items-center justify-between gap-3 rounded-lg border p-3 transition-colors",
+          on ? "border-primary/30 bg-primary/5" : "border-border",
+        )}
+      >
+        <div className="flex min-w-0 items-start gap-2">
+          <RowIcon
+            className={cn("mt-0.5 size-4 shrink-0", on ? "text-primary" : "text-muted-foreground")}
+            aria-hidden
           />
+          <span className="min-w-0">
+            <span className="block text-sm font-medium">{t("tools.shield.toggle")}</span>
+            <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">
+              {t("tools.shield.toggleDesc")}
+            </span>
+          </span>
         </div>
-
-        <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">{t("tools.shield.footnote")}</p>
-      </CardContent>
-    </Card>
+        <Switch
+          checked={on}
+          onCheckedChange={(v) => levelMutation.mutate(v ? "on" : "off")}
+          disabled={levelMutation.isPending || router.mode !== "agent"}
+          aria-label={t("tools.shield.toggle")}
+        />
+      </div>
+    </ModuleCard>
   );
 }
 
@@ -255,44 +447,43 @@ export function AntiVpnCard({ router }: { router: RouterDevice }) {
   });
 
   const on = current === "on";
-  const Icon = on ? GlobeLock : Globe;
+  const RowIcon = on ? GlobeLock : Globe;
 
   return (
-    <Card className="gap-0 py-0">
-      <CardContent className="p-4 sm:p-5">
-        <div className="flex items-start gap-2">
-          <GlobeLock className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
-          <div>
-            <h3 className="text-sm font-semibold">{t("tools.antivpn.title")}</h3>
-            <p className="mt-0.5 text-xs text-muted-foreground">{t("tools.antivpn.desc")}</p>
-          </div>
-        </div>
-
-        <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border p-3">
-          <div className="flex min-w-0 items-start gap-2">
-            <Icon
-              className={cn("mt-0.5 size-4 shrink-0", on ? "text-primary" : "text-muted-foreground")}
-              aria-hidden
-            />
-            <span className="min-w-0">
-              <span className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-medium">{t("tools.antivpn.toggle")}</span>
-                {on && <Badge className="h-5 px-1.5 text-[11px]">{t("tools.antivpn.activeBadge")}</Badge>}
-              </span>
-              <span className="mt-0.5 block text-xs text-muted-foreground">{t("tools.antivpn.toggleDesc")}</span>
-            </span>
-          </div>
-          <Switch
-            checked={on}
-            onCheckedChange={(v) => levelMutation.mutate(v ? "on" : "off")}
-            disabled={levelMutation.isPending || router.mode !== "agent"}
-            aria-label={t("tools.antivpn.toggle")}
+    <ModuleCard
+      icon={GlobeLock}
+      on={on}
+      title={t("tools.antivpn.title")}
+      desc={t("tools.antivpn.desc")}
+      stateLabel={on ? t("tools.antivpn.activeBadge") : t("protection.stateOff")}
+      footnote={t("tools.antivpn.footnote")}
+    >
+      <div
+        className={cn(
+          "flex items-center justify-between gap-3 rounded-lg border p-3 transition-colors",
+          on ? "border-primary/30 bg-primary/5" : "border-border",
+        )}
+      >
+        <div className="flex min-w-0 items-start gap-2">
+          <RowIcon
+            className={cn("mt-0.5 size-4 shrink-0", on ? "text-primary" : "text-muted-foreground")}
+            aria-hidden
           />
+          <span className="min-w-0">
+            <span className="block text-sm font-medium">{t("tools.antivpn.toggle")}</span>
+            <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">
+              {t("tools.antivpn.toggleDesc")}
+            </span>
+          </span>
         </div>
-
-        <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">{t("tools.antivpn.footnote")}</p>
-      </CardContent>
-    </Card>
+        <Switch
+          checked={on}
+          onCheckedChange={(v) => levelMutation.mutate(v ? "on" : "off")}
+          disabled={levelMutation.isPending || router.mode !== "agent"}
+          aria-label={t("tools.antivpn.toggle")}
+        />
+      </div>
+    </ModuleCard>
   );
 }
 
@@ -347,52 +538,60 @@ export function FamilyGuardCard({ router }: { router: RouterDevice }) {
   const editorValid =
     timeOk(start) && timeOk(end) && start !== end && /^[01]{7}$/.test(days) && days.includes("1");
 
-  const Icon = activeNow ? MoonStar : Clock;
+  const RowIcon = activeNow ? MoonStar : Clock;
 
   return (
-    <Card className="gap-0 py-0">
-      <CardContent className="p-4 sm:p-5">
-        <div className="flex items-start gap-2">
-          <Icon className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
-          <div>
-            <h3 className="text-sm font-semibold">{t("tools.familyguard.title")}</h3>
-            <p className="mt-0.5 text-xs text-muted-foreground">{t("tools.familyguard.desc")}</p>
-          </div>
-        </div>
-
-        <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border p-3">
-          <div className="flex min-w-0 items-start gap-2">
-            <Icon
-              className={cn("mt-0.5 size-4 shrink-0", activeNow ? "text-primary" : "text-muted-foreground")}
-              aria-hidden
-            />
-            <span className="min-w-0">
-              <span className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-medium">{t("tools.familyguard.toggle")}</span>
-                {saved.enabled && (
-                  <Badge className="h-5 px-1.5 text-[11px]">{t("tools.familyguard.activeBadge")}</Badge>
-                )}
-              </span>
-              <span className="mt-0.5 block text-xs text-muted-foreground">
-                {saved.enabled
-                  ? activeNow
-                    ? tf("tools.familyguard.liveNow", { end: saved.end })
-                    : tf("tools.familyguard.idle", { start: saved.start, end: saved.end })
-                  : t("tools.familyguard.toggleDesc")}
-              </span>
-            </span>
-          </div>
-          <Switch
-            checked={saved.enabled}
-            onCheckedChange={(v) =>
-              mutation.mutate({ enabled: v, start, end, days })
-            }
-            disabled={mutation.isPending || router.mode !== "agent" || !editorValid}
-            aria-label={t("tools.familyguard.toggle")}
+    <ModuleCard
+      icon={MoonStar}
+      on={saved.enabled}
+      title={t("tools.familyguard.title")}
+      desc={t("tools.familyguard.desc")}
+      stateLabel={saved.enabled ? t("tools.familyguard.activeBadge") : t("protection.stateOff")}
+      footnote={t("tools.familyguard.footnote")}
+    >
+      {/* Interrupteur : l'état vivant (en cours / programmé) se lit dans
+          la description — la chip d'en-tête porte le statut du module. */}
+      <div
+        className={cn(
+          "flex items-center justify-between gap-3 rounded-lg border p-3 transition-colors",
+          saved.enabled ? "border-primary/30 bg-primary/5" : "border-border",
+        )}
+      >
+        <div className="flex min-w-0 items-start gap-2">
+          <RowIcon
+            className={cn(
+              "mt-0.5 size-4 shrink-0",
+              saved.enabled ? "text-primary" : "text-muted-foreground",
+            )}
+            aria-hidden
           />
+          <span className="min-w-0">
+            <span className="block text-sm font-medium">{t("tools.familyguard.toggle")}</span>
+            <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">
+              {saved.enabled
+                ? activeNow
+                  ? tf("tools.familyguard.liveNow", { end: saved.end })
+                  : tf("tools.familyguard.idle", { start: saved.start, end: saved.end })
+                : t("tools.familyguard.toggleDesc")}
+            </span>
+          </span>
         </div>
+        <Switch
+          checked={saved.enabled}
+          onCheckedChange={(v) =>
+            mutation.mutate({ enabled: v, start, end, days })
+          }
+          disabled={mutation.isPending || router.mode !== "agent" || !editorValid}
+          aria-label={t("tools.familyguard.toggle")}
+        />
+      </div>
 
-        <div className="mt-3 grid grid-cols-2 gap-3">
+      {/* Planning groupé (N°96) : heures + jours + enregistrement dans un
+          bloc bordé distinct de l'interrupteur — l'édition ne se confond
+          plus avec l'activation. */}
+      <div className="mt-3 space-y-3 rounded-lg border bg-muted/30 p-3">
+        <p className="text-xs font-medium text-muted-foreground">{t("protection.scheduleTitle")}</p>
+        <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">
             <Label htmlFor={`fg-start-${router.id}`} className="text-xs text-muted-foreground">
               {t("tools.familyguard.startLabel")}
@@ -420,8 +619,7 @@ export function FamilyGuardCard({ router }: { router: RouterDevice }) {
             />
           </div>
         </div>
-
-        <fieldset className="mt-3">
+        <fieldset>
           <legend className="text-xs text-muted-foreground">{t("tools.familyguard.daysLabel")}</legend>
           <div className="mt-1.5 flex flex-wrap gap-1.5" role="group" aria-label={t("tools.familyguard.daysLabel")}>
             {familyGuardDayKeys.map((k, i) => {
@@ -454,12 +652,11 @@ export function FamilyGuardCard({ router }: { router: RouterDevice }) {
             })}
           </div>
         </fieldset>
-
         <Button
           type="button"
           variant="outline"
           size="sm"
-          className="mt-3 w-full"
+          className="w-full"
           disabled={mutation.isPending || router.mode !== "agent" || !editorValid || !dirty}
           onClick={() => mutation.mutate({ enabled: saved.enabled, start, end, days })}
         >
@@ -467,12 +664,10 @@ export function FamilyGuardCard({ router }: { router: RouterDevice }) {
           {t("tools.familyguard.save")}
         </Button>
         {!editorValid && (
-          <p className="mt-1.5 text-[11px] text-destructive">{t("tools.familyguard.invalidWindow")}</p>
+          <p className="text-[11px] text-destructive">{t("tools.familyguard.invalidWindow")}</p>
         )}
-
-        <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">{t("tools.familyguard.footnote")}</p>
-      </CardContent>
-    </Card>
+      </div>
+    </ModuleCard>
   );
 }
 

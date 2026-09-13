@@ -1,22 +1,28 @@
 "use client";
 
-// N°83 — Vue « Protection » (/app/protection, section Supervision de la
-// sidebar principale) : l'état de sécurité du WiFi en un coup d'œil.
+// N°96 — Refonte UX/UI de la vue « Protection » (/app/protection, section
+// Supervision de la sidebar principale).
 //
-// Avant N°83, les 3 modules sécurité (SafeWiFi N°80, Shield N°81,
-// FamilyGuard N°82) vivaient au fond du 4e onglet « Système » de la fiche
-// routeur, elle-même au fond de la zone Paramètres — 5 à 6 interactions
-// pour toucher les fonctions différenciantes du produit. La protection
-// est un ARGUMENT DE VENTE : elle vit désormais à 1 clic de l'atterrissage.
+// Historique (N°83) : les modules sécurité (SafeWiFi N°80, Shield N°81,
+// FamilyGuard N°82 — puis AntiVPN N°88) vivaient au fond du 4e onglet
+// « Système » de la fiche routeur ; la protection est un ARGUMENT DE VENTE,
+// elle vit à 1 clic de l'atterrissage. Fiche adressable /app/protection/<id>
+// (pattern routers), mono-routeur sans étape de sélection, verdict calculé
+// depuis les champs de GET /api/routers (zéro endpoint neuf).
 //
-//   • Verdict par routeur — Bien protégé / À renforcer / Non protégé —
-//     calculé depuis les champs de GET /api/routers (zéro endpoint neuf) ;
-//   • Les 3 cartes actionnables directement (composants partagés
-//     parts/protection-cards.tsx) ;
-//   • Mono-routeur : l'étape de sélection est sautée (le cas de la quasi-
-//     totalité des comptes) ;
-//   • Fiche adressable /app/protection/<id> (pattern routers) : le CTA du
-//     résumé (onglet Système) ouvre CE routeur, Retour navigateur rejoué.
+// N°96 — la promesse « l'état en un coup d'œil » devient littérale :
+//   • HÉROS : identité du site (nom + badges) à gauche, colonne score à
+//     droite — anneau n/4 coloré par verdict (ProtectionScoreRing) + badge
+//     « Bien protégé / À renforcer / Non protégé » ;
+//   • ENSEIGNEMENT : un encart selon le verdict — tout actif (encens
+//     sobre), modules MANQUANTS NOMMÉS (« À activer : Bloque-VPN, … » :
+//     le gérant sait exactement quoi actionner, sans scanner les 4 cartes),
+//     aucune protection (par où commencer : le filtrage de sites) ;
+//   • GRILLE 2 colonnes dès md : SafeWiFi porte 3 options et FamilyGuard
+//     un éditeur complet — 4 colonnes les compressaient, la lecture des
+//     bénéfices reprenait à la ligne à chaque mot ;
+//   • chargement miroir (héros + 4 cartes squelettes), comportements
+//     inchangés (poll 15 s, segment orphelin re-normalisé, gardes agent).
 
 import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
@@ -24,7 +30,9 @@ import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
   Router as RouterIcon,
+  ShieldAlert,
   ShieldCheck,
+  ShieldHalf,
   TriangleAlert,
   Wrench,
 } from "lucide-react";
@@ -40,11 +48,11 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/hotspot/empty-state";
-import { LoadingCards } from "@/components/hotspot/loading";
 import { PageHeader } from "@/components/hotspot/page-header";
 import {
   AntiVpnCard,
   FamilyGuardCard,
+  ProtectionScoreRing,
   ProtectionVerdictBadge,
   SafeWifiCard,
   ShieldCard,
@@ -52,12 +60,53 @@ import {
 import { StatusBadge } from "@/components/hotspot/status-badge";
 import { api } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
-import { protectionScore, protectionVerdict } from "@/lib/hotspot/protection";
+import {
+  antiVpnOn,
+  parseFamilyGuardSpec,
+  protectionScore,
+  protectionVerdict,
+  safeWifiLevelOf,
+  shieldOn,
+  type ProtectionVerdict,
+} from "@/lib/hotspot/protection";
 import type { RouterDevice } from "@/lib/hotspot/types";
 import { detailFromPath, viewToPath } from "@/lib/hotspot/view-path";
 
-export default function ProtectionView() {
+/** Encart pédagogique du héros (N°96) : le verdict ne dit pas seulement
+ * « À renforcer », il dit QUOI renforcer — les modules inactifs sont
+ * nommés, le gérant n'a plus qu'à repérer les cartes correspondantes
+ * (leurs chips « Inactif » répondent à l'encart). */
+function VerdictCallout({ verdict, missing }: { verdict: ProtectionVerdict; missing: string[] }) {
   const { t, tf } = useI18n();
+
+  if (verdict === "protected") {
+    return (
+      <p className="flex items-start gap-2 rounded-lg border border-primary/25 bg-primary/5 px-3 py-2 text-xs leading-relaxed text-foreground">
+        <ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-primary" aria-hidden />
+        {t("protection.hero.allOn")}
+      </p>
+    );
+  }
+
+  if (verdict === "unprotected") {
+    return (
+      <p className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-700 dark:text-amber-300">
+        <ShieldAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+        {t("protection.hero.noneOn")}
+      </p>
+    );
+  }
+
+  return (
+    <p className="flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2 text-xs leading-relaxed text-amber-700 dark:text-amber-300">
+      <ShieldHalf className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+      {tf("protection.hero.missing", { modules: missing.join(", ") })}
+    </p>
+  );
+}
+
+export default function ProtectionView() {
+  const { t } = useI18n();
   const nav = useRouter();
   const pathname = usePathname();
 
@@ -83,10 +132,14 @@ export default function ProtectionView() {
 
   if (isLoading) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-4 sm:space-y-6">
         <PageHeader title={t("protection.title")} description={t("protection.description")} />
-        <Skeleton className="h-24 w-full rounded-xl" />
-        <LoadingCards cards={4} />
+        <Skeleton className="h-44 w-full rounded-xl sm:h-40" />
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-56 rounded-xl" />
+          ))}
+        </div>
       </div>
     );
   }
@@ -132,6 +185,15 @@ export default function ProtectionView() {
   const verdict = protectionVerdict(selected);
   const score = protectionScore(selected);
 
+  // Modules inactifs, dans l'ordre des cartes — l'encart du héros les
+  // nomme (source : mêmes helpers purs que le score, zéro dérive).
+  const missing = [
+    safeWifiLevelOf(selected) === "off" ? t("tools.safewifi.title") : null,
+    !shieldOn(selected) ? t("tools.shield.title") : null,
+    !parseFamilyGuardSpec(selected.familyGuardSpec).enabled ? t("tools.familyguard.title") : null,
+    !antiVpnOn(selected) ? t("tools.antivpn.title") : null,
+  ].filter((name): name is string => name !== null);
+
   function selectRouter(id: string) {
     // L'URL porte la sélection (pattern fiche routeur) : Retour navigateur
     // rejoué, partage de lien direct possible.
@@ -163,54 +225,61 @@ export default function ProtectionView() {
         </div>
       )}
 
-      {/* En-tête du site : identité + statut + verdict en 5 secondes. */}
+      {/* Héros du site : identité + enseignement à gauche, verdict chiffré
+          à droite — l'état de sécurité se lit en une seconde. */}
       <Card className="gap-0 py-0">
         <CardContent className="p-4 sm:p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-3">
-              <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                <RouterIcon className="size-5" aria-hidden />
-              </span>
-              <div className="min-w-0">
-                <p className="truncate font-semibold" title={selected.name}>
-                  {selected.name}
-                </p>
-                <span className="mt-1 flex flex-wrap items-center gap-2">
-                  <StatusBadge status={selected.mode} />
-                  <StatusBadge status={selected.status} dot />
+          <div className="grid items-center gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-6">
+            <div className="min-w-0 space-y-3">
+              <div className="flex items-center gap-3">
+                <span className="flex size-11 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                  <RouterIcon className="size-5" aria-hidden />
                 </span>
+                <div className="min-w-0">
+                  <p className="truncate text-base font-semibold leading-tight" title={selected.name}>
+                    {selected.name}
+                  </p>
+                  <span className="mt-1.5 flex flex-wrap items-center gap-2">
+                    <StatusBadge status={selected.mode} />
+                    <StatusBadge status={selected.status} dot />
+                  </span>
+                </div>
               </div>
+
+              <VerdictCallout verdict={verdict} missing={missing} />
+
+              {selected.mode !== "agent" && (
+                <p className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-700 dark:text-amber-300">
+                  <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                  {t("protection.agentHint")}
+                </p>
+              )}
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => nav.push(viewToPath("routers", selected.id), { scroll: false })}
+              >
+                <Wrench className="size-3.5" aria-hidden />
+                {t("protection.openRouter")}
+              </Button>
             </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <span className="text-xs font-medium text-muted-foreground tabular-nums">
-                {tf("protection.ofModules", { n: score })}
-              </span>
+
+            {/* Colonne score : anneau n/4 + badge verdict (centrée sur
+                mobile où la grille s'empile, alignée à droite ensuite). */}
+            <div className="flex flex-col items-center gap-2 justify-self-center sm:justify-self-end">
+              <ProtectionScoreRing score={score} verdict={verdict} />
               <ProtectionVerdictBadge verdict={verdict} />
             </div>
           </div>
-
-          {selected.mode !== "agent" && (
-            <p className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-              <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-              {t("protection.agentHint")}
-            </p>
-          )}
-
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="mt-3"
-            onClick={() => nav.push(viewToPath("routers", selected.id), { scroll: false })}
-          >
-            <Wrench className="size-3.5" aria-hidden />
-            {t("protection.openRouter")}
-          </Button>
         </CardContent>
       </Card>
 
-      {/* Les 4 protections — actionnables sans quitter la vue. */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+      {/* Les 4 protections — actionnables sans quitter la vue. Deux
+          colonnes dès md : les éditeurs (SafeWiFi 3 options, FamilyGuard
+          planning complet) respirent, les bénéfices se lisent d'un trait. */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <SafeWifiCard router={selected} />
         <ShieldCard router={selected} />
         <FamilyGuardCard router={selected} />

@@ -27,4 +27,17 @@ export const enProtection: Record<string, string> = {
   "protection.banner.unprotectedTitle": "Your WiFi is not protected",
   "protection.banner.count": "{on}/{total} protections active · {routers} router{s}",
   "protection.banner.cta": "Manage protection",
+
+  // — N°96 (Protection view UX/UI redesign) —
+  // Score ring (accessible label), inactive module-card state, recommended
+  // SafeWiFi option, "Good to know" popover notes title, FamilyGuard
+  // schedule block heading and hero verdict callouts.
+  "protection.scoreAria": "{n} of 4 protections active",
+  "protection.stateOff": "Inactive",
+  "protection.recommended": "Recommended",
+  "protection.detailsTitle": "Good to know",
+  "protection.scheduleTitle": "Schedule",
+  "protection.hero.allOn": "All 4 protections are watching over your public WiFi.",
+  "protection.hero.missing": "To activate: {modules}",
+  "protection.hero.noneOn": "No protection active — start with dangerous site filtering.",
 };

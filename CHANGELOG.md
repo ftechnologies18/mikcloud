@@ -5,6 +5,86 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-14 — N°96 : refonte UX/UI de la vue Protection — l'état de sécurité devient littéralement « en un coup d'œil » : anneau de score n/4 dans le héros, encart pédagogique nommant les modules à activer, chips d'état par carte, notes « Bon à savoir » en popover et grille 2 colonnes
+
+### N°96 — Contexte : la promesse affichée, pas encore tenue
+La vue Protection (N°83) affiche « L'état de sécurité de votre WiFi, en
+un coup d'œil » — promesse fondée sur le fond (verdict calculé depuis les
+seuls champs de GET /api/routers, zéro endpoint) mais pas sur la forme :
+le score vivait en texte brut « n/4 protections actives », le verdict en
+badge isolé, l'état de CHAQUE module ne se lisait qu'en parcourant les
+cartes une à une, les footnotes honnêtes (N°85/88 — convergence ≤ 45 s,
+auto-réparation, limites connues) formaient des murs de texte 11 px sous
+chaque carte, et la grille xl:grid-cols-4 compressait les deux cartes
+riches (SafeWiFi et ses 3 options, FamilyGuard et son éditeur complet).
+Demande du gérant après la fermeture des incidents N°93/95 : améliorer
+l'UX et l'UI de cette vitrine du produit.
+
+### Produit — le verdict dit maintenant QUOI faire
+- HÉROS : identité du site (nom + badges) à gauche, colonne score à
+  droite — anneau SVG « n/4 » coloré par verdict (primaire / ambre /
+  destructif), badge « Bien protégé / À renforcer / Non protégé »
+  dessous. L'arc compte des MODULES (le « /4 » au centre dit la vérité),
+  jamais un pourcentage de « sécurité » qui n'existerait pas.
+- ENSEIGNEMENT : encart selon le verdict — « À activer : Anti-piratage
+  du WiFi, Couvre-feu internet, Bloque-VPN » (les manquants NOMMÉS,
+  dans l'ordre des cartes — les chips « Inactif » répondent à l'encart) ;
+  4/4 → encens sobre ; 0/4 → par où commencer (le filtrage de sites).
+- CARTES : en-tête commun — icône d'IDENTITÉ par module (ShieldCheck
+  filtrage, Lock anti-piratage, MoonStar couvre-feu, GlobeLock VPN)
+  teintée selon l'état (primaire actif / neutre inactif), chip d'état
+  (niveau SafeWiFi / Actif / Inactif) et bouton « Bon à savoir » ouvrant
+  la footnote en POPOVER — l'honnêteté N°85/88 reste, à un clic au lieu
+  d'un mur de texte.
+- SAFEWiFi : coche de sélection dans chaque option + pastille
+  « Recommandé » sur « Menaces bloquées » (le défaut raisonnable pour
+  tout WiFi public). FAMILYGUARD : l'interrupteur est séparé du
+  PLANNING (heures + jours + enregistrer), groupé dans un bloc bordé.
+- GRILLE md:grid-cols-2 : les cartes respirent — la lecture des
+  bénéfices ne reprend plus à la ligne à chaque mot.
+
+### Technique — présentation seule, comportements intacts
+- Fichiers : views/protection-view.tsx (héros, VerdictCallout,
+  liste des manquants via les MÊMES helpers purs que le score —
+  protection.ts inchangé, zéro dérive possible ; skeletons miroir) et
+  parts/protection-cards.tsx (ProtectionScoreRing exporté, briques
+  internes ModuleCard/ModuleStateChip/FootnoteNote, les 4 cartes,
+  ProtectionSummaryCard de l'onglet Système conservé tel quel).
+- Anneau : SVG r=33, strokeDasharray posé en style CSS (transition
+  500 ms fluide au changement de score), stroke par verdict, role="img"
+  + libellé accessible « n protections actives sur 4 » (l'arc est
+  décoratif, le texte reste la vérité lecteurs d'écran).
+- Zéro endpoint, zéro route, zéro migration, zéro colonne — le contrat
+  d'API ne bouge pas ; mutations, toasts, invalidations
+  ["/api/routers" + "/api/dashboard"], gardes mode agent, éditeur
+  FamilyGuard (état complet envoyé par le Switch) et fiche adressable
+  /app/protection/<id> strictement inchangés. ProtectionBanner
+  (dashboard) et résumé de la fiche routeur inchangés.
+- i18n : 8 clés nouvelles par langue (protection.scoreAria, stateOff,
+  recommended, detailsTitle, scheduleTitle, hero.allOn, hero.missing,
+  hero.noneOn) — parité FR/EN 8/8, clés tools.* stables (seules les
+  footnotes changent de FOYER : paragraphe → popover, contenu identique).
+
+### Vérifié localement comme la CI
+- eslint 0 ; tsgo 0 ; build production 13 routes (type-check actif).
+- Parcours navigateur complet (backend Go :4000 en mode dev JSON avec
+  DATA_DIR temporaire + next dev :3016, compte CLIENT réel créé par
+  /api/auth/register, routeur agent « CYBER-ESPACE SC », SafeWiFi
+  « threats ») : login UI gérant → dashboard → /app/protection ;
+  anneau « 1/4 » ambre + « À renforcer » + encart « À activer :
+  Anti-piratage du WiFi, Couvre-feu internet, Bloque-VPN » ; 4 cartes
+  en 2×2 avec chips « Menaces bloquées » / « Inactif » ×3 ; popover
+  « Bon à savoir » (titre + footnote complète, fermeture Échap) ;
+  activation du Bloque-VPN en direct → anneau « 2/4 », encart recalculé
+  à 2 manquants, chip « Actif », switch coché, toast reprenant le
+  message exact du backend ; mode Jour + mobile 390 px (jour et nuit)
+  sans débordement horizontal ; 0 erreur console/page (logs dev seuls) ;
+  contrôle VLM des captures (anneau, encart, grille, contraste,
+  alignement) conforme — l'unique bouton flottant « N » sur les
+  captures est l'overlay Next.js Dev Tools, propre au dev.
+- Déploiement attendu : Vercel UNIQUEMENT (Render saute — aucun diff
+  backend/).
+
 ## 2026-09-14 — N°95 : SafeWiFi — l'ordre des règles NAT devient déterministe et vérifié : le N°93 avait livré les bons boucliers au mauvais étage (la table réelle de CYBER-ESPACE SC inversait la théorie « place-before=0 empile en ordre inverse » — boucliers SOUS les dst-nat, ERR_NAME_NOT_RESOLVED sur le dns-name du portail), un bloc move explicite + la disposition rapportée (layout=RRDD) referment la régression portail captif pour de bon
 
 ### N°95 — Contexte : des règles correctes… dans le mauvais ordre

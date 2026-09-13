@@ -111,6 +111,17 @@ func TestPoolDoctorEnsureFreshStaysSilent(t *testing.T) {
 		t.Fatal("diagnostic frais : aucune commande attendue")
 	}
 
+	// N°97-ter : diagnostic ABOUTI mais capacité nulle (hotspot sans pool
+	// identifiable) → fraîcheur sur PoolDoctorAt SEUL : silence, sinon la
+	// file et le journal sont inondés (une commande par check-in, ~180/h
+	// avec le veilleur — constat production ProMax WIFI).
+	router.PoolCap = 0
+	db.Commands = nil
+	a.ensurePoolDoctorLocked(db, router)
+	if len(db.Commands) != 0 {
+		t.Fatal("diagnostic frais sans capacité : AUCUNE commande attendue (anti-boucle N°97-ter)")
+	}
+
 	// Diagnostiqué il y a 8 jours (> refresh 7 j) → re-file.
 	router.PoolDoctorAt = time.Now().UTC().Add(-8 * 24 * time.Hour).Format(time.RFC3339)
 	a.ensurePoolDoctorLocked(db, router)
@@ -147,6 +158,7 @@ func TestApplyPoolDoctorReport(t *testing.T) {
 	vals.Set("pools", "hs-pool|10.5.50.2-10.5.50.254;dhcp|192.168.88.10-192.168.88.254")
 	vals.Set("servers", "hotspot1|default|bridge-hotspot|5m|10m|2m")
 	vals.Set("profiles", "default|hs-pool|2;vip|none|1")
+	vals.Set("dhcp", "dhcp1|bridge-hotspot|hs-pool;dhcp-lan|ether2|dhcp")
 
 	summary := a.applyPoolDoctor(db, router, vals)
 
@@ -319,5 +331,43 @@ func TestPoolDoctorScriptForDispatched(t *testing.T) {
 	}
 	if script == "" {
 		t.Fatal("script vide")
+	}
+}
+
+// TestApplyPoolDoctorProMaxCase — données RÉELLES de production (ProMax WIFI,
+// 13/09 22:06) : profils hotspot SANS address-pool, capacité portée par le
+// serveur DHCP du bridge (Hotspot-Pool sur Bridge-Hotspot). Avant N°97-ter :
+// PoolCap=0 et re-diagnostic à chaque check-in (boucle 20 s) ; après : la
+// capacité du DHCP de l'interface hotspot est comptée.
+func TestApplyPoolDoctorProMaxCase(t *testing.T) {
+	a := newWatchAPI()
+	db := &model.DB{}
+	router := poolDoctorRouter()
+
+	vals := url.Values{}
+	vals.Set("recycled", "no")
+	vals.Set("extended", "no")
+	vals.Set("hosts", "149")
+	vals.Set("active", "61")
+	vals.Set("pools", "Hotspot-Pool|192.168.100.10-192.168.100.250;Prive-Pool|192.168.88.10-192.168.88.250;")
+	vals.Set("servers", "ProMax|ProMax_Hotspot|Bridge-Hotspot|none|30m|none;")
+	vals.Set("profiles", "default||;ProMax_Hotspot||;")
+	vals.Set("dhcp", "dhcp1|Bridge-Hotspot|Hotspot-Pool;dhcp-lan|ether2|Prive-Pool;")
+
+	a.applyPoolDoctor(db, router, vals)
+
+	if router.PoolCap != 241 {
+		t.Fatalf("PoolCap = %d, attendu 241 (Hotspot-Pool 192.168.100.10-250 via le DHCP du bridge)", router.PoolCap)
+	}
+	if router.PoolRanges != "192.168.100.10-192.168.100.250" {
+		t.Fatalf("PoolRanges = %q, attendu le range du DHCP hotspot", router.PoolRanges)
+	}
+	if usage := poolUsagePct(router); usage != 61 {
+		t.Fatalf("usage = %d, attendu 61 (149/241)", usage)
+	}
+	// Le pool du DHCP d'une interface NON hotspot (ether2 → Prive-Pool)
+	// ne doit PAS être compté : capacité du bridge LAN hors du périmètre.
+	if strings.Contains(router.PoolRanges, "192.168.88") {
+		t.Fatalf("le pool de l'interface non-hotspot ne doit pas apparaître : %q", router.PoolRanges)
 	}
 }

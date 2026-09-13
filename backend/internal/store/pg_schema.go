@@ -658,6 +658,15 @@ func (p *PG) ensureSchema() error {
 		// N°97 — état anti-spam alerte pool (routerID → high|full), JSON
 		// sérialisé comme stock_alert_state.
 		`ALTER TABLE notif_settings ADD COLUMN IF NOT EXISTS pool_alert_state TEXT NOT NULL DEFAULT ''`,
+		// N°97-ter — re-diagnostic immédiat des routeurs dont le diagnostic
+		// N°97 a abouti SANS capacité (PoolCap=0 + PoolDoctorAt posé) : le
+		// parseur N°97-ter lit aussi les pools des serveurs DHCP des
+		// interfaces hotspot (cas réel ProMax WIFI : profil sans pool,
+		// DHCP du bridge). La condition '' <> '' sur les jamais-diagnostiqués
+		// les laisse tranquilles ; un routeur réellement sans pool
+		// re-diagnostiquera à chaque redémarrage cloud (rare, une commande
+		// de lecture).
+		`UPDATE routers SET pool_doctor_at = '' WHERE pool_cap = 0 AND pool_doctor_at <> ''`,
 		// Sécurité S6 — détection d'identité routeur dupliquée (conflit
 		// inter-comptes, cf. internal/api/agent_handlers.go).
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS identity_conflict BOOLEAN NOT NULL DEFAULT FALSE`,

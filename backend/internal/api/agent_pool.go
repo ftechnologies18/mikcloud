@@ -121,11 +121,16 @@ func parseDoctorPools(raw string) map[string]string {
 	return out
 }
 
-// parseDoctorReferenced — noms de pools référencés par les profils
-// (« nom|pool|perMAC;… », champ 2). Le pool du SERVEUR (héritage
-// pré-6.44) est ajouté à parité : « n|prof|if|loginTO|idleTO|keepTO;… »,
-// champ introuvable → ignoré.
-func parseDoctorReferenced(profilesRaw, serversRaw string) []string {
+// parseDoctorReferenced — noms de pools référencés par les configs
+// HOTSPOT du routeur : (1) address-pool de chaque profil hotspot
+// (« nom|pool|perMAC;… », champ 2) ; (2) pool du serveur DHCP posé sur une
+// INTERFACE de serveur hotspot (« n|prof|if|loginTO|idleTO|keepTO;… » →
+// interfaces côté serveurs, « nom|if|pool;… » côté DHCP) — un hotspot sans
+// address-pool de profil s'appuie sur le DHCP du bridge (cas réel ProMax
+// WIFI : profil vide + dhcp-server Hotspot-Pool sur Bridge-Hotspot) : sa
+// capacité vient de là. Le champ 2 des serveurs est le nom du PROFIL (le
+// lire comme pool fut le bug N°97 initial corrigé au N°97-ter).
+func parseDoctorReferenced(profilesRaw, serversRaw, dhcpRaw string) []string {
 	var names []string
 	for _, entry := range strings.Split(profilesRaw, ";") {
 		entry = strings.TrimSpace(entry)
@@ -137,14 +142,32 @@ func parseDoctorReferenced(profilesRaw, serversRaw string) []string {
 			names = append(names, fields[1])
 		}
 	}
+	// Interfaces portant un serveur hotspot.
+	hotspotIfaces := map[string]bool{}
 	for _, entry := range strings.Split(serversRaw, ";") {
 		entry = strings.TrimSpace(entry)
 		if entry == "" {
 			continue
 		}
 		fields := strings.Split(entry, "|")
-		if len(fields) >= 2 {
-			names = append(names, fields[1])
+		if len(fields) >= 3 {
+			if ifc := strings.TrimSpace(fields[2]); ifc != "" {
+				hotspotIfaces[ifc] = true
+			}
+		}
+	}
+	// Pools des serveurs DHCP posés sur CES interfaces.
+	for _, entry := range strings.Split(dhcpRaw, ";") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		fields := strings.Split(entry, "|")
+		if len(fields) >= 3 {
+			ifc, pool := strings.TrimSpace(fields[1]), strings.TrimSpace(fields[2])
+			if hotspotIfaces[ifc] && pool != "" && pool != "static" {
+				names = append(names, pool)
+			}
 		}
 	}
 	return names
@@ -155,7 +178,7 @@ func parseDoctorReferenced(profilesRaw, serversRaw string) []string {
 // l'activité (résumé lisible gérant).
 func (a *API) applyPoolDoctor(db *model.DB, router *model.Router, vals url.Values) string {
 	pools := parseDoctorPools(vals.Get("pools"))
-	referenced := parseDoctorReferenced(vals.Get("profiles"), vals.Get("servers"))
+	referenced := parseDoctorReferenced(vals.Get("profiles"), vals.Get("servers"), vals.Get("dhcp"))
 	cap, ranges := ParsePoolCapacity(pools, referenced)
 
 	router.PoolCap = cap
@@ -202,11 +225,18 @@ func poolUsagePct(r *model.Router) int {
 
 // ensurePoolDoctorLocked — N°97 — auto-diagnostiqueur du check-in (pattern
 // ensureWatcherLocked) : enfile un pool_doctor en DIAGNOSTIC PUR (aucun
-// écrit sur le routeur : recycle=false, extend=false) quand la capacité
-// n'a jamais été mesurée (PoolCap=0) ou que le dernier diagnostic dépasse
+// écrit sur le routeur : recycle=false, extend=false) quand aucun diagnostic
+// n'a jamais abouti (PoolDoctorAt vide) ou que le dernier dépasse
 // agent.PoolDoctorRefresh. Les corrections (recyclage/extension) restent
 // des gestes EXPLICITES du gérant (bouton « Outils routeur → Système ») —
 // le check-in ne modifie jamais la configuration de son propre chef.
+//
+// N°97-ter — la fraîcheur se juge sur PoolDoctorAt SEUL (et non plus sur
+// « PoolCap > 0 ET frais ») : un diagnostic ABOUTI dont la capacité reste
+// nulle (hotspot sans pool identifiable) doit reposer 7 jours comme un
+// autre — l'ancienne condition re-filait la commande à CHAQUE check-in,
+// soit toutes les 20 s avec le veilleur d'invités (constat production
+// ProMax WIFI : file + journal inondés de ~180 commandes/heure).
 // À appeler sous le verrou du store.
 func (a *API) ensurePoolDoctorLocked(db *model.DB, router *model.Router) {
 	if router.Mode != "agent" {
@@ -219,7 +249,7 @@ func (a *API) ensurePoolDoctorLocked(db *model.DB, router *model.Router) {
 			return // déjà en file ou en vol
 		}
 	}
-	if router.PoolCap > 0 && router.PoolDoctorAt != "" {
+	if router.PoolDoctorAt != "" {
 		if at, err := time.Parse(time.RFC3339, router.PoolDoctorAt); err == nil {
 			if time.Since(at) < agent.PoolDoctorRefresh {
 				return // diagnostic frais : rien à faire

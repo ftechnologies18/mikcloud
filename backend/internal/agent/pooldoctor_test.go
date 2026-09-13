@@ -38,13 +38,16 @@ func TestPoolDoctorDiagnosticOnly(t *testing.T) {
 			t.Errorf("diagnostic pur : %q ne doit PAS apparaître", forbidden)
 		}
 	}
-	// Lectures présentes : hôtes, actifs, pools, serveurs, profils.
+	// Lectures présentes : hôtes, actifs, pools, serveurs, profils, DHCP.
 	for _, needle := range []string{
 		"[/ip hotspot host print count-only]",
 		"[/ip hotspot active print count-only]",
 		"[/ip pool find]",
 		"[/ip hotspot find]",
 		"[/ip hotspot profile find]",
+		"[/ip dhcp-server find]",
+		"[/ip dhcp-server get $de address-pool]",
+		"&dhcp=",
 		"/agent/result?token=",
 	} {
 		if !strings.Contains(script, needle) {

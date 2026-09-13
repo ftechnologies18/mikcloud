@@ -17,7 +17,9 @@
 //
 //   - DIAGNOSTIC (toujours, lecture seule) : rapporte pools (nom + ranges),
 //     serveurs hotspot (profil, interface, timeouts), profils (address-pool,
-//     address-per-mac), hôtes (IP attribuées, authentifiés ou non) et
+//     address-per-mac), serveurs DHCP (interface + pool — un hotspot SANS
+//     address-pool s'appuie sur le DHCP du bridge : sa capacité vient de là,
+//     cas réel ProMax WIFI), hôtes (IP attribuées, authentifiés ou non) et
 //     sessions actives → le cloud calcule la capacité (PoolCap) et suit
 //     l'occupation (PoolHosts, alimenté aussi par read_state) pour l'alerte
 //     « pool plein » ;
@@ -251,7 +253,20 @@ func (b Builder) buildPoolDoctor(cmd model.Command) string {
     :set mkProf ($mkProf . [$mikClean $pn] . "|" . [$mikClean $pap] . "|" . [$mikClean $pam] . ";")
   }
 } on-error={}
-:local mkData ("cmd=` + cmd.ID + `&status=ok&recycled=". $mkRecycled ."&extended=". $mkExtended ."&hosts=". $mkHosts ."&active=". $mkActive ."&pools=". $mkPools ."&servers=". $mkSrv ."&profiles=". $mkProf)
+:local mkDhcp ""
+:do {
+  :foreach de in=[/ip dhcp-server find] do={
+    :local dn [:tostr [/ip dhcp-server get $de name]]
+    :local di ""
+    :do { :set di [:tostr [/ip dhcp-server get $de interface]] } on-error={}
+    :local dp ""
+    :do { :set dp [:tostr [/ip dhcp-server get $de address-pool]] } on-error={}
+    :if ([:len $dn] > 0) do={
+      :set mkDhcp ($mkDhcp . [$mikClean $dn] . "|" . [$mikClean $di] . "|" . [$mikClean $dp] . ";")
+    }
+  }
+} on-error={}
+:local mkData ("cmd=` + cmd.ID + `&status=ok&recycled=". $mkRecycled ."&extended=". $mkExtended ."&hosts=". $mkHosts ."&active=". $mkActive ."&pools=". $mkPools ."&servers=". $mkSrv ."&profiles=". $mkProf ."&dhcp=". $mkDhcp)
 `)
 	sb.WriteString(`/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
 		`" http-method=post http-data=($mkData) output=none` + "\n")

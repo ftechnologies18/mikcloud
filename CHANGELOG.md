@@ -5,6 +5,44 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-14 — N°97-ter : pool_doctor en production — la capacité vient aussi du DHCP du bridge, et l'auto-diagnostic ne boucle plus
+
+### N°97-ter — Contexte : les deux découvertes de la première heure de production
+N°97 déployé (Render 8d29938, 21:56 UTC), les deux routeurs agents
+(ProMax WIFI, CYBER S.C — RouterOS 7.24.1) checkent en ligne. L'inspection
+directe de Neon révèle : (1) le rapport pool_doctor de ProMax montre des
+PROFILS HOTSPOT SANS ADDRESS-POOL — ses clients reçoivent leurs IP du
+SERVEUR DHCP du bridge (Hotspot-Pool, 192.168.100.10-250 = 241 adresses),
+configuration légitime et répandue — la capacité calculée par les seuls
+pools de profils restait donc nulle ; (2) l'auto-diagnostic était re-filé à
+CHAQUE check-in tant que PoolCap=0 (la fraîcheur exigeait « PoolCap > 0 ET
+PoolDoctorAt frais »), soit une commande + une ligne de journal toutes les
+20 s avec le veilleur d'invités actif (~180/heure — file et Activity
+inondés) ; accessoirement le champ 2 des serveurs (nom du PROFIL) était lu
+comme un nom de pool (bug de lecture, sans effet sur les configs à pool).
+
+### Correctifs
+- CAPACITÉ : le diagnostic rapporte désormais AUSSI les serveurs DHCP
+  (« nom|interface|address-pool;… », /ip dhcp-server) — parseDoctorReferenced
+  compte les pools des serveurs DHCP posés sur les INTERFACES de serveurs
+  hotspot (bridge), en plus des address-pool de profils ; le pool d'un DHCP
+  d'interface non-hotspot (LAN privé) reste hors périmètre.
+- ANTI-BOUCLE : la fraîcheur de l'auto-diagnostic se juge sur PoolDoctorAt
+  SEUL — un diagnostic abouti sans capacité identifiable repose 7 jours
+  comme un autre.
+- MIGRATION UNIQUE : `UPDATE routers SET pool_doctor_at='' WHERE pool_cap=0
+  AND pool_doctor_at<>''` au démarrage — les deux routeurs de production
+  re-diagnostiquent dès le premier check-in après ce déploiement avec le
+  parseur DHCP-aware (ProMax : PoolCap=241 attendu, alerte dès 80 % =
+  193 hôtes).
+
+### Vérifié
+- Test dédié sur les données RÉELLES de production (rapport ProMax 22:06) :
+  PoolCap=241, PoolRanges=192.168.100.10-192.168.100.250, usage 61 %
+  (149/241), pool LAN (ether2/Prive-Pool) exclu.
+- Anti-boucle : diagnostic frais + PoolCap=0 → silence (test).
+- Suite complète go test ./... verte (11 packages), gofmt/vet propres.
+
 ## 2026-09-14 — N°98 — Hotspot/HomeNet Phase 1 « la plomberie invisible » : la colonne accounts.usage existe (ALTER idempotent, défaut « hotspot » — tout le parc existant reste sur le produit historique, zéro changement visible), la session transporte l'usage (login/register/me/impersonation), la garde serveur requireUsage refuse les endpoints produit HOTSPOT aux comptes homenet (404, effet immédiat sans re-login), et la console plateforme segmente : colonne Usage + badges + bascule (PUT /api/admin/accounts/{id}/usage)
 
 ### N°98 — Contexte : deux clients, deux mondes, un produit
@@ -121,6 +159,7 @@ de créer du hotspot, RIEN ne change à l'œil. Premier test HomeNet
 quand le gérant voudra : console plateforme → Comptes → créer un
 compte avec Usage « homenet » (ou basculer un compte de test) —
 l'effet des gardes est immédiat.
+
 ## 2026-09-14 — N°97 : docteur du pool d'adresses IP — l'épuisement « no more free addresses from pool » des heures de pointe est diagnostiqué, recyclé et alerté
 
 ### N°97 — Contexte : la panne qui frappe les clients PAYANTS au pire moment

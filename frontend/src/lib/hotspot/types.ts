@@ -292,6 +292,9 @@ export interface RouterDevice {
    * canonique "<enabled>|<HH:MM>|<HH:MM>|<1111111>" ("" ou absent = jamais
    * utilisé). Ex. "1|22:00|06:00|1111111" = tous les soirs 22:00 → 06:00. */
   familyGuardSpec?: string;
+  /** N°88 AntiVPN : bloque-VPN du WiFi public du site
+   * ("" ou absent = antérieur au N°88 → désactivé). off | on. */
+  antiVpnLevel?: string;
 }
 
 /** Réponse de création d'un routeur en mode agent (script + token à copier). */

@@ -691,6 +691,33 @@ export async function setRouterFamilyGuard(
   );
 }
 
+/* — N°88 : AntiVPN (bloque-VPN du WiFi public) — */
+
+/** Niveau du bloque-VPN d'un site (cf. RouterDevice.antiVpnLevel). */
+export type AntiVpnLevel = "off" | "on";
+
+/** SetRouterAntiVpnResponse — réponse du PUT /api/routers/{id}/antivpn. */
+export interface SetRouterAntiVpnResponse {
+  ok: boolean;
+  level: AntiVpnLevel;
+  message: string;
+}
+
+/** setRouterAntiVpn — N°88 : active ou désactive le bloque-VPN du WiFi
+ * public du site (VPN et tunnels standards coupés pour les clients).
+ * La commande antivpn est servie au check-in suivant du routeur (≤ 45 s) ;
+ * le retour « ok » vérifié (compte de règles marquées == 4 × hotspots
+ * rapportés) confirme l'application. */
+export async function setRouterAntiVpn(
+  routerId: string,
+  level: AntiVpnLevel,
+): Promise<SetRouterAntiVpnResponse> {
+  return api<SetRouterAntiVpnResponse>(
+    `/api/routers/${encodeURIComponent(routerId)}/antivpn`,
+    { method: "PUT", body: { level } },
+  );
+}
+
 /** fetchRouterPortalPreview — récupère le HTML personnalisé de login.html
  * pour un routeur agent, à injecter dans une iframe srcDoc (aperçu console).
  * Retourne le HTML brut (text/html). */

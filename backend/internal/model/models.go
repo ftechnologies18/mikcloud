@@ -284,6 +284,27 @@ type Router struct {
 	// N°82 — horodatage (RFC3339) de la dernière application confirmée :
 	// auto-réparation périodique (pattern walled-garden N°49).
 	FamilyGuardAppliedAt string `json:"familyGuardAppliedAt,omitempty"`
+
+	// N°88 — AntiVPN (bloque-VPN du WiFi public) : état du blocage des
+	// tunnels VPN choisi par le gérant pour ce site. "" = état antérieur
+	// au N°88 (traité comme "off" — aucune commande filée : un routeur
+	// dont le gérant n'ouvre jamais la carte ne consomme rien, pattern
+	// N°80/N°81/N°82).
+	//   off : aucun blocage ;
+	//   on  : VPN et tunnels standards (GRE, IPsec/IKEv2, L2TP, PPTP,
+	//         OpenVPN, WireGuard, WARP, Tor) coupés pour les clients.
+	AntiVpnLevel string `json:"antiVpnLevel,omitempty"`
+	// N°88 — signature de la config AntiVPN DÉJÀ APPLIQUÉE avec succès
+	// sur ce routeur (hash du niveau + sel de version des règles).
+	// Vide → rien d'appliqué (ou dernier échec) : le check-in suivant
+	// re-file la commande antivpn. Posée au retour « ok » VÉRIFIÉ — le
+	// routeur échoe le compte de règles marquées mikcloud-antivpn
+	// (4 par serveur hotspot rapporté, 0 sinon ; vérité routeur,
+	// pattern Shield N°81).
+	AntiVpnSig string `json:"antiVpnSig,omitempty"`
+	// N°88 — horodatage (RFC3339) de la dernière application confirmée :
+	// auto-réparation périodique (pattern walled-garden N°49).
+	AntiVpnAppliedAt string `json:"antiVpnAppliedAt,omitempty"`
 }
 
 // SchedulerSecEffective — pas de scheduler connu du routeur (N°75). 0 =
@@ -1011,6 +1032,7 @@ const (
 	CmdSafeWifi        = "safewifi"         // N°80 : protection DNS du WiFi public — redirection du port 53 vers un résolveur filtrant (règles marquées mikcloud-safewifi, idempotent) ; N°85 : durcie — NAT en tête de table, DoT/DoH bloqués, IPv6 coupé (best-effort)
 	CmdShield          = "shield"           // N°81 : bouclier réseau du WiFi public — administration du routeur et vecteurs malveillants bloqués pour les clients (règles filter marquées mikcloud-shield, idempotent)
 	CmdFamilyGuard     = "familyguard"      // N°82 : couvre-feu internet du WiFi public — fenêtre horaire pendant laquelle l'internet des clients est coupé (règles filter marquées mikcloud-familyguard, idempotent)
+	CmdAntiVpn         = "antivpn"          // N°88 : bloque-VPN du WiFi public — VPN et tunnels standards (GRE, ESP, IKE, L2TP, PPTP, OpenVPN, WireGuard, WARP, Tor) coupés pour les clients (règles filter marquées mikcloud-antivpn, idempotent)
 )
 
 // N°80 — niveaux SafeWiFi (filtrage DNS du WiFi public par redirection).
@@ -1054,6 +1076,28 @@ func (r *Router) ShieldLevelEffective() string {
 		return ShieldOff
 	}
 	return r.ShieldLevel
+}
+
+// N°88 — niveaux AntiVPN (bloque-VPN du WiFi public). Le niveau est
+// choisi par le gérant dans la console et converge via la commande
+// antivpn au check-in suivant (pattern walled-garden).
+const (
+	AntiVpnOff = "off" // aucun blocage
+	AntiVpnOn  = "on"  // VPN et tunnels standards coupés pour les clients WiFi
+)
+
+// ValidAntiVpnLevel — vrai si le niveau fait partie du contrat N°88.
+func ValidAntiVpnLevel(l string) bool {
+	return l == AntiVpnOff || l == AntiVpnOn
+}
+
+// AntiVpnLevelEffective — niveau de blocage courant de ce routeur,
+// normalisé ("" ou valeur inconnue = état antérieur au N°88 → off).
+func (r *Router) AntiVpnLevelEffective() string {
+	if !ValidAntiVpnLevel(r.AntiVpnLevel) {
+		return AntiVpnOff
+	}
+	return r.AntiVpnLevel
 }
 
 // ---------------------------------------------------------------------------

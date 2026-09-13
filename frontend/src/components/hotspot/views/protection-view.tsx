@@ -43,6 +43,7 @@ import { EmptyState } from "@/components/hotspot/empty-state";
 import { LoadingCards } from "@/components/hotspot/loading";
 import { PageHeader } from "@/components/hotspot/page-header";
 import {
+  AntiVpnCard,
   FamilyGuardCard,
   ProtectionVerdictBadge,
   SafeWifiCard,
@@ -85,7 +86,7 @@ export default function ProtectionView() {
       <div className="space-y-6">
         <PageHeader title={t("protection.title")} description={t("protection.description")} />
         <Skeleton className="h-24 w-full rounded-xl" />
-        <LoadingCards cards={3} />
+        <LoadingCards cards={4} />
       </div>
     );
   }
@@ -208,11 +209,12 @@ export default function ProtectionView() {
         </CardContent>
       </Card>
 
-      {/* Les 3 protections — actionnables sans quitter la vue. */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+      {/* Les 4 protections — actionnables sans quitter la vue. */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         <SafeWifiCard router={selected} />
         <ShieldCard router={selected} />
         <FamilyGuardCard router={selected} />
+        <AntiVpnCard router={selected} />
       </div>
     </div>
   );

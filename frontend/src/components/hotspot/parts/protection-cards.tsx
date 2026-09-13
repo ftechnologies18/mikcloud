@@ -15,10 +15,12 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { 
+import {
   ArrowRight,
   Baby,
   Clock,
+  Globe,
+  GlobeLock,
   Loader2,
   MoonStar,
   Shield,
@@ -35,9 +37,11 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import {
+  setRouterAntiVpn,
   setRouterFamilyGuard,
   setRouterSafeWifi,
   setRouterShield,
+  type AntiVpnLevel,
   type FamilyGuardWindow,
   type SafeWifiLevel,
   type ShieldLevel,
@@ -45,6 +49,7 @@ import {
 import { useI18n } from "@/lib/hotspot/i18n";
 import { viewToPath } from "@/lib/hotspot/view-path";
 import {
+  antiVpnOn,
   familyGuardActiveNow,
   parseFamilyGuardSpec,
   protectionVerdict,
@@ -223,6 +228,69 @@ export function ShieldCard({ router }: { router: RouterDevice }) {
         </div>
 
         <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">{t("tools.shield.footnote")}</p>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── AntiVPN (N°88) ───
+
+export function AntiVpnCard({ router }: { router: RouterDevice }) {
+  const { t, tf } = useI18n();
+  const queryClient = useQueryClient();
+
+  const current: AntiVpnLevel = antiVpnOn(router) ? "on" : "off";
+
+  const levelMutation = useMutation({
+    mutationFn: (level: AntiVpnLevel) => setRouterAntiVpn(router.id, level),
+    onSuccess: (res) => {
+      toast.success(tf("tools.antivpn.appliedToast", { name: router.name }), {
+        description: res.message,
+      });
+      for (const key of ["/api/routers", "/api/dashboard"]) {
+        void queryClient.invalidateQueries({ queryKey: [key] });
+      }
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const on = current === "on";
+  const Icon = on ? GlobeLock : Globe;
+
+  return (
+    <Card className="gap-0 py-0">
+      <CardContent className="p-4 sm:p-5">
+        <div className="flex items-start gap-2">
+          <GlobeLock className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
+          <div>
+            <h3 className="text-sm font-semibold">{t("tools.antivpn.title")}</h3>
+            <p className="mt-0.5 text-xs text-muted-foreground">{t("tools.antivpn.desc")}</p>
+          </div>
+        </div>
+
+        <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border p-3">
+          <div className="flex min-w-0 items-start gap-2">
+            <Icon
+              className={cn("mt-0.5 size-4 shrink-0", on ? "text-primary" : "text-muted-foreground")}
+              aria-hidden
+            />
+            <span className="min-w-0">
+              <span className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium">{t("tools.antivpn.toggle")}</span>
+                {on && <Badge className="h-5 px-1.5 text-[11px]">{t("tools.antivpn.activeBadge")}</Badge>}
+              </span>
+              <span className="mt-0.5 block text-xs text-muted-foreground">{t("tools.antivpn.toggleDesc")}</span>
+            </span>
+          </div>
+          <Switch
+            checked={on}
+            onCheckedChange={(v) => levelMutation.mutate(v ? "on" : "off")}
+            disabled={levelMutation.isPending || router.mode !== "agent"}
+            aria-label={t("tools.antivpn.toggle")}
+          />
+        </div>
+
+        <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">{t("tools.antivpn.footnote")}</p>
       </CardContent>
     </Card>
   );
@@ -418,7 +486,11 @@ export function ProtectionSummaryCard({ router }: { router: RouterDevice }) {
 
   const fg = parseFamilyGuardSpec(router.familyGuardSpec);
   const verdict = protectionVerdict(router);
-  const score = (safeWifiLevelOf(router) !== "off" ? 1 : 0) + (shieldOn(router) ? 1 : 0) + (fg.enabled ? 1 : 0);
+  const score =
+    (safeWifiLevelOf(router) !== "off" ? 1 : 0) +
+    (shieldOn(router) ? 1 : 0) +
+    (fg.enabled ? 1 : 0) +
+    (antiVpnOn(router) ? 1 : 0);
 
   const rows: { nameKey: string; state: string; on: boolean }[] = [
     {
@@ -437,6 +509,7 @@ export function ProtectionSummaryCard({ router }: { router: RouterDevice }) {
       state: fg.enabled ? `${fg.start} → ${fg.end}` : "—",
       on: fg.enabled,
     },
+    { nameKey: "tools.antivpn.title", state: antiVpnOn(router) ? t("tools.antivpn.activeBadge") : "—", on: antiVpnOn(router) },
   ];
 
   return (

@@ -61,6 +61,8 @@ func (a *API) registerAgentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/routers/{id}/shield", a.handleRouterSetShield)
 	// N°82 — FamilyGuard : couvre-feu internet du WiFi public (console).
 	mux.HandleFunc("PUT /api/routers/{id}/familyguard", a.handleRouterSetFamilyGuard)
+	// N°88 — AntiVPN : bloque-VPN du WiFi public (console).
+	mux.HandleFunc("PUT /api/routers/{id}/antivpn", a.handleRouterSetAntiVpn)
 }
 
 // ---------------------------------------------------------------------------
@@ -353,6 +355,7 @@ var staleSentReadKinds = map[string]bool{
 	model.CmdSafeWifi:      true, // N°80 : idempotent (marqueur mikcloud-safewifi — remove-then-add)
 	model.CmdShield:        true, // N°81 : idempotent (marqueur mikcloud-shield — remove-then-add)
 	model.CmdFamilyGuard:   true, // N°82 : idempotent (marqueur mikcloud-familyguard — remove-then-add)
+	model.CmdAntiVpn:       true, // N°88 : idempotent (marqueur mikcloud-antivpn — remove-then-add)
 }
 
 // staleSentLimit — au-delà de cette ancienneté sans rapport, une commande
@@ -1062,6 +1065,85 @@ func (a *API) ensureFamilyGuardLocked(db *model.DB, router *model.Router) {
 	})
 }
 
+// antiVpnRulesVersion — sel de version des règles FILTER AntiVPN
+// (pattern safeWifiRulesVersion N°80) : toute évolution de la FORME des
+// règles (nouveau port, règle supplémentaire par hotspot) change ce
+// sel → chaque routeur en ligne reçoit la mise à niveau automatiquement
+// à son premier check-in.
+const antiVpnRulesVersion = "av-v1"
+
+// antiVpnRefresh — cadence d'auto-réparation (pattern N°49) : à
+// configuration IDENTIQUE, le bloc antivpn est re-filé périodiquement.
+// Idempotent (remove-then-add des seules règles marquées) : répare une
+// règle effacée localement (ménage, restauration de backup) au plus
+// tard 6 h après, et suit un renommage d'interface du hotspot.
+const antiVpnRefresh = 6 * time.Hour
+
+// antiVpnSig — signature courte et stable d'un niveau AntiVPN (hash du
+// niveau + sel de version des règles) : elle distingue « déjà appliqué
+// sur ce routeur » d'« à (re)appliquer » sans table supplémentaire.
+func antiVpnSig(level string) string {
+	return agent.HashToken(antiVpnRulesVersion + "|" + level)[:16]
+}
+
+// antiVpnFresh — vrai si la config actuelle a été CONFIRMÉE appliquée
+// récemment. Vide ou illisible → re-file prudent (pattern N°80/N°81).
+func antiVpnFresh(router *model.Router) bool {
+	if router.AntiVpnAppliedAt == "" {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, router.AntiVpnAppliedAt)
+	if err != nil {
+		return false
+	}
+	return time.Since(t) < antiVpnRefresh
+}
+
+// antiVpnLevelLabel — libellé court d'un niveau pour le journal d'activité.
+func antiVpnLevelLabel(level string) string {
+	if level == model.AntiVpnOn {
+		return "bloque-VPN actif"
+	}
+	return "bloque-VPN désactivé"
+}
+
+// ensureAntiVpnLocked — N°88 : converge le bloque-VPN du WiFi public,
+// sous verrou, depuis handleAgentCmd (contrat exact de ensureShieldLocked
+// N°81) :
+//   - niveau "off" JAMAIS utilisé (sig vide) : RIEN — un routeur
+//     antérieur au N°88 dont le gérant n'ouvre jamais la carte ne
+//     consomme aucun octet (économie de veille N°75 entière) ;
+//   - niveau actif ou déjà utilisé : si la signature courante diffère
+//     de la config appliquée ou si l'application n'est plus fraîche,
+//     la commande antivpn rejoint la file (deferred bucket, fermeture) ;
+//   - une commande en file/en vol suffit — le rapport tranchera (ok →
+//     sig posée après vérification 4 règles × hotspots, error → re-file
+//     au check-in suivant).
+func (a *API) ensureAntiVpnLocked(db *model.DB, router *model.Router) {
+	if router.Mode != "agent" {
+		return
+	}
+	level := router.AntiVpnLevelEffective()
+	if level == model.AntiVpnOff && router.AntiVpnSig == "" {
+		return // jamais utilisé : aucune commande
+	}
+	sig := antiVpnSig(level)
+	if router.AntiVpnSig == sig && antiVpnFresh(router) {
+		return // déjà appliqué avec ce niveau exact, et récemment
+	}
+	for i := range db.Commands {
+		c := &db.Commands[i]
+		if c.RouterID == router.ID && c.Kind == model.CmdAntiVpn &&
+			(c.Status == "queued" || c.Status == "sent") {
+			return // une mise à jour est déjà en vol
+		}
+	}
+	queueCommandLocked(db, router.AccountID, router.ID, model.CmdAntiVpn, map[string]any{
+		"level": level,
+		"sig":   sig,
+	})
+}
+
 // ensureReadStateDue — N°74 — cadenceur de la télémétrie read_state. Enfile
 // un read_state pour CE routeur si : (1) aucun n'est déjà en file ou en vol
 // (statuts queued/sent), ET (2) le dernier appliqué date de plus de
@@ -1221,6 +1303,11 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 	// check-in (≤ 45 s console ouverte, ≤ 180 s en veille).
 	a.ensureFamilyGuardLocked(db, router)
 
+	// N°88 — AntiVPN : converge le bloque-VPN du WiFi public — même
+	// contrat (silence si jamais utilisé, re-file au changement,
+	// auto-réparation 6 h).
+	a.ensureAntiVpnLocked(db, router)
+
 	// File FIFO : commandes en attente (max 10 par check-in).
 	//
 	// N°77 — PRIORITÉ AUX ACTIONNABLES : un parc de 3 500 users enfile
@@ -1243,7 +1330,7 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 		switch db.Commands[i].Kind {
 		case model.CmdReadState:
 			reads = append(reads, db.Commands[i])
-		case model.CmdWalledGarden, model.CmdHotspotFiles, model.CmdSafeWifi, model.CmdShield, model.CmdFamilyGuard:
+		case model.CmdWalledGarden, model.CmdHotspotFiles, model.CmdSafeWifi, model.CmdShield, model.CmdFamilyGuard, model.CmdAntiVpn:
 			deferred = append(deferred, db.Commands[i])
 		default:
 			prio = append(prio, db.Commands[i])
@@ -1253,9 +1340,10 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(reads, func(i, j int) bool { return reads[i].CreatedAt < reads[j].CreatedAt })
 	// Au sein des différés, walled_garden avant hotspot_files (le walled-garden
 	// doit être en place pour que le portail puisse appeler l'API cloud pré-auth),
-	// puis safewifi (N°80), shield (N°81) et familyguard (N°82) en fermeture :
+	// puis safewifi (N°80), shield (N°81), familyguard (N°82) et antivpn
+	// (N°88) en fermeture :
 	// ces protections ne dépendent d'aucune autre commande — par ordre de
-	// vague : 29 < 35 < 80 < 81 < 82).
+	// vague : 29 < 35 < 80 < 81 < 82 < 88).
 	deferredWave := func(k string) int {
 		switch k {
 		case model.CmdWalledGarden:
@@ -1266,8 +1354,10 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 			return 80
 		case model.CmdShield:
 			return 81
+		case model.CmdFamilyGuard:
+			return 82
 		}
-		return 82 // CmdFamilyGuard
+		return 88 // CmdAntiVpn
 	}
 	sort.SliceStable(deferred, func(i, j int) bool {
 		wi, wj := deferredWave(deferred[i].Kind), deferredWave(deferred[j].Kind)
@@ -1573,6 +1663,32 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 					label = "actif — internet coupé"
 				}
 				a.logActivity(db, router.AccountID, "router", "Couvre-feu internet ("+label+") appliqué sur «"+router.Name+"»")
+			}
+		} else if cmd.Kind == model.CmdAntiVpn {
+			// N°88 — bloque-VPN appliqué et CONFIRMÉ par le routeur : la
+			// signature n'est posée que si le COMPTE de règles marquées
+			// rapporté correspond à 4 règles × le nombre de serveurs
+			// hotspots RAPPORTÉ (0 si off), et uniquement si le niveau
+			// rapporté est TOUJOURS courant (pattern N°80/81 : un gérant
+			// qui change d'avis pendant le vol ne doit pas voir un état
+			// périmé figé).
+			level := agent.AntiVpnLevelFromPayload(cmd.Payload)
+			want := 0
+			if level != model.AntiVpnOff {
+				if hs, ok := parseReportInt(vals.Get("hs")); ok {
+					want = agent.AntiVpnRulesPerHotspot * hs
+				} else {
+					want = -1 // hs illisible : vérification impossible → pas de sig
+				}
+			}
+			if got, ok := parseReportInt(vals.Get("rules")); ok && got == want {
+				if level == router.AntiVpnLevelEffective() {
+					if sig, _ := cmd.Payload["sig"].(string); sig != "" {
+						router.AntiVpnSig = sig
+					}
+					router.AntiVpnAppliedAt = model.NowISO()
+				}
+				a.logActivity(db, router.AccountID, "router", "Bloque-VPN ("+antiVpnLevelLabel(level)+") appliqué sur «"+router.Name+"»")
 			}
 		} else {
 			a.logActivity(db, router.AccountID, "router", "Commande "+cmd.Kind+" exécutée sur «"+router.Name+"»")

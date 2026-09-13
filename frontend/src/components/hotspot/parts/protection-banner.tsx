@@ -34,7 +34,9 @@ export function ProtectionBanner() {
   const agentRouters = (routers ?? []).filter((r) => r.mode === "agent");
   if (agentRouters.length === 0) return null;
 
-  const total = agentRouters.length * 3;
+  // N°88 : 4 modules de protection par routeur (SafeWiFi, Shield,
+  // FamilyGuard, AntiVPN) — le total suit la source unique protectionScore.
+  const total = agentRouters.length * 4;
   const on = agentRouters.reduce((n, r) => n + protectionScore(r), 0);
   const verdict = on === total ? "protected" : on === 0 ? "unprotected" : "partial";
 

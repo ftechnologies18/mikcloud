@@ -4,8 +4,8 @@
 // le résumé de l'onglet Système de la fiche routeur partagent le MÊME
 // calcul de verdict — ces fonctions en sont la source unique. Elles ne
 // lisent QUE les champs exposés par GET /api/routers (safeWifiLevel,
-// shieldLevel, familyGuardSpec — N°80/81/82) : zéro nouvel endpoint,
-// zéro octet supplémentaire pour le parc.
+// shieldLevel, familyGuardSpec, antiVpnLevel — N°80/81/82/88) : zéro nouvel
+// endpoint, zéro octet supplémentaire pour le parc.
 //
 // La logique de fenêtre FamilyGuard (parse du spec canonique + « en cours
 // maintenant ? ») est déplacée ici depuis router-tools.tsx : miroir exact
@@ -23,6 +23,11 @@ export function safeWifiLevelOf(r: RouterDevice): "off" | "threats" | "family" {
 /** Bouclier Shield actif ? ("" ou inconnu → off, N°81). */
 export function shieldOn(r: RouterDevice): boolean {
   return r.shieldLevel === "on";
+}
+
+/** Bloque-VPN actif ? ("" ou inconnu → off, N°88). */
+export function antiVpnOn(r: RouterDevice): boolean {
+  return r.antiVpnLevel === "on";
 }
 
 /** Parse le spec canonique FamilyGuard "<enabled>|<HH:MM>|<HH:MM>|<1111111>" —
@@ -61,23 +66,27 @@ export function familyGuardActiveNow(w: FamilyGuardWindow, now: Date): boolean {
   return (m >= s && w.days[day] === "1") || (m < e && w.days[prev] === "1");
 }
 
-/** Nombre de protections actives sur ce routeur (0 à 3). */
+/** Nombre de protections actives sur ce routeur (0 à 4). */
 export function protectionScore(r: RouterDevice): number {
   let n = 0;
   if (safeWifiLevelOf(r) !== "off") n++;
   if (shieldOn(r)) n++;
   if (parseFamilyGuardSpec(r.familyGuardSpec).enabled) n++;
+  if (antiVpnOn(r)) n++;
   return n;
 }
 
 /** Verdict de protection d'un routeur — le vocabulaire vendeur N°83. */
 export type ProtectionVerdict = "protected" | "partial" | "unprotected";
 
-/** Verdict d'un routeur : 3/3 = bien protégé, 1-2 = à renforcer, 0 = non
- * protégé. Calculé depuis les seuls champs existants de GET /api/routers. */
+/** Verdict d'un routeur : 4/4 = bien protégé, 1-3 = à renforcer, 0 = non
+ * protégé. Calculé depuis les seuls champs existants de GET /api/routers.
+ * N°88 : le bloque-VPN complète le quatuor — sans lui, la footnote SafeWiFi
+ * (N°85 : « seul un VPN contourne ») reste une porte ouverte : le verdict
+ * l'exige pour « Bien protégé ». */
 export function protectionVerdict(r: RouterDevice): ProtectionVerdict {
   const n = protectionScore(r);
-  if (n >= 3) return "protected";
+  if (n >= 4) return "protected";
   if (n >= 1) return "partial";
   return "unprotected";
 }

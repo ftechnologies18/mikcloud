@@ -5,6 +5,77 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-13 — N°88 : AntiVPN — le bloque-VPN ferme la dernière échappatoire connue de la Protection : les VPN et tunnels standards (WireGuard, OpenVPN, IPsec, PPTP/L2TP, WARP, Tor) sont coupés depuis le WiFi public, 4e module de la vue Protection, pendant que la navigation, l'heure des téléphones et les appels WhatsApp restent intacts
+
+### N°88 — Contexte : la footnote N°85 disait la vérité, N°88 la referme
+Le durcissement SafeWiFi (N°85) avait écrit noir sur blanc la limite
+résiduelle : « seul un VPN contourne ». Le gérant a donné le feu vert pour
+le module qui referme cette porte : un adolescent (ou un client) qui
+installe un VPN pour contourner le filtrage de sites retrouve désormais
+le tunnel coupé. C'est le 4e module de protection — SafeWiFi N°80,
+Shield N°81, FamilyGuard N°82, AntiVPN N°88 — et le verdict « Bien
+protégé » passe de 3/3 à 4/4 : sans bloque-VPN, la porte VPN reste
+ouverte, le verdict l'exige pour être honnête (un badge « Bien protégé »
+avec une échappatoire connue serait un mensonge de vente).
+
+### Technique — L4 honnête, zéro DPI, pattern Shield exact
+PUT /api/routers/{id}/antivpn {level: off|on}, contrat miroir de Shield
+N°81 : niveau persisté (Router.AntiVpnLevel/Sig/AppliedAt, colonnes
+antivpn_* via ALTER TABLE IF NOT EXISTS — migration Neon automatique,
+synchro différentielle du backend à chaque sauvegarde), sig inchangée,
+ensureAntiVpnLocked re-file au check-in suivant (≤ 45 s console ouverte /
+≤ 180 s en veille), retour « ok » VÉRIFIÉ (compte de règles marquées
+mikcloud-antivpn == 4 × hotspots RAPPORTÉ — vérité routeur, miroir
+agent.AntiVpnRulesPerHotspot, source unique), sel de version av-v1,
+auto-réparation 6 h (pattern N°49), silence intégral pour un routeur
+dont le gérant n'a jamais ouvert la carte (économie N°75), reprise
+zombie (staleSentReadKinds), vague 88 en fermeture du deferred bucket.
+Règles FILTER par serveur hotspot (interface lue SUR le routeur, foreach
+/ip hotspot find, place-before=0 au-dessus d'un fasttrack éventuel) :
+GRE (47) et ESP (50) coupés, UDP 500/4500/1701/1194/51820/2408 coupés
+(IKE/NAT-T, L2TP, OpenVPN, WireGuard, Cloudflare WARP), TCP
+1723/1194/9001/9030 coupés (PPTP, OpenVPN, Tor) ; miroir IPv6
+best-effort (pattern N°85, on-error silencieux, non compté). Choix L4
+délibéré : le port 53 (SafeWiFi reste maître du DNS), le NTP 123 et
+l'UDP 443 ne sont JAMAIS touchés — l'UDP 443 porte les appels WhatsApp
+(critiques en Côte d'Ivoire) et QUIC : la limite résiduelle (un tunnel
+camouflé en HTTPS pur, ex. certains clients obfusqués) est écrite noir
+sur blanc dans la footnote du module — un MVP sur routeur 128 Mo ne vend
+pas de DPI. Frontend : AntiVpnCard (pattern ShieldCard, icône GlobeLock),
+4e carte de la vue Protection (grille xl:grid-cols-4), 4e ligne du résumé
+de l'onglet Système, bandeau ×4, verdict 4/4 (protectionScore/
+protectionVerdict, source unique protection.ts), setRouterAntiVpn ;
+i18n dans l'architecture en fragments du N°87 : clés tools.antivpn.*
+(8) dans i18n-fr/tools.ts + i18n-en/tools.ts, protection.ofModules «{n}/4»
+et summary.desc étendus dans les fragments protection, footnotes SafeWiFi
+réécrites (« les VPN standards sont bloqués par le module Bloque-VPN —
+seuls les tunnels camouflés en HTTPS pur (rares) peuvent encore le
+contourner ») — parité FR/EN maintenue.
+
+### Vocabulaire — promesse vendeur, limite assumée
+« Bloque-VPN » / « VPN blocker » : « Les VPN ne peuvent plus contourner
+vos protections : les tunnels connus sont coupés depuis le WiFi public. »
+La footnote dit ce qui reste intact (navigation, heure des téléphones,
+appels WhatsApp) et ce qui reste ouvert (tunnel camouflé en HTTPS pur,
+rare) — la règle maison depuis N°80 : un blocage qui ne tient pas sa
+promesse est pire que pas de blocage.
+
+### Vérifié localement comme la CI
+gofmt/vet/build verts ; go test -race complet 12 paquets verts (api
+408 s, agent 1 s) dont les nouveaux tests : agent/antivpn_test.go
+(4 règles forward IPv4 par hotspot + miroir IPv6, GRE et ESP présents,
+listes de ports sans 443 et sans 53, off ne pose AUCUNE règle et retire
+les deux familles, rapport rules+hs dynamiques, miroir de la constante
+de comptage) et api/antivpn_test.go (silence du jamais-utilisé,
+convergence activation/en-vol/ok-frais/horodatage-ancien/échec, retrait
+après extinction, vérification 4×hs et hs illisible et niveau périmé,
+sel av-v1 ≠ formule sans sel — garde-fou N°48 —, antivpn en fermeture
+du deferred bucket 29<35<80<81<82<88) ; eslint 0, tsgo 0, build
+production 13 routes (type-check actif N°84) ; script RouterOS généré
+inspecté intégralement (2 180 octets pour on : retraits idempotents
+v4+v6, variables avn/avi/avr sans collision avec swn/shn/fgn, fetch de
+rapport avec citations propres, off = retrait seul + rapport rules=0).
+
 ## 2026-09-13 — N°87 : éclatement des dictionnaires i18n — les deux plus gros fichiers du projet (2 702 + 2 589 lignes) deviennent 90 fragments par domaine fusionnés par deux agrégateurs, contenu vérifié identique clé par clé
 
 ### N°87 — Contexte : l'audit « fichiers monolithiques »

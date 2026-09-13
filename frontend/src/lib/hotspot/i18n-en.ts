@@ -131,6 +131,8 @@ export const enDict: Record<string, string> = {
   "login.register.submit": "Create my account",
   "login.welcome": "Welcome, {name}",
   "login.failed": "Sign-in failed",
+  "login.serverWaking": "Waking up the cloud server — retrying (up to a minute)…",
+  "login.networkError": "Server unreachable — check your Internet connection, then try again.",
   "login.registerFailed": "Registration failed",
   "login.tagline": "MikroTik cloud hotspot management",
   "login.logoAlt": "MikCloud logo — cloud, WiFi signal and MikroTik router",

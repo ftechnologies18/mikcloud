@@ -208,6 +208,30 @@ export async function apiAnon<T>(path: string, opts: ApiOptions = {}): Promise<T
   return data as T;
 }
 
+/**
+ * wakeBackend — N°84 : réveil proactif du backend (cold boot Render plan
+ * gratuit : hibernation après ~15 min sans trafic, démarrage 30–90 s).
+ * Fire-and-forget vers GET / (handleHealth, réponse minuscule) : le but est
+ * de DÉCLENCHER le boot pendant que l'utilisateur tape ses identifiants,
+ * pas de lire la réponse. Aucune erreur remontée — un échec (offline, CORS,
+ * timeout 30 s) est silencieusement ignoré : ce ping est une optimisation,
+ * jamais un blocage. Idempotent par garde module (un seul ping par chargement
+ * de bundle, les re-rendus ne relancent rien).
+ */
+const wakeGuard = { done: false };
+export function wakeBackend(): void {
+  if (wakeGuard.done) return;
+  if (typeof window === "undefined") return;
+  wakeGuard.done = true;
+  void fetch(buildUrl("/", { t: Date.now() }), {
+    method: "GET",
+    cache: "no-store",
+    signal: timeoutSignal(30_000, 30_000),
+  }).catch(() => {
+    /* silencieux : réveil au mieux, ignoré sinon */
+  });
+}
+
 /** apiDownload — télécharge un fichier (CSV, PDF…) renvoyé par l'API, avec token.
  * N°78 — délai max 120 s par défaut (gros exports). */
 export async function apiDownload(path: string, filename: string, params?: ApiOptions["params"]): Promise<void> {

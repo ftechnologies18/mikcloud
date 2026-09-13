@@ -26,6 +26,28 @@ Atténuations embarquées dans le workflow (N°40) : deux lignes de cron
 décalées **hors des minutes rondes** (pic de congestion du planificateur) —
 utile, mais insuffisant seul.
 
+## 1-bis. Couche frontend — résilience cold boot (N°84)
+
+Même quand un cold boot se produit (entre deux pings retardés), l'utilisateur
+ne doit plus le subir comme un échec. Deux garde-fous embarqués dans
+l'écran de connexion (`frontend/src/components/hotspot/login-screen.tsx`) :
+
+1. **Réveil proactif** — au premier montage de l'écran de connexion, un ping
+   silencieux `GET /` (`wakeBackend()` dans `lib/hotspot/api.ts`, idempotent
+   par garde module, échec ignoré) part vers le backend : le serveur
+   Render démarre **pendant que l'utilisateur tape ses identifiants**.
+2. **Rejeu patient du login** — si la soumission échoue au niveau RÉSEAU
+   (timeout, connexion — pas une réponse HTTP d'erreur), une unique
+   seconde tentative part avec un délai de 75 s et un message explicite
+   (« Réveil du serveur cloud en cours… », i18n FR/EN). Un cold boot de
+   30-90 s passe donc inaperçu. Le login est le seul POST autorisé à se
+   rejouer : rejouer une génération de vouchers ou un e-mail serait un
+   double effet de bord (traitement serveur réussi masqué par le timeout).
+
+Ces deux garde-fous rendent les cold boots résiduels quasi invisibles ;
+les options A/B ci-dessous restent les correctifs de fond (availability
+continue, pas juste tolérance à l'éveil).
+
 ## 2. Option A — Monitor externe UptimeRobot (gratuit, recommandé)
 
 UptimeRobot Free : **50 monitors, checks HTTP toutes les 5 min, 0 $, sans
@@ -102,5 +124,6 @@ time curl -s -o /dev/null -w '%{http_code}\n' https://mikcloud.onrender.com/
 # → HTTP 200 en < 1 s : service éveillé (un cold boot donnerait 30-90 s).
 
 # Historique du monitor UptimeRobot : onglet Response Time / Logs.
-# Historique GitHub : onglet Actions → Keep-alive Render.
+# Historique GitHub : onglet Actions → Keep-alive Render
+#   (résumé de run : statut + latence mesurée depuis N°84).
 ```

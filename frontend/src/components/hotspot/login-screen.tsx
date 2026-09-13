@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { Eye, EyeOff, Loader2, ShieldCheck, Store, Ticket, Wifi } from "lucide-react";
 import { toast } from "sonner";
@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import ForgotPasswordModal from "@/components/hotspot/parts/forgot-password-modal";
-import { ApiError, api } from "@/lib/hotspot/api";
+import { ApiError, api, wakeBackend } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { useHotspotStore } from "@/lib/hotspot/store";
 import type { AuthResponse } from "@/lib/hotspot/types";
@@ -21,6 +21,28 @@ import type { AuthResponse } from "@/lib/hotspot/types";
 // bundle initial) : les micro-animations vivent en @keyframes CSS
 // (globals.css, classes mik-*) avec animation-delay en cascade pour
 // reproduire l'ancien stagger (0,04 s + 0,07 s par enfant).
+
+// N°84 — filet cold boot : le backend Render du plan gratuit hiberne après
+// ~15 min sans trafic et met 30–90 s à redémarrer. Sur la requête
+// authentifiante, un échec RÉSEAU (timeout/connexion — pas une réponse HTTP
+// d'erreur, qui reste traitée par la logique normale) déclenche UNE seconde
+// tentative patiente (75 s) avec un message explicite. Le login est sûr à
+// rejouer : aucune écriture métier, au pire deux sessions JWT sont créées
+// (la première expire naturellement). Les autres POST (génération de
+// vouchers, e-mails…) ne DOIVENT PAS utiliser ce filet : un timeout peut
+// masquer un traitement serveur réussi → double effet de bord.
+async function withColdBootRetry<T>(
+  attempt: (timeoutMs: number) => Promise<T>,
+  onWake: () => void,
+): Promise<T> {
+  try {
+    return await attempt(20_000);
+  } catch (err) {
+    if (err instanceof ApiError) throw err; // erreur serveur réelle (401, totp_required…)
+    onWake();
+    return await attempt(75_000);
+  }
+}
 
 // Le bloc démo n'existe qu'en mode passerelle sandbox (pas de NEXT_PUBLIC_API_BASE).
 // En production (Vercel → Render), il laisse place à la bascule inscription.
@@ -143,6 +165,15 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
   const { t, tf } = useI18n();
   const setAuth = useHotspotStore((s) => s.setAuth);
 
+  // N°84 — réveil proactif du backend : ping silencieux au premier montage
+  // de l'écran (garde module dans wakeBackend, les re-rendus ne relancent
+  // rien). Sur Render plan gratuit, le serveur démarre PENDANT que
+  // l'utilisateur tape ses identifiants — la soumission part sur un serveur
+  // déjà chaud, et le filet withColdBootRetry couvre le reste.
+  useEffect(() => {
+    wakeBackend();
+  }, []);
+
   // Connexion
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -187,9 +218,13 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
     if (!canSell) return;
     setSellLoading(true);
     try {
-      const res = await api<{ token: string; reseller: { id: string; name: string; username: string } }>(
-        "/api/reseller/login",
-        { method: "POST", body: { username: sellUsername.trim(), pin: sellPin } },
+      const res = await withColdBootRetry(
+        (timeoutMs) =>
+          api<{ token: string; reseller: { id: string; name: string; username: string } }>(
+            "/api/reseller/login",
+            { method: "POST", timeoutMs, body: { username: sellUsername.trim(), pin: sellPin } },
+          ),
+        () => toast.info(t("login.serverWaking")),
       );
       setAuth(res.token, {
         id: res.reseller.id,
@@ -200,7 +235,10 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
       toast.success(tf("login.welcome", { name: res.reseller.name }));
     } catch (err) {
       shakeCard();
-      toast.error(err instanceof Error ? err.message : t("login.failed"));
+      // N°84 — un échec réseau brut (timeout cold boot, hors-ligne) affiche
+      // un message humain, pas le DOMException du navigateur (« signal
+      // timed out ») : la cible gérant n'a pas à décoder un message interne.
+      toast.error(err instanceof ApiError ? err.message : t("login.networkError"));
     } finally {
       setSellLoading(false);
     }
@@ -216,16 +254,21 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
     if (!canLogin) return;
     setLoginLoading(true);
     try {
-      const res = await api<AuthResponse>("/api/auth/login", {
-        method: "POST",
-        body: {
-          username: username.trim(),
-          password,
-          // Second étape TOTP (S4) : le code n'est envoyé qu'une fois le
-          // backend passé en mode « totp_required ».
-          ...(awaitingTotp ? { code: totpCode.trim() } : {}),
-        },
-      });
+      const res = await withColdBootRetry(
+        (timeoutMs) =>
+          api<AuthResponse>("/api/auth/login", {
+            method: "POST",
+            timeoutMs,
+            body: {
+              username: username.trim(),
+              password,
+              // Second étape TOTP (S4) : le code n'est envoyé qu'une fois le
+              // backend passé en mode « totp_required ».
+              ...(awaitingTotp ? { code: totpCode.trim() } : {}),
+            },
+          }),
+        () => toast.info(t("login.serverWaking")),
+      );
       applyAuth(res);
     } catch (err) {
       if (err instanceof ApiError && err.code === "totp_required") {
@@ -233,7 +276,8 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
         toast.info(t("login.totpPrompt"));
       } else {
         shakeCard();
-        toast.error(err instanceof Error ? err.message : t("login.failed"));
+        // N°84 — cf. handleSellLogin : message humain pour l'échec réseau.
+        toast.error(err instanceof ApiError ? err.message : t("login.networkError"));
       }
     } finally {
       setLoginLoading(false);

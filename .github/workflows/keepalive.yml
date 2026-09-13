@@ -13,9 +13,22 @@
 #    Une fois l'une des deux en place, désactiver ce workflow :
 #    `gh workflow disable keepalive.yml` (ou onglet Actions → Disable).
 #
-# Atténuation embarquée : deux lignes de cron décalées hors des minutes
-# rondes (:00, :10, :20… = pic de congestion du planificateur GitHub).
-# Le dépôt étant public, la charge double reste gratuite en minutes Actions.
+# Atténuation embarquée :
+#    - deux lignes de cron décalées hors des minutes rondes (:00, :10, :20…
+#      = pic de congestion du planificateur GitHub). Le dépôt étant public,
+#      la charge double reste gratuite en minutes Actions ;
+#    - N°84 : couche FRONTEND — l'écran de connexion ping GET / à son
+#      montage (réveil pendant la saisie) et rejoue une fois le login sur
+#      échec réseau (75 s) : un cold boot résiduel devient quasi invisible
+#      pour l'utilisateur au lieu d'un message d'erreur brut.
+#
+# N°84 — durcissement du workflow lui-même :
+#    - permissions: {} → ce workflow ne lit/écrit RIEN côté GitHub (il ne
+#      fait que curl) : zéro surface si le token d'Actions fuit ;
+#    - cancel-in-progress: true → un ping bloqué (max 3 min) est annulé
+#      par le suivant ; les pings en file d'attente se remplacent déjà
+#      mutuellement (sémantique concurrency), le plus récent est le seul
+#      utile — jamais de pile de runs obsolètes.
 name: Keep-alive Render
 
 on:
@@ -24,9 +37,11 @@ on:
     - cron: "8,18,28,38,48,58 * * * *" # hors minute ronde, série B
   workflow_dispatch: # déclenchement manuel possible depuis l'onglet Actions
 
+permissions: {} # aucun accès GitHub requis — ping HTTP uniquement
+
 concurrency:
   group: keepalive-render
-  cancel-in-progress: false
+  cancel-in-progress: true # un ping bloqué est supplanté par le suivant
 
 jobs:
   ping:
@@ -38,13 +53,25 @@ jobs:
         run: |
           ok=""
           for i in 1 2 3; do
+            t0=$(date +%s%3N)
             code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 https://mikcloud.onrender.com/ || true)"
-            echo "Tentative ${i} — HTTP ${code}"
-            if [ "${code}" = "200" ]; then ok=1; break; fi
+            t1=$(date +%s%3N)
+            ms=$((t1 - t0))
+            echo "Tentative ${i} — HTTP ${code} en ${ms} ms"
+            if [ "${code}" = "200" ]; then ok=1; echo "${code} ${ms}" > /tmp/ping.txt; break; fi
             sleep 20
           done
           if [ -z "${ok}" ]; then
             echo "::warning::Service injoignable après 3 tentatives — vérifier le dashboard Render."
             exit 1
           fi
-          echo "Service éveillé (HTTP 200)."
+          code=$(cut -d' ' -f1 /tmp/ping.txt)
+          ms=$(cut -d' ' -f2 /tmp/ping.txt)
+          echo "Service éveillé (HTTP ${code}, latence ${ms} ms)."
+          {
+            echo "### Keep-alive Render"
+            echo ""
+            echo "- Statut : éveillé (HTTP ${code})"
+            echo "- Latence : ${ms} ms"
+            echo "- Horodatage : $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          } >> "$GITHUB_STEP_SUMMARY"

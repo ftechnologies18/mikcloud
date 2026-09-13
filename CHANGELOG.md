@@ -5,6 +5,88 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-13 — N°84 : hygiène pré-lancement — le build Vercel type-checke, les cold boots deviennent invisibles, 16 dépendances mortes évacuées
+
+### N°84 — Contexte : trois faiblesses structurelles repérées à l'audit de lancement
+L'audit d'architecture a mis en lumière trois fragilités qui n'ont jamais
+été des choix délibérés mais des héritages ou des constats subis :
+(1) `typescript.ignoreBuildErrors: true` dans `next.config.ts` venait du
+**template initial** (commit 8cd2e40 — N°38 l'avait laissé « intact » sans
+le questionner) : or le webhook Vercel déploie **dès le push `main`,
+indépendamment de la CI** — une régression de types pouvait donc atteindre
+la production avant même que le job tsgo de la CI ne rougisse ; (2) le
+keep-alive Render mesuré à 99–288 min de retard (RUNBOOK-KEEPALIVE) rend
+les cold boots de 30–90 s **une expérience réelle** pour le gérant qui se
+connecte le matin : timeout N°78 à 20 s → erreur brutale « signal timed
+out » → échec perçu ; (3) `prisma` + `@prisma/client`, `next-auth`,
+`z-ai-web-dev-sdk`, `@mdxeditor`, `date-fns`… **16 dépendances sans le
+moindre import** dans src/ ni e2e/ — installées, auditées par Dependabot,
+pesant sur le lockfile, pour rien.
+
+### Barrière de types — le build devient le troisième verrou
+Retrait d'`ignoreBuildErrors` : le build `next build` type-checke
+désormais (tsc), en plus du `tsgo --noEmit` de la CI locale et du job CI.
+Triple barrière : locale (typecheck), CI (tsgo), build (tsc). Une
+régression de types ne peut plus passer inaperçue à aucun étage — le
+webhook Vercel déploie toujours en premier, mais il déploie un artefact
+qui a passé le tsc. Vérifié immédiatement : build complet vert, 13 routes,
+« Finished TypeScript in 14.8 s », zéro erreur. (N°38 conservé : pas de
+retour de `output: "standalone"`.)
+
+### Cold boot — le rendre invisible plutôt que l'empêcher (N°84, couche frontend)
+Le keep-alive GitHub reste un filet partiel (retards plateforme
+non contractuels) ; UptimeRobot/Render Starter restent LES correctifs de
+fond (RUNBOOK inchangé sur ce point). Mais entre deux pings retardés,
+l'utilisateur ne doit plus payer le cold boot de sa poche. Deux
+garde-fous dans l'écran de connexion :
+**réveil proactif** — `wakeBackend()` dans `api.ts` (fire-and-forget vers
+`GET /` = `handleHealth`, garde module = un seul ping par chargement de
+bundle, échec silencieusement ignoré, paramètre anti-cache) part au
+premier montage : le serveur Render démarre **pendant que le gérant tape
+ses identifiants** ; **rejeu patient** — un échec RÉSEAU (timeout/
+connexion — pas une réponse HTTP d'erreur, qui suit la logique normale
+401/totp_required) sur le login déclenche UNE seconde tentative à 75 s
+avec un message explicite (« Réveil du serveur cloud en cours… », i18n
+FR/EN + `login.networkError` humain remplaçant le DOMException brut).
+Le login est le SEUL POST autorisé à se rejouer — aucune écriture métier,
+au pire deux sessions JWT (la première expire) ; génération de vouchers
+et e-mails ne se rejouent JAMAIS : un timeout peut masquer un traitement
+serveur réussi. Workflow keepalive durci au passage : `permissions: {}`
+(zéro accès GitHub requis — ping HTTP seulement), `cancel-in-progress:
+true` (un ping bloqué est supplanté par le suivant), latence mesurée au
+résumé de run. RUNBOOK-KEEPALIVE : nouvelle section « 1-bis. Couche
+frontend — résilience cold boot ».
+
+### Dépendances — 16 paquets morts évacués, lockfile −893 lignes
+Audit exhaustif import par import (src/ + e2e/ + configs racine) :
+`prisma`, `@prisma/client` (le backend utilise pgx — le Prisma frontend
+était un vestige de template), `next-auth` (auth maison JWT),
+`z-ai-web-dev-sdk`, `@mdxeditor/editor`, `next-intl` (i18n maison — un
+commentaire du code le disait déjà), `@dnd-kit/*` (×3), `date-fns`
+(formatage maison `format.ts`), `react-markdown`,
+`react-syntax-highlighter`, `@reactuses/core`, `@tanstack/react-table`
+(tableaux à main), `uuid` (seul `crypto.randomUUID` natif est utilisé),
+`@hookform/resolvers` (aucun zodResolver) — **zéro import pour chacun**.
+Conservés malgré l'absence d'import direct : `react-dom`/`next`
+(framework), `sharp` (optimisation next/image, 5 fichiers). Bénéfices :
+lockfile −893 lignes, install CI/Vercel plus courte, surface Dependabot
+réduite (prisma et next-auth généraient des PR de bump pour rien).
+
+### Vérifications
+Frontend : eslint 0, tsgo 0, build production **avec typecheck actif**
+vert (13 routes, TypeScript 14.8 s), `bun install --frozen-lockfile`
+reproductible. Backend inchangé : gofmt/vet/build/tests 11 paquets verts.
+E2E navigateur autonome bout-en-bout sur stack locale (backend Go port
+4000 mode JSON + build `NEXT_PUBLIC_API_BASE` — le piège documenté N°81
+respecté) : écran de connexion rendu → **ping de réveil constaté dans les
+logs backend au montage** (GET / → 200) → login mot de passe erroné →
+toast « Identifiants invalides » du serveur + tremblement de carte →
+login correct → redirection console, requêtes dashboard 200 → zéro erreur
+console → contrôle visuel VLM sans défaut (mise en page, sidebar, KPI).
+Cold boot simulé impossible en local (serveur chaud) — le rejeu patient
+est couvert par le typage strict et la symétrie du mécanisme (ApiError vs
+erreur réseau). i18n : +2 clés FR, +2 EN (parité maintenue).
+
 ## 2026-09-13 — N°83 : la Protection sort de l'ombre — vue « Protection » dans la navigation principale, bandeau sur le tableau de bord et vocabulaire vendeur — les modules sécurité deviennent des arguments de vente visibles en un clic
 
 ### N°83 — Contexte : des arguments de vente enterrés dans une zone de configuration

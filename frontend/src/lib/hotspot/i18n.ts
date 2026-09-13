@@ -144,6 +144,8 @@ const fr: Record<string, string> = {
   "login.register.submit": "Créer mon compte",
   "login.welcome": "Bienvenue, {name}",
   "login.failed": "Connexion impossible",
+  "login.serverWaking": "Réveil du serveur cloud en cours — nouvelle tentative (jusqu'à une minute)…",
+  "login.networkError": "Serveur injoignable — vérifiez votre connexion Internet, puis réessayez.",
   "login.registerFailed": "Inscription impossible",
   "login.tagline": "Gestion Hotspot Cloud MikroTik",
   "login.logoAlt": "Logo MikCloud — nuage, signal WiFi et routeur MikroTik",

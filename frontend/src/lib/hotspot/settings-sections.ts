@@ -38,9 +38,18 @@ import { Bell, CreditCard, Router as RouterIcon, Settings, ShieldCheck, UsersRou
 import { canView } from "./roles";
 import type { ViewId } from "./types";
 
+/** Usage du compte de session (N°100) — la zone Paramètres est PARTAGÉE par
+ * les deux consoles, mais sa composition change : la section Hotspot
+ * (hub expérience/portail/modèles) est le produit des ÉTABLISSEMENTS — un
+ * foyer n'a ni portail captif ni modèles de vouchers, ses endpoints sont
+ * d'ailleurs 404 pour lui (requireUsage, N°98). */
+type Usage = "hotspot" | "homenet" | "" | undefined;
+
 /** Section de la zone Paramètres — une entrée de la sidebar de zone.
  * `views` regroupe les vues rendues DANS la section (onglets du hub Hotspot
- * inclus) : surlignage actif + filtrage par rôle couvrent le groupe entier. */
+ * inclus) : surlignage actif + filtrage par rôle couvrent le groupe entier.
+ * N°100 — `hotspotOnly` : section réservée à la console hotspot (produit
+ * des établissements) — absente de la zone d'un compte homenet. */
 export interface SettingsSection {
   /** Vue racine de la section — destination du clic dans la sidebar. */
   id: ViewId;
@@ -49,6 +58,8 @@ export interface SettingsSection {
   icon: LucideIcon;
   /** Toutes les vues de la section (surlignage actif, zone, garde-fous). */
   views: readonly ViewId[];
+  /** N°100 — la section n'existe que pour les comptes hotspot (défaut non). */
+  hotspotOnly?: boolean;
 }
 
 /** Sections de la zone, dans l'ordre de la sidebar (N°57-d) : identité →
@@ -62,7 +73,11 @@ export interface SettingsSection {
  * renouvellement/paiement restent rang 3, gardées côté Go). */
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { id: "settings", labelKey: "settings.tabGeneral", icon: Settings, views: ["settings"] },
-  { id: "hotspot", labelKey: "settings.tabHotspot", icon: Wifi, views: ["hotspot", "portal", "templates"] },
+  // N°100 — section marquée « hotspot » : cachée aux comptes homenet
+  // (canView refuse déjà hotspot/portal/templates pour ces comptes — ce
+  // marqueur ne fait qu'écourter le filtrage, la barrière réelle est
+  // VIEW_MIN_RANK + HOMENET_VIEWS dans roles.ts).
+  { id: "hotspot", labelKey: "settings.tabHotspot", icon: Wifi, views: ["hotspot", "portal", "templates"], hotspotOnly: true },
   { id: "security", labelKey: "settings.tabAdvanced", icon: ShieldCheck, views: ["security"] },
   { id: "routers", labelKey: "nav.routers", icon: RouterIcon, views: ["routers"] },
   { id: "notifications", labelKey: "nav.notifications", icon: Bell, views: ["notifications"] },
@@ -85,22 +100,30 @@ export function isSettingsView(view: string): boolean {
  * serveur refuserait de toute façon, pattern N°7). Une section apparaît dès
  * qu'UNE de ses vues est accessible : le gérant voit « Hotspot » (onglets
  * Portail/Modèles, l'Expérience rang 3 y est simplement masquée), jamais
- * « Général » ni « Sécurité ». */
-export function settingsSectionsFor(role: string | undefined): SettingsSection[] {
-  return SETTINGS_SECTIONS.filter((s) => s.views.some((v) => canView(role, v)));
+ * « Général » ni « Sécurité ». N°100 — `usage` retire la section Hotspot de
+ * la zone d'un foyer (les vues hotspot/portal/templates lui sont de toute
+ * façon refusées par canView : la section serait vide). */
+export function settingsSectionsFor(role: string | undefined, usage: Usage = "hotspot"): SettingsSection[] {
+  return SETTINGS_SECTIONS.filter(
+    (s) => !(usage === "homenet" && s.hotspotOnly) && s.views.some((v) => canView(role, v, usage)),
+  );
 }
 
 /** Première section autorisée pour ce rôle — destination du fallback quand
  * une section interdite est demandée directement (lien direct, rechargement
- * après changement de rôle). null = aucune section accessible. */
-export function firstSettingsView(role: string | undefined): ViewId | null {
-  return settingsSectionsFor(role)[0]?.id ?? null;
+ * après changement de rôle). null = aucune section accessible. N°100 — la
+ * destination respecte l'usage : le gérant d'un foyer atterrit sur
+ * « Routeurs », jamais sur le hub Hotspot. */
+export function firstSettingsView(role: string | undefined, usage: Usage = "hotspot"): ViewId | null {
+  return settingsSectionsFor(role, usage)[0]?.id ?? null;
 }
 
 /** Destination des entrées « Paramètres » (sidebar, palette, menus profil) :
  * le propriétaire atterrit sur Général, le gérant sur sa première section
  * accessible (rang 2 — Hotspot) — jamais sur une vue que le serveur
- * refuserait (403). */
-export function settingsLandingView(role: string | undefined): ViewId {
-  return firstSettingsView(role) ?? "settings";
+ * refuserait (403). N°100 — pour un foyer (gérant ou propriétaire) la
+ * première section est toujours saine (Routeurs pour le gérant, Général
+ * pour le propriétaire — jamais le hub Hotspot). */
+export function settingsLandingView(role: string | undefined, usage: Usage = "hotspot"): ViewId {
+  return firstSettingsView(role, usage) ?? "settings";
 }

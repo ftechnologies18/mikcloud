@@ -35,12 +35,12 @@ import { PaywallOverlay } from "@/components/hotspot/parts/paywall-overlay";
 import { cn } from "@/lib/utils";
 import { api, fetchBillingRequests } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
-import { NAV_PLATFORM_SECTIONS, NAV_SECTIONS } from "@/lib/hotspot/nav";
+import { NAV_HOMENET_SECTIONS, NAV_PLATFORM_SECTIONS, NAV_SECTIONS } from "@/lib/hotspot/nav";
 import { roleLabel, userInitials } from "@/lib/hotspot/format";
-import { canView, isPlatformView } from "@/lib/hotspot/roles";
+import { canView, isPlatformView, usageOf } from "@/lib/hotspot/roles";
 import { isSettingsView, settingsLandingView } from "@/lib/hotspot/settings-sections";
 import { useHotspotStore } from "@/lib/hotspot/store";
-import type { HotspotSession, ViewId } from "@/lib/hotspot/types";
+import type { AuthUser, HotspotSession, ViewId } from "@/lib/hotspot/types";
 import { ThemeToggle } from "./theme-toggle";
 import { UserProfileDialog } from "./parts/user-profile-dialog";
 import { SettingsSidebar } from "./settings/settings-shell";
@@ -63,6 +63,10 @@ const ViewFallback = (
 const AccountsView = dynamic(() => import("./views/accounts-view"), { loading: () => ViewFallback });
 const BillingRequestsView = dynamic(() => import("./views/billing-requests-view"), { loading: () => ViewFallback });
 const DashboardView = dynamic(() => import("./views/dashboard-view"), { loading: () => ViewFallback });
+// N°100 — console HomeNet : tableau de bord maison et appareils connectés
+// (chunks dédiés — un foyer ne paie jamais le bundle du dashboard métier).
+const DevicesView = dynamic(() => import("./views/devices-view"), { loading: () => ViewFallback });
+const HomeView = dynamic(() => import("./views/home-view"), { loading: () => ViewFallback });
 // N°57-d — hub Hotspot : « hotspot », « portal » et « templates » rendent la
 // MÊME page (onglet dérivé du ViewId — pattern N°30) : /app/settings/hotspot,
 // /app/settings/hotspot/portail et /app/settings/hotspot/modeles.
@@ -122,6 +126,8 @@ function viewTitle(view: ViewId, t: (key: string) => string): string {
     security: "settings.tabAdvanced",
     team: "nav.team",
     platformSettings: "platformSettings.title",
+    home: "nav.home",
+    devices: "nav.devices",
   };
   return t(keys[view]);
 }
@@ -130,7 +136,8 @@ const VIEWS: Record<ViewId, React.ComponentType> = {
   dashboard: DashboardView,
   sessions: SessionsView,
   // N°83 — vue Protection : verdict + 3 cartes sécurité (routeur adressable
-  // /app/protection/<id>).
+  // /app/protection/<id>) — partagée par les DEUX consoles (N°100 : c'est
+  // l'argument massue du foyer).
   protection: ProtectionView,
   subscription: SubscriptionView,
   // N°30 — les deux ViewIds pointent le même hub (onglet dérivé du ViewId).
@@ -158,6 +165,9 @@ const VIEWS: Record<ViewId, React.ComponentType> = {
   settings: SettingsView,
   security: SecurityView,
   team: TeamView,
+  // N°100 — console HomeNet.
+  home: HomeView,
+  devices: DevicesView,
 };
 
 /** Transition d'apparition de la vue active — fade + translation légère.
@@ -262,7 +272,7 @@ function UserCard() {
             {t("shell.profile")}
           </DropdownMenuItem>
           <DropdownMenuItem
-            onClick={() => setView(isPlatformMode ? "platformSettings" : settingsLandingView(user?.role))}
+            onClick={() => setView(isPlatformMode ? "platformSettings" : settingsLandingView(user?.role, user?.usage))}
             className="min-h-10"
           >
             <Settings className="size-4" />
@@ -393,16 +403,21 @@ function NavList() {
       return next;
     });
   }
-  // Console plateforme : navigation dédiée (cockpit opérateur) ; sinon la
-  // navigation client habituelle. « accounts » n'est rendu qu'en mode client
-  // pour l'admin plateforme (en mode plateforme, il est déjà dans sa section).
+  // Console plateforme : navigation dédiée (cockpit opérateur) ; N°100 —
+  // console MAISON pour un compte homenet (une section, l'histoire du
+  // produit en 3 items) ; sinon la navigation client métier habituelle.
+  // « accounts » n'est rendu qu'en mode client pour l'admin plateforme (en
+  // mode plateforme, il est déjà dans sa section).
+  const usage = usageOf(user?.usage);
   const sections =
     isAdmin && shellMode === "platform"
       ? NAV_PLATFORM_SECTIONS
-      : NAV_SECTIONS.map((section) => ({
-          ...section,
-          items: section.items.filter((item) => !(isAdmin && shellMode === "client" && item.id === "accounts")),
-        }));
+      : usage === "homenet"
+        ? NAV_HOMENET_SECTIONS
+        : NAV_SECTIONS.map((section) => ({
+            ...section,
+            items: section.items.filter((item) => !(isAdmin && shellMode === "client" && item.id === "accounts")),
+          }));
 
   const { data: sessions } = useQuery({
     queryKey: ["/api/sessions"],
@@ -465,7 +480,7 @@ function NavList() {
         // N°57-f — plus d'entrée « Paramètres » ici : la zone vit derrière le
         // menu utilisateur (UserCard/menu profil) et la substitution N°57-c.
         const items = section.items.filter(
-          (item) => (item.id !== "accounts" || isAdmin) && canView(user?.role, item.id),
+          (item) => (item.id !== "accounts" || isAdmin) && canView(user?.role, item.id, usage),
         );
         if (items.length === 0) return null;
         // O — état replié explicite de l'utilisateur (localStorage) ; la
@@ -506,7 +521,7 @@ function NavList() {
                     >
                       <span className="relative flex shrink-0 items-center">
                         <item.icon className="size-4.5" />
-                        {item.id === "sessions" && sessionsCount > 0 && (
+                        {(item.id === "sessions" || item.id === "devices") && sessionsCount > 0 && (
                           <span className="live-dot absolute -right-1 -top-1 block size-2 rounded-full bg-primary" aria-hidden />
                         )}
                         {item.id === "billingRequests" && billingPending > 0 && (
@@ -522,7 +537,7 @@ function NavList() {
                           {billingPending}
                         </Badge>
                       )}
-                      {item.id === "sessions" && sessionsCount > 0 && (
+                      {(item.id === "sessions" || item.id === "devices") && sessionsCount > 0 && (
                         <Badge
                           variant="outline"
                           className="sidebar-count border-border bg-muted px-1.5 py-0 text-[10px] font-semibold tabular-nums text-foreground"
@@ -632,7 +647,7 @@ function Topbar() {
                   {t("shell.profile")}
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  onClick={() => setView(isPlatformMode ? "platformSettings" : settingsLandingView(user?.role))}
+                  onClick={() => setView(isPlatformMode ? "platformSettings" : settingsLandingView(user?.role, user?.usage))}
                   className="min-h-10"
                 >
                   <Settings className="size-4" />
@@ -672,29 +687,68 @@ export default function AppShell() {
   const setSidebarOpen = useHotspotStore((s) => s.setSidebarOpen);
   const setView = useHotspotStore((s) => s.setView);
   const user = useHotspotStore((s) => s.user);
+  const syncUsage = useHotspotStore((s) => s.syncUsage);
   const shellMode = useHotspotStore((s) => s.shellMode);
   const isPlatformAdmin = user?.role === "admin" || user?.role === "platform_admin";
   const platformMode = isPlatformAdmin && shellMode === "platform";
+  const usage = usageOf(user?.usage);
+
+  // N°100 — auto-réparation de l'usage : la coquille relit /api/auth/me
+  // (usage relu sous verrou côté serveur à CHAQUE appel, N°98) une fois par
+  // chargement de console. Deux cas réels : (1) le gérant a basculé le
+  // compte en console plateforme — le client voit SA nouvelle console au
+  // prochain rafraîchissement, sans re-login ; (2) session persistée
+  // antérieure à N°98 (user.usage absent) — la coquille se corrige
+  // d'elle-même. Les autres champs de /me ne touchent PAS au store ici
+  // (rôle/nom rafraîchis par la fiche profil, son consommateur historique).
+  const { data: me } = useQuery({
+    queryKey: ["/api/auth/me", "shell"],
+    queryFn: () => api<{ user: AuthUser & { usage?: string } }>("/api/auth/me"),
+    enabled: !!user?.accountId && !platformMode,
+    staleTime: Infinity,
+    retry: false,
+  });
+  const meUsage = me?.user?.usage === "homenet" ? "homenet" : me?.user ? "hotspot" : undefined;
+  // Synchronisation dans un EFFET (store externe — jamais de setState pendant
+  // le rendu) : une seule fois par divergence, la garde de cohérence
+  // ci-dessous normalise la vue au cycle suivant.
+  useEffect(() => {
+    if (meUsage === undefined || !user || meUsage === usage) return;
+    // Fusion chirurgicale : seul l'usage change (token/vue/mode intacts).
+    syncUsage({ ...user, usage: meUsage });
+  }, [meUsage, usage, user, syncUsage]);
 
   // Cohérence mode ↔ vue : en mode plateforme, une vue client résiduelle
   // (rechargement, palette, lien) retombe sur la vue d'ensemble plateforme —
   // et inversement en mode client (les vues plateforme y sont interdites).
+  // N°100 — cohérence CONSOLE ↔ vue : une vue hors de SA console retombe sur
+  // son atterrissage (maison pour homenet, dashboard pour hotspot) —
+  // rechargement sur /app/vouchers après bascule du compte, signet périmé,
+  // localStorage… Le serveur refuserait les appels de toute façon (404
+  // requireUsage / 403 requireRole) : l'UI re-normalise, elle ne montre jamais
+  // une page morte.
+  const clientLanding: ViewId = usage === "homenet" ? "home" : "dashboard";
   useEffect(() => {
     if (platformMode && !isPlatformView(view)) {
       setView("platform");
     } else if (isPlatformAdmin && !platformMode && isPlatformView(view)) {
-      setView("dashboard");
+      setView(clientLanding);
+    } else if (!platformMode && !canView(user?.role, view, usage)) {
+      setView(clientLanding);
     }
-  }, [platformMode, isPlatformAdmin, view, setView]);
+  }, [platformMode, isPlatformAdmin, view, setView, usage, user?.role, clientLanding]);
 
   // Garde-fou N°7 : une vue interdite au rôle (p.ex. un lien direct restant
   // après un changement de rôle) retombe sur le dashboard — le serveur
-  // refuserait les appels de toute façon (403).
-  const ActiveView = canView(user?.role, view)
+  // refuserait les appels de toute façon (403). N°100 : le fallback respecte
+  // la console active (maison pour homenet).
+  const ActiveView = canView(user?.role, view, usage)
     ? (VIEWS[view] ?? DashboardView)
     : platformMode
       ? PlatformOverviewView
-      : DashboardView;
+      : usage === "homenet"
+        ? HomeView
+        : DashboardView;
 
   // N°57-c — zone Paramètres : quand une vue de la zone est active, la
   // sidebar de sections (bouton Retour + sections filtrées par rôle)
@@ -704,14 +758,15 @@ export default function AppShell() {
   // zone ET le rôle peut l'ouvrir (les liens directs interdits ont déjà
   // été re-normalisés par le garde-fou URL d'app-route). En mode plateforme
   // la zone n'existe pas (console dédiée).
-  const zoneRender = isSettingsView(view) && canView(user?.role, view) && !platformMode;
+  const zoneRender = isSettingsView(view) && canView(user?.role, view, usage) && !platformMode;
 
   // N°57-c — dernière vue MÉTIER visitée : destination du bouton « Retour »
   // de la sidebar de zone. L'app-shell reste monté, le ref survit aux
-  // changements de section ; défaut dashboard pour une entrée par lien
-  // direct. Mis à jour à chaque sortie de zone — jamais pendant (on garde
-  // l'origine, même après un détour par plusieurs sections).
-  const returnViewRef = useRef<ViewId>("dashboard");
+  // changements de section ; défaut = atterrissage de la console courante
+  // (N°100 : maison pour homenet) pour une entrée par lien direct. Mis à
+  // jour à chaque sortie de zone — jamais pendant (on garde l'origine,
+  // même après un détour par plusieurs sections).
+  const returnViewRef = useRef<ViewId>(clientLanding);
   useEffect(() => {
     if (!isSettingsView(view)) returnViewRef.current = view;
   }, [view]);

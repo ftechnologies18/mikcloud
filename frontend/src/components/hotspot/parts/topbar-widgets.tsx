@@ -95,14 +95,15 @@ export function SearchPalette() {
   const queryClient = useQueryClient();
   const isAdmin = user?.role === "admin" || user?.role === "platform_admin";
   const shellMode = useHotspotStore((s) => s.shellMode);
-  // La palette propose les vues de la console ACTIVE (plateforme ou client).
+  // La palette propose les vues de la console ACTIVE (plateforme, client
+  // métier ou MAISON — N°100 : même usage, mêmes vues que la sidebar).
   const mode: "platform" | "client" = isAdmin && shellMode === "platform" ? "platform" : "client";
   const items = useMemo(() => {
-    const list = navItemsFor(user?.role, isAdmin, mode);
+    const list = navItemsFor(user?.role, isAdmin, mode, user?.usage);
     // Session support (console client ouverte) : « Comptes » reste un outil
     // plateforme — il n'encombre pas la palette du client consulté.
     return mode === "client" ? list.filter((item) => item.id !== "accounts") : list;
-  }, [user?.role, isAdmin, mode]);
+  }, [user?.role, user?.usage, isAdmin, mode]);
 
   // ⌘K / Ctrl+K — ouvre (ou referme) la palette depuis n'importe où.
   useEffect(() => {
@@ -258,8 +259,12 @@ export function ActivityBell() {
   );
 
   // Le journal d'activité est réservé aux gérants+ (requireRole 2 côté API,
-  // miroir canView("logs") côté client) — la cloche suit la même règle.
-  const allowed = canView(user?.role, "logs");
+  // miroir canView côté client) — la cloche suit la même règle. N°100 — la
+  // vue pivot de la cloche est « notifications » (sa destination « tout
+  // voir ») : l'activité (/api/activity, ouvert aux deux usages) intéresse
+  // un foyer autant qu'un établissement, et cette section de zone est
+  // partagée — contrairement au Journal (user-logs, produit hotspot).
+  const allowed = canView(user?.role, "notifications", user?.usage);
 
   const { data } = useQuery({
     queryKey: ["/api/activity"],

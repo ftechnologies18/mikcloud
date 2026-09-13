@@ -5,6 +5,130 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-14 — N°100 — Hotspot/HomeNet Phase 2 « la coquille » : un foyer qui se connecte voit SA console — sidebar « Votre maison » (Tableau de bord · Appareils · Protection), dashboard domestique (routeur, appareils, protection n/4, couvre-feu du soir), vue Appareils, zone Paramètres sans la section Hotspot — et les vues produit hotspot n'existent plus pour lui (lien direct /app/vouchers re-normalisé vers la maison, miroir exact des 404 serveur)
+
+### N°100 — Contexte : la confiance se joue à la première sidebar
+Phase 1 (N°98) avait posé la plomberie invisible : la colonne
+accounts.usage, l'usage dans la session, la garde serveur requireUsage
+(404 sur 65 endpoints produit). Mais un compte homenet qui se connectait
+voyait encore la console MÉTIER : « Vouchers », « Revendeurs », un
+dashboard de revenus vide — exactement la perte de confiance que la
+séparation devait éviter. Phase 2 = la coquille : chaque usage a
+maintenant SA navigation, SA page d'accueil, SES pages — les
+fonctionnalités partagées (Protection, Routeurs, zone Paramètres,
+Abonnement) restant communes. Zéro diff backend : la coquille vit du
+pont de données Phase 1 (GET /api/routers et /api/sessions sont ouverts
+aux deux usages) — déploiement Vercel seul.
+
+### Technique — trois consoles, une seule barrière conceptuelle
+- VIEWIDS : « home » (/app/home — tableau de bord maison) et « devices »
+  (/app/devices — appareils connectés) rejoignent l'union ; VIEW_SLUGS,
+  VIEWS (imports dynamiques — chunks dédiés, un foyer ne paie jamais le
+  bundle du dashboard métier), viewTitle alignés.
+- ROLES — canView(role, view, usage) : la polarité change avec la
+  console. Hotspot (et plateforme) : default-open inchangé (une vue non
+  enregistrée reste visible — la barrière réelle vit côté serveur),
+  MAIS home/devices y sont invisibles (vues maison). Homenet : liste
+  FERMÉE HOMENET_VIEWS (home, devices, protection + les sections de zone
+  partagées settings/security/routers/notifications/subscription/team)
+  — une vue inconnue n'y apparaît JAMAIS (le piège default-open identifié
+  dans l'analyse est neutralisé à la racine). usageOf() normalise
+  (absent/vide = hotspot — admin plateforme, sessions pré-N°98).
+  FIX au passage : subscription entre explicitement dans VIEW_MIN_RANK
+  (rang 1) — sans entrée, le repli default-open fermait l'Abonnement aux
+  comptes homenet alors que GET /api/subscription est ouvert aux deux
+  usages (détecté en vérification navigateur : la section manquait).
+- NAV : NAV_HOMENET_SECTIONS — UNE section « Votre maison », trois
+  items : l'histoire du produit en un regard (superviser, voir qui est
+  connecté, garder la famille tranquille). navItemsFor(role, isAdmin,
+  mode, usage) alimente sidebar ET palette ⌘K (même usage, mêmes vues) ;
+  le badge sessions de la sidebar s'applique aussi à « Appareils ».
+- STORE : clientLandingView(user) — un client atterrit sur la vue de SA
+  console (home pour homenet, dashboard sinon) au login ET à
+  l'impersonation (le gérant teste la console maison d'un client en un
+  clic depuis « Comptes ») ; syncUsage(user) remplace le user de session
+  après relecture serveur sans toucher au reste.
+- AUTO-RÉPARATION : la coquille relit GET /api/auth/me une fois par
+  chargement (enabled: user.accountId, hors mode plateforme) — usage
+  relu sous verrou côté serveur à chaque appel (N°98). Deux cas réels :
+  le gérant bascule le compte dans la console plateforme → le client
+  voit SA nouvelle console au prochain rafraîchissement, SANS re-login ;
+  session persistée antérieure à N°98 → la coquille se corrige seule.
+  Vérifié en aller ET retour (homenet→hotspot→homenet, simple reload).
+- GARDES UI (miroir client des 404 serveur, « l'UI masque ce que le
+  serveur refuserait de toute façon ») : app-route généralise la garde
+  URL — un lien direct hors de SA console (bookmark /app/vouchers d'un
+  foyer, /app/home d'un établissement, signet périmé après bascule)
+  retombe sur l'atterrissage de la console active (home / dashboard ;
+  section de zone refusée → première section autorisée de SA zone).
+  app-shell : garde de cohérence console↔vue (rechargement sur une vue
+  périmée du localStorage), fallback ActiveView respecte la console
+  (HomeView pour homenet), bouton « Retour » de zone dirigé vers
+  l'atterrissage de la console courante. Préchauffe B4 par console
+  (devices/protection pour homenet, sessions/users/vouchers sinon).
+- ZONE PARAMÈTRES : settingsSectionsFor(role, usage) — la section
+  Hotspot (hub expérience/portail/modèles) est marquée hotspotOnly :
+  absente de la zone d'un foyer (produit des établissements, endpoints
+  404 pour lui) ; settingsLandingView(role, usage) dirige les menus
+  profil — le propriétaire d'un foyer atterrit sur Général, le gérant
+  sur Routeurs, jamais sur le hub Hotspot.
+- CLOCHE D'ACTIVITÉ : sa porte passe de canView("logs") (Journal =
+  user-logs, produit hotspot, fermé aux foyers) à
+  canView("notifications") — sa destination « tout voir » est une
+  section partagée et /api/activity est ouvert aux deux usages : un
+  foyer garde ses notifications de routeur.
+- VUE MAISON (home-view) : les quatre questions d'un parent en un coup
+  d'œil — Routeur (n/N, « Votre box MikroTik »), Appareils connectés
+  (live), Protection (n/4 du maillon le plus faible + verdict),
+  Couvre-feu internet (Actif/Programmé/Désactivé + fenêtre). Carte par
+  box : identité + statut, anneau ProtectionScoreRing + badge verdict
+  (réutilisation stricte des exports N°96), modèle/uptime/dernier
+  contact, CTA « Gérer la protection » (détail adressable
+  /app/protection/<id>) et « Voir les appareils ». Aucun routeur →
+  EmptyState honnête + CTA vers la zone Routeurs (pas de faux zéro).
+  Données : /api/routers (poll 15 s) + /api/sessions (poll 10 s) —
+  zéro endpoint neuf.
+- VUE APPAREILS (devices-view) : miroir domestique de la vue Sessions —
+  MÊME source (/api/sessions), vocabulaire de foyer : un « appareil »,
+  pas de colonne profil (un foyer ne vend pas de forfaits), PAS
+  d'éjection (couper un membre se décide dans Protection via le
+  couvre-feu FamilyGuard, pas au coup par coup) ; filtre nom/IP/MAC,
+  durée qui avance, trafic ↓/↑ (sémantique RouterOS verrouillée),
+  cadence 5/10/30 s, état vide honnête.
+- I18N : fragments homenet FR/EN (40 clés home.*/devices.*) + 3 clés
+  nav (nav.section.home/nav.home/nav.devices) — parité 43/43 vérifiée
+  par script ; le vocabulaire est domestique (« box », « appareil »,
+  « couvre-feu ») : un parent n'y croise jamais « voucher » ni
+  « revendeur ».
+
+### Vérifié (localement, miroir CI)
+eslint 0 ; tsgo 0 ; build production 13 routes (type-check actif).
+Parcours navigateur complet sur stack réelle (backend Go :4000 mode
+dev JSON + next dev :3016, compte homenet créé par la console
+plateforme — chemin N°98, routeur agent « MAISON YOPOUGON » avec
+SafeWiFi threats + FamilyGuard 22:00→06:00 + AntiVPN on = 3/4, et
+2 appareils vivants via un read_state agent réaliste) : login foyer →
+atterrissage /app/home ; sidebar « VOTRE MAISON » 3 items + badge
+« Appareils 2 », zéro vocabulaire métier ; KPI Routeur 1/1, Appareils
+2, Protection 3/4 « À renforcer », Couvre-feu « Actif 22:00 → 06:00 » ;
+carte box (RB2011UiAS, en ligne, anneau 3/4, CTA) ; /app/vouchers,
+/app/users → re-normalisés /app/home ; /app/settings/hotspot →
+settings/general ; zone Paramètres SANS section Hotspot (avec
+Abonnement après le fix) ; vue Appareils (2 lignes TV-Salon/
+Tel-Chambre, trafic, durées, ni profil ni éjection) ; vue Protection
+partagée intacte depuis la console maison ; palette ⌘K = 3 vues ;
+AUTO-RÉPARATION aller-retour (bascule serveur admin + simple
+rafraîchissement : homenet→hotspot → console métier complète puis
+/app/home→/app/dashboard, retour homenet → console maison, SANS
+re-login) ; mobile 390 px scrollWidth 390 (aucun débordement, badge
+visible) ; anglais intégral (Your home, Internet curfew…) ; 0 erreur
+console/page. Non-régression compte hotspot (cybertest) : atterrissage
+/app/dashboard, 4 sections métier, dashboard revenus intact,
+/app/home et /app/devices → /app/dashboard. Contrôle VLM des 4
+captures conforme (home FR, appareils, zone Paramètres, mobile).
+Déploiement attendu : Vercel UNIQUEMENT (Render saute — aucun diff
+backend/).
+
 ## 2026-09-14 — N°99 : auto-réparation du pool IP — la correction de l'épuisement devient automatique (opt-in par routeur)
 
 ### N°99 — Contexte : « pourquoi cette correction n'est pas automatique ? »
@@ -131,7 +255,6 @@ comme un nom de pool (bug de lecture, sans effet sur les configs à pool).
   (149/241), pool LAN (ether2/Prive-Pool) exclu.
 - Anti-boucle : diagnostic frais + PoolCap=0 → silence (test).
 - Suite complète go test ./... verte (11 packages), gofmt/vet propres.
-
 ## 2026-09-14 — N°98 — Hotspot/HomeNet Phase 1 « la plomberie invisible » : la colonne accounts.usage existe (ALTER idempotent, défaut « hotspot » — tout le parc existant reste sur le produit historique, zéro changement visible), la session transporte l'usage (login/register/me/impersonation), la garde serveur requireUsage refuse les endpoints produit HOTSPOT aux comptes homenet (404, effet immédiat sans re-login), et la console plateforme segmente : colonne Usage + badges + bascule (PUT /api/admin/accounts/{id}/usage)
 
 ### N°98 — Contexte : deux clients, deux mondes, un produit

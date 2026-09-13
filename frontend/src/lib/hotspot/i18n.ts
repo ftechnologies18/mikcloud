@@ -24,6 +24,7 @@ import { frBillingRequests } from "./i18n-fr/billing-requests";
 import { frCommon } from "./i18n-fr/common";
 import { frDashboard } from "./i18n-fr/dashboard";
 import { frForgot } from "./i18n-fr/forgot";
+import { frHomeNet } from "./i18n-fr/homenet";
 import { frHotspot } from "./i18n-fr/hotspot";
 import { frHourly } from "./i18n-fr/hourly";
 import { frJoin } from "./i18n-fr/join";
@@ -86,6 +87,7 @@ const fr: Record<string, string> = {
   ...frCommon,
   ...frDashboard,
   ...frForgot,
+  ...frHomeNet,
   ...frHotspot,
   ...frHourly,
   ...frJoin,

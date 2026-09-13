@@ -44,7 +44,10 @@ export function SettingsSidebar({ onBack }: SettingsSidebarProps) {
   const setView = useHotspotStore((s) => s.setView);
   const view = useHotspotStore((s) => s.view);
   const user = useHotspotStore((s) => s.user);
-  const sections = settingsSectionsFor(user?.role);
+  // N°100 — l'usage du compte filtre la composition de la zone : un foyer
+  // n'a pas de section Hotspot (hub/portail/modèles = produit des
+  // établissements, endpoints 404 pour lui).
+  const sections = settingsSectionsFor(user?.role, user?.usage);
   if (sections.length === 0) return null;
   return (
     <nav className="flex-1 space-y-1 overflow-y-auto px-3 pb-4" aria-label={t("nav.settings")}>

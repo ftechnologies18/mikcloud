@@ -47,4 +47,9 @@ export const frNav: Record<string, string> = {
 
   // — N°27 — inscriptions publiques par QR code (vue Inscriptions) —
   "nav.registrations": "Inscriptions",
+
+  // — N°100 : console HomeNet (foyer) —
+  "nav.section.home": "Votre maison",
+  "nav.home": "Tableau de bord",
+  "nav.devices": "Appareils",
 };

@@ -7,6 +7,7 @@ import {
   Building2,
   Gauge,
   LayoutDashboard,
+  MonitorSmartphone,
   ReceiptText,
   Radio,
   ScrollText,
@@ -102,19 +103,51 @@ export const NAV_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
 ];
 
 /** Liste plate des items de nav pour la console ACTIVE — client par défaut,
- * plateforme quand l'admin y bascule (miroir canView dans les deux cas).
+ * plateforme quand l'admin y bascule, MAISON quand le compte est homenet
+ * (miroir canView dans les trois cas — même usage, même barrière).
  * N°57-f — la zone Paramètres n'y figure plus : son accès unique est le
- * menu utilisateur (settingsLandingView adapte la destination au rôle). */
+ * menu utilisateur (settingsLandingView adapte la destination au rôle ET
+ * à l'usage). */
 export function navItemsFor(
   role: string | undefined,
   isAdmin: boolean,
-  mode: "platform" | "client" = "client",
+  mode: "platform" | "client",
+  usage: "hotspot" | "homenet" | "" | undefined = "hotspot",
 ): NavItem[] {
-  const sections = mode === "platform" ? NAV_PLATFORM_SECTIONS : NAV_SECTIONS;
+  const sections =
+    mode === "platform"
+      ? NAV_PLATFORM_SECTIONS
+      : usage === "homenet"
+        ? NAV_HOMENET_SECTIONS
+        : NAV_SECTIONS;
   return sections
     .flatMap((s) => s.items)
-    .filter((item) => (item.id !== "accounts" || isAdmin) && canView(role, item.id));
+    .filter((item) => (item.id !== "accounts" || isAdmin) && canView(role, item.id, usage));
 }
+
+/**
+ * N°100 — navigation de la CONSOLE HOMENET (foyer). Une seule section
+ * « Votre maison », trois items : l'histoire du produit en un regard —
+ * superviser (tableau de bord), voir qui est connecté (appareils), garder
+ * la famille tranquille (protection). C'est TOUT ce qu'un foyer a besoin
+ * de voir en navigation principale : le MVP mince voulu par la décision
+ * produit — pas un deuxième produit complet. Les réglages vivent dans la
+ * zone Paramètres (menu utilisateur), la facturation dans l'Abonnement
+ * de cette même zone — partagés avec la console hotspot, SANS la section
+ * Hotspot (produit des établissements : hub, portail, modèles).
+ */
+export const NAV_HOMENET_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
+  {
+    labelKey: "nav.section.home",
+    items: [
+      { id: "home", labelKey: "nav.home", icon: LayoutDashboard },
+      { id: "devices", labelKey: "nav.devices", icon: MonitorSmartphone },
+      // La Protection est L'argument massue du foyer (FamilyGuard, couvre-feu,
+      // SafeWiFi famille) — elle vit à un clic du tableau de bord maison.
+      { id: "protection", labelKey: "nav.protection", icon: ShieldCheck },
+    ],
+  },
+];
 
 /**
  * Navigation de la CONSOLE PLATEFORME — cockpit du propriétaire du SaaS

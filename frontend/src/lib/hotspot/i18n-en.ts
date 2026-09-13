@@ -19,6 +19,7 @@ import { enBillingRequests } from "./i18n-en/billing-requests";
 import { enCommon } from "./i18n-en/common";
 import { enDashboard } from "./i18n-en/dashboard";
 import { enForgot } from "./i18n-en/forgot";
+import { enHomeNet } from "./i18n-en/homenet";
 import { enHotspot } from "./i18n-en/hotspot";
 import { enHourly } from "./i18n-en/hourly";
 import { enJoin } from "./i18n-en/join";
@@ -67,6 +68,7 @@ export const enDict: Record<string, string> = {
   ...enCommon,
   ...enDashboard,
   ...enForgot,
+  ...enHomeNet,
   ...enHotspot,
   ...enHourly,
   ...enJoin,

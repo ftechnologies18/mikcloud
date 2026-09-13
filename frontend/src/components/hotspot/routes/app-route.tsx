@@ -31,11 +31,12 @@ import { useEffect, useRef } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import AppShell from "@/components/hotspot/app-shell";
 import { useMounted } from "@/hooks/use-mounted";
-import { canView } from "@/lib/hotspot/roles";
+import { canView, usageOf } from "@/lib/hotspot/roles";
 import { firstSettingsView, isSettingsView } from "@/lib/hotspot/settings-sections";
 import { useHotspotStore } from "@/lib/hotspot/store";
 import { APP_BASE_PATH, detailFromPath, viewFromPath, viewToPath } from "@/lib/hotspot/view-path";
 import { ShellFallback } from "./shell-fallback";
+import type { ViewId } from "@/lib/hotspot/types";
 
 export default function AppRoute() {
   const router = useRouter();
@@ -100,9 +101,23 @@ export default function AppRoute() {
       // entrée d'historique, le bouton Retour n'est jamais piégé (même
       // mécanique que les normalisations ci-dessous). Le rôle est lu
       // dans le store (hors closure React, valeur toujours fraîche).
+      //
+      // N°100 — garde GÉNÉRALISÉE console ↔ usage : un lien direct hors de
+      // SA console (bookmark /app/vouchers d'un foyer, /app/home d'un
+      // établissement, signet périmé après bascule admin) retombe sur
+      // l'atterrissage de la console active — maison pour homenet. Le
+      // rôle ET l'usage sont lus dans le store (valeurs fraîches).
       const role = useHotspotStore.getState().user?.role;
-      if (isSettingsView(target) && !canView(role, target)) {
-        const landing = firstSettingsView(role) ?? "dashboard";
+      const usage = usageOf(useHotspotStore.getState().user?.usage);
+      if (!canView(role, target, usage)) {
+        const landing: ViewId =
+          usage === "homenet"
+            ? isSettingsView(target)
+              ? (firstSettingsView(role, usage) ?? "home")
+              : "home"
+            : isSettingsView(target)
+              ? (firstSettingsView(role) ?? "dashboard")
+              : "dashboard";
         if (useHotspotStore.getState().view !== landing) {
           urlDriven.current = true;
           useHotspotStore.getState().setView(landing);
@@ -132,14 +147,22 @@ export default function AppRoute() {
     }
   }, [pathname, router]);
 
-  // B4 — préchauffe des vues chaudes à l'idle (sessions, utilisateurs,
-  // vouchers) : les chunks sont déjà en cache au premier clic.
+  // B4 — préchauffe des vues chaudes à l'idle : les chunks sont déjà en
+  // cache au premier clic. N°100 — chaque console préchauffe SES vues
+  // chaudes (maison/appareils/protection pour un foyer, sessions/
+  // utilisateurs/vouchers pour un établissement).
   useEffect(() => {
     if (!mounted || !token || userRole === "reseller") return;
+    const isHomenet = usageOf(useHotspotStore.getState().user?.usage) === "homenet";
     const warm = () => {
-      void import("@/components/hotspot/views/sessions-view");
-      void import("@/components/hotspot/views/users-view");
-      void import("@/components/hotspot/views/vouchers-view");
+      if (isHomenet) {
+        void import("@/components/hotspot/views/devices-view");
+        void import("@/components/hotspot/views/protection-view");
+      } else {
+        void import("@/components/hotspot/views/sessions-view");
+        void import("@/components/hotspot/views/users-view");
+        void import("@/components/hotspot/views/vouchers-view");
+      }
     };
     const w = window as Window & {
       requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;

@@ -1313,7 +1313,13 @@ export type ViewId =
   | "settings"
   | "hotspot" // N°57-d — section Hotspot de la zone (hub à onglets : expérience/portail/modèles)
   | "security" // N°57-d — section Sécurité de la zone (mot de passe, 2FA, activité)
-  | "team";
+  | "team"
+  // N°100 — console HomeNet (comptes usage « homenet ») : le foyer a SA
+  // coquille. « home » = le tableau de bord maison (routeur, appareils,
+  // protection, couvre-feu) ; « devices » = les appareils connectés. Ces
+  // vues n'existent PAS pour les comptes hotspot (canView les leur refuse).
+  | "home"
+  | "devices";
 
 /* ─── I (paramètres plateforme) : GET/PUT /api/admin/platform/settings ─── */
 

@@ -47,4 +47,9 @@ export const enNav: Record<string, string> = {
 
   // — N°27 — public sign-ups by QR code (Sign-ups view) —
   "nav.registrations": "Sign-ups",
+
+  // — N°100: HomeNet console (household) —
+  "nav.section.home": "Your home",
+  "nav.home": "Dashboard",
+  "nav.devices": "Devices",
 };

@@ -44,6 +44,11 @@ const VIEW_SLUGS: Record<ViewId, string> = {
   // SafeWiFi/Shield/FamilyGuard) vit dans la navigation principale — un
   // argument de vente ne s'enterre pas dans la zone Paramètres.
   protection: "protection",
+  // N°100 — console HomeNet : le tableau de bord maison (/app/home) et les
+  // appareils connectés (/app/devices). Segments simples, zone Paramètres
+  // partagée (settings/…) — la traduction ViewId ↔ chemin reste bijective.
+  home: "home",
+  devices: "devices",
   // N°57-e — section Abonnement de la zone Paramètres (facturation de
   // l’espace : formule, échéance, renouvellement, factures).
   subscription: "settings/subscription",

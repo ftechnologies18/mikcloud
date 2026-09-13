@@ -5,6 +5,58 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-13 — N°92 : éclatement de router-tools (1 789 l.) — le panneau Outils devient une entry de 96 l. + 6 fichiers par domaine, composants déjà autonomes (zéro déplacement d'état), contenu vérifié ligne par ligne (1 541/1 541)
+
+### N°92 — Contexte : troisième et dernière cible citée par l'audit
+router-tools.tsx était la 3ᵉ plus grosse vue (1 789 l.) mais sa structure
+était différente des deux précédentes : une COLLECTION de 15 composants
+indépendants (chacun avec son PROPRE état — TrafficTab, IpBindingsTab +
+AddBindingDialog, 4 tables F9 + ToolSection + ToolsTab, SystemInfoCard,
+PingCard + PingResultPanel, SchedulerCard + SchedulerAddDialog, PowerCard,
+SystemTab) reliés par RouterToolsPanel. L'éclatement idéal : chaque
+composant déménage dans son fichier SANS AUCUN déplacement d'état.
+
+### Technique — découpage scripté par plages auditées + imports régénérés
+Génération scriptée (méthode N°89) : plages de lignes auditées aux
+commentaires de section d'origine, imports régénérés par scan d'usage
+(mot entier dans le corps — conservateur), exports ajoutés aux
+déclarations de haut niveau, imports inter-fragments générés
+automatiquement. Résultat :
+- router-tools.tsx (96 l.) — ENTRY : RouterToolsPanel (poll 15 s du
+  routeur vivant, 4 TabsTrigger) ;
+- router-tools/shared.tsx (125 l.) — constantes (MAC_RE, INTERVAL_RE,
+  MAX_SAMPLES), helpers (sleep, shortClock, shortBits, fmtMs),
+  fetchToolEnvelope (F9/F10) et les 4 composants d'état (UnsupportedState,
+  ToolError, ToolSkeleton, QueuedBanner) ;
+- traffic-tab.tsx (297 l.), bindings-tab.tsx (355 l.), tools-tab.tsx
+  (339 l.) — les onglets F6/F7/F9 avec leurs dialogs et tables privés ;
+- system-tab.tsx (384 l., deux segments) — F8 : SystemInfoCard, la
+  chaîne ping complète (PingStats/PingOutcome/toPingStats/errorMessageFrom/
+  PingResultPanel/PingCard), PowerCard et l'assembleur SystemTab
+  (résumé Protection N°83 + 4 cartes) ;
+- scheduler-card.tsx (356 l.) — F10 : SchedulerCard + SchedulerAddDialog.
+Deux correctifs post-script : un faux positif d'import circulaire
+(shared importait TrafficTab détecté dans un COMMENTAIRE — retiré) et un
+en-tête doc mal échappé. Vérification de contenu : les lignes de code du
+corps de l'original (1 541) sont reconstituées à 100 % dans les fragments
+(script de contrôle par lignes uniques — zéro perte, zéro ajout).
+Seul consommateur externe inchangé : routers-view importe RouterToolsPanel.
+
+### Vérifications
+eslint 0 ; tsgo 0 ; build production typecheck actif : 13 routes ;
+parcours navigateur autonome (agent-browser) sur stack locale (routeur
+SIMULÉ, données de démo) : fiche routeur /app/settings/routers/<id> →
+panneau rendu avec les 4 onglets ; Trafic (sélecteur d'interface, Rx/Tx,
+table des interfaces) ; IP Bindings (liste + Ajouter) ; Outils (sous-
+onglets DHCP/Hôtes/Cookies/Journal, sections enveloppe) ; Système COMPLET
+(Informations système, Protection 0/4 + lien vers la vue, ping, tâches
+planifiées, alimentation Redémarrer/Éteindre) ; PING RÉEL exécuté
+(8.8.8.8 → résultat avec Envoyés/Reçus et latences 21/35/49 ms — la
+mutation + le panneau de résultat extraits fonctionnent) ; 0 erreur
+console/page ; contrôle VLM plein écran : RAS. Zéro endpoint, zéro
+route, zéro migration, zéro clé i18n. Déploiement attendu : Vercel
+UNIQUEMENT (aucun diff backend/ — Render saute).
+
 ## 2026-09-13 — N°91 : éclatement de sell-shell (1 827 l.) — le Mode Vente PWA devient un shell d'état de 945 l. + 4 fichiers, anti-fuite et hors-ligne intacts, E2E 9/9 + parcours navigateur complet
 
 ### N°91 — Contexte : deuxième vue de la série (après N°90 vouchers-view)

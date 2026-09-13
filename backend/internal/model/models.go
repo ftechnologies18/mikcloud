@@ -264,6 +264,25 @@ type Router struct {
 	// auto-réparation périodique (règles recréées au plus tard
 	// shieldRefresh plus tard). Pattern walled-garden N°49.
 	ShieldAppliedAt string `json:"shieldAppliedAt,omitempty"`
+
+	// N°82 — FamilyGuard (couvre-feu internet du WiFi public) : fenêtre
+	// horaire programmée par le gérant, forme canonique
+	// "<enabled>|<HH:MM>|<HH:MM>|<1111111>" (ex. "1|22:00|06:00|1111111"
+	// = actif tous les soirs de 22:00 à 06:00 ; days = lundi→dimanche).
+	// "" = jamais utilisé → AUCUNE commande filée : un routeur dont le
+	// gérant n'ouvre jamais la carte ne consomme rien, l'économie de
+	// veille N°75 reste entière (pattern N°80/N°81).
+	FamilyGuardSpec string `json:"familyGuardSpec,omitempty"`
+	// N°82 — signature de la config FamilyGuard DÉJÀ APPLIQUÉE avec
+	// succès sur ce routeur (hash du spec + de l'ÉTAT désiré au moment
+	// de l'application — dans la fenêtre ou non : la signature change à
+	// chaque frontière de fenêtre, le check-in suivant re-file la
+	// bascule). Posée au retour « ok » VÉRIFIÉ (règles marquées ==
+	// 1 × hotspots rapportés en couvre-feu, 0 sinon).
+	FamilyGuardSig string `json:"familyGuardSig,omitempty"`
+	// N°82 — horodatage (RFC3339) de la dernière application confirmée :
+	// auto-réparation périodique (pattern walled-garden N°49).
+	FamilyGuardAppliedAt string `json:"familyGuardAppliedAt,omitempty"`
 }
 
 // SchedulerSecEffective — pas de scheduler connu du routeur (N°75). 0 =
@@ -990,6 +1009,7 @@ const (
 	CmdWatcherEnsure   = "watcher_ensure"   // N°77 : veilleur d'invités — scheduler mikcloud-watch (check-in 20 s quand un hôte non autorisé est présent)
 	CmdSafeWifi        = "safewifi"         // N°80 : protection DNS du WiFi public — redirection du port 53 vers un résolveur filtrant (règles marquées mikcloud-safewifi, idempotent)
 	CmdShield          = "shield"           // N°81 : bouclier réseau du WiFi public — administration du routeur et vecteurs malveillants bloqués pour les clients (règles filter marquées mikcloud-shield, idempotent)
+	CmdFamilyGuard     = "familyguard"      // N°82 : couvre-feu internet du WiFi public — fenêtre horaire pendant laquelle l'internet des clients est coupé (règles filter marquées mikcloud-familyguard, idempotent)
 )
 
 // N°80 — niveaux SafeWiFi (filtrage DNS du WiFi public par redirection).
@@ -1033,6 +1053,124 @@ func (r *Router) ShieldLevelEffective() string {
 		return ShieldOff
 	}
 	return r.ShieldLevel
+}
+
+// ---------------------------------------------------------------------------
+// N°82 — FamilyGuard : couvre-feu internet du WiFi public (logique pure)
+// ---------------------------------------------------------------------------
+//
+// Le gérant programme une fenêtre horaire (ex. 22:00 → 06:00 tous les
+// soirs) pendant laquelle l'internet du WiFi public est coupé. Complète la
+// gamme sécurité : SafeWiFi (N°80) filtre QUOI (menaces, contenus),
+// Shield (N°81) protège CONTRE QUI (administration, propagation), FamilyGuard
+// décide QUAND l'internet est accessible (nuit, heures de fermeture, salle
+// familiale).
+//
+// ARBITRAGE (documenté) : l'ÉTAT désiré — couvre-feu en cours ou non — est
+// calculé PAR LE CLOUD à chaque check-in, en UTC (== heure d'Abidjan GMT,
+// la Côte d'Ivoire n'applique pas l'heure d'été). L'horloge routeur N'est
+// PAS consultée : un routeur sans NTP (fréquent sur le terrain) verrait le
+// couvre-feu partir à la mauvaise heure via le paramètre natif time= de
+// RouterOS. Contrepartie assumée : la bascule s'applique au check-in
+// suivant (≤ 45 s console ouverte — attention N°75, ≤ 180 s en veille),
+// et un routeur hors-ligne qui revient converge immédiatement vers
+// l'état « maintenant » (aucune commande périmée en attente).
+
+// FamilyGuardConfig — fenêtre du couvre-feu, forme structurée.
+type FamilyGuardConfig struct {
+	Enabled bool   // false : configuré mais désactivé (la fenêtre est conservée)
+	Start   string // "HH:MM" début (inclus)
+	End     string // "HH:MM" fin (EXCLU — la fenêtre s'arrête à 06:00, pas 06:00:59)
+	Days    string // "1111111" — lundi→dimanche, '1' = la fenêtre DÉMARRE ce jour
+}
+
+// familyGuardDayCount — indices de la chaîne Days (lundi = 0).
+const familyGuardDayCount = 7
+
+// familyGuardMinutes — "HH:MM" → minutes depuis minuit ; ok=false si mal formé.
+func familyGuardMinutes(hhmm string) (int, bool) {
+	if len(hhmm) != 5 || hhmm[2] != ':' {
+		return 0, false
+	}
+	h := int(hhmm[0]-'0')*10 + int(hhmm[1]-'0')
+	m := int(hhmm[3]-'0')*10 + int(hhmm[4]-'0')
+	if h > 23 || m > 59 {
+		return 0, false
+	}
+	return h*60 + m, true
+}
+
+// ValidFamilyGuardConfig — validation stricte : heures bien formées,
+// début ≠ fin (une fenêtre nulle est ambiguë), exactement 7 jours 0/1 dont
+// au moins un actif (sinon rien ne se déclenche jamais).
+func ValidFamilyGuardConfig(c FamilyGuardConfig) bool {
+	s, okS := familyGuardMinutes(c.Start)
+	e, okE := familyGuardMinutes(c.End)
+	if !okS || !okE || s == e {
+		return false
+	}
+	if len(c.Days) != familyGuardDayCount {
+		return false
+	}
+	anyDay := false
+	for i := 0; i < familyGuardDayCount; i++ {
+		if c.Days[i] != '0' && c.Days[i] != '1' {
+			return false
+		}
+		if c.Days[i] == '1' {
+			anyDay = true
+		}
+	}
+	return anyDay
+}
+
+// SpecString — forme canonique persistée dans Router.FamilyGuardSpec :
+// "1|22:00|06:00|1111111".
+func (c FamilyGuardConfig) SpecString() string {
+	enabled := "0"
+	if c.Enabled {
+		enabled = "1"
+	}
+	return enabled + "|" + c.Start + "|" + c.End + "|" + c.Days
+}
+
+// ParseFamilyGuardSpec — "" → ok=false (jamais utilisé). Toute forme
+// invalide → ok=false (défense : la colonne ne reçoit que des specs
+// validés par le handler, mais le parse reste strict).
+func ParseFamilyGuardSpec(s string) (FamilyGuardConfig, bool) {
+	parts := strings.Split(s, "|")
+	if len(parts) != 4 {
+		return FamilyGuardConfig{}, false
+	}
+	c := FamilyGuardConfig{Enabled: parts[0] == "1", Start: parts[1], End: parts[2], Days: parts[3]}
+	return c, ValidFamilyGuardConfig(c)
+}
+
+// ActiveAt — vrai si `now` tombe dans la fenêtre du couvre-feu.
+// Sémantique des jours : un jour positionné est le jour de DÉBUT de la
+// fenêtre — « vendredi » + 22:00→06:00 couvre vendredi 22:00 → samedi 06:00
+// (la portion après minuit appartient à la fenêtre PARTIE la veille, même
+// si le samedi n'est pas coché).
+func (c FamilyGuardConfig) ActiveAt(now time.Time) bool {
+	if !c.Enabled {
+		return false
+	}
+	s, okS := familyGuardMinutes(c.Start)
+	e, okE := familyGuardMinutes(c.End)
+	if !okS || !okE || s == e {
+		return false
+	}
+	day := (int(now.Weekday()) + 6) % familyGuardDayCount // lundi=0 … dimanche=6
+	m := now.Hour()*60 + now.Minute()
+	if s < e {
+		// fenêtre intra-jour : 08:00 → 12:00
+		return m >= s && m < e && c.Days[day] == '1'
+	}
+	// fenêtre franchissant minuit : 22:00 → 06:00 — active si on est
+	// dans la portion du soir (jour de début) OU celle du matin (jour
+	// de début = veille).
+	prev := (day + familyGuardDayCount - 1) % familyGuardDayCount
+	return (m >= s && c.Days[day] == '1') || (m < e && c.Days[prev] == '1')
 }
 
 // ---------------------------------------------------------------------------

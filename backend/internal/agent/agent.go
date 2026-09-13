@@ -115,6 +115,23 @@ func ShieldLevelFromPayload(p map[string]any) string {
 	return model.ShieldOff
 }
 
+// FamilyGuardMarker — commentaire des règles FILTER posées par FamilyGuard
+// (N°82 — couvre-feu internet du WiFi public). Même contrat d'idempotence :
+// seules les règles portant ce marqueur sont retirées puis recréées — les
+// règles du gérant sont préservées.
+const FamilyGuardMarker = "mikcloud-familyguard"
+
+// FamilyGuardActiveFromPayload — état demandé par la commande familyguard
+// (couvre-feu en cours ou non). L'état est calculé PAR LE CLOUD au moment de
+// la mise en file (UTC == heure d'Abidjan, sans DST) : l'horloge routeur
+// n'est jamais consultée (un routeur sans NTP verrait le couvre-feu partir
+// à la mauvaise heure via le paramètre natif time=). Le payload normalise
+// au repli prudent false.
+func FamilyGuardActiveFromPayload(p map[string]any) bool {
+	b, _ := p["active"].(bool)
+	return b
+}
+
 // ---------------------------------------------------------------------------
 // Tokens
 // ---------------------------------------------------------------------------
@@ -552,6 +569,8 @@ func (b Builder) ScriptFor(cmd model.Command) (string, error) {
 		return b.buildSafeWifi(cmd), nil
 	case model.CmdShield:
 		return b.buildShield(cmd), nil
+	case model.CmdFamilyGuard:
+		return b.buildFamilyGuard(cmd), nil
 	case model.CmdReboot:
 		return b.buildPower(cmd, "reboot"), nil
 	case model.CmdShutdown:
@@ -948,6 +967,66 @@ func (b Builder) buildShield(cmd model.Command) string {
 	ok := `/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
 		`" http-method=post http-data=("cmd=` + urlEscape(cmd.ID) + `&status=ok&rules=". $shr . "&hs=". $shn) output=none`
 	ko := b.reportLine(cmd.ID, false, map[string]string{"message": "echec des regles du bouclier sur le routeur"})
+	sb.WriteString(":if ($" + okVar + ") do={\n  " + ok + "\n} else={\n  " + ko + "\n}\n")
+	return sb.String()
+}
+
+// buildFamilyGuard — N°82 : couvre-feu internet du WiFi public (FamilyGuard).
+//
+// Principe : pendant la fenêtre programmée par le gérant (ex. 22:00 → 06:00),
+// UNE règle FILTER par serveur hotspot coupe l'internet des clients —
+// chain=forward ciblée sur l'INTERFACE du hotspot, lue SUR le routeur
+// (foreach /ip hotspot find — s'adapte à toute topologie, pattern N°81),
+// posée en tête de chaîne (place-before=0, au-dessus d'un éventuel fasttrack
+// d'établies : les connexions EN COURS sont coupées immédiatement, pas seulement
+// les nouvelles), action=reject reject-with=icmp-network-unreachable (échec
+// immédiat côté appareil — pas de navigateur qui tourne dans le vide).
+//
+// La page du portail captif reste accessible (chain=input, servie par le
+// routeur) : les vouchers restent validables pendant le couvre-feu, seul
+// l'internet est coupé. Le réseau du gérant (LAN, hors interface hotspot)
+// et le trafic propre du routeur (chain=output : check-in agent, DNS) ne
+// sont JAMAIS touchés ; /ip firewall nat et /ip dns non plus (SafeWiFi N°80
+// reste maître du port 53).
+//
+// L'ÉTAT (active=true/false) est calculé PAR LE CLOUD au moment de la mise
+// en file (l'horloge de référence, en UTC == heure d'Abidjan) : le script
+// ne consulte JAMAIS l'horloge routeur (un routeur sans NTP verrait le
+// couvre-feu partir à la mauvaise heure). La bascule s'applique au check-in
+// suivant (≤ 45 s console ouverte, ≤ 180 s en veille).
+//
+//	active=false : retire les règles marquées (retour à l'état antérieur) ;
+//	active=true  : les repose — exactement 1 règle par serveur hotspot.
+//
+// Idempotent : seules les règles marquées "mikcloud-familyguard" sont
+// remplacées. Le rapport échoe le nombre de règles marquées présentes APRÈS
+// application ET le nombre de serveurs hotspots trouvés (vérité routeur —
+// le cloud ne pose la signature que si rules == 1 × hotspots, 0 sinon).
+//
+// 0 Mo de RAM routeur (règle sans état), 0 FCFA d'infrastructure —
+// compatible MIPS 128 Mo (RB951Ui-2HnD).
+func (b Builder) buildFamilyGuard(cmd model.Command) string {
+	active := FamilyGuardActiveFromPayload(cmd.Payload)
+	okVar := "ok" + idSafe(cmd.ID)
+	var sb strings.Builder
+	sb.WriteString(header(cmd))
+	sb.WriteString(":local " + okVar + " true\n")
+	sb.WriteString(":do {\n  /ip firewall filter remove [find comment=\"" + FamilyGuardMarker + "\"]\n} on-error={}\n")
+	sb.WriteString(":local fgn 0\n")
+	if active {
+		sb.WriteString(":foreach fgh in=[/ip hotspot find] do={\n")
+		sb.WriteString("  :set fgn ($fgn + 1)\n")
+		sb.WriteString("  :local fgi [/ip hotspot get $fgh interface]\n")
+		sb.WriteString("  :do {\n    /ip firewall filter add chain=forward place-before=0 in-interface=$fgi action=reject reject-with=icmp-network-unreachable comment=\"" + FamilyGuardMarker + "\"\n  } on-error={ :set " + okVar + " false }\n")
+		sb.WriteString("}\n")
+	}
+	// Rapport — vérité routeur : le compte de règles marquées présentes
+	// après application ET le nombre de serveurs hotspots trouvés
+	// (valeurs DYNAMIQUES côté routeur, pattern fetchResultData).
+	sb.WriteString(":local fgr [:len [/ip firewall filter find comment=\"" + FamilyGuardMarker + "\"]]\n")
+	ok := `/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
+		`" http-method=post http-data=("cmd=` + urlEscape(cmd.ID) + `&status=ok&rules=". $fgr . "&hs=". $fgn) output=none`
+	ko := b.reportLine(cmd.ID, false, map[string]string{"message": "echec des regles du couvre-feu sur le routeur"})
 	sb.WriteString(":if ($" + okVar + ") do={\n  " + ok + "\n} else={\n  " + ko + "\n}\n")
 	return sb.String()
 }

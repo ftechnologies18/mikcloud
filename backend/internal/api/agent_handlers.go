@@ -59,6 +59,8 @@ func (a *API) registerAgentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/routers/{id}/safewifi", a.handleRouterSetSafeWifi)
 	// N°81 — Shield : bouclier réseau du WiFi public (console).
 	mux.HandleFunc("PUT /api/routers/{id}/shield", a.handleRouterSetShield)
+	// N°82 — FamilyGuard : couvre-feu internet du WiFi public (console).
+	mux.HandleFunc("PUT /api/routers/{id}/familyguard", a.handleRouterSetFamilyGuard)
 }
 
 // ---------------------------------------------------------------------------
@@ -350,6 +352,7 @@ var staleSentReadKinds = map[string]bool{
 	model.CmdHotspotFiles:  true, // N°35 : idempotent (surcharge atomique des fichiers du portail)
 	model.CmdSafeWifi:      true, // N°80 : idempotent (marqueur mikcloud-safewifi — remove-then-add)
 	model.CmdShield:        true, // N°81 : idempotent (marqueur mikcloud-shield — remove-then-add)
+	model.CmdFamilyGuard:   true, // N°82 : idempotent (marqueur mikcloud-familyguard — remove-then-add)
 }
 
 // staleSentLimit — au-delà de cette ancienneté sans rapport, une commande
@@ -936,6 +939,126 @@ func (a *API) ensureShieldLocked(db *model.DB, router *model.Router) {
 	})
 }
 
+// familyGuardRulesVersion — sel de version des règles FILTER FamilyGuard
+// (pattern shieldRulesVersion N°81) : toute évolution de la FORME des
+// règles (action, marquage, règle supplémentaire par hotspot) change ce
+// sel → chaque routeur en ligne reçoit la mise à niveau automatiquement à
+// son premier check-in.
+const familyGuardRulesVersion = "fg-v1"
+
+// familyGuardRefresh — cadence d'auto-réparation (pattern N°49) : à
+// configuration ET ÉTAT identiques (même position dans la fenêtre), le
+// bloc est re-filé périodiquement. Idempotent : répare une règle effacée
+// localement (ménage, restauration de backup) au plus tard 6 h après, et
+// suit un renommage d'interface du hotspot.
+const familyGuardRefresh = 6 * time.Hour
+
+// familyGuardRulesPerHotspot — règle posée par serveur hotspot quand le
+// couvre-feu est en cours (1 forward reject). La vérification du retour
+// l'utilise avec le compte de hotspots RAPPORTÉ par le routeur.
+const familyGuardRulesPerHotspot = 1
+
+// familyGuardSig — signature courte et stable d'une config FamilyGuard
+// APPLIQUÉE : hash du spec + sel de version + ÉTAT désiré au moment de
+// l'application (couvre-feu en cours ou non). L'état fait partie de la
+// signature car il BASCULE à chaque frontière de fenêtre : le check-in
+// suivant voit une signature différente et re-file la bascule — c'est
+// ainsi que le couvre-feu se lève le matin sans autre orchestration.
+func familyGuardSig(spec string, active bool) string {
+	state := "0"
+	if active {
+		state = "1"
+	}
+	return agent.HashToken(familyGuardRulesVersion + "|" + spec + "|" + state)[:16]
+}
+
+// familyGuardFresh — vrai si la config actuelle a été CONFIRMÉE appliquée
+// récemment. Vide ou illisible → re-file prudent (pattern N°80/N°81).
+func familyGuardFresh(router *model.Router) bool {
+	if router.FamilyGuardAppliedAt == "" {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, router.FamilyGuardAppliedAt)
+	if err != nil {
+		return false
+	}
+	return time.Since(t) < familyGuardRefresh
+}
+
+// familyGuardSpecSummary — libellé court d'une fenêtre pour le journal
+// d'activité (ex. « 22:00 → 06:00, tous les jours »).
+func familyGuardSpecSummary(c model.FamilyGuardConfig) string {
+	days := "tous les jours"
+	all := true
+	any := false
+	for i := 0; i < 7; i++ {
+		if c.Days[i] == '1' {
+			any = true
+		} else {
+			all = false
+		}
+	}
+	if !any {
+		days = "aucun jour"
+	} else if !all {
+		names := []string{"lun", "mar", "mer", "jeu", "ven", "sam", "dim"}
+		picked := ""
+		for i := 0; i < 7; i++ {
+			if c.Days[i] == '1' {
+				if picked != "" {
+					picked += ","
+				}
+				picked += names[i]
+			}
+		}
+		days = picked
+	}
+	return c.Start + " → " + c.End + ", " + days
+}
+
+// ensureFamilyGuardLocked — N°82 : converge le couvre-feu internet du WiFi
+// public, sous verrou, depuis handleAgentCmd (contrat exact de
+// ensureSafeWifiLocked N°80 / ensureShieldLocked N°81) :
+//   - spec vide = JAMAIS utilisé : RIEN — un routeur dont le gérant
+//     n'ouvre jamais la carte ne consomme aucun octet (économie de veille
+//     N°75 entière) ;
+//   - l'ÉTAT désiré (dans la fenêtre ou non) est recalculé à CHAQUE
+//     check-in en UTC (heure d'Abidjan — l'horloge routeur n'est jamais
+//     consultée) : à chaque frontière de fenêtre la signature change et
+//     la bascule rejoint la file, servie dans CE check-in (deferred
+//     bucket, fermeture) ;
+//   - une commande en file/en vol suffit — le rapport tranchera (ok →
+//     sig posée après vérification 1 règle × hotspots, error → re-file
+//     au check-in suivant) ;
+//   - un routeur hors-ligne pendant une bascule converge vers l'état
+//     « maintenant » à son retour : aucune commande périmée ne s'accumule.
+func (a *API) ensureFamilyGuardLocked(db *model.DB, router *model.Router) {
+	if router.Mode != "agent" || router.FamilyGuardSpec == "" {
+		return
+	}
+	cfg, ok := model.ParseFamilyGuardSpec(router.FamilyGuardSpec)
+	if !ok {
+		return // spec inviolable (jamais posée par le handler) : silence prudent
+	}
+	active := cfg.ActiveAt(time.Now().UTC())
+	sig := familyGuardSig(router.FamilyGuardSpec, active)
+	if router.FamilyGuardSig == sig && familyGuardFresh(router) {
+		return // déjà appliqué avec ce spec et cet état, et récemment
+	}
+	for i := range db.Commands {
+		c := &db.Commands[i]
+		if c.RouterID == router.ID && c.Kind == model.CmdFamilyGuard &&
+			(c.Status == "queued" || c.Status == "sent") {
+			return // une mise à jour est déjà en vol
+		}
+	}
+	queueCommandLocked(db, router.AccountID, router.ID, model.CmdFamilyGuard, map[string]any{
+		"spec":   router.FamilyGuardSpec,
+		"active": active,
+		"sig":    sig,
+	})
+}
+
 // ensureReadStateDue — N°74 — cadenceur de la télémétrie read_state. Enfile
 // un read_state pour CE routeur si : (1) aucun n'est déjà en file ou en vol
 // (statuts queued/sent), ET (2) le dernier appliqué date de plus de
@@ -1088,6 +1211,13 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 	// auto-réparation 6 h).
 	a.ensureShieldLocked(db, router)
 
+	// N°82 — FamilyGuard : converge le couvre-feu internet du WiFi public
+	// — l'ÉTAT désiré (dans la fenêtre ou non) est recalculé à CHAQUE
+	// check-in : à chaque frontière de fenêtre (22:00, 06:00…) la
+	// signature change et la bascule rejoint la file, servie dans CE
+	// check-in (≤ 45 s console ouverte, ≤ 180 s en veille).
+	a.ensureFamilyGuardLocked(db, router)
+
 	// File FIFO : commandes en attente (max 10 par check-in).
 	//
 	// N°77 — PRIORITÉ AUX ACTIONNABLES : un parc de 3 500 users enfile
@@ -1110,7 +1240,7 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 		switch db.Commands[i].Kind {
 		case model.CmdReadState:
 			reads = append(reads, db.Commands[i])
-		case model.CmdWalledGarden, model.CmdHotspotFiles, model.CmdSafeWifi, model.CmdShield:
+		case model.CmdWalledGarden, model.CmdHotspotFiles, model.CmdSafeWifi, model.CmdShield, model.CmdFamilyGuard:
 			deferred = append(deferred, db.Commands[i])
 		default:
 			prio = append(prio, db.Commands[i])
@@ -1120,8 +1250,9 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(reads, func(i, j int) bool { return reads[i].CreatedAt < reads[j].CreatedAt })
 	// Au sein des différés, walled_garden avant hotspot_files (le walled-garden
 	// doit être en place pour que le portail puisse appeler l'API cloud pré-auth),
-	// puis safewifi (N°80) et shield (N°81) en fermeture : ces protections ne
-	// dépendent d'aucune autre commande — par ordre de vague : 29 < 35 < 80 < 81).
+	// puis safewifi (N°80), shield (N°81) et familyguard (N°82) en fermeture :
+	// ces protections ne dépendent d'aucune autre commande — par ordre de
+	// vague : 29 < 35 < 80 < 81 < 82).
 	deferredWave := func(k string) int {
 		switch k {
 		case model.CmdWalledGarden:
@@ -1130,8 +1261,10 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 			return 35
 		case model.CmdSafeWifi:
 			return 80
+		case model.CmdShield:
+			return 81
 		}
-		return 81 // CmdShield
+		return 82 // CmdFamilyGuard
 	}
 	sort.SliceStable(deferred, func(i, j int) bool {
 		wi, wj := deferredWave(deferred[i].Kind), deferredWave(deferred[j].Kind)
@@ -1395,6 +1528,41 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 					router.ShieldAppliedAt = model.NowISO()
 				}
 				a.logActivity(db, router.AccountID, "router", "Bouclier réseau ("+shieldLevelLabel(level)+") appliqué sur «"+router.Name+"»")
+			}
+		} else if cmd.Kind == model.CmdFamilyGuard {
+			// N°82 — couvre-feu appliqué et CONFIRMÉ par le
+			// routeur : la signature n'est posée que si le COMPTE
+			// de règles marquées rapporté correspond à 1 règle ×
+			// le nombre de serveurs hotspots RAPPORTÉ (en
+			// couvre-feu actif), ou 0 (levé), ET uniquement si le
+			// spec rapporté est TOUJOURS celui du routeur et si
+			// l'ÉTAT désiré est toujours courant — une frontière
+			// de fenêtre franchie pendant le vol ne fige pas un
+			// état périmé : le check-in suivant re-file la
+			// bascule (pattern « niveau toujours courant » N°80).
+			spec, _ := cmd.Payload["spec"].(string)
+			active := agent.FamilyGuardActiveFromPayload(cmd.Payload)
+			want := 0
+			if active {
+				if hs, ok := parseReportInt(vals.Get("hs")); ok {
+					want = familyGuardRulesPerHotspot * hs
+				} else {
+					want = -1 // hs illisible : vérification impossible → pas de sig
+				}
+			}
+			if got, ok := parseReportInt(vals.Get("rules")); ok && got == want {
+				if cur, okCfg := model.ParseFamilyGuardSpec(router.FamilyGuardSpec); okCfg &&
+					router.FamilyGuardSpec == spec && cur.ActiveAt(time.Now().UTC()) == active {
+					if sig, _ := cmd.Payload["sig"].(string); sig != "" {
+						router.FamilyGuardSig = sig
+					}
+					router.FamilyGuardAppliedAt = model.NowISO()
+				}
+				label := "levé"
+				if active {
+					label = "actif — internet coupé"
+				}
+				a.logActivity(db, router.AccountID, "router", "Couvre-feu internet ("+label+") appliqué sur «"+router.Name+"»")
 			}
 		} else {
 			a.logActivity(db, router.AccountID, "router", "Commande "+cmd.Kind+" exécutée sur «"+router.Name+"»")

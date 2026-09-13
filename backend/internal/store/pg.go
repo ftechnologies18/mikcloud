@@ -849,6 +849,13 @@ func (p *PG) ensureSchema() error {
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS shield_level TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS shield_sig TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS shield_applied_at TEXT NOT NULL DEFAULT ''`,
+		// N°82 — FamilyGuard : couvre-feu internet du WiFi public
+		// (fenêtre canonique "1|22:00|06:00|1111111" ; "" = jamais
+		// utilisé → aucune commande), signature de la config appliquée
+		// et horodatage de la dernière confirmation (pattern N°80/N°81).
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS familyguard_spec TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS familyguard_sig TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS familyguard_applied_at TEXT NOT NULL DEFAULT ''`,
 		// Sécurité S6 — détection d'identité routeur dupliquée (conflit
 		// inter-comptes, cf. internal/api/agent_handlers.go).
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS identity_conflict BOOLEAN NOT NULL DEFAULT FALSE`,
@@ -1701,7 +1708,8 @@ var routerSpec = entitySpec[model.Router]{
 		"hotspot_login_url", "agent_token_hash", "token_preview", "last_seen", "account_id",
 		"board_name", "free_hdd_mb", "total_hdd_mb", "identity_conflict", "walled_garden_sig", "walled_garden_applied_at", "hotspot_files_sig", "scheduler_sec", "watcher_ok",
 		"safewifi_level", "safewifi_sig", "safewifi_applied_at",
-		"shield_level", "shield_sig", "shield_applied_at"},
+		"shield_level", "shield_sig", "shield_applied_at",
+		"familyguard_spec", "familyguard_sig", "familyguard_applied_at"},
 	idOf: func(x *model.Router) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Router, error) {
 		var x model.Router
@@ -1710,7 +1718,8 @@ var routerSpec = entitySpec[model.Router]{
 			&x.HotspotLoginUrl, &x.AgentTokenHash, &x.TokenPreview, &x.LastSeen, &x.AccountID,
 			&x.BoardName, &x.FreeHddMb, &x.TotalHddMb, &x.IdentityConflict, &x.WalledGardenSig, &x.WalledGardenAppliedAt, &x.HotspotFilesSig, &x.SchedulerSec, &x.WatcherOK,
 			&x.SafeWifiLevel, &x.SafeWifiSig, &x.SafeWifiAppliedAt,
-			&x.ShieldLevel, &x.ShieldSig, &x.ShieldAppliedAt)
+			&x.ShieldLevel, &x.ShieldSig, &x.ShieldAppliedAt,
+			&x.FamilyGuardSpec, &x.FamilyGuardSig, &x.FamilyGuardAppliedAt)
 		// Sécurité P0 #6 — le mot de passe routeur est stocké chiffré
 		// (AES-256-GCM) : lecture = déchiffrement (passthrough si valeur
 		// antérieure au correctif, migration assurée par
@@ -1728,7 +1737,8 @@ var routerSpec = entitySpec[model.Router]{
 			x.HotspotLoginUrl, x.AgentTokenHash, x.TokenPreview, x.LastSeen, x.AccountID,
 			x.BoardName, x.FreeHddMb, x.TotalHddMb, x.IdentityConflict, x.WalledGardenSig, x.WalledGardenAppliedAt, x.HotspotFilesSig, x.SchedulerSec, x.WatcherOK,
 			x.SafeWifiLevel, x.SafeWifiSig, x.SafeWifiAppliedAt,
-			x.ShieldLevel, x.ShieldSig, x.ShieldAppliedAt}
+			x.ShieldLevel, x.ShieldSig, x.ShieldAppliedAt,
+			x.FamilyGuardSpec, x.FamilyGuardSig, x.FamilyGuardAppliedAt}
 	},
 	hashOf: hashEntity[model.Router],
 }

@@ -21,6 +21,7 @@ import {
   HardDrive,
   Loader2,
   MemoryStick,
+  MoonStar,
   Network,
   Plus,
   Power,
@@ -85,7 +86,7 @@ import { EmptyState } from "@/components/hotspot/empty-state";
 import { ChartTooltip } from "@/components/hotspot/parts/sd-chart-tooltip";
 import { StatusBadge } from "@/components/hotspot/status-badge";
 import { cn } from "@/lib/utils";
-import { api, ApiError, setRouterSafeWifi, setRouterShield, type SafeWifiLevel, type ShieldLevel } from "@/lib/hotspot/api";
+import { api, ApiError, setRouterSafeWifi, setRouterShield, setRouterFamilyGuard, type FamilyGuardWindow, type SafeWifiLevel, type ShieldLevel } from "@/lib/hotspot/api";
 import { localeOf, t as translate, useI18n } from "@/lib/hotspot/i18n";
 import type { Lang } from "@/lib/hotspot/i18n";
 import { useChartPalette } from "@/lib/hotspot/chart-theme";
@@ -1855,12 +1856,229 @@ function ShieldCard({ router }: { router: RouterDevice }) {
   );
 }
 
+// ─── N°82 : FamilyGuard (couvre-feu internet du WiFi public) ───
+
+/** Parse le spec canonique "<enabled>|<HH:MM>|<HH:MM>|<1111111>" — toute
+ * forme invalide retombe sur les défauts (22:00 → 06:00, tous les jours,
+ * désactivé). */
+function parseFamilyGuardSpec(spec: string | undefined): FamilyGuardWindow {
+  const w: FamilyGuardWindow = { enabled: false, start: "22:00", end: "06:00", days: "1111111" };
+  if (!spec) return w;
+  const parts = spec.split("|");
+  if (parts.length !== 4) return w;
+  const timeOk = (s: string) => /^([01]\d|2[0-3]):[0-5]\d$/.test(s);
+  if (timeOk(parts[1]) && timeOk(parts[2]) && parts[1] !== parts[2] && /^[01]{7}$/.test(parts[3]) && parts[3].includes("1")) {
+    w.enabled = parts[0] === "1";
+    w.start = parts[1];
+    w.end = parts[2];
+    w.days = parts[3];
+  }
+  return w;
+}
+
+/** Vrai si le couvre-feu est EN COURS à `now` — calculé en UTC (heure
+ * d'Abidjan GMT, comme le cloud : le couvre-feu vit à l'heure du site,
+ * pas à celle du navigateur). Miroir exact de model.FamilyGuardConfig.ActiveAt :
+ * passage de minuit, jour = jour de DÉBUT de la fenêtre. */
+function familyGuardActiveNow(w: FamilyGuardWindow, now: Date): boolean {
+  if (!w.enabled) return false;
+  const [sh, sm] = w.start.split(":").map(Number);
+  const [eh, em] = w.end.split(":").map(Number);
+  const s = sh * 60 + sm;
+  const e = eh * 60 + em;
+  if (s === e) return false;
+  const day = (now.getUTCDay() + 6) % 7; // lundi = 0 … dimanche = 6
+  const m = now.getUTCHours() * 60 + now.getUTCMinutes();
+  if (s < e) return m >= s && m < e && w.days[day] === "1";
+  const prev = (day + 6) % 7; // portion après minuit = fenêtre partie la veille
+  return (m >= s && w.days[day] === "1") || (m < e && w.days[prev] === "1");
+}
+
+/** Clés i18n des jours (lundi → dimanche, ordre du spec). */
+const familyGuardDayKeys = [
+  { short: "tools.familyguard.dayMon", full: "tools.familyguard.dayMonFull" },
+  { short: "tools.familyguard.dayTue", full: "tools.familyguard.dayTueFull" },
+  { short: "tools.familyguard.dayWed", full: "tools.familyguard.dayWedFull" },
+  { short: "tools.familyguard.dayThu", full: "tools.familyguard.dayThuFull" },
+  { short: "tools.familyguard.dayFri", full: "tools.familyguard.dayFriFull" },
+  { short: "tools.familyguard.daySat", full: "tools.familyguard.daySatFull" },
+  { short: "tools.familyguard.daySun", full: "tools.familyguard.daySunFull" },
+];
+
+function FamilyGuardCard({ router }: { router: RouterDevice }) {
+  const { t, tf } = useI18n();
+  const queryClient = useQueryClient();
+
+  const saved = parseFamilyGuardSpec(router.familyGuardSpec);
+  const activeNow = familyGuardActiveNow(saved, new Date());
+
+  // Éditeur local : les champs sont initialisés depuis le spec persisté,
+  // « Enregistrer » les pousse tels quels (le Switch envoie l'état
+  // complet courant — enabled + champs de l'éditeur).
+  const [start, setStart] = useState(saved.start);
+  const [end, setEnd] = useState(saved.end);
+  const [days, setDays] = useState(saved.days);
+
+  const dirty =
+    start !== saved.start || end !== saved.end || days !== saved.days;
+
+  const mutation = useMutation({
+    mutationFn: (w: FamilyGuardWindow) => setRouterFamilyGuard(router.id, w),
+    onSuccess: (res, w) => {
+      toast.success(tf("tools.familyguard.appliedToast", { name: router.name }), {
+        description: res.message,
+      });
+      if (w.enabled && !activeNow) {
+        // information honnête : activé mais hors fenêtre pour l'instant.
+        toast.info(tf("tools.familyguard.idle", { start: w.start, end: w.end }));
+      }
+      for (const key of ["/api/routers", "/api/dashboard"]) {
+        void queryClient.invalidateQueries({ queryKey: [key] });
+      }
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const timeOk = (s: string) => /^([01]\d|2[0-3]):[0-5]\d$/.test(s);
+  const editorValid =
+    timeOk(start) && timeOk(end) && start !== end && /^[01]{7}$/.test(days) && days.includes("1");
+
+  const Icon = activeNow ? MoonStar : Clock;
+
+  return (
+    <Card className="gap-0 py-0">
+      <CardContent className="p-4 sm:p-5">
+        <div className="flex items-start gap-2">
+          <Icon className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
+          <div>
+            <h3 className="text-sm font-semibold">{t("tools.familyguard.title")}</h3>
+            <p className="mt-0.5 text-xs text-muted-foreground">{t("tools.familyguard.desc")}</p>
+          </div>
+        </div>
+
+        <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border p-3">
+          <div className="flex min-w-0 items-start gap-2">
+            <Icon
+              className={cn("mt-0.5 size-4 shrink-0", activeNow ? "text-primary" : "text-muted-foreground")}
+              aria-hidden
+            />
+            <span className="min-w-0">
+              <span className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium">{t("tools.familyguard.toggle")}</span>
+                {saved.enabled && (
+                  <Badge className="h-5 px-1.5 text-[11px]">{t("tools.familyguard.activeBadge")}</Badge>
+                )}
+              </span>
+              <span className="mt-0.5 block text-xs text-muted-foreground">
+                {saved.enabled
+                  ? activeNow
+                    ? tf("tools.familyguard.liveNow", { end: saved.end })
+                    : tf("tools.familyguard.idle", { start: saved.start, end: saved.end })
+                  : t("tools.familyguard.toggleDesc")}
+              </span>
+            </span>
+          </div>
+          <Switch
+            checked={saved.enabled}
+            onCheckedChange={(v) =>
+              mutation.mutate({ enabled: v, start, end, days })
+            }
+            disabled={mutation.isPending || router.mode !== "agent" || !editorValid}
+            aria-label={t("tools.familyguard.toggle")}
+          />
+        </div>
+
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <Label htmlFor={`fg-start-${router.id}`} className="text-xs text-muted-foreground">
+              {t("tools.familyguard.startLabel")}
+            </Label>
+            <Input
+              id={`fg-start-${router.id}`}
+              type="time"
+              value={start}
+              onChange={(e) => setStart(e.target.value)}
+              disabled={mutation.isPending || router.mode !== "agent"}
+              className="h-9"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor={`fg-end-${router.id}`} className="text-xs text-muted-foreground">
+              {t("tools.familyguard.endLabel")}
+            </Label>
+            <Input
+              id={`fg-end-${router.id}`}
+              type="time"
+              value={end}
+              onChange={(e) => setEnd(e.target.value)}
+              disabled={mutation.isPending || router.mode !== "agent"}
+              className="h-9"
+            />
+          </div>
+        </div>
+
+        <fieldset className="mt-3">
+          <legend className="text-xs text-muted-foreground">{t("tools.familyguard.daysLabel")}</legend>
+          <div className="mt-1.5 flex flex-wrap gap-1.5" role="group" aria-label={t("tools.familyguard.daysLabel")}>
+            {familyGuardDayKeys.map((k, i) => {
+              const on = days[i] === "1";
+              return (
+                <button
+                  key={k.short}
+                  type="button"
+                  aria-pressed={on}
+                  aria-label={t(k.full)}
+                  disabled={mutation.isPending || router.mode !== "agent"}
+                  onClick={() =>
+                    setDays((d) => {
+                      const chars = d.split("");
+                      chars[i] = on ? "0" : "1";
+                      return chars.join("");
+                    })
+                  }
+                  className={cn(
+                    "size-8 rounded-md border text-xs font-medium transition-colors",
+                    "min-h-8 disabled:cursor-not-allowed disabled:opacity-50",
+                    on
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border text-muted-foreground hover:border-muted-foreground/30 hover:bg-muted/60",
+                  )}
+                >
+                  {t(k.short)}
+                </button>
+              );
+            })}
+          </div>
+        </fieldset>
+
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="mt-3 w-full"
+          disabled={mutation.isPending || router.mode !== "agent" || !editorValid || !dirty}
+          onClick={() => mutation.mutate({ enabled: saved.enabled, start, end, days })}
+        >
+          {mutation.isPending && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
+          {t("tools.familyguard.save")}
+        </Button>
+        {!editorValid && (
+          <p className="mt-1.5 text-[11px] text-destructive">{t("tools.familyguard.invalidWindow")}</p>
+        )}
+
+        <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">{t("tools.familyguard.footnote")}</p>
+      </CardContent>
+    </Card>
+  );
+}
+
 function SystemTab({ router }: { router: RouterDevice }) {
   return (
     <div className="space-y-4">
       <SystemInfoCard router={router} />
       <SafeWifiCard router={router} />
       <ShieldCard router={router} />
+      <FamilyGuardCard router={router} />
       <PingCard router={router} />
       <SchedulerCard router={router} />
       <PowerCard router={router} />

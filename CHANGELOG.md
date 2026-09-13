@@ -5,6 +5,123 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-13 — N°82 : FamilyGuard — couvre-feu internet du WiFi public (fenêtre horaire programmée) — Phase 3 de la roadmap sécurité, lancement commercial différé au premier revenu
+
+### N°82 — Contexte : la gamme sécurité manquait le QUAND
+Phase 3 de la roadmap sécurité validée. SafeWiFi (N°80) filtre QUOI
+(menaces, contenus), Shield (N°81) protège CONTRE QUI (administration,
+propagation) — FamilyGuard décide **QUAND l'internet du WiFi public est
+accessible** : le gérant programme une fenêtre horaire (ex. 22:00 → 06:00
+tous les soirs, ou les heures de fermeture du site) pendant laquelle
+l'internet des clients est coupé — nuit des enfants en salle familiale,
+fermeture du maquis, heures d'étude du cybercafé. Décision produit
+confirmée par le gérant du projet : **le module est livré complet et
+testé dès maintenant, mais son lancement COMMERCIAL (vendre l'add-on
++2 000-5 000 FCFA/mois) est volontairement différé au premier revenu** —
+la carte console l'affiche « module en phase de test, gratuit pendant le
+pilote ». Promesse inchangée : SANS réglage technique, sur tout le parc
+(MIPS 128 Mo compris), 0 FCFA d'infrastructure, non intrusive.
+
+### Technique — une règle filter par hotspot, le cloud est l'horloge
+`buildFamilyGuard` (agent) pose, après retrait idempotent des règles
+marquées `mikcloud-familyguard`, exactement **1 règle filter par serveur
+hotspot** pendant la fenêtre : `chain=forward`, `place-before=0` (en tête
+de chaîne, **au-dessus d'un éventuel fasttrack d'établies** — les
+connexions EN COURS sont coupées immédiatement, pas seulement les
+nouvelles), `in-interface` = l'interface du hotspot **lue sur le routeur**
+(`:foreach fgh in=[/ip hotspot find]` — s'adapte à toute topologie,
+pattern N°81), `action=reject reject-with=icmp-network-unreachable`
+(échec IMMÉDIAT côté appareil — pas de navigateur qui tourne dans le
+vide). La page du portail captif reste accessible (chain=input, servie
+par le routeur) : les vouchers restent validables pendant le couvre-feu,
+seul l'internet est coupé. Le réseau du gérant et le trafic propre du
+routeur ne sont jamais touchés ; `/ip firewall nat` et `/ip dns` non
+plus. **Arbitrage central (documenté) : l'ÉTAT désiré — couvre-feu en
+cours ou non — est calculé PAR LE CLOUD à chaque check-in, en UTC
+(== heure d'Abidjan GMT, la Côte d'Ivoire n'applique pas l'heure
+d'été)** : l'horloge routeur n'est JAMAIS consultée (un routeur sans
+NTP — fréquent sur le terrain — verrait le couvre-feu partir à la
+mauvaise heure via le paramètre natif `time=` de RouterOS).
+Contrepartie assumée : la bascule s'applique au check-in suivant
+(≤ 45 s console ouverte — attention N°75, ≤ 180 s en veille), et un
+routeur hors-ligne pendant une frontière converge vers l'état
+« maintenant » à son retour (aucune commande périmée en attente).
+0 Mo de RAM (règle sans état), 0 FCFA.
+
+### Modèle — fenêtre canonique, trois colonnes idempotentes
+`Router` gagne `FamilyGuardSpec`/`FamilyGuardSig`/`FamilyGuardAppliedAt`
+(3 `ALTER TABLE ADD COLUMN IF NOT EXISTS`, pattern N°80/N°81). Le spec
+est une chaîne canonique `<enabled>|<HH:MM>|<HH:MM>|<1111111>` (ex.
+`1|22:00|06:00|1111111` ; days = lundi→dimanche) ; `""` = jamais utilisé
+→ silence intégral (économie N°75). `FamilyGuardConfig` (models.go) porte
+la logique pure : validation stricte (heures `HH:MM`, début ≠ fin,
+7 jours 0/1 dont un actif) et `ActiveAt(now)` — bornes début inclus /
+fin exclue, **passage de minuit** (22:00→06:00 : la portion du matin
+appartient à la fenêtre partie la veille), **jour = jour de DÉBUT** de la
+fenêtre (« vendredi » + 22:00→06:00 couvre jusqu'au samedi matin même si
+le samedi n'est pas coché). API console : `PUT /api/routers/{id}/familyguard`
+`{enabled,start,end,days}` (validation stricte, scope compte, agent-only,
+garde P3, journal d'activité avec l'acteur et le résumé de fenêtre).
+
+### Convergence — la signature porte l'ÉTAT, les frontières se retournent seules
+`ensureFamilyGuardLocked` au check-in, contrat N°80/N°81, avec la
+spécificité temporelle : spec vide = jamais utilisé → **RIEN** ;
+l'état désiré est **recalculé à CHAQUE check-in** et la signature = hash
+(sel `fg-v1` + spec + **état**) — quand la frontière de fenêtre est
+franchie (22:00, 06:00…), la signature attendue change, le check-in
+suivant re-file la bascule : **le couvre-feu se lève le matin sans autre
+orchestration**. Re-file au changement de spec et à l'évolution du sel,
+auto-réparation 6 h (`familyGuardRefresh`, pattern N°49), dédoublonnage
+queued/sent. `CmdFamilyGuard` rejoint `staleSentReadKinds` (idempotent)
+et le bucket différé en FERMETURE du batch (vagues 29 < 35 < 80 < 81 <
+**82**). Le rapport échoe le compte de règles marquées présentes ET le
+nombre de serveurs hotspots ; la signature n'est posée que si
+**rules == 1 × hotspots rapportés** (0 si levé), si le spec rapporté est
+toujours celui du routeur, ET si **l'état désiré est toujours courant**
+(une frontière franchie pendant le vol ne fige pas un état périmé —
+pattern « niveau toujours courant » N°80) ; `hs` illisible → pas de sig.
+
+### Console — une carte planificateur dans l'onglet Système
+`FamilyGuardCard` sous `ShieldCard` (outils routeur → Système) : Switch
+« Activer le couvre-feu », champs Début/Fin (`input type=time`), 7 puces
+de jours (lun→dim, `aria-pressed` + libellés complets), bouton
+« Enregistrer le planning » (inactif sans modification), badge « Actif »,
+statut temps réel — « **En cours — internet coupé jusqu'à HH:MM** » ou
+« Programmé : HH:MM → HH:MM » (miroir exact de `ActiveAt`, calculé en UTC
+== heure d'Abidjan comme le cloud) — et footnote d'honnêteté (heure
+d'Abidjan GMT, jour = jour de DÉBUT, portail accessible, module en phase
+de test — gratuit pendant le pilote). `familyGuardSpec` sur
+`RouterDevice`, `setRouterFamilyGuard` dans api.ts, 27 clés i18n FR +
+27 EN (« Couvre-feu internet »).
+
+### Vérifications
+Tests : 14 nouveaux — 5 model (logique pure de `ActiveAt` : fenêtre
+intra-jour bornes incluses/exclues, passage de minuit tous les jours,
+sémantique jour de DÉBUT sur fenêtre nocturne, désactivé/jour non coché,
+aller-retour du spec canonique + rejet des formes invalides) ; 3 agent
+(actif : retrait idempotent puis exactement 1 règle forward reject par
+hotspot avec interface dynamique et place-before=0, reject-with ICMP,
+jamais nat ni dns, jamais d'horloge routeur (`/system clock`, `time=`),
+rapport rules+hs dynamique ; inactif : retrait seul ; normalisation du
+payload) ; 6 api (silence si jamais utilisé, convergence complète
+programmation → vol → retour ok → réparation 6 h → échec retenté →
+**frontière d'état re-filée sans changement de spec**, retrait après
+désactivation, vérification 1×hotspots avec spec périmé / état périmé /
+hs illisible → échec, sel de version + états distincts, ordre du batch
+29<35<80<81<82). Suite complète 11 paquets verts, -race ciblé vert,
+gofmt/vet/build propres ; frontend eslint 0, tsgo 0, build production ✓ ;
+E2E Playwright 9/9 verts (ports 3012/4000 ponctuellement patchés car le
+bac à sable occupe 3000, fichiers restaurés — diff git vide). Vérification
+navigateur bout-en-bout (Playwright autonome, backend + frontend enfants
+du script) : inscription gérant + routeur agent → login réel → /app/routers
+→ fiche → onglet Système → cartes SafeWiFi + Shield + **FamilyGuard**
+rendues → fenêtre saisie (±30 min autour de maintenant) → Switch → toast
++ spec `1|HH:MM|HH:MM|1111111` persisté + statut « En cours — internet
+coupé jusqu'à HH:MM » affiché → check-in agent simulé (GET /agent/cmd) →
+script familyguard servi (12 586 octets, règle reject marquée) → rapport
+rules=1 hs=1 → **signature posée** → second check-in : silence — 0 erreur
+console.
+
 ## 2026-09-13 — N°81 : Shield — bouclier réseau du WiFi public (ports d'administration + vecteurs malveillants bloqués) — Phase 2 de la roadmap sécurité
 
 ### N°81 — Contexte : le WiFi public expose le routeur ET les clients

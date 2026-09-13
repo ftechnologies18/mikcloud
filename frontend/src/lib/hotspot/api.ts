@@ -631,6 +631,42 @@ export async function setRouterShield(
   );
 }
 
+/* — N°82 : FamilyGuard (couvre-feu internet du WiFi public) — */
+
+/** Fenêtre du couvre-feu FamilyGuard d'un site (cf. RouterDevice.familyGuardSpec). */
+export interface FamilyGuardWindow {
+  /** false : configuré mais désactivé (la fenêtre est conservée). */
+  enabled: boolean;
+  /** Début "HH:MM" (inclus), heure d'Abidjan (GMT). */
+  start: string;
+  /** Fin "HH:MM" (exclue). */
+  end: string;
+  /** "1111111" — lundi→dimanche, '1' = la fenêtre démarre ce jour. */
+  days: string;
+}
+
+/** SetRouterFamilyGuardResponse — réponse du PUT /api/routers/{id}/familyguard. */
+export interface SetRouterFamilyGuardResponse {
+  ok: boolean;
+  enabled: boolean;
+  message: string;
+}
+
+/** setRouterFamilyGuard — N°82 : programme (ou désactive) le couvre-feu
+ * internet du WiFi public du site. L'état désiré (en fenêtre ou non) est
+ * recalculé PAR LE CLOUD à chaque check-in : la bascule s'applique au
+ * point de contact suivant (≤ 45 s) ; le retour « ok » vérifié (règles
+ * marquées == 1 × hotspots rapportés) confirme l'application. */
+export async function setRouterFamilyGuard(
+  routerId: string,
+  window: FamilyGuardWindow,
+): Promise<SetRouterFamilyGuardResponse> {
+  return api<SetRouterFamilyGuardResponse>(
+    `/api/routers/${encodeURIComponent(routerId)}/familyguard`,
+    { method: "PUT", body: window },
+  );
+}
+
 /** fetchRouterPortalPreview — récupère le HTML personnalisé de login.html
  * pour un routeur agent, à injecter dans une iframe srcDoc (aperçu console).
  * Retourne le HTML brut (text/html). */

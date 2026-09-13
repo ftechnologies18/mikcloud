@@ -288,6 +288,10 @@ export interface RouterDevice {
   /** N°81 Shield : bouclier réseau du WiFi public du site
    * ("" ou absent = antérieur au N°81 → désactivé). off | on. */
   shieldLevel?: string;
+  /** N°82 FamilyGuard : couvre-feu internet du WiFi public du site, spec
+   * canonique "<enabled>|<HH:MM>|<HH:MM>|<1111111>" ("" ou absent = jamais
+   * utilisé). Ex. "1|22:00|06:00|1111111" = tous les soirs 22:00 → 06:00. */
+  familyGuardSpec?: string;
 }
 
 /** Réponse de création d'un routeur en mode agent (script + token à copier). */

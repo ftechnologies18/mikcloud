@@ -5,6 +5,100 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-13 — N°93 : SafeWiFi réparé — le portail captif redevient détectable avant le login : le durcissement N°85 détournait AUSSI le DNS des clients non authentifiés, privant l'OS de résolution pré-auth (plus de popup de connexion, régression production CYBER-ESPACE SC) — deux règles redirect vers le servlet DNS natif du hotspot restaurent le comportement RouterOS sans rouvrir l'échappatoire filtrage
+
+### N°93 — Contexte : une régression de disponibilité, pas de sécurité
+Constat du gérant immédiat après le push N°85 : le portail captif du
+routeur CYBER-ESPACE SC (migré Mikhmon, SafeWiFi « familles » actif) ne
+s'affichait plus du tout — un nouvel appareil se connectait au WiFi et
+restait sur « connecté, sans internet », sans popup de login, sans page
+accessible même en naviguant. L'enquête (manuel MikroTik « Hotspot
+customisation », section Firewall customizations) a établi le mécanisme
+exact : le hotspot possède ses PROPRES règles dynamiques NAT — un jump
+« chain=dstnat hotspot=from-client → hotspot », puis un redirect natif
+du port 53 vers son servlet DNS interne (64872), servlet accepté
+PRÉ-authentification par le filtre hs-input (ports 64872-64875 :
+services locaux d'authentification). C'est ce mécanisme qui rend le DNS
+— donc la détection du portail captif par l'OS (connectivitycheck.
+gstatic.com, captive.apple.com…) — possible AVANT le login, y compris
+la résolution du dns-name local du profil (config Mikhmon typique).
+Les dst-nat N°85 en tête de table (place-before=0) préemptaient ce
+redirect pour TOUT le monde : le DNS d'un client NON authentifié
+partait en forward vers l'IP EXTERNE du résolveur filtrant (AdGuard),
+où le filtre hs-unauth le rejetait (tout ce qui n'est pas walled-garden
+est rejected pré-auth) — DNS mort pré-login, portail indétectable, et
+dns-name de surcroît indésolvable chez le résolveur public. Les
+routeurs installés par MikCloud ne voyaient pas le problème complet
+(walled-garden dns N°29 + pas de dns-name), le migré Mikhmon le voyait
+intégralement.
+
+### Technique — le bouclier pré-auth, miroir du natif, au-dessus des dst-nat
+Le correctif restitue le comportement natif pour les clients NON
+authentifiés SANS rouvrir l'échappatoire N°85 : DEUX règles redirect
+« hotspot=from-client,!auth action=redirect to-ports=64872 » (le
+matcher NATIF du hotspot, celui-là même qu'utilisent ses règles
+dynamiques — chain=dstnat, udp + tcp) sont posées APRÈS les dst-nat
+dans le script, donc AU-DESSUS d'elles dans la table (place-before=0
+empile en ordre inverse : le dernier ajouté est le plus haut — ordre
+final voulu : bouclier PUIS dst-nat PUIS règle Mikhmon héritée, rendue
+inerte pour le port 53). Le DNS pré-login redevient natif : le servlet
+64872 répond lui-même (noms locaux + domaines publics, upstream non
+filtré — un invité ne peut de toute façon rien ouvrir hors
+walled-garden avant le login, il n'y a rien à filtrer à ce stade).
+Dès l'authentification, le matcher ne matche plus : le DNS transite
+par les dst-nat → résolveur filtrant. La promesse N°85 est
+intégralement conservée pour tout ce qui est authentifié, ainsi que
+pour le LAN du gérant et tout DNS externe — le filtrage de contenus
+(la raison d'être du module) reste exact, seul le chemin pré-login
+change. Garde de disponibilité (doctrine N°80 : la disponibilité du
+site prime sur la stricteté du filtrage) : un échec de pose dans la
+famille NAT (variable swnat — p.ex. matcher absent d'une version
+RouterOS exotique) déclenche le retrait complet des règles marquées de
+la famille : aucune dst-nat résiduelle ne préempte le redirect natif,
+le portail reste servi, l'échec est rapporté et la commande re-file au
+check-in suivant — jamais d'état à moitié posé qui tuerait le portail.
+Comptage vérifié (vérité routeur) : SafeWifiNatRules = 4 (2 dst-nat +
+2 boucliers) — SafeWifiRulesExpected passe de 2+len(DoH)+2×hs à
+4+len(DoH)+2×hs, la signature n'est posée que si le routeur RAPPORTE
+ce compte exact. Bump du sel sw-v2 → sw-v3 (garde-fou N°48) : tout le
+parc — CYBER-ESPACE SC en tête — reçoit la correction automatiquement
+au check-in suivant le déploiement Render (≤ 45 s console ouverte /
+≤ 180 s en veille), sans intervention. Zéro endpoint, zéro vue, zéro
+migration (aucune colonne : la synchro différentielle Neon n'a rien à
+faire), contrat PUT /api/routers/{id}/safewifi inchangé, footnote
+frontend inchangée (la promesse produit ne bouge pas : le filtrage
+s'applique pareil aux clients authentifiés). Rebase sur l'éclatement Go
+N°89 du gérant absorbé : le correctif vit dans le fichier dédié
+agent/safewifi.go posé par l'éclatement, le sel dans agent_security.go,
+la branche de vérification dans agent_handlers.go — aucun conflit
+restant.
+
+### Vérifié localement comme la CI
+gofmt/vet/build verts ; go test complet 12 paquets verts SANS -race
+PUIS AVEC -race ; tests agent/safewifi_test.go étendus (4 règles NAT
+marquées : 2 dst-nat place-before=0 vers le résolveur + 2 boucliers
+pré-auth hotspot=from-client,!auth vers 64872, udp ET tcp ; ordre
+d'émission : boucliers APRÈS les dst-nat → posés au-dessus ; garde
+:if (!$swnat) présente, ajouts NAT alimentant swnat ;
+SafeWifiNatRules == 4 miroir du comptage ; off ne pose AUCUN objet —
+inchangé) ; tests api/safewifi_test.go étendus (compte attendu
+4+len+2×hs via la source unique ; sw-v3 ≠ sw-v2 ≠ sw-v1 ≠ formule sans
+sel — le parc ne peut rester ni sur la forme N°85 qui tue le portail
+ni sur les précédentes). Script RouterOS généré inspecté
+intégralement (ON : retraits idempotents → 4 NAT → garde → liste DoH
+28 entrées → foreach hotspot DoT/DoH v4 + miroir IPv6 → rapport
+dynamique rules+hs ; OFF : retraits seuls → rapport rules=0) ; syntaxe
+conforme aux formes .rsc en production (blocs :do/on-error
+multi-lignes du foreach, négation !$ déjà éprouvée par l'agent, matcher
+hotspot utilisé tel quel par les règles dynamiques du système).
+Déploiements attendus : Render SEULEMENT (backend/ touché :
+buildSafeWifi + sel sw-v3 + SafeWifiRulesExpected — le déploiement
+redémarre le backend, la sig sw-v2 stockée devient mismatch au check-in
+de chaque routeur protégé → re-file → correction posée et confirmée
+par le compte 4+28+2×hs) ; Vercel déploie un artefact
+fonctionnellement identique (zéro diff frontend) ; la CI joue le même
+gate que localement.
+
 ## 2026-09-13 — N°92 : éclatement de router-tools (1 789 l.) — le panneau Outils devient une entry de 96 l. + 6 fichiers par domaine, composants déjà autonomes (zéro déplacement d'état), contenu vérifié ligne par ligne (1 541/1 541)
 
 ### N°92 — Contexte : troisième et dernière cible citée par l'audit

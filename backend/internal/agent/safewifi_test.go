@@ -1,13 +1,19 @@
 package agent
 
-// Tests N°80/N°85 — script SafeWiFi (protection DNS du WiFi public par
-// redirection, durcie : tête de table NAT, DoT/DoH coupés, IPv6 neutralisé).
+// Tests N°80/N°85/N°93 — script SafeWiFi (protection DNS du WiFi public
+// par redirection, durcie : tête de table NAT, DoT/DoH coupés, IPv6
+// neutralisé, bouclier pré-auth vers le servlet DNS natif du hotspot).
 // Le contrat :
-//   - niveau actif : retrait idempotent PUIS exactement deux règles dst-nat
-//     (udp + tcp) en TÊTE de table (place-before=0) vers LE résolveur du
-//     niveau, marquées mikcloud-safewifi ; la liste DoH v4 complète ; et par
-//     serveur hotspot : DoT (tcp/853) et DoH (tcp/443 → liste) coupés, plus
-//     les coupures IPv6 (DNS, DoT, DoH) best-effort ;
+//   - niveau actif : retrait idempotent PUIS exactement quatre règles NAT
+//     en TÊTE de table (place-before=0) marquées mikcloud-safewifi — 2
+//     dst-nat (udp + tcp) vers LE résolveur du niveau, puis 2 redirect
+//     hotspot=from-client,!auth vers le servlet DNS natif (64872) posées
+//     AU-DESSUS (ajoutées après → empilées au sommet) ; la liste DoH v4
+//     complète ; et par serveur hotspot : DoT (tcp/853) et DoH (tcp/443 →
+//     liste) coupés, plus les coupures IPv6 (DNS, DoT, DoH) best-effort ;
+//   - le bouclier pré-auth est la correction N°93 : sans lui, le DNS d'un
+//     client NON authentifié partait en forward vers l'IP externe du
+//     résolveur → rejeté par hs-unauth → plus de détection de portail ;
 //   - /ip dns n'est JAMAIS touché : le DNS propre du routeur (check-in
 //     agent) ne doit pas dépendre de la disponibilité du résolveur filtrant ;
 //   - niveau off (ou inconnu) : retrait seul — aucune règle posée ;
@@ -21,9 +27,10 @@ import (
 	"mikcloud/hotspot-api/internal/model"
 )
 
-// TestSafeWifiScriptActiveLevels — menaces et famille posent exactement deux
-// règles dst-nat (udp+tcp) EN TÊTE de table vers le résolveur du niveau,
-// la liste DoH v4 complète, et les blocages anti-contournement par hotspot.
+// TestSafeWifiScriptActiveLevels — menaces et famille posent exactement
+// quatre règles NAT en TÊTE de table (2 dst-nat vers le résolveur du niveau
+// + 2 boucliers pré-auth vers le servlet DNS natif), la liste DoH v4
+// complète, et les blocages anti-contournement par hotspot.
 func TestSafeWifiScriptActiveLevels(t *testing.T) {
 	b := Builder{BaseURL: "https://api.example", Token: "tok"}
 	for _, tc := range []struct {
@@ -43,6 +50,31 @@ func TestSafeWifiScriptActiveLevels(t *testing.T) {
 		}
 		if got := strings.Count(s, `place-before=0 action=dst-nat`); got != 2 {
 			t.Errorf("niveau %s : %d règles dst-nat en tête de table (place-before=0), attendu 2 — une règle dstnat antérieure ne doit JAMAIS passer devant (N°85)", tc.level, got)
+		}
+		// N°93 — bouclier pré-authentification : le port 53 des clients
+		// hotspot NON authentifiés part vers le servlet DNS natif (64872)
+		// via le matcher NATIF du hotspot — udp ET tcp, en tête de table.
+		if got := strings.Count(s, `hotspot=from-client,!auth action=redirect to-ports=`+SafeWifiHotspotDnsPort); got != 2 {
+			t.Errorf("niveau %s : %d règles redirect pré-auth (matcher hotspot), attendu 2 (udp+tcp) — sans ce bouclier le portail captif n'est plus détectable avant le login (régression N°85 corrigée N°93)", tc.level, got)
+		}
+		if got := strings.Count(s, `place-before=0 hotspot=from-client,!auth action=redirect`); got != 2 {
+			t.Errorf("niveau %s : %d boucliers pré-auth en tête de table, attendu 2 — ils doivent couvrir les dst-nat (place-before=0 empile en ordre inverse)", tc.level, got)
+		}
+		// N°93 — ordre d'émission : les boucliers sont AJOUTÉS après les
+		// dst-nat dans le script → posés AU-DESSUS dans la table (le
+		// dernier place-before=0 empile au sommet). L'inverse laisserait
+		// le DNS pré-auth capté par les dst-nat → portail mort.
+		if io, ic := strings.Index(s, `hotspot=from-client,!auth action=redirect to-ports=`+SafeWifiHotspotDnsPort), strings.Index(s, `action=dst-nat to-addresses=`+tc.dns); io < 0 || ic < 0 || io <= ic {
+			t.Errorf("niveau %s : les boucliers pré-auth doivent être émis APRÈS les dst-nat (index redirect=%d, dst-nat=%d) pour se poser au-dessus", tc.level, io, ic)
+		}
+		// N°93 — garde de disponibilité : échec de pose dans la famille
+		// NAT → retrait complet des règles marquées de la famille (le
+		// portail reste servi par le servlet natif) + échec rapporté.
+		if !strings.Contains(s, `:if (!$swnat) do={`) {
+			t.Errorf("niveau %s : la garde de retour arrière de la famille NAT manque — un échec de pose laisserait des dst-nat orphelines tuer le portail", tc.level)
+		}
+		if !strings.Contains(s, `:set swnat false`) {
+			t.Errorf("niveau %s : les ajouts NAT doivent alimenter swnat (échec → retrait de la famille)", tc.level)
 		}
 		if !strings.Contains(s, `protocol=udp dst-port=53 comment="`+SafeWifiMarker+`"`) {
 			t.Errorf("niveau %s : la règle udp marquée manque", tc.level)
@@ -130,15 +162,19 @@ func TestSafeWifiResolver(t *testing.T) {
 	}
 }
 
-// TestSafeWifiRulesExpected — miroir exact du comptage du script (N°85) :
-// 2 NAT + liste DoH v4 + 2 règles FILTER par hotspot. Toute évolution de la
-// liste DoH change le compte attendu → le sel sw-v2 doit aussi bouger.
+// TestSafeWifiRulesExpected — miroir exact du comptage du script (N°93) :
+// 4 NAT (2 dst-nat + 2 boucliers pré-auth) + liste DoH v4 + 2 règles FILTER
+// par hotspot. Toute évolution de la liste DoH ou du nombre de règles
+// change le compte attendu → le sel doit aussi bouger (garde-fou N°48).
 func TestSafeWifiRulesExpected(t *testing.T) {
-	if got := SafeWifiRulesExpected(1); got != 2+len(SafeWifiDoHIPv4)+2 {
-		t.Errorf("SafeWifiRulesExpected(1) = %d, attendu %d", got, 2+len(SafeWifiDoHIPv4)+2)
+	if got := SafeWifiRulesExpected(1); got != SafeWifiNatRules+len(SafeWifiDoHIPv4)+2 {
+		t.Errorf("SafeWifiRulesExpected(1) = %d, attendu %d", got, SafeWifiNatRules+len(SafeWifiDoHIPv4)+2)
 	}
-	if got := SafeWifiRulesExpected(3); got != 2+len(SafeWifiDoHIPv4)+6 {
-		t.Errorf("SafeWifiRulesExpected(3) = %d, attendu %d", got, 2+len(SafeWifiDoHIPv4)+6)
+	if got := SafeWifiRulesExpected(3); got != SafeWifiNatRules+len(SafeWifiDoHIPv4)+6 {
+		t.Errorf("SafeWifiRulesExpected(3) = %d, attendu %d", got, SafeWifiNatRules+len(SafeWifiDoHIPv4)+6)
+	}
+	if SafeWifiNatRules != 4 {
+		t.Errorf("SafeWifiNatRules = %d, attendu 4 (2 dst-nat + 2 boucliers pré-auth N°93) — le miroir du comptage serait faux", SafeWifiNatRules)
 	}
 	if SafeWifiRulesExpected(0) == SafeWifiRulesExpected(1) {
 		t.Error("le compte attendu doit dépendre du nombre de hotspots (pattern Shield N°81)")

@@ -252,8 +252,15 @@ func ensureWalledGardenLocked(db *model.DB, router *model.Router, domains []stri
 // N°48. sw-v2 (N°85) : règles NAT en tête de table (place-before=0, une
 // règle dstnat antérieure ne peut plus passer devant), blocage DoT
 // (tcp/853) et DoH (tcp/443 vers liste mikcloud-safewifi-doh) par
-// serveur hotspot, coupure DNS/DoT/DoH IPv6 (best-effort).
-const safeWifiRulesVersion = "sw-v2"
+// serveur hotspot, coupure DNS/DoT/DoH IPv6 (best-effort). sw-v3 (N°93) :
+// bouclier pré-authentification — DEUX règles redirect
+// hotspot=from-client,!auth vers le servlet DNS natif du hotspot (64872)
+// posées AU-DESSUS des dst-nat : le DNS des clients NON authentifiés
+// redevient natif (le portail captif redevient détectable pré-login,
+// régression CYBER-ESPACE SC), sans rouvrir l'échappatoire N°85 pour tout
+// ce qui est authentifié ; garde de retrait de la famille NAT en cas
+// d'échec de pose.
+const safeWifiRulesVersion = "sw-v3"
 
 // safeWifiRefresh — cadence d'auto-réparation (pattern N°49) : à
 // configuration IDENTIQUE, le bloc safewifi est re-filé périodiquement. Le

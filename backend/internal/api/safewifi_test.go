@@ -1,10 +1,11 @@
 package api
 
-// Tests N°80/N°85 — SafeWiFi : convergence au check-in (ensure), signature
-// vérifiée au retour (vérité routeur), silence des routeurs qui n'ont
-// jamais ouvert la carte, et priorité dans le batch du check-in. Le compte
-// attendu au retour (N°85) : 2 règles NAT + liste DoH v4 + 2 règles FILTER
-// par serveur hotspot rapporté — pattern Shield N°81.
+// Tests N°80/N°85/N°93 — SafeWiFi : convergence au check-in (ensure),
+// signature vérifiée au retour (vérité routeur), silence des routeurs qui
+// n'ont jamais ouvert la carte, et priorité dans le batch du check-in. Le
+// compte attendu au retour (N°93) : 4 règles NAT (2 dst-nat + 2 boucliers
+// pré-auth) + liste DoH v4 + 2 règles FILTER par serveur hotspot rapporté
+// — pattern Shield N°81.
 
 import (
 	"strconv"
@@ -162,8 +163,9 @@ func TestSafeWifiRetireApresExtinction(t *testing.T) {
 
 // TestSafeWifiResultVerified — la signature n'est posée que si le COMPTE
 // d'objets marqués rapporté par le routeur correspond au niveau attendu :
-// 2 NAT + liste DoH v4 + 2 règles par hotspot en filtrage actif, 0 sinon.
-// Un compte divergent — ou un hs illisible — reste sans sig.
+// 4 NAT (2 dst-nat + 2 boucliers pré-auth N°93) + liste DoH v4 + 2 règles
+// par hotspot en filtrage actif, 0 sinon. Un compte divergent — ou un hs
+// illisible — reste sans sig.
 func TestSafeWifiResultVerified(t *testing.T) {
 	sig := safeWifiSig(model.SafeWifiFamily)
 	cmd := model.Command{ID: "c-sw", Kind: model.CmdSafeWifi,
@@ -219,15 +221,19 @@ func safeWifiResultVerified(cmd *model.Command, currentLevel, reported string, h
 
 // TestSafeWifiSigVersioned — le sel de version garantit qu'une évolution de
 // la FORME des règles est re-poussée au parc entier (garde-fou N°48). Le
-// bump sw-v1 → sw-v2 (N°85 : place-before, DoT/DoH, IPv6) doit changer la
-// signature d'un niveau déjà appliqué.
+// bump sw-v2 → sw-v3 (N°93 : bouclier pré-auth, correction de la régression
+// portail captif du N°85) doit changer la signature d'un niveau déjà
+// appliqué — le parc entier recevra la correction au check-in suivant.
 func TestSafeWifiSigVersioned(t *testing.T) {
 	legacy := agent.HashToken(model.SafeWifiFamily)[:16] // formule sans sel
 	if s := safeWifiSig(model.SafeWifiFamily); s == legacy {
 		t.Fatal("safeWifiSig sans sel de version : un correctif de règles ne serait jamais re-poussé (régression N°48)")
 	}
 	if v1 := agent.HashToken("sw-v1|" + model.SafeWifiFamily)[:16]; safeWifiSig(model.SafeWifiFamily) == v1 {
-		t.Fatal("sw-v2 doit différer de sw-v1 : le parc resterait sur l'ancienne forme de règles (régression N°85)")
+		t.Fatal("sw-v3 doit différer de sw-v1 : le parc resterait sur la forme initiale des règles (régression N°85)")
+	}
+	if v2 := agent.HashToken("sw-v2|" + model.SafeWifiFamily)[:16]; safeWifiSig(model.SafeWifiFamily) == v2 {
+		t.Fatal("sw-v3 doit différer de sw-v2 : le parc resterait sur la forme N°85 qui prive les clients non authentifiés de DNS — portail captif mort (régression N°93)")
 	}
 	if safeWifiSig(model.SafeWifiThreats) == safeWifiSig(model.SafeWifiFamily) {
 		t.Fatal("des niveaux distincts doivent produire des signatures distinctes")

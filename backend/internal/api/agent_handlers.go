@@ -771,15 +771,17 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 			// N°80 — protection appliquée et CONFIRMÉE par le
 			// routeur : la signature n'est posée que si le COMPTE
 			// d'objets marqués rapporté correspond au niveau
-			// attendu (N°85 : 2 règles NAT + les entrées de la
-			// liste DoH v4 + 2 règles FILTER par serveur hotspot
-			// rapporté — 0 sinon ; vérité routeur, pattern
-			// scheduler_set ET pattern Shield N°81 : le compte
-			// dépend du parc réel du routeur). Et uniquement si le
-			// niveau rapporté correspond TOUJOURS au niveau
-			// courant : un gérant qui change d'avis pendant le vol
-			// ne doit pas voir un niveau périmé figé — le check-in
-			// suivant re-file la différence.
+			// attendu (N°93 : 4 règles NAT — 2 dst-nat vers le
+			// résolveur filtrant + 2 boucliers pré-auth vers le
+			// servlet DNS natif — + les entrées de la liste DoH v4
+			// + 2 règles FILTER par serveur hotspot rapporté — 0
+			// sinon ; vérité routeur, pattern scheduler_set ET
+			// pattern Shield N°81 : le compte dépend du parc réel
+			// du routeur). Et uniquement si le niveau rapporté
+			// correspond TOUJOURS au niveau courant : un gérant
+			// qui change d'avis pendant le vol ne doit pas voir
+			// un niveau périmé figé — le check-in suivant re-file
+			// la différence.
 			level := agent.SafeWifiLevelFromPayload(cmd.Payload)
 			want := 0
 			if level != model.SafeWifiOff {

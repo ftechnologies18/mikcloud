@@ -1,102 +1,35 @@
 "use client";
 
-// Vue Vouchers (kind=voucher) — générateur en série, impression de tickets,
-// suivi des statuts et traçabilité des lots (onglet Lots).
+// Vue Vouchers (kind=voucher) — SHELL d'état : génération en série, impression
+// de tickets, suivi des statuts et traçabilité des lots (onglet Lots).
 // Quick print (F12) : bouton « Réimpression rapide » qui réimprime le dernier
 // lot imprimé (localStorage "mikcloud-last-batch", écrit par uc-print-dialog).
+//
+// Éclatement (refactor présentation) : toute la logique d'état (filtres,
+// pagination, queries, mutations, dialogs) vit ICI ; le rendu des deux
+// onglets a déménagé dans ./vouchers/ (vouchers-tab, batches-tab,
+// confirm-dialogs) — composants de présentation pure alimentés par props.
 
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  ArrowLeftRight,
-  CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
-  Clock,
-  Copy,
-  Download,
-  Eye,
-  Filter,
-  Info,
-  Layers,
-  Loader2,
-  Lock,
-  MoreHorizontal,
-  Printer,
-  RefreshCcw,
-  RotateCcw,
-  Search,
-  ShieldQuestion,
-  Ticket,
-  TicketPlus,
-  Trash2,
-  Undo2,
-  Wallet,
-  Zap,
-} from "lucide-react";
+import { Layers, Ticket, TicketPlus, Zap } from "lucide-react";
 import { toast } from "sonner";
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { EmptyState } from "@/components/hotspot/empty-state";
-import { LoadingCards, LoadingRows } from "@/components/hotspot/loading";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/hotspot/page-header";
-import { StatCard } from "@/components/hotspot/stat-card";
-import { StatusBadge } from "@/components/hotspot/status-badge";
 import { useCurrency, useSettings } from "@/components/hotspot/parts/sd-currency";
 import { copyToClipboard } from "@/components/hotspot/parts/uc-clipboard";
-import { PasswordCell } from "@/components/hotspot/parts/uc-password-cell";
 import { LAST_BATCH_STORAGE_KEY, UcPrintDialog } from "@/components/hotspot/parts/uc-print-dialog";
 import { VoucherTransferDialog } from "@/components/hotspot/parts/voucher-transfer-dialog";
 import { VoucherWizardDialog } from "@/components/hotspot/parts/voucher-wizard-dialog";
-import { BatchLifeBadge, BatchLifeBar } from "@/components/hotspot/parts/batch-life-bar";
 import { BatchDetailSheet } from "@/components/hotspot/parts/batch-detail-sheet";
-import { BatchPipeline } from "@/components/hotspot/parts/batch-pipeline";
 import { BatchPrintDialog } from "@/components/hotspot/parts/batch-print-dialog";
 import { api, apiDownload } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { detailFromPath, viewToPath } from "@/lib/hotspot/view-path";
-import { formatBytes, formatCurrency, formatDate } from "@/lib/hotspot/format";
+import { formatCurrency } from "@/lib/hotspot/format";
 import type {
   BatchWithStats,
   GenerateVouchersRequest,
@@ -109,45 +42,14 @@ import type {
   RouterDevice,
   VoucherTemplate,
 } from "@/lib/hotspot/types";
-import { cn } from "@/lib/utils";
-
-const PAGE_SIZE = 12;
-const BATCH_PAGE_SIZE = 10;
-
-const STATUS_OPTIONS = [
-  { value: "all", labelKey: "common.allStatuses" },
-  { value: "active", labelKey: "common.statusActive" },
-  { value: "online", labelKey: "common.statusOnline" },
-  { value: "used", labelKey: "common.statusUsed" },
-  { value: "expired", labelKey: "common.statusExpired" },
-  { value: "disabled", labelKey: "common.statusDisabled" },
-];
-
-// Refonte v2 — cycle de vie filtrable, DÉFAUT « Vivants » (le stock vivant
-// d'abord) ; « Tous » reste disponible en fin de liste.
-const BATCH_STATUS_OPTIONS = [
-  { value: "stock", labelKey: "vouchers.batches.life.vivants" },
-  { value: "consumed", labelKey: "vouchers.batches.life.consumed" },
-  { value: "expired", labelKey: "vouchers.batches.life.expired" },
-  { value: "purged", labelKey: "vouchers.batches.life.purged" },
-  { value: "all", labelKey: "common.allStatuses" },
-];
-
-function shortBatch(batchId: string): string {
-  return batchId.split("-").pop() || batchId;
-}
-
-// VouchersStats — N°74 — compteurs de stock renvoyés par GET /api/vouchers/stats
-// (calcul serveur sur l'ensemble du stock, plus de plafond pageSize 200).
-type VouchersStats = {
-  active: number;
-  used: number;
-  expired: number;
-  disabled: number;
-  allocated: number;
-  stockValue: number;
-  total: number;
-};
+import { BATCH_PAGE_SIZE, PAGE_SIZE, shortBatch, VouchersStats } from "./vouchers/shared";
+import { VouchersTab } from "./vouchers/vouchers-tab";
+import { BatchesTab } from "./vouchers/batches-tab";
+import {
+  DeleteBatchConfirmDialog,
+  DeleteVoucherConfirmDialog,
+  RepriseConfirmDialog,
+} from "./vouchers/confirm-dialogs";
 
 export default function VouchersView() {
   const { t, tf, lang } = useI18n();
@@ -278,10 +180,6 @@ export default function VouchersView() {
 
   const vouchers = pagedData?.data ?? [];
   const totalCount = pagedData?.total ?? 0;
-  const maxPage = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
-  const safePage = Math.min(page, maxPage);
-  const rangeStart = totalCount === 0 ? 0 : (safePage - 1) * PAGE_SIZE + 1;
-  const rangeEnd = Math.min(safePage * PAGE_SIZE, totalCount);
 
   function invalidateVouchers() {
     void queryClient.invalidateQueries({ queryKey: ["/api/vouchers"] });
@@ -484,10 +382,8 @@ export default function VouchersView() {
   // l'ensemble FILTRÉ, back) consommé par le composant BatchPipeline.
   const batchSummary = batchData?.summary;
   const batchTotal = batchData?.total ?? 0;
-  const batchMaxPage = Math.max(1, Math.ceil(batchTotal / BATCH_PAGE_SIZE));
-  const batchSafePage = Math.min(batchPage, batchMaxPage);
-  const batchRangeStart = batchTotal === 0 ? 0 : (batchSafePage - 1) * BATCH_PAGE_SIZE + 1;
-  const batchRangeEnd = Math.min(batchSafePage * BATCH_PAGE_SIZE, batchTotal);
+  // Premier chargement (aucune donnée en cache) : squelettes pipeline + table.
+  const batchesFirstLoading = batchesLoading && !batchData;
 
   const [deletingBatch, setDeletingBatch] = useState<BatchWithStats | null>(null);
   const [printingBatchId, setPrintingBatchId] = useState<string | null>(null);
@@ -528,6 +424,17 @@ export default function VouchersView() {
     // (push → le Retour du navigateur revient à la liste). L'effet de
     // synchronisation ci-dessous ré-applique le filtre à l'arrivée du push.
     router.push(viewToPath("vouchers", batch.id), { scroll: false });
+  }
+
+  // Clic sur le #lot d'une ligne de la table vouchers (colonne « Lot ») :
+  // filtre la liste sur le lot SANS toucher au filtre détenteur (comportement
+  // d'origine — extrait du JSX de la table).
+  function filterByBatch(batchId: string) {
+    setSearchInput(batchId);
+    setSearch(batchId);
+    setStatusFilter("all");
+    setProfileFilter("all");
+    setPage(1);
   }
 
   // Charge les vouchers ACTIFS d'un lot pour l'impression — parité avec le
@@ -621,124 +528,6 @@ export default function VouchersView() {
     } finally {
       setPrintingBatchId(null);
     }
-  }
-
-  // v2 — actions de ligne en boutons icône UNIQUEMENT (ghost + tooltip) :
-  // zéro texte dans les boutons, zéro débordement — même rendu en table
-  // (md+) et en cartes mobiles.
-  function transferIconButton(batch: BatchWithStats, className = "size-9") {
-    if (batch.transferable === 0) return null;
-    const label = t("vouchers.batches.transfer");
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            className={`${className} text-muted-foreground hover:text-primary`}
-            onClick={() => setTransferBatch(batch)}
-            aria-label={tf("vouchers.batches.transferAria", { batch: batch.id })}
-          >
-            <ArrowLeftRight className="size-4" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{label}</TooltipContent>
-      </Tooltip>
-    );
-  }
-
-  function printIconButton(batch: BatchWithStats, className = "size-9") {
-    const label = t("vouchers.batches.detail.printMulti");
-    const printing = multiPrintBatch?.id === batch.id;
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            className={`${className} text-muted-foreground hover:text-foreground`}
-            disabled={printing}
-            onClick={() => void printMulti(batch)}
-            aria-label={tf("vouchers.batches.printMultiTitle", { batch: shortBatch(batch.id) })}
-          >
-            {printing ? <Loader2 className="size-4 animate-spin" /> : <Printer className="size-4" />}
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{label}</TooltipContent>
-      </Tooltip>
-    );
-  }
-
-  // v2 — menu ⋯ du lot : la fiche 360° d'abord, puis toutes les actions.
-  // Le déclencheur est un bouton icône ghost (tooltip + aria-label).
-  function batchActionsMenu(batch: BatchWithStats, className = "size-9") {
-    return (
-      <DropdownMenu>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className={`${className} text-muted-foreground hover:text-foreground`}
-                aria-label={tf("vouchers.batches.actionsFor", { batch: batch.id })}
-              >
-                <MoreHorizontal className="size-4" />
-              </Button>
-            </DropdownMenuTrigger>
-          </TooltipTrigger>
-          <TooltipContent>{tf("vouchers.batches.actionsFor", { batch: `#${shortBatch(batch.id)}` })}</TooltipContent>
-        </Tooltip>
-        <DropdownMenuContent align="end" className="w-60">
-          <DropdownMenuItem className="min-h-10" onClick={() => setDetailBatch(batch)}>
-            <Info className="size-4" />
-            {tf("vouchers.batches.detailOpen", { batch: `#${shortBatch(batch.id)}` })}
-          </DropdownMenuItem>
-          <DropdownMenuItem className="min-h-10" onClick={() => viewBatchVouchers(batch)}>
-            <Eye className="size-4" />
-            {t("vouchers.batches.view")}
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            className="min-h-10"
-            disabled={multiPrintBatch?.id === batch.id}
-            onClick={() => void printMulti(batch)}
-          >
-            {multiPrintBatch?.id === batch.id ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <Printer className="size-4" />
-            )}
-            {t("vouchers.batches.detail.printMulti")}
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            className="min-h-10"
-            disabled={printingBatchId === batch.id}
-            onClick={() => void printBatch(batch)}
-          >
-            {printingBatchId === batch.id ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <Ticket className="size-4" />
-            )}
-            {t("vouchers.batches.printSimple")}
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            className="min-h-10"
-            disabled={batch.transferable === 0}
-            onClick={() => setTransferBatch(batch)}
-          >
-            <ArrowLeftRight className="size-4" />
-            {t("vouchers.batches.transfer")}
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem variant="destructive" className="min-h-10" onClick={() => setDeletingBatch(batch)}>
-            <Trash2 className="size-4" />
-            {t("common.deleteBatch")}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    );
   }
 
   // Refonte (F3) — impression multi-formats du lot (grille A4 / thermique
@@ -845,134 +634,9 @@ export default function VouchersView() {
     batchHolderFilter !== "all",
   ].filter(Boolean).length;
 
-  // v2 — « Détention » : chips live du stock vendable (Direct {n} / {name} {n}).
-  function holdingsChips(batch: BatchWithStats) {
-    const holdings = batch.holdings ?? [];
-    if (holdings.length === 0) {
-      return <span className="text-sm text-muted-foreground">—</span>;
-    }
-    return (
-      <div className="flex flex-wrap items-center gap-1.5">
-        {holdings.map((h) => (
-          <Badge key={h.resellerId || "direct"} variant="secondary" className="gap-1 text-xs">
-            {h.resellerId === "" ? t("common.direct") : h.name || h.resellerId}
-            <span className="font-semibold tabular-nums">{h.count}</span>
-          </Badge>
-        ))}
-      </div>
-    );
-  }
-
-  // v2 — « Vélocité » : sorties 7 j (+ projection), sinon dormance du stock.
-  // null = rien à afficher (plus de stock, aucune sortie).
-  function velocityInfo(batch: BatchWithStats): { main: string; sub?: string; amber: boolean } | null {
-    if (batch.sold7d > 0) {
-      return {
-        main: tf("vouchers.batches.velocity.egress", { n: batch.sold7d }),
-        sub:
-          batch.transferable > 0
-            ? tf("vouchers.batches.velocity.deplete", { d: Math.ceil((batch.transferable * 7) / batch.sold7d) })
-            : undefined,
-        amber: false,
-      };
-    }
-    if (batch.transferable > 0) {
-      return {
-        main: tf("vouchers.batches.velocity.dormant", { d: batch.dormantDays }),
-        amber: batch.dormantDays >= 7,
-      };
-    }
-    return null;
-  }
-
-  // v2 — les 4 selects de filtres des lots, partagés entre la rangée desktop
-  // (md+) et le sheet « Filtres » mobile (mêmes états, deux rendus).
-  const batchSiteSelect = (triggerClassName: string) => (
-    <Select
-      value={batchRouterFilter}
-      onValueChange={(value) => {
-        setBatchRouterFilter(value);
-        setBatchPage(1);
-      }}
-    >
-      <SelectTrigger className={triggerClassName} aria-label={t("vouchers.batches.siteFilter")}>
-        <SelectValue placeholder={t("vouchers.batches.siteFilterLabel")} />
-      </SelectTrigger>
-      <SelectContent className="max-h-72">
-        <SelectItem value="all">{t("common.allSites")}</SelectItem>
-        {routers?.map((router) => (
-          <SelectItem key={router.id} value={router.id}>
-            {router.name}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
-
-  const batchChannelSelect = (triggerClassName: string) => (
-    <Select
-      value={batchChannelFilter}
-      onValueChange={(value) => {
-        setBatchChannelFilter(value);
-        setBatchPage(1);
-      }}
-    >
-      <SelectTrigger className={triggerClassName} aria-label={t("vouchers.batches.filterChannel")}>
-        <SelectValue placeholder={t("vouchers.batches.channelAll")} />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value="all">{t("vouchers.batches.channelAll")}</SelectItem>
-        <SelectItem value="direct">{t("common.direct")}</SelectItem>
-        <SelectItem value="reseller">{t("common.reseller")}</SelectItem>
-      </SelectContent>
-    </Select>
-  );
-
-  const batchStatusSelect = (triggerClassName: string) => (
-    <Select
-      value={batchStatusFilter}
-      onValueChange={(value) => {
-        setBatchStatusFilter(value);
-        setBatchPage(1);
-      }}
-    >
-      <SelectTrigger className={triggerClassName} aria-label={t("vouchers.batches.filterStatus")}>
-        <SelectValue placeholder={t("vouchers.batches.lifeStatus")} />
-      </SelectTrigger>
-      <SelectContent>
-        {BATCH_STATUS_OPTIONS.map((option) => (
-          <SelectItem key={option.value} value={option.value}>
-            {t(option.labelKey)}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
-
-  const batchHolderSelect = (triggerClassName: string) => (
-    <Select
-      value={batchHolderFilter}
-      onValueChange={(value) => {
-        setBatchHolderFilter(value);
-        setBatchPage(1);
-      }}
-    >
-      <SelectTrigger className={triggerClassName} aria-label={t("vouchers.batches.filterHolder")}>
-        <SelectValue placeholder={t("vouchers.batches.holderAll")} />
-      </SelectTrigger>
-      <SelectContent className="max-h-72">
-        <SelectItem value="all">{t("vouchers.batches.holderAll")}</SelectItem>
-        <SelectItem value="direct">{t("vouchers.batches.holderDirect")}</SelectItem>
-        {/* v2 — « Chez les revendeurs » : n'importe quel revendeur (backend « resellers »). */}
-        <SelectItem value="resellers">{t("vouchers.batches.holder.resellers")}</SelectItem>
-        {resellers?.map((reseller) => (
-          <SelectItem key={reseller.id} value={reseller.id}>
-            {reseller.name}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
+  // Spinners de ligne (mutation en vol sur le voucher concerné).
+  const reprisePendingId = repriseMutation.isPending ? (repriseMutation.variables?.id ?? null) : null;
+  const resyncPendingId = resyncMutation.isPending ? (resyncMutation.variables?.voucher.id ?? null) : null;
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -1007,739 +671,108 @@ export default function VouchersView() {
         </TabsList>
       </Tabs>
 
+      {/* Onglet Vouchers — stats, filtres, table, pagination (présentation extraite) */}
       {tab === "vouchers" && (
-        <>
-      {/* Statistiques du stock */}
-      {statsLoading ? (
-        <LoadingCards cards={5} />
-      ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
-          <StatCard title={t("vouchers.kpi.active")} value={String(activeCount)} sub={t("vouchers.kpi.activeSub")} icon={Ticket} />
-          <StatCard title={t("vouchers.kpi.used")} value={String(usedCount)} sub={t("vouchers.kpi.usedSub")} icon={CheckCircle2} />
-          <StatCard title={t("vouchers.kpi.expired")} value={String(expiredCount)} sub={t("vouchers.kpi.expiredSub")} icon={Clock} />
-          {/* N°23 (W3/W4) — stock confié aux revendeurs, visible d'un coup d'œil. */}
-          <StatCard
-            title={t("vouchers.kpiAllocated")}
-            value={String(allocatedCount)}
-            sub={t("vouchers.kpiAllocatedSub")}
-            icon={Undo2}
-          />
-          <StatCard
-            title={t("vouchers.kpi.stockValue")}
-            value={formatCurrency(stockValue, currency, lang)}
-            sub={t("vouchers.kpi.stockValueSub")}
-            icon={Wallet}
-          />
-        </div>
-      )}
-
-      {/* Barre de filtres */}
-      <Card className="gap-0 py-0">
-        <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center">
-          <div className="relative w-full sm:max-w-xs sm:flex-1">
-            <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
-            <Input
-              className="h-10 pl-9"
-              placeholder={t("vouchers.searchPlaceholder")}
-              value={searchInput}
-              onChange={(event) => setSearchInput(event.target.value)}
-              aria-label={t("vouchers.searchLabel")}
-            />
-          </div>
-          <div className="flex flex-1 flex-wrap gap-3 sm:justify-end">
-            <Select
-              value={statusFilter}
-              onValueChange={(value) => {
-                setStatusFilter(value);
-                setPage(1);
-              }}
-            >
-              <SelectTrigger className="h-10 w-full sm:w-44" aria-label={t("common.filterByStatus")}>
-                <SelectValue placeholder={t("common.status")} />
-              </SelectTrigger>
-              <SelectContent>
-                {STATUS_OPTIONS.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {t(option.labelKey)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {/* N°23 (W3/W4) — détenteur du stock : direct vs revendeurs. */}
-            <Select
-              value={holderFilter}
-              onValueChange={(value) => {
-                setHolderFilter(value);
-                setPage(1);
-              }}
-            >
-              <SelectTrigger className="h-10 w-full sm:w-44" aria-label={t("vouchers.holderLabel")}>
-                <SelectValue placeholder={t("vouchers.holderLabel")} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">{t("vouchers.holderAll")}</SelectItem>
-                <SelectItem value="direct">{t("vouchers.holderDirect")}</SelectItem>
-                <SelectItem value="reseller">{t("vouchers.holderReseller")}</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select
-              value={profileFilter}
-              onValueChange={(value) => {
-                setProfileFilter(value);
-                setPage(1);
-              }}
-            >
-              <SelectTrigger className="h-10 w-full sm:w-48" aria-label={t("common.filterByProfile")}>
-                <SelectValue placeholder={t("common.profile")} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">{t("common.allProfiles")}</SelectItem>
-                {profiles?.map((profile) => (
-                  <SelectItem key={profile.id} value={profile.id}>
-                    {profile.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Table des vouchers */}
-      <Card className="gap-0 py-0">
-        {isLoading ? (
-          <LoadingRows rows={8} />
-        ) : vouchers.length === 0 ? (
-          <EmptyState
-            icon={Ticket}
-            title={t("vouchers.empty")}
-            description={hasFilters ? t("vouchers.emptyFiltered") : t("vouchers.emptyDesc")}
-            action={
-              !hasFilters && (
-                <Button onClick={() => setGenOpen(true)}>
-                  <TicketPlus className="size-4" />
-                  {t("vouchers.generate")}
-                </Button>
-              )
-            }
-          />
-        ) : (
-          <>
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow className="hover:bg-transparent">
-                    <TableHead className="pl-4 text-muted-foreground sm:pl-6">{t("vouchers.code")}</TableHead>
-                    <TableHead className="text-muted-foreground">{t("common.password")}</TableHead>
-                    <TableHead className="text-muted-foreground">{t("common.profile")}</TableHead>
-                    <TableHead className="hidden text-muted-foreground md:table-cell">{t("vouchers.quota")}</TableHead>
-                    <TableHead className="text-right text-muted-foreground">{t("common.price")}</TableHead>
-                    <TableHead className="text-muted-foreground">{t("common.status")}</TableHead>
-                    <TableHead className="hidden text-muted-foreground md:table-cell">{t("common.reseller")}</TableHead>
-                    <TableHead className="hidden text-muted-foreground md:table-cell">{t("common.batch")}</TableHead>
-                    <TableHead className="hidden text-muted-foreground lg:table-cell">{t("common.created")}</TableHead>
-                    <TableHead className="pr-4 text-right text-muted-foreground sm:pr-6">{t("common.actions")}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {vouchers.map((voucher) => (
-                    <TableRow key={voucher.id}>
-                      <TableCell className="pl-4 sm:pl-6">
-                        <span className="inline-flex items-center gap-0.5">
-                          <span className="font-mono text-sm font-medium">{voucher.username}</span>
-                          {voucher.resellerId ? (
-                            // N°22 — ticket revendeur : code masqué côté serveur,
-                            // copie impossible (anti-vente en direct) ; l'impression
-                            // tracée reste disponible dans le menu d'actions.
-                            <span
-                              className="inline-flex size-9 items-center justify-center text-muted-foreground"
-                              title={tf("vouchers.resellerLocked", { name: voucher.resellerName })}
-                            >
-                              <Lock className="size-4" aria-hidden />
-                              <span className="sr-only">
-                                {tf("vouchers.resellerLocked", { name: voucher.resellerName })}
-                              </span>
-                            </span>
-                          ) : (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="size-9 text-muted-foreground hover:text-foreground"
-                              onClick={() => void copyCode(voucher)}
-                              aria-label={tf("vouchers.copyCodeAria", { code: voucher.username })}
-                              title={t("vouchers.copyCode")}
-                            >
-                              <Copy className="size-4" />
-                            </Button>
-                          )}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        {voucher.resellerId ? (
-                          <span className="font-mono text-sm tracking-widest text-muted-foreground">••••••</span>
-                        ) : (
-                          <PasswordCell
-                            password={voucher.password}
-                            visible={revealed.has(voucher.id)}
-                            onToggle={() => toggleReveal(voucher.id)}
-                            label={
-                              revealed.has(voucher.id)
-                                ? tf("vouchers.hidePassword", { name: voucher.username })
-                                : tf("vouchers.showPassword", { name: voucher.username })
-                            }
-                          />
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="max-w-36 truncate">
-                          {voucher.profileName}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="hidden md:table-cell">
-                        {voucher.dataQuotaMb > 0 ? (
-                          <span className="text-sm tabular-nums">
-                            {formatBytes(voucher.dataQuotaMb * 1048576, lang)}
-                          </span>
-                        ) : (
-                          <span className="text-sm text-muted-foreground">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right font-medium tabular-nums">
-                        {formatCurrency(voucher.price, currency, lang)}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <StatusBadge status={voucher.status} dot />
-                          {/* N — rapprochement doux : badge « absent du routeur ». */}
-                          {voucher.missingOnRouter && (
-                            <Badge
-                              variant="outline"
-                              className="gap-1 border-amber-500/30 bg-amber-500/10 px-1.5 py-0 text-[10px] font-medium text-amber-600 dark:text-amber-400"
-                              title={t("users.missingOnRouterHint")}
-                            >
-                              <ShieldQuestion className="size-3" aria-hidden />
-                              {t("users.missingOnRouter")}
-                            </Badge>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell className="hidden max-w-40 truncate text-muted-foreground md:table-cell">
-                        {voucher.resellerName || "—"}
-                      </TableCell>
-                      <TableCell className="hidden md:table-cell">
-                        {voucher.batchId ? (
-                          <button
-                            type="button"
-                            className="font-mono text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                            onClick={() => {
-                              setSearchInput(voucher.batchId);
-                              setSearch(voucher.batchId);
-                              setStatusFilter("all");
-                              setProfileFilter("all");
-                              setPage(1);
-                            }}
-                            title={tf("vouchers.batches.filterBatch", { batch: voucher.batchId })}
-                          >
-                            #{shortBatch(voucher.batchId)}
-                          </button>
-                        ) : (
-                          "—"
-                        )}
-                      </TableCell>
-                      <TableCell className="hidden tabular-nums text-muted-foreground lg:table-cell">
-                        {formatDate(voucher.createdAt, lang)}
-                      </TableCell>
-                      <TableCell className="pr-4 text-right sm:pr-6">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="size-10 text-muted-foreground hover:text-foreground"
-                              aria-label={tf("common.actionsFor", { name: voucher.username })}
-                            >
-                              <MoreHorizontal className="size-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="w-56">
-                            <DropdownMenuItem
-                              className="min-h-10"
-                              disabled={printingVoucherId === voucher.id}
-                              onClick={() => void printOne(voucher)}
-                            >
-                              {printingVoucherId === voucher.id ? (
-                                <Loader2 className="size-4 animate-spin" />
-                              ) : (
-                                <Printer className="size-4" />
-                              )}
-                              {t("vouchers.printOne")}
-                            </DropdownMenuItem>
-                            {/* N°23 (W6) — reprise gérant : uniquement les tickets
-                                revendeur invendus (soldAt vide = pas encore remis
-                                au client ; auto_connect pose SoldAt à la 1ʳᵉ connexion). */}
-                            {voucher.resellerId && !voucher.soldAt && (
-                              <>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem
-                                  className="min-h-10"
-                                  disabled={repriseMutation.isPending && repriseMutation.variables?.id === voucher.id}
-                                  onClick={() => setReprising(voucher)}
-                                >
-                                  {repriseMutation.isPending && repriseMutation.variables?.id === voucher.id ? (
-                                    <Loader2 className="size-4 animate-spin" />
-                                  ) : (
-                                    <Undo2 className="size-4" />
-                                  )}
-                                  {t("vouchers.reprise.action")}
-                                </DropdownMenuItem>
-                              </>
-                            )}
-                            {/* N — resynchronisation (uniquement si absent du routeur). */}
-                            {voucher.missingOnRouter && (
-                              <>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem
-                                  className="min-h-10"
-                                  disabled={resyncMutation.isPending && resyncMutation.variables?.voucher.id === voucher.id}
-                                  onClick={() => resyncMutation.mutate({ voucher, action: "recreate" })}
-                                >
-                                  {resyncMutation.isPending && resyncMutation.variables?.voucher.id === voucher.id ? (
-                                    <Loader2 className="size-4 animate-spin" />
-                                  ) : (
-                                    <RefreshCcw className="size-4" />
-                                  )}
-                                  {t("users.resyncRecreate")}
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  className="min-h-10"
-                                  disabled={resyncMutation.isPending && resyncMutation.variables?.voucher.id === voucher.id}
-                                  onClick={() => {
-                                    if (window.confirm(t("users.resyncForgetConfirm"))) {
-                                      resyncMutation.mutate({ voucher, action: "forget" });
-                                    }
-                                  }}
-                                >
-                                  <Trash2 className="size-4" />
-                                  {t("users.resyncForget")}
-                                </DropdownMenuItem>
-                              </>
-                            )}
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              variant="destructive"
-                              className="min-h-10"
-                              // N°23 (W1) — le stock revendeur n'est pas destructible
-                              // depuis la console (le serveur refuse en 403 ; on
-                              // neutralise l'action pour éviter l'aller-retour).
-                              disabled={!!voucher.resellerId}
-                              title={voucher.resellerId ? t("vouchers.deleteBlocked") : undefined}
-                              onClick={() => setDeleting(voucher)}
-                            >
-                              <Trash2 className="size-4" />
-                              {t("common.delete")}
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-
-            {/* Pagination */}
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3 sm:px-6">
-              <p className="text-xs text-muted-foreground">
-                {isFetching
-                  ? t("common.refreshing")
-                  : tf("common.range", { start: rangeStart, end: rangeEnd, total: totalCount })}
-              </p>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-10"
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  disabled={safePage <= 1}
-                >
-                  <ChevronLeft className="size-4" />
-                  {t("common.previous")}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-10"
-                  onClick={() => setPage((p) => Math.min(maxPage, p + 1))}
-                  disabled={safePage >= maxPage}
-                >
-                  {t("common.next")}
-                  <ChevronRight className="size-4" />
-                </Button>
-              </div>
-            </div>
-          </>
-        )}
-      </Card>
-        </>
+        <VouchersTab
+          statsLoading={statsLoading}
+          activeCount={activeCount}
+          usedCount={usedCount}
+          expiredCount={expiredCount}
+          allocatedCount={allocatedCount}
+          stockValue={stockValue}
+          searchInput={searchInput}
+          onSearchInput={setSearchInput}
+          statusFilter={statusFilter}
+          onStatusFilter={(value) => {
+            setStatusFilter(value);
+            setPage(1);
+          }}
+          holderFilter={holderFilter}
+          onHolderFilter={(value) => {
+            setHolderFilter(value);
+            setPage(1);
+          }}
+          profileFilter={profileFilter}
+          onProfileFilter={(value) => {
+            setProfileFilter(value);
+            setPage(1);
+          }}
+          profiles={profiles}
+          isLoading={isLoading}
+          isFetching={isFetching}
+          vouchers={vouchers}
+          hasFilters={hasFilters}
+          revealed={revealed}
+          onToggleReveal={toggleReveal}
+          printingVoucherId={printingVoucherId}
+          reprisePendingId={reprisePendingId}
+          resyncPendingId={resyncPendingId}
+          onGenerate={() => setGenOpen(true)}
+          onCopyCode={(voucher) => void copyCode(voucher)}
+          onPrintOne={(voucher) => void printOne(voucher)}
+          onReprise={setReprising}
+          onResync={(voucher, action) => resyncMutation.mutate({ voucher, action })}
+          onDelete={setDeleting}
+          onFilterByBatch={filterByBatch}
+          totalCount={totalCount}
+          page={page}
+          onSetPage={setPage}
+        />
       )}
 
       {/* ----------------------------------------------------------------- */}
       {/* Onglet Lots — traçabilité complète des générations de vouchers     */}
       {/* ----------------------------------------------------------------- */}
       {tab === "batches" && (
-        <>
-          {/* v2 — « tour de contrôle » : Stock vivant → Chez revendeurs → Éculés 7 j.
-              Les étapes cliquables filtrent la liste ; chips d'alerte si pertinentes. */}
-          {batchesLoading && !batchData ? (
-            <Card className="gap-0 py-0">
-              <CardContent className="p-4">
-                <div className="h-12 animate-pulse rounded-md bg-muted" aria-hidden />
-              </CardContent>
-            </Card>
-          ) : (
-            batchSummary && (
-              <BatchPipeline
-                summary={batchSummary}
-                statusFilter={batchStatusFilter}
-                holderFilter={batchHolderFilter}
-                onStatusFilter={(value) => {
-                  setBatchStatusFilter(value);
-                  setBatchPage(1);
-                }}
-                onHolderFilter={(value) => {
-                  setBatchHolderFilter(value);
-                  setBatchPage(1);
-                }}
-                money={(amount) => formatCurrency(amount, currency, lang)}
-              />
-            )
-          )}
-
-          {/* Filtres des lots — desktop (md+) : une seule rangée compacte */}
-          <Card className="hidden gap-0 py-0 md:block">
-            <CardContent className="flex items-center gap-2 p-3 lg:gap-3">
-              <div className="relative min-w-0 max-w-56 flex-1">
-                <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
-                <Input
-                  className="h-10 pl-9"
-                  placeholder={t("vouchers.batches.searchPlaceholder")}
-                  value={batchSearchInput}
-                  onChange={(event) => setBatchSearchInput(event.target.value)}
-                  aria-label={t("vouchers.batches.searchLabel")}
-                />
-              </div>
-              {batchSiteSelect("h-10 w-36 shrink-0 xl:w-40")}
-              {batchChannelSelect("h-10 w-36 shrink-0")}
-              {batchStatusSelect("h-10 w-36 shrink-0")}
-              {batchHolderSelect("h-10 w-36 shrink-0 xl:w-40")}
-              <Button
-                variant="outline"
-                size="icon"
-                className="size-10 shrink-0"
-                onClick={() => void exportBatches()}
-                disabled={exportingBatches}
-                title={t("vouchers.batches.exportCsv")}
-                aria-label={t("vouchers.batches.exportCsv")}
-              >
-                {exportingBatches ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
-              </Button>
-              {hasBatchFilters && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-10 shrink-0"
-                  onClick={resetBatchFilters}
-                  title={t("vouchers.batches.resetFilters")}
-                  aria-label={t("vouchers.batches.resetFilters")}
-                >
-                  <RotateCcw className="size-4" />
-                </Button>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Filtres mobile (< md) — UN seul bouton « Filtres » (+ badge du nombre
-              de filtres actifs) qui ouvre un sheet bottom avec tout le panneau. */}
-          <div className="md:hidden">
-            <Button
-              variant="outline"
-              className="h-10 w-full justify-between"
-              onClick={() => setBatchFiltersOpen(true)}
-              aria-label={t("vouchers.batches.filters")}
-            >
-              <span className="inline-flex items-center gap-2">
-                <Filter className="size-4" aria-hidden />
-                {t("vouchers.batches.filters")}
-              </span>
-              {batchActiveFilterCount > 0 && (
-                <Badge variant="secondary" className="tabular-nums">
-                  {tf("vouchers.batches.filters.active", {
-                    n: batchActiveFilterCount,
-                    p: batchActiveFilterCount > 1 ? "s" : "",
-                  })}
-                </Badge>
-              )}
-            </Button>
-            <Sheet open={batchFiltersOpen} onOpenChange={setBatchFiltersOpen}>
-              <SheetContent side="bottom" className="max-h-[85dvh] overflow-y-auto">
-                <SheetHeader>
-                  <SheetTitle>{t("vouchers.batches.filters")}</SheetTitle>
-                  <SheetDescription>{t("vouchers.batches.filtersDesc")}</SheetDescription>
-                </SheetHeader>
-                <div className="flex flex-col gap-3 px-4 pb-6">
-                  <div className="relative">
-                    <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
-                    <Input
-                      className="h-10 pl-9"
-                      placeholder={t("vouchers.batches.searchPlaceholder")}
-                      value={batchSearchInput}
-                      onChange={(event) => setBatchSearchInput(event.target.value)}
-                      aria-label={t("vouchers.batches.searchLabel")}
-                    />
-                  </div>
-                  {batchSiteSelect("h-10 w-full")}
-                  {batchChannelSelect("h-10 w-full")}
-                  {batchStatusSelect("h-10 w-full")}
-                  {batchHolderSelect("h-10 w-full")}
-                  <div className="flex gap-2 pt-1">
-                    <Button
-                      variant="outline"
-                      className="h-10 flex-1"
-                      onClick={() => void exportBatches()}
-                      disabled={exportingBatches}
-                    >
-                      {exportingBatches ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
-                      {t("vouchers.batches.exportCsv")}
-                    </Button>
-                    {hasBatchFilters && (
-                      <Button variant="ghost" className="h-10" onClick={resetBatchFilters}>
-                        <RotateCcw className="size-4" />
-                        {t("vouchers.batches.resetFilters")}
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </SheetContent>
-            </Sheet>
-          </div>
-
-          {/* Table des lots */}
-          <Card className="gap-0 py-0">
-            {batchesLoading && !batchData ? (
-              <LoadingRows rows={8} />
-            ) : batches.length === 0 ? (
-              <EmptyState
-                icon={Layers}
-                title={t("vouchers.batches.empty")}
-                description={
-                  hasBatchFilters ? t("vouchers.batches.emptyFiltered") : t("vouchers.emptyDesc")
-                }
-                action={
-                  !hasBatchFilters && (
-                    <Button onClick={() => setGenOpen(true)}>
-                      <TicketPlus className="size-4" />
-                      {t("vouchers.generate")}
-                    </Button>
-                  )
-                }
-              />
-            ) : (
-              <>
-                {/* Cartes mobiles (< md) — la donnée d'abord : un lot = une carte */}
-                <div className="md:hidden">
-                  {batches.map((batch) => {
-                    const velocity = velocityInfo(batch);
-                    return (
-                      <div
-                        key={batch.id}
-                        role="button"
-                        tabIndex={0}
-                        aria-label={tf("vouchers.batches.detailOpen", { batch: batch.id })}
-                        className="cursor-pointer space-y-2.5 border-b p-4 transition-colors last:border-b-0 hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none"
-                        onClick={() => setDetailBatch(batch)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            setDetailBatch(batch);
-                          }
-                        }}
-                      >
-                        {/* Ligne 1 — identité : #id + cycle de vie + date */}
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="inline-flex items-center gap-1.5">
-                            <span className="font-mono text-sm font-semibold tabular-nums">#{shortBatch(batch.id)}</span>
-                            <BatchLifeBadge status={batch.status} />
-                          </span>
-                          <span className="text-xs text-muted-foreground">{formatDate(batch.createdAt, lang)}</span>
-                        </div>
-                        {/* Ligne 2 — profil */}
-                        <p className="truncate text-xs text-muted-foreground">{batch.profileName}</p>
-                        {/* Cycle de vie — la barre signature (chiffres dans les segments) */}
-                        <BatchLifeBar
-                          count={batch.count}
-                          active={batch.active}
-                          used={batch.used}
-                          expired={batch.expired}
-                          disabled={batch.disabled}
-                        />
-                        {/* Ligne 3 — détention (chips live) + valeur faciale */}
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          {holdingsChips(batch)}
-                          <span className="text-sm font-semibold tabular-nums">
-                            {formatCurrency(batch.stockFace, currency, lang)}
-                          </span>
-                        </div>
-                        {/* Ligne 4 — vélocité / dormance */}
-                        {velocity && (
-                          <p
-                            className={cn(
-                              "text-xs",
-                              velocity.amber ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground",
-                            )}
-                          >
-                            {velocity.main}
-                            {velocity.sub && <span> · {velocity.sub}</span>}
-                          </p>
-                        )}
-                        {/* Actions — 3 boutons icônes en bas à droite */}
-                        <div className="flex items-center justify-end gap-1" onClick={(event) => event.stopPropagation()}>
-                          {transferIconButton(batch, "size-10")}
-                          {printIconButton(batch, "size-10")}
-                          {batchActionsMenu(batch, "size-10")}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* Table (md+) — 6 colonnes resserrées, zéro débordement à 1440 px */}
-                <div className="hidden overflow-x-auto md:block">
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="hover:bg-transparent">
-                        <TableHead className="pl-4 text-muted-foreground sm:pl-6">{t("common.batch")}</TableHead>
-                        <TableHead className="text-muted-foreground">{t("vouchers.batches.life")}</TableHead>
-                        <TableHead className="text-muted-foreground">{t("vouchers.batches.table.holding")}</TableHead>
-                        <TableHead className="text-muted-foreground">{t("vouchers.batches.table.velocity")}</TableHead>
-                        <TableHead className="text-right text-muted-foreground">{t("vouchers.batches.table.value")}</TableHead>
-                        <TableHead className="pr-4 text-right text-muted-foreground sm:pr-6">{t("common.actions")}</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {batches.map((batch) => {
-                        const velocity = velocityInfo(batch);
-                        return (
-                          <TableRow
-                            key={batch.id}
-                            className="cursor-pointer"
-                            onClick={() => setDetailBatch(batch)}
-                          >
-                            {/* Lot — #id + badge, profil, date · site (profil + site fusionnés ici) */}
-                            <TableCell className="pl-4 sm:pl-6">
-                              <div className="flex max-w-52 flex-col items-start gap-0.5">
-                                <span className="inline-flex items-center gap-1.5">
-                                  <span className="font-mono text-sm font-semibold tabular-nums">#{shortBatch(batch.id)}</span>
-                                  <BatchLifeBadge status={batch.status} />
-                                </span>
-                                <span className="max-w-52 truncate text-xs text-muted-foreground">{batch.profileName}</span>
-                                <span className="max-w-52 truncate text-xs text-muted-foreground">
-                                  {formatDate(batch.createdAt, lang)} · {batch.routerName}
-                                </span>
-                              </div>
-                            </TableCell>
-                            {/* Cycle de vie — la barre signature avec chiffres dans les segments */}
-                            <TableCell>
-                              <BatchLifeBar
-                                count={batch.count}
-                                active={batch.active}
-                                used={batch.used}
-                                expired={batch.expired}
-                                disabled={batch.disabled}
-                                className="w-40"
-                              />
-                            </TableCell>
-                            {/* Détention — chips live du stock vendable */}
-                            <TableCell>{holdingsChips(batch)}</TableCell>
-                            {/* Vélocité — sorties 7 j + projection, ou dormance */}
-                            <TableCell>
-                              {velocity ? (
-                                <div>
-                                  <p
-                                    className={cn(
-                                      "text-sm font-medium tabular-nums",
-                                      velocity.amber && "text-amber-600 dark:text-amber-400",
-                                    )}
-                                  >
-                                    {velocity.main}
-                                  </p>
-                                  {velocity.sub && (
-                                    <p className="text-xs text-muted-foreground">{velocity.sub}</p>
-                                  )}
-                                </div>
-                              ) : (
-                                <span className="text-sm text-muted-foreground">—</span>
-                              )}
-                            </TableCell>
-                            {/* Valeur — faciale puis gros (le « Coût » a disparu) */}
-                            <TableCell className="text-right">
-                              <p className="text-sm font-medium tabular-nums">
-                                {formatCurrency(batch.stockFace, currency, lang)}
-                              </p>
-                              <p className="text-xs text-muted-foreground">
-                                {tf("vouchers.batches.pipeline.resellersSub", {
-                                  value: formatCurrency(batch.transferableValue, currency, lang),
-                                })}
-                              </p>
-                            </TableCell>
-                            {/* Actions — 3 boutons icône UNIQUEMENT ; la ligne reste cliquable */}
-                            <TableCell className="pr-4 text-right sm:pr-6" onClick={(event) => event.stopPropagation()}>
-                              <div className="flex items-center justify-end gap-0.5">
-                                {transferIconButton(batch)}
-                                {printIconButton(batch)}
-                                {batchActionsMenu(batch)}
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
-                </div>
-
-                {/* Pagination des lots */}
-                <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3 sm:px-6">
-                  <p className="text-xs text-muted-foreground">
-                    {batchesFetching
-                      ? t("common.refreshing")
-                      : tf("vouchers.batches.range", { start: batchRangeStart, end: batchRangeEnd, total: batchTotal })}
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-10"
-                      onClick={() => setBatchPage((p) => Math.max(1, p - 1))}
-                      disabled={batchSafePage <= 1}
-                    >
-                      <ChevronLeft className="size-4" />
-                      {t("common.previous")}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-10"
-                      onClick={() => setBatchPage((p) => Math.min(batchMaxPage, p + 1))}
-                      disabled={batchSafePage >= batchMaxPage}
-                    >
-                      {t("common.next")}
-                      <ChevronRight className="size-4" />
-                    </Button>
-                  </div>
-                </div>
-              </>
-            )}
-          </Card>
-        </>
+        <BatchesTab
+          batchSummary={batchSummary}
+          firstLoading={batchesFirstLoading}
+          batchSearchInput={batchSearchInput}
+          onBatchSearchInput={setBatchSearchInput}
+          batchRouterFilter={batchRouterFilter}
+          onBatchRouterFilter={(value) => {
+            setBatchRouterFilter(value);
+            setBatchPage(1);
+          }}
+          batchChannelFilter={batchChannelFilter}
+          onBatchChannelFilter={(value) => {
+            setBatchChannelFilter(value);
+            setBatchPage(1);
+          }}
+          batchStatusFilter={batchStatusFilter}
+          onBatchStatusFilter={(value) => {
+            setBatchStatusFilter(value);
+            setBatchPage(1);
+          }}
+          batchHolderFilter={batchHolderFilter}
+          onBatchHolderFilter={(value) => {
+            setBatchHolderFilter(value);
+            setBatchPage(1);
+          }}
+          routers={routers}
+          resellers={resellers}
+          filtersOpen={batchFiltersOpen}
+          onFiltersOpenChange={setBatchFiltersOpen}
+          hasBatchFilters={hasBatchFilters}
+          batchActiveFilterCount={batchActiveFilterCount}
+          exportingBatches={exportingBatches}
+          onExportBatches={() => void exportBatches()}
+          onResetFilters={resetBatchFilters}
+          batches={batches}
+          isFetching={batchesFetching}
+          batchTotal={batchTotal}
+          batchPage={batchPage}
+          onSetBatchPage={setBatchPage}
+          printingBatchId={printingBatchId}
+          multiPrintBatch={multiPrintBatch}
+          onGenerate={() => setGenOpen(true)}
+          onOpenDetail={setDetailBatch}
+          onViewVouchers={viewBatchVouchers}
+          onPrintMulti={(batch) => void printMulti(batch)}
+          onPrintSimple={(batch) => void printBatch(batch)}
+          onTransfer={setTransferBatch}
+          onDeleteBatch={setDeletingBatch}
+        />
       )}
 
       {/* Wizard de génération — 3 étapes (Forfait → Codes → Récap) */}
@@ -1806,88 +839,28 @@ export default function VouchersView() {
       />
 
       {/* N°23 (W6) — confirmation reprise gérant (retour au stock direct). */}
-      <AlertDialog open={reprising !== null} onOpenChange={(open) => !open && setReprising(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t("vouchers.reprise.title")}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {reprising && tf("vouchers.reprise.desc", { name: reprising.resellerName || t("common.reseller") })}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={repriseMutation.isPending}>{t("common.cancel")}</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={repriseMutation.isPending}
-              onClick={(event) => {
-                event.preventDefault();
-                if (reprising) repriseMutation.mutate(reprising);
-              }}
-            >
-              {repriseMutation.isPending && <Loader2 className="size-4 animate-spin" />}
-              {t("vouchers.reprise.action")}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <RepriseConfirmDialog
+        voucher={reprising}
+        isPending={repriseMutation.isPending}
+        onOpenChange={(open) => !open && setReprising(null)}
+        onConfirm={(voucher) => repriseMutation.mutate(voucher)}
+      />
 
       {/* Confirmation suppression voucher */}
-      <AlertDialog open={deleting !== null} onOpenChange={(open) => !open && setDeleting(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{tf("vouchers.deleteTitle", { code: deleting?.username ?? "" })}</AlertDialogTitle>
-            <AlertDialogDescription>{t("vouchers.deleteDesc")}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleteMutation.isPending}>{t("common.cancel")}</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-white hover:bg-destructive/90"
-              disabled={deleteMutation.isPending}
-              onClick={(event) => {
-                event.preventDefault();
-                if (deleting) deleteMutation.mutate(deleting);
-              }}
-            >
-              {deleteMutation.isPending && <Loader2 className="size-4 animate-spin" />}
-              {t("common.delete")}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <DeleteVoucherConfirmDialog
+        voucher={deleting}
+        isPending={deleteMutation.isPending}
+        onOpenChange={(open) => !open && setDeleting(null)}
+        onConfirm={(voucher) => deleteMutation.mutate(voucher)}
+      />
 
       {/* Confirmation suppression d'un lot entier */}
-      <AlertDialog open={deletingBatch !== null} onOpenChange={(open) => !open && setDeletingBatch(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {tf("vouchers.batches.deleteTitle", {
-                batch: deletingBatch ? shortBatch(deletingBatch.id) : "",
-              })}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {deletingBatch &&
-                tf("vouchers.batches.deleteDesc", {
-                  n: deletingBatch.count,
-                  profile: deletingBatch.profileName,
-                  router: deletingBatch.routerName,
-                })}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={batchDeleteMutation.isPending}>{t("common.cancel")}</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-white hover:bg-destructive/90"
-              disabled={batchDeleteMutation.isPending}
-              onClick={(event) => {
-                event.preventDefault();
-                if (deletingBatch) batchDeleteMutation.mutate(deletingBatch);
-              }}
-            >
-              {batchDeleteMutation.isPending && <Loader2 className="size-4 animate-spin" />}
-              {t("common.deleteBatch")}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <DeleteBatchConfirmDialog
+        batch={deletingBatch}
+        isPending={batchDeleteMutation.isPending}
+        onOpenChange={(open) => !open && setDeletingBatch(null)}
+        onConfirm={(batch) => batchDeleteMutation.mutate(batch)}
+      />
     </div>
   );
 }

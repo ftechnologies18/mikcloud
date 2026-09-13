@@ -5,6 +5,62 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-13 — N°90 : éclatement de vouchers-view (1 893 l.) — la plus grosse vue du frontend devient un shell d'état de 866 l. + 4 fichiers de présentation, zéro déplacement d'état, parcours navigateur vérifié de bout en bout
+
+### N°90 — Contexte : la suite volontaire de l'audit « fichiers monolithiques » (après N°87 i18n et N°89 Go)
+Le gérant a donné son feu vert pour la dernière famille de monolithes :
+les VUES frontend. vouchers-view.tsx était la plus grosse (1 893 l. —
+32 useState, 7 useQuery, 6 useMutation entremêlés de 740 l. de JSX).
+Le risque documenté au N°89 était le flux d'état React : la parade est
+un éclatement CONSERVATEUR — l'état, les requêtes, les mutations et
+les handlers RESTENT dans le shell ; seul le JSX déménage vers des
+composants de présentation alimentés par props (pattern déjà prouvé
+par batch-detail-sheet/batch-pipeline extraits lors de la refonte v2).
+
+### Technique — shell d'état + onglets de présentation (zéro logique déplacée)
+vouchers-view.tsx (866 l.) garde TOUT l'état et le rendu des 8 dialogs ;
+le rendu des deux onglets déménage dans views/vouchers/ :
+- shared.ts (41 l.) — constantes PAGE_SIZE/BATCH_PAGE_SIZE, options de
+  statut, shortBatch, type VouchersStats (module SANS dépendance React,
+  importé par le shell ET les onglets — zéro cycle d'import) ;
+- vouchers-tab.tsx (498 l.) — KPI du stock, barre de filtres, table des
+  tickets, pagination ; les spinners de mutation deviennent des props
+  (reprisePendingId/resyncPendingId calculés au shell) ;
+- batches-tab.tsx (729 l.) — pipeline « tour de contrôle », filtres
+  desktop + sheet mobile, cartes mobiles + table desktop, pagination ;
+  les 9 helpers de rendu (holdingsChips, velocityInfo, 4 selects
+  partagés, transferIconButton, printIconButton, batchActionsMenu)
+  deviennent des closures du composant — mêmes signatures, mêmes rendus ;
+- confirm-dialogs.tsx (152 l.) — les 3 AlertDialog de confirmation
+  (reprise gérant, suppression voucher, suppression lot).
+Fidélité traquée au détail : les filtres actifs des lots restent
+calculés au shell sur la recherche DEBOUNCÉE (comportement d'origine,
+pas l'input brut) ; le clic sur le #lot d'une ligne voucher appelle
+filterByBatch qui ne touche PAS au filtre détenteur (fidèle au code
+d'origine) ; l'effet de synchronisation du deep-link Phase D
+(/app/vouchers/<batchId>, fix 192ad9f) reste INTÉGRALEMENT au shell ;
+la pagination passe le setter natif (onSetPage={setPage}) pour garder
+les updaters fonctionnels (p => Math.max(1, p-1)) à l'identique.
+
+### Vérifications
+eslint 0 ; tsgo 0 ; build production AVEC typecheck actif (N°84) :
+13 routes vertes ; E2E Playwright complète sur stack locale (backend Go
+4000 mode JSON, front build NEXT_PUBLIC_API_BASE local, port patché 3015
+puis restauré — piège N°81) : 9/9 verts ; puis parcours navigateur
+autonome (agent-browser) sur données semées par API réelle (73
+vouchers, 2 lots) : onglet Vouchers (KPI 72/1/0/0/14 400 XOF serveur
+N°74, table, révélation mot de passe, pagination page 2) ; onglet Lots
+(pipeline 14 400 XOF/70 tickets, 2 lots, 3 boutons d'action, menu ⋯ 6
+items) ; « Voir les vouchers » → deep-link Phase D avec recherche
+pré-remplie B20260913-1183 ; Retour navigateur → filtre levé (branche
+leaving de l'effet) ; fiche 360° (drawer complet : cycle de vie,
+valeur & marge, possession, écoulement) ; responsive mobile 390 px
+(bouton « Filtres » + sheet bottom complet) ; 0 erreur console, 0 page
+error ; contrôle visuel VLM desktop + mobile : RAS. Zéro endpoint,
+zéro route, zéro migration, zéro clé i18n. Déploiement attendu :
+Vercel UNIQUEMENT (aucun diff backend/ — Render saute, job
+deploy-render détecte l'absence de diff).
+
 ## 2026-09-13 — N°89 : éclatement des monolithes Go — les 4 plus gros fichiers du backend (1 709 à 2 445 lignes, enrichis du N°88) deviennent 31 fichiers par domaine, même package, zéro sémantique changée, suite -race complète verte
 
 ### N°89 — Contexte : la suite de l'audit « fichiers monolithiques » (après N°87)

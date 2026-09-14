@@ -201,7 +201,7 @@ type qosQueueRow struct {
 	Dynamic     bool   `json:"dynamic"`
 }
 
-// parseQueueRows — rapport « queue|name|target|max-limit|queue|disabled[|bytes|rate];… ».
+// parseQueueRows — rapport « queue|name|target|max-limit|queue|disabled[|bytes|rate[|dynamic]];… ».
 // Entrées malformées ignorées (tolérance aux versions d'agent futures).
 func parseQueueRows(rows [][]string) []qosQueueRow {
 	out := make([]qosQueueRow, 0, len(rows))
@@ -218,6 +218,14 @@ func parseQueueRows(rows [][]string) []qosQueueRow {
 		if len(e) >= 8 {
 			row.BytesUp, row.BytesDown = parseDualInt(field(e, 6))
 			row.RateUpBps, row.RateDownBps = agent.RosRateBpsDual(field(e, 7))
+		}
+		// N°106 — drapeau dynamique rapporté (9e colonne) ; ceinture et
+		// bretelles : les files dynamiques RouterOS portent un nom entre
+		// chevrons (« <user> ») — un rapport ancien sans la colonne garde
+		// ainsi son étiquette honnête (et le ménage ne les propose jamais).
+		row.Dynamic = len(e) >= 9 && field(e, 8) == "true"
+		if !row.Dynamic && strings.HasPrefix(row.Name, "<") && strings.HasSuffix(row.Name, ">") {
+			row.Dynamic = true
 		}
 		out = append(out, row)
 	}
@@ -442,7 +450,12 @@ func (a *API) handleRouterQoSGet(w http.ResponseWriter, r *http.Request) {
 		queues["data"] = qosSimulatedRows(&routerCopy)
 		queues["updatedAt"] = model.NowISO()
 	case "agent":
-		if fresh := freshToolCommand(db, id, model.CmdQueueRead, now); fresh != nil {
+		// N°106 — un retrait de file (agrégat OU ménage legacy) terminé
+		// APRÈS la dernière lecture rend le cache obsolète : la table doit
+		// refléter la vérité routeur, pas un cliché antérieur au geste du
+		// gérant → re-lecture posée, la table revient au check-in suivant.
+		cutoff := lastQueueRemovalDoneAt(db, id)
+		if fresh := freshToolCommand(db, id, model.CmdQueueRead, now); fresh != nil && (cutoff == "" || fresh.DoneAt > cutoff) {
 			raw, _ := fresh.Result["data"].(string)
 			queues["data"] = parseQueueRows(splitAgentList(raw))
 			queues["updatedAt"] = fresh.DoneAt
@@ -664,4 +677,114 @@ func qosConvergenceHint(rr *model.Router) string {
 		return ""
 	}
 	return " — convergence au prochain check-in (≤ 45 s)"
+}
+
+// ---------------------------------------------------------------------------
+// N°106 — Ménage à distance des files legacy
+// ---------------------------------------------------------------------------
+
+// queueRemoveNameInFlight — un queue_remove visant CE nom déjà en file/en
+// vol (payload « name », absent = mikcloud-qos) : pas d'accumulation quand
+// le gérant re-clique pendant la convergence. Contrairement au garde du
+// QoS Manager (kind seul), deux retraits de noms DIFFÉRENTS coexistent —
+// chacun est un geste ponctuel, tous convergent.
+func queueRemoveNameInFlight(db *model.DB, routerID, name string) bool {
+	for i := range db.Commands {
+		c := &db.Commands[i]
+		if c.RouterID != routerID || c.Kind != model.CmdQueueRemove || (c.Status != "queued" && c.Status != "sent") {
+			continue
+		}
+		if agent.QueueRemoveTarget(c.Payload) == name {
+			return true
+		}
+	}
+	return false
+}
+
+// lastQueueRemovalDoneAt — DoneAt du queue_remove le plus récent pour ce
+// routeur (mikcloud-qos OU ménage legacy N°106) : "" si aucun. Sert de
+// coupe d'obsolescence au cache queue_read de la carte (un retrait terminé
+// depuis la dernière lecture = table périmée).
+func lastQueueRemovalDoneAt(db *model.DB, routerID string) string {
+	var best string
+	for i := range db.Commands {
+		c := &db.Commands[i]
+		if c.RouterID != routerID || c.Kind != model.CmdQueueRemove || c.Status != "done" {
+			continue
+		}
+		if c.DoneAt > best {
+			best = c.DoneAt
+		}
+	}
+	return best
+}
+
+// handleRouterQueueDelete — N°106 — DELETE /api/routers/{id}/queues/{name}
+// (rang 2) : ménage à distance d'une file statique LEGACY (posée à la main
+// avant le QoS Manager : HOTSPOT-Total, GLOBAL-Internet…). Le gérant n'est
+// pas sur site et ses clients non plus : la table des files de l'onglet QoS
+// lui montre la vérité RouterOS, CE geste retire celle qu'il désigne —
+// détachement des profils qui la référencent puis retrait au check-in
+// (≤ 45 s), disparition prouvée par le compte restant rapporté.
+//
+// Gardes-fous : mikcloud-qos refusé (son retrait passe par « Désactiver la
+// QoS », qui pilote AUSSI l'état cloud — sig, appliedAt, profils) ; noms
+// dynamiques refusés (files des utilisateurs, recréées par les rate-limits
+// — les supprimer n'a aucun sens) ; charset strict partagé avec le builder
+// (un payload corrompu échoue, ne vise jamais une autre file).
+func (a *API) handleRouterQueueDelete(w http.ResponseWriter, r *http.Request) {
+	if !a.guardAccountWrite(w, r) {
+		return
+	}
+	acc := accountScope(r)
+	id := r.PathValue("id")
+	name := r.PathValue("name")
+	if !agent.ValidQueueName(name) {
+		writeErr(w, http.StatusBadRequest,
+			"Nom de file invalide (1 à 64 caractères : lettres, chiffres, espaces, - _ . ; les files dynamiques des utilisateurs ne se suppriment pas)")
+		return
+	}
+	if name == agent.QoSQueueName {
+		writeErr(w, http.StatusBadRequest,
+			"La file mikcloud-qos se retire par « Désactiver la QoS » (le cloud pilote aussi son état)")
+		return
+	}
+	// N°106 quota (fusion) — les files mikthrottle-<user> sont posées et
+	// retirées par le scheduler mikcloud-quota DU ROUTEUR (tick 20 s) :
+	// les supprimer à la main débriderait un utilisateur dont le quota
+	// est épuisé jusqu'au tick suivant — pour rien (elle revient). Le
+	// ménage ne touche qu'aux files LEGACY posées à la main.
+	if strings.HasPrefix(name, agent.QuotaThrottlePrefix) {
+		writeErr(w, http.StatusBadRequest,
+			"Les files mikthrottle- sont pilotées par le bridage quota du routeur (scheduler mikcloud-quota) : changez le mode du profil ou attendez la fin de session")
+		return
+	}
+	a.store.Lock()
+	db := a.store.Data()
+	rr := findRouterScoped(db, id, acc)
+	if rr == nil {
+		a.store.Unlock()
+		writeErr(w, http.StatusNotFound, "Routeur introuvable")
+		return
+	}
+	if rr.Mode == "real" {
+		a.store.Unlock()
+		writeErr(w, http.StatusBadRequest, realModeUnsupported)
+		return
+	}
+	if rr.Mode == "agent" {
+		// Détacher d'abord les profils du compte qui référencent la file
+		// (miroir du retrait QoS — mono-routeur agent : sur un parc
+		// multi-box, le champ account-level reste un choix du gérant dans
+		// le formulaire profil, jamais une décision prise à son insu).
+		a.qosDetachProfilesLocked(db, rr, name)
+		if !queueRemoveNameInFlight(db, rr.ID, name) {
+			queueCommandLocked(db, acc, rr.ID, model.CmdQueueRemove, map[string]any{"name": name})
+		}
+		a.logActivityBy(r, db, acc, "router", "File «"+name+"» retirée de «"+rr.Name+
+			"» — ménage à distance (disparition au check-in, ≤ 45 s)")
+	}
+	a.store.Save()
+	a.store.Unlock()
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

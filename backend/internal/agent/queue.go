@@ -19,6 +19,7 @@
 package agent
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -43,6 +44,44 @@ const QoSBurstTime = "10s/10s"
 
 // QoSComment — commentaire de la file (lisible dans Winbox).
 const QoSComment = "mikcloud: agregat hotspot (QoS Manager)"
+
+// ValidQueueName — N°106 — nom de file statique acceptable pour le ménage
+// à distance : 1 à 64 caractères parmi lettres, chiffres, espace, « - »,
+// « _ », « . » ; pas d'espace en tête ni en queue. Les noms dynamiques
+// RouterOS (« <user> ») sont refusés par construction (charset sans
+// chevrons) : ces files appartiennent aux utilisateurs hotspot et sont
+// recréées par les rate-limits — les supprimer n'a aucun sens. Partagé
+// handler (rejet en 400) et builder (rejet en erreur) : les deux côtés
+// valident le même contrat.
+func ValidQueueName(s string) bool {
+	if s == "" || len(s) > 64 {
+		return false
+	}
+	if s[0] == ' ' || s[len(s)-1] == ' ' {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9',
+			c == ' ', c == '-', c == '_', c == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// QueueRemoveTarget — nom visé par un queue_remove (payload « name »,
+// absent = file agrégat mikcloud-qos). Partagé builder et traitement des
+// rapports : les deux côtés parlent du même nom, jamais de constantes
+// dupliquées.
+func QueueRemoveTarget(payload map[string]any) string {
+	if n, _ := payload["name"].(string); n != "" {
+		return n
+	}
+	return QoSQueueName
+}
 
 // QoSDerived — burst et seuil dérivés des limites (mêmes ratios que la
 // recommandation manuelle du runbook : max-limit = 95 % de la capacité →
@@ -211,7 +250,9 @@ func queueReadLine(varName string) string {
 
 // buildQueueRead — N°104 — lecture des files simples du routeur : identité
 // (nom, cible, limites, types, disabled) + stats (bytes, rate — formats
-// RouterOS, normalisés côté cloud). Cap 60 files (le read_resources déjà
+// RouterOS, normalisés côté cloud) + drapeau dynamique (N°106 — étiquette
+// honnête des files des utilisateurs et garde-fou du ménage : jamais
+// proposées à la suppression). Cap 60 files (le read_resources déjà
 // en pose 60 : mêmes bornes), les DYNAMIQUES incluses — c'est leur
 // agrégat dans le parent qui intéresse la carte QoS.
 func (b Builder) buildQueueRead(cmd model.Command) string {
@@ -227,13 +268,14 @@ func (b Builder) buildQueueRead(cmd model.Command) string {
 	sb.WriteString("      :local qml [:tostr [/queue simple get $qe max-limit]]\n")
 	sb.WriteString("      :local qtp [:tostr [/queue simple get $qe queue]]\n")
 	sb.WriteString("      :local qds [:tostr [/queue simple get $qe disabled]]\n")
+	sb.WriteString("      :local qdy \"false\"\n      :do { :set qdy [:tostr [/queue simple get $qe dynamic]] } on-error={ :set qdy \"false\" }\n")
 	sb.WriteString("      :local qbs \"\"\n      :do { :set qbs [:tostr [/queue simple get $qe bytes]] } on-error={ :set qbs \"\" }\n")
 	sb.WriteString("      :local qrt \"\"\n      :do { :set qrt [:tostr [/queue simple get $qe rate]] } on-error={ :set qrt \"\" }\n")
 	// Précédent read_resources (parité Mikhmon) : les noms de files RouterOS
 	// sont lus tels quels — le protocole d'agent du projet fait confiance à
 	// cette source depuis la vague F9 (aucun assainissement des noms non plus
 	// côté read_resources).
-	sb.WriteString(`      :set rdata ($rdata . "queue|" . $qnm . "|" . $qtg . "|" . $qml . "|" . $qtp . "|" . $qds . "|" . $qbs . "|" . $qrt . ";")` + "\n")
+	sb.WriteString(`      :set rdata ($rdata . "queue|" . $qnm . "|" . $qtg . "|" . $qml . "|" . $qtp . "|" . $qds . "|" . $qbs . "|" . $qrt . "|" . $qdy . ";")` + "\n")
 	sb.WriteString("      :set qn ($qn + 1)\n")
 	sb.WriteString("    }\n  }\n")
 	sb.WriteString("} on-error={ :set " + okVar + " false }\n")
@@ -241,24 +283,38 @@ func (b Builder) buildQueueRead(cmd model.Command) string {
 	return sb.String()
 }
 
-// buildQueueRemove — N°104 — retrait propre : détacher d'abord les profils
-// hotspot qui référencent la file (parent-queue=none), puis retirer la
-// file. Rapporte le nombre de files mikcloud-qos RESTANTES (0 attendu —
+// buildQueueRemove — N°104/N°106 — retrait propre : détacher d'abord les
+// profils hotspot qui référencent la file (parent-queue=none), puis retirer
+// la file. Rapporte le nombre de files du même nom RESTANTES (0 attendu —
 // vérité routeur, pas la foi en un remove silencieux).
-func (b Builder) buildQueueRemove(cmd model.Command) string {
+//
+// N°106 « ménage à distance » : payload « name » optionnel — sans lui (et
+// pour la convergence QoS), la cible reste la file agrégat mikcloud-qos ;
+// avec lui, c'est une file LEGACY posée à la main (ex. HOTSPOT-Total avant
+// le QoS Manager) que le gérant retire DEPUIS MikCloud, sans être sur site.
+// Le nom est validé strictement : un payload corrompu fait ÉCHOUER la
+// commande (statut error, message clair) plutôt que de viser une autre
+// file — jamais de repli vers mikcloud-qos (ce serait supprimer la
+// MAUVAISE file).
+func (b Builder) buildQueueRemove(cmd model.Command) (string, error) {
+	name := QueueRemoveTarget(cmd.Payload)
+	if !ValidQueueName(name) {
+		return "", fmt.Errorf("nom de file invalide : %q", name)
+	}
+	esc := rosEscape(name)
 	okVar := "ok" + idSafe(cmd.ID)
 	var sb strings.Builder
 	sb.WriteString(header(cmd))
 	sb.WriteString(":local " + okVar + " true\n:local rdata \"\"\n")
 	sb.WriteString(":do {\n")
-	sb.WriteString("  :do { /ip hotspot user profile set [find where parent-queue=\"" + QoSQueueName + "\"] parent-queue=none } on-error={}\n")
-	sb.WriteString("  :do { /queue simple remove [find where name=\"" + QoSQueueName + "\"] } on-error={ :set " + okVar + " false }\n")
+	sb.WriteString("  :do { /ip hotspot user profile set [find where parent-queue=\"" + esc + "\"] parent-queue=none } on-error={}\n")
+	sb.WriteString("  :do { /queue simple remove [find where name=\"" + esc + "\"] } on-error={ :set " + okVar + " false }\n")
 	sb.WriteString("  :local mkleft 0\n")
-	sb.WriteString("  :do { :set mkleft [/queue simple print count-only where name=\"" + QoSQueueName + "\"] } on-error={ :set mkleft 0 }\n")
+	sb.WriteString("  :do { :set mkleft [/queue simple print count-only where name=\"" + esc + "\"] } on-error={ :set mkleft 0 }\n")
 	sb.WriteString(`  :set rdata ($rdata . "removed|" . [:tostr $mkleft] . ";")` + "\n")
 	sb.WriteString("} on-error={ :set " + okVar + " false }\n")
 	sb.WriteString(b.fetchResultData(cmd.ID, okVar))
-	return sb.String()
+	return sb.String(), nil
 }
 
 // sanitizeCIDR — borne la cible à une forme CIDR IPv4 lisible (le handler

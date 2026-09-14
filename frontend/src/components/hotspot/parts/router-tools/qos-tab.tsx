@@ -20,6 +20,7 @@ import {
   Pencil,
   Save,
   ShieldCheck,
+  Trash2,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -126,6 +127,24 @@ export function QoSTab({ router }: { router: RouterDevice }) {
     mutationFn: () => api<{ ok: boolean }>(`/api/routers/${router.id}/qos`, { method: "DELETE" }),
     onSuccess: () => {
       toast.success(t("tools.qos.disableToast"));
+      invalidateQoS();
+    },
+    onError: failure,
+  });
+
+  // N°106 — ménage à distance : retrait d'une file LEGACY (posée à la main
+  // avant le QoS Manager : HOTSPOT-Total, GLOBAL-Internet…) depuis la table
+  // des files — le gérant n'est pas sur site, ses clients non plus. La
+  // disparition est prouvée au retour (la table se rafraîchit d'elle-même).
+  const [removing, setRemoving] = useState("");
+  const removeQueueMutation = useMutation({
+    mutationFn: (name: string) =>
+      api<{ ok: boolean }>(`/api/routers/${router.id}/queues/${encodeURIComponent(name)}`, {
+        method: "DELETE",
+      }),
+    onSuccess: (_data, name) => {
+      setRemoving(name);
+      toast.success(t("tools.qos.queueDeleteToast"));
       invalidateQoS();
     },
     onError: failure,
@@ -510,15 +529,33 @@ export function QoSTab({ router }: { router: RouterDevice }) {
                     <TableHead className="hidden pr-4 text-right text-muted-foreground sm:table-cell">
                       {t("tools.qos.queueBytes")}
                     </TableHead>
+                    <TableHead className="w-10 pr-4 text-right">
+                      <span className="sr-only">{t("tools.qos.queueDelete")}</span>
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {qos.queues.data.map((q) => (
-                    <TableRow key={q.name} className={q.name === qos.queueName ? "bg-accent/40" : undefined}>
+                    <TableRow
+                      key={q.name}
+                      className={
+                        q.name === qos.queueName
+                          ? "bg-accent/40"
+                          : removing === q.name
+                            ? "opacity-50"
+                            : undefined
+                      }
+                    >
                       <TableCell className="pl-4 font-mono text-[13px] font-medium">
                         {q.name}
                         <span className="ml-1.5 align-middle text-[10px] text-muted-foreground">
-                          {q.name === qos.queueName ? t("tools.qos.aggregate") : q.dynamic ? t("tools.qos.dynamic") : ""}
+                          {q.name === qos.queueName
+                            ? t("tools.qos.aggregate")
+                            : q.dynamic
+                              ? t("tools.qos.dynamic")
+                              : q.name.startsWith("mikthrottle-")
+                                ? t("tools.qos.throttle")
+                                : ""}
                         </span>
                       </TableCell>
                       <TableCell className="hidden font-mono text-xs text-muted-foreground sm:table-cell">{q.target}</TableCell>
@@ -532,6 +569,45 @@ export function QoSTab({ router }: { router: RouterDevice }) {
                       </TableCell>
                       <TableCell className="hidden pr-4 text-right tabular-nums text-muted-foreground sm:table-cell">
                         {formatBytes(q.bytesUp + q.bytesDown, lang)}
+                      </TableCell>
+                      {/* N°106 — ménage : la file agrégat se retire par « Désactiver
+                          la QoS », les dynamiques appartiennent aux utilisateurs,
+                          les mikthrottle- au bridage quota (N°106 parallèle,
+                          scheduler mikcloud-quota) : SEULES les files statiques
+                          legacy posées à la main sont proposées. */}
+                      <TableCell className="pr-4 text-right">
+                        {q.name !== qos.queueName && !q.dynamic && !q.name.startsWith("mikthrottle-") ? (
+                          removing === q.name ? (
+                            <Loader2 className="ml-auto size-3.5 animate-spin text-muted-foreground" aria-hidden />
+                          ) : (
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="size-8 text-muted-foreground hover:text-destructive"
+                                  disabled={removeQueueMutation.isPending}
+                                  title={t("tools.qos.queueDelete")}
+                                >
+                                  <Trash2 className="size-3.5" aria-hidden />
+                                  <span className="sr-only">{t("tools.qos.queueDelete")}</span>
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>{tf("tools.qos.queueDeleteTitle", { name: q.name })}</AlertDialogTitle>
+                                  <AlertDialogDescription>{t("tools.qos.queueDeleteDesc")}</AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+                                  <AlertDialogAction onClick={() => removeQueueMutation.mutate(q.name)}>
+                                    {t("tools.qos.queueDeleteConfirm")}
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          )
+                        ) : null}
                       </TableCell>
                     </TableRow>
                   ))}

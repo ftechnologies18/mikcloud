@@ -1004,16 +1004,28 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 				a.logActivity(db, router.AccountID, "router", "QoS appliquée sur «"+router.Name+"» — file "+agent.QoSQueueName+" vérifiée (plafond agrégat du hotspot)")
 			}
 		} else if cmd.Kind == model.CmdQueueRemove {
-			// N°104 — retrait confirmé : le rapport échoe le nombre de
-			// files mikcloud-qos RESTANTES (0 attendu — vérité routeur,
-			// pas la foi en un remove silencieux). Le marqueur
-			// QoSAppliedAt est levé : plus rien à retirer.
+			// N°104/N°106 — retrait confirmé : le rapport échoe le nombre
+			// de files du même nom RESTANTES (0 attendu — vérité routeur,
+			// pas la foi en un remove silencieux). La file agrégat
+			// mikcloud-qos lève le marqueur QoSAppliedAt (plus rien à
+			// retirer) ; une file LEGACY (ménage à distance N°106) ne
+			// touche JAMAIS l'état QoS du routeur — et un retrait non
+			// confirmé y est journalisé honnêtement (aucune boucle de
+			// convergence automatique pour ce geste ponctuel : le gérant
+			// voit la file encore présente dans la table et re-clique).
+			rmName := agent.QueueRemoveTarget(cmd.Payload)
 			for _, e := range splitAgentList(vals.Get("data")) {
 				if len(e) >= 2 && e[0] == "removed" {
 					if left, okL := parseReportInt(e[1]); okL && left == 0 {
-						router.QoSAppliedAt = ""
-						router.QoSSig = ""
-						a.logActivity(db, router.AccountID, "router", "QoS retirée de «"+router.Name+"» — file "+agent.QoSQueueName+" supprimée")
+						if rmName == agent.QoSQueueName {
+							router.QoSAppliedAt = ""
+							router.QoSSig = ""
+							a.logActivity(db, router.AccountID, "router", "QoS retirée de «"+router.Name+"» — file "+agent.QoSQueueName+" supprimée")
+						} else {
+							a.logActivity(db, router.AccountID, "router", "File «"+rmName+"» supprimée de «"+router.Name+"» (ménage à distance)")
+						}
+					} else if rmName != agent.QoSQueueName {
+						a.logActivity(db, router.AccountID, "router", "Retrait de la file «"+rmName+"» non confirmé — encore présente sur «"+router.Name+"»")
 					}
 					break
 				}

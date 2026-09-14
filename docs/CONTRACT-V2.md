@@ -708,10 +708,18 @@ bit, jamais textuelle.
   (target|max-limit|queue|disabled). Signature posée seulement si la
   relecture correspond au payload ET si l'état désiré est toujours courant.
 - `queue_read` — toutes les files (dynamiques incluses, cap 60) :
-  name|target|max-limit|queue|disabled|bytes|rate → stats + dérive.
+  name|target|max-limit|queue|disabled|bytes|rate|dynamic → stats + dérive
+  (le drapeau `dynamic` N°106 étiquette honnêtement les files des
+  utilisateurs et garde le ménage loin d'elles ; un rapport ancien sans la
+  colonne reste toléré — l'heuristique des noms `<…>` fait foi).
 - `queue_remove` — détache d'abord les profils qui référencent la file
-  (`set [find parent-queue=mikcloud-qos] parent-queue=none`), retire la
-  file, prouve la disparition (compte restant rapporté).
+  (`set [find parent-queue=X] parent-queue=none`), retire la file, prouve
+  la disparition (compte restant rapporté). Payload `name` optionnel
+  (N°106 « ménage à distance ») : absent = file agrégat mikcloud-qos
+  (convergence QoS) ; présent = retrait d'une file LEGACY posée à la main
+  (HOTSPOT-Total…). Nom validé strictement (1-64 : lettres, chiffres,
+  espaces internes, `- _ .`) : un payload corrompu fait ÉCHOUER la commande,
+  jamais de repli vers une autre file.
 
 ### Modèle (colonnes routers)
 `QoSEnabled bool`, `QoSTarget text` (CIDR IPv4), `QoSMaxUpBps/QoSMaxDownBps
@@ -766,6 +774,18 @@ cible+limites+sel qos-v1), `QoSAppliedAt text`.
   queue_remove (agent). La convergence complète suit au check-in (≤ 45 s).
 - `DELETE /api/routers/{id}/qos` (rang 2) : désactivation — la config est
   conservée (ré-allumage), les profils sont détachés, la file retirée.
+- `DELETE /api/routers/{id}/queues/{name}` (rang 2, N°106 « ménage à
+  distance ») : retrait d'une file statique LEGACY (posée à la main avant
+  le QoS Manager) SANS être sur site — détache les profils qui la
+  référencent (mono-routeur agent), enfile un queue_remove nommé,
+  disparition prouvée au retour (compte restant 0), l'état QoS du routeur
+  reste INTACT. Gardes-fous : `mikcloud-qos` refusé (400 — passer par
+  « Désactiver la QoS »), noms dynamiques `<…>` refusés (400), charset
+  strict (400), re-clic pendant le vol = idempotent (pas d'accumulation,
+  retraits de noms distincts coexistent). Simulé → no-op convergent. Le
+  cache `queues` de GET /qos est invalidé par tout queue_remove terminé
+  postérieur à la dernière lecture (la table montre la vérité routeur,
+  jamais un cliché antérieur au geste).
 
 ---
 

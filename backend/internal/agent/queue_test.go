@@ -110,6 +110,7 @@ func TestBuildQueueReadScript(t *testing.T) {
 		`[:tostr [/queue simple get $qe max-limit]]`,
 		":do { :set qbs [:tostr [/queue simple get $qe bytes]] } on-error={ :set qbs \"\" }", // stats best-effort
 		":do { :set qrt [:tostr [/queue simple get $qe rate]] } on-error={ :set qrt \"\" }",
+		":do { :set qdy [:tostr [/queue simple get $qe dynamic]] } on-error={ :set qdy \"false\" }", // N°106 : drapeau dynamique
 		`"queue|" . $qnm`, // forme du rapport
 	} {
 		if !strings.Contains(script, want) {
@@ -135,6 +136,66 @@ func TestBuildQueueRemoveScript(t *testing.T) {
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script queue_remove : fragment %q absent :\n%s", want, trunc700(script))
+		}
+	}
+}
+
+// TestValidQueueName — N°106 — le contrat du nom de file, partagé handler et
+// builder : charset strict, bornes, pas de dynamiques (chevrons).
+func TestValidQueueName(t *testing.T) {
+	for _, ok := range []string{"HOTSPOT-Total", "GLOBAL-Internet", "mikcloud-qos", "queue 1", "a", strings.Repeat("n", 64), "File_02.v7"} {
+		if !ValidQueueName(ok) {
+			t.Errorf("ValidQueueName(%q) = false, attendu true", ok)
+		}
+	}
+	for _, bad := range []string{
+		"", " ", "  double", "double  ", strings.Repeat("n", 65),
+		"<D-SC-A21B>",   // dynamique RouterOS : jamais supprimable
+		`mauvais"quote`, // guillemet : injection
+		"slash/interdit", "pipe|interdit", "pt-virg;interdit", "dollar$interdit",
+		"accentué", "tab\tinterdit",
+	} {
+		if ValidQueueName(bad) {
+			t.Errorf("ValidQueueName(%q) = true, attendu false", bad)
+		}
+	}
+}
+
+// TestBuildQueueRemoveNamedScript — N°106 — le ménage à distance : payload
+// « name » → le script v CETTE file (détachement, retrait, preuve), et ne
+// mentionne PLUS mikcloud-qos — le gérant retire ce qu'il voit dans la
+// table, jamais autre chose.
+func TestBuildQueueRemoveNamedScript(t *testing.T) {
+	b := Builder{BaseURL: "https://cloud.example", Token: "tok"}
+	script, err := b.ScriptFor(model.Command{ID: "c-qrm2", Kind: model.CmdQueueRemove,
+		Payload: map[string]any{"name": "HOTSPOT-Total"}})
+	if err != nil {
+		t.Fatalf("script queue_remove nommé : %v", err)
+	}
+	for _, want := range []string{
+		`/ip hotspot user profile set [find where parent-queue="HOTSPOT-Total"] parent-queue=none`,
+		`/queue simple remove [find where name="HOTSPOT-Total"]`,
+		`[/queue simple print count-only where name="HOTSPOT-Total"]`,
+		`"removed|" . [:tostr $mkleft]`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("script queue_remove nommé : fragment %q absent :\n%s", want, trunc700(script))
+		}
+	}
+	if strings.Contains(script, "mikcloud-qos") {
+		t.Fatalf("le retrait nommé ne doit PAS viser mikcloud-qos :\n%s", trunc700(script))
+	}
+}
+
+// TestBuildQueueRemoveInvalidName — un payload corrompu fait ÉCHOUER la
+// commande (elle sera marquée error côté file) : jamais de repli vers une
+// autre file — ce serait supprimer la MAUVAISE.
+func TestBuildQueueRemoveInvalidName(t *testing.T) {
+	b := Builder{BaseURL: "https://cloud.example", Token: "tok"}
+	for _, bad := range []string{"<D-u1>", `x"y`, "a;b"} {
+		if _, err := b.ScriptFor(model.Command{ID: "c-bad", Kind: model.CmdQueueRemove,
+			Payload: map[string]any{"name": bad}}); err == nil {
+			t.Fatalf("nom %q : une erreur était attendue", bad)
 		}
 	}
 }

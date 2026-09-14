@@ -502,7 +502,7 @@ func (b Builder) ScriptFor(cmd model.Command) (string, error) {
 	case model.CmdQueueRead:
 		return b.buildQueueRead(cmd), nil
 	case model.CmdQueueRemove:
-		return b.buildQueueRemove(cmd), nil
+		return b.buildQueueRemove(cmd)
 	case model.CmdQuotaEnsure:
 		return b.buildQuotaEnsure(cmd), nil
 	default:

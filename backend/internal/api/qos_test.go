@@ -15,11 +15,13 @@ package api
 import (
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
 	"mikcloud/hotspot-api/internal/agent"
 	"mikcloud/hotspot-api/internal/model"
+	"mikcloud/hotspot-api/internal/store"
 )
 
 // TestQoSRecommended — capacité déclarée prioritaire, mesure en repli, rien
@@ -385,5 +387,333 @@ func TestQoSGetEndpoint(t *testing.T) {
 	if first["name"] != "mikcloud-qos" || first["maxDownBps"] != float64(95_000_000) ||
 		first["rateDownBps"] != float64(72_000_000) || first["bytesUp"] != float64(123456) {
 		t.Fatalf("file agrégat parsée : %v", first)
+	}
+}
+
+// TestParseQueueRowsDynamic — N°106 — le drapeau dynamique : rapporté par le
+// script (9e colonne) ou déduit du nom entre chevrons (rapport ancien) ;
+// une file statique reste statique, jamais d'étiquette fantôme.
+func TestParseQueueRowsDynamic(t *testing.T) {
+	rows := parseQueueRows(splitAgentList(
+		"queue|mikcloud-qos|192.168.10.0/24|19M/95M|pcq-upload-default/pcq-download-default|false|1/2|3M/4M|false;" +
+			"queue|<D-u1>|192.168.10.0/24|5M/5M|default-small/default|false|1/2|1M/2M|true;" +
+			"queue|HOTSPOT-Total|192.168.10.0/24|13M/75M|pcq-upload-default/pcq-download-default|false|7/9|2M/40M|false;"))
+	if len(rows) != 3 {
+		t.Fatalf("3 files attendues, %d", len(rows))
+	}
+	if rows[0].Dynamic || rows[2].Dynamic {
+		t.Fatalf("files statiques étiquetées dynamiques : %+v / %+v", rows[0], rows[2])
+	}
+	if !rows[1].Dynamic {
+		t.Fatalf("file dynamique rapportée (9e colonne) : %+v", rows[1])
+	}
+	// Rapport ancien (8 colonnes, sans le drapeau) : l'heuristique des
+	// chevrons sauve l'étiquette.
+	old := parseQueueRows(splitAgentList(
+		"queue|<D-u2>|192.168.10.0/24|5M/5M|default-small/default|false|1/2|1M/2M;"))
+	if len(old) != 1 || !old[0].Dynamic {
+		t.Fatalf("heuristique chevrons : %+v", old)
+	}
+}
+
+// TestRouterQueueDeleteLegacy — N°106 — le ménage à distance, bout en bout :
+// une file legacy (HOTSPOT-Total posée à la main avant le QoS Manager) avec
+// des profils qui la référencent → DELETE /queues/{name} → détachement +
+// queue_remove NOMMÉ enfilé → check-in sert un script visant CETTE file (et
+// aucune autre) → rapport removed|0 → journal honnête, état QoS INTACT (le
+// ménage d'une file legacy ne débranche pas la QoS du routeur) → le cache
+// de la table est périmé (cutoff) → re-lecture → table sans la file.
+func TestRouterQueueDeleteLegacy(t *testing.T) {
+	st, ts := newTestServerWithStore(t)
+	token, accID, _ := registerAccount(t, ts, "qos-clean-gerant", "")
+	const tok = "q0s-t0ken-legacy"
+	seedAgentRouter(t, st, accID, "r-clean", "SITE CLEAN", tok)
+
+	// QoS active et APPLIQUÉE (la file agrégat vit sur le routeur) + un
+	// profil qui référence la file legacy (état d'avant le manager) + un
+	// cache frais de la table des files montrant l'agrégat ET la legacy.
+	wantSig := ""
+	st.Lock()
+	for i := range st.Data().Routers {
+		if st.Data().Routers[i].ID == "r-clean" {
+			r := &st.Data().Routers[i]
+			r.QoSEnabled = true
+			r.QoSTarget = "192.168.10.0/24"
+			r.QoSMaxUpBps = 19_000_000
+			r.QoSMaxDownBps = 95_000_000
+			r.QoSAppliedAt = model.NowISO()
+			r.QoSSig = qosSig(r) // sig RÉELLE : pas de queue_ensure parasite au check-in
+			wantSig = r.QoSSig
+		}
+	}
+	st.Data().Profiles = append(st.Data().Profiles, model.Profile{
+		ID: "pr-legacy", AccountID: accID, Name: "1JOUR", RateLimit: "5M/5M", ParentQueue: "HOTSPOT-Total",
+	})
+	st.Data().Commands = append(st.Data().Commands, model.Command{
+		ID: "c-qr-old", RouterID: "r-clean", AccountID: accID, Kind: model.CmdQueueRead,
+		Status: "done", DoneAt: model.NowISO(),
+		Result: map[string]any{"data": "queue|mikcloud-qos|192.168.10.0/24|19M/95M|pcq-upload-default/pcq-download-default|false|1/2|3M/4M|false;queue|HOTSPOT-Total|192.168.10.0/24|13M/75M|pcq-upload-default/pcq-download-default|false|7/9|2M/40M|false;"},
+	})
+	st.Save()
+	st.Unlock()
+
+	// Le cache frais se sert tel quel (2 files).
+	status, out := doJSON(t, ts, "GET", "/api/routers/r-clean/qos", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("GET qos : %d %v", status, out)
+	}
+	queues, _ := out["queues"].(map[string]any)
+	if queues["queued"] != false {
+		t.Fatalf("cache frais : %v", queues)
+	}
+	if rows, _ := queues["data"].([]any); len(rows) != 2 {
+		t.Fatalf("cache frais : 2 files attendues, %d", len(rows))
+	}
+
+	// Le geste du gérant : DELETE /api/routers/{id}/queues/HOTSPOT-Total.
+	status, out = doJSON(t, ts, "DELETE", "/api/routers/r-clean/queues/HOTSPOT-Total", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("DELETE queue legacy : %d %v", status, out)
+	}
+	st.Lock()
+	removeQueued := 0
+	rmName := ""
+	detachSet := 0
+	for _, c := range st.Data().Commands {
+		if c.Status != "queued" && c.Status != "sent" {
+			continue
+		}
+		if c.Kind == model.CmdQueueRemove {
+			removeQueued++
+			rmName, _ = c.Payload["name"].(string)
+		}
+		if c.Kind == model.CmdProfileSet {
+			if pq, _ := c.Payload["parentQueue"].(string); pq == "" {
+				detachSet++
+			}
+		}
+	}
+	var prof model.Profile
+	for i := range st.Data().Profiles {
+		if st.Data().Profiles[i].ID == "pr-legacy" {
+			prof = st.Data().Profiles[i]
+		}
+	}
+	st.Unlock()
+	if removeQueued != 1 || rmName != "HOTSPOT-Total" {
+		t.Fatalf("queue_remove nommé enfilé : %d commande(s), name=%q", removeQueued, rmName)
+	}
+	if prof.ParentQueue != "" {
+		t.Fatalf("le profil doit être détaché de HOTSPOT-Total, ParentQueue=%q", prof.ParentQueue)
+	}
+	if detachSet < 1 {
+		t.Fatalf("détachement : au moins UN profile_set (celui du profil legacy), %d", detachSet)
+	}
+
+	// Check-in : le script servi vise HOTSPOT-Total, JAMAIS mikcloud-qos.
+	body := agentCheckIn(t, ts, tok)
+	rmID := deviceCmdID(t, body, model.CmdQueueRemove)
+	if rmID == "" {
+		t.Fatalf("le check-in doit servir queue_remove :\n%s", preview(body, 500))
+	}
+	rmBlock := cmdScriptBlock(t, body, rmID)
+	if !strings.Contains(rmBlock, `name="HOTSPOT-Total"`) {
+		t.Fatalf("le script doit viser HOTSPOT-Total :\n%s", preview(rmBlock, 400))
+	}
+	if strings.Contains(rmBlock, `name="mikcloud-qos"`) {
+		t.Fatalf("le retrait ne doit PAS toucher mikcloud-qos :\n%s", preview(rmBlock, 400))
+	}
+
+	// Rapport : disparition prouvée → l'état QoS reste INTACT.
+	agentReport(t, ts, tok, rmID, url.Values{"status": {"ok"}, "data": {"removed|0;"}})
+	// Déterminisme : NowISO est à la seconde — on garantit lecture ancienne
+	// < retrait < lecture fraîche en décalant les DoneAt en store (les
+	// comparaisons du cutoff sont strictes : égalité = cache périmé).
+	shiftCmdDoneAt(t, st, "c-qr-old", -1)
+	st.Lock()
+	var rr model.Router
+	for i := range st.Data().Routers {
+		if st.Data().Routers[i].ID == "r-clean" {
+			rr = st.Data().Routers[i]
+		}
+	}
+	st.Unlock()
+	if !rr.QoSEnabled || rr.QoSSig != wantSig || rr.QoSAppliedAt == "" {
+		t.Fatalf("état QoS intact après ménage legacy : %+v", rr)
+	}
+
+	// Le cache d'avant le retrait est PÉRIMÉ (cutoff) : GET /qos enfile
+	// une nouvelle lecture au lieu de resservir la table avec la file
+	// supprimée — la vérité routeur, pas un cliché antérieur au geste.
+	status, out = doJSON(t, ts, "GET", "/api/routers/r-clean/qos", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("GET qos après retrait : %d %v", status, out)
+	}
+	queues, _ = out["queues"].(map[string]any)
+	if queues["queued"] != true {
+		t.Fatalf("cache périmé : une re-lecture doit être en attente, %v", queues)
+	}
+
+	// La re-lecture servie puis rapportée : la table revient SANS la
+	// file legacy — la preuve complète du ménage à distance.
+	body = agentCheckIn(t, ts, tok)
+	readID := deviceCmdID(t, body, model.CmdQueueRead)
+	if readID == "" {
+		t.Fatalf("le check-in doit servir queue_read :\n%s", preview(body, 400))
+	}
+	agentReport(t, ts, tok, readID, url.Values{"status": {"ok"},
+		"data": {"queue|mikcloud-qos|192.168.10.0/24|19M/95M|pcq-upload-default/pcq-download-default|false|1/2|3M/4M|false;"}})
+	// Déterminisme (suite) : la lecture fraîche doit être POSTÉRIEURE au
+	// retrait — on la décale d'une seconde en store.
+	shiftCmdDoneAt(t, st, readID, 1)
+	status, out = doJSON(t, ts, "GET", "/api/routers/r-clean/qos", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("GET qos final : %d %v", status, out)
+	}
+	queues, _ = out["queues"].(map[string]any)
+	rows, _ := queues["data"].([]any)
+	if queues["queued"] != false || len(rows) != 1 {
+		t.Fatalf("table rafraîchie : 1 file (l'agrégat) attendue, %v", queues)
+	}
+	if only, _ := rows[0].(map[string]any); only["name"] != "mikcloud-qos" {
+		t.Fatalf("seule l'agrégat doit rester : %v", only)
+	}
+}
+
+// cmdScriptBlock — extrait le segment du script d'un check-in dédié à UNE
+// commande (entre son commentaire d'audit et le suivant) : les assertions
+// portent sur CE que fait CETTE commande, pas sur le reste du script
+// (concaténation des commandes servies ensemble).
+func cmdScriptBlock(t *testing.T, script, cmdID string) string {
+	t.Helper()
+	marker := "# mikcloud cmd " + cmdID + " "
+	start := strings.Index(script, marker)
+	if start < 0 {
+		t.Fatalf("commande %s absente du script", cmdID)
+	}
+	rest := script[start:]
+	if next := strings.Index(rest[len(marker):], "# mikcloud cmd "); next >= 0 {
+		rest = rest[:len(marker)+next]
+	}
+	return rest
+}
+
+// shiftCmdDoneAt — décale le DoneAt d'une commande en store de n secondes
+// (déterminisme des comparaisons strictes quand NowISO tombe à la seconde).
+func shiftCmdDoneAt(t *testing.T, st *store.Store, cmdID string, seconds int) {
+	t.Helper()
+	st.Lock()
+	defer st.Unlock()
+	for i := range st.Data().Commands {
+		if st.Data().Commands[i].ID != cmdID {
+			continue
+		}
+		tt, err := time.Parse(time.RFC3339, st.Data().Commands[i].DoneAt)
+		if err != nil {
+			t.Fatalf("DoneAt illisible (%s) : %v", cmdID, err)
+		}
+		st.Data().Commands[i].DoneAt = tt.Add(time.Duration(seconds) * time.Second).Format(time.RFC3339)
+		return
+	}
+	t.Fatalf("commande %s introuvable pour le décalage DoneAt", cmdID)
+}
+
+// TestRouterQueueDeleteGuards — N°106 — les gardes-fous : mikcloud-qos
+// refusé (son retrait passe par « Désactiver la QoS »), dynamiques refusés,
+// charset hostile refusé, routeur inconnu 404, non authentifié 401, et le
+// geste convergent (re-clic pendant la convergence : pas d'accumulation).
+func TestRouterQueueDeleteGuards(t *testing.T) {
+	st, ts := newTestServerWithStore(t)
+	token, accID, _ := registerAccount(t, ts, "qos-guard-gerant", "")
+	const tok = "q0s-t0ken-guards"
+	seedAgentRouter(t, st, accID, "r-guard", "SITE GUARD", tok)
+
+	// mikcloud-qos : refusé — la désactivation QoS pilote AUSSI l'état cloud.
+	status, out := doJSON(t, ts, "DELETE", "/api/routers/r-guard/queues/mikcloud-qos", token, nil)
+	if status != http.StatusBadRequest {
+		t.Fatalf("mikcloud-qos : statut %d attendu 400 (%v)", status, out)
+	}
+	// File de bridage quota (N°106 parallèle) : refusée — pilotée par le
+	// scheduler mikcloud-quota du routeur, la supprimer est vain.
+	status, _ = doJSON(t, ts, "DELETE", "/api/routers/r-guard/queues/mikthrottle-D-u1", token, nil)
+	if status != http.StatusBadRequest {
+		t.Fatalf("mikthrottle : statut %d attendu 400", status)
+	}
+	// File dynamique (« <D-u1> » encodé) : refusée.
+	status, _ = doJSON(t, ts, "DELETE", "/api/routers/r-guard/queues/%3CD-u1%3E", token, nil)
+	if status != http.StatusBadRequest {
+		t.Fatalf("dynamique : statut %d attendu 400", status)
+	}
+	// Charset hostile (guillemet, tube, point-virgule) : refusé.
+	for _, bad := range []string{"a%22b", "a%7Cb", "a%3Bb", "%20", "%09x"} {
+		status, _ = doJSON(t, ts, "DELETE", "/api/routers/r-guard/queues/"+bad, token, nil)
+		if status != http.StatusBadRequest {
+			t.Fatalf("nom hostile %q : statut %d attendu 400", bad, status)
+		}
+	}
+	// Routeur inconnu : 404.
+	status, _ = doJSON(t, ts, "DELETE", "/api/routers/r-inconnu/queues/HOTSPOT-Total", token, nil)
+	if status != http.StatusNotFound {
+		t.Fatalf("routeur inconnu : statut %d attendu 404", status)
+	}
+	// Non authentifié : 401.
+	status, _ = doJSON(t, ts, "DELETE", "/api/routers/r-guard/queues/HOTSPOT-Total", "", nil)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("sans token : statut %d attendu 401", status)
+	}
+
+	// Routeur simulé : geste no-op convergent (rien de réel à retirer),
+	// aucune commande enfilée — la démo ne s'habille pas d'un mensonge.
+	// (Semé en store : le plan d'essai couvre 1 seul routeur.)
+	st.Lock()
+	st.Data().Routers = append(st.Data().Routers, model.Router{
+		ID: "r-sim", AccountID: accID, Name: "SITE DEMO", Mode: "simulated", Status: "online",
+	})
+	st.Save()
+	st.Unlock()
+	status, out = doJSON(t, ts, "DELETE", "/api/routers/r-sim/queues/HOTSPOT-Total", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("simulé : %d %v", status, out)
+	}
+
+	// Convergence idempotente : re-clic pendant le vol → pas de doublon.
+	status, _ = doJSON(t, ts, "DELETE", "/api/routers/r-guard/queues/HOTSPOT-Total", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("premier DELETE agent : %d", status)
+	}
+	status, _ = doJSON(t, ts, "DELETE", "/api/routers/r-guard/queues/HOTSPOT-Total", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("re-clic pendant le vol : %d", status)
+	}
+	st.Lock()
+	sameName := 0
+	for _, c := range st.Data().Commands {
+		if c.Kind == model.CmdQueueRemove && (c.Status == "queued" || c.Status == "sent") &&
+			agent.QueueRemoveTarget(c.Payload) == "HOTSPOT-Total" {
+			sameName++
+		}
+	}
+	st.Unlock()
+	if sameName != 1 {
+		t.Fatalf("pas d'accumulation : 1 queue_remove en vol attendu, %d", sameName)
+	}
+
+	// Un retrait d'un AUTRE nom coexiste (deux files legacy distinctes :
+	// deux gestes ponctuels, tous deux convergent).
+	status, _ = doJSON(t, ts, "DELETE", "/api/routers/r-guard/queues/GLOBAL-Internet", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("second nom : %d", status)
+	}
+	st.Lock()
+	other := 0
+	for _, c := range st.Data().Commands {
+		if c.Kind == model.CmdQueueRemove && (c.Status == "queued" || c.Status == "sent") &&
+			agent.QueueRemoveTarget(c.Payload) == "GLOBAL-Internet" {
+			other++
+		}
+	}
+	st.Unlock()
+	if other != 1 {
+		t.Fatalf("coexistence des noms : 1 commande GLOBAL-Internet attendue, %d", other)
 	}
 }

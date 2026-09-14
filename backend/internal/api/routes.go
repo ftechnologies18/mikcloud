@@ -394,6 +394,9 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/routers/{id}/qos", a.handleRouterQoSGet)
 	mux.HandleFunc("PUT /api/routers/{id}/qos", a.requireRole(2, a.handleRouterQoSPut))
 	mux.HandleFunc("DELETE /api/routers/{id}/qos", a.requireRole(2, a.handleRouterQoSDelete))
+	// N°106 — ménage à distance : retrait d'une file statique LEGACY
+	// (posée à la main avant le QoS Manager) depuis la table des files.
+	mux.HandleFunc("DELETE /api/routers/{id}/queues/{name}", a.requireRole(2, a.handleRouterQueueDelete))
 
 	// B2 « Speed App UX » — Core Web Vitals (voir handlers_vitals.go) :
 	// collecte publique (beacon text/plain sans preflight, vitrine anonyme

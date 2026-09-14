@@ -583,29 +583,61 @@ indéfiniment (login-timeout absent par défaut), address-per-mac=2 par défaut.
 - `POST /api/routers/{id}/pool-doctor` (rôle ≥ manager, garde compte
   expiré) — corps optionnel `{ "extend": true|false }` (défaut false) :
   - simulated : diagnostic synthétique (PoolCap=254, PoolHosts=sessions+40 %,
-    PoolRanges, PoolDoctorAt) → `{ok, poolCap, poolHosts, usagePct, message}` ;
+    PoolRanges, PoolDoctorAt ; extend=true applique VRAIMENT le geste —
+    capacité + ~2 037 adresses, même arithmétique que le rapport agent)
+    → `{ok, poolCap, poolHosts, usagePct, message}` ;
   - agent : enfile la commande `pool_doctor` avec
     `{recycle: true, extend}` → `{queued, commandId, message}` — le
     recyclage est TOUJOURS inclus (aucun subnet touché), l'extension est
     l'opt-in explicite ;
   - real : 400 (matrice §0).
 
-### Commande agent `pool_doctor` (idempotente, script .rsc)
+### Commande agent `pool_doctor` (idempotente, script .rsc) — N°108
+**Correctif N°108 (constat production ProMax WIFI — l'extension « ne
+fonctionne pas »)** : `address-pool` et `addresses-per-mac` sont des
+propriétés du **SERVEUR** hotspot (`/ip hotspot`) — le menu profil
+(`/ip hotspot profile`) ne les a JAMAIS eues. Le script N°97 lisait/écrivait
+les deux sur le profil : chaque `get` échouait silencieusement (on-error →
+chaîne vide → contresens « profil sans pool ») et le `set` de l'extension
+échouait à chaque fois — le pool n'a JAMAIS été étendu (seuls l'IP
+secondaire, l'entrée network et le NAT étaient posés, autour d'un pool
+orphelin `mikcloud-pool` référencé par personne).
 - DIAGNOSTIC (toujours) : rapporte `pools=nom|ranges;…`,
-  `servers=n|profil|interface|login-timeout|idle-timeout|keepalive;…`,
-  `profiles=n|address-pool|address-per-mac;…`, `hosts`, `active` — le cloud
-  en tire PoolCap (capacité des pools RÉFÉRENCÉS, formats `a-b` et CIDR),
-  PoolHosts, PoolRanges, PoolDoctorAt ;
-- RECYCLAGE (payload recycle) : `/ip hotspot set [find]
-  login-timeout=5m idle-timeout=10m keepalive-timeout=2m` + `/ip hotspot
-  profile set [find] address-per-mac=1` ;
-- EXTENSION (payload extend) : range dédié `10.77.0.10-10.77.7.254` ajouté
-  au pool de chaque profil (+ pool dédié `mikcloud-pool` créé pour un profil
-  sans pool), IP secondaire `10.77.0.1/21` sur l'interface hotspot, entrée
-  `/ip hotspot network add address=10.77.0.0/21 masquerade=yes`, règle NAT
+  `servers=n|profil|interface|login-timeout|idle-timeout|keepalive|address-pool|addresses-per-mac;…`
+  (8 champs — les deux derniers RELUS sur le serveur : la vérité de ce qui
+  a VRAIMENT collé), `dhcp=n|interface|pool|lease-time;…` (4 champs),
+  `hosts`, `active` — la liste `profiles` du N°97 est retirée (propriétés
+  inexistantes sur ce menu) ; le cloud en tire PoolCap (capacité des pools
+  RÉFÉRENCÉS : pool du SERVEUR hotspot **OU** pool du DHCP posé sur son
+  interface — cas ProMax WIFI « DHCP du bridge » ; formats `a-b` et CIDR,
+  dédoublonnés), PoolHosts, PoolRanges, PoolDoctorAt. Tolérant aux rapports
+  pré-N°108 (serveurs à 6 champs : la branche DHCP suffit) ;
+- RECYCLAGE (payload recycle) : trois écrits ISOLÉS sur les bons menus —
+  `/ip hotspot set [find] login-timeout=5m idle-timeout=10m
+  keepalive-timeout=2m`, `/ip hotspot set [find] addresses-per-mac=1`,
+  `/ip dhcp-server set [find where interface=<if hotspot>]
+  lease-time=10m` (un bail long brûle l'IP d'un appareil parti pendant des
+  heures — l'isolation par bloc laisse un RouterOS ancien refuser
+  `addresses-per-mac` sans faire échouer les timeouts) ;
+- EXTENSION (payload extend) : par serveur hotspot — (a) le serveur a un
+  `address-pool` → le range dédié `10.77.0.10-10.77.7.254` est AJOUTÉ à CE
+  pool ; (b) sinon, le serveur DHCP de la même interface a un pool → le
+  range est ajouté au pool **DU DHCP** (la capacité vient de là, cas
+  ProMax WIFI) ; (c) sinon, pool dédié `mikcloud-pool` posé **SUR LE
+  SERVEUR** (`/ip hotspot set <id> address-pool=mikcloud-pool`). Dans tous
+  les cas : IP secondaire `10.77.0.1/21` sur l'interface hotspot, entrée
+  `/ip hotspot network add address=10.77.0.0/21 masquerade=yes`, entrée
+  `/ip dhcp-server network add address=10.77.0.0/21 gateway=10.77.0.1`
+  (sans elle, le DHCP n'offre pas proprement le nouveau range) et règle NAT
   `mikcloud-pool-nat` (chain=srcnat src-address=10.77.0.0/21
-  action=masquerade) — tout marqué/idempotent, clients connectés
-  non déconnectés.
+  action=masquerade) — tout marqué/idempotent, clients connectés non
+  déconnectés. Ménage inclus : le pool orphelin `mikcloud-pool` laissé par
+  le N°97 est retiré s'il n'est référencé par aucun serveur hotspot ni
+  DHCP (garde double avant `/ip pool remove`).
+- Convergence au démarrage cloud : `UPDATE routers SET pool_doctor_at=''
+  WHERE mode='agent' AND pool_doctor_at<>''` (lecture seule, une commande
+  par routeur par démarrage — la sémantique du rapport a changé, la
+  capacité doit être re-mesurée après déploiement).
 - Auto-diagnostic du check-in : tout routeur agent dont PoolCap est nul ou
   dont le diagnostic dépasse 7 jours reçoit un pool_doctor en DIAGNOSTIC
   PUR (recycle/extend OFF — le cloud ne modifie jamais la configuration de

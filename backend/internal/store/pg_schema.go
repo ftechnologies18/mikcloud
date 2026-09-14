@@ -732,6 +732,17 @@ func (p *PG) ensureSchema() error {
 		// re-diagnostiquera à chaque redémarrage cloud (rare, une commande
 		// de lecture).
 		`UPDATE routers SET pool_doctor_at = '' WHERE pool_cap = 0 AND pool_doctor_at <> ''`,
+		// N°108 — le docteur N°97 lisait address-pool sur le PROFIL
+		// hotspot (propriété INEXISTANTE — elle vit sur /ip hotspot,
+		// le SERVEUR) : capacité sous-estimée sur les topologies
+		// « pool serveur ≠ pool DHCP » et extension qui n'a jamais
+		// touché le vrai fournisseur d'adresses (constat production
+		// ProMax WIFI). La sémantique du rapport change (serveurs à
+		// 8 champs, DHCP à 4, liste profils retirée) : re-diagnostic
+		// de tous les routeurs agent au premier check-in suivant ce
+		// démarrage — lecture seule, une commande par routeur par
+		// démarrage cloud (rare), pattern de convergence du parc.
+		`UPDATE routers SET pool_doctor_at = '' WHERE mode = 'agent' AND pool_doctor_at <> ''`,
 		// Sécurité S6 — détection d'identité routeur dupliquée (conflit
 		// inter-comptes, cf. internal/api/agent_handlers.go).
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS identity_conflict BOOLEAN NOT NULL DEFAULT FALSE`,

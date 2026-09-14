@@ -1,15 +1,21 @@
-// N°97 — Docteur du pool d'adresses IP du hotspot (console).
+// N°97 → N°108 — Docteur du pool d'adresses IP du hotspot (console).
 //
 //	POST /api/routers/{id}/pool-doctor   { "extend": true|false }
 //
 // Corrige l'épuisement « cannot assign ip address - no more free addresses
 // from pool » aux heures de pointe (constat gérant 13/09/2026) :
 //   - simulated : applique un diagnostic synthétique honnête (capacité 254
-//     par défaut, hôtes = sessions actives + zombies simulés) ;
+//     par défaut, hôtes = sessions actives + zombies simulés ; extend=true
+//     applique VRAIMENT l'extension — capacité + ~2 037 adresses, la démo
+//     montre le geste que verra le gérant en mode agent) ;
 //   - agent     : enfile la commande pool_doctor (recyclage TOUJOURS inclus :
 //     login-timeout 5m / idle-timeout 10m / keepalive-timeout 2m /
-//     address-per-mac=1 — libère les IP des zombies) ; extend=true ajoute
-//     en plus le range dédié 10.77.0.10-10.77.7.254 (~2 037 IP) au pool du profil ;
+//     addresses-per-mac=1 sur le serveur hotspot + lease-time 10m sur le DHCP
+//     de son interface — libère les IP des zombies) ; extend=true ajoute en
+//     plus le range dédié 10.77.0.10-10.77.7.254 (~2 037 IP) au VRAI
+//     fournisseur d'adresses du serveur : son address-pool, sinon le pool du
+//     DHCP de son interface (N°108 — cas ProMax WIFI), sinon un pool dédié
+//     posé sur le serveur ;
 //   - real      : 400 (matrice §0 : les outils du mode API directe ne sont
 //     pas supportés).
 package api
@@ -17,6 +23,7 @@ package api
 import (
 	"net/http"
 
+	"mikcloud/hotspot-api/internal/agent"
 	"mikcloud/hotspot-api/internal/model"
 )
 
@@ -65,16 +72,24 @@ func (a *API) handleRouterPoolDoctor(w http.ResponseWriter, r *http.Request) {
 
 	// simulated — diagnostic synthétique : capacité /24 (254) et hôtes =
 	// sessions actives + 40 % de zombies (moteur de démo cohérent avec la
-	// télémétrie simulée). Les champs posés sont les MÊMES que le mode agent
-	// (PoolCap/PoolHosts/PoolRanges/PoolDoctorAt) : la console affiche et le
-	// moniteur alerte identiquement.
+	// télémétrie simulée). N°108 — extend=true applique VRAIMENT le geste :
+	// le range dédié rejoint les ranges affichés et la capacité (+ ~2 037,
+	// même arithmétique que rangeCapacity côté rapport agent) — la démo
+	// honnête du bouton « Étendre le pool ». Les champs posés sont les MÊMES
+	// que le mode agent (PoolCap/PoolHosts/PoolRanges/PoolDoctorAt) : la
+	// console affiche et le moniteur alerte identiquement.
 	cur.PoolCap = 254
 	cur.PoolHosts = cur.ActiveSessions + cur.ActiveSessions*2/5
 	cur.PoolRanges = "10.5.50.2-10.5.50.254"
+	if extend {
+		cur.PoolRanges += ", " + agent.PoolDoctorExtRange
+		cur.PoolCap += rangeCapacity(agent.PoolDoctorExtRange)
+	}
 	cur.PoolDoctorAt = model.NowISO()
 	poolCap, poolHosts := cur.PoolCap, cur.PoolHosts
 	usagePct := poolUsagePct(cur)
-	a.logActivityBy(r, db, acc, "router", "Docteur pool IP appliqué sur «"+name+"» (simulation)")
+	a.logActivityBy(r, db, acc, "router", "Docteur pool IP appliqué sur «"+name+"» (simulation"+
+		map[bool]string{true: ", extension incluse", false: ""}[extend]+")")
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{

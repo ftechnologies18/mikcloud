@@ -1,15 +1,18 @@
 "use client";
 
-// N°97 — Docteur du pool d'adresses IP du hotspot (onglet Système des
+// N°97/N°108 — Docteur du pool d'adresses IP du hotspot (onglet Système des
 // Outils routeur). Corrige l'épuisement « no more free addresses from
 // pool » aux heures de pointe :
 //   - jauge d'occupation live (poolHosts/poolCap — hôtes payants + zombies)
 //     quand la capacité est connue (auto-diagnostic du check-in) ;
 //   - « Recycler les IP zombies » : pose login-timeout/idle-timeout/
-//     keepalive-timeout + address-per-mac=1 (aucun subnet touché) ;
+//     keepalive-timeout + addresses-per-mac=1 sur les serveurs hotspot et
+//     lease-time=10m sur les DHCP de leurs interfaces (aucun subnet touché) ;
 //   - « Étendre le pool » (confirmation explicite) : ajoute le range
-//     dédié 10.77.0.0/21 (~2 037 IP) au pool du profil + IP secondaire +
-//     entrée network masquerade + règle NAT marquée.
+//     dédié 10.77.0.0/21 (~2 037 IP) au VRAI fournisseur d'adresses du
+//     serveur — son address-pool, sinon le pool du DHCP de son interface
+//     (N°108 : address-pool vit sur /ip hotspot le SERVEUR, pas le profil)
+//     + IP secondaire + entrées network hotspot/DHCP + règle NAT marquée.
 // N°99 — switch « Auto-réparation » (mode agent) : le gérant autorise le
 // cloud à recycler les zombies LUI-MÊME à chaque transition d'alerte
 // (≥ 80 %/≥ 95 %) — un geste initial, plus jamais de clic. L'extension

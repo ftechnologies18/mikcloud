@@ -1,20 +1,25 @@
-// N°97 — application du rapport pool_doctor + calcul de capacité.
+// N°97 → N°108 — application du rapport pool_doctor + calcul de capacité.
 //
 // Le script (agent/pooldoctor.go) rapporte APRÈS application :
 //
-//	recycled=yes|no          — timeouts + address-per-mac posés
-//	extended=yes|no          — range dédié ajouté aux pools des profils
+//	recycled=yes|no          — timeouts + addresses-per-mac + lease DHCP posés
+//	extended=yes|no          — range dédié ajouté au vrai fournisseur d'adresses
 //	hosts=<n>                — hôtes tenant une IP (authentifiés + zombies)
 //	active=<n>               — sessions authentifiées
 //	pools=nom|r1,r2;…        — pools RouterOS (ranges vérité routeur)
-//	servers=n|prof|if|loginTO|idleTO|keepTO;…
-//	profiles=n|pool|perMAC;…
+//	servers=n|prof|if|loginTO|idleTO|keepTO|pool|perMAC;…
+//	dhcp=n|if|pool|lease;…
 //
-// Le cloud en tire : PoolCap (capacité des pools RÉFÉRENCÉS par les profils
-// hotspot — pas les pools orphelins), PoolRanges (affichage), PoolHosts,
-// PoolDoctorAt. Les listes brutes restent dans cmd.Result (console « Outils
-// routeur »). Calcul partagé avec le simulateur (handler POST pool-doctor
-// en mode simulated) : ParsePoolCapacity.
+// N°108 : la liste « profiles » du N°97 est retirée du rapport (address-pool
+// et addresses-per-mac vivent sur /ip hotspot — le N°97 les lisait sur le
+// profil, propriétés INEXISTANTES : champs toujours vides) ; le pool du
+// SERVEUR hotspot arrive en 7e champ de la liste serveurs.
+//
+// Le cloud en tire : PoolCap (capacité des pools RÉFÉRENCÉS — pool du serveur
+// hotspot OU pool du DHCP de son interface — pas les pools orphelins),
+// PoolRanges (affichage), PoolHosts, PoolDoctorAt. Les listes brutes restent
+// dans cmd.Result (console « Outils routeur »). Calcul partagé avec le
+// simulateur (handler POST pool-doctor en mode simulated) : ParsePoolCapacity.
 package api
 
 import (
@@ -122,28 +127,21 @@ func parseDoctorPools(raw string) map[string]string {
 	return out
 }
 
-// parseDoctorReferenced — noms de pools référencés par les configs
-// HOTSPOT du routeur : (1) address-pool de chaque profil hotspot
-// (« nom|pool|perMAC;… », champ 2) ; (2) pool du serveur DHCP posé sur une
-// INTERFACE de serveur hotspot (« n|prof|if|loginTO|idleTO|keepTO;… » →
-// interfaces côté serveurs, « nom|if|pool;… » côté DHCP) — un hotspot sans
-// address-pool de profil s'appuie sur le DHCP du bridge (cas réel ProMax
-// WIFI : profil vide + dhcp-server Hotspot-Pool sur Bridge-Hotspot) : sa
-// capacité vient de là. Le champ 2 des serveurs est le nom du PROFIL (le
-// lire comme pool fut le bug N°97 initial corrigé au N°97-ter).
-func parseDoctorReferenced(profilesRaw, serversRaw, dhcpRaw string) []string {
+// parseDoctorReferenced — noms de pools référencés par les configs HOTSPOT
+// du routeur : (1) address-pool de chaque SERVEUR hotspot (7e champ de
+// « n|prof|if|loginTO|idleTO|keepTO|pool|perMAC;… » — N°108 : la propriété
+// vit sur /ip hotspot, la réallocation d'IP du hotspot tire de là) ; (2) pool
+// du serveur DHCP posé sur une INTERFACE de serveur hotspot
+// (« n|if|pool|lease;… ») — un serveur sans address-pool s'appuie sur le DHCP
+// du bridge (cas réel ProMax WIFI : serveur sans pool, dhcp-server
+// Hotspot-Pool sur Bridge-Hotspot) : sa capacité vient de là. Tolérant aux
+// rapports antérieurs au N°108 (serveurs à 6 champs : le pool serveur
+// n'y figure pas, la branche DHCP suffit — un rapport en vol au moment du
+// déploiement reste lisible).
+func parseDoctorReferenced(serversRaw, dhcpRaw string) []string {
 	var names []string
-	for _, entry := range strings.Split(profilesRaw, ";") {
-		entry = strings.TrimSpace(entry)
-		if entry == "" {
-			continue
-		}
-		fields := strings.Split(entry, "|")
-		if len(fields) >= 2 {
-			names = append(names, fields[1])
-		}
-	}
-	// Interfaces portant un serveur hotspot.
+	// Pool du serveur hotspot (7e champ) + interfaces portant un serveur
+	// hotspot (3e champ) — une seule passe sur la liste.
 	hotspotIfaces := map[string]bool{}
 	for _, entry := range strings.Split(serversRaw, ";") {
 		entry = strings.TrimSpace(entry)
@@ -156,8 +154,14 @@ func parseDoctorReferenced(profilesRaw, serversRaw, dhcpRaw string) []string {
 				hotspotIfaces[ifc] = true
 			}
 		}
+		if len(fields) >= 7 {
+			if pool := strings.TrimSpace(fields[6]); pool != "" && pool != "none" && pool != "(unknown)" {
+				names = append(names, pool)
+			}
+		}
 	}
-	// Pools des serveurs DHCP posés sur CES interfaces.
+	// Pools des serveurs DHCP posés sur CES interfaces (4e champ = lease,
+	// pas encore lu ici — la branche ne regarde que l'interface et le pool).
 	for _, entry := range strings.Split(dhcpRaw, ";") {
 		entry = strings.TrimSpace(entry)
 		if entry == "" {
@@ -179,7 +183,7 @@ func parseDoctorReferenced(profilesRaw, serversRaw, dhcpRaw string) []string {
 // l'activité (résumé lisible gérant).
 func (a *API) applyPoolDoctor(db *model.DB, router *model.Router, vals url.Values) string {
 	pools := parseDoctorPools(vals.Get("pools"))
-	referenced := parseDoctorReferenced(vals.Get("profiles"), vals.Get("servers"), vals.Get("dhcp"))
+	referenced := parseDoctorReferenced(vals.Get("servers"), vals.Get("dhcp"))
 	cap, ranges := ParsePoolCapacity(pools, referenced)
 
 	router.PoolCap = cap

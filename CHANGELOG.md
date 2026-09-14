@@ -5,6 +5,72 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-14 — N°108 — Correctif docteur pool IP : l'extension « ne fonctionnait pas » — address-pool et addresses-per-mac vivent sur le SERVEUR hotspot (/ip hotspot), PAS sur le profil (menu qui ne les a jamais eues) : le script N°97 lisait des champs vides et ses set échouaient en silence — le pool n'a JAMAIS été étendu (constat production ProMax WIFI, « no more free addresses from pool » persistant aux heures de pointe)
+
+### N°108 — Contexte : la panne invisible du bon menu
+Le docteur N°97 promettait trois gestes ; en production sur ProMax WIFI,
+l'épuisement persiste aux heures de pointe. Vérification croisée contre la
+doc RouterOS (help.mikrotik.com, HotSpot - Captive portal) : `address-pool`
+et `addresses-per-mac` sont des propriétés de `/ip hotspot` (le SERVEUR) —
+le menu `/ip hotspot profile` ne les possède pas. Le script N°97 lisait et
+écrivait les deux sur le PROFIL : chaque `get` échouait en silence
+(on-error → chaîne vide — le rapport production montrait bien des profils « sans
+pool », contresens complet), et le `set` de l'extension échouait à chaque
+fois. Résultat net après un clic « Étendre le pool » : un pool orphelin
+`mikcloud-pool` créé mais référencé par personne, l'IP secondaire, l'entrée
+network et le NAT posés autour de rien — et le VRAI fournisseur d'adresses
+(pool du serveur hotspot, partagé avec le DHCP du bridge : 241 IP chez
+ProMax) jamais étendu. Le recyclage était à moitié muet aussi :
+`address-per-mac=1` sur le profil n'a jamais collé (mauvais menu, mauvais
+nom — la vraie propriété est `addresses-per-mac`, sur le serveur), chaque
+appareil a continué de pouvoir prendre DEUX adresses.
+
+### Produit
+- (1) EXTENSION QUI ÉTEND — par serveur hotspot : (a) le serveur a un
+  address-pool → le range dédié 10.77.0.10-10.77.7.254 (~2 037 IP) est
+  AJOUTÉ à CE pool ; (b) sinon, le serveur DHCP de la même interface a un
+  pool → le range est ajouté au pool DU DHCP (topologie ProMax WIFI : la
+  capacité vient de là) ; (c) sinon, pool dédié `mikcloud-pool` posé SUR LE
+  SERVEUR. S'ajoutent l'IP secondaire 10.77.0.1/21 sur l'interface hotspot,
+  les entrées `/ip hotspot network` (masquerade) et `/ip dhcp-server
+  network` (gateway 10.77.0.1 — sans elle, le DHCP n'offre pas proprement
+  le nouveau range) et la règle NAT mikcloud-pool-nat. Ménage inclus : le
+  pool orphelin laissé par le N°97 est retiré s'il ne référence plus rien
+  (double garde avant /ip pool remove).
+- (2) RECYCLAGE COMPLET — trois écrits ISOLÉS sur les bons menus :
+  login/idle/keepalive-timeout sur `/ip hotspot`, `addresses-per-mac=1`
+  sur `/ip hotspot` (un RouterOS ancien qui l'ignore ne fait plus échouer
+  les timeouts), et `lease-time=10m` sur les DHCP des interfaces hotspot
+  (un bail long brûle l'IP d'un appareil parti pendant des heures).
+- (3) DIAGNOSTIC HONNÊTE — serveurs rapportés à 8 champs (address-pool et
+  addresses-per-mac RELUS sur le serveur : la vérité de ce qui a collé),
+  DHCP à 4 champs (lease-time) ; la liste « profiles » du N°97 est retirée
+  (elle ne rapportait que des champs vides lus sur des propriétés
+  inexistantes). Le cloud compte la capacité des pools RÉFÉRENCÉS : pool du
+  SERVEUR OU pool du DHCP de son interface, dédoublonnés — tolérant aux
+  rapports pré-N°108 encore en vol au déploiement (branche DHCP).
+- (4) CONVERGENCE AU DÉMARRAGE — la sémantique du rapport a changé :
+  `UPDATE routers SET pool_doctor_at='' WHERE mode='agent'` au boot →
+  re-diagnostic (lecture seule, une commande par routeur par démarrage
+  cloud) ; la capacité re-mesurée arrive au premier check-in.
+- (5) SIMULÉ HONNÊTE — « Étendre le pool » applique VRAIMENT le geste en
+  démo : capacité 254 → 2291, ranges enrichis du range dédié.
+
+### Technique
+`agent/pooldoctor.go` réécrit (menus corrects, repli DHCP, ménage orphelin,
+payload `leaseTimeout`) ; `api/agent_pool.go` : `parseDoctorReferenced`
+lit le pool en 7e champ des serveurs + branche DHCP (signature sans la
+liste profiles) ; `api/handlers_pool.go` : simulé étendu honnête ;
+`store/pg_schema.go` : migration boot de re-diagnostic ; i18n
+extendDesc1/2 réécrites (le pool qui alimente réellement le hotspot) ;
+CONTRACT-V2 §N°97-108 mis à jour. Tests : garde de régression
+`TestPoolDoctorNeverTouchesProfileMenu` (JAMAIS de get/set
+address-pool|addresses-per-mac sur /ip hotspot profile), formes du script
+(recyclage trois écrits isolés, extension a/b/c, idempotence, sanitisation
+lease), parseur trois dialectes (serveur avec pool / sans pool / rapport
+pré-N°108 à 6 champs — rétrocompatibilité), cas ProMax complet, simulé
+étendu (2291, 6 %). Vérifié : gofmt/vet/build OK, go test 12 paquets verts.
+
 ## 2026-09-14 — N°106 — Mode bridage « l'atterrissage en douceur » : le quota data épuisé ne coupe PLUS, il bridle (file mikthrottle- posée au-dessus de la file dynamique, marqueur mikq: en tête du commentaire, scheduler mikcloud-quota 20 s, on-login/on-logout du profil) jusqu'à l'expiration du TEMPS — exactement le contrat « 1 h / 1 Go » demandé par le terrain
 
 ### N°106 — Contexte : le quota qui coupe punit le client au pire moment

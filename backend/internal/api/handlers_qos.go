@@ -18,6 +18,7 @@ package api
 import (
 	"net"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -244,10 +245,12 @@ func parseDualInt(s string) (int64, int64) {
 }
 
 // qosRowMatches — la file relue correspond-elle EXACTEMENT à l'état désiré
-// (cible, limites en bps, types PCQ par défaut, active) ?
+// (cible, limites en bps, types PCQ par défaut, active) ? La cible se
+// compare en ENSEMBLE (N°110) : une liste « a,b » relue dans un autre
+// ordre couvre exactement les mêmes sous-réseaux — c'est LA vérité.
 func qosRowMatches(row qosQueueRow, target string, maxUp, maxDown int64) bool {
 	return row.Name == agent.QoSQueueName &&
-		row.Target == target &&
+		normalizeTargetSet(row.Target) == normalizeTargetSet(target) &&
 		row.MaxUpBps == maxUp && row.MaxDownBps == maxDown &&
 		row.Queue == agent.QoSQueueTypes &&
 		!row.Disabled
@@ -562,10 +565,10 @@ func (a *API) handleRouterQoSPut(w http.ResponseWriter, r *http.Request) {
 	// Champs optionnels (PATCH sémantique) : absents = inchangés.
 	target := rr.QoSTarget
 	if req.Target != nil {
-		t, ok := normalizeCIDR(*req.Target)
+		t, ok := normalizeCIDRList(*req.Target)
 		if !ok {
 			a.store.Unlock()
-			writeErr(w, http.StatusBadRequest, "Cible invalide (CIDR IPv4 attendu, ex. 192.168.10.0/24)")
+			writeErr(w, http.StatusBadRequest, "Cible invalide (1 à 4 CIDR IPv4 séparés par des virgules, ex. 192.168.10.0/24,10.77.0.0/21)")
 			return
 		}
 		target = t
@@ -669,6 +672,55 @@ func normalizeCIDR(raw string) (string, bool) {
 		return "", false
 	}
 	return ipnet.String(), true
+}
+
+// normalizeCIDRList — N°110 — cible simple OU multiple : 1 à 4 CIDR IPv4
+// séparés par des virgules (« 192.168.10.0/24,10.77.0.0/21 »). Un hotspot
+// dont le pool a été étendu (docteur N°108 — le range dédié 10.77.0.0/21
+// alimente les nouveaux clients) vit sur des sous-réseaux DISJOINTS :
+// aucun préfixe unique ne les couvre, RouterOS accepte une LISTE de cibles
+// dans une seule file — le plafond agrégat reste UN. Chaque élément est
+// canonisé par normalizeCIDR (IPv4 strict), les doublons disparaissent,
+// l'ordre de saisie est conservé (script lisible côté routeur ; la
+// VÉRIFICATION, elle, compare des ensembles — voir normalizeTargetSet).
+func normalizeCIDRList(raw string) (string, bool) {
+	parts := strings.Split(raw, ",")
+	if len(parts) < 1 || len(parts) > 4 {
+		return "", false
+	}
+	list := make([]string, 0, len(parts))
+	seen := make(map[string]bool, len(parts))
+	for _, p := range parts {
+		c, ok := normalizeCIDR(p)
+		if !ok {
+			return "", false
+		}
+		if !seen[c] {
+			seen[c] = true
+			list = append(list, c)
+		}
+	}
+	return strings.Join(list, ","), true
+}
+
+// normalizeTargetSet — N°110 — une cible (simple ou liste) en ordre
+// canonique d'ENSEMBLE : la relecture RouterOS d'une liste peut revenir
+// dans un autre ordre ou espacer les virgules — la vérification bit à bit
+// compare ce que la file COUVRE, pas la concaténation de caractères.
+func normalizeTargetSet(s string) string {
+	parts := strings.Split(s, ",")
+	list := make([]string, 0, len(parts))
+	seen := make(map[string]bool, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		list = append(list, p)
+	}
+	sort.Strings(list)
+	return strings.Join(list, ",")
 }
 
 // qosConvergenceHint — libellé du délai de convergence pour le journal.

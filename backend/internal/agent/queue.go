@@ -201,7 +201,7 @@ func (b Builder) buildQueueEnsure(cmd model.Command) string {
 	if thrDown < 1_000_000 || thrDown > maxDown {
 		thrDown = maxDown * 4 / 5
 	}
-	target = sanitizeCIDR(target)
+	target = sanitizeCIDRList(target)
 	limits := strconv.FormatInt(maxUp, 10) + "/" + strconv.FormatInt(maxDown, 10)
 	burst := strconv.FormatInt(burstUp, 10) + "/" + strconv.FormatInt(burstDown, 10)
 	thr := strconv.FormatInt(thrUp, 10) + "/" + strconv.FormatInt(thrDown, 10)
@@ -317,27 +317,45 @@ func (b Builder) buildQueueRemove(cmd model.Command) (string, error) {
 	return sb.String(), nil
 }
 
-// sanitizeCIDR — borne la cible à une forme CIDR IPv4 lisible (le handler
-// a validé ; le builder ne laisse passer ni espace ni séparateur du
-// protocole — un payload corrompu retombe sur la cible par défaut du
-// routeur 192.168.88.0/24, jamais sur une injection).
-func sanitizeCIDR(s string) string {
+// sanitizeCIDRPart — N°110 — UN préfixe d'une liste de cibles : charset
+// CIDR strict (chiffres, « . », « / »), ≤ 18 caractères, slash requis.
+// "" si l'élément ne s'y prête pas (distinguer « vide » de « défaut » :
+// la liste doit savoir qu'un élément a été REJETÉ, pas le remplacer
+// silencieusement par un autre sous-réseau — ce serait brider le MAUVAIS).
+func sanitizeCIDRPart(s string) string {
 	s = strings.TrimSpace(s)
-	if s == "" {
-		return "192.168.88.0/24"
+	if s == "" || len(s) > 18 || !strings.Contains(s, "/") {
+		return ""
 	}
-	var clean []byte
-	for i := 0; i < len(s) && len(clean) < 18; i++ {
+	for i := 0; i < len(s); i++ {
 		c := s[i]
-		switch {
-		case c >= '0' && c <= '9', c == '.', c == '/':
-			clean = append(clean, c)
-		default:
-			return "192.168.88.0/24"
+		if !(c >= '0' && c <= '9' || c == '.' || c == '/') {
+			return ""
 		}
 	}
-	if len(clean) == 0 {
+	return s
+}
+
+// sanitizeCIDRList — N°110 — cible simple OU multiple (« 192.168.10.0/24,
+// 10.77.0.0/21 ») : un hotspot dont le pool a été étendu (docteur N°108,
+// range dédié 10.77.0.0/21) vit sur des sous-réseaux DISJOINTS — aucun
+// préfixe unique ne les couvre, RouterOS accepte une liste de cibles dans
+// UNE seule file. 1 à 4 éléments, séparateur virgule (jamais un caractère
+// d'injection : le split précède le filtre charset). Un seul élément
+// invalide fait retomber TOUTE la cible sur le défaut historique — la
+// défense en profondeur reste un repli franc, jamais un demi-bridage.
+func sanitizeCIDRList(s string) string {
+	parts := strings.Split(s, ",")
+	if len(parts) < 1 || len(parts) > 4 {
 		return "192.168.88.0/24"
 	}
-	return string(clean)
+	clean := make([]string, 0, len(parts))
+	for _, p := range parts {
+		c := sanitizeCIDRPart(p)
+		if c == "" {
+			return "192.168.88.0/24"
+		}
+		clean = append(clean, c)
+	}
+	return strings.Join(clean, ",")
 }

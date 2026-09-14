@@ -5,6 +5,64 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-14 — N°110 — QoS multi-sous-réseaux : la cible accepte 1 à 4 CIDR séparés par des virgules — le cas du hotspot au pool ÉTENDU (ProMax WIFI : clients sur 192.168.10.0/24 ET 10.77.0.0/21, deux mondes disjoints qu'aucun préfixe unique ne couvre) devient configurable en UNE file
+
+### N°110 — Contexte : deux sous-réseaux, une seule ligne
+Retour terrain (guide d'activation QoS sur ProMax WIFI) : la table des files
+montre des cibles dynamiques `192.168.10.53/32` ET `10.77.0.63/32` — preuve
+que l'extension de pool N°108 est ACTIVE (des clients hotspot reçoivent des
+adresses du range dédié 10.77.0.0/21). Le hotspot vit donc sur deux
+sous-réseaux DISJOINTS : aucune cible CIDR unique ne peut couvrir les deux,
+et l'ancien PUT refusait les listes (« Cible invalide ») — la QoS n'était
+tout simplement pas activable honnêtement sur ce routeur. RouterOS, lui,
+accepte plusieurs préfixes dans le `target` d'UNE simple queue : le plafond
+agrégat reste UN, les types PCQ classent chaque client (src/dst-address)
+quel que soit son sous-réseau.
+
+### Produit
+- (1) SAISIE MULTI-CIBLES — `PUT /api/routers/{id}/qos` accepte `target`
+  = 1 à 4 CIDR IPv4 séparés par des virgules (`192.168.10.0/24,10.77.0.0/21`)
+  : chaque élément canonisé (IPv4 strict), doublons dédoublonnés, ordre de
+  saisie conservé ; UN seul élément invalide rejette le PUT entier (400) —
+  jamais de file posée sur un sous-réseau de moins. Champ et hint de la
+  carte mis à jour (placeholder `192.168.10.0/24,10.77.0.0/21`, mention
+  explicite du range étendu N°108).
+- (2) SCRIPT ROUTEUR — `buildQueueEnsure` émet `target=a,b` (le builder
+  borne chaque élément : charset CIDR, ≤ 18 caractères, slash requis ; un
+  élément corrompu fait retomber TOUTE la cible sur le défaut franc
+  192.168.88.0/24 — défense en profondeur, jamais un demi-bridage).
+- (3) VÉRIFICATION PAR ENSEMBLE — la relecture RouterOS d'une liste peut
+  revenir RÉORDONNÉE ou espacée : `qosRowMatches` compare désormais les
+  ENSEMBLES de préfixes (split, trim, tri) — une cible qui couvre MOINS
+  (un seul des deux sous-réseaux) reste un mensonge : pas de signature.
+- (4) AUCUNE MIGRATION — `routers.qos_target` est `text` (la liste voyage
+  telle quelle) ; la signature (hash cible+limites) change avec la nouvelle
+  forme → re-convergence automatique du parc déjà équipé.
+
+### Technique
+`normalizeCIDRList` + `normalizeTargetSet` (api/handlers_qos.go),
+`sanitizeCIDRPart`/`sanitizeCIDRList` (agent/queue.go, sanitizeCIDR absorbé),
+i18n `tools.qos.target/targetPlaceholder/targetHint` FR+EN,
+CONTRACT-V2 §N°110. Tests : agent (script multi-cibles, contrat du
+sanitize : espaces/doublons/5 éléments/injection → repli franc) + api
+(normalisation 7 formes valides / 7 rejets, parcours doré ProMax :
+PUT liste → relecture RÉORDONNÉE → signature posée ; cible incomplète →
+signature refusée ; PUT invalide → 400). Vérifié : gofmt vide, go vet OK,
+go build OK, go test 12 paquets verts, eslint 0, tsgo 0, build prod OK.
+
+## 2026-09-14 — N°109 — Le badge de la carte QoS disait « Hors ligne » pour « QoS désactivée » : le badge de CONNECTIVITÉ routeur ne doit jamais porter l'état ON/OFF de la QoS — corrigé en une étiquette dédiée (gris neutre = un choix par défaut, pas une panne)
+
+Correctif d'étiquette suite au retour gérant : la carte QoS (onglet Outils
+routeur) affichait un badge rouge « Hors ligne · QoS désactivée » alors que
+l'en-tête de la même page disait « En ligne » — le composant réutilisait
+`StatusBadge status="offline"` (badge de connectivité) pour l'état ON/OFF de
+la QoS. Désormais : actif = badge vert « QoS active » + point pulsant, le
+span adjacent porte le qualificatif de convergence (« appliquée » / « en
+cours (≤ 45 s) » / « retrait en cours ») ; inactif = badge gris neutre
+« QoS désactivée » — inactive est un CHOIX par défaut, le rouge destructif
+reste réservé aux vraies alertes. Aucun changement backend (GET /qos
+identique), l'en-tête « En ligne » reste LA vérité réseau du routeur.
+
 ## 2026-09-14 — N°108 — Correctif docteur pool IP : l'extension « ne fonctionnait pas » — address-pool et addresses-per-mac vivent sur le SERVEUR hotspot (/ip hotspot), PAS sur le profil (menu qui ne les a jamais eues) : le script N°97 lisait des champs vides et ses set échouaient en silence — le pool n'a JAMAIS été étendu (constat production ProMax WIFI, « no more free addresses from pool » persistant aux heures de pointe)
 
 ### N°108 — Contexte : la panne invisible du bon menu

@@ -735,6 +735,15 @@ bruts (`max-limit=19000000/95000000`), relecture routeur formatée (« 19M »)
 normalisée en bps par le cloud (`RosRateBps`) : la vérification est bit à
 bit, jamais textuelle.
 
+N°110 — la cible accepte désormais une LISTE (1 à 4 CIDR IPv4 séparés par
+des virgules, ex. `192.168.10.0/24,10.77.0.0/21`) : un hotspot dont le pool
+a été étendu (docteur N°108 — range dédié 10.77.0.0/21) vit sur des
+sous-réseaux DISJOINTS qu'aucun préfixe unique ne couvre ; RouterOS accepte
+plusieurs cibles dans UNE file — le plafond agrégat reste UN. La
+VÉRIFICATION compare des ENSEMBLES (une relecture réordonnée reste
+conforme) ; côté builder, tout élément invalide fait retomber TOUTE la
+cible sur le défaut franc 192.168.88.0/24.
+
 ### Commandes agent (kinds)
 - `queue_ensure` — create-or-set idempotent + RELECTURE de vérification
   (target|max-limit|queue|disabled). Signature posée seulement si la
@@ -754,10 +763,10 @@ bit, jamais textuelle.
   jamais de repli vers une autre file.
 
 ### Modèle (colonnes routers)
-`QoSEnabled bool`, `QoSTarget text` (CIDR IPv4), `QoSMaxUpBps/QoSMaxDownBps
-bigint` (max-limit appliqué — burst = max×20/19, seuil = 80 % du max :
-DÉRIVÉS, jamais persistés), `QoSSig text` (config appliquée, hash
-cible+limites+sel qos-v1), `QoSAppliedAt text`.
+`QoSEnabled bool`, `QoSTarget text` (1 à 4 CIDR IPv4, virgules — N°110),
+`QoSMaxUpBps/QoSMaxDownBps bigint` (max-limit appliqué — burst = max×20/19,
+seuil = 80 % du max : DÉRIVÉS, jamais persistés), `QoSSig text` (config
+appliquée, hash cible+limites+sel qos-v1), `QoSAppliedAt text`.
 
 ### Convergence (pattern walled_garden)
 - Check-in : QoS active + sig différente/stale → `queue_ensure` (vague
@@ -801,9 +810,11 @@ cible+limites+sel qos-v1), `QoSAppliedAt text`.
   goulot). `queues` : cache d'un queue_read done < 120 s (mécanique outils
   F9) sinon lecture à la demande ; simulé → lignes déterministes.
 - `PUT /api/routers/{id}/qos` (rang 2) `{enabled, target, maxUpBps,
-  maxDownBps}` : pose l'état désiré (champs absents = inchangés ; CIDR
-  canonisé ; limites 1 Mbps–10 Gbps) et enfile immédiatement queue_ensure /
-  queue_remove (agent). La convergence complète suit au check-in (≤ 45 s).
+  maxDownBps}` : pose l'état désiré (champs absents = inchangés ; target =
+  1 à 4 CIDR IPv4 séparés par des virgules, chacun canonisé, doublons
+  dédoublonnés — N°110 ; limites 1 Mbps–10 Gbps) et enfile immédiatement
+  queue_ensure / queue_remove (agent). La convergence complète suit au
+  check-in (≤ 45 s).
 - `DELETE /api/routers/{id}/qos` (rang 2) : désactivation — la config est
   conservée (ré-allumage), les profils sont détachés, la file retirée.
 - `DELETE /api/routers/{id}/queues/{name}` (rang 2, N°106 « ménage à

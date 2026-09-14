@@ -717,3 +717,158 @@ func TestRouterQueueDeleteGuards(t *testing.T) {
 		t.Fatalf("coexistence des noms : 1 commande GLOBAL-Internet attendue, %d", other)
 	}
 }
+
+// TestNormalizeCIDRList — N°110 — le contrat des cibles multiples : 1 à 4
+// CIDR IPv4 séparés par des virgules, canonisés et dédoublonnés ; un seul
+// élément invalide rejette TOUTE la liste (le gérant corrige sa saisie —
+// jamais de demi-file sur un sous-réseau de moins).
+func TestNormalizeCIDRList(t *testing.T) {
+	ok := []struct{ in, want string }{
+		{"192.168.10.0/24", "192.168.10.0/24"},                                                                             // simple : rétrocompatible
+		{" 192.168.10.0/24 ", "192.168.10.0/24"},                                                                           // espaces tolérés
+		{"192.168.10.0/24,10.77.0.0/21", "192.168.10.0/24,10.77.0.0/21"},                                                   // le cas ProMax
+		{" 10.77.0.0/21 , 192.168.10.0/24 ", "10.77.0.0/21,192.168.10.0/24"},                                               // ordre de saisie conservé
+		{"10.77.0.10/21,192.168.10.5/24", "10.77.0.0/21,192.168.10.0/24"},                                                  // canonisation des préfixes réseau
+		{"192.168.10.0/24,192.168.10.0/24", "192.168.10.0/24"},                                                             // doublon dédoublonné
+		{"10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10", "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10"}, // 4 éléments
+	}
+	for _, c := range ok {
+		if got, valid := normalizeCIDRList(c.in); !valid || got != c.want {
+			t.Errorf("normalizeCIDRList(%q) = (%q, %v), attendu (%q, true)", c.in, got, valid, c.want)
+		}
+	}
+	bad := []string{
+		"",                              // vide
+		",",                             // que des séparateurs
+		"192.168.10.0/24,,10.77.0.0/21", // élément vide en milieu
+		"192.168.10.0/24,fd00::/8",      // IPv6 dans la liste
+		"192.168.10.0/24,not-a-cidr",    // élément invalide
+		"192.168.10.0",                  // sans préfixe (régle inchangée)
+		"10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,169.254.0.0/16", // 5 : trop
+	}
+	for _, in := range bad {
+		if got, valid := normalizeCIDRList(in); valid {
+			t.Errorf("normalizeCIDRList(%q) = (%q, true), attendu invalide", in, got)
+		}
+	}
+}
+
+// TestQoSMultiTarget — N°110 — le parcours doré du cas ProMax : PUT avec la
+// liste des deux sous-réseaux → état désiré + queue_ensure au payload
+// complet → rapport honnête (la relecture RouterOS peut RÉORDONNER la
+// liste) → signature posée quand même : la vérification compare des
+// ENSEMBLES, la file couvre exactement ce qui a été demandé.
+func TestQoSMultiTarget(t *testing.T) {
+	st, ts := newTestServerWithStore(t)
+	token, accID, _ := registerAccount(t, ts, "qos-multi-gerant", "")
+	const tok = "q0s-t0ken-multi"
+	seedAgentRouter(t, st, accID, "r-multi", "SITE MULTI", tok)
+
+	// 1) Activation avec les deux sous-réseaux (pool étendu N°108 actif).
+	status, out := doJSON(t, ts, "PUT", "/api/routers/r-multi/qos", token, map[string]any{
+		"enabled": true, "target": "192.168.10.0/24,10.77.0.0/21",
+		"maxUpBps": 19_000_000, "maxDownBps": 104_500_000,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("PUT qos multi-cibles : %d %v", status, out)
+	}
+	st.Lock()
+	var target string
+	var payload map[string]any
+	for i := range st.Data().Routers {
+		if st.Data().Routers[i].ID == "r-multi" {
+			target = st.Data().Routers[i].QoSTarget
+		}
+	}
+	for _, c := range st.Data().Commands {
+		if c.Kind == model.CmdQueueEnsure && (c.Status == "queued" || c.Status == "sent") {
+			payload = c.Payload
+		}
+	}
+	st.Unlock()
+	if target != "192.168.10.0/24,10.77.0.0/21" {
+		t.Fatalf("cible stockée : %q", target)
+	}
+	if got, _ := payload["target"].(string); got != "192.168.10.0/24,10.77.0.0/21" {
+		t.Fatalf("payload queue_ensure : cible %q", got)
+	}
+
+	// 2) Rapport honnête avec la liste RÉORDONNÉE par RouterOS : la vérité
+	// est l'ensemble couvert, pas l'ordre des caractères.
+	cmdID := ""
+	st.Lock()
+	for _, c := range st.Data().Commands {
+		if c.Kind == model.CmdQueueEnsure && (c.Status == "queued" || c.Status == "sent") {
+			cmdID = c.ID
+		}
+	}
+	st.Unlock()
+	agentReport(t, ts, tok, cmdID, url.Values{"status": {"ok"},
+		"data": {"queue|mikcloud-qos|10.77.0.0/21,192.168.10.0/24|19M/104.5M|pcq-upload-default/pcq-download-default|false;"}})
+	st.Lock()
+	var sig string
+	for i := range st.Data().Routers {
+		if st.Data().Routers[i].ID == "r-multi" {
+			sig = st.Data().Routers[i].QoSSig
+		}
+	}
+	st.Unlock()
+	if sig == "" {
+		t.Fatalf("relecture réordonnée : la signature doit être posée (comparaison par ensemble)")
+	}
+
+	// 3) Une cible qui COUVRE MOINS (un seul des deux sous-réseaux) reste un
+	// mensonge : sig vidée en store → check-in re-file queue_ensure →
+	// rapport incomplet → la signature ne doit PAS revenir.
+	st.Lock()
+	for i := range st.Data().Routers {
+		if st.Data().Routers[i].ID == "r-multi" {
+			st.Data().Routers[i].QoSSig = ""
+		}
+	}
+	st.Save()
+	st.Unlock()
+	body := agentCheckIn(t, ts, tok)
+	driftID := deviceCmdID(t, body, model.CmdQueueEnsure)
+	if driftID == "" {
+		t.Fatalf("sig vide : re-file attendu :\n%s", preview(body, 400))
+	}
+	agentReport(t, ts, tok, driftID, url.Values{"status": {"ok"},
+		"data": {"queue|mikcloud-qos|192.168.10.0/24|19M/104.5M|pcq-upload-default/pcq-download-default|false;"}})
+	st.Lock()
+	sig = ""
+	for i := range st.Data().Routers {
+		if st.Data().Routers[i].ID == "r-multi" {
+			sig = st.Data().Routers[i].QoSSig
+		}
+	}
+	st.Unlock()
+	if sig != "" {
+		t.Fatalf("cible incomplète : la signature ne doit PAS être posée")
+	}
+}
+
+// TestQoSPutMultiTargetInvalid — la moindre cible invalide dans la liste
+// rejette le PUT entier (400) : jamais de file à demi-posée.
+func TestQoSPutMultiTargetInvalid(t *testing.T) {
+	_, ts := newTestServerWithStore(t)
+	token, _, _ := registerAccount(t, ts, "qos-multi-bad", "")
+	status, out := doJSON(t, ts, "POST", "/api/routers", token, map[string]any{"name": "SITE BAD", "mode": "agent"})
+	if status != http.StatusOK {
+		t.Fatalf("création routeur : %d %v", status, out)
+	}
+	routerID, _ := out["id"].(string)
+	for _, bad := range []string{
+		"192.168.10.0/24,,10.77.0.0/21",                     // élément vide
+		"192.168.10.0/24,fd00::/8",                          // IPv6
+		"192.168.10.0/24,abc",                               // injection
+		"1.0.0.0/8,2.0.0.0/8,3.0.0.0/8,4.0.0.0/8,5.0.0.0/8", // 5 éléments
+	} {
+		status, _ = doJSON(t, ts, "PUT", "/api/routers/"+routerID+"/qos", token, map[string]any{
+			"enabled": true, "target": bad, "maxUpBps": 19_000_000, "maxDownBps": 104_500_000,
+		})
+		if status != http.StatusBadRequest {
+			t.Fatalf("cible %q : statut %d attendu 400", bad, status)
+		}
+	}
+}

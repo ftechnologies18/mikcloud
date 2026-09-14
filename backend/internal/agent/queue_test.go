@@ -207,3 +207,53 @@ func trunc700(s string) string {
 	}
 	return s
 }
+
+// TestBuildQueueEnsureMultiTargetScript — N°110 — le cas ProMax : pool
+// étendu (10.77.0.0/21) + sous-réseau historique (192.168.10.0/24), deux
+// mondes DISJOINTS — le script pose UNE file avec la LISTE des deux cibles,
+// le plafond agrégat reste UN.
+func TestBuildQueueEnsureMultiTargetScript(t *testing.T) {
+	b := Builder{BaseURL: "https://cloud.example", Token: "tok"}
+	script, err := b.ScriptFor(model.Command{ID: "c-qe2", Kind: model.CmdQueueEnsure, Payload: map[string]any{
+		"target": "192.168.10.0/24,10.77.0.0/21", "sig": "def456",
+		"maxUpBps": int64(19_000_000), "maxDownBps": int64(104_500_000),
+		"burstUpBps": int64(20_000_000), "burstDownBps": int64(110_000_000),
+		"thrUpBps": int64(15_200_000), "thrDownBps": int64(83_600_000),
+	}})
+	if err != nil {
+		t.Fatalf("script queue_ensure multi-cibles : %v", err)
+	}
+	for _, want := range []string{
+		`/queue simple set $mkq target=192.168.10.0/24,10.77.0.0/21`,
+		`/queue simple add name="mikcloud-qos" target=192.168.10.0/24,10.77.0.0/21`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("script multi-cibles : fragment %q absent :\n%s", want, trunc700(script))
+		}
+	}
+}
+
+// TestSanitizeCIDRList — N°110 — le contrat du côté builder : 1 à 4 CIDR,
+// espaces tolérés, tout élément invalide fait retomber TOUTE la cible sur
+// le défaut franc (jamais un demi-bridage sur le mauvais sous-réseau).
+func TestSanitizeCIDRList(t *testing.T) {
+	cas := []struct {
+		in   string
+		want string
+	}{
+		{"192.168.10.0/24", "192.168.10.0/24"},                                                                             // simple : rétrocompatible
+		{" 192.168.10.0/24 , 10.77.0.0/21 ", "192.168.10.0/24,10.77.0.0/21"},                                               // espaces nettoyés
+		{"192.168.10.0/24,10.77.0.0/21", "192.168.10.0/24,10.77.0.0/21"},                                                   // le cas ProMax
+		{"10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10", "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10"}, // 4 éléments
+		{"", "192.168.88.0/24"},                                                              // vide : défaut
+		{"192.168.10.0/24,,10.77.0.0/21", "192.168.88.0/24"},                                 // élément vide : repli franc
+		{"192.168.10.0/24,abc", "192.168.88.0/24"},                                           // injection : repli franc
+		{"192.168.10.0/24;10.77.0.0/21", "192.168.88.0/24"},                                  // séparateur hostile : repli
+		{"192.168.10.0/24,10.77.0.0/21,1.2.3.0/24,4.5.6.0/24,7.8.9.0/24", "192.168.88.0/24"}, // 5 : trop
+	}
+	for _, c := range cas {
+		if got := sanitizeCIDRList(c.in); got != c.want {
+			t.Errorf("sanitizeCIDRList(%q) = %q, attendu %q", c.in, got, c.want)
+		}
+	}
+}

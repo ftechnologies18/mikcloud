@@ -92,7 +92,8 @@ var routerSpec = entitySpec[model.Router]{
 		"antivpn_level", "antivpn_sig", "antivpn_applied_at",
 		"pool_cap", "pool_hosts", "pool_ranges", "pool_doctor_at",
 		"pool_auto", "pool_auto_pending", "pause_sig",
-		"wan_iface", "line_down_bps", "line_up_bps"},
+		"wan_iface", "line_down_bps", "line_up_bps",
+		"qos_enabled", "qos_target", "qos_max_up_bps", "qos_max_down_bps", "qos_sig", "qos_applied_at"},
 	idOf: func(x *model.Router) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Router, error) {
 		var x model.Router
@@ -105,7 +106,8 @@ var routerSpec = entitySpec[model.Router]{
 			&x.FamilyGuardSpec, &x.FamilyGuardSig, &x.FamilyGuardAppliedAt,
 			&x.AntiVpnLevel, &x.AntiVpnSig, &x.AntiVpnAppliedAt,
 			&x.PoolCap, &x.PoolHosts, &x.PoolRanges, &x.PoolDoctorAt, &x.PoolAuto, &x.PoolAutoPending, &x.PauseSig,
-			&x.WanIface, &x.LineDownBps, &x.LineUpBps)
+			&x.WanIface, &x.LineDownBps, &x.LineUpBps,
+			&x.QoSEnabled, &x.QoSTarget, &x.QoSMaxUpBps, &x.QoSMaxDownBps, &x.QoSSig, &x.QoSAppliedAt)
 		// Sécurité P0 #6 — le mot de passe routeur est stocké chiffré
 		// (AES-256-GCM) : lecture = déchiffrement (passthrough si valeur
 		// antérieure au correctif, migration assurée par
@@ -127,7 +129,8 @@ var routerSpec = entitySpec[model.Router]{
 			x.FamilyGuardSpec, x.FamilyGuardSig, x.FamilyGuardAppliedAt,
 			x.AntiVpnLevel, x.AntiVpnSig, x.AntiVpnAppliedAt,
 			x.PoolCap, x.PoolHosts, x.PoolRanges, x.PoolDoctorAt, x.PoolAuto, x.PoolAutoPending, x.PauseSig,
-			x.WanIface, x.LineDownBps, x.LineUpBps}
+			x.WanIface, x.LineDownBps, x.LineUpBps,
+			x.QoSEnabled, x.QoSTarget, x.QoSMaxUpBps, x.QoSMaxDownBps, x.QoSSig, x.QoSAppliedAt}
 	},
 	hashOf: hashEntity[model.Router],
 }

@@ -688,6 +688,85 @@ La PREMIÈRE mesure (pas de référence) ne compte pas.
 - `PUT /api/routers/{id}` : `lineDownBps` / `lineUpBps` (bits/s, bornes
   0–10 Gbps, 0 = effacer la déclaration).
 
+## N°104 — QoS Manager : plafond agrégat du hotspot automatisé [P1]
+
+### Contexte
+Suite de N°103 : la mesure donne la capacité, le QoS Manager en fait une file.
+Une SEULE file statique « mikcloud-qos » cible le sous-réseau hotspot
+(max-limit upload/download, types PCQ PAR DÉFAUT de RouterOS :
+`pcq-upload-default`/`pcq-download-default`, pcq-rate=0) ; les files
+dynamiques des utilisateurs (rate-limit des user profiles) deviennent ses
+ENFANTS via `parent-queue` — l'arbitrage HTB natif remplace l'ordre fragile
+de la liste des files : le plafond agrégat s'applique VRAIMENT. Paramètres
+duaux orientés upload d'abord (convention RouterOS). Valeurs émises en bps
+bruts (`max-limit=19000000/95000000`), relecture routeur formatée (« 19M »)
+normalisée en bps par le cloud (`RosRateBps`) : la vérification est bit à
+bit, jamais textuelle.
+
+### Commandes agent (kinds)
+- `queue_ensure` — create-or-set idempotent + RELECTURE de vérification
+  (target|max-limit|queue|disabled). Signature posée seulement si la
+  relecture correspond au payload ET si l'état désiré est toujours courant.
+- `queue_read` — toutes les files (dynamiques incluses, cap 60) :
+  name|target|max-limit|queue|disabled|bytes|rate → stats + dérive.
+- `queue_remove` — détache d'abord les profils qui référencent la file
+  (`set [find parent-queue=mikcloud-qos] parent-queue=none`), retire la
+  file, prouve la disparition (compte restant rapporté).
+
+### Modèle (colonnes routers)
+`QoSEnabled bool`, `QoSTarget text` (CIDR IPv4), `QoSMaxUpBps/QoSMaxDownBps
+bigint` (max-limit appliqué — burst = max×20/19, seuil = 80 % du max :
+DÉRIVÉS, jamais persistés), `QoSSig text` (config appliquée, hash
+cible+limites+sel qos-v1), `QoSAppliedAt text`.
+
+### Convergence (pattern walled_garden)
+- Check-in : QoS active + sig différente/stale → `queue_ensure` (vague
+  différée 104, fermeture) ; désactivée mais file posée (QoSAppliedAt) →
+  `queue_remove` ; sig fraîche → monitoring `queue_read` 30 min.
+- Retour VÉRIFIÉ du ensure → sig + appliedAt + rattachement des profils
+  (ParentQueue = mikcloud-qos, machinerie profile_set — mono-routeur agent
+  par compte uniquement, arbitrage documenté : le champ est account-level).
+- `queue_read` : file absente/divergente → sig vidée → re-file (auto-
+  réparation). Auto-ré-assertion complète toutes les 6 h (qosRefresh).
+
+### Routes
+- `GET /api/routers/{id}/qos` (lecture, comme /traffic ; real → 400) :
+```json
+{
+  "queueName": "mikcloud-qos", "queueTypes": "pcq-upload-default/pcq-download-default",
+  "burstTime": "10s/10s",
+  "status": { "enabled": true, "target": "192.168.10.0/24",
+              "maxUpBps": 19000000, "maxDownBps": 95000000,
+              "burstUpBps": 20000000, "burstDownBps": 100000000,
+              "thrUpBps": 15200000, "thrDownBps": 76000000,
+              "applied": true, "appliedAt": "…", "removalPending": false },
+  "recommendation": { "source": "declared|measured|none",
+                      "capacityDownBps": 100000000, "capacityUpBps": 20000000,
+                      "maxDownBps": 95000000, "maxUpBps": 19000000,
+                      "burstDownBps": 100000000, "burstUpBps": 20000000,
+                      "thrDownBps": 76000000, "thrUpBps": 15200000,
+                      "measuredDays": 3 },
+  "queues": { "queued": false, "updatedAt": "…",
+              "data": [ { "name": "mikcloud-qos", "target": "192.168.10.0/24",
+                          "maxLimit": "19M/95M", "maxUpBps": 19000000, "maxDownBps": 95000000,
+                          "queue": "pcq-upload-default/pcq-download-default",
+                          "disabled": false, "dynamic": false,
+                          "bytesUp": 123456, "bytesDown": 654321,
+                          "rateUpBps": 9500000, "rateDownBps": 72000000 } ] }
+}
+```
+  `recommendation` : capacité déclarée (N°103) prioritaire, sinon enveloppe
+  mesurée (confidente), sinon `none` — jamais inventée. max = 95 %, burst =
+  capacité, seuil = 80 % du max (anti-bufferbloat : le shaper routeur est LE
+  goulot). `queues` : cache d'un queue_read done < 120 s (mécanique outils
+  F9) sinon lecture à la demande ; simulé → lignes déterministes.
+- `PUT /api/routers/{id}/qos` (rang 2) `{enabled, target, maxUpBps,
+  maxDownBps}` : pose l'état désiré (champs absents = inchangés ; CIDR
+  canonisé ; limites 1 Mbps–10 Gbps) et enfile immédiatement queue_ensure /
+  queue_remove (agent). La convergence complète suit au check-in (≤ 45 s).
+- `DELETE /api/routers/{id}/qos` (rang 2) : désactivation — la config est
+  conservée (ré-allumage), les profils sont détachés, la file retirée.
+
 ---
 
 ## F13 — Marge : prix de vente vs coût [P2]

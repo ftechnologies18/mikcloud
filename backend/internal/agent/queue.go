@@ -1,0 +1,287 @@
+// QoS Manager N°104 — file agrégat du hotspot (/queue simple), builders RouterOS.
+//
+// PRINCIPE (analyse d'expert router) : une SEULE file statique
+// « mikcloud-qos » cible le sous-réseau hotspot, max-limit upload/download,
+// types PCQ PAR DÉFAUT de RouterOS (pcq-upload-default classifier
+// src-address / pcq-download-default classifier dst-address, pcq-rate=0 :
+// partage équitable des sous-flux). Les files DYNAMIQUES des utilisateurs
+// (posées par les rate-limit des user profiles) deviennent SES ENFANTS via
+// parent-queue : l'arbitrage HTB natif remplace l'ordre fragile de la liste
+// — le plafond agrégat s'applique VRAIMENT, les limites par utilisateur
+// vivent dedans. Paramètres duaux orientés UPLOAD d'abord (convention
+// RouterOS, colonnes Winbox : max-limit=up/down).
+//
+// VALEURS EN BPS BRUTS : max-limit/burst acceptent des entiers (17000000) —
+// aucun formatage « 17M » à l'émission, donc aucune ambiguïté de suffixe ;
+// la RELECTURE routeur, elle, revient formatée (« 17M », « 12.5M »…) : le
+// cloud normalise chaque côté en bps (RosRateBps) avant de comparer —
+// la vérification est bit à bit, pas textuelle.
+package agent
+
+import (
+	"strconv"
+	"strings"
+
+	"mikcloud/hotspot-api/internal/model"
+)
+
+// QoSQueueName — nom canonique de la file agrégat MikCloud (marquage
+// mikcloud- des objets posés sur le routeur, miroir safewifi/shield/pool).
+const QoSQueueName = "mikcloud-qos"
+
+// QoSQueueTypes — types PCQ par défaut de RouterOS, upload d'abord.
+const QoSQueueTypes = "pcq-upload-default/pcq-download-default"
+
+// QoSScriptVersion — sel de version de la FORME du bloc QoS (pattern
+// familyGuardRulesVersion N°82) : toute évolution du script (paramètre
+// supplémentaire, disposition différente) change ce sel → tout le parc
+// équipé reçoit la nouvelle forme au check-in suivant.
+const QoSScriptVersion = "qos-v1"
+
+// QoSBurstTime — fenêtre de burst (les deux côtés, upload d'abord).
+const QoSBurstTime = "10s/10s"
+
+// QoSComment — commentaire de la file (lisible dans Winbox).
+const QoSComment = "mikcloud: agregat hotspot (QoS Manager)"
+
+// QoSDerived — burst et seuil dérivés des limites (mêmes ratios que la
+// recommandation manuelle du runbook : max-limit = 95 % de la capacité →
+// capacité = max×20/19 = burst ; seuil = 80 % du max — la file devient le
+// goult déterministe, jamais la file du FAI : anti-bufferbloat).
+//
+// En entiers purs (pas de float) : déterministe au filage, dans les tests et
+// à la re-vérification.
+func QoSDerived(maxUpBps, maxDownBps int64) (burstUpBps, burstDownBps, thrUpBps, thrDownBps int64) {
+	burstUpBps = maxUpBps * 20 / 19
+	burstDownBps = maxDownBps * 20 / 19
+	thrUpBps = maxUpBps * 4 / 5
+	thrDownBps = maxDownBps * 4 / 5
+	return
+}
+
+// RosRateBps — valeur de débit RouterOS → bits/s. Accepte les formes
+// formatées (« 17M », « 12.5M », « 512k », « 1.5G », suffixe « bps » ou
+// « B ») comme les entiers bruts (« 17000000 ») ; « unlimited » et les
+// formes vides/inconnues → 0 (jamais d'erreur : une relecture muette reste
+// une absence de preuve, pas un mensonge).
+func RosRateBps(s string) int64 {
+	s = strings.TrimSpace(strings.ToLower(s))
+	s = strings.TrimSuffix(s, "bps")
+	s = strings.TrimSpace(s)
+	if s == "" || s == "unlimited" || s == "0" {
+		return 0
+	}
+	mult := int64(1)
+	switch {
+	case strings.HasSuffix(s, "g"):
+		mult, s = 1_000_000_000, strings.TrimSuffix(s, "g")
+	case strings.HasSuffix(s, "m"):
+		mult, s = 1_000_000, strings.TrimSuffix(s, "m")
+	case strings.HasSuffix(s, "k"):
+		mult, s = 1_000, strings.TrimSuffix(s, "k")
+	}
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	// Décimal (« 12.5M ») : fraction bornée à 3 chiffres (RouterOS n'affiche
+	// jamais plus — la valeur reste exacte, le calcul reste en entiers).
+	intPart, fracPart := s, ""
+	if i := strings.IndexAny(s, ".,"); i >= 0 {
+		intPart, fracPart = s[:i], s[i+1:]
+		if len(fracPart) > 3 {
+			fracPart = fracPart[:3]
+		}
+	}
+	parseUint := func(str string) int64 {
+		if str == "" {
+			return 0
+		}
+		var n int64
+		for _, c := range str {
+			if c < '0' || c > '9' {
+				return -1
+			}
+			n = n*10 + int64(c-'0')
+		}
+		return n
+	}
+	base := parseUint(intPart)
+	frac := parseUint(fracPart)
+	if base < 0 || frac < 0 {
+		return 0
+	}
+	// (base.frac) × mult : la fraction est décalée d'abord, le suffixe ensuite —
+	// l'ordre évite toute division entière intermédiaire.
+	shift := int64(1)
+	for range fracPart {
+		shift *= 10
+	}
+	return (base*shift + frac) * mult / shift
+}
+
+// RosRateBpsDual — paire « a/b » (upload/download) → (up, down). Une seule
+// valeur → elle vaut pour l'upload, download 0.
+func RosRateBpsDual(s string) (int64, int64) {
+	if i := strings.IndexByte(s, '/'); i >= 0 {
+		return RosRateBps(s[:i]), RosRateBps(s[i+1:])
+	}
+	return RosRateBps(s), 0
+}
+
+// buildQueueEnsure — N°104 — create-or-set idempotent de la file agrégat,
+// puis RELECTURE de vérification (vérité routeur : le script ne rapporte
+// pas ce qu'il a envoyé, mais ce que /queue simple contient APRÈS —
+// target|max-limit|queue|disabled, cf. queueReadLine).
+func (b Builder) buildQueueEnsure(cmd model.Command) string {
+	target := plStr(cmd.Payload, "target")
+	maxUp := plInt64(cmd.Payload, "maxUpBps")
+	maxDown := plInt64(cmd.Payload, "maxDownBps")
+	burstUp := plInt64(cmd.Payload, "burstUpBps")
+	burstDown := plInt64(cmd.Payload, "burstDownBps")
+	thrUp := plInt64(cmd.Payload, "thrUpBps")
+	thrDown := plInt64(cmd.Payload, "thrDownBps")
+	// Défense en profondeur : le handler valide, le builder borne (des
+	// limites absurdes ne doivent jamais atteindre le routeur, même via un
+	// payload corrompu).
+	if maxUp < 1_000_000 || maxUp > 10_000_000_000 {
+		maxUp = 1_000_000
+	}
+	if maxDown < 1_000_000 || maxDown > 10_000_000_000 {
+		maxDown = 1_000_000
+	}
+	if burstUp < maxUp || burstUp > 10_000_000_000 {
+		burstUp, _, _, _ = QoSDerived(maxUp, maxDown)
+	}
+	if burstDown < maxDown || burstDown > 10_000_000_000 {
+		_, burstDown, _, _ = QoSDerived(maxUp, maxDown)
+	}
+	if thrUp < 1_000_000 || thrUp > maxUp {
+		thrUp = maxUp * 4 / 5
+	}
+	if thrDown < 1_000_000 || thrDown > maxDown {
+		thrDown = maxDown * 4 / 5
+	}
+	target = sanitizeCIDR(target)
+	limits := strconv.FormatInt(maxUp, 10) + "/" + strconv.FormatInt(maxDown, 10)
+	burst := strconv.FormatInt(burstUp, 10) + "/" + strconv.FormatInt(burstDown, 10)
+	thr := strconv.FormatInt(thrUp, 10) + "/" + strconv.FormatInt(thrDown, 10)
+
+	okVar := "ok" + idSafe(cmd.ID)
+	var sb strings.Builder
+	sb.WriteString(header(cmd))
+	sb.WriteString(":local " + okVar + " true\n:local rdata \"\"\n")
+	sb.WriteString(":do {\n")
+	sb.WriteString("  :local mkq [/queue simple find where name=\"" + QoSQueueName + "\"]\n")
+	sb.WriteString("  :if ([:len $mkq] > 0) do={\n")
+	sb.WriteString("    /queue simple set $mkq target=" + target +
+		" max-limit=" + limits + " queue=" + QoSQueueTypes +
+		" burst-limit=" + burst + " burst-threshold=" + thr +
+		" burst-time=" + QoSBurstTime + " disabled=no\n")
+	sb.WriteString("  } else={\n")
+	sb.WriteString("    /queue simple add name=\"" + QoSQueueName + "\" target=" + target +
+		" max-limit=" + limits + " queue=" + QoSQueueTypes +
+		" burst-limit=" + burst + " burst-threshold=" + thr +
+		" burst-time=" + QoSBurstTime + " comment=\"" + rosEscape(QoSComment) + "\"\n")
+	sb.WriteString("  }\n")
+	// Relecture : ce que le routeur a VRAIMENT (target, max-limit, types,
+	// disabled) — la vérification cloud normalise en bps avant comparaison.
+	sb.WriteString("  :do {\n")
+	sb.WriteString("    :set mkq [/queue simple find where name=\"" + QoSQueueName + "\"]\n")
+	sb.WriteString("    :if ([:len $mkq] > 0) do={\n")
+	sb.WriteString(queueReadLine("mkq"))
+	sb.WriteString("    }\n")
+	sb.WriteString("  } on-error={}\n")
+	sb.WriteString("} on-error={ :set " + okVar + " false }\n")
+	sb.WriteString(b.fetchResultData(cmd.ID, okVar))
+	return sb.String()
+}
+
+// queueReadLine — concatène dans $rdata la ligne de relecture d'une file :
+// « queue|name|target|max-limit|queue|disabled; ». Les stats (bytes/rate)
+// suivent le même format via buildQueueRead (7 colonnes : +bytes|rate) —
+// le parseur cloud tolère les deux profondeurs.
+func queueReadLine(varName string) string {
+	return "      :set rdata ($rdata . \"queue|\" . \"" + QoSQueueName + "\" . \"|\" ." +
+		" [:tostr [/queue simple get $" + varName + " target]] . \"|\" ." +
+		" [:tostr [/queue simple get $" + varName + " max-limit]] . \"|\" ." +
+		" [:tostr [/queue simple get $" + varName + " queue]] . \"|\" ." +
+		" [:tostr [/queue simple get $" + varName + " disabled]] . \";\")\n"
+}
+
+// buildQueueRead — N°104 — lecture des files simples du routeur : identité
+// (nom, cible, limites, types, disabled) + stats (bytes, rate — formats
+// RouterOS, normalisés côté cloud). Cap 60 files (le read_resources déjà
+// en pose 60 : mêmes bornes), les DYNAMIQUES incluses — c'est leur
+// agrégat dans le parent qui intéresse la carte QoS.
+func (b Builder) buildQueueRead(cmd model.Command) string {
+	okVar := "ok" + idSafe(cmd.ID)
+	var sb strings.Builder
+	sb.WriteString(header(cmd))
+	sb.WriteString(":local " + okVar + " true\n:local rdata \"\"\n")
+	sb.WriteString(":do {\n  :local qn 0\n")
+	sb.WriteString("  :foreach qe in=[/queue simple find] do={\n")
+	sb.WriteString("    :if ($qn < 60) do={\n")
+	sb.WriteString("      :local qnm [:tostr [/queue simple get $qe name]]\n")
+	sb.WriteString("      :local qtg [:tostr [/queue simple get $qe target]]\n")
+	sb.WriteString("      :local qml [:tostr [/queue simple get $qe max-limit]]\n")
+	sb.WriteString("      :local qtp [:tostr [/queue simple get $qe queue]]\n")
+	sb.WriteString("      :local qds [:tostr [/queue simple get $qe disabled]]\n")
+	sb.WriteString("      :local qbs \"\"\n      :do { :set qbs [:tostr [/queue simple get $qe bytes]] } on-error={ :set qbs \"\" }\n")
+	sb.WriteString("      :local qrt \"\"\n      :do { :set qrt [:tostr [/queue simple get $qe rate]] } on-error={ :set qrt \"\" }\n")
+	// Précédent read_resources (parité Mikhmon) : les noms de files RouterOS
+	// sont lus tels quels — le protocole d'agent du projet fait confiance à
+	// cette source depuis la vague F9 (aucun assainissement des noms non plus
+	// côté read_resources).
+	sb.WriteString(`      :set rdata ($rdata . "queue|" . $qnm . "|" . $qtg . "|" . $qml . "|" . $qtp . "|" . $qds . "|" . $qbs . "|" . $qrt . ";")` + "\n")
+	sb.WriteString("      :set qn ($qn + 1)\n")
+	sb.WriteString("    }\n  }\n")
+	sb.WriteString("} on-error={ :set " + okVar + " false }\n")
+	sb.WriteString(b.fetchResultData(cmd.ID, okVar))
+	return sb.String()
+}
+
+// buildQueueRemove — N°104 — retrait propre : détacher d'abord les profils
+// hotspot qui référencent la file (parent-queue=none), puis retirer la
+// file. Rapporte le nombre de files mikcloud-qos RESTANTES (0 attendu —
+// vérité routeur, pas la foi en un remove silencieux).
+func (b Builder) buildQueueRemove(cmd model.Command) string {
+	okVar := "ok" + idSafe(cmd.ID)
+	var sb strings.Builder
+	sb.WriteString(header(cmd))
+	sb.WriteString(":local " + okVar + " true\n:local rdata \"\"\n")
+	sb.WriteString(":do {\n")
+	sb.WriteString("  :do { /ip hotspot user profile set [find where parent-queue=\"" + QoSQueueName + "\"] parent-queue=none } on-error={}\n")
+	sb.WriteString("  :do { /queue simple remove [find where name=\"" + QoSQueueName + "\"] } on-error={ :set " + okVar + " false }\n")
+	sb.WriteString("  :local mkleft 0\n")
+	sb.WriteString("  :do { :set mkleft [/queue simple print count-only where name=\"" + QoSQueueName + "\"] } on-error={ :set mkleft 0 }\n")
+	sb.WriteString(`  :set rdata ($rdata . "removed|" . [:tostr $mkleft] . ";")` + "\n")
+	sb.WriteString("} on-error={ :set " + okVar + " false }\n")
+	sb.WriteString(b.fetchResultData(cmd.ID, okVar))
+	return sb.String()
+}
+
+// sanitizeCIDR — borne la cible à une forme CIDR IPv4 lisible (le handler
+// a validé ; le builder ne laisse passer ni espace ni séparateur du
+// protocole — un payload corrompu retombe sur la cible par défaut du
+// routeur 192.168.88.0/24, jamais sur une injection).
+func sanitizeCIDR(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "192.168.88.0/24"
+	}
+	var clean []byte
+	for i := 0; i < len(s) && len(clean) < 18; i++ {
+		c := s[i]
+		switch {
+		case c >= '0' && c <= '9', c == '.', c == '/':
+			clean = append(clean, c)
+		default:
+			return "192.168.88.0/24"
+		}
+	}
+	if len(clean) == 0 {
+		return "192.168.88.0/24"
+	}
+	return string(clean)
+}

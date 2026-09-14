@@ -512,6 +512,13 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 	a.ensureHomeDevicesLocked(db, router)
 	a.ensureDevicePauseLocked(db, router)
 
+	// N°104 — QoS Manager : converge la file agrégat du hotspot
+	// (queue_ensure tant que la signature n'est pas posée/vérifiée,
+	// queue_remove après une désactivation, monitoring queue_read
+	// 30 min) — rien pour un routeur qui n'a jamais ouvert la carte
+	// (économie de veille N°75 préservée).
+	a.ensureQoSLocked(db, router)
+
 	// File FIFO : commandes en attente (max 10 par check-in).
 	//
 	// N°77 — PRIORITÉ AUX ACTIONNABLES : un parc de 3 500 users enfile
@@ -534,7 +541,7 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 		switch db.Commands[i].Kind {
 		case model.CmdReadState:
 			reads = append(reads, db.Commands[i])
-		case model.CmdWalledGarden, model.CmdHotspotFiles, model.CmdSafeWifi, model.CmdShield, model.CmdFamilyGuard, model.CmdAntiVpn, model.CmdPoolDoctor, model.CmdDevicePause:
+		case model.CmdWalledGarden, model.CmdHotspotFiles, model.CmdSafeWifi, model.CmdShield, model.CmdFamilyGuard, model.CmdAntiVpn, model.CmdPoolDoctor, model.CmdDevicePause, model.CmdQueueEnsure, model.CmdQueueRemove:
 			deferred = append(deferred, db.Commands[i])
 		default:
 			prio = append(prio, db.Commands[i])
@@ -567,6 +574,12 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 		// autre commande, aucune écriture ne l'attend derrière).
 		if k == model.CmdDevicePause {
 			return 101
+		}
+		// N°104 — la file agrégat ferme TOUT : le rattachement des profils
+		// (parent-queue) part au retour VÉRIFIÉ du queue_ensure — jamais
+		// en concurrence avec une autre vague.
+		if k == model.CmdQueueEnsure || k == model.CmdQueueRemove {
+			return 104
 		}
 		return 97 // CmdPoolDoctor (diagnostic pur : fermeture, ne bloque rien)
 	}
@@ -947,6 +960,64 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 					router.AntiVpnAppliedAt = model.NowISO()
 				}
 				a.logActivity(db, router.AccountID, "router", "Bloque-VPN ("+antiVpnLevelLabel(level)+") appliqué sur «"+router.Name+"»")
+			}
+		} else if cmd.Kind == model.CmdQueueEnsure {
+			// N°104 — QoS appliquée et CONFIRMÉE par le routeur : la
+			// signature n'est posée que si la RELECTURE (target,
+			// max-limit, types, disabled) correspond bit à bit au
+			// payload — chaque côté normalise en bps, le formatage
+			// RouterOS (« 17M » vs « 17000000 ») ne compte plus — et
+			// uniquement si l'état désiré est TOUJOURS courant (un
+			// gérant qui change les limites pendant le vol ne doit
+			// pas voir figé un état périmé, pattern N°80).
+			if qosEnsureVerified(cmd, vals.Get("data")) {
+				if sig, _ := cmd.Payload["sig"].(string); sig != "" && router.QoSEnabled && sig == qosSig(router) {
+					prev := router.QoSSig
+					router.QoSSig = sig
+					router.QoSAppliedAt = model.NowISO()
+					// Rattachement des profils (files dynamiques
+					// filles du plafond) : uniquement à la
+					// PREMIÈRE application d'une config — la file
+					// existe déjà (retour vérifié), l'ordre est
+					// garanti par la causalité.
+					if prev != sig {
+						a.qosAttachProfilesLocked(db, router, agent.QoSQueueName)
+					}
+				}
+				a.logActivity(db, router.AccountID, "router", "QoS appliquée sur «"+router.Name+"» — file "+agent.QoSQueueName+" vérifiée (plafond agrégat du hotspot)")
+			}
+		} else if cmd.Kind == model.CmdQueueRemove {
+			// N°104 — retrait confirmé : le rapport échoe le nombre de
+			// files mikcloud-qos RESTANTES (0 attendu — vérité routeur,
+			// pas la foi en un remove silencieux). Le marqueur
+			// QoSAppliedAt est levé : plus rien à retirer.
+			for _, e := range splitAgentList(vals.Get("data")) {
+				if len(e) >= 2 && e[0] == "removed" {
+					if left, okL := parseReportInt(e[1]); okL && left == 0 {
+						router.QoSAppliedAt = ""
+						router.QoSSig = ""
+						a.logActivity(db, router.AccountID, "router", "QoS retirée de «"+router.Name+"» — file "+agent.QoSQueueName+" supprimée")
+					}
+					break
+				}
+			}
+		} else if cmd.Kind == model.CmdQueueRead {
+			// N°104 — monitoring : une file manquante ou divergente
+			// (limites retouchées en Winbox, file désactivée) vide la
+			// signature — le check-in suivant re-file queue_ensure
+			// (auto-réparation, pattern N°49). Le rapport alimente AUSSI
+			// le cache de la carte (Result["data"], mécanique outils F9).
+			if router.QoSEnabled {
+				matching := false
+				for _, row := range parseQueueRows(splitAgentList(vals.Get("data"))) {
+					if qosRowMatches(row, router.QoSTarget, router.QoSMaxUpBps, router.QoSMaxDownBps) {
+						matching = true
+					}
+				}
+				if !matching && router.QoSSig != "" {
+					router.QoSSig = ""
+					a.logActivity(db, router.AccountID, "router", "QoS divergente sur «"+router.Name+"» (file absente ou modifiée localement) — re-application automatique au prochain check-in")
+				}
 			}
 		} else {
 			a.logActivity(db, router.AccountID, "router", "Commande "+cmd.Kind+" exécutée sur «"+router.Name+"»")

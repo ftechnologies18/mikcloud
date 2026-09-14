@@ -712,6 +712,14 @@ func (p *PG) ensureSchema() error {
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS wan_iface     TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS line_down_bps BIGINT NOT NULL DEFAULT 0`,
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS line_up_bps   BIGINT NOT NULL DEFAULT 0`,
+		// N°104 — QoS Manager : plafond agrégat du hotspot (file
+		// mikcloud-qos convergée au check-in, pattern walled_garden).
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS qos_enabled     BOOLEAN NOT NULL DEFAULT FALSE`,
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS qos_target      TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS qos_max_up_bps   BIGINT NOT NULL DEFAULT 0`,
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS qos_max_down_bps BIGINT NOT NULL DEFAULT 0`,
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS qos_sig         TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS qos_applied_at  TEXT NOT NULL DEFAULT ''`,
 		// N°97 — état anti-spam alerte pool (routerID → high|full), JSON
 		// sérialisé comme stock_alert_state.
 		`ALTER TABLE notif_settings ADD COLUMN IF NOT EXISTS pool_alert_state TEXT NOT NULL DEFAULT ''`,

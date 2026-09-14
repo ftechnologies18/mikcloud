@@ -485,6 +485,12 @@ func (b Builder) ScriptFor(cmd model.Command) (string, error) {
 		return b.buildPoolDoctor(cmd), nil
 	case model.CmdDevicePause:
 		return b.buildDevicePause(cmd), nil
+	case model.CmdQueueEnsure:
+		return b.buildQueueEnsure(cmd), nil
+	case model.CmdQueueRead:
+		return b.buildQueueRead(cmd), nil
+	case model.CmdQueueRemove:
+		return b.buildQueueRemove(cmd), nil
 	default:
 		return "", fmt.Errorf("kind de commande inconnu : %s", cmd.Kind)
 	}

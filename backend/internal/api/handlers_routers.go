@@ -700,19 +700,14 @@ func (a *API) handleRouterLineQuality(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
-	// Enveloppe mesurée : jours éclos qualifiés uniquement.
-	measuredDown, measuredUp, measuredP95Down, measuredP95Up := int64(0), int64(0), int64(0), int64(0)
-	qualifying := 0
+	// Enveloppe mesurée : jours éclos qualifiés uniquement — règle UNIQUE,
+	// partagée avec la recommandation QoS (lineQualityEnvelope, N°104).
+	measuredDown, measuredUp, qualifying := lineQualityEnvelope(db, id, wan, now)
+	// p95 : enveloppe régulière (insensible aux pics isolés), mêmes jours.
+	measuredP95Down, measuredP95Up := int64(0), int64(0)
 	for _, d := range days {
 		if d.Day == today || d.Samples < lineQualityMinDaySamples {
 			continue
-		}
-		qualifying++
-		if d.RxMaxBps > measuredDown {
-			measuredDown = d.RxMaxBps
-		}
-		if d.TxMaxBps > measuredUp {
-			measuredUp = d.TxMaxBps
 		}
 		if d.RxP95Bps > measuredP95Down {
 			measuredP95Down = d.RxP95Bps

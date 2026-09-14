@@ -389,6 +389,11 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/routers/{id}/pool-doctor", a.requireRole(2, a.handleRouterPoolDoctor))
 	// N°99 — auto-réparation du pool (opt-in par routeur)
 	mux.HandleFunc("PUT /api/routers/{id}/pool-auto", a.requireRole(2, a.handleRouterPoolAuto))
+	// N°104 — QoS Manager : état + recommandation (lecture, comme /traffic),
+	// pose de l'état désiré et désactivation (gestes de gérant, rang 2).
+	mux.HandleFunc("GET /api/routers/{id}/qos", a.handleRouterQoSGet)
+	mux.HandleFunc("PUT /api/routers/{id}/qos", a.requireRole(2, a.handleRouterQoSPut))
+	mux.HandleFunc("DELETE /api/routers/{id}/qos", a.requireRole(2, a.handleRouterQoSDelete))
 
 	// B2 « Speed App UX » — Core Web Vitals (voir handlers_vitals.go) :
 	// collecte publique (beacon text/plain sans preflight, vitrine anonyme

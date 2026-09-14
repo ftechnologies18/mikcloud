@@ -281,6 +281,36 @@ type Router struct {
 	// premier jour d'agrégats, même si l'offre dit 110M).
 	LineDownBps int64 `json:"lineDownBps,omitempty"`
 	LineUpBps   int64 `json:"lineUpBps,omitempty"`
+
+	// N°104 — QoS Manager : plafond AGRÉGAT du hotspot, automatisé.
+	// QoSEnabled — opt-in du gérant ; la file mikcloud-qos converge au
+	// check-in (pattern walled_garden : sig posée au retour « ok »
+	// VÉRIFIÉ, re-file tant qu'elle manque, auto-réparation 6 h).
+	// Désactivé après avoir été appliqué : la RETRAITE converge de même
+	// (QoSAppliedAt non vide = une file existe à retirer).
+	QoSEnabled bool `json:"qosEnabled,omitempty"`
+	// QoSTarget — sous-réseau hotspot bridé (CIDR IPv4, ex.
+	// 192.168.10.0/24). La file simple cible CE réseau : le LAN privé
+	// garde sa part par construction, l'ordre des files n'importe plus.
+	QoSTarget string `json:"qosTarget,omitempty"`
+	// QoSMaxUpBps/QoSMaxDownBps — limites APPLIQUÉES (max-limit
+	// upload/download, bits/s). Le burst/threshold sont DÉRIVÉS
+	// déterministement (burst = capacité ≈ max×20/19, seuil = 80 % du
+	// max) : seules les limites persistent, tout est recalculé à
+	// l'identique au filage ET dans les tests.
+	QoSMaxUpBps   int64 `json:"qosMaxUpBps,omitempty"`
+	QoSMaxDownBps int64 `json:"qosMaxDownBps,omitempty"`
+	// QoSSig — signature de la config DÉJÀ APPLIQUÉE (hash
+	// cible+limites+sel de version). Posée au retour « ok » VÉRIFIÉ —
+	// la relecture routeur (target|max-limit|queue|disabled) doit
+	// correspondre bit à bit au payload (les deux côtés normalisent en
+	// bps : le formatage RouterOS « 17M » ou « 17000000 » ne compte
+	// plus). Vide → re-file au check-in suivant.
+	QoSSig string `json:"qosSig,omitempty"`
+	// QoSAppliedAt — RFC3339 de la dernière application confirmée :
+	// auto-réparation périodique (qosRefresh) ET marqueur de retrait
+	// (non vide + désactivé = une file à retirer).
+	QoSAppliedAt string `json:"qosAppliedAt,omitempty"`
 }
 
 // SchedulerSecEffective — pas de scheduler connu du routeur (N°75). 0 =

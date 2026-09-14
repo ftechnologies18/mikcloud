@@ -372,16 +372,25 @@ export function QoSTab({ router }: { router: RouterDevice }) {
           </div>
           {qos && (
             <div className="flex flex-wrap items-center gap-2">
+              {/* N°108 — le badge porte l'état QoS, PAS la connectivité routeur.
+                  Réutiliser status="offline" affichait « Hors ligne » en rouge :
+                  le gérant croyait son routeur déconnecté (l'en-tête dit pourtant
+                  « En ligne »). Inactive = gris neutre (un choix, pas une panne) ;
+                  active = vert + point pulsant. L'étiquette vit dans le badge, le
+                  span adjacent ne porte que le qualificatif de convergence. */}
               {qos.status.enabled ? (
-                <StatusBadge status="online" dot />
+                <StatusBadge status="online" dot label={t("tools.qos.enabled")} />
               ) : (
-                <StatusBadge status="offline" dot />
+                <StatusBadge status="disabled" label={t("tools.qos.disabled")} />
               )}
-              <span className="text-xs text-muted-foreground">
-                {qos.status.enabled ? t("tools.qos.enabled") : t("tools.qos.disabled")}
-                {qos.status.enabled && (qos.status.applied ? ` · ${t("tools.qos.applied")}` : ` · ${t("tools.qos.pending")}`)}
-                {qos.status.removalPending ? ` · ${t("tools.qos.removalPending")}` : ""}
-              </span>
+              {qos.status.enabled && (
+                <span className="text-xs text-muted-foreground">
+                  {qos.status.applied ? t("tools.qos.applied") : t("tools.qos.pending")}
+                </span>
+              )}
+              {qos.status.removalPending && (
+                <span className="text-xs text-muted-foreground">{t("tools.qos.removalPending")}</span>
+              )}
             </div>
           )}
         </div>

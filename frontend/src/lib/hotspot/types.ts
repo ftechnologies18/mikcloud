@@ -333,6 +333,14 @@ export interface RouterDevice {
   /** N°99 : auto-réparation marquée par le moniteur, en attente du check-in
    * qui filera le recyclage (affiché « en attente d'application »). */
   poolAutoPending?: boolean;
+  /** N°103 : interface WAN détectée par read_state (route par défaut active).
+   * Vide = pas encore détectée — la qualité de ligne ne rattache alors aucune
+   * interface (aucun WAN deviné). */
+  wanIface?: string;
+  /** N°103 : capacité ligne déclarée par le gérant (bits/s, 0 = non
+   * renseignée) — « Orange CI 110M/20M » pour CE site, jamais globale. */
+  lineDownBps?: number;
+  lineUpBps?: number;
 }
 
 /** Réponse de création d'un routeur en mode agent (script + token à copier). */
@@ -1207,6 +1215,92 @@ export interface RouterTraffic {
   interfaces: IfaceTraffic[];
   /** 60 derniers points (somme toutes interfaces). */
   history: TrafficPoint[];
+}
+
+// ─── N°103 — Qualité de ligne (mesure passive du débit FAI) ───
+
+/** Un jour d'agrégat de l'interface WAN (max et p95 par direction). */
+export interface LineQualityDay {
+  day: string;
+  samples: number;
+  rxMaxBps: number;
+  txMaxBps: number;
+  rxP95Bps: number;
+  txP95Bps: number;
+}
+
+/** Réponse de GET /api/routers/{id}/line-quality. */
+export interface RouterLineQuality {
+  routerId: string;
+  /** Interface WAN détectée (read_state ; ether1 en simulé). Vide = non détectée. */
+  wanIface: string;
+  configured: { downBps: number; upBps: number };
+  /** Jusqu'à 14 jours de l'interface WAN, plus récent d'abord. */
+  days: LineQualityDay[];
+  measured: {
+    downBps: number;
+    upBps: number;
+    p95DownBps: number;
+    p95UpBps: number;
+    days: number;
+    confident: boolean;
+  };
+  live: { rxBps: number; txBps: number; at: string };
+}
+
+// ─── N°104 — QoS Manager (plafond agrégat du hotspot) ───
+
+/** Une file simple RouterOS (relecture queue_read / queue_ensure). */
+export interface QoSQueueRow {
+  name: string;
+  target: string;
+  maxLimit: string;
+  queue: string;
+  disabled: boolean;
+  dynamic: boolean;
+  bytesUp: number;
+  bytesDown: number;
+  rateUpBps: number;
+  rateDownBps: number;
+  maxUpBps: number;
+  maxDownBps: number;
+}
+
+/** Recommandation du cloud : déclarée > mesurée > aucune (jamais inventée). */
+export interface QoSRecommendation {
+  source: "declared" | "measured" | "none";
+  capacityDownBps: number;
+  capacityUpBps: number;
+  maxDownBps: number;
+  maxUpBps: number;
+  burstDownBps: number;
+  burstUpBps: number;
+  thrDownBps: number;
+  thrUpBps: number;
+  measuredDays: number;
+}
+
+/** Réponse de GET /api/routers/{id}/qos. */
+export interface RouterQoS {
+  routerId: string;
+  queueName: string;
+  queueTypes: string;
+  burstTime: string;
+  status: {
+    enabled: boolean;
+    target: string;
+    maxUpBps: number;
+    maxDownBps: number;
+    burstUpBps: number;
+    burstDownBps: number;
+    thrUpBps: number;
+    thrDownBps: number;
+    applied: boolean;
+    appliedAt: string;
+    removalPending: boolean;
+  };
+  recommendation: QoSRecommendation;
+  queues: { queued: boolean; updatedAt: string; data: QoSQueueRow[] };
 }
 
 // ─── F7 — IP Bindings ───

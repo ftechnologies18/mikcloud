@@ -10,7 +10,7 @@
 // zéro déplacement d'état.
 
 import { useQuery } from "@tanstack/react-query";
-import { Activity, Cpu, Network, Wrench } from "lucide-react";
+import { Activity, Cpu, Gauge, Network, Wrench } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatusBadge } from "@/components/hotspot/status-badge";
 import { api } from "@/lib/hotspot/api";
@@ -20,6 +20,7 @@ import { TrafficTab } from "./router-tools/traffic-tab";
 import { IpBindingsTab } from "./router-tools/bindings-tab";
 import { ToolsTab } from "./router-tools/tools-tab";
 import { SystemTab } from "./router-tools/system-tab";
+import { QoSTab } from "./router-tools/qos-tab";
 
 
 // Retour utilisateur N°57-d : plus de fenêtre modale pour inspecter un
@@ -61,6 +62,10 @@ export function RouterToolsPanel({ router: snapshot }: { router: RouterDevice })
               <Activity className="size-4" />
               {t("tools.tabTraffic")}
             </TabsTrigger>
+            <TabsTrigger value="qos">
+              <Gauge className="size-4" />
+              {t("tools.tabQoS")}
+            </TabsTrigger>
             <TabsTrigger value="bindings">
               <Network className="size-4" />
               {t("tools.tabBindings")}
@@ -79,6 +84,9 @@ export function RouterToolsPanel({ router: snapshot }: { router: RouterDevice })
         <div className="min-h-0 flex-1 pb-1">
           <TabsContent value="traffic" className="mt-0">
             <TrafficTab router={router} />
+          </TabsContent>
+          <TabsContent value="qos" className="mt-0">
+            <QoSTab router={router} />
           </TabsContent>
           <TabsContent value="bindings" className="mt-0">
             <IpBindingsTab router={router} />

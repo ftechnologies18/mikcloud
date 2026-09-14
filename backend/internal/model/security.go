@@ -57,6 +57,7 @@ const (
 	CmdQueueEnsure     = "queue_ensure"     // N°104 : QoS Manager — create-or-set de la file agrégat hotspot (max-limit/burst PCQ, types par défaut), relecture de vérification ; rattachement des profils hotspot via parent-queue (machinerie profile_set existante)
 	CmdQueueRead       = "queue_read"       // N°104 : lecture /queue simple (noms, cibles, limites, stats) — monitoring, vérification de dérive et satiété de la carte QoS (cache outil ≤ 120 s)
 	CmdQueueRemove     = "queue_remove"     // N°104 : retrait propre de la file agrégat (les profils hotspot qui la référencent sont détachés d'abord : set [find parent-queue=…] parent-queue=none)
+	CmdQuotaEnsure     = "quota_ensure"     // N°106 : mode bridage — scheduler mikcloud-quota (tick 20 s : files mikthrottle-<user> posées/retirées selon les cumuls d'octets et les marqueurs mikq:, orphelins balayés) ; remove-then-add idempotent, pattern watcher N°77
 )
 
 // N°80 — niveaux SafeWiFi (filtrage DNS du WiFi public par redirection).

@@ -258,7 +258,21 @@ func (a *API) createHotspotUser(r *http.Request, acc, kind, username, password, 
 			"profile": profileRef(*profile), "comment": u.Comment,
 		}
 		if profile.DataQuotaMb > 0 {
+
 			userPayload["limitBytesTotal"] = profile.DataQuotaMb * 1048576
+
+		}
+
+		// N°106 — débit de bridage : le profil porte le mode (via profileRef),
+
+		// le payload racine porte le débit que l'agent embarquera dans le
+
+		// marqueur mikq: du commentaire utilisateur.
+
+		if profile.QuotaModeEffective() == model.QuotaModeThrottle && profile.ThrottleRate != "" {
+
+			userPayload["throttleRate"] = profile.ThrottleRate
+
 		}
 		cmd := queueCommandLocked(db, routerCopy.AccountID, routerCopy.ID, model.CmdUserAdd, userPayload)
 		a.logActivityBy(r, db, acc, "user", "Utilisateur "+u.Username+" créé (en attente du routeur, commande "+cmd.ID+")")

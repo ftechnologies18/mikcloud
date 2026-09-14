@@ -516,7 +516,19 @@ func (a *API) handleWifiClaim(w http.ResponseWriter, r *http.Request) {
 				"batch":   batchID,
 			}
 			if dataMb > 0 {
+
 				payload["limitBytesTotal"] = dataMb * 1048576
+
+			}
+
+			// N°106 — forfait wifi sur profil throttle : le quota du forfait
+
+			// (dataMb) vit dans le marqueur mikq: avec le débit du profil.
+
+			if profileCopy.QuotaModeEffective() == model.QuotaModeThrottle && profileCopy.ThrottleRate != "" {
+
+				payload["throttleRate"] = profileCopy.ThrottleRate
+
 			}
 			if timeMin > 0 {
 				payload["limitUptimeMin"] = timeMin

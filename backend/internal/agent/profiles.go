@@ -26,9 +26,9 @@ const ImportProfilesMax = 60
 //
 // Format du rapport (POST /agent/result, form-encodé) :
 //
-//	profiles=name|rate-limit|shared-users|session-timeout;…
-//	users=name|profile|disabled|comment|limit-bytes-total;…
-//	total=<nb total d'utilisateurs sur le routeur>
+//      profiles=name|rate-limit|shared-users|session-timeout;…
+//      users=name|profile|disabled|comment|limit-bytes-total;…
+//      total=<nb total d'utilisateurs sur le routeur>
 //
 // Garde-fous : les champs name/profile contenant un séparateur du protocole
 // (| ; & = %) font sauter l'entrée ; le commentaire est tronqué à 60 caractères
@@ -177,8 +177,15 @@ func profileAddParams(p ProfileRef) string {
 	if p.HasQueue && p.ParentQueue != "" {
 		s += ` parent-queue="` + rosEscape(p.ParentQueue) + `"`
 	}
-	if p.LockFirstDevice {
-		s += ` on-login="` + rosScriptValue(onLoginLockScript) + `"`
+	// N°106 — on-login COMBINÉ : verrou « 1er appareil » et/ou bridage quota
+	// (un seul champ on-login par profil — blocs :do indépendants concaténés).
+	if onLogin := profileOnLoginScript(p); onLogin != "" {
+		s += ` on-login="` + rosScriptValue(onLogin) + `"`
+	}
+	// N°106 — on-logout de bridage : retire la file mikthrottle-<user> quand
+	// la dernière session de l'utilisateur se ferme (profil throttle uniquement).
+	if p.QuotaThrottle {
+		s += ` on-logout="` + rosScriptValue(onLogoutQuotaScript) + `"`
 	}
 	return s
 }
@@ -289,6 +296,8 @@ func (b Builder) buildProfileSet(cmd model.Command) string {
 		HasShared:         plHas(cmd.Payload, "sharedUsers"),
 		HasPool:           plHas(cmd.Payload, "addressPool"),
 		HasQueue:          plHas(cmd.Payload, "parentQueue"),
+		// N°106 — mode bridage (scripts on-login/on-logout du profil).
+		QuotaThrottle: plStr(cmd.Payload, "quotaMode") == model.QuotaModeThrottle,
 	}
 	var sb strings.Builder
 	sb.WriteString(header(cmd))
@@ -319,6 +328,10 @@ type ProfileRef struct {
 	HasShared  bool
 	HasPool    bool
 	HasQueue   bool
+	// N°106 — mode bridage : le profil porte les scripts génériques on-login/
+	// on-logout qui posent/retirent la file mikthrottle-<user> (le quota et le
+	// débit vivent dans le marqueur mikq: du commentaire de chaque utilisateur).
+	QuotaThrottle bool
 }
 
 func plProfile(p map[string]any, k string) ProfileRef {
@@ -351,6 +364,8 @@ func plProfile(p map[string]any, k string) ProfileRef {
 		ref.HasQueue = true
 		ref.ParentQueue = plStr(m, "parentQueue")
 	}
+	// N°106 — mode bridage (scripts génériques on-login/on-logout du profil).
+	ref.QuotaThrottle = plStr(m, "quotaMode") == model.QuotaModeThrottle
 	return ref
 }
 

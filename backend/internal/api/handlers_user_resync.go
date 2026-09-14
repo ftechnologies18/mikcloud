@@ -122,7 +122,19 @@ func (a *API) handleUserResync(w http.ResponseWriter, r *http.Request) {
 			payload["profile"] = map[string]any{"name": agent.SanitizeName(profileName)}
 		}
 		if quota > 0 {
+
 			payload["limitBytesTotal"] = quota * 1048576
+
+		}
+
+		// N°106 — resync en mode bridage : le marqueur mikq: est reconstitué
+
+		// (le quota cloud + le débit du profil), la file convergera au tick.
+
+		if profile != nil && profile.QuotaModeEffective() == model.QuotaModeThrottle && profile.ThrottleRate != "" {
+
+			payload["throttleRate"] = profile.ThrottleRate
+
 		}
 		queueCommandLocked(db, routerAcc, routerID, model.CmdUserAdd, payload)
 		// Le badge se lèvera au read_state suivant (l'utilisateur réapparaîtra).

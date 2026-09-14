@@ -27,4 +27,6 @@ export const frSessions: Record<string, string> = {
   "sessions.kickPending": "Déconnexion…",
   "sessions.kicked": "Session de {name} terminée",
   "sessions.theUser": "l'utilisateur",
+  "sessions.throttled": "Bridé",
+  "sessions.throttledTitle": "Quota de données épuisé : le débit est réduit (mode bridage) jusqu'à l'expiration du temps de la session.",
 };

@@ -475,6 +475,14 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 	// fenêtre invité SANS réveiller la veille (0 octet émis sans invité).
 	a.ensureWatcherLocked(db, router)
 
+	// N°106 — mode bridage : converge le scheduler mikcloud-quota (tick
+
+	// 20 s des files mikthrottle-) — silencieux tant qu'aucun profil du
+
+	// compte n'est en mode throttle (économie de veille N°75 entière).
+
+	a.ensureQuotaThrottleLocked(db, router)
+
 	// N°80 — SafeWiFi : converge la protection DNS du WiFi public — rien
 	// pour un routeur qui n'a jamais ouvert la carte (économie N°75
 	// préservée), re-file automatique au changement de niveau, et
@@ -833,6 +841,15 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 			if !router.WatcherOK {
 				router.WatcherOK = true
 				a.logActivity(db, router.AccountID, "router", "Veilleur d'invités déployé sur «"+router.Name+"» — claim du portail servi en ≤ 20 s")
+			}
+		} else if cmd.Kind == model.CmdQuotaEnsure {
+			// N°106 — cadenceur de bridage déployé et CONFIRMÉ par le routeur :
+			// QuotaSchedOK n'est posé qu'ici (pattern watcher N°77 — vérité
+			// routeur uniquement). Un échec reste QuotaSchedOK=false → re-file
+			// au check-in suivant.
+			if !router.QuotaSchedOK {
+				router.QuotaSchedOK = true
+				a.logActivity(db, router.AccountID, "router", "Cadenceur de quota déployé sur «"+router.Name+"» — bridage des forfaits à quota convergé en ≤ 20 s")
 			}
 		} else if cmd.Kind == model.CmdSafeWifi {
 			// N°80 — protection appliquée et CONFIRMÉE par le

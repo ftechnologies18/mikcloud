@@ -291,6 +291,18 @@ export default function ProfilesView() {
                               ? t("profiles.unlimited")
                               : formatBytes(profile.dataQuotaMb * 1048576, lang)}
                           </span>
+                          {profile.quotaMode === "throttle" && profile.dataQuotaMb > 0 && (
+                            <Badge
+                              variant="outline"
+                              className="gap-1 border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                              title={tf("profiles.quotaModeThrottleTitle", {
+                                rate: profile.throttleRate || "—",
+                              })}
+                            >
+                              <Gauge className="size-3" aria-hidden />
+                              {t("profiles.quotaModeThrottle")}
+                            </Badge>
+                          )}
                         </div>
                         <div className="flex min-h-6 items-center gap-2 text-sm sm:col-span-2">
                           <span className="text-muted-foreground">{t("profiles.expiration")}</span>

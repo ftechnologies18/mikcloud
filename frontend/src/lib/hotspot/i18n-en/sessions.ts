@@ -27,4 +27,6 @@ export const enSessions: Record<string, string> = {
   "sessions.kickPending": "Disconnecting…",
   "sessions.kicked": "Session of {name} ended",
   "sessions.theUser": "the user",
+  "sessions.throttled": "Throttled",
+  "sessions.throttledTitle": "Data quota used up: speed is reduced (throttle mode) until the session's time expires.",
 };

@@ -51,6 +51,10 @@ func (a *API) handleProfileCreate(w http.ResponseWriter, r *http.Request) {
 		AddressPool string `json:"addressPool"`
 		ParentQueue string `json:"parentQueue"`
 		ValidityMin int    `json:"validityMin"`
+		// N°106 — mode bridage : comportement à l'épuisement du quota data
+		// (cut = déconnexion RouterOS, historique ; throttle = débit bridé).
+		QuotaMode    string `json:"quotaMode"`
+		ThrottleRate string `json:"throttleRate"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
@@ -83,6 +87,27 @@ func (a *API) handleProfileCreate(w http.ResponseWriter, r *http.Request) {
 	if req.ValidityMin < 0 || req.ValidityMin > 2628000 {
 		writeErr(w, http.StatusBadRequest, "La validité doit être comprise entre 0 et 2628000 minutes")
 		return
+	}
+	// N°106 — mode bridage : normalisation + garde-fous (un bridage sans
+	// quota ni débit serait une config à moitié posée : refus franc).
+	quotaMode := strings.TrimSpace(req.QuotaMode)
+	if quotaMode == "" {
+		quotaMode = model.QuotaModeCut
+	}
+	if !model.ValidQuotaMode(quotaMode) {
+		writeErr(w, http.StatusBadRequest, "Mode de quota invalide (cut ou throttle)")
+		return
+	}
+	throttleRate := strings.TrimSpace(req.ThrottleRate)
+	if quotaMode == model.QuotaModeThrottle {
+		if !model.ValidThrottleRate(throttleRate) {
+			writeErr(w, http.StatusBadRequest, "Débit de bridage requis en mode bridage (format RouterOS, ex. 512k/512k)")
+			return
+		}
+		if req.DataQuotaMb <= 0 {
+			writeErr(w, http.StatusBadRequest, "Le mode bridage exige un quota data supérieur à 0 Mo")
+			return
+		}
 	}
 	// Sécurité P0 — plafond économique (cf. prixMaxProfil) : refuse plutôt
 	// que de clamp silencieusement, pour que l'erreur soit visible en console.
@@ -117,6 +142,8 @@ func (a *API) handleProfileCreate(w http.ResponseWriter, r *http.Request) {
 		AddressPool:     strings.TrimSpace(req.AddressPool),
 		ParentQueue:     strings.TrimSpace(req.ParentQueue),
 		ValidityMin:     defaultMinZero(req.ValidityMin),
+		QuotaMode:       quotaMode,
+		ThrottleRate:    throttleRate,
 	}
 	// Parité Mikhmon : la validité fine est la source de vérité ; le champ
 	// historique validityDays reste cohérent (arrondi supérieur, contrat V2).
@@ -163,6 +190,9 @@ func (a *API) handleProfileUpdate(w http.ResponseWriter, r *http.Request) {
 		AddressPool *string `json:"addressPool"`
 		ParentQueue *string `json:"parentQueue"`
 		ValidityMin *int    `json:"validityMin"`
+		// N°106 — mode bridage (comportement à l'épuisement du quota data).
+		QuotaMode    *string `json:"quotaMode"`
+		ThrottleRate *string `json:"throttleRate"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
@@ -192,6 +222,17 @@ func (a *API) handleProfileUpdate(w http.ResponseWriter, r *http.Request) {
 	// Parité Mikhmon : validité fine en minutes (borne 5 ans).
 	if req.ValidityMin != nil && (*req.ValidityMin < 0 || *req.ValidityMin > 2628000) {
 		writeErr(w, http.StatusBadRequest, "La validité doit être comprise entre 0 et 2628000 minutes")
+		return
+	}
+	// N°106 — mode bridage : la validation porte sur l'état FUTUR du profil
+	// (les champs non fournis héritent de l'existant — le profil est chargé
+	// plus bas ; la garde est re-vérifiée sous verrou avant application).
+	if req.QuotaMode != nil && !model.ValidQuotaMode(strings.TrimSpace(*req.QuotaMode)) {
+		writeErr(w, http.StatusBadRequest, "Mode de quota invalide (cut ou throttle)")
+		return
+	}
+	if req.ThrottleRate != nil && !model.ValidThrottleRate(strings.TrimSpace(*req.ThrottleRate)) && strings.TrimSpace(*req.ThrottleRate) != "" {
+		writeErr(w, http.StatusBadRequest, "Débit de bridage invalide (format RouterOS, ex. 512k/512k)")
 		return
 	}
 	a.store.Lock()
@@ -259,17 +300,58 @@ func (a *API) handleProfileUpdate(w http.ResponseWriter, r *http.Request) {
 		p.LockUser = *req.LockUser
 	}
 	// v2 — verrou « 1er appareil » : un changement d'état est propagé aux
+
 	// routeurs agents (on-login de liaison MAC appliqué ou retiré).
 	lockChanged := false
 	if req.LockFirstDevice != nil && *req.LockFirstDevice != p.LockFirstDevice {
 		p.LockFirstDevice = *req.LockFirstDevice
 		lockChanged = true
 	}
+	// N°106 — mode bridage : application PUIS garde sur l'état FUTUR du
+	// profil (les champs non fournis héritent de l'existant). Un profil
+	// throttle sans débit valide ni quota data serait une configuration à
+	// moitié posée (marqueurs sans bridage possible) : refus franc.
+	quotaModeChanged := false
+	if req.QuotaMode != nil {
+		newMode := strings.TrimSpace(*req.QuotaMode)
+		if newMode == "" {
+			newMode = model.QuotaModeCut
+		}
+		if newMode != p.QuotaMode {
+			quotaModeChanged = true
+		}
+		p.QuotaMode = newMode
+	}
+	if req.ThrottleRate != nil {
+		p.ThrottleRate = strings.TrimSpace(*req.ThrottleRate)
+	}
+	if p.QuotaModeEffective() == model.QuotaModeThrottle {
+		if !model.ValidThrottleRate(p.ThrottleRate) {
+			a.store.Unlock()
+			writeErr(w, http.StatusBadRequest, "Débit de bridage requis en mode bridage (format RouterOS, ex. 512k/512k)")
+			return
+		}
+		if p.DataQuotaMb <= 0 {
+			a.store.Unlock()
+			writeErr(w, http.StatusBadRequest, "Le mode bridage exige un quota data supérieur à 0 Mo")
+			return
+		}
+	}
 	updated := *p
 	// Toute modification (session-timeout, rate-limit, shared-users, verrou…)
 	// est propagée aux routeurs agents : le cloud est la source de vérité.
 	a.queueProfileSetLocked(db, acc, updated)
-	if lockChanged {
+	if quotaModeChanged {
+
+		state := "coupe"
+
+		if updated.QuotaModeEffective() == model.QuotaModeThrottle {
+
+			state = "bridage (" + updated.ThrottleRate + ")"
+
+		}
+		a.logActivityBy(r, db, acc, "user", "Mode de quota du profil "+updated.Name+" passé en "+state)
+	} else if lockChanged {
 		state := "désactivé"
 		if updated.LockFirstDevice {
 			state = "activé"
@@ -300,7 +382,16 @@ func (a *API) queueProfileSetLocked(db *model.DB, acc string, p model.Profile) {
 				"sharedUsers":       p.SharedUsers,
 				"lockFirstDevice":   p.LockFirstDevice,
 				"addressPool":       p.AddressPool,
-				"parentQueue":       p.ParentQueue,
+
+				"parentQueue": p.ParentQueue,
+
+				// N°106 — mode bridage (scripts on-login/on-logout du profil) +
+
+				// débit (embarqué dans les marqueurs mikq: à la création).
+
+				"quotaMode": p.QuotaModeEffective(),
+
+				"throttleRate": p.ThrottleRate,
 			})
 		}
 	}

@@ -36,6 +36,7 @@ import {
   MonitorSmartphone,
   Plus,
   Router as RouterIcon,
+  Scissors,
   ShieldCheck,
   Smartphone,
   Timer,
@@ -90,6 +91,10 @@ import type { Profile, ProfileExpiryMode, RouterDevice } from "@/lib/hotspot/typ
 // Format RouterOS : "2M/2M", "512k/512k", "5M" (insensible à la casse).
 const RATE_LIMIT_RE = /^\d+[KM](\/\d+[KM])?$/i;
 
+// N°106 — débit de bridage au format RouterOS simple : « 512k », « 1M »
+// (symétrique) ou « 512k/2M » (rx/tx). Miroir de ValidThrottleRate (backend).
+const THROTTLE_RATE_RE = /^\d+[kKmMgG]?(\/\d+[kKmMgG]?)?$/;
+
 const GRACE_MAX = 43_200; // 30 jours en minutes (contrat F1)
 
 // Unité de saisie de la durée de session — le serveur stocke TOUJOURS des
@@ -117,6 +122,9 @@ const RATE_PRESETS = ["512k/512k", "1M/1M", "2M/2M", "5M/5M", "10M/10M"];
 
 // Presets de quota de données (Mo) — 0 = illimité.
 const QUOTA_PRESETS = [0, 1024, 5120, 10240, 20480, 51200];
+
+// N°106 — presets de débit de bridage (mode « soft-landing »).
+const THROTTLE_PRESETS = ["256k/256k", "512k/512k", "1M", "1M/1M"];
 
 // Graduations du stepper d'appareils simultanés.
 const DEVICE_CHIPS = [1, 2, 3, 5, 10];
@@ -147,6 +155,9 @@ interface ProfileForm {
   sharedUsers: string;
   price: string;
   dataQuotaMb: string;
+  // N°106 — mode bridage : comportement à l'épuisement du quota data.
+  quotaMode: "cut" | "throttle";
+  throttleRate: string;
   expMode: ProfileExpiryMode;
   gracePeriodMin: string;
   lockUser: boolean;
@@ -167,6 +178,8 @@ const DEFAULT_FORM: ProfileForm = {
   sharedUsers: "1",
   price: "0",
   dataQuotaMb: "0",
+  quotaMode: "cut",
+  throttleRate: "",
   expMode: "notify",
   gracePeriodMin: "0",
   lockUser: false,
@@ -193,6 +206,8 @@ function formFromProfile(profile: Profile): ProfileForm {
     sharedUsers: String(profile.sharedUsers),
     price: String(profile.price),
     dataQuotaMb: String(profile.dataQuotaMb),
+    quotaMode: profile.quotaMode === "throttle" ? "throttle" : "cut",
+    throttleRate: profile.throttleRate ?? "",
     expMode: profile.expMode ?? "notify",
     gracePeriodMin: String(profile.gracePeriodMin ?? 0),
     lockUser: profile.lockUser ?? false,
@@ -339,6 +354,10 @@ export function ProfileEditDialog({ open, onOpenChange, profile }: ProfileEditDi
   const quotaNum = parseInt(form.dataQuotaMb, 10);
   const graceNum = parseInt(form.gracePeriodMin, 10);
   const sellingNum = Number(form.sellingPrice);
+  // N°106 — débit de bridage : format RouterOS simple (512k, 1M, 512k/2M).
+  const throttleRateTrim = form.throttleRate.trim();
+  const throttleRateInvalid =
+    form.quotaMode === "throttle" && !THROTTLE_RATE_RE.test(throttleRateTrim);
 
   const formValid =
     form.name.trim() !== "" &&
@@ -356,6 +375,7 @@ export function ProfileEditDialog({ open, onOpenChange, profile }: ProfileEditDi
     priceNum >= 0 &&
     Number.isInteger(quotaNum) &&
     quotaNum >= 0 &&
+    (form.quotaMode === "cut" || (quotaNum > 0 && !throttleRateInvalid)) &&
     Number.isInteger(graceNum) &&
     graceNum >= 0 &&
     graceNum <= GRACE_MAX &&
@@ -386,6 +406,9 @@ export function ProfileEditDialog({ open, onOpenChange, profile }: ProfileEditDi
         toast.error(t("profiles.dialog.devicesToast"));
       else if (!Number.isFinite(priceNum) || priceNum < 0) toast.error(t("profiles.dialog.priceToast"));
       else if (!Number.isInteger(quotaNum) || quotaNum < 0) toast.error(t("profiles.dialog.quotaToast"));
+      else if (form.quotaMode === "throttle" && quotaNum <= 0)
+        toast.error(t("profiles.dialog.throttleQuotaToast"));
+      else if (throttleRateInvalid) toast.error(t("profiles.dialog.throttleRateToast"));
       else if (!Number.isInteger(graceNum) || graceNum < 0 || graceNum > GRACE_MAX)
         toast.error(tf("profiles.dialog.graceToast", { n: GRACE_MAX }));
       else if (!Number.isFinite(sellingNum) || sellingNum < 0)
@@ -405,6 +428,8 @@ export function ProfileEditDialog({ open, onOpenChange, profile }: ProfileEditDi
         validityMin: validityNum,
         price: Math.round(priceNum),
         dataQuotaMb: quotaNum,
+        quotaMode: form.quotaMode,
+        throttleRate: form.quotaMode === "throttle" ? throttleRateTrim : "",
         expMode: form.expMode,
         gracePeriodMin: graceNum,
         lockUser: form.lockUser,
@@ -747,6 +772,99 @@ export function ProfileEditDialog({ open, onOpenChange, profile }: ProfileEditDi
                         <span className="shrink-0 text-xs text-muted-foreground">Mo</span>
                       </div>
                       <p className="text-[11px] leading-snug text-muted-foreground">{t("profiles.dialog.quotaHint")}</p>
+                      {/* N°106 — comportement à l'épuisement du quota : couper (natif
+                          RouterOS) ou brider (soft-landing : débit réduit jusqu'à
+                          l'expiration du temps, la connexion est maintenue). */}
+                      <div className="mt-1 grid gap-2 border-t pt-2" role="group" aria-label={t("profiles.dialog.quotaModeLabel")}>
+                        <p className="text-xs font-medium text-muted-foreground">{t("profiles.dialog.quotaModeLabel")}</p>
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className={cn(
+                              "h-9 justify-start gap-2 rounded-lg px-3 text-xs",
+                              form.quotaMode === "cut"
+                                ? "border-primary bg-primary/10 text-primary"
+                                : "text-muted-foreground",
+                            )}
+                            onClick={() => setForm((f) => ({ ...f, quotaMode: "cut" }))}
+                            disabled={saveMutation.isPending}
+                          >
+                            <Scissors className="size-3.5" aria-hidden />
+                            <span className="text-left leading-tight">
+                              {t("profiles.dialog.quotaModeCut")}
+                              <span className="block text-[10px] font-normal opacity-70">
+                                {t("profiles.dialog.quotaModeCutHint")}
+                              </span>
+                            </span>
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className={cn(
+                              "h-9 justify-start gap-2 rounded-lg px-3 text-xs",
+                              form.quotaMode === "throttle"
+                                ? "border-primary bg-primary/10 text-primary"
+                                : "text-muted-foreground",
+                            )}
+                            onClick={() => setForm((f) => ({ ...f, quotaMode: "throttle" }))}
+                            disabled={saveMutation.isPending}
+                          >
+                            <Gauge className="size-3.5" aria-hidden />
+                            <span className="text-left leading-tight">
+                              {t("profiles.dialog.quotaModeThrottle")}
+                              <span className="block text-[10px] font-normal opacity-70">
+                                {t("profiles.dialog.quotaModeThrottleHint")}
+                              </span>
+                            </span>
+                          </Button>
+                        </div>
+                        {form.quotaMode === "throttle" && (
+                          <div className="grid gap-2 rounded-lg bg-muted/50 p-2">
+                            <div className="flex flex-wrap gap-1.5" role="group" aria-label={t("profiles.dialog.throttleRate")}>
+                              {THROTTLE_PRESETS.map((rate) => (
+                                <Button
+                                  key={rate}
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className={cn(
+                                    "h-7 rounded-full px-2.5 text-xs tabular-nums",
+                                    throttleRateTrim === rate
+                                      ? "border-primary bg-primary/10 text-primary"
+                                      : "text-muted-foreground",
+                                  )}
+                                  onClick={() => setForm((f) => ({ ...f, throttleRate: rate }))}
+                                  disabled={saveMutation.isPending}
+                                >
+                                  {formatRateLimit(rate)}
+                                </Button>
+                              ))}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Input
+                                id="profile-throttle-rate"
+                                placeholder="512k/512k"
+                                value={form.throttleRate}
+                                onChange={(event) => setForm((f) => ({ ...f, throttleRate: event.target.value }))}
+                                disabled={saveMutation.isPending}
+                                aria-invalid={throttleRateInvalid}
+                                className={cn("min-w-0 flex-1 font-mono text-xs", throttleRateInvalid && "border-destructive")}
+                              />
+                              {throttleRateInvalid && (
+                                <p className="text-[11px] leading-snug text-destructive">
+                                  {t("profiles.dialog.throttleRateToast")}
+                                </p>
+                              )}
+                            </div>
+                            <p className="text-[11px] leading-snug text-amber-600 dark:text-amber-400">
+                              {t("profiles.dialog.throttleHint")}
+                            </p>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </motion.section>

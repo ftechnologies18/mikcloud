@@ -15,6 +15,7 @@ import {
   Radio,
   Search,
   WifiOff,
+  Gauge,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -219,7 +220,19 @@ export default function SessionsView() {
                       {session.username}
                     </TableCell>
                     <TableCell>
-                      <Badge variant="outline">{session.profileName}</Badge>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <Badge variant="outline">{session.profileName}</Badge>
+                        {session.throttled && (
+                          <Badge
+                            variant="outline"
+                            className="gap-1 border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                            title={t("sessions.throttledTitle")}
+                          >
+                            <Gauge className="size-3" aria-hidden />
+                            {t("sessions.throttled")}
+                          </Badge>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="font-mono text-muted-foreground">{session.ip}</TableCell>
                     <TableCell className="hidden font-mono text-muted-foreground md:table-cell">

@@ -85,7 +85,7 @@ var routerSpec = entitySpec[model.Router]{
 	cols: []string{"id", "name", "host", "port", "username", "password", "mode", "status",
 		"version", "uptime_sec", "cpu_load", "hotspot_users", "active_sessions", "created_at",
 		"hotspot_login_url", "agent_token_hash", "token_preview", "last_seen", "account_id",
-		"board_name", "free_hdd_mb", "total_hdd_mb", "identity_conflict", "walled_garden_sig", "walled_garden_applied_at", "hotspot_files_sig", "scheduler_sec", "watcher_ok",
+		"board_name", "free_hdd_mb", "total_hdd_mb", "identity_conflict", "walled_garden_sig", "walled_garden_applied_at", "hotspot_files_sig", "scheduler_sec", "watcher_ok", "quota_sched_ok",
 		"safewifi_level", "safewifi_sig", "safewifi_applied_at",
 		"shield_level", "shield_sig", "shield_applied_at",
 		"familyguard_spec", "familyguard_sig", "familyguard_applied_at",
@@ -100,7 +100,7 @@ var routerSpec = entitySpec[model.Router]{
 		err := r.Scan(&x.ID, &x.Name, &x.Host, &x.Port, &x.Username, &x.Password, &x.Mode, &x.Status,
 			&x.Version, &x.UptimeSec, &x.CPULoad, &x.HotspotUsers, &x.ActiveSessions, &x.CreatedAt,
 			&x.HotspotLoginUrl, &x.AgentTokenHash, &x.TokenPreview, &x.LastSeen, &x.AccountID,
-			&x.BoardName, &x.FreeHddMb, &x.TotalHddMb, &x.IdentityConflict, &x.WalledGardenSig, &x.WalledGardenAppliedAt, &x.HotspotFilesSig, &x.SchedulerSec, &x.WatcherOK,
+			&x.BoardName, &x.FreeHddMb, &x.TotalHddMb, &x.IdentityConflict, &x.WalledGardenSig, &x.WalledGardenAppliedAt, &x.HotspotFilesSig, &x.SchedulerSec, &x.WatcherOK, &x.QuotaSchedOK,
 			&x.SafeWifiLevel, &x.SafeWifiSig, &x.SafeWifiAppliedAt,
 			&x.ShieldLevel, &x.ShieldSig, &x.ShieldAppliedAt,
 			&x.FamilyGuardSpec, &x.FamilyGuardSig, &x.FamilyGuardAppliedAt,
@@ -123,7 +123,7 @@ var routerSpec = entitySpec[model.Router]{
 		return []any{x.ID, x.Name, x.Host, x.Port, x.Username, secretbox.Encrypt(x.Password), x.Mode, x.Status,
 			x.Version, x.UptimeSec, x.CPULoad, x.HotspotUsers, x.ActiveSessions, x.CreatedAt,
 			x.HotspotLoginUrl, x.AgentTokenHash, x.TokenPreview, x.LastSeen, x.AccountID,
-			x.BoardName, x.FreeHddMb, x.TotalHddMb, x.IdentityConflict, x.WalledGardenSig, x.WalledGardenAppliedAt, x.HotspotFilesSig, x.SchedulerSec, x.WatcherOK,
+			x.BoardName, x.FreeHddMb, x.TotalHddMb, x.IdentityConflict, x.WalledGardenSig, x.WalledGardenAppliedAt, x.HotspotFilesSig, x.SchedulerSec, x.WatcherOK, x.QuotaSchedOK,
 			x.SafeWifiLevel, x.SafeWifiSig, x.SafeWifiAppliedAt,
 			x.ShieldLevel, x.ShieldSig, x.ShieldAppliedAt,
 			x.FamilyGuardSpec, x.FamilyGuardSig, x.FamilyGuardAppliedAt,
@@ -142,21 +142,21 @@ var routerSpec = entitySpec[model.Router]{
 
 var profileSpec = entitySpec[model.Profile]{
 	table: "profiles",
-	cols:  []string{"id", "name", "rate_limit", "session_timeout_min", "shared_users", "validity_days", "price", "data_quota_mb", "created_at", "account_id", "exp_mode", "grace_period_min", "lock_user", "selling_price", "lock_first_device", "address_pool", "parent_queue", "validity_min"},
+	cols:  []string{"id", "name", "rate_limit", "session_timeout_min", "shared_users", "validity_days", "price", "data_quota_mb", "created_at", "account_id", "exp_mode", "grace_period_min", "lock_user", "selling_price", "lock_first_device", "address_pool", "parent_queue", "validity_min", "quota_mode", "throttle_rate"},
 	idOf:  func(x *model.Profile) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Profile, error) {
 		var x model.Profile
 		err := r.Scan(&x.ID, &x.Name, &x.RateLimit, &x.SessionTimeoutMin, &x.SharedUsers,
 			&x.ValidityDays, &x.Price, &x.DataQuotaMb, &x.CreatedAt, &x.AccountID,
 			&x.ExpMode, &x.GracePeriodMin, &x.LockUser, &x.SellingPrice, &x.LockFirstDevice,
-			&x.AddressPool, &x.ParentQueue, &x.ValidityMin)
+			&x.AddressPool, &x.ParentQueue, &x.ValidityMin, &x.QuotaMode, &x.ThrottleRate)
 		return x, err
 	},
 	args: func(x *model.Profile) []any {
 		return []any{x.ID, x.Name, x.RateLimit, x.SessionTimeoutMin, x.SharedUsers,
 			x.ValidityDays, x.Price, x.DataQuotaMb, x.CreatedAt, x.AccountID,
 			x.ExpMode, x.GracePeriodMin, x.LockUser, x.SellingPrice, x.LockFirstDevice,
-			x.AddressPool, x.ParentQueue, x.ValidityMin}
+			x.AddressPool, x.ParentQueue, x.ValidityMin, x.QuotaMode, x.ThrottleRate}
 	},
 	hashOf: hashEntity[model.Profile],
 }
@@ -274,17 +274,17 @@ var transactionSpec = entitySpec[model.Transaction]{
 
 var sessionSpec = entitySpec[model.Session]{
 	table: "sessions",
-	cols:  []string{"id", "user_id", "username", "profile_name", "router_id", "router_name", "ip", "mac", "started_at", "uptime_sec", "bytes_in", "bytes_out", "account_id"},
+	cols:  []string{"id", "user_id", "username", "profile_name", "router_id", "router_name", "ip", "mac", "started_at", "uptime_sec", "bytes_in", "bytes_out", "account_id", "throttled"},
 	idOf:  func(x *model.Session) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Session, error) {
 		var x model.Session
 		err := r.Scan(&x.ID, &x.UserID, &x.Username, &x.ProfileName, &x.RouterID, &x.RouterName,
-			&x.IP, &x.MAC, &x.StartedAt, &x.UptimeSec, &x.BytesIn, &x.BytesOut, &x.AccountID)
+			&x.IP, &x.MAC, &x.StartedAt, &x.UptimeSec, &x.BytesIn, &x.BytesOut, &x.AccountID, &x.Throttled)
 		return x, err
 	},
 	args: func(x *model.Session) []any {
 		return []any{x.ID, x.UserID, x.Username, x.ProfileName, x.RouterID, x.RouterName,
-			x.IP, x.MAC, x.StartedAt, x.UptimeSec, x.BytesIn, x.BytesOut, x.AccountID}
+			x.IP, x.MAC, x.StartedAt, x.UptimeSec, x.BytesIn, x.BytesOut, x.AccountID, x.Throttled}
 	},
 	hashOf: hashEntity[model.Session],
 }

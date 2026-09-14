@@ -760,6 +760,14 @@ func (p *PG) ensureSchema() error {
 		`ALTER TABLE profiles      ADD COLUMN IF NOT EXISTS validity_min  INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE hotspot_users ADD COLUMN IF NOT EXISTS time_limit_min BIGINT NOT NULL DEFAULT 0`,
 		`ALTER TABLE batches       ADD COLUMN IF NOT EXISTS time_limit_min BIGINT NOT NULL DEFAULT 0`,
+		// N°106 — mode bridage (quota data) : profil (cut/throttle + débit de
+		// bridage), flag « session bridée » (file mikthrottle- présente sur le
+		// routeur) et scheduler mikcloud-quota confirmé déployé (pattern watcher
+		// N°77). Migrations idempotentes — boot Render.
+		`ALTER TABLE profiles      ADD COLUMN IF NOT EXISTS quota_mode    TEXT NOT NULL DEFAULT 'cut'`,
+		`ALTER TABLE profiles      ADD COLUMN IF NOT EXISTS throttle_rate TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE sessions      ADD COLUMN IF NOT EXISTS throttled     BOOLEAN NOT NULL DEFAULT FALSE`,
+		`ALTER TABLE routers       ADD COLUMN IF NOT EXISTS quota_sched_ok BOOLEAN NOT NULL DEFAULT FALSE`,
 		// Abonnement SaaS (formules Essentiel 1 250 F/mois/routeur et
 		// Illimité 12 000 F/an, routeurs illimités) : état par compte dans settings.
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS sub_plan_id      TEXT NOT NULL DEFAULT ''`,

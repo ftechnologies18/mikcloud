@@ -390,6 +390,18 @@ func InstallScript(baseURL, token, routerName string, wgDomains ...string) strin
       :put "MIKCLOUD : veilleur d'invites non installe (le claim reste servi au pas du scheduler principal)."
     }
 
+    :do {
+      /system scheduler remove [find name="` + QuotaSchedName + `"]
+    } on-error={}
+
+    :do {
+      /system scheduler add name="` + QuotaSchedName + `" interval=` + strconv.Itoa(QuotaSchedIntervalSec) + `s start-time=startup on-event="` + rosEscape(quotaTickScript) + `"
+      :put "MIKCLOUD : cadenceur de quota installe (bridage des forfaits a quota, tick 20 s)."
+      :log info "MikCloud: cadenceur de quota installe"
+    } on-error={
+      :put "MIKCLOUD : cadenceur de quota non installe (convergence via la commande quota_ensure au check-in)."
+    }
+
 ` + walledGardenInstallBlock(wgDomains) + `  }
 } on-error={
   :log error "MikCloud: erreur pendant l'installation de l'agent"
@@ -491,6 +503,8 @@ func (b Builder) ScriptFor(cmd model.Command) (string, error) {
 		return b.buildQueueRead(cmd), nil
 	case model.CmdQueueRemove:
 		return b.buildQueueRemove(cmd), nil
+	case model.CmdQuotaEnsure:
+		return b.buildQuotaEnsure(cmd), nil
 	default:
 		return "", fmt.Errorf("kind de commande inconnu : %s", cmd.Kind)
 	}

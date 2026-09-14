@@ -55,6 +55,8 @@ func (b Builder) buildUserAdd(cmd model.Command) string {
 		uptime = int64(prof.SessionTimeoutMin)
 	}
 	server := plStr(cmd.Payload, "server")
+	// N°106 — débit de bridage du profil (mode throttle uniquement).
+	throttleRate := plStr(cmd.Payload, "throttleRate")
 	okVar := "ok" + idSafe(cmd.ID)
 	var sb strings.Builder
 	sb.WriteString(header(cmd))
@@ -75,7 +77,15 @@ func (b Builder) buildUserAdd(cmd model.Command) string {
 	if server != "" {
 		line += ` server="` + rosEscape(server) + `"`
 	}
-	if quota > 0 {
+	// N°106 — mode bridage : en mode throttle, le quota data ne devient PAS un
+	// limit-bytes-total (le routeur DÉCONNECTERAIT à l'épuisement — l'inverse du
+	// contrat) : il est embarqué en TÊTE du commentaire sous le marqueur
+	// mikq:<octets>,<débit>, relu par les scripts on-login/on-logout du profil
+	// et par le tick mikcloud-quota. La virgule et le « / » du marqueur ne
+	// figurent pas parmi les séparateurs neutralisés par l'import (| ; & = % +).
+	if prof.QuotaThrottle && quota > 0 && throttleRate != "" {
+		comment = PrefixQuotaComment(QuotaMarker(quota, throttleRate), comment)
+	} else if quota > 0 {
 		// Quota de données : limit-bytes-total (in + out cumulés, in/out laissés à 0).
 		line += fmt.Sprintf(" limit-bytes-total=%d", quota)
 	}
@@ -100,6 +110,8 @@ func (b Builder) buildVoucherBatch(cmd model.Command) string {
 		uptime = int64(prof.SessionTimeoutMin)
 	}
 	server := plStr(cmd.Payload, "server")
+	// N°106 — débit de bridage du profil (mode throttle uniquement).
+	throttleRate := plStr(cmd.Payload, "throttleRate")
 	okVar := "ok" + idSafe(cmd.ID)
 	// Commentaire router : la traçabilité MikCloud (lot) reste toujours présente ;
 	// le commentaire libre du gérant est préfixé devant s'il existe.
@@ -111,6 +123,13 @@ func (b Builder) buildVoucherBatch(cmd model.Command) string {
 		comment = custom
 	case batch != "":
 		comment = "mikcloud:" + batch
+	}
+	throttled := prof.QuotaThrottle && quota > 0 && throttleRate != ""
+	if throttled {
+		// N°106 — marqueur mikq:<octets>,<débit> en TÊTE (survit à la troncature
+		// d'import à 60 caractères) : relu par les scripts du profil et le tick
+		// mikcloud-quota — le quota ne devient PAS un limit-bytes-total (coupe).
+		comment = PrefixQuotaComment(QuotaMarker(quota, throttleRate), comment)
 	}
 	var sb strings.Builder
 	sb.WriteString(header(cmd))
@@ -128,9 +147,11 @@ func (b Builder) buildVoucherBatch(cmd model.Command) string {
 		if server != "" {
 			line += ` server="` + rosEscape(server) + `"`
 		}
-		if quota > 0 {
+		if quota > 0 && !throttled {
 			// Quota de données du lot (ex. « 5 Go = 500 F ») : limit-bytes-total
-			// en octets — le routeur déconnecte le voucher une fois épuisé.
+			// en octets — le routeur déconnecte le voucher une fois épuisé (mode
+			// « cut » ; en mode throttle le quota vit dans le marqueur mikq: du
+			// commentaire, posé ci-dessus).
 			line += fmt.Sprintf(" limit-bytes-total=%d", quota)
 		}
 		if comment != "" {

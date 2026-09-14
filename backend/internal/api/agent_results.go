@@ -370,6 +370,24 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 	}
 	router.ActiveSessions = len(sessEntries)
 	userIDs := map[string]string{}
+
+	// N°106 — bridage : « throttle=user1,user2,… » = noms des files
+
+	// mikthrottle-<user> présentes dans /queue simple (le suffixe du nom
+
+	// de file EST le username — vérité routeur, jamais un calcul cloud).
+
+	throttledUsers := map[string]bool{}
+
+	for _, name := range strings.Split(vals.Get("throttle"), ",") {
+
+		if name = strings.TrimSpace(name); name != "" {
+
+			throttledUsers[strings.ToLower(name)] = true
+
+		}
+
+	}
 	for i := range db.HotspotUsers {
 		if db.HotspotUsers[i].RouterID == router.ID {
 			userIDs[strings.ToLower(db.HotspotUsers[i].Username)] = db.HotspotUsers[i].ID
@@ -409,8 +427,16 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 			s.BytesIn = parseInt64(e[3])
 		}
 		if len(e) > 4 {
+
 			s.BytesOut = parseInt64(e[4])
+
 		}
+
+		// N°106 — session bridée : la file mikthrottle-<user> existe sur le
+
+		// routeur (quota data épuisé en mode bridage, débit réduit).
+
+		s.Throttled = throttledUsers[strings.ToLower(e[0])]
 		if id, ok := userIDs[strings.ToLower(e[0])]; ok {
 			s.UserID = id
 			for i := range db.HotspotUsers {

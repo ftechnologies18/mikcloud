@@ -230,9 +230,18 @@ func (b Builder) buildReadState(cmd model.Command) string {
     }
   }
 }
+:local rthr ""
+:if (@@END@@ >= $mikTotal) do={
+  :do {
+    :foreach q in=[/queue simple find where name~"^mikthrottle-"] do={
+      :local qn [:tostr [/queue simple get $q name]]
+      :set rthr ($rthr . [:pick $qn 12 [:len $qn]] . ",")
+    }
+  } on-error={ :set rthr "" }
+}
 :local rsesspart ("&stotal=". $rstotal ."&hosts=". $rhosts)
 :if (@@END@@ >= $mikTotal) do={
-  :set rsesspart ("&stotal=". $rstotal ."&hosts=". $rhosts ."&sessions=". $rsess)
+  :set rsesspart ("&stotal=". $rstotal ."&hosts=". $rhosts ."&sessions=". $rsess ."&throttle=". $rthr)
 }
 :local rif ""
 :do {

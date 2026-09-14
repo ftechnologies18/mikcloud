@@ -1,7 +1,11 @@
 // Package model — types partagés MikCloud, alignés sur le contrat API (voir worklog.md).
 package model
 
-import "time"
+import (
+	"regexp"
+	"strings"
+	"time"
+)
 
 // ---------------------------------------------------------------------------
 // Types métier (réponses JSON strictement conformes au contrat TS)
@@ -132,6 +136,16 @@ type Router struct {
 	// salle n'attend pas) ; le veilleur restaure un check-in ≤ 20 s
 	// PENDANT la fenêtre invité sans coût idle (0 octet émis sans invité).
 	WatcherOK bool `json:"watcherOK,omitempty"`
+	// N°106 — mode bridage : vrai quand le scheduler mikcloud-quota
+	// (tick 20 s : pose/retire les files mikthrottle-<user> selon le cumul
+	// d'octets des utilisateurs et leurs marqueurs mikq:) est CONFIRMÉ
+	// déployé sur ce routeur. Faux = routeur antérieur au N°106 ou dernier
+	// déploiement échoué → le check-in suivant re-file quota_ensure (pattern
+	// watcher N°77 : auto-réparant, posé au retour « ok » uniquement). La
+	// commande n'est filée que si le compte possède AU MOINS un profil en
+	// mode throttle — un site qui n'utilise jamais le bridage ne consomme
+	// rien, l'économie de veille N°75 reste entière.
+	QuotaSchedOK bool `json:"quotaSchedOK,omitempty"`
 	// N°80 — SafeWiFi (protection DNS du WiFi public) : niveau de filtrage
 	// choisi par le gérant pour ce site. "" = état antérieur au N°80
 	// (traité comme "off" — aucun filtrage, AUCUNE commande filée : un
@@ -388,11 +402,23 @@ type Profile struct {
 	// pour la compatibilité contrat V2 / données existantes). Utiliser TOUJOURS
 	// ValidityMinutes() pour calculer une expiration.
 	ValidityMin int `json:"validityMin"`
+	// N°106 — mode bridage : comportement à l'épuisement du quota data.
+	//   "cut"      (défaut, rétro-compatible) : limit-bytes-total RouterOS —
+	//               le routeur DÉCONNECTE le voucher une fois le quota épuisé ;
+	//   "throttle" : le quota devient un marqueur mikq:<octets>,<débit> en tête
+	//               du commentaire routeur — l'utilisateur reste connecté, son
+	//               débit est BRIDÉ par une file simple mikthrottle-<user> posée
+	//               au-dessus de la file dynamique du profil, jusqu'à l'expiration
+	//               du temps (limit-uptime inchangé).
+	// "" = état antérieur au N°106 → "cut" (QuotaModeEffective).
+	QuotaMode string `json:"quotaMode"`
+	// N°106 — débit de bridage au format RouterOS (ex. "512k/512k" ou
+	// "1M"). Utilisé UNIQUEMENT en mode throttle : embarqué dans le marqueur
+	// mikq: de chaque voucher/utilisateur créé sous ce profil (le quota par
+	// lot — DataQuotaMb override — reste supporté : le marqueur porte la
+	// valeur effective). Validé par ValidThrottleRate.
+	ThrottleRate string `json:"throttleRate"`
 }
-
-// ValidityMinutes — durée de validité effective du profil en minutes.
-// Extension parité Mikhmon : ValidityMin (> 0) prime sur ValidityDays
-// (champ historique du contrat V2, conservé pour rétro-compatibilité).
 
 // ValidityMinutes — durée de validité effective du profil en minutes.
 // Extension parité Mikhmon : ValidityMin (> 0) prime sur ValidityDays
@@ -402,6 +428,39 @@ func (p Profile) ValidityMinutes() int {
 		return p.ValidityMin
 	}
 	return p.ValidityDays * 1440
+}
+
+// N°106 — modes de quota data (comportement à l'épuisement).
+const (
+	QuotaModeCut      = "cut"      // limit-bytes-total : le routeur déconnecte (comportement historique)
+	QuotaModeThrottle = "throttle" // marqueur mikq: + file mikthrottle- : débit bridé, connexion maintenue
+)
+
+// ValidQuotaMode — vrai si le mode fait partie du contrat N°106.
+func ValidQuotaMode(m string) bool {
+	return m == QuotaModeCut || m == QuotaModeThrottle
+}
+
+// QuotaModeEffective — mode de quota effectif de ce profil, normalisé
+// ("" ou valeur inconnue = état antérieur au N°106 → cut).
+func (p Profile) QuotaModeEffective() string {
+	if !ValidQuotaMode(p.QuotaMode) {
+		return QuotaModeCut
+	}
+	return p.QuotaMode
+}
+
+// throttleRatePattern — un débit RouterOS simple : "512k", "1M" (symétrique)
+// ou "512k/2M" (rx/tx). Chaque direction = nombre + unité optionnelle
+// (k/K, m/M, g/G). Les formes burst (8 priorités) restent hors contrat v1.
+var throttleRatePattern = regexp.MustCompile(`^\d+[kKmMgG]?(\/\d+[kKmMgG]?)?$`)
+
+// ValidThrottleRate — vrai si le débit de bridage a le format RouterOS
+// accepté par /queue simple max-limit ("512k/512k", "1M"…). Vide = invalide
+// en mode throttle (le handler refuse : bridage sans débit = configuration
+// à moitié posée, pire que pas de bridage du tout).
+func ValidThrottleRate(r string) bool {
+	return throttleRatePattern.MatchString(strings.TrimSpace(r))
 }
 
 // HotspotUser — utilisateur hotspot régulier ou voucher.
@@ -489,6 +548,12 @@ type Session struct {
 	// voir le commentaire HotspotUser et traffic-semantics.ts côté front).
 	BytesIn  int64 `json:"bytesIn"`
 	BytesOut int64 `json:"bytesOut"`
+	// N°106 — vrai quand une file mikthrottle-<user> existe sur le routeur
+	// pour cette session (mode bridage : quota data épuisé, débit réduit).
+	// Alimenté par le rapport read_state (paramètre throttle= : noms des
+	// files mikthrottle- présentes dans /queue simple) — la vérité vient du
+	// routeur, jamais d'un calcul cloud.
+	Throttled bool `json:"throttled,omitempty"`
 }
 
 // Reseller — revendeur avec portefeuille.

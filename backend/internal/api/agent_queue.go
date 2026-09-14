@@ -35,6 +35,9 @@ var staleSentReadKinds = map[string]bool{
 	model.CmdFamilyGuard:   true, // N°82 : idempotent (marqueur mikcloud-familyguard — remove-then-add)
 	model.CmdAntiVpn:       true, // N°88 : idempotent (marqueur mikcloud-antivpn — remove-then-add)
 	model.CmdDevicePause:   true, // N°101 : idempotent (marqueur mikcloud-pause — remove-then-add)
+	model.CmdQueueEnsure:   true, // N°104 : idempotent (file mikcloud-qos — create-or-set + relecture de vérification)
+	model.CmdQueueRemove:   true, // N°104 : idempotent (retrait de la file agrégat — détache les profils d'abord, prouve la disparition)
+	model.CmdQuotaEnsure:   true, // N°106 : idempotent (scheduler mikcloud-quota — remove-then-add, pattern watcher N°77)
 }
 
 // staleSentLimit — au-delà de cette ancienneté sans rapport, une commande
@@ -177,7 +180,18 @@ func profileRef(p model.Profile) map[string]any {
 		// Parité Mikhmon : pools/queues RouterOS portés par le profil
 		// (chaque user_add / voucher_batch aligne le profil sur le cloud).
 		"addressPool": p.AddressPool,
+
 		"parentQueue": p.ParentQueue,
+
+		// N°106 — mode bridage : porté par le profil dans CHAQUE commande
+
+		// user_add/voucher_batch/profile_set (l'agent y lit ses scripts
+
+		// on-login/on-logout génériques ; le débit de bridage, lui, voyage
+
+		// au niveau racine du payload — cf. throttleRate).
+
+		"quotaMode": p.QuotaModeEffective(),
 	}
 }
 
@@ -271,6 +285,41 @@ func (a *API) ensureWatcherLocked(db *model.DB, router *model.Router) {
 		}
 	}
 	queueCommandLocked(db, router.AccountID, router.ID, model.CmdWatcherEnsure, map[string]any{})
+}
+
+// ensureQuotaThrottleLocked — N°106 : converge le scheduler mikcloud-quota
+// (tick 20 s — pose/retire les files mikthrottle-<user>) vers les routeurs
+// agents du compte — UNIQUEMENT si le compte possède au moins un profil en
+// mode throttle : un site qui ne bridle jamais ne consomme rien (économie
+// de veille N°75 entière — le tick serait de toute façon inerte sans
+// marqueur mikq:, mais on n'installe même pas le scheduler). Pattern
+// watcher N°77 : re-file tant que le retour « ok » n'est pas arrivé
+// (QuotaSchedOK posé au rapport, cf. applyAgentResult).
+func (a *API) ensureQuotaThrottleLocked(db *model.DB, router *model.Router) {
+	if router.Mode != "agent" || router.QuotaSchedOK {
+		return
+	}
+	anyThrottle := false
+	for i := range db.Profiles {
+		if db.Profiles[i].AccountID == router.AccountID &&
+			db.Profiles[i].QuotaModeEffective() == model.QuotaModeThrottle {
+			anyThrottle = true
+			break
+		}
+	}
+	if !anyThrottle {
+		return
+	}
+	// Un déploiement déjà en file ou en vol suffit — le rapport tranchera
+	// (ok → QuotaSchedOK posé, error → re-file au check-in suivant).
+	for i := range db.Commands {
+		c := &db.Commands[i]
+		if c.RouterID == router.ID && c.Kind == model.CmdQuotaEnsure &&
+			(c.Status == "queued" || c.Status == "sent") {
+			return
+		}
+	}
+	queueCommandLocked(db, router.AccountID, router.ID, model.CmdQuotaEnsure, map[string]any{})
 }
 
 // safeWifiRulesVersion — sel de version des règles SafeWiFi : toute

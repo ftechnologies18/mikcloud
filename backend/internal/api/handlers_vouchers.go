@@ -469,6 +469,16 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 		if quotaMb > 0 {
 			// limit-bytes-total s'exprime en octets sur le routeur (Mo × 1 048 576).
 			batchPayload["limitBytesTotal"] = quotaMb * 1048576
+
+			// N°106 — débit de bridage : embarqué dans le marqueur mikq: de chaque
+
+			// voucher du lot (le mode voyage dans profileRef du payload).
+
+			if profile.QuotaModeEffective() == model.QuotaModeThrottle && profile.ThrottleRate != "" {
+
+				batchPayload["throttleRate"] = profile.ThrottleRate
+
+			}
 		}
 		if voucherComment != "" {
 			batchPayload["comment"] = voucherComment

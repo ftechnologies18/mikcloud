@@ -769,6 +769,91 @@ cible+limites+sel qos-v1), `QoSAppliedAt text`.
 
 ---
 
+## N°106 — Mode bridage : quota data à l'atterrissage en douceur [P1]
+
+### Contexte
+Un forfait « 1 h / 1 Go » dont le quota data épuisé COUPE la connexion
+(comportement natif RouterOS `limit-bytes-total`) punit le client au pire
+moment. Le mode bridage (« soft-landing ») maintient la connexion : le débit
+est réduit jusqu'à l'expiration du TEMPS (`limit-uptime` inchangé — c'est lui
+qui coupe, jamais le quota). RouterOS n'a aucun réglage natif pour ça (le menu
+`/ip hotspot active` est informationnel) : la construction éprouvée =
+file simple STATIQUE `mikthrottle-<user>` ciblant l'IP du client, posée
+AU-DESSUS de la file dynamique du profil (`place-before` — évaluation en
+ordre, premier-match gagnant), retirée au départ de la dernière session.
+
+### Modèle (nouvelles colonnes)
+- `Profile` gagne : `QuotaMode string json:"quotaMode"` — `"cut"` (défaut,
+  comportement historique) ou `"throttle"` ; `""` (pré-N°106) = cut.
+  `ThrottleRate string json:"throttleRate"` — format RouterOS simple
+  (`512k`, `1M`, `512k/2M` ; regex `^\d+[kKmMgG]?(/\d+[kKmMgG]?)?$`).
+  En mode throttle : quota data > 0 Mo ET débit valide OBLIGATOIRES
+  (refus 400 sinon — jamais une config à moitié posée).
+- `Session` gagne : `Throttled bool json:"throttled,omitempty"` — une file
+  `mikthrottle-<user>` existe sur le routeur (vérité routeur).
+- `Router` gagne : `QuotaSchedOK bool json:"quotaSchedOK,omitempty"` —
+  scheduler `mikcloud-quota` confirmé déployé (pattern watcher N°77).
+Migrations idempotentes : `profiles.quota_mode/throttle_rate`,
+`sessions.throttled`, `routers.quota_sched_ok`.
+
+### Marqueur de quota (commentaire routeur)
+En mode throttle, le quota NE devient PAS un `limit-bytes-total`. Il vit en
+TÊTE du commentaire utilisateur : `mikq:<octets>,<débit>` (ex.
+`mikq:1073741824,512k/512k custom · mikcloud:b1`). La virgule et le `/` ne
+figurent pas parmi les séparateurs neutralisés par l'import (| ; & = % +) ;
+posé en tête, le marqueur survit à la troncature d'import à 60 caractères et
+au suffixe `mikcloud_lock:` du verrou « 1er appareil ». Les overrides de
+quota PAR LOT restent supportés : le marqueur porte la valeur effective.
+
+### Enforcement routeur (100 % sortant, autonome)
+- `on-login` du profil (throttle) : à CHAQUE connexion, cumul utilisateur
+  (bytes-in + bytes-out de `/ip hotspot user`, jamais ceux de la session)
+  ≥ quota du marqueur → file posée pour l'IP de la session (remove-then-add).
+  Couvre la fenêtre de re-login (sinon : plein débit jusqu'au tick).
+  FUSIONNÉ au script du verrou « 1er appareil » si les deux actifs (un seul
+  champ on-login par profil — blocs `:do{}on-error{}` indépendants).
+- `on-logout` du profil (throttle) : dernière session partie → file retirée
+  (anti-héritage d'IP par le prochain occupant du bail DHCP).
+- scheduler `mikcloud-quota` (tick 20 s, remove-then-add idempotent, posé par
+  InstallScript ET par la commande `quota_ensure`) : (1) balayage des
+  orphelins — toute file `mikthrottle-*` sans session active est retirée
+  (couvre aussi le reboot routeur : les files statiques survivent, pas les
+  sessions) ; (2) ≤ 250 sessions actives par tick : marqueur relu, cumul
+  comparé — ≥ quota → file posée si absente ; < quota → file retirée (le
+  reset-counters F4 rouvre le plein débit au tick suivant). Aucun octet émis
+  vers le cloud : le routeur applique la politique même coupé du cloud.
+- Convergence : `ensureQuotaThrottleLocked` au check-in ne file `quota_ensure`
+  QUE si le compte possède ≥ 1 profil throttle (économie de veille N°75
+  entière sinon). `QuotaSchedOK` posé au retour « ok » uniquement
+  (pattern watcher). Commande idempotente (`staleSentReadKinds`).
+
+### Rapport read_state
+`throttle=user1,user2,…` (noms des files `mikthrottle-` présentes dans
+`/queue simple`, le suffixe du nom EST le username) — rapporté par le chunk
+final, comme `sessions`. Chaque session live reçoit `Throttled` depuis cette
+liste (jamais un calcul cloud). Rapport sans le champ (pré-N°106) = faux.
+
+### Routes
+- `POST/PUT /api/profiles` : `quotaMode` (`cut|throttle`, défaut/vide = cut),
+  `throttleRate` (requis en throttle). La validation porte sur l'état FUTUR
+  du profil en PUT (les champs non fournis héritent de l'existant).
+- `GET /api/sessions` : champ `throttled` par session (miroir du modèle).
+- `POST /api/users`, `POST /api/vouchers/generate` : le payload agent
+  embarque `quotaMode` (via profileRef) + `throttleRate` — le cloud reste la
+  source de vérité, le resync utilisateur (`user_resync`) reconstitue le
+  marqueur.
+
+### Limites documentées (v1)
+- `shared-users` > 1 : une seule file par utilisateur (dernière IP) —
+  recommander 1 appareil simultané sur les profils à quota.
+- Latence de détection : ~intervalle (20 s) × débit du profil de
+  sur-consommation possible avant bridage (le on-login ferme la fenêtre de
+  re-login).
+- Validation terrain recommandée avant généralisation : ordre réel des files
+  (`place-before` vs file dynamique) sur les firmwares cibles v6.43+/v7.x.
+
+---
+
 ## F13 — Marge : prix de vente vs coût [P2]
 
 ### Modèle

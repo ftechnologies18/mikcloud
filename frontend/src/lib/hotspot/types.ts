@@ -414,6 +414,10 @@ export interface Profile {
   parentQueue: string;
   /** Parité Mikhmon : validité fine en minutes (0 = hériter validityDays, compat contrat V2). */
   validityMin: number;
+  /** N°106 : comportement à l'épuisement du quota data — "cut" (défaut : le routeur déconnecte) ou "throttle" (débit bridé jusqu'à l'expiration du temps). "" (pré-N°106) = cut. */
+  quotaMode?: "cut" | "throttle" | "";
+  /** N°106 : débit de bridage au format RouterOS (ex. "512k/512k", "1M") — requis en mode throttle, ignoré sinon. */
+  throttleRate?: string;
 }
 
 export interface HotspotUser {
@@ -537,6 +541,8 @@ export interface HotspotSession {
   uptimeSec: number;
   bytesIn: number;
   bytesOut: number;
+  /** N°106 : une file mikthrottle-<user> existe sur le routeur (mode bridage — quota data épuisé, débit réduit). */
+  throttled?: boolean;
 }
 
 /** N°101 — appareil du foyer (bail DHCP, GET /api/devices — console HomeNet).

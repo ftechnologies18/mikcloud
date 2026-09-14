@@ -5,6 +5,90 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-14 — N°106 — Mode bridage « l'atterrissage en douceur » : le quota data épuisé ne coupe PLUS, il bridle (file mikthrottle- posée au-dessus de la file dynamique, marqueur mikq: en tête du commentaire, scheduler mikcloud-quota 20 s, on-login/on-logout du profil) jusqu'à l'expiration du TEMPS — exactement le contrat « 1 h / 1 Go » demandé par le terrain
+
+### N°106 — Contexte : le quota qui coupe punit le client au pire moment
+Le comportement natif RouterOS (limit-bytes-total) DÉCONNECTE l'utilisateur
+dès la limite atteinte — un client qui paie « 1 h / 1 Go » et consomme son
+Go en 20 minutes perd aussi ses 40 minutes restantes. Le terrain demande
+l'inverse : maintenir la connexion au débit réduit (soft-landing) jusqu'à
+l'expiration du temps. RouterOS n'a AUCUN réglage natif pour ça (le menu
+/ip hotspot active est informationnel, le rate-li-mit du profil ne touche
+pas une session en cours) : la construction éprouvée des forums MikroTik
+(2010+) est la file simple STATIQUE posée au-dessus de la file dynamique.
+
+### Produit
+- PROFIL : nouveau sélecteur « À l'épuisement du quota » — Couper (défaut,
+  comportement historique inchangé) ou Brider (débit réduit, connexion
+  maintenue) + champ « Débit de bridage » (format RouterOS : 512k, 1M,
+  512k/2M, presets rapides). Garde-fous : mode bridage ⇒ quota data > 0 ET
+  débit valide (refus 400 sinon) ; la validation du PUT porte sur l'état
+  FUTUR du profil (champs non fournis = héritage).
+- MARQUEUR mikq: : en mode bridage le quota ne devient PAS un
+  limit-bytes-total ; il vit en TÊTE du commentaire routeur
+  (« mikq:1073741824,512k/512k custom · mikcloud:b1 ») — survit à la
+  troncature d'import (60 car.), aux séparateurs neutralisés (| ; & = % +)
+  et au suffixe mikcloud_lock: du verrou 1er appareil. Les overrides de
+  quota PAR LOT restent supportés (le marqueur porte la valeur effective).
+- ENFORCEMENT ROUTEUR AUTONOME : (1) on-login du profil — à chaque
+  connexion, cumul UTILISATEUR (bytes-in+out de /ip hotspot user, jamais
+  ceux de la session — LA faille classique : un cumul session repart à
+  zéro au login) ≥ quota → file posée (remove-then-add, place-before la
+  file dynamique) : la fenêtre de re-login est couverte ; FUSIONNÉ au
+  script du verrou 1er appareil si les deux actifs ; (2) on-logout —
+  dernière session partie → file retirée (anti-héritage d'IP par le
+  prochain occupant du bail DHCP) ; (3) scheduler mikcloud-quota (tick
+  20 s) — balayage des orphelins (files sans session active : couvre aussi
+  le reboot routeur), ≤ 250 sessions par tick : pose/retrait selon le
+  cumul (le reset-counters F4 rouvre le plein débit), zéro octet émis vers
+  le cloud : le routeur applique la politique même coupé du cloud.
+- CONVERGENCE DU PARC : InstallScript pose le scheduler au provisionnement
+  neuf ; la commande quota_ensure (pattern watcher N°77, remove-then-add
+  idempotent, reprise stale) converge le parc existant — filée UNIQUEMENT
+  si le compte possède ≥ 1 profil throttle (économie de veille N°75
+  entière sinon), QuotaSchedOK posé au retour « ok » uniquement.
+- CONSOLE : badge « Bridage » sur la carte du profil (title explicite),
+  badge « Bridé » sur les sessions actives (i18n FR/EN, 14 nouvelles clés)
+  — la vérité vient du routeur (rapport read_state throttle= : noms des
+  files mikthrottle- présentes), jamais d'un calcul cloud.
+
+### Technique
+- Modèle : Profile.QuotaMode/ThrottleRate, Session.Throttled,
+  Router.QuotaSchedOK + ValidQuotaMode/QuotaModeEffective/ValidThrottleRate
+  (regex miroir frontend THROTTLE_RATE_RE). Migrations idempotentes
+  Neon : profiles.quota_mode/throttle_rate, sessions.throttled,
+  routers.quota_sched_ok (ALTER IF NOT EXISTS — boot Render).
+- Agent : internal/agent/quota.go (NOUVEAU) — scripts RouterOS une ligne
+  (tick, on-login, on-logout, cœur partagé quotaApplyLines), buildQuotaEnsure
+  (pattern buildWatcherEnsure), profileOnLoginScript (fusion verrou+quota) ;
+  users.go : buildUserAdd/buildVoucherBatch posent le marqueur en mode
+  throttle (PAS de limit-bytes-total) ; profiles.go : ProfileRef.QuotaThrottle
+  + on-login combiné + on-logout dans add/set ; agent.go : case
+  CmdQuotaEnsure + scheduler dans InstallScript ; readstate.go : rapport
+  throttle= (chunk final, comme sessions).
+- Cloud : profileRef porte quotaMode dans CHAQUE user_add/voucher_batch/
+  profile_set ; throttleRate au niveau racine des payloads (users, vouchers,
+  wifi claim, user_resync) ; ensureQuotaThrottleLocked au check-in ;
+  signature quota_ensure → QuotaSchedOK ; applyReadState pose Session.
+  Throttled depuis throttle=.
+- RÉTRO-COMPATIBILITÉ TOTALE : quotaMode absent/vide = cut — aucun profil
+  existant ne change de comportement au déploiement ; les vouchers pré-N°106
+  gardent leur limit-bytes-total ; le read_state grossit de ~30 octets
+  (throttle=), les routeurs pré-N°106 convergent au premier rapport servi
+  par le nouveau cloud.
+
+### Vérifié
+gofmt/vet/build OK ; go test 12 paquets verts (suite complète) dont 8
+nouveaux tests agent (marqueur, équilibrage/une-ligne des scripts, tokens
+du contrat tick/on-login/on-logout, buildQuotaEnsure échappé, user_add/
+voucher_batch throttle vs cut, fusion on-login, profileEnsure) + 4 tests
+api (convergence conditionnelle/silence/drapeau/doublon/isolation compte,
+script shape remove-then-add, CRUD validations 400/201/bascules, flag
+Throttled du read_state + retombée) ; eslint 0, tsgo 0, build prod OK.
+Validation terrain recommandée avant généralisation (ordre réel des files
+place-before sur v6.43+/v7.x, comptage walled-garden) — documentée au
+contrat.
+
 ## 2026-09-14 — N°102 — Hotspot/HomeNet Phase 4 « le parcours familial éprouvé » : le zéro inexpliqué n'existe plus (le KPI Appareils dit POURQUOI il est vide et devient LA porte de la pause dîner, enseigne « mode agent requis »), et le parcours doré du foyer est verrouillé par les tests E2E (inscription publique « Ma maison » → box en mode agent → découverte par baux DHCP → nom affecté → pause dîner et convergence → gardes d'usage)
 
 ### N°102 — Contexte : la Phase 3 livrait les features, rien ne prouvait le voyage

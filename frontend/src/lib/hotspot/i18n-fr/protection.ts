@@ -40,4 +40,12 @@ export const frProtection: Record<string, string> = {
   "protection.hero.allOn": "Les 4 protections veillent sur votre WiFi public.",
   "protection.hero.missing": "À activer : {modules}",
   "protection.hero.noneOn": "Aucune protection active — commencez par le filtrage des sites dangereux.",
+
+  // — N°101 (re-skin foyer) : la MÊME vue parle « maison » pour un compte
+  // homenet — description du héros + encarts du verdict. Les clés des
+  // cartes modules restent partagées (leur vocabulaire est déjà neutre :
+  // « Couvre-feu internet », « Menaces bloquées »). —
+  "protection.home.description": "La protection de votre box et des appareils de la famille, en un coup d'œil",
+  "protection.home.hero.allOn": "Les 4 protections veillent sur votre maison.",
+  "protection.home.hero.noneOn": "Aucune protection active — commencez par le couvre-feu internet.",
 };

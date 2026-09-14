@@ -5,6 +5,124 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-14 — N°101 — Hotspot/HomeNet Phase 3 « les features maison » : les appareils du foyer vivent de leurs bails DHCP — inventaire découvert par la box (cadence 2 min, hotspots exclus), noms affectés (« TV du salon », « Tel de mama »), et LA pause dîner (couper l'internet d'un appareil précis, 30 min / 1 h / 2 h / jusqu'à réactivation, expiration recalculée par le cloud à chaque check-in) ; la Protection parle « maison » (couvre-feu en tête), et l'inscription publique du foyer est OUVERTE (sélecteur « Un lieu public / Ma maison »)
+
+### N°101 — Contexte : la coquille N°100 vivait d'un pis-aller
+La vue Appareils de la Phase 2 lisait GET /api/sessions — la table tenue
+par read_state pour le métier hotspot. Un foyer n'a PAS de portail captif :
+ses appareils rejoignent le WiFi, reçoivent un bail DHCP de la box, et
+n'apparaissent dans AUCUNE session. Phase 3 = la source de vérité des
+foyers : l'agent rapporte /ip dhcp-server lease (read_dhcp, la commande
+F9 déjà construite pour l'outil console), le cloud en tient un registre
+(une ligne par MAC — l'identité stable, l'IP tournant au gré des
+renouvellements), la famille nomme ses appareils et peut couper l'internet
+de l'un d'eux — la pause dîner, LE geste parental du phasage convenu.
+
+### Produit
+- APPAREILS RÉELS : trois nouveaux endpoints réservés homenet
+  (requireUsage, 404 pour un compte hotspot — miroir exact des vues
+  produit hotspot refusées aux foyers) : GET /api/devices (registre :
+  nom affecté, host-name DHCP, IP, statut du bail — bound = en ligne,
+  absence du dernier rapport complet = « gone », ligne conservée pour le
+  nom), PUT /api/devices/{id} (renommage, 48 runes, vide légitime),
+  POST /api/devices/{id}/pause (pause dîner : minutes 0-1440, 0 =
+  illimité, échéance calculée serveur).
+- PAUSE DÎNER : une règle FILTER PAR APPAREIL en pause, chain=forward,
+  src-mac-address (survit aux renouvellements DHCP), place-before=0
+  (au-dessus du fasttrack : les téléchargements EN COURS sont coupés
+  immédiatement), action=drop, marqueur mikcloud-pause — remove-then-add
+  idempotent, miroir IPv6 best-effort (on-error silencieux, non compté au
+  rapport). L'ÉTAT DÉSIRÉ est cloud-calculé (pattern FamilyGuard N°82 :
+  jamais d'horloge routeur) : à chaque check-in, l'ensemble des MAC en
+  pause effective est recalculé (une pause expirée en sort TOUTE SEULE),
+  sa signature comparée à Router.PauseSig, la commande device_pause
+  re-filée en cas de divergence — le parent qui change d'avis pendant le
+  vol ne voit jamais figer un état périmé (la version envoyée doit être
+  TOUJOURS désirée au moment du rapport, pattern SafeWiFi N°80).
+- INSCRIPTION PUBLIQUE HOMENET OUVERTE (renversement du contrat N°98) :
+  POST /api/auth/register accepte « homenet » — le sélecteur d'usage
+  ouvre le formulaire (« Un lieu public — Maquis, cybercafé, boutique » /
+  « Ma maison — Vous protégez le réseau familial »), l'atterrissage suit
+  l'usage (dashboard métier vs maison). Champ absent = hotspot : les
+  clients existants ne changent pas d'un octet.
+- RE-SKIN PROTECTION FOYER : la MÊME vue parle « maison » — description
+  (« La protection de votre box et des appareils de la famille »),
+  encarts du héros (aucune protection → « commencez par le couvre-feu
+  internet », pas le filtrage de sites), et le COUVRE-FEU OUVRANT LA
+  GRILLE des cartes (LA protection d'une famille) ; le gérant hotspot
+  garde SA page au mot près (vérifié navigateur des deux côtés).
+- DASHBOARD MAISON : le KPI « Appareils en ligne » lit le registre DHCP
+  (fin du comptage « sessions »), la carte box compte les appareils en
+  ligne de SA box.
+
+### Technique
+- Modèle : model.Device (MAC normalisée XX:XX:XX:XX:XX:XX — un rapport
+  corrompu ne crée jamais de ligne fantôme ; PauseActiveAt(now) avec
+  repli PRUDENT illimité sur échéance illisible — couper trop longtemps
+  se répare d'un clic, mentir à un parent non) ; DB.Devices + table
+  « devices » (DDL idempotent, index router/account) + Router.PauseSig
+  (ALTER idempotent) — specs/scan/args/load/sync alignés, BuildEmptyState
+  initialisé, suppression d'un routeur purge SON registre.
+- Agent : buildDevicePause (une règle IPv4 par MAC + miroir IPv6
+  best-effort + rapport rules=N — la signature n'est posée que si
+  rules == len(macs), vérité routeur pattern N°93) ; CmdDevicePause dans
+  ScriptFor, staleSentReadKinds (idempotent, re-prise zombie), vague 101
+  en fermeture du FIFO des différés.
+- Cadenceur ensureHomeDevicesLocked : read_dhcp enfilé aux check-ins des
+  routeurs agent de comptes HOMENET uniquement (borné à 2 min — même
+  régime egress que read_state N°74) ; les parcs hotspot ne paient RIEN
+  (leurs clics DHCP restent du cache outil F9, et un rapport F9 d'une box
+  hotspot n'alimente JAMAIS le registre — garde accountUsageLocked).
+- applyDeviceLeases : upsert par (routeur, MAC), host-name vide conservé,
+  déduction « gone » UNIQUEMENT sur rapport complet (< 100 baux, borne du
+  script — jamais de badge mensonger sur un rapport tronqué, honnêteté
+  v2/v4) ; ETag/304 sur GET /api/devices (poll 10 s de la vue).
+- Front : devices-view rework (source /api/devices, repli nom affecté →
+  host-name → MAC, icônes heuristiques TV/téléphone/ordinateur, chips
+  En ligne/En pause avec compte à rebours vivant, menu pause 30 min/1 h/
+  2 h/illimité, dialog de renommage, mutations TanStack + toasts, encart
+  d'honnêteté « s'applique à la prochaine synchronisation de votre box
+  (~1 min) ») ; i18n 21 clés neuves × 2 (parité 66/66 homenet), clés
+  signup.usage.* et protection.home.*.
+
+### Vérifié
+- gofmt vide, go vet OK, go build OK ; go test complet 12 paquets verts
+  SANS -race PUIS AVEC -race (api 463 s) — dont devices_test.go
+  (builders, garde d'usage 404/200, inventaire end-to-end avec agent
+  factice honnête : upsert, IP rafraîchie, « gone » sur rapport complet
+  uniquement, cadence, hotspot muet ; renommage bornes/isolation ; pause
+  posée → servie → signée → silence ; rapport menteur rules≠macs ne signe
+  PAS ; version périmée ne signe PAS ; expiration re-file la levée ;
+  purge à la suppression de la box) et model/devices_test.go (MAC,
+  PauseActiveAt illimité/borné/expiré/illisible, nom par runes).
+- eslint 0, tsgo 0, build production 13 routes.
+- Navigateur RÉEL (backend :4000 + front :3016, agent factice MAISON
+  YOPOUGON répondant à TOUS les kinds multiplexés) : inscription foyer
+  par le sélecteur « Ma maison » → atterrissage /app/home ; box agent →
+  check-in sert read_dhcp → 3 appareils découverts (tv-salon, tel-mama,
+  laptop-enfant) ; KPI maison « Appareils en ligne : 3 » ; vue Appareils
+  (3 lignes, statuts, bail) ; renommage « TV du salon » en live ; pause
+  30 min sur tel-mama → chip « En pause · 29m 56s » + toast + bouton
+  « Rétablir internet » + CONVERGENCE SERVEUR (PauseSig posée, journal
+  « Pause d'appareils appliquée (1 appareil coupé) ») ; rétablissement →
+  « En ligne » ; Protection foyer (description maison, couvre-feu en
+  tête de grille) vs Protection gérant (vocabulaire et ordre historiques,
+  session parallèle) ; sidebar métier sans « Votre maison » ; mobile
+  390 px scrollWidth 390 ; anglais intégral (Devices/Online/Paused/
+  Restore internet) ; 0 erreur console/page ; contrôle VLM des captures
+  conforme (boutons entiers à 1280 et 1512, aucune coupe).
+
+### Déploiement
+Diff backend (table + commandes + garde) : la CI déploie Render —
+l'ALTER devices/pause_sig et le CREATE TABLE s'appliquent au boot
+(idempotents, zéro donnée existante touchée) ; Vercel suit pour le
+front. Les DEUX routeurs clients réels (hotspot) ne changent de rien :
+leurs comptes restent hotspot (aucun cycle read_dhcp cadencé, aucun
+device_pause — la garde usage l'exclut), la vue Sessions et le dashboard
+métier sont inchangés. Test HomeNet pour le gérant : / → « Créer mon
+compte » → « Ma maison » — ou basculer un compte de test en console
+plateforme (N°98).
+
 ## 2026-09-14 — N°100 — Hotspot/HomeNet Phase 2 « la coquille » : un foyer qui se connecte voit SA console — sidebar « Votre maison » (Tableau de bord · Appareils · Protection), dashboard domestique (routeur, appareils, protection n/4, couvre-feu du soir), vue Appareils, zone Paramètres sans la section Hotspot — et les vues produit hotspot n'existent plus pour lui (lien direct /app/vouchers re-normalisé vers la maison, miroir exact des 404 serveur)
 
 ### N°100 — Contexte : la confiance se joue à la première sidebar

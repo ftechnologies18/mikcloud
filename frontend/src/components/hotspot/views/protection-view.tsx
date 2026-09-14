@@ -60,6 +60,8 @@ import {
 import { StatusBadge } from "@/components/hotspot/status-badge";
 import { api } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
+import { useHotspotStore } from "@/lib/hotspot/store";
+import { usageOf } from "@/lib/hotspot/roles";
 import {
   antiVpnOn,
   parseFamilyGuardSpec,
@@ -75,15 +77,17 @@ import { detailFromPath, viewToPath } from "@/lib/hotspot/view-path";
 /** Encart pédagogique du héros (N°96) : le verdict ne dit pas seulement
  * « À renforcer », il dit QUOI renforcer — les modules inactifs sont
  * nommés, le gérant n'a plus qu'à repérer les cartes correspondantes
- * (leurs chips « Inactif » répondent à l'encart). */
-function VerdictCallout({ verdict, missing }: { verdict: ProtectionVerdict; missing: string[] }) {
+ * (leurs chips « Inactif » répondent à l'encart). N°101 : le foyer reçoit
+ * SA phraséologie (votre maison, couvre-feu d'abord) — les clés
+ * protection.home.* existent en miroir FR/EN. */
+function VerdictCallout({ verdict, missing, isHome }: { verdict: ProtectionVerdict; missing: string[]; isHome: boolean }) {
   const { t, tf } = useI18n();
 
   if (verdict === "protected") {
     return (
       <p className="flex items-start gap-2 rounded-lg border border-primary/25 bg-primary/5 px-3 py-2 text-xs leading-relaxed text-foreground">
         <ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-primary" aria-hidden />
-        {t("protection.hero.allOn")}
+        {t(isHome ? "protection.home.hero.allOn" : "protection.hero.allOn")}
       </p>
     );
   }
@@ -92,7 +96,7 @@ function VerdictCallout({ verdict, missing }: { verdict: ProtectionVerdict; miss
     return (
       <p className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-700 dark:text-amber-300">
         <ShieldAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-        {t("protection.hero.noneOn")}
+        {t(isHome ? "protection.home.hero.noneOn" : "protection.hero.noneOn")}
       </p>
     );
   }
@@ -109,6 +113,11 @@ export default function ProtectionView() {
   const { t } = useI18n();
   const nav = useRouter();
   const pathname = usePathname();
+  // N°101 — re-skin foyer : la MÊME vue parle « maison » pour un compte
+  // homenet (description, héros, ordre des cartes — le couvre-feu d'abord,
+  // LA protection d'une famille) ; le gérant hotspot garde SA page au
+  // mot près. Usage lu du store de session (bascule admin → rechargement).
+  const isHome = usageOf(useHotspotStore((s) => s.user?.usage)) === "homenet";
 
   const { data: routers, isLoading, isError, refetch } = useQuery({
     queryKey: ["/api/routers"],
@@ -185,14 +194,23 @@ export default function ProtectionView() {
   const verdict = protectionVerdict(selected);
   const score = protectionScore(selected);
 
-  // Modules inactifs, dans l'ordre des cartes — l'encart du héros les
-  // nomme (source : mêmes helpers purs que le score, zéro dérive).
-  const missing = [
-    safeWifiLevelOf(selected) === "off" ? t("tools.safewifi.title") : null,
-    !shieldOn(selected) ? t("tools.shield.title") : null,
-    !parseFamilyGuardSpec(selected.familyGuardSpec).enabled ? t("tools.familyguard.title") : null,
-    !antiVpnOn(selected) ? t("tools.antivpn.title") : null,
-  ].filter((name): name is string => name !== null);
+  // Modules inactifs — l'encart du héros les nomme (source : mêmes helpers
+  // purs que le score, zéro dérive). N°101 : pour un foyer, le COUVRE-FEU
+  // d'abord dans la liste (la première protection d'une famille), puis le
+  // filtrage de sites ; le gérant hotspot garde l'ordre des cartes.
+  const missing = isHome
+    ? [
+        !parseFamilyGuardSpec(selected.familyGuardSpec).enabled ? t("tools.familyguard.title") : null,
+        safeWifiLevelOf(selected) === "off" ? t("tools.safewifi.title") : null,
+        !shieldOn(selected) ? t("tools.shield.title") : null,
+        !antiVpnOn(selected) ? t("tools.antivpn.title") : null,
+      ].filter((name): name is string => name !== null)
+    : [
+        safeWifiLevelOf(selected) === "off" ? t("tools.safewifi.title") : null,
+        !shieldOn(selected) ? t("tools.shield.title") : null,
+        !parseFamilyGuardSpec(selected.familyGuardSpec).enabled ? t("tools.familyguard.title") : null,
+        !antiVpnOn(selected) ? t("tools.antivpn.title") : null,
+      ].filter((name): name is string => name !== null);
 
   function selectRouter(id: string) {
     // L'URL porte la sélection (pattern fiche routeur) : Retour navigateur
@@ -202,7 +220,10 @@ export default function ProtectionView() {
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      <PageHeader title={t("protection.title")} description={t("protection.description")} />
+      <PageHeader
+        title={t("protection.title")}
+        description={t(isHome ? "protection.home.description" : "protection.description")}
+      />
 
       {/* Multi-sites : sélecteur (mono-routeur = étape sautée). */}
       {routers.length > 1 && (
@@ -246,7 +267,7 @@ export default function ProtectionView() {
                 </div>
               </div>
 
-              <VerdictCallout verdict={verdict} missing={missing} />
+              <VerdictCallout verdict={verdict} missing={missing} isHome={isHome} />
 
               {selected.mode !== "agent" && (
                 <p className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-700 dark:text-amber-300">
@@ -278,12 +299,25 @@ export default function ProtectionView() {
 
       {/* Les 4 protections — actionnables sans quitter la vue. Deux
           colonnes dès md : les éditeurs (SafeWiFi 3 options, FamilyGuard
-          planning complet) respirent, les bénéfices se lisent d'un trait. */}
+          planning complet) respirent, les bénéfices se lisent d'un trait.
+          N°101 : pour un foyer, le COUVRE-FEU ouvre le bal (c'est LA
+          protection d'une famille) — le gérant garde l'ordre historique. */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <SafeWifiCard router={selected} />
-        <ShieldCard router={selected} />
-        <FamilyGuardCard router={selected} />
-        <AntiVpnCard router={selected} />
+        {isHome ? (
+          <>
+            <FamilyGuardCard router={selected} />
+            <SafeWifiCard router={selected} />
+            <ShieldCard router={selected} />
+            <AntiVpnCard router={selected} />
+          </>
+        ) : (
+          <>
+            <SafeWifiCard router={selected} />
+            <ShieldCard router={selected} />
+            <FamilyGuardCard router={selected} />
+            <AntiVpnCard router={selected} />
+          </>
+        )}
       </div>
     </div>
   );

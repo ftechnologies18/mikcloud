@@ -64,6 +64,11 @@ type API struct {
 	// scripts servus (7 × ~2 Ko par cycle) reste dans le régime N°75.
 	// Accédé UNIQUEMENT sous le verrou du store.
 	readStateChunks map[string]int
+	// N°101 — cadence de l'inventaire HomeNet : horodatage du dernier
+	// rapport read_dhcp APPLIQUÉ par routeur (handleAgentResult) — borne
+	// le cycle à devicesMinInterval (2 min), miroir de readStateDone.
+	// Accédé UNIQUEMENT sous le verrou du store.
+	devicesDone map[string]time.Time
 	// N°75 — veille adaptative : signaux d'attention VOLATILS (jamais
 	// persistés — un redémarrage repart en mode rapide partout, le plus
 	// sûr). Clés « acc:<id> » (requête console authentifiée du compte) et
@@ -92,7 +97,7 @@ const readStateAccumStale = 15 * time.Minute
 
 // New construit l'API.
 func New(s *store.Store, jwtSecret string) *API {
-	return &API{store: s, secret: jwtSecret, gws: map[string]routeros.Gateway{}, pinLock: newPinLimiter(), signup: newSignupLimiter(), join: newSignupLimiter(), wifiClaim: newSignupLimiterLimits(20, 100), portalTrack: newSignupLimiterLimits(300, 3000), reset: newSignupLimiter(), egress: newEgressStats(), readStateDone: map[string]time.Time{}, readAcc: map[string]*readStateAccum{}, readStateChunks: map[string]int{}, attn: map[string]time.Time{}}
+	return &API{store: s, secret: jwtSecret, gws: map[string]routeros.Gateway{}, pinLock: newPinLimiter(), signup: newSignupLimiter(), join: newSignupLimiter(), wifiClaim: newSignupLimiterLimits(20, 100), portalTrack: newSignupLimiterLimits(300, 3000), reset: newSignupLimiter(), egress: newEgressStats(), readStateDone: map[string]time.Time{}, readAcc: map[string]*readStateAccum{}, readStateChunks: map[string]int{}, devicesDone: map[string]time.Time{}, attn: map[string]time.Time{}}
 }
 
 // Handler — mux complet, protégé par le middleware d'authentification.
@@ -210,6 +215,14 @@ func (a *API) Handler() http.Handler {
 
 	// Sessions
 	mux.HandleFunc("GET /api/sessions", a.handleSessionsList)
+	// N°101 — Phase 3 HomeNet : le registre des appareils du foyer (bails
+	// DHCP rapportés par l'agent + noms affectés + pause dîner). Famille
+	// RÉSERVÉE aux comptes homenet (404 pour un compte hotspot — miroir des
+	// vues produit hotspot refusées aux foyers) ; renommage et pause sont
+	// des gestes de gérant de la maison (rang 2, miroir des protections).
+	mux.HandleFunc("GET /api/devices", a.requireUsage(model.AccountUsageHomeNet, a.handleDevicesList))
+	mux.HandleFunc("PUT /api/devices/{id}", a.requireUsage(model.AccountUsageHomeNet, a.requireRole(2, a.handleDeviceRename)))
+	mux.HandleFunc("POST /api/devices/{id}/pause", a.requireUsage(model.AccountUsageHomeNet, a.requireRole(2, a.handleDevicePause)))
 	mux.HandleFunc("DELETE /api/sessions/{id}", a.handleSessionKick)
 
 	// Revendeurs

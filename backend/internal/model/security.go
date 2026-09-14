@@ -53,6 +53,7 @@ const (
 	CmdFamilyGuard     = "familyguard"      // N°82 : couvre-feu internet du WiFi public — fenêtre horaire pendant laquelle l'internet des clients est coupé (règles filter marquées mikcloud-familyguard, idempotent)
 	CmdAntiVpn         = "antivpn"          // N°88 : bloque-VPN du WiFi public — VPN et tunnels standards (GRE, ESP, IKE, L2TP, PPTP, OpenVPN, WireGuard, WARP, Tor) coupés pour les clients (règles filter marquées mikcloud-antivpn, idempotent)
 	CmdPoolDoctor      = "pool_doctor"      // N°97 : docteur du pool d'adresses IP du hotspot — diagnostic (pools/serveurs/profils/hôtes) + recyclage des IP zombies (login/idle/keepalive-timeout, address-per-mac=1) + extension de capacité optionnelle (range 10.77.0.0/21) ; idempotent, objets marqués mikcloud-pool
+	CmdDevicePause     = "device_pause"     // N°101 : pause dîner HomeNet — coupe l'internet d'appareils précis (règles filter par MAC marquées mikcloud-pause, remove-then-add idempotent) ; l'ensemble désiré est calculé par le cloud à chaque check-in (pause expirée = retirée)
 )
 
 // N°80 — niveaux SafeWiFi (filtrage DNS du WiFi public par redirection).

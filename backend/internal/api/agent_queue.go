@@ -34,6 +34,7 @@ var staleSentReadKinds = map[string]bool{
 	model.CmdShield:        true, // N°81 : idempotent (marqueur mikcloud-shield — remove-then-add)
 	model.CmdFamilyGuard:   true, // N°82 : idempotent (marqueur mikcloud-familyguard — remove-then-add)
 	model.CmdAntiVpn:       true, // N°88 : idempotent (marqueur mikcloud-antivpn — remove-then-add)
+	model.CmdDevicePause:   true, // N°101 : idempotent (marqueur mikcloud-pause — remove-then-add)
 }
 
 // staleSentLimit — au-delà de cette ancienneté sans rapport, une commande

@@ -91,7 +91,7 @@ var routerSpec = entitySpec[model.Router]{
 		"familyguard_spec", "familyguard_sig", "familyguard_applied_at",
 		"antivpn_level", "antivpn_sig", "antivpn_applied_at",
 		"pool_cap", "pool_hosts", "pool_ranges", "pool_doctor_at",
-		"pool_auto", "pool_auto_pending"},
+		"pool_auto", "pool_auto_pending", "pause_sig"},
 	idOf: func(x *model.Router) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Router, error) {
 		var x model.Router
@@ -103,7 +103,7 @@ var routerSpec = entitySpec[model.Router]{
 			&x.ShieldLevel, &x.ShieldSig, &x.ShieldAppliedAt,
 			&x.FamilyGuardSpec, &x.FamilyGuardSig, &x.FamilyGuardAppliedAt,
 			&x.AntiVpnLevel, &x.AntiVpnSig, &x.AntiVpnAppliedAt,
-			&x.PoolCap, &x.PoolHosts, &x.PoolRanges, &x.PoolDoctorAt, &x.PoolAuto, &x.PoolAutoPending)
+			&x.PoolCap, &x.PoolHosts, &x.PoolRanges, &x.PoolDoctorAt, &x.PoolAuto, &x.PoolAutoPending, &x.PauseSig)
 		// Sécurité P0 #6 — le mot de passe routeur est stocké chiffré
 		// (AES-256-GCM) : lecture = déchiffrement (passthrough si valeur
 		// antérieure au correctif, migration assurée par
@@ -124,7 +124,7 @@ var routerSpec = entitySpec[model.Router]{
 			x.ShieldLevel, x.ShieldSig, x.ShieldAppliedAt,
 			x.FamilyGuardSpec, x.FamilyGuardSig, x.FamilyGuardAppliedAt,
 			x.AntiVpnLevel, x.AntiVpnSig, x.AntiVpnAppliedAt,
-			x.PoolCap, x.PoolHosts, x.PoolRanges, x.PoolDoctorAt, x.PoolAuto, x.PoolAutoPending}
+			x.PoolCap, x.PoolHosts, x.PoolRanges, x.PoolDoctorAt, x.PoolAuto, x.PoolAutoPending, x.PauseSig}
 	},
 	hashOf: hashEntity[model.Router],
 }
@@ -281,6 +281,25 @@ var sessionSpec = entitySpec[model.Session]{
 			x.IP, x.MAC, x.StartedAt, x.UptimeSec, x.BytesIn, x.BytesOut, x.AccountID}
 	},
 	hashOf: hashEntity[model.Session],
+}
+
+// deviceSpec — N°101 : appareils des foyers HomeNet (bails DHCP + noms
+// affectés + pause dîner). L'ordre cols/scan/args reste strictement aligné.
+var deviceSpec = entitySpec[model.Device]{
+	table: "devices",
+	cols:  []string{"id", "account_id", "router_id", "router_name", "mac", "name", "hostname", "ip", "status", "expires", "lease_at", "created_at", "paused", "paused_until"},
+	idOf:  func(x *model.Device) string { return x.ID },
+	scan: func(r *sql.Rows) (model.Device, error) {
+		var x model.Device
+		err := r.Scan(&x.ID, &x.AccountID, &x.RouterID, &x.RouterName, &x.MAC, &x.Name, &x.Hostname,
+			&x.IP, &x.Status, &x.Expires, &x.LeaseAt, &x.CreatedAt, &x.Paused, &x.PausedUntil)
+		return x, err
+	},
+	args: func(x *model.Device) []any {
+		return []any{x.ID, x.AccountID, x.RouterID, x.RouterName, x.MAC, x.Name, x.Hostname,
+			x.IP, x.Status, x.Expires, x.LeaseAt, x.CreatedAt, x.Paused, x.PausedUntil}
+	},
+	hashOf: hashEntity[model.Device],
 }
 
 var activitySpec = entitySpec[model.Activity]{

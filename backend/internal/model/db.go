@@ -52,6 +52,12 @@ type DB struct {
 	// N°66 — registre des sessions PIN Mode Vente (limite d'appareils
 	// simultanés par revendeur) — voir SellSession.
 	SellSessions []SellSession `json:"sellSessions"`
+	// N°101 — appareils des foyers HomeNet (bails DHCP rapportés par
+	// read_dhcp + noms affectés + pause dîner). Remplie UNIQUEMENT pour
+	// les routeurs agent de comptes homenet (le cadenceur du check-in
+	// garde la famille — les clics DHCP de la console hotspot restent
+	// du cache outil F9, jamais des lignes d'appareil).
+	Devices []Device `json:"devices"`
 	// N°68 — demandes de réinitialisation de mot de passe (« Mot de passe
 	// oublié ? ») : token hashé, expiration 60 min, usage unique — voir
 	// PasswordReset. Borné par prunePasswordResetsLocked.

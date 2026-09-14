@@ -248,6 +248,20 @@ type Router struct {
 	// attente du check-in qui la filera (consommé au filage ; reste posé
 	// tant qu'une commande pool_doctor est en file ou en vol).
 	PoolAutoPending bool `json:"poolAutoPending,omitempty"`
+
+	// N°101 — pause dîner HomeNet : signature de l'ENSEMBLE pause DÉJÀ
+	// APPLIQUÉ avec succès sur ce routeur (hash de la liste triée des
+	// MAC en pause + sel de version dp-v1). Vide → rien d'appliqué (ou
+	// dernier échec) : le check-in suivant re-file la commande
+	// device_pause dès que la signature désirée diffère (pause posée,
+	// levée, expirée, appareil renommé dans le registre n'y compte pas —
+	// seules les MAC comptent). Posée au retour « ok » VÉRIFIÉ — le
+	// routeur échoe le compte de règles marquées mikcloud-pause APRÈS
+	// application, la signature n'est posée que si rules == len(macs)
+	// du payload ET si la version envoyée est TOUJOURS la version
+	// désirée (un parent qui change d'avis pendant le vol ne doit pas
+	// voir figé un état périmé — pattern SafeWiFi N°80).
+	PauseSig string `json:"pauseSig,omitempty"`
 }
 
 // SchedulerSecEffective — pas de scheduler connu du routeur (N°75). 0 =

@@ -11,6 +11,13 @@ export const frSignup: Record<string, string> = {
   "signup.subtitleStep2": "Pour vous aider et segmenter notre offre — nous ne spammons jamais.",
   "signup.step1": "Compte",
   "signup.step2": "Profil",
+  // N°101 — usage du réseau : la première question de l'inscription
+  // choisit la console d'atterrissage (lieu public vs foyer).
+  "signup.usage.label": "Votre réseau",
+  "signup.usage.hotspot.title": "Un lieu public",
+  "signup.usage.hotspot.desc": "Maquis, cybercafé, boutique — vous vendez l'accès internet.",
+  "signup.usage.homenet.title": "Ma maison",
+  "signup.usage.homenet.desc": "Vous protégez le réseau familial et ses appareils.",
   "signup.name": "Nom du compte",
   "signup.username": "Identifiant",
   "signup.usernameHint": "3 à 32 caractères : a-z, 0-9, tirets et tirets bas",

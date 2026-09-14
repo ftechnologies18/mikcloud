@@ -505,6 +505,13 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 	// du gérant via POST /api/routers/{id}/pool-doctor.
 	a.ensurePoolDoctorLocked(db, router)
 
+	// N°101 — Phase 3 HomeNet : l'inventaire des appareils (bails DHCP,
+	// cadence 2 min — hotspots exclus) puis la convergence de la pause dîner
+	// (l'ensemble désiré est recalculé à CHAQUE check-in : une pause qui
+	// expire change la signature et se lève d'elle-même, pattern N°82).
+	a.ensureHomeDevicesLocked(db, router)
+	a.ensureDevicePauseLocked(db, router)
+
 	// File FIFO : commandes en attente (max 10 par check-in).
 	//
 	// N°77 — PRIORITÉ AUX ACTIONNABLES : un parc de 3 500 users enfile
@@ -527,7 +534,7 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 		switch db.Commands[i].Kind {
 		case model.CmdReadState:
 			reads = append(reads, db.Commands[i])
-		case model.CmdWalledGarden, model.CmdHotspotFiles, model.CmdSafeWifi, model.CmdShield, model.CmdFamilyGuard, model.CmdAntiVpn, model.CmdPoolDoctor:
+		case model.CmdWalledGarden, model.CmdHotspotFiles, model.CmdSafeWifi, model.CmdShield, model.CmdFamilyGuard, model.CmdAntiVpn, model.CmdPoolDoctor, model.CmdDevicePause:
 			deferred = append(deferred, db.Commands[i])
 		default:
 			prio = append(prio, db.Commands[i])
@@ -555,6 +562,11 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 			return 82
 		case model.CmdAntiVpn:
 			return 88
+		}
+		// N°101 — device_pause ferme la vague (la pause ne dépend d'aucune
+		// autre commande, aucune écriture ne l'attend derrière).
+		if k == model.CmdDevicePause {
+			return 101
 		}
 		return 97 // CmdPoolDoctor (diagnostic pur : fermeture, ne bloque rien)
 	}
@@ -730,6 +742,32 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 		// suivant tant que PoolCap reste nul.
 		summary := a.applyPoolDoctor(db, router, vals)
 		a.logActivity(db, router.AccountID, "router", "Routeur «"+router.Name+"» — "+summary)
+	case cmd.Kind == model.CmdReadDhcp && ok:
+		// N°101 — inventaire HomeNet : le rapport des bails DHCP nourrit le
+		// registre des appareils UNIQUEMENT pour un compte homenet (le clic
+		// DHCP de la console hotspot reste du cache outil F9 : aucune ligne
+		// d'appareil ne naît d'un parc public). La commande reste « done »
+		// avec son Result["data"] : l'outil F9 y relit son cache 120 s —
+		// les DEUX consommateurs du même rapport, zéro conflit.
+		if accountUsageLocked(db, router.AccountID) == model.AccountUsageHomeNet {
+			created := a.applyDeviceLeases(db, router, vals)
+			if a.devicesDone == nil {
+				a.devicesDone = map[string]time.Time{}
+			}
+			a.devicesDone[router.ID] = time.Now().UTC()
+			if created > 0 {
+				a.logActivity(db, router.AccountID, "router", strconv.Itoa(created)+" appareil(s) découvert(s) sur «"+router.Name+"» (bail DHCP)")
+			}
+		}
+	case cmd.Kind == model.CmdDevicePause && ok:
+		// N°101 — pause dîner : la signature n'est posée que si le COMPTE de
+		// règles marquées rapporté correspond à l'ensemble envoyé ET si la
+		// version envoyée est toujours désirée (vérité routeur + anti-
+		// péremption, pattern SafeWiFi N°80/N°93). Un échec reste sans
+		// signature : le convergeur du check-in re-file tant que ça diverge.
+		if applied := a.applyDevicePauseResult(db, router, cmd, vals); applied > 0 {
+			a.logActivity(db, router.AccountID, "router", "Pause d'appareils appliquée sur «"+router.Name+"» ("+strconv.Itoa(applied)+" appareil(s) coupé(s))")
+		}
 	case ok:
 		if cmd.Kind == model.CmdWalledGarden {
 			// N°29 — configuration appliquée et CONFIRMÉE par le routeur :

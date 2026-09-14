@@ -373,6 +373,15 @@ func (a *API) handleRouterDelete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	db.Commands = commands
+	// N°101 — le registre des appareils suit le routeur (les noms affectés
+	// ne survivent pas à la box qui les a découverts).
+	devices := db.Devices[:0]
+	for _, d := range db.Devices {
+		if d.RouterID != id {
+			devices = append(devices, d)
+		}
+	}
+	db.Devices = devices
 	a.logActivityBy(r, db, acc, "router", "Routeur "+name+" supprimé")
 	a.store.Save()
 	a.store.Unlock()

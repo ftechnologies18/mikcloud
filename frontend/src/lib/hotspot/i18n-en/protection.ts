@@ -40,4 +40,10 @@ export const enProtection: Record<string, string> = {
   "protection.hero.allOn": "All 4 protections are watching over your public WiFi.",
   "protection.hero.missing": "To activate: {modules}",
   "protection.hero.noneOn": "No protection active — start with dangerous site filtering.",
+  // — N°101 (home re-skin): the SAME view speaks "home" for a homenet
+  // account — hero description + verdict callouts. Module card keys stay
+  // shared (their wording is already neutral).
+  "protection.home.description": "Protection for your box and the family's devices, at a glance",
+  "protection.home.hero.allOn": "All 4 protections are watching over your home.",
+  "protection.home.hero.noneOn": "No protection active — start with the internet curfew.",
 };

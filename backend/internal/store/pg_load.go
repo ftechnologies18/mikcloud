@@ -40,6 +40,7 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 		BillingRequests:   []model.BillingRequest{},
 		WifiSites:         []model.WifiSite{},
 		WifiGuests:        []model.WifiGuest{},
+		Devices:           []model.Device{},
 	}
 
 	steps := []struct {
@@ -57,6 +58,7 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 		{"password_resets", func() error { return loadInto(p, &db.PasswordResets, passwordResetSpec) }},
 		{"transactions", func() error { return loadInto(p, &db.Transactions, transactionSpec) }},
 		{"sessions", func() error { return loadInto(p, &db.Sessions, sessionSpec) }},
+		{"devices", func() error { return loadInto(p, &db.Devices, deviceSpec) }},
 		{"activity", func() error { return loadInto(p, &db.Activity, activitySpec) }},
 		{"sales", func() error { return loadInto(p, &db.Sales, saleSpec) }},
 		{"commands", func() error { return loadInto(p, &db.Commands, commandSpec) }},

@@ -483,6 +483,8 @@ func (b Builder) ScriptFor(cmd model.Command) (string, error) {
 		return b.buildHotspotFiles(cmd), nil
 	case model.CmdPoolDoctor:
 		return b.buildPoolDoctor(cmd), nil
+	case model.CmdDevicePause:
+		return b.buildDevicePause(cmd), nil
 	default:
 		return "", fmt.Errorf("kind de commande inconnu : %s", cmd.Kind)
 	}

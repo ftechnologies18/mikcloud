@@ -109,6 +109,9 @@ func (p *PG) Sync(db *model.DB) (err error) {
 	if err := syncTable(ctx, tx, p.hashes, sessionSpec, db.Sessions, &delta); err != nil {
 		return err
 	}
+	if err := syncTable(ctx, tx, p.hashes, deviceSpec, db.Devices, &delta); err != nil {
+		return err
+	}
 	if err := syncTable(ctx, tx, p.hashes, activitySpec, db.Activity, &delta); err != nil {
 		return err
 	}

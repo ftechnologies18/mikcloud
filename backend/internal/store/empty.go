@@ -43,6 +43,7 @@ func BuildEmptyState() *model.DB {
 		Resellers:       []model.Reseller{},
 		Transactions:    []model.Transaction{},
 		Sessions:        []model.Session{},
+		Devices:         []model.Device{},
 		Activity:        []model.Activity{},
 		Sales:           []model.Sale{},
 		Templates:       []model.VoucherTemplate{},

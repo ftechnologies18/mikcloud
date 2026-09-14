@@ -78,6 +78,10 @@ export interface RegisterPayload {
   country: string;
   /** Ville d'activité (texte libre). */
   city: string;
+  /** N°101 — usage du compte : « hotspot » (lieu public) ou « homenet »
+   * (foyer — inscription OUVERTE depuis la Phase 3). Absent = hotspot
+   * (comportement historique). */
+  usage?: AccountUsage;
 }
 
 export interface AuthResponse {
@@ -526,6 +530,36 @@ export interface HotspotSession {
   bytesIn: number;
   bytesOut: number;
 }
+
+/** N°101 — appareil du foyer (bail DHCP, GET /api/devices — console HomeNet).
+ * L'identité stable est la MAC ; le nom affiché replie nom affecté →
+ * host-name DHCP → MAC. `status` = dernier bail rapporté par la box
+ * (bound = en ligne) ; « gone » = bail retiré du dernier rapport complet. */
+export interface HomeDevice {
+  id: string;
+  accountId?: string;
+  routerId: string;
+  routerName: string;
+  mac: string;
+  /** Nom affecté par la famille (« TV du salon ») — vide = repli host-name/MAC. */
+  name: string;
+  /** host-name DHCP rapporté par l'appareil (souvent vide ou générique). */
+  hostname: string;
+  ip: string;
+  status: string;
+  /** Durée brute RouterOS du bail (« 30m »), affichée telle quelle. */
+  expires: string;
+  /** Horodatage RFC3339 du dernier rapport agent qui a nourri ces champs. */
+  leaseAt: string;
+  createdAt: string;
+  /** Pause dîner — état EFFECTIF au moment de la lecture (serveur). */
+  paused: boolean;
+  /** RFC3339 ; "" = illimité (jusqu'à réactivation). */
+  pausedUntil: string;
+}
+
+/** Options de pause dîner proposées par l'UI (minutes ; 0 = illimité). */
+export const DEVICE_PAUSE_PRESETS = [30, 60, 120, 0] as const;
 
 export interface Reseller {
   id: string;

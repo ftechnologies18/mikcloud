@@ -3,7 +3,7 @@
 import { useMemo, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { motion, useAnimate, useReducedMotion, type Variants } from "framer-motion";
-import { ArrowLeft, ArrowRight, Check, Eye, EyeOff, Loader2, MapPin, Rocket, ShieldCheck, User } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Eye, EyeOff, Home, Loader2, MapPin, Rocket, ShieldCheck, Store, User } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -27,6 +27,7 @@ import {
 import { register } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { useHotspotStore } from "@/lib/hotspot/store";
+import type { AccountUsage } from "@/lib/hotspot/types";
 import { countriesByLang, countryByCode } from "./african-countries";
 
 /* Micro-animations : champs en cascade (cohérent avec login-screen). */
@@ -57,7 +58,10 @@ export default function SignupModal({ open, onOpenChange }: SignupModalProps) {
   // Étape courante : 1 = compte, 2 = profil.
   const [step, setStep] = useState<1 | 2>(1);
 
-  // Étape 1 — compte.
+  // Étape 1 — compte + usage du réseau (N°101 : l'inscription publique du
+  // foyer est OUVERTE — la première question du formulaire choisit la
+  // console d'atterrissage, hotspot par défaut = comportement historique).
+  const [usage, setUsage] = useState<AccountUsage>("hotspot");
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -84,6 +88,7 @@ export default function SignupModal({ open, onOpenChange }: SignupModalProps) {
   }
 
   function resetForm() {
+    setUsage("hotspot");
     setName("");
     setUsername("");
     setPassword("");
@@ -128,6 +133,9 @@ export default function SignupModal({ open, onOpenChange }: SignupModalProps) {
         phone: dialCode && !phoneDigits.startsWith(dialCode) ? dialCode + phoneDigits : phoneDigits,
         country,
         city: city.trim(),
+        // N°101 — usage choisi à l'étape 1 : le serveur ouvre la console
+        // correspondante (dashboard métier vs maison de la famille).
+        usage,
       });
       setAuth(res.token, res.user);
       toast.success(t("signup.success", "Compte créé — bienvenue sur MikCloud !"));
@@ -194,6 +202,48 @@ export default function SignupModal({ open, onOpenChange }: SignupModalProps) {
             }}
             className="space-y-4 pt-2"
           >
+            {/* N°101 — votre réseau : la question qui ouvre l'inscription.
+                Deux cartes radio (pas un select : le choix se VOIT), hotspot
+                sélectionné par défaut — les clients existants ne changent
+                pas d'un clic près. */}
+            <motion.div variants={rise} className="space-y-2">
+              <Label>{t("signup.usage.label", "Votre réseau")}</Label>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2" role="radiogroup" aria-label={t("signup.usage.label", "Votre réseau")}>
+                {([
+                  { value: "hotspot" as AccountUsage, icon: Store, title: t("signup.usage.hotspot.title", "Un lieu public"), desc: t("signup.usage.hotspot.desc", "Maquis, cybercafé, boutique — vous vendez l'accès internet.") },
+                  { value: "homenet" as AccountUsage, icon: Home, title: t("signup.usage.homenet.title", "Ma maison"), desc: t("signup.usage.homenet.desc", "Vous protégez le réseau familial et ses appareils.") },
+                ]).map((option) => {
+                  const selected = usage === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      onClick={() => setUsage(option.value)}
+                      disabled={loading}
+                      className={`flex items-start gap-2.5 rounded-lg border p-3 text-left transition-all ${
+                        selected
+                          ? "border-primary/50 bg-primary/5 shadow-sm"
+                          : "border-border hover:border-primary/30 hover:bg-muted/40"
+                      }`}
+                    >
+                      <span className={`mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md ${selected ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"}`}>
+                        <option.icon className="size-4" aria-hidden />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="flex items-center gap-1.5 text-sm font-medium">
+                          {option.title}
+                          {selected && <Check className="size-3.5 text-primary" aria-hidden />}
+                        </span>
+                        <span className="mt-0.5 block text-xs leading-snug text-muted-foreground">{option.desc}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </motion.div>
+
             <motion.div variants={rise} className="space-y-2">
               <Label htmlFor="signup-name">{t("signup.name", "Nom du compte")}</Label>
               <Input

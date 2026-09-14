@@ -368,20 +368,18 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	city := strings.TrimSpace(req.City)
 
-	// N°98 — usage du compte : seul « hotspot » est ouvert à l'inscription
-	// publique (Phase 1 — plomberie invisible) ; « homenet » arrive avec
-	// sa coquille de navigation (Phase 2). Valeur vide = défaut « hotspot »
-	// (les clients HTTP existants ne changent pas d'un octet).
+	// N°98 → N°101 — usage du compte : l'inscription publique accepte les
+	// DEUX usages depuis la Phase 3 (la coquille N°100 et les features
+	// maison existent : dashboard, appareils par bail DHCP, protection
+	// re-skinée — un foyer qui s'inscrit arrive sur SA console). Valeur
+	// vide = défaut « hotspot » (les clients HTTP existants ne changent
+	// pas d'un octet).
 	usage := strings.ToLower(strings.TrimSpace(req.Usage))
 	if usage == "" {
 		usage = model.AccountUsageHotspot
 	}
-	if usage != model.AccountUsageHotspot {
-		if usage == model.AccountUsageHomeNet {
-			writeErr(w, http.StatusBadRequest, "L'inscription HomeNet n'est pas encore ouverte — créez un compte Hotspot")
-		} else {
-			writeErr(w, http.StatusBadRequest, "Mode de compte inconnu")
-		}
+	if usage != model.AccountUsageHotspot && usage != model.AccountUsageHomeNet {
+		writeErr(w, http.StatusBadRequest, "Mode de compte inconnu")
 		return
 	}
 
@@ -426,7 +424,7 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 		Phone:     phone,
 		Country:   country,
 		City:      city,
-		Usage:     usage, // N°98 — « hotspot » (seule valeur acceptée en public)
+		Usage:     usage, // N°98/N°101 — hotspot OU homenet (l'atterrissage client suit : dashboard vs maison)
 	}
 	db.Accounts = append(db.Accounts, acc)
 	u := model.AdminUser{

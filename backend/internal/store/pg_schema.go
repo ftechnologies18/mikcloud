@@ -207,6 +207,30 @@ func (p *PG) ensureSchema() error {
 		// SELECT différentiel de la nouvelle colonne ne boote pas
 		// (SQLSTATE 42703) sur les bases préexistantes.
 		`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS usage TEXT NOT NULL DEFAULT 'hotspot'`,
+		// N°101 — appareils des foyers HomeNet : registre des bails DHCP
+		// (identité stable = MAC, upsert par routeur) + nom affecté par la
+		// famille + état de pause dîner (désiré côté cloud, convergé par la
+		// commande agent device_pause). Remplie UNIQUEMENT pour les routeurs
+		// agent de comptes homenet — la table des comptes hotspot reste vide
+		// (cadenceur du check-in, cf. ensureHomeDevicesLocked côté api).
+		`CREATE TABLE IF NOT EXISTS devices (
+				id           TEXT PRIMARY KEY,
+				account_id   TEXT NOT NULL DEFAULT '',
+				router_id    TEXT NOT NULL DEFAULT '',
+				router_name  TEXT NOT NULL DEFAULT '',
+				mac          TEXT NOT NULL DEFAULT '',
+				name         TEXT NOT NULL DEFAULT '',
+				hostname     TEXT NOT NULL DEFAULT '',
+				ip           TEXT NOT NULL DEFAULT '',
+				status       TEXT NOT NULL DEFAULT '',
+				expires      TEXT NOT NULL DEFAULT '',
+				lease_at     TEXT NOT NULL DEFAULT '',
+				created_at   TEXT NOT NULL DEFAULT '',
+				paused       BOOLEAN NOT NULL DEFAULT FALSE,
+				paused_until TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_devices_router  ON devices (router_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_devices_account ON devices (account_id)`,
 		// P0/P1 (audit Mikhmon) — nouvelles collections.
 		`CREATE TABLE IF NOT EXISTS voucher_templates (
                         id         TEXT PRIMARY KEY,
@@ -660,6 +684,10 @@ func (p *PG) ensureSchema() error {
 		// check-in (PoolAutoPending, cf. internal/api/agent_pool.go).
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS pool_auto BOOLEAN NOT NULL DEFAULT FALSE`,
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS pool_auto_pending BOOLEAN NOT NULL DEFAULT FALSE`,
+		// N°101 — pause dîner HomeNet : signature de l'ensemble pause appliqué
+		// sur ce routeur (hash de la liste des MAC en pause, sel dp-v1 — posée
+		// au retour « ok » VÉRIFIÉ de la commande device_pause, cf. models.go).
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS pause_sig TEXT NOT NULL DEFAULT ''`,
 		// N°97 — état anti-spam alerte pool (routerID → high|full), JSON
 		// sérialisé comme stock_alert_state.
 		`ALTER TABLE notif_settings ADD COLUMN IF NOT EXISTS pool_alert_state TEXT NOT NULL DEFAULT ''`,

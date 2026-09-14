@@ -265,7 +265,9 @@ export async function apiDownload(path: string, filename: string, params?: ApiOp
   URL.revokeObjectURL(url);
 }
 
-/** register — inscription SaaS (rôle owner). Renvoie token + utilisateur comme le login. */
+/** register — inscription SaaS (rôle owner). Renvoie token + utilisateur comme le login.
+ * N°101 — l'usage (hotspot | homenet) est porté par le corps : le sélecteur
+ * du formulaire d'inscription choisit la console d'atterrissage. */
 export async function register(payload: RegisterPayload): Promise<AuthResponse> {
   return api<AuthResponse>("/api/auth/register", {
     method: "POST",
@@ -279,6 +281,8 @@ export async function register(payload: RegisterPayload): Promise<AuthResponse> 
       phone: payload.phone,
       country: payload.country,
       city: payload.city,
+      // N°101 — usage du compte (absent = hotspot, comportement historique).
+      usage: payload.usage || undefined,
     },
   });
 }
@@ -298,6 +302,31 @@ export async function setAccountStatus(id: string, status: AccountStatus): Promi
  * l'usage à chaque requête, pas au login). */
 export async function setAccountUsage(id: string, usage: AccountUsage): Promise<{ ok: boolean }> {
   return api<{ ok: boolean }>(`/api/admin/accounts/${id}/usage`, { method: "PUT", body: { usage } });
+}
+
+// ---------------------------------------------------------------------------
+// N°101 — appareils du foyer (console HomeNet)
+// ---------------------------------------------------------------------------
+
+/** renameDevice — affecte le nom familier d'un appareil (« TV du salon »).
+ * Un nom vide est légitime (retour à l'anonymat host-name/MAC). */
+export async function renameDevice(id: string, name: string): Promise<{ ok: boolean; name: string }> {
+  return api<{ ok: boolean; name: string }>(`/api/devices/${id}`, { method: "PUT", body: { name } });
+}
+
+/** pauseDevice — pause dîner : coupe l'internet de l'appareil.
+ * `paused` pose/ lève la pause ; `minutes` (0 ou absent = illimité) borne la
+ * durée — l'échéance est calculée serveur, la coupure appliquée par la box
+ * à son prochain check-in (≤ 1 min console ouverte). */
+export async function pauseDevice(
+  id: string,
+  paused: boolean,
+  minutes?: number,
+): Promise<{ ok: boolean; paused: boolean; pausedUntil: string }> {
+  return api<{ ok: boolean; paused: boolean; pausedUntil: string }>(`/api/devices/${id}/pause`, {
+    method: "POST",
+    body: { paused, minutes: minutes ?? 0 },
+  });
 }
 
 // ---------------------------------------------------------------------------

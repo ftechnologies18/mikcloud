@@ -1,9 +1,9 @@
 package api
 
 // Tests N°98 — Phase 1 Hotspot/HomeNet (plomberie invisible) :
-//   - contrat d'inscription publique : seul « hotspot » est accepté
-//     (absent = défaut, homenet = refusé TANT QUE la coquille Phase 2
-//     n'existe pas, valeur inconnue = refusée) ;
+//   - contrat d'inscription publique : N°98 refusait « homenet » (la
+//     coquille n'existait pas) — N°101 (Phase 3) l'OUVRE, les DEUX usages
+//     sont acceptés (absent = défaut hotspot, valeur inconnue = refusée) ;
 //   - la session transporte l'usage : login, register, /api/auth/me ;
 //   - la garde requireUsage : les endpoints PRODUIT hotspot répondent 404
 //     aux comptes homenet (créés par la console plateforme), les endpoints
@@ -56,11 +56,12 @@ func registerUsageBody(username, usage string) map[string]string {
 	return body
 }
 
-// TestRegisterUsagePublicHotspotOnly — le contrat public de la Phase 1 :
-// hotspot seul. Champ absent → défaut hotspot ; homenet → refusé (la
-// coquille de navigation n'existe pas encore — un compte homenet verrait la
-// console hotspot avec des endpoints produit 404) ; valeur inconnue → 400.
-func TestRegisterUsagePublicHotspotOnly(t *testing.T) {
+// TestRegisterUsageBothOpen — N°101 (Phase 3) inverse le contrat N°98 :
+// l'inscription publique accepte les DEUX usages. Champ absent → défaut
+// hotspot (les clients existants ne changent pas d'un octet) ; homenet →
+// 201 avec usage transporté par la session (la coquille N°100 et les
+// features maison existent) ; valeur inconnue → 400.
+func TestRegisterUsageBothOpen(t *testing.T) {
 	ts := newTestServer(t)
 
 	// Champ absent → 201, compte hotspot (les clients existants ne
@@ -79,9 +80,16 @@ func TestRegisterUsagePublicHotspotOnly(t *testing.T) {
 		t.Fatalf("inscription hotspot explicite : statut %d, attendu 201", status)
 	}
 
-	// « homenet » → 400 : pas encore ouvert au public.
-	if status, _ := doJSON(t, ts, "POST", "/api/auth/register", "", registerUsageBody("usage-hn", model.AccountUsageHomeNet)); status != http.StatusBadRequest {
-		t.Fatalf("inscription homenet : statut %d, attendu 400 (pas encore ouverte)", status)
+	// N°101 — « homenet » → 201 : l'inscription publique du foyer est
+	// OUVERTE (Phase 3 : dashboard maison + appareils + protection
+	// re-skinée existent, l'atterrissage client suit l'usage).
+	status, out = doJSON(t, ts, "POST", "/api/auth/register", "", registerUsageBody("usage-hn", model.AccountUsageHomeNet))
+	if status != http.StatusCreated {
+		t.Fatalf("inscription homenet : statut %d, attendu 201 (ouverte depuis la Phase 3)", status)
+	}
+	user, _ = out["user"].(map[string]any)
+	if user["usage"] != model.AccountUsageHomeNet {
+		t.Fatalf("usage homenet = %v, attendu %q", user["usage"], model.AccountUsageHomeNet)
 	}
 
 	// Valeur inconnue → 400.

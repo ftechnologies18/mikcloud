@@ -47,7 +47,7 @@ import {
   protectionVerdict,
 } from "@/lib/hotspot/protection";
 import { viewToPath } from "@/lib/hotspot/view-path";
-import type { HotspotSession, RouterDevice } from "@/lib/hotspot/types";
+import type { HomeDevice, RouterDevice } from "@/lib/hotspot/types";
 
 /** Carte d'une box : identité, santé, anneau de protection, actions.
  * Le foyer a rarement plusieurs routeurs — mais le modèle SaaS est
@@ -55,11 +55,13 @@ import type { HotspotSession, RouterDevice } from "@/lib/hotspot/types";
 function RouterCard({
   router,
   lang,
+  devicesOnline,
   onOpenProtection,
   onOpenDevices,
 }: {
   router: RouterDevice;
   lang: "fr" | "en";
+  devicesOnline: number;
   onOpenProtection: (routerId: string) => void;
   onOpenDevices: () => void;
 }) {
@@ -100,8 +102,8 @@ function RouterCard({
               <div>
                 <dt className="text-muted-foreground">{t("home.router.devices")}</dt>
                 <dd className="font-semibold tabular-nums">
-                  {router.activeSessions}
-                  {online && <span className="live-dot ml-1.5 inline-block size-1.5 rounded-full bg-primary align-middle" aria-hidden />}
+                  {devicesOnline}
+                  {router.status === "online" && <span className="live-dot ml-1.5 inline-block size-1.5 rounded-full bg-primary align-middle" aria-hidden />}
                 </dd>
               </div>
               <div>
@@ -146,17 +148,26 @@ export default function HomeView() {
     refetchInterval: 15_000,
   });
 
-  // Appareils en ligne : la même source de vérité que la vue Appareils
-  // (table des sessions, tenue par read_state) — pas de double comptage.
-  const { data: sessions } = useQuery({
-    queryKey: ["/api/sessions"],
-    queryFn: () => api<HotspotSession[]>("/api/sessions"),
+  // N°101 — le registre des appareils du foyer (bails DHCP rapportés par la
+  // box) : la même source de vérité que la vue Appareils, et la fin du
+  // pis-aller « sessions hotspot » de la Phase 2 (un foyer sans portail
+  // captif ne produit PAS de sessions — ses appareils vivent dans ses baux).
+  const { data: devices } = useQuery({
+    queryKey: ["/api/devices"],
+    queryFn: () => api<HomeDevice[]>("/api/devices"),
     refetchInterval: 10_000,
   });
 
   const list = useMemo(() => routers ?? [], [routers]);
   const onlineCount = list.filter((r) => r.status === "online").length;
-  const devicesCount = sessions?.length ?? 0;
+  const devicesOnline = useMemo(() => (devices ?? []).filter((d) => d.status === "bound").length, [devices]);
+  const devicesByRouter = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const d of devices ?? []) {
+      if (d.status === "bound") map.set(d.routerId, (map.get(d.routerId) ?? 0) + 1);
+    }
+    return map;
+  }, [devices]);
 
   // Protection KPI : le maillon le plus faible du foyer (un réseau se juge
   // par sa porte la plus ouverte — même calcul que le bandeau du dashboard
@@ -224,7 +235,7 @@ export default function HomeView() {
         />
         <StatCard
           title={t("home.kpi.devices")}
-          value={String(devicesCount)}
+          value={String(devicesOnline)}
           sub={t("home.kpi.devicesSub")}
           icon={MonitorSmartphone}
           live
@@ -274,6 +285,7 @@ export default function HomeView() {
                 key={r.id}
                 router={r}
                 lang={lang}
+                devicesOnline={devicesByRouter.get(r.id) ?? 0}
                 onOpenProtection={openProtection}
                 onOpenDevices={openDevices}
               />

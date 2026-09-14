@@ -83,7 +83,7 @@ func TestSyncStatusRoleMatrix(t *testing.T) {
 }
 
 // TestSyncStatusContract — en mode JSON (tests sans DATABASE_URL) :
-// mode="json", blocs sync/neon null, 30 tables avec les lignes mémoire,
+// mode="json", blocs sync/neon null, 31 tables avec les lignes mémoire,
 // et la photographie agents cohérente avec le seed (1 agent en ligne,
 // file 1/2 dont 1 zombie).
 func TestSyncStatusContract(t *testing.T) {
@@ -107,10 +107,10 @@ func TestSyncStatusContract(t *testing.T) {
 		t.Fatalf("mode JSON : neon doit être null, obtenu %v", out["neon"])
 	}
 
-	// Tables : 30 entrées, lignes mémoire exactes pour le seed.
+	// Tables : 31 entrées, lignes mémoire exactes pour le seed.
 	tables, ok := out["tables"].([]any)
-	if !ok || len(tables) != 30 {
-		t.Fatalf("30 tables attendues, obtenu %v", len(tables))
+	if !ok || len(tables) != 31 {
+		t.Fatalf("31 tables attendues, obtenu %v", len(tables))
 	}
 	findTable := func(name string) map[string]any {
 		for _, e := range tables {

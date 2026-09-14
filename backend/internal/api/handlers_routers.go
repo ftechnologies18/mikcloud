@@ -210,6 +210,11 @@ func (a *API) handleRouterUpdate(w http.ResponseWriter, r *http.Request) {
 		Password        *string `json:"password"`
 		Mode            *string `json:"mode"`
 		HotspotLoginUrl *string `json:"hotspotLoginUrl"`
+		// N°103 — capacité ligne DÉCLARÉE (bits/s, 0 = effacer la
+		// déclaration). WanIface n'est PAS modifiable ici : c'est la
+		// vérité routeur (read_state), jamais une saisie console.
+		LineDownBps *int64 `json:"lineDownBps"`
+		LineUpBps   *int64 `json:"lineUpBps"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
@@ -251,6 +256,23 @@ func (a *API) handleRouterUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Password != nil && *req.Password != "" {
 		updated.Password = *req.Password
+	}
+	// N°103 — capacité ligne déclarée : bornée 10 Gbps (une saisie au-delà
+	// est une erreur d'unité — Mbps entrés en bps ou faute de frappe) ;
+	// négatif refusé (0 est l'effacement, pas une capacité).
+	if req.LineDownBps != nil {
+		if *req.LineDownBps < 0 || *req.LineDownBps > 10_000_000_000 {
+			writeErr(w, http.StatusBadRequest, "Capacité descendante invalide (0 à 10 Gbps en bits/s)")
+			return
+		}
+		updated.LineDownBps = *req.LineDownBps
+	}
+	if req.LineUpBps != nil {
+		if *req.LineUpBps < 0 || *req.LineUpBps > 10_000_000_000 {
+			writeErr(w, http.StatusBadRequest, "Capacité montante invalide (0 à 10 Gbps en bits/s)")
+			return
+		}
+		updated.LineUpBps = *req.LineUpBps
 	}
 	prevMode := updated.Mode
 	if req.Mode != nil {
@@ -382,6 +404,15 @@ func (a *API) handleRouterDelete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	db.Devices = devices
+	// N°103 — les agrégats de qualité de ligne suivent le routeur (la
+	// mesure FAI d'une box retirée n'a plus d'objet).
+	lq := db.LineQuality[:0]
+	for _, d := range db.LineQuality {
+		if d.RouterID != id {
+			lq = append(lq, d)
+		}
+	}
+	db.LineQuality = lq
 	a.logActivityBy(r, db, acc, "router", "Routeur "+name+" supprimé")
 	a.store.Save()
 	a.store.Unlock()
@@ -565,4 +596,168 @@ func (a *API) handleRouterTraffic(w http.ResponseWriter, r *http.Request) {
 	a.store.Save()
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, out)
+}
+
+// ---------------------------------------------------------------------------
+// N°103 — Qualité de ligne (mesure passive du débit FAI)
+// ---------------------------------------------------------------------------
+
+// lineQualityWindow — fenêtre d'observation de l'enveloppe mesurée : 14 jours
+// (deux semaines complètes de fréquentation — semaine + week-end — avant de
+// faire confiance à la mesure ; moins serait un carnet de commande faussé par
+// un seul soir de match).
+const lineQualityWindow = 14
+
+// lineQualityMinDaySamples — échantillons minimum pour qu'un jour compte dans
+// l'enveloppe : 50 fenêtres de ~2 min ≈ 1 h 40 d'observation — un jour quasi
+// vide (redéploiement cloud, routeur en veille profonde) n'apporte rien.
+const lineQualityMinDaySamples = 50
+
+// lineQualityConfidentDays — jours QUALIFIÉS minimum pour estimer la mesure
+// « exploitable » : 3 jours distincts d'observation sérieuse.
+const lineQualityConfidentDays = 3
+
+// handleRouterLineQuality — GET /api/routers/{id}/line-quality : la carte
+// « Qualité de ligne » du site. Réponse :
+//
+//	wanIface      — interface WAN détectée (read_state ; ether1 en simulé) ;
+//	configured    — capacité DÉCLARÉE par le gérant (0 = non renseignée) ;
+//	days          — jusqu'à 14 jours d'agrégats de l'interface WAN (jour le
+//	                plus récent d'abord) : max et p95 par direction ;
+//	measured      — enveloppe OBSERVÉE sur la fenêtre : le débit le plus
+//	                élevé jamais vu en fenêtre ~2 min (plancher honnête de la
+//	                capacité — une ligne peu chargée n'est jamais « mesurée » à
+//	                son étiquette) + p95 le plus élevé (enveloppe régulière,
+//	                insensible aux pics isolés) + days/confident ;
+//	live          — débit courant de l'interface WAN (db.Traffic, même
+//	                fraîcheur que l'onglet Trafic).
+//
+// Simulé comme agent : le moteur d'échantillonnage est le même (AccumulateLineQuality),
+// seul le producteur diffère (tickTraffic vs read_state). Mode real : 400 comme
+// toutes les lectures télémétriques (le mode direct n'est pas supporté).
+func (a *API) handleRouterLineQuality(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
+	id := r.PathValue("id")
+	now := time.Now().UTC()
+
+	a.store.Lock()
+	db := a.store.Data()
+	rr := findRouterScoped(db, id, acc)
+	if rr == nil {
+		a.store.Unlock()
+		writeErr(w, http.StatusNotFound, "Routeur introuvable")
+		return
+	}
+	if rr.Mode == "real" {
+		a.store.Unlock()
+		writeErr(w, http.StatusBadRequest, realModeUnsupported)
+		return
+	}
+	routerCopy := *rr
+	// Le simulé vit au rythme des polls de la console (pattern handleRouterTraffic).
+	if routerCopy.Mode == "simulated" {
+		store.Tick(db, now)
+		if rr = findRouterScoped(db, id, acc); rr != nil {
+			routerCopy = *rr
+		}
+	}
+
+	type dayOut struct {
+		Day      string `json:"day"`
+		Samples  int    `json:"samples"`
+		RxMaxBps int64  `json:"rxMaxBps"`
+		TxMaxBps int64  `json:"txMaxBps"`
+		RxP95Bps int64  `json:"rxP95Bps"`
+		TxP95Bps int64  `json:"txP95Bps"`
+	}
+	days := []dayOut{}
+	wan := routerCopy.WanIface
+	// Agrégats de l'interface WAN, triés du plus récent au plus ancien, bornés
+	// à la fenêtre d'observation. Le jour courant compte SANS seuil de samples
+	// (c'est le jour en cours de se remplir) ; seuls les jours ÉCLOS comptent
+	// dans l'enveloppe mesurée (samples ≥ 50).
+	var today string
+	if wan != "" {
+		today = model.LineQualityDayKey(now)
+		rows := []*model.LineQualityDay{}
+		for i := range db.LineQuality {
+			lq := &db.LineQuality[i]
+			if lq.RouterID != id || lq.Iface != wan {
+				continue
+			}
+			if lq.Day < now.AddDate(0, 0, -lineQualityWindow).Format("2006-01-02") {
+				continue
+			}
+			rows = append(rows, lq)
+		}
+		sort.Slice(rows, func(i, j int) bool { return rows[i].Day > rows[j].Day })
+		for _, lq := range rows {
+			days = append(days, dayOut{
+				Day: lq.Day, Samples: lq.Samples,
+				RxMaxBps: lq.RxMaxBps, TxMaxBps: lq.TxMaxBps,
+				RxP95Bps: model.LineQualityHistPercentile(lq.RxHist, 95),
+				TxP95Bps: model.LineQualityHistPercentile(lq.TxHist, 95),
+			})
+		}
+	}
+	// Enveloppe mesurée : jours éclos qualifiés uniquement.
+	measuredDown, measuredUp, measuredP95Down, measuredP95Up := int64(0), int64(0), int64(0), int64(0)
+	qualifying := 0
+	for _, d := range days {
+		if d.Day == today || d.Samples < lineQualityMinDaySamples {
+			continue
+		}
+		qualifying++
+		if d.RxMaxBps > measuredDown {
+			measuredDown = d.RxMaxBps
+		}
+		if d.TxMaxBps > measuredUp {
+			measuredUp = d.TxMaxBps
+		}
+		if d.RxP95Bps > measuredP95Down {
+			measuredP95Down = d.RxP95Bps
+		}
+		if d.TxP95Bps > measuredP95Up {
+			measuredP95Up = d.TxP95Bps
+		}
+	}
+	// Débit courant de l'interface WAN (même source que l'onglet Trafic).
+	live := map[string]any{"rxBps": int64(0), "txBps": int64(0), "at": ""}
+	if wan != "" {
+		for i := range db.Traffic {
+			if db.Traffic[i].RouterID != id {
+				continue
+			}
+			tr := &db.Traffic[i]
+			for _, it := range tr.Interfaces {
+				if it.Name == wan {
+					live["rxBps"] = it.RxBps
+					live["txBps"] = it.TxBps
+					live["at"] = tr.UpdatedAt
+				}
+			}
+			break
+		}
+	}
+	a.store.Save() // le Tick du simulé a pu avancer les compteurs
+	a.store.Unlock()
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"routerId": id,
+		"wanIface": wan,
+		"configured": map[string]int64{
+			"downBps": routerCopy.LineDownBps,
+			"upBps":   routerCopy.LineUpBps,
+		},
+		"days": days,
+		"measured": map[string]any{
+			"downBps":    measuredDown,
+			"upBps":      measuredUp,
+			"p95DownBps": measuredP95Down,
+			"p95UpBps":   measuredP95Up,
+			"days":       qualifying,
+			"confident":  qualifying >= lineQualityConfidentDays,
+		},
+		"live": live,
+	})
 }

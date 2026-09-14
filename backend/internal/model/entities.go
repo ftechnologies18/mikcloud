@@ -75,6 +75,26 @@ type RouterTraffic struct {
 	History    []TrafficPoint `json:"history"`    // 60 derniers points (somme interfaces)
 }
 
+// LineQualityDay — N°103 — agrégat quotidien de qualité de ligne d'une
+// interface (l'agrégat WAN est LA mesure FAI du site). Une ligne par
+// (routeur, jour, interface) : max et histogramme par direction. Le p95 se
+// relit de l'histogramme (fusionnable — cf. linequality.go) ; les échantillons
+// individuels ne sont jamais gardés. Jours en UTC (== heure d'Abidjan,
+// arbitrage FamilyGuard N°82). Rétention 90 jours (PruneLineQuality).
+type LineQualityDay struct {
+	ID        string `json:"id"`
+	AccountID string `json:"accountId"`
+	RouterID  string `json:"routerId"`
+	Day       string `json:"day"`   // "2006-01-02" (UTC)
+	Iface     string `json:"iface"` // nom RouterOS de l'interface (WAN détecté : read_state)
+	Samples   int    `json:"samples"`
+	RxMaxBps  int64  `json:"rxMaxBps"` // plus haute fenêtre de mesure du jour (descendant)
+	TxMaxBps  int64  `json:"txMaxBps"` // (montant)
+	RxHist    string `json:"rxHist"`   // histogramme « c0,…,c15 » (seaux log, cf. linequality.go)
+	TxHist    string `json:"txHist"`
+	UpdatedAt string `json:"updatedAt"`
+}
+
 // IPBinding — règle hotspot IP binding (F7) : bypass ou blocage par MAC.
 
 // IPBinding — règle hotspot IP binding (F7) : bypass ou blocage par MAC.

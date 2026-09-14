@@ -220,6 +220,7 @@ func liveTableRows(db *model.DB) []TableHealth {
 		{Table: "ip_bindings", Rows: len(db.IPBindings)},
 		{Table: "scheduler_tasks", Rows: len(db.SchedulerTasks)},
 		{Table: "traffic", Rows: len(db.Traffic)},
+		{Table: "line_quality", Rows: len(db.LineQuality)},
 		{Table: "notif_settings", Rows: len(db.NotifSettings)},
 		{Table: "notif_log", Rows: len(db.NotifLog)},
 		{Table: "billing_requests", Rows: len(db.BillingRequests)},

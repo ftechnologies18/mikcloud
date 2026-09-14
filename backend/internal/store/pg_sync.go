@@ -136,6 +136,10 @@ func (p *PG) Sync(db *model.DB) (err error) {
 	if err := syncTable(ctx, tx, p.hashes, trafficSpec, db.Traffic, &delta); err != nil {
 		return err
 	}
+	// N°103 — agrégats quotidiens de qualité de ligne (mesure FAI).
+	if err := syncTable(ctx, tx, p.hashes, lineQualitySpec, db.LineQuality, &delta); err != nil {
+		return err
+	}
 	notifRows := make([]model.NotificationSettings, 0, len(db.NotifSettings))
 	for _, v := range db.NotifSettings {
 		notifRows = append(notifRows, v)
@@ -540,6 +544,7 @@ func (p *PG) rebuildHashes(db *model.DB) {
 		ipBindingSpec.table:           hashRows(db.IPBindings, ipBindingSpec),
 		schedulerTaskSpec.table:       hashRows(db.SchedulerTasks, schedulerTaskSpec),
 		trafficSpec.table:             hashRows(db.Traffic, trafficSpec),
+		lineQualitySpec.table:         hashRows(db.LineQuality, lineQualitySpec),
 		notifLogSpec.table:            hashRows(db.NotifLog, notifLogSpec),
 		billingRequestSpec.table:      hashRows(db.BillingRequests, billingRequestSpec),
 		purgeTombstoneSpec.table:      hashRows(db.PurgeTombstones, purgeTombstoneSpec),

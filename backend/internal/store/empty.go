@@ -52,5 +52,8 @@ func BuildEmptyState() *model.DB {
 		SchedulerTasks:  []model.SchedulerTask{},
 		Traffic:         []model.RouterTraffic{},
 		PurgeTombstones: []model.PurgeTombstone{},
+		// N°103 — agrégats quotidiens de qualité de ligne (base vide :
+		// slice non-nil → l'API sert [], la synchro PG n'insère rien).
+		LineQuality: []model.LineQualityDay{},
 	}
 }

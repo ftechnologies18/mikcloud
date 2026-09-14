@@ -28,6 +28,10 @@ type DB struct {
 	IPBindings     []IPBinding       `json:"ipBindings"`     // F7
 	SchedulerTasks []SchedulerTask   `json:"schedulerTasks"` // F10
 	Traffic        []RouterTraffic   `json:"traffic"`        // F6
+	// N°103 — agrégats quotidiens de qualité de ligne (mesure passive du
+	// débit FAI) : une ligne par (routeur, jour, interface), rétention
+	// 90 jours (PruneLineQuality). Cf. linequality.go.
+	LineQuality []LineQualityDay `json:"lineQuality"`
 	// Tier 1 — notifications multi-canaux.
 	NotifSettings map[string]NotificationSettings `json:"notifSettings"` // accountId → réglages
 	NotifLog      []NotificationLog               `json:"notifLog"`

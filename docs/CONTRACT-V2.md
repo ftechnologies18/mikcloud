@@ -624,6 +624,72 @@ indéfiniment (login-timeout absent par défaut), address-per-mac=2 par défaut.
 `PoolDoctorAt text` — migrations idempotentes, `omitempty` (absent tant
 que jamais diagnostiqué).
 
+## N°103 — Qualité de ligne : mesure passive du débit FAI [P1]
+
+### Contexte
+Chaque site MikCloud a un FAI et un forfait différents ; aucun routeur ne peut
+exposer « le débit du forfait » (paramètre commercial opérateur). La capacité
+EFFECTIVE se mesure passivement : l'enveloppe des débits observés sur
+l'interface WAN en fenêtres ~2 min (celles de read_state) converge vers le
+plafond réel de la ligne. Les agrégats survivent aux redéploiements (histogrammes
+fusionnables), le p95 filtre les pics isolés, le max borne le plancher honnête.
+
+### Détection WAN (script read_state, N°103)
+`read_state` rapporte en plus `wan=<iface>` : première route par défaut ACTIVE
+(`/ip route find where dst-address="0.0.0.0/0"` → `gateway-status`
+« reachable via <iface> »). Vide si aucune (l'endpoint ne rattache alors AUCUNE
+interface — aucun WAN deviné). Appliqué sur `Router.WanIface` (lecture seule
+côté console : vérité routeur, jamais une saisie). Simulé : `ether1` par
+convention (le WanIface est posé au Tick).
+
+### Modèle (nouvelles collections/colonnes)
+```go
+type LineQualityDay struct { // une ligne par (routeur, jour UTC, interface)
+    ID, AccountID, RouterID    string
+    Day   string `json:"day"`   // "2006-01-02" (UTC == Abidjan, arbitrage N°82)
+    Iface string `json:"iface"` // WAN détecté pour la mesure FAI
+    Samples   int   `json:"samples"`
+    RxMaxBps  int64 `json:"rxMaxBps"` // plus haute fenêtre ~2 min du jour
+    TxMaxBps  int64 `json:"txMaxBps"`
+    RxHist    string `json:"rxHist"`  // histogramme « c0,…,c15 » (seaux log, fusionnables)
+    TxHist    string `json:"txHist"`
+    UpdatedAt string `json:"updatedAt"`
+}
+```
+Table `line_quality` (+ index account/router). Router : `WanIface text`,
+`LineDownBps bigint`, `LineUpBps bigint` (capacité DÉCLARÉE par le gérant,
+bits/s, 0 = non renseignée — PAR ROUTEUR, jamais globale). Rétention 90 j
+(PruneLineQuality, moteur commun applyExpiry).
+
+Alimentation : chaque fenêtre de mesure (read_state côté agent, Tick côté simulé)
+verse ses débits par interface via `AccumulateLineQuality` (~720 échantillons/jour).
+La PREMIÈRE mesure (pas de référence) ne compte pas.
+
+### Route
+- `GET /api/routers/{id}/line-quality` (toute l'équipe connectée, comme /traffic ;
+  real → 400) :
+```json
+{
+  "routerId": "r-…", "wanIface": "ether1",
+  "configured": { "downBps": 110000000, "upBps": 20000000 },
+  "days": [ { "day": "2026-09-14", "samples": 312, "rxMaxBps": 96000000,
+              "txMaxBps": 18000000, "rxP95Bps": 75000000, "txP95Bps": 10000000 } ],
+  "measured": { "downBps": 96000000, "upBps": 19000000,
+                "p95DownBps": 75000000, "p95UpBps": 10000000,
+                "days": 3, "confident": true },
+  "live": { "rxBps": 42000000, "txBps": 9000000, "at": "…" }
+}
+```
+  `days` : jusqu'à 14 jours de l'interface WAN, du plus récent au plus ancien.
+  `measured` : enveloppe sur les jours ÉCLOS qualifiés uniquement (samples ≥ 50,
+  hors jour courant ; `confident` à partir de 3 jours) — une ligne peu chargée
+  n'est jamais « mesurée » à son étiquette (le plancher observé seul est rendu).
+  `live` : débit courant de l'interface WAN (même source que l'onglet Trafic).
+- `PUT /api/routers/{id}` : `lineDownBps` / `lineUpBps` (bits/s, bornes
+  0–10 Gbps, 0 = effacer la déclaration).
+
+---
+
 ## F13 — Marge : prix de vente vs coût [P2]
 
 ### Modèle

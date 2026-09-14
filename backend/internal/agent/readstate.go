@@ -171,6 +171,13 @@ func (b Builder) buildWatcherEnsure(cmd model.Command) string {
 // compteurs cumulés → débits par diff côté cloud). v2 : le gel honnête des
 // déductions sur rapport incomplet reste LA règle (chunk perdu = cycle
 // abandonné sans déduction, la complétude est vérifiée avant d'appliquer).
+//
+// N°103 — le rapport porte AUSSI l'interface WAN détectée : première route
+// par défaut ACTIVE (gateway-status « reachable via <iface> ») → paramètre
+// wan (vide si aucune — l'endpoint line-quality ne rattachera alors aucune
+// interface à la ligne, aucun WAN deviné). Le scan de « via » s'arrête au
+// premier séparateur (espace/virgule — ECMP « via e1, via e2 » → e1) ;
+// /ip route reste lisible des deux côtés (v6 natif, v7 legacy).
 func (b Builder) buildReadState(cmd model.Command) string {
 	start := int(plInt64(cmd.Payload, "start"))
 	count := int(plInt64(cmd.Payload, "count"))
@@ -239,13 +246,37 @@ func (b Builder) buildReadState(cmd model.Command) string {
     }
   }
 } on-error={ :set rif "" }
+:local rwan ""
+:do {
+  :foreach rt in=[/ip route find where dst-address="0.0.0.0/0"] do={
+    :if ([:len $rwan] = 0) do={
+      :local gs ""
+      :do { :set gs [:tostr [/ip route get $rt gateway-status]] } on-error={}
+      :local vp [:find $gs "via "]
+      :if ([:typeof $vp] != "nil") do={
+        :local wi ($vp + 4)
+        :local w ""
+        :while ($wi < [:len $gs]) do={
+          :local wc [:pick $gs $wi ($wi + 1)]
+          :if ($wc = " " || $wc = ",") do={
+            :set wi [:len $gs]
+          } else={
+            :set w ($w . $wc)
+            :set wi ($wi + 1)
+          }
+        }
+        :set rwan $w
+      }
+    }
+  }
+} on-error={ :set rwan "" }
 `)
 	sb.WriteString(`/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
 		`" http-method=post http-data=("cmd=` + cmd.ID +
 		`&status=ok&version=". $rver ."&uptime=". $rup ."&cpu=". $rcpu ."&freemem=". $rmem ."&totalmem=". $rmemb` +
 		` ."&board=". $rboard ."&freehdd=". $rfreehdd ."&totalhdd=". $rtotalhdd` +
 		` ."&total=". $mikTotal ."&start=@@START@@&count=@@COUNT@@&out=". $rout` +
-		` ."&users=". $rusr . $rsesspart ."&ifaces=". $rif ."&trunc=". $rtrunc) output=none` + "\n")
+		` ."&users=". $rusr . $rsesspart ."&ifaces=". $rif ."&wan=". $rwan ."&trunc=". $rtrunc) output=none` + "\n")
 	// Placeholders substitués en dernier : une seule chaîne brute lisible,
 	// aucune concaténation au milieu du script (le pattern @@VAR@@ ne peut
 	// pas apparaître par accident dans une commande RouterOS).

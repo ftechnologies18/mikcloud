@@ -931,6 +931,13 @@ func Tick(db *model.DB, now time.Time) {
 		// anti-sessions figées de ResolvedStatus/onlineSessions.
 		if db.Routers[i].Mode == "simulated" {
 			db.Routers[i].LastSeen = now.UTC().Format(time.RFC3339)
+			// N°103 — le routeur simulé a son WAN par convention
+			// (ether1, cf. newSimTraffic) : la carte Qualité de ligne
+			// est immédiatement lisible en démo, sans attendre une
+			// détection qui n'existe pas sur un routeur fictif.
+			if db.Routers[i].WanIface == "" {
+				db.Routers[i].WanIface = "ether1"
+			}
 		}
 	}
 
@@ -1169,7 +1176,9 @@ func Sweep(db *model.DB, now time.Time) int {
 //     les utilisateurs « expired » dont l'expiration date de plus de
 //     expiryPolicyAfterDays jours sont supprimés du cloud (+ Activity résumé) ;
 //  3. purge des UserLogs selon la rétention DU COMPTE (30/60/90 j, N°65 ;
-//     défaut 90) + garde-fou volumétrie (5 000 entrées).
+//     défaut 90) + garde-fou volumétrie (5 000 entrées) ;
+//  4. N°103 — rétention des agrégats de qualité de ligne (90 j glissants,
+//     global : télémétrie de ligne, pas des données client).
 //
 // Retour : accountID → usernames dont l'expiration vient d'être appliquée
 // (information disponible pour l'enforcement routeur — cf. enforceExpired).
@@ -1178,6 +1187,9 @@ func applyExpiry(db *model.DB, now time.Time) map[string][]string {
 	if db.UserLogs == nil {
 		db.UserLogs = []model.UserLog{}
 	}
+	// 4. N°103 — rétention de la télémétrie de ligne (en tête, avant tout
+	// return : tous les chemins d'applyExpiry passent par ici).
+	model.PruneLineQuality(db, now)
 
 	// 1. Passage « expired » (grâce du profil prise en compte). Comme
 	// EffectiveStatus, l'expiration cloud ne s'applique qu'aux vouchers : le
@@ -1371,6 +1383,14 @@ func tickTraffic(db *model.DB, now time.Time, dt int64) {
 			}
 		}
 		tr.UpdatedAt = now.UTC().Format(time.RFC3339Nano)
+		// N°103 — Qualité de ligne : le SIMULÉ échantillonne aussi (les
+		// agrégats se remplissent au rythme des ticks — la carte et la
+		// recommandation QoS se testent en démo, pattern de la plateforme
+		// « tout est essayable sans matériel »). Même garde que l'agent :
+		// uniquement les fenêtres réelles (dt > 0).
+		if dt > 0 {
+			model.AccumulateLineQuality(db, rr, tr.Interfaces, now)
+		}
 	}
 }
 

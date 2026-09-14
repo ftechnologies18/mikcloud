@@ -189,6 +189,15 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 	if h, okH := parseReportInt(vals.Get("hosts")); okH {
 		router.PoolHosts = h
 	}
+	// N°103 — interface WAN détectée par le script (première route par
+	// défaut active, « reachable via <iface> »). Chaîne vide = pas de
+	// route par défaut publiée (ou routeur antérieur au N°103) : WanIface
+	// est laissé tel quel — la vérité d'un rapport récent ne doit pas
+	// effacer celle du précédent sur un silence. Borné 32 : un nom
+	// d'interface RouterOS ne dépasse pas, une valeur parasite non plus.
+	if w := strings.TrimSpace(vals.Get("wan")); w != "" && len(w) <= 32 {
+		router.WanIface = w
+	}
 
 	now := time.Now().UTC()
 
@@ -692,6 +701,15 @@ func applyAgentTraffic(db *model.DB, router *model.Router, raw string, now time.
 		tr.History = tr.History[len(tr.History)-60:]
 	}
 	tr.UpdatedAt = now.UTC().Format(time.RFC3339Nano)
+	// N°103 — Qualité de ligne : les débits de cette fenêtre de mesure
+	// alimentent les agrégats quotidiens (max + histogrammes par interface
+	// — la table de mesure FAI du site se remplit au fil des read_state,
+	// ~720 échantillons/jour/interface). Seules les fenêtres RÉELLES
+	// comptent : la première mesure (débits 0, pas de référence) est
+	// exclue — un zéro de démarrage n'est pas un échantillon de ligne.
+	if dt > 0 {
+		model.AccumulateLineQuality(db, router, out, now)
+	}
 }
 
 // normalizePingResult — F8 : le rapport agent arrive en valeurs formulaire

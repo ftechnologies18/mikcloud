@@ -214,21 +214,21 @@ func (p *PG) ensureSchema() error {
 		// agent de comptes homenet — la table des comptes hotspot reste vide
 		// (cadenceur du check-in, cf. ensureHomeDevicesLocked côté api).
 		`CREATE TABLE IF NOT EXISTS devices (
-				id           TEXT PRIMARY KEY,
-				account_id   TEXT NOT NULL DEFAULT '',
-				router_id    TEXT NOT NULL DEFAULT '',
-				router_name  TEXT NOT NULL DEFAULT '',
-				mac          TEXT NOT NULL DEFAULT '',
-				name         TEXT NOT NULL DEFAULT '',
-				hostname     TEXT NOT NULL DEFAULT '',
-				ip           TEXT NOT NULL DEFAULT '',
-				status       TEXT NOT NULL DEFAULT '',
-				expires      TEXT NOT NULL DEFAULT '',
-				lease_at     TEXT NOT NULL DEFAULT '',
-				created_at   TEXT NOT NULL DEFAULT '',
-				paused       BOOLEAN NOT NULL DEFAULT FALSE,
-				paused_until TEXT NOT NULL DEFAULT ''
-		)`,
+                                id           TEXT PRIMARY KEY,
+                                account_id   TEXT NOT NULL DEFAULT '',
+                                router_id    TEXT NOT NULL DEFAULT '',
+                                router_name  TEXT NOT NULL DEFAULT '',
+                                mac          TEXT NOT NULL DEFAULT '',
+                                name         TEXT NOT NULL DEFAULT '',
+                                hostname     TEXT NOT NULL DEFAULT '',
+                                ip           TEXT NOT NULL DEFAULT '',
+                                status       TEXT NOT NULL DEFAULT '',
+                                expires      TEXT NOT NULL DEFAULT '',
+                                lease_at     TEXT NOT NULL DEFAULT '',
+                                created_at   TEXT NOT NULL DEFAULT '',
+                                paused       BOOLEAN NOT NULL DEFAULT FALSE,
+                                paused_until TEXT NOT NULL DEFAULT ''
+                )`,
 		`CREATE INDEX IF NOT EXISTS idx_devices_router  ON devices (router_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_devices_account ON devices (account_id)`,
 		// P0/P1 (audit Mikhmon) — nouvelles collections.
@@ -291,6 +291,24 @@ func (p *PG) ensureSchema() error {
                         history    TEXT NOT NULL DEFAULT '[]'  -- JSON []TrafficPoint
                 )`,
 		`CREATE INDEX IF NOT EXISTS idx_traffic_account ON traffic (account_id)`,
+		// N°103 — qualité de ligne : une ligne par (routeur, jour,
+		// interface). Histogrammes en TEXT canonique « c0,…,c15 »
+		// (fusionnés incrémentalement — cf. model/linequality.go).
+		`CREATE TABLE IF NOT EXISTS line_quality (
+                        id         TEXT PRIMARY KEY,
+                        account_id TEXT NOT NULL DEFAULT '',
+                        router_id  TEXT NOT NULL,
+                        day        TEXT NOT NULL,
+                        iface      TEXT NOT NULL,
+                        samples    INTEGER NOT NULL,
+                        rx_max_bps BIGINT NOT NULL,
+                        tx_max_bps BIGINT NOT NULL,
+                        rx_hist    TEXT NOT NULL DEFAULT '',
+                        tx_hist    TEXT NOT NULL DEFAULT '',
+                        updated_at TEXT NOT NULL
+                )`,
+		`CREATE INDEX IF NOT EXISTS idx_line_quality_account ON line_quality (account_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_line_quality_router  ON line_quality (router_id)`,
 		`CREATE TABLE IF NOT EXISTS settings (
                         id               TEXT PRIMARY KEY, -- = account_id : une ligne par compte SaaS
                         account_id       TEXT NOT NULL DEFAULT '',
@@ -688,6 +706,12 @@ func (p *PG) ensureSchema() error {
 		// sur ce routeur (hash de la liste des MAC en pause, sel dp-v1 — posée
 		// au retour « ok » VÉRIFIÉ de la commande device_pause, cf. models.go).
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS pause_sig TEXT NOT NULL DEFAULT ''`,
+		// N°103 — qualité de ligne (mesure passive du débit FAI) : interface
+		// WAN détectée par read_state (route par défaut active) + capacité
+		// ligne déclarée par le gérant, PAR ROUTEUR (chaque site a son FAI).
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS wan_iface     TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS line_down_bps BIGINT NOT NULL DEFAULT 0`,
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS line_up_bps   BIGINT NOT NULL DEFAULT 0`,
 		// N°97 — état anti-spam alerte pool (routerID → high|full), JSON
 		// sérialisé comme stock_alert_state.
 		`ALTER TABLE notif_settings ADD COLUMN IF NOT EXISTS pool_alert_state TEXT NOT NULL DEFAULT ''`,

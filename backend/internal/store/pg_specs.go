@@ -91,7 +91,8 @@ var routerSpec = entitySpec[model.Router]{
 		"familyguard_spec", "familyguard_sig", "familyguard_applied_at",
 		"antivpn_level", "antivpn_sig", "antivpn_applied_at",
 		"pool_cap", "pool_hosts", "pool_ranges", "pool_doctor_at",
-		"pool_auto", "pool_auto_pending", "pause_sig"},
+		"pool_auto", "pool_auto_pending", "pause_sig",
+		"wan_iface", "line_down_bps", "line_up_bps"},
 	idOf: func(x *model.Router) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Router, error) {
 		var x model.Router
@@ -103,7 +104,8 @@ var routerSpec = entitySpec[model.Router]{
 			&x.ShieldLevel, &x.ShieldSig, &x.ShieldAppliedAt,
 			&x.FamilyGuardSpec, &x.FamilyGuardSig, &x.FamilyGuardAppliedAt,
 			&x.AntiVpnLevel, &x.AntiVpnSig, &x.AntiVpnAppliedAt,
-			&x.PoolCap, &x.PoolHosts, &x.PoolRanges, &x.PoolDoctorAt, &x.PoolAuto, &x.PoolAutoPending, &x.PauseSig)
+			&x.PoolCap, &x.PoolHosts, &x.PoolRanges, &x.PoolDoctorAt, &x.PoolAuto, &x.PoolAutoPending, &x.PauseSig,
+			&x.WanIface, &x.LineDownBps, &x.LineUpBps)
 		// Sécurité P0 #6 — le mot de passe routeur est stocké chiffré
 		// (AES-256-GCM) : lecture = déchiffrement (passthrough si valeur
 		// antérieure au correctif, migration assurée par
@@ -124,7 +126,8 @@ var routerSpec = entitySpec[model.Router]{
 			x.ShieldLevel, x.ShieldSig, x.ShieldAppliedAt,
 			x.FamilyGuardSpec, x.FamilyGuardSig, x.FamilyGuardAppliedAt,
 			x.AntiVpnLevel, x.AntiVpnSig, x.AntiVpnAppliedAt,
-			x.PoolCap, x.PoolHosts, x.PoolRanges, x.PoolDoctorAt, x.PoolAuto, x.PoolAutoPending, x.PauseSig}
+			x.PoolCap, x.PoolHosts, x.PoolRanges, x.PoolDoctorAt, x.PoolAuto, x.PoolAutoPending, x.PauseSig,
+			x.WanIface, x.LineDownBps, x.LineUpBps}
 	},
 	hashOf: hashEntity[model.Router],
 }
@@ -667,6 +670,28 @@ var trafficSpec = entitySpec[model.RouterTraffic]{
 		return []any{x.ID, x.AccountID, x.RouterID, x.UpdatedAt, ifaces, hist}
 	},
 	hashOf: hashEntity[model.RouterTraffic],
+}
+
+// lineQualitySpec — N°103 — agrégats quotidiens de qualité de ligne (mesure
+// passive du débit FAI). id synthétique « lq-… » : une ligne par (routeur,
+// jour, interface) ; les histogrammes restent des colonnes TEXT (forme
+// canonique « c0,…,c15 » produite et relue par le modèle — pas de JSON, un
+// simple séparateur virgule, cf. model/linequality.go).
+var lineQualitySpec = entitySpec[model.LineQualityDay]{
+	table: "line_quality",
+	cols:  []string{"id", "account_id", "router_id", "day", "iface", "samples", "rx_max_bps", "tx_max_bps", "rx_hist", "tx_hist", "updated_at"},
+	idOf:  func(x *model.LineQualityDay) string { return x.ID },
+	scan: func(r *sql.Rows) (model.LineQualityDay, error) {
+		var x model.LineQualityDay
+		err := r.Scan(&x.ID, &x.AccountID, &x.RouterID, &x.Day, &x.Iface, &x.Samples,
+			&x.RxMaxBps, &x.TxMaxBps, &x.RxHist, &x.TxHist, &x.UpdatedAt)
+		return x, err
+	},
+	args: func(x *model.LineQualityDay) []any {
+		return []any{x.ID, x.AccountID, x.RouterID, x.Day, x.Iface, x.Samples,
+			x.RxMaxBps, x.TxMaxBps, x.RxHist, x.TxHist, x.UpdatedAt}
+	},
+	hashOf: hashEntity[model.LineQualityDay],
 }
 
 // notifSettingsSpec — réglages de notification par compte. id = account_id.

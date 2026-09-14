@@ -88,8 +88,8 @@ func TestSyncHealthJSONMode(t *testing.T) {
 	if h.Sync != nil || h.Neon != nil {
 		t.Fatalf("en mode JSON, sync et neon doivent être absents : %+v %+v", h.Sync, h.Neon)
 	}
-	if len(h.Tables) != 30 {
-		t.Fatalf("30 tables attendues (29 différentielles + settings), obtenues %d", len(h.Tables))
+	if len(h.Tables) != 31 {
+		t.Fatalf("31 tables attendues (30 différentielles + settings — N°103 : line_quality), obtenues %d", len(h.Tables))
 	}
 
 	// Une mutation mémoire apparaît dans les lignes, sans réplique (mirrored
@@ -114,12 +114,12 @@ func TestSyncHealthJSONMode(t *testing.T) {
 }
 
 // TestLiveTableRowsConcordance — la liste suit les tables de la synchro
-// différentielle : 30 entrées, noms uniques, aucune table en double (une
+// différentielle : 31 entrées, noms uniques, aucune table en double (une
 // table ajoutée à Sync sans être ajoutée ici doit faire échouer le compte).
 func TestLiveTableRowsConcordance(t *testing.T) {
 	rows := liveTableRows(BuildEmptyState())
-	if len(rows) != 30 {
-		t.Fatalf("30 entrées attendues (29 différentielles + settings), obtenues %d", len(rows))
+	if len(rows) != 31 {
+		t.Fatalf("31 entrées attendues (30 différentielles + settings — N°103 : line_quality), obtenues %d", len(rows))
 	}
 	seen := map[string]bool{}
 	for _, th := range rows {

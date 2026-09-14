@@ -359,6 +359,10 @@ func (a *API) Handler() http.Handler {
 	// handlers_router_tools.go, handlers_scheduler.go)
 	// Trafic temps réel (F6)
 	mux.HandleFunc("GET /api/routers/{id}/traffic", a.handleRouterTraffic)
+	// N°103 — Qualité de ligne : mesure passive du débit FAI (enveloppe
+	// 14 j de l'interface WAN détectée + capacité déclarée par le gérant).
+	// Ouvert à toute l'équipe connectée (lecture), comme /traffic.
+	mux.HandleFunc("GET /api/routers/{id}/line-quality", a.handleRouterLineQuality)
 	// IP bindings (F7)
 	mux.HandleFunc("GET /api/routers/{id}/ipbindings", a.requireRole(2, a.handleIPBindingsList))
 	mux.HandleFunc("POST /api/routers/{id}/ipbindings", a.requireRole(2, a.handleIPBindingCreate))

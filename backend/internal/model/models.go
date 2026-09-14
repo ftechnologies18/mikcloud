@@ -262,6 +262,25 @@ type Router struct {
 	// désirée (un parent qui change d'avis pendant le vol ne doit pas
 	// voir figé un état périmé — pattern SafeWiFi N°80).
 	PauseSig string `json:"pauseSig,omitempty"`
+
+	// N°103 — Qualité de ligne (mesure passive du débit FAI) :
+	// WanIface est l'interface WAN DÉTECTÉE par le script read_state
+	// (route par défaut active → « reachable via <iface> »). Lecture
+	// seule côté console — c'est la vérité routeur, jamais une saisie.
+	// Vide = pas encore détecté (premier read_state post-N°103, routeur
+	// sans route par défaut publiée) : les agrégats existent mais
+	// l'endpoint line-quality ne rattachera AUCUNE interface à la ligne
+	// (honnêteté : aucun WAN deviné, miroir pooldoctor N°97).
+	WanIface string `json:"wanIface,omitempty"`
+	// N°103 — capacité ligne DÉCLARÉE par le gérant (bits/s, 0 = non
+	// renseignée) : « Orange CI 110M/20M » pour CE site. Chaque client
+	// MikCloud a un FAI et un forfait différents — JAMAIS de valeur
+	// globale. Prime sur la mesure passive (étiquette vs enveloppe
+	// observée : c'est l'étiquette qui borne le burst) ; la mesure
+	// l'affine (une ligne qui ne rend jamais plus de 96M se découvre au
+	// premier jour d'agrégats, même si l'offre dit 110M).
+	LineDownBps int64 `json:"lineDownBps,omitempty"`
+	LineUpBps   int64 `json:"lineUpBps,omitempty"`
 }
 
 // SchedulerSecEffective — pas de scheduler connu du routeur (N°75). 0 =

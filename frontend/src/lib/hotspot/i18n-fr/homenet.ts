@@ -20,6 +20,10 @@ export const frHomeNet: Record<string, string> = {
   "home.kpi.routerSub": "Votre box MikroTik",
   "home.kpi.devices": "Appareils en ligne",
   "home.kpi.devicesSub": "sur votre WiFi, maintenant",
+  // N°102 — le zéro inexpliqué n'existe plus : la box découvre (agent là,
+  // premier rapport en route) ou l'enseigne dit le geste à faire (non-agent).
+  "home.kpi.devicesWaiting": "votre box découvre votre réseau…",
+  "home.kpi.devicesAgent": "connectez votre box en mode agent",
   "home.kpi.protection": "Protection",
   "home.kpi.protectionNone": "Ajoutez d'abord un routeur",
   "home.kpi.curfew": "Couvre-feu internet",
@@ -37,6 +41,11 @@ export const frHomeNet: Record<string, string> = {
   "home.router.devices": "Appareils en ligne",
   "home.router.protectionCta": "Gérer la protection",
   "home.router.devicesCta": "Voir les appareils",
+
+  // N°102 — enseigne « mode agent requis » : des routeurs existent mais
+  // aucun en mode agent → l'inventaire (et la pause dîner) ne peut pas vivre.
+  "home.agentHint": "Les appareils du foyer sont découverts par votre box MikroTik connectée à MikCloud en mode agent — l'inventaire et la pause dîner vivent de ses bails DHCP.",
+  "home.agentHintCta": "Voir mes routeurs",
 
   // Aucun routeur — l'invitation honnête (le reste de la console est vide
   // tant que la box n'est pas connectée : pas de faux zéro).

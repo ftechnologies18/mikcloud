@@ -5,6 +5,110 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-14 — N°102 — Hotspot/HomeNet Phase 4 « le parcours familial éprouvé » : le zéro inexpliqué n'existe plus (le KPI Appareils dit POURQUOI il est vide et devient LA porte de la pause dîner, enseigne « mode agent requis »), et le parcours doré du foyer est verrouillé par les tests E2E (inscription publique « Ma maison » → box en mode agent → découverte par baux DHCP → nom affecté → pause dîner et convergence → gardes d'usage)
+
+### N°102 — Contexte : la Phase 3 livrait les features, rien ne prouvait le voyage
+N°98 (plomberie), N°100 (coquille), N°101 (features) — chaque niveau était
+vérifié navigateur en session manuelle, mais le PARCOURS complet du foyer
+restait éprouvé à la main : personne n'avait rejoué « une famille s'inscrit,
+connecte SA box, voit ses appareils, coupe l'internet du tel de mama » en
+un seul trait. Et le dashboard maison avait un anglicisme d'état : un KPI
+« Appareils en ligne : 0 » NU alors qu'aucune box agent ne rapporte de baux
+— un faux zéro, la pire des réponses à un parent qui vient de s'inscrire.
+Phase 4 = E2E/polish : verrouiller le voyage par des tests qui le rejouent,
+et faire dire au KPI la vérité terrain.
+
+### Produit
+- LE ZÉRO INEXPLIQUÉ N'EXISTE PLUS : le KPI « Appareils en ligne » du
+  dashboard maison distingue désormais TROIS vérités — registre vivant
+  (« sur votre WiFi, maintenant »), box agent là mais premier rapport en
+  route (« votre box découvre votre réseau… »), box en mode non-agent
+  (« connectez votre box en mode agent »). Le point live du KPI ne clignote
+  que quand une box agent alimente réellement le registre.
+- ENSEIGNE « MODE AGENT REQUIS » : des routeurs existent MAIS aucun en
+  mode agent → encart ambré sous la grille des box (« Les appareils du
+  foyer sont découverts par votre box MikroTik connectée à MikCloud en
+  mode agent — l'inventaire et la pause dîner vivent de ses bails DHCP »)
+  et CTA « Voir mes routeurs » vers la fiche box. Le foyer sait quoi
+  faire, le faux zéro disparaît.
+- LE KPI DEVIENT LA PORTE DE LA PAUSE DÎNER : la carte Appareils du
+  dashboard est un bouton (sémantique, focus visible, la carte reste un
+  div neutre — zéro bouton imbriqué) qui ouvre la vue Appareils — le
+  raccourci du parent pressé : cliquer le compteur, choisir l'appareil,
+  couper. Accessible au clavier (focus-visible ring).
+- PARCOURS FAMILIAL ÉPROUVÉ (E2E) : nouveau projet Playwright « homenet »
+  (e2e/homenet.spec.ts, autonome — ses propres comptes, suffixe unique) :
+  (1) inscription PUBLIQUE par l'UI avec le sélecteur « Ma maison » →
+  atterrissage /app/home et invitation honnête ; (2) box sans mode agent →
+  KPI honnête + enseigne + CTA ; (3) la box passe en mode agent (PUT, le
+  plan essai couvre UNE box), s'inscrit (version RouterOS 7.20 — la garde
+  TLS P0 #5 refuse un check-in sans version connue), rapporte ses baux →
+  registre, KPI « 3 », enseigne disparue, le KPI ouvre la vue ; (4) nom
+  affecté « TV du salon » + pause dîner 30 min sur tel-mama (chip En
+  pause, toast) + CONVERGENCE SERVEUR (device_pause servie, rapport rules
+  exact — le compte de règles IPv4 de SON script — puis silence au
+  check-in suivant : signature posée, pattern N°93/101) + rétablissement ;
+  (5) gardes d'usage : compte hotspot → GET /api/devices 404, /app/devices
+  re-normalisé vers SON dashboard, sidebar sans « Votre maison » ; signet
+  métier d'un foyer (/app/vouchers) → SA maison.
+- Boucle agent honnête du spec : découpe du script par commentaires
+  d'audit « # mikcloud cmd <id> <kind> », rapport de read_dhcp (bails
+  F9) et de CHAQUE device_pause servie avec rules = le compte exact de
+  règles IPv4 posables (un routeur réel applique ce qu'on lui envoie —
+  leçon N°101 respectée : tout ce qui est servi est rapporté, aucun
+  check-in de diagnostic qui consommerait la file).
+
+### Technique
+- backend/main.go — RATE_API_PER_MIN (env, défaut 120 — le contrat S1-A2
+  est INCHANGÉ tant qu'il n'est pas posé, le déploiement Render ne le
+  pose pas) : le runner E2E exécute quatre suites légitimes derrière UNE
+  même IP et, preflights OPTIONS compris, franchissait 120 requêtes/min
+  en ~30 s — le 429 tombait sur la dernière suite schedulée (constat
+  local reproduit deux fois : pagination puis rapport du Mode Vente en
+  échec, la requête /api/sell/stock → 429 dans le log). Le webServer
+  Playwright pose 600.
+- playwright.config.ts — projet « homenet » + surcharges locales
+  (E2E_FRONT_PORT/E2E_API_PORT quand le port 3000/4000 est occupé sur le
+  poste de dev — le webServer « réutiliserait » le mauvais serveur ;
+  E2E_REGISTER_KEY pour refermer la porte d'inscription en bêta privée).
+  La porte d'inscription E2E est OUVERTE par défaut (REGISTER_KEY vide) :
+  le parcours UI publique « Ma maison » s'inscrit sans clé — le refus
+  sans clé reste couvert par les tests Go. Le bootstrap envoie TOUJOURS
+  sa clé (ignorée porte ouverte, exigée porte fermée) ; le compte hotspot
+  « voisin » du spec homenet s'inscrit en déclarant SA connexion (premier
+  hop X-Forwarded-For — sémantique documentée du limiteur S3) : un run
+  complet consomme 6 inscriptions contre 5/10 min PAR IP.
+- Le front webServer passe à `bunx next start -p ${FRONT_PORT}` (le port
+  suit la surcharge ; CI inchangée : 3000).
+- home-view : états honnêtes du KPI (hasAgentRouter/devicesEmpty), KPI
+  bouton porte de la vue, enseigne ambrée ; i18n 4 clés neuves × 2
+  (parité 70/70 homenet).
+- CI : le job E2E s'appelle « E2E Playwright (Mode Vente + HomeNet) ».
+
+### Vérifié
+- Suite E2E COMPLÈTE en local (stack réelle : go run + next start prod,
+  port 3017 car le 3000 du poste est occupé) : 14/14 — setup, 3
+  resellers, 5 homenet, 5 sell — après les deux correctifs de course
+  (429 quota inscription → XFF du voisin ; 429 plafond api → env knob).
+  Les échecs intermédiaires étaient les DEUX 429, cause racine commune
+  constatée au log serveur (GET /api/sell/stock → 429) — pas des flakes
+  d'assertion.
+- gofmt vide, go vet OK, go build OK ; go test 12 paquets verts SANS
+  -race puis AVEC -race sur les paquets touchés (racine 2,3 s — le
+  middleware du limiteur ; api 459 s, invocation unique — leçon sandbox).
+- Front : eslint 0, tsgo 0, build production 13 routes ;
+  parité i18n homenet 70/70 clés.
+- navigateur : le parcours du spec EST la vérification navigateur
+  (inscription UI réelle avec clics — sélecteur radix du pays, case
+  confidentialité, dialog radix de renommage, menu pause, toasts).
+
+### Déploiement
+- Frontend Vercel (diff frontend/) ; backend Render (diff main.go —
+  RATE_API_PER_MIN non posé en production : comportement strictement
+  identique, le déploiement ne fait que shipper le knob).
+- Zéro changement de données : ni colonne ni table ni migration — la
+  Phase 4 ne touche que du code de présentation et des tests.
+
 ## 2026-09-14 — N°101 — Hotspot/HomeNet Phase 3 « les features maison » : les appareils du foyer vivent de leurs bails DHCP — inventaire découvert par la box (cadence 2 min, hotspots exclus), noms affectés (« TV du salon », « Tel de mama »), et LA pause dîner (couper l'internet d'un appareil précis, 30 min / 1 h / 2 h / jusqu'à réactivation, expiration recalculée par le cloud à chaque check-in) ; la Protection parle « maison » (couvre-feu en tête), et l'inscription publique du foyer est OUVERTE (sélecteur « Un lieu public / Ma maison »)
 
 ### N°101 — Contexte : la coquille N°100 vivait d'un pis-aller

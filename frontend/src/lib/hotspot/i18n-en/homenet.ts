@@ -19,6 +19,10 @@ export const enHomeNet: Record<string, string> = {
   "home.kpi.routerSub": "Your MikroTik box",
   "home.kpi.devices": "Devices online",
   "home.kpi.devicesSub": "on your WiFi, right now",
+  // N°102 — no more unexplained zero: the box is discovering (agent present,
+  // first report on its way) or the hint says what to do (non-agent).
+  "home.kpi.devicesWaiting": "your box is discovering your network…",
+  "home.kpi.devicesAgent": "connect your box in agent mode",
   "home.kpi.protection": "Protection",
   "home.kpi.protectionNone": "Add a router first",
   "home.kpi.curfew": "Internet curfew",
@@ -36,6 +40,11 @@ export const enHomeNet: Record<string, string> = {
   "home.router.devices": "Devices online",
   "home.router.protectionCta": "Manage protection",
   "home.router.devicesCta": "View devices",
+
+  // N°102 — "agent mode required" hint: routers exist but none in agent
+  // mode → the inventory (and the dinner pause) cannot live.
+  "home.agentHint": "Home devices are discovered by your MikroTik box connected to MikCloud in agent mode — the inventory and the dinner pause live on its DHCP leases.",
+  "home.agentHintCta": "View my routers",
 
   // No router — the honest invitation (the rest of the console stays empty
   // until the box is connected: no fake zeros).

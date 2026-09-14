@@ -338,6 +338,21 @@ func authRateLimit(next http.Handler) http.Handler {
 			mu.Unlock()
 		}
 	}()
+
+	// N°102 — plafond « api » (S1-A2 : 120 req/min par IP sur le reste de
+	// l'API) ajustable par env. Motivation E2E : le runner Playwright exécute
+	// QUATRE suites légitimes derrière UNE même IP (127.0.0.1) et, preflights
+	// OPTIONS compris, franchit 120 requêtes en moins d'une minute — le
+	// 429 tombait sur la dernière suite schedulée. RATE_API_PER_MIN ne change
+	// RIEN tant qu'il n'est pas posé : le déploiement Render ne le pose pas,
+	// le contrat production reste exactement 120 (valeur invalide → ignorée).
+	apiLimit := 120
+	if v := strings.TrimSpace(os.Getenv("RATE_API_PER_MIN")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			apiLimit = n
+		}
+	}
+
 	// scopeFor — scope du limiteur pour la requête : nom + limite, ou vide
 	// si la route n'est pas limitée.
 	scopeFor := func(path string) (string, int) {
@@ -358,7 +373,7 @@ func authRateLimit(next http.Handler) http.Handler {
 			return "wifi-read", 30
 		case strings.HasPrefix(path, "/api/"):
 			// Sécurité S1-A2 — limite globale par IP sur le reste de l'API.
-			return "api", 120
+			return "api", apiLimit
 		}
 		return "", 0
 	}

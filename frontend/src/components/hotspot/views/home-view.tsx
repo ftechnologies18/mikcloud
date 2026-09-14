@@ -161,6 +161,17 @@ export default function HomeView() {
   const list = useMemo(() => routers ?? [], [routers]);
   const onlineCount = list.filter((r) => r.status === "online").length;
   const devicesOnline = useMemo(() => (devices ?? []).filter((d) => d.status === "bound").length, [devices]);
+  // N°102 — la vérité terrain de l'inventaire : le registre ne vit QUE des
+  // bails DHCP rapportés par une box connectée en mode agent (cadenceur dédié
+  // N°101). Sans elle, un « 0 » nu serait un faux zéro — le KPI dit pourquoi.
+  const hasAgentRouter = useMemo(() => list.some((r) => r.mode === "agent"), [list]);
+  const devicesEmpty = (devices ?? []).length === 0;
+  const devicesSub =
+    devicesEmpty && list.length > 0
+      ? hasAgentRouter
+        ? t("home.kpi.devicesWaiting") // box agent là, premier rapport en route
+        : t("home.kpi.devicesAgent") // box en mode non-agent : l'enseigne dit tout
+      : t("home.kpi.devicesSub");
   const devicesByRouter = useMemo(() => {
     const map = new Map<string, number>();
     for (const d of devices ?? []) {
@@ -233,13 +244,24 @@ export default function HomeView() {
           sub={t("home.kpi.routerSub")}
           icon={RouterIcon}
         />
-        <StatCard
-          title={t("home.kpi.devices")}
-          value={String(devicesOnline)}
-          sub={t("home.kpi.devicesSub")}
-          icon={MonitorSmartphone}
-          live
-        />
+        {/* N°102 — le KPI Appareils devient la porte de la vue Appareils :
+            c'est LE raccourci de la pause dîner (un parent pressé clique le
+            compteur, choisit l'appareil, coupe). Bouton sémantique autour de
+            la carte — la carte reste un div neutre, zéro bouton imbriqué. */}
+        <button
+          type="button"
+          onClick={() => router.push(viewToPath("devices"), { scroll: false })}
+          className="block cursor-pointer rounded-xl text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+        >
+          <StatCard
+            title={t("home.kpi.devices")}
+            value={String(devicesOnline)}
+            sub={devicesSub}
+            icon={MonitorSmartphone}
+            live={hasAgentRouter}
+            className="w-full text-left"
+          />
+        </button>
         <StatCard
           title={t("home.kpi.protection")}
           value={weakest ? `${weakestScore}/4` : "—"}
@@ -291,6 +313,25 @@ export default function HomeView() {
               />
             ))}
           </div>
+          {/* N°102 — enseigne honnête : des routeurs existent MAIS aucun en
+              mode agent → l'inventaire (et la pause dîner) ne peut pas vivre.
+              Le foyer sait quoi faire, le faux zéro disparaît. */}
+          {!hasAgentRouter && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+              <p className="flex min-w-0 items-start gap-2 text-sm text-amber-800 dark:text-amber-200">
+                <MonitorSmartphone className="mt-0.5 size-4 shrink-0" aria-hidden />
+                <span>{t("home.agentHint")}</span>
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-9 border-amber-500/40 text-amber-800 hover:bg-amber-500/10 dark:text-amber-200"
+                onClick={() => router.push(viewToPath("routers"), { scroll: false })}
+              >
+                {t("home.agentHintCta")}
+              </Button>
+            </div>
+          )}
         </section>
       )}
     </div>

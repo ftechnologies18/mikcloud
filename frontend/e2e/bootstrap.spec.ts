@@ -16,7 +16,10 @@ const SUFFIX = Date.now().toString(36); // unique entre les réutilisations loca
 const PHONE = "07" + String(Date.now()).slice(-8); // anti-abus : numéro unique par run
 
 test("bootstrap — compte, stock paginé, revendeur PIN, une vente tracée", async () => {
-  // 1. Inscription gérant (inscriptions fermées sans clé — fail-closed).
+  // 1. Inscription gérant. La clé est TOUJOURS envoyée : ignorée quand la
+  // porte d'inscription est ouverte (défaut E2E, N°102 — le parcours UI du
+  // spec homenet s'inscrit sans clé), exigée quand E2E_REGISTER_KEY la
+  // referme (bêta privée — le refus sans clé est couvert par les tests Go).
   const reg = await api("/api/auth/register", {
     method: "POST",
     body: {

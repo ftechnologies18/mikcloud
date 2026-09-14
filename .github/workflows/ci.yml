@@ -111,13 +111,15 @@ jobs:
       - name: Scan des vulnérabilités atteignables
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
-  # Tests E2E Playwright (P3-e) — le parcours revendeur complet contre la
+  # Tests E2E Playwright (P3-e) — les parcours revendeur ET familial contre la
   # stack réelle : backend Go (store JSON éphémère) + frontend Next.js de
   # production. Bootstrap par API (project « setup »), puis navigateur :
   # login PIN, pagination du stock, recherche exhaustive, vente tactile,
-  # rapport de journée + export CSV comptable. Bloque le déploiement.
+  # rapport de journée + export CSV comptable ; N°102 — le parcours doré du
+  # foyer (inscription « Ma maison », découverte par baux DHCP, pause dîner
+  # et convergence, gardes d'usage). Bloque le déploiement.
   e2e:
-    name: E2E Playwright (Mode Vente)
+    name: E2E Playwright (Mode Vente + HomeNet)
     runs-on: ubuntu-latest
     timeout-minutes: 25
     defaults:

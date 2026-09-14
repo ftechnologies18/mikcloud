@@ -130,4 +130,15 @@ export const enProfiles: Record<string, string> = {
   "profiles.dialog.devicesPlus": "Add a device",
   "profiles.dialog.lockDeviceShort": "1st device",
   "profiles.dialog.lockUserDevices": "“One session at a time” lock is on — codes are used one customer at a time.",
+
+  // — Wizard (W1): steps, navigation, stepper aria —
+  "profiles.dialog.step1Title": "Plan",
+  "profiles.dialog.step2Title": "Durations & devices",
+  "profiles.dialog.step3Title": "Data & pricing",
+  "profiles.dialog.step4Title": "Expiry & settings",
+  "profiles.dialog.stepTitle": "Step {n} — {title}",
+  "profiles.dialog.stepAria": "Step {n}: {title}",
+  "profiles.dialog.stepsAria": "Profile configuration steps",
+  "profiles.dialog.next": "Next",
+  "profiles.dialog.back": "Back",
 };

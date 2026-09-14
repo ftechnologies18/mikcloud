@@ -130,4 +130,15 @@ export const frProfiles: Record<string, string> = {
   "profiles.dialog.devicesPlus": "Ajouter un appareil",
   "profiles.dialog.lockDeviceShort": "1er appareil",
   "profiles.dialog.lockUserDevices": "Verrou « 1 session à la fois » actif — le code est utilisé un client à la fois.",
+
+  // — Wizard (W1) : étapes, navigation, aria du stepper —
+  "profiles.dialog.step1Title": "Forfait",
+  "profiles.dialog.step2Title": "Durées & appareils",
+  "profiles.dialog.step3Title": "Data & tarifs",
+  "profiles.dialog.step4Title": "Expiration & réglages",
+  "profiles.dialog.stepTitle": "Étape {n} — {title}",
+  "profiles.dialog.stepAria": "Étape {n} : {title}",
+  "profiles.dialog.stepsAria": "Étapes de configuration du profil",
+  "profiles.dialog.next": "Suivant",
+  "profiles.dialog.back": "Retour",
 };

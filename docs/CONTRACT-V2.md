@@ -871,10 +871,11 @@ quota PAR LOT restent supportés : le marqueur porte la valeur effective.
 ### Enforcement routeur (100 % sortant, autonome)
 - `on-login` du profil (throttle) : à CHAQUE connexion, cumul utilisateur
   (bytes-in + bytes-out de `/ip hotspot user`, jamais ceux de la session)
-  ≥ quota du marqueur → file posée pour l'IP de la session (remove-then-add).
-  Couvre la fenêtre de re-login (sinon : plein débit jusqu'au tick).
-  FUSIONNÉ au script du verrou « 1er appareil » si les deux actifs (un seul
-  champ on-login par profil — blocs `:do{}on-error{}` indépendants).
+  ≥ quota du marqueur → file posée pour l'IP de la session (remove-then-add,
+  ancrée EN TÊTE de liste — N°113). Couvre la fenêtre de re-login (sinon :
+  plein débit jusqu'au tick). FUSIONNÉ au script du verrou « 1er appareil »
+  si les deux actifs (un seul champ on-login par profil — blocs
+  `:do{}on-error{}` indépendants).
 - `on-logout` du profil (throttle) : dernière session partie → file retirée
   (anti-héritage d'IP par le prochain occupant du bail DHCP).
 - scheduler `mikcloud-quota` (tick 20 s, remove-then-add idempotent, posé par
@@ -882,13 +883,17 @@ quota PAR LOT restent supportés : le marqueur porte la valeur effective.
   orphelins — toute file `mikthrottle-*` sans session active est retirée
   (couvre aussi le reboot routeur : les files statiques survivent, pas les
   sessions) ; (2) ≤ 250 sessions actives par tick : marqueur relu, cumul
-  comparé — ≥ quota → file posée si absente ; < quota → file retirée (le
+  comparé — ≥ quota → file posée EN TÊTE ; < quota → file retirée (le
   reset-counters F4 rouvre le plein débit au tick suivant). Aucun octet émis
   vers le cloud : le routeur applique la politique même coupé du cloud.
 - Convergence : `ensureQuotaThrottleLocked` au check-in ne file `quota_ensure`
   QUE si le compte possède ≥ 1 profil throttle (économie de veille N°75
   entière sinon). `QuotaSchedOK` posé au retour « ok » uniquement
   (pattern watcher). Commande idempotente (`staleSentReadKinds`).
+- Scripts du profil : la ligne `set` de `profileEnsureLine` aligne ELLE AUSSI
+  `on-login` (combiné verrou+quota) et `on-logout` (N°113) — le `add` seul
+  ne suffit pas : sur un profil PRÉEXISTANT l'add échoue et le set est la
+  seule écriture.
 
 ### Rapport read_state
 `throttle=user1,user2,…` (noms des files `mikthrottle-` présentes dans
@@ -906,14 +911,61 @@ liste (jamais un calcul cloud). Rapport sans le champ (pré-N°106) = faux.
   source de vérité, le resync utilisateur (`user_resync`) reconstitue le
   marqueur.
 
-### Limites documentées (v1)
+### Limites documentées (v2)
 - `shared-users` > 1 : une seule file par utilisateur (dernière IP) —
   recommander 1 appareil simultané sur les profils à quota.
 - Latence de détection : ~intervalle (20 s) × débit du profil de
   sur-consommation possible avant bridage (le on-login ferme la fenêtre de
   re-login).
-- Validation terrain recommandée avant généralisation : ordre réel des files
-  (`place-before` vs file dynamique) sur les firmwares cibles v6.43+/v7.x.
+- Compteurs de LA FILE de bridage remis à zéro à chaque tick (pose
+  remove-then-add) : purement cosmétique — la décision se fait sur les
+  compteurs CUMULÉS utilisateur, et le read_state ne rapporte que les NOMS
+  des files `mikthrottle-`.
+- Le trafic d'un utilisateur bridé n'entre plus dans le plafond agrégat
+  `mikcloud-qos` (N°104) quand celui-ci est une simple queue plate : la file
+  `mikthrottle-` (plus spécifique, en tête) matche en premier — le contrat de
+  BRIDAGE prime sur l'agrégat (compromis documenté ; en mode HTB
+  parent-queue l'agrégat reste respecté).
+- Un routeur avec une règle firewall `fasttrack-connection` générique qui
+  matche le trafic hotspot authentifié contourne TOUTES les simple queues
+  (manuel RouterOS) : si même le débit DE BASE du forfait ne s'applique pas,
+  vérifier/retirer la règle fasttrack (diagnostic terrain — les compteurs
+  hotspot continuent de compter, le fasttrack ne casse ni l'auth ni les
+  quotas temps).
+
+### N°113 — Correctif terrain : « le bridage qui ne bridait rien »
+Test N°106 réel (routeur client cybere-space sc, voucher `testa` — 15 min /
+50 Mo / bridage 512k/1M) : **200+ Mo consommés sans AUCUN bridage** jusqu'à
+l'expiration du temps. Autopsie (sources : manuel RouterOS
+manual.mikrotik.com + sorties réelles du forum MikroTik) :
+1. **LA CAUSE RACINE — ancre morte** : la file dynamique hotspot se nomme
+   `<user>` AVEC CHEVRONS (sortie réelle : `name="<hotspot-user3>"`), et
+   les simple queues s'évaluent en ORDRE STRICT premier-match-gagnant
+   (manuel : « each packet must go through every queue until it reaches one
+   queue whose conditions fit »). L'ancre `find where name=$qu` (nom NU)
+   ne trouvait JAMAIS la dynamique → la file `mikthrottle-testa` était
+   ajoutée en BAS de liste, SOUS `<testa>` → **pas un seul paquet vu par le
+   bridage**. Correctif : pose v2 = remove-then-add + `place-before` LA
+   PREMIÈRE file de la liste (repli `/queue simple move` en tête si le
+   place-before échoue — l'opération historiquement supportée pour placer
+   une statique avant les dynamiques, pattern des forums 2007+). Au-dessus
+   de la dynamique `<user>`, du plafond `mikcloud-qos` (N°104) et de toute
+   file opérateur — seules des files aux cibles DISJOINTES peuvent rester
+   au-dessus (aucun effet sur le trafic de cet utilisateur).
+2. **Le set qui effaçait le on-login** : `profileSetLine` écrasait
+   `on-login` avec le verrou SEUL (ou vide) et n'alignait JAMAIS
+   `on-logout` — le on-login de bridage posé par le `add` de la MÊME
+   commande était effacé aussitôt ; sur un profil préexistant (add en
+   échec), le set était la SEULE écriture : AUCUN script de bridage.
+   Correctif : le set porte le on-login COMBINÉ (verrou+quota) et le
+   on-logout (vidés en mode cut — alignement complet).
+3. **Le tick figé sans version** : le script vit dans le `on-event` du
+   scheduler ROUTEUR — `QuotaSchedOK` vrai bloquait tout re-déploiement :
+   les routeurs déjà équipés du tick v1 ne recevraient JAMAIS le correctif.
+   Correctif : `Router.QuotaSchedVer` (génération confirmée, portée par le
+   payload de `quota_ensure` et posée au retour « ok » — pattern sel
+   `safeWifiRulesVersion` N°80). Migration `routers.quota_sched_ver` ; 0 =
+   pré-N°113 → re-file automatique au premier check-in après déploiement.
 
 ---
 

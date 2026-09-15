@@ -72,12 +72,36 @@ func TestQuotaEnsureQueuedWhenThrottleProfile(t *testing.T) {
 		}
 	}
 
-	// Drapeau posé → silence définitif.
+	// Drapeau posé MAIS génération ANCIENNE (pré-N°113, QuotaSchedVer=0) :
+	// le tick v1 posait la file de bridage SOUS la dynamique <user> (aucun
+	// bridage — terrain N°106) → quota_ensure RE-FILÉ pour servir le v2.
 	router.QuotaSchedOK = true
+	router.QuotaSchedVer = 0
+	db.Commands = nil
+	a.ensureQuotaThrottleLocked(db, router)
+	if findQueuedByKind(db, model.CmdQuotaEnsure) == nil {
+		t.Fatal("QuotaSchedOK posé mais génération ancienne : quota_ensure doit être re-filé (convergence N°113)")
+	}
+
+	// Drapeau posé ET génération courante → silence définitif.
+	router.QuotaSchedVer = agent.QuotaTickVersion
 	db.Commands = nil
 	a.ensureQuotaThrottleLocked(db, router)
 	if findQueuedByKind(db, model.CmdQuotaEnsure) != nil {
-		t.Fatal("QuotaSchedOK posé : aucun quota_ensure ne doit être re-filé")
+		t.Fatal("QuotaSchedOK + génération courante : aucun quota_ensure ne doit être re-filé")
+	}
+
+	// N°113 — la commandes en file porte la génération du tick dans son
+	// payload (le rapport la reposera — vérité de CE script-ci).
+	router.QuotaSchedVer = 0
+	db.Commands = nil
+	a.ensureQuotaThrottleLocked(db, router)
+	c := findQueuedByKind(db, model.CmdQuotaEnsure)
+	if c == nil {
+		t.Fatal("génération ancienne : quota_ensure attendu en file")
+	}
+	if v, ok := c.Payload["tickVer"]; !ok || v != agent.QuotaTickVersion {
+		t.Fatalf("payload tickVer = %v (attendu %d)", v, agent.QuotaTickVersion)
 	}
 
 	// Un profil throttle d'un AUTRE compte ne compte pas (isolation).

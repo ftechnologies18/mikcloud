@@ -19,6 +19,21 @@
 // séparateurs neutralisés par l'import (| ; & = % +) ; posé en tête, le
 // marqueur survit à la troncature d'import à 60 caractères.
 //
+// N°113 — LA LEÇON DU TERRAIN (test N°106 chez cybere-space sc : 200 Mo
+// consommés sans AUCUN bridage) : la file dynamique du hotspot se nomme
+// « <user> » AVEC CHEVRONS (convention RouterOS — cf. sorties réelles du
+// forum MikroTik : name="<hotspot-user3>"), et les simple queues suivent
+// un ORDRE STRICT premier-match-gagnant (manuel officiel : « each packet
+// must go through every queue until it reaches one queue whose conditions
+// fit »). L'ancre historique `find where name=$qu` ne trouvait JAMAIS la
+// dynamique → la file mikthrottle-<user> était ajoutée en BAS de liste,
+// SOUS la dynamique → le bridage ne voyait pas un seul paquet. La pose v2
+// place donc la file AVANT LA PREMIÈRE de la liste (place-before, repli
+// move-to-top) : au-dessus de la dynamique <user>, du plafond QoS
+// mikcloud-qos (N°104) et de toute file créée par l'opérateur — seules les
+// files aux cibles DISJOINTES (autres utilisateurs) restent au-dessus,
+// sans effet sur le trafic de cet utilisateur.
+//
 // Les trois temps du bridage :
 //  1. ON-LOGIN (profil)   : cumul déjà ≥ quota (re-connexion) → file posée
 //     AVANT le premier paquet utile — la fenêtre de
@@ -71,6 +86,22 @@ const QuotaSchedName = "mikcloud-quota"
 // un coût CPU routeur négligeable (deux lectures API par tick).
 const QuotaSchedIntervalSec = 20
 
+// QuotaTickVersion — GÉNÉRATION du script du tick (N°113). Le tick est figé
+// dans le on-event du scheduler ROUTEUR : QuotaSchedOK seul ne suffit pas à
+// servir une évolution du script aux routeurs déjà convergés. La version
+// voyage dans le payload de quota_ensure et revient dans son rapport — le
+// check-in re-file tant que la génération confirmée du routeur n'est pas la
+// courante (pattern sel safeWifiRulesVersion N°80).
+//
+//	v1 (N°106) : ancre `find name=$qu` — ne matchait jamais la dynamique
+//	             <user> : file posée en bas de liste, sous la dynamique →
+//	             PREMIER-MATCH GAGNANT : AUCUN bridage (terrain cybere-
+//	             space sc : 200 Mo sans bridage).
+//	v2 (N°113) : place-before la PREMIÈRE file de la liste (repli
+//	             move-to-top si le place-before échoue), remove-then-add à
+//	             chaque évaluation (rafraîchit la cible IP et la position).
+const QuotaTickVersion = 2
+
 // QuotaMarkerPrefix — préfixe du marqueur de quota dans le commentaire
 // routeur. « mikq: » fait 5 caractères : les scripts le repèrent par
 // [:pick $uc 0 5].
@@ -101,20 +132,35 @@ func PrefixQuotaComment(marker, comment string) string {
 // quotaApplyLines — le cœur partagé du on-login et du tick : lit le marqueur
 // du commentaire utilisateur, compare au cumul, pose ou retire la file.
 // Paramètres RouterOS attendus : $qu (username), $qa (adresse IP de la
-// session), $que (id interne /ip hotspot user). Pose la file avec
-// place-before la file DYNAMIQUE du profil (name=<user>) si elle existe —
-// sinon add simple (la file dynamique à venir s'insérera derrière).
+// session), $que (id interne /ip hotspot user).
+//
+// Pose v2 (N°113) — TOUJOURS remove-then-add : la cible IP est rafraîchie à
+// chaque évaluation (couvre le changement d'IP sans re-login, limite v1
+// documentée) et la position est ré-ancrée avant la PREMIÈRE file de la
+// liste — les simple queues s'évaluent en ordre STRICT premier-match
+// gagnant : au-dessus de la dynamique <user> et du plafond mikcloud-qos,
+// le bridage s'applique réellement. La fenêtre remove→add est sub-
+// milliseconde (exécutée d'un bloc par l'interpréteur) ; les compteurs de
+// LA FILE de bridage repartent à zéro à chaque tick — purement cosmétique
+// (la décision se fait sur les compteurs CUMULÉS de l'UTILISATEUR, jamais
+// sur ceux de la file ; le read_state ne rapporte que le NOM des files
+// mikthrottle-). Repli en profondeur : si le place-before échoue, la file
+// est ajoutée puis REMONTÉE en tête (/queue simple move — l'opération
+// historiquement supportée pour placer une statique AVANT les dynamiques,
+// pattern des forums 2007+) ; si tout échoue, log sans interrompre.
 // Retour une ligne compacte (les séparateurs « ; » sont valides en import
 // .rsc, même sérialisation que watcherOnEvent).
-const quotaApplyLines = `:local uc [:tostr [/ip hotspot user get $que comment]]; :if ([:pick $uc 0 5] = "mikq:") do={ :local sp [:find $uc " "]; :local mk ""; :if ([:typeof $sp] = "nil") do={ :set mk [:pick $uc 5 [:len $uc]] } else={ :set mk [:pick $uc 5 $sp] }; :local cp [:find $mk ","]; :if ([:typeof $cp] != "nil") do={ :local qb [:pick $mk 0 $cp]; :local qr [:pick $mk ($cp + 1) [:len $mk]]; :local bi 0; :local bo 0; :do { :set bi [:tonum [:tostr [/ip hotspot user get $que bytes-in]]] } on-error={ :set bi 0 }; :do { :set bo [:tonum [:tostr [/ip hotspot user get $que bytes-out]]] } on-error={ :set bo 0 }; :if (($bi + $bo) >= [:tonum $qb]) do={ :local qn ("mikthrottle-" . $qu); :if ([:len [/queue simple find where name=$qn]] = 0) do={ :local pb [/queue simple find where name=$qu]; :if ([:len $pb] > 0) do={ :do { /queue simple add name=$qn target=$qa max-limit=$qr place-before=$pb } on-error={ :do { /queue simple add name=$qn target=$qa max-limit=$qr } on-error={ :log info "mikcloud: quota bridage impossible" } } } else={ :do { /queue simple add name=$qn target=$qa max-limit=$qr } on-error={ :log info "mikcloud: quota bridage impossible" } } } } else={ :do { /queue simple remove [find where name=("mikthrottle-" . $qu)] } on-error={} } } }`
+const quotaApplyLines = `:local uc [:tostr [/ip hotspot user get $que comment]]; :if ([:pick $uc 0 5] = "mikq:") do={ :local sp [:find $uc " "]; :local mk ""; :if ([:typeof $sp] = "nil") do={ :set mk [:pick $uc 5 [:len $uc]] } else={ :set mk [:pick $uc 5 $sp] }; :local cp [:find $mk ","]; :if ([:typeof $cp] != "nil") do={ :local qb [:pick $mk 0 $cp]; :local qr [:pick $mk ($cp + 1) [:len $mk]]; :local bi 0; :local bo 0; :do { :set bi [:tonum [:tostr [/ip hotspot user get $que bytes-in]]] } on-error={ :set bi 0 }; :do { :set bo [:tonum [:tostr [/ip hotspot user get $que bytes-out]]] } on-error={ :set bo 0 }; :if (($bi + $bo) >= [:tonum $qb]) do={ :local qn ("mikthrottle-" . $qu); :do { /queue simple remove [find where name=$qn] } on-error={}; :local qf [:pick [/queue simple find] 0]; :if ([:len $qf] > 0) do={ :do { /queue simple add name=$qn target=$qa max-limit=$qr place-before=$qf } on-error={ :do { /queue simple add name=$qn target=$qa max-limit=$qr; :local tq [/queue simple find where name=$qn]; :local qf2 [:pick [/queue simple find] 0]; :if ([:len $tq] > 0 && [:len $qf2] > 0 && ([:pick $tq 0] != $qf2)) do={ /queue simple move [:pick $tq 0] $qf2 } } on-error={ :log info "mikcloud: quota bridage impossible" } } } else={ :do { /queue simple add name=$qn target=$qa max-limit=$qr } on-error={ :log info "mikcloud: quota bridage impossible" } } } else={ :do { /queue simple remove [find where name=("mikthrottle-" . $qu)] } on-error={} } } }`
 
 // onLoginQuotaScript — script on-login du profil en mode throttle : à
 // CHAQUE connexion, si le cumul de l'utilisateur a déjà épuisé le quota du
 // marqueur, la file de bridage est (re)posée pour l'IP de CETTE session
-// (remove-then-add : la cible est rafraîchie à chaque connexion). C'est la
-// couverture de la fenêtre de re-login : sans elle, un client dont le quota
-// est épuisé repartirait au débit plein entre l'épuisement et le tick.
-// Les variables $user/$address sont fournies par le hotspot au login.
+// (remove-then-add : la cible est rafraîchie à chaque connexion, la file
+// ré-ancrée EN TÊTE de liste — la dynamique <user> créée au même login ne
+// peut pas la recouvrir). C'est la couverture de la fenêtre de re-login :
+// sans elle, un client dont le quota est épuisé repartirait au débit plein
+// entre l'épuisement et le tick. Les variables $user/$address sont fournies
+// par le hotspot au login.
 const onLoginQuotaScript = `:do { :local qu $user; :local qa $address; :local que [/ip hotspot user find name=$qu]; :if ([:len $que] > 0) do={ ` + quotaApplyLines + ` } } on-error={ :log info "mikcloud: quota on-login ignore" }`
 
 // onLogoutQuotaScript — script on-logout du profil en mode throttle :
@@ -135,9 +181,9 @@ const onLogoutQuotaScript = `:do { :local qu $user; :if ([:len [/ip hotspot acti
 //     routeur : les files simples statiques survivent au reboot, les
 //     sessions non) ;
 //  2. sessions actives (≤ 250 par tick) — marqueur mikq: lu, cumul
-//     comparé : ≥ quota → file posée si absente (place-before la
-//     dynamique) ; < quota → file retirée si présente (reset-counters F4
-//     rouvre le plein débit dans le tick suivant) ;
+//     comparé : ≥ quota → file posée EN TÊTE (place-before la première,
+//     cf. quotaApplyLines v2) ; < quota → file retirée si présente
+//     (reset-counters F4 rouvre le plein débit dans le tick suivant) ;
 //  3. rien d'autre — aucun octet émis vers le cloud : le tick est 100 %
 //     local, le routeur continue d'appliquer la politique même coupé du
 //     cloud (philosophie agent MikCloud).

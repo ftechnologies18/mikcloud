@@ -49,8 +49,11 @@ func quotaScriptBalance(t *testing.T, name, script string) {
 }
 
 // TestQuotaScriptsShape — les trois scripts du bridage portent les tokens
-// du contrat : préfixe de file, marqueur, place-before la file dynamique,
-// compteurs CUMULÉS de l'utilisateur (jamais ceux de la session).
+// du contrat : préfixe de file, marqueur, ancrage EN TÊTE de liste (N°113 :
+// place-before la PREMIÈRE file + repli move — la dynamique hotspot se nomme
+// <user>, l'ancre historique par nom d'utilisateur ne trouvait JAMAIS rien
+// et la file tombait SOUS la dynamique : premier-match gagnant, aucun
+// bridage), compteurs CUMULÉS de l'utilisateur (jamais ceux de la session).
 func TestQuotaScriptsShape(t *testing.T) {
 	for _, s := range []struct{ name, script string }{
 		{"quotaTickScript", quotaTickScript},
@@ -58,16 +61,22 @@ func TestQuotaScriptsShape(t *testing.T) {
 	} {
 		quotaScriptBalance(t, s.name, s.script)
 		for _, token := range []string{
-			`"mikq:"`,       // lecture du marqueur en tête de commentaire
-			`mikthrottle-`,  // nom de la file de bridage
-			`place-before`,  // au-dessus de la file dynamique du profil
-			`bytes-in`,      // compteurs CUMULÉS utilisateur
-			`bytes-out`,     // (in + out comparés au quota du marqueur)
-			`/queue simple`, // pose ET retrait de la file
+			`"mikq:"`,            // lecture du marqueur en tête de commentaire
+			`mikthrottle-`,       // nom de la file de bridage
+			`place-before=$qf`,   // ancrage AVANT la première file (v2 N°113)
+			`/queue simple move`, // repli : remontée en tête si place-before échoue
+			`bytes-in`,           // compteurs CUMULÉS utilisateur
+			`bytes-out`,          // (in + out comparés au quota du marqueur)
+			`/queue simple`,      // pose ET retrait de la file
 		} {
 			if !strings.Contains(s.script, token) {
 				t.Fatalf("%s : token %q absent", s.name, token)
 			}
+		}
+		// N°113 — remove-then-add à CHAQUE évaluation (rafraîchit la cible
+		// IP et la position) : le remove précède TOUJOURS l'add.
+		if idxRemove, idxAdd := strings.Index(s.script, `/queue simple remove`), strings.Index(s.script, `place-before=$qf`); idxRemove < 0 || idxAdd < 0 || idxRemove > idxAdd {
+			t.Fatalf("%s : le remove de la file doit précéder l'ancrage (remove=%d, add=%d)", s.name, idxRemove, idxAdd)
 		}
 	}
 	quotaScriptBalance(t, "onLogoutQuotaScript", onLogoutQuotaScript)
@@ -81,6 +90,17 @@ func TestQuotaScriptsShape(t *testing.T) {
 	// Le tick est borné à 250 sessions par passage (miroir read_state).
 	if !strings.Contains(quotaTickScript, `$qn2 < 250`) {
 		t.Fatal("quotaTickScript : la borne de 250 sessions est absente")
+	}
+	// N°113 — l'ancre historique par nom d'utilisateur NU (sans chevrons)
+	// ne doit PLUS exister : la dynamique hotspot se nomme <user>, cette
+	// ancre ne trouvait jamais rien (bug du terrain N°106).
+	for _, s := range []struct{ name, script string }{
+		{"quotaTickScript", quotaTickScript},
+		{"onLoginQuotaScript", onLoginQuotaScript},
+	} {
+		if strings.Contains(s.script, `find where name=$qu]`) {
+			t.Fatalf("%s : l'ancre find where name=$qu (sans chevrons) ne doit plus exister — la dynamique se nomme <user>", s.name)
+		}
 	}
 }
 
@@ -213,6 +233,12 @@ func TestProfileOnLoginScriptCombiné(t *testing.T) {
 // TestProfileEnsureThrottleScripts — profileEnsureLine pose le on-login
 // combiné ET le on-logout en mode throttle ; sans mode, on-login est vidé
 // (alignement complet du profil — sémantique set existante).
+//
+// N°113 — LE test de régression du bug du terrain : le set qui suit TOUJOURS
+// le add dans profileEnsureLine doit porter LUI AUSSI les scripts de bridage
+// (AVANT : il écrasait on-login avec le verrou seul et n'alignait jamais
+// on-logout — le on-login de bridage était effacé dans la MÊME commande, la
+// fenêtre de re-login n'était couverte nulle part).
 func TestProfileEnsureThrottleScripts(t *testing.T) {
 	throttle := ProfileRef{
 		Name: "1h-1go", RateLimit: "2M/2M", SessionTimeoutMin: 60, SharedUsers: 1,
@@ -227,6 +253,17 @@ func TestProfileEnsureThrottleScripts(t *testing.T) {
 		t.Fatal("profil throttle : le on-logout (retrait de la file) doit être posé")
 	}
 
+	// N°113 — la ligne SET (2e ligne de profileEnsureLine) doit ELLE-MÊME
+	// porter le on-login de bridage (mikq:) et le on-logout : le add
+	// échoue sur un profil préexistant, le set est alors la SEULE écriture.
+	setLine := profileSetLine(throttle.Name, throttle)
+	if !strings.Contains(setLine, "mikq:") {
+		t.Fatal("profil throttle : le SET doit porter le on-login de bridage (régression N°113 — il l'écrasait avant)")
+	}
+	if !strings.Contains(setLine, rosScriptValue(onLogoutQuotaScript)) {
+		t.Fatal("profil throttle : le SET doit aligner le on-logout de bridage")
+	}
+
 	cut := ProfileRef{
 		Name: "1h-cut", RateLimit: "2M/2M", SessionTimeoutMin: 60, SharedUsers: 1,
 		HasRate: true, HasTimeout: true, HasShared: true,
@@ -238,5 +275,25 @@ func TestProfileEnsureThrottleScripts(t *testing.T) {
 		if strings.Contains(scriptCut, `on-logout="`+rosScriptValue(onLogoutQuotaScript)) {
 			t.Fatal("profil cut : le script de bridage ne doit pas être posé dans on-logout")
 		}
+	}
+	// N°113 — en mode cut, le set vide EXPLICITEMENT on-login et on-logout
+	// (un profil repassé en « couper » perd ses scripts de bridage).
+	setCut := profileSetLine(cut.Name, cut)
+	if !strings.Contains(setCut, `on-login=""`) {
+		t.Fatal("profil cut : le set doit vider on-login (alignement complet)")
+	}
+	if !strings.Contains(setCut, `on-logout=""`) {
+		t.Fatal("profil cut : le set doit vider on-logout (alignement complet)")
+	}
+
+	// N°113 — verrou + bridage : le set porte le on-login COMBINÉ.
+	both := ProfileRef{
+		Name: "1h-lock-thr", RateLimit: "2M/2M", SessionTimeoutMin: 60, SharedUsers: 1,
+		HasRate: true, HasTimeout: true, HasShared: true,
+		LockFirstDevice: true, QuotaThrottle: true,
+	}
+	setBoth := profileSetLine(both.Name, both)
+	if !strings.Contains(setBoth, "mikcloud_lock:") || !strings.Contains(setBoth, "mikq:") {
+		t.Fatal("verrou + bridage : le set doit porter le on-login COMBINÉ (régression N°113)")
 	}
 }

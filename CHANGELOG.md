@@ -5,6 +5,91 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-15 — N°113 — Correctif bridage N°106 « le bridage qui ne bridait rien » : la file mikthrottle- était posée en BAS de liste, sous la dynamique <user> (premier-match gagnant → AUCUN paquet vu par le bridage — terrain cybere-space sc : voucher testa 15 min/50 Mo/512k-1M, 200+ Mo consommés sans aucun bridage jusqu'à l'épuisement du temps). Trois bugs en chaîne, trois correctifs : ancrage EN TÊTE de liste, set du profil qui porte enfin les scripts, génération du tick versionnée pour rejoindre le parc déjà équipé
+
+### N°113 — Contexte : le test terrain qui a fait tomber la chaîne entière
+Test N°106 réel sur un routeur client (cybere-space sc) : voucher « testa »
+avec profil 15 min / 50 Mo / bridage 512k/1M — le client a consommé PLUS DE
+200 Mo sans AUCUN bridage, jusqu'à l'expiration naturelle du temps. Le mode
+« cut » historique fonctionnait (limit-bytes-total coupe), le temps
+fonctionnait (limit-uptime coupe)… mais la FILE de bridage n'a jamais vu un
+seul paquet. Autopsie contre les sources officielles (manuel RouterOS
+manual.mikrotik.com — « Simple queues have a strict order : each packet must
+go through every queue until it reaches one queue whose conditions fit » —
+et sorties réelles du forum MikroTik : `name="<hotspot-user3>"`).
+
+### Produit
+- (1) LA CAUSE RACINE — L'ANCRE MORTE : la file dynamique hotspot se nomme
+  `<user>` AVEC CHEVRONS ; l'ancre `find where name=$qu` (nom NU) ne
+  trouvait JAMAIS rien → la file `mikthrottle-<user>` était ajoutée en BAS
+  de liste, SOUS la dynamique → ordre strict premier-match-gagnant : la
+  dynamique matche l'IP du client en premier, le bridage ne voit AUCUN
+  paquet. CORRECTIF — pose v2 : remove-then-add SYSTÉMATIQUE (rafraîchit la
+  cible IP et la position à chaque évaluation — couvre au passage le
+  changement d'IP sans re-login, limite v1 documentée) + `place-before` LA
+  PREMIÈRE file de la liste (au-dessus de la dynamique `<user>`, du plafond
+  QoS mikcloud-qos N°104 et de toute file opérateur) + repli en profondeur
+  `/queue simple move` en tête (l'opération historiquement supportée pour
+  placer une statique AVANT les dynamiques — pattern des forums 2007+) si le
+  place-before échoue.
+- (2) LE SET QUI EFFAÇAIT LE ON-LOGIN : `profileSetLine` écrasait `on-login`
+  avec le verrou « 1er appareil » SEUL (ou vide) et n'alignait JAMAIS
+  `on-logout` — le on-login de bridage posé par le `add` de la MÊME commande
+  était effacé aussitôt ; et sur un profil PRÉEXISTANT (add en échec
+  silencieux), le set était la SEULE écriture : AUCUN script de bridage
+  n'atteignait jamais le routeur. CORRECTIF — le set porte le on-login
+  COMBINÉ (verrou + quota via profileOnLoginScript) ET le on-logout
+  (onLogoutQuotaScript), vidés explicitement en mode cut (alignement
+  complet : un profil repassé en « couper » perd ses scripts).
+- (3) LE TICK FIGÉ SANS VERSION : le script du tick vit dans le `on-event`
+  du scheduler ROUTEUR — `QuotaSchedOK` vrai bloquait tout re-déploiement :
+  les routeurs déjà équipés du tick v1 (dont cybere-space sc) ne
+  recevraient JAMAIS le correctif. CORRECTIF — `Router.QuotaSchedVer`
+  (génération du tick confirmée) : la version voyage dans le payload de
+  `quota_ensure` et est posée au retour « ok » (vérité de CE script-ci,
+  jamais d'un ordre en vol antérieur — pattern sel safeWifiRulesVersion
+  N°80) ; le check-in re-file tant que la génération confirmée n'est pas la
+  courante (`agent.QuotaTickVersion = 2`). Migration idempotente
+  `routers.quota_sched_ver` (0 = pré-N°113) : le parc entier re-converge au
+  premier check-in après le déploiement, SANS geste opérateur.
+
+### Diagnostic documenté (au cas où)
+Un routeur avec une règle firewall `fasttrack-connection` générique qui
+matche le trafic hotspot authentifié contourne TOUTES les simple queues
+(manuel RouterOS : « FastTrack packets bypass firewall, connection tracking,
+simple queues… »). Signal : même le débit DE BASE du forfait ne s'applique
+pas. Les compteurs hotspot continuent de compter (fasttrack ne casse ni
+l'auth ni les quotas temps) — le test terrain N°106 n'était PAS ce cas (le
+débit de base s'appliquait), mais le diagnostic reste documenté dans
+CONTRACT-V2 §N°106 limites v2.
+
+### Technique
+- agent/quota.go : quotaApplyLines v2 (remove-then-add + place-before la
+  première file + repli move-to-top), QuotaTickVersion = 2, commentaires
+  d'autopsie complets (les trois temps du bridage, la leçon du terrain).
+- agent/profiles.go : profileSetLine aligne on-login combiné + on-logout
+  (régression N°113) ; profileAddParams inchangé (déjà correct).
+- model : Router.QuotaSchedVer int.
+- store : routerSpec + migration `routers.quota_sched_ver INTEGER DEFAULT 0`.
+- api : ensureQuotaThrottleLocked re-file si QuotaSchedOK&&Ver<courante ;
+  payload `tickVer` ; applyAgentResult pose QuotaSchedVer depuis LE payload
+  de la commande rapportée (payloadTickVer tolère int/float64 — relecture
+  JSON du store).
+- Docs : CONTRACT-V2 §N°106 (enforcement v2 + limites v2 + sous-section
+  N°113 autopsie).
+
+### Tests
+- agent : TestQuotaScriptsShape renforcé — tokens `place-before=$qf` et
+  `/queue simple move`, ordre remove→ancre, GARDE ANTI-RÉGRESSION : l'ancre
+  `find where name=$qu` (nom nu, sans chevrons) ne doit PLUS exister ;
+  TestProfileEnsureThrottleScripts étendu — LE test du bug : la ligne SET
+  doit porter mikq: ET on-logout (elle les écrasait avant), le cut vide
+  explicitement les deux champs, verrou+bridage combinés dans le set.
+- api : TestQuotaEnsureQueuedWhenThrottleProfile étendu — QuotaSchedOK posé
+  MAIS génération ancienne → re-file (convergence N°113), silence uniquement
+  à OK+version courante, payload tickVer embarqué.
+- Vérifié : gofmt vide, go vet OK, go build OK, go test 12 paquets verts.
+
 ## 2026-09-14 — N°110 — QoS multi-sous-réseaux : la cible accepte 1 à 4 CIDR séparés par des virgules — le cas du hotspot au pool ÉTENDU (ProMax WIFI : clients sur 192.168.10.0/24 ET 10.77.0.0/21, deux mondes disjoints qu'aucun préfixe unique ne couvre) devient configurable en UNE file
 
 ### N°110 — Contexte : deux sous-réseaux, une seule ligne

@@ -295,8 +295,17 @@ func (a *API) ensureWatcherLocked(db *model.DB, router *model.Router) {
 // marqueur mikq:, mais on n'installe même pas le scheduler). Pattern
 // watcher N°77 : re-file tant que le retour « ok » n'est pas arrivé
 // (QuotaSchedOK posé au rapport, cf. applyAgentResult).
+//
+// N°113 — la GÉNÉRATION du tick compte autant que sa présence : le script
+// est figé dans le on-event du scheduler routeur, un routeur convergé sur
+// une génération ANCIENNE (QuotaSchedVer < agent.QuotaTickVersion) doit
+// être re-déployé — c'est LE canal qui a porté le correctif du terrain
+// N°106 (le tick v1 posait la file de bridage SOUS la dynamique <user> :
+// premier-match gagnant, aucun bridage, 200 Mo consommés sans bridage).
+// La version voyage dans le payload et revient dans le rapport (pattern
+// sel safeWifiRulesVersion N°80).
 func (a *API) ensureQuotaThrottleLocked(db *model.DB, router *model.Router) {
-	if router.Mode != "agent" || router.QuotaSchedOK {
+	if router.Mode != "agent" || (router.QuotaSchedOK && router.QuotaSchedVer >= agent.QuotaTickVersion) {
 		return
 	}
 	anyThrottle := false
@@ -319,7 +328,11 @@ func (a *API) ensureQuotaThrottleLocked(db *model.DB, router *model.Router) {
 			return
 		}
 	}
-	queueCommandLocked(db, router.AccountID, router.ID, model.CmdQuotaEnsure, map[string]any{})
+	queueCommandLocked(db, router.AccountID, router.ID, model.CmdQuotaEnsure, map[string]any{
+		// N°113 — génération du tick embarquée : le rapport la reposera
+		// (vérité de CE script-ci, jamais d'un ordre en vol antérieur).
+		"tickVer": agent.QuotaTickVersion,
+	})
 }
 
 // safeWifiRulesVersion — sel de version des règles SafeWiFi : toute

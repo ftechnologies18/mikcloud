@@ -146,6 +146,17 @@ type Router struct {
 	// mode throttle — un site qui n'utilise jamais le bridage ne consomme
 	// rien, l'économie de veille N°75 reste entière.
 	QuotaSchedOK bool `json:"quotaSchedOK,omitempty"`
+	// N°113 — GÉNÉRATION du script du tick mikcloud-quota confirmée déployée
+	// sur ce routeur (miroir de agent.QuotaTickVersion, portée par le payload
+	// de quota_ensure et posée au retour « ok » — jamais à la mise en file).
+	// Le tick est FIGÉ dans le on-event du scheduler routeur : QuotaSchedOK
+	// seul ne suffit pas à servir une évolution du script au parc déjà
+	// convergé. 0 = génération inconnue (pré-N°113) → le check-in re-file
+	// quota_ensure tant que la génération courante n'est pas confirmée
+	// (pattern sel safeWifiRulesVersion N°80 — LE bug du terrain N°106 :
+	// le tick v1 posait la file de bridage SOUS la dynamique <user>,
+	// premier-match gagnant → aucun bridage, 200 Mo consommés).
+	QuotaSchedVer int `json:"quotaSchedVer,omitempty"`
 	// N°80 — SafeWiFi (protection DNS du WiFi public) : niveau de filtrage
 	// choisi par le gérant pour ce site. "" = état antérieur au N°80
 	// (traité comme "off" — aucun filtrage, AUCUNE commande filée : un

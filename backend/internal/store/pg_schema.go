@@ -779,6 +779,10 @@ func (p *PG) ensureSchema() error {
 		`ALTER TABLE profiles      ADD COLUMN IF NOT EXISTS throttle_rate TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE sessions      ADD COLUMN IF NOT EXISTS throttled     BOOLEAN NOT NULL DEFAULT FALSE`,
 		`ALTER TABLE routers       ADD COLUMN IF NOT EXISTS quota_sched_ok BOOLEAN NOT NULL DEFAULT FALSE`,
+		// N°113 — génération du script du tick mikcloud-quota confirmée sur
+		// le routeur (0 = pré-N°113 : le check-in re-file quota_ensure pour
+		// servir le tick v2 — ancrage EN TÊTE de liste, cf. agent.QuotaTickVersion).
+		`ALTER TABLE routers       ADD COLUMN IF NOT EXISTS quota_sched_ver INTEGER NOT NULL DEFAULT 0`,
 		// Abonnement SaaS (formules Essentiel 1 250 F/mois/routeur et
 		// Illimité 12 000 F/an, routeurs illimités) : état par compte dans settings.
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS sub_plan_id      TEXT NOT NULL DEFAULT ''`,

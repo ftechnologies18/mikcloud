@@ -843,13 +843,20 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 				a.logActivity(db, router.AccountID, "router", "Veilleur d'invités déployé sur «"+router.Name+"» — claim du portail servi en ≤ 20 s")
 			}
 		} else if cmd.Kind == model.CmdQuotaEnsure {
-			// N°106 — cadenceur de bridage déployé et CONFIRMÉ par le routeur :
-			// QuotaSchedOK n'est posé qu'ici (pattern watcher N°77 — vérité
-			// routeur uniquement). Un échec reste QuotaSchedOK=false → re-file
-			// au check-in suivant.
+			// N°106/N°113 — cadenceur de bridage déployé et CONFIRMÉ par le
+			// routeur : QuotaSchedOK ET la GÉNÉRATION du tick (QuotaSchedVer,
+			// lue dans le payload de LA commande rapportée — vérité de CE
+			// script-ci, jamais d'un ordre en vol antérieur) ne sont posés
+			// qu'ici (pattern watcher N°77 — vérité routeur uniquement). Un
+			// échec reste QuotaSchedOK=false → re-file au check-in suivant ;
+			// un rapport d'une génération ancienne ne pose PAS la version
+			// courante (re-file jusqu'à confirmation de la bonne).
 			if !router.QuotaSchedOK {
 				router.QuotaSchedOK = true
 				a.logActivity(db, router.AccountID, "router", "Cadenceur de quota déployé sur «"+router.Name+"» — bridage des forfaits à quota convergé en ≤ 20 s")
+			}
+			if v := payloadTickVer(cmd.Payload); v > router.QuotaSchedVer {
+				router.QuotaSchedVer = v
 			}
 		} else if cmd.Kind == model.CmdSafeWifi {
 			// N°80 — protection appliquée et CONFIRMÉE par le
@@ -1064,4 +1071,21 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 	a.store.Unlock()
 
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// payloadTickVer — N°113 : lit la GÉNÉRATION du tick mikcloud-quota dans le
+// payload d'une commande quota_ensure. Tolère les deux formes : int (payload
+// construit en mémoire par ensureQuotaThrottleLocked) et float64 (relecture
+// JSON du store — les nombres y perdent leur type). Absente/illisible : 0
+// (génération inconnue → re-file jusqu'à confirmation).
+func payloadTickVer(p map[string]any) int {
+	switch v := p["tickVer"].(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	}
+	return 0
 }

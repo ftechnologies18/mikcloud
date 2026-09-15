@@ -230,10 +230,24 @@ func profileSetLine(name string, p ProfileRef) string {
 			s += ` parent-queue=none`
 		}
 	}
-	if p.LockFirstDevice {
-		s += ` on-login="` + rosScriptValue(onLoginLockScript) + `"`
+	// N°113 — le set aligne AUSSI les scripts de bridage : profileOnLoginScript
+	// combine verrou « 1er appareil » ET quota (un seul champ on-login par
+	// profil), et on-logout porte le retrait de la file pour les profils
+	// throttle (vidé sinon : un profil repassé en « cut » perd ses scripts —
+	// sémantique d'alignement complet du set).
+	// AVANT N°113 (bug du terrain N°106) : le set écrasait on-login avec le
+	// verrou SEUL (ou vide) — le on-login de bridage posé par le add de la
+	// MÊME commande était effacé aussitôt, et on-logout n'était jamais
+	// aligné : la fenêtre de re-login n'était couverte NULLE PART.
+	if onLogin := profileOnLoginScript(p); onLogin != "" {
+		s += ` on-login="` + rosScriptValue(onLogin) + `"`
 	} else {
 		s += ` on-login=""`
+	}
+	if p.QuotaThrottle {
+		s += ` on-logout="` + rosScriptValue(onLogoutQuotaScript) + `"`
+	} else {
+		s += ` on-logout=""`
 	}
 	return ":do { " + s + " } on-error={ :log info \"mikcloud: profil " + rosEscape(name) + " inaccessible\" }\n"
 }

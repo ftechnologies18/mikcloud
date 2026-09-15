@@ -54,6 +54,9 @@ func quotaScriptBalance(t *testing.T, name, script string) {
 // <user>, l'ancre historique par nom d'utilisateur ne trouvait JAMAIS rien
 // et la file tombait SOUS la dynamique : premier-match gagnant, aucun
 // bridage), compteurs CUMULÉS de l'utilisateur (jamais ceux de la session).
+//
+// N°116 — la décision v3 passe par les DEUX sources : compteurs utilisateur
+// ET octets des sessions actives (max, jamais somme — cf. TestQuotaDecisionSourceV3).
 func TestQuotaScriptsShape(t *testing.T) {
 	for _, s := range []struct{ name, script string }{
 		{"quotaTickScript", quotaTickScript},
@@ -61,13 +64,15 @@ func TestQuotaScriptsShape(t *testing.T) {
 	} {
 		quotaScriptBalance(t, s.name, s.script)
 		for _, token := range []string{
-			`"mikq:"`,            // lecture du marqueur en tête de commentaire
-			`mikthrottle-`,       // nom de la file de bridage
-			`place-before=$qf`,   // ancrage AVANT la première file (v2 N°113)
-			`/queue simple move`, // repli : remontée en tête si place-before échoue
-			`bytes-in`,           // compteurs CUMULÉS utilisateur
-			`bytes-out`,          // (in + out comparés au quota du marqueur)
-			`/queue simple`,      // pose ET retrait de la file
+			`"mikq:"`,                             // lecture du marqueur en tête de commentaire
+			`mikthrottle-`,                        // nom de la file de bridage
+			`place-before=$qf`,                    // ancrage AVANT la première file (v2 N°113)
+			`/queue simple move`,                  // repli : remontée en tête si place-before échoue
+			`bytes-in`,                            // compteurs CUMULÉS utilisateur
+			`bytes-out`,                           // (in + out comparés au quota du marqueur)
+			`/queue simple`,                       // pose ET retrait de la file
+			`/ip hotspot active get $sa bytes-in`, // v3 (N°116) : repli session PROUVÉ fiable
+			`[/ip hotspot active find where user=$qu]`, // v3 : sessions de CET utilisateur
 		} {
 			if !strings.Contains(s.script, token) {
 				t.Fatalf("%s : token %q absent", s.name, token)
@@ -104,6 +109,73 @@ func TestQuotaScriptsShape(t *testing.T) {
 	}
 }
 
+// TestQuotaDecisionSourceV3 — N°116 : la décision de bridage passe par le
+// MAX des deux sources (compteurs UTILISATEUR, octets de la plus grosse
+// session ACTIVE), JAMAIS par leur somme ni par les seuls compteurs
+// utilisateur. Rappel terrain : le tick v2 armé (marqueur présent, scheduler
+// v2 confirmé) restait silencieusement inactif — 219 Mo sans bridage — parce
+// que la seule source était les compteurs utilisateur, illisibles ou figés
+// sur RouterOS 7.24 (bi=bo=0 < quota à chaque tick).
+func TestQuotaDecisionSourceV3(t *testing.T) {
+	for _, s := range []struct{ name, script string }{
+		{"quotaTickScript", quotaTickScript},
+		{"onLoginQuotaScript", onLoginQuotaScript},
+	} {
+		// 1. Initialisation depuis des compteurs utilisateur (protégés on-error).
+		if !strings.Contains(s.script, `:local eff ($bi + $bo)`) {
+			t.Fatalf("%s : l'initialisation du cumul v3 (:local eff ($bi + $bo)) est absente", s.name)
+		}
+		// 2. Repli session : parcours des sessions ACTIVES de $qu uniquement.
+		if !strings.Contains(s.script, `:foreach sa in=[/ip hotspot active find where user=$qu] do=`) {
+			t.Fatalf("%s : le repli session v3 (foreach sur les sessions actives de $qu) est absent", s.name)
+		}
+		// 3. MAX (jamais somme) : la session ne remplace le cumul que si ELLE
+		// est plus grosse — double comptage impossible quand les compteurs
+		// utilisateur sont live (ils incluent déjà la session en cours).
+		if !strings.Contains(s.script, `:if ($sse > $eff) do={ :set eff $sse }`) {
+			t.Fatalf("%s : la mise à jour MAX du cumul v3 est absente", s.name)
+		}
+		// 4. La décision compare $eff (le cumul consolidé), pas ($bi + $bo).
+		if !strings.Contains(s.script, `:if ($eff >= [:tonum $qb]) do=`) {
+			t.Fatalf("%s : la comparaison v3 (:if ($eff >= ...)) est absente", s.name)
+		}
+		// GARDE ANTI-RÉGRESSION : l'ancienne décision v2 (comparaison directe
+		// des seuls compteurs utilisateur) ne doit PLUS exister — c'est ELLE
+		// qui laissait le tick silencieusement inactif sur le terrain.
+		if strings.Contains(s.script, `($bi + $bo) >=`) {
+			t.Fatalf("%s : la comparaison directe v2 (($bi + $bo) >=) ne doit plus exister — la décision passe par $eff", s.name)
+		}
+		// Le repli session est PROTÉGÉ : une session au compteur illisible
+		// n'interrompt jamais l'évaluation (miroir des protections v2).
+		if !strings.Contains(s.script, `+ [:tonum [:tostr [/ip hotspot active get $sa bytes-out]]]); :if ($sse > $eff)`) {
+			t.Fatalf("%s : le repli session doit sommer bytes-in+bytes-out avant le MAX", s.name)
+		}
+	}
+}
+
+// TestReadStateQuotaTelemetry — N°116 : le read_state du chunk final rapporte
+// la sonde qcounters (lisibilité des compteurs utilisateur — diagnostic à
+// distance du mode de dégradation v3) et le champ throttle (files posées).
+func TestReadStateQuotaTelemetry(t *testing.T) {
+	b := Builder{BaseURL: "https://cloud.example", Token: "tk"}
+	script := b.buildReadState(model.Command{ID: "cmd-rs1", Kind: model.CmdReadState, Payload: map[string]any{}})
+	for _, token := range []string{
+		`&throttle=". $rthr`,                                 // liste des files mikthrottle- (contrat N°106)
+		`&qcounters=". $rqc`,                                 // sonde N°116
+		`[/ip hotspot user get $uqc bytes-in]`,               // la sonde lit BIEN les compteurs utilisateur
+		`:if ([:typeof $qcq] != "nil") do={ :set rqc "ok" }`, // lecture réussie = typeof non-nil
+	} {
+		if !strings.Contains(script, token) {
+			t.Fatalf("read_state : token de télémétrie quota %q absent", token)
+		}
+	}
+	// La sonde est dans le chunk FINAL uniquement (les chunks intermédiaires
+	// ne rapportent que stotal/hosts — miroir sessions/throttle).
+	if strings.Count(script, `&qcounters=`) != 1 {
+		t.Fatalf("read_state : la sonde qcounters doit apparaître exactement une fois (chunk final), obtenu %d", strings.Count(script, `&qcounters=`))
+	}
+}
+
 // TestBuildQuotaEnsure — remove-then-add idempotent du scheduler
 // mikcloud-quota (pattern watcher N°77) + rapport au cloud.
 func TestBuildQuotaEnsure(t *testing.T) {
@@ -124,6 +196,11 @@ func TestBuildQuotaEnsure(t *testing.T) {
 	// citation on-event="…" décode les siens).
 	if !strings.Contains(script, `\$qn2`) {
 		t.Fatal("buildQuotaEnsure : le tick doit être échappé pour on-event (variables \\$…)")
+	}
+	// N°116 — le tick déployé est bien v3 : la variable $eff (cumul MAX des
+	// deux sources) doit survivre à l'échappement dans le on-event servi.
+	if !strings.Contains(script, `\$eff`) {
+		t.Fatal("buildQuotaEnsure : la décision v3 ($eff) doit être embarquée échappée dans le on-event")
 	}
 }
 

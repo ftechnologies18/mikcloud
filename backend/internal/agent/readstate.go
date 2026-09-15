@@ -178,6 +178,19 @@ func (b Builder) buildWatcherEnsure(cmd model.Command) string {
 // interface à la ligne, aucun WAN deviné). Le scan de « via » s'arrête au
 // premier séparateur (espace/virgule — ECMP « via e1, via e2 » → e1) ;
 // /ip route reste lisible des deux côtés (v6 natif, v7 legacy).
+//
+// N°116 — le rapport du chunk final porte la sonde qcounters (ok|err|na) :
+// lisibilité des compteurs UTILISATEUR (/ip hotspot user bytes-in — la
+// source historique de la décision de bridage N°106, suspectée illisible ou
+// figée sur RouterOS 7.x d'après le re-test terrain post-N°113 : tick v2
+// déployé, marqueur présent, 219 Mo consommés, AUCUNE file posée — cf.
+// agent/quota.go QuotaTickVersion v3). La sonde tente la lecture sur chaque
+// utilisateur jusqu'à la première LISIBLE (typeof non-nil, pas d'erreur) :
+// ok = au moins un compteur utilisateur lisible ; err = parc sondé, aucun
+// lisible ; na = aucun utilisateur (ou lecture du parc en erreur). Le champ
+// atterrit dans le résultat de la commande (télémétrie queryable à distance) ;
+// la décision de bridage v3 ne DÉPEND PAS de la sonde (elle prend le MAX des
+// deux sources — dégradation gracieuse, jamais un échec).
 func (b Builder) buildReadState(cmd model.Command) string {
 	start := int(plInt64(cmd.Payload, "start"))
 	count := int(plInt64(cmd.Payload, "count"))
@@ -239,9 +252,20 @@ func (b Builder) buildReadState(cmd model.Command) string {
     }
   } on-error={ :set rthr "" }
 }
+:local rqc "na"
+:if (@@END@@ >= $mikTotal) do={
+  :do {
+    :foreach uqc in=[/ip hotspot user find] do={
+      :if ($rqc != "ok") do={
+        :set rqc "err"
+        :do { :local qcq [/ip hotspot user get $uqc bytes-in]; :if ([:typeof $qcq] != "nil") do={ :set rqc "ok" } } on-error={ :set rqc "err" }
+      }
+    }
+  } on-error={ :set rqc "na" }
+}
 :local rsesspart ("&stotal=". $rstotal ."&hosts=". $rhosts)
 :if (@@END@@ >= $mikTotal) do={
-  :set rsesspart ("&stotal=". $rstotal ."&hosts=". $rhosts ."&sessions=". $rsess ."&throttle=". $rthr)
+  :set rsesspart ("&stotal=". $rstotal ."&hosts=". $rhosts ."&sessions=". $rsess ."&throttle=". $rthr ."&qcounters=". $rqc)
 }
 :local rif ""
 :do {

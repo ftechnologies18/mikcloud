@@ -5,6 +5,64 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-15 — N°116 — Correctif bridage v3 « le tick armé qui restait silencieux » : la décision ne se fiait qu'aux compteurs UTILISATEUR jamais prouvés sur RouterOS 7.x — 219 Mo sans bridage un tick v2 parfaitement déployé ; la v3 décide sur le MAX des compteurs utilisateur ET des octets de session (source prouvée), + sonde qcounters télémétrique
+
+### N°116 — Contexte : re-test terrain du N°106/N°113, constat identique
+Routeur cybere-space sc (RouterOS 7.24.1), voucher `4327` créé PAR MikCloud
+(15 min / 50 Mo / bridage 1M/512k) : 219 Mo consommés, le débit ne tombe
+jamais à ~512 kbps. Autopsie AVEC les données de production (Neon) :
+le scheduler `mikcloud-quota` v2 est déployé et confirmé (`QuotaSchedVer=2`,
+on-event relu mot à mot depuis un rapport `read_scheduler`), le marqueur
+`mikq:52428800,1M/512k` est présent (payload du voucher_batch vérifié),
+le on-login combiné a été livré — et `throttle=""` dans CHAQUE read_state
+de la fenêtre de bridage : la file n'a JAMAIS existé, pas même mal placée.
+L'hypothèse fasttrack est ÉLIMINÉE par les compteurs (la file dynamique
+`<hotspot-4327>` comptait exactement les octets de la session). Reste UNE
+opération du script jamais prouvée sur ce routeur : la lecture des
+compteurs UTILISATEUR (`/ip hotspot user get <id> bytes-in/out`) — source
+EXCLUSIVE de la décision v2. Illisibles ou figés sur RouterOS 7.x, chaque
+lecture protégée retombe à 0 → `0 >= quota` FAUX à chaque tick → branche
+retrait → rien, SILENCIEUSEMENT.
+
+### Produit
+- (1) DÉCISION v3 — MAX DES DEUX SOURCES, JAMAIS LEUR SOMME :
+  `quotaApplyLines` (cœur partagé du tick et du on-login) consolide le
+  cumul retenu = max(compteurs cumulés UTILISATEUR protégés on-error,
+  octets de la PLUS GROSSE session ACTIVE de l'utilisateur via
+  `/ip hotspot active` — source prouvée fiable : le read_state la rapporte
+  toutes les ~2 min). Pourquoi max : compteurs live → ils incluent déjà la
+  session (somme = double comptage, bridage trop tôt) ; figés au logout →
+  sous-estimation bornée à un reste de quota ; absents → le max retombe
+  EXACTEMENT sur la session : le bridage en cours de session fonctionne,
+  seule la fenêtre de re-login peut se rouvrir (dégradation documentée).
+- (2) SONDE `qcounters` (ok|err|na) : le chunk final du read_state tente
+  la lecture d'un compteur utilisateur (typeof non-nil, protégé on-error)
+  et rapporte le résultat — le champ atterrit dans le résultat de la
+  commande (queryable à distance dans l'historique) : le mode réel du parc
+  est MESURABLE sans Winbox. La décision v3 ne dépend PAS de la sonde
+  (dégradation gracieuse).
+- (3) CONVERGENCE : `QuotaTickVersion = 3` — le payload de `quota_ensure`
+  porte la génération, `ensureQuotaThrottleLocked` re-file tout routeur
+  dont `QuotaSchedVer < 3` : le parc re-converge au premier check-in après
+  déploiement, SANS geste opérateur (pattern N°113).
+
+### Technique
+- `backend/internal/agent/quota.go` : `quotaApplyLines` v3 (`$eff` consolidé,
+  repli session `foreach sa in=[/ip hotspot active find where user=$qu]`,
+  mise à jour MAX `:if ($sse > $eff)`), `QuotaTickVersion = 3`, en-tête et
+  limites documentés (fenêtre de re-login en mode compteurs absents ;
+  marqueur mikq: réservé aux créations MikCloud — Winbox/Mikhmon exclus).
+- `backend/internal/agent/readstate.go` : sonde `qcounters` dans le chunk
+  final (une seule occurrence — les chunks intermédiaires ne changent pas).
+- Tests : `TestQuotaDecisionSourceV3` (init depuis compteurs utilisateur,
+  repli session sur `$qu`, MAX pas somme, décision sur `$eff`, GARDE
+  ANTI-RÉGRESSION : la comparaison directe v2 `($bi + $bo) >=` interdite) ;
+  `TestReadStateQuotaTelemetry` (sonde présente une fois, typeof non-nil) ;
+  `TestQuotaScriptsShape` étendu aux tokens v3 ; `TestBuildQuotaEnsure`
+  vérifie `\$eff` échappé dans le on-event servi. Suite complète : gofmt
+  vide, go vet OK, go build OK, go test 12 paquets verts.
+- Docs : CONTRACT-V2 §N°106 enrichi de la sous-section N°116 (autopsie
+  complète, décision v3, sonde, limites).
 ## 2026-09-15 — N°115 — « Update RouterOS sans Winbox » : le gérant vérifie et installe la dernière version RouterOS de son parc DEPUIS MikCloud — la vérification interroge les serveurs MikroTik DEPUIS le routeur (le canal du routeur fait foi), l'installation télécharge, installe puis REDÉMARRE, et la version finale revient d'elle-même à la première télémétrie post-redémarrage
 
 ### N°115 — Contexte : la maintenance firmware, dernier geste qui exigeait Winbox

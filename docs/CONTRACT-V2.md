@@ -1065,6 +1065,62 @@ manual.mikrotik.com + sorties réelles du forum MikroTik) :
    `safeWifiRulesVersion` N°80). Migration `routers.quota_sched_ver` ; 0 =
    pré-N°113 → re-file automatique au premier check-in après déploiement.
 
+### N°116 — Correctif terrain v3 : « le tick armé qui restait silencieux »
+Re-test N°113 (routeur cybere-space sc, RouterOS 7.24.1, voucher `4327` —
+15 min / 50 Mo / bridage 1M/512k, créé PAR MikCloud) : **219 Mo consommés
+sans AUCUN bridage**, encore. Autopsie AVEC les données de production
+(Neon : payloads, résultats, `read_scheduler`, `queue_read`, read_state) :
+1. **Tout était ARMÉ** : tick v2 déployé et confirmé (`QuotaSchedVer=2`,
+   scheduler `mikcloud-quota` 20 s, on-event v2 relu mot à mot depuis le
+   rapport `read_scheduler`), marqueur `mikq:52428800,1M/512k` présent
+   (payload du voucher_batch vérifié), `profile_set` avec le on-login
+   combiné livré 6 min avant le test — et `throttle=""` dans CHAQUE
+   read_state de la fenêtre de bridage : **la file n'a JAMAIS existé, pas
+   même mal placée en bas de liste**.
+2. **LA CAUSE RATTEE — la source de décision** : la comparaison v2
+   reposait sur les SEULS compteurs UTILISATEUR
+   (`/ip hotspot user get <id> bytes-in/out`). C'est l'opération du script
+   jamais prouvée sur ce routeur : les compteurs SESSION
+   (`/ip hotspot active` — rapportés par le read_state toutes les ~2 min)
+   sont fiables, mais si les compteurs UTILISATEUR sont illisibles ou
+   figés sur RouterOS 7.x, chaque lecture protégée retombe à 0 →
+   `0 + 0 >= quota` est FAUX à CHAQUE tick → branche retrait → **rien,
+   silencieusement, pour toujours**. (L'hypothèse fasttrack est ÉLIMINÉE
+   par les compteurs : la file dynamique `<hotspot-4327>` comptait les
+   mêmes octets que la session — le trafic traverse bien les simple
+   queues.)
+3. **Correctif v3 — décision = MAX des deux sources, JAMAIS leur somme** :
+   - compteurs cumulés UTILISATEUR (protégés on-error — survivent aux
+     reconnexions QUAND le RouterOS les tient) ;
+   - octets de la PLUS GROSSE session ACTIVE de l'utilisateur
+     (`/ip hotspot active` — source prouvée fiable sur le terrain).
+     Pourquoi max : si les compteurs utilisateur sont live, ils INCLUENT
+     la session en cours (somme = double comptage, bridage trop tôt) ;
+     s'ils sont figés au logout, le max sous-estime d'au plus un reste de
+     quota (dégradation bornée) ; s'ils sont absents, le max retombe
+     exactement sur la session — **le bridage en cours de session
+     fonctionne, seule la fenêtre de re-login peut se rouvrir**
+     (dégradation documentée, mesurable — cf. la sonde).
+4. **Sonde `qcounters` (ok|err|na)** : le chunk final du read_state tente
+   la lecture d'un compteur utilisateur (typeof non-nil, protégé on-error)
+   et rapporte le résultat. Le champ atterrit dans le résultat de la
+   commande (historique queryable à distance) : `ok` = au moins un
+   compteur utilisateur lisible ; `err` = parc sondé, aucun lisible ;
+   `na` = aucun utilisateur. La décision v3 ne DÉPEND PAS de la sonde
+   (dégradation gracieuse) — elle mesure le mode réel du parc.
+5. **Convergence** : `QuotaTickVersion = 3` — le payload de `quota_ensure`
+   porte la génération, `ensureQuotaThrottleLocked` re-file tout routeur
+   dont `QuotaSchedVer < 3` : le parc re-converge au premier check-in
+   après déploiement, SANS geste opérateur (pattern N°113).
+6. **Limites documentées** : (a) si `qcounters=err`, la fenêtre de
+   re-login d'un voucher épuisé peut se rouvrir (plein débit jusqu'au
+   tick qui voit la nouvelle session dépasser le quota — v4 possible :
+   persistance du consommé au logout) ; (b) le marqueur `mikq:` n'est
+   posé QUE sur les utilisateurs créés par MikCloud (`user_add` /
+   `voucher_batch`) : un voucher créé dans Winbox ou Mikhmon sous un
+   profil throttle ne porte pas le marqueur — aucun bridage pour lui
+   (le quota par lot reste une création MikCloud).
+
 ---
 
 ## F13 — Marge : prix de vente vs coût [P2]

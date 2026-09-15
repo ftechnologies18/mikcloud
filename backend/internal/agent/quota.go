@@ -46,16 +46,17 @@
 //     d'exécution on-logout vs retrait de la session
 //     active n'est pas documenté par MikroTik).
 //
-// La décision se fait sur les compteurs CUMULÉS de l'UTILISATEUR
-// (/ip hotspot user bytes-in + bytes-out — survivent aux reconnexions et
-// au reboot), jamais sur ceux de la session : un cumul session repart à
-// zéro à chaque login et rouvrirait le plein débit (LA faille classique
-// de ce montage). limit-uptime (quota temps) reste inchangé : le routeur
-// coupe la session à l'heure, le on-logout retire la file, la limite de
-// temps refuse la reconnexion — l'utilisateur n'est jamais déconnecté
-// pour le QUOTA, seulement pour le TEMPS, exactement le contrat demandé.
+// La décision (v3, N°116) se fait sur le MAX des compteurs CUMULÉS de
+// l'UTILISATEUR (/ip hotspot user bytes-in + bytes-out — survivent aux
+// reconnexions QUAND le RouterOS les tient) et des octets de la plus grosse
+// session ACTIVE (/ip hotspot active — source prouvée fiable sur le terrain,
+// cf. QuotaTickVersion v3) : jamais sur ceux de la file. limit-uptime (quota
+// temps) reste inchangé : le routeur coupe la session à l'heure, le on-logout
+// retire la file, la limite de temps refuse la reconnexion — l'utilisateur
+// n'est jamais déconnecté pour le QUOTA, seulement pour le TEMPS,
+// exactement le contrat demandé.
 //
-// Limites documentées (v1) :
+// Limites documentées :
 //   - shared-users > 1 : une seule file par utilisateur (la dernière IP) ;
 //     recommander shared-users=1 sur les profils à quota (le bridage est
 //     global au cumul, mais seule l'IP de la session traitée est bridée) ;
@@ -64,7 +65,20 @@
 //   - changement d'IP en cours de session sans re-login : la cible de la
 //     file n'est pas rafraîchie par le tick (cas quasi inexistant en
 //     hotspot — bail DHCP stable ; le on-login re-pose la file à chaque
-//     connexion).
+//     connexion) ;
+//   - N°116 (v3) : si les compteurs UTILISATEUR sont illisibles sur le
+//     RouterOS (sonde qcounters= du read_state), la décision retombe sur
+//     les octets de la SESSION active : le bridage en cours de session
+//     fonctionne, mais la fenêtre de re-login peut se rouvrir (un voucher
+//     épuisé qui se reconnecte repart au plein débit jusqu'au tick qui
+//     voit la nouvelle session dépasser le quota) — dégradation bornée,
+//     mesurable à distance, v4 possible (persistance du consommé au
+//     logout) si le terrain le demande ;
+//   - N°116 : le marqueur mikq: n'est posé QUE sur les utilisateurs créés
+//     par MikCloud (user_add / voucher_batch) : un voucher créé dans
+//     Winbox ou Mikhmon sous un profil throttle ne porte pas le marqueur —
+//     les scripts ne le voient pas, aucun bridage (documenté ; le quota
+//     par lot reste une création MikCloud).
 package agent
 
 import (
@@ -100,7 +114,25 @@ const QuotaSchedIntervalSec = 20
 //	v2 (N°113) : place-before la PREMIÈRE file de la liste (repli
 //	             move-to-top si le place-before échoue), remove-then-add à
 //	             chaque évaluation (rafraîchit la cible IP et la position).
-const QuotaTickVersion = 2
+//	v3 (N°116) : la décision ne fait PLUS confiance aux seuls compteurs
+//	             UTILISATEUR (/ip hotspot user bytes-in/out). Re-test
+//	             terrain post-N°113 (cybere-space sc, voucher 4327 —
+//	             15 min / 50 Mo / 1M/512k) : tick v2 DÉPLOYÉ et confirmé
+//	             (QuotaSchedVer=2), marqueur mikq: PRESENT (voucher créé
+//	             par MikCloud, payload vérifié), 219 Mo consommés — et
+//	             throttle="" dans CHAQUE read_state : la file n'a JAMAIS
+//	             existé, pas même mal placée. L'opération unique du script
+//	             jamais prouvée sur ce routeur : la lecture des compteurs
+//	             UTILISATEUR (les compteurs SESSION — /ip hotspot active —
+//	             sont prouvés fiables : le read_state les rapporte toutes
+//	             les 2 min). S'ils sont illisibles ou figés sur RouterOS
+//	             7.24, bi=bo=0 < quota à CHAQUE tick → branche retrait →
+//	             rien, SILENCIEUSEMENT. v3 : cumul = MAX(compteurs
+//	             utilisateur, octets des sessions actives de $qu) — cf.
+//	             quotaApplyLines. Sonde qcounters= dans le read_state
+//	             (télémétrie : le champ atterrit dans le rapport et donc
+//	             dans l'historique de commandes — diagnostic à distance).
+const QuotaTickVersion = 3
 
 // QuotaMarkerPrefix — préfixe du marqueur de quota dans le commentaire
 // routeur. « mikq: » fait 5 caractères : les scripts le repèrent par
@@ -134,10 +166,26 @@ func PrefixQuotaComment(marker, comment string) string {
 // Paramètres RouterOS attendus : $qu (username), $qa (adresse IP de la
 // session), $que (id interne /ip hotspot user).
 //
-// Pose v2 (N°113) — TOUJOURS remove-then-add : la cible IP est rafraîchie à
-// chaque évaluation (couvre le changement d'IP sans re-login, limite v1
-// documentée) et la position est ré-ancrée avant la PREMIÈRE file de la
-// liste — les simple queues s'évaluent en ordre STRICT premier-match
+// DÉCISION v3 (N°116) — MAX des deux sources, JAMAIS leur somme :
+//   - compteurs CUMULÉS de l'UTILISATEUR (/ip hotspot user bytes-in+out —
+//     survivent aux reconnexions quand le RouterOS les tient à jour) ;
+//   - octets de LA PLUS GROSSE session ACTIVE de $qu (/ip hotspot active —
+//     source PROUVÉE fiable sur le terrain : le read_state la rapporte).
+//     Pourquoi max et pas somme : si les compteurs utilisateur sont LIVE (v6,
+//     certains v7), ils INCLUENT la session en cours — les sommer compterait
+//     deux fois et briderrait trop tôt ; s'ils sont FIGÉS au logout, le max
+//     sous-estime d'au plus un reste de quota (dégradation bornée, documentée) ;
+//     s'ils sont ABSENTS (lecture en erreur → 0), le max retombe exactement sur
+//     la session active — le bridage en cours de session fonctionne, seule la
+//     fenêtre de re-login peut se rouvrir (limite documentée, sonde qcounters
+//     pour la mesurer). Le on-login ne dispose que des compteurs utilisateur
+//     (session ≈ 0 octet au login) : la fenêtre de re-login reste couverte
+//     QUAND ils sont tenus à jour.
+//
+// Pose v2 (N°113, inchangée) — TOUJOURS remove-then-add : la cible IP est
+// rafraîchie à chaque évaluation (couvre le changement d'IP sans re-login,
+// limite v1 documentée) et la position est ré-ancrée avant la PREMIÈRE file
+// de la liste — les simple queues s'évaluent en ordre STRICT premier-match
 // gagnant : au-dessus de la dynamique <user> et du plafond mikcloud-qos,
 // le bridage s'applique réellement. La fenêtre remove→add est sub-
 // milliseconde (exécutée d'un bloc par l'interpréteur) ; les compteurs de
@@ -150,7 +198,7 @@ func PrefixQuotaComment(marker, comment string) string {
 // pattern des forums 2007+) ; si tout échoue, log sans interrompre.
 // Retour une ligne compacte (les séparateurs « ; » sont valides en import
 // .rsc, même sérialisation que watcherOnEvent).
-const quotaApplyLines = `:local uc [:tostr [/ip hotspot user get $que comment]]; :if ([:pick $uc 0 5] = "mikq:") do={ :local sp [:find $uc " "]; :local mk ""; :if ([:typeof $sp] = "nil") do={ :set mk [:pick $uc 5 [:len $uc]] } else={ :set mk [:pick $uc 5 $sp] }; :local cp [:find $mk ","]; :if ([:typeof $cp] != "nil") do={ :local qb [:pick $mk 0 $cp]; :local qr [:pick $mk ($cp + 1) [:len $mk]]; :local bi 0; :local bo 0; :do { :set bi [:tonum [:tostr [/ip hotspot user get $que bytes-in]]] } on-error={ :set bi 0 }; :do { :set bo [:tonum [:tostr [/ip hotspot user get $que bytes-out]]] } on-error={ :set bo 0 }; :if (($bi + $bo) >= [:tonum $qb]) do={ :local qn ("mikthrottle-" . $qu); :do { /queue simple remove [find where name=$qn] } on-error={}; :local qf [:pick [/queue simple find] 0]; :if ([:len $qf] > 0) do={ :do { /queue simple add name=$qn target=$qa max-limit=$qr place-before=$qf } on-error={ :do { /queue simple add name=$qn target=$qa max-limit=$qr; :local tq [/queue simple find where name=$qn]; :local qf2 [:pick [/queue simple find] 0]; :if ([:len $tq] > 0 && [:len $qf2] > 0 && ([:pick $tq 0] != $qf2)) do={ /queue simple move [:pick $tq 0] $qf2 } } on-error={ :log info "mikcloud: quota bridage impossible" } } } else={ :do { /queue simple add name=$qn target=$qa max-limit=$qr } on-error={ :log info "mikcloud: quota bridage impossible" } } } else={ :do { /queue simple remove [find where name=("mikthrottle-" . $qu)] } on-error={} } } }`
+const quotaApplyLines = `:local uc [:tostr [/ip hotspot user get $que comment]]; :if ([:pick $uc 0 5] = "mikq:") do={ :local sp [:find $uc " "]; :local mk ""; :if ([:typeof $sp] = "nil") do={ :set mk [:pick $uc 5 [:len $uc]] } else={ :set mk [:pick $uc 5 $sp] }; :local cp [:find $mk ","]; :if ([:typeof $cp] != "nil") do={ :local qb [:pick $mk 0 $cp]; :local qr [:pick $mk ($cp + 1) [:len $mk]]; :local bi 0; :local bo 0; :do { :set bi [:tonum [:tostr [/ip hotspot user get $que bytes-in]]] } on-error={ :set bi 0 }; :do { :set bo [:tonum [:tostr [/ip hotspot user get $que bytes-out]]] } on-error={ :set bo 0 }; :local eff ($bi + $bo); :foreach sa in=[/ip hotspot active find where user=$qu] do={ :do { :local sse ([:tonum [:tostr [/ip hotspot active get $sa bytes-in]]] + [:tonum [:tostr [/ip hotspot active get $sa bytes-out]]]); :if ($sse > $eff) do={ :set eff $sse } } on-error={} }; :if ($eff >= [:tonum $qb]) do={ :local qn ("mikthrottle-" . $qu); :do { /queue simple remove [find where name=$qn] } on-error={}; :local qf [:pick [/queue simple find] 0]; :if ([:len $qf] > 0) do={ :do { /queue simple add name=$qn target=$qa max-limit=$qr place-before=$qf } on-error={ :do { /queue simple add name=$qn target=$qa max-limit=$qr; :local tq [/queue simple find where name=$qn]; :local qf2 [:pick [/queue simple find] 0]; :if ([:len $tq] > 0 && [:len $qf2] > 0 && ([:pick $tq 0] != $qf2)) do={ /queue simple move [:pick $tq 0] $qf2 } } on-error={ :log info "mikcloud: quota bridage impossible" } } } else={ :do { /queue simple add name=$qn target=$qa max-limit=$qr } on-error={ :log info "mikcloud: quota bridage impossible" } } } else={ :do { /queue simple remove [find where name=("mikthrottle-" . $qu)] } on-error={} } } }`
 
 // onLoginQuotaScript — script on-login du profil en mode throttle : à
 // CHAQUE connexion, si le cumul de l'utilisateur a déjà épuisé le quota du

@@ -5,6 +5,83 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-15 — N°118 — Convention débit « le libellé qui inversait le sens » : le Studio Forfait annonçait (descendant/montant) alors que RouterOS lit montant/descendant — le bridage du re-test N°116 s'est donc appliqué INVERSÉ (down 512k/up 1M au lieu de down 1M/up 512k) ; libellés, flèches d'aperçu et ordre des champs QoS unifiés sur l'ordre RouterOS
+
+### N°118 — Contexte : re-test N°116 réussi… avec le sens inversé
+Le re-test terrain du correctif v3 était une RÉUSSITE complète (voucher
+`7388` sur CYBER S.C : file `mikthrottle-7388` en position 0, download
+plombé à 512,9 kbps live, dynamique gelée à 53,7 Mo — le bridage quota
+fonctionne, prouvé par télémétrie). Mais le retour utilisateur révèle
+l'inversion : « dans le formulaire de création de profil, au niveau du
+bridage, le download est placé avant l'upload, d'où 1M/512 dans le test —
+pareil pour la QoS, plafond agrégat ». RouterOS lit `max-limit`/`rate-limit`
+en **montant/descendant** (preuve terrain : `1M/512k` plombait le download
+à 512,9 kbps — la 2ᵉ valeur est le descendant) ; le libellé du Studio
+Forfait annonçait « Limite de débit **(descendant/montant)** » — l'inverse
+exact. L'opérateur tape le 1M (download voulu) en premier, la chaîne part
+verbatim au routeur, le routeur l'applique comme MONTANT. Aucun bug de
+données : un bug de COMMUNICATION du sens, aggravé par `formatRateLimit`
+qui décorait la 1ʳᵉ valeur d'une flèche ↓ (aperçu live du wizard, liste
+des profils, presets bridage) et par la carte QoS qui affichait « Plafond
+descendant » avant « Plafond montant » — alors que la table des files,
+elle, affichait déjà « Plafond (montant/descendant) ».
+
+### Produit
+- (1) FORMATTER — `formatRateLimit` : `1M/10M` → « 1M ↑ / 10M ↓ »
+  (montant d'abord, la vérité RouterOS) — l'aperçu live du wizard, la
+  liste des profils et les presets de bridage ne confirment PLUS le
+  mauvais sens.
+- (2) STUDIO FORFAIT — libellé « Limite de débit **(montant/descendant)** »,
+  hint et toasts explicites (FR : « Format RouterOS montant/descendant,
+  ex : 512k/1M » / EN : « RouterOS format (up/down) »), « Débit de
+  bridage **(montant/descendant)** » ; la chaîne saisie reste poussée
+  VERBATIM au routeur (WYSIWYG Winbox : ce que l'opérateur tape dans
+  MikCloud est ce qu'il voit dans ses files).
+- (3) CARTE QoS — « Plafond montant » AVANT « Plafond descendant »
+  (saisie), forfait FAI déclaré réordonné « montant / descendant »
+  (saisie, affichage lecture, exemple 20/110), recommandation affichée
+  ↑ d'abord ; les VALEURS étaient déjà correctes (champs séparés,
+  backend `maxUp/maxDown` dans le bon ordre depuis N°104) — seul
+  l'ordre de présentation prête à confusion.
+- (4) CONVENTION UNIQUE — une paire de débit se lit et se saisit dans
+  l'ordre RouterOS **montant/descendant** partout dans la console
+  (Studio Forfait, QoS, table des files) ; les affichages de télémétrie
+  pure (débit live, capacité observée, historique) gardent leurs icônes
+  ↓/↑ explicites par valeur.
+
+### Rattrapage de la donnée existante (geste ponctuel, pas une migration)
+- Profil `Test` (seul profil throttle du parc) : `throttle_rate`
+  `1M/512k` (saisi avec l'ancien libellé, intention down 1M / up 512k)
+  → corrigé en base vers `512k/1M`. Les `rate_limit` existants
+  (1M/10M, 512k/6M…) étaient déjà tapés RouterOS-style : inchangés.
+- Un profil édité doit être re-sauvegardé pour re-pousser son
+  `profile_set` ; le marqueur `mikq:` des vouchers EXISTANTS conserve
+  le débit de leur création (les nouveaux lots lisent le profil corrigé).
+
+### Technique
+- frontend : `lib/hotspot/format.ts` (formatRateLimit inversé + doc),
+  `i18n-fr/profiles.ts` + `i18n-en/profiles.ts` (rate, rateInvalid,
+  rateHint, rateToast, throttleRate, throttleRateToast), `i18n-fr/tools.ts`
+  + `i18n-en/tools.ts` (declaredHint, declaredNone), `router-tools/qos-tab.tsx`
+  (ordre des champs montant→descendant : saisie QoS, forfait FAI déclaré,
+  recommandation, affichage lecture du forfait).
+- AUCUN changement backend (les chaînes débit transitent verbatim ;
+  la QoS envoie déjà maxUpBps/maxDownBps séparés) ; docs :
+  CONTRACT-V2 §N°106 sous-section N°118.
+
+### Vérifications
+- eslint 0 erreur, tsgo 0 erreur, next build OK (13 routes inchangées).
+- Navigateur bout-en-bout (backend Go réel :4000 + next dev :3016) :
+  wizard — libellé « (montant/descendant) », aperçu live « 512k ↑ / 1M ↓ »,
+  bridage « 256k/512k » accepté, payload POST `rateLimit=512k/1M`
+  `throttleRate=256k/512k` verbatim, liste « 512k ↑ / 1M ↓ » ;
+  QoS — « Plafond montant » avant « Plafond descendant », forfait déclaré
+  20/110 (montant/descendant), recommandation ↑ 19 Mbps puis ↓ 104,5 Mbps,
+  file posée `maxLimit=19000000/104500000` (montant d'abord — cohérence
+  saisie → recommandation → file), mobile 390 px, 0 erreur console.
+
+---
+
 ## 2026-09-16 — N°117 — « Mise à jour de flotte » : le super-admin vérifie et met à jour le parc RouterOS de TOUS les clients MikCloud depuis la console plateforme — nouvelle vue « Parc routeurs » (chaque routeur de chaque compte, version installée → disponible, état), « Vérifier tout le parc » en lecture seule, « Mettre à jour le parc » qui ne cible QUE le retard détecté (jamais à l'aveugle : un update redémarre le routeur et coupe le hotspot du client)
 
 ### N°117 — Contexte : le super-admin voulait le geste de flotte

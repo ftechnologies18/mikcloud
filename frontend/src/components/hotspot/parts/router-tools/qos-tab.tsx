@@ -252,7 +252,8 @@ export function QoSTab({ router }: { router: RouterDevice }) {
               <p className="mt-1 text-[11px] leading-tight text-muted-foreground">{t("tools.qos.measuredNone")}</p>
             )}
           </div>
-          {/* Forfait déclaré */}
+          {/* Forfait déclaré — N°117 : montant/descendant, l'ordre RouterOS
+              (même convention que le Studio Forfait et la table des files). */}
           <div className="rounded-lg border p-3">
             <p className="text-xs text-muted-foreground">{t("tools.qos.declared")}</p>
             {editingPlan ? (
@@ -260,20 +261,20 @@ export function QoSTab({ router }: { router: RouterDevice }) {
                 <div className="flex items-center gap-1">
                   <Input
                     inputMode="numeric"
-                    value={planDown}
-                    onChange={(e) => setPlanDown(e.target.value)}
-                    className="h-7 w-full text-xs tabular-nums"
-                    aria-label={t("tools.qos.maxDown")}
-                    placeholder="110"
-                  />
-                  <span className="text-xs text-muted-foreground">/</span>
-                  <Input
-                    inputMode="numeric"
                     value={planUp}
                     onChange={(e) => setPlanUp(e.target.value)}
                     className="h-7 w-full text-xs tabular-nums"
                     aria-label={t("tools.qos.maxUp")}
                     placeholder="20"
+                  />
+                  <span className="text-xs text-muted-foreground">/</span>
+                  <Input
+                    inputMode="numeric"
+                    value={planDown}
+                    onChange={(e) => setPlanDown(e.target.value)}
+                    className="h-7 w-full text-xs tabular-nums"
+                    aria-label={t("tools.qos.maxDown")}
+                    placeholder="110"
                   />
                   <span className="shrink-0 text-[10px] text-muted-foreground">Mbps</span>
                 </div>
@@ -306,7 +307,8 @@ export function QoSTab({ router }: { router: RouterDevice }) {
                 title={t("tools.qos.declaredEdit")}
               >
                 <p className="text-sm font-semibold tabular-nums">
-                  {Math.round(line.configured.downBps / 1_000_000)}/{Math.round(line.configured.upBps / 1_000_000)} Mbps
+                  {/* N°117 — montant/descendant, l'ordre de saisie juste au-dessus. */}
+                  {Math.round(line.configured.upBps / 1_000_000)}/{Math.round(line.configured.downBps / 1_000_000)} Mbps
                 </p>
                 <Pencil className="size-3 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" aria-hidden />
               </button>
@@ -401,10 +403,13 @@ export function QoSTab({ router }: { router: RouterDevice }) {
           {rec && rec.source !== "none" ? (
             <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1.5">
               <span className="flex items-center gap-1.5 text-sm font-semibold tabular-nums">
-                <ArrowDown className="size-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden />
-                {formatBitsPerSec(rec.maxDownBps)}
-                <ArrowUp className="ml-1 size-3.5 text-amber-600 dark:text-amber-400" aria-hidden />
+                {/* N°117 — montant d'abord : l'ordre exact du max-limit posé
+                    sur le routeur (la table des files ci-dessous l'affiche
+                    déjà « montant/descendant »). */}
+                <ArrowUp className="size-3.5 text-amber-600 dark:text-amber-400" aria-hidden />
                 {formatBitsPerSec(rec.maxUpBps)}
+                <ArrowDown className="ml-1 size-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden />
+                {formatBitsPerSec(rec.maxDownBps)}
               </span>
               <span className="text-xs text-muted-foreground">
                 {rec.source === "declared" ? t("tools.qos.recSourceDeclared") : t("tools.qos.recSourceMeasured")}
@@ -447,20 +452,8 @@ export function QoSTab({ router }: { router: RouterDevice }) {
             />
             <p className="text-[11px] text-muted-foreground">{t("tools.qos.targetHint")}</p>
           </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="qos-maxdown" className="text-xs">
-              {t("tools.qos.maxDown")} (Mbps)
-            </Label>
-            <Input
-              id="qos-maxdown"
-              inputMode="numeric"
-              value={qos?.status.enabled ? String(Math.round(qos.status.maxDownBps / 1_000_000)) : maxDown}
-              onChange={(e) => setMaxDown(e.target.value)}
-              disabled={qos?.status.enabled || qosMutation.isPending}
-              placeholder={rec && rec.source !== "none" ? String(Math.round(rec.maxDownBps / 1_000_000)) : "95"}
-              className="h-9 tabular-nums"
-            />
-          </div>
+          {/* N°117 — plafond MONTANT d'abord (ordre RouterOS du max-limit,
+              aligné sur la table des files « Plafond (montant/descendant) »). */}
           <div className="space-y-1.5">
             <Label htmlFor="qos-maxup" className="text-xs">
               {t("tools.qos.maxUp")} (Mbps)
@@ -472,6 +465,20 @@ export function QoSTab({ router }: { router: RouterDevice }) {
               onChange={(e) => setMaxUp(e.target.value)}
               disabled={qos?.status.enabled || qosMutation.isPending}
               placeholder={rec && rec.source !== "none" ? String(Math.round(rec.maxUpBps / 1_000_000)) : "19"}
+              className="h-9 tabular-nums"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="qos-maxdown" className="text-xs">
+              {t("tools.qos.maxDown")} (Mbps)
+            </Label>
+            <Input
+              id="qos-maxdown"
+              inputMode="numeric"
+              value={qos?.status.enabled ? String(Math.round(qos.status.maxDownBps / 1_000_000)) : maxDown}
+              onChange={(e) => setMaxDown(e.target.value)}
+              disabled={qos?.status.enabled || qosMutation.isPending}
+              placeholder={rec && rec.source !== "none" ? String(Math.round(rec.maxDownBps / 1_000_000)) : "95"}
               className="h-9 tabular-nums"
             />
           </div>

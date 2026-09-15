@@ -1195,6 +1195,53 @@ sans AUCUN bridage**, encore. Autopsie AVEC les données de production
    profil throttle ne porte pas le marqueur — aucun bridage pour lui
    (le quota par lot reste une création MikCloud).
 
+### N°118 — Convention débit : « le libellé qui inversait le sens »
+Re-test N°116 RÉUSSI (voucher `7388` sur CYBER S.C : file `mikthrottle-7388`
+en position 0, `max-limit=1M/512k`, download plombé à 512,9 kbps live,
+dynamique gelée à 53,7 Mo) — mais retour utilisateur : « dans le formulaire
+de création de profil, au niveau du bridage, le download est placé avant
+l'upload, d'où 1M/512 dans le test — pareil pour la QoS (plafond agrégat) ».
+
+**La chaîne de la confusion** (aucun bug de données — un bug de
+COMMUNICATION du sens) :
+1. RouterOS lit `max-limit`/`rate-limit` en ordre **montant/descendant**
+   (upload/download) — preuve terrain N°116 : `1M/512k` plombait le
+   download à 512,9 kbps (2ᵉ valeur = descendant).
+2. Le libellé du Studio Forfait annonçait « Limite de débit
+   **(descendant/montant)** » — l'inverse exact. L'opérateur tape le 1M
+   (download voulu) en premier → la chaîne part verbatim au routeur →
+   le routeur l'applique comme MONTANT. Le test N°116 a donc bridé
+   down 512k/up 1M au lieu de down 1M/up 512k.
+3. `formatRateLimit` (aperçu live du wizard, liste des profils, presets
+   bridage) décorait la 1ʳᵉ valeur d'une flèche ↓ — confirmant
+   visuellement le mauvais sens.
+4. La carte QoS affichait « Plafond descendant » AVANT « Plafond montant »
+   (saisie + forfait FAI déclaré + recommandation) — mêmes valeurs
+   correctes (champs séparés, backend `maxUp/maxDown` déjà dans le bon
+   ordre), mais ordre incohérent avec la table des files qui affiche
+   déjà « Plafond (montant/descendant) ».
+
+**Correctif (frontend uniquement, aucune donnée transformée au passage)** :
+- `formatRateLimit` : `1M/10M` → « 1M ↑ / 10M ↓ » (montant d'abord).
+- Studio Forfait : libellé « Limite de débit **(montant/descendant)** »,
+  hints/toasts explicites (FR+EN), « Débit de bridage **(montant/descendant)** ».
+- Carte QoS : « Plafond montant » AVANT « Plafond descendant » (saisie),
+  forfait FAI déclaré « montant / descendant » (saisie + affichage +
+  exemple), recommandation ↑ d'abord.
+- Convention UNIQUE dans toute la console : **une paire de débit se lit
+  et se saisit dans l'ordre RouterOS montant/descendant** — WYSIWYG avec
+  Winbox (l'opérateur vérifie ses files dans Winbox : ce qu'il tape dans
+  MikCloud est ce qu'il voit là-bas).
+
+**Rattrapage de la donnée existante** (geste opérateur ponctuel, pas une
+migration) : le profil `Test` (seul profil throttle du parc) portait
+`throttle_rate=1M/512k` saisi avec l'ancien libellé (intention :
+down 1M / up 512k) — corrigé en base vers `512k/1M`. Les `rate_limit`
+existants (1M/10M, 512k/6M…) étaient déjà tapés RouterOS-style (petit
+montant d'abord) : inchangés. Un profil édité doit être re-sauvegardé
+pour re-pousser son `profile_set` (le marqueur `mikq:` des vouchers
+EXISTANTS conserve le débit de leur création).
+
 ---
 
 ## F13 — Marge : prix de vente vs coût [P2]

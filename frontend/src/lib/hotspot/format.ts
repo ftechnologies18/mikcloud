@@ -102,16 +102,19 @@ export function formatMb(mb: number | undefined | null): string {
 }
 
 /**
- * Limite de débit au format RouterOS « descendant/montant » (rx/tx côté client,
- * poussée telle quelle au routeur) → « 4M ↓ / 1M ↑ ».
- * 1ʳᵉ valeur = descendant (↓, reçu par le client), 2ᵉ = montant (↑, émis).
+ * Limite de débit au format RouterOS « montant/descendant » (poussée telle
+ * quelle au routeur) → « 1M ↑ / 4M ↓ ».
+ * N°117 — 1ʳᵉ valeur = montant (↑, émis par le client), 2ᵉ = descendant
+ * (↓, reçu par le client) : l'ordre EXACT que RouterOS applique à
+ * max-limit/rate-limit (preuves terrain N°116 : mikthrottle 1M/512k plombait
+ * le download à 512,9 kbps — la 2ᵉ valeur est bien le descendant).
  * Valeur unique (« 5M ») = RouterOS applique la même limite aux deux sens.
  */
 export function formatRateLimit(rate: string): string {
   if (!rate) return "—";
   const parts = rate.split("/");
   if (parts.length < 2) return rate;
-  return `${parts[0]} ↓ / ${parts[1]} ↑`;
+  return `${parts[0]} ↑ / ${parts[1]} ↓`;
 }
 
 /** Initiales d'affichage (avatar) à partir du nom complet. */

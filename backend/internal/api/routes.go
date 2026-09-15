@@ -4,6 +4,7 @@ package api
 
 import (
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -97,7 +98,13 @@ const readStateAccumStale = 15 * time.Minute
 
 // New construit l'API.
 func New(s *store.Store, jwtSecret string) *API {
-	return &API{store: s, secret: jwtSecret, gws: map[string]routeros.Gateway{}, pinLock: newPinLimiter(), signup: newSignupLimiter(), join: newSignupLimiter(), wifiClaim: newSignupLimiterLimits(20, 100), portalTrack: newSignupLimiterLimits(300, 3000), reset: newSignupLimiter(), egress: newEgressStats(), readStateDone: map[string]time.Time{}, readAcc: map[string]*readStateAccum{}, readStateChunks: map[string]int{}, devicesDone: map[string]time.Time{}, attn: map[string]time.Time{}}
+	// N°114 — le quota S3 d'inscription lit ses bornes de l'environnement
+	// (SIGNUP_BURST_MAX / SIGNUP_DAILY_MAX, repli franc sur les constantes
+	// S3 en production) : le runner E2E partage UNE IP et le retry d'un
+	// groupe serial rejoue l'inscription déjà passée — cf. signup_abuse.go.
+	// Les autres limiteurs S3 (join, reset) gardent les constantes : aucune
+	// suite E2E ne les traverse.
+	return &API{store: s, secret: jwtSecret, gws: map[string]routeros.Gateway{}, pinLock: newPinLimiter(), signup: signupLimiterFromEnv(os.Getenv), join: newSignupLimiter(), wifiClaim: newSignupLimiterLimits(20, 100), portalTrack: newSignupLimiterLimits(300, 3000), reset: newSignupLimiter(), egress: newEgressStats(), readStateDone: map[string]time.Time{}, readAcc: map[string]*readStateAccum{}, readStateChunks: map[string]int{}, devicesDone: map[string]time.Time{}, attn: map[string]time.Time{}}
 }
 
 // Handler — mux complet, protégé par le middleware d'authentification.

@@ -5,6 +5,71 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-15 — N°114 — « l'auto-déploiement qui ne déployait rien » : le backend était figé au N°110 en production pendant que GitHub disait « poussé » — TROIS verrous en chaîne levés : le test E2E périmé qui rendait la CI rouge depuis N°112 (URL /app/settings/routers jamais mise à jour), le 429 fantôme du quota S3 qui masquait tout échec réel sous un retry de groupe serial, et l'autoDeploy Render éteint
+
+### N°114 — Contexte : le correctif N°113 était sur GitHub mais pas en production
+Retour utilisateur : « corrige définitivement le problème de l'auto-déploiement
+Render désactivé ». L'enquête révèle que le réglage Render n'était que la
+pointe de l'iceberg : le service Render (créé par API) n'a JAMAIS reçu de
+webhook GitHub — l'historique complet (20 déploiements) montre 100 % de
+déclenchements `api` manuels. LE mécanisme de déploiement réel du monorepo
+est le job CI `deploy-render` (`.github/workflows/ci.yml` — déclenche
+l'API Render après CI verte, uniquement si `backend/` a changé)… mais la CI
+est ROUGE depuis N°112 : `needs: [backend, frontend, e2e]` → E2E en échec →
+déploiement SAUTÉ en silence. Résultat : N°113 (correctif bridage N°106)
+poussé sur GitHub, deployé à la main dans l'urgence, et tout futur push
+backend promis au même gel.
+
+### Produit
+- (1) LA CI ROUGE — LE TEST PÉRIMÉ : `e2e/homenet.spec.ts:233` attendait
+  encore `/app/settings/routers$` alors que N°112 a déplacé la fiche box en
+  section Infrastructure de la navigation principale (`/app/routers`) — le
+  log CI lui-même le prouvait (`Received: http://localhost:3000/app/routers` :
+  l'APPLICATION était correcte, l'ATTENTE était fausse). Correctif : URL
+  attendue + commentaires alignés (N°112 : legacy deep-link conservé).
+- (2) LE 429 FANTÔME — L'AMPLIFICATEUR : l'échec réel déclenchait le retry
+  du groupe serial Playwright, qui REJOUE l'inscription « Ma maison » déjà
+  passée — 6e inscription depuis l'IP unique du runner contre le quota S3
+  (5/10 min par IP) → `429` → un DEUXIÈME échec fantôme masquait le
+  premier (le log montre la cascade exacte : 5×201 puis 429 sur le retry).
+  Correctif : bornes S3 configurables par environnement
+  (`signupLimiterFromEnv` — `SIGNUP_BURST_MAX`/`SIGNUP_DAILY_MAX`,
+  entiers > 0, repli FRANC sur les constantes 5/20 sinon) ; la config
+  Playwright pose 20/100 (bornes NAT-friendly N°50, miroir exact du
+  pattern `RATE_API_PER_MIN` N°102 — même maladie, même remède).
+  Production : env absent côté Render → bornes S3 inchangées.
+- (3) L'AUTODEPLOY RENDER ÉTEINT : le réglage service (autoDeploy=no,
+  sans webhook de toute façon) est réactivé par API (autoDeploy=yes,
+  trigger=commit) — défense en profondeur : si un jour le webhook GitHub App
+  est installé, le déploiement natif prendra le relais ; en attendant, le
+  job CI reste LE chemin de déploiement.
+
+### Technique
+- `backend/internal/api/signup_abuse.go` : `signupLimiterFromEnv`
+  (getenv injecté, `strconv.Atoi`, bornes > 0 uniquement).
+- `backend/internal/api/routes.go` : `New()` câble
+  `signup: signupLimiterFromEnv(os.Getenv)` — les autres limiteurs S3
+  (join, reset) gardent les constantes (aucune suite E2E ne les traverse).
+- `frontend/playwright.config.ts` : env backend `SIGNUP_BURST_MAX=20`,
+  `SIGNUP_DAILY_MAX=100` + commentaire d'autopsie.
+- `frontend/e2e/homenet.spec.ts` : URL N°112 + commentaires.
+- `docs/CONTRACT-V2.md` (§S3) : bornes configurables documentées.
+
+### Tests
+- `TestSignupLimiterFromEnv` (api) : sans env → bornes S3 ; env hostile
+  (non numérique, négatif, nul) → repli franc ; env valide → 20/100 ET le
+  scénario du bug — la 6e tentative (inscription rejouée par le retry) est
+  ADMISE sous bornes E2E.
+- Vérifié : gofmt vide, `go vet ./...` OK, `go build` OK, `go test`
+  (api 32,7 s + store/agent/model) verts ; eslint 0 erreur, tsgo 0 erreur ;
+  suite E2E COMPLÈTE en local mode CI (retries actifs) : 14/14 passés
+  (bootstrap, sell, resellers, homenet).
+
+### Effet déploiement — la preuve par le feu
+CE commit est son propre test bout-en-bout : premier push backend depuis la
+réparation → CI verte attendue → `deploy-render` se déclenche pour la
+première fois de l'histoire du dépôt → Render déploie automatiquement.
+
 ## 2026-09-15 — N°113 — Correctif bridage N°106 « le bridage qui ne bridait rien » : la file mikthrottle- était posée en BAS de liste, sous la dynamique <user> (premier-match gagnant → AUCUN paquet vu par le bridage — terrain cybere-space sc : voucher testa 15 min/50 Mo/512k-1M, 200+ Mo consommés sans aucun bridage jusqu'à l'épuisement du temps). Trois bugs en chaîne, trois correctifs : ancrage EN TÊTE de liste, set du profil qui porte enfin les scripts, génération du tick versionnée pour rejoindre le parc déjà équipé
 
 ### N°113 — Contexte : le test terrain qui a fait tomber la chaîne entière

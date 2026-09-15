@@ -74,6 +74,66 @@ func TestSignupQuotaUnitDaily(t *testing.T) {
 	}
 }
 
+// TestSignupLimiterFromEnv — N°114 : bornes S3 configurables par environnement.
+// Sans env (production) : constantes S3. Env hostile (vide, non numérique,
+// nul/négatif) : repli FRANC sur les constantes — jamais un limiteur ouvert
+// par accident. Env valide (E2E) : les bornes font foi, le comportement
+// glissant du limiter est inchangé (6e tentative admise sous burst 20).
+func TestSignupLimiterFromEnv(t *testing.T) {
+	// Sans environnement : bornes S3.
+	s := signupLimiterFromEnv(func(string) string { return "" })
+	if s.burstMax != signupBurstMax || s.dailyMax != signupDailyMax {
+		t.Fatalf("sans env, bornes S3 attendues (%d/%d), obtenu %d/%d",
+			signupBurstMax, signupDailyMax, s.burstMax, s.dailyMax)
+	}
+	// Env hostile : valeurs non numériques, vides, nulles et négatives —
+	// chacune doit replier sur la constante S3 correspondante.
+	s = signupLimiterFromEnv(func(k string) string {
+		switch k {
+		case "SIGNUP_BURST_MAX":
+			return "trente"
+		case "SIGNUP_DAILY_MAX":
+			return "-5"
+		}
+		return ""
+	})
+	if s.burstMax != signupBurstMax || s.dailyMax != signupDailyMax {
+		t.Fatalf("env hostile : repli franc attendu (%d/%d), obtenu %d/%d",
+			signupBurstMax, signupDailyMax, s.burstMax, s.dailyMax)
+	}
+	if s = signupLimiterFromEnv(func(k string) string {
+		if k == "SIGNUP_BURST_MAX" {
+			return "0"
+		}
+		return ""
+	}); s.burstMax != signupBurstMax {
+		t.Fatalf("burst nul : repli franc attendu (%d), obtenu %d", signupBurstMax, s.burstMax)
+	}
+	// Env valide (E2E) : les bornes font foi — et le scénario du bug : la 6e
+	// tentative d'une série (l'inscription rejouée par le retry du groupe
+	// serial) est ADMISE sous burst 20, là où les bornes S3 la coupaient.
+	base := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	cur := base
+	s = signupLimiterFromEnv(func(k string) string {
+		switch k {
+		case "SIGNUP_BURST_MAX":
+			return "20"
+		case "SIGNUP_DAILY_MAX":
+			return "100"
+		}
+		return ""
+	})
+	s.now = func() time.Time { return cur }
+	if s.burstMax != 20 || s.dailyMax != 100 {
+		t.Fatalf("bornes E2E attendues (20/100), obtenu %d/%d", s.burstMax, s.dailyMax)
+	}
+	for i := 0; i < 6; i++ {
+		if ok, retry := s.allow("127.0.0.1"); !ok {
+			t.Fatalf("tentative %d (inscription rejouée par le retry) refusée sous bornes E2E (retry %v)", i+1, retry)
+		}
+	}
+}
+
 // TestSignupQuotaE2E — surface HTTP : 5 inscriptions valides (201) puis la
 // 6e tentative est coupée (429 + Retry-After), même avec un corps valide —
 // toute tentative consomme le quota.

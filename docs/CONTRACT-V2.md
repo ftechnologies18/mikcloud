@@ -57,7 +57,13 @@
     hop XFF (forgeable en production, cf. S1) : le fermage organisé reste
     rattrapé par le plafond global d'instance (900 req/min) et, pour la
     bêta privée, par `REGISTER_KEY`. État en mémoire (instance unique),
-    remis à zéro au redémarrage.
+    remis à zéro au redémarrage. N°114 — bornes configurables par
+    environnement (`SIGNUP_BURST_MAX` / `SIGNUP_DAILY_MAX`, entiers > 0 ;
+    valeur absente/vide/non numérique → repli franc sur 5/20) : le runner
+    E2E funellise quatre suites par UNE IP et le retry d'un groupe serial
+    rejoue l'inscription déjà passée (6e tentative → 429 fantôme) — la
+    config Playwright pose 20/100 (bornes NAT-friendly N°50, miroir du
+    pattern `RATE_API_PER_MIN` N°102). Production : env absent → S3.
   - Chaîne d'approvisionnement (côté dépôt GitHub) : job CI `govulncheck`
     (vulnérabilités Go atteignables, rapport non bloquant — job rouge =
     visibilité immédiate, le déploiement n'attend pas une base de CVE

@@ -75,6 +75,14 @@ export default defineConfig({
         // coupait la dernière suite schedulée en 429. Production : 120 (env
         // absent côté Render — cf. main.go).
         RATE_API_PER_MIN: "600",
+        // N°114 — même maladie, même remède pour le quota S3 d'inscription :
+        // un run complet consomme 5 inscriptions (bootstrap 1 + revendeurs 3
+        // + foyer 1) = EXACTEMENT le plafond burst 5/10 min ; le retry d'un
+        // groupe serial REJOUE l'inscription déjà passée → 6e tentative →
+        // 429 fantôme qui masquait l'échec réel. Bornes NAT-friendly N°50.
+        // Production : env absent → bornes S3 (5/10 min + 20/24 h).
+        SIGNUP_BURST_MAX: "20",
+        SIGNUP_DAILY_MAX: "100",
         ALLOWED_ORIGIN: `http://localhost:${FRONT_PORT}`,
       },
     },

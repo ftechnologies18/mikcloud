@@ -33,6 +33,7 @@
 package api
 
 import (
+	"strconv"
 	"sync"
 	"time"
 )
@@ -86,6 +87,28 @@ func newSignupLimiter() *signupLimiter {
 // en bornant le fermage de codes depuis une même IP).
 func newSignupLimiterLimits(burst, daily int) *signupLimiter {
 	return &signupLimiter{ips: map[string]*signupState{}, now: time.Now, burstMax: burst, dailyMax: daily}
+}
+
+// signupLimiterFromEnv — N°114 : bornes S3 configurables par environnement
+// (SIGNUP_BURST_MAX / SIGNUP_DAILY_MAX, entiers > 0 — toute valeur absente,
+// vide ou non numérique replie FRANCAISEMENT sur les constantes S3).
+// Motivation : le runner E2E funellise quatre suites par UNE seule IP
+// (127.0.0.1) ; un run complet consomme 5 inscriptions — EXACTEMENT le
+// plafond burst — et le retry d'un groupe serial REJOUE l'inscription déjà
+// passée : la 6e tentative tombait en 429 et masquait l'échec réel sous un
+// échec fantôme (CI rouge pour la mauvaise raison, déploiement bloqué).
+// Miroir du pattern RATE_API_PER_MIN (main.go, N°102 — même compromis) :
+// production inchangée (env absent côté Render), E2E élargi (20/100, bornes
+// NAT-friendly du claim WiFi N°50). Le getenv est injecté pour les tests.
+func signupLimiterFromEnv(getenv func(string) string) *signupLimiter {
+	burst, daily := signupBurstMax, signupDailyMax
+	if v, err := strconv.Atoi(getenv("SIGNUP_BURST_MAX")); err == nil && v > 0 {
+		burst = v
+	}
+	if v, err := strconv.Atoi(getenv("SIGNUP_DAILY_MAX")); err == nil && v > 0 {
+		daily = v
+	}
+	return newSignupLimiterLimits(burst, daily)
 }
 
 // allow — enregistre une tentative d'inscription pour cette IP et dit si elle

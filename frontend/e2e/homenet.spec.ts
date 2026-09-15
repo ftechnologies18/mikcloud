@@ -227,10 +227,14 @@ test.describe.serial("HomeNet — le parcours familial", () => {
     await expect(page.getByRole("button", { name: /Appareils en ligne/ })).toContainText("0");
     await expect(page.getByText("connectez votre box en mode agent")).toBeVisible();
     // L'enseigne ambrée : la vérité terrain (bails DHCP de la box agent) et
-    // la sortie (Voir mes routeurs — la zone Paramètres héberge la fiche box).
+    // la sortie (Voir mes routeurs — N°112 : la section Infrastructure de la
+    // navigation principale héberge la fiche box).
     await expect(page.getByText(/découverts par votre box MikroTik/)).toBeVisible();
     await page.getByRole("button", { name: "Voir mes routeurs" }).click();
-    await expect(page).toHaveURL(/\/app\/settings\/routers$/);
+    // N°112 — la fiche box vit désormais dans la section Infrastructure de la
+    // navigation principale (/app/routers), plus dans la zone Paramètres
+    // (/app/settings/routers reste deep-linkable — re-normalisation legacy).
+    await expect(page).toHaveURL(/\/app\/routers$/);
   });
 
   test("la box découvre le foyer — baux DHCP → registre → KPI → vue Appareils", async ({ page }) => {

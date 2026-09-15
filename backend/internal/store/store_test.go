@@ -495,3 +495,63 @@ func TestApplyExpiryLogRetentionPerAccount(t *testing.T) {
 		t.Error("valeur invalide (45) doit retomber sur 90 j — le log de 45 j est conservé")
 	}
 }
+
+// TestTickNeverConsumesResellerStock — N°119 : le moteur de simulation ne
+// consomme JAMAIS le stock confié à un revendeur. Incident E2E N°118 : des
+// ticks GLOBAUX (lectures console d'autres comptes) ont « connecté » trois
+// tickets d'un stock de 72 → « used » → exclus du stock vente → pagination
+// E2E en échec (« Afficher plus (60 sur 69) »). Même principe que la garde
+// N°26/W1 de sweepDeadBatches : le stock confié attend sa VENTE.
+//
+// Déterminisme : le ticket confié ne doit JAMAIS bouger, quels que soient
+// les tirages (30 % par tick × 300 ticks — avant le correctif, la proba
+// d'y échapper était (0,7)^300 ≈ 10⁻⁴⁶). Le ticket direct n'est PAS
+// asserté : la démo a le droit de le connecter.
+func TestTickNeverConsumesResellerStock(t *testing.T) {
+	now := time.Now().UTC()
+	db := model.DB{
+		Routers: []model.Router{
+			{ID: "r-sim", AccountID: "acc-a", Name: "Sim", Mode: "simulated"},
+		},
+		Resellers: []model.Reseller{
+			{ID: "res-x", AccountID: "acc-a", Name: "Revendeur X", Status: "active"},
+		},
+		HotspotUsers: []model.HotspotUser{
+			{
+				ID: "v-held", AccountID: "acc-a", Kind: "voucher", Username: "HELD01",
+				Status: "active", RouterID: "r-sim", ResellerID: "res-x",
+			},
+			{
+				ID: "v-free", AccountID: "acc-a", Kind: "voucher", Username: "FREE01",
+				Status: "active", RouterID: "r-sim",
+			},
+		},
+	}
+	// 300 ticks espacés de 3 s (passe la garde de 2 s) : le tirage aléatoire
+	// est sollicité massivement — l'invariant doit tenir à chaque passage.
+	for i := 0; i < 300; i++ {
+		Tick(&db, now.Add(time.Duration(i)*3*time.Second))
+	}
+	var held *model.HotspotUser
+	for i := range db.HotspotUsers {
+		if db.HotspotUsers[i].ID == "v-held" {
+			held = &db.HotspotUsers[i]
+		}
+	}
+	if held == nil {
+		t.Fatal("le ticket confié a disparu du store — la simulation ne supprime pas, corruption inattendue")
+	}
+	if held.Status != "active" || held.UsedAt != "" {
+		t.Fatalf("le ticket confié doit rester VENDABLE (status=%q usedAt=%q) — la simulation l'a consommé", held.Status, held.UsedAt)
+	}
+	for _, s := range db.Sessions {
+		if s.UserID == "v-held" || s.Username == "HELD01" {
+			t.Fatalf("session de démo créée sur le ticket confié : %+v", s)
+		}
+	}
+	for i := range db.Resellers {
+		if db.Resellers[i].ID == "res-x" && db.Resellers[i].VouchersSold != 0 {
+			t.Fatalf("vente fantôme fabriquée pour le revendeur : VouchersSold=%d", db.Resellers[i].VouchersSold)
+		}
+	}
+}

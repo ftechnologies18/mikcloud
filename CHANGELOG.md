@@ -5,6 +5,63 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-15 — N°119 — « la simulation qui mangeait le stock du revendeur » : le moteur de démo (Tick, ~30 % par lecture console) connectait un voucher actif ALÉATOIRE de N'IMPORTE QUEL compte et le marquait « used » — amputant le stock de vente d'un compte tiers ; le stock confié devient INTOUCHABLE (même garde que N°26/W1)
+
+### N°119 — Contexte : l'échec E2E du N°118 était un lancé de dé
+La CI du N°118 (frontend pur — libellés/flèches/QoS) échoue sur UN test :
+sell.spec.ts « pagination du stock — "Afficher plus" complète » — attendu
+« 60 sur 7x » (72 tickets), obtenu « 60 sur 69 », idem au retry. La trace
+Playwright (corps de réponses réseau extraits) dit tout : à 15:34:06,
+/api/sell/me ET /api/sell/stock répondent stockCount=69 / total=69, 100 %
+du lot B20260915-4661 (70) — ZÉRO du petit lot (3) — alors que le crédit
+(35 400 = 50 000 − 14 000 − 600) prouve que les DEUX transferts ont bien
+débité : les 3 tickets manquants ONT été transférés puis ont DISPARU du
+stock vendable. Reconstitution : le moteur de simulation (store.Tick —
+déclenché par CHAQUE lecture console, TOUS comptes : « fait vivre la
+simulation (tous comptes) », handlers_sessions.go) crée à ~30 % par tick
+(≥ 2 s) une session sur un voucher actif ALÉATOIRE d'un routeur simulé,
+PEU IMPORTE SON COMPTE, et le marque Status="used" + UsedAt (→ exclu du
+stock vente par EffectiveStatus != "active") en incrémentant au passage
+VouchersSold/Revenue du revendeur (vente fantôme). La fenêtre bootstrap →
+tests sell (~14 s, lectures console des specs resellers + homenet sur
+D'AUTRES comptes) laisse ~7 ticks × 30 % tomber sur les 72 tickets du
+compte bootstrap (seuls candidats massifs) : 3 « connectés » → 69. Le
+commentaire du bootstrap (« le stock resterait stable ») documentait
+l'INTENTION — la simulation la violait.
+
+### Produit
+- (1) STOCK CONFIÉ INTOUCHABLE — la boucle des candidats à une session
+  démo saute désormais tout voucher `ResellerID != ""` : un ticket remis
+  à un revendeur attend sa VENTE (tactile/papier), pas une connexion de
+  démo ; le moteur ne peut plus ni l'exclure du stock (« used ») ni
+  fabriquer des ventes fantômes (VouchersSold/Revenue). Même principe
+  que la garde N°26/W1 de sweepDeadBatches (« AUCUN ticket revendeur :
+  le stock confié reste la trace de ce qui a été remis »).
+- (2) La démo reste vivante — les vouchers DIRECTS d'un routeur simulé
+  continuent d'être connectés au hasard ( rôle du moteur) ; seules les
+  sessions sur stock confié étaient un bug.
+- (3) Périmètre réel : comptes à routeurs SIMULÉS uniquement (démo/E2E) ;
+  les routeurs agents/réels n'ont jamais été candidats (garde existante).
+
+### Technique
+- backend/internal/store/store.go — la collecte des candidats (Tick →
+  « nouvelle session ~30 % ») saute les vouchers à ResellerID non vide,
+  commentaire d'autopsie citant l'incident E2E N°118.
+- Test : TestTickNeverConsumesResellerStock (store_test.go) — 300 ticks
+  espacés de 3 s sur un store seedé (routeur simulé + revendeur + 1
+  ticket confié + 1 direct) ; INVARIANT : le ticket confié reste
+  « active », UsedAt vide, AUCUNE session à son nom, ZÉRO VouchersSold
+  pour le revendeur. Déterministe : avant correctif, P(y échapper) =
+  (0,7)^300 ≈ 10⁻⁴⁶ — vérifié ÉCHEC sans le patch (status="used" au
+  premier tirage), PASS avec.
+
+### Vérifications
+- gofmt vide, go vet OK, go build OK, go test 12 paquets verts (api 35,4 s).
+- Suite E2E COMPLÈTE en local mode CI (retries actifs) : 14/14 passés —
+  dont le test de pagination restauré (lot de 72 stable de bout en bout).
+
+---
+
 ## 2026-09-15 — N°118 — Convention débit « le libellé qui inversait le sens » : le Studio Forfait annonçait (descendant/montant) alors que RouterOS lit montant/descendant — le bridage du re-test N°116 s'est donc appliqué INVERSÉ (down 512k/up 1M au lieu de down 1M/up 512k) ; libellés, flèches d'aperçu et ordre des champs QoS unifiés sur l'ordre RouterOS
 
 ### N°118 — Contexte : re-test N°116 réussi… avec le sens inversé

@@ -1017,6 +1017,20 @@ func Tick(db *model.DB, now time.Time) {
 			if active[u.Username] || u.Status != "active" {
 				continue
 			}
+			// N°119 — stock confié INTOUCHABLE (même principe que
+			// sweepDeadBatches N°26/W1) : un ticket remis à un
+			// revendeur attend sa VENTE, pas une connexion démo.
+			// Le moteur ne doit JAMAIS le consommer (« used », ce
+			// l'exclurait du stock vente) ni fabriquer une vente
+			// fantôme (VouchersSold/Revenue). Incident E2E N°118 :
+			// trois tickets d'un stock de 72 « connectés » par des
+			// ticks GLOBAUX déclenchés par les lectures console
+			// d'AUTRES comptes → stock amputé à 69, « Afficher
+			// plus (60 sur 69) » — la simulation est mondiale,
+			// le stock du revendeur ne doit pas l'être.
+			if u.ResellerID != "" {
+				continue
+			}
 			if u.Kind == "voucher" && model.EffectiveStatus(u, now) != "active" {
 				continue
 			}

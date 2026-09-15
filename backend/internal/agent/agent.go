@@ -505,6 +505,10 @@ func (b Builder) ScriptFor(cmd model.Command) (string, error) {
 		return b.buildQueueRemove(cmd)
 	case model.CmdQuotaEnsure:
 		return b.buildQuotaEnsure(cmd), nil
+	case model.CmdRouterOSCheck:
+		return b.buildRouterOSCheck(cmd), nil
+	case model.CmdRouterOSUpdate:
+		return b.buildRouterOSUpdate(cmd), nil
 	default:
 		return "", fmt.Errorf("kind de commande inconnu : %s", cmd.Kind)
 	}

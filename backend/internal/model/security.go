@@ -58,6 +58,8 @@ const (
 	CmdQueueRead       = "queue_read"       // N°104 : lecture /queue simple (noms, cibles, limites, stats) — monitoring, vérification de dérive et satiété de la carte QoS (cache outil ≤ 120 s)
 	CmdQueueRemove     = "queue_remove"     // N°104 : retrait propre de la file agrégat (les profils hotspot qui la référencent sont détachés d'abord : set [find parent-queue=…] parent-queue=none)
 	CmdQuotaEnsure     = "quota_ensure"     // N°106 : mode bridage — scheduler mikcloud-quota (tick 20 s : files mikthrottle-<user> posées/retirées selon les cumuls d'octets et les marqueurs mikq:, orphelins balayés) ; remove-then-add idempotent, pattern watcher N°77
+	CmdRouterOSCheck   = "routeros_check"   // N°115 : vérification de mise à jour RouterOS (/system package update check-for-updates + lecture status/latest-version) — lecture, rapport au front via le poll de commande (pattern ping F8)
+	CmdRouterOSUpdate  = "routeros_update"  // N°115 : installation de la mise à jour RouterOS (download + install + redémarrage automatique) — rapport ok AVANT exécution (pattern reboot F10), erreur de téléchargement rapportée après coup
 )
 
 // N°80 — niveaux SafeWiFi (filtrage DNS du WiFi public par redirection).

@@ -1348,6 +1348,19 @@ export interface CommandStatus {
   result: unknown;
 }
 
+/** N°115 — contrôle de mise à jour RouterOS : réponse directe (simulated)
+ * ou résultat normalisé d'une commande routeros_check pollée (agent). */
+export interface RouterOSCheckResult {
+  /** État normalisé côté cloud (dérivé du status RouterOS brut). */
+  state: "latest" | "available" | "error" | "unknown";
+  /** Status RouterOS brut (« New version is available: 7.19.4 »…). */
+  status: string;
+  latestVersion?: string;
+  installedVersion?: string;
+  /** Canal du routeur (stable par défaut). */
+  channel?: string;
+}
+
 // ─── F9 — Outils routeur (DHCP / hôtes / cookies / journal) ───
 
 export interface DhcpLeaseRow {

@@ -574,6 +574,98 @@ type SchedulerTask struct {
 
 ---
 
+## N°115 — Mise à jour RouterOS depuis la console [P1]
+
+**Retour utilisateur** : « je souhaite donner la possibilité à mes clients de
+mettre à jour leurs routeurs vers la dernière version RouterOS depuis
+MikCloud ». Parité Mikhmon « Update RouterOS » — le gérant garde son parc à
+jour sans Winbox. La VÉRIFICATION interroge les serveurs MikroTik DEPUIS le
+routeur (`/system package update check-for-updates` : le canal du routeur —
+stable par défaut — fait foi, pas une version codée en dur côté cloud) ;
+l'INSTALLATION télécharge, installe puis REDÉMARRE (sémantique v7 de
+`/system package update install`). Parc concerné : agents RouterOS ≥ 7.19
+(garde TLS existante de `/agent/cmd` — un routeur plus ancien ne reçoit
+AUCUNE commande, la mise à jour doit se faire une première fois en Winbox ;
+version inconnue → tolérée le temps du premier read_state).
+
+### Routes
+- `POST /api/routers/{id}/routeros-check` →
+  - simulated : réponse immédiate `{queued:false, ok, state, status,
+    latestVersion, installedVersion, channel}` — déterministe (la version
+    posée à la création est toujours en retard sur la dernière stable
+    simulée ; après update → `latest`) ;
+  - agent : DÉDUP (une vérification à la fois — le second clic récupère la
+    commande EN COURS, pas d'accumulation) + commande `routeros_check` en
+    file → `{queued:true, commandId, message}` ; le front poll
+    `GET /api/commands/{id}` (pattern ping F8, 2 s / 90 s max — le
+    check-in vient toutes les 45 s et le script routeur patiente lui-même
+    jusqu'à ~30 s que MikroTik réponde : boucle `:while` sur le status
+    « Checking… », garde `[:typeof] = "num"` du find-qui-ne-trouve-pas).
+- `POST /api/routers/{id}/routeros-update` `{latest?}` (corps OPTIONNEL —
+  `decodeBodyTolerant` : un POST nu ne doit pas échouer) →
+  - simulated : application immédiate (version posée, uptime à zéro,
+    sessions coupées et journalisées logout — miroir exact du reboot F10) ;
+  - agent : DÉDUP STRICTE (jamais deux installations en parallèle — le
+    second clic récupère la commande en vol avec `already:true`) + commande
+    `routeros_update` en file ; le rapport ok part AVANT l'exécution
+    (pattern reboot F10 : le téléchargement — minutes — puis le
+    redémarrage coupent le routeur, le `/tool fetch` bloquant termine le
+    premier) ; un échec de téléchargement est rapporté après coup
+    (`:do on-error` — le routeur ne redémarre pas dans ce cas).
+- Validation : `latest` optionnel, `^[0-9][0-9A-Za-z.\-]{0,31}$` (défense
+  en profondeur — la valeur est embarquée dans le script .rsc du rapport de
+  lancement ET assainie côté générateur `sanitizeRouterOSVersion` : premier
+  caractère chiffre, `[0-9A-Za-z.-]`, coupe au premier caractère étranger,
+  ≤ 32).
+
+### Normalisation du rapport (`normalizeRouterOSCheck`)
+Le rapport agent arrive en valeurs formulaire (`rosStatus` = le status
+RouterOS BRUT — la clé `status` est celle du protocole ok/error du rapport,
+jamais réutilisée). Le front attend `state` + `status` +
+`latestVersion`/`installedVersion`/`channel`. Dérivation de l'état, par
+ordre : « up to date » → `latest` ; « new version » → `available` ;
+« error » → `error` ; REPLI sur la comparaison `installed != latest`
+(un libellé de build inconnu ne doit pas masquer une mise à jour évidente) ;
+sinon `unknown` — le status brut est préservé et affiché honnêtement (borné
+à 160 chars : un firmware exotique ne gonfle pas l'historique).
+
+### Confirmation de version — zéro mécanique dédiée
+La version finale revient d'elle-même : le `read_state` de fraîcheur
+re-enfilé après le rapport ok rapporte la NOUVELLE version
+post-redémarrage, et `applyReadState` trace le changement (journal
+« RouterOS de «X» mis à jour : A → B » — couvre AUSSI une mise à jour posée
+à la main en Winbox). Le lancement lui-même est journalisé au rapport de la
+commande (« Mise à jour RouterOS lancée sur «X» vers Y — téléchargement
+puis redémarrage, le portail coupe pendant l'opération »). Aucune nouvelle
+colonne : `Router.Version` (read_state) reste la vérité. Le check en revanche
+ne journalise RIEN (lecture d'outil : chaque clic « vérifier » en produirait
+une ligne de bruit) et n'enfile aucun read_state (aucune écriture).
+
+### Zombie & convergence
+`routeros_check` rejoint `staleSentReadKinds` (re-exécution sans effet de
+bord — le check est idempotent). `routeros_update` N'EN FAIT PAS partie :
+une écriture « sent » muette n'est JAMAIS rejouée automatiquement (un
+redémarrage peut être en cours — le double lancement est précisément ce que
+la dédup stricte interdit) ; la trace vit dans le journal et l'historique
+des commandes.
+
+### Front — carte « Mise à jour RouterOS » (onglet Système, sous les infos)
+`ros-update-card.tsx` : version installée + bouton « Vérifier les mises à
+jour » → panneau d'état (à jour = vert, disponible = ambre avec
+`installé → dispo [canal]` + status brut en italique + bouton « Mettre à
+jour vers X », erreur = rouge, inconnu = neutre honnête) → AlertDialog de
+confirmation (avertissement FORT : coupure totale 2 à 5 min, sessions Wi-Fi
+coupées, note agent ≤ 45 s) → panneau d'installation piloté SANS état
+dérivé : la fiche routeur est « vivante » (poll 15 s), le panneau reste
+« Installation en cours… » tant que la version n'a pas atteint la cible
+(ou changé depuis une base connue — une base INCONNUE ne conclut jamais
+sur une version ≠ cible : l'arrivée d'une version périmée pendant le
+téléchargement ne doit pas faire passer le panneau pour terminé), puis
+bascule « Mise à jour installée A → B ». Une vérification fraîche remplace
+le panneau d'installation (le check est l'action la plus récente du gérant
+et porte la vérité du serveur). i18n : 27 clés `tools.ros.*` FR/EN.
+Mode `real` : carte désactivée (note standard `tools.realNote`).
+
 ---
 
 ## N°97 — Docteur du pool d'adresses IP du hotspot [P1]

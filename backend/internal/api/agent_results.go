@@ -135,6 +135,15 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 		if len(v) > 32 {
 			v = v[:32]
 		}
+		// N°115 — trace les changements de version RouterOS : la confirmation
+		// d'une mise à jour lancée depuis la console (N°115) ou posée à la
+		// main en Winbox revient avec la première télémétrie post-redémarrage
+		// — le gérant qui a cliqué « Mettre à jour » voit la version finale
+		// arriver ici, sans autre mécanique (le lancement lui-même est
+		// journalisé au rapport de la commande routeros_update).
+		if router.Version != "" && router.Version != v {
+			a.logActivity(db, router.AccountID, "router", "RouterOS de «"+router.Name+"» mis à jour : "+router.Version+" → "+v)
+		}
 		router.Version = v
 	}
 	if up := parseRosUptime(vals.Get("uptime")); up > 0 {

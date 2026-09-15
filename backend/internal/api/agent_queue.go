@@ -38,6 +38,7 @@ var staleSentReadKinds = map[string]bool{
 	model.CmdQueueEnsure:   true, // N°104 : idempotent (file mikcloud-qos — create-or-set + relecture de vérification)
 	model.CmdQueueRemove:   true, // N°104 : idempotent (retrait de la file agrégat — détache les profils d'abord, prouve la disparition)
 	model.CmdQuotaEnsure:   true, // N°106 : idempotent (scheduler mikcloud-quota — remove-then-add, pattern watcher N°77)
+	model.CmdRouterOSCheck: true, // N°115 : lecture (check-for-updates) — re-exécution sans effet de bord
 }
 
 // staleSentLimit — au-delà de cette ancienneté sans rapport, une commande

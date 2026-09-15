@@ -714,8 +714,18 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 	if ok && cmd.Kind == model.CmdPing {
 		normalizePingResult(cmd.Result)
 	}
+	// N°115 — idem pour le contrôle de mise à jour RouterOS : le front attend
+	// state/status/latestVersion/installedVersion/channel.
+	if ok && cmd.Kind == model.CmdRouterOSCheck {
+		normalizeRouterOSCheck(cmd.Result)
+	}
 
 	switch {
+	case cmd.Kind == model.CmdRouterOSCheck && ok:
+		// N°115 — lecture d'outil (pattern ping F8) : le résultat normalisé vit
+		// dans Command.Result, le front le relit via GET /api/commands/{id} —
+		// ni journal (bruit : chaque clic vérifier en produirait une ligne),
+		// ni read_state post-écriture (aucune écriture).
 	case cmd.Kind == model.CmdReadState && ok:
 		// N°76 — cycle paginé : les chunks intermédiaires ne comptent
 		// ni pour la cadence (readStateDone au FINAL seulement — sinon
@@ -1055,6 +1065,19 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 					a.logActivity(db, router.AccountID, "router", "QoS divergente sur «"+router.Name+"» (file absente ou modifiée localement) — re-application automatique au prochain check-in")
 				}
 			}
+		} else if cmd.Kind == model.CmdRouterOSUpdate {
+			// N°115 — lancement de la mise à jour RouterOS CONFIRMÉ pris en
+			// charge par le routeur (le rapport ok part AVANT l'exécution,
+			// pattern reboot F10 : le téléchargement puis l'installation
+			// vont couper le routeur). La version finale reviendra d'elle-même
+			// au read_state post-redémarrage — le journal N°115 (applyReadState)
+			// en tracera la confirmation.
+			latest := ""
+			if v, okL := cmd.Result["latest"].(string); okL {
+				latest = v
+			}
+			a.logActivity(db, router.AccountID, "router", "Mise à jour RouterOS lancée sur «"+router.Name+"»"+versionSuffix(latest)+
+				" — téléchargement puis redémarrage (2 à 5 min), le portail coupe pendant l'opération")
 		} else {
 			a.logActivity(db, router.AccountID, "router", "Commande "+cmd.Kind+" exécutée sur «"+router.Name+"»")
 		}

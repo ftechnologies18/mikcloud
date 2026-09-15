@@ -36,6 +36,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ProtectionSummaryCard } from "@/components/hotspot/parts/protection-cards";
 import { PoolDoctorCard } from "@/components/hotspot/parts/router-tools/pool-card";
+import { RouterOSUpdateCard } from "@/components/hotspot/parts/router-tools/ros-update-card";
 import { api } from "@/lib/hotspot/api";
 import { t as translate, useI18n } from "@/lib/hotspot/i18n";
 import type { Lang } from "@/lib/hotspot/i18n";
@@ -373,6 +374,10 @@ export function SystemTab({ router }: { router: RouterDevice }) {
   return (
     <div className="space-y-4">
       <SystemInfoCard router={router} />
+      {/* N°115 — mise à jour RouterOS depuis MikCloud : vérification (le
+          routeur interroge les serveurs MikroTik) + installation avec
+          confirmation — la carte vit juste sous la version installée. */}
+      <RouterOSUpdateCard router={router} />
       {/* N°83 — les 3 cartes sécurité ont déménagé dans la vue Protection
           (/app/protection) : l'onglet Système garde un résumé compact avec
           lien — aucun contrôle dupliqué. */}

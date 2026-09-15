@@ -5,6 +5,114 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-15 — N°115 — « Update RouterOS sans Winbox » : le gérant vérifie et installe la dernière version RouterOS de son parc DEPUIS MikCloud — la vérification interroge les serveurs MikroTik DEPUIS le routeur (le canal du routeur fait foi), l'installation télécharge, installe puis REDÉMARRE, et la version finale revient d'elle-même à la première télémétrie post-redémarrage
+
+### N°115 — Contexte : la maintenance firmware, dernier geste qui exigeait Winbox
+Retour utilisateur : « je souhaite donner la possibilité à mes clients de
+mettre à jour leurs routeurs vers la dernière version RouterOS depuis
+MikCloud ». Le gérant vit dans sa console (état du parc, QoS, pool,
+scheduler, reboot) mais le firmware restait le dernier rituel Winbox —
+téléchargement manuel, câble, fenêtre de maintenance. Parité Mikhmon
+« Update RouterOS » : le geste devient deux boutons, avec la vérité du
+CANAL du routeur (stable par défaut — pas une version codée en dur côté
+cloud qui mentirait sur les canaux beta/long-term) et un avertissement
+honnête sur la coupure.
+
+### Produit
+- (1) VÉRIFICATION (`POST /api/routers/{id}/routeros-check`) : commande
+  `routeros_check` servie à l'agent — `/system package update
+  check-for-updates` puis lecture `status`/`latest-version`/
+  `installed-version`/`channel`, chaque lecture isolée dans son `:do
+  on-error` (un champ absent sur un build exotique ne tue pas la commande) ;
+  le status RouterOS passe par « Checking… » le temps que MikroTik
+  réponde : le script ROUTEUR boucle (2 s × ≤ 15 — garde `[:typeof] =
+  "num"` du find-qui-ne-trouve-pas), le FRONT poll la commande (2 s ×
+  90 s max, pattern ping F8). Dédup : une vérification à la fois (le
+  second clic récupère la commande en cours). Normalisation cloud
+  (`normalizeRouterOSCheck`) : états `latest`/`available`/`error`/
+  `unknown` dérivés du status BRUT, REPLI sur la comparaison
+  installed != latest (un libellé inconnu ne masque pas une mise à jour
+  évidente), status brut préservé et affiché honnêtement (borné 160) ;
+  la clé `rosStatus` transporte le status RouterOS (la clé `status`
+  reste celle du protocole ok/error du rapport).
+- (2) INSTALLATION (`POST /api/routers/{id}/routeros-update` `{latest?}`,
+  corps optionnel — `decodeBodyTolerant`) : commande `routeros_update` —
+  rapport ok AVANT l'exécution (pattern reboot F10 : le téléchargement
+  puis le redémarrage coupent le routeur, le fetch bloquant termine
+  premier), `/system package update install` dans un `:do on-error` qui
+  rapporte l'échec de téléchargement APRÈS coup (le routeur ne redémarre
+  pas dans ce cas). Dédup STRICTE : jamais deux installations en parallèle
+  (second clic → commande en vol + `already:true`). Simulated : application
+  immédiate (version, uptime à zéro, sessions coupées — miroir reboot F10).
+- (3) CONFIRMATION SANS MÉCANIQUE DÉDIÉE : aucune nouvelle colonne — la
+  version finale revient au `read_state` de fraîcheur re-enfilé après le
+  rapport ok ; `applyReadState` trace le changement (journal « RouterOS de
+  «X» mis à jour : A → B » — couvre aussi une mise à jour manuelle
+  Winbox), le lancement est journalisé au rapport de la commande. Le
+  check ne journalise RIEN (lecture d'outil — bruit) et n'enfile aucun
+  read_state. `routeros_check` rejoint `staleSentReadKinds`
+  (idempotent) ; `routeros_update` NON (une écriture muette n'est jamais
+  rejouée — un redémarrage peut être en cours).
+- (4) FRONT — carte « Mise à jour RouterOS » (onglet Système, sous les
+  infos) : version installée + « Vérifier les mises à jour » → panneau
+  d'état (vert/ambre/rouge/neutre — disponible affiche
+  `installé → dispo [canal]` + status brut + bouton « Mettre à jour vers
+  X ») → AlertDialog d'avertissement FORT (coupure totale 2 à 5 min,
+  sessions coupées, note agent ≤ 45 s) → panneau d'installation SANS
+  état dérivé : la fiche « vivante » (poll 15 s) pilote la bascule
+  « Installation en cours… » → « Mise à jour installée A → B » — une
+  base de version INCONNUE ne conclut jamais sur une version ≠ cible
+  (l'arrivée d'une version périmée pendant le téléchargement ne fait pas
+  passer le panneau pour terminé), et une vérification fraîche remplace
+  le panneau (le check porte la vérité du serveur). 27 clés i18n
+  `tools.ros.*` FR/EN.
+- Sécurité : `latest` validé `^[0-9][0-9A-Za-z.\-]{0,31}$` ET assaini au
+  générateur (`sanitizeRouterOSVersion` — premier chiffre, coupe à la
+  première impureté) : la valeur est embarquée dans le script .rsc du
+  rapport de lancement. Parc concerné : agents RouterOS ≥ 7.19 (garde
+  TLS existante de `/agent/cmd` — un routeur plus ancien ne reçoit aucune
+  commande, première mise à jour via Winbox ; version inconnue tolérée).
+
+### Technique
+agent/routerosupdate.go (buildRouterOSCheck + buildRouterOSUpdate +
+sanitizeRouterOSVersion), agent/agent.go (ScriptFor), model/security.go
+(CmdRouterOSCheck/CmdRouterOSUpdate), api/handlers_routeros_update.go
+(check + update + dédups + normalizeRouterOSCheck + decodeBodyTolerant +
+versionSuffix), api/routes.go (2 routes rôle 2), api/agent_handlers.go
+(normalisation au rapport + journal du lancement + case lecture sans
+journal), api/agent_results.go (trace N°115 des changements de version
+dans applyReadState), api/agent_queue.go (staleSentReadKinds + check),
+frontend : router-tools/ros-update-card.tsx (nouveau), system-tab.tsx
+(câblage), types.ts (RouterOSCheckResult), i18n fr/en +27 clés.
+Docs : CONTRACT-V2 §N°115.
+
+### Tests
+TestRouterOSCheckScriptShape (poll borné, lectures isolées, rapport
+dynamique — la clé rosStatus ne doit JAMAIS s'appeler status),
+TestRouterOSUpdateScriptShape (ORDRE : rapport ok AVANT l'install,
+rapport d'échec APRÈS), TestRouterOSUpdatePayloadSanitized (version
+hostile assainie), TestSanitizeRouterOSVersion (noyau numérique,
+suffixes coupés, junk tronqué, tête-chiffre obligatoire),
+TestRouterOSCheckSimulated, TestRouterOSUpdateSimulated (version, uptime
+zéro, sessions, activité, boucle démo refermée : update sans cible puis
+re-check → latest), TestRouterOSCheckAgentQueuedAndNormalized (file +
+dédup + rapport en CORPS BRUT comme le routeur — espaces littérales,
+pas d'encodage formulaire — résultat normalisé relu par le poll),
+TestRouterOSUpdateAgentFlow (file + dédup stricte + journal du lancement
++ read_state re-enfilé + confirmation de version),
+TestRouterOSUpdatePayloadRejected (versions hostiles → 400),
+TestNormalizeRouterOSCheck (libellés v7 réels, replis, états honnêtes).
+Vérifié : gofmt vide, go vet OK, go build OK, go test 12 paquets verts ;
+eslint 0, tsgo 0, next build OK (13 routes). Navigateur bout-en-bout sur
+backend Go réel (:4000) + next dev (:3016) : 33 PASS / 0 FAIL — SIM
+(check immédiat → dialogue → installation → re-check à jour), AGENT
+(protocole RÉEL joué en curl : GET /agent/cmd multi-chunks drainé,
+rapport routeros_check → panneau normalisé, rapport routeros_update →
+panneau installation, read_state post-redémarrage → panneau installée
+7.19.3 → 7.19.4 + journaux lancement/confirmation), mobile 390 px,
+0 erreur console, captures VLM conformes (alignements, contrastes,
+cibles tactiles).
+
 ## 2026-09-15 — N°114 — « l'auto-déploiement qui ne déployait rien » : le backend était figé au N°110 en production pendant que GitHub disait « poussé » — TROIS verrous en chaîne levés : le test E2E périmé qui rendait la CI rouge depuis N°112 (URL /app/settings/routers jamais mise à jour), le 429 fantôme du quota S3 qui masquait tout échec réel sous un retry de groupe serial, et l'autoDeploy Render éteint
 
 ### N°114 — Contexte : le correctif N°113 était sur GitHub mais pas en production

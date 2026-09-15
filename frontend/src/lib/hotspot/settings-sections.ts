@@ -17,24 +17,32 @@
 // (section.id) ; le surlignage actif couvre TOUTES les vues de la section
 // (views) — la section Hotspot reste active sur ses trois onglets.
 //
+// N°112 — « Routeurs » QUITTE la zone et retourne dans la navigation
+// principale (section Infrastructure, lib/hotspot/nav.ts) : le parc matériel
+// est une préoccupation opérationnelle quotidienne, pas un réglage
+// back-office. La zone se recentre sur l'identité et la gouvernance de
+// l'espace — 6 sections : Général / Hotspot / Sécurité / Notifications /
+// Abonnement / Équipe. L'URL /app/settings/routers reste deep-linkable
+// (LEGACY_SLUG_VIEWS → re-normalisée vers /app/routers).
+//
 // Le contrat des vues est INCHANGÉ : chaque section conserve ses ViewIds
 // (store, rôles, map VIEWS de l'app-shell) — seuls les chemins canoniques
 // changent (view-path.ts). Les URLs historiques (/app/templates,
 // /app/settings/portal…) restent deep-linkables : la normalisation
 // d'app-route réécrit vers le chemin canonique.
 //
-// N°57-e — l’Abonnement rejoint la zone (7 sections) : la facturation de
-// l’espace (formule, échéance, renouvellement, factures) vit désormais
+// N°57-e — l’Abonnement rejoint la zone : la facturation de l’espace
+// (formule, échéance, renouvellement, factures) vit désormais
 // sous /app/settings/subscription, comme les autres préoccupations
 // back-office. L’ancienne vue racine /app/subscription reste deep-linkable
 // (re-normalisation app-route). Position : AVANT Équipe — l’ordre se lit
-// « identité → service → sécurité → infrastructure → alertes → facturation
-// → équipe » ; le gérant (rang 2, lecture seule du GET /api/subscription)
-// conserve son atterrissage Hotspot (la section ne devient jamais SA
-// première section accessible).
+// « identité → service → sécurité → alertes → facturation → équipe » ; le
+// gérant (rang 2, lecture seule du GET /api/subscription) conserve son
+// atterrissage Hotspot (la section ne devient jamais SA première section
+// accessible).
 
 import type { LucideIcon } from "lucide-react";
-import { Bell, CreditCard, Router as RouterIcon, Settings, ShieldCheck, UsersRound, Wifi } from "lucide-react";
+import { Bell, CreditCard, Settings, ShieldCheck, UsersRound, Wifi } from "lucide-react";
 import { canView } from "./roles";
 import type { ViewId } from "./types";
 
@@ -63,14 +71,14 @@ export interface SettingsSection {
 }
 
 /** Sections de la zone, dans l'ordre de la sidebar (N°57-d) : identité →
- * service WiFi → sécurité → infrastructure → alertes → facturation →
- * équipe (N°57-e : Abonnement avant Équipe). L'accès suit VIEW_MIN_RANK
- * (rôles existants) : « Général », « Sécurité » et « Équipe » restent
- * propriétaire (rang 3) ; « Hotspot » (hors onglet Expérience, masqué au
- * gérant), « Routeurs » et « Notifications » sont gérant+ (rang 2) ;
- * « Abonnement » est en lecture pour tous les rôles authentifiés
- * (GET /api/subscription sans restriction serveur — les ACTIONS de
- * renouvellement/paiement restent rang 3, gardées côté Go). */
+ * service WiFi → sécurité → alertes → facturation → équipe (N°57-e :
+ * Abonnement avant Équipe ; N°112 : Routeurs parti en navigation
+ * principale). L'accès suit VIEW_MIN_RANK (rôles existants) : « Général »,
+ * « Sécurité » et « Équipe » restent propriétaire (rang 3) ; « Hotspot »
+ * (hors onglet Expérience, masqué au gérant) et « Notifications » sont
+ * gérant+ (rang 2) ; « Abonnement » est en lecture pour tous les rôles
+ * authentifiés (GET /api/subscription sans restriction serveur — les
+ * ACTIONS de renouvellement/paiement restent rang 3, gardées côté Go). */
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { id: "settings", labelKey: "settings.tabGeneral", icon: Settings, views: ["settings"] },
   // N°100 — section marquée « hotspot » : cachée aux comptes homenet
@@ -79,7 +87,8 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   // VIEW_MIN_RANK + HOMENET_VIEWS dans roles.ts).
   { id: "hotspot", labelKey: "settings.tabHotspot", icon: Wifi, views: ["hotspot", "portal", "templates"], hotspotOnly: true },
   { id: "security", labelKey: "settings.tabAdvanced", icon: ShieldCheck, views: ["security"] },
-  { id: "routers", labelKey: "nav.routers", icon: RouterIcon, views: ["routers"] },
+  // N°112 — plus de section « routers » ici : la vue Routeurs vit en
+  // navigation principale (section Infrastructure de nav.ts, /app/routers).
   { id: "notifications", labelKey: "nav.notifications", icon: Bell, views: ["notifications"] },
   // N°57-e — Abonnement : formule, échéance, renouvellement, factures.
   { id: "subscription", labelKey: "nav.subscription", icon: CreditCard, views: ["subscription"] },
@@ -112,8 +121,9 @@ export function settingsSectionsFor(role: string | undefined, usage: Usage = "ho
 /** Première section autorisée pour ce rôle — destination du fallback quand
  * une section interdite est demandée directement (lien direct, rechargement
  * après changement de rôle). null = aucune section accessible. N°100 — la
- * destination respecte l'usage : le gérant d'un foyer atterrit sur
- * « Routeurs », jamais sur le hub Hotspot. */
+ * destination respecte l'usage. N°112 — sans la section Routeurs (partie en
+ * navigation principale), le gérant d'un foyer atterrit sur « Notifications »,
+ * le gérant d'un établissement sur le hub Hotspot (inchangé). */
 export function firstSettingsView(role: string | undefined, usage: Usage = "hotspot"): ViewId | null {
   return settingsSectionsFor(role, usage)[0]?.id ?? null;
 }
@@ -122,8 +132,8 @@ export function firstSettingsView(role: string | undefined, usage: Usage = "hots
  * le propriétaire atterrit sur Général, le gérant sur sa première section
  * accessible (rang 2 — Hotspot) — jamais sur une vue que le serveur
  * refuserait (403). N°100 — pour un foyer (gérant ou propriétaire) la
- * première section est toujours saine (Routeurs pour le gérant, Général
- * pour le propriétaire — jamais le hub Hotspot). */
+ * première section est toujours saine (Notifications pour le gérant,
+ * Général pour le propriétaire — jamais le hub Hotspot). */
 export function settingsLandingView(role: string | undefined, usage: Usage = "hotspot"): ViewId {
   return firstSettingsView(role, usage) ?? "settings";
 }

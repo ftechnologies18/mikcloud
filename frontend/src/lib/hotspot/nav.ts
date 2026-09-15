@@ -10,6 +10,7 @@ import {
   MonitorSmartphone,
   ReceiptText,
   Radio,
+  Router as RouterIcon,
   ScrollText,
   Settings,
   ShieldCheck,
@@ -29,7 +30,7 @@ export interface NavItem {
 }
 
 export const NAV_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
-  // N°57-g — réorganisation experte de la navigation métier : 4 catégories
+  // N°57-g — réorganisation experte de la navigation métier : catégories
   // homogènes dont l'ordre suit le parcours d'usage (surveiller → vendre
   // l'accès → gérer les gens → analyser). L'ancienne section
   // « Exploitation » (5 items : fourre-tout mêlant supervision, clients et
@@ -40,9 +41,21 @@ export const NAV_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
   //   • Hotspot — LE produit : les trois façons de délivrer de l'accès
   //     (voucher prépayé, profil/forfait, WiFi jetable offert) ;
   //   • Personnes — les deux annuaires humains du business (clients finaux
-  //     qui se connectent, revendeurs qui écoulent) ;
-  //   • Analyse — comprendre et auditer (rapports, journal, comptes SaaS).
-  // Chaque groupe reste repliable (row expandable O).
+  //     qui se connectent, revendeurs qui écoulent).
+  //
+  // N°112 — « Routeurs » quitte la zone Paramètres et rouvre une section
+  // Infrastructure DANS la navigation principale (entre Personnes et
+  // Analyse). Retour terrain : le gérant vit sur son parc matériel — état
+  // en ligne/hors ligne, outils QoS/pool/scheduler, installation agent —
+  // et l'exiler derrière le menu utilisateur (N°57) l'enterrait à deux
+  // clics du tableau de bord qui pourtant LUI parle des routeurs (cartes
+  // d'état, check-in agent). La sidebar se relit en deux pôles : le FRONT
+  // métier (Supervision, Hotspot, Personnes — ce qu'on fait chaque jour)
+  // puis le DOS technique (Infrastructure, Analyse — la machine et l'audit).
+  // La clé « nav.section.infrastructure » existait déjà depuis le pré-N°57
+  // (FR/EN) : zéro traduction neuve. Le Portail, lui, reste en zone
+  // Paramètres (onglet du hub Hotspot — expérience de marque, pas parc
+  // matériel). Chaque groupe reste repliable (row expandable O).
   {
     labelKey: "nav.section.supervision",
     items: [
@@ -81,9 +94,17 @@ export const NAV_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
       { id: "resellers", labelKey: "nav.resellers", icon: Store },
     ],
   },
-  // N°57 — la section Infrastructure disparaît : Routeurs et Portail sont
-  // des vues de configuration, elles vivent dans la zone Paramètres
-  // (/app/settings/routers, /app/settings/portal).
+  // N°112 — section Infrastructure : LE parc matériel qui porte le service.
+  // Restauration partielle du pré-N°57 (Routeurs + Portail) : seuls les
+  // Routeurs reviennent — le Portail reste un onglet du hub Hotspot en
+  // zone Paramètres. Position : après le pôle métier, avant l'audit — la
+  // machine vit avec l'analyse dans le dos technique de la sidebar.
+  {
+    labelKey: "nav.section.infrastructure",
+    items: [{ id: "routers", labelKey: "nav.routers", icon: RouterIcon }],
+  },
+  // N°57 — le Portail vit dans la zone Paramètres (onglet du hub Hotspot,
+  // /app/settings/portal) — expérience de marque, pas navigation métier.
   {
     labelKey: "nav.section.analysis",
     items: [
@@ -145,6 +166,14 @@ export const NAV_HOMENET_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
       // La Protection est L'argument massue du foyer (FamilyGuard, couvre-feu,
       // SafeWiFi famille) — elle vit à un clic du tableau de bord maison.
       { id: "protection", labelKey: "nav.protection", icon: ShieldCheck },
+      // N°112 — « Routeurs » suit le retour en navigation principale (même
+      // décision produit que la console hotspot) : le routeur du foyer
+      // n'était atteignable qu'en zone Paramètres — un compte à rebours de
+      // clics pour LA boîte qui porte toute la maison. Append en fin de
+      // section : l'histoire émotionnelle (superviser → voir qui est
+      // connecté → protéger la famille) reste d'abord, le matériel ferme
+      // la marche.
+      { id: "routers", labelKey: "nav.routers", icon: RouterIcon },
     ],
   },
 ];

@@ -1,7 +1,8 @@
 "use client";
 
-// N°57-d — Vue « Routeurs » de la zone Paramètres (/app/settings/routers),
-// réorganisée d'après le retour utilisateur :
+// N°112 — Vue « Routeurs » de la navigation principale (/app/routers,
+// section Infrastructure de la sidebar — ex-zone Paramètres N°57, cf.
+// lib/hotspot/nav.ts), réorganisée d'après le retour utilisateur :
 //   • la liste est une grille de CARTES CLIQUABLES (focus clavier, aria) ;
 //   • cliquer une carte ouvre la FICHE routeur EN PLEINE PAGE — plus de
 //     fenêtre modale d'inspection (l'ancien RouterToolsDialog devient un
@@ -9,7 +10,7 @@
 //   • la fiche porte un bouton « Tous les routeurs » (Retour aux cartes) et
 //     concentre les actions (test, stats, import, réparation walled-garden,
 //     script d'installation, édition, suppression) ;
-//   • la fiche est ADRESSABLE : /app/settings/routers/<id> (mécanisme de
+//   • la fiche est ADRESSABLE : /app/routers/<id> (mécanisme de
 //     détail Phase D — router.push à l'ouverture, replace au retour, la
 //     discipline « zéro entrée d'historique parasite » du fix 192ad9f est
 //     préservée : Retour navigateur et bouton Retour font la même chose).
@@ -290,7 +291,7 @@ export default function RoutersView() {
     refetchInterval: 15_000,
   });
 
-  // ── Fiche adressable (Phase D, N°57-d) : /app/settings/routers/<id>.
+  // ── Fiche adressable (Phase D, N°57-d ; N°112 : segment simple) : /app/routers/<id>.
   // Le segment vit dans l'URL — Retour navigateur et bouton « Tous les
   // routeurs » rejouent la même sortie ; le routeur est résolu depuis le
   // poll (fiche « vivante », y compris après un changement hors page).

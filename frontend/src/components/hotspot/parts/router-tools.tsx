@@ -25,7 +25,8 @@ import { QoSTab } from "./router-tools/qos-tab";
 
 // Retour utilisateur N°57-d : plus de fenêtre modale pour inspecter un
 // routeur — le panneau vit DANS la fiche routeur (page directe
-// /app/settings/routers/<id>, bouton Retour aux cartes). Même contenu
+// /app/routers/<id> — N°112 : segment simple depuis le retour en
+// navigation principale, bouton Retour aux cartes). Même contenu
 // (onglets Trafic / Liaisons IP / Outils / Système), même routeur « vivant »
 // (poll 15 s partagé avec la liste), seul le conteneur change : un bloc
 // plein largeur en flux de page au lieu d'un overlay.

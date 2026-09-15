@@ -7,15 +7,15 @@
 // navigateur et les liens directs (/app/users…) deviennent fonctionnels sans
 // changer ni le store ni les vues.
 //
-// N°57 — zone Paramètres : les vues de configuration (modèles, routeurs,
-// portail, notifications, équipe) vivent sous /app/settings/<section>
+// N°57 — zone Paramètres : les vues de configuration (modèles, portail,
+// notifications, équipe) vivent sous /app/settings/<section>
 // (segment IMBRIQUÉ). Les chemins historiques (/app/templates, /app/team…)
 // restent deep-linkables : la vue est résolue via LEGACY_SLUG_VIEWS puis
 // l'URL est re-normalisée (replace, zéro entrée d'historique parasite) par
 // app-route — même mécanique que la fusion N°30 « registrations → hub ».
 //
 // N°57-d — réorganisation des sections : Général / Hotspot / Sécurité /
-// Routeurs / Notifications / Équipe. Le slug de « settings » devient
+// Notifications / Équipe. Le slug de « settings » devient
 // settings/general ; la section Hotspot est un HUB : l'expérience vit sur
 // settings/hotspot, le portail et les modèles sont ses ONGLETS adressables
 // (settings/hotspot/portail, settings/hotspot/modeles — pattern N°30).
@@ -27,6 +27,12 @@
 // subscription. L’ancien chemin racine /app/subscription reste deep-linkable
 // (LEGACY_SLUG_VIEWS) puis re-normalisé — signets et historiques navigateur
 // conservés.
+//
+// N°112 — « Routeurs » RETOURNE en navigation principale : son slug
+// redevient le simple /app/routers (pré-N°57). L'ancien chemin canonique
+// N°57 (/app/settings/routers) reste deep-linkable via LEGACY_SLUG_VIEWS
+// puis re-normalisé — signets et historiques navigateur conservés. La
+// fiche routeur reste adressable : /app/routers/<id> (DETAIL_VIEWS).
 
 import type { ViewId } from "./types";
 
@@ -36,7 +42,9 @@ export const APP_BASE_PATH = "/app";
 /** Segment d'URL de chaque vue — kebab-case dérivé de l'identifiant.
  * N°57 : les vues de la zone Paramètres portent un segment IMBRIQUÉ
  * « settings/<section> ». N°57-d : « settings » = Général (settings/general),
- * « hotspot » = hub à 3 segments (portail/modeles = onglets deep-linkables). */
+ * « hotspot » = hub à 3 segments (portail/modeles = onglets deep-linkables).
+ * N°112 : « routers » retrouve son segment SIMPLE d'avant la zone — la vue
+ * vit en navigation principale (/app/routers). */
 const VIEW_SLUGS: Record<ViewId, string> = {
   dashboard: "dashboard",
   sessions: "sessions",
@@ -59,7 +67,9 @@ const VIEW_SLUGS: Record<ViewId, string> = {
   profiles: "profiles",
   resellers: "resellers",
   wifi: "wifi",
-  routers: "settings/routers",
+  // N°112 — retour au segment simple (vue de navigation principale,
+  // section Infrastructure) — cf. en-tête du fichier.
+  routers: "routers",
   portal: "settings/hotspot/portail",
   reports: "reports",
   logs: "logs",
@@ -80,16 +90,17 @@ const SLUG_VIEWS: Record<string, ViewId> = Object.fromEntries(
   Object.entries(VIEW_SLUGS).map(([view, slug]) => [slug, view as ViewId]),
 );
 
-/** Slugs historiques (pré-N°57 et pré-N°57-d) des vues de la zone :
- * /app/<slug> résout toujours vers sa vue (signets, historique navigateur,
- * liens sortants) — app-route replace ensuite vers le chemin canonique
- * /app/settings/<…>. Paires « settings/<x> » : anciens chemins canoniques
- * N°57-b/c (portal, templates) + racine de zone « settings » (N°57-d →
- * Général). Une section de zone inconnue (/app/settings/xyz) retombe sur
- * la racine de zone par la résolution simple. */
+/** Slugs historiques (pré-N°57, pré-N°57-d et pré-N°112) des vues qui ont
+ * changé de chemin : /app/<slug> résout toujours vers sa vue (signets,
+ * historique navigateur, liens sortants) — app-route replace ensuite vers
+ * le chemin canonique /app/settings/<…> ou /app/<…>. Paires
+ * « settings/<x> » : anciens chemins canoniques N°57-b/c (portal,
+ * templates) + racine de zone « settings » (N°57-d → Général) + ancien
+ * chemin N°57 des routeurs (N°112 → /app/routers). Une section de zone
+ * inconnue (/app/settings/xyz) retombe sur la racine de zone par la
+ * résolution simple. */
 const LEGACY_SLUG_VIEWS: Record<string, ViewId> = {
   templates: "templates",
-  routers: "routers",
   portal: "portal",
   notifications: "notifications",
   team: "team",
@@ -98,6 +109,9 @@ const LEGACY_SLUG_VIEWS: Record<string, ViewId> = {
   "settings/templates": "templates",
   // N°57-e — ancien chemin racine de la vue Abonnement (pré-zone).
   subscription: "subscription",
+  // N°112 — ancien chemin canonique N°57 de la vue Routeurs (pré-retour
+  // en navigation principale) : /app/settings/routers → /app/routers.
+  "settings/routers": "routers",
 };
 
 /** Chemin complet d'une vue : /app/<slug>, ou /app/<slug>/<détail> quand la
@@ -115,8 +129,9 @@ export function viewToPath(view: ViewId, detail?: string): string {
  * adresse ses onglets sur 3 segments (settings/hotspot/portail) ; puis
  * la paire (settings/<section>, canonique OU legacy) ; puis le slug simple
  * (canonique ou legacy, re-normalisé ensuite). Le segment de détail
- * éventuel (/app/settings/routers/<id>) est ignoré ici : il appartient à
- * la vue (detailFromPath), la synchro de vue d'app-route reste inchangée. */
+ * éventuel (/app/routers/<id>, /app/users/<name>…) est ignoré ici : il
+ * appartient à la vue (detailFromPath), la synchro de vue d'app-route reste
+ * inchangée. */
 export function viewFromPath(pathname: string | null): ViewId | null {
   if (!pathname) return null;
   if (pathname === APP_BASE_PATH) return null;
@@ -129,7 +144,7 @@ export function viewFromPath(pathname: string | null): ViewId | null {
     if (triplet) return triplet;
   }
   // Segment imbriqué — section de la zone Paramètres (settings/<section>,
-  // canonique N°57-d ou legacy N°57-b/c).
+  // canonique N°57-d, legacy N°57-b/c ou ancien chemin routeurs N°112).
   if (segs.length >= 2) {
     const pair = `${segs[0]}/${segs[1]}`;
     const nested = SLUG_VIEWS[pair] ?? LEGACY_SLUG_VIEWS[pair];
@@ -142,7 +157,7 @@ export function viewFromPath(pathname: string | null): ViewId | null {
 /** Vues exposant un détail adressable (Phase D, N°57-d) — les autres n'ont
  * pas de 2e segment valide : app-route re-normalise ces chemins orphelins.
  * N°57-d : « routers » expose la FICHE routeur (carte cliquable → page de
- * détail, /app/settings/routers/<id> — plus de modale d'inspection).
+ * détail, /app/routers/<id> — plus de modale d'inspection).
  * N°83 : « protection » adresse le routeur sélectionné (le CTA du résumé
  * de l'onglet Système ouvre CE routeur, /app/protection/<id>). */
 const DETAIL_VIEWS: ReadonlySet<ViewId> = new Set<ViewId>(["users", "vouchers", "sessions", "routers", "protection"]);
@@ -152,7 +167,11 @@ const DETAIL_VIEWS: ReadonlySet<ViewId> = new Set<ViewId>(["users", "vouchers", 
  * préfixe canonique de la vue (3e/4e segment en zone) : les vues branchent
  * leur état local dessus (ouverture de fiche, filtre lot…) sans toucher au
  * mécanisme de navigation (fix 192ad9f préservé). Un segment suivant
- * éventuel est ignoré (le détail ne s'imbrique pas). */
+ * éventuel est ignoré (le détail ne s'imbrique pas). N°112 — note : les
+ * liens profonds de l'ère N°57 AVEC détail (/app/settings/routers/<id>)
+ * résolvent la vue mais perdent le segment de fiche (préfixe canonique
+ * changé) : ils atterrissent sur la liste — même traitement que les autres
+ * chemins historiques, jamais une page morte. */
 export function detailFromPath(pathname: string | null, view: ViewId): string | null {
   if (!pathname || !DETAIL_VIEWS.has(view)) return null;
   const prefix = `${APP_BASE_PATH}/${VIEW_SLUGS[view]}/`;

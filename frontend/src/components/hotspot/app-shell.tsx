@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import Image from "next/image";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -169,6 +169,22 @@ const VIEWS: Record<ViewId, React.ComponentType> = {
   home: HomeView,
   devices: DevicesView,
 };
+
+/** N°112 — dernière vue MÉTIER visitée (hors zone Paramètres) : destination
+ * du bouton « Retour » de la sidebar de zone. Vit au NIVEAU MODULE et non
+ * dans un useRef de l'app-shell : Next.js REMONTE la page du catch-all
+ * /app/[[...vue]] à chaque changement de segment d'URL (/app/routers →
+ * /app/settings/general…), un ref d'instance repartait donc de zéro à
+ * CHAQUE navigation et le Retour retombait systématiquement sur
+ * l'atterrissage de la console — le défaut N°57-c « rouvre la dernière vue
+ * métier visitée » n'a jamais réellement tenu (masqué tant qu'on entrait
+ * en zone depuis le tableau de bord : le reset tombait par coïncidence sur
+ * la bonne destination). Le module, lui, survit à tous ces remontages ;
+ * null tant qu'aucune vue métier n'a été visitée (entrée par lien direct →
+ * atterrissage de la console, comportement documenté N°100). Réécrit dès la
+ * première vue métier d'une session (login → atterrissage) : aucune fuite
+ * entre consoles. */
+let zoneReturnView: ViewId | null = null;
 
 /** Transition d'apparition de la vue active — fade + translation légère.
  * Extraite du rendu principal (N°57) : identique zone Paramètres ou non
@@ -761,16 +777,20 @@ export default function AppShell() {
   const zoneRender = isSettingsView(view) && canView(user?.role, view, usage) && !platformMode;
 
   // N°57-c — dernière vue MÉTIER visitée : destination du bouton « Retour »
-  // de la sidebar de zone. L'app-shell reste monté, le ref survit aux
-  // changements de section ; défaut = atterrissage de la console courante
-  // (N°100 : maison pour homenet) pour une entrée par lien direct. Mis à
-  // jour à chaque sortie de zone — jamais pendant (on garde l'origine,
-  // même après un détour par plusieurs sections).
-  const returnViewRef = useRef<ViewId>(clientLanding);
+  // de la sidebar de zone. N°112 — le suivi vit au NIVEAU MODULE (voir
+  // zoneReturnView ci-dessus) : l'app-shell est REMONTÉ par Next.js à
+  // chaque changement de segment du catch-all /app/[[...vue]] — un useRef
+  // repartait de zéro à chaque montage et le Retour retombait sur
+  // l'atterrissage de la console au lieu de la dernière vue métier (constaté
+  // par instrumentation : 5 montages d'app-shell pour 4 navigations).
+  // Défaut = atterrissage de la console courante (N°100 : maison pour
+  // homenet) pour une entrée par lien direct. Mis à jour à chaque vue
+  // métier — jamais pendant la zone (on garde l'origine, même après un
+  // détour par plusieurs sections).
   useEffect(() => {
-    if (!isSettingsView(view)) returnViewRef.current = view;
+    if (!isSettingsView(view)) zoneReturnView = view;
   }, [view]);
-  const handleZoneBack = () => setView(returnViewRef.current);
+  const handleZoneBack = () => setView(zoneReturnView ?? clientLanding);
 
   return (
     <div className="flex min-h-screen">

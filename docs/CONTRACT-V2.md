@@ -668,6 +668,80 @@ Mode `real` : carte désactivée (note standard `tools.realNote`).
 
 ---
 
+## N°117 — Mise à jour RouterOS de FLOTTE : le super-admin pilote le parc de TOUS les clients [P1]
+
+**Retour utilisateur** : « ajouter une fonctionnalité pour le super admin
+afin que celui-ci, depuis la console, lance une mise à jour du parc de
+routeurs de tous les clients MikCloud ». Suite multi-comptes du N°115 (le
+gérant met à jour SON routeur) : la vue « Parc routeurs » de la console
+plateforme liste chaque routeur de chaque compte client — version installée,
+version disponible détectée, état — puis deux gestes de flotte.
+
+**SÉCURITÉ — jamais à l'aveugle** : un update RouterOS REDÉMARRE le routeur
+et coupe le hotspot du client. La cible par défaut de « Mettre à jour le
+parc » n'est PAS « tous les routeurs » mais « tous les routeurs avec une
+mise à jour DÉTECTÉE » (état `available` du dernier check abouti) ; la
+barrière s'applique AUSSI en ciblage explicite (un routeur à jour ou jamais
+vérifié n'est jamais re-redémarré pour rien) ; la confirmation du front
+affiche le compte EXACT (nombre de routeurs, nombre de comptes touchés)
+avant le geste ; dédup stricte par routeur (jamais deux installations en
+parallèle — pattern N°115).
+
+### Routes (super-admin : `requireRole(3)` + `isPlatformAdmin`)
+- `GET /api/admin/fleet/routers` → le parc complet, tous comptes confondus :
+  par routeur, compte/nom/mode/statut/version/lastSeen + état RouterOS
+  DÉRIVÉ (`rosState`, `rosLatest`, `rosStatus` borné 160, `checkedAt`,
+  `checking`, `updating`, `updateError`) + `summary` (total/agent/
+  simulated/real/online/checking/updating/latest/available).
+- `POST /api/admin/fleet/routeros-check` `{routerIds?}` → enfile un
+  `routeros_check` sur chaque routeur AGENT ciblé (liste explicite = bouton
+  par routeur ; absent = TOUT le parc). Lecture seule. Dédup par routeur
+  (un check en vol n'est pas re-enfilé). Simulés : rien à enfiler (état
+  calculé à la volée au GET), `real` : non supporté (matrice §0).
+- `POST /api/admin/fleet/routeros-update` `{routerIds?, latest?}` (corps
+  OPTIONNEL — `decodeBodyTolerant`) → agents : commande `routeros_update`
+  avec la cible du dernier check (`latest` du corps en repli, validé
+  `^[0-9][0-9A-Za-z.\-]{0,31}$`) ; simulés : application immédiate (miroir
+  du chemin simulated N°115 — version, uptime à zéro, sessions coupées et
+  journalisées logout). Réponse `{queued, applied, skipped, message}`.
+
+### Dérivation d'état — ZÉRO nouveau schéma
+`fleetRouterOSStateOf` parcourt l'historique des commandes du routeur : la
+dernière `routeros_check` aboutie porte l'état normalisé
+(`normalizeRouterOSCheck`, N°115) dans son `Result` ; les commandes en vol
+portent `checking`/`updating`. Les routeurs SIMULÉS n'ont pas d'agent : état
+calculé à la volée (version posée vs dernière stable simulée — miroir du
+chemin simulated N°115). La version installée reste `Router.Version`
+(read_state) ; la version finale revient d'elle-même au premier read_state
+post-redémarrage (mécanique N°115 inchangée).
+
+### Journal — une entrée par COMPTE, pas par routeur
+Un geste de flotte ne doit pas inonder le journal : `logActivityBy` pose UNE
+entrée par compte client concerné (« Mise à jour RouterOS de flotte lancée
+par la plateforme : «A», «B», «C» + N autres en file d'installation… » —
+noms bornés à 3, acteur = le super-admin). Les commandes sont enfilées sous
+le COMPTE CLIENT du routeur (`queueCommandLocked acc = rr.AccountID`) : le
+gérant concerné voit l'opération dans SON journal, le rapport agent remonte
+par le chemin standard N°115.
+
+### Front — vue « Parc routeurs » (console plateforme)
+`platform-fleet-view.tsx` : 4 KPI (total, en ligne, mises à jour disponibles
+en ambre, installations en cours) + gestes (« Vérifier tout le parc »
+outline, « Mettre à jour le parc (N) » — désactivé à 0 avec note
+pédagogique) + la liste du parc (compte, routeur, badges mode/ligne,
+`installé → dispo` mono, badge d'état + dernière vérification `timeAgo`,
+actions par routeur : check + update) — `max-h-[32rem] overflow-y-auto`
+(règle maison des longues listes), poll 10 s pendant les vols sinon 30 s
+(forme fonctionnelle — pas de fermeture sur `data`), AlertDialog de
+confirmation forte (nombre exact, comptes touchés, coupure 2 à 5 min par
+routeur, jamais deux fois le même). Câblage : ViewId `platformFleet`,
+slug `/app/platform-fleet`, `PLATFORM_VIEWS` (garde rôle), nav plateforme
+(après « Vue d'ensemble »), `viewTitle`, dynamic import. i18n : clés
+`platform.fleet.*` + `nav.platformFleet` FR/EN. Mode `real` : ligne sans
+action (note standard).
+
+---
+
 ## N°97 — Docteur du pool d'adresses IP du hotspot [P1]
 
 ### Contexte

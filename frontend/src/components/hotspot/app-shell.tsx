@@ -75,6 +75,8 @@ const LogsView = dynamic(() => import("./views/logs-view"), { loading: () => Vie
 const NotificationsView = dynamic(() => import("./views/notifications-view"), { loading: () => ViewFallback });
 const PlatformLogsView = dynamic(() => import("./views/platform-logs-view"), { loading: () => ViewFallback });
 const PlatformOverviewView = dynamic(() => import("./views/platform-overview-view"), { loading: () => ViewFallback });
+// N°117 — parc routeurs global : flotte tous comptes + mise à jour RouterOS.
+const PlatformFleetView = dynamic(() => import("./views/platform-fleet-view"), { loading: () => ViewFallback });
 const PlatformSettingsView = dynamic(() => import("./views/platform-settings-view"), { loading: () => ViewFallback });
 const PlatformTeamView = dynamic(() => import("./views/platform-team-view"), { loading: () => ViewFallback });
 const ProfilesView = dynamic(() => import("./views/profiles-view"), { loading: () => ViewFallback });
@@ -116,6 +118,7 @@ function viewTitle(view: ViewId, t: (key: string) => string): string {
     reports: "nav.reports",
     logs: "logs.title",
     platform: "nav.platform",
+    platformFleet: "nav.platformFleet",
     platformLogs: "platformLogs.title",
     platformTeam: "platformTeam.title",
     billingRequests: "billingRequests.title",
@@ -156,6 +159,7 @@ const VIEWS: Record<ViewId, React.ComponentType> = {
   reports: ReportsView,
   logs: LogsView,
   platform: PlatformOverviewView,
+  platformFleet: PlatformFleetView,
   platformLogs: PlatformLogsView,
   platformTeam: PlatformTeamView,
   platformSettings: PlatformSettingsView,

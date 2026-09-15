@@ -74,6 +74,8 @@ const VIEW_SLUGS: Record<ViewId, string> = {
   reports: "reports",
   logs: "logs",
   platform: "platform",
+  // N°117 — parc routeurs global (flotte tous comptes, mise à jour RouterOS).
+  platformFleet: "platform-fleet",
   platformLogs: "platform-logs",
   platformTeam: "platform-team",
   platformSettings: "platform-settings",

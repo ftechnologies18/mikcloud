@@ -321,6 +321,17 @@ func (a *API) Handler() http.Handler {
 	// Console plateforme (super-admin MikCloud, multi-comptes).
 	mux.HandleFunc("GET /api/admin/overview", a.requireRole(3, a.handleAdminOverview))
 	mux.HandleFunc("GET /api/admin/activity", a.requireRole(3, a.handleAdminActivity))
+	// N°117 — parc routeurs global : mise à jour RouterOS de FLOTTE. La vue
+	// « Parc routeurs » de la console plateforme liste chaque routeur de
+	// chaque compte (version installée, version disponible détectée, état)
+	// ; « Vérifier tout » enfile un routeros_check par routeur agent
+	// (lecture seule), « Mettre à jour » n'installe QUE le retard connu
+	// (état available du dernier check — jamais à l'aveugle : un update
+	// redémarre le routeur et coupe le hotspot du client). Voir
+	// handlers_admin_fleet.go.
+	mux.HandleFunc("GET /api/admin/fleet/routers", a.requireRole(3, a.handleAdminFleetRouters))
+	mux.HandleFunc("POST /api/admin/fleet/routeros-check", a.requireRole(3, a.handleAdminFleetRouterOSCheck))
+	mux.HandleFunc("POST /api/admin/fleet/routeros-update", a.requireRole(3, a.handleAdminFleetRouterOSUpdate))
 	// N°71 — santé de la persistance (synchro différentielle FNV-1a → Neon) et
 	// des agents : diagnostic READ-ONLY pour l'opérateur (dernier sync,
 	// volumétrie du delta, erreurs, dérive mémoire/miroir, file de commandes).

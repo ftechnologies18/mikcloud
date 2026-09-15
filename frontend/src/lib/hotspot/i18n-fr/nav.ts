@@ -37,6 +37,8 @@ export const frNav: Record<string, string> = {
   // — console plateforme (admin plateforme uniquement) —
   "nav.section.platform": "Plateforme",
   "nav.platform": "Vue d'ensemble",
+  // N°117 — parc routeurs global (flotte tous comptes).
+  "nav.platformFleet": "Parc routeurs",
   "nav.billingRequests": "Demandes",
   "nav.platformLogs": "Journal plateforme",
   "nav.platformTeam": "Équipe plateforme",

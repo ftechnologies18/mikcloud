@@ -37,6 +37,8 @@ export const enNav: Record<string, string> = {
   // — platform console (platform admin only) —
   "nav.section.platform": "Platform",
   "nav.platform": "Overview",
+  // N°117 — global router fleet (all tenants).
+  "nav.platformFleet": "Router fleet",
   "nav.billingRequests": "Requests",
   "nav.platformLogs": "Platform log",
   "nav.platformTeam": "Platform team",

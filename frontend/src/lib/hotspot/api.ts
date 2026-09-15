@@ -19,6 +19,8 @@ import type {
   AuthUser,
   BillingRequest,
   BillingRequestsResponse,
+  FleetActionResponse,
+  FleetOverview,
   InvoiceRow,
   PlatformActivityRow,
   PlatformOverview,
@@ -336,6 +338,39 @@ export async function pauseDevice(
 /** fetchPlatformOverview — KPIs globaux du SaaS (tous comptes confondus). */
 export async function fetchPlatformOverview(): Promise<PlatformOverview> {
   return api<PlatformOverview>("/api/admin/overview");
+}
+
+/* ─── N°117 — parc routeurs global (vue « Parc routeurs », super-admin) ─── */
+
+/** fetchFleetRouters — le parc complet, tous comptes confondus, avec l'état
+ * de mise à jour RouterOS de chaque routeur (version installée, version
+ * disponible détectée, vérification/installation en vol). */
+export async function fetchFleetRouters(): Promise<FleetOverview> {
+  return api<FleetOverview>("/api/admin/fleet/routers");
+}
+
+/** fleetRouterOSCheck — N°117 — enfile un routeros_check sur chaque routeur
+ * agent ciblé (liste explicite = bouton par routeur ; absent = TOUT le parc).
+ * Lecture seule : la réponse de chaque routeur arrive à son check-in. */
+export async function fleetRouterOSCheck(routerIds?: string[]): Promise<FleetActionResponse> {
+  return api<FleetActionResponse>("/api/admin/fleet/routeros-check", {
+    method: "POST",
+    body: routerIds && routerIds.length > 0 ? { routerIds } : {},
+  });
+}
+
+/** fleetRouterOSUpdate — N°117 — installe la mise à jour RouterOS sur les
+ * routeurs ciblés. Sans routerIds : uniquement les routeurs avec une mise à
+ * jour DÉTECTÉE (état available du dernier check — jamais à l'aveugle : un
+ * update redémarre le routeur et coupe le hotspot du client). */
+export async function fleetRouterOSUpdate(
+  routerIds?: string[],
+  latest?: string,
+): Promise<FleetActionResponse> {
+  return api<FleetActionResponse>("/api/admin/fleet/routeros-update", {
+    method: "POST",
+    body: routerIds && routerIds.length > 0 ? { routerIds, latest } : { latest },
+  });
 }
 
 /** createClientAccount — crée un compte client complet (compte + owner).

@@ -5,6 +5,83 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-16 — N°117 — « Mise à jour de flotte » : le super-admin vérifie et met à jour le parc RouterOS de TOUS les clients MikCloud depuis la console plateforme — nouvelle vue « Parc routeurs » (chaque routeur de chaque compte, version installée → disponible, état), « Vérifier tout le parc » en lecture seule, « Mettre à jour le parc » qui ne cible QUE le retard détecté (jamais à l'aveugle : un update redémarre le routeur et coupe le hotspot du client)
+
+### N°117 — Contexte : le super-admin voulait le geste de flotte
+Retour utilisateur : « ajouter une fonctionnalité pour le super admin afin
+que celui-ci, depuis la console, lance une mise à jour du parc de routeurs
+de tous les clients MikCloud ». Le N°115 a donné le geste unitaire au
+gérant ; le propriétaire du SaaS veut piloter la FLOTTE — savoir où le
+firmware prend retard, et dérouler la mise à jour sans ouvrir chaque
+console client.
+
+### Produit
+- (1) VUE « PARC ROUTEURS » (console plateforme, nav après « Vue
+  d'ensemble ») : chaque routeur de chaque compte client — compte, nom,
+  badges mode (agent/simulé/API directe) et ligne, version installée →
+  version disponible (mono), badge d'état RouterOS (à jour / mise à jour
+  disponible / vérification… / installation… / erreur / inconnu / jamais
+  vérifié) + dernière vérification en temps relatif, actions par routeur
+  (vérifier / mettre à jour). 4 KPI de synthèse (total, en ligne, mises à
+  jour disponibles en ambre, installations en cours) ; liste
+  `max-h-[32rem] overflow-y-auto` (règle maison des longues listes) ; poll
+  10 s pendant les vols sinon 30 s.
+- (2) « VÉRIFIER TOUT LE PARC » — lecture seule, sans risque :
+  `POST /api/admin/fleet/routeros-check` enfile un `routeros_check` sur
+  chaque routeur agent (dédup par routeur — un check en vol n'est pas
+  re-enfilé) ; les réponses arrivent au rythme des check-ins (≤ 45 s par
+  routeur en ligne). Simulés : état calculé à la volée au GET (rien à
+  enfiler). API directe : non supporté (matrice §0).
+- (3) « METTRE À JOUR LE PARC » — JAMAIS À L'AVEUGLE : un update RouterOS
+  REDÉMARRE le routeur et coupe le hotspot du client ; la cible par défaut
+  est « tous les routeurs avec une mise à jour DÉTECTÉE » (état available
+  du dernier check abouti), pas « tous les routeurs ». La barrière
+  s'applique AUSSI en ciblage explicite (un routeur à jour ou jamais
+  vérifié n'est jamais re-redémarré pour rien — le serveur ne fait pas
+  confiance au front). Confirmation forte : nombre EXACT de routeurs,
+  nombre de comptes touchés, coupure WiFi 2 à 5 min par routeur, jamais
+  deux fois le même (dédup stricte N°115 inchangée). Agents : commande
+  `routeros_update` avec la cible du dernier check ; simulés : application
+  immédiate (miroir N°115 — version, uptime zéro, sessions coupées et
+  journalisées logout).
+- (4) ZÉRO NOUVEAU SCHÉMA — l'état de flotte dérive de l'existant :
+  `fleetRouterOSStateOf` lit la dernière commande `routeros_check` aboutie
+  (état normalisé N°115 dans son Result), les commandes en vol
+  (checking/updating), `Router.Version` (read_state) pour l'installée. La
+  version finale revient d'elle-même au premier read_state
+  post-redémarrage (mécanique N°115 inchangée, journal comprise).
+- (5) JOURNAL — une entrée par COMPTE, pas par routeur : un geste de
+  flotte ne noie pas le journal (« Mise à jour RouterOS de flotte lancée
+  par la plateforme : «A», «B», «C» + N autres en file d'installation… » —
+  noms bornés à 3, acteur = le super-admin). Les commandes sont enfilées
+  sous le COMPTE CLIENT du routeur : le gérant concerné voit l'opération
+  dans SON journal, le rapport agent remonte par le chemin standard N°115.
+
+### Sécurité
+Routes super-admin uniquement (`requireRole(3)` + `isPlatformAdmin`, pattern
+handleAdminOverview). `latest` validé `^[0-9][0-9A-Za-z.\-]{0,31}$` (repli
+du corps, défense en profondeur — la cible réelle vient du check du routeur).
+Chaînes libres rapportées bornées (status 160, versions 32).
+
+### Technique
+Backend : `api/handlers_admin_fleet.go` (NOUVEAU — GET fleet/routers +
+POST fleet/routeros-check + POST fleet/routeros-update +
+fleetRouterOSStateOf + boundedString + fleetResolveTargets +
+fleetNamesLabel/fleetCountLabel), `api/routes.go` (3 routes rôle 3).
+Frontend : `views/platform-fleet-view.tsx` (NOUVEAU), `types.ts` (ViewId
+`platformFleet` + FleetRouter/FleetOverview/FleetActionResponse), `roles.ts`
+(PLATFORM_VIEWS), `view-path.ts` (slug `platform-fleet`), `nav.ts`
+(NAV_PLATFORM_SECTIONS), `app-shell.tsx` (dynamic import + vue + titre),
+`api.ts` (fetchFleetRouters/fleetRouterOSCheck/fleetRouterOSUpdate), i18n
+fr/en `platform.fleet.*` + `nav.platformFleet`. Docs : CONTRACT-V2 §N°116,
+CHANGELOG.
+
+### Vérifié
+gofmt vide, go vet OK, go build OK, go test api (33,7 s) + agent verts ;
+eslint 0 erreur, tsc 0 erreur.
+
+---
+
 ## 2026-09-15 — N°116 — Correctif bridage v3 « le tick armé qui restait silencieux » : la décision ne se fiait qu'aux compteurs UTILISATEUR jamais prouvés sur RouterOS 7.x — 219 Mo sans bridage un tick v2 parfaitement déployé ; la v3 décide sur le MAX des compteurs utilisateur ET des octets de session (source prouvée), + sonde qcounters télémétrique
 
 ### N°116 — Contexte : re-test terrain du N°106/N°113, constat identique
@@ -63,6 +140,9 @@ retrait → rien, SILENCIEUSEMENT.
   vide, go vet OK, go build OK, go test 12 paquets verts.
 - Docs : CONTRACT-V2 §N°106 enrichi de la sous-section N°116 (autopsie
   complète, décision v3, sonde, limites).
+
+---
+
 ## 2026-09-15 — N°115 — « Update RouterOS sans Winbox » : le gérant vérifie et installe la dernière version RouterOS de son parc DEPUIS MikCloud — la vérification interroge les serveurs MikroTik DEPUIS le routeur (le canal du routeur fait foi), l'installation télécharge, installe puis REDÉMARRE, et la version finale revient d'elle-même à la première télémétrie post-redémarrage
 
 ### N°115 — Contexte : la maintenance firmware, dernier geste qui exigeait Winbox

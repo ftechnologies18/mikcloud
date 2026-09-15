@@ -218,6 +218,53 @@ export interface PlatformOverview {
   registerOpen: boolean;
 }
 
+/* ─── N°117 — parc routeurs global : GET /api/admin/fleet/routers ─── */
+
+/** Ligne de la vue « Parc routeurs » (super-admin) : un routeur d'un compte
+ * client avec son état de mise à jour RouterOS dérivé (dernier check
+ * abouti + commandes en vol). rosState absent = jamais vérifié. */
+export interface FleetRouter {
+  id: string;
+  accountId: string;
+  accountName: string;
+  name: string;
+  mode: "simulated" | "real" | "agent";
+  status: "online" | "offline";
+  version: string;
+  lastSeen?: string;
+  rosState?: "latest" | "available" | "error" | "unknown";
+  rosLatest?: string;
+  rosStatus?: string;
+  checkedAt?: string;
+  checking: boolean;
+  updating: boolean;
+  updateError?: string;
+}
+
+/** Réponse GET /api/admin/fleet/routers — le parc + compteurs de synthèse. */
+export interface FleetOverview {
+  routers: FleetRouter[];
+  summary: {
+    total: number;
+    agent: number;
+    simulated: number;
+    real: number;
+    online: number;
+    checking: number;
+    updating: number;
+    available: number;
+    latest: number;
+  };
+}
+
+/** Réponse POST /api/admin/fleet/routeros-check | routeros-update. */
+export interface FleetActionResponse {
+  queued?: number;
+  applied?: number;
+  skipped?: number;
+  message: string;
+}
+
 /** Entrée du journal d'activité transverse (tous comptes — plateforme). */
 export interface PlatformActivityRow {
   id: string;
@@ -1451,6 +1498,7 @@ export type ViewId =
   | "reports"
   | "logs"
   | "platform"
+  | "platformFleet" // N°117 — parc routeurs global (console plateforme) : flotte tous comptes + mise à jour RouterOS de flotte
   | "platformLogs"
   | "platformTeam"
   | "platformSettings"

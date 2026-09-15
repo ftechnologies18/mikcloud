@@ -188,6 +188,10 @@ export const NAV_PLATFORM_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
     labelKey: "nav.section.platform",
     items: [
       { id: "platform", labelKey: "nav.platform", icon: ShieldCheck },
+      // N°117 — parc routeurs global : chaque routeur de chaque compte client,
+      // version installée vs disponible, vérification et mise à jour RouterOS
+      // de flotte (le geste super-admin, miroir multi-comptes du N°115).
+      { id: "platformFleet", labelKey: "nav.platformFleet", icon: RouterIcon },
       { id: "accounts", labelKey: "nav.accounts", icon: Building2 },
       // File des demandes de renouvellement (facturation) — badge en attente.
       { id: "billingRequests", labelKey: "nav.billingRequests", icon: ReceiptText },

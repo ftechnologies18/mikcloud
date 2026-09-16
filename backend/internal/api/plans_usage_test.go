@@ -3,7 +3,7 @@
 // Couvre la SOURCE UNIQUE du pricing (model.ResolvePlan), le moteur
 // d'application des périodes (applySubscriptionLocked : montants par mode,
 // normalisation des identifiants historiques, forfaits annuels pro-ratisés),
-// l'essai segmenté à l'inscription (30 j HomeNet / 3 mois Hotspot) et la
+// l'essai segmenté à l'inscription (30 j HomeNet / 60 j Hotspot — N°123) et la
 // garde de mode sur la demande de souscription (un compte HomeNet ne peut
 // pas souscrire au tarif Hotspot, et réciproquement).
 package api
@@ -151,7 +151,7 @@ func TestApplySubscriptionUsagePricing(t *testing.T) {
 }
 
 // TestSignupTrialSegmented — l'essai public est segmenté : 30 jours en mode
-// HomeNet, 3 mois (~90 jours) en mode Hotspot. Vérifié bout-en-bout via
+// HomeNet, 60 jours en mode Hotspot (N°123 — réduit de 90). Vérifié bout-en-bout via
 // l'inscription publique puis l'état d'abonnement renvoyé à la console.
 func TestSignupTrialSegmented(t *testing.T) {
 	ts := newTestServer(t)
@@ -200,8 +200,8 @@ func TestSignupTrialSegmented(t *testing.T) {
 	}
 
 	tokHot, outHot := inscrire("hot002", "hotspot")
-	if days := dureeJours(tokHot); days < 89 || days > 92 {
-		t.Fatalf("essai Hotspot = %.1f jours, attendu ~90 (3 mois)", days)
+	if days := dureeJours(tokHot); days < 59 || days > 61 {
+		t.Fatalf("essai Hotspot = %.1f jours, attendu 60", days)
 	}
 	if u, _ := outHot["user"].(map[string]any); u == nil || u["usage"] != "hotspot" {
 		t.Fatalf("la session doit transporter usage=hotspot, obtenu %v", outHot["user"])

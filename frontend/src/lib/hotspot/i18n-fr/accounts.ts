@@ -89,7 +89,7 @@ export const frAccounts: Record<string, string> = {
   "accounts.sub.plan-hotspot-annuel": "Hotspot Annuel — 25 000 F / an, routeurs illimités",
   "accounts.sub.plan-homenet-mensuel": "HomeNet Mensuel — 1 250 F / mois / routeur",
   "accounts.sub.plan-homenet-annuel": "HomeNet Annuel — 12 000 F / an, routeurs illimités",
-  "accounts.sub.plan-essai": "Essai — 30 j Maison / 90 j Hotspot, 1 routeur",
+  "accounts.sub.plan-essai": "Essai — 30 j Maison / 60 j Hotspot, 1 routeur",
   "accounts.sub.months": "Durée (mois)",
   "accounts.sub.slots": "Routeurs couverts",
   "accounts.sub.slotsHint": "Au-delà de ce nombre, la création de routeurs sera refusée au client.",

@@ -316,7 +316,7 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 	// configurée ne laisse plus personne passer. Avant ce correctif,
 	// « fermée + clé vide » rendait expectedKey vide : toute requête sans
 	// clé (req.Key == "" == expectedKey) était acceptée — le mode fermé
-	// n'était qu'illusion. Le flux OUVERT (essai public 90 jours, mode
+	// n'était qu'illusion. Le flux OUVERT (essai public 60 jours, mode
 	// produit actuel) est strictement inchangé.
 	if open, expectedKey := a.registerGate(); !open {
 		if expectedKey == "" || req.Key != expectedKey {
@@ -400,7 +400,7 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 	// Sécurité S5 — dédoublonnage email/WhatsApp : un même email ou un même
 	// numéro WhatsApp ne peut créer qu'UN SEUL compte. Sans ce verrou, un
 	// client dont l'essai est tombé sous le paywall (guard P3) relance un essai
-	// de 90 jours à l'infini en changeant juste nom et username — le fermage
+	// de 60 jours à l'infini en changeant juste nom et username — le fermage
 	// « manuel » le plus courant du marché cible. La raison fine (email vs
 	// WhatsApp) est renvoyée pour que l'utilisateur légitime corrige son
 	// formulaire ; le quota anti-abus (signup_abuse.go) borne déjà le sondage
@@ -451,7 +451,7 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 			PlanID:      "essai",
 			Status:      "active",
 			PeriodStart: now.Format(time.RFC3339),
-			// N°122 — essai segmenté : 3 mois (~90 j) en Hotspot,
+			// N°122 → N°123 — essai segmenté : 60 jours en Hotspot,
 			// 30 jours en HomeNet (le foyer décide vite).
 			PeriodEnd:   trialPeriodEnd(now, usage).Format(time.RFC3339),
 			RouterSlots: 1,

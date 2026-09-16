@@ -361,7 +361,10 @@ func (a *API) handleAdminAccountCreate(w http.ResponseWriter, r *http.Request) {
 			PlanID:      "essai",
 			Status:      "active",
 			PeriodStart: now.Format(time.RFC3339),
-			PeriodEnd:   now.AddDate(0, 3, 0).Format(time.RFC3339),
+			// N°123 — même essai segmenté que l'inscription publique
+			// (trialPeriodEnd) : 60 jours Hotspot, 30 jours HomeNet.
+			// Avant : 3 mois fixes quelle que soit l'usage du compte.
+			PeriodEnd:   trialPeriodEnd(now, usage).Format(time.RFC3339),
 			RouterSlots: 1,
 		},
 	}

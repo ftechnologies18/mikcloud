@@ -5,6 +5,56 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-16 — N°123 — Badges annuels « 2 mois offerts » retirés + essai Hotspot réduit à 60 jours — les clients ACTIFS mis à jour par migration au démarrage
+
+### N°123 — Contexte : l'argument annuel est le prix, pas une promesse de gratuité
+Retour utilisateur : « Supprime les (2 mois offerts) sur les cartes annuelles.
+Essai Hotspot réduit à 60 jours. Mettre à jour les clients actifs. » Deux
+décisions produit : (1) le badge « 2 mois offerts » comptait à la place du
+client — l'argument de l'annuel est le PRIX AFFICHÉ (25 000 F/12 000 F =
+routeurs illimités), pas une remise relative à décoder ; (2) trois mois
+d'essai laissaient un réseau public tourner sans payer — deux mois
+suffisent à installer un hotspot et à valider le produit.
+
+### Produit — cartes annuelles épurées, essai 60 jours
+- BADGES ANNUELS : « 2 mois offerts » RETIRÉ partout — vitrine (badge
+  annuel « Le plus choisi » / « Most popular », sans suffixe), console
+  client (les formules annuelles s'affichent SANS badge — seules les
+  mensuelles gardent « Sans engagement »), caractéristiques annuelles
+  réécrites (« Forfait annuel, un seul paiement » / « Annual flat rate —
+  one single payment »).
+- ESSAI HOTSPOT : 90 jours → 60 jours à l'inscription publique (HomeNet
+  inchangé : 30 jours) ; durée par défaut de prolongation plateforme :
+  3 mois → 2 mois Hotspot (Maison 1).
+- CRÉATION PLATEFORME : le compte client créé par la plateforme reçoit
+  l'essai SEGMENTÉ (60 j Hotspot / 30 j HomeNet) — avant : 3 mois fixes
+  quelle que soit l'usage, un foyer créé par la plateforme avait 3 mois.
+- VITRINE : hint hero « 60 jours Hotspot · 30 jours Maison », carte
+  Découverte « FCFA · 60 jours », note frais, modal d'inscription (60 j en
+  mode Hotspot), FR/EN ; console plateforme : hint d'inscriptions ouvertes
+  « essai 60 j Hotspot / 30 j Maison », fiche client « Essai — 30 j
+  Maison / 60 j Hotspot, 1 routeur ».
+
+### Technique — migration idempotente des clients ACTIFS en essai
+- `store.migrateActiveTrialCap` (exécutée au chargement PG/JSON/Reload,
+  juste après migrateUsageScopedPlans) : plafonne la fin d'essai des
+  comptes « active » en plan « essai » à PeriodStart + durée segmentée
+  courante (60 j Hotspot / 30 j HomeNet). Un essai de 90 jours en cours
+  passe à 60 jours comptés depuis son DÉBUT ; un essai entamé au-delà de
+  la durée cible voit sa fin passer dans le passé (compte « expired » en
+  lecture seule, suspension après la grâce de 30 j — la réduction
+  s'applique aussi aux essais déjà largement consommés) ; un essai plus
+  court reste intact (la migration ne raccourcit que ce qui dépasse,
+  n'allonge jamais). Abonnements PAYÉS, essais de comptes désactivés et
+  périodes non expirantes (PeriodEnd vide) : NON TOUCHÉS.
+- `trialPeriodEnd` : 60 jours Hotspot ; `trialDefaultMonths` : 2 mois
+  Hotspot ; création plateforme alignée sur `trialPeriodEnd(now, usage)`.
+- Catalogue serveur : `Badge` retiré des formules annuelles (champ vide,
+  omis du JSON) — clés i18n `sub.plan.*-annuel.badge` supprimées FR/EN,
+  caractéristiques `sub.feat.ill4`/`homeA4` réécrites.
+- Tests : `TestSignupTrialSegmented` attend 60 jours (59-61) en Hotspot.
+- Docs : CONTRACT-V2 section N°123 (badges, essai, migration).
+
 ## 2026-09-16 — N°122 — « Deux modes, un nuage » : tarifs SEGMENTÉS Hotspot / HomeNet sur TOUT le système de paiement (catalogue serveur, demande client, webhooks Wave, prélèvement carte, console, plateforme, vitrine) — la Maison paie deux fois moins cher que le lieu public
 
 ### N°122 — Contexte : un prix unique pour deux produits différents

@@ -1195,6 +1195,36 @@ sans AUCUN bridage**, encore. Autopsie AVEC les données de production
    profil throttle ne porte pas le marqueur — aucun bridage pour lui
    (le quota par lot reste une création MikCloud).
 
+### N°123 — Badges annuels retirés, essai Hotspot 60 jours, migration des essais actifs
+
+Retour utilisateur : « Supprime les (2 mois offerts) sur les cartes
+annuelles. Essai Hotspot réduit à 60 jours, mettre à jour les clients
+actifs. »
+
+**Badges** : les formules annuelles (`hotspot-annuel`, `homenet-annuel`)
+n'ont PLUS de `badge` (champ vide, omis du JSON de `GET /api/plans` et
+`GET /api/subscription`) ; les mensuelles gardent « Sans engagement ».
+
+**Essai** : `trialPeriodEnd` = 30 jours HomeNet / **60 jours** Hotspot
+(avant N°123 : 3 mois) ; `trialDefaultMonths` = 1 mois Maison / **2 mois**
+Hotspot (défaut d'attribution plateforme sans durée explicite) ; la
+création de compte par la plateforme (`POST /api/admin/accounts`) pose le
+MÊME essai segmenté que l'inscription publique (avant : 3 mois fixes
+quelle que soit l'usage du compte).
+
+**Migration idempotente** (`store.migrateActiveTrialCap`, exécutée au
+chargement PG/JSON/Reload après `migrateUsageScopedPlans`) : pour chaque
+compte de statut `active` dont `Subscription.PlanID == "essai"`, si
+`PeriodEnd > PeriodStart + durée segmentée` (60 j hotspot / 30 j homenet),
+alors `PeriodEnd = PeriodStart + durée`. La migration ne fait que
+raccourcir (jamais allonger) ; les abonnements payés, les comptes
+désactivés et les périodes non expirantes (`PeriodEnd` vide) ne sont pas
+touchés. Un essai déjà entamé au-delà de la durée cible devient `expired`
+(lecture seule) puis `suspended` après la grâce de 30 jours — comportement
+voulu de la réduction.
+
+---
+
 ### N°122 — Tarifs segmentés Hotspot / HomeNet : « Deux modes, un nuage »
 
 Retour utilisateur : le catalogue unique (Essentiel 1 250 F/mois/routeur,

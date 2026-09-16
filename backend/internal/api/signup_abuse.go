@@ -2,7 +2,7 @@
 // pré-lancement commercial).
 //
 // POST /api/auth/register crée une ressource persistante lourde (compte +
-// propriétaire + réglages + modèles de vouchers + profils + essai de 90
+// propriétaire + réglages + modèles de vouchers + profils + essai de 60
 // jours). Le middleware S1-A2 (main.go) borne le DÉBIT (12 req/min par IP
 // sur /api/auth/*), mais un fermier de comptes d'essai peut étaler ses
 // créations dans le temps (12/min pendant des heures) et gonfler la base de

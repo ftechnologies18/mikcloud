@@ -151,12 +151,17 @@ type SaasPlan struct {
 // segmenté par usage depuis le N°122 :
 //   - HOTSPOT (réseaux publics payants — cybercafé, maquis, boutique) :
 //     Mensuel 2 500 F/mois/routeur (acquisition, sans engagement) ; Annuel
-//     25 000 F/an routeurs illimités (2 mois offerts vs mensuel : 25 000 F =
-//     10 mois au tarif mensuel — verrouille 12 mois, consolide tous les sites).
+//     25 000 F/an routeurs illimités (verrouille 12 mois, consolide tous
+//     les sites du réseau).
 //   - HOMENET (pare-feu cloud des foyers résidentiels) : Mensuel
-//     1 250 F/mois/routeur ; Annuel 12 000 F/an routeurs illimités (2 mois
-//     offerts — le prix historique du produit, la maison paie deux fois
-//     moins cher que le lieu public : moins de charge, moins de tickets).
+//     1 250 F/mois/routeur ; Annuel 12 000 F/an routeurs illimités (le prix
+//     historique du produit, la maison paie deux fois moins cher que le lieu
+//     public : moins de charge, moins de tickets).
+//
+// N°123 — le badge « 2 mois offerts » est RETIRÉ des formules annuelles
+// (l'argument prix est porté par le tarif affiché, pas par une promesse de
+// gratuité relative). Seules les mensuelles gardent un badge (« Sans
+// engagement ») ; les annuelles s'affichent sans badge.
 //
 // Identifiants historiques (« essentiel », « illimite ») : ils ne sont PLUS
 // dans le catalogue mais restent résolus par ResolvePlan (à l'usage du compte)
@@ -173,7 +178,7 @@ var SaasPlans = []SaasPlan{
 	{
 		ID: "hotspot-annuel", Name: "Hotspot Annuel", PriceFcfa: 25000, Period: "an",
 		Unlimited: true, Usage: AccountUsageHotspot,
-		Tagline: "Tous vos routeurs, un seul prix", Badge: "2 mois offerts",
+		Tagline: "Tous vos routeurs, un seul prix", // N°123 : sans badge
 	},
 	{
 		ID: "homenet-mensuel", Name: "HomeNet Mensuel", PriceFcfa: 1250, Period: "mois",
@@ -183,7 +188,7 @@ var SaasPlans = []SaasPlan{
 	{
 		ID: "homenet-annuel", Name: "HomeNet Annuel", PriceFcfa: 12000, Period: "an",
 		Unlimited: true, Usage: AccountUsageHomeNet,
-		Tagline: "Votre maison protégée toute l'année", Badge: "2 mois offerts",
+		Tagline: "Votre maison protégée toute l'année", // N°123 : sans badge
 	},
 }
 

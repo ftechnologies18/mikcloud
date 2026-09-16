@@ -10,8 +10,8 @@
 // sur le routeur : SafeWiFi, Shield, FamilyGuard, AntiVPN) et un outil de
 // pilotage de parc (télémétrie, mise à jour RouterOS unitaire + flotte).
 // La copie ne mentionne QUE des fonctionnalités réelles du produit — les
-// chiffres mis en avant (500 vouchers/lot, 4 boucliers, 54 pays, 90 jours
-// d'essai) sont des constantes produit, pas des métriques d'usage inventées.
+// chiffres mis en avant (500 vouchers/lot, 4 boucliers, 54 pays, 60 jours
+// d'essai Hotspot) sont des constantes produit, pas des métriques d'usage inventées.
 //
 // Positionnement : marché africain pan-continental (UEMOA + CEMAC + Afrique
 // de l'Est + Nigeria + Ghana). Multi mobile-money (Wave, Orange Money, MTN
@@ -167,7 +167,7 @@ const fr: LandingCopy = {
       "Que vous exploitiez un hotspot public ou protégiez votre maison, MikCloud réunit vouchers, portails captifs à votre marque, quatre boucliers pare-feu et pilotage complet de votre parc MikroTik — une seule console, réparée automatiquement depuis le cloud.",
     ctaPrimary: "Protéger mon réseau",
     ctaSecondary: "Découvrir la plateforme",
-    trialHint: "Essai gratuit · sans carte bancaire — 90 jours Hotspot · 30 jours Maison",
+    trialHint: "Essai gratuit · sans carte bancaire — 60 jours Hotspot · 30 jours Maison",
     chips: ["4/4 protections actives", "500 vouchers par lot", "Agent · check-in 45 s"],
   },
   marquee: [
@@ -340,7 +340,7 @@ const fr: LandingCopy = {
       {
         name: "Découverte",
         price: "0",
-        period: "FCFA · 90 jours",
+        period: "FCFA · 60 jours",
         tagline: "Pour découvrir MikCloud sans risque",
         cta: "Commencer gratuitement",
         highlight: false,
@@ -358,7 +358,7 @@ const fr: LandingCopy = {
         tagline: "Tous vos routeurs, un seul prix",
         cta: "Passer à l'annuel",
         highlight: true,
-        badge: "Le plus choisi · 2 mois offerts",
+        badge: "Le plus choisi",
         features: [
           "Routeurs illimités",
           "4 protections sur tout le parc",
@@ -409,7 +409,7 @@ const fr: LandingCopy = {
             tagline: "Votre foyer protégé toute l'année",
             cta: "Passer à l'annuel",
             highlight: true,
-            badge: "Le plus choisi · 2 mois offerts",
+            badge: "Le plus choisi",
             features: [
               "Routeurs illimités — toute la famille",
               "4 protections sur tout le parc",
@@ -436,7 +436,7 @@ const fr: LandingCopy = {
       },
     ],
     currencyNote:
-      "Frais de paiement répercutés sur le prix de liste : carte +6 %, Wave −3 % (remise mobile money). Essai offert : 90 jours en mode Hotspot, 30 jours en mode Maison.",
+      "Frais de paiement répercutés sur le prix de liste : carte +6 %, Wave −3 % (remise mobile money). Essai offert : 60 jours en mode Hotspot, 30 jours en mode Maison.",
   },
   faq: {
     eyebrow: "Questions fréquentes",
@@ -529,7 +529,7 @@ const en: LandingCopy = {
       "Whether you run a public hotspot or shield your home, MikCloud brings vouchers, white-label captive portals, four firewall shields and full MikroTik fleet control together — one console, self-healed from the cloud.",
     ctaPrimary: "Protect my network",
     ctaSecondary: "Explore the platform",
-    trialHint: "Free trial · no credit card — 90 days Hotspot · 30 days Home",
+    trialHint: "Free trial · no credit card — 60 days Hotspot · 30 days Home",
     chips: ["4/4 protections active", "500 vouchers per batch", "Agent · 45 s check-in"],
   },
   marquee: [
@@ -701,7 +701,7 @@ const en: LandingCopy = {
       {
         name: "Discovery",
         price: "0",
-        period: "FCFA · 90 days",
+        period: "FCFA · 60 days",
         tagline: "To discover MikCloud risk-free",
         cta: "Start for free",
         highlight: false,
@@ -719,7 +719,7 @@ const en: LandingCopy = {
         tagline: "All your routers, one single price",
         cta: "Go yearly",
         highlight: true,
-        badge: "Most popular · 2 months free",
+        badge: "Most popular",
         features: [
           "Unlimited routers",
           "4 protections across the fleet",
@@ -770,7 +770,7 @@ const en: LandingCopy = {
             tagline: "Your home shielded all year",
             cta: "Go yearly",
             highlight: true,
-            badge: "Most popular · 2 months free",
+            badge: "Most popular",
             features: [
               "Unlimited routers — the whole family",
               "4 protections across the fleet",
@@ -797,7 +797,7 @@ const en: LandingCopy = {
       },
     ],
     currencyNote:
-      "Payment fees passed through the list price: card +6%, Wave −3% (mobile money discount). Free trial: 90 days in Hotspot mode, 30 days in Home mode.",
+      "Payment fees passed through the list price: card +6%, Wave −3% (mobile money discount). Free trial: 60 days in Hotspot mode, 30 days in Home mode.",
   },
   faq: {
     eyebrow: "Frequently asked questions",

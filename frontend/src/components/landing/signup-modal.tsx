@@ -171,7 +171,7 @@ export default function SignupModal({ open, onOpenChange }: SignupModalProps) {
           </DialogTitle>
           <DialogDescription>
             {step === 1
-              ? tf("signup.subtitle", { days: usage === "homenet" ? 30 : 90 })
+              ? tf("signup.subtitle", { days: usage === "homenet" ? 30 : 60 })
               : t("signup.subtitleStep2", "Pour vous aider et segmenter notre offre — nous ne spammons jamais.")}
           </DialogDescription>
         </DialogHeader>
@@ -300,7 +300,7 @@ export default function SignupModal({ open, onOpenChange }: SignupModalProps) {
 
             <motion.div variants={rise} className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
               <ShieldCheck className="mr-1.5 inline size-3.5 text-primary" />
-              {tf("signup.trialNote", { days: usage === "homenet" ? 30 : 90 })}
+              {tf("signup.trialNote", { days: usage === "homenet" ? 30 : 60 })}
             </motion.div>
 
             <motion.div variants={rise} whileHover={{ scale: canSubmitStep1 ? 1.015 : 1 }} whileTap={{ scale: canSubmitStep1 ? 0.97 : 1 }}>

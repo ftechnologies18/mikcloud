@@ -107,23 +107,26 @@ func planAmount(p model.SaasPlan, routerCount int) int {
 }
 
 // trialPeriodEnd — N°122 : fin de l'essai selon le mode du compte. Hotspot
-// (produit historique) : 3 mois (~90 jours). HomeNet (foyer résidentiel) :
+// (produit historique) : 60 jours — N°123 : réduit de 90 (trois mois
+// laissaient le réseau tourner sans payer ; deux mois suffisent à installer
+// un hotspot et à valider le produit). HomeNet (foyer résidentiel) :
 // 30 jours — cycle de décision d'un particulier, la maison n'a pas besoin
-// d'un trimestre pour savoir si son WiFi est protégé.
+// d'un mois de plus pour savoir si son WiFi est protégé.
 func trialPeriodEnd(now time.Time, usage string) time.Time {
 	if usage == model.AccountUsageHomeNet {
 		return now.AddDate(0, 0, 30)
 	}
-	return now.AddDate(0, 3, 0)
+	return now.AddDate(0, 0, 60)
 }
 
 // trialDefaultMonths — durée d'essai PAR DÉFAUT (en mois de plateforme)
 // quand la plateforme attribue/prolonge un essai sans préciser de durée.
+// N°123 : Hotspot 2 mois (~60 jours, aligné sur trialPeriodEnd), Maison 1.
 func trialDefaultMonths(usage string) int {
 	if usage == model.AccountUsageHomeNet {
 		return 1
 	}
-	return 3
+	return 2
 }
 
 // accountRouterCount — nombre de routeurs enregistrés du compte (tous modes :

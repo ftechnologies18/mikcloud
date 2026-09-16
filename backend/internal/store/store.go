@@ -92,6 +92,9 @@ func New(dir string) (*Store, error) {
 		if migrateUsageScopedPlans(s.db) {
 			mtChanged = true
 		}
+		if migrateActiveTrialCap(s.db) {
+			mtChanged = true
+		}
 		if mtChanged {
 			s.Lock()
 			s.Save()
@@ -139,6 +142,9 @@ func New(dir string) (*Store, error) {
 				mtChanged = true
 			}
 			if migrateUsageScopedPlans(s.db) {
+				mtChanged = true
+			}
+			if migrateActiveTrialCap(s.db) {
 				mtChanged = true
 			}
 			if mtChanged {
@@ -543,6 +549,68 @@ func migrateUsageScopedPlans(db *model.DB) bool {
 	return changed
 }
 
+// migrateActiveTrialCap — N°123 (essai Hotspot réduit à 60 jours) : met à
+// jour les clients ACTIFS en essai vers la durée segmentée courante —
+// 60 jours en Hotspot, 30 jours en HomeNet — calculée depuis le DÉBUT de
+// la période posée en base (PeriodStart) :
+//   - un essai de 90 jours encore en cours passe à 60 jours à compter de
+//     son début : le reliquat au-delà de la nouvelle durée est retiré ;
+//   - un essai entamé depuis plus que la durée cible voit sa fin ramenée
+//     dans le passé : le compte passe « expired » (lecture seule), puis
+//     « suspended » après la durée de grâce (30 j) — la réduction s'applique
+//     aussi aux essais déjà largement consommés, c'est la décision produit ;
+//   - un essai plus court que la durée cible (prolongation manuelle
+//     antérieure plus courte, essai Maison de 30 j conforme) reste INTACT :
+//     la migration ne fait que raccourcir, jamais allonger.
+//
+// Périmètre : comptes de statut « active » dont l'abonnement courant est
+// « essai ». Les abonnements PAYÉS (segmentés ou historiques réécrits par
+// migrateUsageScopedPlans) et les essais des comptes désactivés ne sont
+// pas touchés. Une PeriodEnd vide (non expirante) est ignorée — une
+// migration ne ferme jamais un accès illimité posé à la main.
+// Idempotent : une fin déjà ≤ à PeriodStart + durée cible ne re-matche pas.
+func migrateActiveTrialCap(db *model.DB) bool {
+	statusOf := func(accID string) (string, string) {
+		for i := range db.Accounts {
+			if db.Accounts[i].ID == accID {
+				if db.Accounts[i].Usage == model.AccountUsageHomeNet {
+					return db.Accounts[i].Status, model.AccountUsageHomeNet
+				}
+				return db.Accounts[i].Status, model.AccountUsageHotspot
+			}
+		}
+		return "", model.AccountUsageHotspot
+	}
+	changed := false
+	for accID, s := range db.SettingsByAccount {
+		if s.Subscription.PlanID != "essai" {
+			continue
+		}
+		accStatus, usage := statusOf(accID)
+		if accStatus != "active" {
+			continue
+		}
+		if s.Subscription.PeriodEnd == "" || s.Subscription.PeriodStart == "" {
+			continue
+		}
+		start, errS := time.Parse(time.RFC3339, s.Subscription.PeriodStart)
+		end, errE := time.Parse(time.RFC3339, s.Subscription.PeriodEnd)
+		if errS != nil || errE != nil {
+			continue
+		}
+		trialCap := start.AddDate(0, 0, 60)
+		if usage == model.AccountUsageHomeNet {
+			trialCap = start.AddDate(0, 0, 30)
+		}
+		if end.After(trialCap) {
+			s.Subscription.PeriodEnd = trialCap.Format(time.RFC3339)
+			db.SettingsByAccount[accID] = s
+			changed = true
+		}
+	}
+	return changed
+}
+
 // bootstrapAdmin — sécurité P0 : il n'existe PLUS d'identifiants par défaut
 // connus du code (l'ancien admin/admin123 documenté publiquement est
 // supprimé — BuildEmptyState ne crée plus aucun utilisateur). Sur un état
@@ -933,6 +1001,9 @@ func (s *Store) Reload() (ReloadStats, error) {
 		changed = true
 	}
 	if migrateUsageScopedPlans(s.db) {
+		changed = true
+	}
+	if migrateActiveTrialCap(s.db) {
 		changed = true
 	}
 	if applyAdminOverride(s.db) {

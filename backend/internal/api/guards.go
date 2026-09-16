@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"mikcloud/hotspot-api/internal/model"
 )
 
 // ---------------------------------------------------------------------------
@@ -69,17 +71,20 @@ func (a *API) guardAccountWrite(w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 
-// guardAccountRouterLimit — plafond de routeurs du plan Essentiel (P3) :
-// la période couvre RouterSlots routeurs ; au-delà, la création est refusée
-// (402, code « plan_router_limit »). À appeler APRÈS guardAccountWrite,
-// sous verrou (routerCount = routeurs déjà enregistrés du compte).
+// guardAccountRouterLimit — plafond de routeurs des formules mensuelles par
+// routeur et de l'essai (P3) : la période couvre RouterSlots routeurs ;
+// au-delà, la création est refusée (402, code « plan_router_limit »). À
+// appeler APRÈS guardAccountWrite, sous verrou (routerCount = routeurs déjà
+// enregistrés du compte).
 func guardAccountRouterLimit(w http.ResponseWriter, view subscriptionGuardView, routerCount int) bool {
-	// Essai : 1 routeur max. Essentiel : quota de routeurs couverts par la période.
-	if (view.PlanID != "essentiel" && view.PlanID != "essai") || view.RouterSlots <= 0 || routerCount < view.RouterSlots {
+	// Essai : 1 routeur max. Mensuelles (Hotspot/HomeNet + historique
+	// « essentiel ») : quota de routeurs couverts par la période. Les annuelles
+	// et l'ère bêta ne plafonnent pas (RouterSlots = 0).
+	if (view.PlanID != "essai" && !model.IsPerRouterPlanID(view.PlanID)) || view.RouterSlots <= 0 || routerCount < view.RouterSlots {
 		return true
 	}
 	writeErrCode(w, http.StatusPaymentRequired, "plan_router_limit",
-		fmt.Sprintf("Votre formule couvre %d routeur(s) — passez au plan Essentiel (plus de routeurs) ou Illimité pour en ajouter", view.RouterSlots),
+		fmt.Sprintf("Votre formule couvre %d routeur(s) — passez à la formule annuelle de votre mode (routeurs illimités) pour en ajouter", view.RouterSlots),
 		map[string]any{"limit": view.RouterSlots, "current": routerCount, "plan": view.PlanID})
 	return false
 }

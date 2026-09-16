@@ -451,7 +451,9 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 			PlanID:      "essai",
 			Status:      "active",
 			PeriodStart: now.Format(time.RFC3339),
-			PeriodEnd:   now.AddDate(0, 3, 0).Format(time.RFC3339),
+			// N°122 — essai segmenté : 3 mois (~90 j) en Hotspot,
+			// 30 jours en HomeNet (le foyer décide vite).
+			PeriodEnd:   trialPeriodEnd(now, usage).Format(time.RFC3339),
 			RouterSlots: 1,
 		},
 	}

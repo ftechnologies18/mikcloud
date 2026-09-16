@@ -138,37 +138,58 @@ type SaasPlan struct {
 	Period    string `json:"period"`    // mois | an
 	PerRouter bool   `json:"perRouter"` // true : prix × routeurs enregistrés
 	Unlimited bool   `json:"unlimited"` // routeurs illimités
-	Tagline   string `json:"tagline"`
-	Badge     string `json:"badge,omitempty"`
+	// Usage — segment N°122 de la formule : « hotspot » (réseaux publics
+	// payants) ou « homenet » (foyers résidentiels). Le catalogue est
+	// SEGMENTÉ par mode : chaque compte ne voit et ne souscrit que les
+	// formules de SON usage (validé serveur, cf. ResolvePlan).
+	Usage   string `json:"usage"`
+	Tagline string `json:"tagline"`
+	Badge   string `json:"badge,omitempty"`
 }
 
-// SaasPlans — catalogue des formules MikCloud (marché FCFA concurrentiel).
-//   - Essentiel : 1 250 F/mois/routeur — acquisition, sans engagement, le gérant
-//     paie au fil de sa croissance (remboursé par 4-5 tickets 24 h vendus).
-//   - Illimité : 12 000 F/an, routeurs illimités — arme de conquête :
-//     1 000 F/mois équivalent, 2 mois offerts vs Essentiel (−20 % à 1 routeur,
-//     −92 % à 10 routeurs), verrouille 12 mois et fait consolider tous les sites.
+// SaasPlans — catalogue des formules MikCloud (marché FCFA concurrentiel),
+// segmenté par usage depuis le N°122 :
+//   - HOTSPOT (réseaux publics payants — cybercafé, maquis, boutique) :
+//     Mensuel 2 500 F/mois/routeur (acquisition, sans engagement) ; Annuel
+//     25 000 F/an routeurs illimités (2 mois offerts vs mensuel : 25 000 F =
+//     10 mois au tarif mensuel — verrouille 12 mois, consolide tous les sites).
+//   - HOMENET (pare-feu cloud des foyers résidentiels) : Mensuel
+//     1 250 F/mois/routeur ; Annuel 12 000 F/an routeurs illimités (2 mois
+//     offerts — le prix historique du produit, la maison paie deux fois
+//     moins cher que le lieu public : moins de charge, moins de tickets).
+//
+// Identifiants historiques (« essentiel », « illimite ») : ils ne sont PLUS
+// dans le catalogue mais restent résolus par ResolvePlan (à l'usage du compte)
+// pour les abonnements antérieurs au N°122 — la migration store les réécrit
+// vers les identifiants segmentés au démarrage.
 
 // SaasPlans — catalogue des formules MikCloud (marché FCFA concurrentiel).
-//   - Essentiel : 1 250 F/mois/routeur — acquisition, sans engagement, le gérant
-//     paie au fil de sa croissance (remboursé par 4-5 tickets 24 h vendus).
-//   - Illimité : 12 000 F/an, routeurs illimités — arme de conquête :
-//     1 000 F/mois équivalent, 2 mois offerts vs Essentiel (−20 % à 1 routeur,
-//     −92 % à 10 routeurs), verrouille 12 mois et fait consolider tous les sites.
 var SaasPlans = []SaasPlan{
 	{
-		ID: "essentiel", Name: "Essentiel", PriceFcfa: 1250, Period: "mois",
-		PerRouter: true, Tagline: "Payez au fil de votre croissance",
-		Badge: "Sans engagement",
+		ID: "hotspot-mensuel", Name: "Hotspot Mensuel", PriceFcfa: 2500, Period: "mois",
+		PerRouter: true, Usage: AccountUsageHotspot,
+		Tagline: "Payez au fil de votre croissance", Badge: "Sans engagement",
 	},
 	{
-		ID: "illimite", Name: "Illimité", PriceFcfa: 12000, Period: "an",
-		Unlimited: true, Tagline: "Tous vos routeurs, un seul prix",
-		Badge: "2 mois offerts · −20 %",
+		ID: "hotspot-annuel", Name: "Hotspot Annuel", PriceFcfa: 25000, Period: "an",
+		Unlimited: true, Usage: AccountUsageHotspot,
+		Tagline: "Tous vos routeurs, un seul prix", Badge: "2 mois offerts",
+	},
+	{
+		ID: "homenet-mensuel", Name: "HomeNet Mensuel", PriceFcfa: 1250, Period: "mois",
+		PerRouter: true, Usage: AccountUsageHomeNet,
+		Tagline: "Protégez votre foyer sans engagement", Badge: "Sans engagement",
+	},
+	{
+		ID: "homenet-annuel", Name: "HomeNet Annuel", PriceFcfa: 12000, Period: "an",
+		Unlimited: true, Usage: AccountUsageHomeNet,
+		Tagline: "Votre maison protégée toute l'année", Badge: "2 mois offerts",
 	},
 }
 
-// PlanByID — retrouve une formule du catalogue par son identifiant.
+// PlanByID — retrouve une formule du catalogue par son identifiant EXACT
+// (identifiants segmentés N°122 uniquement). Pour les identifiants
+// historiques ou la résolution à l'usage du compte, voir ResolvePlan.
 
 // PlanByID — retrouve une formule du catalogue par son identifiant.
 func PlanByID(id string) (SaasPlan, bool) {
@@ -178,6 +199,72 @@ func PlanByID(id string) (SaasPlan, bool) {
 		}
 	}
 	return SaasPlan{}, false
+}
+
+// PlansForUsage — les DEUX formules du mode demandé (mensuel puis annuel),
+// dans l'ordre d'affichage de la console. Usage vide/inconnu → hotspot
+// (produit historique, cf. normalizeAccountUsage).
+func PlansForUsage(usage string) []SaasPlan {
+	if usage != AccountUsageHomeNet {
+		usage = AccountUsageHotspot
+	}
+	out := make([]SaasPlan, 0, 2)
+	for _, p := range SaasPlans {
+		if p.Usage == usage {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// ResolvePlan — résout un identifiant de formule À L'USAGE du compte :
+//   - identifiant segmenté (« hotspot-mensuel»…) → la formule exacte ;
+//   - identifiant HISTORIQUE (« essentiel », « illimite » — abonnements
+//     posés avant le N°122) → la formule du MÊME MODE que le compte :
+//     un compte hotspot renouvelle « essentiel » au tarif Hotspot Mensuel,
+//     un compte homenet au tarif HomeNet Mensuel ;
+//   - « essai » et tout identifiant inconnu → pas de formule (false).
+//
+// Source unique du pricing segmenté : applySubscriptionLocked, la demande
+// client, le webhook Wave et le prélèvement carte passent tous par ici.
+func ResolvePlan(id, usage string) (SaasPlan, bool) {
+	if p, ok := PlanByID(id); ok {
+		return p, true
+	}
+	plans := PlansForUsage(usage)
+	switch id {
+	case "essentiel":
+		if len(plans) > 0 {
+			return plans[0], true
+		}
+	case "illimite":
+		if len(plans) > 1 {
+			return plans[1], true
+		}
+	}
+	return SaasPlan{}, false
+}
+
+// IsAnnualPlanID — true pour les formules ANNUELLES (période « an »),
+// identifiants historiques compris (défense en profondeur : les demandes de
+// facturation et les prélèvements créés avant le N°122 gardent « illimite »).
+func IsAnnualPlanID(id string) bool {
+	switch id {
+	case "hotspot-annuel", "homenet-annuel", "illimite":
+		return true
+	}
+	return false
+}
+
+// IsPerRouterPlanID — true pour les formules MENSUELLES par routeur (quota
+// RouterSlots vérifié à la création de routeur), identifiant historique
+// compris. L'essai est géré à part (1 routeur, hors catalogue payant).
+func IsPerRouterPlanID(id string) bool {
+	switch id {
+	case "hotspot-mensuel", "homenet-mensuel", "essentiel":
+		return true
+	}
+	return false
 }
 
 // Settings — paramètres du tenant (tenant + plan + abonnement).

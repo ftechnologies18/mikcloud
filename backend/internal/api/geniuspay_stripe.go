@@ -302,7 +302,7 @@ func (a *API) applyStripeRenewalByUUID(id, paidAt string, amount float64) bool {
 		}
 		months := stripeCycleMonths(g.Cycle)
 		slots := g.Slots
-		if g.PlanID == "essentiel" {
+		if model.IsPerRouterPlanID(g.PlanID) {
 			// La couverture suit le parc réel (comme finalizeBillingSuccess) :
 			// des routeurs ajoutés restent couverts après renouvellement.
 			if rc := accountRouterCount(db, g.AccountID); rc > slots {

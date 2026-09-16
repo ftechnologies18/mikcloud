@@ -109,15 +109,38 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-/** Preview locale (indicative) du montant et de l'échéance après attribution. */
+/** Miroir indicatif du catalogue segmenté N°122 (le serveur fait foi —
+ * appliqué par applySubscriptionLocked). Utilisé uniquement pour le preview
+ * du dialog plateforme. */
+const PLAN_MIRROR: Record<
+  string,
+  { price: number; perRouter: boolean; period: "mois" | "an" }
+> = {
+  "hotspot-mensuel": { price: 2500, perRouter: true, period: "mois" },
+  "hotspot-annuel": { price: 25000, perRouter: false, period: "an" },
+  "homenet-mensuel": { price: 1250, perRouter: true, period: "mois" },
+  "homenet-annuel": { price: 12000, perRouter: false, period: "an" },
+};
+
+/** Les DEUX formules d'un mode + l'essai (options du dialog plateforme). */
+function planOptionsFor(usage: AccountUsage | undefined): { id: string }[] {
+  return usage === "homenet"
+    ? [{ id: "homenet-mensuel" }, { id: "homenet-annuel" }, { id: "essai" }]
+    : [{ id: "hotspot-mensuel" }, { id: "hotspot-annuel" }, { id: "essai" }];
+}
+
+/** Preview locale (indicative) du montant et de l'échéance après attribution —
+ * miroir d'applySubscriptionLocked : mensuelle = prix × slots × mois ;
+ * annuelle = forfait pro-ratisé (prix × mois / 12, tronqué comme en Go). */
 function previewSubscription(
   current: SubscriptionInfo,
-  planId: "essentiel" | "illimite" | "essai",
+  planId: string,
   months: number,
   slots: number,
 ): { amount: number; end: string | null; stacked: boolean } {
   const now = new Date();
-  if (planId !== "essentiel" && planId !== "illimite") {
+  const plan = PLAN_MIRROR[planId];
+  if (!plan) {
     return { amount: 0, end: null, stacked: false };
   }
   const stackable = current.planId === planId && current.status === "active" && current.periodEnd !== "";
@@ -128,10 +151,9 @@ function previewSubscription(
   }
   const end = new Date(base);
   end.setMonth(end.getMonth() + months);
-  const amount =
-    planId === "essentiel"
-      ? 1250 * Math.max(slots, 1) * months
-      : 1000 * months;
+  const amount = plan.perRouter
+    ? plan.price * Math.max(slots, 1) * months
+    : Math.floor((plan.price * months) / 12);
   return { amount, end: end.toISOString(), stacked: stackable };
 }
 
@@ -141,11 +163,13 @@ function previewSubscription(
 
 function SubscriptionDialog({
   accountId,
+  usage,
   current,
   open,
   onOpenChange,
 }: {
   accountId: string;
+  usage: AccountUsage | undefined;
   current: SubscriptionInfo;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -154,9 +178,14 @@ function SubscriptionDialog({
   const currency = useCurrency();
   const queryClient = useQueryClient();
 
-  const [planId, setPlanId] = useState<string>("essentiel");
+  const isHome = usage === "homenet";
+  const planOptions = planOptionsFor(usage);
+  const monthlyId = isHome ? "homenet-mensuel" : "hotspot-mensuel";
+  const annualId = isHome ? "homenet-annuel" : "hotspot-annuel";
+
+  const [planId, setPlanId] = useState<string>(monthlyId);
   const [months, setMonths] = useState<string>(
-    current.planId === "illimite" ? "12" : "1",
+    current.planId === annualId ? "12" : "1",
   );
   const [slots, setSlots] = useState<string>(
     String(current.routerSlots > 0 ? current.routerSlots : Math.max(current.routerCount, 1)),
@@ -166,18 +195,19 @@ function SubscriptionDialog({
 
   const monthsNum = Math.max(1, Math.min(36, parseInt(months, 10) || 1));
   const slotsNum = Math.max(1, parseInt(slots, 10) || 1);
-  const planKey = planId as "essentiel" | "illimite" | "essai";
+  const isPaid = planId === monthlyId || planId === annualId;
+  const isPerRouter = planId === monthlyId;
   const preview = useMemo(
-    () => previewSubscription(current, planKey, monthsNum, slotsNum),
-    [current, planKey, monthsNum, slotsNum],
+    () => previewSubscription(current, planId, monthsNum, slotsNum),
+    [current, planId, monthsNum, slotsNum],
   );
 
   const mutation = useMutation({
     mutationFn: () =>
       updateAccountSubscription(accountId, {
-        planId: planKey,
-        months: planKey === "essentiel" || planKey === "illimite" ? monthsNum : undefined,
-        routerSlots: planKey === "essentiel" ? slotsNum : undefined,
+        planId,
+        months: isPaid ? monthsNum : undefined,
+        routerSlots: isPerRouter ? slotsNum : undefined,
         markPaid,
         note: note.trim() || undefined,
       }),
@@ -202,19 +232,29 @@ function SubscriptionDialog({
         <div className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="sub-plan">{t("accounts.sub.plan")}</Label>
-            <Select value={planId} onValueChange={setPlanId}>
+            <Select
+              value={planId}
+              onValueChange={(v) => {
+                setPlanId(v);
+                // La durée par défaut suit la formule choisie (12 mois pour
+                // l'annuel, 1 mois pour le mensuel).
+                setMonths(v === annualId ? "12" : "1");
+              }}
+            >
               <SelectTrigger id="sub-plan" className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="essentiel">{t("accounts.sub.planEssentiel")}</SelectItem>
-                <SelectItem value="illimite">{t("accounts.sub.planIllimite")}</SelectItem>
-                <SelectItem value="essai">{t("accounts.sub.planBeta")}</SelectItem>
+                {planOptions.map((opt) => (
+                  <SelectItem key={opt.id} value={opt.id}>
+                    {t(`accounts.sub.plan-${opt.id}`, opt.id)}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
 
-          {(planId === "essentiel" || planId === "illimite") && (
+          {isPaid && (
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
                 <Label htmlFor="sub-months">{t("accounts.sub.months")}</Label>
@@ -223,7 +263,7 @@ function SubscriptionDialog({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {["1", "3", "6", "12", "24"].map((m) => (
+                    {(planId === annualId ? ["12", "24", "36"] : ["1", "3", "6", "12", "24"]).map((m) => (
                       <SelectItem key={m} value={m}>
                         {m}
                       </SelectItem>
@@ -231,7 +271,7 @@ function SubscriptionDialog({
                   </SelectContent>
                 </Select>
               </div>
-              {planId === "essentiel" && (
+              {isPerRouter && (
                 <div className="space-y-2">
                   <Label htmlFor="sub-slots">{t("accounts.sub.slots")}</Label>
                   <Input
@@ -247,7 +287,7 @@ function SubscriptionDialog({
             </div>
           )}
 
-          {planId === "essentiel" && (
+          {isPerRouter && (
             <p className="text-xs text-muted-foreground">{t("accounts.sub.slotsHint")}</p>
           )}
 
@@ -272,7 +312,7 @@ function SubscriptionDialog({
 
           {/* Preview indicative — le serveur fait foi. */}
           <div className="rounded-lg bg-muted/60 p-3 text-sm">
-            {(planId === "essentiel" || planId === "illimite") ? (
+            {isPaid ? (
               <>
                 <p className="font-medium">
                   {tf("accounts.sub.previewAmount", {
@@ -720,6 +760,7 @@ export function AccountDetailDialog({
       {sub && (
         <SubscriptionDialog
           accountId={account.id}
+          usage={account.usage}
           current={sub}
           open={subOpen}
           onOpenChange={setSubOpen}

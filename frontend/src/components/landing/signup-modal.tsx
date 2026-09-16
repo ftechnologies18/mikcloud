@@ -52,7 +52,7 @@ export interface SignupModalProps {
 }
 
 export default function SignupModal({ open, onOpenChange }: SignupModalProps) {
-  const { t, lang } = useI18n();
+  const { t, tf, lang } = useI18n();
   const setAuth = useHotspotStore((s) => s.setAuth);
 
   // Étape courante : 1 = compte, 2 = profil.
@@ -171,7 +171,7 @@ export default function SignupModal({ open, onOpenChange }: SignupModalProps) {
           </DialogTitle>
           <DialogDescription>
             {step === 1
-              ? t("signup.subtitle", "Essai gratuit de 90 jours — 1 routeur inclus, sans carte bancaire.")
+              ? tf("signup.subtitle", { days: usage === "homenet" ? 30 : 90 })
               : t("signup.subtitleStep2", "Pour vous aider et segmenter notre offre — nous ne spammons jamais.")}
           </DialogDescription>
         </DialogHeader>
@@ -300,10 +300,7 @@ export default function SignupModal({ open, onOpenChange }: SignupModalProps) {
 
             <motion.div variants={rise} className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
               <ShieldCheck className="mr-1.5 inline size-3.5 text-primary" />
-              {t(
-                "signup.trialNote",
-                "Votre essai de 90 jours démarre immédiatement. 1 routeur inclus, sans carte bancaire.",
-              )}
+              {tf("signup.trialNote", { days: usage === "homenet" ? 30 : 90 })}
             </motion.div>
 
             <motion.div variants={rise} whileHover={{ scale: canSubmitStep1 ? 1.015 : 1 }} whileTap={{ scale: canSubmitStep1 ? 0.97 : 1 }}>

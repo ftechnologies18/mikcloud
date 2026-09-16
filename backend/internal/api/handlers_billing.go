@@ -206,7 +206,7 @@ func (a *API) handleAdminBillingRequestResolve(w http.ResponseWriter, r *http.Re
 	months := req.Months
 	if months <= 0 {
 		months = 1
-		if br.PlanID == "illimite" {
+		if model.IsAnnualPlanID(br.PlanID) {
 			months = 12
 		}
 	}
@@ -411,7 +411,7 @@ func (a *API) handleWaveWebhook(w http.ResponseWriter, r *http.Request) {
 	// Succès : activation aux règles de la plateforme (source unique) puis
 	// clôture de la demande (PaidVia wave — encaissement automatique).
 	months := 1
-	if br.PlanID == "illimite" {
+	if model.IsAnnualPlanID(br.PlanID) {
 		months = 12
 	}
 	slots := br.RouterCount
@@ -442,9 +442,10 @@ func (a *API) handleWaveWebhook(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// periodLabelOf — libellé de période d'une formule du catalogue.
+// periodLabelOf — libellé de période d'une formule du catalogue (N°122 :
+// formules annuelles segmentées + identifiant historique « illimite »).
 func periodLabelOf(planID string) string {
-	if planID == "illimite" {
+	if model.IsAnnualPlanID(planID) {
 		return "1 an"
 	}
 	return "1 mois"

@@ -184,10 +184,20 @@ export interface AccountDetail {
 
 /** Corps de PUT /api/admin/accounts/{id}/subscription (attribution plateforme). */
 export interface SubscriptionUpdatePayload {
-  planId: "essentiel" | "illimite" | "essai";
-  /** Durée en mois (défaut : 1 essentiel, 12 illimité). */
+  /** N°122 — formules segmentées par mode (les identifiants historiques
+   * restent acceptés par le serveur, résolus à l'usage du compte). */
+  planId:
+    | "hotspot-mensuel"
+    | "hotspot-annuel"
+    | "homenet-mensuel"
+    | "homenet-annuel"
+    | "essentiel"
+    | "illimite"
+    | "essai"
+    | (string & {});
+  /** Durée en mois (défaut : 1 mensuelle, 12 annuelle, essai selon le mode). */
   months?: number;
-  /** Routeurs couverts (Essentiel ; défaut = quota actuel sinon routeurs enregistrés). */
+  /** Routeurs couverts (formules mensuelles ; défaut = quota actuel sinon routeurs enregistrés). */
   routerSlots?: number;
   /** Marquer la période comme payée maintenant. */
   markPaid?: boolean;
@@ -1120,16 +1130,20 @@ export interface AppSettings {
   autoImportRouterUsers?: boolean;
 }
 
-/** Formule d'abonnement MikCloud (catalogue GET /api/plans). */
+/** Formule d'abonnement MikCloud (catalogue GET /api/plans — segmenté par
+ * mode depuis le N°122 : le serveur ne renvoie au compte que les formules
+ * de SON usage). */
 export interface SaasPlan {
-  id: "essentiel" | "illimite" | string;
+  id: "hotspot-mensuel" | "hotspot-annuel" | "homenet-mensuel" | "homenet-annuel" | string;
   name: string;
   priceFcfa: number;
   period: "mois" | "an";
-  /** true : prix × nombre de routeurs enregistrés (formule Essentiel). */
+  /** true : prix × nombre de routeurs enregistrés (formules mensuelles). */
   perRouter: boolean;
-  /** true : routeurs illimités (formule Illimité). */
+  /** true : routeurs illimités (formules annuelles). */
   unlimited: boolean;
+  /** Mode de la formule : "hotspot" (réseaux publics) | "homenet" (foyers). */
+  usage: "hotspot" | "homenet" | string;
   tagline: string;
   badge?: string;
 }
@@ -1160,7 +1174,10 @@ export interface SubscriptionView {
   status: "active" | "expired" | "suspended" | "none";
   routerCount: number;
   currentAmountFcfa: number;
+  /** Formules du MODE du compte uniquement (filtrées serveur, N°122). */
   plans: SaasPlan[];
+  /** Usage du compte : "hotspot" | "homenet" (segmentation N°122). */
+  usage: "hotspot" | "homenet" | string;
   waveConfigured: boolean;
   /** Montants par moyen pour chaque formule (répercussion des frais, serveur). */
   pricing?: PlanPricing[];

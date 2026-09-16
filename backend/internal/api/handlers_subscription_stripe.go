@@ -63,9 +63,19 @@ func (a *API) handleSubscriptionStripePost(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	planID := strings.ToLower(strings.TrimSpace(req.PlanID))
-	plan, ok := model.PlanByID(planID)
+	// N°122 — la formule est résolue à L'USAGE du compte (les identifiants
+	// historiques restent acceptés) et doit être celle de son mode.
+	a.store.Lock()
+	stripeAccUsage := accountUsageLocked(a.store.Data(), accountScope(r))
+	a.store.Unlock()
+	plan, ok := model.ResolvePlan(planID, stripeAccUsage)
 	if !ok {
-		writeErrCode(w, http.StatusBadRequest, "bad_plan", "Formule inconnue (essentiel | illimite)", nil)
+		writeErrCode(w, http.StatusBadRequest, "bad_plan", "Formule inconnue (hotspot-mensuel | hotspot-annuel | homenet-mensuel | homenet-annuel)", nil)
+		return
+	}
+	if plan.Usage != stripeAccUsage {
+		writeErrCode(w, http.StatusBadRequest, "wrong_mode",
+			fmt.Sprintf("La formule %s est réservée aux comptes %s — choisissez une formule de votre mode", plan.Name, map[bool]string{true: "HomeNet", false: "Hotspot"}[plan.Usage == model.AccountUsageHomeNet]), nil)
 		return
 	}
 

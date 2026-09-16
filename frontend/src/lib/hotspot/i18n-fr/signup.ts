@@ -7,7 +7,7 @@ export const frSignup: Record<string, string> = {
   // — Signup (modale 2 étapes) —
   "signup.title": "Créer mon compte",
   "signup.titleStep2": "Votre profil",
-  "signup.subtitle": "Essai gratuit de 90 jours — 1 routeur inclus, sans carte bancaire.",
+  "signup.subtitle": "Essai gratuit de {days} jours — 1 routeur inclus, sans carte bancaire.",
   "signup.subtitleStep2": "Pour vous aider et segmenter notre offre — nous ne spammons jamais.",
   "signup.step1": "Compte",
   "signup.step2": "Profil",
@@ -34,7 +34,7 @@ export const frSignup: Record<string, string> = {
   "signup.continue": "Continuer",
   "signup.back": "Retour",
   "signup.submit": "Créer mon compte",
-  "signup.trialNote": "Votre essai de 90 jours démarre immédiatement. 1 routeur inclus, sans carte bancaire.",
+  "signup.trialNote": "Votre essai de {days} jours démarre immédiatement. 1 routeur inclus, sans carte bancaire.",
   "signup.profileNote": "Ces informations restent confidentielles et servent au support et à la segmentation.",
   "signup.privacyPrefix": "J'ai lu et j'accepte la",
   "signup.privacyLink": "politique de confidentialité",

@@ -101,15 +101,23 @@ export interface LandingCopy {
     eyebrow: string;
     title: string;
     subtitle: string;
-    plans: {
-      name: string;
-      price: string;
-      period: string;
-      tagline: string;
-      cta: string;
-      highlight: boolean;
-      features: string[];
-      badge?: string;
+    /** N°122 — aria-label du sélecteur de mode (Hotspot / Maison). */
+    modesLabel: string;
+    /** N°122 — tarifs segmentés par mode : chaque mode a ses 3 formules. */
+    segments: {
+      id: "hotspot" | "homenet";
+      label: string;
+      hint: string;
+      plans: {
+        name: string;
+        price: string;
+        period: string;
+        tagline: string;
+        cta: string;
+        highlight: boolean;
+        features: string[];
+        badge?: string;
+      }[];
     }[];
     currencyNote: string;
   };
@@ -151,15 +159,15 @@ const fr: LandingCopy = {
     homeLink: "Retour à l'accueil",
   },
   hero: {
-    badge: "Hotspot · Protection cloud · Parc MikroTik",
+    badge: "Gestion Hotspot · Pare-feu Maison · Cloud MikroTik",
     title1: "Votre WiFi,",
     titleAccent: "blindé",
     title2: "par le cloud.",
     subtitle:
-      "MikCloud est bien plus qu'un gestionnaire de hotspot : vouchers, portails captifs à votre marque, quatre boucliers pare-feu et pilotage complet de votre parc MikroTik — réunis dans une seule console, réparée automatiquement depuis le cloud.",
+      "Que vous exploitiez un hotspot public ou protégiez votre maison, MikCloud réunit vouchers, portails captifs à votre marque, quatre boucliers pare-feu et pilotage complet de votre parc MikroTik — une seule console, réparée automatiquement depuis le cloud.",
     ctaPrimary: "Protéger mon réseau",
     ctaSecondary: "Découvrir la plateforme",
-    trialHint: "90 jours d'essai gratuit · 1 routeur · sans carte bancaire",
+    trialHint: "Essai gratuit · sans carte bancaire — 90 jours Hotspot · 30 jours Maison",
     chips: ["4/4 protections actives", "500 vouchers par lot", "Agent · check-in 45 s"],
   },
   marquee: [
@@ -167,6 +175,7 @@ const fr: LandingCopy = {
     "Filtrage DNS Quad9",
     "Anti-piratage WiFi",
     "Couvre-feu internet",
+    "Pare-feu maison HomeNet",
     "Bloque-VPN",
     "QoS & forfait FAI",
     "Mode Vente revendeurs",
@@ -314,14 +323,20 @@ const fr: LandingCopy = {
     { value: 500, label: "vouchers par lot" },
     { value: 4, label: "boucliers pare-feu" },
     { value: 54, label: "pays africains visés" },
-    { value: 90, label: "jours d'essai gratuit" },
+    { value: 2, label: "modes — Hotspot & Maison" },
   ],
   pricing: {
     eyebrow: "Tarifs",
-    title: "Simple comme un nuage.",
+    title: "Deux modes, un nuage.",
     subtitle:
-      "Commencez gratuitement pendant 90 jours, grandissez à votre rythme. Sans engagement, sans frais cachés.",
-    plans: [
+      "Exploitez un réseau public ou protégez votre foyer : MikCloud s'adapte. L'essai est offert dans les deux cas, sans engagement.",
+    modesLabel: "Choisir votre mode",
+    segments: [
+      {
+        id: "hotspot",
+        label: "Hotspot",
+        hint: "Réseaux publics que vous exploitez : cybercafé, maquis, boutique — vouchers, portail captif et vente d'accès.",
+        plans: [
       {
         name: "Découverte",
         price: "0",
@@ -337,11 +352,11 @@ const fr: LandingCopy = {
         ],
       },
       {
-        name: "Illimité",
-        price: "12 000",
+        name: "Hotspot Annuel",
+        price: "25 000",
         period: "FCFA / an",
         tagline: "Tous vos routeurs, un seul prix",
-        cta: "Passer à l'Illimité",
+        cta: "Passer à l'annuel",
         highlight: true,
         badge: "Le plus choisi · 2 mois offerts",
         features: [
@@ -353,11 +368,11 @@ const fr: LandingCopy = {
         ],
       },
       {
-        name: "Essentiel",
-        price: "1 250",
+        name: "Hotspot Mensuel",
+        price: "2 500",
         period: "FCFA / mois / routeur",
         tagline: "Payez au fil de votre croissance",
-        cta: "Choisir Essentiel",
+        cta: "Choisir le mensuel",
         highlight: false,
         features: [
           "Par routeur actif",
@@ -366,14 +381,71 @@ const fr: LandingCopy = {
           "Toutes les fonctions incluses",
         ],
       },
+        ],
+      },
+      {
+        id: "homenet",
+        label: "Maison",
+        hint: "Le foyer que vous protégez : pare-feu cloud, filtrage DNS, couvre-feu familial et contrôle des appareils.",
+        plans: [
+          {
+            name: "Essai Maison",
+            price: "0",
+            period: "FCFA · 30 jours",
+            tagline: "Pour protéger votre famille sans risque",
+            cta: "Commencer gratuitement",
+            highlight: false,
+            features: [
+              "1 routeur · toutes les fonctions",
+              "4 protections incluses",
+              "Contrôle des appareils & pause dîner",
+              "Sans carte bancaire",
+            ],
+          },
+          {
+            name: "Maison Annuel",
+            price: "12 000",
+            period: "FCFA / an",
+            tagline: "Votre foyer protégé toute l'année",
+            cta: "Passer à l'annuel",
+            highlight: true,
+            badge: "Le plus choisi · 2 mois offerts",
+            features: [
+              "Routeurs illimités — toute la famille",
+              "4 protections sur tout le parc",
+              "Mises à jour RouterOS automatiques",
+              "Notifications Telegram & WhatsApp",
+              "Support prioritaire",
+            ],
+          },
+          {
+            name: "Maison Mensuel",
+            price: "1 250",
+            period: "FCFA / mois / routeur",
+            tagline: "Protégez votre foyer sans engagement",
+            cta: "Choisir le mensuel",
+            highlight: false,
+            features: [
+              "Par routeur actif",
+              "Sans engagement",
+              "Résiliable à tout moment",
+              "Toutes les fonctions incluses",
+            ],
+          },
+        ],
+      },
     ],
     currencyNote:
-      "Frais de paiement répercutés sur le prix de liste : carte +6 %, Wave −3 % (remise mobile money). Les 90 premiers jours sont offerts sur toutes les formules.",
+      "Frais de paiement répercutés sur le prix de liste : carte +6 %, Wave −3 % (remise mobile money). Essai offert : 90 jours en mode Hotspot, 30 jours en mode Maison.",
   },
   faq: {
     eyebrow: "Questions fréquentes",
     title: "Les réponses, sans jargon.",
     items: [
+      {
+        q: "Quelle différence entre Hotspot et Maison ?",
+        a: "Le mode Hotspot s'adresse aux réseaux publics que vous exploitez (cybercafé, maquis, boutique) : vouchers, portail captif, revendeurs. Le mode Maison protège votre foyer : pare-feu cloud, filtrage DNS, couvre-feu et contrôle des appareils. Même console MikCloud, mêmes protections — seuls les tarifs diffèrent (la Maison paie deux fois moins cher).",
+      },
       {
         q: "Faut-il un routeur particulier ?",
         a: "MikCloud pilote les routeurs MikroTik sous RouterOS (hEX, RB, CHR…). L'agent sort du routeur vers le cloud : il fonctionne derrière CGNAT, Orange ou Starlink, sans IP publique ni port ouvert — un script à coller dans Winbox, environ 40 secondes.",
@@ -449,15 +521,15 @@ const en: LandingCopy = {
     homeLink: "Back to home",
   },
   hero: {
-    badge: "Hotspot · Cloud protection · MikroTik fleet",
+    badge: "Hotspot management · Home firewall · MikroTik cloud",
     title1: "Your WiFi,",
     titleAccent: "shielded",
     title2: "by the cloud.",
     subtitle:
-      "MikCloud is far more than a hotspot manager: vouchers, white-label captive portals, four firewall shields and full MikroTik fleet control — brought together in a single console, self-healed from the cloud.",
+      "Whether you run a public hotspot or shield your home, MikCloud brings vouchers, white-label captive portals, four firewall shields and full MikroTik fleet control together — one console, self-healed from the cloud.",
     ctaPrimary: "Protect my network",
     ctaSecondary: "Explore the platform",
-    trialHint: "90-day free trial · 1 router · no credit card",
+    trialHint: "Free trial · no credit card — 90 days Hotspot · 30 days Home",
     chips: ["4/4 protections active", "500 vouchers per batch", "Agent · 45 s check-in"],
   },
   marquee: [
@@ -465,6 +537,7 @@ const en: LandingCopy = {
     "Quad9 DNS filtering",
     "WiFi anti-hacking",
     "Internet curfew",
+    "HomeNet home firewall",
     "VPN blocker",
     "QoS & ISP plan",
     "Reseller Sell Mode",
@@ -612,13 +685,19 @@ const en: LandingCopy = {
     { value: 500, label: "vouchers per batch" },
     { value: 4, label: "firewall shields" },
     { value: 54, label: "African countries" },
-    { value: 90, label: "days of free trial" },
+    { value: 2, label: "modes — Hotspot & Home" },
   ],
   pricing: {
     eyebrow: "Pricing",
-    title: "Simple as a cloud.",
-    subtitle: "Start free for 90 days, grow at your own pace. No commitment, no hidden fees.",
-    plans: [
+    title: "Two modes, one cloud.",
+    subtitle: "Run a public network or shield your home: MikCloud adapts. The trial is free in both cases, no commitment.",
+    modesLabel: "Choose your mode",
+    segments: [
+      {
+        id: "hotspot",
+        label: "Hotspot",
+        hint: "Public networks you operate: cybercafé, bar, shop — vouchers, captive portal and paid access.",
+        plans: [
       {
         name: "Discovery",
         price: "0",
@@ -634,11 +713,11 @@ const en: LandingCopy = {
         ],
       },
       {
-        name: "Unlimited",
-        price: "12,000",
+        name: "Hotspot Yearly",
+        price: "25,000",
         period: "FCFA / year",
         tagline: "All your routers, one single price",
-        cta: "Go Unlimited",
+        cta: "Go yearly",
         highlight: true,
         badge: "Most popular · 2 months free",
         features: [
@@ -650,11 +729,11 @@ const en: LandingCopy = {
         ],
       },
       {
-        name: "Essential",
-        price: "1,250",
+        name: "Hotspot Monthly",
+        price: "2,500",
         period: "FCFA / month / router",
         tagline: "Pay as you grow",
-        cta: "Choose Essential",
+        cta: "Choose monthly",
         highlight: false,
         features: [
           "Per active router",
@@ -663,14 +742,71 @@ const en: LandingCopy = {
           "Every feature included",
         ],
       },
+        ],
+      },
+      {
+        id: "homenet",
+        label: "Home",
+        hint: "The home you shield: cloud firewall, DNS filtering, family curfew and device control.",
+        plans: [
+          {
+            name: "Home Trial",
+            price: "0",
+            period: "FCFA · 30 days",
+            tagline: "To protect your family risk-free",
+            cta: "Start for free",
+            highlight: false,
+            features: [
+              "1 router · every feature",
+              "4 protections included",
+              "Device control & dinner pause",
+              "No credit card",
+            ],
+          },
+          {
+            name: "Home Yearly",
+            price: "12,000",
+            period: "FCFA / year",
+            tagline: "Your home shielded all year",
+            cta: "Go yearly",
+            highlight: true,
+            badge: "Most popular · 2 months free",
+            features: [
+              "Unlimited routers — the whole family",
+              "4 protections across the fleet",
+              "Automatic RouterOS updates",
+              "Telegram & WhatsApp alerts",
+              "Priority support",
+            ],
+          },
+          {
+            name: "Home Monthly",
+            price: "1,250",
+            period: "FCFA / month / router",
+            tagline: "Protect your home, no commitment",
+            cta: "Choose monthly",
+            highlight: false,
+            features: [
+              "Per active router",
+              "No commitment",
+              "Cancel anytime",
+              "Every feature included",
+            ],
+          },
+        ],
+      },
     ],
     currencyNote:
-      "Payment fees passed through the list price: card +6%, Wave −3% (mobile money discount). The first 90 days are free on every plan.",
+      "Payment fees passed through the list price: card +6%, Wave −3% (mobile money discount). Free trial: 90 days in Hotspot mode, 30 days in Home mode.",
   },
   faq: {
     eyebrow: "Frequently asked questions",
     title: "Straight answers, no jargon.",
     items: [
+      {
+        q: "What's the difference between Hotspot and Home?",
+        a: "Hotspot mode targets the public networks you operate (cybercafé, bar, shop): vouchers, captive portal, resellers. Home mode shields your household: cloud firewall, DNS filtering, curfew and device control. Same MikCloud console, same protections — only the prices differ (Home pays half the Hotspot rate).",
+      },
       {
         q: "Do I need a specific router?",
         a: "MikCloud drives MikroTik routers running RouterOS (hEX, RB, CHR…). The agent dials out from the router to the cloud: it works behind CGNAT, Orange or Starlink, with no public IP and no open port — one script to paste into Winbox, about 40 seconds.",

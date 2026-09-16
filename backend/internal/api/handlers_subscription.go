@@ -60,6 +60,9 @@ type subscriptionView struct {
 	CurrentAmountFcfa int                `json:"currentAmountFcfa"` // montant de la période en cours
 	Plans             []model.SaasPlan   `json:"plans"`
 	WaveConfigured    bool               `json:"waveConfigured"`
+	// N°122 — usage du compte (hotspot | homenet) : la console segmente
+	// l'affichage (libellés, caractéristiques) sans le déduire du plan.
+	Usage string `json:"usage"`
 	// Pricing — montants par moyen pour chaque formule (remise Wave / prix
 	// de liste carte), à l'assiette routeurs du compte.
 	Pricing []planPricingView `json:"pricing,omitempty"`
@@ -90,8 +93,8 @@ func subscriptionStatus(sub model.Subscription, now time.Time) string {
 // (pour payer) et /api/auth/me (pour identifier l'utilisateur).
 const suspendGracePeriod = 30 * 24 * time.Hour // 30 jours
 
-// planAmount — montant de la période pour une formule : Essentiel =
-// prix × routeurs enregistrés (minimum 1) ; Illimité = forfait 12 000 F.
+// planAmount — montant de la période pour une formule : mensuelle par
+// routeur = prix × routeurs enregistrés (minimum 1) ; annuelle = forfait.
 func planAmount(p model.SaasPlan, routerCount int) int {
 	if p.PerRouter {
 		rc := routerCount
@@ -101,6 +104,26 @@ func planAmount(p model.SaasPlan, routerCount int) int {
 		return p.PriceFcfa * rc
 	}
 	return p.PriceFcfa
+}
+
+// trialPeriodEnd — N°122 : fin de l'essai selon le mode du compte. Hotspot
+// (produit historique) : 3 mois (~90 jours). HomeNet (foyer résidentiel) :
+// 30 jours — cycle de décision d'un particulier, la maison n'a pas besoin
+// d'un trimestre pour savoir si son WiFi est protégé.
+func trialPeriodEnd(now time.Time, usage string) time.Time {
+	if usage == model.AccountUsageHomeNet {
+		return now.AddDate(0, 0, 30)
+	}
+	return now.AddDate(0, 3, 0)
+}
+
+// trialDefaultMonths — durée d'essai PAR DÉFAUT (en mois de plateforme)
+// quand la plateforme attribue/prolonge un essai sans préciser de durée.
+func trialDefaultMonths(usage string) int {
+	if usage == model.AccountUsageHomeNet {
+		return 1
+	}
+	return 3
 }
 
 // accountRouterCount — nombre de routeurs enregistrés du compte (tous modes :
@@ -132,22 +155,27 @@ func (a *API) handleSubscriptionGet(w http.ResponseWriter, r *http.Request) {
 	a.store.Lock()
 	db := a.store.Data()
 	settings := ensureSettings(db, acc)
+	// N°122 — tarifs segmentés : le compte ne voit QUE les formules de son
+	// mode (Hotspot vs HomeNet) — le catalogue renvoyé est filtré serveur.
+	accUsage := accountUsageLocked(db, acc)
 	view := subscriptionView{
 		Subscription: settings.Subscription,
+		Status:       "",
 		RouterCount:  accountRouterCount(db, acc),
-		Plans:        model.SaasPlans,
+		Plans:        model.PlansForUsage(accUsage),
+		Usage:        accUsage,
 	}
 	// Répercussion des frais de paiement (stratégie validée) : montants par
 	// moyen pour chaque formule, à l'assiette routeurs du compte — le client
 	// voit le montant exact AVANT de choisir (remise Wave / prix de liste).
-	for _, p := range model.SaasPlans {
+	for _, p := range model.PlansForUsage(accUsage) {
 		pr := planPricingOfPlan(p, view.RouterCount)
 		view.Pricing = append(view.Pricing, planPricingView{PlanID: p.ID, planPricing: pr})
 	}
 	// waveConfigured = lien de paiement Wave de la PLATEFORME (WAVE_PAY_LINK)
 	// configuré — PAS le lien marchand du client (réservé à ses propres vouchers).
 	view.WaveConfigured = wavePayLink() != ""
-	if p, ok := model.PlanByID(settings.Subscription.PlanID); ok {
+	if p, ok := model.ResolvePlan(settings.Subscription.PlanID, accUsage); ok {
 		view.CurrentAmountFcfa = planAmount(p, view.RouterCount)
 	}
 	view.Status = subscriptionStatus(settings.Subscription, time.Now().UTC())
@@ -171,7 +199,10 @@ func wavePayLink() string {
 // lien de paiement Wave de la plateforme ; la demande est tracée dans le
 // journal (type billing) et l'ACTIVATION reste réservée à la plateforme
 // (PUT /api/admin/accounts/{id}/subscription), après encaissement confirmé.
-// Corps : {"planId":"essentiel"|"illimite"}.
+// Corps : {"planId":"hotspot-mensuel"|"hotspot-annuel"|"homenet-mensuel"|
+// "homenet-annuel"} — la formule doit être celle du MODE du compte (N°122 :
+// un compte Hotspot ne souscrit pas au tarif HomeNet, et réciproquement ;
+// les identifiants historiques restent acceptés et résolvent au mode).
 func (a *API) handleSubscriptionPost(w http.ResponseWriter, r *http.Request) {
 	acc := accountScope(r)
 	if c := claimsFrom(r); c != nil && c.Acc == "" {
@@ -188,9 +219,17 @@ func (a *API) handleSubscriptionPost(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
 		return
 	}
-	plan, ok := model.PlanByID(strings.TrimSpace(req.PlanID))
+	a.store.Lock()
+	accUsage := accountUsageLocked(a.store.Data(), acc)
+	a.store.Unlock()
+	plan, ok := model.ResolvePlan(strings.TrimSpace(req.PlanID), accUsage)
 	if !ok {
-		writeErr(w, http.StatusBadRequest, "Formule inconnue (essentiel | illimite)")
+		writeErr(w, http.StatusBadRequest, "Formule inconnue (hotspot-mensuel | hotspot-annuel | homenet-mensuel | homenet-annuel)")
+		return
+	}
+	if plan.Usage != accUsage {
+		writeErrCode(w, http.StatusBadRequest, "wrong_mode",
+			fmt.Sprintf("La formule %s est réservée aux comptes %s — choisissez une formule de votre mode", plan.Name, map[bool]string{true: "HomeNet", false: "Hotspot"}[plan.Usage == model.AccountUsageHomeNet]), nil)
 		return
 	}
 
@@ -310,8 +349,11 @@ func (a *API) handleSubscriptionPost(w http.ResponseWriter, r *http.Request) {
 // applySubscriptionLocked — active / renouvelle la période d'abonnement d'un
 // compte client (verrou POSÉ par l'appelant). Règles partagées par la fiche
 // client (PUT /api/admin/accounts/{id}/subscription), la file des demandes de
-// renouvellement et le webhook Wave : source unique du calcul de période
-// (empilement sur la période active), des quotas Essentiel et du montant.
+// renouvellement, le webhook Wave et le prélèvement carte : source unique du
+// calcul de période (empilement sur la période active), des quotas par
+// routeur et du montant — TOUJOURS RESOLU À L'USAGE DU COMPTE (N°122 : les
+// identifiants historiques « essentiel »/« illimite » mappent sur les formules
+// segmentées du mode ; la migration store a déjà réécrit le stockage).
 // Retourne l'abonnement, le libellé d'affichage (compat contrat historique),
 // le nom court de la formule et le montant appliqué.
 func applySubscriptionLocked(db *model.DB, accID, planID string, months, reqSlots int, markPaid bool) (model.Subscription, string, string, int) {
@@ -319,19 +361,24 @@ func applySubscriptionLocked(db *model.DB, accID, planID string, months, reqSlot
 	sub := settings.Subscription
 	now := time.Now().UTC()
 
-	var plan model.SaasPlan
+	plan, planOK := model.ResolvePlan(planID, accountUsageLocked(db, accID))
 	var amount int
 	var slots int
-	switch planID {
-	case "essai":
+	// resolvedID — identifiant NORMALISÉ stocké : une demande historique
+	// (« essentiel »/« illimite ») active la formule segmentée de son mode
+	// et STOCKE son identifiant nouveau (le stockage est déjà migré au
+	// démarrage — les écritures futures le restent).
+	resolvedID := planID
+	if planOK {
+		resolvedID = plan.ID
+	}
+	switch {
+	case planID == "essai":
 		// Essai : gratuit, 1 routeur, période limitée (prolongeable par la plateforme).
 		slots = 1
-	case "illimite":
-		// 1 000 F/mois équivalent (12 000 F/an) × durée.
-		slots = 0
-		amount = 1000 * months
-	case "essentiel":
-		plan, _ = model.PlanByID(planID)
+	case planOK && plan.PerRouter:
+		// Mensuelle par routeur (Hotspot/HomeNet) : la couverture suit le
+		// quota demandé, sinon le quota actuel, sinon le parc réel.
 		slots = reqSlots
 		if slots <= 0 {
 			slots = sub.RouterSlots // renouvellement : le quota actuel est conservé
@@ -343,18 +390,25 @@ func applySubscriptionLocked(db *model.DB, accID, planID string, months, reqSlot
 			slots = 1
 		}
 		amount = plan.PriceFcfa * slots * months
+	case planOK:
+		// Annuelle (Hotspot/HomeNet) : forfait pro-ratisé au mois de
+		// plateforme — 12 mois = le prix catalogue, 24 mois = le double.
+		slots = 0
+		amount = plan.PriceFcfa * months / 12
 	}
 
-	if planID == "essentiel" || planID == "illimite" || planID == "essai" {
+	if planOK || planID == "essai" {
 		// Renouvellement du même plan encore actif : la nouvelle période
 		// s'empile à la fin de la période en cours. Sinon : immédiat.
+		// La comparaison se fait sur l'identifiant NORMALISÉ (une demande
+		// historique renouvelle bien la formule segmentée correspondante).
 		start := now
-		if sub.PlanID == planID && subscriptionStatus(sub, now) == "active" && sub.PeriodEnd != "" {
+		if sub.PlanID == resolvedID && subscriptionStatus(sub, now) == "active" && sub.PeriodEnd != "" {
 			if end, err := time.Parse(time.RFC3339, sub.PeriodEnd); err == nil && now.Before(end) {
 				start = end
 			}
 		}
-		sub.PlanID = planID
+		sub.PlanID = resolvedID
 		sub.Status = "active"
 		sub.PeriodStart = start.Format(time.RFC3339)
 		sub.PeriodEnd = start.AddDate(0, months, 0).Format(time.RFC3339)
@@ -380,15 +434,17 @@ func applySubscriptionLocked(db *model.DB, accID, planID string, months, reqSlot
 	// Compatibilité d'affichage avec l'ancien contrat (libellé Plan).
 	label := "Essai"
 	maxRouters := "1"
-	switch planID {
-	case "essentiel":
-		label = "MikCloud Essentiel"
-		maxRouters = "Par routeur"
-	case "illimite":
-		label = "MikCloud Illimité"
-		maxRouters = "Illimité"
+	planName := "Essai"
+	if planOK {
+		label = "MikCloud " + plan.Name
+		planName = plan.Name
+		if plan.PerRouter {
+			maxRouters = "Par routeur"
+		} else {
+			maxRouters = "Illimité"
+		}
 	}
 	settings.Plan = model.Plan{Name: label, MaxRouters: maxRouters, MaxUsers: "Illimité"}
 	db.SettingsByAccount[accID] = settings
-	return sub, label, plan.Name, amount
+	return sub, label, planName, amount
 }

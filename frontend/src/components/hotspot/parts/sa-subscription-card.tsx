@@ -1,11 +1,9 @@
 "use client";
 
-// Carte Abonnement SaaS — deux formules FCFA agressives pour un marché
-// concurrentiel :
-//   • Essentiel — 1 250 F/mois/routeur (sans engagement, facturé sur les
-//     routeurs enregistrés : le gérant paie au fil de sa croissance) ;
-//   • Illimité — 12 000 F/an, routeurs illimités (1 000 F/mois équivalent,
-//     2 mois offerts vs Essentiel, −92 % à 10 routeurs).
+// Carte Abonnement SaaS — tarifs SEGMENTÉS par mode (N°122), le serveur ne
+// renvoie que les DEUX formules du mode du compte (PlansForUsage) :
+//   • Hotspot — Mensuel 2 500 F/mois/routeur, Annuel 25 000 F/an illimité ;
+//   • HomeNet — Mensuel 1 250 F/mois/routeur, Annuel 12 000 F/an illimité.
 // VERROU FACTURATION : la souscription n'active RIEN côté client — choisir
 // une formule enregistre une demande, renvoie le montant et le lien de
 // paiement Wave de la PLATEFORME (WAVE_PAY_LINK) ; l'activation de la
@@ -70,12 +68,16 @@ export function useStripeSub() {
   });
 }
 
-// Comparatif annuel : formule mensuelle (1 250 F × routeurs × 12) vs Illimité.
+// Comparatif annuel : formule mensuelle (prix × routeurs × 12) vs formule
+// annuelle — les prix viennent du catalogue serveur (segmentés par mode).
 const COMPARISON_ROUTERS = [1, 2, 5, 10];
 
-// Caractéristiques des formules — clés i18n (traduites FR/EN).
-const ESSENTIEL_FEATURE_KEYS = ["sub.feat.ess1", "sub.feat.ess2", "sub.feat.ess3", "sub.feat.ess4"] as const;
-const ILLIMITE_FEATURE_KEYS = ["sub.feat.ill1", "sub.feat.ill2", "sub.feat.ill3", "sub.feat.ill4"] as const;
+// Caractéristiques des formules — clés i18n (traduites FR/EN), segmentées
+// par usage du compte (N°122) : Hotspot (réseau public) vs HomeNet (foyer).
+const HOTSPOT_MONTHLY_KEYS = ["sub.feat.ess1", "sub.feat.ess2", "sub.feat.ess3", "sub.feat.ess4"] as const;
+const HOTSPOT_ANNUAL_KEYS = ["sub.feat.ill1", "sub.feat.ill2", "sub.feat.ill3", "sub.feat.ill4"] as const;
+const HOMENET_MONTHLY_KEYS = ["sub.feat.homeM1", "sub.feat.homeM2", "sub.feat.homeM3", "sub.feat.homeM4"] as const;
+const HOMENET_ANNUAL_KEYS = ["sub.feat.homeA1", "sub.feat.homeA2", "sub.feat.homeA3", "sub.feat.homeA4"] as const;
 
 // Montant d'une période pour une formule (miroir de planAmount côté Go).
 function planAmount(plan: SaasPlan, routerCount: number): number {
@@ -257,6 +259,16 @@ export function SubscriptionCard() {
 
   const status = view.status;
   const currentPlan = view.plans.find((p) => p.id === view.subscription.planId);
+  // N°122 — formules du mode du compte : le serveur filtre déjà le catalogue
+  // (PlansForUsage) ; on repère mensuelle/annuelle par PÉRIODE, pas par id —
+  // robuste aux identifiants segmentés comme historiques.
+  const isHome = view.usage === "homenet";
+  const monthly = view.plans.find((p) => p.period === "mois");
+  const annual = view.plans.find((p) => p.period === "an");
+  const monthlyKeys = isHome ? HOMENET_MONTHLY_KEYS : HOTSPOT_MONTHLY_KEYS;
+  const annualKeys = isHome ? HOMENET_ANNUAL_KEYS : HOTSPOT_ANNUAL_KEYS;
+  const monthlyPrice = monthly?.priceFcfa ?? (isHome ? 1250 : 2500);
+  const annualPrice = annual?.priceFcfa ?? (isHome ? 12000 : 25000);
   const statusBadge =
     status === "active" ? (
       <Badge className="gap-1 border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" variant="outline">
@@ -308,21 +320,21 @@ export function SubscriptionCard() {
 
       <CardContent className="space-y-4 px-4 sm:px-6">
         <div className="grid gap-4 sm:grid-cols-2">
-          {/* Formule Essentiel */}
+          {/* Formule mensuelle (par routeur) */}
           <PlanCard
-            plan={view.plans.find((p) => p.id === "essentiel")}
+            plan={monthly}
             routerCount={view.routerCount}
-            isCurrent={view.subscription.planId === "essentiel" && status === "active"}
-            featureKeys={ESSENTIEL_FEATURE_KEYS}
+            isCurrent={!!monthly && view.subscription.planId === monthly.id && status === "active"}
+            featureKeys={monthlyKeys}
             featured={false}
             onSelect={setConfirmPlan}
           />
-          {/* Formule Illimité */}
+          {/* Formule annuelle (routeurs illimités) */}
           <PlanCard
-            plan={view.plans.find((p) => p.id === "illimite")}
+            plan={annual}
             routerCount={view.routerCount}
-            isCurrent={view.subscription.planId === "illimite" && status === "active"}
-            featureKeys={ILLIMITE_FEATURE_KEYS}
+            isCurrent={!!annual && view.subscription.planId === annual.id && status === "active"}
+            featureKeys={annualKeys}
             featured
             onSelect={setConfirmPlan}
           />
@@ -361,20 +373,20 @@ export function SubscriptionCard() {
             <thead>
               <tr className="border-b bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
                 <th scope="col" className="px-3 py-2 font-medium">{t("sub.cmp.routers")}</th>
-                <th scope="col" className="px-3 py-2 font-medium">{t("sub.cmp.essYear")}</th>
-                <th scope="col" className="px-3 py-2 font-medium">{t("sub.cmp.illYear")}</th>
+                <th scope="col" className="px-3 py-2 font-medium">{t("sub.cmp.monthlyYear")}</th>
+                <th scope="col" className="px-3 py-2 font-medium">{t("sub.cmp.annualYear")}</th>
                 <th scope="col" className="px-3 py-2 font-medium">{t("sub.cmp.save")}</th>
               </tr>
             </thead>
             <tbody>
               {COMPARISON_ROUTERS.map((routers) => {
-                const monthlyAnnual = 1250 * routers * 12;
-                const save = Math.round((1 - 12000 / monthlyAnnual) * 100);
+                const monthlyAnnual = monthlyPrice * routers * 12;
+                const save = Math.round((1 - annualPrice / monthlyAnnual) * 100);
                 return (
                   <tr key={routers} className="border-b last:border-b-0">
                     <td className="px-3 py-2 font-medium">{routers}</td>
                     <td className="px-3 py-2 text-muted-foreground">{formatCurrency(monthlyAnnual, "FCFA", lang)}</td>
-                    <td className="px-3 py-2">{formatCurrency(12000, "FCFA", lang)}</td>
+                    <td className="px-3 py-2">{formatCurrency(annualPrice, "FCFA", lang)}</td>
                     <td className="px-3 py-2 font-semibold text-emerald-600 dark:text-emerald-400">−{save} %</td>
                   </tr>
                 );
@@ -383,7 +395,7 @@ export function SubscriptionCard() {
           </table>
         </div>
         <p className="text-xs text-muted-foreground">
-          {t("sub.footnoteCalc")} {t("sub.footnotePay")}
+          {tf("sub.footnoteCalc", { price: formatCurrency(monthlyPrice, "FCFA", lang) })} {t("sub.footnotePay")}
         </p>
       </CardContent>
 
@@ -534,7 +546,7 @@ function PlanCard({
           })}
         </p>
       ) : (
-        <p className="mt-2 rounded-md bg-muted/60 px-2.5 py-1.5 text-xs">{t("sub.card.flat")}</p>
+        <p className="mt-2 rounded-md bg-muted/60 px-2.5 py-1.5 text-xs">{tf("sub.card.flat", { amount: formatCurrency(Math.round(plan.priceFcfa / 12), "FCFA", lang) })}</p>
       )}
 
       <ul className="mt-3 flex-1 space-y-2">

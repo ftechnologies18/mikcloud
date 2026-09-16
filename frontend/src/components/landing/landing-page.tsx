@@ -256,6 +256,8 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
 
   /* Section active dans le rail (IntersectionObserver) */
   const [active, setActive] = useState("top");
+  /* N°122 — mode de tarifs affiché : Hotspot (défaut) ou Maison */
+  const [priceMode, setPriceMode] = useState<"hotspot" | "homenet">("hotspot");
   useEffect(() => {
     const sections = ["top", "pouvoirs", "protection", "hotspot", "parc", "tarifs"];
     const io = new IntersectionObserver(
@@ -638,9 +640,37 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
               <h2>{copy.pricing.title}</h2>
               <p>{copy.pricing.subtitle}</p>
             </Reveal>
-            <div className="mkl-pricing">
-              {copy.pricing.plans.map((plan, i) => (
-                <Reveal key={plan.name} delay={i * 0.08} className="h-full">
+            {/* N°122 — segmentation Hotspot / Maison : le sélecteur clay pilote
+                les 3 formules du mode choisi (prix, essai, arguments). */}
+            <Reveal delay={0.05}>
+              <div
+                className="mkl-mode-toggle"
+                role="group"
+                aria-label={copy.pricing.modesLabel}
+              >
+                {copy.pricing.segments.map((seg) => (
+                  <button
+                    key={seg.id}
+                    type="button"
+                    aria-pressed={priceMode === seg.id}
+                    className={`mkl-mode-btn ${priceMode === seg.id ? "is-active" : ""}`}
+                    onClick={() => setPriceMode(seg.id)}
+                  >
+                    {seg.label}
+                  </button>
+                ))}
+              </div>
+              <p className="mkl-mode-hint" role="status">
+                {copy.pricing.segments.find((s) => s.id === priceMode)?.hint ??
+                  copy.pricing.segments[0].hint}
+              </p>
+            </Reveal>
+            {/* key={priceMode} : le changement de mode REJOUE l'entrée des
+                cartes (Reveal remonté) — avec prefers-reduced-motion, aucun
+                mouvement (Reveal rend un div statique). */}
+            <div className="mkl-pricing" key={priceMode}>
+              {(copy.pricing.segments.find((s) => s.id === priceMode) ?? copy.pricing.segments[0]).plans.map((plan, i) => (
+                <Reveal key={`${priceMode}-${plan.name}`} delay={i * 0.08} className="h-full">
                   <article className={`mkl-price-card mkl-pc${i + 1} h-full`}>
                     {plan.highlight && plan.badge ? <span className="mkl-pop">{plan.badge}</span> : null}
                     <h3>{plan.name}</h3>

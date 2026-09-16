@@ -89,6 +89,9 @@ func New(dir string) (*Store, error) {
 		if migrateRemoveOperator(s.db) {
 			mtChanged = true
 		}
+		if migrateUsageScopedPlans(s.db) {
+			mtChanged = true
+		}
 		if mtChanged {
 			s.Lock()
 			s.Save()
@@ -133,6 +136,9 @@ func New(dir string) (*Store, error) {
 				mtChanged = true
 			}
 			if migrateRemoveOperator(s.db) {
+				mtChanged = true
+			}
+			if migrateUsageScopedPlans(s.db) {
 				mtChanged = true
 			}
 			if mtChanged {
@@ -468,6 +474,69 @@ func migrateRemoveOperator(db *model.DB) bool {
 	for i := range db.Users {
 		if db.Users[i].Role == "operator" {
 			db.Users[i].Role = model.RoleManager
+			changed = true
+		}
+	}
+	return changed
+}
+
+// migrateUsageScopedPlans — N°122 (tarifs segmentés Hotspot/HomeNet) :
+// réécrit les identifiants de formule HISTORIQUES vers leur équivalent du
+// mode du compte, partout où ils sont stockés :
+//   - SettingsByAccount[].Subscription.PlanID : « essentiel » → mensuel du
+//     mode, « illimite » → annuel du mode (les PÉRIODES et LastAmountFcfa
+//     sont conservés tels quels — le renouvelement appliquera le nouveau
+//     tarif, conforme à la décision prix) ; le libellé compat Settings.Plan
+//     est rafraîchi ;
+//   - BillingRequests[].PlanID (demandes en attente et historique) : même
+//     résolution, pour que l'activation applique la formule du bon mode.
+//     Le MONTANT demandé reste celui calculé à la demande (l'activation
+//     plateforme reste une décision de l'opérateur après encaissement).
+//
+// Les prélèvements carte GeniusPaySubs gardent leur identifiant d'origine :
+// ResolvePlan les résout à l'usage à chaque facture — leur MONTANT souscrit
+// chez GeniusPay reste le tarif de création (résilier/re-créer pour aligner).
+// Idempotent : les identifiants segmentés ne re-matchent jamais les anciens.
+func migrateUsageScopedPlans(db *model.DB) bool {
+	usageOf := func(accID string) string {
+		for i := range db.Accounts {
+			if db.Accounts[i].ID == accID {
+				if db.Accounts[i].Usage == model.AccountUsageHomeNet {
+					return model.AccountUsageHomeNet
+				}
+				return model.AccountUsageHotspot
+			}
+		}
+		return model.AccountUsageHotspot
+	}
+	resolve := func(accID, legacy string) string {
+		if p, ok := model.ResolvePlan(legacy, usageOf(accID)); ok {
+			return p.ID
+		}
+		return legacy
+	}
+	changed := false
+	for accID, s := range db.SettingsByAccount {
+		if s.Subscription.PlanID == "essentiel" || s.Subscription.PlanID == "illimite" {
+			s.Subscription.PlanID = resolve(accID, s.Subscription.PlanID)
+			if p, ok := model.PlanByID(s.Subscription.PlanID); ok {
+				s.Plan = model.Plan{
+					Name:       "MikCloud " + p.Name,
+					MaxRouters: "Illimité",
+					MaxUsers:   "Illimité",
+				}
+				if p.PerRouter {
+					s.Plan.MaxRouters = "Par routeur"
+				}
+			}
+			db.SettingsByAccount[accID] = s
+			changed = true
+		}
+	}
+	for i := range db.BillingRequests {
+		br := &db.BillingRequests[i]
+		if br.PlanID == "essentiel" || br.PlanID == "illimite" {
+			br.PlanID = resolve(br.AccountID, br.PlanID)
 			changed = true
 		}
 	}
@@ -858,6 +927,12 @@ func (s *Store) Reload() (ReloadStats, error) {
 	// Garanties identiques à un démarrage propre, persistées si besoin.
 	changed := migrateMultiTenant(s.db)
 	if migrateDetachPlatform(s.db) {
+		changed = true
+	}
+	if migrateRemoveOperator(s.db) {
+		changed = true
+	}
+	if migrateUsageScopedPlans(s.db) {
 		changed = true
 	}
 	if applyAdminOverride(s.db) {

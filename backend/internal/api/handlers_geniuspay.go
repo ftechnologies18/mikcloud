@@ -451,7 +451,7 @@ func (a *API) cancelPayRequest(acc, ref, note string) bool {
 func (a *API) finalizeBillingSuccess(db *model.DB, idx int, paidVia, resolvedBy, note string) (model.Subscription, string, int) {
 	br := db.BillingRequests[idx]
 	months := 1
-	if br.PlanID == "illimite" {
+	if model.IsAnnualPlanID(br.PlanID) {
 		months = 12
 	}
 	slots := br.RouterCount

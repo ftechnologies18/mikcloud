@@ -7,7 +7,7 @@ export const enSignup: Record<string, string> = {
   // — Signup (2-step modal) —
   "signup.title": "Create my account",
   "signup.titleStep2": "Your profile",
-  "signup.subtitle": "90-day free trial — 1 router included, no credit card.",
+  "signup.subtitle": "{days}-day free trial — 1 router included, no credit card.",
   "signup.subtitleStep2": "To help you and segment our offer — we never spam.",
   "signup.step1": "Account",
   "signup.step2": "Profile",
@@ -34,7 +34,7 @@ export const enSignup: Record<string, string> = {
   "signup.continue": "Continue",
   "signup.back": "Back",
   "signup.submit": "Create my account",
-  "signup.trialNote": "Your 90-day trial starts immediately. 1 router included, no credit card.",
+  "signup.trialNote": "Your {days}-day trial starts immediately. 1 router included, no credit card.",
   "signup.profileNote": "This information remains confidential and is used for support and segmentation.",
   "signup.privacyPrefix": "I have read and accept the",
   "signup.privacyLink": "privacy policy",

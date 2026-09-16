@@ -19,7 +19,7 @@ export const enPlatformSettings: Record<string, string> = {
   "platformSettings.register": "Sign-ups",
   "platformSettings.registerDesc": "Controls who can create a client account from the landing page.",
   "platformSettings.registerOpen": "Sign-ups open",
-  "platformSettings.registerOpenHint": "Open: anyone can create an account (90-day trial). Closed: invitation key required.",
+  "platformSettings.registerOpenHint": "Open: anyone can create an account (90-day Hotspot / 30-day Home trial). Closed: invitation key required.",
   "platformSettings.registerSaved": "Sign-up settings updated",
   "platformSettings.registerEnvLocked": "The REGISTER_KEY environment variable is set on the server: it locks sign-ups and overrides the console. Remove it from Render to control sign-ups here.",
   "platformSettings.inviteKey": "Invitation key",

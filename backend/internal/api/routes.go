@@ -261,8 +261,11 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/media", a.requireRole(3, a.handleMediaUpload))
 	mux.HandleFunc("GET /api/media/{key...}", a.handleMediaGet)
 
-	// Abonnement SaaS — formules FCFA (Essentiel 1 250 F/mois/routeur,
-	// Illimité 12 000 F/an routeurs illimités). Catalogue et état lisibles
+	// Abonnement SaaS — formules FCFA SEGMENTÉES par mode (N°122) :
+	// Hotspot Mensuel 2 500 F/mois/routeur, Hotspot Annuel 25 000 F/an
+	// routeurs illimités ; HomeNet Mensuel 1 250 F/mois/routeur, HomeNet
+	// Annuel 12 000 F/an routeurs illimités. Le catalogue /api/subscription
+	// est filtré par l'usage du compte. Catalogue complet et état lisibles
 	// par toute l'équipe. VERROU FACTURATION : l'activation d'un abonnement
 	// est réservée à la plateforme (PUT /api/admin/accounts/{id}/subscription,
 	// après encaissement) ; le client ne peut que DEMANDER un renouvellement

@@ -257,24 +257,11 @@ func (a *API) handleAdminAccountSubscription(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	planID := strings.ToLower(strings.TrimSpace(req.PlanID))
-	if planID != "essentiel" && planID != "illimite" && planID != "essai" {
-		writeErrCode(w, http.StatusBadRequest, "bad_plan", "Formule inconnue (essentiel | illimite | essai)", nil)
-		return
-	}
-	// La formule et le montant sont calculés par applySubscriptionLocked.
-	months := req.Months
-	if planID == "illimite" && months <= 0 {
-		months = 12
-	}
-	if planID == "essentiel" && months <= 0 {
-		months = 1
-	}
-	if planID == "essai" && months <= 0 {
-		months = 3 // essai par défaut : 3 mois (90 jours)
-	}
-	if planID == "essentiel" || planID == "illimite" || planID == "essai" {
-		if months < 1 || months > 36 {
-			writeErrCode(w, http.StatusBadRequest, "bad_months", "Durée invalide (1 à 36 mois)", nil)
+	// N°122 — la formule doit exister (segmentée ou historique, résolue à
+	// l'usage du compte par applySubscriptionLocked).
+	if planID != "essai" && !model.IsAnnualPlanID(planID) && !model.IsPerRouterPlanID(planID) {
+		if _, ok := model.PlanByID(planID); !ok {
+			writeErrCode(w, http.StatusBadRequest, "bad_plan", "Formule inconnue (hotspot-mensuel | hotspot-annuel | homenet-mensuel | homenet-annuel | essai)", nil)
 			return
 		}
 	}
@@ -291,6 +278,23 @@ func (a *API) handleAdminAccountSubscription(w http.ResponseWriter, r *http.Requ
 	if acc == nil {
 		a.store.Unlock()
 		writeErrCode(w, http.StatusNotFound, "not_found", "Compte introuvable", nil)
+		return
+	}
+	accUsage := accountUsageLocked(db, id)
+	// La formule et le montant sont calculés par applySubscriptionLocked.
+	months := req.Months
+	if model.IsAnnualPlanID(planID) && months <= 0 {
+		months = 12
+	}
+	if model.IsPerRouterPlanID(planID) && months <= 0 {
+		months = 1
+	}
+	if planID == "essai" && months <= 0 {
+		months = trialDefaultMonths(accUsage) // N°122 : 1 mois HomeNet, 3 mois Hotspot
+	}
+	if months < 1 || months > 36 {
+		a.store.Unlock()
+		writeErrCode(w, http.StatusBadRequest, "bad_months", "Durée invalide (1 à 36 mois)", nil)
 		return
 	}
 	routerCount := accountRouterCount(db, id)

@@ -19,7 +19,7 @@ export const frPlatformSettings: Record<string, string> = {
   "platformSettings.register": "Inscriptions",
   "platformSettings.registerDesc": "Contrôle qui peut créer un compte client depuis la page d'accueil.",
   "platformSettings.registerOpen": "Inscriptions ouvertes",
-  "platformSettings.registerOpenHint": "Ouvertes : n'importe qui peut créer un compte (essai 90 jours). Fermées : clé d'invitation requise.",
+  "platformSettings.registerOpenHint": "Ouvertes : n'importe qui peut créer un compte (essai 90 j Hotspot / 30 j Maison). Fermées : clé d'invitation requise.",
   "platformSettings.registerSaved": "Paramètres d'inscription mis à jour",
   "platformSettings.registerEnvLocked": "La variable d'environnement REGISTER_KEY est définie sur le serveur : elle verrouille les inscriptions et prend le dessus sur la console. Retirez-la de Render pour piloter les inscriptions ici.",
   "platformSettings.inviteKey": "Clé d'invitation",

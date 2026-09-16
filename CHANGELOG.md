@@ -5,6 +5,112 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-16 — N°122 — « Deux modes, un nuage » : tarifs SEGMENTÉS Hotspot / HomeNet sur TOUT le système de paiement (catalogue serveur, demande client, webhooks Wave, prélèvement carte, console, plateforme, vitrine) — la Maison paie deux fois moins cher que le lieu public
+
+### N°122 — Contexte : un prix unique pour deux produits différents
+Retour utilisateur : « MikCloud dispose de deux modes liés — Hotspot (gestion
+hotspot) et HomeNet (pare-feu cloud, protection internet résidentiel), mais
+cela n'a pas été mis en avant sur le landing page, pas de segmentation. Les
+prix pour le HomeNet sont : 1 250/mois/routeur et 12 000/an, essai 30 jours.
+Les prix Hotspot eux changent pour 2 500/mois/routeur et 25 000/an routeurs
+illimités. Mettre à jour tout le système de paiement et le landing page. »
+Le catalogue unique (Essentiel 1 250 F/mois/routeur, Illimité 12 000 F/an)
+facturait pareil un cybercafé qui MONÉTISE son WiFi et un foyer qui se
+PROTÈGE — deux valeurs, deux budgets, deux concurrences.
+
+### Produit — le catalogue segmenté (4 formules, 2 par mode)
+- HOTSPOT (réseaux publics payants — cybercafé, maquis, boutique) :
+  Mensuel 2 500 F/mois/routeur (sans engagement) ; Annuel 25 000 F/an
+  routeurs illimités (2 mois offerts vs mensuel : 25 000 F = 10 mois au
+  tarif mensuel).
+- HOMENET (pare-feu cloud des foyers) : Mensuel 1 250 F/mois/routeur ;
+  Annuel 12 000 F/an routeurs illimités (2 mois offerts — le prix
+  historique du produit : la Maison paie deux fois moins cher).
+- ESSAI segmenté : 90 jours (3 mois) en Hotspot, 30 jours en HomeNet —
+  posé à l'inscription selon l'usage choisi, prolongeable par la plateforme.
+- LANDING PAGE : la section tarifs devient « Deux modes, un nuage. » avec un
+  SÉLECTEUR CLAY Hotspot/Maison (pilule segmentée, bouton actif enfoncé en
+  sarcelle, aria-pressed, focus visible) qui pilote les 3 formules du mode
+  (essai, annuel mis en avant ×1,05 avec badge, mensuel) — le changement de
+  mode rejoue l'entrée des cartes ; hero « Que vous exploitiez un hotspot
+  public ou protégiez votre maison… », hint d'essai « 90 jours Hotspot ·
+  30 jours Maison », badge « Gestion Hotspot · Pare-feu Maison · Cloud
+  MikroTik », bandeau stats « 2 modes — Hotspot & Maison », item marquee
+  « Pare-feu maison HomeNet », question FAQ « Quelle différence entre
+  Hotspot et Maison ? », note frais « Essai offert : 90 j Hotspot, 30 j
+  Maison » ; bilingue FR/EN intégral ; le modal d'inscription adapte son
+  essai au mode coché (30 ou 90 jours).
+- CONSOLE CLIENT : la carte Abonnement ne montre QUE les formules du mode du
+  compte (serveur filtré) — repérées par PÉRIODE (mois/an), robustes aux
+  identifiants ; caractéristiques segmentées (Hotspot : vouchers, quotas,
+  revendeurs ; HomeNet : 4 protections, pause dîner, couvre-feu) ;
+  comparatif annuel DÉDUIT du catalogue (2 500×12=30 000 vs 25 000 : −17 %,
+  −50 %, −80 %, −89 % en hotspot ; 15 000 vs 12 000 : −20 % à −92 % en
+  HomeNet) ; « Soit 1 000 F (2 083 F) / mois équivalent » dynamique.
+- CONSOLE PLATEFORME : le dialog d'attribution propose les DEUX formules du
+  mode DU COMPTE + l'essai (un compte Maison ne se voit plus proposer le
+  tarif hotspot) ; durée par défaut qui suit la formule (12 mois annuel,
+  1 mois mensuel, essai 1 mois Maison / 3 mois Hotspot) ; mois multiples
+  de 12 pour l'annuel ; preview miroir du serveur (mensuelle = prix ×
+  slots × mois, annuelle = forfait pro-ratisé).
+
+### Technique — la segmentation est SERVEUR, pas cosmétique
+- `model/tenant.go` : SaasPlan gagne `Usage` (hotspot | homenet) ; catalogue
+  4 formules ; `PlansForUsage` (les 2 formules du mode), `ResolvePlan(id,
+  usage)` (identifiants exacts + HISTORIQUES « essentiel »/« illimite »
+  résolus au mode du compte — source unique du pricing), `IsAnnualPlanID` /
+  `IsPerRouterPlanID` (legacy compris, défense en profondeur).
+- MIGRATION IDEMPOTENTE au chargement (PG + JSON + Reload) :
+  `migrateUsageScopedPlans` réécrit les abonnements et demandes de
+  facturation historiques vers les identifiants segmentés du mode du compte
+  (périodes et LastAmountFcfa conservés — le RENOUVELLEMENT applique le
+  nouveau tarif, conforme à la décision prix) ; libellés compat rafraîchis.
+  Les prélèvements carte GeniusPaySubs gardent leur ID (résolu à l'usage à
+  chaque facture — leur MONTANT souscrit chez GeniusPay reste le tarif de
+  création : résilier/re-créer pour aligner, consigné dans CONTRACT-V2).
+- `applySubscriptionLocked` : montants pilotés par le catalogue résolu —
+  mensuelle = prix × slots × mois ; annuelle = forfait pro-ratisé
+  (prix × mois / 12) ; l'identifiant STOCKÉ est NORMALISÉ (une demande
+  historique active et stocke « hotspot-mensuel ») ; l'empilement compare
+  les identifiants normalisés.
+- GARDE DE MODE : POST /api/subscription et POST /api/subscription/stripe
+  refusent la formule d'un autre mode (400, code `wrong_mode`) ;
+  GET /api/subscription filtre le catalogue par usage et expose `usage` ;
+  guards.go plafonne les mensuelles par routeur (essai à part) ; webhook
+  Wave, finalizeBillingSuccess et resync carte alignés sur
+  IsAnnualPlanID/IsPerRouterPlanID ; essai signup `trialPeriodEnd`
+  (30 jours HomeNet / 3 mois Hotspot) + défaut plateforme par usage.
+- Frontend : types.ts (SaasPlan.usage, SubscriptionView.usage,
+  SubscriptionUpdatePayload segmenté), sa-subscription-card (lookup par
+  période, comparatif dynamique), account-detail-dialog (options par usage,
+  preview miroir), signup-modal (essai {days} paramétrique), i18n FR/EN
+  (sub.*, accounts.sub.plan-*, signup, platform-settings).
+- Vérifié : gofmt vide, go vet OK, go build OK, go test 12 paquets VERTS
+  (nouveaux : TestResolvePlanSegmented, TestApplySubscriptionUsagePricing —
+  montants/normalisation/empilement legacy, TestSignupTrialSegmented — 30 j
+  vs 91 j bout-en-bout, TestSubscriptionPostWrongMode, TestMigrate
+  UsageScopedPlans — idempotence) ; eslint 0, tsc 0, next build OK 13
+  routes ; smoke bout-en-bout sur backend Go réel (:4030, CORS dev) +
+  next dev :3016 : catalogue 4 formules, compte Maison → essai 30 j,
+  catalogue filtré, demande cross-mode refusée wrong_mode, demande bon
+  mode base 1 250/wave 1 425/liste 1 450, activation plateforme HomeNet
+  Annuel 12 000 F, legacy « essentiel » sur compte hotspot → stocké
+  « hotspot-mensuel », 7 500 F (2 500×3), vue console hotspot 2 500 F,
+  essai hotspot 91 jours ; NAVIGATEUR : landing — toggle clay
+  Hotspot/Maison (aria-pressed), cartes Découverte 0 F/90 j · Hotspot
+  Annuel 25 000 F/an · Hotspot Mensuel 2 500 F/mois/routeur ↔ Essai
+  Maison 0 F/30 j · Maison Annuel 12 000 F/an · Maison Mensuel 1 250
+  F/mois/routeur, hint dynamique, badge « Le plus choisi · 2 mois
+  offerts », FR→EN (« Two modes, one cloud. »), modal signup 30 j quand
+  « Ma maison » cochée, mobile 390 px scrollWidth=390 zéro débordement ;
+  console Maison — carte Abonnement HomeNet seule, comparatif −20 %/−60 %/
+  −84 %/−92 %, dialog souscription 1 250/1 425 Wave/1 450 carte ;
+  plateforme — dialog attribution Maison 122 : options HomeNet Mensuel/
+  Annuel/Essai, annuel → 12 mois + « Montant : 12 000 », slots masqués ;
+  0 erreur console.
+
+---
+
 ## 2026-09-16 — N°121 — Pied de page de la vitrine allégé : retrait du copyright MikCloud, de la ligne lieu/humeur et de l'e-mail de contact
 
 ### N°121 — Contexte : retour utilisateur immédiat post-N°120

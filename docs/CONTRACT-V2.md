@@ -1195,6 +1195,68 @@ sans AUCUN bridage**, encore. Autopsie AVEC les données de production
    profil throttle ne porte pas le marqueur — aucun bridage pour lui
    (le quota par lot reste une création MikCloud).
 
+### N°122 — Tarifs segmentés Hotspot / HomeNet : « Deux modes, un nuage »
+
+Retour utilisateur : le catalogue unique (Essentiel 1 250 F/mois/routeur,
+Illimité 12 000 F/an) facturait pareil un cybercafé qui monétise son WiFi et
+un foyer qui se protège. Décision produit :
+
+| Formule | Prix | Couverture | Mode |
+|---|---|---|---|
+| `hotspot-mensuel` | 2 500 F / mois | par routeur (`PerRouter`) | hotspot |
+| `hotspot-annuel` | 25 000 F / an | routeurs illimités | hotspot |
+| `homenet-mensuel` | 1 250 F / mois | par routeur (`PerRouter`) | homenet |
+| `homenet-annuel` | 12 000 F / an | routeurs illimités | homenet |
+
+**Essai segmenté** : 3 mois (~90 jours) en Hotspot, **30 jours** en HomeNet
+(`trialPeriodEnd`, posé à l'inscription selon l'usage ; défaut plateforme
+`trialDefaultMonths` : 1 mois Maison, 3 mois Hotspot).
+
+**Résolution — source unique** (`model.ResolvePlan(id, usage)`) :
+- identifiant segmenté exact → la formule ;
+- identifiants HISTORIQUES `essentiel`/`illimite` (abonnements antérieurs)
+  → la formule du MÊME MODE que le compte (usage vide/inconnu → hotspot) ;
+- `essai` et inconnus → pas de formule.
+
+**Application** (`applySubscriptionLocked`) : mensuelle = prix × slots ×
+mois ; annuelle = forfait pro-ratisé `prix × mois / 12` (division entière —
+12 mois = prix catalogue exact). L'identifiant STOCKÉ est NORMALISÉ vers
+l'identifiant segmenté ; l'empilement compare les identifiants normalisés.
+
+**Migration idempotente** (`store.migrateUsageScopedPlans`, exécutée au
+chargement PG/JSON/Reload) : réécrit `SettingsByAccount[].Subscription.PlanID`
+et `BillingRequests[].PlanID` historiques vers les identifiants segmentés du
+mode du compte (périodes et `LastAmountFcfa` conservés : le RENOUVELLEMENT
+applique le nouveau tarif — décision prix, pas de rattrapage rétroactif) ;
+libellés compat `Settings.Plan` rafraîchis.
+
+**Garde de mode (serveur)** : `POST /api/subscription` et
+`POST /api/subscription/stripe` refusent la formule d'un autre mode
+(400, code `wrong_mode`) ; `GET /api/subscription` renvoie UNIQUEMENT les
+formules du mode du compte + le champ `usage` ; `guardAccountRouterLimit`
+plafonne les mensuelles par routeur (`IsPerRouterPlanID`, essai à part) ;
+webhook Wave, `finalizeBillingSuccess`, activation plateforme et resync
+carte alignés sur `IsAnnualPlanID`/`IsPerRouterPlanID`.
+
+**Limites connues (consignées)** :
+- Les prélèvements carte GeniusPaySubs créés AVANT le N°122 gardent leur
+  identifiant et leur MONTANT souscrit chez GeniusPay (tarif de création) :
+  la facture applique la formule résolue mais le débit reste l'ancien
+  montant — résilier et re-créer l'abonnement carte pour aligner.
+- Une demande de facturation en attente au moment du déploiement conserve
+  le montant calculé à la demande ; l'activation (décision plateforme)
+  applique le tarif segmenté courant — l'opérateur voit l'écart dans le
+  journal (« abonnement X activé (N FCFA) »).
+
+**Frontend** : catalogue consommé par PÉRIODE (`mois`/`an`), jamais par id ;
+`SubscriptionView.usage` pilote les caractéristiques (Hotspot vs HomeNet) ;
+dialog plateforme : options par usage du compte, preview miroir (mensuelle =
+prix × slots × mois, annuelle = `Math.floor(prix × mois / 12)`) ; vitrine :
+sélecteur clay Hotspot/Maison (`aria-pressed`), 3 formules par mode, essai
+30/90 jours affiché, FR/EN.
+
+---
+
 ### N°118 — Convention débit : « le libellé qui inversait le sens »
 Re-test N°116 RÉUSSI (voucher `7388` sur CYBER S.C : file `mikthrottle-7388`
 en position 0, `max-limit=1M/512k`, download plombé à 512,9 kbps live,

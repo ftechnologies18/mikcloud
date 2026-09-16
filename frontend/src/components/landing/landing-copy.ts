@@ -1,33 +1,40 @@
-// Landing page MikCloud — copie marketing bilingue FR/EN.
+// Landing page MikCloud « Clay » — copie marketing bilingue FR/EN.
 //
-// Auto-contenue (à part du dictionnaire app i18n.ts) car la landing a un
-// volume de copie marketing important (~150 clés) qui n'a pas vocation à
-// vivre dans le dictionnaire applicatif. La langue courante est lue via
-// le store zustand (useHotspotStore.lang) — pas de rechargement au switch.
+// Auto-contenue (à part du dictionnaire applicatif i18n) : la vitrine a un
+// volume de copie marketing important qui n'a pas vocation à vivre dans le
+// dictionnaire applicatif. La langue courante est lue via le store zustand
+// (useHotspotStore.lang) — pas de rechargement au switch.
 //
-// Inspiration (fusion des meilleurs patterns) :
-//   - Spotipo  : hero axé revenu, 2 CTA, trust bar, feature grid avec CTA
-//                inline, FAQ, final CTA sans carte bancaire
-//   - Tanaza   : multi-segments (ISP/MSP/Enterprise), framing hardware,
-//                multi-langue, pricing 2-tier "switch anytime"
-//   - Cloudi-Fi: benefits grid 4 cartes (cloud-native, une console,
-//                déploiement facile, conformité/souveraineté), showcase
-//                méthodes d'onboarding, angle infrastructure-agnostic
+// N°120 — refonte complète de la vitrine : MikCloud n'est plus seulement un
+// gestionnaire Hotspot, c'est aussi un pare-feu cloud (4 protections posées
+// sur le routeur : SafeWiFi, Shield, FamilyGuard, AntiVPN) et un outil de
+// pilotage de parc (télémétrie, mise à jour RouterOS unitaire + flotte).
+// La copie ne mentionne QUE des fonctionnalités réelles du produit — les
+// chiffres mis en avant (500 vouchers/lot, 4 boucliers, 54 pays, 90 jours
+// d'essai) sont des constantes produit, pas des métriques d'usage inventées.
 //
 // Positionnement : marché africain pan-continental (UEMOA + CEMAC + Afrique
-// de l'Est + Nigeria + Ghana). Multi-opérateur (Orange, MTN, Moov, Safaricom,
-// Airtel, Vodafone GH, 9Mobile, Glo), multi mobile-money (Wave, Orange Money,
-// MTN MoMo, Moov, MPesa, Airtel Money), multi-devises (FCFA, NGN, GHS, KES...).
+// de l'Est + Nigeria + Ghana). Multi mobile-money (Wave, Orange Money, MTN
+// MoMo, Moov, MPesa, Airtel Money), multi-devises (FCFA, NGN, GHS, KES...).
 
 export type Lang = "fr" | "en";
 
 export interface LandingCopy {
+  rail: {
+    home: string;
+    powers: string;
+    protection: string;
+    hotspot: string;
+    fleet: string;
+    pricing: string;
+    cta: string;
+  };
   header: {
     brand: string;
-    nav: { features: string; benefits: string; pricing: string; faq: string };
     signIn: string;
     signUp: string;
     langLabel: string;
+    homeLink: string;
   };
   hero: {
     badge: string;
@@ -37,51 +44,59 @@ export interface LandingCopy {
     subtitle: string;
     ctaPrimary: string;
     ctaSecondary: string;
-    ctaSignUp: string;
     trialHint: string;
-    statBar: { value: string; label: string }[];
+    chips: string[];
   };
-  trust: {
-    items: { icon: string; label: string }[];
-  };
-  // — Section "Benefits" (inspirée Cloudi-Fi) — 4 cartes axées bénéfices
-  benefits: {
+  marquee: string[];
+  powers: {
     eyebrow: string;
     title: string;
     subtitle: string;
-    items: { icon: string; title: string; description: string }[];
-  };
-  features: {
-    eyebrow: string;
-    title: string;
-    subtitle: string;
-    items: {
-      icon: string;
+    cards: {
+      tag: string;
       title: string;
-      description: string;
-      cta: string;
+      desc: string;
+      items: string[];
     }[];
   };
-  how: {
-    eyebrow: string;
+  protection: {
+    kicker: string;
     title: string;
-    subtitle: string;
-    steps: { num: string; title: string; description: string }[];
+    body: string;
+    feats: { title: string; desc: string }[];
+    panel: {
+      title: string;
+      scoreLabel: string;
+      scoreVerdict: string;
+      stats: { value: string; label: string }[];
+      lines: { name: string; state: string }[];
+      repairLine: { name: string; state: string };
+    };
   };
-  useCases: {
-    eyebrow: string;
+  hotspot: {
+    kicker: string;
     title: string;
-    subtitle: string;
-    items: { icon: string; title: string; description: string }[];
+    body: string;
+    feats: { title: string; desc: string }[];
+    panel: {
+      title: string;
+      online: string;
+      peak: string;
+    };
   };
-  hardware: {
-    eyebrow: string;
+  fleet: {
+    kicker: string;
     title: string;
-    subtitle: string;
-    primaryVendor: string;
-    primaryVendorNote: string;
-    roadmapNote: string;
+    body: string;
+    feats: { title: string; desc: string }[];
+    panel: {
+      title: string;
+      rows: { name: string; version: string; state: string; upToDate: boolean }[];
+      checkAll: string;
+      updateAll: string;
+    };
   };
+  stats: { value: number; label: string }[];
   pricing: {
     eyebrow: string;
     title: string;
@@ -98,20 +113,13 @@ export interface LandingCopy {
     }[];
     currencyNote: string;
   };
-  testimonials: {
-    eyebrow: string;
-    title: string;
-    subtitle: string;
-    placeholder: string;
-    valueProps: { icon: string; title: string; description: string }[];
-  };
   faq: {
     eyebrow: string;
     title: string;
-    subtitle: string;
     items: { q: string; a: string }[];
   };
   finalCta: {
+    kicker: string;
     title: string;
     subtitle: string;
     primary: string;
@@ -121,714 +129,613 @@ export interface LandingCopy {
     tagline: string;
     columns: { title: string; links: { label: string; href: string }[] }[];
     copyright: string;
+    fun: string;
     contact: string;
     location: string;
-    /** N°70 — libellé du lien vers /legal/confidentialite (politique de confidentialité). */
+    /** N°70 — libellé du lien vers /legal/confidentialite. */
     legal: string;
   };
 }
 
 const fr: LandingCopy = {
+  rail: {
+    home: "Accueil",
+    powers: "Super-pouvoirs",
+    protection: "Protection",
+    hotspot: "Hotspot",
+    fleet: "Parc routeurs",
+    pricing: "Tarifs",
+    cta: "Essai gratuit",
+  },
   header: {
     brand: "MikCloud",
-    nav: {
-      features: "Fonctionnalités",
-      benefits: "Bénéfices",
-      pricing: "Tarifs",
-      faq: "FAQ",
-    },
     signIn: "Se connecter",
-    signUp: "Créer mon compte",
+    signUp: "Essai gratuit",
     langLabel: "EN",
+    homeLink: "Retour à l'accueil",
   },
   hero: {
-    badge: "Essai gratuit 90 jours · sans carte bancaire",
-    title1: "Boostez vos revenus",
-    titleAccent: "hotspot",
-    title2: "depuis un seul cloud",
+    badge: "Hotspot · Protection cloud · Parc MikroTik",
+    title1: "Votre WiFi,",
+    titleAccent: "blindé",
+    title2: "par le cloud.",
     subtitle:
-      "MikCloud est la plateforme cloud de gestion de hotspot MikroTik, conçue en Afrique pour les opérateurs africains. Connectez votre premier routeur en 45 secondes.",
-    ctaPrimary: "Se connecter à la console",
-    ctaSecondary: "Voir la démo",
-    ctaSignUp: "Créer mon compte",
-    trialHint: "Essai gratuit 90 jours · 1 routeur · sans carte bancaire",
-    statBar: [
-      { value: "45 s", label: "pour connecter un routeur" },
-      { value: "0", label: "IP publique requise" },
-      { value: "6+", label: "mobile money supportés" },
-      { value: "14+", label: "pays africains couverts" },
-    ],
+      "MikCloud est bien plus qu'un gestionnaire de hotspot : vouchers, portails captifs à votre marque, quatre boucliers pare-feu et pilotage complet de votre parc MikroTik — réunis dans une seule console, réparée automatiquement depuis le cloud.",
+    ctaPrimary: "Protéger mon réseau",
+    ctaSecondary: "Découvrir la plateforme",
+    trialHint: "90 jours d'essai gratuit · 1 routeur · sans carte bancaire",
+    chips: ["4/4 protections actives", "500 vouchers par lot", "Agent · check-in 45 s"],
   },
-  trust: {
-    items: [
-      { icon: "Timer", label: "45 s pour connecter un routeur" },
-      { icon: "ShieldOff", label: "Zéro IP publique, zéro port ouvert" },
-      { icon: "Wallet", label: "Wave, Orange Money, MTN MoMo, Moov, MPesa, Airtel Money" },
-      { icon: "Globe", label: "Conçu en Afrique, hébergé dans le cloud UE" },
-    ],
-  },
-  benefits: {
-    eyebrow: "Bénéfices",
-    title: "Cloud-native, sécurisé et souverain",
+  marquee: [
+    "Vouchers & codes d'accès",
+    "Filtrage DNS Quad9",
+    "Anti-piratage WiFi",
+    "Couvre-feu internet",
+    "Bloque-VPN",
+    "QoS & forfait FAI",
+    "Mode Vente revendeurs",
+    "Mise à jour RouterOS",
+    "Portail captif à votre marque",
+    "WiFi jetable par QR",
+    "Notifications Telegram",
+    "Paiement Wave",
+  ],
+  powers: {
+    eyebrow: "Une console, trois super-pouvoirs",
+    title: "Tout ce qu'il faut pour régner sur votre réseau.",
     subtitle:
-      "MikCloud déploie une architecture cloud-native Zero Trust à travers tous vos sites. Une seule console pour piloter tous vos routeurs, où qu'ils soient — avec conformité aux réglementations locales de données.",
-    items: [
+      "Gestion hotspot, protection cloud et pilotage du parc : MikCloud réunit en une seule interface tout ce que votre infrastructure réclame — sans Winbox, sans serveur à maintenir.",
+    cards: [
       {
-        icon: "Cloud",
-        title: "Cloud-native & sécurisé",
-        description:
-          "Architecture 100 % cloud, chiffrement TLS en transit et au repos. Authentification Zero Trust, mots de passe hashés (bcrypt), identifiants routeur chiffrés. Aucun agent à installer sur le routeur.",
+        tag: "Fondation",
+        title: "Gestion Hotspot",
+        desc: "Le cœur historique de MikCloud, devenu adulte : portails captifs à votre marque, vouchers par lots, quotas et bridage au forfait, sessions en direct.",
+        items: [
+          "Portail captif 100 % à votre marque",
+          "Vouchers par lots jusqu'à 500",
+          "Quota, débit et durée par forfait",
+          "Mode Vente & revendeurs avec PIN",
+        ],
       },
       {
-        icon: "MonitorSmartphone",
-        title: "Une console pour tous vos routeurs",
-        description:
-          "Pilotez 1, 10 ou 100 routeurs MikroTik depuis une seule console. Vue consolidée multi-sites : sessions, ventes, revenus par site. Plus besoin de jongler entre Winbox, NAT et DDNS.",
+        tag: "4 boucliers",
+        title: "Protection Cloud",
+        desc: "Quatre protections pare-feu posées directement sur vos routeurs, pilotées et auto-réparées depuis le cloud toutes les six heures.",
+        items: [
+          "SafeWiFi — filtrage DNS Quad9 / AdGuard",
+          "Shield — ports d'administration blindés",
+          "FamilyGuard — couvre-feu horaire",
+          "AntiVPN — tunnels coupés, WhatsApp intact",
+        ],
       },
       {
-        icon: "Rocket",
-        title: "Déploiement facile & scalable",
-        description:
-          "Infrastructure-agnostic : votre routeur appelle le cloud en sortant uniquement. Ajoutez un routeur en 45 s, scalez à 100 sans rien reconfigurer. Ça marche derrière n'importe quel opérateur, même en CGNAT.",
-      },
-      {
-        icon: "ShieldCheck",
-        title: "Conforme & souverain",
-        description:
-          "Données hébergées dans l'UE (Francfort) avec rétention conforme aux réglementations locales. Journaux d'activité en temps réel, export et suppression de vos données à tout moment. Souveraineté numérique respectée.",
-      },
-    ],
-  },
-  features: {
-    eyebrow: "Fonctionnalités",
-    title: "Tout votre métier hotspot, un seul écran",
-    subtitle:
-      "Du voucher à l'impression rapide, de la session temps réel au portefeuille revendeur — MikCloud réunit ce que vous faisiez à la main dans Winbox, Excel et WhatsApp.",
-    items: [
-      {
-        icon: "Ticket",
-        title: "Vouchers & impression rapide",
-        description:
-          "Génération par lots (1 à 500), préfixe et longueur de code personnalisables, impression rapide des tickets avec QR code. Traçabilité complète par lot : site émetteur, canal, revendeur, statut voucher par voucher.",
-        cta: "Générer un lot",
-      },
-      {
-        icon: "Activity",
-        title: "Sessions temps réel",
-        description:
-          "Table de sessions live rafraîchie toutes les 5 s, déconnexion (kick) instantanée, vue multi-routeurs consolidée. CPU, uptime, statut de chaque routeur MikroTik d'un coup d'œil.",
-        cta: "Voir les sessions",
-      },
-      {
-        icon: "Network",
-        title: "Multi-sites & multi-routeurs",
-        description:
-          "Un compte, N hotspots, N routeurs. Vue d'ensemble multi-sites : sessions, ventes et revenus par site. Idéal pour les gérants multi-sites, ISPs et revendeurs qui jonglent entre Winbox, NAT et DDNS.",
-        cta: "Gérer plusieurs sites",
-      },
-      {
-        icon: "Wallet",
-        title: "Revendeurs à portefeuille",
-        description:
-          "Créez des comptes revendeurs avec portefeuille de crédits, rechargements traçables et journal des transactions. Chaque revendeur suit ses ventes, vous gardez la vue d'ensemble.",
-        cta: "Créer un revendeur",
-      },
-      {
-        icon: "BarChart3",
-        title: "Rapports & comptabilité",
-        description:
-          "Comptabilité multi-sites : ventes par jour, semaine, mois et par routeur (part de CA, panier moyen). Activité : revenus, ventes par profil, trafic consommé, statut des vouchers.",
-        cta: "Consulter les rapports",
-      },
-      {
-        icon: "Bell",
-        title: "Alertes & notifications",
-        description:
-          "Surveillance automatique : auto-marquage hors ligne des routeurs (3 × 45 s sans check-in), alertes de stock de vouchers bas, rapports journaliers. Canaux Telegram, WhatsApp, email.",
-        cta: "Configurer une alerte",
+        tag: "Parc",
+        title: "Pilotage du parc",
+        desc: "Télémétrie live, mise à jour RouterOS en un clic — routeur par routeur ou tout le parc d'un geste — et qualité de ligne mesurée en continu.",
+        items: [
+          "Mise à jour RouterOS sans Winbox",
+          "Télémétrie CPU, mémoire, uptime",
+          "QoS agrégée & forfait FAI",
+          "Docteur Pool IP & auto-réparation",
+        ],
       },
     ],
   },
-  how: {
-    eyebrow: "Comment ça marche",
-    title: "En ligne en 3 étapes, moins de 5 minutes",
-    subtitle:
-      "Aucune installation réseau. Aucune IP publique. Aucun port à ouvrir. Le routeur appelle le cloud dans le sens sortant uniquement — ça marche partout, même derrière CGNAT.",
-    steps: [
+  protection: {
+    kicker: "Protection cloud",
+    title: "Le bouclier qui veille pendant que vous dormez.",
+    body: "Chaque protection est vérifiée par signatures et réparée automatiquement toutes les six heures. Sans rien installer, sans ouvrir Winbox : vos règles existantes sont préservées, et le WiFi reste opérationnel quoi qu'il arrive.",
+    feats: [
       {
-        num: "01",
-        title: "Connectez votre routeur MikroTik",
-        description:
-          "Ajoutez votre routeur dans MikCloud : IP, port 8728, identifiants API. Ou collez le script .rsc auto-installable depuis Winbox — le routeur appelle le cloud toutes les 45 s.",
+        title: "SafeWiFi — sites dangereux bloqués",
+        desc: "Virus, arnaques et publicités stoppés au niveau DNS (Quad9 ou AdGuard Famille) — les échappatoires DoH et IPv6 sont fermées.",
       },
       {
-        num: "02",
-        title: "Configurez vos forfaits & vouchers",
-        description:
-          "Débit (format RouterOS), durée de session, validité, quota Go, prix. Générez un lot de vouchers, débitez automatiquement le portefeuille du revendeur, imprimez les tickets en un clic.",
+        title: "Shield — anti-piratage du WiFi",
+        desc: "Les ports d'administration de vos routeurs et le partage Windows deviennent inaccessibles depuis le WiFi public.",
       },
       {
-        num: "03",
-        title: "Vendez & supervisez",
-        description:
-          "Acceptez Wave, Orange Money, MTN MoMo, Moov, MPesa ou Airtel Money. Suivez les sessions en temps réel, consultez les rapports par site, par profil et par période — depuis n'importe quel navigateur.",
+        title: "FamilyGuard — couvre-feu internet",
+        desc: "Tout l'internet des clients est coupé pendant la fenêtre programmée, par exemple de 22 h à 6 h.",
+      },
+      {
+        title: "AntiVPN — tunnels coupés",
+        desc: "WireGuard, OpenVPN, IPsec et Tor bloqués — les appels WhatsApp restent intacts.",
       },
     ],
+    panel: {
+      title: "Centre de protection",
+      scoreLabel: "Score de protection",
+      scoreVerdict: "Bien protégé",
+      stats: [
+        { value: "4", label: "protections actives" },
+        { value: "6 h", label: "auto-réparation" },
+        { value: "45 s", label: "check-in agent" },
+      ],
+      lines: [
+        { name: "SafeWiFi · Filtrage DNS", state: "Actif" },
+        { name: "Shield · Anti-piratage", state: "Actif" },
+        { name: "FamilyGuard · Couvre-feu", state: "22:00 → 06:00" },
+        { name: "AntiVPN · Bloque-VPN", state: "Actif" },
+      ],
+      repairLine: { name: "Auto-réparation cloud", state: "Vérifié il y a 2 min" },
+    },
   },
-  useCases: {
-    eyebrow: "Cas d'usage",
-    title: "Conçu pour tous les opérateurs WiFi africains",
-    subtitle:
-      "Du cybercafé de quartier au WISP multi-ville, en passant par l'hôtel, le campus et le marché de rue — MikCloud s'adapte à votre métier.",
-    items: [
+  hotspot: {
+    kicker: "Gestion hotspot",
+    title: "Un portail captif dont vous serez fier.",
+    body: "Offrez à vos clients une connexion fluide et soignée — à votre marque, sans aucune mention MikCloud. Vouchers à durée, quota ou multi-appareils : vous gardez le contrôle total.",
+    feats: [
       {
-        icon: "Monitor",
-        title: "Cybercafés & boutiques internet",
-        description:
-          "Vendez l'accès à la minute, au quart d'heure ou à l'heure. Vouchers prépayés, impression à la volée, comptabilité journalière automatique.",
+        title: "Marque 100 % personnalisable",
+        desc: "Mode commercial avec grille tarifaire et paiement Wave, ou mode hospitalité avec promos et réseaux sociaux.",
       },
       {
-        icon: "Hotel",
-        title: "Hôtels & résidences",
-        description:
-          "Vouchers invités remis à la réception, quotas par chambre, forfaits jour / séjour. Comptabilité par étage ou par bâtiment.",
+        title: "Vouchers & forfaits",
+        desc: "Durée, quota de données, débit, 1 à 10 appareils — et à l'épuisement : couper ou brider en douceur.",
       },
       {
-        icon: "GraduationCap",
-        title: "Campus & écoles",
-        description:
-          "Quotas étudiants par semestre, profils par classe, sessions limitées en temps ou en volume. Rapports d'usage par promotion.",
-      },
-      {
-        icon: "Server",
-        title: "ISPs & WISP locaux",
-        description:
-          "Multi-sites, revendeurs à portefeuille, alertes automatiques. Pilotez 1, 10 ou 100 routeurs depuis une seule console cloud.",
-      },
-      {
-        icon: "Coffee",
-        title: "Restaurants & cafés",
-        description:
-          "WiFi client gratuit avec capture d'email pour le marketing, ou WiFi premium payant au-delà d'un quota. Bascule en 1 clic.",
-      },
-      {
-        icon: "Store",
-        title: "Marchés & gares",
-        description:
-          "Vouchers en gros confiés à des revendeurs de rue. Chaque revendeur suit son stock et ses ventes, vous gardez la traçabilité complète.",
+        title: "Statistiques en direct",
+        desc: "Affluence horaire, revenus, marge par profil, canaux directs et revendeurs.",
       },
     ],
+    panel: {
+      title: "Affluence horaire",
+      online: "Heure de pointe · 19 h",
+      peak: "24 h",
+    },
   },
-  hardware: {
-    eyebrow: "Compatibilité",
-    title: "Conçu pour MikroTik RouterOS",
-    subtitle:
-      "MikCloud parle le protocole binaire natif RouterOS (API port 8728) — le standard des hotspots professionnels en Afrique. Login v6.43+ et fallback challenge MD5 gérés automatiquement.",
-    primaryVendor: "MikroTik",
-    primaryVendorNote:
-      "Tout routeur sous RouterOS 6.43+ est supporté : hAP, hEX, RB, CCR, etc. Mode Simulé intégré pour démontrer sans matériel.",
-    roadmapNote:
-      "Roadmap : support Ubiquiti UniFi, TP-Link et Cisco prévu — MikCloud évolue vers une plateforme multi-vendor.",
+  fleet: {
+    kicker: "Parc & flotte",
+    title: "Votre parc MikroTik, sans quitter la console.",
+    body: "L'agent MikCloud sort du routeur vers le cloud : il fonctionne derrière CGNAT, Orange ou Starlink, sans IP publique ni port ouvert. Puis chaque routeur se pilote à distance — jusqu'à la mise à jour RouterOS de toute la flotte.",
+    feats: [
+      {
+        title: "Mise à jour RouterOS en 1 clic",
+        desc: "Vérifiez la dernière version et installez-la routeur par routeur — ou tout le parc détecté en retard, d'un seul geste.",
+      },
+      {
+        title: "Télémétrie en continu",
+        desc: "CPU, mémoire, uptime, version RouterOS et qualité de ligne de chaque routeur, rafraîchis à chaque check-in.",
+      },
+      {
+        title: "Alertes qui ne dorment pas",
+        desc: "Routeur hors ligne, stock de vouchers bas, rapport quotidien : Telegram, WhatsApp ou e-mail.",
+      },
+    ],
+    panel: {
+      title: "Parc routeurs",
+      rows: [
+        { name: "Café du Plateau", version: "7.24.3", state: "À jour", upToDate: true },
+        { name: "Hôtel Ébène", version: "7.16.2 → 7.24.3", state: "Mise à jour prête", upToDate: false },
+        { name: "Cyber Marché", version: "7.24.3", state: "À jour", upToDate: true },
+      ],
+      checkAll: "Vérifier tout le parc",
+      updateAll: "Mettre à jour le parc",
+    },
   },
+  stats: [
+    { value: 500, label: "vouchers par lot" },
+    { value: 4, label: "boucliers pare-feu" },
+    { value: 54, label: "pays africains visés" },
+    { value: 90, label: "jours d'essai gratuit" },
+  ],
   pricing: {
     eyebrow: "Tarifs",
-    title: "Un prix clair, sans surprise",
+    title: "Simple comme un nuage.",
     subtitle:
-      "Tarif en FCFA (UEMOA et CEMAC). Pour NGN, GHS, KES, TZS, UGX, ZAR et autres devises africaines, le montant est converti automatiquement à la souscription.",
+      "Commencez gratuitement pendant 90 jours, grandissez à votre rythme. Sans engagement, sans frais cachés.",
     plans: [
       {
-        name: "Essentiel",
-        price: "1 250 FCFA",
-        period: "/ mois / routeur",
-        tagline: "Pour démarrer, sans engagement.",
-        cta: "Commencer",
+        name: "Découverte",
+        price: "0",
+        period: "FCFA · 90 jours",
+        tagline: "Pour découvrir MikCloud sans risque",
+        cta: "Commencer gratuitement",
         highlight: false,
         features: [
-          "1 routeur (ajoutez-en à la demande)",
-          "Vouchers, sessions, profils",
-          "Rapports par routeur",
-          "Support email",
-          "Sans engagement, annulable à tout moment",
+          "1 routeur · toutes les fonctions",
+          "4 protections incluses",
+          "Mode Vente & revendeurs",
+          "Sans carte bancaire",
         ],
       },
       {
         name: "Illimité",
-        price: "12 000 FCFA",
-        period: "/ an · routeurs illimités",
-        tagline: "Pour les multi-sites et ISPs.",
-        cta: "Choisir cette formule",
+        price: "12 000",
+        period: "FCFA / an",
+        tagline: "Tous vos routeurs, un seul prix",
+        cta: "Passer à l'Illimité",
         highlight: true,
-        badge: "Routeurs illimités · 2 mois offerts",
+        badge: "Le plus choisi · 2 mois offerts",
         features: [
           "Routeurs illimités",
-          "Revendeurs illimités",
-          "Multi-sites avec vue consolidée",
-          "Alertes Telegram, WhatsApp, email",
-          "Rapports comptables multi-sites",
-          "Support prioritaire WhatsApp",
-          "Tarif annuel — équivalent 1 000 F/mois",
+          "4 protections sur tout le parc",
+          "Mises à jour RouterOS de flotte",
+          "Notifications Telegram & WhatsApp",
+          "Support prioritaire",
+        ],
+      },
+      {
+        name: "Essentiel",
+        price: "1 250",
+        period: "FCFA / mois / routeur",
+        tagline: "Payez au fil de votre croissance",
+        cta: "Choisir Essentiel",
+        highlight: false,
+        features: [
+          "Par routeur actif",
+          "Sans engagement",
+          "Résiliable à tout moment",
+          "Toutes les fonctions incluses",
         ],
       },
     ],
     currencyNote:
-      "Devises supportées : FCFA (UEMOA : CI, SN, ML, BF, BJ, TG, NE + CEMAC : CM, GA, CG, TD, CF, GQ), NGN (Nigeria), GHS (Ghana), KES (Kenya), TZS (Tanzanie), UGX (Ouganda), ZAR (Afrique du Sud).",
-  },
-  testimonials: {
-    eyebrow: "Témoignages",
-    title: "Conçu avec les opérateurs, pour les opérateurs",
-    subtitle:
-      "MikCloud est en lancement — les premiers témoignages clients arriveront ici. En attendant, voici ce que la plateforme vous apporte dès le premier jour.",
-    placeholder: "Premiers témoignages clients à venir",
-    valueProps: [
-      {
-        icon: "Clock",
-        title: "45 secondes",
-        description: "C'est le temps moyen pour connecter un routeur MikroTik à MikCloud, script .rsc inclus.",
-      },
-      {
-        icon: "TrendingDown",
-        title: "−20 % à −92 %",
-        description: "L'économie réalisée en passant au forfait Illimité : de 1 à 10 routeurs, le coût marginal tombe à presque zéro.",
-      },
-      {
-        icon: "Lock",
-        title: "Aucune IP publique",
-        description: "Le routeur appelle le cloud en sortant uniquement. Aucun port à ouvrir, aucun VPN, aucune exposition internet.",
-      },
-      {
-        icon: "Headphones",
-        title: "Support local",
-        description: "Assistance en français et en anglais, par WhatsApp et email — depuis Abidjan, pour toute l'Afrique.",
-      },
-    ],
+      "Frais de paiement répercutés sur le prix de liste : carte +6 %, Wave −3 % (remise mobile money). Les 90 premiers jours sont offerts sur toutes les formules.",
   },
   faq: {
-    eyebrow: "FAQ",
-    title: "Questions fréquentes",
-    subtitle:
-      "Tout ce que les opérateurs africains nous demandent avant de se lancer.",
+    eyebrow: "Questions fréquentes",
+    title: "Les réponses, sans jargon.",
     items: [
       {
-        q: "MikCloud marche-t-il derrière Orange, MTN, Moov, Safaricom ou Airtel (CGNAT) ?",
-        a: "Oui — c'est précisément pour ça que MikCloud existe. Le routeur appelle le cloud toutes les 45 secondes dans le sens sortant uniquement. Aucune IP publique, aucun port à ouvrir, aucun VPN. Ça marche derrière n'importe quel opérateur africain en CGNAT : Orange CI/CM/SN/ML/BF/BJ/TG/NE, MTN (15 pays), Moov CI/BF/BJ, Safaricom KE/TZ, Airtel (14 pays), Vodafone GH, Surfline GH, 9Mobile et Glo NG, etc.",
+        q: "Faut-il un routeur particulier ?",
+        a: "MikCloud pilote les routeurs MikroTik sous RouterOS (hEX, RB, CHR…). L'agent sort du routeur vers le cloud : il fonctionne derrière CGNAT, Orange ou Starlink, sans IP publique ni port ouvert — un script à coller dans Winbox, environ 40 secondes.",
       },
       {
-        q: "Dois-je avoir une IP publique ou ouvrir un port sur mon routeur ?",
-        a: "Non. MikCloud fonctionne entièrement en sortant : le routeur MikroTik établit la connexion vers le cloud. Vous n'avez besoin ni d'IP publique, ni de DDNS, ni d'ouverture de port. C'est ce qui rend la plateforme utilisable immédiatement, même sur une connexion Orange ou MTN grand public.",
+        q: "Mes clients verront-ils la protection ?",
+        a: "Non. La navigation reste fluide et WhatsApp continue de passer. En coulisses : sites dangereux et publicités bloqués au DNS, ports d'administration et partage Windows inaccessibles depuis le WiFi public, couvre-feu et bloque-VPN si vous les activez.",
       },
       {
-        q: "Quels routeurs sont supportés ?",
-        a: "MikCloud s'appuie sur le protocole binaire natif RouterOS (API port 8728). Tout routeur MikroTik sous RouterOS 6.43+ est supporté — hAP, hEX, RB, CCR, etc. Le login v6.43+ et le fallback challenge MD5 sont gérés automatiquement. Un mode Simulé intégré permet aussi de démontrer toute la plateforme sans matériel. Le support Ubiquiti, TP-Link et Cisco est en roadmap.",
+        q: "Puis-je vendre des tickets sans boutique ?",
+        a: "Oui. Le Mode Vente tourne sur le téléphone de vos revendeurs (PWA protégée par PIN) : stock transféré, ventes même hors-ligne, reçu partageable sur WhatsApp et rapport de fin de journée.",
       },
       {
-        q: "Quels moyens de paiement puis-je accepter auprès de mes clients ?",
-        a: "MikCloud génère des liens de paiement pré-composés au montant exact, compatibles avec Wave (SN/CI), Orange Money (UEMOA + CEEAC), MTN MoMo (15 pays), Moov Money (UEMOA), MPesa (KE/TZ/CD/GH) et Airtel Money (14 pays). Vous pouvez aussi encaisser en espèces et valider manuellement. Côté abonnement MikCloud, le paiement se fait par mobile money ou virement.",
-      },
-      {
-        q: "Puis-je essayer avant de payer ?",
-        a: "Oui. Créez votre compte gratuitement : votre essai de 90 jours démarre immédiatement, avec 1 routeur inclus et un mode Simulé pour démontrer toute la plateforme sans matériel. Pour connecter un vrai routeur MikroTik et juger par vous-même, souscrivez au forfait Essentiel (1 250 F/mois, sans engagement) — annulable à tout moment.",
-      },
-      {
-        q: "Mes données sont-elles en sécurité ? Où sont-elles stockées ?",
-        a: "Vos données vivent dans une base PostgreSQL managée (Neon), chiffrée en transit (TLS) et au repos. Le backend Go est hébergé sur Render dans l'UE (Francfort). Vos identifiants de routeur sont stockés chiffrés, vos mots de passe utilisateur sont hashés (bcrypt). Vous pouvez exporter ou supprimer vos données à tout moment. Conformité aux réglementations locales de données respectée.",
+        q: "Que devient mon réseau si j'arrête de payer ?",
+        a: "Vous avez 30 jours de grâce après l'échéance, puis la console est suspendue. Vos routeurs continuent de servir vos clients et vos données sont conservées — un règlement suffit à rouvrir l'accès.",
       },
     ],
   },
   finalCta: {
-    title: "Prêt à connecter votre premier routeur ?",
+    kicker: "Prêt·e à passer au niveau supérieur ?",
+    title: "Blindez votre WiFi en moins de 5 minutes.",
     subtitle:
-      "Votre routeur MikroTik en ligne en 45 secondes. Sans IP publique. Sans engagement. Sans installer quoi que ce soit sur votre réseau.",
-    primary: "Se connecter à la console",
-    secondary: "Choisir le forfait Illimité",
+      "Créez votre compte, collez le script agent sur votre routeur, activez vos protections. Sans carte bancaire, sans serveur à maintenir.",
+    primary: "Créer mon compte gratuit",
+    secondary: "Se connecter",
   },
   footer: {
     tagline:
-      "La plateforme cloud de gestion de hotspot MikroTik, conçue en Afrique pour les opérateurs africains.",
+      "Le cloud qui protège : hotspot, pare-feu et pilotage MikroTik réunis dans un seul outil.",
     columns: [
       {
         title: "Produit",
         links: [
-          { label: "Bénéfices", href: "#benefits" },
-          { label: "Fonctionnalités", href: "#features" },
-          { label: "Tarifs", href: "#pricing" },
-          { label: "Cas d'usage", href: "#use-cases" },
-          { label: "FAQ", href: "#faq" },
+          { label: "Super-pouvoirs", href: "#pouvoirs" },
+          { label: "Protection cloud", href: "#protection" },
+          { label: "Hotspot", href: "#hotspot" },
+          { label: "Parc routeurs", href: "#parc" },
+          { label: "Tarifs", href: "#tarifs" },
         ],
       },
       {
-        title: "Société",
+        title: "Console",
         links: [
-          { label: "À propos", href: "#" },
-          { label: "Contact", href: "mailto:freelancetechnologies.ci@gmail.com" },
-          { label: "Blog", href: "#" },
-          { label: "Partenaires", href: "#" },
+          { label: "Se connecter", href: "/login" },
+          { label: "Mode Vente", href: "/sell" },
+          { label: "Connexion WiFi jetable", href: "/wifi" },
         ],
       },
       {
-        title: "Ressources",
-        links: [
-          { label: "Documentation", href: "#" },
-          { label: "Statut", href: "#" },
-          { label: "Changelog", href: "#" },
-          { label: "API", href: "#" },
-        ],
+        title: "Légal",
+        links: [{ label: "Politique de confidentialité", href: "/legal/confidentialite" }],
       },
     ],
-    copyright: "© 2026 FTCI — Freelance Technologies Côte d'Ivoire",
+    copyright: "© 2026 MikCloud — Tous droits réservés.",
+    fun: "Fait avec ☁ et beaucoup de sarcelle.",
     contact: "freelancetechnologies.ci@gmail.com",
-    location: "Abidjan, Côte d'Ivoire · Afrique de l'Ouest, Centrale et de l'Est",
+    location: "Abidjan · Côte d'Ivoire",
     legal: "Politique de confidentialité",
   },
 };
 
 const en: LandingCopy = {
+  rail: {
+    home: "Home",
+    powers: "Superpowers",
+    protection: "Protection",
+    hotspot: "Hotspot",
+    fleet: "Router fleet",
+    pricing: "Pricing",
+    cta: "Free trial",
+  },
   header: {
     brand: "MikCloud",
-    nav: {
-      features: "Features",
-      benefits: "Benefits",
-      pricing: "Pricing",
-      faq: "FAQ",
-    },
     signIn: "Sign in",
-    signUp: "Sign up",
+    signUp: "Free trial",
     langLabel: "FR",
+    homeLink: "Back to home",
   },
   hero: {
-    badge: "90-day free trial · no credit card",
-    title1: "Boost your",
-    titleAccent: "hotspot",
-    title2: "revenue from one cloud",
+    badge: "Hotspot · Cloud protection · MikroTik fleet",
+    title1: "Your WiFi,",
+    titleAccent: "shielded",
+    title2: "by the cloud.",
     subtitle:
-      "MikCloud is the cloud-managed MikroTik hotspot platform built in Africa for African operators. Connect your first router in 45 seconds.",
-    ctaPrimary: "Sign in to console",
-    ctaSecondary: "Try the demo",
-    ctaSignUp: "Create account",
+      "MikCloud is far more than a hotspot manager: vouchers, white-label captive portals, four firewall shields and full MikroTik fleet control — brought together in a single console, self-healed from the cloud.",
+    ctaPrimary: "Protect my network",
+    ctaSecondary: "Explore the platform",
     trialHint: "90-day free trial · 1 router · no credit card",
-    statBar: [
-      { value: "45s", label: "to connect a router" },
-      { value: "0", label: "public IP required" },
-      { value: "6+", label: "mobile money supported" },
-      { value: "14+", label: "African countries covered" },
-    ],
+    chips: ["4/4 protections active", "500 vouchers per batch", "Agent · 45 s check-in"],
   },
-  trust: {
-    items: [
-      { icon: "Timer", label: "45s to connect a router" },
-      { icon: "ShieldOff", label: "Zero public IP, zero open port" },
-      { icon: "Wallet", label: "Wave, Orange Money, MTN MoMo, Moov, MPesa, Airtel Money" },
-      { icon: "Globe", label: "Built in Africa, cloud-hosted in the EU" },
-    ],
-  },
-  benefits: {
-    eyebrow: "Benefits",
-    title: "Cloud-native, secure and sovereign",
+  marquee: [
+    "Vouchers & access codes",
+    "Quad9 DNS filtering",
+    "WiFi anti-hacking",
+    "Internet curfew",
+    "VPN blocker",
+    "QoS & ISP plan",
+    "Reseller Sell Mode",
+    "RouterOS updates",
+    "White-label captive portal",
+    "QR throwaway WiFi",
+    "Telegram alerts",
+    "Wave payments",
+  ],
+  powers: {
+    eyebrow: "One console, three superpowers",
+    title: "Everything you need to rule your network.",
     subtitle:
-      "MikCloud deploys a cloud-native Zero Trust architecture across all your sites. One console to pilot all your routers, wherever they are — with compliance to local data regulations.",
-    items: [
+      "Hotspot management, cloud protection and fleet control: MikCloud gathers in a single interface everything your infrastructure demands — no Winbox, no server to maintain.",
+    cards: [
       {
-        icon: "Cloud",
-        title: "Cloud-native & secure",
-        description:
-          "100% cloud architecture, TLS encryption in transit and at rest. Zero Trust authentication, hashed passwords (bcrypt), encrypted router credentials. No agent to install on the router.",
+        tag: "Foundation",
+        title: "Hotspot Management",
+        desc: "MikCloud's historic core, all grown up: white-label captive portals, batch vouchers, per-plan quotas and throttling, live sessions.",
+        items: [
+          "100% white-label captive portal",
+          "Voucher batches up to 500",
+          "Quota, bandwidth & duration per plan",
+          "Sell Mode & PIN-protected resellers",
+        ],
       },
       {
-        icon: "MonitorSmartphone",
-        title: "One console for all routers",
-        description:
-          "Pilot 1, 10 or 100 MikroTik routers from a single console. Consolidated multi-site view: sessions, sales, revenue per site. No more juggling Winbox, NAT and DDNS.",
+        tag: "4 shields",
+        title: "Cloud Protection",
+        desc: "Four firewall protections deployed right on your routers, driven and self-healed from the cloud every six hours.",
+        items: [
+          "SafeWiFi — Quad9 / AdGuard DNS filtering",
+          "Shield — admin ports locked down",
+          "FamilyGuard — scheduled internet curfew",
+          "AntiVPN — tunnels cut, WhatsApp intact",
+        ],
       },
       {
-        icon: "Rocket",
-        title: "Easy to deploy & scalable",
-        description:
-          "Infrastructure-agnostic: your router calls the cloud outbound only. Add a router in 45s, scale to 100 without reconfiguring anything. Works behind any carrier, even in CGNAT.",
-      },
-      {
-        icon: "ShieldCheck",
-        title: "Compliant & sovereign",
-        description:
-          "Data hosted in the EU (Frankfurt) with retention compliant to local regulations. Real-time activity logs, export and delete your data anytime. Digital sovereignty respected.",
-      },
-    ],
-  },
-  features: {
-    eyebrow: "Features",
-    title: "Your whole hotspot business, one screen",
-    subtitle:
-      "From vouchers to quick printing, from real-time sessions to reseller wallets — MikCloud unifies what you used to juggle across Winbox, Excel and WhatsApp.",
-    items: [
-      {
-        icon: "Ticket",
-        title: "Vouchers & quick printing",
-        description:
-          "Batch generation (1 to 500), custom code prefix and length, one-click ticket printing with QR codes. Full batch traceability: issuing site, channel, reseller, per-voucher status.",
-        cta: "Generate a batch",
-      },
-      {
-        icon: "Activity",
-        title: "Real-time sessions",
-        description:
-          "Live session table refreshed every 5s, instant kick, consolidated multi-router view. CPU, uptime and status of every MikroTik router at a glance.",
-        cta: "View sessions",
-      },
-      {
-        icon: "Network",
-        title: "Multi-site & multi-router",
-        description:
-          "One account, N hotspots, N routers. Multi-site overview: sessions, sales and revenue per site. Built for multi-site operators, ISPs and resellers juggling Winbox, NAT and DDNS.",
-        cta: "Manage multiple sites",
-      },
-      {
-        icon: "Wallet",
-        title: "Resellers with wallets",
-        description:
-          "Create reseller accounts with credit wallets, traceable top-ups and a transaction journal. Each reseller tracks their own sales — you keep the bird's-eye view.",
-        cta: "Create a reseller",
-      },
-      {
-        icon: "BarChart3",
-        title: "Reports & accounting",
-        description:
-          "Multi-site accounting: sales by day, week, month and per router (revenue share, average basket). Activity: revenue, sales by profile, traffic consumed, voucher status.",
-        cta: "Open reports",
-      },
-      {
-        icon: "Bell",
-        title: "Alerts & notifications",
-        description:
-          "Automatic monitoring: offline router auto-marking (3 × 45s without check-in), low voucher stock alerts, daily reports. Channels: Telegram, WhatsApp, email.",
-        cta: "Set up an alert",
+        tag: "Fleet",
+        title: "Fleet Control",
+        desc: "Live telemetry, one-click RouterOS updates — router by router or the whole fleet at once — and continuously measured line quality.",
+        items: [
+          "RouterOS updates without Winbox",
+          "CPU, memory & uptime telemetry",
+          "Aggregate QoS & ISP plan",
+          "IP pool doctor & self-healing",
+        ],
       },
     ],
   },
-  how: {
-    eyebrow: "How it works",
-    title: "Online in 3 steps, under 5 minutes",
-    subtitle:
-      "No network setup. No public IP. No port to open. The router calls the cloud outbound only — it works everywhere, even behind CGNAT.",
-    steps: [
+  protection: {
+    kicker: "Cloud protection",
+    title: "The shield that watches while you sleep.",
+    body: "Every protection is signature-checked and automatically repaired every six hours. Nothing to install, no Winbox needed: your existing rules are preserved, and the WiFi keeps working no matter what.",
+    feats: [
       {
-        num: "01",
-        title: "Connect your MikroTik router",
-        description:
-          "Add your router to MikCloud: IP, port 8728, API credentials. Or paste the auto-installable .rsc script from Winbox — the router calls the cloud every 45s.",
+        title: "SafeWiFi — dangerous sites blocked",
+        desc: "Viruses, scams and ads stopped at the DNS level (Quad9 or AdGuard Family) — DoH and IPv6 escape hatches are closed.",
       },
       {
-        num: "02",
-        title: "Set up plans & vouchers",
-        description:
-          "Bandwidth (RouterOS format), session duration, validity, data quota, price. Generate a voucher batch, automatically debit the reseller wallet, print tickets in one click.",
+        title: "Shield — WiFi anti-hacking",
+        desc: "Your routers' admin ports and Windows file sharing become unreachable from the public WiFi.",
       },
       {
-        num: "03",
-        title: "Sell & monitor",
-        description:
-          "Accept Wave, Orange Money, MTN MoMo, Moov, MPesa or Airtel Money. Track sessions in real time, read reports by site, profile and period — from any browser.",
+        title: "FamilyGuard — internet curfew",
+        desc: "All client internet is cut during the scheduled window, for instance 10 pm to 6 am.",
+      },
+      {
+        title: "AntiVPN — tunnels cut",
+        desc: "WireGuard, OpenVPN, IPsec and Tor blocked — WhatsApp calls stay intact.",
       },
     ],
+    panel: {
+      title: "Protection center",
+      scoreLabel: "Protection score",
+      scoreVerdict: "Well protected",
+      stats: [
+        { value: "4", label: "protections on" },
+        { value: "6 h", label: "self-healing" },
+        { value: "45 s", label: "agent check-in" },
+      ],
+      lines: [
+        { name: "SafeWiFi · DNS filtering", state: "Active" },
+        { name: "Shield · Anti-hacking", state: "Active" },
+        { name: "FamilyGuard · Curfew", state: "10 pm → 6 am" },
+        { name: "AntiVPN · VPN blocker", state: "Active" },
+      ],
+      repairLine: { name: "Cloud self-healing", state: "Checked 2 min ago" },
+    },
   },
-  useCases: {
-    eyebrow: "Use cases",
-    title: "Built for every African WiFi operator",
-    subtitle:
-      "From the corner cybercafé to the multi-city WISP, through hotels, campuses and street markets — MikCloud adapts to your business.",
-    items: [
+  hotspot: {
+    kicker: "Hotspot management",
+    title: "A captive portal you'll be proud of.",
+    body: "Give your customers a smooth, polished connection — under your brand, with zero MikCloud mention. Duration, quota or multi-device vouchers: you keep total control.",
+    feats: [
       {
-        icon: "Monitor",
-        title: "Cybercafés & internet shops",
-        description:
-          "Sell access by the minute, quarter-hour or hour. Prepaid vouchers, on-the-fly printing, automatic daily accounting.",
+        title: "100% custom branding",
+        desc: "Commercial mode with price grid and Wave payments, or hospitality mode with promos and social links.",
       },
       {
-        icon: "Hotel",
-        title: "Hotels & residences",
-        description:
-          "Guest vouchers handed out at reception, per-room quotas, day / stay packages. Accounting by floor or building.",
+        title: "Vouchers & plans",
+        desc: "Duration, data quota, bandwidth, 1 to 10 devices — and when exhausted: cut off or softly throttle.",
       },
       {
-        icon: "GraduationCap",
-        title: "Campuses & schools",
-        description:
-          "Per-semester student quotas, per-class profiles, time- or volume-limited sessions. Usage reports by promotion.",
-      },
-      {
-        icon: "Server",
-        title: "Local ISPs & WISPs",
-        description:
-          "Multi-site, resellers with wallets, automatic alerts. Pilot 1, 10 or 100 routers from a single cloud console.",
-      },
-      {
-        icon: "Coffee",
-        title: "Restaurants & cafés",
-        description:
-          "Free guest WiFi with email capture for marketing, or premium paid WiFi above a quota. One-click toggle.",
-      },
-      {
-        icon: "Store",
-        title: "Markets & stations",
-        description:
-          "Bulk vouchers handed to street resellers. Each reseller tracks their stock and sales, you keep full traceability.",
+        title: "Live statistics",
+        desc: "Hourly footfall, revenue, margin per plan, direct and reseller channels.",
       },
     ],
+    panel: {
+      title: "Hourly footfall",
+      online: "Peak hour · 7 pm",
+      peak: "24 h",
+    },
   },
-  hardware: {
-    eyebrow: "Compatibility",
-    title: "Built for MikroTik RouterOS",
-    subtitle:
-      "MikCloud speaks the native RouterOS binary protocol (API port 8728) — the standard for professional African hotspots. Login v6.43+ and MD5 challenge fallback handled automatically.",
-    primaryVendor: "MikroTik",
-    primaryVendorNote:
-      "Any router running RouterOS 6.43+ is supported: hAP, hEX, RB, CCR, etc. Built-in Simulated mode to demo without hardware.",
-    roadmapNote:
-      "Roadmap: Ubiquiti UniFi, TP-Link and Cisco support planned — MikCloud evolves toward a multi-vendor platform.",
+  fleet: {
+    kicker: "Fleet & routers",
+    title: "Your MikroTik fleet, without leaving the console.",
+    body: "The MikCloud agent dials out from the router to the cloud: it works behind CGNAT, Orange or Starlink, with no public IP and no open port. Then every router is remote-controlled — down to fleet-wide RouterOS updates.",
+    feats: [
+      {
+        title: "One-click RouterOS updates",
+        desc: "Check the latest version and install it router by router — or every router found behind, in a single move.",
+      },
+      {
+        title: "Continuous telemetry",
+        desc: "CPU, memory, uptime, RouterOS version and line quality for each router, refreshed on every check-in.",
+      },
+      {
+        title: "Alerts that never sleep",
+        desc: "Router offline, low voucher stock, daily report: Telegram, WhatsApp or email.",
+      },
+    ],
+    panel: {
+      title: "Router fleet",
+      rows: [
+        { name: "Plateau Café", version: "7.24.3", state: "Up to date", upToDate: true },
+        { name: "Ebony Hotel", version: "7.16.2 → 7.24.3", state: "Update ready", upToDate: false },
+        { name: "Market Cyber", version: "7.24.3", state: "Up to date", upToDate: true },
+      ],
+      checkAll: "Check the whole fleet",
+      updateAll: "Update the fleet",
+    },
   },
+  stats: [
+    { value: 500, label: "vouchers per batch" },
+    { value: 4, label: "firewall shields" },
+    { value: 54, label: "African countries" },
+    { value: 90, label: "days of free trial" },
+  ],
   pricing: {
     eyebrow: "Pricing",
-    title: "Clear pricing, no surprise",
-    subtitle:
-      "Prices in FCFA (UEMOA and CEMAC). For NGN, GHS, KES, TZS, UGX, ZAR and other African currencies, the amount is auto-converted at checkout.",
+    title: "Simple as a cloud.",
+    subtitle: "Start free for 90 days, grow at your own pace. No commitment, no hidden fees.",
     plans: [
       {
-        name: "Essential",
-        price: "1,250 FCFA",
-        period: "/ month / router",
-        tagline: "To get started, no commitment.",
-        cta: "Get started",
+        name: "Discovery",
+        price: "0",
+        period: "FCFA · 90 days",
+        tagline: "To discover MikCloud risk-free",
+        cta: "Start for free",
         highlight: false,
         features: [
-          "1 router (add more on demand)",
-          "Vouchers, sessions, profiles",
-          "Per-router reports",
-          "Email support",
-          "No commitment, cancel anytime",
+          "1 router · every feature",
+          "4 protections included",
+          "Sell Mode & resellers",
+          "No credit card",
         ],
       },
       {
         name: "Unlimited",
-        price: "12,000 FCFA",
-        period: "/ year · unlimited routers",
-        tagline: "For multi-site and ISPs.",
-        cta: "Choose this plan",
+        price: "12,000",
+        period: "FCFA / year",
+        tagline: "All your routers, one single price",
+        cta: "Go Unlimited",
         highlight: true,
-        badge: "Unlimited routers · 2 months free",
+        badge: "Most popular · 2 months free",
         features: [
           "Unlimited routers",
-          "Unlimited resellers",
-          "Multi-site with consolidated view",
-          "Telegram, WhatsApp, email alerts",
-          "Multi-site accounting reports",
-          "Priority WhatsApp support",
-          "Annual price — equivalent to 1,000 F/month",
+          "4 protections across the fleet",
+          "Fleet RouterOS updates",
+          "Telegram & WhatsApp alerts",
+          "Priority support",
+        ],
+      },
+      {
+        name: "Essential",
+        price: "1,250",
+        period: "FCFA / month / router",
+        tagline: "Pay as you grow",
+        cta: "Choose Essential",
+        highlight: false,
+        features: [
+          "Per active router",
+          "No commitment",
+          "Cancel anytime",
+          "Every feature included",
         ],
       },
     ],
     currencyNote:
-      "Supported currencies: FCFA (UEMOA: CI, SN, ML, BF, BJ, TG, NE + CEMAC: CM, GA, CG, TD, CF, GQ), NGN (Nigeria), GHS (Ghana), KES (Kenya), TZS (Tanzania), UGX (Uganda), ZAR (South Africa).",
-  },
-  testimonials: {
-    eyebrow: "Testimonials",
-    title: "Built with operators, for operators",
-    subtitle:
-      "MikCloud is launching — first customer testimonials will appear here. Meanwhile, here's what the platform brings you from day one.",
-    placeholder: "First customer testimonials coming soon",
-    valueProps: [
-      {
-        icon: "Clock",
-        title: "45 seconds",
-        description: "The average time to connect a MikroTik router to MikCloud, .rsc script included.",
-      },
-      {
-        icon: "TrendingDown",
-        title: "−20% to −92%",
-        description: "The savings when moving to the Unlimited plan: from 1 to 10 routers, marginal cost drops near zero.",
-      },
-      {
-        icon: "Lock",
-        title: "No public IP",
-        description: "The router calls the cloud outbound only. No port to open, no VPN, no internet exposure.",
-      },
-      {
-        icon: "Headphones",
-        title: "Local support",
-        description: "Support in French and English, via WhatsApp and email — from Abidjan, for all of Africa.",
-      },
-    ],
+      "Payment fees passed through the list price: card +6%, Wave −3% (mobile money discount). The first 90 days are free on every plan.",
   },
   faq: {
-    eyebrow: "FAQ",
-    title: "Frequently asked questions",
-    subtitle: "Everything African operators ask us before getting started.",
+    eyebrow: "Frequently asked questions",
+    title: "Straight answers, no jargon.",
     items: [
       {
-        q: "Does MikCloud work behind Orange, MTN, Moov, Safaricom or Airtel (CGNAT)?",
-        a: "Yes — that's exactly why MikCloud exists. The router calls the cloud every 45 seconds, outbound only. No public IP, no port to open, no VPN. It works behind any African carrier in CGNAT: Orange CI/CM/SN/ML/BF/BJ/TG/NE, MTN (15 countries), Moov CI/BF/BJ, Safaricom KE/TZ, Airtel (14 countries), Vodafone GH, Surfline GH, 9Mobile and Glo NG, etc.",
+        q: "Do I need a specific router?",
+        a: "MikCloud drives MikroTik routers running RouterOS (hEX, RB, CHR…). The agent dials out from the router to the cloud: it works behind CGNAT, Orange or Starlink, with no public IP and no open port — one script to paste into Winbox, about 40 seconds.",
       },
       {
-        q: "Do I need a public IP or to open a port on my router?",
-        a: "No. MikCloud works entirely outbound: the MikroTik router initiates the connection to the cloud. You don't need a public IP, DDNS or port forwarding. That's what makes the platform usable immediately, even on a consumer Orange or MTN line.",
+        q: "Will my customers notice the protection?",
+        a: "No. Browsing stays smooth and WhatsApp keeps working. Behind the scenes: dangerous sites and ads blocked at the DNS level, admin ports and Windows sharing unreachable from the public WiFi, curfew and VPN blocker if you enable them.",
       },
       {
-        q: "Which routers are supported?",
-        a: "MikCloud uses the native RouterOS binary protocol (API port 8728). Any MikroTik router running RouterOS 6.43+ is supported — hAP, hEX, RB, CCR, etc. Login v6.43+ and MD5 challenge fallback are handled automatically. A built-in Simulated mode also lets you demo the whole platform without hardware. Ubiquiti, TP-Link and Cisco support is on the roadmap.",
+        q: "Can I sell tickets without a shop?",
+        a: "Yes. Sell Mode runs on your resellers' phones (PWA protected by a PIN): transferred stock, offline sales, receipts shareable on WhatsApp and an end-of-day report.",
       },
       {
-        q: "Which payment methods can I accept from my customers?",
-        a: "MikCloud generates pre-composed payment links at the exact amount, compatible with Wave (SN/CI), Orange Money (UEMOA + CEEAC), MTN MoMo (15 countries), Moov Money (UEMOA), MPesa (KE/TZ/CD/GH) and Airtel Money (14 countries). You can also collect cash and validate manually. For the MikCloud subscription itself, payment is via mobile money or bank transfer.",
-      },
-      {
-        q: "Can I try before I pay?",
-        a: "Yes. Create your account for free: your 90-day trial starts immediately, with 1 router included and a Simulated mode to demo the whole platform without hardware. To connect a real MikroTik router and judge for yourself, subscribe to the Essential plan (1,250 F/month, no commitment) — cancel anytime.",
-      },
-      {
-        q: "Are my data safe? Where are they stored?",
-        a: "Your data lives in a managed PostgreSQL database (Neon), encrypted in transit (TLS) and at rest. The Go backend is hosted on Render in the EU (Frankfurt). Your router credentials are stored encrypted, your user passwords are hashed (bcrypt). You can export or delete your data at any time. Compliance with local data regulations is respected.",
+        q: "What happens to my network if I stop paying?",
+        a: "You get a 30-day grace period after the due date, then the console is suspended. Your routers keep serving your customers and your data is preserved — one payment reopens access.",
       },
     ],
   },
   finalCta: {
-    title: "Ready to connect your first router?",
+    kicker: "Ready to level up?",
+    title: "Shield your WiFi in under 5 minutes.",
     subtitle:
-      "Your MikroTik router online in 45 seconds. No public IP. No commitment. Nothing to install on your network.",
-    primary: "Sign in to console",
-    secondary: "Choose the Unlimited plan",
+      "Create your account, paste the agent script on your router, switch on your protections. No credit card, no server to maintain.",
+    primary: "Create my free account",
+    secondary: "Sign in",
   },
   footer: {
     tagline:
-      "The cloud-managed MikroTik hotspot platform, built in Africa for African operators.",
+      "The cloud that protects: hotspot, firewall and MikroTik control united in a single tool.",
     columns: [
       {
         title: "Product",
         links: [
-          { label: "Benefits", href: "#benefits" },
-          { label: "Features", href: "#features" },
-          { label: "Pricing", href: "#pricing" },
-          { label: "Use cases", href: "#use-cases" },
-          { label: "FAQ", href: "#faq" },
+          { label: "Superpowers", href: "#pouvoirs" },
+          { label: "Cloud protection", href: "#protection" },
+          { label: "Hotspot", href: "#hotspot" },
+          { label: "Router fleet", href: "#parc" },
+          { label: "Pricing", href: "#tarifs" },
         ],
       },
       {
-        title: "Company",
+        title: "Console",
         links: [
-          { label: "About", href: "#" },
-          { label: "Contact", href: "mailto:freelancetechnologies.ci@gmail.com" },
-          { label: "Blog", href: "#" },
-          { label: "Partners", href: "#" },
+          { label: "Sign in", href: "/login" },
+          { label: "Sell Mode", href: "/sell" },
+          { label: "Throwaway WiFi login", href: "/wifi" },
         ],
       },
       {
-        title: "Resources",
-        links: [
-          { label: "Documentation", href: "#" },
-          { label: "Status", href: "#" },
-          { label: "Changelog", href: "#" },
-          { label: "API", href: "#" },
-        ],
+        title: "Legal",
+        links: [{ label: "Privacy policy", href: "/legal/confidentialite" }],
       },
     ],
-    copyright: "© 2026 FTCI — Freelance Technologies Côte d'Ivoire",
+    copyright: "© 2026 MikCloud — All rights reserved.",
+    fun: "Made with ☁ and a lot of teal.",
     contact: "freelancetechnologies.ci@gmail.com",
-    location: "Abidjan, Côte d'Ivoire · West, Central and East Africa",
+    location: "Abidjan · Côte d'Ivoire",
     legal: "Privacy policy",
   },
 };

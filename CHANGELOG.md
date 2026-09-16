@@ -5,6 +5,115 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-16 — N°120 — « Le cloud qui protège » : reconstruction complète de la vitrine publique en Claymorphisme & Flat Design (palette FreeTech — ivoire, jaune crème, vert sarcelle, menthe) avec rail de navigation vertical qui s'étend au survol
+
+### N°120 — Contexte : la vitrine ne reflétait plus l'étendue du produit
+MikCloud a grandi : le N°80-88 a ajouté le module Protection (4 boucliers
+pare-feu posés sur le routeur — SafeWiFi, Shield, FamilyGuard, AntiVPN), le
+N°115/N°117 la mise à jour RouterOS unitaire et de flotte, le N°27/49/63 le
+WiFi jetable, le N°98-101 la console HomeNet. La vitrine d'origine (style
+« Aurora Emerald », hero centré, grilles de cartes shadcn) présentait encore
+MikCloud comme un simple gestionnaire de hotspot MikroTik. Retour utilisateur :
+« MikCloud a évolué et n'est plus seulement un simple outil de gestion Hotspot
+mais aussi un pare-feu cloud et outil de protection et sécurité. Le landing
+page actuelle ne reflète pas l'étendu de MikCloud et la puissance de l'outil »
+— avec demande explicite d'un style Claymorphisme & Flat Design sur la palette
+FreeTech (jaune crème, vert sarcelle, vert menthe clair, ivoire), d'un menu
+vertical apparaissant au survol, et d'un rendu unique et captivant.
+
+### Produit
+- (1) RAIL DE NAVIGATION VERTICAL (desktop ≥ 1024 px) — pilule clay fixe à
+  gauche (64 px au repos), qui s'étend à 218 px au SURVOL ou au focus clavier
+  (cubic-bezier rebond 0.34/1.56/0.64) en révélant les libellés : Accueil,
+  Super-pouvoirs, Protection, Hotspot, Parc routeurs, Tarifs + CTA « Essai
+  gratuit » ; la section ACTIVE se détache (fond sarcelle, dot inversé) via
+  IntersectionObserver (rootMargin -40 %/-55 %) — le rail suit le défilement.
+  Mobile < 1024 px : barre tactile en bas (dots seuls, scrollable, cibles
+  44 px, respecte env(safe-area-inset-bottom)).
+- (2) HERO — « Votre WiFi, blindé par le cloud. » : mot « blindé » en
+  sarcelle surligné de jaune crème (em::after derrière le texte), eyebrow
+  pulsé « Hotspot · Protection cloud · Parc MikroTik », et SCULPTURE CLOUD
+  CLAY animée à droite : corps de nuage clay (double inset + ombre dure),
+  bouclier sarcelle qui flotte (bob 4,5 s), 4 cercles clay, 2 anneaux
+  pointillés en rotation inverse, 3 chips flottantes (4/4 protections
+  actives · 500 vouchers par lot · Agent check-in 45 s).
+- (3) MARQUEE incliné (-1,2°) sarcelle : les 12 vraies capacités produit
+  (Vouchers, Filtrage DNS Quad9, Anti-piratage, Couvre-feu, Bloque-VPN,
+  QoS, Mode Vente, Mise à jour RouterOS, Portail captif, WiFi jetable QR,
+  Notifications Telegram, Paiement Wave) en défilement infini 26 s.
+- (4) SUPER-POUVOIRS — 3 cartes clay (crème « Gestion Hotspot » / sarcelle
+  « Protection Cloud » / menthe « Pilotage du parc ») avec tags (Fondation /
+  4 boucliers / Parc), icônes lucide sur tuiles clay, listes à coches des
+  capacités réelles ; hover : élévation -10 px avec légère rotation -0,6°.
+- (5) SECTION PROTECTION — split texte + PANEL SOMBRE « Centre de
+  protection » : anneau SVG animé 4/4 (stroke-dashoffset), verdict « Bien
+  protégé », 3 stat-mini (4 protections · 6 h auto-réparation · 45 s
+  check-in), et FLUX DE SUPERVISION vivant — les 4 protections
+  s'illuminent à tour de rôle (2,4 s) avec leur état (FamilyGuard affiche
+  sa fenêtre 22:00 → 06:00) + ligne « Auto-réparation cloud · vérifié il y
+  a 2 min » ; les 4 feats décrivent les protections réelles (SafeWiFi
+  Quad9/AdGuard + DoH fermé, Shield ports admin/SMB, FamilyGuard couvre-feu,
+  AntiVPN WhatsApp préservé).
+- (6) SECTIONS HOTSPOT & PARC — 2 splits alternés : bar chart clay
+  « Affluence horaire » (8 barres animées à l'entrée en vue) et panel
+  « Parc routeurs » (3 lignes routeurs avec version → état, boutons
+  « Vérifier tout le parc » / « Mettre à jour le parc » illustrant le
+  N°117) ; les feats couvrent portail à votre marque (modes commercial
+  Wave / hospitalité), vouchers 1-10 appareils, stats live, mise à jour
+  RouterOS sans Winbox, télémétrie, alertes Telegram/WhatsApp.
+- (7) BANDEAU STATS sarcelle — compteurs animés (ease-out cubique au
+  rAF) sur des constantes PRODUIT vérifiables : 500 vouchers par lot,
+  4 boucliers pare-feu, 54 pays africains visés, 90 jours d'essai —
+  formatage fr-FR/en-US selon la langue.
+- (8) TARIFS — 3 cartes clay fidèles au catalogue serveur (model/tenant.go) :
+  Découverte 0 FCFA · 90 jours, ILLIMITÉ 12 000 FCFA/an (carte sarcelle
+  centrale agrandie ×1,05, badge « Le plus choisi · 2 mois offerts »),
+  Essentiel 1 250 FCFA/mois/routeur ; note frais répercutés (carte +6 %,
+  Wave −3 %) ; tous les CTA ouvrent l'inscription.
+- (9) FAQ clay (details/summary natifs, plus « + » qui pivote en ×), CTA
+  final crème avec mini-nuages flottants, footer 4 colonnes (Produit /
+  Console / Légal avec /legal/confidentialite, crédit FTCI, contact).
+- (10) BILINGUE — toggle FR/EN conservé (store zustand) : intégralité de
+  la copie traduite, compteurs localisés.
+
+### Technique
+- Frontend uniquement : landing-page.tsx (RECONSTRUIT — 670 → ~640 lignes),
+  landing-copy.ts (RECONSTRUIT — nouvelle interface sectionnée rail/hero/
+  marquee/powers/protection/hotspot/fleet/stats/pricing/faq/finalCta/footer,
+  FR + EN), landing-clay.css (NOUVEAU ~900 lignes — design system clay
+  isolé : tout préfixé mkl-/--mkl-*, zéro collision avec le thème shadcn
+  « Aurora Emerald » de la console ; z-index rail 40 VOLONTAIREMENT sous
+  les modales shadcn z-50 — la SignupModal passe devant), layout.tsx
+  (metadata : title/description/keywords « protection cloud & pilotage
+  MikroTik »). page.tsx et signup-modal.tsx INCHANGÉS (props onSignIn/
+  onSignUp conservées).
+- Polices : Fraunces (titres, variable opsz) + Manrope (texte) via
+  next/font — self-hostées, zéro requête externe bloquante.
+- Animations : framer-motion (Reveal/whileInView, respect
+  useReducedMotion) + CSS keyframes (bob/floaty/spin/pulse/marquee) ;
+  prefers-reduced-motion coupe tout + masque le surlignage em.
+- Accessibilité : rail aria-label + aria-current, focus-visible 3 px
+  sarcelle partout, cibles tactiles 44 px, aria-hidden sur les décors,
+  scroll-margin-top 90 px pour les ancres sous topbar sticky, contrastes
+  AA (encre #123B3A sur ivoire #FDF9EE ≈ 12:1 ; ivoire sur sarcelle
+  #0E7C7B ≈ 4,7:1).
+- HONNÊTETÉ MARKETING : aucun compteur de « menaces bloquées » (n'existe
+  pas dans le produit) — le « flux de supervision » anime les 4 protections
+  RÉELLES avec leurs états ; les stats du bandeau sont des constantes
+  produit ; les lignes du panel parc sont des illustrations génériques
+  (noms d'établissements fictifs, pas de clients réels).
+- Vérifié : eslint 0 erreur ; tsgo 0 erreur ; next build OK (13 routes
+  inchangées) ; navigateur bout-en-bout (next dev :3016) — desktop
+  1440×900 : rail 64 px → 218 px au survol (labels révélés, CTA lisible),
+  section active « Tarifs » correcte après scroll, compteurs finaux
+  500/4/54/90, cartes tarifs (ivoire/sarcelle ×1,05/crème) alignées +
+  badge « Le plus choisi », FAQ ouvrable (body 93 px), surlignage crème
+  #F5E3A8 vérifié en style calculé, toggle FR→EN (h1 « Your WiFi,
+  shielded by the cloud. ») ; modale Signup au-DESSUS du rail
+  (z-index 50 > 40, visible) ; mobile 390×844 : zéro débordement
+  horizontal (scrollWidth = 390), rail mobile en bas (display flex,
+  desktop none), boutons pleine largeur ; 0 erreur console/page.
+
 ## 2026-09-15 — N°119 — « la simulation qui mangeait le stock du revendeur » : le moteur de démo (Tick, ~30 % par lecture console) connectait un voucher actif ALÉATOIRE de N'IMPORTE QUEL compte et le marquait « used » — amputant le stock de vente d'un compte tiers ; le stock confié devient INTOUCHABLE (même garde que N°26/W1)
 
 ### N°119 — Contexte : l'échec E2E du N°118 était un lancé de dé

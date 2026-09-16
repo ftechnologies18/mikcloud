@@ -1,75 +1,79 @@
 "use client";
 
-import { useState, type ComponentType } from "react";
+/* ============================================================
+   MIKCLOUD « CLAY » — Landing page FreeTech (N°120)
+   ------------------------------------------------------------
+   Reconstruction complète de la vitrine : Claymorphisme & Flat
+   Design, palette FreeTech (ivoire, jaune crème, vert sarcelle,
+   vert menthe), rail vertical qui s'étend au survol (desktop) /
+   barre tactile en bas (mobile), sculptures clay animées.
+   Design system isolé dans landing-clay.css (préfixe mkl-,
+   z-index 40 < modales shadcn 50 : la SignupModal passe devant).
+   Contenu : UNIQUEMENT des fonctionnalités réelles (cf.
+   landing-copy.ts) — pas de métriques d'usage inventées.
+   ============================================================ */
+
+import { useEffect, useRef, useState, type ComponentType } from "react";
 import Link from "next/link";
-import { motion, useReducedMotion, type Variants } from "framer-motion";
-import { FtciCredit } from "@/components/ftci-credit";
+import { Fraunces, Manrope } from "next/font/google";
+import { motion, useInView, useReducedMotion } from "framer-motion";
 import {
   Activity,
+  ArrowRight,
+  Ban,
   BarChart3,
   Bell,
+  CircleDollarSign,
   Cloud,
-  Clock,
-  Coffee,
-  GraduationCap,
   Globe,
-  Headphones,
-  Hotel,
+  Home,
   Lock,
-  Menu,
-  Monitor,
-  MonitorSmartphone,
-  Network,
-  Rocket,
-  Server,
+  MoonStar,
+  Palette,
+  RefreshCw,
+  Router,
   ShieldCheck,
-  ShieldOff,
-  Store,
+  Sparkles,
   Ticket,
-  Timer,
-  TrendingDown,
-  Wallet,
   Wifi,
-  X,
+  Zap,
   type LucideProps,
 } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion";
-import { Separator } from "@/components/ui/separator";
+import { FtciCredit } from "@/components/ftci-credit";
 import { useHotspotStore } from "@/lib/hotspot/store";
 import { landingCopy, type Lang } from "./landing-copy";
+import "./landing-clay.css";
 
-/* ─── Mappeur d'icônes (nom string → composant lucide) ─── */
-const ICONS: Record<string, ComponentType<LucideProps>> = {
-  Activity, BarChart3, Bell, Cloud, Clock, Coffee, GraduationCap, Globe,
-  Headphones, Hotel, Lock, Monitor, MonitorSmartphone, Network, Rocket,
-  Server, ShieldCheck, ShieldOff, Store, Ticket, Timer, TrendingDown, Wallet,
+/* ─── Polices display (serif Fraunces) & texte (Manrope) ─── */
+const fraunces = Fraunces({
+  subsets: ["latin"],
+  variable: "--font-fraunces",
+  display: "swap",
+  axes: ["opsz"],
+});
+const manrope = Manrope({
+  subsets: ["latin"],
+  variable: "--font-manrope",
+  display: "swap",
+});
+
+/* ─── Icônes des sections du rail (name → lucide) ─── */
+const RAIL_ICONS: Record<string, ComponentType<LucideProps>> = {
+  home: Home,
+  powers: Sparkles,
+  protection: ShieldCheck,
+  hotspot: Wifi,
+  fleet: Router,
+  pricing: CircleDollarSign,
 };
+const POWER_ICONS = [Ticket, ShieldCheck, Router];
+const PROTECTION_FEAT_ICONS = [Globe, Lock, MoonStar, Ban];
+const HOTSPOT_FEAT_ICONS = [Palette, Ticket, BarChart3];
+const FLEET_FEAT_ICONS = [RefreshCw, Activity, Bell];
+const CHIP_ICONS = [ShieldCheck, Ticket, Zap];
 
-function Icon({ name, className }: { name: string; className?: string }) {
-  const Cmp = ICONS[name] ?? Globe;
-  return <Cmp className={className} />;
-}
-
-/* ─── Animations (respect prefers-reduced-motion) ─── */
-const fadeUp: Variants = {
-  hidden: { opacity: 0, y: 24 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.5, ease: "easeOut" } },
-};
-
-const stagger: Variants = {
-  hidden: {},
-  show: { transition: { staggerChildren: 0.08 } },
-};
-
+/* ─── Reveal on scroll (respecte prefers-reduced-motion) ─── */
 function Reveal({
   children,
   className,
@@ -84,30 +88,155 @@ function Reveal({
   return (
     <motion.div
       className={className}
-      initial="hidden"
-      whileInView="show"
-      viewport={{ once: true, margin: "-80px" }}
-      variants={fadeUp}
-      transition={{ delay }}
+      initial={{ opacity: 0, y: 34 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, margin: "-60px" }}
+      transition={{ duration: 0.7, delay, ease: [0.22, 1, 0.36, 1] }}
     >
       {children}
     </motion.div>
   );
 }
 
-/* ─── Container ─── */
-function Container({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <div className={`mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 ${className ?? ""}`}>{children}</div>;
+/* ─── Compteur animé (bandeau stats) ─── */
+function CountUp({ value, lang }: { value: number; lang: Lang }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const inView = useInView(ref, { once: true, margin: "-40px" });
+  const reduce = useReducedMotion();
+  const locale = lang === "fr" ? "fr-FR" : "en-US";
+  const [animated, setAnimated] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!inView || reduce) return;
+    const t0 = performance.now();
+    const dur = 1600;
+    let raf = 0;
+    const tick = (t: number) => {
+      const p = Math.min((t - t0) / dur, 1);
+      const ease = 1 - Math.pow(1 - p, 3);
+      setAnimated(Math.round(value * ease));
+      if (p < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [inView, value, reduce]);
+
+  /* Hors animation (pas encore visible ou mouvement réduit) : valeur
+     finale directe — aucun setState synchrone dans l'effet. */
+  const shown =
+    !inView || reduce ? value : (animated ?? 0);
+
+  return <span ref={ref}>{shown.toLocaleString(locale)}</span>;
 }
 
-/* ─── Eyebrow (petit titre de section coloré) ─── */
-function Eyebrow({ children }: { children: React.ReactNode }) {
+/* ─── Sculpture cloud clay du hero (les animations sont coupées par la
+    media query prefers-reduced-motion du CSS) ─── */
+function CloudStage({ chips }: { chips: string[] }) {
   return (
-    <span className="inline-block text-xs font-semibold uppercase tracking-widest text-primary mb-3">
-      {children}
-    </span>
+    <div className="mkl-cloud-stage" aria-hidden="true">
+      <div className="mkl-ring mkl-ring-1" />
+      <div className="mkl-ring mkl-ring-2" />
+      <div className="mkl-clay-circle mkl-c1" />
+      <div className="mkl-clay-circle mkl-c2" />
+      <div className="mkl-clay-circle mkl-c3" />
+      <div className="mkl-clay-circle mkl-c4" />
+      <div className="mkl-cloud-body">
+        <div className="mkl-shield">
+          <ShieldCheck className="size-11" strokeWidth={2.2} />
+        </div>
+      </div>
+      {chips.slice(0, 3).map((chip, i) => {
+        const Icon = CHIP_ICONS[i] ?? ShieldCheck;
+        return (
+          <div key={chip} className={`mkl-chip mkl-chip-${"abc"[i] ?? "a"}`}>
+            <Icon className="size-4" /> {chip}
+          </div>
+        );
+      })}
+    </div>
   );
 }
+
+/* ─── Panel « Centre de protection » (score + flux de supervision) ─── */
+function ProtectionPanel({
+  panel,
+}: {
+  panel: LandingPanel;
+}) {
+  const reduce = useReducedMotion();
+  const total = panel.lines.length + 1; // + ligne auto-réparation
+  const [active, setActive] = useState(0);
+
+  useEffect(() => {
+    if (reduce) return;
+    const id = setInterval(() => setActive((i) => (i + 1) % total), 2400);
+    return () => clearInterval(id);
+  }, [reduce, total]);
+
+  const ringLength = 2 * Math.PI * 36; // r=36 → périmètre
+
+  return (
+    <div className="mkl-panel mkl-dark">
+      <div className="mkl-panel-top" aria-hidden="true">
+        <i /><i /><i />
+      </div>
+      <p className="font-bold" style={{ marginBottom: 18 }}>{panel.title}</p>
+
+      {/* Score anneau 4/4 */}
+      <div className="mkl-score">
+        <div className="mkl-score-ring">
+          <svg viewBox="0 0 84 84" role="img" aria-label={`${panel.scoreLabel} : 4/4`}>
+            <circle className="mkl-ring-track" cx="42" cy="42" r="36" />
+            <motion.circle
+              className="mkl-ring-value"
+              cx="42"
+              cy="42"
+              r="36"
+              strokeDasharray={ringLength}
+              initial={reduce ? undefined : { strokeDashoffset: ringLength }}
+              whileInView={reduce ? undefined : { strokeDashoffset: 0 }}
+              viewport={{ once: true }}
+              transition={{ duration: 1.4, ease: "easeOut" }}
+            />
+          </svg>
+          <span className="mkl-score-num">4/4</span>
+        </div>
+        <div>
+          <b>{panel.scoreVerdict}</b>
+          <span>{panel.scoreLabel}</span>
+        </div>
+      </div>
+
+      {/* Stat mini */}
+      <div className="mkl-stat-row">
+        {panel.stats.map((s) => (
+          <div key={s.label} className="mkl-stat-mini">
+            <b>{s.value}</b>
+            <span>{s.label}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Flux de supervision : les protections s'illuminent à tour de rôle */}
+      <div className="mkl-log-lines" aria-live="off">
+        {panel.lines.map((line, i) => (
+          <div key={line.name} className={`mkl-log-line${active === i ? " mkl-on" : ""}`}>
+            <span>{line.name}</span>
+            <span className={`mkl-ok${i === 2 ? " mkl-warn" : ""}`}>{line.state}</span>
+          </div>
+        ))}
+        <div className={`mkl-log-line${active === panel.lines.length ? " mkl-on" : ""}`}>
+          <span>{panel.repairLine.name}</span>
+          <span className="mkl-ok mkl-warn">{panel.repairLine.state}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type LandingPanel = ReturnType<
+  () => import("./landing-copy").LandingCopy["protection"]["panel"]
+>;
 
 /* ===========================================================
    LANDING PAGE
@@ -123,548 +252,516 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
   const lang = useHotspotStore((s) => s.lang) as Lang;
   const setLang = useHotspotStore((s) => s.setLang);
   const copy = landingCopy[lang];
-  const [mobileOpen, setMobileOpen] = useState(false);
+  const reduce = useReducedMotion();
+
+  /* Section active dans le rail (IntersectionObserver) */
+  const [active, setActive] = useState("top");
+  useEffect(() => {
+    const sections = ["top", "pouvoirs", "protection", "hotspot", "parc", "tarifs"];
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) setActive(e.target.id);
+        }
+      },
+      { rootMargin: "-40% 0px -55% 0px" },
+    );
+    for (const id of sections) {
+      const el = document.getElementById(id);
+      if (el) io.observe(el);
+    }
+    return () => io.disconnect();
+  }, []);
+
+  /* Scroll doux vers les ancres (scopé à la vitrine) */
+  const goTo = (id: string) => (e: React.MouseEvent) => {
+    e.preventDefault();
+    document
+      .getElementById(id)
+      ?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+  };
 
   const toggleLang = () => setLang(lang === "fr" ? "en" : "fr");
 
+  const railKeys = ["home", "powers", "protection", "hotspot", "fleet", "pricing"] as const;
+  const railIds = ["top", "pouvoirs", "protection", "hotspot", "parc", "tarifs"];
+
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      {/* ─── HEADER ─── */}
-      <header className="sticky top-0 z-50 border-b border-border/60 bg-background/80 backdrop-blur-xl">
-        <Container className="flex h-16 items-center justify-between">
-          <a href="#top" className="flex items-center gap-2 font-bold text-lg">
-            <span className="grid size-8 place-items-center rounded-lg bg-aurora text-primary-foreground shadow-lg shadow-primary/30">
-              <Wifi className="size-5" />
-            </span>
-            {copy.header.brand}
-          </a>
+    <div className={`mkl-page ${fraunces.variable} ${manrope.variable}`}>
+      {/* Grain + halos FreeTech */}
+      <div className="mkl-grain" aria-hidden="true" />
+      <div className="mkl-blob mkl-blob-1" aria-hidden="true" />
+      <div className="mkl-blob mkl-blob-2" aria-hidden="true" />
 
-          <nav className="hidden md:flex items-center gap-1">
-            <Button variant="ghost" size="sm" asChild>
-              <a href="#benefits">{copy.header.nav.benefits}</a>
-            </Button>
-            <Button variant="ghost" size="sm" asChild>
-              <a href="#features">{copy.header.nav.features}</a>
-            </Button>
-            <Button variant="ghost" size="sm" asChild>
-              <a href="#pricing">{copy.header.nav.pricing}</a>
-            </Button>
-            <Button variant="ghost" size="sm" asChild>
-              <a href="#faq">{copy.header.nav.faq}</a>
-            </Button>
-          </nav>
-
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={toggleLang} aria-label="Toggle language">
-              <Globe className="size-4" />
-              {copy.header.langLabel}
-            </Button>
-            <Button variant="ghost" size="sm" onClick={onSignIn} className="hidden sm:inline-flex">
-              {copy.header.signIn}
-            </Button>
-            <Button size="sm" onClick={onSignUp} className="hidden sm:inline-flex">
-              {copy.header.signUp}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="md:hidden"
-              onClick={() => setMobileOpen((v) => !v)}
-              aria-label="Menu"
+      {/* ═══ RAIL VERTICAL (desktop, s'étend au survol) ═══ */}
+      <nav className="mkl-rail" aria-label={copy.rail.home}>
+        <div className="mkl-rail-logo">M</div>
+        {railKeys.map((key, i) => {
+          const Icon = RAIL_ICONS[key];
+          return (
+            <a
+              key={key}
+              href={`#${railIds[i]}`}
+              onClick={goTo(railIds[i])}
+              className={active === railIds[i] ? "mkl-active" : undefined}
+              aria-current={active === railIds[i] ? "true" : undefined}
             >
-              {mobileOpen ? <X className="size-5" /> : <Menu className="size-5" />}
-            </Button>
-          </div>
-        </Container>
+              <span className="mkl-dot" aria-hidden="true">
+                <Icon />
+              </span>
+              <span className="mkl-lbl">{copy.rail[key]}</span>
+            </a>
+          );
+        })}
+        <button className="mkl-rail-cta" onClick={onSignUp}>
+          <span className="mkl-dot" aria-hidden="true">
+            <ArrowRight />
+          </span>
+          <span className="mkl-lbl">{copy.rail.cta}</span>
+        </button>
+      </nav>
 
-        {mobileOpen && (
-          <div className="md:hidden border-t border-border/60 bg-background">
-            <Container className="flex flex-col gap-1 py-3">
-              <Button variant="ghost" size="sm" asChild className="justify-start">
-                <a href="#benefits" onClick={() => setMobileOpen(false)}>{copy.header.nav.benefits}</a>
-              </Button>
-              <Button variant="ghost" size="sm" asChild className="justify-start">
-                <a href="#features" onClick={() => setMobileOpen(false)}>{copy.header.nav.features}</a>
-              </Button>
-              <Button variant="ghost" size="sm" asChild className="justify-start">
-                <a href="#pricing" onClick={() => setMobileOpen(false)}>{copy.header.nav.pricing}</a>
-              </Button>
-              <Button variant="ghost" size="sm" asChild className="justify-start">
-                <a href="#faq" onClick={() => setMobileOpen(false)}>{copy.header.nav.faq}</a>
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => { setMobileOpen(false); onSignIn(); }} className="mt-2">
+      {/* ═══ RAIL MOBILE (barre tactile en bas) ═══ */}
+      <nav className="mkl-rail-mobile" aria-label={copy.rail.home}>
+        <div className="mkl-rail-logo" aria-hidden="true">M</div>
+        {railKeys.map((key, i) => {
+          const Icon = RAIL_ICONS[key];
+          return (
+            <a
+              key={key}
+              href={`#${railIds[i]}`}
+              onClick={goTo(railIds[i])}
+              className={active === railIds[i] ? "mkl-active" : undefined}
+              aria-label={copy.rail[key]}
+            >
+              <Icon className="size-5" />
+            </a>
+          );
+        })}
+        <button
+          className="mkl-rail-cta-mobile"
+          onClick={onSignUp}
+          aria-label={copy.rail.cta}
+        >
+          <ArrowRight className="size-5" />
+        </button>
+      </nav>
+
+      <div className="mkl-main">
+        {/* ═══ TOPBAR ═══ */}
+        <div className="mkl-topbar">
+          <div className="mkl-wrap flex items-center justify-between py-5">
+            <a
+              href="#top"
+              onClick={goTo("top")}
+              className="mkl-brand"
+              aria-label={copy.header.homeLink}
+            >
+              <span className="mkl-brand-badge" aria-hidden="true">
+                <Cloud className="size-6" />
+              </span>
+              {copy.header.brand}
+            </a>
+            <div className="flex items-center gap-2">
+              <button className="mkl-lang" onClick={toggleLang} aria-label="Switch language">
+                {copy.header.langLabel}
+              </button>
+              <button className="mkl-link-quiet" onClick={onSignIn}>
                 {copy.header.signIn}
-              </Button>
-              <Button size="sm" onClick={() => { setMobileOpen(false); onSignUp(); }} className="mt-2">
-                {copy.header.signUp}
-              </Button>
-            </Container>
+              </button>
+              <button className="mkl-btn mkl-btn-teal mkl-btn-sm" onClick={onSignUp}>
+                {copy.header.signUp} <ArrowRight className="size-4" />
+              </button>
+            </div>
           </div>
-        )}
-      </header>
-
-      {/* ─── HERO ─── */}
-      <section id="top" className="relative overflow-hidden">
-        {/* Halos aurora en fond */}
-        <div aria-hidden className="pointer-events-none absolute inset-0 -z-10">
-          <div className="absolute -top-32 left-1/4 size-96 rounded-full bg-primary/20 blur-[120px]" />
-          <div className="absolute top-20 right-1/4 size-80 rounded-full bg-accent/30 blur-[100px]" />
         </div>
 
-        <Container className="py-20 sm:py-28 lg:py-32 text-center">
-          <Reveal>
-            <Badge variant="secondary" className="mb-6 px-3 py-1 text-xs font-medium">
-              <span className="mr-1.5 inline-block size-1.5 rounded-full bg-primary animate-pulse" />
-              {copy.hero.badge}
-            </Badge>
-          </Reveal>
-
-          <Reveal delay={0.05}>
-            <h1 className="mx-auto max-w-4xl text-4xl font-bold tracking-tight sm:text-5xl lg:text-6xl">
-              {copy.hero.title1}{" "}
-              <span className="bg-gradient-to-r from-primary to-accent-foreground bg-clip-text text-transparent">
-                {copy.hero.titleAccent}
-              </span>{" "}
-              {copy.hero.title2}
-            </h1>
-          </Reveal>
-
-          <Reveal delay={0.1}>
-            <p className="mx-auto mt-6 max-w-2xl text-base text-muted-foreground sm:text-lg">
-              {copy.hero.subtitle}
-            </p>
-          </Reveal>
-
-          <Reveal delay={0.15}>
-            <div className="mt-8 flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
-              <Button size="lg" onClick={onSignUp} className="w-full sm:w-auto">
-                {copy.hero.ctaSignUp}
-              </Button>
-              <Button size="lg" variant="outline" onClick={onSignIn} className="w-full sm:w-auto">
-                {copy.hero.ctaPrimary}
-              </Button>
-            </div>
-          </Reveal>
-
-          <Reveal delay={0.2}>
-            <p className="mt-3 text-xs text-muted-foreground">{copy.hero.trialHint}</p>
-          </Reveal>
-
-          {/* Stat bar */}
-          <Reveal delay={0.25}>
-            <div className="mt-16 grid grid-cols-2 gap-4 sm:grid-cols-4 sm:gap-8">
-              {copy.hero.statBar.map((stat) => (
-                <div key={stat.label} className="text-center">
-                  <div className="text-3xl font-bold text-primary sm:text-4xl">{stat.value}</div>
-                  <div className="mt-1 text-xs text-muted-foreground sm:text-sm">{stat.label}</div>
+        {/* ═══ HERO ═══ */}
+        <section id="top" className="mkl-hero">
+          <div className="mkl-wrap mkl-hero-grid">
+            <div>
+              <Reveal>
+                <span className="mkl-eyebrow">
+                  <span className="mkl-pulse" aria-hidden="true" />
+                  {copy.hero.badge}
+                </span>
+              </Reveal>
+              <Reveal delay={0.06}>
+                <h1>
+                  {copy.hero.title1}
+                  <br />
+                  <em>{copy.hero.titleAccent}</em> {copy.hero.title2}
+                </h1>
+              </Reveal>
+              <Reveal delay={0.12}>
+                <p className="mkl-lead">{copy.hero.subtitle}</p>
+              </Reveal>
+              <Reveal delay={0.18}>
+                <div className="mkl-hero-actions">
+                  <button className="mkl-btn mkl-btn-teal" onClick={onSignUp}>
+                    {copy.hero.ctaPrimary}
+                  </button>
+                  <a
+                    href="#pouvoirs"
+                    onClick={goTo("pouvoirs")}
+                    className="mkl-btn mkl-btn-cream"
+                  >
+                    {copy.hero.ctaSecondary}
+                  </a>
                 </div>
-              ))}
+                <p className="mkl-trial-hint">{copy.hero.trialHint}</p>
+              </Reveal>
             </div>
-          </Reveal>
-        </Container>
-      </section>
+            <Reveal delay={0.15}>
+              <CloudStage chips={copy.hero.chips} />
+            </Reveal>
+          </div>
+        </section>
 
-      {/* ─── TRUST BAR ─── */}
-      <section className="border-y border-border/60 bg-card/30">
-        <Container className="py-6">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {copy.trust.items.map((item) => (
-              <div key={item.label} className="flex items-center gap-3">
-                <Icon name={item.icon} className="size-5 shrink-0 text-primary" />
-                <span className="text-sm text-muted-foreground">{item.label}</span>
-              </div>
+        {/* ═══ MARQUEE ═══ */}
+        <div className="mkl-marquee" aria-hidden="true">
+          <div className="mkl-marquee-track">
+            {[0, 1].map((dup) => (
+              <span key={dup}>
+                {copy.marquee.map((item) => (
+                  <span key={`${dup}-${item}`}>
+                    {item} <i>✦</i>
+                  </span>
+                ))}
+              </span>
             ))}
           </div>
-        </Container>
-      </section>
+        </div>
 
-      {/* ─── BENEFITS ─── */}
-      <section id="benefits" className="py-16 sm:py-24">
-        <Container>
-          <Reveal className="mx-auto max-w-2xl text-center">
-            <Eyebrow>{copy.benefits.eyebrow}</Eyebrow>
-            <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">{copy.benefits.title}</h2>
-            <p className="mt-4 text-muted-foreground">{copy.benefits.subtitle}</p>
-          </Reveal>
+        {/* ═══ SUPER-POUVOIRS ═══ */}
+        <section id="pouvoirs">
+          <div className="mkl-wrap">
+            <Reveal className="mkl-sec-head">
+              <span className="mkl-kicker">{copy.powers.eyebrow}</span>
+              <h2>{copy.powers.title}</h2>
+              <p>{copy.powers.subtitle}</p>
+            </Reveal>
+            <div className="mkl-powers">
+              {copy.powers.cards.map((card, i) => {
+                const Icon = POWER_ICONS[i] ?? Ticket;
+                return (
+                  <Reveal key={card.title} delay={i * 0.08} className="h-full">
+                    <article className={`mkl-power mkl-p${i + 1} h-full`}>
+                      <span className="mkl-tag">{card.tag}</span>
+                      <div className="mkl-icon" aria-hidden="true">
+                        <Icon className="size-7" />
+                      </div>
+                      <h3>{card.title}</h3>
+                      <p>{card.desc}</p>
+                      <ul>
+                        {card.items.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    </article>
+                  </Reveal>
+                );
+              })}
+            </div>
+          </div>
+        </section>
 
-          <motion.div
-            className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-4"
-            initial="hidden"
-            whileInView="show"
-            viewport={{ once: true, margin: "-80px" }}
-            variants={stagger}
-          >
-            {copy.benefits.items.map((item) => (
-              <motion.div key={item.title} variants={fadeUp}>
-                <Card className="h-full border-border/60 bg-card/50 backdrop-blur transition-colors hover:border-primary/40">
-                  <CardHeader>
-                    <div className="mb-3 grid size-11 place-items-center rounded-xl bg-primary/10 text-primary">
-                      <Icon name={item.icon} className="size-5" />
+        {/* ═══ PROTECTION CLOUD ═══ */}
+        <section id="protection">
+          <div className="mkl-wrap mkl-split">
+            <Reveal>
+              <span className="mkl-kicker">{copy.protection.kicker}</span>
+              <h2>{copy.protection.title}</h2>
+              <p className="mkl-body">{copy.protection.body}</p>
+              <div className="mkl-feat-list">
+                {copy.protection.feats.map((feat, i) => {
+                  const Icon = PROTECTION_FEAT_ICONS[i] ?? Globe;
+                  return (
+                    <div key={feat.title} className="mkl-feat">
+                      <div className="mkl-fi" aria-hidden="true">
+                        <Icon className="size-5" />
+                      </div>
+                      <div>
+                        <h4>{feat.title}</h4>
+                        <p>{feat.desc}</p>
+                      </div>
                     </div>
-                    <CardTitle className="text-lg">{item.title}</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-sm text-muted-foreground">{item.description}</p>
-                  </CardContent>
-                </Card>
-              </motion.div>
-            ))}
-          </motion.div>
-        </Container>
-      </section>
-
-      {/* ─── FEATURES ─── */}
-      <section id="features" className="py-16 sm:py-24 bg-card/20">
-        <Container>
-          <Reveal className="mx-auto max-w-2xl text-center">
-            <Eyebrow>{copy.features.eyebrow}</Eyebrow>
-            <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">{copy.features.title}</h2>
-            <p className="mt-4 text-muted-foreground">{copy.features.subtitle}</p>
-          </Reveal>
-
-          <motion.div
-            className="mt-12 grid gap-6 md:grid-cols-2 lg:grid-cols-3"
-            initial="hidden"
-            whileInView="show"
-            viewport={{ once: true, margin: "-80px" }}
-            variants={stagger}
-          >
-            {copy.features.items.map((item) => (
-              <motion.div key={item.title} variants={fadeUp}>
-                <Card className="group h-full border-border/60 bg-card/50 backdrop-blur transition-all hover:border-primary/40 hover:shadow-lg hover:shadow-primary/5">
-                  <CardHeader>
-                    <div className="mb-4 grid size-12 place-items-center rounded-xl bg-gradient-to-br from-primary/15 to-accent/30 text-primary transition-transform group-hover:scale-110">
-                      <Icon name={item.icon} className="size-6" />
-                    </div>
-                    <CardTitle className="text-xl">{item.title}</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-sm text-muted-foreground">{item.description}</p>
-                    <button
-                      onClick={onSignIn}
-                      className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
-                    >
-                      {item.cta}
-                      <span aria-hidden>→</span>
-                    </button>
-                  </CardContent>
-                </Card>
-              </motion.div>
-            ))}
-          </motion.div>
-        </Container>
-      </section>
-
-      {/* ─── HOW IT WORKS ─── */}
-      <section className="py-16 sm:py-24">
-        <Container>
-          <Reveal className="mx-auto max-w-2xl text-center">
-            <Eyebrow>{copy.how.eyebrow}</Eyebrow>
-            <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">{copy.how.title}</h2>
-            <p className="mt-4 text-muted-foreground">{copy.how.subtitle}</p>
-          </Reveal>
-
-          <motion.div
-            className="mt-12 grid gap-8 md:grid-cols-3"
-            initial="hidden"
-            whileInView="show"
-            viewport={{ once: true, margin: "-80px" }}
-            variants={stagger}
-          >
-            {copy.how.steps.map((step) => (
-              <motion.div key={step.num} variants={fadeUp} className="relative">
-                <div className="text-5xl font-bold text-primary/20">{step.num}</div>
-                <h3 className="mt-2 text-xl font-semibold">{step.title}</h3>
-                <p className="mt-3 text-sm text-muted-foreground">{step.description}</p>
-              </motion.div>
-            ))}
-          </motion.div>
-        </Container>
-      </section>
-
-      {/* ─── USE CASES ─── */}
-      <section id="use-cases" className="py-16 sm:py-24 bg-card/20">
-        <Container>
-          <Reveal className="mx-auto max-w-2xl text-center">
-            <Eyebrow>{copy.useCases.eyebrow}</Eyebrow>
-            <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">{copy.useCases.title}</h2>
-            <p className="mt-4 text-muted-foreground">{copy.useCases.subtitle}</p>
-          </Reveal>
-
-          <motion.div
-            className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-3"
-            initial="hidden"
-            whileInView="show"
-            viewport={{ once: true, margin: "-80px" }}
-            variants={stagger}
-          >
-            {copy.useCases.items.map((item) => (
-              <motion.div key={item.title} variants={fadeUp}>
-                <Card className="h-full border-border/60 bg-card/50">
-                  <CardContent className="pt-6">
-                    <div className="mb-4 grid size-11 place-items-center rounded-xl bg-primary/10 text-primary">
-                      <Icon name={item.icon} className="size-5" />
-                    </div>
-                    <h3 className="font-semibold">{item.title}</h3>
-                    <p className="mt-2 text-sm text-muted-foreground">{item.description}</p>
-                  </CardContent>
-                </Card>
-              </motion.div>
-            ))}
-          </motion.div>
-        </Container>
-      </section>
-
-      {/* ─── HARDWARE ─── */}
-      <section className="py-16 sm:py-24">
-        <Container>
-          <Reveal className="mx-auto max-w-3xl text-center">
-            <Eyebrow>{copy.hardware.eyebrow}</Eyebrow>
-            <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">{copy.hardware.title}</h2>
-            <p className="mt-4 text-muted-foreground">{copy.hardware.subtitle}</p>
-          </Reveal>
-
-          <Reveal delay={0.1} className="mt-10 flex justify-center">
-            <div className="inline-flex flex-col items-center gap-3 rounded-2xl border border-border/60 bg-card/50 px-10 py-8">
-              <div className="grid size-14 place-items-center rounded-xl bg-aurora text-primary-foreground shadow-lg shadow-primary/30">
-                <Server className="size-7" />
+                  );
+                })}
               </div>
-              <div className="text-2xl font-bold">{copy.hardware.primaryVendor}</div>
-              <p className="max-w-xs text-center text-sm text-muted-foreground">
-                {copy.hardware.primaryVendorNote}
-              </p>
+            </Reveal>
+            <Reveal delay={0.1} className="mkl-split-visual">
+              <ProtectionPanel panel={copy.protection.panel} />
+            </Reveal>
+          </div>
+        </section>
+
+        {/* ═══ HOTSPOT ═══ */}
+        <section id="hotspot">
+          <div className="mkl-wrap mkl-split mkl-rev">
+            <Reveal className="mkl-split-visual">
+              <div className="mkl-panel">
+                <div className="mkl-panel-top" aria-hidden="true">
+                  <i /><i /><i />
+                </div>
+                <div
+                  className="flex items-baseline justify-between"
+                  style={{ marginBottom: 6 }}
+                >
+                  <strong>{copy.hotspot.panel.title}</strong>
+                  <span style={{ color: "var(--mkl-teal)", fontWeight: 800 }}>
+                    {copy.hotspot.panel.online}
+                  </span>
+                </div>
+                <div className="mkl-bar-chart" aria-hidden="true">
+                  {[45, 70, 55, 90, 62, 78, 100, 68].map((h, i) => (
+                    <motion.div
+                      key={i}
+                      className="mkl-bar"
+                      initial={reduce ? undefined : { height: 0 }}
+                      whileInView={reduce ? undefined : { height: `${h}%` }}
+                      viewport={{ once: true }}
+                      transition={{ duration: 0.9, delay: i * 0.07, ease: [0.22, 1, 0.36, 1] }}
+                    />
+                  ))}
+                </div>
+              </div>
+            </Reveal>
+            <Reveal delay={0.1}>
+              <span className="mkl-kicker">{copy.hotspot.kicker}</span>
+              <h2>{copy.hotspot.title}</h2>
+              <p className="mkl-body">{copy.hotspot.body}</p>
+              <div className="mkl-feat-list">
+                {copy.hotspot.feats.map((feat, i) => {
+                  const Icon = HOTSPOT_FEAT_ICONS[i] ?? Ticket;
+                  return (
+                    <div key={feat.title} className="mkl-feat">
+                      <div className="mkl-fi" aria-hidden="true">
+                        <Icon className="size-5" />
+                      </div>
+                      <div>
+                        <h4>{feat.title}</h4>
+                        <p>{feat.desc}</p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </Reveal>
+          </div>
+        </section>
+
+        {/* ═══ PARC & FLOTTE ═══ */}
+        <section id="parc">
+          <div className="mkl-wrap mkl-split">
+            <Reveal>
+              <span className="mkl-kicker">{copy.fleet.kicker}</span>
+              <h2>{copy.fleet.title}</h2>
+              <p className="mkl-body">{copy.fleet.body}</p>
+              <div className="mkl-feat-list">
+                {copy.fleet.feats.map((feat, i) => {
+                  const Icon = FLEET_FEAT_ICONS[i] ?? RefreshCw;
+                  return (
+                    <div key={feat.title} className="mkl-feat">
+                      <div className="mkl-fi" aria-hidden="true">
+                        <Icon className="size-5" />
+                      </div>
+                      <div>
+                        <h4>{feat.title}</h4>
+                        <p>{feat.desc}</p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </Reveal>
+            <Reveal delay={0.1} className="mkl-split-visual">
+              {/* Maquette illustrative du parc (produit réel N°115/N°117) */}
+              <div className="mkl-panel">
+                <div className="mkl-panel-top" aria-hidden="true">
+                  <i /><i /><i />
+                </div>
+                <p className="font-bold" style={{ marginBottom: 16 }}>
+                  {copy.fleet.panel.title}
+                </p>
+                <div className="flex flex-col gap-2.5">
+                  {copy.fleet.panel.rows.map((row) => (
+                    <div key={row.name} className="mkl-fleet-row">
+                      <b>{row.name}</b>
+                      <span
+                        className="mkl-ver"
+                        style={{ color: row.upToDate ? "var(--mkl-teal-dark)" : "#8a6d1a" }}
+                      >
+                        {row.version}
+                      </span>
+                      <span
+                        className="mkl-ver"
+                        style={{ fontWeight: 800, whiteSpace: "nowrap" }}
+                      >
+                        {row.state}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <div className="mkl-fleet-actions" aria-hidden="true">
+                  <span className="mkl-btn mkl-btn-cream">{copy.fleet.panel.checkAll}</span>
+                  <span className="mkl-btn mkl-btn-teal">{copy.fleet.panel.updateAll}</span>
+                </div>
+              </div>
+            </Reveal>
+          </div>
+        </section>
+
+        {/* ═══ BANDEAU STATS ═══ */}
+        <section style={{ paddingTop: 0, paddingBottom: 0 }}>
+          <Reveal>
+            <div className="mkl-band">
+              <div className="mkl-wrap mkl-band-grid">
+                {copy.stats.map((stat) => (
+                  <div key={stat.label}>
+                    <b>
+                      <CountUp value={stat.value} lang={lang} />
+                    </b>
+                    <span>{stat.label}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           </Reveal>
+        </section>
 
-          <Reveal delay={0.15} className="mt-6 text-center">
-            <p className="mx-auto max-w-xl text-xs text-muted-foreground">{copy.hardware.roadmapNote}</p>
-          </Reveal>
-        </Container>
-      </section>
-
-      {/* ─── PRICING ─── */}
-      <section id="pricing" className="py-16 sm:py-24 bg-card/20">
-        <Container>
-          <Reveal className="mx-auto max-w-2xl text-center">
-            <Eyebrow>{copy.pricing.eyebrow}</Eyebrow>
-            <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">{copy.pricing.title}</h2>
-            <p className="mt-4 text-muted-foreground">{copy.pricing.subtitle}</p>
-          </Reveal>
-
-          <motion.div
-            className="mx-auto mt-12 grid max-w-4xl gap-6 md:grid-cols-2"
-            initial="hidden"
-            whileInView="show"
-            viewport={{ once: true, margin: "-80px" }}
-            variants={stagger}
-          >
-            {copy.pricing.plans.map((plan) => (
-              <motion.div key={plan.name} variants={fadeUp}>
-                <Card
-                  className={`relative h-full ${
-                    plan.highlight
-                      ? "border-primary/50 bg-card shadow-xl shadow-primary/10 ring-1 ring-primary/30"
-                      : "border-border/60 bg-card/50"
-                  }`}
-                >
-                  {plan.badge && (
-                    <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-                      <Badge className="bg-aurora text-primary-foreground shadow-lg">
-                        {plan.badge}
-                      </Badge>
+        {/* ═══ TARIFS ═══ */}
+        <section id="tarifs">
+          <div className="mkl-wrap">
+            <Reveal className="mkl-sec-head mkl-center">
+              <span className="mkl-kicker">{copy.pricing.eyebrow}</span>
+              <h2>{copy.pricing.title}</h2>
+              <p>{copy.pricing.subtitle}</p>
+            </Reveal>
+            <div className="mkl-pricing">
+              {copy.pricing.plans.map((plan, i) => (
+                <Reveal key={plan.name} delay={i * 0.08} className="h-full">
+                  <article className={`mkl-price-card mkl-pc${i + 1} h-full`}>
+                    {plan.highlight && plan.badge ? <span className="mkl-pop">{plan.badge}</span> : null}
+                    <h3>{plan.name}</h3>
+                    <p className="mkl-tagline">{plan.tagline}</p>
+                    <div className="mkl-amount">
+                      {plan.price} <small>{plan.period}</small>
                     </div>
-                  )}
-                  <CardHeader className="text-center pb-0">
-                    <h3 className="text-xl font-semibold">{plan.name}</h3>
-                    <p className="text-sm text-muted-foreground">{plan.tagline}</p>
-                    <div className="mt-4">
-                      <span className="text-4xl font-bold">{plan.price}</span>
-                      <span className="ml-1 text-sm text-muted-foreground">{plan.period}</span>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="mt-6">
-                    <Button
-                      className="w-full"
-                      variant={plan.highlight ? "default" : "outline"}
-                      onClick={onSignIn}
-                    >
-                      {plan.cta}
-                    </Button>
-                    <Separator className="my-6" />
-                    <ul className="space-y-3">
+                    <ul>
                       {plan.features.map((f) => (
-                        <li key={f} className="flex items-start gap-2 text-sm">
-                          <ShieldCheck className="mt-0.5 size-4 shrink-0 text-primary" />
-                          <span className="text-muted-foreground">{f}</span>
-                        </li>
+                        <li key={f}>{f}</li>
                       ))}
                     </ul>
-                  </CardContent>
-                </Card>
-              </motion.div>
-            ))}
-          </motion.div>
-
-          <Reveal delay={0.1} className="mt-8 text-center">
-            <p className="mx-auto max-w-3xl text-xs text-muted-foreground">{copy.pricing.currencyNote}</p>
-          </Reveal>
-        </Container>
-      </section>
-
-      {/* ─── TESTIMONIALS / VALUE PROPS ─── */}
-      <section className="py-16 sm:py-24">
-        <Container>
-          <Reveal className="mx-auto max-w-2xl text-center">
-            <Eyebrow>{copy.testimonials.eyebrow}</Eyebrow>
-            <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">{copy.testimonials.title}</h2>
-            <p className="mt-4 text-muted-foreground">{copy.testimonials.subtitle}</p>
-          </Reveal>
-
-          <motion.div
-            className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-4"
-            initial="hidden"
-            whileInView="show"
-            viewport={{ once: true, margin: "-80px" }}
-            variants={stagger}
-          >
-            {copy.testimonials.valueProps.map((item) => (
-              <motion.div key={item.title} variants={fadeUp}>
-                <Card className="h-full border-border/60 bg-card/50 text-center">
-                  <CardContent className="pt-8">
-                    <div className="mx-auto mb-4 grid size-12 place-items-center rounded-xl bg-primary/10 text-primary">
-                      <Icon name={item.icon} className="size-6" />
-                    </div>
-                    <div className="text-2xl font-bold text-primary">{item.title}</div>
-                    <p className="mt-2 text-sm text-muted-foreground">{item.description}</p>
-                  </CardContent>
-                </Card>
-              </motion.div>
-            ))}
-          </motion.div>
-        </Container>
-      </section>
-
-      {/* ─── FAQ ─── */}
-      <section id="faq" className="py-16 sm:py-24 bg-card/20">
-        <Container>
-          <Reveal className="mx-auto max-w-2xl text-center">
-            <Eyebrow>{copy.faq.eyebrow}</Eyebrow>
-            <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">{copy.faq.title}</h2>
-            <p className="mt-4 text-muted-foreground">{copy.faq.subtitle}</p>
-          </Reveal>
-
-          <Reveal delay={0.1} className="mx-auto mt-12 max-w-3xl">
-            <Accordion type="single" collapsible className="w-full">
-              {copy.faq.items.map((item, i) => (
-                <AccordionItem key={i} value={`item-${i}`}>
-                  <AccordionTrigger className="text-left text-base font-medium">
-                    {item.q}
-                  </AccordionTrigger>
-                  <AccordionContent className="text-sm text-muted-foreground leading-relaxed">
-                    {item.a}
-                  </AccordionContent>
-                </AccordionItem>
+                    <button
+                      className={`mkl-btn ${plan.highlight ? "mkl-btn-cream" : "mkl-btn-teal"}`}
+                      style={{ justifyContent: "center" }}
+                      onClick={onSignUp}
+                    >
+                      {plan.cta}
+                    </button>
+                  </article>
+                </Reveal>
               ))}
-            </Accordion>
-          </Reveal>
-        </Container>
-      </section>
+            </div>
+            <Reveal delay={0.15}>
+              <p className="mkl-currency-note">{copy.pricing.currencyNote}</p>
+            </Reveal>
+          </div>
+        </section>
 
-      {/* ─── FINAL CTA ─── */}
-      <section className="py-16 sm:py-24">
-        <Container>
+        {/* ═══ FAQ ═══ */}
+        <section id="faq" style={{ paddingTop: 0 }}>
+          <div className="mkl-wrap">
+            <Reveal className="mkl-sec-head mkl-center">
+              <span className="mkl-kicker">{copy.faq.eyebrow}</span>
+              <h2>{copy.faq.title}</h2>
+            </Reveal>
+            <Reveal delay={0.1}>
+              <div className="mkl-faq">
+                {copy.faq.items.map((item) => (
+                  <details key={item.q} className="mkl-faq-item">
+                    <summary>
+                      {item.q}
+                      <span className="mkl-faq-plus" aria-hidden="true">
+                        +
+                      </span>
+                    </summary>
+                    <p className="mkl-faq-body">{item.a}</p>
+                  </details>
+                ))}
+              </div>
+            </Reveal>
+          </div>
+        </section>
+
+        {/* ═══ CTA FINAL ═══ */}
+        <section id="cta" style={{ paddingTop: 0 }}>
           <Reveal>
-            <div className="relative overflow-hidden rounded-3xl bg-aurora px-6 py-16 text-center shadow-2xl shadow-primary/20 sm:px-12 sm:py-20">
-              <div aria-hidden className="pointer-events-none absolute inset-0">
-                <div className="absolute -top-20 -left-20 size-60 rounded-full bg-white/10 blur-3xl" />
-                <div className="absolute -bottom-20 -right-20 size-60 rounded-full bg-white/10 blur-3xl" />
-              </div>
-              <div className="relative">
-                <h2 className="mx-auto max-w-2xl text-3xl font-bold tracking-tight text-primary-foreground sm:text-4xl">
-                  {copy.finalCta.title}
-                </h2>
-                <p className="mx-auto mt-4 max-w-xl text-primary-foreground/80">
-                  {copy.finalCta.subtitle}
-                </p>
-                <div className="mt-8 flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
-                  <Button
-                    size="lg"
-                    variant="secondary"
-                    onClick={onSignIn}
-                    className="w-full bg-background text-foreground hover:bg-background/90 sm:w-auto"
-                  >
-                    {copy.finalCta.primary}
-                  </Button>
-                  <Button
-                    size="lg"
-                    onClick={onSignIn}
-                    className="w-full border border-primary-foreground/30 bg-primary-foreground/10 text-primary-foreground hover:bg-primary-foreground/20 sm:w-auto"
-                  >
-                    {copy.finalCta.secondary}
-                  </Button>
-                </div>
+            <div className="mkl-cta">
+              <Cloud className="mkl-mini-cloud mkl-mc1 size-10" aria-hidden="true" />
+              <Cloud className="mkl-mini-cloud mkl-mc2 size-12" aria-hidden="true" />
+              <Cloud className="mkl-mini-cloud mkl-mc3 size-7" aria-hidden="true" />
+              <span className="mkl-kicker">{copy.finalCta.kicker}</span>
+              <h2>{copy.finalCta.title}</h2>
+              <p>{copy.finalCta.subtitle}</p>
+              <div className="mkl-cta-actions">
+                <button className="mkl-btn mkl-btn-teal" onClick={onSignUp}>
+                  {copy.finalCta.primary} <ArrowRight className="size-4" />
+                </button>
+                <button className="mkl-btn mkl-btn-cream" onClick={onSignIn}>
+                  {copy.finalCta.secondary}
+                </button>
               </div>
             </div>
           </Reveal>
-        </Container>
-      </section>
+        </section>
 
-      {/* ─── FOOTER ─── */}
-      <footer className="border-t border-border/60 bg-card/30">
-        <Container className="py-12">
-          <div className="grid gap-8 md:grid-cols-4">
-            <div className="md:col-span-1">
-              <a href="#top" className="flex items-center gap-2 font-bold text-lg">
-                <span className="grid size-8 place-items-center rounded-lg bg-aurora text-primary-foreground">
-                  <Wifi className="size-5" />
-                </span>
-                {copy.footer.tagline && copy.header.brand}
-              </a>
-              <p className="mt-3 text-sm text-muted-foreground">{copy.footer.tagline}</p>
-            </div>
-
-            {copy.footer.columns.map((col) => (
-              <div key={col.title}>
-                <h4 className="text-sm font-semibold">{col.title}</h4>
-                <ul className="mt-3 space-y-2">
-                  {col.links.map((link) => (
-                    <li key={link.label}>
-                      <a
-                        href={link.href}
-                        className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-                      >
+        {/* ═══ FOOTER ═══ */}
+        <footer className="mkl-footer">
+          <div className="mkl-wrap">
+            <div className="mkl-foot-grid">
+              <div>
+                <a href="#top" onClick={goTo("top")} className="mkl-brand" style={{ marginBottom: 14 }}>
+                  <span className="mkl-brand-badge" aria-hidden="true">
+                    <Cloud className="size-6" />
+                  </span>
+                  {copy.header.brand}
+                </a>
+                <p className="mkl-foot-tagline">{copy.footer.tagline}</p>
+              </div>
+              {copy.footer.columns.map((col) => (
+                <div key={col.title}>
+                  <h5>{col.title}</h5>
+                  {col.links.map((link) =>
+                    link.href.startsWith("/") ? (
+                      <Link key={link.label} href={link.href}>
+                        {link.label}
+                      </Link>
+                    ) : (
+                      <a key={link.label} href={link.href} onClick={goTo(link.href.slice(1))}>
                         {link.label}
                       </a>
-                    </li>
-                  ))}
-                </ul>
+                    ),
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="mkl-foot-bottom">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                <FtciCredit className="text-xs" />
+                <span>{copy.footer.copyright}</span>
               </div>
-            ))}
-          </div>
-
-          <Separator className="my-8" />
-
-          <div className="flex flex-col items-center justify-between gap-4 text-center sm:flex-row sm:text-left">
-            {/* N°70 — lien public vers la politique de confidentialité
-                (registre §6.1) à côté du crédit FTCI. */}
-            <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
-              <FtciCredit className="text-xs text-muted-foreground" />
-              <Link
-                href="/legal/confidentialite"
-                className="text-xs text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                {copy.footer.legal}
-              </Link>
-            </div>
-            <div className="flex flex-col items-center gap-1 text-xs text-muted-foreground sm:items-end">
-              <a href={`mailto:${copy.footer.contact}`} className="hover:text-foreground">
-                {copy.footer.contact}
-              </a>
-              <span>{copy.footer.location}</span>
+              <div className="flex flex-col items-center gap-1 sm:items-end">
+                <a href={`mailto:${copy.footer.contact}`}>{copy.footer.contact}</a>
+                <span>
+                  {copy.footer.location} · {copy.footer.fun}
+                </span>
+              </div>
             </div>
           </div>
-        </Container>
-      </footer>
+        </footer>
+      </div>
     </div>
   );
 }

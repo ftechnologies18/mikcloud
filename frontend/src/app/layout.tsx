@@ -24,10 +24,21 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "MikCloud — Gestion Hotspot MikroTik",
+  title: "MikCloud — Hotspot, protection cloud & pilotage MikroTik",
   description:
-    "Plateforme cloud de gestion professionnelle de hotspot MikroTik : vouchers, utilisateurs, profils, sessions temps réel et revendeurs.",
-  keywords: ["MikroTik", "hotspot", "RouterOS", "vouchers", "wifi", "billing"],
+    "MikCloud, le cloud qui protège : gestion hotspot MikroTik (vouchers, portail captif, Mode Vente), 4 boucliers pare-feu (filtrage DNS, anti-piratage, couvre-feu, bloque-VPN) et pilotage du parc — télémétrie et mises à jour RouterOS.",
+  keywords: [
+    "MikroTik",
+    "hotspot",
+    "RouterOS",
+    "vouchers",
+    "wifi",
+    "billing",
+    "pare-feu",
+    "protection WiFi",
+    "filtrage DNS",
+    "hotspot Abidjan",
+  ],
   // Favicon via conventions fichiers : src/app/icon.png + apple-icon.png.
   // N°8 — PWA installable (manifest via src/app/manifest.ts + /sw.js).
   appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "MikCloud" },

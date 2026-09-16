@@ -1,7 +1,7 @@
 "use client";
 
 /* ============================================================
-   MIKCLOUD « CLAY » — Landing page FreeTech (N°120)
+   MIKCLOUD « CLAY » — Landing page FreeTech (N°120 / N°124)
    ------------------------------------------------------------
    Reconstruction complète de la vitrine : Claymorphisme & Flat
    Design, palette FreeTech (ivoire, jaune crème, vert sarcelle,
@@ -14,6 +14,7 @@
    ============================================================ */
 
 import { useEffect, useRef, useState, type ComponentType } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { Fraunces, Manrope } from "next/font/google";
 import { motion, useInView, useReducedMotion } from "framer-motion";
@@ -129,6 +130,37 @@ function CountUp({ value, lang }: { value: number; lang: Lang }) {
   return <span ref={ref}>{shown.toLocaleString(locale)}</span>;
 }
 
+/* --- N°124 — chips « clientèle cible » (mode Hotspot) : petites pills
+    clay qui apparaissent en cascade ; prefers-reduced-motion rend des
+    spans statiques (aucun mouvement). --- */
+function AudienceChips({ items, left = false }: { items: string[]; left?: boolean }) {
+  const reduce = useReducedMotion();
+  return (
+    <div className={`mkl-audience${left ? " mkl-audience-left" : ""}`}>
+      {items.map((item, i) =>
+        reduce ? (
+          <span key={item} className="mkl-audience-chip">
+            <i aria-hidden="true" />
+            {item}
+          </span>
+        ) : (
+          <motion.span
+            key={item}
+            className="mkl-audience-chip"
+            initial={{ opacity: 0, y: 16, scale: 0.85 }}
+            whileInView={{ opacity: 1, y: 0, scale: 1 }}
+            viewport={{ once: true, margin: "-30px" }}
+            transition={{ delay: i * 0.06, duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <i aria-hidden="true" />
+            {item}
+          </motion.span>
+        ),
+      )}
+    </div>
+  );
+}
+
 /* ─── Sculpture cloud clay du hero (les animations sont coupées par la
     media query prefers-reduced-motion du CSS) ─── */
 function CloudStage({ chips }: { chips: string[] }) {
@@ -141,9 +173,17 @@ function CloudStage({ chips }: { chips: string[] }) {
       <div className="mkl-clay-circle mkl-c3" />
       <div className="mkl-clay-circle mkl-c4" />
       <div className="mkl-cloud-body">
-        <div className="mkl-shield">
-          <ShieldCheck className="size-11" strokeWidth={2.2} />
-        </div>
+        {/* N°124 — le VRAI logo MikCloud (nuage blanc + routeur rouge +
+            signal Wi-Fi vert, même design que le favicon) assis sur la
+            sculpture clay ; décoratif dans un conteneur aria-hidden. */}
+        <Image
+          src="/logo.png"
+          alt=""
+          width={280}
+          height={280}
+          priority
+          className="mkl-hero-logo"
+        />
       </div>
       {chips.slice(0, 3).map((chip, i) => {
         const Icon = CHIP_ICONS[i] ?? ShieldCheck;
@@ -256,7 +296,7 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
 
   /* Section active dans le rail (IntersectionObserver) */
   const [active, setActive] = useState("top");
-  /* N°122 — mode de tarifs affiché : Hotspot (défaut) ou Maison */
+  /* N°122 — mode de tarifs affiché : Hotspot (défaut) ou HomeNet */
   const [priceMode, setPriceMode] = useState<"hotspot" | "homenet">("hotspot");
   useEffect(() => {
     const sections = ["top", "pouvoirs", "protection", "hotspot", "parc", "tarifs"];
@@ -288,6 +328,10 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
   const railKeys = ["home", "powers", "protection", "hotspot", "fleet", "pricing"] as const;
   const railIds = ["top", "pouvoirs", "protection", "hotspot", "parc", "tarifs"];
 
+  /* N°124 — segment de tarifs actif : hint, clientèle cible et formules. */
+  const activeSegment =
+    copy.pricing.segments.find((s) => s.id === priceMode) ?? copy.pricing.segments[0];
+
   return (
     <div className={`mkl-page ${fraunces.variable} ${manrope.variable}`}>
       {/* Grain + halos FreeTech */}
@@ -297,7 +341,15 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
 
       {/* ═══ RAIL VERTICAL (desktop, s'étend au survol) ═══ */}
       <nav className="mkl-rail" aria-label={copy.rail.home}>
-        <div className="mkl-rail-logo">M</div>
+        {/* N°124 — signature : le logo réel coiffe le rail. */}
+        <Image
+          src="/logo.png"
+          alt="MikCloud"
+          width={88}
+          height={88}
+          priority
+          className="mkl-rail-logo"
+        />
         {railKeys.map((key, i) => {
           const Icon = RAIL_ICONS[key];
           return (
@@ -311,7 +363,10 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
               <span className="mkl-dot" aria-hidden="true">
                 <Icon />
               </span>
-              <span className="mkl-lbl">{copy.rail[key]}</span>
+              <span className="mkl-lbl">
+                <i className="mkl-idx" aria-hidden="true">0{i + 1}</i>
+                {copy.rail[key]}
+              </span>
             </a>
           );
         })}
@@ -325,7 +380,13 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
 
       {/* ═══ RAIL MOBILE (barre tactile en bas) ═══ */}
       <nav className="mkl-rail-mobile" aria-label={copy.rail.home}>
-        <div className="mkl-rail-logo" aria-hidden="true">M</div>
+        <Image
+          src="/logo.png"
+          alt=""
+          width={80}
+          height={80}
+          className="mkl-rail-logo"
+        />
         {railKeys.map((key, i) => {
           const Icon = RAIL_ICONS[key];
           return (
@@ -359,9 +420,15 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
               className="mkl-brand"
               aria-label={copy.header.homeLink}
             >
-              <span className="mkl-brand-badge" aria-hidden="true">
-                <Cloud className="size-6" />
-              </span>
+              {/* N°124 — le logo réel (favicon) remplace le badge clay. */}
+              <Image
+                src="/logo.png"
+                alt="Logo MikCloud"
+                width={84}
+                height={84}
+                priority
+                className="mkl-brand-logo"
+              />
               {copy.header.brand}
             </a>
             <div className="flex items-center gap-2">
@@ -533,6 +600,13 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
               <span className="mkl-kicker">{copy.hotspot.kicker}</span>
               <h2>{copy.hotspot.title}</h2>
               <p className="mkl-body">{copy.hotspot.body}</p>
+              {/* N°124 — clientèle cible du mode Hotspot (chips clay). */}
+              {copy.hotspot.audience.length > 0 ? (
+                <div className="mkl-for-who">
+                  <span className="mkl-for-who-label">{copy.hotspot.audienceLabel}</span>
+                  <AudienceChips items={copy.hotspot.audience} left />
+                </div>
+              ) : null}
               <div className="mkl-feat-list">
                 {copy.hotspot.feats.map((feat, i) => {
                   const Icon = HOTSPOT_FEAT_ICONS[i] ?? Ticket;
@@ -640,36 +714,52 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
               <h2>{copy.pricing.title}</h2>
               <p>{copy.pricing.subtitle}</p>
             </Reveal>
-            {/* N°122 — segmentation Hotspot / Maison : le sélecteur clay pilote
-                les 3 formules du mode choisi (prix, essai, arguments). */}
+            {/* N°122 — segmentation Hotspot / HomeNet : le sélecteur clay
+                pilote les 3 formules du mode choisi (prix, essai, arguments).
+                N°124 — thumb sarcelle glissant (layoutId framer-motion,
+                coupé sous prefers-reduced-motion) + chips clientèle cible
+                affichées uniquement pour le mode Hotspot. */}
             <Reveal delay={0.05}>
               <div
                 className="mkl-mode-toggle"
                 role="group"
                 aria-label={copy.pricing.modesLabel}
               >
-                {copy.pricing.segments.map((seg) => (
-                  <button
-                    key={seg.id}
-                    type="button"
-                    aria-pressed={priceMode === seg.id}
-                    className={`mkl-mode-btn ${priceMode === seg.id ? "is-active" : ""}`}
-                    onClick={() => setPriceMode(seg.id)}
-                  >
-                    {seg.label}
-                  </button>
-                ))}
+                {copy.pricing.segments.map((seg) => {
+                  const on = priceMode === seg.id;
+                  return (
+                    <button
+                      key={seg.id}
+                      type="button"
+                      aria-pressed={on}
+                      className={`mkl-mode-btn ${on ? "is-active" : ""}`}
+                      onClick={() => setPriceMode(seg.id)}
+                    >
+                      {on && !reduce ? (
+                        <motion.span
+                          className="mkl-mode-thumb"
+                          layoutId="mkl-mode-thumb"
+                          aria-hidden="true"
+                          transition={{ type: "spring", stiffness: 500, damping: 40 }}
+                        />
+                      ) : null}
+                      <span className="mkl-mode-lbl">{seg.label}</span>
+                    </button>
+                  );
+                })}
               </div>
               <p className="mkl-mode-hint" role="status">
-                {copy.pricing.segments.find((s) => s.id === priceMode)?.hint ??
-                  copy.pricing.segments[0].hint}
+                {activeSegment.hint}
               </p>
+              {activeSegment.audience?.length ? (
+                <AudienceChips key={`audience-${priceMode}`} items={activeSegment.audience} />
+              ) : null}
             </Reveal>
             {/* key={priceMode} : le changement de mode REJOUE l'entrée des
                 cartes (Reveal remonté) — avec prefers-reduced-motion, aucun
                 mouvement (Reveal rend un div statique). */}
             <div className="mkl-pricing" key={priceMode}>
-              {(copy.pricing.segments.find((s) => s.id === priceMode) ?? copy.pricing.segments[0]).plans.map((plan, i) => (
+              {activeSegment.plans.map((plan, i) => (
                 <Reveal key={`${priceMode}-${plan.name}`} delay={i * 0.08} className="h-full">
                   <article className={`mkl-price-card mkl-pc${i + 1} h-full`}>
                     {plan.highlight && plan.badge ? <span className="mkl-pop">{plan.badge}</span> : null}
@@ -753,9 +843,13 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
             <div className="mkl-foot-grid">
               <div>
                 <a href="#top" onClick={goTo("top")} className="mkl-brand" style={{ marginBottom: 14 }}>
-                  <span className="mkl-brand-badge" aria-hidden="true">
-                    <Cloud className="size-6" />
-                  </span>
+                  <Image
+                    src="/logo.png"
+                    alt="Logo MikCloud"
+                    width={84}
+                    height={84}
+                    className="mkl-brand-logo"
+                  />
                   {copy.header.brand}
                 </a>
                 <p className="mkl-foot-tagline">{copy.footer.tagline}</p>

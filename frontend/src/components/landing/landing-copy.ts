@@ -13,6 +13,11 @@
 // chiffres mis en avant (500 vouchers/lot, 4 boucliers, 54 pays, 60 jours
 // d'essai Hotspot) sont des constantes produit, pas des métriques d'usage inventées.
 //
+// N°124 — le mode résidentiel est renommé HomeNet (sécurité internet
+// résidentiel) partout où le mode est nommé ; la clientèle cible du mode
+// Hotspot (hôtels, cybercafés, maquis…) est exposée via le champ
+// optionnel audience (rendu en chips clay), revendeurs mis en avant.
+//
 // Positionnement : marché africain pan-continental (UEMOA + CEMAC + Afrique
 // de l'Est + Nigeria + Ghana). Multi mobile-money (Wave, Orange Money, MTN
 // MoMo, Moov, MPesa, Airtel Money), multi-devises (FCFA, NGN, GHS, KES...).
@@ -77,6 +82,9 @@ export interface LandingCopy {
     kicker: string;
     title: string;
     body: string;
+    /** N°124 — clientèle cible du mode Hotspot + libellé du bandeau. */
+    audience: string[];
+    audienceLabel: string;
     feats: { title: string; desc: string }[];
     panel: {
       title: string;
@@ -101,13 +109,15 @@ export interface LandingCopy {
     eyebrow: string;
     title: string;
     subtitle: string;
-    /** N°122 — aria-label du sélecteur de mode (Hotspot / Maison). */
+    /** N°122 — aria-label du sélecteur de mode (Hotspot / HomeNet). */
     modesLabel: string;
     /** N°122 — tarifs segmentés par mode : chaque mode a ses 3 formules. */
     segments: {
       id: "hotspot" | "homenet";
       label: string;
       hint: string;
+      /** N°124 — clientèle cible (chips clay) — uniquement le mode Hotspot. */
+      audience?: string[];
       plans: {
         name: string;
         price: string;
@@ -159,15 +169,15 @@ const fr: LandingCopy = {
     homeLink: "Retour à l'accueil",
   },
   hero: {
-    badge: "Gestion Hotspot · Pare-feu Maison · Cloud MikroTik",
+    badge: "Gestion Hotspot · Pare-feu HomeNet · Cloud MikroTik",
     title1: "Votre WiFi,",
     titleAccent: "blindé",
     title2: "par le cloud.",
     subtitle:
-      "Que vous exploitiez un hotspot public ou protégiez votre maison, MikCloud réunit vouchers, portails captifs à votre marque, quatre boucliers pare-feu et pilotage complet de votre parc MikroTik — une seule console, réparée automatiquement depuis le cloud.",
+      "Que vous exploitiez un hotspot public ou protégiez votre domicile avec HomeNet, MikCloud réunit vouchers, portails captifs à votre marque, quatre boucliers pare-feu et pilotage complet de votre parc MikroTik — une seule console, réparée automatiquement depuis le cloud.",
     ctaPrimary: "Protéger mon réseau",
     ctaSecondary: "Découvrir la plateforme",
-    trialHint: "Essai gratuit · sans carte bancaire — 60 jours Hotspot · 30 jours Maison",
+    trialHint: "Essai gratuit · sans carte bancaire — 60 jours Hotspot · 30 jours HomeNet",
     chips: ["4/4 protections actives", "500 vouchers par lot", "Agent · check-in 45 s"],
   },
   marquee: [
@@ -175,7 +185,7 @@ const fr: LandingCopy = {
     "Filtrage DNS Quad9",
     "Anti-piratage WiFi",
     "Couvre-feu internet",
-    "Pare-feu maison HomeNet",
+    "HomeNet · Sécurité internet résidentiel",
     "Bloque-VPN",
     "QoS & forfait FAI",
     "Mode Vente revendeurs",
@@ -269,7 +279,9 @@ const fr: LandingCopy = {
   hotspot: {
     kicker: "Gestion hotspot",
     title: "Un portail captif dont vous serez fier.",
-    body: "Offrez à vos clients une connexion fluide et soignée — à votre marque, sans aucune mention MikCloud. Vouchers à durée, quota ou multi-appareils : vous gardez le contrôle total.",
+    body: "Offrez à vos clients une connexion fluide et soignée — à votre marque, sans aucune mention MikCloud. Vouchers à durée, quota ou multi-appareils : vous gardez le contrôle total. Vos revendeurs ? Ils vendent depuis leur téléphone : PWA protégée par PIN, stock transféré, ventes hors-ligne, rapport de journée.",
+    audience: ["Hôtels", "Cybercafés", "Maquis", "Boutiques", "Campus", "Restaurants"],
+    audienceLabel: "Pour qui ?",
     feats: [
       {
         title: "Marque 100 % personnalisable",
@@ -323,7 +335,7 @@ const fr: LandingCopy = {
     { value: 500, label: "vouchers par lot" },
     { value: 4, label: "boucliers pare-feu" },
     { value: 54, label: "pays africains visés" },
-    { value: 2, label: "modes — Hotspot & Maison" },
+    { value: 2, label: "modes — Hotspot & HomeNet" },
   ],
   pricing: {
     eyebrow: "Tarifs",
@@ -335,7 +347,8 @@ const fr: LandingCopy = {
       {
         id: "hotspot",
         label: "Hotspot",
-        hint: "Réseaux publics que vous exploitez : cybercafé, maquis, boutique — vouchers, portail captif et vente d'accès.",
+        hint: "Hôtels, cybercafés, maquis, boutiques, campus… : vouchers, portail captif et vente d'accès avec vos revendeurs.",
+        audience: ["Hôtels", "Cybercafés", "Maquis", "Boutiques", "Campus", "Restaurants"],
         plans: [
       {
         name: "Découverte",
@@ -385,11 +398,11 @@ const fr: LandingCopy = {
       },
       {
         id: "homenet",
-        label: "Maison",
-        hint: "Le foyer que vous protégez : pare-feu cloud, filtrage DNS, couvre-feu familial et contrôle des appareils.",
+        label: "HomeNet",
+        hint: "Sécurité internet résidentiel : pare-feu cloud, filtrage DNS, couvre-feu familial et contrôle des appareils de votre foyer.",
         plans: [
           {
-            name: "Essai Maison",
+            name: "Essai HomeNet",
             price: "0",
             period: "FCFA · 30 jours",
             tagline: "Pour protéger votre famille sans risque",
@@ -403,7 +416,7 @@ const fr: LandingCopy = {
             ],
           },
           {
-            name: "Maison Annuel",
+            name: "HomeNet Annuel",
             price: "12 000",
             period: "FCFA / an",
             tagline: "Votre foyer protégé toute l'année",
@@ -419,7 +432,7 @@ const fr: LandingCopy = {
             ],
           },
           {
-            name: "Maison Mensuel",
+            name: "HomeNet Mensuel",
             price: "1 250",
             period: "FCFA / mois / routeur",
             tagline: "Protégez votre foyer sans engagement",
@@ -436,15 +449,15 @@ const fr: LandingCopy = {
       },
     ],
     currencyNote:
-      "Frais de paiement répercutés sur le prix de liste : carte +6 %, Wave −3 % (remise mobile money). Essai offert : 60 jours en mode Hotspot, 30 jours en mode Maison.",
+      "Frais de paiement répercutés sur le prix de liste : carte +6 %, Wave −3 % (remise mobile money). Essai offert : 60 jours en mode Hotspot, 30 jours en mode HomeNet.",
   },
   faq: {
     eyebrow: "Questions fréquentes",
     title: "Les réponses, sans jargon.",
     items: [
       {
-        q: "Quelle différence entre Hotspot et Maison ?",
-        a: "Le mode Hotspot s'adresse aux réseaux publics que vous exploitez (cybercafé, maquis, boutique) : vouchers, portail captif, revendeurs. Le mode Maison protège votre foyer : pare-feu cloud, filtrage DNS, couvre-feu et contrôle des appareils. Même console MikCloud, mêmes protections — seuls les tarifs diffèrent (la Maison paie deux fois moins cher).",
+        q: "Quelle différence entre Hotspot et HomeNet ?",
+        a: "Le mode Hotspot s'adresse aux réseaux publics que vous exploitez (cybercafé, maquis, boutique) : vouchers, portail captif, revendeurs. Le mode HomeNet, c'est la sécurité internet résidentiel : pare-feu cloud, filtrage DNS, couvre-feu et contrôle des appareils pour votre foyer. Même console MikCloud, mêmes protections — seuls les tarifs diffèrent (HomeNet paie deux fois moins cher).",
       },
       {
         q: "Faut-il un routeur particulier ?",
@@ -521,15 +534,15 @@ const en: LandingCopy = {
     homeLink: "Back to home",
   },
   hero: {
-    badge: "Hotspot management · Home firewall · MikroTik cloud",
+    badge: "Hotspot management · HomeNet residential firewall · MikroTik cloud",
     title1: "Your WiFi,",
     titleAccent: "shielded",
     title2: "by the cloud.",
     subtitle:
-      "Whether you run a public hotspot or shield your home, MikCloud brings vouchers, white-label captive portals, four firewall shields and full MikroTik fleet control together — one console, self-healed from the cloud.",
+      "Whether you run a public hotspot or shield your home with HomeNet, MikCloud brings vouchers, white-label captive portals, four firewall shields and full MikroTik fleet control together — one console, self-healed from the cloud.",
     ctaPrimary: "Protect my network",
     ctaSecondary: "Explore the platform",
-    trialHint: "Free trial · no credit card — 60 days Hotspot · 30 days Home",
+    trialHint: "Free trial · no credit card — 60 days Hotspot · 30 days HomeNet",
     chips: ["4/4 protections active", "500 vouchers per batch", "Agent · 45 s check-in"],
   },
   marquee: [
@@ -537,7 +550,7 @@ const en: LandingCopy = {
     "Quad9 DNS filtering",
     "WiFi anti-hacking",
     "Internet curfew",
-    "HomeNet home firewall",
+    "HomeNet · Residential internet security",
     "VPN blocker",
     "QoS & ISP plan",
     "Reseller Sell Mode",
@@ -631,7 +644,9 @@ const en: LandingCopy = {
   hotspot: {
     kicker: "Hotspot management",
     title: "A captive portal you'll be proud of.",
-    body: "Give your customers a smooth, polished connection — under your brand, with zero MikCloud mention. Duration, quota or multi-device vouchers: you keep total control.",
+    body: "Give your customers a smooth, polished connection — under your brand, with zero MikCloud mention. Duration, quota or multi-device vouchers: you keep total control. Your resellers? They sell straight from their phone: PIN-protected PWA, transferred stock, offline sales, end-of-day report.",
+    audience: ["Hotels", "Cybercafés", "Bars", "Shops", "Campuses", "Restaurants"],
+    audienceLabel: "Who is it for?",
     feats: [
       {
         title: "100% custom branding",
@@ -685,7 +700,7 @@ const en: LandingCopy = {
     { value: 500, label: "vouchers per batch" },
     { value: 4, label: "firewall shields" },
     { value: 54, label: "African countries" },
-    { value: 2, label: "modes — Hotspot & Home" },
+    { value: 2, label: "modes — Hotspot & HomeNet" },
   ],
   pricing: {
     eyebrow: "Pricing",
@@ -696,7 +711,8 @@ const en: LandingCopy = {
       {
         id: "hotspot",
         label: "Hotspot",
-        hint: "Public networks you operate: cybercafé, bar, shop — vouchers, captive portal and paid access.",
+        hint: "Hotels, cybercafés, bars, shops, campuses…: vouchers, captive portal and access sales through your resellers.",
+        audience: ["Hotels", "Cybercafés", "Bars", "Shops", "Campuses", "Restaurants"],
         plans: [
       {
         name: "Discovery",
@@ -746,11 +762,11 @@ const en: LandingCopy = {
       },
       {
         id: "homenet",
-        label: "Home",
-        hint: "The home you shield: cloud firewall, DNS filtering, family curfew and device control.",
+        label: "HomeNet",
+        hint: "Residential internet security: cloud firewall, DNS filtering, family curfew and device control for your household.",
         plans: [
           {
-            name: "Home Trial",
+            name: "HomeNet Trial",
             price: "0",
             period: "FCFA · 30 days",
             tagline: "To protect your family risk-free",
@@ -764,7 +780,7 @@ const en: LandingCopy = {
             ],
           },
           {
-            name: "Home Yearly",
+            name: "HomeNet Yearly",
             price: "12,000",
             period: "FCFA / year",
             tagline: "Your home shielded all year",
@@ -780,7 +796,7 @@ const en: LandingCopy = {
             ],
           },
           {
-            name: "Home Monthly",
+            name: "HomeNet Monthly",
             price: "1,250",
             period: "FCFA / month / router",
             tagline: "Protect your home, no commitment",
@@ -797,15 +813,15 @@ const en: LandingCopy = {
       },
     ],
     currencyNote:
-      "Payment fees passed through the list price: card +6%, Wave −3% (mobile money discount). Free trial: 60 days in Hotspot mode, 30 days in Home mode.",
+      "Payment fees passed through the list price: card +6%, Wave −3% (mobile money discount). Free trial: 60 days in Hotspot mode, 30 days in HomeNet mode.",
   },
   faq: {
     eyebrow: "Frequently asked questions",
     title: "Straight answers, no jargon.",
     items: [
       {
-        q: "What's the difference between Hotspot and Home?",
-        a: "Hotspot mode targets the public networks you operate (cybercafé, bar, shop): vouchers, captive portal, resellers. Home mode shields your household: cloud firewall, DNS filtering, curfew and device control. Same MikCloud console, same protections — only the prices differ (Home pays half the Hotspot rate).",
+        q: "What's the difference between Hotspot and HomeNet?",
+        a: "Hotspot mode targets the public networks you operate (cybercafé, bar, shop): vouchers, captive portal, resellers. HomeNet is residential internet security: cloud firewall, DNS filtering, curfew and device control for your household. Same MikCloud console, same protections — only the prices differ (HomeNet pays half the Hotspot rate).",
       },
       {
         q: "Do I need a specific router?",

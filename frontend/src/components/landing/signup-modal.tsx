@@ -134,7 +134,7 @@ export default function SignupModal({ open, onOpenChange }: SignupModalProps) {
         country,
         city: city.trim(),
         // N°101 — usage choisi à l'étape 1 : le serveur ouvre la console
-        // correspondante (dashboard métier vs maison de la famille).
+        // correspondante (dashboard métier vs console foyer HomeNet).
         usage,
       });
       setAuth(res.token, res.user);
@@ -210,8 +210,8 @@ export default function SignupModal({ open, onOpenChange }: SignupModalProps) {
               <Label>{t("signup.usage.label", "Votre réseau")}</Label>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2" role="radiogroup" aria-label={t("signup.usage.label", "Votre réseau")}>
                 {([
-                  { value: "hotspot" as AccountUsage, icon: Store, title: t("signup.usage.hotspot.title", "Un lieu public"), desc: t("signup.usage.hotspot.desc", "Maquis, cybercafé, boutique — vous vendez l'accès internet.") },
-                  { value: "homenet" as AccountUsage, icon: Home, title: t("signup.usage.homenet.title", "Ma maison"), desc: t("signup.usage.homenet.desc", "Vous protégez le réseau familial et ses appareils.") },
+                  { value: "hotspot" as AccountUsage, icon: Store, title: t("signup.usage.hotspot.title", "Hotspot"), desc: t("signup.usage.hotspot.desc", "Hôtel, cybercafé, boutique — vous vendez l'accès internet.") },
+                  { value: "homenet" as AccountUsage, icon: Home, title: t("signup.usage.homenet.title", "HomeNet"), desc: t("signup.usage.homenet.desc", "Sécurité internet résidentiel — protégez le réseau familial et ses appareils.") },
                 ]).map((option) => {
                   const selected = usage === option.value;
                   return (

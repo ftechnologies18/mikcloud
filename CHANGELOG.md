@@ -5,6 +5,69 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-16 — N°124 — Vitrine : le mode résidentiel devient « HomeNet », le VRAI logo MikCloud (favicon) prend la barre, la clientèle cible du Hotspot s'affiche — polish clay accrocheur
+
+### N°124 — Contexte : nommer le produit, montrer la marque, cibler la clientèle
+Retour utilisateur : « Sur le landing page change l'expression Maison par
+HomeNet (mise en avant de sécurité internet résidentiel). Le vrai logo
+MikCloud comme identique au favicon. Le mode hotspot revendeur, la clientèle
+cible, exemple (hôtel, wifi…). Je trouve que le landing est bien mais
+d'énorme [marges de progression] — utilise ton expertise afin de créer
+quelque chose d'accrocheur d'unique tout en gardant le style UX actuel,
+Claymorphisme & Flat Design avec l'identité FreeTech (jaune crème, vert
+sarcelle, vert menthe clair et ivoire). »
+
+### Produit — HomeNet nommé, logo réel, clientèle visible
+- « MAISON » → « HOMENET » PARTOUT où le mode est nommé (badge hero
+  « Pare-feu HomeNet », hint d'essai, marquee « HomeNet · Sécurité internet
+  résidentiel », stats « Hotspot & HomeNet », pilule du sélecteur, formules
+  « Essai HomeNet / HomeNet Annuel / HomeNet Mensuel », note frais, FAQ
+  « Quelle différence entre Hotspot et HomeNet ? ») — le hint du mode et la
+  réponse FAQ portent désormais l'expression « sécurité internet résidentiel » ;
+  FR/EN symétrique (HomeNet Trial/Yearly/Monthly, residential internet
+  security).
+- VRAI LOGO (favicon : nuage blanc + routeur rouge + signal Wi-Fi vert sur
+  bleu marine) intégré en 4 emplacements : topbar (à côté du wordmark, rebond
+  incliné au survol), tête du rail vertical desktop ET barre tactile mobile,
+  sculpture du hero (144 px assis sur le nuage clay avec halo ivoire, remplace
+  le bouclier), footer. Il remplace l'ancien badge clay à icône Cloud.
+- CLIENTÈLE CIBLE DU HOTSPOT : nouveau champ audience — chips clay (menthe et
+  crème alternées) « Hôtels · Cybercafés · Maquis · Boutiques · Campus ·
+  Restaurants » rendues (1) sous le hint du sélecteur de tarifs en mode
+  Hotspot (cascade animée, réduite sans mouvement) et (2) dans la section
+  hotspot derrière un label « Pour qui ? » ; le hint du segment cite hôtels
+  et campus + « avec vos revendeurs ».
+- REVENDEURS MIS EN AVANT : le corps de la section hotspot décrit désormais
+  le Mode Vente (PWA protégée par PIN, stock transféré, ventes hors-ligne,
+  rapport de journée).
+- POLISH CLAY ACCROCHEUR (style conservé) : thumb sarcelle GLISSANT du
+  sélecteur de mode (framer-motion layoutId, coupé sous
+  prefers-reduced-motion — la classe .is-active assure le même rendu sans
+  JS), numérotation 01-06 des sections du rail au survol, hover lift des
+  cartes super-pouvoirs et tarifs avec ombre clay qui s'étire, marquee en
+  pause au survol, texture pointillée du bandeau stats, lavage menthe très
+  doux derrière la FAQ, chips clientèle compactes en mobile (390 px).
+- MODAL D'INSCRIPTION : les options deviennent « Hotspot » (Hôtel, cybercafé,
+  boutique — vous vendez l'accès internet) et « HomeNet » (Sécurité internet
+  résidentiel — protégez le réseau familial et ses appareils), FR/EN.
+
+### Technique — frontend uniquement, zéro contrat API
+- landing-copy.ts : champ optionnel `audience?: string[]` sur les segments de
+  tarifs + `audience`/`audienceLabel` sur la section hotspot ; commentaires
+  mis à jour.
+- landing-page.tsx : composant `AudienceChips` (whileInView en cascade,
+  reduced-motion = spans statiques), `next/image` /logo.png (priority sur le
+  hero), refactor `activeSegment`, thumb `layoutId="mkl-mode-thumb"`.
+- landing-clay.css : .mkl-brand-logo, .mkl-hero-logo, .mkl-rail-logo (image),
+  .mkl-idx, .mkl-mode-thumb/.mkl-mode-lbl, .mkl-audience/.mkl-audience-chip,
+  .mkl-for-who, hovers étendus, marquee pause, texture stats, gradient FAQ,
+  responsive chips.
+- i18n FR/EN (signup.usage.*) + signup-modal : labels d'usage.
+- Vérifié : eslint 0, tsc 0 ; navigateur (dev :3016) — desktop 1440 px
+  (logo ×4, badge « PARE-FEU HOMENET », zéro « Maison »), bascule HomeNet
+  (formules + hint + disparition des chips), FR↔EN, mobile 390 px zéro
+  débordement, modal (options Hotspot/HomeNet), 0 erreur console.
+
 ## 2026-09-16 — N°123 — Badges annuels « 2 mois offerts » retirés + essai Hotspot réduit à 60 jours — les clients ACTIFS mis à jour par migration au démarrage
 
 ### N°123 — Contexte : l'argument annuel est le prix, pas une promesse de gratuité

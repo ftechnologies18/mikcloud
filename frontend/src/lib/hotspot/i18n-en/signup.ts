@@ -14,10 +14,10 @@ export const enSignup: Record<string, string> = {
   // N°101 — network usage: the sign-up's first question picks the
   // landing console (public place vs household).
   "signup.usage.label": "Your network",
-  "signup.usage.hotspot.title": "A public place",
-  "signup.usage.hotspot.desc": "Maquis, cybercafé, shop — you sell internet access.",
-  "signup.usage.homenet.title": "My home",
-  "signup.usage.homenet.desc": "You protect the family network and its devices.",
+  "signup.usage.hotspot.title": "Hotspot",
+  "signup.usage.hotspot.desc": "Hotel, cybercafé, shop — you sell internet access.",
+  "signup.usage.homenet.title": "HomeNet",
+  "signup.usage.homenet.desc": "Residential internet security — protect the family network and its devices.",
   "signup.name": "Account name",
   "signup.username": "Username",
   "signup.usernameHint": "3 to 32 characters: a-z, 0-9, dashes and underscores",

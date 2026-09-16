@@ -14,10 +14,10 @@ export const frSignup: Record<string, string> = {
   // N°101 — usage du réseau : la première question de l'inscription
   // choisit la console d'atterrissage (lieu public vs foyer).
   "signup.usage.label": "Votre réseau",
-  "signup.usage.hotspot.title": "Un lieu public",
-  "signup.usage.hotspot.desc": "Maquis, cybercafé, boutique — vous vendez l'accès internet.",
-  "signup.usage.homenet.title": "Ma maison",
-  "signup.usage.homenet.desc": "Vous protégez le réseau familial et ses appareils.",
+  "signup.usage.hotspot.title": "Hotspot",
+  "signup.usage.hotspot.desc": "Hôtel, cybercafé, boutique — vous vendez l'accès internet.",
+  "signup.usage.homenet.title": "HomeNet",
+  "signup.usage.homenet.desc": "Sécurité internet résidentiel — protégez le réseau familial et ses appareils.",
   "signup.name": "Nom du compte",
   "signup.username": "Identifiant",
   "signup.usernameHint": "3 à 32 caractères : a-z, 0-9, tirets et tirets bas",

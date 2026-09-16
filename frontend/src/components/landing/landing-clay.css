@@ -111,20 +111,14 @@
 .mkl-rail:focus-within {
   width: 218px;
 }
+/* N°124 — le VRAI logo MikCloud (même design que le favicon) coiffe le
+   rail : tile navy sur ivoire, ombre clay douce, pas de bordure dure. */
 .mkl-rail-logo {
   width: 44px;
   height: 44px;
   flex: none;
-  border-radius: 16px;
-  background: var(--mkl-teal);
-  color: var(--mkl-ivory);
-  display: grid;
-  place-items: center;
-  font-family: var(--font-fraunces), Georgia, serif;
-  font-weight: 900;
-  font-size: 1.15rem;
-  box-shadow: inset 3px 4px 8px rgba(255, 255, 255, 0.35),
-    inset -4px -5px 10px rgba(0, 0, 0, 0.22), 4px 5px 0 rgba(18, 59, 58, 0.12);
+  border-radius: 15px;
+  box-shadow: 4px 5px 0 rgba(18, 59, 58, 0.14);
   margin-bottom: 8px;
 }
 .mkl-rail a,
@@ -168,6 +162,19 @@
   opacity: 0;
   transform: translateX(-8px);
   transition: opacity 0.3s 0.08s, transform 0.3s 0.08s;
+}
+/* N°124 — numérotation des sections, lisible quand le rail s'étend. */
+.mkl-rail .mkl-idx {
+  font-style: normal;
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: var(--mkl-teal);
+  opacity: 0.75;
+  margin-right: 3px;
+}
+.mkl-rail a.mkl-active .mkl-idx {
+  color: var(--mkl-mint);
 }
 .mkl-rail:hover a .mkl-lbl,
 .mkl-rail:hover button .mkl-lbl,
@@ -224,16 +231,17 @@
   color: var(--mkl-ink);
   text-decoration: none;
 }
-.mkl-brand-badge {
-  width: 46px;
-  height: 46px;
-  border-radius: 17px;
-  background: var(--mkl-teal);
-  color: var(--mkl-ivory);
-  display: grid;
-  place-items: center;
-  box-shadow: inset 3px 4px 8px rgba(255, 255, 255, 0.35),
-    inset -4px -5px 10px rgba(0, 0, 0, 0.22), 5px 6px 0 rgba(18, 59, 58, 0.12);
+/* N°124 — logo réel (favicon) en topbar et footer : tile clay navy,
+   léger rebond incliné au survol du lien de marque. */
+.mkl-brand-logo {
+  width: 42px;
+  height: 42px;
+  border-radius: 13px;
+  box-shadow: 4px 5px 0 rgba(18, 59, 58, 0.13);
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.mkl-brand:hover .mkl-brand-logo {
+  transform: rotate(-4deg) scale(1.06);
 }
 
 /* ============ BOUTONS CLAY ============ */
@@ -473,16 +481,15 @@
   display: grid;
   place-items: center;
 }
-.mkl-shield {
-  width: 96px;
-  height: 96px;
-  border-radius: 30px;
-  background: var(--mkl-teal);
-  display: grid;
-  place-items: center;
-  color: var(--mkl-ivory);
-  box-shadow: inset 5px 7px 12px rgba(255, 255, 255, 0.35),
-    inset -6px -8px 14px rgba(0, 0, 0, 0.28), 8px 10px 0 rgba(18, 59, 58, 0.15);
+/* N°124 — le logo MikCloud assis sur la sculpture cloud : tile navy
+   arrondi ~30 %, halo ivoire pour le détacher du nuage, ombre clay
+   dure et flottement doux (mkl-bob, coupé en reduced-motion). */
+.mkl-hero-logo {
+  width: 144px;
+  height: 144px;
+  border-radius: 42px;
+  box-shadow: 10px 13px 0 rgba(18, 59, 58, 0.13),
+    0 0 0 4px rgba(253, 249, 238, 0.65);
   animation: mkl-bob 4.5s ease-in-out infinite;
 }
 @keyframes mkl-bob {
@@ -589,6 +596,11 @@
   font-style: normal;
   opacity: 0.5;
 }
+/* N°124 — le ruban marque une pause au survol : on peut le lire,
+   sans le saut visuel qu'occasionnerait un renversement de direction. */
+.mkl-marquee:hover .mkl-marquee-track {
+  animation-play-state: paused;
+}
 
 /* ============ TÊTES DE SECTION ============ */
 .mkl-sec-head {
@@ -631,10 +643,13 @@
   position: relative;
   overflow: hidden;
   box-shadow: var(--mkl-clay-shadow), var(--mkl-clay-inset);
-  transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 0.35s;
 }
+/* N°124 — la carte se lève et l'ombre clay s'étire avec elle. */
 .mkl-power:hover {
   transform: translateY(-10px) rotate(-0.6deg);
+  box-shadow: 16px 20px 0 rgba(18, 59, 58, 0.13), var(--mkl-clay-inset);
 }
 .mkl-power.mkl-p1 {
   background: var(--mkl-cream);
@@ -978,6 +993,12 @@
 /* ============ BANDEAU STATS ============ */
 .mkl-band {
   background: var(--mkl-teal);
+  /* N°124 — texture pointillée clay très douce */
+  background-image: radial-gradient(
+    rgba(255, 255, 255, 0.09) 1.6px,
+    transparent 1.6px
+  );
+  background-size: 26px 26px;
   color: var(--mkl-ivory);
   border-radius: 3rem;
   margin: 0 clamp(10px, 3vw, 40px);
@@ -1006,7 +1027,7 @@
 }
 
 /* ============ TARIFS ============ */
-/* N°122 — sélecteur de mode (Hotspot / Maison) : pilule clay segmentée,
+/* N°122 — sélecteur de mode (Hotspot / HomeNet) : pilule clay segmentée,
    le bouton actif s'enfonce en sarcelle (métaphore bouton physique). */
 .mkl-mode-toggle {
   display: flex;
@@ -1020,6 +1041,7 @@
   box-shadow: var(--mkl-clay-shadow), var(--mkl-clay-inset);
 }
 .mkl-mode-btn {
+  position: relative;
   border: none;
   cursor: pointer;
   background: transparent;
@@ -1047,12 +1069,79 @@
   outline: 3px solid var(--mkl-teal);
   outline-offset: 3px;
 }
+/* N°124 — thumb glissant (framer-motion layoutId) : le marqueur
+   sarcelle glisse d'un mode à l'autre. Sans JS/reduced-motion, la
+   classe .is-active assure le même rendu. */
+.mkl-mode-thumb {
+  position: absolute;
+  inset: 0;
+  border-radius: 1.7rem;
+  background: var(--mkl-teal);
+  box-shadow: inset 0 -4px 0 rgba(9, 66, 65, 0.35),
+    inset 0 3px 0 rgba(255, 255, 255, 0.18), 4px 5px 0 rgba(18, 59, 58, 0.12);
+}
+.mkl-mode-lbl {
+  position: relative;
+  z-index: 1;
+}
 .mkl-mode-hint {
   text-align: center;
   max-width: 58ch;
   margin: 16px auto 0;
   font-size: 0.92rem;
   color: var(--mkl-ink-60);
+}
+/* N°124 — chips « clientèle cible » (mode Hotspot) : pills menthe et
+   crème alternées, compactes, wrap, micro-lift au survol. */
+.mkl-audience {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 18px;
+}
+.mkl-audience-left {
+  justify-content: flex-start;
+  margin-top: 0;
+}
+.mkl-audience-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 2rem;
+  background: var(--mkl-mint-soft);
+  color: var(--mkl-teal-dark);
+  font-weight: 800;
+  font-size: 0.82rem;
+  box-shadow: var(--mkl-clay-inset), 3px 4px 0 rgba(18, 59, 58, 0.08);
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.mkl-audience-chip:nth-child(even) {
+  background: var(--mkl-cream);
+}
+.mkl-audience-chip:hover {
+  transform: translateY(-3px);
+}
+.mkl-audience-chip i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.55;
+}
+/* Bandeau « Pour qui ? » de la section hotspot */
+.mkl-for-who {
+  margin: -8px 0 26px;
+}
+.mkl-for-who-label {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--mkl-teal);
+  margin-bottom: 10px;
 }
 .mkl-pricing {
   display: grid;
@@ -1067,10 +1156,12 @@
   flex-direction: column;
   background: var(--mkl-ivory);
   box-shadow: var(--mkl-clay-shadow), var(--mkl-clay-inset);
-  transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 0.35s;
 }
 .mkl-price-card:hover {
   transform: translateY(-10px);
+  box-shadow: 16px 20px 0 rgba(18, 59, 58, 0.13), var(--mkl-clay-inset);
 }
 .mkl-price-card.mkl-pc1 {
   background: var(--mkl-ivory);
@@ -1083,6 +1174,7 @@
 }
 .mkl-price-card.mkl-pc2:hover {
   transform: scale(1.05) translateY(-10px);
+  box-shadow: 16px 20px 0 rgba(18, 59, 58, 0.16), var(--mkl-clay-inset);
 }
 .mkl-price-card.mkl-pc3 {
   background: var(--mkl-cream);
@@ -1157,6 +1249,17 @@
 }
 
 /* ============ FAQ CLAY ============ */
+/* N°124 — lavage menthe très doux derrière la FAQ : rythme ivoire →
+   sarcelle (stats) → ivoire (tarifs) → menthe (FAQ) → crème (CTA). */
+.mkl-page section#faq {
+  background: linear-gradient(
+    180deg,
+    rgba(223, 243, 233, 0) 0%,
+    var(--mkl-mint-soft) 14%,
+    var(--mkl-mint-soft) 86%,
+    rgba(223, 243, 233, 0) 100%
+  );
+}
 .mkl-faq {
   max-width: 760px;
   margin: 0 auto;
@@ -1359,8 +1462,7 @@
   .mkl-rail-mobile .mkl-rail-logo {
     width: 40px;
     height: 40px;
-    border-radius: 14px;
-    font-size: 1rem;
+    border-radius: 13px;
     margin: 0 4px 0 2px;
   }
   .mkl-rail-mobile a,
@@ -1446,6 +1548,13 @@
 @media (max-width: 480px) {
   .mkl-amount {
     font-size: 2.2rem;
+  }
+  .mkl-audience {
+    gap: 8px;
+  }
+  .mkl-audience-chip {
+    padding: 7px 13px;
+    font-size: 0.78rem;
   }
   .mkl-hero-actions .mkl-btn,
   .mkl-cta-actions .mkl-btn {

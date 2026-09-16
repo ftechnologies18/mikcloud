@@ -5,6 +5,39 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-16 — N°121 — Pied de page de la vitrine allégé : retrait du copyright MikCloud, de la ligne lieu/humeur et de l'e-mail de contact
+
+### N°121 — Contexte : retour utilisateur immédiat post-N°120
+Juste après la reconstruction de la vitrine (N°120), demande explicite de
+supprimer trois éléments du bas du footer : « © 2026 MikCloud — Tous droits
+réservés. », « Abidjan · Côte d'Ivoire · Fait avec ☁ et beaucoup de
+sarcelle. » et « freelancetechnologies.ci@gmail.com ».
+
+### Produit
+- Le bas du footer ne garde QUE le crédit FTCI (« © 2026 FTCI — Freelance
+  Technologies Côte d'Ivoire », lien vers ftci.fr, composant FtciCredit
+  partagé avec les autres surfaces — écran de connexion, console, page
+  légale) : la bande se réduit à une seule ligne propre, alignée à gauche.
+- Le reste du footer est inchangé : marque + tagline, colonnes
+  Produit/Console/Légal (dont le lien Politique de confidentialité).
+- Suppression bilingue FR/EN : « © 2026 MikCloud — All rights reserved. »,
+  « Made with ☁ and a lot of teal. » et l'e-mail disparaissent aussi en
+  anglais — le retrait est symétrique dans les deux langues.
+
+### Technique
+- `landing-copy.ts` : les champs `copyright`, `fun`, `contact`, `location`
+  sont retirés de l'interface `LandingCopy.footer` ET des objets `fr`/`en`
+  (plus aucune référence nulle part — vérifié par recherche globale) ; le
+  champ `legal` (libellé du lien /legal/confidentialite, N°70) reste.
+- `landing-page.tsx` : le bloc `mkl-foot-bottom` passe de deux groupes
+  (copyright + e-mail/lieu) au seul `FtciCredit` ; aucun changement CSS
+  nécessaire (`mkl-foot-bottom` en flex space-between se comporte
+  naturellement avec un enfant unique).
+- Frontend uniquement — aucune route, aucun contrat API, aucune donnée.
+- Vérifié : eslint 0 erreur, tsc 0 erreur.
+
+---
+
 ## 2026-09-16 — N°120 — « Le cloud qui protège » : reconstruction complète de la vitrine publique en Claymorphisme & Flat Design (palette FreeTech — ivoire, jaune crème, vert sarcelle, menthe) avec rail de navigation vertical qui s'étend au survol
 
 ### N°120 — Contexte : la vitrine ne reflétait plus l'étendue du produit

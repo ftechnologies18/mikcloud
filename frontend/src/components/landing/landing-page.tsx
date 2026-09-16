@@ -748,16 +748,7 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
               ))}
             </div>
             <div className="mkl-foot-bottom">
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                <FtciCredit className="text-xs" />
-                <span>{copy.footer.copyright}</span>
-              </div>
-              <div className="flex flex-col items-center gap-1 sm:items-end">
-                <a href={`mailto:${copy.footer.contact}`}>{copy.footer.contact}</a>
-                <span>
-                  {copy.footer.location} · {copy.footer.fun}
-                </span>
-              </div>
+              <FtciCredit className="text-xs" />
             </div>
           </div>
         </footer>

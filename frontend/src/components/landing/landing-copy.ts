@@ -128,10 +128,6 @@ export interface LandingCopy {
   footer: {
     tagline: string;
     columns: { title: string; links: { label: string; href: string }[] }[];
-    copyright: string;
-    fun: string;
-    contact: string;
-    location: string;
     /** N°70 — libellé du lien vers /legal/confidentialite. */
     legal: string;
   };
@@ -431,10 +427,6 @@ const fr: LandingCopy = {
         links: [{ label: "Politique de confidentialité", href: "/legal/confidentialite" }],
       },
     ],
-    copyright: "© 2026 MikCloud — Tous droits réservés.",
-    fun: "Fait avec ☁ et beaucoup de sarcelle.",
-    contact: "freelancetechnologies.ci@gmail.com",
-    location: "Abidjan · Côte d'Ivoire",
     legal: "Politique de confidentialité",
   },
 };
@@ -732,10 +724,6 @@ const en: LandingCopy = {
         links: [{ label: "Privacy policy", href: "/legal/confidentialite" }],
       },
     ],
-    copyright: "© 2026 MikCloud — All rights reserved.",
-    fun: "Made with ☁ and a lot of teal.",
-    contact: "freelancetechnologies.ci@gmail.com",
-    location: "Abidjan · Côte d'Ivoire",
     legal: "Privacy policy",
   },
 };

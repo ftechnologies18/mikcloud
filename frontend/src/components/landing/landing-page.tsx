@@ -368,12 +368,6 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
             </a>
           );
         })}
-        <button className="mkl-rail-cta" onClick={onSignUp}>
-          <span className="mkl-dot" aria-hidden="true">
-            <ArrowRight />
-          </span>
-          <span className="mkl-lbl">{copy.rail.cta}</span>
-        </button>
       </nav>
 
       {/* ═══ RAIL MOBILE (barre tactile en bas) ═══ */}
@@ -399,13 +393,6 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
             </a>
           );
         })}
-        <button
-          className="mkl-rail-cta-mobile"
-          onClick={onSignUp}
-          aria-label={copy.rail.cta}
-        >
-          <ArrowRight className="size-5" />
-        </button>
       </nav>
 
       <div className="mkl-main">

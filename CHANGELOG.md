@@ -5,6 +5,76 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-17 — N°131 — La vitrine retire le doublon et réveille son chat : le bouton « Essai gratuit » quitte le rail (le header le porte déjà), l'icône du tchat gagne une animation « wahou » qui dit au visiteur qu'il peut écrire sa question
+
+### N°131 — Contexte : deux retours vitrine
+Retour utilisateur : « supprimer le bouton essai gratuit du rail, déjà présent
+dans le header, donc redondance ; ajouter une animation (effet wahou) à
+l'icône du tchat afin que le visiteur sache qu'il peut écrire ou poser les
+questions qu'il veut ». Deux maux : un CTA en double (rail vertical desktop +
+rail tactile mobile, alors que la topbar sticky affiche déjà « Essai gratuit »
+à TOUTES les largeurs — seul « Se connecter » se cache sous 860 px), et une
+icône de chat muette — le widget N°127 est né après la refonte, rien ne
+signale au premier visiteur qu'il peut y ÉCRIRE n'importe quelle question.
+
+### Produit
+- RAIL ÉPURÉ : le bouton « Essai gratuit » disparaît du rail vertical (desktop)
+  ET du rail tactile (mobile) — markup, clé de copie `rail.cta` (FR/EN), règles
+  CSS `.mkl-rail-cta`/`.mkl-rail-cta-mobile` et sélecteurs `button` morts du
+  rail. Le CTA d'essai reste porté par le header sticky (visible desktop comme
+  mobile) et les boutons hero/CTA final — un seul endroit par écran, zéro
+  doublon.
+- ANIMATION « WAHOU » DE DÉCOUVERTE (icône chat) : tant que le visiteur n'a
+  JAMAIS ouvert le chat, le bouton flottant VIT —
+  (1) REBOND CLAY squash & stretch (burst ~2 s puis repos dans un cycle
+  5,6 s : le bouton s'écrase, s'étire vers le haut, retombe avec un léger
+  rebond résiduel — la signature Claymorphisme en mouvement) ;
+  (2) ONDES CONCENTRIQUES : deux halos sarcelle partent du bouton toutes les
+  2,8 s (décalées de 1,4 s) — l'invitation visuelle « quelque chose vit ici » ;
+  (3) MINI-BULLE D'INVITATION : « Une question ? Écrivez-la ici ! » (FR) /
+  « Got a question? Ask away! » (EN), bulle ivoire clay à coin vif pointé vers
+  le bouton, précédée de trois points de frappe animés — le signe universel
+  « on peut écrire ici » ; cycle 9 s (apparition ressort, tenue, rétraction),
+  desktop à gauche du bouton, mobile au-dessus (l'écran est étroit).
+- LA FÊTE S'ARRÊTE D'ELLE-MÊME : au PREMIER clic sur le chat, l'animation se
+  calme pour de bon (l'effort de découverte a fait son office — animer
+  éternellement à côté d'une conversation ouverte serait du bruit) ; l'empreinte
+  localStorage `mikcloud-chat` (posée à la création de session) garde le teasing
+  éteint aux visites suivantes. Un visiteur qui connaît déjà le chat n'a pas
+  besoin qu'on lui refasse la démonstration.
+- ACCESSIBILITÉ : la bulle est décorative (aria-hidden, pointer-events none —
+  le BOUTON reste la cible accessible, 56-62 px, pointer-events auto) ;
+  prefers-reduced-motion coupe toutes les animations (règle `.mkl-page *`
+  existante — la bulle devient statique, l'information reste).
+
+### Technique
+- Frontend uniquement, zéro route, zéro schéma : landing-page.tsx (retrait des
+  deux boutons CTA du rail), chat-widget.tsx (état `tease` : armé 1,6 s après
+  le montage si `mikcloud-chat` absent du localStorage, éteint au premier
+  ouverture), landing-copy.ts (rail.cta supprimée, chat.tease ajoutée FR/EN),
+  landing-clay.css (retraits CTA + bloc N°131 : mkl-fab-bounce/mkl-fab-ripple/
+  mkl-tease-cycle/mkl-tease-dot + position mobile de la bulle).
+- Correctif attrapé au smoke navigateur AVANT tout commit : le modifieur du
+  bouton s'appelle `mkl-chat-fab-tease` et JAMAIS `mkl-chat-tease` (classe de
+  la BULLE) — la première version partageait la classe, si bien que la règle
+  de la bulle (fond ivoire, position right:104px, pointer-events none)
+  s'appliquait AUSSI au bouton : chat décoloré, déplacé et NON CLIQUABLE.
+  Détecté par témoin DOM (même classe sans modifieur → sarcelle) + analyse VLM
+  de la capture ; leçon consignée : un modifieur partage le namespace de
+  classes, il ne réutilise jamais la classe d'un autre composant.
+
+### Vérifié
+- eslint 0 erreur, tsgo 0 erreur.
+- Smoke navigateur (next dev :3021) : desktop 1440 px — rail sans CTA (6
+  liens), header « Essai gratuit » présent, FAB sarcelle rgb(14,124,123) à
+  right:26px cliquable, rebond + ondes + bulle complets (analyse VLM 5/5) ;
+  clic → panneau ouvert, teasing disparu, refermé → il ne revient pas dans la
+  vue ; rechargement avec empreinte localStorage → AUCUN teasing (le visiteur
+  connaît le chat) ; bascule EN → « Got a question? Ask away! » + « Free
+  trial » au header. Mobile 390 px — scrollWidth 390 (zéro débordement), rail
+  tactile sans bouton, FAB 56 px cliquable 16 px du bord, bulle au-dessus
+  complète dans l'écran (analyse VLM 4/4) ; 0 erreur console.
+
 ## 2026-09-17 — N°130 — Réactivité P0 « le nuage qui rendait la main trop tard » : sauvegarde PostgreSQL asynchrone, révalidation 304 réactivée, préchargement au survol — l'audit performance passe à l'application
 
 ### N°130 — Contexte : la lenteur au clic sur une architecture pourtant découplée

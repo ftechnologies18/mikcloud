@@ -84,6 +84,26 @@ export function LandingChatWidget() {
   const [sendError, setSendError] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  /* N°131 — animation « wahou » de découverte : tant que le visiteur n'a
+     JAMAIS ouvert le chat, l'icône vit (ondes clay + rebond) et une
+     mini-bulle l'invite à écrire sa question. Dès la première ouverture
+     la fête s'arrête — et l'empreinte localStorage (posée à la création
+     de session) la garde éteinte aux visites suivantes. Un visiteur qui
+     connaît déjà le chat n'a pas besoin qu'on lui refasse la démonstration. */
+  const [tease, setTease] = useState(false);
+
+  useEffect(() => {
+    if (!mounted) return;
+    try {
+      if (localStorage.getItem(STORAGE_KEY)) return; // connaît déjà le chat
+    } catch {
+      /* stockage illisible → on anime quand même */
+    }
+    /* petit délai : on laisse la page se poser avant d'attirer l'œil. */
+    const id = window.setTimeout(() => setTease(true), 1600);
+    return () => window.clearTimeout(id);
+  }, [mounted]);
+
   const sessionRef = useRef<{ id: string; token: string } | null>(null);
   const messagesRef = useRef<ChatMsg[]>([]);
   const busyRef = useRef(false);
@@ -242,7 +262,10 @@ export function LandingChatWidget() {
   const toggle = () => {
     const next = !open;
     setOpen(next);
-    if (next) void ensureSession();
+    if (next) {
+      setTease(false); // première ouverture : la découverte a fait son office
+      void ensureSession();
+    }
   };
 
   if (!mounted) return null;
@@ -368,8 +391,16 @@ export function LandingChatWidget() {
 
   return (
     <>
+      {tease && !open ? (
+        <div className="mkl-chat-tease" aria-hidden="true">
+          <span className="mkl-chat-tease-dots">
+            <i /><i /><i />
+          </span>
+          {copy.tease}
+        </div>
+      ) : null}
       <button
-        className="mkl-chat-fab"
+        className={tease && !open ? "mkl-chat-fab mkl-chat-fab-tease" : "mkl-chat-fab"}
         onClick={toggle}
         aria-label={open ? copy.closeLabel : copy.openLabel}
         aria-expanded={open}

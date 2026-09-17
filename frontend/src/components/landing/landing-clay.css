@@ -140,8 +140,7 @@
   white-space: nowrap;
   transition: background 0.25s, transform 0.25s, color 0.25s;
 }
-.mkl-rail a .mkl-dot,
-.mkl-rail button .mkl-dot {
+.mkl-rail a .mkl-dot {
   width: 26px;
   height: 26px;
   flex: none;
@@ -157,26 +156,21 @@
   width: 14px;
   height: 14px;
 }
-.mkl-rail a .mkl-lbl,
-.mkl-rail button .mkl-lbl {
+.mkl-rail a .mkl-lbl {
   opacity: 0;
   transform: translateX(-8px);
   transition: opacity 0.3s 0.08s, transform 0.3s 0.08s;
 }
 .mkl-rail:hover a .mkl-lbl,
-.mkl-rail:hover button .mkl-lbl,
-.mkl-rail:focus-within a .mkl-lbl,
-.mkl-rail:focus-within button .mkl-lbl {
+.mkl-rail:focus-within a .mkl-lbl {
   opacity: 1;
   transform: translateX(0);
 }
-.mkl-rail a:hover,
-.mkl-rail button:hover {
+.mkl-rail a:hover {
   background: var(--mkl-cream);
   transform: translateX(4px);
 }
-.mkl-rail a:focus-visible,
-.mkl-rail button:focus-visible {
+.mkl-rail a:focus-visible {
   outline: 3px solid var(--mkl-teal);
   outline-offset: 2px;
 }
@@ -189,14 +183,6 @@
 .mkl-rail a.mkl-active .mkl-dot {
   background: var(--mkl-teal-dark);
   color: var(--mkl-cream);
-}
-.mkl-rail-cta {
-  margin-top: 8px;
-  background: var(--mkl-cream-deep);
-  box-shadow: 4px 5px 0 rgba(18, 59, 58, 0.15);
-}
-.mkl-rail-cta:hover {
-  background: var(--mkl-cream-deep);
 }
 
 /* ============ TOPBAR ============ */
@@ -1409,6 +1395,93 @@
   0%, 100% { transform: scale(1); }
   50% { transform: scale(1.25); }
 }
+/* ── N°131 — animation « wahou » de découverte ──────────────────
+   Le visiteur qui n'a jamais ouvert le chat doit comprendre qu'il
+   peut ÉCRIRE sa question : l'icône vit (rebond clay squash &
+   stretch + ondes concentriques) et une mini-bulle d'invitation
+   avec points de frappe « … » vient se poser à côté. Au premier
+   clic la fête s'arrête (logique composant) — la boucle reste
+   discrète : burst de rebond, puis repos.
+   ATTENTION : le modifieur du bouton s'appelle mkl-chat-fab-tease —
+   JAMAIS mkl-chat-tease (c'est la classe de la BULLE : position,
+   fond ivoire, pointer-events none — l'appliquer au bouton le
+   déplacerait, le décolorerait et le rendrait non cliquable). */
+.mkl-chat-fab.mkl-chat-fab-tease {
+  animation: mkl-fab-bounce 5.6s cubic-bezier(0.34, 1.56, 0.64, 1) infinite;
+}
+@keyframes mkl-fab-bounce {
+  0%, 42%, 100% { transform: none; }
+  4% { transform: scale(1.12, 0.86); }
+  10% { transform: translateY(-13px) scale(0.94, 1.1); }
+  16% { transform: translateY(0) scale(1.09, 0.9); }
+  23% { transform: translateY(-6px) scale(0.98, 1.05); }
+  30% { transform: translateY(0) scale(1.03, 0.97); }
+  36% { transform: none; }
+}
+/* Ondes concentriques : deux halos sarcelle partent du bouton. */
+.mkl-chat-fab.mkl-chat-fab-tease::before,
+.mkl-chat-fab.mkl-chat-fab-tease::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 3px solid var(--mkl-teal);
+  pointer-events: none;
+  opacity: 0;
+  animation: mkl-fab-ripple 2.8s ease-out infinite;
+}
+.mkl-chat-fab.mkl-chat-fab-tease::after {
+  animation-delay: 1.4s;
+}
+@keyframes mkl-fab-ripple {
+  0% { transform: scale(1); opacity: 0.5; }
+  75%, 100% { transform: scale(1.6); opacity: 0; }
+}
+/* Mini-bulle d'invitation : « posez votre question ici ». Coin vif
+   bas-droit pointé vers le bouton ; décorative (aria-hidden, aucun
+   clic — le bouton reste LA cible accessible). */
+.mkl-chat-tease {
+  position: fixed;
+  right: 104px;
+  bottom: 38px;
+  z-index: 44;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  max-width: 300px;
+  padding: 11px 16px;
+  border-radius: 18px 18px 4px 18px;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--mkl-ink);
+  background: var(--mkl-ivory);
+  box-shadow: 6px 8px 0 rgba(18, 59, 58, 0.14), var(--mkl-clay-inset);
+  pointer-events: none;
+  animation: mkl-tease-cycle 9s cubic-bezier(0.34, 1.56, 0.64, 1) infinite;
+}
+.mkl-chat-tease-dots {
+  display: inline-flex;
+  gap: 4px;
+  flex: none;
+}
+.mkl-chat-tease-dots i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--mkl-teal);
+  animation: mkl-tease-dot 1.2s ease-in-out infinite;
+}
+.mkl-chat-tease-dots i:nth-child(2) { animation-delay: 0.15s; }
+.mkl-chat-tease-dots i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes mkl-tease-dot {
+  0%, 100% { transform: translateY(0); opacity: 0.55; }
+  40% { transform: translateY(-5px); opacity: 1; }
+}
+@keyframes mkl-tease-cycle {
+  0% { opacity: 0; transform: translateY(12px) scale(0.72); }
+  7%, 74% { opacity: 1; transform: translateY(0) scale(1); }
+  84%, 100% { opacity: 0; transform: translateY(8px) scale(0.8); }
+}
 .mkl-chat-panel {
   position: fixed;
   right: 26px;
@@ -1759,8 +1832,7 @@
     border-radius: 13px;
     margin: 0 4px 0 2px;
   }
-  .mkl-rail-mobile a,
-  .mkl-rail-mobile button {
+  .mkl-rail-mobile a {
     flex: none;
     width: 44px;
     height: 44px;
@@ -1775,10 +1847,6 @@
   .mkl-rail-mobile a.mkl-active {
     background: var(--mkl-teal);
     color: var(--mkl-ivory);
-  }
-  .mkl-rail-mobile .mkl-rail-cta-mobile {
-    background: var(--mkl-cream-deep);
-    color: var(--mkl-ink);
   }
   /* N°127 — widget chat au-dessus du rail tactile mobile. */
   .mkl-chat-fab {
@@ -1796,6 +1864,13 @@
     width: auto;
     bottom: calc(env(safe-area-inset-bottom, 0px) + 176px);
     height: min(560px, calc(100dvh - 250px));
+  }
+  /* N°131 — bulle d'invitation AU-DESSUS du FAB mobile (à gauche elle
+     déborderait) ; même ancrage droit que le bouton, coin vif vers lui. */
+  .mkl-chat-tease {
+    right: 16px;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 176px);
+    max-width: min(300px, calc(100vw - 56px));
   }
   .mkl-foot-bottom {
     justify-content: center;

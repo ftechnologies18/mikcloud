@@ -32,7 +32,6 @@ export interface LandingCopy {
     hotspot: string;
     fleet: string;
     pricing: string;
-    cta: string;
   };
   header: {
     brand: string;
@@ -135,6 +134,9 @@ export interface LandingCopy {
     fabLabel: string;
     openLabel: string;
     closeLabel: string;
+    /** N°131 — bulle d'invitation flottant à côté du bouton chat
+        (animation « wahou » de découverte). */
+    tease: string;
     title: string;
     statusBot: string;
     statusHuman: string;
@@ -173,7 +175,6 @@ const fr: LandingCopy = {
     hotspot: "Hotspot",
     fleet: "Parc routeurs",
     pricing: "Tarifs",
-    cta: "Essai gratuit",
   },
   header: {
     brand: "MikCloud",
@@ -469,6 +470,7 @@ const fr: LandingCopy = {
     fabLabel: "Discuter avec l'assistant",
     openLabel: "Ouvrir la discussion",
     closeLabel: "Fermer la discussion",
+    tease: "Une question ? Écrivez-la ici !",
     title: "Assistant MikCloud",
     statusBot: "Assistant · réponses instantanées",
     statusHuman: "Un conseiller vous répond",
@@ -536,7 +538,6 @@ const en: LandingCopy = {
     hotspot: "Hotspot",
     fleet: "Router fleet",
     pricing: "Pricing",
-    cta: "Free trial",
   },
   header: {
     brand: "MikCloud",
@@ -831,6 +832,7 @@ const en: LandingCopy = {
     fabLabel: "Chat with the assistant",
     openLabel: "Open the conversation",
     closeLabel: "Close the conversation",
+    tease: "Got a question? Ask away!",
     title: "MikCloud Assistant",
     statusBot: "Assistant · instant answers",
     statusHuman: "An advisor is replying to you",

@@ -411,7 +411,7 @@ func TestTickNothingUnderTwoSeconds(t *testing.T) {
 	db.LastTick = time.Now()
 	db.Routers = append(db.Routers, model.Router{ID: "rt-t", Mode: "simulated", CPULoad: 10})
 	before := db.Routers[0].UptimeSec
-	Tick(db, time.Now().Add(time.Second)) // < 2 s : refusé
+	Tick(db, time.Now().Add(time.Second), nil) // < 2 s : refusé
 	if db.Routers[0].UptimeSec != before {
 		t.Fatal("Tick rapproché (< 2 s) ne doit rien faire")
 	}
@@ -433,7 +433,7 @@ func TestSimulatedSessionTrafficDirection(t *testing.T) {
 		ID: "sess-traffic", UserID: "u-traffic", Username: "traffic-test",
 		RouterID: "rt-traffic",
 	})
-	Tick(db, time.Now())
+	Tick(db, time.Now(), nil)
 	// Le tick de démo peut couper aléatoirement (~12 %) une session simulée
 	// APRÈS avoir accumulé les octets : l'assertion porte donc sur les
 	// compteurs CUMULÉS de l'utilisateur, persistants malgré cette purge.
@@ -474,7 +474,7 @@ func TestApplyExpiryLogRetentionPerAccount(t *testing.T) {
 		{ID: "l-b-old", AccountID: accDefault, At: iso(100)}, // > 90 j → purgé
 		{ID: "l-c-mid", AccountID: accBad, At: iso(45)},      // invalide → 90 j → conservé
 	}
-	applyExpiry(&db, now)
+	applyExpiry(&db, now, nil)
 	kept := map[string]bool{}
 	for _, l := range db.UserLogs {
 		kept[l.ID] = true
@@ -530,7 +530,7 @@ func TestTickNeverConsumesResellerStock(t *testing.T) {
 	// 300 ticks espacés de 3 s (passe la garde de 2 s) : le tirage aléatoire
 	// est sollicité massivement — l'invariant doit tenir à chaque passage.
 	for i := 0; i < 300; i++ {
-		Tick(&db, now.Add(time.Duration(i)*3*time.Second))
+		Tick(&db, now.Add(time.Duration(i)*3*time.Second), nil)
 	}
 	var held *model.HotspotUser
 	for i := range db.HotspotUsers {

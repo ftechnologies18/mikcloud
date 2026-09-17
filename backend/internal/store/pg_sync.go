@@ -51,7 +51,166 @@ const syncTimeout = 20 * time.Second
 // Sync compare l'état mémoire aux empreintes de la dernière synchronisation
 // réussie et applique les différences en une transaction :
 // upserts des lignes nouvelles/modifiées, suppressions des disparues.
+//
+// N°133 — Save() appelle ce diff COMPLET (les 33 tables différentielles) ;
+// les chemins de lecture pollés appellent SyncTables (diff ciblé sur les
+// seules tables marquées sales par le moteur, cf. tables.go).
 func (p *PG) Sync(db *model.DB) (err error) {
+	return p.syncPlan(db, nil)
+}
+
+// SyncTables — N°133 — variante CIBLÉE de Sync : seules les tables listées
+// sont re-hashées puis différentiellement synchronisées ; les autres
+// conservent leurs empreintes (reportées telles quelles dans le cache après
+// commit — cf. syncPlan). La table settings reste TOUJOURS écrite : elle est
+// hors diff d'empreintes (une ligne par compte, upsert direct) et porte
+// last_tick/last_sweep — la fraîcheur du moteur de simulation ne doit pas
+// dépendre du ciblage.
+//
+// Une liste vide déclenche le diff complet (défaut sûr : l'appelant qui
+// n'aurait rien su marquer retombe sur le comportement de Sync).
+func (p *PG) SyncTables(db *model.DB, tables map[string]bool) (err error) {
+	if len(tables) == 0 {
+		return p.syncPlan(db, nil)
+	}
+	return p.syncPlan(db, tables)
+}
+
+// syncStep — UNE table de la synchro différentielle, encapsulée dans une
+// clôture pour effacer le type concret des lignes (syncTable est générique :
+// les méthodes Go ne peuvent pas introduire de paramètres de type — c'est une
+// restriction du langage, d'où la liste de clôtures ci-dessous).
+type syncStep struct {
+	name string
+	run  func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error
+}
+
+// syncSteps — plan COMPLET de la synchro différentielle (ordre stable,
+// identique à l'ancien Sync monolithique). Les tables non marquées par un
+// SyncTables sont simplement sautées : leurs empreintes sont reportées.
+func syncSteps(db *model.DB) []syncStep {
+	return []syncStep{
+		{accountSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, accountSpec, db.Accounts, delta)
+		}},
+		{adminSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, adminSpec, db.Users, delta)
+		}},
+		{routerSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, routerSpec, db.Routers, delta)
+		}},
+		{profileSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, profileSpec, db.Profiles, delta)
+		}},
+		{hotspotUserSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, hotspotUserSpec, db.HotspotUsers, delta)
+		}},
+		{batchSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, batchSpec, db.Batches, delta)
+		}},
+		{resellerSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, resellerSpec, db.Resellers, delta)
+		}},
+		{sellSessionSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, sellSessionSpec, db.SellSessions, delta)
+		}},
+		{passwordResetSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, passwordResetSpec, db.PasswordResets, delta)
+		}},
+		{chatConversationSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, chatConversationSpec, db.ChatConversations, delta)
+		}},
+		{chatMessageSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, chatMessageSpec, db.ChatMessages, delta)
+		}},
+		{transactionSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, transactionSpec, db.Transactions, delta)
+		}},
+		{sessionSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, sessionSpec, db.Sessions, delta)
+		}},
+		{deviceSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, deviceSpec, db.Devices, delta)
+		}},
+		{activitySpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, activitySpec, db.Activity, delta)
+		}},
+		{saleSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, saleSpec, db.Sales, delta)
+		}},
+		{commandSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, commandSpec, db.Commands, delta)
+		}},
+		{templateSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, templateSpec, db.Templates, delta)
+		}},
+		{userLogSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, userLogSpec, db.UserLogs, delta)
+		}},
+		{ipBindingSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, ipBindingSpec, db.IPBindings, delta)
+		}},
+		{schedulerTaskSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, schedulerTaskSpec, db.SchedulerTasks, delta)
+		}},
+		{trafficSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, trafficSpec, db.Traffic, delta)
+		}},
+		// N°103 — agrégats quotidiens de qualité de ligne (mesure FAI).
+		{lineQualitySpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, lineQualitySpec, db.LineQuality, delta)
+		}},
+		{notifSettingsSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			notifRows := make([]model.NotificationSettings, 0, len(db.NotifSettings))
+			for _, v := range db.NotifSettings {
+				notifRows = append(notifRows, v)
+			}
+			return syncTable(ctx, tx, hashes, pending, notifSettingsSpec, notifRows, delta)
+		}},
+		{notifLogSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, notifLogSpec, db.NotifLog, delta)
+		}},
+		{billingRequestSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, billingRequestSpec, db.BillingRequests, delta)
+		}},
+		{purgeTombstoneSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, purgeTombstoneSpec, db.PurgeTombstones, delta)
+		}},
+		{joinLinkSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, joinLinkSpec, db.JoinLinks, delta)
+		}},
+		{registrationRequestSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, registrationRequestSpec, db.RegistrationRequests, delta)
+		}},
+		{wifiSiteSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, wifiSiteSpec, db.WifiSites, delta)
+		}},
+		{wifiGuestSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, wifiGuestSpec, db.WifiGuests, delta)
+		}},
+		{promoEventSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, promoEventSpec, db.PromoEvents, delta)
+		}},
+		// N°71 — geniuspay_subs intègre la synchro différentielle : la spec
+		// existait (table chargée au boot) mais échappait à Sync — les abonnements
+		// carte créés en mémoire (avec a.store.Save() !) disparaissaient donc au
+		// redémarrage. La clé primaire « uuid » (≠ « id ») est désormais portée
+		// par la machinerie générique (cols[0] = cible ON CONFLICT, cf. upsertRows).
+		{geniusPaySubSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, geniusPaySubSpec, db.GeniusPaySubs, delta)
+		}},
+	}
+}
+
+// syncPlan — moteur commun de Sync (diff complet) et SyncTables (diff ciblé) :
+// UNE transaction (bornée par syncTimeout), les empreintes fraîches posées
+// dans « pending » puis basculées APRÈS le Commit (atomicité N°130).
+//
+// N°133 — mode ciblé (only != nil) : les tables non marquées sont sautées et
+// leurs empreintes COURANTES sont reportées dans pending (le swap post-commit
+// ne peut donc pas perdre de cache) ; la volumétrie santé (syncDelta) ne
+// compte que les tables réellement re-hashées.
+func (p *PG) syncPlan(db *model.DB, only map[string]bool) (err error) {
 	// N°71 — instrumentation santé : le defer alimente les compteurs exposés
 	// par GET /api/admin/sync-status (tentatives/succès/échecs, durée,
 	// volumétrie du delta). Aucun verrou supplémentaire sur le chemin
@@ -91,115 +250,21 @@ func (p *PG) Sync(db *model.DB) (err error) {
 	// asynchrone (retry automatique), ce cas serait devenu un bug actif :
 	// le retry repartait d'un cache pollué. Pending→commit→swap garantit
 	// qu'un échec retente les VRAIES différences.
-	pending := make(map[string]map[string]uint64, 32)
-	if err := syncTable(ctx, tx, p.hashes, pending, accountSpec, db.Accounts, &delta); err != nil {
-		return err
+	pending := make(map[string]map[string]uint64, len(p.hashes)+4)
+	if only != nil {
+		// N°133 — ciblé : les tables non marquées conservent leurs
+		// empreintes (aucun re-hash, aucune écriture pour elles).
+		for t, h := range p.hashes {
+			pending[t] = h
+		}
 	}
-	if err := syncTable(ctx, tx, p.hashes, pending, adminSpec, db.Users, &delta); err != nil {
-		return err
-	}
-	if err := syncTable(ctx, tx, p.hashes, pending, routerSpec, db.Routers, &delta); err != nil {
-		return err
-	}
-	if err := syncTable(ctx, tx, p.hashes, pending, profileSpec, db.Profiles, &delta); err != nil {
-		return err
-	}
-	if err := syncTable(ctx, tx, p.hashes, pending, hotspotUserSpec, db.HotspotUsers, &delta); err != nil {
-		return err
-	}
-	if err := syncTable(ctx, tx, p.hashes, pending, batchSpec, db.Batches, &delta); err != nil {
-		return err
-	}
-	if err := syncTable(ctx, tx, p.hashes, pending, resellerSpec, db.Resellers, &delta); err != nil {
-		return err
-	}
-	if err := syncTable(ctx, tx, p.hashes, pending, sellSessionSpec, db.SellSessions, &delta); err != nil {
-		return err
-	}
-	if err := syncTable(ctx, tx, p.hashes, pending, passwordResetSpec, db.PasswordResets, &delta); err != nil {
-		return err
-	}
-	if err := syncTable(ctx, tx, p.hashes, pending, chatConversationSpec, db.ChatConversations, &delta); err != nil {
-		return err
-	}
-	if err := syncTable(ctx, tx, p.hashes, pending, chatMessageSpec, db.ChatMessages, &delta); err != nil {
-		return err
-	}
-	if err := syncTable(ctx, tx, p.hashes, pending, transactionSpec, db.Transactions, &delta); err != nil {
-		return err
-	}
-	if err := syncTable(ctx, tx, p.hashes, pending, sessionSpec, db.Sessions, &delta); err != nil {
-		return err
-	}
-	if err := syncTable(ctx, tx, p.hashes, pending, deviceSpec, db.Devices, &delta); err != nil {
-		return err
-	}
-	if err := syncTable(ctx, tx, p.hashes, pending, activitySpec, db.Activity, &delta); err != nil {
-		return err
-	}
-	if err := syncTable(ctx, tx, p.hashes, pending, saleSpec, db.Sales, &delta); err != nil {
-		return err
-	}
-	if err := syncTable(ctx, tx, p.hashes, pending, commandSpec, db.Commands, &delta); err != nil {
-		return err
-	}
-	if err := syncTable(ctx, tx, p.hashes, pending, templateSpec, db.Templates, &delta); err != nil {
-		return err
-	}
-	if err := syncTable(ctx, tx, p.hashes, pending, userLogSpec, db.UserLogs, &delta); err != nil {
-		return err
-	}
-	if err := syncTable(ctx, tx, p.hashes, pending, ipBindingSpec, db.IPBindings, &delta); err != nil {
-		return err
-	}
-	if err := syncTable(ctx, tx, p.hashes, pending, schedulerTaskSpec, db.SchedulerTasks, &delta); err != nil {
-		return err
-	}
-	if err := syncTable(ctx, tx, p.hashes, pending, trafficSpec, db.Traffic, &delta); err != nil {
-		return err
-	}
-	// N°103 — agrégats quotidiens de qualité de ligne (mesure FAI).
-	if err := syncTable(ctx, tx, p.hashes, pending, lineQualitySpec, db.LineQuality, &delta); err != nil {
-		return err
-	}
-	notifRows := make([]model.NotificationSettings, 0, len(db.NotifSettings))
-	for _, v := range db.NotifSettings {
-		notifRows = append(notifRows, v)
-	}
-	if err := syncTable(ctx, tx, p.hashes, pending, notifSettingsSpec, notifRows, &delta); err != nil {
-		return err
-	}
-	if err := syncTable(ctx, tx, p.hashes, pending, notifLogSpec, db.NotifLog, &delta); err != nil {
-		return err
-	}
-	if err := syncTable(ctx, tx, p.hashes, pending, billingRequestSpec, db.BillingRequests, &delta); err != nil {
-		return err
-	}
-	if err := syncTable(ctx, tx, p.hashes, pending, purgeTombstoneSpec, db.PurgeTombstones, &delta); err != nil {
-		return err
-	}
-	if err := syncTable(ctx, tx, p.hashes, pending, joinLinkSpec, db.JoinLinks, &delta); err != nil {
-		return err
-	}
-	if err := syncTable(ctx, tx, p.hashes, pending, registrationRequestSpec, db.RegistrationRequests, &delta); err != nil {
-		return err
-	}
-	if err := syncTable(ctx, tx, p.hashes, pending, wifiSiteSpec, db.WifiSites, &delta); err != nil {
-		return err
-	}
-	if err := syncTable(ctx, tx, p.hashes, pending, wifiGuestSpec, db.WifiGuests, &delta); err != nil {
-		return err
-	}
-	if err := syncTable(ctx, tx, p.hashes, pending, promoEventSpec, db.PromoEvents, &delta); err != nil {
-		return err
-	}
-	// N°71 — geniuspay_subs intègre la synchro différentielle : la spec
-	// existait (table chargée au boot) mais échappait à Sync — les abonnements
-	// carte créés en mémoire (avec a.store.Save() !) disparaissaient donc au
-	// redémarrage. La clé primaire « uuid » (≠ « id ») est désormais portée
-	// par la machinerie générique (cols[0] = cible ON CONFLICT, cf. upsertRows).
-	if err := syncTable(ctx, tx, p.hashes, pending, geniusPaySubSpec, db.GeniusPaySubs, &delta); err != nil {
-		return err
+	for _, st := range syncSteps(db) {
+		if only != nil && !only[st.name] {
+			continue
+		}
+		if err := st.run(ctx, tx, p.hashes, pending, &delta); err != nil {
+			return err
+		}
 	}
 	if err := p.syncSettings(ctx, tx, db); err != nil {
 		return err
@@ -575,6 +640,14 @@ func (p *PG) rebuildHashes(db *model.DB) {
 		wifiGuestSpec.table:           hashRows(db.WifiGuests, wifiGuestSpec),
 		promoEventSpec.table:          hashRows(db.PromoEvents, promoEventSpec),
 		geniusPaySubSpec.table:        hashRows(db.GeniusPaySubs, geniusPaySubSpec),
+		// N°133 — parité avec Sync : les tables chat et devices manquaient au
+		// cache reconstruit au boot — le premier flush les considérait
+		// intégralement « changées » (empreintes absentes) et re-upsertait
+		// toutes leurs lignes pour rien. Elles sont chargées au boot comme
+		// les autres : leurs empreintes sont posées comme les autres.
+		chatConversationSpec.table: hashRows(db.ChatConversations, chatConversationSpec),
+		chatMessageSpec.table:      hashRows(db.ChatMessages, chatMessageSpec),
+		deviceSpec.table:           hashRows(db.Devices, deviceSpec),
 	}
 	notifRows := make([]model.NotificationSettings, 0, len(db.NotifSettings))
 	for _, v := range db.NotifSettings {

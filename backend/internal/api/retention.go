@@ -69,8 +69,8 @@ func (a *API) RunRetentionSweep() {
 	a.store.Lock()
 	defer a.store.Unlock() // N°74 — libération garantie, même sur panique
 	db := a.store.Data()
-	purged := store.Sweep(db, now)
-	a.enforceExpired(db) // même passage commun que les lectures console
+	purged := store.Sweep(db, now, nil)
+	a.enforceExpired(db, nil) // même passage commun que les lectures console — Save() complet (passage horaire)
 	a.store.Save()
 	if purged > 0 {
 		log.Printf("rétention (30/60/90 j par compte) : %d entrée(s) du journal utilisateurs purgée(s)", purged)

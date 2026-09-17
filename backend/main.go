@@ -2,6 +2,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -498,22 +499,52 @@ func clientIP(r *http.Request) string {
 }
 
 // statusRecorder — capture le code de statut pour le log.
+//
+// N°133 — P1 audit performance : pose AUSSI l'en-tête Server-Timing
+// (RFC 8006, format `app;dur=###`) au PREMIER octet écrit — c'est le seul
+// instant où Go accepte encore de modifier les en-têtes. Le navigateur
+// (DevTools → Network → Timing) et le support distinguent ainsi le temps
+// SERVEUR du temps réseau/Render : sur le plan free, un `dur` systématique
+// ~200 ms signale le plancher proxy+CPU (cause A de l'audit), une valeur
+// qui grimpe signale une contention applicative (cause B — désormais traitée).
 type statusRecorder struct {
 	http.ResponseWriter
-	status int
+	status   int
+	start    time.Time
+	timedSet bool
+}
+
+// setServerTiming — idempotent : la durée est figée au premier envoi
+// (l'essentiel du travail serveur est fait à ce moment ; le reste est du
+// flush réseau que l'en-tête ne peut de toute façon plus suivre).
+func (rec *statusRecorder) setServerTiming() {
+	if rec.timedSet {
+		return
+	}
+	rec.timedSet = true
+	dur := float64(time.Since(rec.start).Microseconds()) / 1000
+	rec.Header().Set("Server-Timing", fmt.Sprintf("app;dur=%.1f", dur))
 }
 
 func (rec *statusRecorder) WriteHeader(code int) {
 	rec.status = code
+	rec.setServerTiming()
 	rec.ResponseWriter.WriteHeader(code)
+}
+
+func (rec *statusRecorder) Write(b []byte) (int, error) {
+	rec.setServerTiming()
+	return rec.ResponseWriter.Write(b)
 }
 
 // logRequests — log minimal : méthode, chemin, statut, durée.
 func logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK, start: start}
 		next.ServeHTTP(rec, r)
+		// Réponses sans corps (204, handler muet…) : l'en-tête part quand même.
+		rec.setServerTiming()
 		log.Printf("%s %s -> %d (%s)", r.Method, maskLogPath(r.URL.Path), rec.status, time.Since(start).Round(time.Millisecond))
 	})
 }

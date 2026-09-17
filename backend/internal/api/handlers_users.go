@@ -37,9 +37,12 @@ func (a *API) handleVouchersStats(w http.ResponseWriter, r *http.Request) {
 	a.store.Lock()
 	db := a.store.Data()
 	// Même moteur que la liste : expiration à jour puis filtres.
-	store.Tick(db, now)
-	a.enforceExpired(db)
+	// N°133 — marquage ciblé (Tick + enforcement rapportent leurs tables).
+	touched := store.NewTableSet()
+	store.Tick(db, now, touched)
+	a.enforceExpired(db, touched)
 	filtered := filterUsers(db, acc, q, now)
+	a.store.SaveTables(touched.Names()...)
 	a.store.Unlock()
 
 	active, used, expired, disabled, allocated, stockValue := 0, 0, 0, 0, 0, 0
@@ -115,10 +118,12 @@ func (a *API) usersList(w http.ResponseWriter, r *http.Request, kindOverride str
 	db := a.store.Data()
 	// P0 (audit Mikhmon) : fait vivre la simulation (statuts d'expiration à
 	// jour via applyExpiry) puis applique l'enforcement routeur (F1).
-	store.Tick(db, now)
-	a.enforceExpired(db)
+	// N°133 — marquage ciblé : sauvegarde des seules tables modifiées.
+	touched := store.NewTableSet()
+	store.Tick(db, now, touched)
+	a.enforceExpired(db, touched)
 	filtered := filterUsers(db, acc, q, now)
-	a.store.Save()
+	a.store.SaveTables(touched.Names()...)
 	a.store.Unlock()
 	maskResellerCodes(filtered)
 

@@ -408,8 +408,8 @@ func (a *API) handleUsersExport(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	a.store.Lock()
 	db := a.store.Data()
-	store.Tick(db, now)  // statuts à jour (même comportement que la liste)
-	a.enforceExpired(db) // F1 : enforcement au passage
+	store.Tick(db, now, nil)  // statuts à jour (même comportement que la liste)
+	a.enforceExpired(db, nil) // F1 : enforcement au passage — export ponctuel : Save() complet
 	users := filterUsers(db, acc, r.URL.Query(), now)
 	a.store.Save()
 	a.store.Unlock()
@@ -458,7 +458,7 @@ func (a *API) handleUsersCleanup(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	a.store.Lock()
 	db := a.store.Data()
-	store.Tick(db, now) // applique les expirations en attente avant le nettoyage
+	store.Tick(db, now, nil) // applique les expirations en attente avant le nettoyage (écriture : Save complet)
 
 	// Collecte des utilisateurs expirés du compte, groupés par routeur.
 	type target struct {

@@ -13,6 +13,7 @@ import (
 
 	"mikcloud/hotspot-api/internal/agent"
 	"mikcloud/hotspot-api/internal/model"
+	"mikcloud/hotspot-api/internal/store"
 )
 
 func (a *API) handleVouchersList(w http.ResponseWriter, r *http.Request) {
@@ -856,7 +857,10 @@ func (a *API) computeBatches(acc string, f batchFilter) ([]batchRow, batchSummar
 	now := time.Now().UTC()
 	a.store.Lock()
 	db := a.store.Data()
-	a.enforceExpired(db)              // P0 (audit Mikhmon) : expiration appliquée au passage
+	// N°133 — marquage ciblé (liste de lots pollée par la console Vouchers).
+	touched := store.NewTableSet()
+	a.enforceExpired(db, touched) // P0 (audit Mikhmon) : expiration appliquée au passage
+	a.store.SaveTables(touched.Names()...)
 	online := onlineSessions(db, now) // sessions live (routeurs vus < 3 min)
 
 	// Statuts live des vouchers, agrégés par lot.

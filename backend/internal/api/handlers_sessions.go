@@ -17,7 +17,10 @@ func (a *API) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	a.store.Lock()
 	db := a.store.Data()
-	store.Tick(db, now) // fait vivre la simulation (tous comptes)
+	// N°133 — marquage ciblé : la simulation (Tick) rapporte les tables
+	// réellement modifiées — un parc agent ne re-hashe que routers.
+	touched := store.NewTableSet()
+	store.Tick(db, now, touched) // fait vivre la simulation (tous comptes)
 	sessions := []model.Session{}
 	for _, s := range db.Sessions {
 		if s.AccountID == acc {
@@ -30,7 +33,7 @@ func (a *API) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 			realRouters = append(realRouters, rr)
 		}
 	}
-	a.store.Save()
+	a.store.SaveTables(touched.Names()...)
 	a.store.Unlock()
 
 	// Fusion des sessions live des routeurs réels

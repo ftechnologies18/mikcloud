@@ -36,9 +36,24 @@ func (a *API) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	db := a.store.Data()
 	// P0 (audit Mikhmon) : simulation vivante + expiration à jour +
 	// enforcement routeur (F1), comme handleSessionsList/handleUsersList.
-	store.Tick(db, now)
-	a.enforceExpired(db)
-	a.store.Save()
+	//
+	// N°133 — P1 audit performance : (1) marquage CIBLÉ — Tick et
+	// enforceExpired rapportent les tables réellement modifiées, la
+	// sauvegarde ne re-hashe que ces tables (en croisière d'un parc
+	// agent : ~2 lignes routers + les settings, contre les ~8 500
+	// lignes du diff complet) ; (2) agrégats HORS VERROU — le mutex ne
+	// porte plus que Tick+enforcement+photographie (CloneDeep, quelques
+	// ms) : les boucles sessions/utilisateurs/transactions, les tris et
+	// les courbes 14 j se calculent sur le SNAPSHOT, les requêtes
+	// concurrentes ne font plus la queue derrière le dashboard pollé
+	// toutes les 15 s.
+	touched := store.NewTableSet()
+	store.Tick(db, now, touched)
+	a.enforceExpired(db, touched)
+	a.store.SaveTables(touched.Names()...)
+	snap := db.CloneDeep()
+	a.store.Unlock()
+	db = snap // les agrégats ci-dessous lisent la photographie, hors verrou
 
 	// Vue d'ensemble multi-sites : 1 compte = N hotspots. Tous les agrégats
 	// ci-dessous sont calculés DANS le compte demandeur (isolation stricte).
@@ -219,7 +234,6 @@ func (a *API) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	// N°19 V2 — créances revendeurs (dépôt-vente) : trésorerie dormant
 	// chez les revendeurs, avec ancienneté et verrou plafond.
 	receivables := buildReceivables(db, acc, now)
-	a.store.Unlock()
 
 	// N°10 — courbe 24 h RÉELLE : connexions/heure agrégées depuis les
 	// UserLogs (simulation + agent), dans le fuseau du compte. Un compte

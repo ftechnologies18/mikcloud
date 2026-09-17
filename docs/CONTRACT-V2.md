@@ -935,6 +935,65 @@ orphelin `mikcloud-pool` référencé par personne).
 `PoolDoctorAt text` — migrations idempotentes, `omitempty` (absent tant
 que jamais diagnostiqué).
 
+## N°133 — Réactivité P1 : synchronisation ciblée par tables marquées + agrégats hors verrou + Server-Timing [P1]
+
+### Contexte
+Après le P0 (N°130 : Save asynchrone, 304, prefetch), deux charges
+persistaient : chaque flush re-hashait les 33 tables différentielles
+COMPLÈTES (~8 500 lignes, ~1,4-2,8 s de CPU sur le 0,1 vCPU Render) alors
+que la croisière d'un parc agent ne change que ~6 lignes ; et le dashboard
+calculait tous ses agrégats SOUS le verrou global.
+
+### Contrat de marquage (moteur, mode PostgreSQL)
+- `store.Tick(db, now, touched)`, `applyExpiry`, `tickTraffic`, `Sweep`,
+  `API.enforceExpired(db, touched)` : `touched *store.TableSet` (nil-sûr —
+  nil = désactive le marquage, comportement d'avant). Le moteur marque
+  UNIQUEMENT les tables réellement mutées par CE passage (télémétrie
+  `routers` dès qu'un routeur existe ; `traffic`/`line_quality` seulement
+  pour un simulateur ; `sessions`/`hotspot_users`/`user_logs`/`resellers`
+  aux événements de la simulation ; expiration/nettoyage/rétention ;
+  drapeaux Enforced ; commandes déposées ; lots éteints ; tombstones ;
+  inscriptions périmées).
+- `Store.Save()` : diff COMPLET (toutes les tables) — contrat inchangé,
+  appelé par tout chemin d'ÉCRITURE.
+- `Store.SaveTables(names...)` : diff CIBLÉ sur les tables listées
+  (constantes `store.Table*`) — réservé aux chemins de LECTURE pollés
+  dont toutes les mutations passent par le moteur marquant. Le moindre
+  doute → `Save()` complet. Un marquage incomplet ne perd JAMAIS de
+  données (l'état mémoire reste la vérité ; le boot resynchronise tout)
+  : il retarde la persistance jusqu'à la prochaine sauvegarde complète.
+
+### Contrat de synchro ciblée (PG.SyncTables)
+- `Sync` (complet) et `SyncTables` (ciblé) partagent `syncPlan` : UNE
+  transaction bornée `syncTimeout`, empreintes fraîches dans `pending`,
+  swap du cache APRÈS commit (atomicité N°130). En ciblé, les tables non
+  marquées sont sautées et leurs empreintes COURANTES reportées — le swap
+  ne peut pas perdre de cache.
+- Parcours : liste vide → diff complet ; échec de ciblé → re-marquage
+  COMPLET (retry sur les vraies différences) ; `syncSettings` TOUJOURS
+  exécuté (`last_tick`/`last_sweep` ne dépendent pas du ciblage).
+- Mode JSON (développement/E2E) : `SaveTables` ≡ `Save` (écriture complète
+  synchrone) — aucun changement observable.
+
+### Lecture dashboard (changement de concurrence, pas de contrat HTTP)
+`GET /api/dashboard` photographie l'état (CloneDeep) sous le verrou puis
+calcule tous les agrégats HORS verrou sur le snapshot. Le mutex ne porte
+plus que Tick + enforcement + copie (quelques ms). Corps, ETag/304 et
+fraîcheur : INCHANGÉS (N°75/N°130).
+
+### Server-Timing (NOUVEAU, toutes les réponses)
+`Server-Timing: app;dur=<ms>` (RFC 8006), posé au premier octet écrit —
+le temps SERVEUR est observable côté navigateur (DevTools → Timing) et
+séparé du temps réseau/proxy Render.
+
+### Parité des listes de tables (garde-fou)
+Trois listes désignent les MÊMES tables : constantes `Table*`
+(tables.go) ↔ plan `syncSteps` (pg_sync.go) ↔ volumétrie `liveTableRows`
+(syncstats.go) — 33 différentielles + settings = 34. Alignement verrouillé
+par `TestSyncKnownTablesConcordance` ; `rebuildHashes` couvre désormais
+aussi `chat_conversations`, `chat_messages`, `devices` (le premier flush
+post-boot ne les re-upsertait plus pour rien).
+
 ## N°130 — Réactivité P0 : sauvegarde PostgreSQL asynchrone + revalidation ETag/304 étendue [P0]
 
 ### Contexte

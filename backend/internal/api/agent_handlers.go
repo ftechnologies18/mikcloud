@@ -430,7 +430,7 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 	// P0 (audit Mikhmon) — F1 : l'agent reçoit l'enforcement des
 	// expirations à son check-in (les commandes déposées ici sont servies
 	// dans le MÊME check-in, juste après).
-	a.enforceExpired(db)
+	a.enforceExpired(db, nil) // N°133 — chemin d'ÉCRITURE : Save() complet conservé
 
 	// N°29 — walled-garden d'inscription publique : si la configuration
 	// (domaines page+API) a changé ou n'a jamais été appliquée sur ce

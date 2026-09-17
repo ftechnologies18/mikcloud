@@ -47,12 +47,21 @@ type Store struct {
 	// l'état sous le verrou (CloneDeep, quelques ms) puis synchronise
 	// HORS verrou — une requête ne peut plus être bloquée par une
 	// sauvegarde. Le mode JSON (dev/E2E) reste synchrone et inchangé.
-	saveMu   sync.Mutex
-	dirty    bool
-	closed   bool
-	saveCh   chan struct{} // réveil du syncreur (capacité 1, signal non bloquant)
-	closing  chan struct{} // arrêt propre (fermé par Close)
-	syncDone chan struct{} // syncreur terminé (flush final effectué)
+	//
+	// N°133 — P1 audit performance : le marquage devient PAR TABLE.
+	// Save() = diff COMPLET (toutes les tables — défaut sûr, inchangé
+	// pour tout handler métier) ; SaveTables() = diff CIBLÉ sur les
+	// seules tables marquées sales par un chemin de lecture (Tick +
+	// enforcement retournent leur empreinte, cf. tables.go). En état de
+	// croisière d'un parc agent, la synchro re-hashe ~6 lignes au lieu
+	// de ~8 500 : le CPU Render rendu au service par chaque flush.
+	saveMu      sync.Mutex
+	dirtyAll    bool
+	dirtyTables map[string]bool
+	closed      bool
+	saveCh      chan struct{} // réveil du syncreur (capacité 1, signal non bloquant)
+	closing     chan struct{} // arrêt propre (fermé par Close)
+	syncDone    chan struct{} // syncreur terminé (flush final effectué)
 }
 
 // New charge l'état persisté (PostgreSQL si DATABASE_URL est défini, sinon
@@ -943,16 +952,22 @@ func unsealSecrets(db *model.DB) {
 //
 // Mode PostgreSQL (N°130) : ASYNCHRONE — simple marquage « sale » + réveil
 // du syncreur de fond. La requête rend la main immédiatement ; la synchro
-// différentielle (re-hash 31 tables + transaction Neon) s'exécute HORS du
+// différentielle (re-hash des tables + transaction Neon) s'exécute HORS du
 // verrou global, sur une photographie CloneDeep. Le micro-verrou saveMu
 // (indépendant du verrou global) rend le marquage sûr même pour un appelant
 // qui ne tiendrait pas le verrou.
+//
+// N°133 — Save() marque TOUTES les tables sales (diff complet). Les
+// chemins de LECTURE pollés qui connaissent précisément ce qu'ils ont
+// touché utilisent SaveTables (tables.go) ; tout autre appelant garde ce
+// comportement conservateur — une mutation non ciblée reste toujours
+// persistée au cycle suivant.
 //
 // Mode JSON (développement, E2E) : écriture atomique synchrone inchangée.
 func (s *Store) Save() {
 	if s.pg != nil {
 		s.saveMu.Lock()
-		s.dirty = true
+		s.dirtyAll = true
 		s.saveMu.Unlock()
 		select {
 		case s.saveCh <- struct{}{}:
@@ -960,6 +975,56 @@ func (s *Store) Save() {
 		}
 		return
 	}
+	s.saveJSON()
+}
+
+// SaveTables — N°133 — variante CIBLÉE de Save pour les chemins de LECTURE
+// pollés (dashboard, listes, check-in agent) : seules les tables listées
+// seront re-hashées puis différentiellement synchronisées au prochain flush
+// ; les autres conservent leurs empreintes (aucun re-hash, aucune écriture).
+// Les noms viennent des constantes Table* (tables.go) ; les marqueurs sont
+// produits par le moteur lui-même (Tick/applyExpiry/enforcement).
+//
+// SÉCURITÉ DU CONTRAT : ne doit être utilisé QUE par des chemins dont
+// TOUTES les mutations passent par le moteur marqué (Tick, enforceExpired,
+// touchAgent, file de commandes). Le moindre doute → Save() complet.
+// Un marquage incomplet retarderait la persistance d'une table jusqu'à la
+// prochaine sauvegarde complète (jamais de perte : l'état mémoire reste la
+// vérité, le boot suivant resynchronise tout).
+//
+// Mode JSON : pas de diff possible — retombe sur l'écriture complète
+// synchrone (strictement identique à Save).
+func (s *Store) SaveTables(names ...string) {
+	if s.pg == nil {
+		s.saveJSON()
+		return
+	}
+	marked := false
+	s.saveMu.Lock()
+	for _, n := range names {
+		if n == "" || !syncKnownTables[n] {
+			continue
+		}
+		if s.dirtyTables == nil {
+			s.dirtyTables = make(map[string]bool, 8)
+		}
+		if !s.dirtyTables[n] {
+			s.dirtyTables[n] = true
+			marked = true
+		}
+	}
+	s.saveMu.Unlock()
+	if !marked {
+		return // rien de nouveau : un flush est déjà en attente/en cours
+	}
+	select {
+	case s.saveCh <- struct{}{}:
+	default:
+	}
+}
+
+// saveJSON — écriture atomique du fichier db.json (mode développement).
+func (s *Store) saveJSON() {
 	data, err := json.MarshalIndent(sealedSnapshot(s.db), "", "  ")
 	if err != nil {
 		log.Printf("store: sérialisation impossible : %v", err)
@@ -1035,27 +1100,50 @@ func (s *Store) syncLoop() {
 
 // flush — UNE synchronisation : photographie sous le verrou global
 // (CloneDeep — quelques millisecondes, aucune E/S) puis synchro
-// PostgreSQL HORS verrou (re-hash 31 tables + transaction, bornées par
-// syncTimeout). Les requêtes concurrentes continuent d'être servies pendant
-// l'écriture. Retourne false sur échec : l'appelant retente avec backoff
-// (l'état re-marqué sale sera re-photographié à la tentative suivante).
+// PostgreSQL HORS verrou, bornée par syncTimeout. Les requêtes
+// concurrentes continuent d'être servies pendant l'écriture.
+//
+// N°133 — deux régimes : diff COMPLET (marquage Save) ou diff CIBLÉ
+// sur les tables marquées par SaveTables (re-hash des seules tables
+// concernées — les empreintes des autres sont reportées telles quelles
+// dans le cache, cf. PG.SyncTables). Retourne false sur échec :
+// l'appelant retente avec backoff en BASCULANT sur le diff complet
+// (conservateur — le retry repart de toutes les vraies différences).
 func (s *Store) flush() bool {
 	s.saveMu.Lock()
-	if !s.dirty {
-		s.saveMu.Unlock()
-		return true
+	full := s.dirtyAll
+	var tables map[string]bool
+	if !full {
+		if len(s.dirtyTables) == 0 {
+			s.saveMu.Unlock()
+			return true // rien de sale (marquages absorbés par le flush précédent)
+		}
+		tables = s.dirtyTables
+		s.dirtyTables = nil
+	} else {
+		// Diff complet : les marquages ciblés éventuellement en attente sont
+		// couverts (et vidés) — sinon le flush suivant re-syncerait ces
+		// tables pour rien.
+		s.dirtyTables = nil
 	}
-	s.dirty = false
+	s.dirtyAll = false
 	s.saveMu.Unlock()
 
 	s.mu.Lock()
 	snap := s.db.CloneDeep()
 	s.mu.Unlock()
 
-	if err := s.pg.Sync(snap); err != nil {
-		log.Printf("store: synchro PostgreSQL différée échouée (%v) — nouvelle tentative", err)
+	var err error
+	if full {
+		err = s.pg.Sync(snap)
+	} else {
+		err = s.pg.SyncTables(snap, tables)
+	}
+	if err != nil {
+		log.Printf("store: synchro PostgreSQL différée échouée (%v) — nouvelle tentative (diff complet)", err)
 		s.saveMu.Lock()
-		s.dirty = true
+		s.dirtyAll = true
+		s.dirtyTables = nil
 		s.saveMu.Unlock()
 		return false
 	}
@@ -1186,15 +1274,22 @@ const (
 //   - ~30 % de chance de créer une session depuis un user actif (voucher -> used)
 //   - ~12 % de chance de terminer une session aléatoire
 //   - P0 : journalisation login/logout (F3) + verrouillage LockUser (F1)
-func Tick(db *model.DB, now time.Time) {
+//
+// N°133 — P1 audit performance : `touched` collecte les tables RÉELLEMENT
+// modifiées par le passage (nil = marquage désactivé — Sweep, tests) pour
+// une sauvegarde ciblée (Store.SaveTables). En croisière d'un parc AGENT,
+// seuls routers (télémétrie) et settings (last_tick, écrit par syncSettings
+// à chaque flush) bougent : les 3 000+ utilisateurs hotspot et 5 000 lignes
+// de journal ne sont plus re-hashés à chaque lecture pollée.
+func Tick(db *model.DB, now time.Time, touched *TableSet) {
 	if !db.LastTick.IsZero() && now.Sub(db.LastTick) <= 2*time.Second {
-		return
+		return // trop tôt : RIEN n'a bougé, rien à marquer
 	}
 
 	// P0 (audit Mikhmon) — moteur d'expiration cloud en TÊTE : les lectures
 	// suivantes voient des statuts à jour. L'enforcement routeur (commandes
 	// agent) est réalisé par les handlers via enforceExpired.
-	applyExpiry(db, now)
+	applyExpiry(db, now, touched)
 
 	var dt int64
 	if db.LastTick.IsZero() {
@@ -1210,7 +1305,12 @@ func Tick(db *model.DB, now time.Time) {
 	}
 	db.LastTick = now
 
-	// Télémétrie routeurs
+	// Télémétrie routeurs — N°133 : UptimeSec/CPULoad progressent pour TOUS
+	// les routeurs (l'affichage console en dépend), la table est donc marquée
+	// dès qu'un routeur existe — quelques lignes, re-hash immédiat.
+	if len(db.Routers) > 0 {
+		touched.Mark(TableRouters)
+	}
 	for i := range db.Routers {
 		db.Routers[i].UptimeSec += dt
 		db.Routers[i].CPULoad = clamp(db.Routers[i].CPULoad+rand.Intn(13)-6, 5, 45)
@@ -1234,7 +1334,7 @@ func Tick(db *model.DB, now time.Time) {
 	// simulés (débits lissés 0,5-50 Mbps, compteurs cumulés, point
 	// d'historique toutes les ~5 s). Vérrouillé + rapide par construction
 	// (quelques interfaces par routeur, aucune allocation lourde).
-	tickTraffic(db, now, dt)
+	tickTraffic(db, now, dt, touched)
 
 	// Index utilisateurs par nom + profils par id (F1)
 	userIdx := make(map[string]int, len(db.HotspotUsers))
@@ -1259,17 +1359,23 @@ func Tick(db *model.DB, now time.Time) {
 
 	// Progression (et purge) des sessions — P0 : chaque session coupée
 	// (utilisateur supprimé/désactivé) produit un UserLog "logout" (F3).
+	// N°133 — flags de marquage ciblé : seules les VRAIES mutations marquent
+	// (un parc agent sans session simulée ne marque ni sessions ni users).
+	sessionsChanged := false // lignes créées/supprimées/progressées
+	usersChanged := false    // compteurs octets/uptime des utilisateurs simulés
 	kept := db.Sessions[:0]
 	for i := range db.Sessions {
 		s := db.Sessions[i]
 		idx, ok := userIdx[s.Username]
 		if !ok {
-			logUserEvent(db, s, "logout", now) // utilisateur supprimé -> session abandonnée
+			logUserEvent(db, s, "logout", now, touched) // utilisateur supprimé -> session abandonnée
+			sessionsChanged = true
 			continue
 		}
 		u := &db.HotspotUsers[idx]
 		if u.Status == "disabled" {
-			logUserEvent(db, s, "logout", now) // utilisateur désactivé -> session coupée
+			logUserEvent(db, s, "logout", now, touched) // utilisateur désactivé -> session coupée
+			sessionsChanged = true
 			continue
 		}
 		if routerModes[s.RouterID] != "simulated" {
@@ -1290,6 +1396,8 @@ func Tick(db *model.DB, now time.Time) {
 		u.BytesIn += dIn
 		u.BytesOut += dOut
 		u.UptimeUsedSec += dt
+		sessionsChanged = true
+		usersChanged = true
 		kept = append(kept, s)
 	}
 	db.Sessions = kept
@@ -1350,16 +1458,19 @@ func Tick(db *model.DB, now time.Time) {
 				BytesOut:    0,
 			}
 			db.Sessions = append(db.Sessions, sess)
-			logUserEvent(db, sess, "login", now) // P0 : F3 — session créée
+			logUserEvent(db, sess, "login", now, touched) // P0 : F3 — session créée
+			sessionsChanged = true
 			if u.Kind == "voucher" {
 				u.Status = "used"
 				u.UsedAt = nowISO
 				model.AnchorVoucherValidity(db, u, now) // validité ancrée au 1er login
+				usersChanged = true
 				if u.ResellerID != "" {
 					for j := range db.Resellers {
 						if db.Resellers[j].ID == u.ResellerID {
 							db.Resellers[j].VouchersSold++
 							db.Resellers[j].Revenue += u.Price
+							touched.Mark(TableResellers) // vente simulée créditée
 						}
 					}
 				}
@@ -1381,19 +1492,29 @@ func Tick(db *model.DB, now time.Time) {
 		}
 		if len(candidates) > 0 {
 			i := candidates[rand.Intn(len(candidates))]
-			logUserEvent(db, db.Sessions[i], "logout", now)
+			logUserEvent(db, db.Sessions[i], "logout", now, touched)
 			db.Sessions = append(db.Sessions[:i], db.Sessions[i+1:]...)
+			sessionsChanged = true
 		}
 	}
 
 	// P0 (audit Mikhmon) — LockUser (F1) : un utilisateur dont le profil
 	// verrouille les sessions n'en garde qu'une — les plus anciennes sont
 	// fermées (kick) et journalisées.
-	kickLockedUsers(db, userIdx, profileIdx, now)
+	if kickLockedUsers(db, userIdx, profileIdx, now, touched) > 0 {
+		sessionsChanged = true
+	}
+	if sessionsChanged {
+		touched.Mark(TableSessions)
+	}
+	if usersChanged {
+		touched.Mark(TableHotspotUsers)
+	}
 }
 
 // logUserEvent ajoute une entrée au journal utilisateurs (F3), sous verrou.
-func logUserEvent(db *model.DB, s model.Session, action string, now time.Time) {
+// N°133 — marque la table user_logs (chaque appel AJOUTE une ligne).
+func logUserEvent(db *model.DB, s model.Session, action string, now time.Time, touched *TableSet) {
 	if db.UserLogs == nil {
 		db.UserLogs = []model.UserLog{}
 	}
@@ -1409,12 +1530,14 @@ func logUserEvent(db *model.DB, s model.Session, action string, now time.Time) {
 		MAC:        s.MAC,
 		At:         now.UTC().Format(time.RFC3339),
 	})
+	touched.Mark(TableUserLogs)
 }
 
 // kickLockedUsers — F1 LockUser : pour chaque utilisateur dont le profil a
 // lockUser et qui possède plus d'une session active, les plus anciennes sont
 // fermées (UserLog "kick"). La session la plus récente est conservée.
-func kickLockedUsers(db *model.DB, userIdx, profileIdx map[string]int, now time.Time) {
+// N°133 — retourne le nombre de sessions fermées (marquage ciblé de Tick).
+func kickLockedUsers(db *model.DB, userIdx, profileIdx map[string]int, now time.Time, touched *TableSet) int {
 	sessByUser := map[string][]model.Session{}
 	for _, s := range db.Sessions {
 		sessByUser[s.Username] = append(sessByUser[s.Username], s)
@@ -1440,17 +1563,18 @@ func kickLockedUsers(db *model.DB, userIdx, profileIdx map[string]int, now time.
 		}
 	}
 	if len(kicked) == 0 {
-		return
+		return 0
 	}
 	kept := db.Sessions[:0]
 	for _, s := range db.Sessions {
 		if kicked[s.ID] {
-			logUserEvent(db, s, "kick", now)
+			logUserEvent(db, s, "kick", now, touched)
 			continue
 		}
 		kept = append(kept, s)
 	}
 	db.Sessions = kept
+	return len(kicked)
 }
 
 // Sweep — N°64 — point d'entrée du BALAYAGE PÉRIODIQUE (goroutine main.go,
@@ -1462,9 +1586,12 @@ func kickLockedUsers(db *model.DB, userIdx, profileIdx map[string]int, now time.
 // consulté, est couvert aussi. Date le passage (db.LastSweep, preuve d'audit
 // via GET /) et renvoie le nombre d'entrées du journal purgées.
 // À appeler sous verrou ; le Save est à charge de l'appelant.
-func Sweep(db *model.DB, now time.Time) int {
+// N°133 — `touched` collecte les tables modifiées (nil = balayage complet
+// non ciblé : le goroutine de rétention appelle Save() full, plus simple
+// et sans risque pour un passage horaire).
+func Sweep(db *model.DB, now time.Time, touched *TableSet) int {
 	before := len(db.UserLogs)
-	applyExpiry(db, now)
+	applyExpiry(db, now, touched)
 	db.LastSweep = now
 	return before - len(db.UserLogs)
 }
@@ -1485,14 +1612,19 @@ func Sweep(db *model.DB, now time.Time) int {
 //
 // Retour : accountID → usernames dont l'expiration vient d'être appliquée
 // (information disponible pour l'enforcement routeur — cf. enforceExpired).
-func applyExpiry(db *model.DB, now time.Time) map[string][]string {
+// N°133 — `touched` collecte les tables réellement modifiées (nil = sans
+// marquage) : expiration (hotspot_users + user_logs), nettoyage (hotspot_users
+// + activity), rétentions (user_logs, line_quality).
+func applyExpiry(db *model.DB, now time.Time, touched *TableSet) map[string][]string {
 	applied := map[string][]string{}
 	if db.UserLogs == nil {
 		db.UserLogs = []model.UserLog{}
 	}
 	// 4. N°103 — rétention de la télémétrie de ligne (en tête, avant tout
 	// return : tous les chemins d'applyExpiry passent par ici).
-	model.PruneLineQuality(db, now)
+	if model.PruneLineQuality(db, now) > 0 {
+		touched.Mark(TableLineQuality)
+	}
 
 	// 1. Passage « expired » (grâce du profil prise en compte). Comme
 	// EffectiveStatus, l'expiration cloud ne s'applique qu'aux vouchers : le
@@ -1546,8 +1678,11 @@ func applyExpiry(db *model.DB, now time.Time) map[string][]string {
 		logUserEvent(db, model.Session{
 			AccountID: u.AccountID, UserID: u.ID, Username: u.Username,
 			RouterID: u.RouterID, RouterName: u.RouterName,
-		}, "expire", now)
+		}, "expire", now, touched)
 		applied[u.AccountID] = append(applied[u.AccountID], u.Username)
+	}
+	if len(applied) > 0 {
+		touched.Mark(TableHotspotUsers) // statuts « expired » posés
 	}
 
 	// 2. Nettoyage cloud (F5) : politique « remove » par compte.
@@ -1589,6 +1724,9 @@ func applyExpiry(db *model.DB, now time.Time) map[string][]string {
 			db.Activity = db.Activity[:500]
 		}
 	}
+	if len(removed) > 0 {
+		touched.Mark(TableHotspotUsers, TableActivity) // suppressions + résumés
+	}
 
 	// 3. Rétention du journal utilisateurs — N°65 : 30/60/90 jours PAR COMPTE
 	// (tenant.logRetentionDays ; défaut 90 = userLogRetention) + garde-fou
@@ -1598,6 +1736,7 @@ func applyExpiry(db *model.DB, now time.Time) map[string][]string {
 		cutoffs[accID] = now.AddDate(0, 0, -s.Tenant.LogRetentionDaysEffective()).Format(time.RFC3339)
 	}
 	defLim := now.Add(-userLogRetention).Format(time.RFC3339)
+	logsBefore := len(db.UserLogs)
 	keptLogs := db.UserLogs[:0]
 	for _, l := range db.UserLogs {
 		lim := defLim
@@ -1613,6 +1752,9 @@ func applyExpiry(db *model.DB, now time.Time) map[string][]string {
 		keptLogs = keptLogs[len(keptLogs)-maxUserLogs:]
 	}
 	db.UserLogs = keptLogs
+	if len(db.UserLogs) != logsBefore {
+		touched.Mark(TableUserLogs) // rétention/plafond : lignes purgées
+	}
 
 	return applied
 }
@@ -1639,15 +1781,20 @@ const (
 //
 // Tick reste rapide : 3 interfaces par routeur, aucune allocation au-delà des
 // points d'historique (1 toutes les 5 s).
-func tickTraffic(db *model.DB, now time.Time, dt int64) {
+// N°133 — ne marque `touched` QUE si au moins un routeur simulé existe : un
+// parc 100 % agent ne touche ni traffic ni line_quality ici (leurs lignes
+// vivent au rythme du read_state, persisté par les Save() complets).
+func tickTraffic(db *model.DB, now time.Time, dt int64, touched *TableSet) {
 	if db.Traffic == nil {
 		db.Traffic = []model.RouterTraffic{}
 	}
+	simulated := false
 	for i := range db.Routers {
 		rr := &db.Routers[i]
 		if rr.Mode != "simulated" {
 			continue
 		}
+		simulated = true
 		var tr *model.RouterTraffic
 		for j := range db.Traffic {
 			if db.Traffic[j].RouterID == rr.ID {
@@ -1693,6 +1840,15 @@ func tickTraffic(db *model.DB, now time.Time, dt int64) {
 		// uniquement les fenêtres réelles (dt > 0).
 		if dt > 0 {
 			model.AccumulateLineQuality(db, rr, tr.Interfaces, now)
+		}
+	}
+	if simulated {
+		// Les lignes de trafic simulé progressent à chaque tick
+		// (débits, compteurs, UpdatedAt) ; la qualité de ligne
+		// s'échantillonne dès qu'une fenêtre réelle s'écoule (dt > 0).
+		touched.Mark(TableTraffic)
+		if dt > 0 {
+			touched.Mark(TableLineQuality)
 		}
 	}
 }

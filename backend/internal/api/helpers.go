@@ -17,6 +17,7 @@ import (
 	"mikcloud/hotspot-api/internal/agent"
 	"mikcloud/hotspot-api/internal/model"
 	"mikcloud/hotspot-api/internal/routeros"
+	"mikcloud/hotspot-api/internal/store"
 )
 
 // prixMaxProfil — plafond économique des prix de profil (création/édition) :
@@ -352,13 +353,22 @@ const realModeUnsupported = "Non supporté en mode API directe — utilisez le m
 // fois par expiration ; un « extend » ultérieur repasse le statut « active »).
 // À appeler sous verrou, après store.Tick (applyExpiry) ; le Save est à charge
 // de l'appelant. Les commandes sont servies à l'agent à son prochain check-in.
-func (a *API) enforceExpired(db *model.DB) {
+//
+// N°133 — P1 audit performance : `touched` collecte les tables réellement
+// modifiées (nil = sans marquage — les chemins d'ÉCRITURE conservent le
+// Save() complet, défaut sûr) : réparations/enforcements (hotspot_users),
+// commandes déposées (commands), lots éteints (batches, hotspot_users,
+// sessions, purge_tombstones, commands, activity), inscriptions périmées
+// (registration_requests).
+func (a *API) enforceExpired(db *model.DB, touched *store.TableSet) {
 	// N — réparation parité limit-uptime en TÊTE : les vouchers coupés par le
 	// routeur à leur quota temps mais restés « utilisés » (déficit
 	// d'échantillonnage du cumul cloud) sont realignés AVANT la résolution
 	// des statuts — les lectures suivantes (listes, stock vente, rapports)
 	// voient immédiatement l'état « expiré » (cf. RepairTimeLimitParity).
-	model.RepairTimeLimitParity(db)
+	if model.RepairTimeLimitParity(db) > 0 {
+		touched.Mark(store.TableHotspotUsers)
+	}
 	expMode := make(map[string]string, len(db.Profiles))
 	for _, p := range db.Profiles {
 		m := p.ExpMode
@@ -371,12 +381,14 @@ func (a *API) enforceExpired(db *model.DB) {
 	for i := range db.Routers {
 		routers[db.Routers[i].ID] = &db.Routers[i]
 	}
+	enforced := false
 	for i := range db.HotspotUsers {
 		u := &db.HotspotUsers[i]
 		if u.Status != "expired" || u.Enforced {
 			continue
 		}
 		u.Enforced = true
+		enforced = true
 		rr := routers[u.RouterID]
 		if rr == nil || rr.Mode != "agent" {
 			continue // simulated/real : le statut cloud suffit
@@ -392,16 +404,36 @@ func (a *API) enforceExpired(db *model.DB) {
 			})
 		}
 	}
+	if enforced {
+		touched.Mark(store.TableHotspotUsers) // drapeaux Enforced posés
+	}
+	if len(db.Commands) > 0 {
+		// Toute commande vivante (dépôt ci-dessus, file walled-garden/
+		// portail du check-in…) marque la table : la file est courte
+		// (servie au check-in 45 s) mais doit être persistée au plus vite.
+		touched.Mark(store.TableCommands)
+	}
 
 	// N°26 — lots éteints : un lot dont TOUS les tickets sont expirés disparaît
 	// du système (tickets + ligne de lot + tombstones anti-résurrection +
 	// nettoyage RouterOS). Ce point est le passage commun de toutes les lectures
 	// (console, agent 45 s, PWA) : sous verrou, avant le Save de l'appelant.
-	sweepDeadBatches(db)
+	if sweepDeadBatches(db) > 0 {
+		touched.Mark(
+			store.TableBatches,         // lignes de lots supprimées
+			store.TableHotspotUsers,    // tickets supprimés
+			store.TableSessions,        // sessions abandonnées (parité F5)
+			store.TablePurgeTombstones, // tombstones anti-résurrection
+			store.TableCommands,        // nettoyage RouterOS en file
+			store.TableActivity,        // trace de disparition
+		)
+	}
 
 	// N°27 — inscriptions publiques : les demandes REFUSÉES au-delà de la
 	// rétention (30 jours) sont purgées (minimisation des données personnelles).
-	sweepStaleRegistrations(db)
+	if sweepStaleRegistrations(db) > 0 {
+		touched.Mark(store.TableRegistrationRequests)
+	}
 }
 
 // ---------------------------------------------------------------------------

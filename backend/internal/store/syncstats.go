@@ -231,6 +231,10 @@ func liveTableRows(db *model.DB) []TableHealth {
 		{Table: "wifi_guests", Rows: len(db.WifiGuests)},
 		{Table: "promo_events", Rows: len(db.PromoEvents)},
 		{Table: "geniuspay_subs", Rows: len(db.GeniusPaySubs)},
+		// N°133 — parité avec la synchro différentielle (chat N°127, HomeNet N°101).
+		{Table: "chat_conversations", Rows: len(db.ChatConversations)},
+		{Table: "chat_messages", Rows: len(db.ChatMessages)},
+		{Table: "devices", Rows: len(db.Devices)},
 		{Table: "settings", Rows: len(db.SettingsByAccount)},
 	}
 }

@@ -5,6 +5,92 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+
+## 2026-09-17 — N°133 — Réactivité P1 « le verrou ne portait plus l'E/S, il portait le calcul » : synchronisation ciblée par tables marquées sales, agrégats du dashboard HORS verrou, en-tête Server-Timing — le plan structurel de l'audit performance passe à l'application
+
+### N°133 — Contexte : P0 rendu, reste la charge CPU du flush et le calcul sous verrou
+Renumérotation double : N°131 pris par la vitrine (2e6f38d — retrait du
+doublon d'essai + animation du tchat), puis N°132 pris par le correctif du
+guillemet routeros (59dcad8 — script routeros_check invalide) pendant que ce
+travail attendait son push — il devient donc N°133.
+Le P0 (N°130) avait sorti la transaction Neon du verrou global (Save
+asynchrone) et vidé le réseau (304 réactivé, prefetch au survol). L'audit
+laissait deux travaux structurels : (B-résiduel) CHAQUE flush re-hashait
+toujours les 33 tables différentielles COMPLÈTES — sur le 0,1 vCPU Render,
+~8 500 lignes (3 130 hotspot_users + 5 000 user_logs + le reste) soit
+~1,4-2,8 s de CPU par synchronisation, alors que l'état de croisière d'un
+parc AGENT ne change que de ~6 lignes (2 routeurs télémétrie + 4 settings
+last_tick) : le CPU rendu au service était dépensé à re-marshaller des
+lignes identiques ; (E) le dashboard calculait TOUS ses agrégats
+(boucles sessions/utilisateurs/transactions, tris, courbes 14 j, créances)
+SOUS le verrou global — le mutex ne portait plus d'E/S mais portait du
+calcul : chaque concurrent attendait la fin du poll de chaque autre.
+
+### Produit — la sauvegarde ne re-hashe plus que ce qui a changé (par table)
+- MOTEUR MARQUANT : Tick, applyExpiry, tickTraffic, enforceExpired,
+  sweepDeadBatches et sweepStaleRegistrations reçoivent un `*TableSet`
+  (tables.go — nil-sûr) et marquent les tables qu'ils ont RÉELLEMENT
+  modifiées : télémétrie (routers), trafic/qualité de ligne simulés,
+  progression/naissance/mort de sessions, compteurs utilisateurs, journal
+  (login/logout/expire/kick), ventes simulées (resellers), expiration/
+  nettoyage/rétention, drapeaux Enforced, commandes déposées, lots éteints,
+  tombstones, inscriptions périmées. En croisière d'un parc agent : SEULS
+  routers (+ settings via syncSettings, toujours écrit) sont marqués.
+- SAUVETABLES CIBLÉE : les chemins de LECTURE pollés (dashboard, sessions,
+  listes utilisateurs/vouchers, stats, trafic/qualité d'un simulateur,
+  liste des lots) appellent `SaveTables(...)` au lieu de `Save()` : le
+  flush re-hashe UNIQUEMENT les tables marquées, les autres conservent
+  leurs empreintes (reportées telles quelles après commit — atomicité
+  pending→commit→swap préservée). TOUT chemin d'écriture conserve le
+  `Save()` complet : défaut sûr, une mutation non ciblée reste TOUJOURS
+  persistée au cycle suivant (et l'état mémoire reste la vérité : un
+  marquage incomplet ne perd rien, il retarde).
+- PARCOURS DU CIBLAGE : une liste vide retombe sur le diff complet ;
+  un échec de synchro ciblée re-marque TOUT (le retry repart de toutes
+  les vraies différences) ; la table settings reste TOUJOURS écrite
+  (last_tick/last_sweep ne dépendent pas du ciblage) ; le mode JSON
+  (développement/E2E) ignore le ciblage (écriture complète synchrone).
+- REBUILDHASHES COMPLÉTÉ (latent) : les tables chat_conversations,
+  chat_messages et devices existaient dans Sync mais manquaient au cache
+  d'empreintes reconstruit au boot — le premier flush post-démarrage les
+  re-upsertait intégralement pour rien. Elles sont désormais hashées au
+  boot comme les autres (parité des trois listes : constantes ↔ specs ↔
+  santé, verrouillée par TestSyncKnownTablesConcordance).
+
+### Produit — le dashboard calcule hors verrou (photographie CloneDeep)
+- Le mutex ne porte plus que Tick + enforcement + photographie CloneDeep
+  (quelques millisecondes, aucune E/S — même mécanisme que le flush N°130)
+  ; TOUS les agrégats (sites, KPI, courbes revenus 14 j, top profils,
+  activité récente, timeline 24 h, créances revendeurs) se calculent sur
+  le SNAPSHOT, hors verrou : les polls dashboard (15 s) ne sérialisent
+  plus les autres requêtes.
+
+### Produit — Server-Timing : le temps serveur devient observable
+- Chaque réponse porte désormais `Server-Timing: app;dur=###` (RFC 8006),
+  posé au premier octet écrit : DevTools → Network → Timing sépare le
+  temps SERVEUR du temps réseau/proxy. Sur le plan Render free, un dur
+  systématique ~200 ms signale le plancher cause A de l'audit (décision
+  payante P2 : Starter ~7 $/mois) ; une valeur qui grimpe signale une
+  contention applicative — désormais traitée.
+
+### Technique
+- Backend : store/tables.go (NOUVEAU — constantes Table*, registre,
+  TableSet nil-sûr), store/store.go (SaveTables, flush à deux régimes,
+  moteur marquant Tick/applyExpiry/tickTraffic/Sweep/logUserEvent/
+  kickLockedUsers), store/pg_sync.go (SyncTables + syncPlan commun à
+  clôtures typées, rebuildHashes paritaire), api/helpers.go (enforceExpired
+  marquant), api/handlers_dashboard.go (photographie + agrégats hors
+  verrou), handlers_sessions/users/routers/vouchers (SaveTables ciblée),
+  main.go (statusRecorder → Server-Timing), syncstats (3 tables de plus).
+- Vérifié : gofmt vide, go vet OK, go build OK, go test 12 paquets verts
+  — dont TestTableSet, TestSyncKnownTablesConcordance (alignement
+  constantes ↔ plan ↔ santé), TestTickMarksTouchedTables (invariant
+  perf : un parc agent ne marque QUE routers ; garde 2 s marque rien ;
+  un simulateur marque traffic/line_quality) et TestSaveTablesJSONMode.
+- Leçon consignée : un verrou global qui porte du calcul est une file
+  d'attente déguisée en mutex — photographier tôt et calculer dehors
+  vaut pour toute lecture lourde, pas seulement pour l'écriture.
+
 ## 2026-09-17 — N°132 — « Le guillemet qui tuait la vérification » : le script routeros_check généré par N°125 était syntaxiquement invalide (guillemet ouvrant manquant dans le rapport dynamique) — l'import échouait sur le VRAI routeur, la commande restait « sent » sans rapport à jamais et la mise à jour de flotte perdait toutes ses cibles ; au passage, auto-upgrade est lu au bon chemin
 
 ### N°132 — Contexte : retour utilisateur
@@ -146,7 +232,6 @@ signale au premier visiteur qu'il peut y ÉCRIRE n'importe quelle question.
   trial » au header. Mobile 390 px — scrollWidth 390 (zéro débordement), rail
   tactile sans bouton, FAB 56 px cliquable 16 px du bord, bulle au-dessus
   complète dans l'écran (analyse VLM 4/4) ; 0 erreur console.
-
 ## 2026-09-17 — N°130 — Réactivité P0 « le nuage qui rendait la main trop tard » : sauvegarde PostgreSQL asynchrone, révalidation 304 réactivée, préchargement au survol — l'audit performance passe à l'application
 
 ### N°130 — Contexte : la lenteur au clic sur une architecture pourtant découplée

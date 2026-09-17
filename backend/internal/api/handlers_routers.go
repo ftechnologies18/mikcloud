@@ -572,7 +572,11 @@ func (a *API) handleRouterTraffic(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, realModeUnsupported)
 		return
 	}
-	store.Tick(db, now)
+	// N°133 — marquage ciblé : le tick d'un simulateur marque routers
+	// (+ traffic/line_quality pour ce routeur) — sauvegarde ciblée au
+	// lieu du diff complet à chaque poll de trafic.
+	touched := store.NewTableSet()
+	store.Tick(db, now, touched)
 	out := model.RouterTraffic{
 		RouterID: id, AccountID: acc,
 		Interfaces: []model.IfaceTraffic{}, History: []model.TrafficPoint{},
@@ -593,7 +597,7 @@ func (a *API) handleRouterTraffic(w http.ResponseWriter, r *http.Request) {
 		}
 		break
 	}
-	a.store.Save()
+	a.store.SaveTables(touched.Names()...)
 	a.store.Unlock()
 	writeJSON(w, http.StatusOK, out)
 }
@@ -656,7 +660,12 @@ func (a *API) handleRouterLineQuality(w http.ResponseWriter, r *http.Request) {
 	routerCopy := *rr
 	// Le simulé vit au rythme des polls de la console (pattern handleRouterTraffic).
 	if routerCopy.Mode == "simulated" {
-		store.Tick(db, now)
+		touched := store.NewTableSet()
+		store.Tick(db, now, touched)
+		// N°133 — le tick d'un routeur simulé marque routers (+ traffic/
+		// line_quality pour ce simulateur) : sauvegarde ciblée, le reste
+		// du parc n'est pas re-hashé pour cette carte qualité de ligne.
+		a.store.SaveTables(touched.Names()...)
 		if rr = findRouterScoped(db, id, acc); rr != nil {
 			routerCopy = *rr
 		}

@@ -5,6 +5,43 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-17 — N°126 — E2E HomeNet : « le test qui cherchait une maison rebaptisée »
+
+### Contexte
+CI rouge sur `main` depuis le push N°125 (run #396) — et en réalité dès le
+N°124 (run #395) : le job « E2E Playwright (Mode Vente + HomeNet) » échoue,
+le déploiement Render (needs: e2e) saute donc à chaque push. Cause racine :
+le N°124 a renommé la carte radio du sélecteur d'usage dans le modal
+d'inscription (« Ma maison » → « HomeNet », i18n FR/EN inclus), mais le
+test `homenet.spec.ts` cherchait toujours
+`getByRole("radio", { name: /Ma maison/ })` — le locator ne matchait plus
+rien, timeout de 90 s (×2 avec le retry CI), puis les 4 tests suivants du
+groupe `describe.serial` ne s'exécutaient pas (« did not run »).
+
+### Produit
+- Aucun changement produit : le libellé « HomeNet » est la décision N°124,
+  c'est le TEST qui était resté sur l'ancien nom.
+
+### Technique
+- `frontend/e2e/homenet.spec.ts` : locator `/Ma maison/` → `/HomeNet/`
+  (l. 181) + titre du test et commentaire d'en-tête alignés sur le
+  renommage N°124 ;
+- Vérification préalable que tous les autres libellés utilisés par la série
+  HomeNet existent toujours dans le source (« Votre maison », « attend son
+  routeur », « connectez votre box en mode agent », « Voir mes routeurs »,
+  « Appareils en ligne », « Mettre en pause », « Rétablir internet »,
+  « Renommer », « Nommer l'appareil », « 30 minutes ») — aucun autre
+  décalage ;
+- Suite complète rejouée en local contre la stack réelle (backend Go store
+  JSON + Next.js build production, ports 4000/3000) : **14/14 verts**
+  (setup 1, resellers 3, homenet 5, sell 5 — 25,8 s).
+
+### Leçon
+Un renommage UI (N°124) doit emporter ses tests E2E : le smoke manuel du
+N°124 vérifiait le modal visuellement, mais le locator du parcours
+d'inscription publique n'avait pas suivi — la CI a tourné rouge en silence
+pendant deux push, bloquant le déploiement Render du N°125 (backend).
+
 ## 2026-09-17 — N°125 — Firmware RouterBOARD : « le bootloader qui attendait son redémarrage »
 
 ### Contexte

@@ -1,6 +1,6 @@
 // E2E HomeNet — le parcours familial DORÉ (Phase 4 N°102), contre la stack
 // réelle (backend Go store JSON + Next.js de production) :
-//   1. inscription PUBLIQUE « Ma maison » par l'UI — le sélecteur d'usage
+//   1. inscription PUBLIQUE « HomeNet » par l'UI — le sélecteur d'usage
 //      N°101 est LA porte d'entrée du foyer, l'atterrissage est SA console
 //      (/app/home, invitation honnête tant que la box n'est pas connectée) ;
 //   2. le zéro inexpliqué n'existe plus (N°102) : un routeur SANS mode agent
@@ -170,7 +170,7 @@ function sessionValueFor(token: string, user: Record<string, unknown>): string {
 // ---------------------------------------------------------------------------
 
 test.describe.serial("HomeNet — le parcours familial", () => {
-  test("inscription publique « Ma maison » → atterrissage SA console", async ({ page }) => {
+  test("inscription publique « HomeNet » → atterrissage SA console", async ({ page }) => {
     // Le sélecteur d'usage (N°101) ouvre l'inscription au foyer : deux cartes
     // radio en tête du formulaire, hotspot par défaut (zéro changement pour
     // les clients existants — ici on choisit explicitement la maison).
@@ -178,7 +178,7 @@ test.describe.serial("HomeNet — le parcours familial", () => {
     await page.getByRole("button", { name: "Créer mon compte" }).first().click();
     const dialog = page.getByRole("dialog");
     await expect(dialog).toBeVisible();
-    await dialog.getByRole("radio", { name: /Ma maison/ }).click();
+    await dialog.getByRole("radio", { name: /HomeNet/ }).click();
 
     // Étape 1 — compte.
     await page.locator("#signup-name").fill("Famille Yopougon");

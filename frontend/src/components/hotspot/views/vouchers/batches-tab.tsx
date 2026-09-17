@@ -163,11 +163,20 @@ export function BatchesTab({
       return <span className="text-sm text-muted-foreground">—</span>;
     }
     return (
-      <div className="flex flex-wrap items-center gap-1.5">
+      // min-w-0 sur le conteneur + max-w-full/min-w-0 sur le chip — un nom de
+      // revendeur long tenait toute la largeur du chip (w-fit, nowrap) et
+      // débordait la carte mobile (scroll horizontal fantôme ≤ 390 px).
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
         {holdings.map((h) => (
-          <Badge key={h.resellerId || "direct"} variant="secondary" className="gap-1 text-xs">
-            {h.resellerId === "" ? t("common.direct") : h.name || h.resellerId}
-            <span className="font-semibold tabular-nums">{h.count}</span>
+          <Badge
+            key={h.resellerId || "direct"}
+            variant="secondary"
+            className="max-w-full min-w-0 gap-1 text-xs"
+          >
+            <span className="min-w-0 truncate">
+              {h.resellerId === "" ? t("common.direct") : h.name || h.resellerId}
+            </span>
+            <span className="shrink-0 font-semibold tabular-nums">{h.count}</span>
           </Badge>
         ))}
       </div>

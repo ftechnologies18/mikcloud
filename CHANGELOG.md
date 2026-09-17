@@ -5,6 +5,74 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-18 — N°144 — Le débordement de la modale « Transférer le stock » éradiqué sur desktop et mobile : champs et listes contenus dans la carte, méta financière en ligne de contexte, modale bornée à l'écran
+
+### Contexte
+Retour utilisateur : « la fenêtre modale de Transférer le stock a des éléments
+qui débordent de la carte sur desktop et mobile ». Reproduit au navigateur contre
+un backend Go réel (JSON store éphémère) avec des revendeurs aux noms longs, un
+dépôt-vente et un lot de 50 : le champ Destination mesurait 650 px dans une carte
+de 448 px — il dépassait de 227 px à droite sur desktop, de 22 px sur mobile, et
+sa liste déroulante (652 px) sortait de l'écran de 272 px à 390 px.
+
+### Cause racine (trois étages)
+(1) LES ITEMS DU SELECT PORTAIENT LA MÉTA FINANCIÈRE (« nom · solde X · en
+stock Y ») : le texte nowrap du trigger et des items donnait un max-content
+~650 px. (2) DialogContent (shadcn) est une GRILLE à piste auto implicite : la
+piste se dimensionne sur le max-content des enfants → toute la colonne du
+formulaire passait hors de la carte (le trigger w-full héritait des 650 px).
+(3) Le popper Radix se dimensionne sur l'item le plus large, sans plafond → la
+liste débordait la carte et l'écran. Comorbidités : la modale n'avait AUCUN
+max-h (contrairement à toutes les autres du dépôt — viewport court = fermeture
+et boutons inatteignables) et les chips de détention des cartes mobiles « Lots »
+cédaient au premier nom long (scroll horizontal fantôme 401 px à 390 px).
+
+### Correctifs
+- **ui/dialog.tsx** — `grid-cols-[minmax(0,1fr)]` sur DialogContent : la piste
+  est bornée à la largeur de la carte, les enfants se tronquent dedans au lieu
+  de l'étirer (durcissement global de toutes les modales grid ; les DialogContent
+  flex du profil passent display:flex et restent hors de portée).
+- **ui/select.tsx** — `*:data-[slot=select-value]:min-w-0` sur le trigger : la
+  valeur peut rétrécir dans son champ (globale, inerte quand la place suffit).
+- **voucher-transfer-dialog.tsx** — items au NOM SEUL (il s'enroule dans la
+  liste), `textValue` pour le typeahead ; la méta financière vit en LIGNE DE
+  CONTEXTE sous le champ (clés existantes transferResellerMeta[Deposit],
+  zéro i18n neuf) ; trigger : `[&_[data-slot=select-value]>span]:min-w-0 …:truncate`
+  (ellipse propre) ; popper : `w-[var(--radix-select-trigger-width)]` (liste =
+  largeur du champ, jamais plus large que la carte) ; DialogContent :
+  `max-h-[85dvh] overflow-y-auto` (convention du dépôt — la carte défile,
+  fermeture et actions toujours atteignables).
+- **sell/dialogs.tsx (OutboundConfirmDialog)** — même durcissement pour la
+  modale sœur « Rendre / Transférer » du Mode Vente (le popper des pairs
+  dépassait encore de 46 px à 375 px).
+- **batches-tab.tsx** — chips de détention : `max-w-full` + nom `min-w-0
+  truncate` + compteur `shrink-0` (la carte mobile Lots ne déborde plus).
+
+### Fidélité
+Zéro route, zéro API, zéro schéma (CONTRACT-V2 inchangé). Le transfert reste
+exactement le même POST /api/vouchers/batch/{id}/transfer — mêmes toasts, mêmes
+gardes-fous (quantité plafonnée, exclusion < 7 j, crédit insuffisant), même
+destination intelligente par canal du lot. La méta financière (solde/dette/
+plafond/en stock) reste affichée, en dessous du champ au lieu d'empilée dans
+l'item et le trigger.
+
+### Vérifié
+eslint 0, tsc 0. Navigateur (backend Go réel seedé : noms longs, dépôt-vente,
+lot 50, transferts partiels) : desktop 1440 — trigger 398 px à 25 px du bord de
+la carte (avant : 227 px dehors), popper aligné au champ, noms enroulés, ligne
+de contexte présente ; mobile 390 — ellipse effective (`text-overflow: ellipsis`
+mesuré), docScrollWidth 390 = viewport (avant 401) ; mobile 375 état maximal
+(dépôt-vente + quantité + aperçu + crédit insuffisant) — modale 567 px = 85dvh,
+tient, défile si besoin, boutons visibles ; 360×640 et 1280×620 — idem ; page
+Lots 375 — zéro débordement, zéro élément fautif ; Mode Vente (session isolée,
+login PIN) — modale Rendre/Transférer contenue, popper 293 px = trigger ;
+chemin d'or : transfert réel de 5 tickets à Moussa Traoré → toast exact
+« 1 000 XOF débités (solde : 4 000 XOF) », dialog fermé ; assistant « Générer
+des vouchers » (autre DialogContent) inchangé — non-régression du grid ; VLM
+4/4 (desktop popper ouvert : rien ne dépasse, alignement parfait ; mobile :
+contenu contenu, boutons atteignables ; avant/après : débordement net vs
+propre ; page Lots : aucun cut-off). 0 erreur console/page.
+
 ## 2026-09-18 — N°143 — L'écran de connexion porté par « Miko », une mascotte flat design qui vit le formulaire : toggle Admin/Revendeur à pastille clay glissante, regard qui suit l'identifiant, mains sur les yeux pendant les secrets, œillo, humeurs (choc, joie, 2FA) et tenues par rôle (casque opérateur / casquette terrain)
 
 Renumérotation : N°142 pris par le durcissement UX de l'onglet Expérience (2685253,

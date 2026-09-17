@@ -443,13 +443,20 @@ export function OutboundConfirmDialog({
         <div className="space-y-1.5">
           <Label htmlFor="outbound-dest">{t("sell.outboundDest")}</Label>
           <Select value={dest} onValueChange={onDestChange}>
-            <SelectTrigger id="outbound-dest" className="h-10 w-full">
+            {/* N°144 — même durcissement que le dialog admin « Transférer le
+                stock » : valeur longue tronquée à l'ellipse dans le trigger,
+                popper borné à la largeur du champ (un nom de pair long faisait
+                déborder la liste hors de la carte et de l'écran). */}
+            <SelectTrigger
+              id="outbound-dest"
+              className="h-10 w-full [&_[data-slot=select-value]>span]:min-w-0 [&_[data-slot=select-value]>span]:truncate"
+            >
               <SelectValue aria-label={t("sell.outboundDest")} />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent className="w-[var(--radix-select-trigger-width)]">
               <SelectItem value="manager">{t("sell.outboundDestManager")}</SelectItem>
               {(peers ?? []).map((p) => (
-                <SelectItem key={p.id} value={p.id}>
+                <SelectItem key={p.id} value={p.id} textValue={p.name}>
                   {tf("sell.outboundDestPeer", { name: p.name })}
                 </SelectItem>
               ))}

@@ -167,7 +167,11 @@ export function VoucherTransferDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      {/* max-h + overflow-y — la modale ne doit jamais dépasser l'écran (noms
+          longs, garde-fou expiration, aperçu + crédit insuffisant cumulés sur
+          un viewport court) : la carte défile, fermeture et actions restent
+          atteignables. */}
+      <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <ArrowLeftRight className="size-4 text-primary" aria-hidden />
@@ -178,38 +182,47 @@ export function VoucherTransferDialog({
 
         {batch && (
           <div className="space-y-4">
-            {/* Destination : stock direct (retour) ou revendeur (distribution) */}
+            {/* Destination : stock direct (retour) ou revendeur (distribution).
+                N°144 — les items ne portent PLUS la méta financière : elle
+                gonflait le max-content du SelectTrigger (nowrap) et du popper
+                (~650 px) qui débordaient de la carte sur desktop ET mobile.
+                Le nom seul dans l'item (il s'enroule dans la liste), la méta
+                vit en ligne de contexte sous le champ ; le popper est borné à
+                la largeur du trigger. */}
             <div className="space-y-1.5">
               <Label htmlFor="transfer-target">{t("vouchers.batches.transferTarget")}</Label>
               <Select value={target} onValueChange={setTarget}>
-                <SelectTrigger id="transfer-target" className="h-10 w-full">
+                <SelectTrigger
+                  id="transfer-target"
+                  className="h-10 w-full [&_[data-slot=select-value]>span]:min-w-0 [&_[data-slot=select-value]>span]:truncate"
+                >
                   <SelectValue aria-label={t("vouchers.batches.transferTarget")} />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="w-[var(--radix-select-trigger-width)]">
                   <SelectItem value={DIRECT}>
                     <span className="font-medium">{t("vouchers.batches.transferTargetDirect")}</span>
                   </SelectItem>
                   {activeResellers.map((r) => (
-                    <SelectItem key={r.id} value={r.id}>
+                    <SelectItem key={r.id} value={r.id} textValue={r.name}>
                       <span className="font-medium">{r.name}</span>
-                      <span className="text-muted-foreground">
-                        {" "}
-                        ·{" "}
-                        {r.paymentMode === "deposit"
-                          ? tf("vouchers.batches.transferResellerMetaDeposit", {
-                              debt: formatCurrency(r.debt ?? 0, currency, lang),
-                              ceiling: formatCurrency(r.debtCeiling ?? 0, currency, lang),
-                              stock: r.stockCount ?? 0,
-                            })
-                          : tf("vouchers.batches.transferResellerMeta", {
-                              credit: formatCurrency(r.credit, currency, lang),
-                              stock: r.stockCount ?? 0,
-                            })}
-                      </span>
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              {targetReseller && (
+                <p className="text-xs text-muted-foreground">
+                  {isDepositTarget
+                    ? tf("vouchers.batches.transferResellerMetaDeposit", {
+                        debt: formatCurrency(targetReseller.debt ?? 0, currency, lang),
+                        ceiling: formatCurrency(targetReseller.debtCeiling ?? 0, currency, lang),
+                        stock: targetReseller.stockCount ?? 0,
+                      })
+                    : tf("vouchers.batches.transferResellerMeta", {
+                        credit: formatCurrency(targetReseller.credit, currency, lang),
+                        stock: targetReseller.stockCount ?? 0,
+                      })}
+                </p>
+              )}
             </div>
 
             {/* Disponibilité + garde-fou expiration */}

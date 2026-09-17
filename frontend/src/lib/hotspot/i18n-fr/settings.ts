@@ -162,6 +162,18 @@ export const frSettings: Record<string, string> = {
   "settings.svc.icon.scissors": "Coiffure / couture",
   "settings.svc.icon.book": "Formation / scolarité",
   "settings.svc.icon.spa": "Bien-être / spa",
+  // — N°138 : messages du bandeau animé sous le logo du portail —
+  "settings.ticker.card": "Portail : messages du bandeau animé",
+  "settings.ticker.cardDesc":
+    "Les messages qui s'affichent en animation sous le logo du portail captif (effet machine à écrire) — les vôtres, pas ceux par défaut.",
+  "settings.ticker.list": "Messages affichés sous le logo (5 max)",
+  "settings.ticker.add": "Ajouter un message",
+  "settings.ticker.empty":
+    "Aucun message personnalisé — le portail affiche les 3 messages par défaut.",
+  "settings.ticker.name": "Message (ex. Fibre optique 100 Mbps)",
+  "settings.ticker.hint":
+    "Chaque message (80 caractères max) s'affiche à tour de rôle sous le logo. Tout changement est re-déployé automatiquement sur vos routeurs (≤ 45 s) et rafraîchi à la volée sur les portails déjà ouverts.",
+  "settings.ticker.savedToast": "Messages du bandeau enregistrés",
   "settings.autoImport.title": "Import automatique des utilisateurs hors MikCloud",
   "settings.autoImport.desc": "Comportement de la synchronisation agent pour les comptes créés directement sur les routeurs.",
   "settings.autoImport.switchLabel": "Importer automatiquement les utilisateurs inconnus",

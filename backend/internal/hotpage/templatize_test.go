@@ -3,6 +3,7 @@ package hotpage
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -338,5 +339,47 @@ func TestLoginTemplateJoinButtonLogic(t *testing.T) {
 	// être dans le bouton statique initial, que applyConfig remplace ou retire.
 	if !strings.Contains(body, "S'inscrire") {
 		t.Error("le libellé « S'inscrire » doit rester présent dans login.html")
+	}
+}
+
+// TestTickerJSON — N°138 : le marqueur TICKER_JSON rend le tableau JSON des
+// messages DU TENANT (insérable tel quel dans le contexte JS de l'init
+// Typed.js) et retombe sur les 3 messages HISTORIQUES du template sans
+// configuration (repli neutre — messages WiFi génériques).
+func TestTickerJSON(t *testing.T) {
+	// Avec messages du tenant : tableau JSON dans l'ordre.
+	cfg := PortalConfig{Ticker: []string{"Fibre 100 Mbps", "Ouvert 7j/7"}}
+	out := Personalize(`strings: {{MIKCLOUD_TICKER_JSON}},`, cfg)
+	if out != `strings: ["Fibre 100 Mbps","Ouvert 7j/7"],` {
+		t.Errorf("TICKER_JSON mal substitué : %s", out)
+	}
+	// Sans messages : les 3 messages historiques du template.
+	out = Personalize(`strings: {{MIKCLOUD_TICKER_JSON}},`, PortalConfig{})
+	if out != `strings: ["Wifi haut débit !","Disponible 24H/24","Payez facilement par Wave !"],` {
+		t.Errorf("repli historique absent : %s", out)
+	}
+}
+
+// TestTickerJSONInjection — un message contenant </script> ou des guillemets
+// ne peut pas sortir du contexte JS du template (encoding/json échappe <, >,
+// & par défaut) et le JSON substitué reste parsable — round-trip exact des
+// messages du tenant.
+func TestTickerJSONInjection(t *testing.T) {
+	msgs := []string{`</script><script>alert(1)</script>`, `Say "hello" \o/`}
+	out := Personalize(`<script>var x = {{MIKCLOUD_TICKER_JSON}};</script>`, PortalConfig{Ticker: msgs})
+	if strings.Contains(out, "</script><script>") {
+		t.Errorf("injection </script> non neutralisée : %s", out)
+	}
+	start := strings.Index(out, "var x = ") + len("var x = ")
+	end := strings.Index(out[start:], ";")
+	if start <= 0 || end <= 0 {
+		t.Fatalf("substitution introuvable : %s", out)
+	}
+	var got []string
+	if err := json.Unmarshal([]byte(out[start:start+end]), &got); err != nil {
+		t.Fatalf("le JSON substitué n'est pas parsable : %v (%s)", err, out)
+	}
+	if !reflect.DeepEqual(got, msgs) {
+		t.Errorf("messages non round-trip : %v", got)
 	}
 }

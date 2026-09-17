@@ -746,11 +746,18 @@
         }
         setMode('voucher');
 
-        // Typed.js
-        var typed = new Typed('#typed-output', {
-            strings: ['Wifi haut débit !', 'Disponible 24H/24', 'Payez facilement par Wave !'],
+        // Typed.js — N°138 : les messages qui défilent sous le logo sont
+        // ceux DU TENANT (posés en console, servis par le cloud au moment
+        // du déploiement — marqueur {{MIKCLOUD_TICKER_JSON}} ; repli : les
+        // 3 messages historiques du template, messages WiFi génériques).
+        // L'instance est exposée (window.mikTyped) pour le pilotage live
+        // (applyConfig bloc 10). Garde typeof : un typed.umd.js absent ne
+        // doit pas casser le reste du bloc.
+        var typed = (typeof Typed !== 'undefined') ? new Typed('#typed-output', {
+            strings: {{MIKCLOUD_TICKER_JSON}},
             typeSpeed: 40, backSpeed: 30, loop: true, backDelay: 2000
-        });
+        }) : null;
+        window.mikTyped = typed;
 
         // Focus
         if (document.login && document.login.username) { document.login.username.focus(); }
@@ -1016,6 +1023,35 @@
                     });
                     if (svcList) svcList.innerHTML = svcHtml;
                     svcWrap.style.display = svcHtml ? '' : 'none';
+                }
+
+                // 10. Bandeau animé sous le logo (N°138) : les messages qui
+                // défilent sous le logo sont pilotés par la console (≤ 5,
+                // texte brut). Le déploiement a déjà posé les messages du
+                // tenant (marqueur TICKER_JSON) ou les 3 historiques ; le
+                // fetch live peut apporter des messages plus frais — mise à
+                // jour idempotente par signature (join), reset() relance
+                // proprement l'animation depuis le 1er message. undefined
+                // (config antérieure à N°138, ou liste vidée côté serveur —
+                // omitempty) = AUCUN changement : une liste vidée revient
+                // aux défauts au prochain re-déploiement (l'empreinte
+                // branding couvre PortalTicker — même promesse que le logo
+                // N°135). Compat vieux WebViews : var, pas de flèches.
+                if (window.mikTyped) {
+                    var liveMsgs = Array.isArray(cfg.portalTicker) ? cfg.portalTicker : [];
+                    var cleanMsgs = [];
+                    for (var mi = 0; mi < liveMsgs.length; mi++) {
+                        var mm = String(liveMsgs[mi] || '').replace(/^\s+|\s+$/g, '');
+                        if (mm) cleanMsgs.push(mm);
+                    }
+                    if (cleanMsgs.length > 0) {
+                        var tickerSig = cleanMsgs.join('\u0001');
+                        var curTickerSig = (window.mikTyped.strings || []).join('\u0001');
+                        if (tickerSig !== curTickerSig) {
+                            window.mikTyped.strings = cleanMsgs;
+                            window.mikTyped.reset();
+                        }
+                    }
                 }
             }
 

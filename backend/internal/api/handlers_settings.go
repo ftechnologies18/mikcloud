@@ -48,6 +48,8 @@ type tenantPut struct {
 	PortalSlides *[]string `json:"portalSlides"`
 	// N°137 — repli nested des services du portail (cf. req plat).
 	PortalServices *[]portalServiceReq `json:"portalServices"`
+	// N°138 — repli nested des messages du bandeau animé (cf. req plat).
+	PortalTicker *[]string `json:"portalTicker"`
 	// N°65 — rétention du journal utilisateurs (repli nested du champ plat :
 	// 30/60/90 j, défaut 90).
 	LogRetentionDays *int `json:"logRetentionDays"`
@@ -126,6 +128,9 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		// « Nos Services » du portail captif (nil = inchangé ; liste vide =
 		// section masquée).
 		PortalServices *[]portalServiceReq `json:"portalServices"`
+		// N°138 — messages du bandeau animé sous le logo du portail
+		// captif (nil = inchangé ; liste vide = messages par défaut).
+		PortalTicker *[]string `json:"portalTicker"`
 		// N°65 — rétention du journal utilisateurs (30/60/90 j ; nil = inchangé,
 		// défaut effectif 90).
 		LogRetentionDays *int `json:"logRetentionDays"`
@@ -153,6 +158,8 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	portalSlides := req.PortalSlides
 	// N°137 — même résolution pour les services du portail.
 	portalServices := req.PortalServices
+	// N°138 — même résolution pour les messages du bandeau animé.
+	portalTicker := req.PortalTicker
 	// N°65 — même résolution plat > imbriqué pour la rétention du journal.
 	logRetentionDays := req.LogRetentionDays
 	if req.Tenant != nil {
@@ -206,6 +213,9 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		}
 		if portalServices == nil {
 			portalServices = req.Tenant.PortalServices
+		}
+		if portalTicker == nil {
+			portalTicker = req.Tenant.PortalTicker
 		}
 		if logRetentionDays == nil {
 			logRetentionDays = req.Tenant.LogRetentionDays
@@ -448,6 +458,39 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		}
 		servicesJSON = v
 	}
+	// N°138 — validation des messages du bandeau animé sous le logo :
+	// ≤ 5 messages, 1-80 caractères chacun (texte brut trimé — le portail
+	// les affiche tels quels, Typed.js tape le texte ; aucun HTML n'est
+	// interprété). Liste vide = retour aux 3 messages par défaut du
+	// template (même contrat que les slides N°136).
+	var tickerJSON string
+	if portalTicker != nil {
+		list := *portalTicker
+		if len(list) > 5 {
+			writeErr(w, http.StatusBadRequest, "Messages du bandeau invalides : au plus 5 messages")
+			return
+		}
+		tickerOut := make([]string, 0, len(list))
+		for _, it := range list {
+			m := strings.TrimSpace(it)
+			if m == "" {
+				continue // entrée vide ignorée (la console n'en envoie pas)
+			}
+			if len(m) > 80 {
+				writeErr(w, http.StatusBadRequest, "Messages du bandeau invalides : 80 caractères max par message")
+				return
+			}
+			tickerOut = append(tickerOut, m)
+		}
+		if len(tickerOut) > 0 {
+			b, err := json.Marshal(tickerOut)
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, "Messages du bandeau invalides : "+err.Error())
+				return
+			}
+			tickerJSON = string(b)
+		} // liste vidée = messages retirés → retour aux 3 défauts du template
+	}
 	if expiryAfterDays != nil && (*expiryAfterDays < 0 || *expiryAfterDays > 365) {
 		writeErr(w, http.StatusBadRequest, "Le nombre de jours doit être compris entre 0 et 365")
 		return
@@ -510,6 +553,12 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	// (nil = inchangé ; liste vide = section masquée sur le portail).
 	if portalServices != nil {
 		settings.Tenant.PortalServices = servicesJSON
+	}
+	// N°138 — les messages du bandeau animé arrivent déjà
+	// sérialisés/validés ci-dessus (nil = inchangé ; liste vide =
+	// retour aux 3 messages par défaut du template).
+	if portalTicker != nil {
+		settings.Tenant.PortalTicker = tickerJSON
 	}
 	if expiryMode != nil {
 		settings.Tenant.ExpiryPolicyMode = *expiryMode

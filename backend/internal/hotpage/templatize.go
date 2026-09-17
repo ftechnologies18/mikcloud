@@ -41,6 +41,13 @@
 //	{{MIKCLOUD_SERVICES_BLOCK}} — les <li> des services DU TENANT (≤ 6,
 //	                        icônes Font Awesome curées, échappement strict),
 //	                        vide si aucun service
+//	{{MIKCLOUD_TICKER_JSON}} — le tableau JSON des messages du bandeau animé
+//	                        sous le logo (N°138, Typed.js) : les messages DU
+//	                        TENANT (≤ 5, validés côté API), sinon les 3
+//	                        messages historiques du template (repli neutre —
+//	                        messages WiFi génériques). Inséré dans un
+//	                        contexte JS (strings: {{…}}) : encoding/json
+//	                        échappe <, >, & — pas de sortie de script.
 //
 // Sécurité : les valeurs sont ÉCHAPPÉES pour leur contexte d'insertion. Pour le
 // bloc JSON, on utilise encoding/json (échappement strict : guillemets,
@@ -127,6 +134,11 @@ type PortalConfig struct {
 	// API — icônes Font Awesome curées). Vide = section masquée
 	// (le template historique y portait les services du site pilote).
 	Services []PortalService `json:"portalServices,omitempty"`
+	// N°138 — messages du bandeau animé sous le logo (Typed.js, ≤ 5,
+	// validés côté API — texte brut). Vide = les 3 messages historiques
+	// du template (messages WiFi génériques, pas la carte de visite du
+	// site pilote : « Wifi haut débit ! », etc.).
+	Ticker []string `json:"portalTicker,omitempty"`
 	// N°56 — clé publique du portail (analytics) : résout le compte pour
 	// POST /api/portal/track sans authentification (pré-auth du hotspot).
 	// NON secret par design (visible de chaque invité dans le bloc config) :
@@ -220,6 +232,7 @@ func Personalize(content string, cfg PortalConfig) string {
 		"{{MIKCLOUD_BANNER_URL}}", html.EscapeString(cfg.BannerURL),
 		"{{MIKCLOUD_SERVICES_ATTR}}", servicesAttr(cfg),
 		"{{MIKCLOUD_SERVICES_BLOCK}}", servicesBlock(cfg),
+		"{{MIKCLOUD_TICKER_JSON}}", tickerJSON(cfg),
 		"{{MIKCLOUD_CONFIG_JSON}}", configJSON(cfg),
 	)
 	return repl.Replace(content)
@@ -273,6 +286,26 @@ func servicesAttr(cfg PortalConfig) string {
 		return ` style="display:none"`
 	}
 	return ""
+}
+
+// tickerJSON — N°138 — le tableau JSON des messages du bandeau animé sous le
+// logo, servi au moment du SERVE dans l'init de Typed.js (strings: {{…}}).
+// Vide = les 3 messages HISTORIQUES du template (repli neutre : messages
+// WiFi génériques, pas la carte de visite du site pilote). encoding/json
+// échappe <, >, & par défaut : un message ne peut pas fermer le <script>
+// prématurément (même garantie que configJSON).
+func tickerJSON(cfg PortalConfig) string {
+	list := cfg.Ticker
+	if len(list) == 0 {
+		list = []string{"Wifi haut débit !", "Disponible 24H/24", "Payez facilement par Wave !"}
+	}
+	b, err := json.Marshal(list)
+	if err != nil {
+		// Types simples — impossible en pratique ; repli sur les défauts
+		// plutôt que de casser l'init JS du template.
+		return `["Wifi haut débit !","Disponible 24H/24","Payez facilement par Wave !"]`
+	}
+	return string(b)
 }
 
 // tenantInitial — l'initiale d'affichage du tenant : première LETTRE

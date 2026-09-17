@@ -152,6 +152,18 @@ export const enSettings: Record<string, string> = {
   "settings.svc.icon.scissors": "Haircut / tailoring",
   "settings.svc.icon.book": "Training / education",
   "settings.svc.icon.spa": "Wellness / spa",
+  // — N°138 : messages of the animated banner under the portal logo —
+  "settings.ticker.card": "Portal: animated banner messages",
+  "settings.ticker.cardDesc":
+    "The messages shown in the typing animation under the portal logo — your own, not the defaults.",
+  "settings.ticker.list": "Messages shown under the logo (max 5)",
+  "settings.ticker.add": "Add a message",
+  "settings.ticker.empty":
+    "No custom message — the portal shows the 3 default messages.",
+  "settings.ticker.name": "Message (e.g. 100 Mbps fiber)",
+  "settings.ticker.hint":
+    "Each message (80 characters max) takes turns under the logo. Any change is redeployed to your routers automatically (≤ 45 s) and refreshed live on already-open portals.",
+  "settings.ticker.savedToast": "Banner messages saved",
   "settings.hosp.savedToast": "Portal showcase saved",
   "settings.hosp.imageFail": "Image upload failed",
   "settings.slides.card": "Portal: carousel images",

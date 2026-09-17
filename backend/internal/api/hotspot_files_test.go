@@ -323,3 +323,39 @@ func countHotspotCmds(db *model.DB, routerID string) int {
 	}
 	return n
 }
+
+// TestEnsureHotspotFilesLockedTickerChange — N°138 : un changement des
+// messages du bandeau animé (console) change la sig → la commande
+// hotspot_files est re-filée au check-in suivant (l'empreinte branding couvre
+// PortalTicker — même promesse auto-re-déploiement que le logo N°135).
+func TestEnsureHotspotFilesLockedTickerChange(t *testing.T) {
+	st, _ := newTestServerWithStore(t)
+	st.Lock()
+	db := st.Data()
+	db.Accounts = append(db.Accounts, model.Account{ID: "acc-ticker", Name: "Cyber Ticker"})
+	db.Routers = append(db.Routers, model.Router{
+		ID:             "r-ticker",
+		AccountID:      "acc-ticker",
+		Name:           "TickerRouter",
+		Mode:           "agent",
+		Status:         "online",
+		AgentTokenHash: agent.HashToken("tok-tickerfiles"),
+	})
+	router := &db.Routers[len(db.Routers)-1]
+	router.HotspotFilesSig = hotspotFilesSig(hotpage.DefaultFiles(), db, router)
+	ensureHotspotFilesLocked(db, router)
+	if n := countHotspotCmds(db, router.ID); n != 0 {
+		st.Unlock()
+		t.Fatalf("sig à jour : 0 commande attendue, %d trouvée(s)", n)
+	}
+	// Le gérant configure les messages de son bandeau animé en console.
+	s := db.SettingsByAccount["acc-ticker"]
+	s.Tenant.PortalTicker = `["Fibre optique 100 Mbps","Ouvert 7j/7"]`
+	db.SettingsByAccount["acc-ticker"] = s
+	ensureHotspotFilesLocked(db, router)
+	n := countHotspotCmds(db, router.ID)
+	st.Unlock()
+	if n != 1 {
+		t.Fatalf("changement de messages du bandeau : 1 commande de re-déploiement attendue, %d trouvée(s)", n)
+	}
+}

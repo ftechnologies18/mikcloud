@@ -354,9 +354,9 @@ func (p *PG) syncSettings(ctx context.Context, tx *sql.Tx, db *model.DB) error {
                                sub_plan_id, sub_status, sub_period_start, sub_period_end, sub_last_amount,
                                sub_router_slots, sub_last_paid_at, last_tick, last_sweep,
                                platform_name, platform_register_open, platform_register_key, auto_import_router_users, join_button,
-                               portal_style, portal_welcome, portal_promos, portal_socials, portal_slides, portal_services, portal_key,
+                               portal_style, portal_welcome, portal_promos, portal_socials, portal_slides, portal_services, portal_ticker, portal_key,
                                log_retention_days)
-                         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35)
+                         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36)
                          ON CONFLICT (id) DO UPDATE SET
                            account_id                = EXCLUDED.account_id,
                            tenant_name               = EXCLUDED.tenant_name,
@@ -391,6 +391,7 @@ func (p *PG) syncSettings(ctx context.Context, tx *sql.Tx, db *model.DB) error {
                            portal_socials           = EXCLUDED.portal_socials,
                            portal_slides            = EXCLUDED.portal_slides,
                            portal_services          = EXCLUDED.portal_services,
+                           portal_ticker            = EXCLUDED.portal_ticker,
                            portal_key               = EXCLUDED.portal_key,
                            log_retention_days       = EXCLUDED.log_retention_days`,
 			accID, s.Tenant.Name, s.Tenant.Currency, s.Tenant.Timezone,
@@ -404,6 +405,7 @@ func (p *PG) syncSettings(ctx context.Context, tx *sql.Tx, db *model.DB) error {
 			s.Tenant.PortalStyle, s.Tenant.PortalWelcome, s.Tenant.PortalPromos, s.Tenant.PortalSocials,
 			s.Tenant.PortalSlides,
 			s.Tenant.PortalServices,
+			s.Tenant.PortalTicker,
 			s.Tenant.PortalKey, s.Tenant.LogRetentionDaysEffective())
 		if err != nil {
 			return fmt.Errorf("pg sync settings (%s) : %w", accID, err)

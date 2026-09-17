@@ -207,6 +207,35 @@ func portalServicesList(t model.Tenant) []hotpage.PortalService {
 	return out
 }
 
+// portalTickerList — décode les messages du bandeau animé sous le logo du
+// tenant (N°138, effet Typed.js du login.html). Persisté en JSON
+// (model.Tenant.PortalTicker) : un JSON invalide ou un champ vide donne nil
+// — le template garde ses 3 messages historiques (jamais cassé). Le plafond
+// (5) et la longueur (80) sont re-vérifiés au décodage (défense en
+// profondeur, même discipline que portalSlidesList).
+func portalTickerList(t model.Tenant) []string {
+	if t.PortalTicker == "" {
+		return nil
+	}
+	var raw []string
+	if json.Unmarshal([]byte(t.PortalTicker), &raw) != nil {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, m := range raw {
+		if m = strings.TrimSpace(m); m != "" && len(m) <= 80 {
+			out = append(out, m)
+		}
+		if len(out) >= 5 {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // buildPortalConfig — construit le PortalConfig pour le compte propriétaire
 // du routeur, à partir du store. À appeler SOUS VERROU (lit db.SettingsByAccount,
 // db.WifiSites, db.JoinLinks, db.Profiles).
@@ -243,6 +272,7 @@ func buildPortalConfig(db *model.DB, router *model.Router, r *http.Request) hotp
 	cfg.Slides = portalSlidesList(settings.Tenant)                                       // N°136 — carrousel commercial
 	cfg.PortalKey = settings.Tenant.PortalKey                                            // N°56 — analytics pré-auth
 	cfg.Services = portalServicesList(settings.Tenant)                                   // N°137 — section « Nos Services »
+	cfg.Ticker = portalTickerList(settings.Tenant)                                       // N°138 — bandeau animé sous le logo
 	// WifiSlug — 1er site WiFi actif lié à ce routeur.
 	for i := range db.WifiSites {
 		s := &db.WifiSites[i]
@@ -363,6 +393,7 @@ func buildPortalConfigForSite(db *model.DB, site *model.WifiSite, router *model.
 	cfg.Slides = portalSlidesList(settings.Tenant)                                       // N°136 — carrousel commercial
 	cfg.PortalKey = settings.Tenant.PortalKey                                            // N°56 — analytics pré-auth
 	cfg.Services = portalServicesList(settings.Tenant)                                   // N°137 — section « Nos Services »
+	cfg.Ticker = portalTickerList(settings.Tenant)                                       // N°138 — bandeau animé sous le logo
 	if origin := publicFrontendURL(r); origin != "" {
 		cfg.WifiURL = origin + "/wifi/" + site.Slug
 	}

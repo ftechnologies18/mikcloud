@@ -58,6 +58,12 @@ type Tenant struct {
 	// du template étaient ceux du site pilote — même chasse que le
 	// logo N°135).
 	PortalServices string `json:"portalServices,omitempty"`
+	// N°138 — messages du bandeau animé sous le logo du portail captif
+	// (effet Typed.js) : JSON ["msg", …] ≤ 5 messages, 1-80 car. chacun
+	// (texte brut trimé — pas d'URL ni de HTML, le portail échappe au
+	// rendu). Vide = les 3 messages historiques du template (messages
+	// WiFi génériques — « Wifi haut débit ! », etc.).
+	PortalTicker string `json:"portalTicker,omitempty"`
 	// N°56 — clé publique du portail (16 hex, générée une fois par compte) :
 	// identifiant NON secret embarqué dans la config du portail captif
 	// (bloc mikcloud-config, visible de chaque invité par design) qui

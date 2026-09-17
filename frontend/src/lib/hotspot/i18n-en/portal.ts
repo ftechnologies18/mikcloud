@@ -26,7 +26,7 @@ export const enPortal: Record<string, string> = {
   "portal.cancel": "Cancel",
   // N°135 — the portal logo is the client's own: where to set it.
   "portal.brandingNote":
-    "The logo shown on the portal is your establishment's own: set it in the Experience tab (\"Vouchers\" card) — the header banner and the \"Our Services\" list are configured in the same area. Any branding change is redeployed to your routers automatically (≤ 45 s).",
+    "The logo shown on the portal is your establishment's own: set it in the Experience tab (\"Vouchers\" card) — the header banner, the \"Our Services\" list and the animated banner under the logo are configured in the same area. Any branding change is redeployed to your routers automatically (≤ 45 s).",
   "portal.journal": "Deployment log",
   "portal.journalEmpty": "No deployment recorded",
 };

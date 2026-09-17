@@ -672,6 +672,9 @@ func (p *PG) ensureSchema() error {
 		// N°137 — services de l'établissement du portail captif (JSON [{icon,label}]
 		// ≤ 6, section « Nos Services » du mode commercial).
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS portal_services TEXT NOT NULL DEFAULT ''`,
+		// N°138 — messages du bandeau animé sous le logo du portail captif
+		// (JSON ["msg",…] ≤ 5, effet Typed.js du login.html).
+		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS portal_ticker TEXT NOT NULL DEFAULT ''`,
 		// N°56 — clé publique du portail (analytics pré-auth) : générée
 		// une fois par compte côté Go (ensureSettings), simple TEXT.
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS portal_key TEXT NOT NULL DEFAULT ''`,

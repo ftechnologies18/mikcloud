@@ -249,3 +249,27 @@ func TestSigEmpty(t *testing.T) {
 		t.Errorf("Sig(nil) longueur = %d, attendu 16", len(s))
 	}
 }
+
+// TestLoginTemplateTicker — N°138 : le bandeau animé sous le logo est
+// templatisé (marqueur TICKER_JSON dans l'init Typed.js) et ne porte PLUS
+// les 3 messages codés en dur — ils vivent dans le repli serveur
+// (tickerJSON) ; le JS expose l'instance (window.mikTyped) pour le
+// pilotage live (bloc 10 de applyConfig).
+func TestLoginTemplateTicker(t *testing.T) {
+	body := RawFile("login.html")
+	if body == "" {
+		t.Fatal("login.html absent du template")
+	}
+	if !strings.Contains(body, "{{MIKCLOUD_TICKER_JSON}}") {
+		t.Fatal("marqueur {{MIKCLOUD_TICKER_JSON}} absent de login.html — les messages du bandeau ne sont plus templatisés")
+	}
+	if strings.Contains(body, "strings: ['Wifi haut débit !'") {
+		t.Fatal("login.html porte encore les messages codés en dur — ils doivent venir du marqueur (repli serveur)")
+	}
+	if !strings.Contains(body, "window.mikTyped") {
+		t.Fatal("l'exposition de l'instance Typed (window.mikTyped) absente de login.html — pas de pilotage live du bandeau")
+	}
+	if !strings.Contains(body, "mikTyped.reset()") {
+		t.Fatal("le rafraîchissement live de l'animation (reset()) absent de login.html")
+	}
+}

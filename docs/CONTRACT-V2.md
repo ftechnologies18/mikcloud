@@ -2215,6 +2215,49 @@ Migration boot idempotente : `settings.portal_style`, `portal_welcome`,
   injection vitrine (bienvenue, promos avec images R2, socials) ; commercial =
   retrait des injections et dé-masquage (réversible, idempotent).
 
+## N°138 — Bandeau animé sous le logo du portail piloté en console
+
+### Settings — `tenant.portalTicker` (JSON string, pattern N°55)
+`["msg",…]` ≤ 5 messages : texte brut 1-80 car. trimé (pas d'URL, pas de
+HTML — le portail tape le texte tel quel, Typed.js n'interprète rien). PUT
+/api/settings : champ plat `portalTicker` + repli imbriqué
+`tenant.portalTicker` (le plat prime), resérialisation serveur (trim,
+filtre des entrées vides, plafonds). Liste vide = retour aux 3 messages
+HISTORIQUES du template (« Wifi haut débit ! », « Disponible 24H/24 »,
+« Payez facilement par Wave ! » — messages WiFi génériques, PAS la carte de
+visite du site pilote : le repli reste neutre). Colonne
+`settings.portal_ticker` (TEXT NOT NULL DEFAULT '', ALTER IF NOT EXISTS).
+Défaut des comptes existants : VIDE (défaut neutre).
+
+### Marqueur `{{MIKCLOUD_TICKER_JSON}}`
+Dans login.html, init de Typed.js (`strings: {{MIKCLOUD_TICKER_JSON}},`) :
+le serveur substitue le tableau JSON des messages DU TENANT, ou les 3
+messages historiques sans configuration (`tickerJSON`, templatize.go —
+encoding/json échappe <, >, & : un message ne peut pas fermer le
+`<script>`, même garantie que configJSON). Config :
+`PortalConfig.Ticker []string` (JSON `portalTicker`, omitempty) dans le
+bloc inliné ET les endpoints live (buildPortalConfig,
+buildPortalConfigForSite — `portalTickerList` : JSON invalide en base =
+nil, plafond 5 et longueur 80 RE-VÉRIFIÉS au décodage, défense en
+profondeur). JS applyConfig (bloc 10, ES5 idempotent) : le fetch live
+compare une signature d'état (join) avant de poser `window.mikTyped.strings`
+puis `reset()` — l'animation repart proprement du 1er message ; undefined
+(config antérieure à N°138, ou liste vidée côté serveur — omitempty) =
+AUCUN changement (une liste vidée revient aux défauts au prochain
+re-déploiement). L'init expose `window.mikTyped` et garde `typeof` : un
+typed.umd.js absent ne casse pas le reste du bloc. SIG :
+`portalBrandingFingerprint` couvre `t.PortalTicker` (garde :
+TestEnsureHotspotFilesLockedTickerChange — messages posés → 1 commande
+hotspot_files filée ; sig à jour → 0).
+
+### Console
+Carte « Portail : messages du bandeau animé » (onglet Expérience, section
+Hotspot, après les services, avant l'hospitalité) : ≤ 5 lignes de texte
+(80 car.), ajout/suppression, PUT /api/settings corps défensif plat +
+tenant{…}. i18n FR/EN (`settings.ticker.*`) ; note branding de l'onglet
+Portail étendue au bandeau animé.
+
+
 ## N°137 — Services « Nos Services » du portail pilotés en console
 
 ### Settings — `tenant.portalServices` (JSON string, pattern N°55)

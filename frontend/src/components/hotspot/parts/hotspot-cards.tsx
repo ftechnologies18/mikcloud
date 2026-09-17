@@ -39,6 +39,7 @@ import {
   Images,
   Link as LinkIcon,
   Loader2,
+  Megaphone,
   MousePointerClick,
   Phone,
   Plus,
@@ -116,6 +117,10 @@ export function HotspotExperience({ settings }: { settings: AppSettings }) {
       {/* Services du portail captif (N°137) — section « Nos Services »
           pilotée par le gérant (≤ 6 lignes, icônes curées) */}
       <PortalServicesCard settings={settings} />
+
+      {/* Bandeau animé du portail captif (N°138) — les messages qui
+          défilent sous le logo pilotés par le gérant (≤ 5, texte brut) */}
+      <PortalTickerCard settings={settings} />
 
       {/* Mode hospitalité du portail captif (N°55) — vitrine de
           l'établissement (promos produits R2, bienvenue, réseaux
@@ -1086,6 +1091,108 @@ const PORTAL_SERVICE_LUCIDE: Record<string, LucideIcon> = {
   "fa-book": BookOpen,
   "fa-spa": Sparkles,
 };
+
+// Carte Bandeau animé du portail (N°138) — les messages qui défilent en
+// animation sous le logo du portail captif (effet machine à écrire Typed.js)
+// sont pilotés par le gérant : jusqu'à 5 messages de texte brut (80 car.).
+// Vide = les 3 messages par défaut du template. Validée/sérialisée côté
+// backend (≤ 5, 1-80 car. — cf. handlers_settings.go, champ portalTicker).
+function PortalTickerCard({ settings }: { settings: AppSettings }) {
+  const { t } = useI18n();
+  const queryClient = useQueryClient();
+  const [msgs, setMsgs] = useState<string[]>(() => {
+    try {
+      const parsed = JSON.parse(settings.tenant.portalTicker || "[]") as string[];
+      return Array.isArray(parsed) ? parsed.filter((m) => typeof m === "string" && m) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: () =>
+      api<AppSettings>("/api/settings", {
+        method: "PUT",
+        // Corps défensif (pattern PortalSlidesCard) : champ plat + forme
+        // imbriquée tenant{…} — le plat prime côté backend.
+        body: {
+          portalTicker: msgs,
+          tenant: { portalTicker: msgs },
+        },
+      }),
+    onSuccess: () => {
+      toast.success(t("settings.ticker.savedToast"));
+      void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return (
+    <Card className="gap-4 py-4 sm:py-6">
+      <CardHeader className="px-4 sm:px-6">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
+            <Megaphone className="size-4" />
+          </span>
+          {t("settings.ticker.card")}
+        </CardTitle>
+        <CardDescription>{t("settings.ticker.cardDesc")}</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-4 px-4 sm:px-6">
+        <div className="grid gap-2">
+          <div className="flex items-center justify-between">
+            <Label>{t("settings.ticker.list")}</Label>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={msgs.length >= 5}
+              onClick={() => setMsgs((list) => [...list, ""])}
+            >
+              <Plus className="size-4" />
+              {t("settings.ticker.add")}
+            </Button>
+          </div>
+          {msgs.length === 0 && (
+            <p className="text-xs text-muted-foreground">{t("settings.ticker.empty")}</p>
+          )}
+          {msgs.map((msg, idx) => (
+            <div key={idx} className="flex items-center gap-2">
+              <Input
+                className="h-9 min-w-0 flex-1"
+                maxLength={80}
+                placeholder={t("settings.ticker.name")}
+                value={msg}
+                onChange={(event) =>
+                  setMsgs((list) => list.map((it, i) => (i === idx ? event.target.value : it)))
+                }
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="text-destructive hover:text-destructive"
+                onClick={() => setMsgs((list) => list.filter((_, i) => i !== idx))}
+              >
+                <X className="size-4" />
+                <span className="sr-only">{t("settings.slides.remove")}</span>
+              </Button>
+            </div>
+          ))}
+        </div>
+        <p className="text-xs text-muted-foreground">{t("settings.ticker.hint")}</p>
+        <Button
+          type="button"
+          className="w-full sm:w-auto"
+          disabled={saveMutation.isPending}
+          onClick={() => saveMutation.mutate()}
+        >
+          {saveMutation.isPending ? t("common.saving") : t("common.save")}
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
 
 // Carte Portail hospitalité (N°55) — le gérant choisit le MODE d'affichage du
 // portail captif : « commercial » (grille tarifaire + Wave, défaut) ou

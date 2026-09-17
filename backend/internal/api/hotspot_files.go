@@ -109,6 +109,7 @@ func portalBrandingFingerprint(db *model.DB, router *model.Router) string {
 		t.PortalSlides,   // N°136 — slides du carrousel : servies dans la config, donc dans la sig
 		t.PortalServices, // N°137 — services « Nos Services » : servis dans la config, donc dans la sig
 		t.PortalTicker,   // N°138 — bandeau animé sous le logo : servi dans la config, donc dans la sig
+		t.PortalWhatsapp, // N°139 — support WhatsApp du footer : servi dans la config ET les marqueurs, donc dans la sig
 		t.PortalKey,
 		strconv.Itoa(t.LogRetentionDaysEffective()),
 		getEnv("APP_PUBLIC_URL"),

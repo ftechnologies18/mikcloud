@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"mikcloud/hotspot-api/internal/hotpage"
 	"mikcloud/hotspot-api/internal/model"
 )
 
@@ -50,6 +51,8 @@ type tenantPut struct {
 	PortalServices *[]portalServiceReq `json:"portalServices"`
 	// N°138 — repli nested des messages du bandeau animé (cf. req plat).
 	PortalTicker *[]string `json:"portalTicker"`
+	// N°139 — repli nested du numéro WhatsApp support (cf. req plat).
+	PortalWhatsapp *portalWhatsappReq `json:"portalWhatsapp"`
 	// N°65 — rétention du journal utilisateurs (repli nested du champ plat :
 	// 30/60/90 j, défaut 90).
 	LogRetentionDays *int `json:"logRetentionDays"`
@@ -79,6 +82,15 @@ type portalSocialReq struct {
 type portalServiceReq struct {
 	Icon  string `json:"icon"`
 	Label string `json:"label"`
+}
+
+// portalWhatsappReq — le numéro WhatsApp SUPPORT du portail captif (N°139) :
+// number au format international (chiffres seuls, 8-15 — espaces/+/-/()
+// tolérés en entrée puis retirés) + label d'affichage optionnel (≤ 30 car.).
+// Objet vide (number vide) = numéro retiré → retour au support MikCloud.
+type portalWhatsappReq struct {
+	Number string `json:"number"`
+	Label  string `json:"label"`
 }
 
 // portalServiceIcons — N°137 — whitelist des icônes Font Awesome 6 free
@@ -131,6 +143,9 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		// N°138 — messages du bandeau animé sous le logo du portail
 		// captif (nil = inchangé ; liste vide = messages par défaut).
 		PortalTicker *[]string `json:"portalTicker"`
+		// N°139 — numéro WhatsApp SUPPORT du portail captif (nil =
+		// inchangé ; number vide = retour au support MikCloud).
+		PortalWhatsapp *portalWhatsappReq `json:"portalWhatsapp"`
 		// N°65 — rétention du journal utilisateurs (30/60/90 j ; nil = inchangé,
 		// défaut effectif 90).
 		LogRetentionDays *int `json:"logRetentionDays"`
@@ -160,6 +175,8 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	portalServices := req.PortalServices
 	// N°138 — même résolution pour les messages du bandeau animé.
 	portalTicker := req.PortalTicker
+	// N°139 — même résolution pour le numéro WhatsApp support.
+	portalWhatsapp := req.PortalWhatsapp
 	// N°65 — même résolution plat > imbriqué pour la rétention du journal.
 	logRetentionDays := req.LogRetentionDays
 	if req.Tenant != nil {
@@ -216,6 +233,9 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		}
 		if portalTicker == nil {
 			portalTicker = req.Tenant.PortalTicker
+		}
+		if portalWhatsapp == nil {
+			portalWhatsapp = req.Tenant.PortalWhatsapp
 		}
 		if logRetentionDays == nil {
 			logRetentionDays = req.Tenant.LogRetentionDays
@@ -491,6 +511,36 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 			tickerJSON = string(b)
 		} // liste vidée = messages retirés → retour aux 3 défauts du template
 	}
+	// N°139 — validation du numéro WhatsApp SUPPORT : format international
+	// en chiffres seuls après nettoyage (espaces, +, -, parenthèses tolérés
+	// puis retirés), 8-15 chiffres ; label d'affichage optionnel ≤ 30 car.
+	// Number vide = numéro retiré → retour au support MikCloud (repli). Le
+	// JSON final est resérialisé côté serveur (même contrat que les promos).
+	var whatsappJSON string
+	if portalWhatsapp != nil {
+		num := hotpage.WhatsappNumber(portalWhatsapp.Number)
+		if portalWhatsapp.Number != "" && num == "" {
+			writeErr(w, http.StatusBadRequest, "Numéro WhatsApp invalide : 8 à 15 chiffres en format international requis (ex. 2250708091012)")
+			return
+		}
+		label := strings.TrimSpace(portalWhatsapp.Label)
+		if len(label) > 30 {
+			writeErr(w, http.StatusBadRequest, "Libellé WhatsApp trop long (30 caractères max)")
+			return
+		}
+		if num != "" {
+			type wa struct {
+				Number string `json:"number"`
+				Label  string `json:"label,omitempty"`
+			}
+			b, err := json.Marshal(wa{Number: num, Label: label})
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, "Numéro WhatsApp invalide : "+err.Error())
+				return
+			}
+			whatsappJSON = string(b)
+		} // number vide = numéro retiré → repli support MikCloud
+	}
 	if expiryAfterDays != nil && (*expiryAfterDays < 0 || *expiryAfterDays > 365) {
 		writeErr(w, http.StatusBadRequest, "Le nombre de jours doit être compris entre 0 et 365")
 		return
@@ -559,6 +609,12 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	// retour aux 3 messages par défaut du template).
 	if portalTicker != nil {
 		settings.Tenant.PortalTicker = tickerJSON
+	}
+	// N°139 — le numéro WhatsApp support arrive déjà sérialisé/validé
+	// ci-dessus (nil = inchangé ; number vide = retour au support
+	// MikCloud — repli historique du template).
+	if portalWhatsapp != nil {
+		settings.Tenant.PortalWhatsapp = whatsappJSON
 	}
 	if expiryMode != nil {
 		settings.Tenant.ExpiryPolicyMode = *expiryMode

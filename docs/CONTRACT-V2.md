@@ -2215,6 +2215,47 @@ Migration boot idempotente : `settings.portal_style`, `portal_welcome`,
   injection vitrine (bienvenue, promos avec images R2, socials) ; commercial =
   retrait des injections et dé-masquage (réversible, idempotent).
 
+## N°139 — Numéro WhatsApp support du portail piloté en console
+
+### Settings — `tenant.portalWhatsapp` (JSON string, pattern N°55)
+`{"number":"…","label":"…"}` : `number` au format international en CHIFFRES
+seuls, 8-15 (espaces, +, -, parenthèses tolérés en entrée puis retirés —
+`hotpage.WhatsappNumber`, partagé validation/décodage/rendu) ; `label`
+d'affichage optionnel 1-30 car. trimé (défaut = le number brut). PUT
+/api/settings : champ plat `portalWhatsapp` + repli imbriqué
+`tenant.portalWhatsapp` (le plat prime), resérialisation serveur. Number
+vide = numéro RETIRÉ → retour au REPLI support MikCloud (2250150491807,
+affiché « 01 5049 1807 » — le support plateforme, même légitimité que le
+crédit FTCI du footer : PAS la carte de visite du site pilote). Colonne
+`settings.portal_whatsapp` (TEXT NOT NULL DEFAULT '', ALTER IF NOT EXISTS).
+Défaut des comptes existants : VIDE (repli).
+
+### Marqueurs `{{MIKCLOUD_WHATSAPP_HREF}}` / `{{MIKCLOUD_WHATSAPP_LABEL}}`
+Sur les TROIS pages qui portent le lien support — login.html (footer,
+ancre `#mikcloud-wa-link` + span `#mikcloud-wa-label`), logout.html et
+error.html (« Besoin d'aide ? ») : le serveur substitue l'URL wa.me et le
+libellé DU TENANT, ou le repli support MikCloud. Sécurité : le href ne
+reçoit QUE des chiffres revalidés (aucune sortie d'attribut possible) ;
+le label est échappé HTML strict. Config : `PortalConfig.Whatsapp
+*PortalWhatsapp` (JSON `portalWhatsapp`, omitempty) dans le bloc inliné ET
+les endpoints live (`portalWhatsappInfo` : JSON invalide = nil, format
+revalidé — défense en profondeur). JS applyConfig (bloc 11, ES5
+idempotent) : le fetch live revalide les chiffres puis pose href +
+textContent — undefined (config antérieure à N°139, ou numéro vidé —
+omitempty) = AUCUN changement (la vidange revient au repli au prochain
+re-déploiement). logout/error n'ont pas de fetch live : leur numéro est
+figé au déploiement. SIG : `portalBrandingFingerprint` couvre
+`t.PortalWhatsapp` (garde : TestEnsureHotspotFilesLockedWhatsappChange —
+numéro posé → 1 commande hotspot_files filée ; sig à jour → 0) — c'est la
+SEULE voie de mise à jour des pages figées.
+
+### Console
+Carte « Portail : numéro WhatsApp support » (onglet Expérience, section
+Hotspot, après le bandeau animé, avant l'hospitalité) : numéro
+international + libellé optionnel + aperçu du lien servi, PUT /api/settings
+corps défensif plat + tenant{…}. i18n FR/EN (`settings.wa.*`).
+
+
 ## N°138 — Bandeau animé sous le logo du portail piloté en console
 
 ### Settings — `tenant.portalTicker` (JSON string, pattern N°55)

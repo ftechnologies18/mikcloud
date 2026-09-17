@@ -675,6 +675,9 @@ func (p *PG) ensureSchema() error {
 		// N°138 — messages du bandeau animé sous le logo du portail captif
 		// (JSON ["msg",…] ≤ 5, effet Typed.js du login.html).
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS portal_ticker TEXT NOT NULL DEFAULT ''`,
+		// N°139 — numéro WhatsApp SUPPORT du portail captif (JSON
+		// {"number","label"} — lien wa.me du footer login/logout/error).
+		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS portal_whatsapp TEXT NOT NULL DEFAULT ''`,
 		// N°56 — clé publique du portail (analytics pré-auth) : générée
 		// une fois par compte côté Go (ensureSettings), simple TEXT.
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS portal_key TEXT NOT NULL DEFAULT ''`,

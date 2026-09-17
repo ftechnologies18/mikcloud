@@ -48,6 +48,19 @@
 //	                        messages WiFi génériques). Inséré dans un
 //	                        contexte JS (strings: {{…}}) : encoding/json
 //	                        échappe <, >, & — pas de sortie de script.
+//	{{MIKCLOUD_WHATSAPP_HREF}} — l'URL wa.me du lien support WhatsApp du
+//	                        portail (N°139) : https://wa.me/{number} DU
+//	                        TENANT (chiffres seuls, 8-15, revalidés au
+//	                        rendu), sinon le numéro du support MikCloud
+//	                        (repli historique — le support plateforme,
+//	                        comme le crédit FTCI du footer).
+//	{{MIKCLOUD_WHATSAPP_LABEL}} — le libellé affiché du lien support
+//	                        WhatsApp (N°139) : le label DU TENANT (≤ 30
+//	                        car., échappé HTML strict) ou son number
+//	                        brut, sinon « 01 5049 1807 » (repli).
+//	                        Posé dans login.html (sous l'icône, avec le
+//	                        span #mikcloud-wa-label pour le pilotage
+//	                        live), logout.html et error.html.
 //
 // Sécurité : les valeurs sont ÉCHAPPÉES pour leur contexte d'insertion. Pour le
 // bloc JSON, on utilise encoding/json (échappement strict : guillemets,
@@ -139,6 +152,12 @@ type PortalConfig struct {
 	// du template (messages WiFi génériques, pas la carte de visite du
 	// site pilote : « Wifi haut débit ! », etc.).
 	Ticker []string `json:"portalTicker,omitempty"`
+	// N°139 — numéro WhatsApp SUPPORT du portail : ce que les invités
+	// cliquent dans le footer (login/logout/error) pour joindre le
+	// gérant. Number en chiffres seuls (8-15, revalidé au rendu),
+	// Label d'affichage optionnel (défaut = le number brut). nil/absent
+	// = le numéro du support MikCloud (repli historique).
+	Whatsapp *PortalWhatsapp `json:"portalWhatsapp,omitempty"`
 	// N°56 — clé publique du portail (analytics) : résout le compte pour
 	// POST /api/portal/track sans authentification (pré-auth du hotspot).
 	// NON secret par design (visible de chaque invité dans le bloc config) :
@@ -233,6 +252,8 @@ func Personalize(content string, cfg PortalConfig) string {
 		"{{MIKCLOUD_SERVICES_ATTR}}", servicesAttr(cfg),
 		"{{MIKCLOUD_SERVICES_BLOCK}}", servicesBlock(cfg),
 		"{{MIKCLOUD_TICKER_JSON}}", tickerJSON(cfg),
+		"{{MIKCLOUD_WHATSAPP_HREF}}", whatsappHref(cfg),
+		"{{MIKCLOUD_WHATSAPP_LABEL}}", whatsappLabel(cfg),
 		"{{MIKCLOUD_CONFIG_JSON}}", configJSON(cfg),
 	)
 	return repl.Replace(content)
@@ -306,6 +327,76 @@ func tickerJSON(cfg PortalConfig) string {
 		return `["Wifi haut débit !","Disponible 24H/24","Payez facilement par Wave !"]`
 	}
 	return string(b)
+}
+
+// PortalWhatsapp — le numéro WhatsApp SUPPORT du compte (N°139) : ce que
+// les invités du portail cliquent pour joindre le gérant. Number au format
+// international SANS + ni espaces (chiffres seuls, 8-15 — revalidé au
+// rendu par WhatsappNumber) ; Label optionnel affiché à l'écran (défaut =
+// le number brut).
+type PortalWhatsapp struct {
+	Number string `json:"number"`
+	Label  string `json:"label,omitempty"`
+}
+
+// Repli historique du template — le support de la PLATEFORME MikCloud :
+// tant qu'un compte n'a pas posé son numéro, le lien du portail ouvre le
+// support MikCloud (même légitimité que le crédit « © Freelance
+// Technologies » du footer — ce n'est PAS la carte de visite du site
+// pilote, contrairement au logo chassé au N°135).
+const (
+	whatsappFallbackNumber = "2250150491807"
+	whatsappFallbackLabel  = "01 5049 1807"
+)
+
+// WhatsappNumber — les chiffres du numéro passé (espaces, +, - et
+// parenthèses tolérés puis retirés), vidé si la longueur sort de [8, 15].
+// Défense en profondeur : la validation console/API a déjà borné le format,
+// mais le rendu ne doit JAMAIS produire une URL wa.me cassée — un JSON
+// hérité d'un appel API direct ne peut pas passer au travers (même
+// discipline que portalSlidesList/portalTickerList côté api).
+func WhatsappNumber(n string) string {
+	var b strings.Builder
+	for _, r := range n {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	digits := b.String()
+	if len(digits) < 8 || len(digits) > 15 {
+		return ""
+	}
+	return digits
+}
+
+// whatsappHref — N°139 — l'URL wa.me du lien support : https://wa.me/{number}
+// DU TENANT quand il est bien formé, sinon le numéro du support MikCloud
+// (repli historique). Le number est revalidé (chiffres seuls 8-15) : seuls
+// des chiffres rejoignent l'attribut href — aucun caractère ne peut sortir
+// du contexte attribut HTML.
+func whatsappHref(cfg PortalConfig) string {
+	if cfg.Whatsapp != nil {
+		if d := WhatsappNumber(cfg.Whatsapp.Number); d != "" {
+			return "https://wa.me/" + d
+		}
+	}
+	return "https://wa.me/" + whatsappFallbackNumber
+}
+
+// whatsappLabel — N°139 — le libellé affiché du lien support : le label DU
+// TENANT (≤ 30 car., trimé — échappement HTML STRICT : ni < ni > ni " ne
+// peuvent sortir du texte du lien), sinon son number brut, sinon « 01 5049
+// 1807 » (repli historique du support MikCloud).
+func whatsappLabel(cfg PortalConfig) string {
+	if cfg.Whatsapp != nil {
+		if d := WhatsappNumber(cfg.Whatsapp.Number); d != "" {
+			if l := strings.TrimSpace(cfg.Whatsapp.Label); l != "" {
+				return html.EscapeString(l)
+			}
+			return d
+		}
+	}
+	return whatsappFallbackLabel
 }
 
 // tenantInitial — l'initiale d'affichage du tenant : première LETTRE

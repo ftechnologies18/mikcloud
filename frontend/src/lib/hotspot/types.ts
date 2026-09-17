@@ -1159,6 +1159,12 @@ export interface AppSettings {
      * (effet Typed.js) — JSON string ["msg",…] ≤ 5, 1-80 car. chacun.
      * Vide = les 3 messages par défaut du template. */
     portalTicker?: string;
+    /** N°139 : numéro WhatsApp SUPPORT du portail captif — JSON string
+     * {"number","label"} : number au format international sans + ni espaces
+     * (8-15 chiffres, ex. 2250708091012), label d'affichage optionnel ≤ 30 car.
+     * (défaut = le number brut). Vide = le numéro du support MikCloud
+     * (repli historique — le support plateforme). */
+    portalWhatsapp?: string;
     /** N°56 : clé publique du portail (analytics pré-auth) — 16 hex, générée
      * côté serveur. Non secrète : elle n'ouvre aucun droit de lecture. */
     portalKey?: string;

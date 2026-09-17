@@ -273,3 +273,31 @@ func TestLoginTemplateTicker(t *testing.T) {
 		t.Fatal("le rafraîchissement live de l'animation (reset()) absent de login.html")
 	}
 }
+
+// TestTemplatesWhatsapp — N°139 : le lien support WhatsApp est templatisé
+// (marqueurs WHATSAPP_HREF/LABEL) sur les TROIS pages qui le portent
+// (login, logout, error) et ne porte PLUS le numéro codé en dur — il vit
+// dans le repli serveur (whatsappHref/whatsappLabel) ; le login expose
+// l'ancre + le span pour le pilotage live (bloc 11 de applyConfig).
+func TestTemplatesWhatsapp(t *testing.T) {
+	for _, page := range []string{"login.html", "logout.html", "error.html"} {
+		body := RawFile(page)
+		if body == "" {
+			t.Fatalf("%s absent du template", page)
+		}
+		if !strings.Contains(body, "{{MIKCLOUD_WHATSAPP_HREF}}") || !strings.Contains(body, "{{MIKCLOUD_WHATSAPP_LABEL}}") {
+			t.Fatalf("%s : marqueurs {{MIKCLOUD_WHATSAPP_*}} absents — le numéro support n'est plus templatisé", page)
+		}
+		if strings.Contains(body, "wa.me/2250150491807") || strings.Contains(body, "01 5049 1807") {
+			t.Fatalf("%s : porte encore le numéro support codé en dur — il doit venir des marqueurs (repli serveur)", page)
+		}
+	}
+	// Le login porte l'infrastructure du pilotage live (bloc 11).
+	login := RawFile("login.html")
+	if !strings.Contains(login, `id="mikcloud-wa-link"`) || !strings.Contains(login, `id="mikcloud-wa-label"`) {
+		t.Fatal("l'ancre/span du pilotage live WhatsApp absents de login.html (bloc 11 sans cible)")
+	}
+	if !strings.Contains(login, "cfg.portalWhatsapp") {
+		t.Fatal("le bloc 11 de applyConfig (cfg.portalWhatsapp) absent de login.html")
+	}
+}

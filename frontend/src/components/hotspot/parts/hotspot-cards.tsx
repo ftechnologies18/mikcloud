@@ -40,6 +40,7 @@ import {
   Link as LinkIcon,
   Loader2,
   Megaphone,
+  MessageCircle,
   MousePointerClick,
   Phone,
   Plus,
@@ -121,6 +122,11 @@ export function HotspotExperience({ settings }: { settings: AppSettings }) {
       {/* Bandeau animé du portail captif (N°138) — les messages qui
           défilent sous le logo pilotés par le gérant (≤ 5, texte brut) */}
       <PortalTickerCard settings={settings} />
+
+      {/* Support WhatsApp du portail captif (N°139) — le numéro que les
+          invités cliquent pour joindre le gérant (footer login/logout/error,
+          repli : support MikCloud) */}
+      <PortalWhatsappCard settings={settings} />
 
       {/* Mode hospitalité du portail captif (N°55) — vitrine de
           l'établissement (promos produits R2, bienvenue, réseaux
@@ -1181,6 +1187,109 @@ function PortalTickerCard({ settings }: { settings: AppSettings }) {
           ))}
         </div>
         <p className="text-xs text-muted-foreground">{t("settings.ticker.hint")}</p>
+        <Button
+          type="button"
+          className="w-full sm:w-auto"
+          disabled={saveMutation.isPending}
+          onClick={() => saveMutation.mutate()}
+        >
+          {saveMutation.isPending ? t("common.saving") : t("common.save")}
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+// Carte Support WhatsApp du portail (N°139) — le numéro que les invités
+// cliquent dans le footer du portail (login, déconnexion, erreur) pour
+// joindre le gérant : numéro international en chiffres seuls (8-15) +
+// libellé d'affichage optionnel (≤ 30 car.). Vide = le numéro du support
+// MikCloud (repli historique — le support plateforme). Validé/sérialisé
+// côté backend (cf. handlers_settings.go, champ portalWhatsapp).
+function PortalWhatsappCard({ settings }: { settings: AppSettings }) {
+  const { t } = useI18n();
+  const queryClient = useQueryClient();
+  const [number, setNumber] = useState(() => {
+    try {
+      const parsed = JSON.parse(settings.tenant.portalWhatsapp || "{}") as { number?: unknown };
+      return typeof parsed.number === "string" ? parsed.number : "";
+    } catch {
+      return "";
+    }
+  });
+  const [label, setLabel] = useState(() => {
+    try {
+      const parsed = JSON.parse(settings.tenant.portalWhatsapp || "{}") as { label?: unknown };
+      return typeof parsed.label === "string" ? parsed.label : "";
+    } catch {
+      return "";
+    }
+  });
+
+  // Aperçu du lien réellement servi sur le portail (chiffres seuls —
+  // l'affichage suit la même normalisation que le serveur).
+  const digits = number.replace(/[^0-9]/g, "");
+  const preview = digits ? `https://wa.me/${digits}` : "https://wa.me/2250150491807";
+
+  const saveMutation = useMutation({
+    mutationFn: () =>
+      api<AppSettings>("/api/settings", {
+        method: "PUT",
+        // Corps défensif (pattern PortalTickerCard) : champ plat + forme
+        // imbriquée tenant{…} — le plat prime côté backend.
+        body: {
+          portalWhatsapp: { number, label },
+          tenant: { portalWhatsapp: { number, label } },
+        },
+      }),
+    onSuccess: () => {
+      toast.success(t("settings.wa.savedToast"));
+      void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return (
+    <Card className="gap-4 py-4 sm:py-6">
+      <CardHeader className="px-4 sm:px-6">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
+            <MessageCircle className="size-4" />
+          </span>
+          {t("settings.wa.card")}
+        </CardTitle>
+        <CardDescription>{t("settings.wa.cardDesc")}</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-4 px-4 sm:px-6">
+        <div className="grid gap-2">
+          <Label htmlFor="wa-number">{t("settings.wa.number")}</Label>
+          <Input
+            id="wa-number"
+            className="h-9"
+            type="tel"
+            inputMode="tel"
+            autoComplete="off"
+            maxLength={20}
+            placeholder={t("settings.wa.numberPh")}
+            value={number}
+            onChange={(event) => setNumber(event.target.value)}
+          />
+          <Label htmlFor="wa-label" className="mt-2">
+            {t("settings.wa.label")}
+          </Label>
+          <Input
+            id="wa-label"
+            className="h-9"
+            maxLength={30}
+            placeholder={t("settings.wa.labelPh")}
+            value={label}
+            onChange={(event) => setLabel(event.target.value)}
+          />
+          <p className="mt-1 break-all font-mono text-xs text-muted-foreground" data-testid="wa-preview">
+            {t("settings.wa.preview")} : {preview}
+          </p>
+        </div>
+        <p className="text-xs text-muted-foreground">{t("settings.wa.hint")}</p>
         <Button
           type="button"
           className="w-full sm:w-auto"

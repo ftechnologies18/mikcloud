@@ -72,7 +72,7 @@ Hotspot Page/
 | Logo | `{{MIKCLOUD_LOGO_BLOCK}}` — img du logo DU CLIENT (`logoUrl` console) ou repli initiale du tenant (N°135 : `img/logo.png` retiré — jamais le logo d'un autre client) |
 | Services « Nos Services » | `{{MIKCLOUD_SERVICES_ATTR}}` + `{{MIKCLOUD_SERVICES_BLOCK}}` — services DU TENANT (`portalServices` console, ≤ 6, icônes FA curées) ou section masquée (N°137 : les 4 services historiques du pilote sont chassés du template) |
 | Messages animés | `{{MIKCLOUD_TICKER_JSON}}` — messages DU TENANT (`portalTicker` console, ≤ 5, 80 car.) ou repli des 3 messages historiques (N°138 : le serveur substitue le tableau dans l'init Typed.js) |
-| Support WhatsApp / pied de page | lien `wa.me` et `.ftci-link` dans login.html |
+| Support WhatsApp / pied de page | `{{MIKCLOUD_WHATSAPP_HREF}}` + `{{MIKCLOUD_WHATSAPP_LABEL}}` — numéro DU TENANT (`portalWhatsapp` console, chiffres 8-15 + libellé ≤ 30 car.) ou repli support MikCloud, posés dans login/logout/error (N°139) ; le crédit `.ftci-link` reste serve (éditeur) |
 | Messages d'erreur | `errors.txt` (syntaxe `$(error-orig)` etc.) |
 
 ## Historique du nettoyage (N°34)

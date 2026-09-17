@@ -236,6 +236,31 @@ func portalTickerList(t model.Tenant) []string {
 	return out
 }
 
+// portalWhatsappInfo — décode le numéro WhatsApp SUPPORT du tenant (N°139,
+// lien du footer login/logout/error). Persisté en JSON
+// (model.Tenant.PortalWhatsapp) : un JSON invalide, un champ vide ou un
+// numéro mal formé donnent nil — le portail garde le numéro du support
+// MikCloud (repli historique, jamais cassé). Le format est revalidé au
+// décodage via hotpage.WhatsappNumber (défense en profondeur, même
+// discipline que portalTickerList).
+func portalWhatsappInfo(t model.Tenant) *hotpage.PortalWhatsapp {
+	if t.PortalWhatsapp == "" {
+		return nil
+	}
+	var raw struct {
+		Number string `json:"number"`
+		Label  string `json:"label"`
+	}
+	if json.Unmarshal([]byte(t.PortalWhatsapp), &raw) != nil {
+		return nil
+	}
+	d := hotpage.WhatsappNumber(raw.Number)
+	if d == "" {
+		return nil
+	}
+	return &hotpage.PortalWhatsapp{Number: d, Label: strings.TrimSpace(raw.Label)}
+}
+
 // buildPortalConfig — construit le PortalConfig pour le compte propriétaire
 // du routeur, à partir du store. À appeler SOUS VERROU (lit db.SettingsByAccount,
 // db.WifiSites, db.JoinLinks, db.Profiles).
@@ -273,6 +298,7 @@ func buildPortalConfig(db *model.DB, router *model.Router, r *http.Request) hotp
 	cfg.PortalKey = settings.Tenant.PortalKey                                            // N°56 — analytics pré-auth
 	cfg.Services = portalServicesList(settings.Tenant)                                   // N°137 — section « Nos Services »
 	cfg.Ticker = portalTickerList(settings.Tenant)                                       // N°138 — bandeau animé sous le logo
+	cfg.Whatsapp = portalWhatsappInfo(settings.Tenant)                                   // N°139 — support WhatsApp du footer
 	// WifiSlug — 1er site WiFi actif lié à ce routeur.
 	for i := range db.WifiSites {
 		s := &db.WifiSites[i]
@@ -394,6 +420,7 @@ func buildPortalConfigForSite(db *model.DB, site *model.WifiSite, router *model.
 	cfg.PortalKey = settings.Tenant.PortalKey                                            // N°56 — analytics pré-auth
 	cfg.Services = portalServicesList(settings.Tenant)                                   // N°137 — section « Nos Services »
 	cfg.Ticker = portalTickerList(settings.Tenant)                                       // N°138 — bandeau animé sous le logo
+	cfg.Whatsapp = portalWhatsappInfo(settings.Tenant)                                   // N°139 — support WhatsApp du footer
 	if origin := publicFrontendURL(r); origin != "" {
 		cfg.WifiURL = origin + "/wifi/" + site.Slug
 	}

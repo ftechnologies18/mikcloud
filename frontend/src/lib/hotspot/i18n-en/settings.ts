@@ -164,6 +164,18 @@ export const enSettings: Record<string, string> = {
   "settings.ticker.hint":
     "Each message (80 characters max) takes turns under the logo. Any change is redeployed to your routers automatically (≤ 45 s) and refreshed live on already-open portals.",
   "settings.ticker.savedToast": "Banner messages saved",
+  // — N°139: support WhatsApp number of the captive portal —
+  "settings.wa.card": "Portal: support WhatsApp number",
+  "settings.wa.cardDesc":
+    "The number guests tap on the portal (login, logout, error) to reach you — your own, not the MikCloud support line.",
+  "settings.wa.number": "WhatsApp number (international format)",
+  "settings.wa.numberPh": "2250708091012",
+  "settings.wa.label": "Display label (optional)",
+  "settings.wa.labelPh": "07 08 09 10 12",
+  "settings.wa.preview": "Link served on the portal",
+  "settings.wa.hint":
+    "International digits only, no + or spaces (e.g. 2250708091012 for Côte d'Ivoire). Spaces and + are stripped automatically. Leave empty to show the MikCloud support line (01 5049 1807). Any change is redeployed to your routers automatically (≤ 45 s) and refreshed live on already-open portals.",
+  "settings.wa.savedToast": "WhatsApp number saved",
   "settings.hosp.savedToast": "Portal showcase saved",
   "settings.hosp.imageFail": "Image upload failed",
   "settings.slides.card": "Portal: carousel images",

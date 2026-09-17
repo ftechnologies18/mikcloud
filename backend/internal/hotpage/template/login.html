@@ -675,8 +675,16 @@
                     </div>
 
                     <div class="text-center mt-auto wa-link-container">
-                        <a href="https://wa.me/2250150491807" target="_blank" rel="noopener" class="btn-wa-small">
-                            <i class="fab fa-whatsapp"></i> Support : 01 5049 1807
+                        <!-- N°139 — le lien support WhatsApp du portail est piloté
+                             par la console (carte Support WhatsApp) : le cloud
+                             rend l'URL wa.me et le libellé DU TENANT au moment
+                             du SERVE (marqueurs WHATSAPP_HREF/LABEL) ; repli :
+                             le numéro du support MikCloud (le support
+                             plateforme, même légitimité que le crédit
+                             FTCI juste en dessous). Le fetch live (applyConfig,
+                             bloc 11) met le lien à jour sans re-déploiement. -->
+                        <a href="{{MIKCLOUD_WHATSAPP_HREF}}" target="_blank" rel="noopener" class="btn-wa-small" id="mikcloud-wa-link">
+                            <i class="fab fa-whatsapp"></i> Support : <span id="mikcloud-wa-label">{{MIKCLOUD_WHATSAPP_LABEL}}</span>
                         </a>
                         <div class="mt-2">
                             <small><a href="https://ftci.fr/" target="_blank" rel="noopener" class="ftci-link">&copy; 2026 Freelance Technologies (FTCI)</a></small>
@@ -1050,6 +1058,33 @@
                         if (tickerSig !== curTickerSig) {
                             window.mikTyped.strings = cleanMsgs;
                             window.mikTyped.reset();
+                        }
+                    }
+                }
+
+                // 11. Support WhatsApp du footer (N°139) : le lien que les
+                // invités cliquent pour joindre le gérant est piloté par la
+                // console (numéro international + libellé d'affichage). Le
+                // déploiement a déjà posé le numéro du tenant (marqueurs
+                // WHATSAPP_HREF/LABEL) ou le repli support MikCloud ; le fetch
+                // live peut apporter un numéro plus frais — href et libellé
+                // sont remis à jour ici (textContent : aucun HTML interprété).
+                // undefined (config antérieure à N°139, ou numéro vidé côté
+                // serveur — omitempty) = AUCUN changement : un numéro vidé
+                // revient au repli au prochain re-déploiement (l'empreinte
+                // branding couvre PortalWhatsapp — même promesse que le
+                // ticker N°138). Côté numéro, on ne garde que les chiffres :
+                // https://wa.me/ exige le format international nu. Compat
+                // vieux WebViews : var, pas de flèches.
+                var waLink = document.getElementById('mikcloud-wa-link');
+                if (waLink && cfg.portalWhatsapp && cfg.portalWhatsapp.number) {
+                    var waDigits = String(cfg.portalWhatsapp.number).replace(/[^0-9]/g, '');
+                    if (waDigits.length >= 8 && waDigits.length <= 15) {
+                        waLink.href = 'https://wa.me/' + waDigits;
+                        var waLabel = document.getElementById('mikcloud-wa-label');
+                        if (waLabel) {
+                            var waTxt = (cfg.portalWhatsapp.label ? String(cfg.portalWhatsapp.label) : '').replace(/^\s+|\s+$/g, '');
+                            waLabel.textContent = waTxt || waDigits;
                         }
                     }
                 }

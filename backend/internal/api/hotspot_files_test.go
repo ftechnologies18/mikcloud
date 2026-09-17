@@ -359,3 +359,41 @@ func TestEnsureHotspotFilesLockedTickerChange(t *testing.T) {
 		t.Fatalf("changement de messages du bandeau : 1 commande de re-déploiement attendue, %d trouvée(s)", n)
 	}
 }
+
+// TestEnsureHotspotFilesLockedWhatsappChange — N°139 : un changement du
+// numéro WhatsApp support (console) change la sig → la commande hotspot_files
+// est re-filée au check-in suivant (l'empreinte branding couvre
+// PortalWhatsapp — même promesse auto-re-déploiement que le logo N°135 : le
+// numéro est FIGÉ dans les pages déployées, seul un re-déploiement le met à
+// jour sur logout/error).
+func TestEnsureHotspotFilesLockedWhatsappChange(t *testing.T) {
+	st, _ := newTestServerWithStore(t)
+	st.Lock()
+	db := st.Data()
+	db.Accounts = append(db.Accounts, model.Account{ID: "acc-wa", Name: "Cyber WhatsApp"})
+	db.Routers = append(db.Routers, model.Router{
+		ID:             "r-wa",
+		AccountID:      "acc-wa",
+		Name:           "WaRouter",
+		Mode:           "agent",
+		Status:         "online",
+		AgentTokenHash: agent.HashToken("tok-wafiles"),
+	})
+	router := &db.Routers[len(db.Routers)-1]
+	router.HotspotFilesSig = hotspotFilesSig(hotpage.DefaultFiles(), db, router)
+	ensureHotspotFilesLocked(db, router)
+	if n := countHotspotCmds(db, router.ID); n != 0 {
+		st.Unlock()
+		t.Fatalf("sig à jour : 0 commande attendue, %d trouvée(s)", n)
+	}
+	// Le gérant pose SON numéro WhatsApp support en console.
+	s := db.SettingsByAccount["acc-wa"]
+	s.Tenant.PortalWhatsapp = `{"number":"2250708091012","label":"07 08 09 10 12"}`
+	db.SettingsByAccount["acc-wa"] = s
+	ensureHotspotFilesLocked(db, router)
+	n := countHotspotCmds(db, router.ID)
+	st.Unlock()
+	if n != 1 {
+		t.Fatalf("changement de numéro WhatsApp : 1 commande de re-déploiement attendue, %d trouvée(s)", n)
+	}
+}

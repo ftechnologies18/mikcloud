@@ -174,6 +174,18 @@ export const frSettings: Record<string, string> = {
   "settings.ticker.hint":
     "Chaque message (80 caractères max) s'affiche à tour de rôle sous le logo. Tout changement est re-déployé automatiquement sur vos routeurs (≤ 45 s) et rafraîchi à la volée sur les portails déjà ouverts.",
   "settings.ticker.savedToast": "Messages du bandeau enregistrés",
+  // — N°139 : numéro WhatsApp support du portail captif —
+  "settings.wa.card": "Portail : numéro WhatsApp support",
+  "settings.wa.cardDesc":
+    "Le numéro que vos invités cliquent sur le portail (connexion, déconnexion, erreur) pour vous joindre — le vôtre, pas celui du support MikCloud.",
+  "settings.wa.number": "Numéro WhatsApp (format international)",
+  "settings.wa.numberPh": "2250708091012",
+  "settings.wa.label": "Libellé affiché (optionnel)",
+  "settings.wa.labelPh": "07 08 09 10 12",
+  "settings.wa.preview": "Lien servi sur le portail",
+  "settings.wa.hint":
+    "Format international en chiffres, sans + ni espaces (ex. 2250708091012 pour la Côte d'Ivoire). Espaces et + sont retirés automatiquement. Laisser vide pour afficher le support MikCloud (01 5049 1807). Tout changement est re-déployé automatiquement sur vos routeurs (≤ 45 s) et rafraîchi à la volée sur les portails déjà ouverts.",
+  "settings.wa.savedToast": "Numéro WhatsApp enregistré",
   "settings.autoImport.title": "Import automatique des utilisateurs hors MikCloud",
   "settings.autoImport.desc": "Comportement de la synchronisation agent pour les comptes créés directement sur les routeurs.",
   "settings.autoImport.switchLabel": "Importer automatiquement les utilisateurs inconnus",

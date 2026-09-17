@@ -64,6 +64,14 @@ type Tenant struct {
 	// rendu). Vide = les 3 messages historiques du template (messages
 	// WiFi génériques — « Wifi haut débit ! », etc.).
 	PortalTicker string `json:"portalTicker,omitempty"`
+	// N°139 — numéro WhatsApp SUPPORT du portail captif : JSON
+	// {"number","label"} — number au format international sans + ni
+	// espaces (8-15 chiffres, ex. 2250708091012), label optionnel
+	// affiché à l'écran (≤ 30 car. ; défaut = le number brut). Vide =
+	// le numéro du support MikCloud (repli historique : le support
+	// plateforme, comme le crédit FTCI du footer — PAS la carte de
+	// visite du site pilote).
+	PortalWhatsapp string `json:"portalWhatsapp,omitempty"`
 	// N°56 — clé publique du portail (16 hex, générée une fois par compte) :
 	// identifiant NON secret embarqué dans la config du portail captif
 	// (bloc mikcloud-config, visible de chaque invité par design) qui

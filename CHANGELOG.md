@@ -5,6 +5,17 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-17 — N°140-fix : barre d'action N°140 en mobile — le compteur sur SA ligne (une, pas trois), les boutons partagent la suivante
+
+### N°140-fix — Contexte : le compteur plié en trois lignes à 390 px
+Auto-vérification navigateur du N°140 (backend Go éphémère + frontend dev + agent-browser, viewport 390×844) : la barre sticky rendait « {n} modification(s) non enregistrée(s) » dans l'espace restant à côté des deux boutons (~120 px) — le texte se repliait sur TROIS lignes, la barre mangeait sa hauteur en hauteur et le bouton « Réinitialiser » paraissait serré (remonté par l'analyse visuelle VLM des captures).
+
+### Produit
+La barre passe en COLONNE sous sm (une rangée par information) et en rangée unique ≥ sm : (1) mobile — le compteur (point pulsant + texte) occupe SA ligne pleine largeur (une seule ligne de texte, jamais de repli), les boutons « Réinitialiser » et « Enregistrer tout » se partagent la ligne suivante (chacun flex-1, zones tactiles confortables) ; (2) desktop — rangée unique inchangée [compteur … boutons] ; (3) le message de validation « Corrigez les champs… » : icône seule à côté du compteur en mobile (le détail vit déjà sous les champs), texte complet en desktop.
+
+### Technique
+`hotspot-cards.tsx` — la barre sticky : `flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center`, compteur dans sa propre rangée `flex min-w-0 items-center`, boutons `flex-1 sm:flex-none` + `sm:ml-auto`, message d'erreur dupliqué `sm:hidden`/`hidden sm:flex` (icône + sr-only en mobile). Vérifié : eslint 0, tsgo 0 ; re-test navigateur 390×844 — compteur 1 ligne (barre 94 px, deux rangées nettes), desktop 1440×900 — rangée unique 66 px, VLM confirme « no remaining layout defect ».
+
 ## 2026-09-17 — N°140 — Refonte UX de /app/settings/hotspot (onglet Expérience) : un seul enregistrement pour les 10 réglages (barre d'action sticky + points « modifié » par sous-section + navigation par ancres), carte guide MikroTik supprimée
 
 ### N°140 — Contexte : dix boutons « Enregistrer » pour une page

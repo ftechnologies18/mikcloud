@@ -430,31 +430,47 @@ export function HotspotExperience({ settings }: { settings: AppSettings }) {
       {dirtyCount > 0 && (
         <div className="sticky bottom-4 z-30 mik-rise">
           <div
-            className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border bg-card/95 p-3 pl-4 shadow-lg shadow-black/10 backdrop-blur"
+            className="flex flex-col gap-2 rounded-xl border bg-card/95 p-3 pl-4 shadow-lg shadow-black/10 backdrop-blur sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3 sm:gap-y-2"
             role="status"
             aria-live="polite"
           >
-            <span className="relative flex size-2 shrink-0" aria-hidden>
-              <span className="absolute inline-flex size-full animate-ping rounded-full bg-primary opacity-60" />
-              <span className="relative inline-flex size-2 rounded-full bg-primary" />
-            </span>
-            <p className="min-w-0 flex-1 text-sm font-medium">
-              {tf("settings.exp.changes", { n: dirtyCount })}
-            </p>
+            {/* Compteur — pleine largeur en mobile (une ligne, jamais de
+                retour à la 3e ligne), rangée flex en desktop. */}
+            <div className="flex min-w-0 items-center gap-2.5">
+              <span className="relative flex size-2 shrink-0" aria-hidden>
+                <span className="absolute inline-flex size-full animate-ping rounded-full bg-primary opacity-60" />
+                <span className="relative inline-flex size-2 rounded-full bg-primary" />
+              </span>
+              <p className="min-w-0 flex-1 text-sm font-medium">
+                {tf("settings.exp.changes", { n: dirtyCount })}
+              </p>
+              {!canSave && (
+                <p className="flex min-w-0 items-center gap-1.5 text-xs text-destructive sm:hidden">
+                  <CircleAlert className="size-3.5 shrink-0" aria-hidden />
+                  <span className="sr-only">{t("settings.exp.invalid")}</span>
+                </p>
+              )}
+            </div>
             {!canSave && (
-              <p className="flex min-w-0 items-center gap-1.5 text-xs text-destructive">
+              <p className="hidden items-center gap-1.5 text-xs text-destructive sm:flex">
                 <CircleAlert className="size-3.5 shrink-0" aria-hidden />
                 {t("settings.exp.invalid")}
               </p>
             )}
-            <div className="flex shrink-0 flex-wrap items-center gap-2">
-              <Button type="button" variant="outline" className="h-10" onClick={resetForm} disabled={saving}>
+            <div className="flex shrink-0 items-center gap-2 sm:ml-auto">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-10 flex-1 sm:flex-none"
+                onClick={resetForm}
+                disabled={saving}
+              >
                 <RotateCcw className="size-4" />
                 {t("settings.exp.reset")}
               </Button>
               <Button
                 type="button"
-                className="h-10"
+                className="h-10 flex-1 sm:flex-none"
                 onClick={() => saveAll()}
                 disabled={saving || !canSave}
               >

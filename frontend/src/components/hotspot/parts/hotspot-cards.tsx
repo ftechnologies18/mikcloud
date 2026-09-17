@@ -39,6 +39,20 @@
 // R2 avec repli data URL, aperçu QR régénéré, aperçu bannière, aperçu du
 // lien WhatsApp, analytics de la vitrine, indices et limites) — seule
 // l'armature UX change.
+//
+// N°142 — Durcissement UX (suite du retour « peut encore l'améliorer ? ») :
+//   • GARDE DE SORTIE D'ONGLET — le formulaire remonte son compteur de
+//     groupes modifiés au hub (onDirtyChange) : changer d'onglet avec des
+//     saisies non enregistrées ouvre une confirmation au lieu de tout
+//     jeter silencieusement ; « Voir le portail » (onPreviewPortal)
+//     traverse la même garde.
+//   • NAVIGATION MOBILE + SCROLLSPY — les puces d'ancres, desktop-only au
+//     N°140, deviennent une rangée défilante sur téléphone (le gérant de
+//     cyber est mobile-first) ; la puce de la section lue se remplit.
+//   • RÉINITIALISER CONFIRMÉ — le bouton jetait {n} groupes de saisie sans
+//     confirmation ; un AlertDialog demande avant d'effacer.
+//   • ERREUR LOCALISÉE — le message d'invalidité de la barre devient un
+//     bouton : il mène au premier champ en erreur et lui donne le focus.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -99,6 +113,16 @@ import type {
 } from "@/lib/hotspot/types";
 import { PORTAL_SERVICE_ICONS } from "@/lib/hotspot/types";
 import { qrWithLogoDataUrl } from "@/components/hotspot/parts/template-render";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -243,9 +267,32 @@ function computeDirty(form: HotspotForm, base: HotspotForm): DirtyGroups {
   };
 }
 
+/* Ancres de la navigation rapide — module scope : partagées par les puces
+ * et le scrollspy (la puce de la section lue se remplit au scroll). */
+const ANCHORS = [
+  { id: "hot-exp-vouchers", labelKey: "settings.exp.navVouchers" },
+  { id: "hot-exp-join", labelKey: "settings.exp.navJoin" },
+  { id: "hot-exp-banner", labelKey: "settings.exp.navBanner" },
+  { id: "hot-exp-slides", labelKey: "settings.exp.navSlides" },
+  { id: "hot-exp-services", labelKey: "settings.exp.navServices" },
+  { id: "hot-exp-ticker", labelKey: "settings.exp.navTicker" },
+  { id: "hot-exp-whatsapp", labelKey: "settings.exp.navWhatsapp" },
+  { id: "hot-exp-mode", labelKey: "settings.exp.navMode" },
+];
+
 /* ─── Onglet « Expérience » — un formulaire, deux cartes, une barre ─── */
 
-export function HotspotExperience({ settings }: { settings: AppSettings }) {
+export function HotspotExperience({
+  settings,
+  onDirtyChange,
+  onPreviewPortal,
+}: {
+  settings: AppSettings;
+  /** Remonte le nombre de groupes modifiés au hub — garde de sortie d'onglet (N°142). */
+  onDirtyChange?: (count: number) => void;
+  /** « Voir le portail » — navigue vers l'onglet Portail via la garde du hub (N°142). */
+  onPreviewPortal?: () => void;
+}) {
   const { t, tf } = useI18n();
   const queryClient = useQueryClient();
   const [form, setForm] = useState<HotspotForm>(() => initialForm(settings));
@@ -264,6 +311,71 @@ export function HotspotExperience({ settings }: { settings: AppSettings }) {
   const dirty = useMemo(() => computeDirty(form, baseline), [form, baseline]);
   const dirtyCount = useMemo(() => Object.values(dirty).filter(Boolean).length, [dirty]);
 
+  // N°142 — le hub garde le compte pour confirmer les sorties d'onglet
+  // (le callback est stable — useCallback côté hub).
+  useEffect(() => {
+    onDirtyChange?.(dirtyCount);
+  }, [dirtyCount, onDirtyChange]);
+
+  // N°142 — scrollspy : la puce de la dernière section dont l'en-tête a
+  // passé la ligne de lecture (topbar sticky + respiration) se remplit ;
+  // la rangée défilante (mobile) la suit pour rester cadrée.
+  const [activeAnchor, setActiveAnchor] = useState(ANCHORS[0].id);
+  const chipNavRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    let raf = 0;
+    const measure = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        // Bas de page atteint (à 60 px près) : la DERNIÈRE section est
+        // celle qu'on lit — sans cette règle, les sections dont l'en-tête
+        // ne peut pas monter au-dessus de la ligne (page plus courte que
+        // la cible d'ancrage : le scroll est clampé) resteraient muettes.
+        const doc = document.documentElement;
+        const maxScroll = doc.scrollHeight - window.innerHeight;
+        if (maxScroll > 0 && window.scrollY >= maxScroll - 60) {
+          setActiveAnchor(ANCHORS[ANCHORS.length - 1].id);
+          return;
+        }
+        const line = 140;
+        let current = ANCHORS[0].id;
+        for (const anchor of ANCHORS) {
+          const el = document.getElementById(anchor.id);
+          if (el && el.getBoundingClientRect().top <= line) current = anchor.id;
+        }
+        setActiveAnchor(current);
+      });
+    };
+    measure();
+    window.addEventListener("scroll", measure, { passive: true });
+    window.addEventListener("resize", measure);
+    return () => {
+      window.removeEventListener("scroll", measure);
+      window.removeEventListener("resize", measure);
+      cancelAnimationFrame(raf);
+    };
+  }, []);
+  useEffect(() => {
+    // N°142-bis — correction : suivre la puce active NE DOIT toucher qu'au
+    // défilement HORIZONTAL de la rangée. scrollIntoView(block:"nearest")
+    // remontait la PAGE pour révéler la rangée dès qu'elle quittait le
+    // viewport — l'utilisateur ne pouvait plus descendre (aspiration en
+    // haut à chaque changement de section). Ici on ne règle que
+    // scrollLeft : la page ne bouge jamais.
+    const nav = chipNavRef.current;
+    const chip = nav?.querySelector<HTMLElement>(`[data-chip="${activeAnchor}"]`);
+    if (!nav || !chip) return;
+    const navRect = nav.getBoundingClientRect();
+    const chipRect = chip.getBoundingClientRect();
+    const target = chipRect.left - navRect.left - (nav.clientWidth - chip.offsetWidth) / 2;
+    const left = Math.max(0, nav.scrollLeft + target);
+    if (Math.abs(left - nav.scrollLeft) >= 1) nav.scrollTo({ left, behavior: "smooth" });
+  }, [activeAnchor]);
+
+  // N°142 — Réinitialiser demande confirmation (le bouton jette {n} groupes
+  // de saisie d'un coup — plus de misclick fatal).
+  const [confirmReset, setConfirmReset] = useState(false);
+
   /* Validations locales — miroir des garde-fous des anciennes cartes.
    * L'enregistrement reste bloqué tant qu'un champ triche. */
   const daysNum = parseInt(form.expiryDays, 10);
@@ -276,6 +388,24 @@ export function HotspotExperience({ settings }: { settings: AppSettings }) {
   const waDigits = form.waNumber.replace(/[^0-9]/g, "");
   const waInvalid = waDigits !== "" && (waDigits.length < 8 || waDigits.length > 15);
   const canSave = !expiryInvalid && !bannerInvalid && !waInvalid;
+
+  // N°142 — l'erreur de la barre devient un raccourci : mène au premier
+  // champ fautif (ordre de lecture de la page) et lui donne le focus une
+  // fois le scroll doux posé.
+  const firstError = expiryInvalid
+    ? { section: "hot-exp-vouchers", input: "expiry-days" }
+    : bannerInvalid
+      ? { section: "hot-exp-banner", input: "banner-url" }
+      : waInvalid
+        ? { section: "hot-exp-whatsapp", input: "wa-number" }
+        : null;
+  const goToFirstError = () => {
+    if (!firstError) return;
+    document.getElementById(firstError.section)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    window.setTimeout(() => {
+      document.getElementById(firstError.input)?.focus({ preventScroll: true });
+    }, 450);
+  };
 
   const saveMutation = useMutation({
     mutationFn: () => {
@@ -343,38 +473,59 @@ export function HotspotExperience({ settings }: { settings: AppSettings }) {
 
   const resetForm = () => setForm({ ...baseline });
 
-  /* Ancres de la navigation rapide (desktop) — scroll-mt-24 sous le
-   * topbar sticky de l'app-shell. */
-  const anchors = [
-    { id: "hot-exp-vouchers", labelKey: "settings.exp.navVouchers" },
-    { id: "hot-exp-join", labelKey: "settings.exp.navJoin" },
-    { id: "hot-exp-banner", labelKey: "settings.exp.navBanner" },
-    { id: "hot-exp-slides", labelKey: "settings.exp.navSlides" },
-    { id: "hot-exp-services", labelKey: "settings.exp.navServices" },
-    { id: "hot-exp-ticker", labelKey: "settings.exp.navTicker" },
-    { id: "hot-exp-whatsapp", labelKey: "settings.exp.navWhatsapp" },
-    { id: "hot-exp-mode", labelKey: "settings.exp.navMode" },
-  ];
+  /* Ancres — scroll-mt-24 sous le topbar sticky de l'app-shell (la liste
+   * vit au module scope : partagée avec le scrollspy N°142). */
   const jumpTo = (id: string) =>
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      {/* Navigation rapide + rappel du modèle d'enregistrement unique. */}
+      {/* Navigation rapide + rappel du modèle d'enregistrement unique.
+          Mobile : rangée défilante (le gérant de cyber est mobile-first) ;
+          la puce de la section lue se remplit (scrollspy) et la rangée la
+          suit pour rester cadrée. Desktop : rangée enroulée inchangée. */}
       <div className="space-y-2">
-        <nav className="hidden flex-wrap items-center gap-1.5 sm:flex" aria-label={t("settings.exp.jumpAria")}>
-          {anchors.map((anchor) => (
-            <button
-              key={anchor.id}
-              type="button"
-              onClick={() => jumpTo(anchor.id)}
-              className="glass-chip rounded-full px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
-            >
-              {t(anchor.labelKey)}
-            </button>
-          ))}
+        <nav
+          ref={chipNavRef}
+          className="flex items-center gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none] sm:flex-wrap sm:overflow-visible [&::-webkit-scrollbar]:hidden"
+          aria-label={t("settings.exp.jumpAria")}
+        >
+          {ANCHORS.map((anchor) => {
+            const active = anchor.id === activeAnchor;
+            return (
+              <button
+                key={anchor.id}
+                type="button"
+                data-chip={anchor.id}
+                onClick={() => jumpTo(anchor.id)}
+                aria-current={active ? "true" : undefined}
+                className={cn(
+                  "shrink-0 whitespace-nowrap rounded-full px-3 py-1 text-xs font-medium transition-colors",
+                  active
+                    ? "bg-primary text-primary-foreground"
+                    : "glass-chip text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {t(anchor.labelKey)}
+              </button>
+            );
+          })}
         </nav>
-        <p className="text-xs text-muted-foreground">{t("settings.exp.hint")}</p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs text-muted-foreground">{t("settings.exp.hint")}</p>
+          {onPreviewPortal && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-1.5 text-xs"
+              onClick={onPreviewPortal}
+            >
+              <Eye className="size-3.5" aria-hidden />
+              {t("settings.exp.previewPortal")}
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* ══ CARTE 1 — Vouchers & tickets imprimés ══ */}
@@ -445,24 +596,32 @@ export function HotspotExperience({ settings }: { settings: AppSettings }) {
                 {tf("settings.exp.changes", { n: dirtyCount })}
               </p>
               {!canSave && (
-                <p className="flex min-w-0 items-center gap-1.5 text-xs text-destructive sm:hidden">
+                <button
+                  type="button"
+                  onClick={goToFirstError}
+                  className="flex min-w-0 shrink-0 items-center gap-1 rounded text-xs text-destructive transition-colors hover:text-destructive/80 sm:hidden"
+                >
                   <CircleAlert className="size-3.5 shrink-0" aria-hidden />
                   <span className="sr-only">{t("settings.exp.invalid")}</span>
-                </p>
+                </button>
               )}
             </div>
             {!canSave && (
-              <p className="hidden items-center gap-1.5 text-xs text-destructive sm:flex">
+              <button
+                type="button"
+                onClick={goToFirstError}
+                className="hidden items-center gap-1.5 rounded text-left text-xs text-destructive underline underline-offset-2 transition-colors hover:text-destructive/80 sm:flex"
+              >
                 <CircleAlert className="size-3.5 shrink-0" aria-hidden />
                 {t("settings.exp.invalid")}
-              </p>
+              </button>
             )}
             <div className="flex shrink-0 items-center gap-2 sm:ml-auto">
               <Button
                 type="button"
                 variant="outline"
                 className="h-10 flex-1 sm:flex-none"
-                onClick={resetForm}
+                onClick={() => setConfirmReset(true)}
                 disabled={saving}
               >
                 <RotateCcw className="size-4" />
@@ -481,6 +640,29 @@ export function HotspotExperience({ settings }: { settings: AppSettings }) {
           </div>
         </div>
       )}
+
+      {/* N°142 — Réinitialiser demande confirmation : le bouton jette
+          TOUTES les saisies non enregistrées d'un coup. */}
+      <AlertDialog open={confirmReset} onOpenChange={setConfirmReset}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{tf("settings.exp.resetTitle", { n: dirtyCount })}</AlertDialogTitle>
+            <AlertDialogDescription>{t("settings.exp.resetDesc")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
+              onClick={() => {
+                resetForm();
+                setConfirmReset(false);
+              }}
+            >
+              {t("settings.exp.reset")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

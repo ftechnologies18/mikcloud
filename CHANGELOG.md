@@ -5,6 +5,86 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-18 — N°142 — Durcissement UX de l'onglet Expérience (N°140) : garde de sortie d'onglet, navigation mobile + scrollspy, Réinitialiser confirmé, erreur localisée, pont « Voir le portail »
+
+### N°142 — Contexte : « quel est ton avis sur cette UX, peut encore l'améliorer ? »
+Retour utilisateur à chaud sur la refonte N°140 de /app/settings/hotspot (onglet Expérience).
+Revue d'expert UI/UX : les acquis sont solides (enregistrement unique, points « modifié » par
+groupe, garde-fous beforeunload/Cmd+Entrée), mais CINQ failles réelles subsistaient — dont deux
+de perte de données et une invisibilité mobile complète de la navigation dans un usage
+mobile-first (le gérant de cyber-café ivoirien vit sur son téléphone).
+
+### Produit
+(1) GARDE DE SORTIE D'ONGLET — avant : un clic sur « Portail » ou « Modèles » démontait
+silencieusement le formulaire : les 10 groupes de saisie non enregistrés étaient perdus sans
+avertissement (beforeunload ne couvre que reload/fermeture). Maintenant : le formulaire remonte
+son compteur de groupes modifiés au hub (onDirtyChange) ; toute sortie (onglets OU « Voir le
+portail ») passe par requestView — propre = navigation directe, saisie en cours = AlertDialog
+« Quitter sans enregistrer ? » (Rester / Quitter sans enregistrer, compte affiché). Les onglets
+étant contrôlés (value=active), un refus ne change rien visuellement ; le remontage du
+formulaire re-zérote le compteur (aucune garde fantôme).
+(2) NAVIGATION MOBILE + SCROLLSPY — les puces d'ancres étaient desktop-only (hidden sm:flex) :
+sur téléphone, un mur de 10 sections sans repère ni saut. Maintenant : rangée défilante sur
+tous les viewports (overflow-x-auto, scrollbar masquée, desktop enroulé inchangé) ; la puce de
+la section lue se REMPLIT (bg-primary) — scrollspy par ligne de lecture à 140 px (sous le topbar
+sticky + scroll-mt-24) + règle bas-de-page (à 60 px du fond, la DERNIÈRE section est active —
+sans elle, les sections dont l'en-tête ne peut pas monter au-dessus de la ligne, page plus courte
+que la cible d'ancrage, restaient muettes) ; la rangée suit la puce active en la cadrant
+HORIZONTALEMENT (réglage de scrollLeft seul — voir leçon).
+(3) RÉINITIALISER CONFIRMÉ — le bouton jetait {n} groupes de saisie d'un coup, sans undo ni
+confirmation (misclick fatal après 15 minutes de réglages). Maintenant : AlertDialog
+« Réinitialiser {n} modification(s) ? » (Annuler / Réinitialiser destructif rouge).
+(4) ERREUR LOCALISÉE — la barre disait « Corrigez les champs signalés » sans dire OÙ. Maintenant :
+le message (desktop) et l'icône (mobile, sr-only) sont des BOUTONS : ils mènent au premier champ
+en erreur dans l'ordre de lecture (expiration → bannière → WhatsApp), posent le scroll doux sur
+la section (ancre) puis donnent le focus au champ (preventScroll, pas de double scroll).
+(5) PONT « VOIR LE PORTAIL » — l'onglet règle tout ce que l'invité VOIT (bannière, carrousel,
+services, bandeau, WhatsApp) mais le résultat vivait un onglet plus loin. Bouton « Voir le
+portail » à côté du rappel d'enregistrement unique : navigation directe si propre, garde si
+saisie en cours (même chemin que les onglets). Hint étendu : « Ctrl+Entrée fonctionne aussi ».
+
+### Fidélité comportementale
+L'armature N°140 est INTACTE : formulaire unique + baseline, UN SEUL PUT /api/settings (15 champs,
+plat + tenant{…}), barre sticky avec compteur, points « modifié » par sous-section, beforeunload,
+Cmd/Ctrl+Entrée, validations bloquantes (délai 1-365, bannière https/data, WhatsApp 8-15 chiffres),
+uploads R2 + repli data URL, aperçus QR/bannière/WhatsApp, analytics vitrine N°56, décodeurs JSON
+défensifs, défauts historiques, limites identiques. Zéro backend, zéro route, zéro schéma, zéro
+contrat API (les deux nouveaux props du composant sont optionnels).
+
+### Technique
+hotspot-cards.tsx : signature HotspotExperience +onDirtyChange/+onPreviewPortal (optionnels) ;
+ANCHORS au module scope (partagés rendu + scrollspy) ; scrollspy rAF-throttlé (scroll + resize,
+ligne 140 px, règle bas-de-page à 60 px) ; suivi de puce par réglage de scrollLeft SEUL (jamais
+scrollIntoView sur la puce) ; AlertDialog de confirmation pour Réinitialiser ; messages
+d'invalidité de la barre promus en boutons (goToFirstError : ancre + focus différé 450 ms) ;
+bouton « Voir le portail ». hotspot-view.tsx : requestView (garde centralisée onglets + bouton),
+expDirty/pendingView, onglets contrôlés inchangés, AlertDialog de sortie. i18n FR/EN : +9 clés
+settings.exp.* (previewPortal, resetTitle, resetDesc, tabGuardTitle/Desc/Stay/Leave), hint étendu.
+ANCRES inchangées (hot-exp-vouchers…hot-exp-mode, scroll-mt-24).
+
+### Leçon
+scrollIntoView sur la puce active (block:"nearest") pour « suivre » la navigation remontait la
+PAGE entière dès que la rangée quittait le viewport — l'utilisateur ne pouvait plus descender
+(aspiration en haut à chaque changement de section, boucle de feedback). Un suivi de composant
+défilant ne doit toucher qu'À SON propre axe : régler scrollLeft à la main, jamais scrollIntoView.
+Et un scrollspy « dernière section au-dessus de la ligne » a une zone morte en bas de page courte
+(le scroll d'ancrage est clampé par le navigateur) : la règle bas-de-page est obligatoire.
+Les deux bugs ont été trouvés par l'auto-vérification navigateur (agent-browser), pas par le lint.
+
+### Vérifié
+eslint 0, tsgo 0. Auto-vérification navigateur complète contre le backend Go réel (store JSON
+éphémère, port 4100 + frontend dev 3200, compte de test propriétaire) : garde d'onglet (Rester =
+on reste, barre intacte ; Quitter = onglet cible + URL ; retour = aucune barre fantôme) ;
+« Voir le portail » propre = navigation directe / sale = garde ; erreur WhatsApp « 123 » =
+message-bouton + Enregistrer bloqué + clic = scroll sur la section + focus wa-number ;
+Réinitialiser = dialogue « 2 modification(s) ? », Annuler = intact, confirmer = valeurs
+restaurées (switch checked, champ vidé) + barre disparue ; enregistrement unifié = UN PUT,
+barre dismiss, persistance après reload ; scrollspy desktop = Vouchers → Carrousel → Mode au
+fond, Vouchers en haut ; mobile 390×844 = rangée visible 358 px, défilante (778 px de contenu),
+follow horizontal 420 px au fond / 0 en haut, aucune puce tronquée, zéro débordement horizontal
+de page ; 0 erreur console ; analyse VLM des 3 captures : « CLEAN » (puce active clairement
+distinguable, aucun défaut de mise en page).
+
 ## 2026-09-17 — N°141 — Audit expert PWA : les pages blanches à la réouverture de l'app et à l'actualisation éradiquées (masquage anti-flash rescopé à la vitrine + garde-fou 6 s, navigations du service worker toutes bornées avec repli shell offline, frontières d'erreur racine, recharge unique sur échec de chunk)
 
 ### N°141 — Contexte : « les pages qui ne s'affichent plus, qui restent blanches à la réouverture de l'app ou lorsqu'on actualise la page »

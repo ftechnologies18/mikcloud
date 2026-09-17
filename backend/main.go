@@ -107,6 +107,11 @@ func main() {
 	// + traces de purge dans le log service.
 	engine := api.New(st, jwtSecret).WithVitals(vitals)
 	go engine.RunRetentionSweepForever()
+	// N°129 — balayage chat par minute : clôture automatique des
+	// conversations sans nouveau message depuis 15 minutes + rétention
+	// (fermées purgées à 30 j, bot inactives à 7 j) — l'inbox support
+	// ne gonfle pas sous affluence, même sans nouvelle session visiteur.
+	go engine.RunChatSweepForever()
 
 	handler := logRequests(securityHeaders(corsMiddleware(limitBody(authRateLimit(engine.Handler())))))
 	// Sécurité P1 #12 — timeouts HTTP complets. ReadHeaderTimeout seul laissait

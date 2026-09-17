@@ -50,4 +50,8 @@ export const enPlatformChat: Record<string, string> = {
   "platformChat.note.bot":
     "The automatic assistant is answering — you can take over at any time by replying.",
   "platformChat.note.closed": "Conversation closed — the thread is read-only.",
+  "platformChat.note.autoClose":
+    "Auto-close: after 15 minutes without a new message, the assistant closes the conversation — an advisor's reply reopens it at any time.",
+  "platformChat.note.retention":
+    "Retention: closed conversations are deleted after 30 days, idle bot conversations after 7 days — the inbox stays lean under heavy traffic.",
 };

@@ -31,6 +31,16 @@
 // par les trois POST publics (a.chat : 30/10 min + 400/24 h — un humain
 // en conversation active reste très loin du seuil). Corps bornés
 // (1 000 caractères visiteur, 2 000 agent). Rétention chatPruneLocked.
+//
+// CLÔTURE AUTOMATIQUE (N°129) : une conversation vivante (bot OU human)
+// sans nouveau message depuis 15 minutes est fermée par l'assistant —
+// atomiquement, sous le verrou du store (chatAutoCloseLocked). Deux
+// déclencheurs : le balayage de fond (chat_sweep.go, chaque minute) et
+// la lecture de l'inbox console (le support voit les fils morts déjà
+// fermés à l'ouverture). Un message du visiteur rouvre une conversation
+// clôturée (« human » si un conseiller était intervenu, « bot » sinon).
+// La rétention purge désormais AUSSI périodiquement : fermées à 30
+// jours, bot inactives à 7 jours, garde-fou 2 000 conversations.
 package api
 
 import (
@@ -202,6 +212,55 @@ func chatAge(at string, now time.Time) time.Duration {
 	return now.Sub(t)
 }
 
+// chatAutoCloseAfter — délai d'inactivité au-delà duquel l'assistant
+// clôture automatiquement la conversation (N°129). L'horloge est le
+// DERNIER MESSAGE du fil (UpdatedAt) : pour une conversation « bot »
+// c'est exactement le dernier message du visiteur (l'assistant répond
+// dans la même seconde) ; pour une conversation « human », la réponse
+// d'un conseiller relance le délai — le visiteur garde un quart d'heure
+// pour lire et répondre.
+const chatAutoCloseAfter = 15 * time.Minute
+
+// chatAutoCloseLocked — clôture ATOMIQUE des conversations vivantes
+// (bot OU human) sans nouveau message depuis 15 minutes (N°129). Tout
+// se joue sous le verrou du store : aucune course possible entre le
+// test d'inactivité, l'arrivée d'un message visiteur et la clôture.
+// Le message de fin explique la clôture au visiteur (langue de la
+// conversation) ; une réponse du support rouvre le fil à tout moment.
+// Retourne le nombre de conversations fermées (l'appelant sauvegarde
+// et journalise).
+func chatAutoCloseLocked(db *model.DB, now time.Time) int {
+	closed := 0
+	for i := range db.ChatConversations {
+		conv := &db.ChatConversations[i]
+		if conv.Status != model.ChatStatusBot && conv.Status != model.ChatStatusHuman {
+			continue
+		}
+		if chatAge(conv.UpdatedAt, now) <= chatAutoCloseAfter {
+			continue
+		}
+		at := model.NowISO()
+		conv.Status = model.ChatStatusClosed
+		conv.UpdatedAt = at // la purge à 30 jours court depuis la clôture
+		db.ChatMessages = append(db.ChatMessages,
+			newChatMessage(conv.ID, model.ChatSenderBot, chatInactiveMessage(conv.Lang), at))
+		closed++
+	}
+	return closed
+}
+
+// chatAgentEverRepliedLocked — vrai si un conseiller a déjà écrit dans
+// la conversation : la reprise après clôture se fait alors côté
+// support (le bot ne reprend jamais la main après un humain).
+func chatAgentEverRepliedLocked(db *model.DB, convID string) bool {
+	for i := range db.ChatMessages {
+		if db.ChatMessages[i].ConversationID == convID && db.ChatMessages[i].Sender == model.ChatSenderAgent {
+			return true
+		}
+	}
+	return false
+}
+
 // chatAllow — quota IP partagé par les POST publics du chat. Le corps du
 // 429 suit le contrat S2/S3 (Retry-After en secondes).
 func (a *API) chatAllow(w http.ResponseWriter, r *http.Request) bool {
@@ -341,6 +400,19 @@ func (a *API) handleChatMessage(w http.ResponseWriter, r *http.Request) {
 	// répond dans la langue affichée, la console voit la préférence).
 	if l := chatLang(req.Lang); l != "" && l != conv.Lang {
 		conv.Lang = l
+	}
+	// N°129 — un message du visiteur ROUVRE une conversation clôturée :
+	// le widget propose une nouvelle conversation, mais un message qui
+	// arrive quand même (widget non rechargé, appel direct) ne doit pas
+	// se perdre dans un fil fermé. Reprise « human » si un conseiller
+	// était déjà intervenu (le bot ne reprend jamais la main après un
+	// humain), sinon « bot » — l'assistant répond à nouveau.
+	if conv.Status == model.ChatStatusClosed {
+		if chatAgentEverRepliedLocked(db, conv.ID) {
+			conv.Status = model.ChatStatusHuman
+		} else {
+			conv.Status = model.ChatStatusBot
+		}
 	}
 	now := model.NowISO()
 	db.ChatMessages = append(db.ChatMessages,
@@ -489,6 +561,13 @@ func chatStatusRank(s string) int {
 func (a *API) handleAdminChatConversations(w http.ResponseWriter, r *http.Request) {
 	a.store.Lock()
 	db := a.store.Data()
+	// N°129 — la console donne le relais au bot : à l'ouverture de
+	// l'inbox, les fils morts (aucun message depuis 15 minutes) sont
+	// clôturés immédiatement — le balayage de fond (chat_sweep.go)
+	// garantit la même clôture à la minute près partout ailleurs.
+	if chatAutoCloseLocked(db, time.Now().UTC()) > 0 {
+		a.store.Save()
+	}
 	// Dernier message par conversation (un passage, ordre d'ajout).
 	last := map[string]model.ChatMessage{}
 	for i := range db.ChatMessages {

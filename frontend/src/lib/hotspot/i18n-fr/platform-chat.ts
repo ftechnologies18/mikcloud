@@ -50,4 +50,8 @@ export const frPlatformChat: Record<string, string> = {
   "platformChat.note.bot":
     "L'assistant automatique répond — vous pouvez reprendre la main à tout moment en répondant.",
   "platformChat.note.closed": "Conversation clôturée — le fil est en lecture seule.",
+  "platformChat.note.autoClose":
+    "Clôture automatique : sans nouveau message pendant 15 minutes, l'assistant ferme la conversation — la réponse d'un conseiller la rouvre à tout moment.",
+  "platformChat.note.retention":
+    "Rétention : les conversations fermées sont supprimées après 30 jours, les conversations bot inactives après 7 jours — l'inbox ne gonfle pas sous affluence.",
 };

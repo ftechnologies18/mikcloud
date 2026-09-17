@@ -16,13 +16,23 @@
 //
 // Statuts : "bot" (l'assistant répond), "human" (transmise au support —
 // l'assistant se tait, les messages du visiteur partent dans la file de
-// l'inbox plateforme), "closed" (clôturée par le support).
+// l'inbox plateforme), "closed" (clôturée par le support OU
+// automatiquement — N°129 : aucun message depuis 15 minutes).
 //
-// Rétention (chatPruneLocked, appelée à la création de session sous le
-// verrou du store) : les conversations clôturées de plus de 30 jours et
-// les conversations "bot" sans interaction depuis 7 jours sont purgées
-// avec leurs messages — l'inbox du support ne gonfle pas indéfiniment ;
-// les conversations "human" ne sont JAMAIS purgées automatiquement.
+// Clôture automatique (N°129, chatAutoCloseLocked) : une conversation
+// vivante (bot OU human) sans nouveau message depuis 15 minutes est
+// fermée par l'assistant — atomiquement sous le verrou, au balayage
+// périodique (chat_sweep.go, chaque minute) comme à la lecture de
+// l'inbox console. Un message du visiteur rouvre une conversation
+// clôturée (« human » si un conseiller était intervenu, « bot » sinon).
+//
+// Rétention (chatPruneLocked, appelée à la création de session ET au
+// balayage périodique, sous le verrou du store) : les conversations
+// clôturées de plus de 30 jours et les conversations "bot" sans
+// interaction depuis 7 jours sont purgées avec leurs messages —
+// l'inbox du support ne gonfle pas indéfiniment ; les conversations
+// "human" ne sont JAMAIS purgées automatiquement (elles passent
+// "closed" par la clôture d'inactivité, puis purge à 30 jours).
 package model
 
 // ChatConversation — une conversation visiteur ↔ assistant ↔ support.

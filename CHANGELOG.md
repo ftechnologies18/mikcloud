@@ -5,6 +5,87 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-17 — N°129 — Le bot range sa boutique : clôture automatique après 15 minutes d'inactivité + purge périodique des conversations
+
+### N°129 — Contexte : retour utilisateur « la console Conversations doit donner la possibilité au bot de clôturer la conversation automatiquement si pas de message du visiteur pendant 15 min ; combien de temps les conversations clôturées restent-elles dans le système, y a-t-il un mécanisme de purge pour éviter la pollution en cas d'affluence ? »
+Deux demandes jumelles : un filet de sécurité pour les fils morts, et
+une garantie que l'inbox support ne gonfle pas. AVANT : rien ne clôturait
+jamais une conversation que le visiteur avait quittée — sous affluence,
+l'inbox accumulait des conversations « bot » muettes depuis des heures
+et des transmissions « human » jamais clôturées… donc jamais purgées (la
+rétention N°127 ne purgeait qu'à la CRÉATION de session, et jamais les
+« human »).
+
+### Clôture automatique (15 minutes)
+- `chatAutoCloseLocked` — une conversation vivante (`bot` OU `human`)
+  sans nouveau message depuis 15 minutes est fermée par l'assistant :
+  opération ATOMIQUE sous le verrou du store (aucune race entre le test
+  d'inactivité, un message visiteur qui arrive et la clôture), message
+  de fin DÉDIÉ dans la langue de la conversation (distinct de la
+  clôture support : « Pas de nouveau message depuis 15 minutes — la
+  conversation est fermée automatiquement… »).
+- Horloge = DERNIER MESSAGE du fil (`updated_at`) : pour une
+  conversation « bot » c'est exactement le dernier message du visiteur
+  (l'assistant répond dans la même seconde) ; pour une « human », la
+  réponse d'un conseiller RELANCE le délai — le visiteur garde un quart
+  d'heure pour lire et répondre.
+- Deux déclencheurs : balayage de fond `RunChatSweepForever`
+  (goroutine main.go, CHAQUE MINUTE, rattrapage au démarrage, filet
+  anti-panique N°74 — fichier NOUVEAU `chat_sweep.go`) et la lecture de
+  l'inbox console `GET /api/admin/chat/conversations` (le support ouvre
+  « Conversations » : les fils morts y apparaissent déjà fermés — la
+  console donne littéralement le relais au bot).
+- Réouverture : un message du visiteur sur une conversation clôturée
+  (support OU automatique) la ROUVRE — `human` si un conseiller était
+  déjà intervenu (`chatAgentEverRepliedLocked` : le bot ne reprend
+  jamais la main après un humain), sinon `bot` (l'assistant répond à
+  nouveau). Corrige au passage un bord silencieux : un message visiteur
+  sur un fil fermé par le support se perdait sans badge non-lu.
+- Widget vitrine : rien à changer — au statut `closed` il affiche déjà
+  la note de clôture et le bouton « Nouvelle conversation ».
+
+### Rétention (réponse à la question « combien de temps ? »)
+- Conversations FERMÉES : purgées (avec leurs messages) **30 jours**
+  après la clôture ; conversations « bot » inactives : 7 jours ;
+  conversations « human » : jamais purgées directement — la clôture
+  d'inactivité les fait passer `closed`, donc purge à 30 j ; garde-fou
+  mémoire 2 000 conversations.
+- `chatPruneLocked` tourne désormais AUSSI au balayage périodique
+  (chaque minute, même fichier `chat_sweep.go`) — plus seulement à la
+  création de session : la purge est garantie même sans nouveau
+  visiteur. Un Save PostgreSQL n'a lieu que si l'état change.
+
+### Console plateforme
+- Vue « Conversations » : note de transparence sous l'en-tête (deux
+  lignes, icônes Timer/Archive, i18n FR/EN) — la règle d'auto-clôture
+  15 min et la rétention 30 j / 7 j sont écrites noir sur blanc pour
+  l'équipe support.
+
+### Technique
+- Backend : `internal/api/chat_sweep.go` (NOUVEAU — boucle + passage),
+  `handlers_chat.go` (const `chatAutoCloseAfter` + `chatAutoCloseLocked`
+  + `chatAgentEverRepliedLocked` + réouverture dans `handleChatMessage`
+  + déclencheur dans `handleAdminChatConversations` + en-tête
+  documenté), `chatbot.go` (const `chatInactiveFr/En` +
+  `chatInactiveMessage`), `model/chat.go` (commentaires statuts +
+  rétention), `main.go` (goroutine `RunChatSweepForever`).
+- AUCUNE nouvelle route, AUCUN changement de schéma (l'horloge
+  d'inactivité est `updated_at`, déjà persisté) — les deux
+  déclencheurs réutilisent le verrou existant du store.
+- Frontend : `platform-chat-view.tsx` (note règles + imports icônes),
+  `i18n-fr/platform-chat.ts` + `i18n-en/platform-chat.ts`
+  (`platformChat.note.autoClose` / `.retention`).
+
+### Vérifié
+- Frontend : eslint 0 erreur, tsc 0 erreur.
+- Backend : patches Go byte-précis (tabs préservés, ancres uniques
+  assertées, scanner mojibake 0) — compilation et gofmt validés par la
+  CI puis par le build Render (sandbox sans toolchain Go).
+- Production : widget vitrine + console « Conversations » (note visible)
+  + test live de la clôture automatique (conversation laissée inactive
+  > 15 min → fermée par le balayage, message de fin visible des deux
+  côtés, réouverture par message visiteur).
+
 ## 2026-09-17 — N°128 — Le chatbot corrige son accent : chaînes réparées (mojibake), anglais poli et langue qui suit le visiteur
 
 ### N°128 — Contexte : retour utilisateur « la fenêtre du chat bot semble présenter des caractères de lettre non conventionnelle et la traduction FR/EN est imparfaite »

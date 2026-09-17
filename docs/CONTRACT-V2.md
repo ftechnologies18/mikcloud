@@ -1350,6 +1350,32 @@ activité depuis 7 jours purgées avec leurs messages ; les conversations
 2 000 conversations. Limite connue : une conversation très longue n'est
 pas plafonnée en messages (le volume est borné par la purge par statut).
 
+**Clôture automatique + rétention périodique (N°129)** : une conversation
+vivante (`bot` OU `human`) sans nouveau message depuis **15 minutes** est
+fermée par l'assistant — `chatAutoCloseLocked`, opération ATOMIQUE sous le
+verrou du store (aucune race entre le test d'inactivité, un message
+visiteur et la clôture), message de fin dédié dans la langue de la
+conversation (distinct de la clôture support). L'horloge est le DERNIER
+MESSAGE du fil (`updated_at`) : pour une conversation `bot` c'est
+exactement le dernier message du visiteur (l'assistant répond dans la
+même seconde) ; pour une conversation `human`, la réponse d'un conseiller
+relance le délai — le visiteur garde un quart d'heure pour lire et
+répondre. Deux déclencheurs : le balayage de fond `RunChatSweepForever`
+(goroutine main.go, **chaque minute**, rattrapage au démarrage, filet
+anti-panique N°74 — `chat_sweep.go`) et la lecture
+`GET /api/admin/chat/conversations` (l'inbox console ouverte, les fils
+morts apparaissent déjà fermés). Un message du visiteur sur une
+conversation clôturée (support OU automatique) la ROUVRE : `human` si un
+conseiller était déjà intervenu (`chatAgentEverRepliedLocked` — le bot ne
+reprend jamais la main après un humain), sinon `bot` (l'assistant répond
+à nouveau) ; la réponse d'un conseiller rouvre aussi (comportement
+existant). Le widget de la vitrine propose quant à lui une nouvelle
+conversation au statut `closed`. La rétention `chatPruneLocked` tourne
+désormais AUSSI au balayage périodique (chaque minute) — plus seulement
+à la création de session : la purge est garantie même sans nouveau
+visiteur. Console : la vue « Conversations » affiche les deux règles
+(auto-close 15 min + rétention 30 j / 7 j) sous l'en-tête, i18n FR/EN.
+
 ---
 
 ### N°123 — Badges annuels retirés, essai Hotspot 60 jours, migration des essais actifs

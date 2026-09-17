@@ -195,6 +195,8 @@ const (
 	chatHandoffEn  = "I'm handing you over to a member of the MikCloud team. They will pick up this conversation from the support console — hold on a moment, your next messages go straight to them."
 	chatClosedFr   = "Conversation clôturée par le support MikCloud. Merci de votre visite — vous pouvez rouvrir une nouvelle conversation à tout moment."
 	chatClosedEn   = "Conversation closed by MikCloud support. Thanks for visiting — you can start a new conversation at any time."
+	chatInactiveFr = "Pas de nouveau message depuis 15 minutes — la conversation est fermée automatiquement. Vous pouvez en ouvrir une nouvelle à tout moment : l'assistant et les conseillers MikCloud restent disponibles."
+	chatInactiveEn = "No new message for 15 minutes — this conversation has been closed automatically. You can start a new one at any time: the MikCloud assistant and advisors remain available."
 )
 
 // chatDeaccent — remplace les caractères latins accentués courants par
@@ -296,6 +298,15 @@ func chatClosedMessage(lang string) string {
 		return chatClosedEn
 	}
 	return chatClosedFr
+}
+
+// chatInactiveMessage — message de clôture AUTOMATIQUE (N°129 : aucun
+// nouveau message depuis 15 minutes) dans la langue de la conversation.
+func chatInactiveMessage(lang string) string {
+	if lang == "en" {
+		return chatInactiveEn
+	}
+	return chatInactiveFr
 }
 
 // newChatMessage — construit un message prêt à être appendé.

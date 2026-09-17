@@ -16,12 +16,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Archive,
   Bot,
   CheckCheck,
   CircleOff,
   Loader2,
   MessagesSquare,
   Send,
+  Timer,
   UserRound,
   XCircle,
 } from "lucide-react";
@@ -165,6 +167,18 @@ export default function PlatformChatView() {
   return (
     <div className="space-y-6">
       <PageHeader title={t("platformChat.title")} description={t("platformChat.description")} />
+
+      {/* Règles de vie (N°129) — clôture automatique du bot + rétention */}
+      <div className="grid grid-cols-1 gap-3 rounded-xl border bg-muted/40 p-4 text-xs leading-relaxed text-muted-foreground sm:grid-cols-2">
+        <p className="flex items-start gap-2">
+          <Timer className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+          {t("platformChat.note.autoClose")}
+        </p>
+        <p className="flex items-start gap-2">
+          <Archive className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+          {t("platformChat.note.retention")}
+        </p>
+      </div>
 
       {/* Synthèse */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-live="polite">

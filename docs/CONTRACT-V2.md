@@ -1317,15 +1317,22 @@ messages connus), pas par horloge.
 | Route | Corps / Query | Réponse |
 |---|---|---|
 | `POST /api/chat/session` | `{lang}` ("fr" défaut) | `201 {id, token, status, total, messages[]}` — message de bienvenue |
-| `POST /api/chat/message` | `{token, body, offset}` | `{status, total, messages[]}` — fil depuis `offset` (inclut le message visiteur confirmé + la réponse bot) |
+| `POST /api/chat/message` | `{token, body, offset, lang?}` | `{status, total, messages[]}` — fil depuis `offset` (inclut le message visiteur confirmé + la réponse bot) |
 | `GET /api/chat/messages` | `?token=&offset=` | `{status, total, messages[]}` — polling visiteur |
-| `POST /api/chat/handoff` | `{token, offset}` | `{status, total, messages[]}` — transmission explicite |
+| `POST /api/chat/handoff` | `{token, offset, lang?}` | `{status, total, messages[]}` — transmission explicite |
 
 Statuts : `bot` (l'assistant répond), `human` (transmis — le bot se tait,
 les messages visiteur incrémentent `unread`), `closed` (clôturée par le
 support, message de fin automatique côté visiteur). L'intent « humain »
 reconnu dans un message (mots-clés : humain, conseiller, support…) a le
 même effet qu'un handoff explicite. Mauvais token → `404`.
+
+**Langue (N°128)** : la conversation suit le visiteur — `message` et
+`handoff` acceptent un champ optionnel `lang` (`"fr"`/`"en"`) ; le
+backend aligne `conversation.lang` dessus AVANT de générer la réponse
+bot ou le message de transmission (le bot répond dans la langue
+affichée, l'inbox support voit la préférence à jour). Champ absent ou
+invalide → aucun changement (rétro-compatible).
 
 **Routes console plateforme** (`requireRole(3)`) :
 

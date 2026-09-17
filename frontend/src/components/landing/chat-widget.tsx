@@ -66,6 +66,14 @@ export function LandingChatWidget() {
   const lang = useHotspotStore((s) => s.lang) as Lang;
   const copy = landingCopy[lang].chat;
 
+  /* N°128 — la langue suit le visiteur : chaque POST au backend emporte la
+     langue courante de l'interface (ref → callbacks stables, pas de
+     re-création au changement de langue). */
+  const langRef = useRef<Lang>(lang);
+  useEffect(() => {
+    langRef.current = lang;
+  }, [lang]);
+
   const [mounted, setMounted] = useState(false);
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMsg[]>([]);
@@ -175,7 +183,7 @@ export function LandingChatWidget() {
     try {
       const r = await apiAnon<ChatPollResp>("/api/chat/message", {
         method: "POST",
-        body: { token: tok, body, offset: String(messagesRef.current.length) },
+        body: { token: tok, body, offset: String(messagesRef.current.length), lang: langRef.current },
       });
       setMessages((prev) => [...prev, ...r.messages]);
       setStatus(r.status);
@@ -197,7 +205,7 @@ export function LandingChatWidget() {
     try {
       const r = await apiAnon<ChatPollResp>("/api/chat/handoff", {
         method: "POST",
-        body: { token: tok, offset: String(messagesRef.current.length) },
+        body: { token: tok, offset: String(messagesRef.current.length), lang: langRef.current },
       });
       setMessages((prev) => [...prev, ...r.messages]);
       setStatus(r.status);

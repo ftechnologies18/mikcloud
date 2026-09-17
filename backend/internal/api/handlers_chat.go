@@ -4,9 +4,9 @@
 // Côté VITRINE (public, sans JWT — le secret visiteur fait l'auth) :
 //
 //	POST /api/chat/session          {lang}                      → 201
-//	POST /api/chat/message          {token, body, offset}       → 200
+//	POST /api/chat/message          {token, body, offset, lang} → 200
 //	GET  /api/chat/messages?token=&offset=                      → 200
-//	POST /api/chat/handoff          {token, offset}             → 200
+//	POST /api/chat/handoff          {token, offset, lang}       → 200
 //
 // Côté CONSOLE PLATEFORME (requireRole 3) :
 //
@@ -19,6 +19,11 @@
 // réordonnés ni insérés au milieu — le client suit le fil par OFFSET (le
 // nombre de messages qu'il connaît déjà), jamais par horloge : deux
 // messages écrits dans la même seconde ne peuvent pas être ratés.
+//
+// LANGUE (N°128) : la conversation suit le visiteur — les POST publics
+// acceptent un champ optionnel "lang" ("fr"/"en") ; le backend aligne
+// la conversation dessus, le bot répond dans la langue affichée et la
+// console support voit la préférence à jour dans l'inbox.
 //
 // SÉCURITÉ : le secret visiteur (token 40 hex) n'est stocké que sous
 // forme de SHA-256 (même garantie que PasswordReset N°68) — l'identifiant
@@ -217,6 +222,19 @@ func chatOffsetFrom(raw string) int {
 	return v
 }
 
+// chatLang — normalise la langue d'une requête visiteur : "fr"/"en",
+// ou "" si absente/invalide (aucun changement demandé). N°128 : la
+// langue de la conversation suit le visiteur — l'interface peut changer
+// de langue après l'ouverture, chaque POST public emporte la langue
+// affichée.
+func chatLang(raw string) string {
+	l := strings.ToLower(strings.TrimSpace(raw))
+	if l == "fr" || l == "en" {
+		return l
+	}
+	return ""
+}
+
 // chatBodyVisitor — corps d'un message visiteur : trim + bornes.
 // Vide → "" (le handler répond 400).
 func chatBodyVisitor(s string) string {
@@ -245,8 +263,8 @@ func (a *API) handleChatSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
 		return
 	}
-	lang := strings.ToLower(strings.TrimSpace(req.Lang))
-	if lang != "en" {
+	lang := chatLang(req.Lang)
+	if lang == "" {
 		lang = "fr" // la vitrine est FR-first
 	}
 
@@ -297,6 +315,7 @@ func (a *API) handleChatMessage(w http.ResponseWriter, r *http.Request) {
 		Token  string `json:"token"`
 		Body   string `json:"body"`
 		Offset string `json:"offset"`
+		Lang   string `json:"lang"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
@@ -316,6 +335,12 @@ func (a *API) handleChatMessage(w http.ResponseWriter, r *http.Request) {
 		a.store.Unlock()
 		writeErr(w, http.StatusNotFound, "Conversation introuvable")
 		return
+	}
+	// N°128 — la langue suit le visiteur : si l'interface a changé de
+	// langue depuis l'ouverture, la conversation s'aligne dessus (le bot
+	// répond dans la langue affichée, la console voit la préférence).
+	if l := chatLang(req.Lang); l != "" && l != conv.Lang {
+		conv.Lang = l
 	}
 	now := model.NowISO()
 	db.ChatMessages = append(db.ChatMessages,
@@ -386,6 +411,7 @@ func (a *API) handleChatHandoff(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Token  string `json:"token"`
 		Offset string `json:"offset"`
+		Lang   string `json:"lang"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
@@ -400,6 +426,11 @@ func (a *API) handleChatHandoff(w http.ResponseWriter, r *http.Request) {
 		a.store.Unlock()
 		writeErr(w, http.StatusNotFound, "Conversation introuvable")
 		return
+	}
+	// N°128 — la langue suit le visiteur : le message de transmission
+	// part dans la langue affichée au moment de la demande.
+	if l := chatLang(req.Lang); l != "" && l != conv.Lang {
+		conv.Lang = l
 	}
 	if conv.Status == model.ChatStatusBot {
 		now := model.NowISO()

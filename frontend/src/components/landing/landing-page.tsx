@@ -851,7 +851,7 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
         </footer>
       </div>
 
-      {/* âââ ASSISTANT CHAT (NÂ°125 â remplace la FAQ) âââ */}
+      {/* ═══ ASSISTANT CHAT (N°127 — remplace la FAQ) ═══ */}
       <LandingChatWidget />
     </div>
   );

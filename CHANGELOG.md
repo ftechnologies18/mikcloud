@@ -5,6 +5,65 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-17 — N°128 — Le chatbot corrige son accent : chaînes réparées (mojibake), anglais poli et langue qui suit le visiteur
+
+### N°128 — Contexte : retour utilisateur « la fenêtre du chat bot semble présenter des caractères de lettre non conventionnelle et la traduction FR/EN est imparfaite »
+Deux maux distincts derrière une même vitre. (1) ENCODAGE — les chaînes
+FR/EN du widget (statusBot, statusHuman, statusClosed, placeholder,
+humanBtn, handoffNote, closedNote, sendError) avaient été double-encodées
+(UTF-8 décodé en latin-1 puis ré-encodé en UTF-8) : « Assistant Â·
+rÃ©ponses instantanÃ©es », « Ãcrivez votre messageâ¦ », « Parler Ã  un
+humain », « Sending failed â try again » — avec des contrôles C1
+invisibles (U+0089, U+00A0…) en prime. Le reste de la vitrine était
+propre : seul le bloc `chat` de landing-copy.ts (plus un commentaire de
+landing-page.tsx) datait d'une écriture mal encodée. (2) LANGUE — la
+langue d'une conversation était figée à l'ouverture : un visiteur qui
+bascule la vitrine FR→EN en cours de route voyait l'habillage du widget
+passer en anglais… pendant que le bot continuait de répondre en français.
+
+### Réparation de l'encodage
+- 12 chaînes réparées par round-trip byte-précis latin-1→UTF-8, ligne par
+  ligne, avec ancres uniques et résultats attendus ASSERTÉS (script
+  Python à échec bruyant — aucun remplacement approximatif possible) ;
+  le commentaire landing-page.tsx datait en outre de « N°125 » : réparé
+  et renuméroté N°127.
+- Scanner mojibake global rejoué après coup (frontend src/ + backend
+  internal/, .ts/.tsx/.css/.json/.go) : 0 ligne suspecte.
+
+### Anglais poli (Gallicismes du N°127)
+- Fallback bot : « I don't have a certain answer to that question » →
+  « I'm not sure about that one » ; welcome : « I'm the showcase
+  assistant » → « I'm the MikCloud assistant » ; réponse vouchers :
+  « a captive portal 100% in your brand » → « a fully branded captive
+  portal » ; statut du widget : « An advisor is answering you » → « An
+  advisor is replying to you ». Le français natif était sain — aucun
+  changement FR de contenu.
+
+### La langue suit le visiteur (changement produit)
+- CONTRAT : `POST /api/chat/message` et `POST /api/chat/handoff`
+  acceptent un champ optionnel `lang` ("fr"/"en") ; le backend aligne la
+  conversation dessus AVANT de générer la réponse bot ou le message de
+  transmission — le bot répond toujours dans la langue affichée, et
+  l'inbox support voit la préférence à jour. Champ absent/invalide =
+  aucun changement (rétro-compatible : les clients qui ne l'envoient pas
+  conservent le comportement N°127). `POST /api/chat/session` refactoré
+  sur le même helper `chatLang` (comportement inchangé, FR par défaut).
+- WIDGET : `langRef` (ref synchronisée par effet — callbacks stables,
+  pas de re-création au changement de langue) ; chaque POST emporte la
+  langue courante de l'interface.
+
+### Vérifié
+- eslint 0 erreur, tsc 0 erreur ; scan mojibake 0 (frontend + backend) ;
+  navigateur (next dev :3018) : widget FR (« Assistant · réponses
+  instantanées », « Échec d'envoi — réessayez ») et EN (« Assistant ·
+  instant answers », « Sending failed — try again ») aux accents propres,
+  mobile 390 px zéro débordement, 0 erreur console. Le parcours complet
+  (session bot + bascule de langue en cours de conversation) est rejoué
+  sur production après déploiement — la sandbox n'a pas de toolchain Go
+  pour faire tourner le backend en local, et le CORS du backend Render
+  n'autorise que les origines légitimes (localhost est refusé, à juste
+  titre).
+
 ## 2026-09-17 — N°127 — La FAQ devient un CHATBOT : assistant conversationnel sur la vitrine + relève humaine depuis la console plateforme — rail sans numéros, tarifs qui ne recouvrent plus
 
 ### N°127 — Contexte : trois défauts de la vitrine et une demande d'assistance vivante

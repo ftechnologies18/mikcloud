@@ -138,7 +138,7 @@ var chatIntents = []chatIntent{
 			"identifiants", "wifi code",
 		},
 		answerFr: "Le cœur du mode Hotspot : des vouchers par lots (jusqu'à 500 par lot), avec quotas de temps et de données, bridage au forfait plutôt que coupure, portail captif 100 % à votre marque et QR codes prêts à imprimer. Les sessions se suivent en direct dans la console.",
-		answerEn: "The heart of Hotspot mode: vouchers in batches (up to 500 per batch), with time and data quotas, throttling to your plan instead of cutting off, a captive portal 100% in your brand and print-ready QR codes. Sessions are tracked live in the console.",
+		answerEn: "The heart of Hotspot mode: vouchers in batches (up to 500 per batch), with time and data quotas, throttling to your plan instead of cutting off, a fully branded captive portal and print-ready QR codes. Sessions are tracked live in the console.",
 	},
 	{
 		id: "resellers",
@@ -188,9 +188,9 @@ const chatIntentHuman = "human"
 // Messages du bot (une seule source, FR + EN).
 const (
 	chatFallbackFr = "Je n'ai pas de réponse certaine à cette question. Vous pouvez la reformuler, toucher une suggestion ci-dessous — ou demander un conseiller humain : je vous transmets en un clic."
-	chatFallbackEn = "I don't have a certain answer to that question. You can rephrase it, tap a suggestion below — or ask for a human advisor: I'll transfer you in one tap."
+	chatFallbackEn = "I'm not sure about that one. You can rephrase it, tap a suggestion below — or ask for a human advisor: I'll transfer you in one tap."
 	chatWelcomeFr  = "Bonjour et bienvenue sur MikCloud. Je suis l'assistant de la vitrine : modes Hotspot et HomeNet, tarifs, essai gratuit, compatibilité routeur, protections… Posez votre question ou touchez une suggestion. Vous pouvez aussi demander un humain à tout moment."
-	chatWelcomeEn  = "Hello and welcome to MikCloud. I'm the showcase assistant: Hotspot and HomeNet modes, pricing, free trial, router compatibility, protections… Ask your question or tap a suggestion. You can also ask for a human at any time."
+	chatWelcomeEn  = "Hello and welcome to MikCloud. I'm the MikCloud assistant: Hotspot and HomeNet modes, pricing, free trial, router compatibility, protections… Ask your question or tap a suggestion. You can also ask for a human at any time."
 	chatHandoffFr  = "Je vous transmets à un membre de l'équipe MikCloud. Il reprendra cette conversation depuis la console de support — patientez un instant, vos prochains messages lui parviennent directement."
 	chatHandoffEn  = "I'm handing you over to a member of the MikCloud team. They will pick up this conversation from the support console — hold on a moment, your next messages go straight to them."
 	chatClosedFr   = "Conversation clôturée par le support MikCloud. Merci de votre visite — vous pouvez rouvrir une nouvelle conversation à tout moment."

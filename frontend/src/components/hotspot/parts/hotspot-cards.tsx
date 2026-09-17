@@ -1,22 +1,46 @@
 "use client";
 
-// N°57-d — Cartes « Expérience hotspot » de la section Hotspot
-// (components/hotspot/views/hotspot-view.tsx).
+// N°140 — Refonte UX de l'onglet « Expérience » (hub Hotspot,
+// components/hotspot/views/hotspot-view.tsx).
 //
-// Ces cartes vivaient dans l'onglet Hotspot de l'ancienne vue Paramètres
-// (settings-view, pré-N°57-d) : expiration des vouchers, import automatique,
-// bouton d'inscription du portail, personnalisation des tickets (DNS+logo),
-// bannière et mode hospitalité du portail, guide de connexion routeur.
-// L'éclatement des sections les déplace ici SANS AUCUNE modification
-// fonctionnelle : mêmes mutations (PUT /api/settings), mêmes contrats,
-// mêmes libellés i18n — seule l'adresse change (section Hotspot, onglet
-// Expérience, /app/settings/hotspot).
+// Retour utilisateur : « chaque réglage du portail captif est dans une carte
+// séparée avec chacun son bouton d'enregistrement, ce qui complexifie
+// l'expérience » + « supprimer la carte "Connecter un vrai routeur
+// MikroTik" ». L'onglet portait DIX cartes à FOOTER d'enregistrement : le
+// gérant ne savait plus ce qui était sauvé, scrollait un mur de chrome
+// répété (10 en-têtes, 10 boutons), et la carte guide MikroTik occupait le
+// bas de page pour un branchement qui se fait une fois dans la vue Routeurs.
 //
-// Toutes ces cartes écrivent dans /api/settings (rang 3 serveur) : le hub
-// n'affiche l'onglet Expérience qu'aux rôles propriétaire+ (canView
-// « settings » — miroir client du requireRole Go).
+// La refonte :
+//   • UN SEUL ENREGISTREMENT — plus aucun bouton par carte. Une barre
+//     d'action STICKY (bas d'écran, n'apparaît que sur modification) porte
+//     le compteur de groupes modifiés, « Réinitialiser » et « Enregistrer
+//     tout ». Le PUT /api/settings part en UN SEUL appel avec tous les
+//     champs (le handler Go accepte déjà tout champ présent, nil = inchangé
+//     — contrat inchangé, corps défensif plat + tenant{…} conservé).
+//   • DEUX CARTES THÉMATIQUES — « Vouchers & tickets imprimés » (politique
+//     d'expiration, import des routeurs, DNS + logo + aperçu QR) et
+//     « Portail captif » (inscription, bannière, carrousel, services,
+//     bandeau animé, WhatsApp, mode d'affichage). Les sous-sections sont
+//     séparées par des Separator et portent un POINT « modifié » qui
+//     s'allume dès que leur groupe diverge de l'état enregistré ; les
+//     pictogrammes des anciennes cartes sont conservés (repères visuels).
+//   • NAVIGATION RAPIDE — puces d'ancrage (desktop) sous l'en-tête de
+//     l'onglet : saut doux vers chaque sous-section (scroll-mt sous le
+//     topbar sticky).
+//   • CARTE GUIDE MIKROTIK SUPPRIMÉE — le branchement matériel vit dans la
+//     vue Routeurs (et le README) ; la page reste 100 % réglages.
+//   • GARDE-FOUS — beforeunload tant que des modifications ne sont pas
+//     enregistrées, Cmd/Ctrl+Entrée enregistre, enregistrement bloqué tant
+//     qu'une validation locale échoue (délai d'expiration, URL bannière,
+//     numéro WhatsApp).
+//
+// Les comportements de champs sont conservés À L'IDENTIQUE (téléversements
+// R2 avec repli data URL, aperçu QR régénéré, aperçu bannière, aperçu du
+// lien WhatsApp, analytics de la vitrine, indices et limites) — seule
+// l'armature UX change.
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BadgeCheck,
@@ -25,27 +49,28 @@ import {
   CalendarClock,
   Camera,
   Car,
+  Check,
+  CircleAlert,
   Code,
   Coffee,
   CreditCard,
   Gamepad2,
-  Headset,
-  Laptop,
-  ListChecks,
-  Eye,
   Globe,
-  ImagePlus,
+  Headset,
   Image as ImageIcon,
   Images,
+  Laptop,
   Link as LinkIcon,
+  ListChecks,
   Loader2,
   Megaphone,
   MessageCircle,
+  MonitorSmartphone,
   MousePointerClick,
   Phone,
   Plus,
   Printer,
-  Router as RouterIcon,
+  RotateCcw,
   Scissors,
   Sparkles,
   Store,
@@ -56,16 +81,17 @@ import {
   Wrench,
   X,
   Zap,
+  ImagePlus,
+  Eye,
   type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 
-import { api, apiUpload, updateSettings } from "@/lib/hotspot/api";
+import { api, apiUpload } from "@/lib/hotspot/api";
 import { SETTINGS_QUERY_KEY } from "@/components/hotspot/parts/sd-currency";
 import { useI18n } from "@/lib/hotspot/i18n";
 import type {
   AppSettings,
-  ExpiryPolicyMode,
   PortalPromo,
   PortalService,
   PortalSocial,
@@ -75,380 +101,568 @@ import { PORTAL_SERVICE_ICONS } from "@/lib/hotspot/types";
 import { qrWithLogoDataUrl } from "@/components/hotspot/parts/template-render";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 
-const MIKROTIK_STEPS = [
-  { titleKey: "settings.guide.step1", textKey: "settings.guide.step1Text" },
-  { titleKey: "settings.guide.step2", textKey: "settings.guide.step2Text" },
-  { titleKey: "settings.guide.step3", textKey: "settings.guide.step3Text" },
-];
+/* ─── Forme locale : TOUT l'état éditable de l'onglet, un seul objet ─── */
 
-/** Onglet « Expérience » — grille des cartes de règles du service (N°57-d) :
- * même contenu que l'ancien onglet Hotspot, même ordre. */
+interface HotspotForm {
+  expiryMode: "keep" | "remove";
+  expiryDays: string;
+  autoImport: boolean;
+  joinButton: boolean;
+  dnsName: string;
+  logoUrl: string;
+  bannerUrl: string;
+  slides: string[];
+  services: PortalService[];
+  ticker: string[];
+  waNumber: string;
+  waLabel: string;
+  portalStyle: string;
+  welcome: string;
+  promos: PortalPromo[];
+  socials: PortalSocial[];
+}
+
+/* Décodeurs défensifs — identiques aux anciennes cartes (JSON invalide ou
+ * absent du compte = valeur neutre, jamais de page cassée). */
+function parseStringArray(raw: string | undefined): string[] {
+  try {
+    const parsed = JSON.parse(raw || "[]") as string[];
+    return Array.isArray(parsed) ? parsed.filter((u) => typeof u === "string" && u) : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseServices(raw: string | undefined): PortalService[] {
+  try {
+    const parsed = JSON.parse(raw || "[]") as PortalService[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseWhatsapp(raw: string | undefined): { number: string; label: string } {
+  try {
+    const parsed = JSON.parse(raw || "{}") as { number?: unknown; label?: unknown };
+    return {
+      number: typeof parsed.number === "string" ? parsed.number : "",
+      label: typeof parsed.label === "string" ? parsed.label : "",
+    };
+  } catch {
+    return { number: "", label: "" };
+  }
+}
+
+function parsePromos(raw: string | undefined): PortalPromo[] {
+  try {
+    const parsed = JSON.parse(raw || "[]") as PortalPromo[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseSocials(raw: string | undefined): PortalSocial[] {
+  try {
+    const parsed = JSON.parse(raw || "[]") as PortalSocial[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/** État initial — même lecture défensive que les anciennes cartes (champ
+ * absent du JSON = défaut effectif historique, pas « vide »). */
+function initialForm(settings: AppSettings): HotspotForm {
+  return {
+    expiryMode: settings.tenant.expiryPolicyMode === "remove" ? "remove" : "keep",
+    expiryDays: String(settings.tenant.expiryPolicyAfterDays ?? 30),
+    autoImport: settings.tenant.autoImportRouterUsers ?? settings.autoImportRouterUsers ?? true,
+    joinButton: settings.tenant.joinButton ?? true,
+    dnsName: settings.tenant.dnsName ?? "",
+    logoUrl: settings.tenant.logoUrl ?? "",
+    bannerUrl: settings.tenant.bannerUrl ?? "",
+    slides: parseStringArray(settings.tenant.portalSlides),
+    services: parseServices(settings.tenant.portalServices),
+    ticker: parseStringArray(settings.tenant.portalTicker),
+    ...(() => {
+      const wa = parseWhatsapp(settings.tenant.portalWhatsapp);
+      return { waNumber: wa.number, waLabel: wa.label };
+    })(),
+    portalStyle: settings.tenant.portalStyle ?? "",
+    welcome: settings.tenant.portalWelcome ?? "",
+    promos: parsePromos(settings.tenant.portalPromos),
+    socials: parseSocials(settings.tenant.portalSocials),
+  };
+}
+
+/** Groupes « modifiés » — un point par sous-section de la page. */
+interface DirtyGroups {
+  expiry: boolean;
+  autoImport: boolean;
+  voucher: boolean;
+  join: boolean;
+  banner: boolean;
+  slides: boolean;
+  services: boolean;
+  ticker: boolean;
+  whatsapp: boolean;
+  hospitality: boolean;
+}
+
+const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+function computeDirty(form: HotspotForm, base: HotspotForm): DirtyGroups {
+  return {
+    expiry: form.expiryMode !== base.expiryMode || form.expiryDays !== base.expiryDays,
+    autoImport: form.autoImport !== base.autoImport,
+    voucher: form.dnsName !== base.dnsName || form.logoUrl !== base.logoUrl,
+    join: form.joinButton !== base.joinButton,
+    banner: form.bannerUrl !== base.bannerUrl,
+    slides: !sameJson(form.slides, base.slides),
+    services: !sameJson(form.services, base.services),
+    ticker: !sameJson(form.ticker, base.ticker),
+    whatsapp: form.waNumber !== base.waNumber || form.waLabel !== base.waLabel,
+    hospitality:
+      form.portalStyle !== base.portalStyle ||
+      form.welcome !== base.welcome ||
+      !sameJson(form.promos, base.promos) ||
+      !sameJson(form.socials, base.socials),
+  };
+}
+
+/* ─── Onglet « Expérience » — un formulaire, deux cartes, une barre ─── */
+
 export function HotspotExperience({ settings }: { settings: AppSettings }) {
+  const { t, tf } = useI18n();
+  const queryClient = useQueryClient();
+  const [form, setForm] = useState<HotspotForm>(() => initialForm(settings));
+  // État de référence « enregistré » : sert au point modifié, au bouton
+  // Réinitialiser et à la bascule propre après enregistrement (le refetch
+  // d'arrière-plan ne PIETINE jamais la saisie — l'état vit ici, pas dans
+  // les props).
+  const [baseline, setBaseline] = useState<HotspotForm>(() => initialForm(settings));
+
+  const patch = useCallback((p: Partial<HotspotForm>) => setForm((f) => ({ ...f, ...p })), []);
+  // Variante FONCTIONNELLE — pour les téléversements async (slides, promos) :
+  // comme les setXxx((list) => …) des anciennes cartes, elle part TOUJOURS
+  // de l'état le plus frais, même si deux téléversements se chevauchent.
+  const patchWith = useCallback((fn: (f: HotspotForm) => HotspotForm) => setForm(fn), []);
+
+  const dirty = useMemo(() => computeDirty(form, baseline), [form, baseline]);
+  const dirtyCount = useMemo(() => Object.values(dirty).filter(Boolean).length, [dirty]);
+
+  /* Validations locales — miroir des garde-fous des anciennes cartes.
+   * L'enregistrement reste bloqué tant qu'un champ triche. */
+  const daysNum = parseInt(form.expiryDays, 10);
+  const daysValid = Number.isInteger(daysNum) && daysNum >= 1 && daysNum <= 365;
+  const expiryInvalid = form.expiryMode === "remove" && !daysValid;
+  const bannerInvalid =
+    form.bannerUrl.trim() !== "" &&
+    !form.bannerUrl.trim().startsWith("https://") &&
+    !form.bannerUrl.trim().startsWith("data:image/");
+  const waDigits = form.waNumber.replace(/[^0-9]/g, "");
+  const waInvalid = waDigits !== "" && (waDigits.length < 8 || waDigits.length > 15);
+  const canSave = !expiryInvalid && !bannerInvalid && !waInvalid;
+
+  const saveMutation = useMutation({
+    mutationFn: () => {
+      // Sérialisation À L'IDENTIQUE des anciennes cartes, fusionnée en un
+      // seul corps : champs plats + forme imbriquée tenant{…} (le plat
+      // prime côté backend, le décodeur Go ignore les champs inconnus).
+      // expiryPolicyAfterDays omis en mode « conserver » (undefined = pas
+      // de JSON = nil = inchangé côté serveur — comportement ExpiryCard).
+      const afterDays = form.expiryMode === "remove" && daysValid ? daysNum : undefined;
+      const flat = {
+        expiryPolicyMode: form.expiryMode,
+        expiryPolicyAfterDays: afterDays,
+        autoImportRouterUsers: form.autoImport,
+        joinButton: form.joinButton,
+        dnsName: form.dnsName.trim(),
+        logoUrl: form.logoUrl,
+        bannerUrl: form.bannerUrl.trim(),
+        portalSlides: form.slides,
+        portalServices: form.services,
+        portalTicker: form.ticker,
+        portalWhatsapp: { number: form.waNumber, label: form.waLabel },
+        portalStyle: form.portalStyle,
+        portalWelcome: form.welcome,
+        portalPromos: form.promos,
+        portalSocials: form.socials,
+      };
+      return api<AppSettings>("/api/settings", {
+        method: "PUT",
+        body: { ...flat, tenant: { ...flat } },
+      });
+    },
+    onSuccess: () => {
+      toast.success(t("settings.exp.savedToast"));
+      // La saisie devient la nouvelle référence : les points « modifié »
+      // s'éteignent immédiatement, sans attendre le refetch.
+      setBaseline({ ...form });
+      void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+  const { mutate: saveAll, isPending: saving } = saveMutation;
+
+  /* Garde-fou navigation : ne pas perdre 10 groupes de saisie sur un
+   * clic accidentel hors de la page. */
+  useEffect(() => {
+    if (dirtyCount === 0) return;
+    const handler = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [dirtyCount]);
+
+  /* Cmd/Ctrl+Entrée enregistre — raccourci des consoles modernes. */
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+        if (dirtyCount > 0 && canSave && !saving) saveAll();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [dirtyCount, canSave, saving, saveAll]);
+
+  const resetForm = () => setForm({ ...baseline });
+
+  /* Ancres de la navigation rapide (desktop) — scroll-mt-24 sous le
+   * topbar sticky de l'app-shell. */
+  const anchors = [
+    { id: "hot-exp-vouchers", labelKey: "settings.exp.navVouchers" },
+    { id: "hot-exp-join", labelKey: "settings.exp.navJoin" },
+    { id: "hot-exp-banner", labelKey: "settings.exp.navBanner" },
+    { id: "hot-exp-slides", labelKey: "settings.exp.navSlides" },
+    { id: "hot-exp-services", labelKey: "settings.exp.navServices" },
+    { id: "hot-exp-ticker", labelKey: "settings.exp.navTicker" },
+    { id: "hot-exp-whatsapp", labelKey: "settings.exp.navWhatsapp" },
+    { id: "hot-exp-mode", labelKey: "settings.exp.navMode" },
+  ];
+  const jumpTo = (id: string) =>
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+
   return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-6">
-      {/* Expiration des vouchers (F1/F5) — politique de nettoyage cloud */}
-      <ExpiryCard settings={settings} />
+    <div className="space-y-4 sm:space-y-6">
+      {/* Navigation rapide + rappel du modèle d'enregistrement unique. */}
+      <div className="space-y-2">
+        <nav className="hidden flex-wrap items-center gap-1.5 sm:flex" aria-label={t("settings.exp.jumpAria")}>
+          {anchors.map((anchor) => (
+            <button
+              key={anchor.id}
+              type="button"
+              onClick={() => jumpTo(anchor.id)}
+              className="glass-chip rounded-full px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+            >
+              {t(anchor.labelKey)}
+            </button>
+          ))}
+        </nav>
+        <p className="text-xs text-muted-foreground">{t("settings.exp.hint")}</p>
+      </div>
 
-      {/* Import automatique des utilisateurs hors MikCloud (purge P1) —
-          comportement de la synchro agent pour les inconnus du cloud */}
-      <AutoImportCard settings={settings} />
+      {/* ══ CARTE 1 — Vouchers & tickets imprimés ══ */}
+      <Card className="gap-4 py-4 sm:py-6">
+        <CardHeader className="px-4 sm:px-6">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
+              <Ticket className="size-4" />
+            </span>
+            {t("settings.exp.cardVouchers")}
+          </CardTitle>
+          <CardDescription>{t("settings.exp.cardVouchersDesc")}</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-6 px-4 sm:px-6">
+          <ExpiryFields form={form} patch={patch} dirty={dirty.expiry} daysValid={daysValid} />
+          <Separator />
+          <AutoImportFields form={form} patch={patch} dirty={dirty.autoImport} />
+          <Separator />
+          <VoucherFields form={form} patch={patch} dirty={dirty.voucher} />
+        </CardContent>
+      </Card>
 
-      {/* Bouton « S'inscrire » du portail captif (N°46) — affichage
-          dynamique piloté par le gérant */}
-      <PortalJoinCard settings={settings} />
+      {/* ══ CARTE 2 — Portail captif : ce que voient vos invités ══ */}
+      <Card className="gap-4 py-4 sm:py-6">
+        <CardHeader className="px-4 sm:px-6">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
+              <MonitorSmartphone className="size-4" />
+            </span>
+            {t("settings.exp.cardPortal")}
+          </CardTitle>
+          <CardDescription>{t("settings.exp.cardPortalDesc")}</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-6 px-4 sm:px-6">
+          <JoinFields form={form} patch={patch} dirty={dirty.join} />
+          <Separator />
+          <BannerFields form={form} patch={patch} dirty={dirty.banner} invalid={bannerInvalid} />
+          <Separator />
+          <SlidesFields form={form} patch={patch} patchWith={patchWith} dirty={dirty.slides} />
+          <Separator />
+          <ServicesFields form={form} patch={patch} dirty={dirty.services} />
+          <Separator />
+          <TickerFields form={form} patch={patch} dirty={dirty.ticker} />
+          <Separator />
+          <WhatsappFields form={form} patch={patch} dirty={dirty.whatsapp} invalid={waInvalid} />
+          <Separator />
+          <HospitalityFields form={form} patch={patch} patchWith={patchWith} dirty={dirty.hospitality} />
+        </CardContent>
+      </Card>
 
-      {/* Vouchers — DNS + logo (F2) */}
-      <VoucherCard settings={settings} />
-
-      {/* Bannière du portail captif (N°45) — image tête de page login */}
-      <PortalBannerCard settings={settings} />
-
-      {/* Slides du carrousel commercial (N°136) — les 3 visuels pub du
-          portail remplacés par les images du gérant */}
-      <PortalSlidesCard settings={settings} />
-      {/* Services du portail captif (N°137) — section « Nos Services »
-          pilotée par le gérant (≤ 6 lignes, icônes curées) */}
-      <PortalServicesCard settings={settings} />
-
-      {/* Bandeau animé du portail captif (N°138) — les messages qui
-          défilent sous le logo pilotés par le gérant (≤ 5, texte brut) */}
-      <PortalTickerCard settings={settings} />
-
-      {/* Support WhatsApp du portail captif (N°139) — le numéro que les
-          invités cliquent pour joindre le gérant (footer login/logout/error,
-          repli : support MikCloud) */}
-      <PortalWhatsappCard settings={settings} />
-
-      {/* Mode hospitalité du portail captif (N°55) — vitrine de
-          l'établissement (promos produits R2, bienvenue, réseaux
-          sociaux) à la place de la vitrine commerciale */}
-      <PortalHospitalityCard settings={settings} />
-
-      {/* Guide connexion routeur réel */}
-      <HotspotGuideCard />
+      {/* ══ BARRE D'ACTION UNIQUE — sticky bas d'écran, visible dès la
+          première modification (mik-rise), disparaît une fois propre. */}
+      {dirtyCount > 0 && (
+        <div className="sticky bottom-4 z-30 mik-rise">
+          <div
+            className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border bg-card/95 p-3 pl-4 shadow-lg shadow-black/10 backdrop-blur"
+            role="status"
+            aria-live="polite"
+          >
+            <span className="relative flex size-2 shrink-0" aria-hidden>
+              <span className="absolute inline-flex size-full animate-ping rounded-full bg-primary opacity-60" />
+              <span className="relative inline-flex size-2 rounded-full bg-primary" />
+            </span>
+            <p className="min-w-0 flex-1 text-sm font-medium">
+              {tf("settings.exp.changes", { n: dirtyCount })}
+            </p>
+            {!canSave && (
+              <p className="flex min-w-0 items-center gap-1.5 text-xs text-destructive">
+                <CircleAlert className="size-3.5 shrink-0" aria-hidden />
+                {t("settings.exp.invalid")}
+              </p>
+            )}
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              <Button type="button" variant="outline" className="h-10" onClick={resetForm} disabled={saving}>
+                <RotateCcw className="size-4" />
+                {t("settings.exp.reset")}
+              </Button>
+              <Button
+                type="button"
+                className="h-10"
+                onClick={() => saveAll()}
+                disabled={saving || !canSave}
+              >
+                {saving ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
+                {saving ? t("common.saving") : t("settings.exp.saveAll")}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-/** Guide de connexion MikroTik — 3 étapes + note (ancienne carte « Guide »
- * de l'onglet Hotspot, déplacée telle quelle). */
-export function HotspotGuideCard() {
-  const { t } = useI18n();
+/* ─── Briques communes des sous-sections ─── */
+
+/** En-tête de sous-section : pictogramme (repère des anciennes cartes) +
+ * libellé + point « modifié » (pulse discret quand le groupe diverge de
+ * l'état enregistré) + description. L'id EST l'ancre de la nav rapide. */
+function SubSectionHeader({
+  id,
+  icon: Icon,
+  title,
+  desc,
+  dirty,
+}: {
+  id: string;
+  icon: LucideIcon;
+  title: string;
+  desc?: string;
+  dirty: boolean;
+}) {
   return (
-    <Card className="gap-4 border-primary/20 bg-primary/5 py-4 sm:py-6 lg:col-span-2">
-      <CardHeader className="px-4 sm:px-6">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
-            <RouterIcon className="size-4" />
-          </span>
-          {t("settings.guide.title")}
-        </CardTitle>
-        <CardDescription>{t("settings.guide.desc")}</CardDescription>
-      </CardHeader>
-      <CardContent className="px-4 sm:px-6">
-        <ol className="grid gap-4 sm:grid-cols-3">
-          {MIKROTIK_STEPS.map((step, index) => (
-            <li key={step.titleKey} className="rounded-lg border bg-card p-3">
-              <p className="flex items-center gap-2 text-sm font-medium">
-                <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
-                  {index + 1}
-                </span>
-                {t(step.titleKey)}
-              </p>
-              <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{t(step.textKey)}</p>
-            </li>
-          ))}
-        </ol>
-        <p className="mt-4 text-xs text-muted-foreground">{t("settings.guide.simulatedNote")}</p>
-      </CardContent>
-    </Card>
-  );
-}
-
-// Carte Expiration des vouchers (F1/F5) — politique de nettoyage des expirés.
-// Le moteur d'expiration du cloud (Tick) applique la politique automatiquement.
-function ExpiryCard({ settings }: { settings: AppSettings }) {
-  const { t } = useI18n();
-  const queryClient = useQueryClient();
-  const [mode, setMode] = useState<ExpiryPolicyMode>(
-    settings.tenant.expiryPolicyMode === "remove" ? "remove" : "keep",
-  );
-  const [days, setDays] = useState(String(settings.tenant.expiryPolicyAfterDays ?? 30));
-
-  const daysNum = parseInt(days, 10);
-  const daysValid = Number.isInteger(daysNum) && daysNum >= 1 && daysNum <= 365;
-
-  const saveMutation = useMutation({
-    mutationFn: () => {
-      const afterDays = mode === "remove" && daysValid ? daysNum : undefined;
-      return api<AppSettings>("/api/settings", {
-        method: "PUT",
-        // Corps défensif : champs plats (forme du handler actuel) + forme imbriquée
-        // « tenant » du contrat — le décodeur Go ignore les champs inconnus.
-        body: {
-          expiryPolicyMode: mode,
-          expiryPolicyAfterDays: afterDays,
-          tenant: { expiryPolicyMode: mode, expiryPolicyAfterDays: afterDays },
-        },
-      });
-    },
-    onSuccess: () => {
-      toast.success(t("settings.expirySavedToast"));
-      void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  return (
-    <Card className="gap-4 py-4 sm:py-6">
-      <CardHeader className="px-4 sm:px-6">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
-            <CalendarClock className="size-4" />
-          </span>
-          {t("settings.expiryCard")}
-        </CardTitle>
-        <CardDescription>{t("settings.expiryCardDesc")}</CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-4 px-4 sm:px-6">
-        <RadioGroup
-          value={mode}
-          onValueChange={(value) => setMode(value as ExpiryPolicyMode)}
-          className="grid gap-3"
-        >
-          <label className="flex min-h-14 cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors has-[[data-state=checked]]:border-primary/50">
-            <RadioGroupItem value="keep" className="mt-1" />
-            <span className="text-sm">
-              {t("settings.expiryKeep")}
-              <span className="block text-xs font-normal text-muted-foreground">
-                {t("settings.expiryKeepDesc")}
-              </span>
-            </span>
-          </label>
-          <label className="flex min-h-14 cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors has-[[data-state=checked]]:border-primary/50">
-            <RadioGroupItem value="remove" className="mt-1" />
-            <span className="text-sm">
-              {t("settings.expiryRemove")}
-              <span className="block text-xs font-normal text-muted-foreground">
-                {t("settings.expiryRemoveDesc")}
-              </span>
-            </span>
-          </label>
-        </RadioGroup>
-
-        {mode === "remove" && (
-          <div className="grid gap-2">
-            <Label htmlFor="expiry-days">{t("settings.expiryDays")}</Label>
-            <Input
-              id="expiry-days"
-              type="number"
-              min={1}
-              max={365}
-              value={days}
-              onChange={(event) => setDays(event.target.value)}
-              className="h-10"
-              aria-invalid={!daysValid}
-            />
-            <p className={daysValid ? "text-xs text-muted-foreground" : "text-xs text-destructive"}>
-              {daysValid ? t("settings.expiryDaysHint") : t("settings.expiryDaysInvalid")}
-            </p>
-          </div>
+    <div id={id} className="scroll-mt-24 gap-0.5">
+      <h3 className="flex items-center gap-2 text-sm font-semibold">
+        <Icon className="size-4 shrink-0 text-primary" aria-hidden />
+        {title}
+        {dirty && (
+          <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-primary" aria-hidden />
         )}
-      </CardContent>
-      <CardFooter className="justify-end px-4 sm:px-6">
-        <Button
-          className="h-10"
-          onClick={() => saveMutation.mutate()}
-          disabled={saveMutation.isPending || (mode === "remove" && !daysValid)}
-        >
-          {saveMutation.isPending ? t("common.saving") : t("common.save")}
-        </Button>
-      </CardFooter>
-    </Card>
+      </h3>
+      {desc && <p className="text-xs leading-relaxed text-muted-foreground">{desc}</p>}
+    </div>
   );
 }
 
-// Carte Import automatique (purge P1) — comportement de la synchronisation
-// agent pour les utilisateurs présents sur les routeurs mais inconnus du
-// cloud (créés via Winbox ou un autre système). Défaut affiché = ACTIVÉ
-// quand le champ est absent/undefined (comportement historique de découverte).
-// Quand désactivé : jamais importés automatiquement — listés dans la santé
-// du routeur (unknownOnRouter), adoption manuelle via l'outil d'import.
-function AutoImportCard({ settings }: { settings: AppSettings }) {
-  const { t } = useI18n();
-  const queryClient = useQueryClient();
-  // Lecture défensive : le champ peut vivre dans tenant{…} ou à plat selon
-  // la version du backend déployée — absent = true (comportement historique).
-  const [enabled, setEnabled] = useState<boolean>(
-    settings.tenant.autoImportRouterUsers ?? settings.autoImportRouterUsers ?? true,
-  );
-
-  const saveMutation = useMutation({
-    mutationFn: () => updateSettings({ autoImportRouterUsers: enabled }),
-    onSuccess: () => {
-      toast.success(t("settings.autoImport.savedToast"));
-      void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
+/** Ligne interrupteur — libellé à gauche, Switch à droite (zone tactile
+ * confortable), puis les DEUX comportements décrits : celui du réglage
+ * courant est mis en avant, l'autre reste lisible (conséquence du
+ * basculement). */
+function SwitchRow({
+  id,
+  label,
+  ariaLabel,
+  checked,
+  onCheckedChange,
+}: {
+  id: string;
+  label: string;
+  ariaLabel: string;
+  checked: boolean;
+  onCheckedChange: (value: boolean) => void;
+}) {
   return (
-    <Card className="gap-4 py-4 sm:py-6">
-      <CardHeader className="px-4 sm:px-6">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
-            <UserPlus className="size-4" />
-          </span>
-          {t("settings.autoImport.title")}
-        </CardTitle>
-        <CardDescription>{t("settings.autoImport.desc")}</CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-3 px-4 sm:px-6">
-        <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
-          <Label htmlFor="auto-import-router-users" className="cursor-pointer text-sm">
-            {t("settings.autoImport.switchLabel")}
-          </Label>
-          <Switch
-            id="auto-import-router-users"
-            checked={enabled}
-            onCheckedChange={setEnabled}
-            aria-label={t("settings.autoImport.aria")}
-            className="shrink-0"
-            disabled={saveMutation.isPending}
-          />
-        </div>
-        {/* Les deux comportements sont décrits — celui du réglage courant
-            est mis en avant, l'autre reste lisible (montre la conséquence
-            du basculement avant d'enregistrer). */}
-        <p
-          className={
-            enabled
-              ? "text-xs leading-relaxed text-foreground"
-              : "text-xs leading-relaxed text-muted-foreground"
-          }
-        >
-          {t("settings.autoImport.enabledDesc")}
-        </p>
-        <p
-          className={
-            !enabled
-              ? "text-xs leading-relaxed text-foreground"
-              : "text-xs leading-relaxed text-muted-foreground"
-          }
-        >
-          {t("settings.autoImport.disabledDesc")}
-        </p>
-      </CardContent>
-      <CardFooter className="justify-end px-4 sm:px-6">
-        <Button className="h-10" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
-          {saveMutation.isPending ? t("common.saving") : t("common.save")}
-        </Button>
-      </CardFooter>
-    </Card>
+    <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
+      <Label htmlFor={id} className="cursor-pointer text-sm">
+        {label}
+      </Label>
+      <Switch
+        id={id}
+        checked={checked}
+        onCheckedChange={onCheckedChange}
+        aria-label={ariaLabel}
+        className="shrink-0"
+      />
+    </div>
   );
 }
 
-// Carte Bouton « S'inscrire » (N°46) — réglage dynamique de l'affichage du
-// bouton d'inscription sur la page de connexion du portail captif. Le portail
-// lit ce réglage dans la config (fallback inliné + fetch live) : activé → le
-// bouton Mikhmon « Scanner un QR Code » devient « S'inscrire » (lien join
-// ?mac= pré-injectée) ; désactivé → aucun bouton d'inscription.
-function PortalJoinCard({ settings }: { settings: AppSettings }) {
-  const { t } = useI18n();
-  const queryClient = useQueryClient();
-  // Lecture défensive : le champ vit dans tenant{…} (forme du contrat) —
-  // absent (nil côté Go) = true (défaut effectif, comportement historique).
-  const [enabled, setEnabled] = useState<boolean>(settings.tenant.joinButton ?? true);
-
-  const saveMutation = useMutation({
-    mutationFn: () => updateSettings({ joinButton: enabled }),
-    onSuccess: () => {
-      toast.success(t("settings.joinButton.savedToast"));
-      void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
+function DualStateDesc({
+  enabled,
+  enabledText,
+  disabledText,
+}: {
+  enabled: boolean;
+  enabledText: string;
+  disabledText: string;
+}) {
   return (
-    <Card className="gap-4 py-4 sm:py-6">
-      <CardHeader className="px-4 sm:px-6">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
-            <BadgeCheck className="size-4" />
-          </span>
-          {t("settings.joinButton.title")}
-        </CardTitle>
-        <CardDescription>{t("settings.joinButton.desc")}</CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-3 px-4 sm:px-6">
-        <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
-          <Label htmlFor="portal-join-button" className="cursor-pointer text-sm">
-            {t("settings.joinButton.switchLabel")}
-          </Label>
-          <Switch
-            id="portal-join-button"
-            checked={enabled}
-            onCheckedChange={setEnabled}
-            aria-label={t("settings.joinButton.aria")}
-            className="shrink-0"
-            disabled={saveMutation.isPending}
-          />
-        </div>
-        {/* Les deux comportements sont décrits — celui du réglage courant
-            est mis en avant, l'autre reste lisible (montre la conséquence
-            du basculement avant d'enregistrer). */}
-        <p
-          className={
-            enabled
-              ? "text-xs leading-relaxed text-foreground"
-              : "text-xs leading-relaxed text-muted-foreground"
-          }
-        >
-          {t("settings.joinButton.enabledDesc")}
-        </p>
-        <p
-          className={
-            !enabled
-              ? "text-xs leading-relaxed text-foreground"
-              : "text-xs leading-relaxed text-muted-foreground"
-          }
-        >
-          {t("settings.joinButton.disabledDesc")}
-        </p>
-      </CardContent>
-      <CardFooter className="justify-end px-4 sm:px-6">
-        <Button className="h-10" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
-          {saveMutation.isPending ? t("common.saving") : t("common.save")}
-        </Button>
-      </CardFooter>
-    </Card>
+    <>
+      <p className={cn("text-xs leading-relaxed", enabled ? "text-foreground" : "text-muted-foreground")}>
+        {enabledText}
+      </p>
+      <p className={cn("text-xs leading-relaxed", !enabled ? "text-foreground" : "text-muted-foreground")}>
+        {disabledText}
+      </p>
+    </>
   );
 }
 
-// Carte Vouchers (F2) — nom DNS du hotspot + logo affichés sur les tickets
-// (variables {{dnsName}} et {{logo}} des modèles).
-function VoucherCard({ settings }: { settings: AppSettings }) {
+/* ─── Sous-sections (contrôlées : form + patch) ─── */
+
+interface SectionProps {
+  form: HotspotForm;
+  patch: (p: Partial<HotspotForm>) => void;
+  /** Mise à jour fonctionnelle (téléversements async — cf. HotspotExperience). */
+  patchWith?: (fn: (f: HotspotForm) => HotspotForm) => void;
+  dirty: boolean;
+}
+
+/** Expiration des vouchers (F1/F5) — politique de nettoyage des expirés,
+ * appliquée automatiquement par le moteur d'expiration du cloud. */
+function ExpiryFields({ form, patch, dirty, daysValid }: SectionProps & { daysValid: boolean }) {
   const { t } = useI18n();
-  const queryClient = useQueryClient();
-  const [dnsName, setDnsName] = useState(settings.tenant.dnsName ?? "");
-  const [logoUrl, setLogoUrl] = useState(settings.tenant.logoUrl ?? "");
+  return (
+    <section className="grid gap-3" aria-labelledby="hot-exp-vouchers">
+      <SubSectionHeader
+        id="hot-exp-vouchers"
+        icon={CalendarClock}
+        title={t("settings.expiryCard")}
+        desc={t("settings.expiryCardDesc")}
+        dirty={dirty}
+      />
+      <RadioGroup
+        value={form.expiryMode}
+        onValueChange={(value) => patch({ expiryMode: value === "remove" ? "remove" : "keep" })}
+        className="grid gap-3"
+      >
+        <label className="flex min-h-14 cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors has-[[data-state=checked]]:border-primary/50">
+          <RadioGroupItem value="keep" className="mt-1" />
+          <span className="text-sm">
+            {t("settings.expiryKeep")}
+            <span className="block text-xs font-normal text-muted-foreground">
+              {t("settings.expiryKeepDesc")}
+            </span>
+          </span>
+        </label>
+        <label className="flex min-h-14 cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors has-[[data-state=checked]]:border-primary/50">
+          <RadioGroupItem value="remove" className="mt-1" />
+          <span className="text-sm">
+            {t("settings.expiryRemove")}
+            <span className="block text-xs font-normal text-muted-foreground">
+              {t("settings.expiryRemoveDesc")}
+            </span>
+          </span>
+        </label>
+      </RadioGroup>
+      {form.expiryMode === "remove" && (
+        <div className="grid gap-2">
+          <Label htmlFor="expiry-days">{t("settings.expiryDays")}</Label>
+          <Input
+            id="expiry-days"
+            type="number"
+            min={1}
+            max={365}
+            value={form.expiryDays}
+            onChange={(event) => patch({ expiryDays: event.target.value })}
+            className="h-10"
+            aria-invalid={!daysValid || undefined}
+          />
+          <p className={daysValid ? "text-xs text-muted-foreground" : "text-xs text-destructive"}>
+            {daysValid ? t("settings.expiryDaysHint") : t("settings.expiryDaysInvalid")}
+          </p>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** Import automatique (purge P1) — comportement de la synchro agent pour
+ * les utilisateurs inconnus du cloud (créés via Winbox…). */
+function AutoImportFields({ form, patch, dirty }: SectionProps) {
+  const { t } = useI18n();
+  return (
+    <section className="grid gap-3" aria-labelledby="hot-exp-autoimport">
+      <SubSectionHeader
+        id="hot-exp-autoimport"
+        icon={UserPlus}
+        title={t("settings.autoImport.title")}
+        desc={t("settings.autoImport.desc")}
+        dirty={dirty}
+      />
+      <SwitchRow
+        id="auto-import-router-users"
+        label={t("settings.autoImport.switchLabel")}
+        ariaLabel={t("settings.autoImport.aria")}
+        checked={form.autoImport}
+        onCheckedChange={(value) => patch({ autoImport: value })}
+      />
+      <DualStateDesc
+        enabled={form.autoImport}
+        enabledText={t("settings.autoImport.enabledDesc")}
+        disabledText={t("settings.autoImport.disabledDesc")}
+      />
+    </section>
+  );
+}
+
+/** Identité des tickets (F2) — DNS + logo (variables {{dnsName}}/{{logo}}),
+ * avec aperçu live « logo au centre du QR » (même composition que les
+ * tickets réels, régénéré à chaque changement de logo). */
+function VoucherFields({ form, patch, dirty }: SectionProps) {
+  const { t } = useI18n();
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Aperçu live « logo au centre du QR » — même fonction de composition que
-  // les tickets réels ; se régénère dès que le logo importé change.
   const [qrPreview, setQrPreview] = useState("");
   useEffect(() => {
     let cancelled = false;
-    qrWithLogoDataUrl("MIKCLOUD\nDEMO-2026", logoUrl || undefined)
+    qrWithLogoDataUrl("MIKCLOUD\nDEMO-2026", form.logoUrl || undefined)
       .then((url) => {
         if (!cancelled) setQrPreview(url);
       })
@@ -458,7 +672,7 @@ function VoucherCard({ settings }: { settings: AppSettings }) {
     return () => {
       cancelled = true;
     };
-  }, [logoUrl]);
+  }, [form.logoUrl]);
 
   // Logo : image ≤ 300 Ko encodée en data URL (contrat F2).
   function handleLogoFile(event: React.ChangeEvent<HTMLInputElement>) {
@@ -476,42 +690,22 @@ function VoucherCard({ settings }: { settings: AppSettings }) {
     }
     const reader = new FileReader();
     reader.onload = () => {
-      if (typeof reader.result === "string") setLogoUrl(reader.result);
+      if (typeof reader.result === "string") patch({ logoUrl: reader.result });
     };
     reader.onerror = () => toast.error(t("settings.logoReadError"));
     reader.readAsDataURL(file);
   }
 
-  const saveMutation = useMutation({
-    mutationFn: () =>
-      api<AppSettings>("/api/settings", {
-        method: "PUT",
-        // Corps défensif : champs plats + forme imbriquée « tenant » (cf. ExpiryCard).
-        body: {
-          dnsName: dnsName.trim(),
-          logoUrl,
-          tenant: { dnsName: dnsName.trim(), logoUrl },
-        },
-      }),
-    onSuccess: () => {
-      toast.success(t("settings.voucherSavedToast"));
-      void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
   return (
-    <Card className="gap-4 py-4 sm:py-6">
-      <CardHeader className="px-4 sm:px-6">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
-            <Ticket className="size-4" />
-          </span>
-          {t("settings.voucherCard")}
-        </CardTitle>
-        <CardDescription>{t("settings.voucherCardDesc")}</CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-4 px-4 sm:px-6 sm:grid-cols-2">
+    <section className="grid gap-3" aria-labelledby="hot-exp-voucher">
+      <SubSectionHeader
+        id="hot-exp-voucher"
+        icon={Globe}
+        title={t("settings.voucherCard")}
+        desc={t("settings.voucherCardDesc")}
+        dirty={dirty}
+      />
+      <div className="grid gap-4 sm:grid-cols-2">
         <div className="grid gap-2">
           <Label htmlFor="voucher-dns">{t("settings.dnsName")}</Label>
           <div className="relative">
@@ -520,8 +714,8 @@ function VoucherCard({ settings }: { settings: AppSettings }) {
               id="voucher-dns"
               className="h-10 pl-9"
               placeholder="wifi.mondomaine.ci"
-              value={dnsName}
-              onChange={(event) => setDnsName(event.target.value)}
+              value={form.dnsName}
+              onChange={(event) => patch({ dnsName: event.target.value })}
               maxLength={100}
             />
           </div>
@@ -536,8 +730,8 @@ function VoucherCard({ settings }: { settings: AppSettings }) {
           <Label>{t("settings.logo")}</Label>
           <div className="flex items-center gap-3">
             <Avatar className="size-14 rounded-xl border bg-white">
-              {logoUrl ? (
-                <AvatarImage src={logoUrl} alt={t("settings.logoAlt")} className="object-contain" />
+              {form.logoUrl ? (
+                <AvatarImage src={form.logoUrl} alt={t("settings.logoAlt")} className="object-contain" />
               ) : null}
               <AvatarFallback className="rounded-xl bg-muted text-muted-foreground">
                 <ImageIcon className="size-5" aria-hidden />
@@ -551,14 +745,14 @@ function VoucherCard({ settings }: { settings: AppSettings }) {
                 onClick={() => fileInputRef.current?.click()}
               >
                 <ImagePlus className="size-4" />
-                {logoUrl ? t("settings.change") : t("settings.upload")}
+                {form.logoUrl ? t("settings.change") : t("settings.upload")}
               </Button>
-              {logoUrl && (
+              {form.logoUrl && (
                 <Button
                   type="button"
                   variant="ghost"
                   className="h-10 text-destructive hover:text-destructive"
-                  onClick={() => setLogoUrl("")}
+                  onClick={() => patch({ logoUrl: "" })}
                 >
                   <X className="size-4" />
                   {t("settings.remove")}
@@ -582,49 +776,55 @@ function VoucherCard({ settings }: { settings: AppSettings }) {
           <p className="text-xs font-medium">{t("settings.qrPreviewTitle")}</p>
           <div className="flex items-center gap-3 rounded-lg border bg-white p-3">
             {qrPreview ? (
-              <img
-                src={qrPreview}
-                alt={t("settings.qrPreviewAlt")}
-                className="size-20 shrink-0"
-              />
+              <img src={qrPreview} alt={t("settings.qrPreviewAlt")} className="size-20 shrink-0" />
             ) : (
               <Skeleton className="size-20 shrink-0" />
             )}
             <p className="text-xs text-muted-foreground">{t("settings.qrPreviewHint")}</p>
           </div>
         </div>
-      </CardContent>
-      <CardFooter className="justify-end px-4 sm:px-6">
-        <Button
-          className="h-10"
-          onClick={() => saveMutation.mutate()}
-          disabled={saveMutation.isPending || dnsName.trim().length > 100}
-        >
-          {saveMutation.isPending ? t("common.saving") : t("common.save")}
-        </Button>
-      </CardFooter>
-    </Card>
+      </div>
+    </section>
   );
 }
 
-// Carte Bannière portail (N°45) — image affichée en tête de la page de login
-// du portail captif (routeurs agent) et de la page visiteur WiFi. Deux sources
-// acceptées par le backend : data URL (téléversement, ≤ 500 Ko) ou URL https
-// (Cloudflare R2 et tout hébergeur d'images). Vide = portail sans bannière.
-function PortalBannerCard({ settings }: { settings: AppSettings }) {
+/** Bouton « S'inscrire » du portail (N°46) — affichage dynamique piloté
+ * par le gérant (config figée + fetch live côté portail). */
+function JoinFields({ form, patch, dirty }: SectionProps) {
   const { t } = useI18n();
-  const queryClient = useQueryClient();
-  const [bannerUrl, setBannerUrl] = useState(settings.tenant.bannerUrl ?? "");
+  return (
+    <section className="grid gap-3" aria-labelledby="hot-exp-join">
+      <SubSectionHeader
+        id="hot-exp-join"
+        icon={BadgeCheck}
+        title={t("settings.joinButton.title")}
+        desc={t("settings.joinButton.desc")}
+        dirty={dirty}
+      />
+      <SwitchRow
+        id="portal-join-button"
+        label={t("settings.joinButton.switchLabel")}
+        ariaLabel={t("settings.joinButton.aria")}
+        checked={form.joinButton}
+        onCheckedChange={(value) => patch({ joinButton: value })}
+      />
+      <DualStateDesc
+        enabled={form.joinButton}
+        enabledText={t("settings.joinButton.enabledDesc")}
+        disabledText={t("settings.joinButton.disabledDesc")}
+      />
+    </section>
+  );
+}
+
+/** Bannière du portail (N°45) — image de tête de la page de connexion.
+ * Téléversement R2 (URL https permanente) avec repli data URL ≤ 500 Ko
+ * si le stockage est indisponible — le gérant n'est jamais bloqué. */
+function BannerFields({ form, patch, dirty, invalid }: SectionProps & { invalid: boolean }) {
+  const { t } = useI18n();
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // N°53 — Téléversement : l'image part dans le stockage cloud R2 (POST
-  // /api/media, ≤ 2 Mo, type sniffé côté serveur) et le champ reçoit une URL
-  // https PERMANENTE servie par le même hôte que l'API — donc joignable
-  // pré-authentification par le portail captif (walled-garden N°48). Repli
-  // dégradé si le stockage est indisponible (sandbox, R2 non configuré) :
-  // data URL intégrée ≤ 500 Ko, contrat N°45 inchangé — le gérant n'est
-  // jamais bloqué.
   async function handleBannerFile(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     // Permet de re-sélectionner le même fichier après une erreur.
@@ -640,17 +840,17 @@ function PortalBannerCard({ settings }: { settings: AppSettings }) {
     }
     setUploading(true);
     try {
-      const form = new FormData();
-      form.append("file", file);
-      const res = await apiUpload<{ url: string }>("/api/media", form, { timeoutMs: 60_000 });
-      setBannerUrl(res.url);
+      const data = new FormData();
+      data.append("file", file);
+      const res = await apiUpload<{ url: string }>("/api/media", data, { timeoutMs: 60_000 });
+      patch({ bannerUrl: res.url });
       toast.success(t("settings.bannerUploadOk"));
     } catch {
       // Repli N°45 : image intégrée au compte (≤ 500 Ko).
       if (file.size <= 500 * 1024) {
         const reader = new FileReader();
         reader.onload = () => {
-          if (typeof reader.result === "string") setBannerUrl(reader.result);
+          if (typeof reader.result === "string") patch({ bannerUrl: reader.result });
         };
         reader.onerror = () => toast.error(t("settings.logoReadError"));
         reader.readAsDataURL(file);
@@ -663,154 +863,91 @@ function PortalBannerCard({ settings }: { settings: AppSettings }) {
     }
   }
 
-  // Validation souple de l'URL collée : https:// requis (le portail et la
-  // page WiFi sont servies en https — mixed content interdit), data URL
-  // tolérée (elle vient du téléversement). Backend : même contrat (400 sinon).
-  const bannerUrlInvalid =
-    bannerUrl.trim() !== "" &&
-    !bannerUrl.trim().startsWith("https://") &&
-    !bannerUrl.trim().startsWith("data:image/");
-
-  const saveMutation = useMutation({
-    mutationFn: () =>
-      api<AppSettings>("/api/settings", {
-        method: "PUT",
-        // Corps défensif : champs plats + forme imbriquée « tenant » (cf. VoucherCard).
-        body: {
-          bannerUrl: bannerUrl.trim(),
-          tenant: { bannerUrl: bannerUrl.trim() },
-        },
-      }),
-    onSuccess: () => {
-      toast.success(t("settings.bannerSavedToast"));
-      void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
   return (
-    <Card className="gap-4 py-4 sm:py-6">
-      <CardHeader className="px-4 sm:px-6">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
-            <Images className="size-4" />
-          </span>
-          {t("settings.bannerCard")}
-        </CardTitle>
-        <CardDescription>{t("settings.bannerCardDesc")}</CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-4 px-4 sm:px-6">
-        <div className="grid gap-2">
-          <Label htmlFor="banner-url">{t("settings.bannerUrl")}</Label>
-          <div className="flex flex-wrap items-center gap-2">
-            <Input
-              id="banner-url"
-              className="h-10 min-w-0 flex-1"
-              placeholder={t("settings.bannerUrlPlaceholder")}
-              value={bannerUrl.startsWith("data:image/") ? "" : bannerUrl}
-              onChange={(event) => setBannerUrl(event.target.value)}
-              aria-invalid={bannerUrlInvalid || undefined}
-            />
+    <section className="grid gap-3" aria-labelledby="hot-exp-banner">
+      <SubSectionHeader
+        id="hot-exp-banner"
+        icon={ImageIcon}
+        title={t("settings.bannerCard")}
+        desc={t("settings.bannerCardDesc")}
+        dirty={dirty}
+      />
+      <div className="grid gap-2">
+        <Label htmlFor="banner-url">{t("settings.bannerUrl")}</Label>
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            id="banner-url"
+            className="h-10 min-w-0 flex-1"
+            placeholder={t("settings.bannerUrlPlaceholder")}
+            value={form.bannerUrl.startsWith("data:image/") ? "" : form.bannerUrl}
+            onChange={(event) => patch({ bannerUrl: event.target.value })}
+            aria-invalid={invalid || undefined}
+          />
+          <Button
+            type="button"
+            variant="outline"
+            className="h-10"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+          >
+            <ImagePlus className="size-4" />
+            {uploading ? t("settings.uploading") : t("settings.upload")}
+          </Button>
+          {form.bannerUrl && (
             <Button
               type="button"
-              variant="outline"
-              className="h-10"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploading}
+              variant="ghost"
+              className="h-10 text-destructive hover:text-destructive"
+              onClick={() => patch({ bannerUrl: "" })}
             >
-              <ImagePlus className="size-4" />
-              {uploading ? t("settings.uploading") : t("settings.upload")}
+              <X className="size-4" />
+              {t("settings.remove")}
             </Button>
-            {bannerUrl && (
-              <Button
-                type="button"
-                variant="ghost"
-                className="h-10 text-destructive hover:text-destructive"
-                onClick={() => setBannerUrl("")}
-              >
-                <X className="size-4" />
-                {t("settings.remove")}
-              </Button>
-            )}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              className="sr-only"
-              onChange={handleBannerFile}
-              aria-label={t("settings.bannerInputAria")}
+          )}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="sr-only"
+            onChange={handleBannerFile}
+            aria-label={t("settings.bannerInputAria")}
+          />
+        </div>
+        <p className={cn("text-xs", invalid ? "text-destructive" : "text-muted-foreground")}>
+          {invalid ? t("settings.bannerInvalidUrl") : t("settings.bannerUrlHint")}
+        </p>
+      </div>
+
+      {/* Aperçu live — même rendu que la page du portail (cover, arrondi). */}
+      {form.bannerUrl && !invalid && (
+        <div className="grid gap-2">
+          <p className="text-xs font-medium">{t("settings.bannerPreviewAlt")}</p>
+          <div className="overflow-hidden rounded-xl border bg-muted">
+            <img
+              src={form.bannerUrl}
+              alt={t("settings.bannerPreviewAlt")}
+              className="h-32 w-full object-cover"
             />
           </div>
-          <p className="text-xs text-muted-foreground">{t("settings.bannerUrlHint")}</p>
         </div>
-
-        {/* Aperçu live — même rendu que la page du portail (objet cover, coins arrondis) */}
-        {bannerUrl && !bannerUrlInvalid && (
-          <div className="grid gap-2">
-            <p className="text-xs font-medium">{t("settings.bannerPreviewAlt")}</p>
-            <div className="overflow-hidden rounded-xl border bg-muted">
-              <img
-                src={bannerUrl}
-                alt={t("settings.bannerPreviewAlt")}
-                className="h-32 w-full object-cover"
-              />
-            </div>
-          </div>
-        )}
-      </CardContent>
-      <CardFooter className="justify-end px-4 sm:px-6">
-        <Button
-          className="h-10"
-          onClick={() => saveMutation.mutate()}
-          disabled={saveMutation.isPending || bannerUrlInvalid}
-        >
-          {saveMutation.isPending ? t("common.saving") : t("common.save")}
-        </Button>
-      </CardFooter>
-    </Card>
+      )}
+    </section>
   );
 }
 
-// Carte Slides du carrousel commercial (N°136) — le gérant remplace les 3
-// visuels publicitaires génériques (pub1/2/3) du portail captif par SES
-// images : jusqu'à 3 slots, téléversement R2 via /api/media (URL https
-// permanente), suppression par slot. Sauvegarde PUT /api/settings
-// (champ portalSlides, plat + imbriqué — pattern PortalHospitalityCard).
-// Les listes sont VALIDÉES côté backend (≤ 3 URLs https ≤ 300 car.).
-function PortalSlidesCard({ settings }: { settings: AppSettings }) {
+/** Slides du carrousel commercial (N°136) — ≤ 3 visuels R2 remplaçant
+ * les images génériques du portail (mode commercial). */
+function SlidesFields({
+  form,
+  patch,
+  patchWith,
+  dirty,
+}: SectionProps) {
   const { t, tf } = useI18n();
-  const queryClient = useQueryClient();
-  const [slides, setSlides] = useState<string[]>(() => {
-    try {
-      const parsed = JSON.parse(settings.tenant.portalSlides || "[]") as string[];
-      return Array.isArray(parsed) ? parsed.filter((u) => typeof u === "string" && u) : [];
-    } catch {
-      return [];
-    }
-  });
   const [uploadingIdx, setUploadingIdx] = useState<number | null>(null);
   const [pendingIdx, setPendingIdx] = useState<number>(0);
+  const slides = form.slides;
 
-  const saveMutation = useMutation({
-    mutationFn: () =>
-      api<AppSettings>("/api/settings", {
-        method: "PUT",
-        // Corps défensif (pattern VoucherCard) : champs plats + forme
-        // imbriquée tenant{…} — le plat prime côté backend.
-        body: {
-          portalSlides: slides,
-          tenant: { portalSlides: slides },
-        },
-      }),
-    onSuccess: () => {
-      toast.success(t("settings.slides.savedToast"));
-      void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  // Image d'un slide : téléversement vers R2 (N°53) — URL permanente https
-  // (même flux que les images de promos et la bannière du portail).
   async function handleSlideFile(idx: number, file?: File) {
     if (!file) return;
     if (!file.type.startsWith("image/")) {
@@ -823,16 +960,19 @@ function PortalSlidesCard({ settings }: { settings: AppSettings }) {
     }
     setUploadingIdx(idx);
     try {
-      const form = new FormData();
-      form.append("file", file);
-      const res = await apiUpload<{ url: string }>("/api/media", form, { timeoutMs: 60_000 });
-      setSlides((list) => {
-        // Append (idx = prochaine place) ou remplacement (slot existant) —
-        // aucun trou possible : les entrées vides sont retirées.
-        const next = [...list];
-        next[idx] = res.url;
-        return next.filter((u) => u !== "");
-      });
+      const data = new FormData();
+      data.append("file", file);
+      const res = await apiUpload<{ url: string }>("/api/media", data, { timeoutMs: 60_000 });
+      patchWith?.((f) => ({
+        ...f,
+        slides: (() => {
+          // Append (idx = prochaine place) ou remplacement (slot existant) —
+          // aucun trou possible : les entrées vides sont retirées.
+          const next = [...f.slides];
+          next[idx] = res.url;
+          return next.filter((u) => u !== "");
+        })(),
+      }));
       toast.success(t("settings.bannerUploadOk"));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("settings.hosp.imageFail"));
@@ -842,232 +982,182 @@ function PortalSlidesCard({ settings }: { settings: AppSettings }) {
   }
 
   return (
-    <Card className="gap-4 py-4 sm:py-6">
-      <CardHeader className="px-4 sm:px-6">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
-            <Images className="size-4" />
-          </span>
-          {t("settings.slides.card")}
-        </CardTitle>
-        <CardDescription>{t("settings.slides.cardDesc")}</CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-3 px-4 sm:px-6">
-        {slides.length === 0 && (
-          <p className="text-xs text-muted-foreground">{t("settings.slides.empty")}</p>
-        )}
-        {[0, 1, 2].map((idx) => {
-          const url = slides[idx];
-          if (!url) return null;
-          return (
-            <div key={idx} className="flex items-center gap-3 rounded-lg border p-3">
-              <img
-                src={url}
-                alt={tf("settings.slides.slot", { n: idx + 1 })}
-                className="h-12 w-20 rounded-md object-cover"
-                onError={(event) => {
-                  event.currentTarget.style.opacity = "0.3";
-                }}
-              />
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium">{tf("settings.slides.slot", { n: idx + 1 })}</p>
-                <p className="truncate text-xs text-muted-foreground">{url}</p>
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={uploadingIdx === idx}
-                onClick={() => document.getElementById(`slide-file-${idx}`)?.click()}
-              >
-                <ImagePlus className="size-4" />
-                {uploadingIdx === idx ? t("settings.uploading") : t("settings.upload")}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setSlides((list) => list.filter((_, i) => i !== idx))}
-              >
-                <X className="size-4" />
-                <span className="sr-only">{t("settings.slides.remove")}</span>
-              </Button>
-              <input
-                id={`slide-file-${idx}`}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  event.target.value = "";
-                  void handleSlideFile(idx, file);
-                }}
-              />
+    <section className="grid gap-3" aria-labelledby="hot-exp-slides">
+      <SubSectionHeader
+        id="hot-exp-slides"
+        icon={Images}
+        title={t("settings.slides.card")}
+        desc={t("settings.slides.cardDesc")}
+        dirty={dirty}
+      />
+      {slides.length === 0 && (
+        <p className="text-xs text-muted-foreground">{t("settings.slides.empty")}</p>
+      )}
+      {[0, 1, 2].map((idx) => {
+        const url = slides[idx];
+        if (!url) return null;
+        return (
+          <div key={idx} className="flex items-center gap-3 rounded-lg border p-3">
+            <img
+              src={url}
+              alt={tf("settings.slides.slot", { n: idx + 1 })}
+              className="h-12 w-20 rounded-md object-cover"
+              onError={(event) => {
+                event.currentTarget.style.opacity = "0.3";
+              }}
+            />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">{tf("settings.slides.slot", { n: idx + 1 })}</p>
+              <p className="truncate text-xs text-muted-foreground">{url}</p>
             </div>
-          );
-        })}
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={slides.length >= 3}
-            onClick={() => {
-              // Ouvre le sélecteur pour le prochain slot libre.
-              setPendingIdx(slides.length);
-              document.getElementById("slide-file-new")?.click();
-            }}
-          >
-            <ImagePlus className="size-4" />
-            {t("settings.slides.add")}
-          </Button>
-          <span className="text-xs text-muted-foreground">{slides.length}/3</span>
-        </div>
-        <p className="text-xs text-muted-foreground">{t("settings.slides.hint")}</p>
-        <input
-          id="slide-file-new"
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            event.target.value = "";
-            void handleSlideFile(pendingIdx, file);
-          }}
-        />
-      </CardContent>
-      <CardFooter className="justify-end px-4 sm:px-6">
-        <Button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} className="gap-1.5">
-          {saveMutation.isPending ? <Loader2 className="size-4 animate-spin" /> : <BadgeCheck className="size-4" />}
-          {t("common.save")}
-        </Button>
-      </CardFooter>
-    </Card>
-  );
-}
-
-// Carte Services du portail (N°137) — la section « Nos Services » du portail
-// captif (mode commercial) est pilotée par le gérant : jusqu'à 6 lignes
-// (icône curée + libellé). Vide = section masquée sur le portail (repli
-// neutre — les 4 services historiques du template étaient ceux du site
-// pilote, même chasse que le logo N°135). Validée/sérialisée côté backend
-// (≤ 6, libellé 1-60, icône whitelist — cf. handlers_settings.go encodeServices).
-function PortalServicesCard({ settings }: { settings: AppSettings }) {
-  const { t } = useI18n();
-  const queryClient = useQueryClient();
-  const [services, setServices] = useState<PortalService[]>(() => {
-    try {
-      const parsed = JSON.parse(settings.tenant.portalServices || "[]") as PortalService[];
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  });
-
-  const saveMutation = useMutation({
-    mutationFn: () =>
-      api<AppSettings>("/api/settings", {
-        method: "PUT",
-        // Corps défensif (pattern PortalHospitalityCard) : champ plat + forme
-        // imbriquée tenant{…} — le plat prime côté backend.
-        body: {
-          portalServices: services,
-          tenant: { portalServices: services },
-        },
-      }),
-    onSuccess: () => {
-      toast.success(t("settings.svc.savedToast"));
-      void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  return (
-    <Card className="gap-4 py-4 sm:py-6">
-      <CardHeader className="px-4 sm:px-6">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
-            <ListChecks className="size-4" />
-          </span>
-          {t("settings.svc.card")}
-        </CardTitle>
-        <CardDescription>{t("settings.svc.cardDesc")}</CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-4 px-4 sm:px-6">
-        <div className="grid gap-2">
-          <div className="flex items-center justify-between">
-            <Label>{t("settings.svc.list")}</Label>
             <Button
               type="button"
               variant="outline"
               size="sm"
-              disabled={services.length >= 6}
-              onClick={() => setServices((list) => [...list, { icon: "fa-wifi", label: "" }])}
+              disabled={uploadingIdx === idx}
+              onClick={() => document.getElementById(`slide-file-${idx}`)?.click()}
             >
-              <Plus className="size-4" />
-              {t("settings.svc.add")}
+              <ImagePlus className="size-4" />
+              {uploadingIdx === idx ? t("settings.uploading") : t("settings.upload")}
             </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => patch({ slides: slides.filter((_, i) => i !== idx) })}
+            >
+              <X className="size-4" />
+              <span className="sr-only">{t("settings.slides.remove")}</span>
+            </Button>
+            <input
+              id={`slide-file-${idx}`}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = "";
+                void handleSlideFile(idx, file);
+              }}
+            />
           </div>
-          {services.length === 0 && (
-            <p className="text-xs text-muted-foreground">{t("settings.svc.empty")}</p>
-          )}
-          {services.map((service, idx) => (
-            <div key={idx} className="flex flex-wrap items-center gap-2">
-              <Select
-                value={service.icon}
-                onValueChange={(value) =>
-                  setServices((list) => list.map((it, i) => (i === idx ? { ...it, icon: value } : it)))
-                }
-              >
-                <SelectTrigger className="h-9 w-[11.5rem]" aria-label={t("settings.svc.icon")}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {PORTAL_SERVICE_ICONS.map((icon) => {
-                    const Icon = PORTAL_SERVICE_LUCIDE[icon] ?? ListChecks;
-                    return (
-                      <SelectItem key={icon} value={icon}>
-                        <span className="inline-flex items-center gap-2">
-                          <Icon className="size-4 text-primary" aria-hidden="true" />
-                          {t(`settings.svc.icon.${icon.slice(3)}`)}
-                        </span>
-                      </SelectItem>
-                    );
-                  })}
-                </SelectContent>
-              </Select>
-              <Input
-                className="h-9 min-w-0 flex-1"
-                maxLength={60}
-                placeholder={t("settings.svc.name")}
-                value={service.label}
-                onChange={(event) =>
-                  setServices((list) => list.map((it, i) => (i === idx ? { ...it, label: event.target.value } : it)))
-                }
-              />
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="text-destructive hover:text-destructive"
-                onClick={() => setServices((list) => list.filter((_, i) => i !== idx))}
-              >
-                <X className="size-4" />
-              </Button>
-            </div>
-          ))}
-        </div>
-        <p className="text-xs text-muted-foreground">{t("settings.svc.hint")}</p>
+        );
+      })}
+      <div className="flex flex-wrap items-center gap-2">
         <Button
           type="button"
-          className="w-full sm:w-auto"
-          disabled={saveMutation.isPending}
-          onClick={() => saveMutation.mutate()}
+          variant="outline"
+          size="sm"
+          disabled={slides.length >= 3}
+          onClick={() => {
+            // Ouvre le sélecteur pour le prochain slot libre.
+            setPendingIdx(slides.length);
+            document.getElementById("slide-file-new")?.click();
+          }}
         >
-          {saveMutation.isPending ? t("common.saving") : t("common.save")}
+          <ImagePlus className="size-4" />
+          {t("settings.slides.add")}
         </Button>
-      </CardContent>
-    </Card>
+        <span className="text-xs text-muted-foreground">{slides.length}/3</span>
+      </div>
+      <p className="text-xs text-muted-foreground">{t("settings.slides.hint")}</p>
+      <input
+        id="slide-file-new"
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+          void handleSlideFile(pendingIdx, file);
+        }}
+      />
+    </section>
+  );
+}
+
+/** Services du portail (N°137) — section « Nos Services » (mode
+ * commercial) : ≤ 6 lignes {icône curée + libellé}. */
+function ServicesFields({ form, patch, dirty }: SectionProps) {
+  const { t } = useI18n();
+  const services = form.services;
+
+  return (
+    <section className="grid gap-3" aria-labelledby="hot-exp-services">
+      <SubSectionHeader
+        id="hot-exp-services"
+        icon={ListChecks}
+        title={t("settings.svc.card")}
+        desc={t("settings.svc.cardDesc")}
+        dirty={dirty}
+      />
+      <div className="grid gap-2">
+        <div className="flex items-center justify-between">
+          <Label>{t("settings.svc.list")}</Label>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={services.length >= 6}
+            onClick={() => patch({ services: [...services, { icon: "fa-wifi", label: "" }] })}
+          >
+            <Plus className="size-4" />
+            {t("settings.svc.add")}
+          </Button>
+        </div>
+        {services.length === 0 && (
+          <p className="text-xs text-muted-foreground">{t("settings.svc.empty")}</p>
+        )}
+        {services.map((service, idx) => (
+          <div key={idx} className="flex flex-wrap items-center gap-2">
+            <Select
+              value={service.icon}
+              onValueChange={(value) =>
+                patch({ services: services.map((it, i) => (i === idx ? { ...it, icon: value } : it)) })
+              }
+            >
+              <SelectTrigger className="h-9 w-[11.5rem]" aria-label={t("settings.svc.icon")}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PORTAL_SERVICE_ICONS.map((icon) => {
+                  const Icon = PORTAL_SERVICE_LUCIDE[icon] ?? ListChecks;
+                  return (
+                    <SelectItem key={icon} value={icon}>
+                      <span className="inline-flex items-center gap-2">
+                        <Icon className="size-4 text-primary" aria-hidden="true" />
+                        {t(`settings.svc.icon.${icon.slice(3)}`)}
+                      </span>
+                    </SelectItem>
+                  );
+                })}
+              </SelectContent>
+            </Select>
+            <Input
+              className="h-9 min-w-0 flex-1"
+              maxLength={60}
+              placeholder={t("settings.svc.name")}
+              value={service.label}
+              onChange={(event) =>
+                patch({
+                  services: services.map((it, i) => (i === idx ? { ...it, label: event.target.value } : it)),
+                })
+              }
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="text-destructive hover:text-destructive"
+              onClick={() => patch({ services: services.filter((_, i) => i !== idx) })}
+            >
+              <X className="size-4" />
+            </Button>
+          </div>
+        ))}
+      </div>
+      <p className="text-xs text-muted-foreground">{t("settings.svc.hint")}</p>
+    </section>
   );
 }
 
@@ -1098,169 +1188,86 @@ const PORTAL_SERVICE_LUCIDE: Record<string, LucideIcon> = {
   "fa-spa": Sparkles,
 };
 
-// Carte Bandeau animé du portail (N°138) — les messages qui défilent en
-// animation sous le logo du portail captif (effet machine à écrire Typed.js)
-// sont pilotés par le gérant : jusqu'à 5 messages de texte brut (80 car.).
-// Vide = les 3 messages par défaut du template. Validée/sérialisée côté
-// backend (≤ 5, 1-80 car. — cf. handlers_settings.go, champ portalTicker).
-function PortalTickerCard({ settings }: { settings: AppSettings }) {
+/** Bandeau animé du portail (N°138) — messages Typed.js sous le logo,
+ * ≤ 5 messages de texte brut (80 car.). */
+function TickerFields({ form, patch, dirty }: SectionProps) {
   const { t } = useI18n();
-  const queryClient = useQueryClient();
-  const [msgs, setMsgs] = useState<string[]>(() => {
-    try {
-      const parsed = JSON.parse(settings.tenant.portalTicker || "[]") as string[];
-      return Array.isArray(parsed) ? parsed.filter((m) => typeof m === "string" && m) : [];
-    } catch {
-      return [];
-    }
-  });
-
-  const saveMutation = useMutation({
-    mutationFn: () =>
-      api<AppSettings>("/api/settings", {
-        method: "PUT",
-        // Corps défensif (pattern PortalSlidesCard) : champ plat + forme
-        // imbriquée tenant{…} — le plat prime côté backend.
-        body: {
-          portalTicker: msgs,
-          tenant: { portalTicker: msgs },
-        },
-      }),
-    onSuccess: () => {
-      toast.success(t("settings.ticker.savedToast"));
-      void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
+  const msgs = form.ticker;
 
   return (
-    <Card className="gap-4 py-4 sm:py-6">
-      <CardHeader className="px-4 sm:px-6">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
-            <Megaphone className="size-4" />
-          </span>
-          {t("settings.ticker.card")}
-        </CardTitle>
-        <CardDescription>{t("settings.ticker.cardDesc")}</CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-4 px-4 sm:px-6">
-        <div className="grid gap-2">
-          <div className="flex items-center justify-between">
-            <Label>{t("settings.ticker.list")}</Label>
+    <section className="grid gap-3" aria-labelledby="hot-exp-ticker">
+      <SubSectionHeader
+        id="hot-exp-ticker"
+        icon={Megaphone}
+        title={t("settings.ticker.card")}
+        desc={t("settings.ticker.cardDesc")}
+        dirty={dirty}
+      />
+      <div className="grid gap-2">
+        <div className="flex items-center justify-between">
+          <Label>{t("settings.ticker.list")}</Label>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={msgs.length >= 5}
+            onClick={() => patch({ ticker: [...msgs, ""] })}
+          >
+            <Plus className="size-4" />
+            {t("settings.ticker.add")}
+          </Button>
+        </div>
+        {msgs.length === 0 && (
+          <p className="text-xs text-muted-foreground">{t("settings.ticker.empty")}</p>
+        )}
+        {msgs.map((msg, idx) => (
+          <div key={idx} className="flex items-center gap-2">
+            <Input
+              className="h-9 min-w-0 flex-1"
+              maxLength={80}
+              placeholder={t("settings.ticker.name")}
+              value={msg}
+              onChange={(event) =>
+                patch({ ticker: msgs.map((it, i) => (i === idx ? event.target.value : it)) })
+              }
+            />
             <Button
               type="button"
-              variant="outline"
+              variant="ghost"
               size="sm"
-              disabled={msgs.length >= 5}
-              onClick={() => setMsgs((list) => [...list, ""])}
+              className="text-destructive hover:text-destructive"
+              onClick={() => patch({ ticker: msgs.filter((_, i) => i !== idx) })}
             >
-              <Plus className="size-4" />
-              {t("settings.ticker.add")}
+              <X className="size-4" />
+              <span className="sr-only">{t("settings.slides.remove")}</span>
             </Button>
           </div>
-          {msgs.length === 0 && (
-            <p className="text-xs text-muted-foreground">{t("settings.ticker.empty")}</p>
-          )}
-          {msgs.map((msg, idx) => (
-            <div key={idx} className="flex items-center gap-2">
-              <Input
-                className="h-9 min-w-0 flex-1"
-                maxLength={80}
-                placeholder={t("settings.ticker.name")}
-                value={msg}
-                onChange={(event) =>
-                  setMsgs((list) => list.map((it, i) => (i === idx ? event.target.value : it)))
-                }
-              />
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="text-destructive hover:text-destructive"
-                onClick={() => setMsgs((list) => list.filter((_, i) => i !== idx))}
-              >
-                <X className="size-4" />
-                <span className="sr-only">{t("settings.slides.remove")}</span>
-              </Button>
-            </div>
-          ))}
-        </div>
-        <p className="text-xs text-muted-foreground">{t("settings.ticker.hint")}</p>
-        <Button
-          type="button"
-          className="w-full sm:w-auto"
-          disabled={saveMutation.isPending}
-          onClick={() => saveMutation.mutate()}
-        >
-          {saveMutation.isPending ? t("common.saving") : t("common.save")}
-        </Button>
-      </CardContent>
-    </Card>
+        ))}
+      </div>
+      <p className="text-xs text-muted-foreground">{t("settings.ticker.hint")}</p>
+    </section>
   );
 }
 
-// Carte Support WhatsApp du portail (N°139) — le numéro que les invités
-// cliquent dans le footer du portail (login, déconnexion, erreur) pour
-// joindre le gérant : numéro international en chiffres seuls (8-15) +
-// libellé d'affichage optionnel (≤ 30 car.). Vide = le numéro du support
-// MikCloud (repli historique — le support plateforme). Validé/sérialisé
-// côté backend (cf. handlers_settings.go, champ portalWhatsapp).
-function PortalWhatsappCard({ settings }: { settings: AppSettings }) {
+/** Support WhatsApp du portail (N°139) — le numéro que les invités
+ * cliquent (footer login/logout/error), repli : support MikCloud. */
+function WhatsappFields({ form, patch, dirty, invalid }: SectionProps & { invalid: boolean }) {
   const { t } = useI18n();
-  const queryClient = useQueryClient();
-  const [number, setNumber] = useState(() => {
-    try {
-      const parsed = JSON.parse(settings.tenant.portalWhatsapp || "{}") as { number?: unknown };
-      return typeof parsed.number === "string" ? parsed.number : "";
-    } catch {
-      return "";
-    }
-  });
-  const [label, setLabel] = useState(() => {
-    try {
-      const parsed = JSON.parse(settings.tenant.portalWhatsapp || "{}") as { label?: unknown };
-      return typeof parsed.label === "string" ? parsed.label : "";
-    } catch {
-      return "";
-    }
-  });
-
-  // Aperçu du lien réellement servi sur le portail (chiffres seuls —
-  // l'affichage suit la même normalisation que le serveur).
-  const digits = number.replace(/[^0-9]/g, "");
+  // Aperçu du lien réellement servi (chiffres seuls — même normalisation
+  // que le serveur).
+  const digits = form.waNumber.replace(/[^0-9]/g, "");
   const preview = digits ? `https://wa.me/${digits}` : "https://wa.me/2250150491807";
 
-  const saveMutation = useMutation({
-    mutationFn: () =>
-      api<AppSettings>("/api/settings", {
-        method: "PUT",
-        // Corps défensif (pattern PortalTickerCard) : champ plat + forme
-        // imbriquée tenant{…} — le plat prime côté backend.
-        body: {
-          portalWhatsapp: { number, label },
-          tenant: { portalWhatsapp: { number, label } },
-        },
-      }),
-    onSuccess: () => {
-      toast.success(t("settings.wa.savedToast"));
-      void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
   return (
-    <Card className="gap-4 py-4 sm:py-6">
-      <CardHeader className="px-4 sm:px-6">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
-            <MessageCircle className="size-4" />
-          </span>
-          {t("settings.wa.card")}
-        </CardTitle>
-        <CardDescription>{t("settings.wa.cardDesc")}</CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-4 px-4 sm:px-6">
+    <section className="grid gap-3" aria-labelledby="hot-exp-whatsapp">
+      <SubSectionHeader
+        id="hot-exp-whatsapp"
+        icon={MessageCircle}
+        title={t("settings.wa.card")}
+        desc={t("settings.wa.cardDesc")}
+        dirty={dirty}
+      />
+      <div className="grid gap-4 sm:grid-cols-2">
         <div className="grid gap-2">
           <Label htmlFor="wa-number">{t("settings.wa.number")}</Label>
           <Input
@@ -1271,98 +1278,49 @@ function PortalWhatsappCard({ settings }: { settings: AppSettings }) {
             autoComplete="off"
             maxLength={20}
             placeholder={t("settings.wa.numberPh")}
-            value={number}
-            onChange={(event) => setNumber(event.target.value)}
+            value={form.waNumber}
+            onChange={(event) => patch({ waNumber: event.target.value })}
+            aria-invalid={invalid || undefined}
           />
-          <Label htmlFor="wa-label" className="mt-2">
-            {t("settings.wa.label")}
-          </Label>
+          {invalid && <p className="text-xs text-destructive">{t("settings.exp.waInvalid")}</p>}
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor="wa-label">{t("settings.wa.label")}</Label>
           <Input
             id="wa-label"
             className="h-9"
             maxLength={30}
             placeholder={t("settings.wa.labelPh")}
-            value={label}
-            onChange={(event) => setLabel(event.target.value)}
+            value={form.waLabel}
+            onChange={(event) => patch({ waLabel: event.target.value })}
           />
-          <p className="mt-1 break-all font-mono text-xs text-muted-foreground" data-testid="wa-preview">
-            {t("settings.wa.preview")} : {preview}
-          </p>
         </div>
-        <p className="text-xs text-muted-foreground">{t("settings.wa.hint")}</p>
-        <Button
-          type="button"
-          className="w-full sm:w-auto"
-          disabled={saveMutation.isPending}
-          onClick={() => saveMutation.mutate()}
-        >
-          {saveMutation.isPending ? t("common.saving") : t("common.save")}
-        </Button>
-      </CardContent>
-    </Card>
+      </div>
+      <p className="break-all font-mono text-xs text-muted-foreground" data-testid="wa-preview">
+        {t("settings.wa.preview")} : {preview}
+      </p>
+      <p className="text-xs text-muted-foreground">{t("settings.wa.hint")}</p>
+    </section>
   );
 }
 
-// Carte Portail hospitalité (N°55) — le gérant choisit le MODE d'affichage du
-// portail captif : « commercial » (grille tarifaire + Wave, défaut) ou
-// « hospitality » (vitrine de son établissement : message de bienvenue, promos
-// produits avec images stockées dans R2 via N°53, liens réseaux sociaux).
-// Les listes sont éditées structurées ici et VALIDÉES/sérialisées côté
-// backend (≤ 6 promos, ≤ 4 liens, URLs https) — cf. handlers_settings.go.
-function PortalHospitalityCard({ settings }: { settings: AppSettings }) {
+/** Mode d'affichage du portail (N°55) — commercial (grille tarifaire +
+ * Wave, défaut) ou hospitalité (vitrine : bienvenue, promos R2, réseaux
+ * sociaux). Inclut l'analyse de la vitrine (N°56). */
+function HospitalityFields({ form, patch, patchWith, dirty }: SectionProps) {
   const { t } = useI18n();
-  const queryClient = useQueryClient();
-  const [style, setStyle] = useState(settings.tenant.portalStyle ?? "");
-  const [welcome, setWelcome] = useState(settings.tenant.portalWelcome ?? "");
-  const [promos, setPromos] = useState<PortalPromo[]>(() => {
-    try {
-      const parsed = JSON.parse(settings.tenant.portalPromos || "[]") as PortalPromo[];
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  });
-  const [socials, setSocials] = useState<PortalSocial[]>(() => {
-    try {
-      const parsed = JSON.parse(settings.tenant.portalSocials || "[]") as PortalSocial[];
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  });
+  const promos = form.promos;
+  const socials = form.socials;
   const [uploadingIdx, setUploadingIdx] = useState<number | null>(null);
 
-  // N°56 — analytics de la vitrine : impressions/clics par promo. Chargé
-  // quand la carte est ouverte en mode hospitalité ; rafraîchi après chaque
-  // enregistrement (invalidation SETTINGS_QUERY_KEY + refetch à l'ouverture).
+  // N°56 — analytics de la vitrine : impressions/clics par promo.
   const statsQuery = useQuery({
     queryKey: ["promo-stats"],
     queryFn: () => api<PromoStats>("/api/promos/stats"),
-    enabled: style === "hospitality" && promos.length > 0,
+    enabled: form.portalStyle === "hospitality" && promos.length > 0,
     staleTime: 30_000,
   });
   const stats = statsQuery.data;
-
-  const saveMutation = useMutation({
-    mutationFn: () =>
-      api<AppSettings>("/api/settings", {
-        method: "PUT",
-        // Corps défensif (pattern VoucherCard) : champs plats + forme
-        // imbriquée tenant{…} — le plat prime côté backend.
-        body: {
-          portalStyle: style,
-          portalWelcome: welcome,
-          portalPromos: promos,
-          portalSocials: socials,
-          tenant: { portalStyle: style, portalWelcome: welcome, portalPromos: promos, portalSocials: socials },
-        },
-      }),
-    onSuccess: () => {
-      toast.success(t("settings.hosp.savedToast"));
-      void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
 
   // Image d'une promo : téléversée vers R2 (N°53) — URL permanente https.
   async function handlePromoImage(idx: number, file?: File) {
@@ -1377,10 +1335,13 @@ function PortalHospitalityCard({ settings }: { settings: AppSettings }) {
     }
     setUploadingIdx(idx);
     try {
-      const form = new FormData();
-      form.append("file", file);
-      const res = await apiUpload<{ url: string }>("/api/media", form, { timeoutMs: 60_000 });
-      setPromos((list) => list.map((it, i) => (i === idx ? { ...it, imageUrl: res.url } : it)));
+      const data = new FormData();
+      data.append("file", file);
+      const res = await apiUpload<{ url: string }>("/api/media", data, { timeoutMs: 60_000 });
+      patchWith?.((f) => ({
+        ...f,
+        promos: f.promos.map((it, i) => (i === idx ? { ...it, imageUrl: res.url } : it)),
+      }));
       toast.success(t("settings.bannerUploadOk"));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("settings.hosp.imageFail"));
@@ -1390,276 +1351,275 @@ function PortalHospitalityCard({ settings }: { settings: AppSettings }) {
   }
 
   return (
-    <Card className="gap-4 py-4 sm:py-6">
-      <CardHeader className="px-4 sm:px-6">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
-            <Store className="size-4" />
-          </span>
-          {t("settings.hosp.card")}
-        </CardTitle>
-        <CardDescription>{t("settings.hosp.cardDesc")}</CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-4 px-4 sm:px-6">
-        <div className="grid gap-2">
-          <Label htmlFor="portal-style">{t("settings.hosp.mode")}</Label>
-          <Select
-            value={style === "hospitality" ? "hospitality" : "commercial"}
-            onValueChange={(value) => setStyle(value === "hospitality" ? "hospitality" : "")}
-          >
-            <SelectTrigger id="portal-style" className="h-10">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="commercial">{t("settings.hosp.modeCommercial")}</SelectItem>
-              <SelectItem value="hospitality">{t("settings.hosp.modeHospitality")}</SelectItem>
-            </SelectContent>
-          </Select>
-          <p className="text-xs text-muted-foreground">{t("settings.hosp.modeHint")}</p>
-        </div>
+    <section className="grid gap-3" aria-labelledby="hot-exp-mode">
+      <SubSectionHeader
+        id="hot-exp-mode"
+        icon={Store}
+        title={t("settings.hosp.card")}
+        desc={t("settings.hosp.cardDesc")}
+        dirty={dirty}
+      />
+      <div className="grid gap-2">
+        <Label htmlFor="portal-style">{t("settings.hosp.mode")}</Label>
+        <Select
+          value={form.portalStyle === "hospitality" ? "hospitality" : "commercial"}
+          onValueChange={(value) => patch({ portalStyle: value === "hospitality" ? "hospitality" : "" })}
+        >
+          <SelectTrigger id="portal-style" className="h-10 sm:w-72">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="commercial">{t("settings.hosp.modeCommercial")}</SelectItem>
+            <SelectItem value="hospitality">{t("settings.hosp.modeHospitality")}</SelectItem>
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">{t("settings.hosp.modeHint")}</p>
+      </div>
 
-        {style === "hospitality" && (
-          <>
-            <div className="grid gap-2">
-              <Label htmlFor="portal-welcome">{t("settings.hosp.welcome")}</Label>
-              <Textarea
-                id="portal-welcome"
-                className="min-h-[70px]"
-                maxLength={200}
-                value={welcome}
-                onChange={(event) => setWelcome(event.target.value)}
-                placeholder={t("settings.hosp.welcomePlaceholder")}
-              />
+      {form.portalStyle === "hospitality" && (
+        <>
+          <div className="grid gap-2">
+            <Label htmlFor="portal-welcome">{t("settings.hosp.welcome")}</Label>
+            <Textarea
+              id="portal-welcome"
+              className="min-h-[70px]"
+              maxLength={200}
+              value={form.welcome}
+              onChange={(event) => patch({ welcome: event.target.value })}
+              placeholder={t("settings.hosp.welcomePlaceholder")}
+            />
+          </div>
+
+          <div className="grid gap-2">
+            <div className="flex items-center justify-between">
+              <Label>{t("settings.hosp.promos")}</Label>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={promos.length >= 6}
+                onClick={() =>
+                  patch({ promos: [...promos, { title: "", desc: "", imageUrl: "", priceLabel: "" }] })
+                }
+              >
+                <ImagePlus className="size-4" />
+                {t("settings.hosp.addPromo")}
+              </Button>
             </div>
-
-            <div className="grid gap-2">
-              <div className="flex items-center justify-between">
-                <Label>{t("settings.hosp.promos")}</Label>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={promos.length >= 6}
-                  onClick={() => setPromos((list) => [...list, { title: "", desc: "", imageUrl: "", priceLabel: "" }])}
-                >
-                  <ImagePlus className="size-4" />
-                  {t("settings.hosp.addPromo")}
-                </Button>
-              </div>
-              {promos.length === 0 && (
-                <p className="text-xs text-muted-foreground">{t("settings.hosp.promosEmpty")}</p>
-              )}
-              {promos.map((promo, idx) => (
-                <div key={idx} className="grid gap-2 rounded-lg border p-3">
-                  <div className="flex items-center gap-2">
-                    {promo.imageUrl ? (
-                      <img
-                        src={promo.imageUrl}
-                        alt={promo.title || `promo-${idx + 1}`}
-                        className="size-10 rounded-md object-cover"
-                        onError={(event) => {
-                          event.currentTarget.style.opacity = "0.3";
-                        }}
-                      />
-                    ) : (
-                      <span className="flex size-10 items-center justify-center rounded-md border bg-muted text-muted-foreground">
-                        <ImageIcon className="size-4" />
-                      </span>
-                    )}
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={uploadingIdx === idx}
-                      onClick={() => document.getElementById(`promo-file-${idx}`)?.click()}
-                    >
-                      <ImagePlus className="size-4" />
-                      {uploadingIdx === idx ? t("settings.uploading") : t("settings.upload")}
-                    </Button>
-                    {promo.imageUrl && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="text-destructive hover:text-destructive"
-                        onClick={() => setPromos((list) => list.map((it, i) => (i === idx ? { ...it, imageUrl: "" } : it)))}
-                      >
-                        <X className="size-4" />
-                      </Button>
-                    )}
-                    <input
-                      id={`promo-file-${idx}`}
-                      type="file"
-                      accept="image/*"
-                      className="sr-only"
-                      onChange={(event) => {
-                        const file = event.target.files?.[0];
-                        event.target.value = "";
-                        void handlePromoImage(idx, file);
+            {promos.length === 0 && (
+              <p className="text-xs text-muted-foreground">{t("settings.hosp.promosEmpty")}</p>
+            )}
+            {promos.map((promo, idx) => (
+              <div key={idx} className="grid gap-2 rounded-lg border p-3">
+                <div className="flex items-center gap-2">
+                  {promo.imageUrl ? (
+                    <img
+                      src={promo.imageUrl}
+                      alt={promo.title || `promo-${idx + 1}`}
+                      className="size-10 rounded-md object-cover"
+                      onError={(event) => {
+                        event.currentTarget.style.opacity = "0.3";
                       }}
-                      aria-label={t("settings.bannerInputAria")}
                     />
+                  ) : (
+                    <span className="flex size-10 items-center justify-center rounded-md border bg-muted text-muted-foreground">
+                      <ImageIcon className="size-4" />
+                    </span>
+                  )}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={uploadingIdx === idx}
+                    onClick={() => document.getElementById(`promo-file-${idx}`)?.click()}
+                  >
+                    <ImagePlus className="size-4" />
+                    {uploadingIdx === idx ? t("settings.uploading") : t("settings.upload")}
+                  </Button>
+                  {promo.imageUrl && (
                     <Button
                       type="button"
                       variant="ghost"
                       size="sm"
-                      className="ml-auto text-destructive hover:text-destructive"
-                      onClick={() => setPromos((list) => list.filter((_, i) => i !== idx))}
+                      className="text-destructive hover:text-destructive"
+                      onClick={() =>
+                        patch({ promos: promos.map((it, i) => (i === idx ? { ...it, imageUrl: "" } : it)) })
+                      }
                     >
                       <X className="size-4" />
-                      {t("settings.remove")}
                     </Button>
-                  </div>
-                  <Input
-                    className="h-9"
-                    maxLength={60}
-                    placeholder={t("settings.hosp.promoTitle")}
-                    value={promo.title}
-                    onChange={(event) =>
-                      setPromos((list) => list.map((it, i) => (i === idx ? { ...it, title: event.target.value } : it)))
-                    }
-                  />
-                  <Input
-                    className="h-9"
-                    maxLength={160}
-                    placeholder={t("settings.hosp.promoDesc")}
-                    value={promo.desc}
-                    onChange={(event) =>
-                      setPromos((list) => list.map((it, i) => (i === idx ? { ...it, desc: event.target.value } : it)))
-                    }
-                  />
-                  <Input
-                    className="h-9"
-                    maxLength={30}
-                    placeholder={t("settings.hosp.promoPrice")}
-                    value={promo.priceLabel}
-                    onChange={(event) =>
-                      setPromos((list) => list.map((it, i) => (i === idx ? { ...it, priceLabel: event.target.value } : it)))
-                    }
-                  />
-                  <div className="relative">
-                    <LinkIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      className="h-9 pl-8"
-                      maxLength={300}
-                      inputMode="url"
-                      placeholder={t("settings.hosp.promoLink")}
-                      value={promo.link ?? ""}
-                      onChange={(event) =>
-                        setPromos((list) => list.map((it, i) => (i === idx ? { ...it, link: event.target.value } : it)))
-                      }
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* N°56 — analytics : « votre menu vu N fois cette semaine ». Les
-                compteurs démarrent dès les premières connexions au portail. */}
-            {promos.length > 0 && (
-              <div className="grid gap-2 rounded-lg border bg-muted/30 p-3">
-                <div className="flex items-center gap-2">
-                  <Eye className="size-4 text-primary" />
-                  <span className="text-sm font-semibold">{t("settings.hosp.statsTitle")}</span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="ml-auto h-8 px-2 text-xs"
-                    disabled={statsQuery.isFetching}
-                    onClick={() => void statsQuery.refetch()}
-                  >
-                    {statsQuery.isFetching ? t("common.refreshing") : t("common.refresh")}
-                  </Button>
-                </div>
-                {stats && (
-                  <p className="text-sm text-primary font-medium">
-                    {t("settings.hosp.statsHeadline").replace("{n}", String(stats.totals.impression.week))}
-                  </p>
-                )}
-                {stats && stats.totals.impression.week === 0 && (
-                  <p className="text-xs text-muted-foreground">{t("settings.hosp.statsEmpty")}</p>
-                )}
-                {stats?.promos.map((p) => (
-                  <div key={p.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-                    <span className="font-medium text-foreground min-w-0 truncate max-w-full sm:max-w-[16rem]">{p.title || p.id}</span>
-                    <span className="inline-flex items-center gap-1 text-muted-foreground">
-                      <Eye className="size-3" />
-                      {t("settings.hosp.statsViews").replace("{w}", String(p.impressions.week)).replace("{t}", String(p.impressions.total))}
-                    </span>
-                    {p.clicks.week > 0 && (
-                      <span className="inline-flex items-center gap-1 text-muted-foreground">
-                        <MousePointerClick className="size-3" />
-                        {t("settings.hosp.statsClicks").replace("{w}", String(p.clicks.week)).replace("{t}", String(p.clicks.total))}
-                      </span>
-                    )}
-                  </div>
-                ))}
-                <p className="text-xs text-muted-foreground">{t("settings.hosp.statsHint")}</p>
-              </div>
-            )}
-
-            <div className="grid gap-2">
-              <div className="flex items-center justify-between">
-                <Label>{t("settings.hosp.socials")}</Label>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={socials.length >= 4}
-                  onClick={() => setSocials((list) => [...list, { label: "", url: "" }])}
-                >
-                  <UserPlus className="size-4" />
-                  {t("settings.hosp.addSocial")}
-                </Button>
-              </div>
-              {socials.length === 0 && (
-                <p className="text-xs text-muted-foreground">{t("settings.hosp.socialsEmpty")}</p>
-              )}
-              {socials.map((social, idx) => (
-                <div key={idx} className="flex flex-wrap items-center gap-2">
-                  <Input
-                    className="h-9 w-36"
-                    maxLength={30}
-                    placeholder={t("settings.hosp.socialLabel")}
-                    value={social.label}
-                    onChange={(event) =>
-                      setSocials((list) => list.map((it, i) => (i === idx ? { ...it, label: event.target.value } : it)))
-                    }
-                  />
-                  <Input
-                    className="h-9 min-w-0 flex-1"
-                    maxLength={200}
-                    placeholder="https://…"
-                    value={social.url}
-                    onChange={(event) =>
-                      setSocials((list) => list.map((it, i) => (i === idx ? { ...it, url: event.target.value } : it)))
-                    }
+                  )}
+                  <input
+                    id={`promo-file-${idx}`}
+                    type="file"
+                    accept="image/*"
+                    className="sr-only"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      event.target.value = "";
+                      void handlePromoImage(idx, file);
+                    }}
+                    aria-label={t("settings.bannerInputAria")}
                   />
                   <Button
                     type="button"
                     variant="ghost"
                     size="sm"
-                    className="text-destructive hover:text-destructive"
-                    onClick={() => setSocials((list) => list.filter((_, i) => i !== idx))}
+                    className="ml-auto text-destructive hover:text-destructive"
+                    onClick={() => patch({ promos: promos.filter((_, i) => i !== idx) })}
                   >
                     <X className="size-4" />
+                    {t("settings.remove")}
                   </Button>
                 </div>
-              ))}
-            </div>
-          </>
-        )}
+                <Input
+                  className="h-9"
+                  maxLength={60}
+                  placeholder={t("settings.hosp.promoTitle")}
+                  value={promo.title}
+                  onChange={(event) =>
+                    patch({ promos: promos.map((it, i) => (i === idx ? { ...it, title: event.target.value } : it)) })
+                  }
+                />
+                <Input
+                  className="h-9"
+                  maxLength={160}
+                  placeholder={t("settings.hosp.promoDesc")}
+                  value={promo.desc}
+                  onChange={(event) =>
+                    patch({ promos: promos.map((it, i) => (i === idx ? { ...it, desc: event.target.value } : it)) })
+                  }
+                />
+                <Input
+                  className="h-9"
+                  maxLength={30}
+                  placeholder={t("settings.hosp.promoPrice")}
+                  value={promo.priceLabel}
+                  onChange={(event) =>
+                    patch({
+                      promos: promos.map((it, i) => (i === idx ? { ...it, priceLabel: event.target.value } : it)),
+                    })
+                  }
+                />
+                <div className="relative">
+                  <LinkIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    className="h-9 pl-8"
+                    maxLength={300}
+                    inputMode="url"
+                    placeholder={t("settings.hosp.promoLink")}
+                    value={promo.link ?? ""}
+                    onChange={(event) =>
+                      patch({ promos: promos.map((it, i) => (i === idx ? { ...it, link: event.target.value } : it)) })
+                    }
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
 
-        <Button
-          type="button"
-          className="w-full sm:w-auto"
-          disabled={saveMutation.isPending}
-          onClick={() => saveMutation.mutate()}
-        >
-          {saveMutation.isPending ? t("common.saving") : t("common.save")}
-        </Button>
-      </CardContent>
-    </Card>
+          {/* N°56 — analytics : « votre menu vu N fois cette semaine ». Les
+              compteurs démarrent dès les premières connexions au portail. */}
+          {promos.length > 0 && (
+            <div className="grid gap-2 rounded-lg border bg-muted/30 p-3">
+              <div className="flex items-center gap-2">
+                <Eye className="size-4 text-primary" />
+                <span className="text-sm font-semibold">{t("settings.hosp.statsTitle")}</span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="ml-auto h-8 px-2 text-xs"
+                  disabled={statsQuery.isFetching}
+                  onClick={() => void statsQuery.refetch()}
+                >
+                  {statsQuery.isFetching ? t("common.refreshing") : t("common.refresh")}
+                </Button>
+              </div>
+              {stats && (
+                <p className="text-sm text-primary font-medium">
+                  {t("settings.hosp.statsHeadline").replace("{n}", String(stats.totals.impression.week))}
+                </p>
+              )}
+              {stats && stats.totals.impression.week === 0 && (
+                <p className="text-xs text-muted-foreground">{t("settings.hosp.statsEmpty")}</p>
+              )}
+              {stats?.promos.map((p) => (
+                <div key={p.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                  <span className="font-medium text-foreground min-w-0 truncate max-w-full sm:max-w-[16rem]">
+                    {p.title || p.id}
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-muted-foreground">
+                    <Eye className="size-3" />
+                    {t("settings.hosp.statsViews").replace("{w}", String(p.impressions.week)).replace("{t}", String(p.impressions.total))}
+                  </span>
+                  {p.clicks.week > 0 && (
+                    <span className="inline-flex items-center gap-1 text-muted-foreground">
+                      <MousePointerClick className="size-3" />
+                      {t("settings.hosp.statsClicks").replace("{w}", String(p.clicks.week)).replace("{t}", String(p.clicks.total))}
+                    </span>
+                  )}
+                </div>
+              ))}
+              <p className="text-xs text-muted-foreground">{t("settings.hosp.statsHint")}</p>
+            </div>
+          )}
+
+          <div className="grid gap-2">
+            <div className="flex items-center justify-between">
+              <Label>{t("settings.hosp.socials")}</Label>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={socials.length >= 4}
+                onClick={() => patch({ socials: [...socials, { label: "", url: "" }] })}
+              >
+                <UserPlus className="size-4" />
+                {t("settings.hosp.addSocial")}
+              </Button>
+            </div>
+            {socials.length === 0 && (
+              <p className="text-xs text-muted-foreground">{t("settings.hosp.socialsEmpty")}</p>
+            )}
+            {socials.map((social, idx) => (
+              <div key={idx} className="flex flex-wrap items-center gap-2">
+                <Input
+                  className="h-9 w-36"
+                  maxLength={30}
+                  placeholder={t("settings.hosp.socialLabel")}
+                  value={social.label}
+                  onChange={(event) =>
+                    patch({
+                      socials: socials.map((it, i) => (i === idx ? { ...it, label: event.target.value } : it)),
+                    })
+                  }
+                />
+                <Input
+                  className="h-9 min-w-0 flex-1"
+                  maxLength={200}
+                  placeholder="https://…"
+                  value={social.url}
+                  onChange={(event) =>
+                    patch({
+                      socials: socials.map((it, i) => (i === idx ? { ...it, url: event.target.value } : it)),
+                    })
+                  }
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="text-destructive hover:text-destructive"
+                  onClick={() => patch({ socials: socials.filter((_, i) => i !== idx) })}
+                >
+                  <X className="size-4" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </section>
   );
 }

@@ -14,7 +14,6 @@ import type {
   AccountStatus,
   AccountSummary,
   AccountUsage,
-  AppSettings,
   AuthResponse,
   AuthUser,
   BillingRequest,
@@ -566,30 +565,10 @@ export async function purgeData(
 
 /* ─── Réglages du compte : GET/PUT /api/settings ─── */
 
-/** updateSettings — sauvegarde partielle des réglages du compte (PUT /api/settings).
- * autoImportRouterUsers : true (défaut) = les utilisateurs présents sur les
- * routeurs mais inconnus du cloud sont importés automatiquement à chaque
- * synchronisation agent (comportement historique) ; false = jamais importés
- * automatiquement (visibles dans la santé du routeur, adoption manuelle via
- * l'outil d'import existant). */
-export async function updateSettings(
-  payload: { autoImportRouterUsers?: boolean; joinButton?: boolean },
-): Promise<AppSettings> {
-  return api<AppSettings>("/api/settings", {
-    method: "PUT",
-    // Corps défensif (cf. ExpiryCard) : champ plat (forme du handler actuel)
-    // + forme imbriquée « tenant » du contrat — le décodeur Go ignore les
-    // champs inconnus.
-    body: {
-      autoImportRouterUsers: payload.autoImportRouterUsers,
-      joinButton: payload.joinButton,
-      tenant: {
-        autoImportRouterUsers: payload.autoImportRouterUsers,
-        joinButton: payload.joinButton,
-      },
-    },
-  });
-}
+/* N°140 — updateSettings (sauvegarde partielle autoImport/joinButton) est
+ * retiré : l'onglet Expérience de la console enregistre désormais TOUT son
+ * formulaire en un seul PUT /api/settings depuis hotspot-cards.tsx (corps
+ * défensif plat + tenant{…}, même contrat serveur). */
 
 /* ─── M (facturation client) : historique + facture imprimable ─── */
 

@@ -80,6 +80,7 @@ export const enPlatform: Record<string, string> = {
   "platform.fleet.checkOne": "Check",
   "platform.fleet.updateOne": "Update",
   "platform.fleet.lastCheck": "Checked {at}",
+  "platform.fleet.fwTitle": "RouterBOARD firmware (bootloader): version in place → pending version, applied on router reboot",
   "platform.fleet.offline": "Offline — the command will wait for its return",
   "platform.fleet.realNote": "Not supported in direct API mode",
   "platform.fleet.checkedNever": "—",

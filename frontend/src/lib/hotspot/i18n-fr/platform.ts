@@ -80,6 +80,7 @@ export const frPlatform: Record<string, string> = {
   "platform.fleet.checkOne": "Vérifier",
   "platform.fleet.updateOne": "Mettre à jour",
   "platform.fleet.lastCheck": "Vérifié {at}",
+  "platform.fleet.fwTitle": "Firmware RouteBOARD (bootloader) : version en place → version en attente, appliquée au redémarrage du routeur",
   "platform.fleet.offline": "Hors ligne — la commande attendra son retour",
   "platform.fleet.realNote": "Non supporté en mode API directe",
   "platform.fleet.checkedNever": "—",

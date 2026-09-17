@@ -62,6 +62,8 @@ type fleetRouterOSState struct {
 	checking    bool   // un routeros_check queued|sent est en vol
 	updating    bool   // un routeros_update queued|sent est en vol
 	updateError string // message de la dernière installation échouée
+	fwCurrent   string // N°125 — firmware RouterBOARD en place (dernier check)
+	fwStaged    string // N°125 — firmware RouterBOARD en attente (livré avec le paquet RouterOS)
 }
 
 // fleetRouterOSStateOf — parcourt l'historique des commandes du routeur et
@@ -118,6 +120,10 @@ func fleetRouterOSStateOf(db *model.DB, rr *model.Router) fleetRouterOSState {
 			st.state = routerOSStateAvailable
 		}
 		st.latest = simRouterOSLatest
+		// N°125 — le firmware simulé suit toujours le RouterOS (auto-upgrade
+		// simulé) : jamais en attente en mode démo.
+		st.fwCurrent = rr.Version
+		st.fwStaged = rr.Version
 	}
 	return st
 }
@@ -152,6 +158,10 @@ type fleetRouterOut struct {
 	Checking    bool   `json:"checking"`              // vérification en vol
 	Updating    bool   `json:"updating"`              // installation en vol
 	UpdateError string `json:"updateError,omitempty"` // dernière installation échouée
+
+	// N°125 — firmware RouterBOARD (dérivé du dernier check abouti).
+	FwCurrent string `json:"fwCurrent,omitempty"` // firmware en place
+	FwStaged  string `json:"fwStaged,omitempty"`  // firmware en attente (≠ fwCurrent)
 }
 
 // handleAdminFleetRouters — GET /api/admin/fleet/routers : le parc complet,
@@ -204,6 +214,7 @@ func (a *API) handleAdminFleetRouters(w http.ResponseWriter, r *http.Request) {
 			Name: rr.Name, Mode: rr.Mode, Status: rr.Status, Version: rr.Version, LastSeen: rr.LastSeen,
 			RosState: st.state, RosLatest: st.latest, RosStatus: st.status, CheckedAt: st.checkedAt,
 			Checking: st.checking, Updating: st.updating, UpdateError: st.updateError,
+			FwCurrent: st.fwCurrent, FwStaged: st.fwStaged,
 		})
 	}
 	a.store.Unlock()

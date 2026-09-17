@@ -5,6 +5,63 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-17 — N°125 — Firmware RouterBOARD : « le bootloader qui attendait son redémarrage »
+
+### Contexte
+Retour utilisateur : « tout le parc est à la dernière version 7.24.4.
+Cependant j'ai remarqué depuis Winbox que la mise à jour du routeur ne
+change pas automatiquement le firmware routeurboard. » Comportement
+RouterOS par défaut (le firmware du bootloader ne s'applique qu'au
+redémarrage et seulement si `auto-upgrade=yes`, désactivé d'usine) — mais
+une lacune pour MikCloud : le N°115/N°117 mettaient le RouterOS à jour en
+laissant le firmware en attente, invisible depuis la console.
+
+### Produit
+- **CHECK RÉVÉLATEUR** — `routeros_check` lit l'état du firmware
+  RouterBOARD (`current-firmware` / `upgrade-firmware` / `auto-upgrade`,
+  lectures isolées on-error : un CHR n'expose rien, la ligne ne s'affiche
+  pas). Le panneau de vérification montre « Firmware RouteBOARD 7.24.2 →
+  7.24.4 (appliqué au redémarrage du routeur) » ;
+- **UPDATE AUTO-SYNC** — `routeros_update` pose `auto-upgrade=yes` AVANT
+  l'install : le MÊME redémarrage applique RouterOS ET firmware, les
+  prochaines mises à jour ne laissent plus le bootloader en retard ;
+- **COMMANDE `routerboard_firmware`** — applique le firmware en attente
+  sur un parc déjà à jour côté RouterOS : garde côté routeur (rien à
+  appliquer → ok `applied=false` SANS redémarrage), sinon auto-upgrade +
+  staging + rapport ok AVANT le reboot (pattern F10) ; POST
+  `/api/routers/{id}/routerboard-firmware` (rôle 2, dédup CROISÉE avec
+  `routeros_update` — jamais deux redémarrages en parallèle) ;
+- **PANNEAU VIVANT** — « Application du firmware… » puis « Firmware
+  appliqué A → B » quand la fiche vivante voit l'uptime retomber (la
+  version RouterOS ne change pas : c'est l'uptime qui prouve le retour) ;
+  AlertDialog forte (coupure 2 à 5 min) ; ligne firmware en attente aussi
+  dans la vue flotte N°117 ; 18 clés i18n FR/EN.
+
+### Technique
+Agent `routerosupdate.go` (check étendu + update auto-sync +
+`buildRouterboardFirmware`), model/security.go (kind), api
+`handlers_routeros_update.go` (handler + normalisation firmware +
+simulated), routes.go, `agent_handlers.go` (journaux lancé/déjà
+synchronisé + fraîcheur read_state), `handlers_admin_fleet.go`
+(fwCurrent/fwStaged dérivés du dernier check) ; frontend
+`ros-update-card.tsx` (FirmwareStatus + FirmwarePanel + mutation + poll
+bref), `types.ts`, `platform-fleet-view.tsx`, i18n fr/en. AUCUNE nouvelle
+colonne (l'état firmware voyage dans les résultats de commandes).
+
+### Tests
+`TestRouterOSCheckScriptShape` étendu, `TestRouterOSUpdateScriptShape`
+étendu (auto-upgrade avant install), `TestRouterboardFirmwareScriptShape`,
+`TestRouterOSCheckSimulatedFirmware`, `TestRouterboardFirmwareAgentFlow`
+(dédup stricte + croisée, rapport brut routeur, journaux, read_state),
+`TestRouterboardFirmwareSimulated`, `TestNormalizeRouterOSCheckFirmware`.
+Vérifié : gofmt vide, go vet OK, go build OK, go test 12 paquets verts ;
+eslint 0, tsgo 0, next build OK (13 routes) ; smoke navigateur
+bout-en-bout sur backend Go réel + protocole agent joué (check-in →
+read_state 7.24.4 uptime 2w → check « à jour + firmware 7.24.2 → 7.24.4 »
+→ dialogue → commande exécutée → read_state uptime 45s → panneau
+« Firmware appliqué »), journal complet (demandé/lancé A → B), mobile
+390 px zéro débordement, 0 erreur console.
+
 ## 2026-09-16 — N°124 — Vitrine : le mode résidentiel devient « HomeNet », le VRAI logo MikCloud (favicon) prend la barre, la clientèle cible du Hotspot s'affiche — polish clay accrocheur
 
 ### N°124 — Contexte : nommer le produit, montrer la marque, cibler la clientèle

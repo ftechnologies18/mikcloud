@@ -409,6 +409,8 @@ func (a *API) Handler() http.Handler {
 	// N°115 — mise à jour RouterOS depuis la console (vérification + installation).
 	mux.HandleFunc("POST /api/routers/{id}/routeros-check", a.requireRole(2, a.handleRouterOSCheck))
 	mux.HandleFunc("POST /api/routers/{id}/routeros-update", a.requireRole(2, a.handleRouterOSUpdate))
+	// N°125 — firmware RouterBOARD en attente (appliquage + redémarrage).
+	mux.HandleFunc("POST /api/routers/{id}/routerboard-firmware", a.requireRole(2, a.handleRouterboardFirmware))
 	// N°97 — docteur pool IP (épuisement heures de pointe)
 	mux.HandleFunc("POST /api/routers/{id}/pool-doctor", a.requireRole(2, a.handleRouterPoolDoctor))
 	// N°99 — auto-réparation du pool (opt-in par routeur)

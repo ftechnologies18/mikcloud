@@ -39,10 +39,11 @@ func TestRouterOSCheckScriptShape(t *testing.T) {
 			t.Fatalf("routeros_check : %q absent du script :\n%s", want, script)
 		}
 	}
-	// Chaque lecture périphérique est isolée dans son :do on-error.
+	// Chaque lecture périphérique est isolée dans son :do on-error
+	// (N°125 : 4 champs paquet + 3 champs firmware = 7).
 	isolated := strings.Count(script, `} on-error={ }`)
-	if isolated < 4 {
-		t.Fatalf("routeros_check : lectures isolées attendues (≥ 4), trouvées %d :\n%s", isolated, script)
+	if isolated < 7 {
+		t.Fatalf("routeros_check : lectures isolées attendues (≥ 7), trouvées %d :\n%s", isolated, script)
 	}
 	// Branche d'échec : rapport error explicite.
 	if !strings.Contains(script, `status=error`) || !strings.Contains(script, `verification_de_mise_a_jour_impossible_sur_le_routeur`) {
@@ -82,6 +83,12 @@ func TestRouterOSUpdateScriptShape(t *testing.T) {
 	iReport, iInstall := strings.Index(script, "/agent/result?token="), strings.Index(script, "/system package update install")
 	if iReport < 0 || iInstall < 0 || iReport > iInstall {
 		t.Fatalf("routeros_update : le rapport ok doit précéder l'install (rapport=%d, install=%d) :\n%s", iReport, iInstall, script)
+	}
+	// N°125 — ORDRE : auto-upgrade posé AVANT l'install (le même redémarrage
+	// applique RouterOS ET firmware).
+	iAuto := strings.Index(script, "/system routerboard settings set auto-upgrade=yes")
+	if iAuto < 0 || iAuto > iInstall {
+		t.Fatalf("routeros_update : auto-upgrade doit précéder l'install (auto=%d, install=%d) :\n%s", iAuto, iInstall, script)
 	}
 	// Le rapport d'échec, lui, suit l'install (il ne part QUE si le
 	// téléchargement échoue — sinon le routeur redémarre et le script meurt).
@@ -130,5 +137,53 @@ func TestSanitizeRouterOSVersion(t *testing.T) {
 		if got := sanitizeRouterOSVersion(in); got != want {
 			t.Fatalf("sanitizeRouterOSVersion(%q) = %q, attendu %q", in, got, want)
 		}
+	}
+}
+
+// TestRouterboardFirmwareScriptShape — N°125 — l'appliquage du firmware :
+// lectures current/upgrade-firmware isolées, garde anti-redémarrage-inutile
+// (rien à appliquer → ok SANS reboot), auto-upgrade + staging dans :do
+// on-error, rapport ok AVANT /system reboot (pattern F10), branche d'échec.
+func TestRouterboardFirmwareScriptShape(t *testing.T) {
+	b := Builder{BaseURL: "https://cloud.example", Token: "tok-fw"}
+	script, err := b.ScriptFor(model.Command{ID: "c-fw1", Kind: model.CmdRouterboardFirmware})
+	if err != nil {
+		t.Fatalf("routerboard_firmware : %v", err)
+	}
+	for _, want := range []string{
+		"# mikcloud cmd c-fw1 routerboard_firmware\n",
+		`:do { :set fwCur [/system routerboard get current-firmware] } on-error={ }`,
+		`:do { :set fwStg [/system routerboard get upgrade-firmware] } on-error={ }`,
+		// Garde : le reboot n'a lieu QUE si un firmware attend réellement.
+		`:if ($fwStg != "" && $fwStg != $fwCur) do={ :set fwNeed true }`,
+		"/system routerboard settings set auto-upgrade=yes",
+		"/system routerboard upgrade",
+		"/system reboot",
+		// Rapport dynamique : fwCurrent/fwStaged/applied (garde côté routeur).
+		`&status=ok&action=firmware&fwCurrent=". $fwCur ."&fwStaged=". $fwStg ."&applied=". $fwNeed`,
+		// Branche d'échec : staging impossible → rapport error explicite.
+		"firmware_routeurboard_impossible_sur_le_routeur",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("routerboard_firmware : %q absent du script :\n%s", want, script)
+		}
+	}
+	// ORDRE — le rapport ok précède le reboot (le fetch est bloquant : le
+	// cloud voit « done » avant que le routeur ne coupe).
+	iReport, iReboot := strings.Index(script, "/agent/result?token="), strings.Index(script, "/system reboot")
+	if iReport < 0 || iReboot < 0 || iReport > iReboot {
+		t.Fatalf("routerboard_firmware : le rapport ok doit précéder le reboot (rapport=%d, reboot=%d) :\n%s", iReport, iReboot, script)
+	}
+	// Le reboot est SOUS-GARDE : il vit dans la branche fwNeed du rapport ok —
+	// le staging (auto-upgrade + upgrade) précède le rapport, qui précède le
+	// reboot. Un firmware absent (fwStg vide) ne déclenche JAMAIS le reboot.
+	iGuard := strings.Index(script, `:if ($fwStg != "" && $fwStg != $fwCur)`)
+	iStage := strings.Index(script, "/system routerboard upgrade")
+	if iGuard < 0 || iStage < iGuard || iReboot < iStage {
+		t.Fatalf("routerboard_firmware : ordre garde → staging → reboot attendu (garde=%d, staging=%d, reboot=%d) :\n%s", iGuard, iStage, iReboot, script)
+	}
+	// Lectures isolées (un CHR sans /system routerboard ne tue pas la commande).
+	if isolated := strings.Count(script, `} on-error={ }`); isolated < 2 {
+		t.Fatalf("routerboard_firmware : lectures isolées attendues (≥ 2), trouvées %d :\n%s", isolated, script)
 	}
 }

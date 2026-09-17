@@ -7,6 +7,12 @@
 // l'installation, cf. InstallScript) — sémantique v7 de /system package update
 // (champs status/latest-version/installed-version/channel, install =
 // download + install + reboot).
+//
+// N°125 — firmware RouterBOARD : le bootloader est un monde SÉPARÉ du RouterOS
+// (il ne s'applique qu'au REDÉMARRAGE, et seulement si auto-upgrade=yes —
+// désactivé par défaut) : un parc à jour côté RouterOS peut donc porter un
+// firmware en attente, révélé par le check et appliqué par la commande
+// routerboard_firmware.
 package agent
 
 import (
@@ -31,12 +37,21 @@ const RouterOSCheckPollMax = 15
 // calculées côté routeur, concaténées — pattern ping F8) : la clé rosStatus
 // transporte le status RouterOS BRUT (la clé status est déjà celle du
 // protocole ok/error du rapport).
+//
+// N°125 — le check lit AUSSI l'état du firmware RouterBOARD (bootloader) :
+// current-firmware (en place) vs upgrade-firmware (livré avec le dernier
+// paquet RouterOS, appliqué au redémarrage si auto-upgrade=yes — désactivé
+// par défaut : c'est ainsi qu'un parc à jour côté RouterOS se retrouve avec
+// un firmware en attente). Lectures isolées pareillement : un CHR ou un vieux
+// build sans /system routerboard ne tue pas la commande — les champs restent
+// vides et le cloud n'expose simplement pas la ligne firmware.
 func (b Builder) buildRouterOSCheck(cmd model.Command) string {
 	okVar := "ok" + idSafe(cmd.ID)
 	var sb strings.Builder
 	sb.WriteString(header(cmd))
 	sb.WriteString(":local " + okVar + " true\n")
 	sb.WriteString(":local rosStat \"\"\n:local rosLatest \"\"\n:local rosInst \"\"\n:local rosChan \"\"\n")
+	sb.WriteString(":local fwCur \"\"\n:local fwStg \"\"\n:local fwAuto \"\"\n")
 	sb.WriteString(":do {\n")
 	// Lancement de la vérification — asynchrone, le status passe par
 	// « Checking for updates… » le temps de la réponse MikroTik.
@@ -58,13 +73,18 @@ func (b Builder) buildRouterOSCheck(cmd model.Command) string {
 	sb.WriteString("  :do { :set rosLatest [/system package update get latest-version] } on-error={ }\n")
 	sb.WriteString("  :do { :set rosInst [/system package update get installed-version] } on-error={ }\n")
 	sb.WriteString("  :do { :set rosChan [/system package update get channel] } on-error={ }\n")
+	// N°125 — firmware RouterBOARD (bootloader), isolé pareillement.
+	sb.WriteString("  :do { :set fwCur [/system routerboard get current-firmware] } on-error={ }\n")
+	sb.WriteString("  :do { :set fwStg [/system routerboard get upgrade-firmware] } on-error={ }\n")
+	sb.WriteString("  :do { :set fwAuto [/system routerboard get auto-upgrade] } on-error={ }\n")
 	sb.WriteString("} on-error={ :set " + okVar + " false }\n")
 	// Rapport dynamique (valeurs calculées côté routeur, pas d'escape possible —
 	// RouterOS les concatène à l'exécution, elles ne passent jamais par le
 	// générateur Go ; le cloud borne/rosEscape à la relecture).
 	ok := `/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
 		`" http-method=post http-data=("cmd=` + cmd.ID +
-		`&status=ok&rosStatus=". $rosStat ."&latest=". $rosLatest ."&installed=". $rosInst ."&channel=". $rosChan) output=none`
+		`&status=ok&rosStatus=". $rosStat ."&latest=". $rosLatest ."&installed=". $rosInst ."&channel=". $rosChan .` +
+		`&fwCurrent=". $fwCur ."&fwStaged=". $fwStg ."&fwAuto=". $fwAuto) output=none`
 	ko := b.reportLine(cmd.ID, false, map[string]string{"message": "verification de mise a jour impossible sur le routeur"})
 	sb.WriteString(":if ($" + okVar + ") do={\n  " + ok + "\n} else={\n  " + ko + "\n}\n")
 	return sb.String()
@@ -86,6 +106,11 @@ func (b Builder) buildRouterOSCheck(cmd model.Command) string {
 // nouvelle revient d'elle-même via le read_state post-redémarrage (enfilé par
 // handleAgentResult, fraîcheur post-écriture) et le journal N°115 en trace la
 // confirmation.
+//
+// N°125 — le firmware RouterBOARD suit le RouterOS : auto-upgrade posé AVANT
+// l'install pour que le MÊME redémarrage applique les deux (sinon le firmware
+// livré avec le paquet reste en attente — comportement RouterOS par défaut,
+// auto-upgrade=no).
 func (b Builder) buildRouterOSUpdate(cmd model.Command) string {
 	var sb strings.Builder
 	sb.WriteString(header(cmd))
@@ -96,6 +121,10 @@ func (b Builder) buildRouterOSUpdate(cmd model.Command) string {
 		"latest": sanitizeRouterOSVersion(plStr(cmd.Payload, "latest")),
 	}) + "\n")
 	sb.WriteString(":delay 1s\n")
+	// N°125 — firmware RouterBOARD synchronisé au même redémarrage. Isolé : un
+	// CHR ou un vieux build sans /system routerboard ne doit pas bloquer
+	// l'installation RouterOS.
+	sb.WriteString(":do { /system routerboard settings set auto-upgrade=yes } on-error={ }\n")
 	sb.WriteString(":do {\n")
 	sb.WriteString("  /system package update install\n")
 	sb.WriteString("} on-error={\n")
@@ -103,6 +132,58 @@ func (b Builder) buildRouterOSUpdate(cmd model.Command) string {
 	sb.WriteString("  " + b.reportLine(cmd.ID, false, map[string]string{
 		"message": "installation impossible sur le routeur (telechargement echoue ?)",
 	}) + "\n")
+	sb.WriteString("}\n")
+	return sb.String()
+}
+
+// buildRouterboardFirmware — N°125 — applique le firmware RouterBOARD EN
+// ATTENTE : le firmware livré avec le dernier paquet RouterOS ne s'applique
+// qu'au REDÉMARRAGE et seulement si auto-upgrade=yes (désactivé par défaut —
+// d'où les parcs « RouterOS à jour, firmware en attente » que le check N°125
+// révèle). Garde côté routeur (le cloud ne se fie jamais au front) : relire
+// current-firmware / upgrade-firmware et ne redémarrer QUE si un firmware
+// attend réellement — une coupure de 2 à 5 min doit avoir une raison. Sinon :
+// rapport ok SANS redémarrage (état déjà synchronisé). Quand il y a quelque
+// chose à appliquer : auto-upgrade posé (les prochaines mises à jour RouterOS
+// appliqueront le firmware d'elles-mêmes), staging explicite, rapport ok
+// AVANT le redémarrage (pattern reboot F10 — le fetch bloquant termine
+// premier), reboot. L'échec du staging est rapporté en erreur (le routeur ne
+// redémarre pas dans ce cas).
+func (b Builder) buildRouterboardFirmware(cmd model.Command) string {
+	okVar := "ok" + idSafe(cmd.ID)
+	var sb strings.Builder
+	sb.WriteString(header(cmd))
+	sb.WriteString(":local " + okVar + " true\n")
+	sb.WriteString(":local fwCur \"\"\n:local fwStg \"\"\n:local fwNeed false\n")
+	sb.WriteString(":do { :set fwCur [/system routerboard get current-firmware] } on-error={ }\n")
+	sb.WriteString(":do { :set fwStg [/system routerboard get upgrade-firmware] } on-error={ }\n")
+	// Garde : ne redémarrer que s'il y a un firmware en attente RÉEL (le
+	// cloud a pu montrer un état périmé — le routeur fait foi).
+	sb.WriteString(":if ($fwStg != \"\" && $fwStg != $fwCur) do={ :set fwNeed true }\n")
+	sb.WriteString(":if ($fwNeed) do={\n")
+	sb.WriteString("  :do {\n")
+	sb.WriteString("    /system routerboard settings set auto-upgrade=yes\n")
+	sb.WriteString("    /system routerboard upgrade\n")
+	sb.WriteString("  } on-error={ :set " + okVar + " false }\n")
+	sb.WriteString("}\n")
+	// Rapport dynamique (pattern ping F8 — les valeurs sont lues côté routeur
+	// et concaténées à l'exécution) : « applied » distingue un vrai appliquage
+	// (redémarrage en cours) d'un état déjà synchronisé.
+	ok := `/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
+		`" http-method=post http-data=("cmd=` + cmd.ID +
+		`&status=ok&action=firmware&fwCurrent=". $fwCur ."&fwStaged=". $fwStg ."&applied=". $fwNeed) output=none`
+	ko := b.reportLine(cmd.ID, false, map[string]string{"message": "firmware routeurboard impossible sur le routeur"})
+	sb.WriteString(":if ($" + okVar + ") do={\n")
+	sb.WriteString("  " + ok + "\n")
+	// Le redémarrage suit le rapport ok, UNIQUEMENT s'il y a quelque chose à
+	// appliquer (sinon la commande se termine sans couper le hotspot).
+	sb.WriteString("  :if ($fwNeed) do={\n")
+	sb.WriteString("    :delay 2s\n")
+	sb.WriteString("    /system reboot\n")
+	sb.WriteString("  }\n")
+	sb.WriteString("} else={\n")
+	sb.WriteString("  :log warning \"mikcloud: firmware routeurboard impossible\"\n")
+	sb.WriteString("  " + ko + "\n")
 	sb.WriteString("}\n")
 	return sb.String()
 }

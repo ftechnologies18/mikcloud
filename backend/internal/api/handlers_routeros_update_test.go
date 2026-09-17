@@ -10,7 +10,10 @@ package api
 //   - update agent : mise en file + dédup stricte, journal du lancement au
 //     rapport ok, confirmation de version au read_state suivant (journal
 //     N°115) ;
-//   - payload hostile : version cible invalide refusée (400).
+//   - payload hostile : version cible invalide refusée (400) ;
+//   - N°125 firmware : normalisation des champs firmware du check, flux
+//     agent complet (file + dédup CROISÉE + rapport + journal + read_state
+//     re-enfilé), réponse simulée « déjà synchronisé ».
 
 import (
 	"net/http"
@@ -338,5 +341,186 @@ func TestNormalizeRouterOSCheck(t *testing.T) {
 		if s, _ := res["status"].(string); len(s) > 160 {
 			t.Fatalf("%s : status non borné (%d)", c.name, len(s))
 		}
+	}
+}
+
+// TestRouterOSCheckSimulatedFirmware — N°125 — le check simulé expose l'état
+// firmware : toujours synchronisé (le firmware simulé suit le RouterOS).
+func TestRouterOSCheckSimulatedFirmware(t *testing.T) {
+	_, ts, token, routerID := rosTestRig(t, "simulated", "7.15.2")
+	status, out := doJSON(t, ts, "POST", "/api/routers/"+routerID+"/routeros-check", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("check simulé : %d %v", status, out)
+	}
+	if out["firmwareCurrent"] != "7.15.2" || out["firmwareStaged"] != "7.15.2" {
+		t.Fatalf("check simulé (firmware) : %+v", out)
+	}
+	if fa, _ := out["firmwareAuto"].(bool); !fa {
+		t.Fatalf("check simulé (auto-upgrade simulé) : %+v", out)
+	}
+}
+
+// TestRouterboardFirmwareAgentFlow — N°125 — mode agent : file + dédup
+// stricte + dédup CROISÉE (jamais un firmware pendant un routeros_update en
+// vol) + rapport brut routeur → journal du lancement + read_state re-enfilé
+// (fraîcheur post-redémarrage). Et la variante « déjà synchronisé » (garde
+// côté routeur : applied=false) journalisée sans redémarrage.
+func TestRouterboardFirmwareAgentFlow(t *testing.T) {
+	st, ts, token, routerID := rosTestRig(t, "agent", "7.24.4")
+	agt := rosAgentToken(t, st, routerID)
+
+	status, out := doJSON(t, ts, "POST", "/api/routers/"+routerID+"/routerboard-firmware", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("firmware agent : %d %v", status, out)
+	}
+	cmdID, _ := out["commandId"].(string)
+	if q, _ := out["queued"].(bool); !q || cmdID == "" {
+		t.Fatalf("firmware agent : file attendue, %+v", out)
+	}
+
+	// Dédup stricte : jamais deux appliquages en parallèle.
+	status, out = doJSON(t, ts, "POST", "/api/routers/"+routerID+"/routerboard-firmware", token, nil)
+	if status != http.StatusOK || out["commandId"] != cmdID {
+		t.Fatalf("dédup firmware : %d %+v", status, out)
+	}
+	if al, _ := out["already"].(bool); !al {
+		t.Fatalf("dédup firmware : marque « déjà en cours » attendue, %+v", out)
+	}
+
+	// Rapport routeur — corps BRUT (espaces littérales) comme le routeur
+	// l'envoie réellement : firmware appliqué 7.24.2 → 7.24.4, reboot en cours.
+	rosReportResult(t, ts, agt, cmdID, url.Values{
+		"status":    {"ok"},
+		"action":    {"firmware"},
+		"fwCurrent": {"7.24.2"},
+		"fwStaged":  {"7.24.4"},
+		"applied":   {"true"},
+	})
+	st.Lock()
+	var launchLogged, readQueued bool
+	for _, a := range st.Data().Activity {
+		if strings.Contains(a.Message, "Firmware RouterBOARD lancé") && strings.Contains(a.Message, "7.24.2 → 7.24.4") {
+			launchLogged = true
+		}
+	}
+	for _, c := range st.Data().Commands {
+		if c.Kind == model.CmdReadState && c.RouterID == routerID && c.Status == "queued" {
+			readQueued = true
+		}
+	}
+	st.Unlock()
+	if !launchLogged {
+		t.Fatal("rapport firmware : journal du lancement absent")
+	}
+	if !readQueued {
+		t.Fatal("rapport firmware : read_state de fraîcheur non re-enfilé")
+	}
+
+	// Dédup CROISÉE : un routeros_update en vol bloque le firmware (jamais
+	// deux redémarrages en parallèle) — le serveur retourne la commande en vol.
+	status, out = doJSON(t, ts, "POST", "/api/routers/"+routerID+"/routeros-update", token, map[string]any{"latest": "7.24.4"})
+	if status != http.StatusOK {
+		t.Fatalf("update en vol : %d %v", status, out)
+	}
+	updID, _ := out["commandId"].(string)
+	if updID == "" {
+		t.Fatalf("update en vol : commandId absent, %+v", out)
+	}
+	status, out = doJSON(t, ts, "POST", "/api/routers/"+routerID+"/routerboard-firmware", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("firmware pendant update : %d %v", status, out)
+	}
+	if out["commandId"] != updID {
+		t.Fatalf("dédup croisée : la commande routeros_update en vol doit être retournée, %+v", out)
+	}
+	if al, _ := out["already"].(bool); !al {
+		t.Fatalf("dédup croisée : marque « déjà en cours » attendue, %+v", out)
+	}
+	// L'update en vol est rapportée en échec (téléchargement simulé
+	// impossible) pour libérer la voie à la variante « déjà synchronisé ».
+	rosReportResult(t, ts, agt, updID, url.Values{"status": {"error"}, "message": {"installation impossible sur le routeur (telechargement echoue ?)"}})
+
+	// Variante « déjà synchronisé » (garde côté routeur) : applied=false →
+	// journal honnête SANS redémarrage.
+	status, out = doJSON(t, ts, "POST", "/api/routers/"+routerID+"/routerboard-firmware", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("firmware (2e) : %d %v", status, out)
+	}
+	cmdID2, _ := out["commandId"].(string)
+	rosReportResult(t, ts, agt, cmdID2, url.Values{
+		"status":    {"ok"},
+		"action":    {"firmware"},
+		"fwCurrent": {"7.24.4"},
+		"fwStaged":  {"7.24.4"},
+		"applied":   {"false"},
+	})
+	st.Lock()
+	var syncedLogged bool
+	for _, a := range st.Data().Activity {
+		if strings.Contains(a.Message, "Firmware RouterBOARD déjà synchronisé") {
+			syncedLogged = true
+		}
+	}
+	st.Unlock()
+	if !syncedLogged {
+		t.Fatal("rapport firmware (déjà synchronisé) : journal absent")
+	}
+}
+
+// TestRouterboardFirmwareSimulated — N°125 — le firmware simulé suit
+// toujours le RouterOS : réponse immédiate « déjà synchronisé », aucune
+// coupure, aucun journal (rien ne s'est passé).
+func TestRouterboardFirmwareSimulated(t *testing.T) {
+	st, ts, token, routerID := rosTestRig(t, "simulated", "7.19.4")
+	status, out := doJSON(t, ts, "POST", "/api/routers/"+routerID+"/routerboard-firmware", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("firmware simulé : %d %v", status, out)
+	}
+	if ok, _ := out["ok"].(bool); !ok {
+		t.Fatalf("firmware simulé : ok attendu, %+v", out)
+	}
+	if al, _ := out["already"].(bool); !al || out["version"] != "7.19.4" {
+		t.Fatalf("firmware simulé : déjà synchronisé attendu, %+v", out)
+	}
+	st.Lock()
+	for _, a := range st.Data().Activity {
+		if strings.Contains(a.Message, "Firmware") {
+			st.Unlock()
+			t.Fatalf("firmware simulé : aucun journal attendu (no-op), trouvé : %s", a.Message)
+		}
+	}
+	st.Unlock()
+}
+
+// TestNormalizeRouterOSCheckFirmware — N°125 — les champs firmware du
+// rapport : versions bornées, drapeau auto-upgrade en booléen, absence
+// tolérée (build sans /system routerboard).
+func TestNormalizeRouterOSCheckFirmware(t *testing.T) {
+	// Cas complet : mismatch firmware visible.
+	res := map[string]any{
+		"rosStatus": "System is already up to date", "latest": "7.24.4", "installed": "7.24.4",
+		"fwCurrent": "7.24.2", "fwStaged": "7.24.4", "fwAuto": "false",
+	}
+	normalizeRouterOSCheck(res)
+	if res["firmwareCurrent"] != "7.24.2" || res["firmwareStaged"] != "7.24.4" {
+		t.Fatalf("firmware normalisé : %+v", res)
+	}
+	if fa, _ := res["firmwareAuto"].(bool); fa {
+		t.Fatalf("firmwareAuto : booléen false attendu, %+v", res)
+	}
+	// Cas CHR (pas de /system routerboard) : champs absents, pas de clés posées.
+	res = map[string]any{"rosStatus": "System is already up to date", "latest": "7.24.4", "installed": "7.24.4"}
+	normalizeRouterOSCheck(res)
+	for _, k := range []string{"firmwareCurrent", "firmwareStaged", "firmwareAuto"} {
+		if _, ok := res[k]; ok {
+			t.Fatalf("CHR : %s ne doit pas être posé, %+v", k, res)
+		}
+	}
+	// Bornage : un firmware exotique ne gonfle pas l'historique.
+	res = map[string]any{"rosStatus": "System is already up to date", "latest": "7.24.4", "installed": "7.24.4",
+		"fwCurrent": strings.Repeat("7", 80)}
+	normalizeRouterOSCheck(res)
+	if s, _ := res["firmwareCurrent"].(string); len(s) != 32 {
+		t.Fatalf("fwCurrent non borné : %d", len(s))
 	}
 }

@@ -16,6 +16,7 @@ import {
   ArrowDownToLine,
   BadgeCheck,
   CircleAlert,
+  Cpu,
   Download,
   Loader2,
   PartyPopper,
@@ -75,7 +76,11 @@ function toCheckResult(raw: unknown): RouterOSCheckResult | null {
     status: str(r.status),
     latestVersion: str(r.latestVersion) || undefined,
     installedVersion: str(r.installedVersion) || undefined,
-    channel: str(r.channel) || undefined
+    channel: str(r.channel) || undefined,
+    // N°125 — firmware RouterBOARD (absent sur un build sans /system routerboard).
+    firmwareCurrent: str(r.firmwareCurrent) || undefined,
+    firmwareStaged: str(r.firmwareStaged) || undefined,
+    firmwareAuto: r.firmwareAuto === true
   };
 }
 
@@ -131,13 +136,66 @@ async function runRouterOSCheck(routerId: string, lang: Lang): Promise<CheckOutc
   }
 }
 
+/**
+ * N°125 — ligne firmware RouterBOARD du panneau de vérification : en attente
+ * (current ≠ staged, bouton d'application quand le RouterOS est à jour — la
+ * mise à jour RouterOS l'applique sinon d'elle-même) ou synchronisée.
+ */
+function FirmwareStatus({
+  result,
+  onApply
+}: {
+  result: RouterOSCheckResult;
+  onApply: () => void;
+}) {
+  const { t, tf } = useI18n();
+  const cur = result.firmwareCurrent ?? "";
+  const stg = result.firmwareStaged ?? "";
+  if (!cur) {
+    // Build sans /system routerboard (CHR, vieux matériel) : pas de ligne.
+    return null;
+  }
+  const pending = stg !== "" && stg !== cur;
+  if (!pending) {
+    return (
+      <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+        <Cpu className="size-3.5 shrink-0" aria-hidden />
+        {tf("tools.ros.fwSynced", { version: cur })}
+      </p>
+    );
+  }
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs" aria-live="polite">
+      <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-muted-foreground">
+        <Cpu className="size-3.5 shrink-0" aria-hidden />
+        {tf("tools.ros.fwPending", { from: cur, to: stg })}
+      </span>
+      {result.state === "latest" && (
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 gap-1.5 px-2.5 text-xs"
+          onClick={onApply}
+        >
+          {t("tools.ros.fwApplyBtn")}
+        </Button>
+      )}
+      {result.state === "available" && (
+        <span className="italic">{t("tools.ros.fwFollowNote")}</span>
+      )}
+    </div>
+  );
+}
+
 /** Panneau du résultat de vérification : à jour / disponible / erreur / inconnu. */
 function CheckResultPanel({
   result,
-  onUpdate
+  onUpdate,
+  onApplyFirmware
 }: {
   result: RouterOSCheckResult;
   onUpdate: (target: string) => void;
+  onApplyFirmware: () => void;
 }) {
   const { t, tf } = useI18n();
 
@@ -152,6 +210,7 @@ function CheckResultPanel({
           {t("tools.ros.stateLatest")}
         </p>
         <p className="mt-1 text-xs text-muted-foreground">{t("tools.ros.uptodateNote")}</p>
+        <FirmwareStatus result={result} onApply={onApplyFirmware} />
       </div>
     );
   }
@@ -175,6 +234,7 @@ function CheckResultPanel({
           )}
         </p>
         {result.status && <p className="mt-1 text-xs italic text-muted-foreground">{result.status}</p>}
+        <FirmwareStatus result={result} onApply={onApplyFirmware} />
         {target && (
           <Button size="sm" className="mt-2.5" onClick={() => onUpdate(target)}>
             <Download className="size-4" />
@@ -196,6 +256,7 @@ function CheckResultPanel({
           {t("tools.ros.stateError")}
         </p>
         {result.status && <p className="mt-1 text-xs">{result.status}</p>}
+        <FirmwareStatus result={result} onApply={onApplyFirmware} />
       </div>
     );
   }
@@ -208,6 +269,7 @@ function CheckResultPanel({
         {t("tools.ros.stateUnknown")}
       </p>
       {result.status && <p className="mt-1 text-xs italic text-muted-foreground">{result.status}</p>}
+      <FirmwareStatus result={result} onApply={onApplyFirmware} />
     </div>
   );
 }
@@ -258,6 +320,65 @@ function InstallPanel({ from, to, current }: { from: string; to: string; current
   );
 }
 
+/**
+ * N°125 — panneau d'application du firmware : en cours (le routeur applique
+ * puis redémarre — la version RouterOS ne change PAS) puis appliqué dès que
+ * la fiche « vivante » voit l'uptime RETOMBER (retour du routeur). Une base
+ * d'uptime NULLE au lancement (routeur muet) ne conclut jamais : le panneau
+ * reste honnêtement « en cours », une vérification fraîche le remplace.
+ */
+function FirmwarePanel({
+  from,
+  to,
+  uptimeAtLaunch,
+  currentUptime
+}: {
+  from: string;
+  to: string;
+  uptimeAtLaunch: number;
+  currentUptime: number;
+}) {
+  const { t, tf } = useI18n();
+  const done = uptimeAtLaunch > 0 && currentUptime > 0 && currentUptime < uptimeAtLaunch;
+  if (!done) {
+    return (
+      <div
+        className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm"
+        role="status"
+        aria-live="polite"
+      >
+        <p className="flex items-center gap-2 font-medium text-amber-700 dark:text-amber-400">
+          <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
+          {t("tools.ros.fwApplyingTitle")}
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          <span className="font-mono">{from || "—"}</span> <span aria-hidden>→</span>{" "}
+          <span className="font-mono font-semibold text-foreground">{to}</span>
+          {" · "}
+          {t("tools.ros.fwApplyingNote")}
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div
+      className="mt-3 rounded-lg border border-emerald-500/25 bg-emerald-500/10 p-3 text-sm"
+      aria-live="polite"
+    >
+      <p className="flex items-center gap-2 font-medium text-emerald-700 dark:text-emerald-400">
+        <PartyPopper className="size-4 shrink-0" aria-hidden />
+        {t("tools.ros.fwAppliedTitle")}
+      </p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        <span className="font-mono">{from || "—"}</span> <span aria-hidden>→</span>{" "}
+        <span className="font-mono font-semibold text-foreground">{to}</span>
+        {" · "}
+        {tf("tools.ros.fwAppliedNote", { version: to })}
+      </p>
+    </div>
+  );
+}
+
 export function RouterOSUpdateCard({ router }: { router: RouterDevice }) {
   const { t, tf, lang } = useI18n();
   const queryClient = useQueryClient();
@@ -266,16 +387,23 @@ export function RouterOSUpdateCard({ router }: { router: RouterDevice }) {
   // Lancement d'installation : version au moment du clic + CIBLE (le panneau
   // vit tant que la version du routeur « vivant » n'a pas atteint la cible).
   const [installState, setInstallState] = useState<{ from: string; to: string } | null>(null);
+  // N°125 — lancement firmware : versions au moment du clic + uptime de
+  // référence (le panneau bascule quand la fiche vivante voit l'uptime
+  // retomber = retour du routeur).
+  const [fwState, setFwState] = useState<{ from: string; to: string; uptimeAtLaunch: number } | null>(null);
+  const [fwConfirm, setFwConfirm] = useState(false);
   const realMode = router.mode === "real";
 
   const checkMutation = useMutation({
     mutationFn: () => runRouterOSCheck(router.id, lang),
     onSuccess: (outcome) => {
       if (outcome.kind === "result") {
-        // Une vérification fraîche remplace le panneau d'installation : le
-        // check est l'action la plus récente du gérant, et c'est la vérité
-        // du serveur (déjà à jour / encore en retard) qui doit s'afficher.
+        // Une vérification fraîche remplace les panneaux d'installation ET de
+        // firmware : le check est l'action la plus récente du gérant, et c'est
+        // la vérité du serveur (déjà à jour / encore en retard) qui doit
+        // s'afficher.
         setInstallState(null);
+        setFwState(null);
         setCheckResult(outcome.result);
       } else if (outcome.kind === "error") {
         setCheckResult(null);
@@ -314,7 +442,66 @@ export function RouterOSUpdateCard({ router }: { router: RouterDevice }) {
     onError: (err: Error) => toast.error(err.message)
   });
 
-  const busy = checkMutation.isPending || updateMutation.isPending;
+  // N°125 — application du firmware RouterBOARD en attente. Agent : la
+  // commande part au prochain check-in ; le panneau vit de l'uptime (le
+  // routeur redémarre, la version RouterOS ne change pas). Simulated : déjà
+  // synchronisé (le firmware simulé suit toujours le RouterOS).
+  const fwMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api<{
+        ok?: boolean;
+        queued?: boolean;
+        already?: boolean;
+        version?: string;
+        commandId?: string;
+        message?: string;
+      }>(`/api/routers/${router.id}/routerboard-firmware`, { method: "POST" });
+      if (res.already) {
+        return { already: true as const };
+      }
+      // Agent : le rapport ok part AVANT le reboot — poller brièvement la
+      // commande pour remonter un éventuel échec de staging (sinon le panneau
+      // resterait « en cours » sans raison).
+      const commandId = res.commandId ?? "";
+      if (res.queued && commandId) {
+        const deadline = Date.now() + 95_000;
+        while (Date.now() <= deadline) {
+          await sleep(2_000);
+          const cmd = await api<CommandStatus>(`/api/commands/${commandId}`);
+          if (cmd.status === "error") {
+            throw new Error(checkErrorFrom(cmd.result, t("tools.ros.fwFailed")));
+          }
+          if (cmd.status === "done") break;
+        }
+      }
+      return { already: false as const };
+    },
+    onSuccess: (res) => {
+      setFwConfirm(false);
+      if (res.already) {
+        setFwState(null);
+        toast.success(t("tools.ros.fwAlreadyToast"));
+        return;
+      }
+      // from/to : la vérité du CHECK qui a révélé l'attente (le bouton ne
+      // vit que là) — la garde côté routeur reste maîtresse du redémarrage.
+      const from = checkResult?.firmwareCurrent ?? "";
+      const to = checkResult?.firmwareStaged ?? "";
+      setCheckResult(null);
+      setInstallState(null);
+      setFwState({ from, to, uptimeAtLaunch: router.uptimeSec });
+      toast.success(t("tools.ros.fwQueuedToast"));
+      for (const key of ["/api/routers", "/api/sessions", "/api/dashboard"]) {
+        void queryClient.invalidateQueries({ queryKey: [key] });
+      }
+    },
+    onError: (err: Error) => {
+      setFwConfirm(false);
+      toast.error(err.message);
+    }
+  });
+
+  const busy = checkMutation.isPending || updateMutation.isPending || fwMutation.isPending;
 
   return (
     <Card className="gap-0 py-0">
@@ -352,10 +539,11 @@ export function RouterOSUpdateCard({ router }: { router: RouterDevice }) {
           </p>
         )}
 
-        {checkResult && !installState && (
+        {checkResult && !installState && !fwState && (
           <CheckResultPanel
             result={checkResult}
             onUpdate={(target) => setConfirmTarget(target)}
+            onApplyFirmware={() => setFwConfirm(true)}
           />
         )}
         {installState && (
@@ -363,6 +551,14 @@ export function RouterOSUpdateCard({ router }: { router: RouterDevice }) {
             from={installState.from}
             to={installState.to}
             current={router.version ?? ""}
+          />
+        )}
+        {fwState && (
+          <FirmwarePanel
+            from={fwState.from}
+            to={fwState.to}
+            uptimeAtLaunch={fwState.uptimeAtLaunch}
+            currentUptime={router.uptimeSec ?? 0}
           />
         )}
       </CardContent>
@@ -392,6 +588,38 @@ export function RouterOSUpdateCard({ router }: { router: RouterDevice }) {
             >
               {updateMutation.isPending && <Loader2 className="size-4 animate-spin" />}
               {t("tools.ros.updateConfirm")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={fwConfirm} onOpenChange={(open) => !open && setFwConfirm(false)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("tools.ros.fwTitle")}</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <span>
+                {tf("tools.ros.fwDesc1", {
+                  from: checkResult?.firmwareCurrent ?? "",
+                  to: checkResult?.firmwareStaged ?? ""
+                })}{" "}
+                <strong>{t("tools.ros.updateDescStrong")}</strong>{" "}
+                {t("tools.ros.fwDesc2")}
+                {router.mode === "agent" && t("tools.ros.agentNote")}
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={fwMutation.isPending}>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
+              disabled={fwMutation.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                fwMutation.mutate();
+              }}
+            >
+              {fwMutation.isPending && <Loader2 className="size-4 animate-spin" />}
+              {t("tools.ros.fwConfirm")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

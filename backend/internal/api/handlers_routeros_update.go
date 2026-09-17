@@ -15,9 +15,26 @@
 //	                                        (dédupliquée — un lancement à la
 //	                                        fois par routeur).
 //
+// N°125 — firmware RouterBOARD : le bootloader ne s'applique qu'au
+// redémarrage avec auto-upgrade=yes (désactivé par défaut). Le check révèle
+// l'état (firmwareCurrent/firmwareStaged/firmwareAuto), l'update RouterOS
+// pose auto-upgrade avant l'install (le même redémarrage applique les deux),
+// et la route dédiée applique le firmware EN ATTENTE sur un parc déjà à jour
+// côté RouterOS :
+//
+//	POST /api/routers/{id}/routerboard-firmware → simulated : rien à
+//	                                        appliquer (le firmware simulé
+//	                                        suit toujours le RouterOS) ;
+//	                                        agent : commande
+//	                                        routerboard_firmware en file
+//	                                        (dédup CROISÉE avec
+//	                                        routeros_update — jamais deux
+//	                                        redémarrages en parallèle).
+//
 // Aucune nouvelle colonne : la version courante vit déjà dans Router.Version
 // (read_state), la confirmation de la mise à jour revient par le journal de
-// télémétrie N°115 (applyReadState trace les changements de version).
+// télémétrie N°115 (applyReadState trace les changements de version), l'état
+// firmware voyage dans les résultats de commandes (check/apply).
 package api
 
 import (
@@ -107,10 +124,11 @@ func (a *API) handleRouterOSCheck(w http.ResponseWriter, r *http.Request) {
 	// simulated — réponse immédiate, déterministe : la version posée à la
 	// création (7.12–7.15) est toujours en retard sur la dernière stable ; un
 	// routeur déjà mis à jour (== simRouterOSLatest) est à jour.
+	ver := rr.Version
 	a.store.Unlock()
 	state := routerOSStateAvailable
 	status := "New version is available: " + simRouterOSLatest
-	if rr.Version == simRouterOSLatest {
+	if ver == simRouterOSLatest {
 		state = routerOSStateLatest
 		status = "System is already up to date"
 	}
@@ -119,8 +137,13 @@ func (a *API) handleRouterOSCheck(w http.ResponseWriter, r *http.Request) {
 		"state":            state,
 		"status":           status,
 		"latestVersion":    simRouterOSLatest,
-		"installedVersion": rr.Version,
+		"installedVersion": ver,
 		"channel":          "stable",
+		// N°125 — le firmware simulé suit toujours le RouterOS (auto-upgrade
+		// simulé) : la ligne firmware de la carte affiche « à jour ».
+		"firmwareCurrent": ver,
+		"firmwareStaged":  ver,
+		"firmwareAuto":    true,
 	})
 }
 
@@ -285,4 +308,84 @@ func normalizeRouterOSCheck(res map[string]any) {
 	res["latestVersion"] = latest
 	res["installedVersion"] = installed
 	res["channel"] = channel
+
+	// N°125 — firmware RouterBOARD (optionnel : absent sur un build sans
+	// /system routerboard — CHR, vieux matériel) : versions bornées (32),
+	// drapeau auto-upgrade normalisé en booléen.
+	fwCur, fwStg, fwAuto := str("fwCurrent"), str("fwStaged"), str("fwAuto")
+	if len(fwCur) > 32 {
+		fwCur = fwCur[:32]
+	}
+	if len(fwStg) > 32 {
+		fwStg = fwStg[:32]
+	}
+	if fwCur != "" {
+		res["firmwareCurrent"] = fwCur
+	}
+	if fwStg != "" {
+		res["firmwareStaged"] = fwStg
+	}
+	if fwAuto != "" {
+		res["firmwareAuto"] = fwAuto == "true"
+	}
+}
+
+// handleRouterboardFirmware — N°125 — POST /api/routers/{id}/routerboard-firmware :
+// applique le firmware RouterBOARD en attente (auto-upgrade + staging +
+// redémarrage). La garde « rien à appliquer » vit côté routeur (le script
+// relit current/upgrade-firmware et ne redémarre que si un firmware attend
+// réellement) : la réponse cloud reste honnête sans jamais se fier au front.
+func (a *API) handleRouterboardFirmware(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
+	id := r.PathValue("id")
+
+	a.store.Lock()
+	db := a.store.Data()
+	rr := findRouterScoped(db, id, acc)
+	if rr == nil {
+		a.store.Unlock()
+		writeErr(w, http.StatusNotFound, "Routeur introuvable")
+		return
+	}
+	if rr.Mode == "real" {
+		a.store.Unlock()
+		writeErr(w, http.StatusBadRequest, realModeUnsupported)
+		return
+	}
+	ver := rr.Version
+	if rr.Mode == "agent" {
+		// Dédup CROISÉE stricte : le firmware REDÉMARRE le routeur — jamais en
+		// parallèle d'une installation RouterOS NI d'un autre appliquage
+		// firmware. Le second clic récupère la commande en vol.
+		for _, kind := range []string{model.CmdRouterboardFirmware, model.CmdRouterOSUpdate} {
+			if pend := pendingCommandOfKind(db, id, kind); pend != nil {
+				cmdID := pend.ID
+				what := "du firmware RouterBOARD"
+				if kind == model.CmdRouterOSUpdate {
+					what = "d'une mise à jour RouterOS"
+				}
+				a.store.Unlock()
+				writeJSON(w, http.StatusOK, map[string]any{
+					"queued": true, "commandId": cmdID, "already": true,
+					"message": "Une opération " + what + " est déjà en cours sur ce routeur",
+				})
+				return
+			}
+		}
+		cmd := queueCommandLocked(db, acc, id, model.CmdRouterboardFirmware, map[string]any{})
+		a.logActivityBy(r, db, acc, "router", "Firmware RouterBOARD demandé sur «"+rr.Name+"»")
+		a.store.Save()
+		cmdID := cmd.ID
+		a.store.Unlock()
+		writeJSON(w, http.StatusOK, map[string]any{
+			"queued": true, "commandId": cmdID,
+			"message": "Firmware envoyé — application au prochain check-in (≤ 45 s), puis redémarrage (2 à 5 min)",
+		})
+		return
+	}
+
+	// simulated — le firmware suit toujours le RouterOS en mode simulé
+	// (auto-upgrade simulé) : rien à appliquer, aucune coupure.
+	a.store.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "already": true, "version": ver})
 }

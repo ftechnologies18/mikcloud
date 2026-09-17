@@ -249,6 +249,10 @@ export interface FleetRouter {
   checking: boolean;
   updating: boolean;
   updateError?: string;
+  /** N°125 — firmware RouterBOARD (dernier check abouti ; en place). */
+  fwCurrent?: string;
+  /** N°125 — firmware RouterBOARD en attente (≠ fwCurrent). */
+  fwStaged?: string;
 }
 
 /** Réponse GET /api/admin/fleet/routers — le parc + compteurs de synthèse. */
@@ -1423,6 +1427,15 @@ export interface RouterOSCheckResult {
   installedVersion?: string;
   /** Canal du routeur (stable par défaut). */
   channel?: string;
+  /** N°125 — firmware RouterBOARD en place (absent : build sans
+   * /system routerboard — CHR, vieux matériel). */
+  firmwareCurrent?: string;
+  /** N°125 — firmware RouterBOARD livré avec le dernier paquet RouterOS,
+   * appliqué au redémarrage (≠ firmwareCurrent = en attente). */
+  firmwareStaged?: string;
+  /** N°125 — auto-upgrade posé sur le routeur (les mises à jour RouterOS
+   * appliquent alors le firmware d'elles-mêmes). */
+  firmwareAuto?: boolean;
 }
 
 // ─── F9 — Outils routeur (DHCP / hôtes / cookies / journal) ───

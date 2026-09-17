@@ -28,38 +28,39 @@ const (
 // dans Command.Result (les outils F9/F10 mettent en cache leurs lignes dans la
 // clé "data" — relue tant que la commande est done depuis < 120 s).
 const (
-	CmdPing            = "ping"             // F8 : test de latence (/ping count=4 as-value)
-	CmdIpbindingAdd    = "ipbinding_add"    // F7 : /ip hotspot ip-binding add
-	CmdIpbindingSet    = "ipbinding_set"    // F7 : /ip hotspot ip-binding set
-	CmdIpbindingRemove = "ipbinding_remove" // F7 : /ip hotspot ip-binding remove
-	CmdReadDhcp        = "read_dhcp"        // F9 : /ip dhcp-server lease print
-	CmdReadHosts       = "read_hosts"       // F9 : /ip hotspot host print
-	CmdReadCookies     = "read_cookies"     // F9 : /ip hotspot cookie print
-	CmdReadLog         = "read_log"         // F9 : /log print where topics~"hotspot"
-	CmdReadScheduler   = "read_scheduler"   // F10 : /system scheduler print
-	CmdReadResources   = "read_resources"   // Parité Mikhmon : noms /ip pool + /queue simple + /ip hotspot
-	CmdSchedulerAdd    = "scheduler_add"    // F10 : /system scheduler add
-	CmdSchedulerSet    = "scheduler_set"    // F10 : /system scheduler set (disabled)
-	CmdSchedulerRemove = "scheduler_remove" // F10 : /system scheduler remove
-	CmdReboot          = "reboot"           // F10 : /system reboot
-	CmdShutdown        = "shutdown"         // F10 : /system shutdown
-	CmdImportHotspot   = "import_hotspot"   // import initial : lecture paginée des profils + utilisateurs existants sur le routeur
-	CmdProfileSet      = "profile_set"      // v2 : applique/retire le verrou « 1er appareil » (on-login de liaison MAC) sur un profil
-	CmdWalledGarden    = "walled_garden"    // N°29 : walled-garden d'inscription publique (runbook N°27-D automatisé)
-	CmdHotspotFiles    = "hotspot_files"    // N°35 : déploiement automatique du portail captif (login.html, status.html, assets) — pattern walled_garden
-	CmdWatcherEnsure   = "watcher_ensure"   // N°77 : veilleur d'invités — scheduler mikcloud-watch (check-in 20 s quand un hôte non autorisé est présent)
-	CmdSafeWifi        = "safewifi"         // N°80 : protection DNS du WiFi public — redirection du port 53 vers un résolveur filtrant (règles marquées mikcloud-safewifi, idempotent) ; N°85 : durcie — NAT en tête de table, DoT/DoH bloqués, IPv6 coupé (best-effort)
-	CmdShield          = "shield"           // N°81 : bouclier réseau du WiFi public — administration du routeur et vecteurs malveillants bloqués pour les clients (règles filter marquées mikcloud-shield, idempotent)
-	CmdFamilyGuard     = "familyguard"      // N°82 : couvre-feu internet du WiFi public — fenêtre horaire pendant laquelle l'internet des clients est coupé (règles filter marquées mikcloud-familyguard, idempotent)
-	CmdAntiVpn         = "antivpn"          // N°88 : bloque-VPN du WiFi public — VPN et tunnels standards (GRE, ESP, IKE, L2TP, PPTP, OpenVPN, WireGuard, WARP, Tor) coupés pour les clients (règles filter marquées mikcloud-antivpn, idempotent)
-	CmdPoolDoctor      = "pool_doctor"      // N°97 : docteur du pool d'adresses IP du hotspot — diagnostic (pools/serveurs/profils/hôtes) + recyclage des IP zombies (login/idle/keepalive-timeout, address-per-mac=1) + extension de capacité optionnelle (range 10.77.0.0/21) ; idempotent, objets marqués mikcloud-pool
-	CmdDevicePause     = "device_pause"     // N°101 : pause dîner HomeNet — coupe l'internet d'appareils précis (règles filter par MAC marquées mikcloud-pause, remove-then-add idempotent) ; l'ensemble désiré est calculé par le cloud à chaque check-in (pause expirée = retirée)
-	CmdQueueEnsure     = "queue_ensure"     // N°104 : QoS Manager — create-or-set de la file agrégat hotspot (max-limit/burst PCQ, types par défaut), relecture de vérification ; rattachement des profils hotspot via parent-queue (machinerie profile_set existante)
-	CmdQueueRead       = "queue_read"       // N°104 : lecture /queue simple (noms, cibles, limites, stats) — monitoring, vérification de dérive et satiété de la carte QoS (cache outil ≤ 120 s)
-	CmdQueueRemove     = "queue_remove"     // N°104 : retrait propre de la file agrégat (les profils hotspot qui la référencent sont détachés d'abord : set [find parent-queue=…] parent-queue=none)
-	CmdQuotaEnsure     = "quota_ensure"     // N°106 : mode bridage — scheduler mikcloud-quota (tick 20 s : files mikthrottle-<user> posées/retirées selon les cumuls d'octets et les marqueurs mikq:, orphelins balayés) ; remove-then-add idempotent, pattern watcher N°77
-	CmdRouterOSCheck   = "routeros_check"   // N°115 : vérification de mise à jour RouterOS (/system package update check-for-updates + lecture status/latest-version) — lecture, rapport au front via le poll de commande (pattern ping F8)
-	CmdRouterOSUpdate  = "routeros_update"  // N°115 : installation de la mise à jour RouterOS (download + install + redémarrage automatique) — rapport ok AVANT exécution (pattern reboot F10), erreur de téléchargement rapportée après coup
+	CmdPing                = "ping"                 // F8 : test de latence (/ping count=4 as-value)
+	CmdIpbindingAdd        = "ipbinding_add"        // F7 : /ip hotspot ip-binding add
+	CmdIpbindingSet        = "ipbinding_set"        // F7 : /ip hotspot ip-binding set
+	CmdIpbindingRemove     = "ipbinding_remove"     // F7 : /ip hotspot ip-binding remove
+	CmdReadDhcp            = "read_dhcp"            // F9 : /ip dhcp-server lease print
+	CmdReadHosts           = "read_hosts"           // F9 : /ip hotspot host print
+	CmdReadCookies         = "read_cookies"         // F9 : /ip hotspot cookie print
+	CmdReadLog             = "read_log"             // F9 : /log print where topics~"hotspot"
+	CmdReadScheduler       = "read_scheduler"       // F10 : /system scheduler print
+	CmdReadResources       = "read_resources"       // Parité Mikhmon : noms /ip pool + /queue simple + /ip hotspot
+	CmdSchedulerAdd        = "scheduler_add"        // F10 : /system scheduler add
+	CmdSchedulerSet        = "scheduler_set"        // F10 : /system scheduler set (disabled)
+	CmdSchedulerRemove     = "scheduler_remove"     // F10 : /system scheduler remove
+	CmdReboot              = "reboot"               // F10 : /system reboot
+	CmdShutdown            = "shutdown"             // F10 : /system shutdown
+	CmdImportHotspot       = "import_hotspot"       // import initial : lecture paginée des profils + utilisateurs existants sur le routeur
+	CmdProfileSet          = "profile_set"          // v2 : applique/retire le verrou « 1er appareil » (on-login de liaison MAC) sur un profil
+	CmdWalledGarden        = "walled_garden"        // N°29 : walled-garden d'inscription publique (runbook N°27-D automatisé)
+	CmdHotspotFiles        = "hotspot_files"        // N°35 : déploiement automatique du portail captif (login.html, status.html, assets) — pattern walled_garden
+	CmdWatcherEnsure       = "watcher_ensure"       // N°77 : veilleur d'invités — scheduler mikcloud-watch (check-in 20 s quand un hôte non autorisé est présent)
+	CmdSafeWifi            = "safewifi"             // N°80 : protection DNS du WiFi public — redirection du port 53 vers un résolveur filtrant (règles marquées mikcloud-safewifi, idempotent) ; N°85 : durcie — NAT en tête de table, DoT/DoH bloqués, IPv6 coupé (best-effort)
+	CmdShield              = "shield"               // N°81 : bouclier réseau du WiFi public — administration du routeur et vecteurs malveillants bloqués pour les clients (règles filter marquées mikcloud-shield, idempotent)
+	CmdFamilyGuard         = "familyguard"          // N°82 : couvre-feu internet du WiFi public — fenêtre horaire pendant laquelle l'internet des clients est coupé (règles filter marquées mikcloud-familyguard, idempotent)
+	CmdAntiVpn             = "antivpn"              // N°88 : bloque-VPN du WiFi public — VPN et tunnels standards (GRE, ESP, IKE, L2TP, PPTP, OpenVPN, WireGuard, WARP, Tor) coupés pour les clients (règles filter marquées mikcloud-antivpn, idempotent)
+	CmdPoolDoctor          = "pool_doctor"          // N°97 : docteur du pool d'adresses IP du hotspot — diagnostic (pools/serveurs/profils/hôtes) + recyclage des IP zombies (login/idle/keepalive-timeout, address-per-mac=1) + extension de capacité optionnelle (range 10.77.0.0/21) ; idempotent, objets marqués mikcloud-pool
+	CmdDevicePause         = "device_pause"         // N°101 : pause dîner HomeNet — coupe l'internet d'appareils précis (règles filter par MAC marquées mikcloud-pause, remove-then-add idempotent) ; l'ensemble désiré est calculé par le cloud à chaque check-in (pause expirée = retirée)
+	CmdQueueEnsure         = "queue_ensure"         // N°104 : QoS Manager — create-or-set de la file agrégat hotspot (max-limit/burst PCQ, types par défaut), relecture de vérification ; rattachement des profils hotspot via parent-queue (machinerie profile_set existante)
+	CmdQueueRead           = "queue_read"           // N°104 : lecture /queue simple (noms, cibles, limites, stats) — monitoring, vérification de dérive et satiété de la carte QoS (cache outil ≤ 120 s)
+	CmdQueueRemove         = "queue_remove"         // N°104 : retrait propre de la file agrégat (les profils hotspot qui la référencent sont détachés d'abord : set [find parent-queue=…] parent-queue=none)
+	CmdQuotaEnsure         = "quota_ensure"         // N°106 : mode bridage — scheduler mikcloud-quota (tick 20 s : files mikthrottle-<user> posées/retirées selon les cumuls d'octets et les marqueurs mikq:, orphelins balayés) ; remove-then-add idempotent, pattern watcher N°77
+	CmdRouterOSCheck       = "routeros_check"       // N°115 : vérification de mise à jour RouterOS (/system package update check-for-updates + lecture status/latest-version) — lecture, rapport au front via le poll de commande (pattern ping F8)
+	CmdRouterOSUpdate      = "routeros_update"      // N°115 : installation de la mise à jour RouterOS (download + install + redémarrage automatique) — rapport ok AVANT exécution (pattern reboot F10), erreur de téléchargement rapportée après coup
+	CmdRouterboardFirmware = "routerboard_firmware" // N°125 : application du firmware RouterBOARD en attente (livré avec le paquet RouterOS mais non appliqué — il ne s'applique qu'au redémarrage, auto-upgrade désactivé par défaut) — garde côté routeur (rien à appliquer → ok SANS redémarrage), rapport ok AVANT le reboot (pattern F10)
 )
 
 // N°80 — niveaux SafeWiFi (filtrage DNS du WiFi public par redirection).

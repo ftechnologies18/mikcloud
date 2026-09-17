@@ -509,6 +509,8 @@ func (b Builder) ScriptFor(cmd model.Command) (string, error) {
 		return b.buildRouterOSCheck(cmd), nil
 	case model.CmdRouterOSUpdate:
 		return b.buildRouterOSUpdate(cmd), nil
+	case model.CmdRouterboardFirmware:
+		return b.buildRouterboardFirmware(cmd), nil
 	default:
 		return "", fmt.Errorf("kind de commande inconnu : %s", cmd.Kind)
 	}

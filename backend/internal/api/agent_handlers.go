@@ -1078,6 +1078,21 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 			}
 			a.logActivity(db, router.AccountID, "router", "Mise à jour RouterOS lancée sur «"+router.Name+"»"+versionSuffix(latest)+
 				" — téléchargement puis redémarrage (2 à 5 min), le portail coupe pendant l'opération")
+		} else if cmd.Kind == model.CmdRouterboardFirmware {
+			// N°125 — firmware RouterBOARD : le rapport ok part AVANT le
+			// redémarrage (pattern reboot F10). « applied » (garde côté
+			// routeur) distingue un vrai appliquage (A → B, le routeur va
+			// redémarrer) d'un état déjà synchronisé (aucun redémarrage —
+			// le gérant a cliqué sur un état périmé, le routeur fait foi).
+			fwCur := boundedString(cmd.Result["fwCurrent"], 32)
+			fwStg := boundedString(cmd.Result["fwStaged"], 32)
+			applied, _ := cmd.Result["applied"].(string)
+			if applied == "true" && fwCur != "" && fwStg != "" {
+				a.logActivity(db, router.AccountID, "router", "Firmware RouterBOARD lancé sur «"+router.Name+"» : "+fwCur+" → "+fwStg+
+					" — redémarrage (2 à 5 min), la version RouterOS ne change pas")
+			} else {
+				a.logActivity(db, router.AccountID, "router", "Firmware RouterBOARD déjà synchronisé sur «"+router.Name+"» — aucun redémarrage nécessaire")
+			}
 		} else {
 			a.logActivity(db, router.AccountID, "router", "Commande "+cmd.Kind+" exécutée sur «"+router.Name+"»")
 		}

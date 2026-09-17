@@ -742,6 +742,107 @@ action (note standard).
 
 ---
 
+## N°125 — Firmware RouterBOARD : « le bootloader qui attendait son redémarrage » [P1]
+
+**Retour utilisateur** : « tout le parc est à la dernière version 7.24.4.
+Cependant j'ai remarqué depuis Winbox que la mise à jour du routeur ne
+change pas automatiquement le firmware routeurboard. » Comportement
+RouterOS PAR DÉFAUT, pas un bug : le firmware RouterBOARD (bootloader) est
+un monde SÉPARÉ du RouterOS — il ne s'applique qu'au REDÉMARRAGE et
+seulement si `auto-upgrade=yes` (désactivé d'usine). Un parc mis à jour
+via le N°115/N°117 (ou Winbox) se retrouve donc « RouterOS à jour, firmware
+en attente » : Winbox le montre dans *System → Routerboard*
+(`current-firmware` ≠ `upgrade-firmware`).
+
+### Modèle
+
+- **AUCUNE nouvelle colonne** : l'état firmware voyage dans les RÉSULTATS
+  de commandes (`routeros_check` le révèle, `routerboard_firmware`
+  l'applique) — la version RouterOS reste dans `Router.Version`
+  (read_state), le firmware n'a pas besoin d'être télémétré toutes les
+  ~2 min pour un geste rare ;
+- **CHECK ÉTENDU** — `buildRouterOSCheck` lit en plus
+  `/system routerboard get current-firmware / upgrade-firmware /
+  auto-upgrade`, chaque lecture dans son `:do on-error` (un CHR ou un
+  vieux build sans `/system routerboard` ne tue pas la commande : les
+  champs restent vides, le cloud n'expose pas la ligne). Le rapport
+  dynamique F8 emporte `fwCurrent/fwStaged/fwAuto` ; la normalisation
+  expose `firmwareCurrent/firmwareStaged` (bornés 32) et `firmwareAuto`
+  (booléen) — absents si le routeur n'a rien rapporté ;
+- **UPDATE AUTO-SYNC** — `buildRouterOSUpdate` pose
+  `/system routerboard settings set auto-upgrade=yes` AVANT
+  `/system package update install` (isolé on-error) : le MÊME redémarrage
+  applique RouterOS ET firmware — les prochaines mises à jour ne laissent
+  plus le bootloader en attente ;
+- **COMMANDE `routerboard_firmware`** (kind N°125) — applique le firmware
+  EN ATTENTE sur un parc déjà à jour côté RouterOS. GARDE CÔTÉ ROUTEUR
+  (le cloud ne se fie jamais au front) : le script relit
+  current/upgrade-firmware et ne redémarre QUE si un firmware attend
+  réellement (`fwStg != "" && fwStg != fwCur`) — sinon rapport ok
+  `applied=false` SANS coupure (une coupure de 2 à 5 min doit avoir une
+  raison). Vrai appliquage : auto-upgrade posé, staging
+  `/system routerboard upgrade`, rapport ok AVANT `/system reboot`
+  (pattern reboot F10 — le fetch bloquant termine premier), reboot.
+  L'échec du staging est rapporté en erreur (le routeur ne redémarre pas).
+
+### API
+
+```
+POST /api/routers/{id}/routerboard-firmware   (rôle 2)
+  simulated → {ok:true, already:true, version}   — le firmware simulé suit
+              toujours le RouterOS (auto-upgrade simulé) : rien à appliquer
+  agent     → {queued:true, commandId, message}  — dédup CROISÉE stricte :
+              jamais en parallèle d'un routeros_update NI d'un autre
+              routerboard_firmware (le second clic récupère la commande en
+              vol, `already:true`)
+```
+
+Rapport (`handleAgentResult`) : `applied=true` → journal « Firmware
+RouterBOARD lancé sur «X» : A → B — redémarrage (2 à 5 min), la version
+RouterOS ne change pas » ; `applied=false` → « déjà synchronisé — aucun
+redémarrage nécessaire ». `queueReadStateFreshLocked` (fraîcheur
+post-écriture) : le read_state post-redémarrage ramène l'uptime — la
+version RouterOS ne change PAS, c'est l'uptime qui prouve le retour.
+
+### Front
+
+- **Carte « Mise à jour RouterOS »** (onglet Système) : le panneau de
+  vérification affiche la ligne firmware dans CHAQUE état (icône puce) —
+  en attente (`7.24.2 → 7.24.4, appliqué au redémarrage du routeur`) avec
+  le bouton **« Appliquer le firmware »** quand le RouterOS est À JOUR
+  (état `latest` : le geste n'entre pas en concurrence avec une mise à
+  jour RouterOS qui l'emporterait de toute façon), ou la note « Sera
+  appliqué par la mise à jour RouterOS » en état `available` (un seul
+  redémarrage pour les deux). Synchronisé → « Firmware RouteBOARD X · à
+  jour » discret. Absent (CHR) → pas de ligne ;
+- **AlertDialog forte** : « Le firmware en attente A → B sera appliqué et
+  le routeur REDÉMARRERA (la version RouterOS ne change pas) » + coupure
+  totale 2 à 5 min + note agent ≤ 45 s ;
+- **Panneau vivant** : « Application du firmware… » tant que la fiche
+  (poll 15 s) ne voit pas l'uptime RETOMBER (retour du routeur — miroir
+  InstallPanel, mais la version ne bouge pas : c'est l'uptime qui
+  bascule) → « Firmware appliqué · A → B en place, routeur redémarré ».
+  Une base d'uptime NULLE au lancement ne conclut jamais (panneau
+  honnête, une vérification fraîche le remplace). Poll bref de la
+  commande (95 s) : un échec de staging remonte en toast au lieu de
+  laisser le panneau « en cours » sans raison ;
+- **Vue flotte (N°117)** : ligne firmware par routeur (dérivée du dernier
+  check abouti) — `fwCurrent → fwStaged` en ambre si en attente ; simulés :
+  toujours synchronisés. 18 clés i18n `tools.ros.fw*` FR/EN + 1 clé flotte.
+
+### Tests
+
+Agent : `TestRouterOSCheckScriptShape` (lectures firmware isolées ≥ 7,
+rapport étendu), `TestRouterOSUpdateScriptShape` (auto-upgrade AVANT
+l'install), `TestRouterboardFirmwareScriptShape` (garde anti-redémarrage
+inutile, ordre garde → staging → rapport → reboot, échec rapporté).
+API : `TestRouterOSCheckSimulatedFirmware`, `TestRouterboardFirmwareAgentFlow`
+(file + dédups + rapport brut routeur + journaux + read_state re-enfilé),
+`TestRouterboardFirmwareSimulated`, `TestNormalizeRouterOSCheckFirmware`
+(bornage, booléen, absence CHR tolérée).
+
+---
+
 ## N°97 — Docteur du pool d'adresses IP du hotspot [P1]
 
 ### Contexte

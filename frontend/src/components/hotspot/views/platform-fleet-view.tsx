@@ -22,6 +22,7 @@ import {
   BadgeCheck,
   CircleAlert,
   Clock,
+  Cpu,
   Download,
   HelpCircle,
   Loader2,
@@ -318,18 +319,39 @@ export default function PlatformFleetView() {
                   <StatusBadge status={r.status} dot />
                 </div>
 
-                {/* Versions : installée → disponible */}
-                <div className="flex min-w-0 items-center gap-1.5 text-xs lg:w-44 lg:shrink-0 lg:justify-center">
-                  <span className="truncate font-mono tabular-nums" title={r.version}>
-                    {r.version || "—"}
+                {/* Versions : installée → disponible (+ firmware N°125) */}
+                <div className="flex min-w-0 flex-col gap-0.5 text-xs lg:w-44 lg:shrink-0 lg:items-center">
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span className="truncate font-mono tabular-nums" title={r.version}>
+                      {r.version || "—"}
+                    </span>
+                    {r.rosState === "available" && r.rosLatest && (
+                      <>
+                        <span aria-hidden>→</span>
+                        <span className="truncate font-mono font-semibold tabular-nums text-amber-600 dark:text-amber-400">
+                          {r.rosLatest}
+                        </span>
+                      </>
+                    )}
                   </span>
-                  {r.rosState === "available" && r.rosLatest && (
-                    <>
-                      <span aria-hidden>→</span>
-                      <span className="truncate font-mono font-semibold tabular-nums text-amber-600 dark:text-amber-400">
-                        {r.rosLatest}
-                      </span>
-                    </>
+                  {r.fwCurrent && (
+                    <span
+                      className="flex min-w-0 items-center gap-1 text-[10px] text-muted-foreground"
+                      title={t("platform.fleet.fwTitle")}
+                    >
+                      <Cpu className="size-3 shrink-0" aria-hidden />
+                      {r.fwStaged && r.fwStaged !== r.fwCurrent ? (
+                        <>
+                          <span className="truncate font-mono">{r.fwCurrent}</span>
+                          <span aria-hidden>→</span>
+                          <span className="truncate font-mono font-semibold text-amber-600 dark:text-amber-400">
+                            {r.fwStaged}
+                          </span>
+                        </>
+                      ) : (
+                        <span className="truncate font-mono">{r.fwCurrent}</span>
+                      )}
+                    </span>
                   )}
                 </div>
 

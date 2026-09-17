@@ -864,6 +864,223 @@ html:not(.dark) .login-brand .glass-chip {
   transform: translateY(-3px);
 }
 
+/* ─── N°143 — Mascotte « Miko » de l'écran de connexion (flat design) ───
+   Toutes les animations du personnage vivent ICI (discipline N°78 : le
+   bundle du login reste sans framer-motion). Piège SVG : `transform-box:
+   view-box` fait résoudre les transform-origin dans le repère du viewBox
+   240×210 — rotations et scales des groupes restent justes à toutes les
+   tailles d'affichage du SVG. Les poses (mains, pupilles, sourcils, tête)
+   sont des style.transform transitions posées en JSX (login-mascot.tsx). */
+.mik-mascot .mik-org {
+  transform-box: view-box;
+}
+/* Fondus d'expression (bouches, joues, yeux plissés de joie). */
+.mik-swap {
+  transition: opacity 0.22s ease;
+}
+/* Respiration du personnage. */
+.mik-mascot-bob {
+  animation: mik-mascot-bob 4.6s ease-in-out infinite;
+}
+@keyframes mik-mascot-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+/* Clignement des yeux (paupière = écrasement vertical bref). */
+.mik-eye {
+  transform-box: view-box;
+  animation: mik-blink 5.8s infinite;
+}
+@keyframes mik-blink {
+  0%,
+  93.5%,
+  100% {
+    transform: scaleY(1);
+  }
+  95.5% {
+    transform: scaleY(0.06);
+  }
+  97.5% {
+    transform: scaleY(1);
+  }
+}
+/* Mains : ressort vers les poses (repos → cache-yeux → œillo → salut). */
+.mik-hand {
+  transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+/* Halo de l'antenne-nuée (tenue Admin). */
+.mik-halo {
+  transform-box: view-box;
+  animation: mik-halo 2.8s ease-out infinite;
+}
+@keyframes mik-halo {
+  0% {
+    transform: scale(0.7);
+    opacity: 0.55;
+  }
+  70%,
+  100% {
+    transform: scale(1.25);
+    opacity: 0;
+  }
+}
+/* Changement de tenue (casque ↔ casquette) : pop élastique. */
+.mik-acc-pop {
+  transform-box: view-box;
+  animation: mik-acc-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+@keyframes mik-acc-pop {
+  0% {
+    transform: scale(0.55);
+    opacity: 0;
+  }
+  65% {
+    transform: scale(1.07);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+/* Salut de la main droite (bascule de rôle). */
+.mik-wave {
+  transform-box: view-box;
+  animation: mik-wave 0.9s ease-in-out;
+}
+@keyframes mik-wave {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  30% {
+    transform: rotate(18deg);
+  }
+  55% {
+    transform: rotate(-10deg);
+  }
+  80% {
+    transform: rotate(14deg);
+  }
+}
+/* Étincelles de joie (soumission / succès). */
+.mik-sparkle {
+  transform-box: view-box;
+  animation: mik-sparkle 1.15s ease-in-out infinite;
+}
+@keyframes mik-sparkle {
+  0%,
+  100% {
+    transform: scale(0.4);
+    opacity: 0.35;
+  }
+  50% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+/* Bulle 2FA flottante (points du code). */
+.mik-float-b {
+  transform-box: view-box;
+  animation: mik-float-b 3.4s ease-in-out infinite;
+}
+@keyframes mik-float-b {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+/* Sautilllements pendant la soumission (excitation). */
+.mik-mascot-cheer {
+  animation: mik-mascot-cheer 0.62s ease-in-out infinite;
+}
+@keyframes mik-mascot-cheer {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-7px);
+  }
+}
+/* Entrée du personnage. */
+.mik-mascot-in {
+  animation: mik-mascot-in 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+@keyframes mik-mascot-in {
+  0% {
+    transform: translateY(14px) scale(0.75);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+/* Bulle de dialogue de Miko (queue en ::after, tournée vers la tête).
+   L'animation transform compose avec l'utilitaire translate de Tailwind v4
+   (propriété `translate` distincte de `transform`). */
+.mik-bubble {
+  animation: mik-bubble-pop 0.36s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+@keyframes mik-bubble-pop {
+  0% {
+    transform: scale(0.55) translateY(5px);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1) translateY(0);
+    opacity: 1;
+  }
+}
+.mik-bubble::after {
+  content: "";
+  position: absolute;
+  bottom: -4.5px;
+  right: 12px;
+  width: 9px;
+  height: 9px;
+  background: var(--card);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  transform: rotate(45deg);
+}
+
+/* Toggle Admin/Revendeur (N°143) — bac en creux + pastille clay glissante. */
+.mik-role-toggle {
+  background: color-mix(in oklab, var(--muted) 78%, var(--background));
+  box-shadow:
+    inset 0 2px 5px oklch(0.32 0.05 165 / 0.14),
+    inset 0 -1px 0 oklch(1 0 0 / 0.55);
+}
+.dark .mik-role-toggle {
+  background: color-mix(in oklab, var(--muted) 88%, var(--background));
+  box-shadow:
+    inset 0 2px 5px oklch(0 0 0 / 0.45),
+    inset 0 -1px 0 oklch(1 0 0 / 0.06);
+}
+.mik-role-thumb {
+  background: var(--card);
+  box-shadow:
+    0 5px 14px -5px oklch(0.4 0.09 163 / 0.45),
+    inset 0 1px 0 oklch(1 0 0 / 0.7);
+  transition: transform 0.36s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.dark .mik-role-thumb {
+  background: color-mix(in oklab, var(--card) 92%, white 8%);
+  box-shadow:
+    0 5px 14px -5px oklch(0 0 0 / 0.6),
+    inset 0 1px 0 oklch(1 0 0 / 0.12);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .mik-rise,
   .mik-fade,
@@ -874,13 +1091,29 @@ html:not(.dark) .login-brand .glass-chip {
   .mik-drift-b,
   .mik-orb-pulse,
   .mik-shake,
-  .mik-icon-in {
+  .mik-icon-in,
+  .mik-mascot-bob,
+  .mik-eye,
+  .mik-halo,
+  .mik-acc-pop,
+  .mik-wave,
+  .mik-sparkle,
+  .mik-float-b,
+  .mik-mascot-cheer,
+  .mik-mascot-in,
+  .mik-bubble {
     animation: none;
   }
   .mik-press:hover,
   .mik-press:active,
   .mik-hover-lift:hover {
     transform: none;
+  }
+  /* N°143 — Miko : les poses restent instantanées (lisible), sans glissements. */
+  .mik-hand,
+  .mik-swap,
+  .mik-role-thumb {
+    transition: none;
   }
 }
 

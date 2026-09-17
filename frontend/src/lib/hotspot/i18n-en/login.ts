@@ -48,11 +48,24 @@ export const enLogin: Record<string, string> = {
   "login.forgot": "Forgot password?",
 
   // — N°8 : Mode Vente PWA —
-  "login.tabSell": "Sell Mode",
-  "login.tabRegisterShort": "Register",
-  "login.tabSellShort": "Sell",
   "login.sellHint": "Field reseller: sign in with your username and the PIN given by the manager.",
   "login.sellUsername": "Reseller username",
   "login.sellPin": "PIN (4-6 digits)",
   "login.sellSubmit": "Open Sell Mode",
+
+  // — N°143 : Admin/Reseller toggle + “Miko” the mascot —
+  "login.role.switchLabel": "Choose the sign-in type",
+  "login.role.admin": "Admin",
+  "login.role.reseller": "Reseller",
+  "login.role.adminDesc": "Management console — username and password",
+  "login.role.resellerDesc": "Field sales — username and manager PIN",
+  "login.mascot.alt": "Miko, the MikCloud mascot, follows your typing",
+  "login.mascot.hello": "Hi there! Ready to sign in?",
+  "login.mascot.cover": "I'm not looking, promise!",
+  "login.mascot.peek": "Just a tiny peek…",
+  "login.mascot.totp": "Your 6-digit code?",
+  "login.mascot.error": "Oops, that didn't work…",
+  "login.mascot.success": "Nice, welcome in!",
+  "login.mascot.modeAdmin": "Admin console",
+  "login.mascot.modeReseller": "Sell mode",
 };

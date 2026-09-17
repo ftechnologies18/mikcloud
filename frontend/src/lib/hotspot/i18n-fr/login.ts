@@ -48,11 +48,24 @@ export const frLogin: Record<string, string> = {
   "login.forgot": "Mot de passe oublié ?",
 
   // — N°8 : Mode Vente PWA —
-  "login.tabSell": "Mode Vente",
-  "login.tabRegisterShort": "Inscription",
-  "login.tabSellShort": "Vente",
   "login.sellHint": "Revendeur en tournée : connectez-vous avec votre identifiant et le PIN donné par le gérant.",
   "login.sellUsername": "Identifiant revendeur",
   "login.sellPin": "PIN (4-6 chiffres)",
   "login.sellSubmit": "Ouvrir le Mode Vente",
+
+  // — N°143 : toggle Admin/Revendeur + mascotte « Miko » —
+  "login.role.switchLabel": "Choisir le type de connexion",
+  "login.role.admin": "Admin",
+  "login.role.reseller": "Revendeur",
+  "login.role.adminDesc": "Console de gestion — identifiant et mot de passe",
+  "login.role.resellerDesc": "Vente terrain — identifiant et PIN du gérant",
+  "login.mascot.alt": "Miko, la mascotte MikCloud, suit la saisie du regard",
+  "login.mascot.hello": "Salut ! On se connecte ?",
+  "login.mascot.cover": "Je ne regarde pas, promis !",
+  "login.mascot.peek": "Juste un petit œil…",
+  "login.mascot.totp": "Votre code à 6 chiffres ?",
+  "login.mascot.error": "Oups, ça n'a pas marché…",
+  "login.mascot.success": "Bien joué, bienvenue !",
+  "login.mascot.modeAdmin": "Console Admin",
+  "login.mascot.modeReseller": "Mode Vente",
 };

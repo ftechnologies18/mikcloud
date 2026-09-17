@@ -1,5 +1,19 @@
 "use client";
 
+// N°143 — Écran de connexion porté par « Miko », la mascotte flat design.
+// Le formulaire historique (onglets Radix Console / Mode Vente) devient un
+// TOGGLE CLAY Admin / Revendeur à pastille glissante : même contrat métier
+// (Admin → POST /api/auth/login + étape 2FA ; Revendeur → POST
+// /api/reseller/login par PIN), mais le personnage au-dessus de la carte
+// vit chaque interaction — pupilles qui suivent l'identifiant, mains sur
+// les yeux pendant les secrets, œillo quand on affiche le mot de passe,
+// étonnement à l'échec, joie au succès, bulle 2FA qui se remplit.
+// Tout l'historique fonctionnel est conservé : réveil proactif du backend
+// (N°84) + filet cold-boot, 2FA TOTP (S4), « Mot de passe oublié ? » (N°68),
+// inscription (SignupModal), CTA PWA (N°60), crédit FTCI (N°94).
+// Discipline N°78 : zéro framer-motion ici — les animations vivent en CSS
+// (globals.css, classes mik-*), le personnage inclus (login-mascot.tsx).
+
 import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { Eye, EyeOff, Loader2, ShieldCheck, Store, Ticket, Wifi } from "lucide-react";
@@ -10,17 +24,13 @@ import { PwaInstallCta } from "@/components/pwa-install-cta";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import ForgotPasswordModal from "@/components/hotspot/parts/forgot-password-modal";
+import LoginMascot, { type MascotMood } from "@/components/hotspot/login-mascot";
 import { ApiError, api, wakeBackend } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { useHotspotStore } from "@/lib/hotspot/store";
 import type { AuthResponse } from "@/lib/hotspot/types";
-
-// N°78 — framer-motion retiré du chemin critique (écran de connexion =
-// bundle initial) : les micro-animations vivent en @keyframes CSS
-// (globals.css, classes mik-*) avec animation-delay en cascade pour
-// reproduire l'ancien stagger (0,04 s + 0,07 s par enfant).
+import { cn } from "@/lib/utils";
 
 // N°84 — filet cold boot : le backend Render du plan gratuit hiberne après
 // ~15 min sans trafic et met 30–90 s à redémarrer. Sur la requête
@@ -160,6 +170,10 @@ function BrandPanel() {
   );
 }
 
+/* Rôles du toggle N°143 — Admin (console) / Revendeur (Mode Vente). */
+type LoginMode = "admin" | "reseller";
+type ActiveField = null | "username" | "password" | "totp" | "sellUsername" | "sellPin";
+
 export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void; onSignUp?: () => void }) {
   const { t, tf } = useI18n();
   const setAuth = useHotspotStore((s) => s.setAuth);
@@ -173,7 +187,7 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
     wakeBackend();
   }, []);
 
-  // Connexion
+  // ─── Connexion Admin ───
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
@@ -184,7 +198,7 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
   const [awaitingTotp, setAwaitingTotp] = useState(false);
   const [totpCode, setTotpCode] = useState("");
 
-  // N°8 — Mode Vente (revendeur, identifiant + PIN)
+  // ─── Mode Vente (revendeur, identifiant + PIN) ───
   const [sellUsername, setSellUsername] = useState("");
   const [sellPin, setSellPin] = useState("");
   const [sellLoading, setSellLoading] = useState(false);
@@ -192,9 +206,102 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
   // N°68 — « Mot de passe oublié ? » : modale de demande de lien e-mail.
   const [forgotOpen, setForgotOpen] = useState(false);
 
+  // ─── N°143 — Miko, la mascotte ───
+  const [mode, setMode] = useState<LoginMode>("admin");
+  const [activeField, setActiveField] = useState<ActiveField>(null);
+  const [gaze, setGaze] = useState({ x: 0, y: 0.1 });
+  // Humeur transitoire (échec / succès) : prime sur l'humeur dérivée.
+  const [flash, setFlash] = useState<null | "shocked" | "happy">(null);
+  const [waving, setWaving] = useState(false);
+  const [bubble, setBubble] = useState<{ key: number; text: string } | null>(null);
+
+  const bubbleTimer = useRef<number | null>(null);
+  const flashTimer = useRef<number | null>(null);
+  // Répliques « une fois par session » : le voile des secrets et l'œillo.
+  const coverHintShown = useRef(false);
+  const peekHintShown = useRef(false);
+
+  // Nettoyage des minuteurs au démontage (redirection après succès).
+  useEffect(
+    () => () => {
+      if (bubbleTimer.current) window.clearTimeout(bubbleTimer.current);
+      if (flashTimer.current) window.clearTimeout(flashTimer.current);
+    },
+    [],
+  );
+
+  /** Miko parle : bulle de dialogue auto-effacée (~2,6 s). */
+  function say(text: string) {
+    if (bubbleTimer.current) window.clearTimeout(bubbleTimer.current);
+    setBubble({ key: performance.now(), text });
+    bubbleTimer.current = window.setTimeout(() => setBubble(null), 2600);
+  }
+
+  /** Humeur éphémère (échec / succès) puis retour au calme. */
+  function flashMood(m: "shocked" | "happy") {
+    setFlash(m);
+    if (flashTimer.current) window.clearTimeout(flashTimer.current);
+    flashTimer.current = window.setTimeout(() => setFlash(null), m === "happy" ? 2200 : 1900);
+  }
+
+  // Salut du montage (une fois, à la langue du premier rendu).
+  const hello = t("login.mascot.hello");
+  useEffect(() => {
+    const id = window.setTimeout(() => setBubble({ key: 1, text: hello }), 700);
+    return () => window.clearTimeout(id);
+  }, [hello]);
+
+  /** Les pupilles suivent le caret de l'identifiant (progression 0→1). */
+  function trackCaret(e: { currentTarget: HTMLInputElement }) {
+    const el = e.currentTarget;
+    const pos = el.selectionStart ?? el.value.length;
+    const ratio = Math.min(Math.max(pos / 14, 0), 1);
+    setGaze({ x: (ratio * 2 - 1) * 0.72, y: 0.34 });
+  }
+
+  function focusUsername(field: "username" | "sellUsername") {
+    return {
+      onFocus: (e: React.FocusEvent<HTMLInputElement>) => {
+        setActiveField(field);
+        trackCaret(e);
+      },
+      onBlur: blurField,
+    };
+  }
+
+  function focusSecret(field: "password" | "sellPin") {
+    return {
+      onFocus: () => {
+        setActiveField(field);
+        setGaze({ x: 0, y: 0.75 });
+        if (!coverHintShown.current) {
+          coverHintShown.current = true;
+          say(t("login.mascot.cover"));
+        }
+      },
+      onBlur: blurField,
+    };
+  }
+
+  function blurField() {
+    setActiveField(null);
+    setGaze({ x: 0, y: 0.1 });
+  }
+
+  /** Bascule Admin ↔ Revendeur : tenue de Miko + salut + micro-fiche. */
+  function switchMode(next: LoginMode) {
+    if (next === mode || loginLoading || sellLoading) return;
+    setMode(next);
+    setActiveField(null);
+    setGaze({ x: 0, y: 0.1 });
+    setWaving(true);
+    window.setTimeout(() => setWaving(false), 950);
+    say(t(next === "admin" ? "login.mascot.modeAdmin" : "login.mascot.modeReseller"));
+  }
+
   // Micro-feedback d'erreur : la carte de verre tremble (N°78 — relance CSS
   // par retrait/retour forcé/rajout de la classe sur le MÊME nœud DOM, le
-  // focus des champs est préservé).
+  // focus des champs est préservé). N°143 : Miko s'étonne en plus.
   const cardRef = useRef<HTMLDivElement>(null);
   function shakeCard() {
     const el = cardRef.current;
@@ -210,6 +317,29 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
     (!awaitingTotp || totpCode.trim().length === 6) &&
     !loginLoading;
   const canSell = sellUsername.trim().length > 0 && sellPin.length >= 4 && !sellLoading;
+
+  // ─── État dérivé de Miko ───
+  const covering = activeField === "password" || activeField === "sellPin";
+  const peeking = covering && activeField === "password" && showPassword;
+  const mood: MascotMood =
+    flash ?? ((loginLoading || sellLoading) ? "excited" : awaitingTotp ? "curious" : "idle");
+
+  /** Œil d'affichage du mot de passe : Miko garde le focus sur le champ
+   *  (mousedown empêché) et ne triche qu'un petit œil — une fois. */
+  function toggleShowPassword() {
+    const next = !showPassword;
+    setShowPassword(next);
+    if (next && activeField === "password" && !peekHintShown.current) {
+      peekHintShown.current = true;
+      say(t("login.mascot.peek"));
+    }
+  }
+
+  function failMascot() {
+    shakeCard();
+    flashMood("shocked");
+    say(t("login.mascot.error"));
+  }
 
   // N°8 — connexion revendeur par PIN : token scopé role=reseller → SellShell.
   async function handleSellLogin(e: React.FormEvent) {
@@ -231,9 +361,11 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
         username: res.reseller.username,
         role: "reseller",
       });
+      flashMood("happy");
+      say(t("login.mascot.success"));
       toast.success(tf("login.welcome", { name: res.reseller.name }));
     } catch (err) {
-      shakeCard();
+      failMascot();
       // N°84 — un échec réseau brut (timeout cold boot, hors-ligne) affiche
       // un message humain, pas le DOMException du navigateur (« signal
       // timed out ») : la cible gérant n'a pas à décoder un message interne.
@@ -245,6 +377,8 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
 
   function applyAuth(res: AuthResponse) {
     setAuth(res.token, res.user);
+    flashMood("happy");
+    say(t("login.mascot.success"));
     toast.success(tf("login.welcome", { name: res.user.name }));
   }
 
@@ -272,9 +406,10 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
     } catch (err) {
       if (err instanceof ApiError && err.code === "totp_required") {
         setAwaitingTotp(true);
+        say(t("login.mascot.totp"));
         toast.info(t("login.totpPrompt"));
       } else {
-        shakeCard();
+        failMascot();
         // N°84 — cf. handleSellLogin : message humain pour l'échec réseau.
         toast.error(err instanceof ApiError ? err.message : t("login.networkError"));
       }
@@ -311,24 +446,64 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
         />
 
         <div className="relative z-10 flex w-full max-w-md flex-1 flex-col items-center justify-center">
-          {/* En-tête branding compact (mobile / tablette) */}
+          {/* En-tête branding compact (mobile / tablette) — N°143 : réduit
+              au strict nécessaire, la mascotte porte l'identité visuelle. */}
           <div
-            className="mik-rise mb-8 flex flex-col items-center text-center lg:hidden"
+            className="mik-rise mb-4 flex flex-col items-center text-center lg:hidden"
             style={{ animationDuration: "0.45s" }}
           >
-            <div className="relative w-fit">
-              <PulseRings />
+            <div className="flex items-center gap-3">
               <Image
                 src="/logo.png"
                 alt={t("login.logoAlt")}
-                width={88}
-                height={88}
+                width={44}
+                height={44}
                 priority
-                className="relative z-10 rounded-2xl shadow-xl shadow-primary/20"
+                className="rounded-xl shadow-lg shadow-primary/20"
+              />
+              <div className="text-left">
+                <h1 className="text-xl font-semibold tracking-tight">MikCloud</h1>
+                <p className="text-xs text-muted-foreground">{t("login.tagline")}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* ─── Miko, la mascotte (N°143) ───
+              Ses mains reposent sur le bord de la carte (chevauchement
+              ~14 px au-dessus du verre) ; la bulle de dialogue flotte à
+              gauche de son antenne. pointer-events-none : rien d'interactif. */}
+          <div
+            className={cn(
+              "pointer-events-none relative z-20 -mb-3.5 flex w-full justify-center",
+              flash === "shocked" && "mik-shake",
+            )}
+          >
+            <div
+              className={cn("mik-mascot-in relative", (loginLoading || sellLoading) && "mik-mascot-cheer")}
+              style={{ animationDelay: "0.02s" }}
+            >
+              {bubble && (
+                <div
+                  key={bubble.key}
+                  aria-hidden="true"
+                  className="mik-bubble absolute -top-2 -left-2 z-30 w-max max-w-[178px] rounded-xl border border-border bg-card px-3 py-1.5 text-[11px] font-medium leading-snug text-foreground shadow-lg sm:-left-8"
+                >
+                  {bubble.text}
+                </div>
+              )}
+              <LoginMascot
+                mode={mode}
+                mood={mood}
+                gaze={gaze}
+                covering={covering}
+                peeking={peeking}
+                waving={waving}
+                totpActive={awaitingTotp}
+                totpDots={totpCode.length}
+                label={t("login.mascot.alt")}
+                className="w-[204px] sm:w-[232px]"
               />
             </div>
-            <h1 className="mt-4 text-2xl font-semibold tracking-tight">MikCloud</h1>
-            <p className="mt-1 text-sm text-muted-foreground">{t("login.tagline")}</p>
           </div>
 
           {/* Carte de verre */}
@@ -337,147 +512,199 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
             className="mik-card-in glass-card w-full rounded-2xl p-6 sm:p-8"
             style={{ animationDelay: "0.08s" }}
           >
-            <div className="mb-6 hidden lg:block">
+            <div className="mb-5 hidden lg:block">
               <h2 className="text-xl font-semibold tracking-tight">{t("login.form.title")}</h2>
               <p className="mt-1 text-sm text-muted-foreground">{t("login.form.subtitle")}</p>
             </div>
 
-            <Tabs defaultValue="login" className="gap-5">
-              <TabsList className="glass-chip grid w-full grid-cols-2">
-                <TabsTrigger value="login" className="px-1.5 text-xs sm:px-2.5 sm:text-sm">
-                  {t("login.tabLogin")}
-                </TabsTrigger>
-                <TabsTrigger value="sell" className="px-1.5 text-xs sm:px-2.5 sm:text-sm">
-                  <span className="hidden sm:inline">{t("login.tabSell")}</span>
-                  <span className="sm:hidden">{t("login.tabSellShort")}</span>
-                </TabsTrigger>
-              </TabsList>
+            {/* ─── Toggle Admin / Revendeur (N°143) ───
+                Bac en creux + pastille clay glissante (mik-role-toggle /
+                mik-role-thumb, globals.css) ; remplace les onglets Radix —
+                même destinations : Admin → console, Revendeur → Mode Vente. */}
+            <div
+              className="mik-role-toggle relative mb-4 grid grid-cols-2 rounded-2xl p-1.5"
+              role="group"
+              aria-label={t("login.role.switchLabel")}
+            >
+              <span
+                aria-hidden="true"
+                className="mik-role-thumb absolute bottom-1.5 left-1.5 top-1.5 w-[calc(50%-0.375rem)] rounded-xl"
+                style={{
+                  transform:
+                    mode === "admin" ? "translateX(0)" : "translateX(calc(100% + 0.375rem))",
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => switchMode("admin")}
+                aria-pressed={mode === "admin"}
+                className={cn(
+                  "relative z-10 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-medium transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+                  mode === "admin" ? "text-accent-foreground" : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <ShieldCheck className="size-4" aria-hidden />
+                {t("login.role.admin")}
+              </button>
+              <button
+                type="button"
+                onClick={() => switchMode("reseller")}
+                aria-pressed={mode === "reseller"}
+                className={cn(
+                  "relative z-10 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-medium transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+                  mode === "reseller"
+                    ? "text-accent-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <Store className="size-4" aria-hidden />
+                {t("login.role.reseller")}
+              </button>
+            </div>
+            <p className="mb-5 text-center text-xs text-muted-foreground">
+              {t(mode === "admin" ? "login.role.adminDesc" : "login.role.resellerDesc")}
+            </p>
 
-              <TabsContent value="login">
-                <form onSubmit={handleLogin} className="space-y-4">
-                  <div className="mik-rise space-y-2" style={{ animationDelay: "0.04s" }}>
-                    <Label htmlFor="login-username">{t("login.username")}</Label>
+            {mode === "admin" ? (
+              /* ─── Formulaire Admin (console de gestion) ─── */
+              <form key="mik-form-admin" onSubmit={handleLogin} className="space-y-4">
+                <div className="mik-rise space-y-2" style={{ animationDelay: "0.04s" }}>
+                  <Label htmlFor="login-username">{t("login.username")}</Label>
+                  <Input
+                    id="login-username"
+                    autoComplete="username"
+                    placeholder="admin"
+                    value={username}
+                    {...focusUsername("username")}
+                    onChange={(e) => {
+                      setUsername(e.target.value);
+                      trackCaret(e);
+                    }}
+                    disabled={loginLoading}
+                  />
+                </div>
+                <div className="mik-rise space-y-2" style={{ animationDelay: "0.11s" }}>
+                  <Label htmlFor="login-password">{t("login.password")}</Label>
+                  <div className="relative">
                     <Input
-                      id="login-username"
-                      autoComplete="username"
-                      placeholder="admin"
-                      value={username}
-                      onChange={(e) => setUsername(e.target.value)}
+                      id="login-password"
+                      type={showPassword ? "text" : "password"}
+                      autoComplete="current-password"
+                      placeholder="••••••••"
+                      className="pr-10"
+                      value={password}
+                      {...focusSecret("password")}
+                      onChange={(e) => setPassword(e.target.value)}
                       disabled={loginLoading}
                     />
+                    <button
+                      type="button"
+                      onClick={toggleShowPassword}
+                      onMouseDown={(e) => e.preventDefault()} // le champ garde le focus : Miko ne baisse pas les mains
+                      aria-label={t(showPassword ? "login.hidePassword" : "login.showPassword")}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
+                    >
+                      {showPassword ? <EyeOff className="size-4" aria-hidden /> : <Eye className="size-4" aria-hidden />}
+                    </button>
                   </div>
-                  <div className="mik-rise space-y-2" style={{ animationDelay: "0.11s" }}>
-                    <Label htmlFor="login-password">{t("login.password")}</Label>
-                    <div className="relative">
-                      <Input
-                        id="login-password"
-                        type={showPassword ? "text" : "password"}
-                        autoComplete="current-password"
-                        placeholder="••••••••"
-                        className="pr-10"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        disabled={loginLoading}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword((v) => !v)}
-                        aria-label={t(showPassword ? "login.hidePassword" : "login.showPassword")}
-                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
-                      >
-                        {showPassword ? <EyeOff className="size-4" aria-hidden /> : <Eye className="size-4" aria-hidden />}
-                      </button>
-                    </div>
-                    {/* N°68 — lien d'entrée du parcours de réinitialisation. */}
-                    <div className="flex justify-end">
-                      <button
-                        type="button"
-                        onClick={() => setForgotOpen(true)}
-                        className="text-xs font-medium text-muted-foreground transition-colors hover:text-primary hover:underline focus-visible:outline-none focus-visible:underline"
-                      >
-                        {t("login.forgot", "Mot de passe oublié ?")}
-                      </button>
-                    </div>
+                  {/* N°68 — lien d'entrée du parcours de réinitialisation. */}
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => setForgotOpen(true)}
+                      className="text-xs font-medium text-muted-foreground transition-colors hover:text-primary hover:underline focus-visible:outline-none focus-visible:underline"
+                    >
+                      {t("login.forgot", "Mot de passe oublié ?")}
+                    </button>
                   </div>
-                  {awaitingTotp && (
-                    <div className="mik-rise space-y-2" style={{ animationDelay: "0.18s" }}>
-                      <Label htmlFor="login-totp">{t("login.totpCode")}</Label>
-                      <Input
-                        id="login-totp"
-                        inputMode="numeric"
-                        autoComplete="one-time-code"
-                        placeholder="000000"
-                        maxLength={6}
-                        value={totpCode}
-                        onChange={(e) => setTotpCode(e.target.value.replace(/[^0-9]/g, ""))}
-                        disabled={loginLoading}
-                        className="text-center font-mono tracking-[0.4em]"
-                      />
-                      <p className="text-xs text-muted-foreground">{t("login.totpHint")}</p>
-                    </div>
-                  )}
-                  <div className="mik-rise mik-press" style={{ animationDelay: "0.25s" }}>
-                    <Button type="submit" className="w-full shadow-lg shadow-primary/25" disabled={!canLogin}>
-                      {loginLoading && <Loader2 className="size-4 animate-spin" />}
-                      {awaitingTotp ? t("login.totpSubmit") : t("login.tabLogin")}
-                    </Button>
-                  </div>
-                </form>
-              </TabsContent>
-
-              {onSignUp && (
-                <p className="mik-rise text-center text-sm text-muted-foreground" style={{ animationDelay: "0.32s" }}>
-                  {t("login.noAccount", "Pas encore de compte ?")}{" "}
-                  <button onClick={onSignUp} className="font-medium text-primary hover:underline">
-                    {t("login.createAccount", "Créer mon compte")}
-                  </button>
-                </p>
-              )}
-
-              <TabsContent value="sell">
-                <form onSubmit={handleSellLogin} className="space-y-4">
-                  <p
-                    className="mik-rise glass-chip rounded-lg px-3 py-2 text-xs text-muted-foreground"
-                    style={{ animationDelay: "0.04s" }}
-                  >
-                    {t("login.sellHint")}
-                  </p>
-                  <div className="mik-rise space-y-2" style={{ animationDelay: "0.11s" }}>
-                    <Label htmlFor="sell-username">{t("login.sellUsername")}</Label>
-                    <Input
-                      id="sell-username"
-                      autoComplete="username"
-                      placeholder="ange.kessie"
-                      value={sellUsername}
-                      onChange={(e) => setSellUsername(e.target.value)}
-                      disabled={sellLoading}
-                    />
-                  </div>
+                </div>
+                {awaitingTotp && (
                   <div className="mik-rise space-y-2" style={{ animationDelay: "0.18s" }}>
-                    <Label htmlFor="sell-pin">{t("login.sellPin")}</Label>
+                    <Label htmlFor="login-totp">{t("login.totpCode")}</Label>
                     <Input
-                      id="sell-pin"
-                      type="password"
+                      id="login-totp"
                       inputMode="numeric"
-                      pattern="[0-9]*"
-                      maxLength={6}
                       autoComplete="one-time-code"
-                      placeholder="••••"
-                      value={sellPin}
-                      onChange={(e) => setSellPin(e.target.value.replace(/\D/g, ""))}
-                      disabled={sellLoading}
+                      placeholder="000000"
+                      maxLength={6}
+                      value={totpCode}
+                      onFocus={() => {
+                        setActiveField("totp");
+                        setGaze({ x: 0.62, y: -0.55 });
+                      }}
+                      onBlur={blurField}
+                      onChange={(e) => setTotpCode(e.target.value.replace(/[^0-9]/g, ""))}
+                      disabled={loginLoading}
+                      className="text-center font-mono tracking-[0.4em]"
                     />
+                    <p className="text-xs text-muted-foreground">{t("login.totpHint")}</p>
                   </div>
-                  <div className="mik-rise mik-press" style={{ animationDelay: "0.25s" }}>
-                    <Button type="submit" className="w-full shadow-lg shadow-primary/25" disabled={!canSell}>
-                      {sellLoading && <Loader2 className="size-4 animate-spin" />}
-                      <Store className="size-4" />
-                      {t("login.sellSubmit")}
-                    </Button>
-                  </div>
-                </form>
-              </TabsContent>
-            </Tabs>
+                )}
+                <div className="mik-rise mik-press" style={{ animationDelay: "0.25s" }}>
+                  <Button type="submit" className="w-full shadow-lg shadow-primary/25" disabled={!canLogin}>
+                    {loginLoading && <Loader2 className="size-4 animate-spin" />}
+                    {awaitingTotp ? t("login.totpSubmit") : t("login.tabLogin")}
+                  </Button>
+                </div>
+              </form>
+            ) : (
+              /* ─── Formulaire Revendeur (Mode Vente, N°8) ─── */
+              <form key="mik-form-reseller" onSubmit={handleSellLogin} className="space-y-4">
+                <p
+                  className="mik-rise glass-chip rounded-lg px-3 py-2 text-xs text-muted-foreground"
+                  style={{ animationDelay: "0.04s" }}
+                >
+                  {t("login.sellHint")}
+                </p>
+                <div className="mik-rise space-y-2" style={{ animationDelay: "0.11s" }}>
+                  <Label htmlFor="sell-username">{t("login.sellUsername")}</Label>
+                  <Input
+                    id="sell-username"
+                    autoComplete="username"
+                    placeholder="ange.kessie"
+                    value={sellUsername}
+                    {...focusUsername("sellUsername")}
+                    onChange={(e) => {
+                      setSellUsername(e.target.value);
+                      trackCaret(e);
+                    }}
+                    disabled={sellLoading}
+                  />
+                </div>
+                <div className="mik-rise space-y-2" style={{ animationDelay: "0.18s" }}>
+                  <Label htmlFor="sell-pin">{t("login.sellPin")}</Label>
+                  <Input
+                    id="sell-pin"
+                    type="password"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    maxLength={6}
+                    autoComplete="one-time-code"
+                    placeholder="••••"
+                    value={sellPin}
+                    {...focusSecret("sellPin")}
+                    onChange={(e) => setSellPin(e.target.value.replace(/\D/g, ""))}
+                    disabled={sellLoading}
+                  />
+                </div>
+                <div className="mik-rise mik-press" style={{ animationDelay: "0.25s" }}>
+                  <Button type="submit" className="w-full shadow-lg shadow-primary/25" disabled={!canSell}>
+                    {sellLoading && <Loader2 className="size-4 animate-spin" />}
+                    <Store className="size-4" />
+                    {t("login.sellSubmit")}
+                  </Button>
+                </div>
+              </form>
+            )}
+
+            {onSignUp && (
+              <p className="mik-rise mt-5 text-center text-sm text-muted-foreground" style={{ animationDelay: "0.32s" }}>
+                {t("login.noAccount", "Pas encore de compte ?")}{" "}
+                <button onClick={onSignUp} className="font-medium text-primary hover:underline">
+                  {t("login.createAccount", "Créer mon compte")}
+                </button>
+              </p>
+            )}
 
             {SHOW_DEMO && (
               <div className="mik-fade glass-chip mt-6 flex items-center justify-between gap-3 rounded-xl px-3 py-2.5" style={{ animationDelay: "0.4s" }}>
@@ -492,6 +719,7 @@ export default function LoginScreen({ onBack, onSignUp }: { onBack?: () => void;
                   className="h-8 text-xs"
                   onClick={() => {
                     setUsername("admin");
+                    setGaze({ x: 0.25, y: 0.34 });
                   }}
                   disabled={loginLoading}
                 >

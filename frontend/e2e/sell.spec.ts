@@ -31,9 +31,9 @@ test.describe.serial("Mode Vente — PWA revendeur", () => {
   });
 
   test("connexion PIN → le comptoir s'ouvre avec les groupes de stock", async ({ page }) => {
-    // Parcours de connexion UI réel (onglet « Vente », identifiant + PIN).
+    // Parcours de connexion UI réel (toggle « Revendeur » N°143, identifiant + PIN).
     await page.goto("/login");
-    await page.getByRole("tab", { name: "Vente" }).click();
+    await page.getByRole("button", { name: "Revendeur" }).click();
     await page.getByLabel(/Identifiant/).fill(state.resellerUsername);
     await page.getByLabel(/PIN/).fill(state.pin);
     await page.getByRole("button", { name: "Ouvrir le Mode Vente" }).click();

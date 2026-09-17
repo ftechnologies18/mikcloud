@@ -5,6 +5,87 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-18 — N°143 — L'écran de connexion porté par « Miko », une mascotte flat design qui vit le formulaire : toggle Admin/Revendeur à pastille clay glissante, regard qui suit l'identifiant, mains sur les yeux pendant les secrets, œillo, humeurs (choc, joie, 2FA) et tenues par rôle (casque opérateur / casquette terrain)
+
+Renumérotation : N°142 pris par le durcissement UX de l'onglet Expérience (2685253,
+poussé par une session parallèle pendant que ce travail attendait son push) — il
+devient N°143. Aucun chevauchement de fichiers (l'autre session : hotspot-cards/
+hotspot-view/i18n settings ; celle-ci : login-screen/login-mascot/globals/i18n login).
+
+### Contexte
+Demande utilisateur : « améliorer le formulaire du login page avec toggle Admin/Revendeur,
+créer un formulaire login qui sort de l'ordinaire, effet whaou, animation tirée par un
+personnage flat design ». L'écran historique était une carte en verre correcte mais
+classique : onglets Radix Console / Mode Vente, micro-animations génériques (mik-rise,
+mik-shake au seul échec), aucune personnalité — le premier écran de TOUT le produit
+(admin comme revendeur) ne racontait rien.
+
+### Produit — le personnage
+(1) MIKO, UNE MASCOTTE 100 % VECTORIELLE (login-mascot.tsx, SVG pur, zéro dépendance,
+palette flat fixe dérivée d'Aurora Emerald — le personnage ne change pas de peau en
+mode nuit) : tête squircle clay + écran-visage émeraude profond + antenne-nuée (marque
+MikCloud) + moufles flottantes. Ses mains reposent sur le bord supérieur de la carte
+de verre (chevauchement 14 px, z au-dessus). (2) IL VIT CHAQUE INTERACTION : ses
+pupilles suivent le caret de l'identifiant (gaze normalisé -1..1 + micro-inclinaison
+de la tête), il SE CACHE LES YEUX dès le focus d'un secret (mot de passe OU PIN
+revendeur, ressort cubic-bezier overshoot), il ne triche qu'UN ŒIL quand on affiche
+le mot de passe (main droite abaissée, œil droit plissé, joues rosées), il S'ÉTONNE
+à l'échec (yeux écarquillés, pupilles rétractées, sourcils levés, bouche en O + la
+carte tremble), il EXULTE pendant la soumission et au succès (étincelles, sourire
+ouvert, sautilllements, yeux plissés de joie), il PENCHE LA TÊTE vers une bulle 2FA
+flottante dont les six points se remplissent avec le code tapé (bordure verte à 6/6),
+et il SALUE de la main droite à chaque bascule de rôle. (3) IL PARLE : bulles de
+dialogue à queue (salut au montage, « Je ne regarde pas, promis ! », « Juste un
+petit œil… », « Oups, ça n'a pas marché… », « Bien joué, bienvenue ! », annonce du
+rôle) — auto-effacées 2,6 s, aria-hidden (l'information vit déjà dans les toasts),
+répliques doublées FR/EN. (4) TENUES PAR RÔLE : Admin = casque opérateur (arceau,
+écouteurs, perche micro — l'antenne-nuée flotte au-dessus) ; Revendeur = casquette
+terrain inclinée à visière portant la marque-nuée. Le changement de tenue rejoue un
+pop élastique.
+
+### Produit — le toggle Admin/Revendeur
+Les onglets Radix deviennent un SEGMENTED CONTROL CLAY : bac en creux (inset shadows,
+mix muted/background) + PASTILLE GLISSANTE (card + ombre portée, translation
+ressort 0,36 s) derrière le bouton actif, icônes ShieldCheck/Store, aria-pressed,
+libellé descriptif sous le bac (« Console de gestion — identifiant et mot de passe » /
+« Vente terrain — identifiant et PIN du gérant »). Mêmes destinations qu'avant :
+Admin → POST /api/auth/login (+ étape 2FA), Revendeur → POST /api/reseller/login.
+
+### Fidélité comportementale (tout l'historique conservé)
+Réveil proactif du backend + filet cold-boot 75 s (N°84), 2FA TOTP second étape (S4),
+« Mot de passe oublié ? » (N°68), SignupModal, CTA PWA (N°60), crédit FTCI (N°94),
+bloc démo sandbox, tremblement de carte au même nœud DOM (N°78 — focus préservé),
+autocompletes intacts (gestionnaires de mots de passe). DEUX GARDES NOUVELLES : le
+bouton œil empêche son mousedown (le champ garde le focus → les mains de Miko ne
+baissent pas pendant l'affichage) ; les répliques voile/œillo ne se jouent qu'UNE
+fois par session (refs). En-tête mobile compacté (logo 44 px + wordmark + tagline) :
+la mascotte porte l'identité visuelle, la colonne respire sur petits écrans.
+
+### Technique
+Discipline N°78 tenue : ZÉRO framer-motion dans le bundle du login — les poses sont
+des style.transform transitions CSS et les boucles vivent en globals.css (13 keyframes
+nouveaux : bob, blink, halo, acc-pop, wave, sparkle, float-b, cheer, mascot-in,
+bubble-pop…). Piège SVG résolu par `transform-box: view-box` (classe .mik-org) : les
+transform-origin px se résolvent dans le repère du viewBox 240×210 — rotations/scales
+justes à toute taille d'affichage. Les fondus d'expression (.mik-swap) évitent la
+collision avec l'animation .mik-fade historique. Les clignements n'entrent jamais en
+conflit avec les scales d'humeur (groups imbriqués : scale JS > blink CSS). Le
+tremblement d'échec s'applique au conteneur EXTÉRIEUR du stage (jamais sur le même
+nœud que l'entrée/les sauts). prefers-reduced-motion étendu : toutes les boucles
+coupées, les poses restent instantanées (lisible). E2E : sell.spec.ts mis à jour
+(getByRole tab « Vente » → button « Revendeur »). Nettoyage : clés mortes
+login.tabSell/tabSellShort/tabRegisterShort retirées (FR/EN). Frontend uniquement —
+zéro route, zéro API, zéro schéma (CONTRACT-V2 inchangé).
+
+### Vérifié
+eslint 0, tsgo 0. Smoke navigateur (Playwright/Chromium, dev :3021, 12 captures
+desktop clair/nuit + mobile 390 px) : 0 erreur de page (les 404 /api sont l'absence
+de backend en dev) ; VLM 4 passes — repos/mains-sur-les-yeux/œillo validés (mains
+symétriques PILE sur les yeux, bulles synchronisées), casquette bien posée + salut +
+pastille Revendeur, regard suivi (pupilles décalées à droite après saisie longue),
+expression de choc lisible, mobile sans débordement, bulle complète/queue orientée/
+espace net avec l'antenne, casque arceau-écouteurs-micro bien dessiné.
+
 ## 2026-09-18 — N°142 — Durcissement UX de l'onglet Expérience (N°140) : garde de sortie d'onglet, navigation mobile + scrollspy, Réinitialiser confirmé, erreur localisée, pont « Voir le portail »
 
 ### N°142 — Contexte : « quel est ton avis sur cette UX, peut encore l'améliorer ? »

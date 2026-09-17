@@ -26,7 +26,7 @@ export const frPortal: Record<string, string> = {
   "portal.cancel": "Annuler",
   // N°135 — le logo du portail est celui du client : où le poser.
   "portal.brandingNote":
-    "Le logo affiché sur le portail est celui de votre établissement : posez-le dans l'onglet Expérience (carte « Vouchers ») — la bannière d'en-tête se règle dans la même zone. Tout changement de branding est re-déployé automatiquement sur vos routeurs (≤ 45 s).",
+    "Le logo affiché sur le portail est celui de votre établissement : posez-le dans l'onglet Expérience (carte « Vouchers ») — la bannière d'en-tête et la liste « Nos Services » se règlent dans la même zone. Tout changement de branding est re-déployé automatiquement sur vos routeurs (≤ 45 s).",
   "portal.journal": "Journal des déploiements",
   "portal.journalEmpty": "Aucun déploiement enregistré",
 };

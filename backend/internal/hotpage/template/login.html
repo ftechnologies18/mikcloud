@@ -658,26 +658,19 @@
                             </div>
                         </div>
 
-                        <div class="mt-4">
+                        <!-- N°137 — la section « Nos Services » est pilotée par la
+                             console (carte Services du portail, ≤ 6 lignes) : le
+                             cloud rend les <li> DU TENANT au moment du SERVE
+                             ({{MIKCLOUD_SERVICES_BLOCK}}) et masque la section
+                             entière sans services configurés
+                             ({{MIKCLOUD_SERVICES_ATTR}}) — les 4 lignes
+                             historiques étaient celles du site pilote (même
+                             chasse que le logo N°135). Le fetch live
+                             (applyConfig, bloc 8) met la liste à jour sans
+                             re-déploiement. -->
+                        <div class="mt-4" id="mikcloud-services-wrap"{{MIKCLOUD_SERVICES_ATTR}}>
                             <h5 class="section-title">Nos Services</h5>
-                            <ul class="list-unstyled text-muted mt-2 mb-0">
-                                <li class="service-list-item">
-                                    <div class="service-icon-box"><i class="fas fa-globe"></i></div>
-                                    <span>Cyber Espace & Internet</span>
-                                </li>
-                                <li class="service-list-item">
-                                    <div class="service-icon-box"><i class="fas fa-tools"></i></div>
-                                    <span>Maintenance Informatique</span>
-                                </li>
-                                <li class="service-list-item">
-                                    <div class="service-icon-box"><i class="fas fa-code"></i></div>
-                                    <span>Développement Web & Applications</span>
-                                </li>
-                                <li class="service-list-item">
-                                    <div class="service-icon-box"><i class="fas fa-credit-card"></i></div>
-                                    <span>Services Monétiques (Wave, Orange, MTN)</span>
-                                </li>
-                            </ul>
+                            <ul class="list-unstyled text-muted mt-2 mb-0" id="mikcloud-services-list">{{MIKCLOUD_SERVICES_BLOCK}}</ul>
                         </div>
                     </div>
 
@@ -998,6 +991,32 @@
                 // historique inchangée. Idempotent : le fetch live (N°48) peut
                 // rappeler applyConfig — injections par id, masquage par classe.
                 applyHospitality(cfg);
+
+                // 9. Services du portail (N°137) : la section « Nos Services »
+                // est pilotée par la console (≤ 6 lignes, icônes Font
+                // Awesome curées). Idempotent : le fetch live peut rappeler
+                // applyConfig — on recrée la liste (échappée) et on masque le
+                // wrap quand la config live n'apporte aucun service (undefined
+                // ou [] : omitempty côté serveur). display '' retire le style
+                // inline posé au SERVE (repli masqué sans services) ; en mode
+                // hospitalité, la classe mikcloud-hosp-hidden (!important) garde
+                // la section voilée. Compat vieux WebViews : var, pas de
+                // flèches, pas d'optional chaining.
+                var svcWrap = document.getElementById('mikcloud-services-wrap');
+                if (svcWrap) {
+                    var svcList = document.getElementById('mikcloud-services-list');
+                    var svcItems = Array.isArray(cfg.portalServices) ? cfg.portalServices : [];
+                    var svcHtml = '';
+                    svcItems.forEach(function (svc) {
+                        if (!svc || !svc.label) return;
+                        var svcIcon = svc.icon ? String(svc.icon) : 'fa-check';
+                        svcHtml += '<li class="service-list-item"><div class="service-icon-box"><i class="fas '
+                            + escapeHtml(svcIcon) + '"></i></div><span>'
+                            + escapeHtml(svc.label) + '</span></li>';
+                    });
+                    if (svcList) svcList.innerHTML = svcHtml;
+                    svcWrap.style.display = svcHtml ? '' : 'none';
+                }
             }
 
             // escapeHtml — échappe <, >, &, ", ' pour insertion HTML safe.

@@ -46,6 +46,8 @@ type tenantPut struct {
 	PortalSocials *[]portalSocialReq `json:"portalSocials"`
 	// N°136 — repli nested des slides du carrousel commercial (cf. req plat).
 	PortalSlides *[]string `json:"portalSlides"`
+	// N°137 — repli nested des services du portail (cf. req plat).
+	PortalServices *[]portalServiceReq `json:"portalServices"`
 	// N°65 — rétention du journal utilisateurs (repli nested du champ plat :
 	// 30/60/90 j, défaut 90).
 	LogRetentionDays *int `json:"logRetentionDays"`
@@ -68,6 +70,28 @@ type portalPromoReq struct {
 type portalSocialReq struct {
 	Label string `json:"label"`
 	URL   string `json:"url"`
+}
+
+// portalServiceReq — une ligne « Nos Services » du portail captif
+// (N°137) : un libellé + une icône de la whitelist curée.
+type portalServiceReq struct {
+	Icon  string `json:"icon"`
+	Label string `json:"label"`
+}
+
+// portalServiceIcons — N°137 — whitelist des icônes Font Awesome 6 free
+// acceptées pour la section « Nos Services » du portail (toutes embarquées
+// dans le template css/all.min.css — vérifiées une à une). La validation EST la
+// whitelist : aucune classe arbitraire ne peut rejoindre le portail
+// (défense en profondeur — le rendu hotpage échappe déjà, mais une classe
+// inconnue casserait le glyphe). Miroir frontend : PORTAL_SERVICE_ICONS
+// (types.ts).
+var portalServiceIcons = map[string]bool{
+	"fa-wifi": true, "fa-globe": true, "fa-laptop": true, "fa-tools": true,
+	"fa-code": true, "fa-print": true, "fa-credit-card": true, "fa-money-bill-wave": true,
+	"fa-phone": true, "fa-headset": true, "fa-gamepad": true, "fa-mug-hot": true,
+	"fa-utensils": true, "fa-car": true, "fa-bolt": true, "fa-store": true,
+	"fa-camera": true, "fa-scissors": true, "fa-book": true, "fa-spa": true,
 }
 
 func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
@@ -98,6 +122,10 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		// N°136 — slides du carrousel COMMERCIAL du portail captif : URLs
 		// https (R2 via /api/media) qui remplacent les 3 pub génériques.
 		PortalSlides *[]string `json:"portalSlides"`
+		// N°137 — services de l'établissement affichés dans la section
+		// « Nos Services » du portail captif (nil = inchangé ; liste vide =
+		// section masquée).
+		PortalServices *[]portalServiceReq `json:"portalServices"`
 		// N°65 — rétention du journal utilisateurs (30/60/90 j ; nil = inchangé,
 		// défaut effectif 90).
 		LogRetentionDays *int `json:"logRetentionDays"`
@@ -123,6 +151,8 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	portalPromos, portalSocials := req.PortalPromos, req.PortalSocials
 	// N°136 — même résolution pour les slides du carrousel commercial.
 	portalSlides := req.PortalSlides
+	// N°137 — même résolution pour les services du portail.
+	portalServices := req.PortalServices
 	// N°65 — même résolution plat > imbriqué pour la rétention du journal.
 	logRetentionDays := req.LogRetentionDays
 	if req.Tenant != nil {
@@ -173,6 +203,9 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		}
 		if portalSlides == nil {
 			portalSlides = req.Tenant.PortalSlides
+		}
+		if portalServices == nil {
+			portalServices = req.Tenant.PortalServices
 		}
 		if logRetentionDays == nil {
 			logRetentionDays = req.Tenant.LogRetentionDays
@@ -308,6 +341,42 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		}
 		return string(b), nil
 	}
+	// N°137 — services de la section « Nos Services » du portail : ≤ 6
+	// lignes, libellé 1-60 car., icône dans la whitelist curée (défaut
+	// fa-wifi). Le JSON final est resérialisé côté serveur — le client ne peut
+	// rien injecter d'autre que ces champs validés (même contrat que les promos).
+	encodeServices := func(list []portalServiceReq) (string, error) {
+		if len(list) > 6 {
+			return "", fmt.Errorf("au plus 6 services")
+		}
+		type service struct {
+			Icon  string `json:"icon,omitempty"`
+			Label string `json:"label"`
+		}
+		out := make([]service, 0, len(list))
+		for _, it := range list {
+			label := strings.TrimSpace(it.Label)
+			if label == "" || len(label) > 60 {
+				return "", fmt.Errorf("nom de service requis (1-60 caractères)")
+			}
+			icon := strings.TrimSpace(it.Icon)
+			if icon == "" {
+				icon = "fa-wifi"
+			}
+			if !portalServiceIcons[icon] {
+				return "", fmt.Errorf("icône non supportée : %s", icon)
+			}
+			out = append(out, service{Icon: icon, Label: label})
+		}
+		if len(out) == 0 {
+			return "", nil // liste vidée = section « Nos Services » masquée
+		}
+		b, err := json.Marshal(out)
+		if err != nil {
+			return "", err
+		}
+		return string(b), nil
+	}
 	if portalStyle != nil {
 		v := strings.TrimSpace(*portalStyle)
 		if v != "" && v != "commercial" && v != "hospitality" {
@@ -319,7 +388,7 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Message de bienvenue trop long (200 caractères max)")
 		return
 	}
-	var promosJSON, socialsJSON string
+	var promosJSON, socialsJSON, servicesJSON string
 	if portalPromos != nil {
 		v, err := encodePromos(*portalPromos)
 		if err != nil {
@@ -370,6 +439,14 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 			}
 			slidesJSON = string(b)
 		} // liste vidée = slides retirées → retour aux images par défaut
+	}
+	if portalServices != nil {
+		v, err := encodeServices(*portalServices)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "Services du portail invalides : "+err.Error())
+			return
+		}
+		servicesJSON = v
 	}
 	if expiryAfterDays != nil && (*expiryAfterDays < 0 || *expiryAfterDays > 365) {
 		writeErr(w, http.StatusBadRequest, "Le nombre de jours doit être compris entre 0 et 365")
@@ -428,6 +505,11 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	// liste vide = retour aux images génériques pub1/2/3 du template).
 	if portalSlides != nil {
 		settings.Tenant.PortalSlides = slidesJSON
+	}
+	// N°137 — les services arrivent déjà sérialisés/validés ci-dessus
+	// (nil = inchangé ; liste vide = section masquée sur le portail).
+	if portalServices != nil {
+		settings.Tenant.PortalServices = servicesJSON
 	}
 	if expiryMode != nil {
 		settings.Tenant.ExpiryPolicyMode = *expiryMode

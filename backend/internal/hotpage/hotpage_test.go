@@ -144,6 +144,37 @@ func TestLoginTemplateLogoBlock(t *testing.T) {
 	}
 }
 
+// TestLoginTemplateServicesBlock — N°137 : la section « Nos Services » est
+// templatisée (marqueurs ATTR/BLOCK) et ne porte PLUS les 4 services codés
+// en dur du site pilote — les services affichés sont ceux DU TENANT, posés
+// en console ; sans services configurés, la section est masquée (ATTR).
+func TestLoginTemplateServicesBlock(t *testing.T) {
+	body := RawFile("login.html")
+	if body == "" {
+		t.Fatal("login.html absent du template")
+	}
+	if !strings.Contains(body, "{{MIKCLOUD_SERVICES_ATTR}}") {
+		t.Fatal("marqueur {{MIKCLOUD_SERVICES_ATTR}} absent de login.html — le wrap Nos Services n'est plus templatisé")
+	}
+	if !strings.Contains(body, "{{MIKCLOUD_SERVICES_BLOCK}}") {
+		t.Fatal("marqueur {{MIKCLOUD_SERVICES_BLOCK}} absent de login.html — les <li> des services ne sont plus templatisés")
+	}
+	for _, banned := range []string{
+		"Cyber Espace & Internet",
+		"Maintenance Informatique",
+		"Développement Web & Applications",
+		"Services Monétiques",
+	} {
+		if strings.Contains(body, banned) {
+			t.Fatalf("login.html porte encore le service codé en dur du site pilote : %q", banned)
+		}
+	}
+	// Le JS du fetch live doit piloter la section (sans re-déploiement).
+	if !strings.Contains(body, "mikcloud-services-wrap") {
+		t.Fatal("le pilotage JS de la section Nos Services (fetch live) absent de login.html")
+	}
+}
+
 // TestHasFile — cohérence entre HasFile et File/RawFile.
 func TestHasFile(t *testing.T) {
 	cases := map[string]bool{

@@ -456,6 +456,65 @@ func TestPortalServeLogoBlock(t *testing.T) {
 	}
 }
 
+// TestPortalServeServicesBlock — N°137 : le login.html servi rend les
+// services DU TENANT (posés en console) dans la section « Nos Services »,
+// et masque la section entière sans services configurés — les 4 services
+// historiques du template (ceux du site pilote) ne sont plus servis à personne.
+func TestPortalServeServicesBlock(t *testing.T) {
+	st, ts := newTestServerWithStore(t)
+	seedRouterWithAccount(t, st, "tok-svc", struct {
+		tenantName  string
+		wifiSlug    string
+		joinActive  bool
+		profileName string
+		profilePrc  int
+		waveLink    string
+		bannerUrl   string
+	}{tenantName: "ProMax WIFI"})
+
+	fetchLogin := func() string {
+		resp, err := http.Get(ts.URL + "/portal/tok-svc/login.html")
+		if err != nil {
+			t.Fatalf("GET login.html : %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("statut %d", resp.StatusCode)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		return string(b)
+	}
+
+	// Sans services configurés : section masquée (repli neutre), aucun
+	// service du site pilote servi.
+	body := fetchLogin()
+	if !strings.Contains(body, `id="mikcloud-services-wrap" style="display:none"`) {
+		t.Errorf("sans services, la section Nos Services doit être masquée : %s", body[:200])
+	}
+	if strings.Contains(body, "Maintenance Informatique") {
+		t.Error("login.html servi porte encore un service codé en dur du site pilote")
+	}
+
+	// Le gérant configure SES services en console (carte Services du portail).
+	st.Lock()
+	db := st.Data()
+	s := db.SettingsByAccount["acc-portal-tok-svc"]
+	s.Tenant.PortalServices = `[{"icon":"fa-print","label":"Impression & photocopie"},{"icon":"fa-bolt","label":"Recharge électrique"}]`
+	db.SettingsByAccount["acc-portal-tok-svc"] = s
+	st.Unlock()
+
+	body = fetchLogin()
+	if !strings.Contains(body, `<span>Impression &amp; photocopie</span>`) {
+		t.Error("service du tenant absent du login.html servi")
+	}
+	if !strings.Contains(body, `<i class="fas fa-bolt"></i>`) {
+		t.Error("icône fa-bolt du service absente du login.html servi")
+	}
+	if strings.Contains(body, `id="mikcloud-services-wrap" style="display:none"`) {
+		t.Error("avec des services configurés, la section doit être visible")
+	}
+}
+
 // TestPortalServeSecurityTenantInjection — un tenant name malveillant ne
 // casse pas le bloc <script type="application/json"> (échappement JSON) et ne
 // crée pas de balise <script> exécutable.

@@ -70,6 +70,7 @@ Hotspot Page/
 | Offres & prix (liens Wave) | cartes `.creative-card` / `.card-featured` dans login.html |
 | Carrousel promo | remplacer `img/pub1..3.jpg` (mêmes noms) |
 | Logo | `{{MIKCLOUD_LOGO_BLOCK}}` — img du logo DU CLIENT (`logoUrl` console) ou repli initiale du tenant (N°135 : `img/logo.png` retiré — jamais le logo d'un autre client) |
+| Services « Nos Services » | `{{MIKCLOUD_SERVICES_ATTR}}` + `{{MIKCLOUD_SERVICES_BLOCK}}` — services DU TENANT (`portalServices` console, ≤ 6, icônes FA curées) ou section masquée (N°137 : les 4 services historiques du pilote sont chassés du template) |
 | Messages animés | tableau `strings` de `new Typed(...)` dans login.html |
 | Support WhatsApp / pied de page | lien `wa.me` et `.ftci-link` dans login.html |
 | Messages d'erreur | `errors.txt` (syntaxe `$(error-orig)` etc.) |

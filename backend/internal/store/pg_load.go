@@ -145,7 +145,7 @@ func (p *PG) loadSettings(db *model.DB) error {
                         sub_plan_id, sub_status, sub_period_start, sub_period_end, sub_last_amount,
                         sub_router_slots, sub_last_paid_at, last_tick, last_sweep,
                         platform_name, platform_register_open, platform_register_key, auto_import_router_users,
-                        join_button, portal_style, portal_welcome, portal_promos, portal_socials, portal_slides, portal_key,
+                        join_button, portal_style, portal_welcome, portal_promos, portal_socials, portal_slides, portal_services, portal_key,
                         log_retention_days
                  FROM settings`)
 	if err != nil {
@@ -176,6 +176,8 @@ func (p *PG) loadSettings(db *model.DB) error {
 			portalStyle, portalWelcome, portalPromos, portalSocials string
 			// N°136 - slides du carrousel commercial (JSON d'URLs https ≤ 3).
 			portalSlides string
+			// N°137 - services de l'établissement (section Nos Services).
+			portalServices string
 			// N°56 - clé publique du portail (analytics pré-auth).
 			portalKey string
 			// N°65 - rétention du journal par compte (30/60/90 j, défaut 90).
@@ -191,7 +193,7 @@ func (p *PG) loadSettings(db *model.DB) error {
 			&subPlanID, &subStatus, &subPeriodStart, &subPeriodEnd, &subLastAmount,
 			&subRouterSlots, &subLastPaidAt, &lastTick, &lastSweep,
 			&platformName, &platformRegisterOpen, &platformRegisterKey, &autoImport,
-			&joinButton, &portalStyle, &portalWelcome, &portalPromos, &portalSocials, &portalSlides, &portalKey, &logRetentionDays); err != nil {
+			&joinButton, &portalStyle, &portalWelcome, &portalPromos, &portalSocials, &portalSlides, &portalServices, &portalKey, &logRetentionDays); err != nil {
 			return err
 		}
 		if accID == "" {
@@ -205,8 +207,9 @@ func (p *PG) loadSettings(db *model.DB) error {
 				ExpiryPolicyMode: expiryMode, ExpiryPolicyAfterDays: expiryAfterDays,
 				PortalStyle: portalStyle, PortalWelcome: portalWelcome,
 				PortalPromos: portalPromos, PortalSocials: portalSocials,
-				PortalSlides: portalSlides,
-				PortalKey:    portalKey,
+				PortalSlides:   portalSlides,
+				PortalServices: portalServices,
+				PortalKey:      portalKey,
 			},
 			Plan: model.Plan{Name: planName, MaxRouters: planMaxRouters, MaxUsers: planMaxUsers},
 			Subscription: model.Subscription{

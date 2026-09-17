@@ -33,6 +33,14 @@
 //	                                template de référence — le logo du site pilote).
 //	{{MIKCLOUD_BANNER_URL}}   — bannière du portail du tenant (data URL ≤ 500 Ko
 //	                            ou URL https, ex. Cloudflare R2 ; ou "")
+//	{{MIKCLOUD_SERVICES_ATTR}} — attribut du wrap « Nos Services » (N°137) :
+//	                        style="display:none" quand le tenant n'a AUCUN
+//	                        service configuré (repli neutre — le template
+//	                        historique y affichait les services du site pilote),
+//	                        sinon chaîne vide
+//	{{MIKCLOUD_SERVICES_BLOCK}} — les <li> des services DU TENANT (≤ 6,
+//	                        icônes Font Awesome curées, échappement strict),
+//	                        vide si aucun service
 //
 // Sécurité : les valeurs sont ÉCHAPPÉES pour leur contexte d'insertion. Pour le
 // bloc JSON, on utilise encoding/json (échappement strict : guillemets,
@@ -114,6 +122,11 @@ type PortalConfig struct {
 	Slides []string `json:"portalSlides,omitempty"`
 	// Socials — liens réseaux sociaux (≤ 4, https, validés côté API).
 	Socials []PortalSocial `json:"portalSocials,omitempty"`
+	// N°137 — services de l'établissement affichés dans la section
+	// « Nos Services » du portail (mode commercial, ≤ 6, validés côté
+	// API — icônes Font Awesome curées). Vide = section masquée
+	// (le template historique y portait les services du site pilote).
+	Services []PortalService `json:"portalServices,omitempty"`
 	// N°56 — clé publique du portail (analytics) : résout le compte pour
 	// POST /api/portal/track sans authentification (pré-auth du hotspot).
 	// NON secret par design (visible de chaque invité dans le bloc config) :
@@ -163,6 +176,16 @@ type PortalSocial struct {
 	URL   string `json:"url"`
 }
 
+// PortalService — une ligne de la section « Nos Services » du portail
+// captif (N°137) : ce que l'établissement fait en plus du WiFi (impression,
+// restauration, recharge, monétique…). Icon est une classe Font Awesome 6
+// free (« fa-print »), posée depuis la whitelist curée côté console ; vide au
+// rendu = « fa-check » (coche neutre).
+type PortalService struct {
+	Icon  string `json:"icon,omitempty"`
+	Label string `json:"label"`
+}
+
 // PortalOffer — une offre payante du compte, vue par la page du portail.
 type PortalOffer struct {
 	Name        string `json:"name"`
@@ -195,6 +218,8 @@ func Personalize(content string, cfg PortalConfig) string {
 		"{{MIKCLOUD_LOGO_URL}}", html.EscapeString(cfg.LogoURL),
 		"{{MIKCLOUD_LOGO_BLOCK}}", logoBlock(cfg),
 		"{{MIKCLOUD_BANNER_URL}}", html.EscapeString(cfg.BannerURL),
+		"{{MIKCLOUD_SERVICES_ATTR}}", servicesAttr(cfg),
+		"{{MIKCLOUD_SERVICES_BLOCK}}", servicesBlock(cfg),
 		"{{MIKCLOUD_CONFIG_JSON}}", configJSON(cfg),
 	)
 	return repl.Replace(content)
@@ -215,6 +240,39 @@ func logoBlock(cfg PortalConfig) string {
 	return `<img src="` + html.EscapeString(cfg.LogoURL) + `" alt="Logo ` + html.EscapeString(cfg.TenantName) +
 		`" class="rounded" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">` +
 		`<span class="logo-fallback" style="display:none;">` + initial + `</span>`
+}
+
+// servicesBlock — N°137 — les <li> de la section « Nos Services » : les
+// services DU TENANT (posés en console, ≤ 6), échappés strict. Vide quand le
+// compte n'en a pas configuré — l'ATTR masque alors la section entière (repli
+// neutre : le template historique y affichait les 4 services du site pilote,
+// même chasse que le logo N°135).
+func servicesBlock(cfg PortalConfig) string {
+	var b strings.Builder
+	for _, s := range cfg.Services {
+		icon := strings.TrimSpace(s.Icon)
+		if icon == "" {
+			icon = "fa-check"
+		}
+		b.WriteString(`<li class="service-list-item"><div class="service-icon-box"><i class="fas `)
+		b.WriteString(html.EscapeString(icon))
+		b.WriteString(`"></i></div><span>`)
+		b.WriteString(html.EscapeString(s.Label))
+		b.WriteString(`</span></li>`)
+	}
+	return b.String()
+}
+
+// servicesAttr — N°137 — l'attribut du wrap « Nos Services » : masqué
+// quand le tenant n'a AUCUN service (une section vide n'a rien à faire sur
+// un portail). Le fetch live (applyConfig côté page) retire ce style inline
+// quand la config live apporte des services — pilotage sans re-déploiement
+// (pattern N°48).
+func servicesAttr(cfg PortalConfig) string {
+	if len(cfg.Services) == 0 {
+		return ` style="display:none"`
+	}
+	return ""
 }
 
 // tenantInitial — l'initiale d'affichage du tenant : première LETTRE

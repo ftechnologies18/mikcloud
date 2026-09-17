@@ -181,6 +181,32 @@ func portalSlidesList(t model.Tenant) []string {
 	return out
 }
 
+// portalServicesList — décode les services de l'établissement du tenant
+// (N°137, section « Nos Services » du portail commercial). Persisté en JSON
+// (model.Tenant.PortalServices) : un JSON invalide ou un champ vide donne
+// une liste vide — la section est masquée côté page, jamais cassée
+// (même robustesse que portalHospitality).
+func portalServicesList(t model.Tenant) []hotpage.PortalService {
+	if t.PortalServices == "" {
+		return nil
+	}
+	var raw []struct {
+		Icon  string `json:"icon"`
+		Label string `json:"label"`
+	}
+	if json.Unmarshal([]byte(t.PortalServices), &raw) != nil {
+		return nil
+	}
+	var out []hotpage.PortalService
+	for _, it := range raw {
+		if strings.TrimSpace(it.Label) == "" {
+			continue // ligne incomplète (héritée d'un import manuel) → ignorée
+		}
+		out = append(out, hotpage.PortalService{Icon: it.Icon, Label: it.Label})
+	}
+	return out
+}
+
 // buildPortalConfig — construit le PortalConfig pour le compte propriétaire
 // du routeur, à partir du store. À appeler SOUS VERROU (lit db.SettingsByAccount,
 // db.WifiSites, db.JoinLinks, db.Profiles).
@@ -216,6 +242,7 @@ func buildPortalConfig(db *model.DB, router *model.Router, r *http.Request) hotp
 	cfg.Style, cfg.Welcome, cfg.Promos, cfg.Socials = portalHospitality(settings.Tenant) // N°55
 	cfg.Slides = portalSlidesList(settings.Tenant)                                       // N°136 — carrousel commercial
 	cfg.PortalKey = settings.Tenant.PortalKey                                            // N°56 — analytics pré-auth
+	cfg.Services = portalServicesList(settings.Tenant)                                   // N°137 — section « Nos Services »
 	// WifiSlug — 1er site WiFi actif lié à ce routeur.
 	for i := range db.WifiSites {
 		s := &db.WifiSites[i]
@@ -335,6 +362,7 @@ func buildPortalConfigForSite(db *model.DB, site *model.WifiSite, router *model.
 	cfg.Style, cfg.Welcome, cfg.Promos, cfg.Socials = portalHospitality(settings.Tenant) // N°55
 	cfg.Slides = portalSlidesList(settings.Tenant)                                       // N°136 — carrousel commercial
 	cfg.PortalKey = settings.Tenant.PortalKey                                            // N°56 — analytics pré-auth
+	cfg.Services = portalServicesList(settings.Tenant)                                   // N°137 — section « Nos Services »
 	if origin := publicFrontendURL(r); origin != "" {
 		cfg.WifiURL = origin + "/wifi/" + site.Slug
 	}

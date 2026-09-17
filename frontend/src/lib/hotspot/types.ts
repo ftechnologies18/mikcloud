@@ -1150,6 +1150,11 @@ export interface AppSettings {
     portalSlides?: string;
     /** N°55 : liens réseaux sociaux — JSON string [{label,url}] ≤ 4. */
     portalSocials?: string;
+    /** N°137 : services de l'établissement affichés dans la section
+     * « Nos Services » du portail captif (mode commercial) — JSON string
+     * [{icon,label}] ≤ 6, icônes Font Awesome curées (PORTAL_SERVICE_ICONS).
+     * Vide = section masquée (repli neutre). */
+    portalServices?: string;
     /** N°56 : clé publique du portail (analytics pré-auth) — 16 hex, générée
      * côté serveur. Non secrète : elle n'ouvre aucun droit de lecture. */
     portalKey?: string;
@@ -1944,3 +1949,37 @@ export interface PortalSocial {
   label: string;
   url: string;
 }
+
+/** N°137 — un service de la section « Nos Services » du portail captif
+ * (mode commercial) : ce que l'établissement fait en plus du WiFi. */
+export interface PortalService {
+  icon: string;
+  label: string;
+}
+
+/** N°137 — icônes Font Awesome 6 free acceptées pour les services du portail
+ * (toutes embarquées dans le template css/all.min.css). Miroir EXACT de la
+ * whitelist serveur portalServiceIcons (handlers_settings.go) : la validation
+ * backend EST cette liste — toute divergence ferait refuser un choix valide. */
+export const PORTAL_SERVICE_ICONS = [
+  "fa-wifi",
+  "fa-globe",
+  "fa-laptop",
+  "fa-tools",
+  "fa-code",
+  "fa-print",
+  "fa-credit-card",
+  "fa-money-bill-wave",
+  "fa-phone",
+  "fa-headset",
+  "fa-gamepad",
+  "fa-mug-hot",
+  "fa-utensils",
+  "fa-car",
+  "fa-bolt",
+  "fa-store",
+  "fa-camera",
+  "fa-scissors",
+  "fa-book",
+  "fa-spa",
+] as const;

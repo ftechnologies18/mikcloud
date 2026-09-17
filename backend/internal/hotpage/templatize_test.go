@@ -102,6 +102,55 @@ func TestPersonalizeLogoBlockInjection(t *testing.T) {
 	}
 }
 
+// TestPersonalizeServicesBlock — N°137 : la section « Nos Services » rend les
+// services DU TENANT (≤ 6) et se MASQUE entièrement sans services
+// configurés (repli neutre — les 4 services historiques du template
+// étaient ceux du site pilote, même chasse que le logo N°135).
+func TestPersonalizeServicesBlock(t *testing.T) {
+	// Avec services : les <li> du tenant, icône + libellé.
+	cfg := PortalConfig{Services: []PortalService{
+		{Icon: "fa-print", Label: "Impression & photocopie"},
+		{Label: "Recharge électrique"}, // icône vide → coche neutre fa-check
+	}}
+	tpl := `<div class="mt-4" id="mikcloud-services-wrap"{{MIKCLOUD_SERVICES_ATTR}}><ul id="mikcloud-services-list">{{MIKCLOUD_SERVICES_BLOCK}}</ul></div>`
+	out := Personalize(tpl, cfg)
+	if !strings.Contains(out, `<li class="service-list-item"><div class="service-icon-box"><i class="fas fa-print"></i></div><span>Impression &amp; photocopie</span></li>`) {
+		t.Errorf("li du service (icône fa-print) absent : %s", out)
+	}
+	if !strings.Contains(out, `<i class="fas fa-check"></i>`) {
+		t.Errorf("icône vide doit retomber sur fa-check : %s", out)
+	}
+	if strings.Contains(out, "display:none") {
+		t.Errorf("avec des services configurés, la section ne doit PAS être masquée : %s", out)
+	}
+	// Sans services : bloc vide + ATTR masquant (section retirée, jamais vide).
+	out = Personalize(tpl, PortalConfig{})
+	if !strings.Contains(out, `id="mikcloud-services-wrap" style="display:none"`) {
+		t.Errorf("sans services, le wrap doit être masqué par l'ATTR : %s", out)
+	}
+	if !strings.Contains(out, `id="mikcloud-services-list"></ul>`) {
+		t.Errorf("sans services, le bloc doit être vide : %s", out)
+	}
+}
+
+// TestPersonalizeServicesBlockInjection — un libellé ou une icône malveillants
+// ne peuvent pas sortir de leurs contextes (contenu HTML / attribut class).
+func TestPersonalizeServicesBlockInjection(t *testing.T) {
+	cfg := PortalConfig{Services: []PortalService{
+		{Icon: `fa-x" onload="alert(1)`, Label: `<script>alert(2)</script>`},
+	}}
+	out := Personalize(`<ul>{{MIKCLOUD_SERVICES_BLOCK}}</ul>`, cfg)
+	if strings.Contains(out, "<script>") {
+		t.Errorf("label non échappé : %s", out)
+	}
+	if strings.Contains(out, `" onload="`) {
+		t.Errorf("icône non échappée dans l'attribut class : %s", out)
+	}
+	if !strings.Contains(out, "&lt;script&gt;") {
+		t.Errorf("label doit être échappé en &lt;script&gt; : %s", out)
+	}
+}
+
 // TestPersonalizeConfigJSON — le marqueur CONFIG_JSON est remplacé par un
 // objet JSON valide, parsable par encoding/json côté client.
 func TestPersonalizeConfigJSON(t *testing.T) {

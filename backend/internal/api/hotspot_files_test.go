@@ -176,6 +176,42 @@ func TestEnsureHotspotFilesLockedSlides(t *testing.T) {
 	}
 }
 
+// TestEnsureHotspotFilesLockedServicesChange — N°137 : un changement des
+// services « Nos Services » du compte (console) change la sig → la commande
+// hotspot_files est re-filée au check-in suivant (l'empreinte branding couvre
+// PortalServices depuis N°137 — même promesse auto-re-déploiement que le logo N°135).
+func TestEnsureHotspotFilesLockedServicesChange(t *testing.T) {
+	st, _ := newTestServerWithStore(t)
+	st.Lock()
+	db := st.Data()
+	db.Accounts = append(db.Accounts, model.Account{ID: "acc-svc", Name: "Cyber Services"})
+	db.Routers = append(db.Routers, model.Router{
+		ID:             "r-svc",
+		AccountID:      "acc-svc",
+		Name:           "SvcRouter",
+		Mode:           "agent",
+		Status:         "online",
+		AgentTokenHash: agent.HashToken("tok-svcfiles"),
+	})
+	router := &db.Routers[len(db.Routers)-1]
+	router.HotspotFilesSig = hotspotFilesSig(hotpage.DefaultFiles(), db, router)
+	ensureHotspotFilesLocked(db, router)
+	if n := countHotspotCmds(db, router.ID); n != 0 {
+		st.Unlock()
+		t.Fatalf("sig à jour : 0 commande attendue, %d trouvée(s)", n)
+	}
+	// Le gérant configure ses services « Nos Services » en console.
+	s := db.SettingsByAccount["acc-svc"]
+	s.Tenant.PortalServices = `[{"icon":"fa-print","label":"Impression"}]`
+	db.SettingsByAccount["acc-svc"] = s
+	ensureHotspotFilesLocked(db, router)
+	n := countHotspotCmds(db, router.ID)
+	st.Unlock()
+	if n != 1 {
+		t.Fatalf("changement de services : 1 commande de re-déploiement attendue, %d trouvée(s)", n)
+	}
+}
+
 // TestPortalServeOK — GET /portal/{token}/login.html sert le fichier avec le
 // Content-Type HTML, et un token valide donne accès à tous les fichiers du
 // template (texte + binaire).

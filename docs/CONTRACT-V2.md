@@ -2215,6 +2215,49 @@ Migration boot idempotente : `settings.portal_style`, `portal_welcome`,
   injection vitrine (bienvenue, promos avec images R2, socials) ; commercial =
   retrait des injections et dé-masquage (réversible, idempotent).
 
+## N°137 — Services « Nos Services » du portail pilotés en console
+
+### Settings — `tenant.portalServices` (JSON string, pattern N°55)
+`[{icon,label}]` ≤ 6 items : `icon` = classe Font Awesome 6 free de la
+WHITELIST `portalServiceIcons` (handlers_settings.go — miroir exact du
+`PORTAL_SERVICE_ICONS` frontend, types.ts : fa-wifi, fa-globe, fa-laptop,
+fa-tools, fa-code, fa-print, fa-credit-card, fa-money-bill-wave, fa-phone,
+fa-headset, fa-gamepad, fa-mug-hot, fa-utensils, fa-car, fa-bolt, fa-store,
+fa-camera, fa-scissors, fa-book, fa-spa — toutes embarquées dans le
+css/all.min.css du template) ; vide accepté → `fa-wifi` ; `label` 1-60 car.
+trimé. PUT /api/settings : champ plat `portalServices` + repli imbriqué
+`tenant.portalServices` (le plat prime), resérialisation serveur
+(`encodeServices` — le client ne peut rien injecter d'autre). Liste vide =
+section masquée. Colonne `settings.portal_services` (TEXT NOT NULL DEFAULT
+'', ALTER IF NOT EXISTS). Défaut des comptes existants : VIDE (défaut
+neutre — les 4 services codés en dur du template étaient ceux du site
+pilote, chassés comme le logo N°135).
+
+### Marqueurs `{{MIKCLOUD_SERVICES_ATTR}}` / `{{MIKCLOUD_SERVICES_BLOCK}}`
+Dans login.html, wrap `#mikcloud-services-wrap` + `<ul
+id="mikcloud-services-list">` : le BLOCK rend les `<li>` des services DU
+TENANT (échappement strict, icône vide → `fa-check`), l'ATTR pose
+` style="display:none"` sur le wrap sans services configurés (section
+retirée, jamais vide). Config : `PortalConfig.Services
+[]PortalService{icon,label}` (JSON `portalServices`, omitempty — absent =
+masqué) dans le bloc inliné ET les endpoints live (buildPortalConfig,
+buildPortalConfigForSite — JSON invalide en base = liste vide, page jamais
+cassée). JS applyConfig (bloc 8, ES5 idempotent) : le fetch live recrée la
+liste et bascule le wrap ; mode hospitalité → la classe
+`mikcloud-hosp-hidden` (!important) garde la section voilée. SIG :
+`portalBrandingFingerprint` couvre `t.PortalServices` (garde :
+TestEnsureHotspotFilesLockedServicesChange — services posés → 1 commande
+hotspot_files filée ; sig à jour → 0).
+
+### Console
+Carte « Portail : services de l'établissement » (onglet Expérience,
+section Hotspot, entre bannière et hospitalité) : ≤ 6 lignes {Select icône
+(glyphes lucide en console, valeur `fa-*` persistée) + libellé}, PUT
+/api/settings corps défensif plat + tenant{…}. i18n FR/EN
+(`settings.svc.*` + 20 libellés d'icônes) ; note branding de l'onglet
+Portail étendue aux services.
+
+
 ## N°136 — Slides du carrousel commercial du portail captif
 
 ### Modèle (ajout Tenant)

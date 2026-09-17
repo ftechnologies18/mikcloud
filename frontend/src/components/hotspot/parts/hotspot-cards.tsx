@@ -20,7 +20,18 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BadgeCheck,
+  Banknote,
+  BookOpen,
   CalendarClock,
+  Camera,
+  Car,
+  Code,
+  Coffee,
+  CreditCard,
+  Gamepad2,
+  Headset,
+  Laptop,
+  ListChecks,
   Eye,
   Globe,
   ImagePlus,
@@ -29,18 +40,36 @@ import {
   Link as LinkIcon,
   Loader2,
   MousePointerClick,
+  Phone,
+  Plus,
+  Printer,
   Router as RouterIcon,
+  Scissors,
+  Sparkles,
   Store,
   Ticket,
   UserPlus,
+  Utensils,
+  Wifi,
+  Wrench,
   X,
+  Zap,
+  type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import { api, apiUpload, updateSettings } from "@/lib/hotspot/api";
 import { SETTINGS_QUERY_KEY } from "@/components/hotspot/parts/sd-currency";
 import { useI18n } from "@/lib/hotspot/i18n";
-import type { AppSettings, ExpiryPolicyMode, PortalPromo, PortalSocial, PromoStats } from "@/lib/hotspot/types";
+import type {
+  AppSettings,
+  ExpiryPolicyMode,
+  PortalPromo,
+  PortalService,
+  PortalSocial,
+  PromoStats,
+} from "@/lib/hotspot/types";
+import { PORTAL_SERVICE_ICONS } from "@/lib/hotspot/types";
 import { qrWithLogoDataUrl } from "@/components/hotspot/parts/template-render";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -84,6 +113,9 @@ export function HotspotExperience({ settings }: { settings: AppSettings }) {
       {/* Slides du carrousel commercial (N°136) — les 3 visuels pub du
           portail remplacés par les images du gérant */}
       <PortalSlidesCard settings={settings} />
+      {/* Services du portail captif (N°137) — section « Nos Services »
+          pilotée par le gérant (≤ 6 lignes, icônes curées) */}
+      <PortalServicesCard settings={settings} />
 
       {/* Mode hospitalité du portail captif (N°55) — vitrine de
           l'établissement (promos produits R2, bienvenue, réseaux
@@ -902,6 +934,158 @@ function PortalSlidesCard({ settings }: { settings: AppSettings }) {
     </Card>
   );
 }
+
+// Carte Services du portail (N°137) — la section « Nos Services » du portail
+// captif (mode commercial) est pilotée par le gérant : jusqu'à 6 lignes
+// (icône curée + libellé). Vide = section masquée sur le portail (repli
+// neutre — les 4 services historiques du template étaient ceux du site
+// pilote, même chasse que le logo N°135). Validée/sérialisée côté backend
+// (≤ 6, libellé 1-60, icône whitelist — cf. handlers_settings.go encodeServices).
+function PortalServicesCard({ settings }: { settings: AppSettings }) {
+  const { t } = useI18n();
+  const queryClient = useQueryClient();
+  const [services, setServices] = useState<PortalService[]>(() => {
+    try {
+      const parsed = JSON.parse(settings.tenant.portalServices || "[]") as PortalService[];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: () =>
+      api<AppSettings>("/api/settings", {
+        method: "PUT",
+        // Corps défensif (pattern PortalHospitalityCard) : champ plat + forme
+        // imbriquée tenant{…} — le plat prime côté backend.
+        body: {
+          portalServices: services,
+          tenant: { portalServices: services },
+        },
+      }),
+    onSuccess: () => {
+      toast.success(t("settings.svc.savedToast"));
+      void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return (
+    <Card className="gap-4 py-4 sm:py-6">
+      <CardHeader className="px-4 sm:px-6">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
+            <ListChecks className="size-4" />
+          </span>
+          {t("settings.svc.card")}
+        </CardTitle>
+        <CardDescription>{t("settings.svc.cardDesc")}</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-4 px-4 sm:px-6">
+        <div className="grid gap-2">
+          <div className="flex items-center justify-between">
+            <Label>{t("settings.svc.list")}</Label>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={services.length >= 6}
+              onClick={() => setServices((list) => [...list, { icon: "fa-wifi", label: "" }])}
+            >
+              <Plus className="size-4" />
+              {t("settings.svc.add")}
+            </Button>
+          </div>
+          {services.length === 0 && (
+            <p className="text-xs text-muted-foreground">{t("settings.svc.empty")}</p>
+          )}
+          {services.map((service, idx) => (
+            <div key={idx} className="flex flex-wrap items-center gap-2">
+              <Select
+                value={service.icon}
+                onValueChange={(value) =>
+                  setServices((list) => list.map((it, i) => (i === idx ? { ...it, icon: value } : it)))
+                }
+              >
+                <SelectTrigger className="h-9 w-[11.5rem]" aria-label={t("settings.svc.icon")}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PORTAL_SERVICE_ICONS.map((icon) => {
+                    const Icon = PORTAL_SERVICE_LUCIDE[icon] ?? ListChecks;
+                    return (
+                      <SelectItem key={icon} value={icon}>
+                        <span className="inline-flex items-center gap-2">
+                          <Icon className="size-4 text-primary" aria-hidden="true" />
+                          {t(`settings.svc.icon.${icon.slice(3)}`)}
+                        </span>
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
+              <Input
+                className="h-9 min-w-0 flex-1"
+                maxLength={60}
+                placeholder={t("settings.svc.name")}
+                value={service.label}
+                onChange={(event) =>
+                  setServices((list) => list.map((it, i) => (i === idx ? { ...it, label: event.target.value } : it)))
+                }
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="text-destructive hover:text-destructive"
+                onClick={() => setServices((list) => list.filter((_, i) => i !== idx))}
+              >
+                <X className="size-4" />
+              </Button>
+            </div>
+          ))}
+        </div>
+        <p className="text-xs text-muted-foreground">{t("settings.svc.hint")}</p>
+        <Button
+          type="button"
+          className="w-full sm:w-auto"
+          disabled={saveMutation.isPending}
+          onClick={() => saveMutation.mutate()}
+        >
+          {saveMutation.isPending ? t("common.saving") : t("common.save")}
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+// PORTAL_SERVICE_LUCIDE — N°137 — équivalents lucide des icônes curées : la
+// console n'embarque PAS Font Awesome (c'est le portail qui rend les fa-*),
+// elle montre son propre jeu d'icônes pour guider le choix du gérant. La
+// valeur persistée reste la classe fa-* (whitelist serveur).
+const PORTAL_SERVICE_LUCIDE: Record<string, LucideIcon> = {
+  "fa-wifi": Wifi,
+  "fa-globe": Globe,
+  "fa-laptop": Laptop,
+  "fa-tools": Wrench,
+  "fa-code": Code,
+  "fa-print": Printer,
+  "fa-credit-card": CreditCard,
+  "fa-money-bill-wave": Banknote,
+  "fa-phone": Phone,
+  "fa-headset": Headset,
+  "fa-gamepad": Gamepad2,
+  "fa-mug-hot": Coffee,
+  "fa-utensils": Utensils,
+  "fa-car": Car,
+  "fa-bolt": Zap,
+  "fa-store": Store,
+  "fa-camera": Camera,
+  "fa-scissors": Scissors,
+  "fa-book": BookOpen,
+  "fa-spa": Sparkles,
+};
 
 // Carte Portail hospitalité (N°55) — le gérant choisit le MODE d'affichage du
 // portail captif : « commercial » (grille tarifaire + Wave, défaut) ou

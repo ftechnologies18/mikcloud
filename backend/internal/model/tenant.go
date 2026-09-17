@@ -50,6 +50,14 @@ type Tenant struct {
 	PortalSlides string `json:"portalSlides,omitempty"`
 	// Liens réseaux sociaux — JSON [{label,url}] ≤ 4 (WhatsApp, Facebook…).
 	PortalSocials string `json:"portalSocials,omitempty"`
+	// N°137 — services de l'établissement affichés dans la section
+	// « Nos Services » du portail captif (mode commercial) : JSON
+	// [{icon,label}] ≤ 6 items, icônes Font Awesome curées (whitelist
+	// serveur côté validation settings — pattern N°55, pas de table dédiée).
+	// Vide = section masquée (repli neutre : les 4 services historiques
+	// du template étaient ceux du site pilote — même chasse que le
+	// logo N°135).
+	PortalServices string `json:"portalServices,omitempty"`
 	// N°56 — clé publique du portail (16 hex, générée une fois par compte) :
 	// identifiant NON secret embarqué dans la config du portail captif
 	// (bloc mikcloud-config, visible de chaque invité par design) qui

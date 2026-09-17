@@ -326,7 +326,9 @@ func normalizeRouterOSCheck(res map[string]any) {
 		res["firmwareStaged"] = fwStg
 	}
 	if fwAuto != "" {
-		res["firmwareAuto"] = fwAuto == "true"
+		// N°132 — certains builds stringifient le booléen en « yes »/« no »
+		// (précédent device-mode) : les deux formes disent « activé ».
+		res["firmwareAuto"] = fwAuto == "true" || fwAuto == "yes"
 	}
 }
 

@@ -74,9 +74,12 @@ func (b Builder) buildRouterOSCheck(cmd model.Command) string {
 	sb.WriteString("  :do { :set rosInst [/system package update get installed-version] } on-error={ }\n")
 	sb.WriteString("  :do { :set rosChan [/system package update get channel] } on-error={ }\n")
 	// N°125 — firmware RouterBOARD (bootloader), isolé pareillement.
+	// N°132 — auto-upgrade vit sous /system routerboard SETTINGS : le
+	// chemin N°125 échouait en silence sur le vrai matériel (fwAuto
+	// toujours vide, indicateur jamais affiché).
 	sb.WriteString("  :do { :set fwCur [/system routerboard get current-firmware] } on-error={ }\n")
 	sb.WriteString("  :do { :set fwStg [/system routerboard get upgrade-firmware] } on-error={ }\n")
-	sb.WriteString("  :do { :set fwAuto [/system routerboard get auto-upgrade] } on-error={ }\n")
+	sb.WriteString("  :do { :set fwAuto [/system routerboard settings get auto-upgrade] } on-error={ }\n")
 	sb.WriteString("} on-error={ :set " + okVar + " false }\n")
 	// Rapport dynamique (valeurs calculées côté routeur, pas d'escape possible —
 	// RouterOS les concatène à l'exécution, elles ne passent jamais par le
@@ -84,7 +87,7 @@ func (b Builder) buildRouterOSCheck(cmd model.Command) string {
 	ok := `/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
 		`" http-method=post http-data=("cmd=` + cmd.ID +
 		`&status=ok&rosStatus=". $rosStat ."&latest=". $rosLatest ."&installed=". $rosInst ."&channel=". $rosChan .` +
-		`&fwCurrent=". $fwCur ."&fwStaged=". $fwStg ."&fwAuto=". $fwAuto) output=none`
+		`"&fwCurrent=". $fwCur ."&fwStaged=". $fwStg ."&fwAuto=". $fwAuto) output=none`
 	ko := b.reportLine(cmd.ID, false, map[string]string{"message": "verification de mise a jour impossible sur le routeur"})
 	sb.WriteString(":if ($" + okVar + ") do={\n  " + ok + "\n} else={\n  " + ko + "\n}\n")
 	return sb.String()

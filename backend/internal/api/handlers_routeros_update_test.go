@@ -523,4 +523,11 @@ func TestNormalizeRouterOSCheckFirmware(t *testing.T) {
 	if s, _ := res["firmwareCurrent"].(string); len(s) != 32 {
 		t.Fatalf("fwCurrent non borné : %d", len(s))
 	}
+	// N°132 — certains builds stringifient le booléen en « yes » (précédent
+	// device-mode) : la normalisation le lit comme activé.
+	res = map[string]any{"rosStatus": "System is already up to date", "latest": "7.24.4", "installed": "7.24.4", "fwAuto": "yes"}
+	normalizeRouterOSCheck(res)
+	if fa, _ := res["firmwareAuto"].(bool); !fa {
+		t.Fatalf("firmwareAuto « yes » : true attendu, %+v", res)
+	}
 }

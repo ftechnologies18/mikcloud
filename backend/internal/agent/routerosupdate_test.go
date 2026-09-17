@@ -34,6 +34,14 @@ func TestRouterOSCheckScriptShape(t *testing.T) {
 		// Rapport dynamique : la clé rosStatus (le status RouterOS brut) ne
 		// doit JAMAIS s'appeler status (clé du protocole ok/error du rapport).
 		`&status=ok&rosStatus=". $rosStat ."&latest=". $rosLatest ."&installed=". $rosInst ."&channel=". $rosChan`,
+		// N°132 — régression N°125 : la continuation firmware doit OUVRIR une
+		// nouvelle chaîne (guillemet AVANT &fwCurrent). Sans lui, `.$fwCurrent=`
+		// est une erreur de syntaxe RouterOS qui avortait l'import du script :
+		// check muet à jamais, commande « sent » zombie reprise en boucle.
+		`."&fwCurrent=". $fwCur ."&fwStaged=". $fwStg ."&fwAuto=". $fwAuto) output=none`,
+		// N°132 — auto-upgrade vit sous /system routerboard settings (le
+		// chemin N°125 échouait en silence sur le vrai matériel).
+		`:set fwAuto [/system routerboard settings get auto-upgrade]`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("routeros_check : %q absent du script :\n%s", want, script)
@@ -185,5 +193,35 @@ func TestRouterboardFirmwareScriptShape(t *testing.T) {
 	// Lectures isolées (un CHR sans /system routerboard ne tue pas la commande).
 	if isolated := strings.Count(script, `} on-error={ }`); isolated < 2 {
 		t.Fatalf("routerboard_firmware : lectures isolées attendues (≥ 2), trouvées %d :\n%s", isolated, script)
+	}
+}
+
+// TestRouterOSScriptsQuoteParity — N°132 — garde anti-régression du bug
+// N°125 : chaque ligne http-data= des scripts de mise à jour doit porter un
+// nombre PAIR de guillemets. La concaténation dynamique (« &cle=". $var . »)
+// exige que CHAQUE fragment ouvre ET ferme sa chaîne : un guillemet ouvrant
+// manquant (le `.&fwCurrent=` de N°125) est une erreur de syntaxe RouterOS
+// qui avorte l'import du fichier — la commande restait « sent » sans
+// rapport à jamais (reprise zombie 10 min en boucle), la vérification
+// n'aboutissait plus et la mise à jour de flotte perdait ses cibles.
+func TestRouterOSScriptsQuoteParity(t *testing.T) {
+	b := Builder{BaseURL: "https://cloud.example", Token: "tok-parity"}
+	for _, cmd := range []model.Command{
+		{ID: "c-q1", Kind: model.CmdRouterOSCheck},
+		{ID: "c-q2", Kind: model.CmdRouterOSUpdate, Payload: map[string]any{"latest": "7.24.4"}},
+		{ID: "c-q3", Kind: model.CmdRouterboardFirmware},
+	} {
+		script, err := b.ScriptFor(cmd)
+		if err != nil {
+			t.Fatalf("%s : %v", cmd.Kind, err)
+		}
+		for i, line := range strings.Split(script, "\n") {
+			if !strings.Contains(line, "http-data=") {
+				continue
+			}
+			if n := strings.Count(line, `"`); n%2 != 0 {
+				t.Fatalf("%s ligne %d : %d guillemets (IMPAIR) — concaténation dynamique cassée :\n%s", cmd.Kind, i+1, n, line)
+			}
+		}
 	}
 }

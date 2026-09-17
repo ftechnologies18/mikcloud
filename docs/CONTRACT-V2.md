@@ -762,13 +762,19 @@ en attente » : Winbox le montre dans *System → Routerboard*
   (read_state), le firmware n'a pas besoin d'être télémétré toutes les
   ~2 min pour un geste rare ;
 - **CHECK ÉTENDU** — `buildRouterOSCheck` lit en plus
-  `/system routerboard get current-firmware / upgrade-firmware /
-  auto-upgrade`, chaque lecture dans son `:do on-error` (un CHR ou un
+  `/system routerboard get current-firmware / upgrade-firmware` et
+  `/system routerboard settings get auto-upgrade` (N°132 : auto-upgrade
+  vit sous `settings` — le chemin plat N°125 échouait en silence sur le
+  vrai matériel), chaque lecture dans son `:do on-error` (un CHR ou un
   vieux build sans `/system routerboard` ne tue pas la commande : les
   champs restent vides, le cloud n'expose pas la ligne). Le rapport
-  dynamique F8 emporte `fwCurrent/fwStaged/fwAuto` ; la normalisation
+  dynamique F8 emporte `fwCurrent/fwStaged/fwAuto` — la continuation
+  firmware du sandwich doit OUVRIR sa chaîne (guillemet avant `&fwCurrent`
+  — régression N°125 corrigée N°132 : sans lui, erreur de syntaxe
+  RouterOS qui avortait l'import, check muet à jamais) ; la normalisation
   expose `firmwareCurrent/firmwareStaged` (bornés 32) et `firmwareAuto`
-  (booléen) — absents si le routeur n'a rien rapporté ;
+  (booléen, `true`/`yes` — N°132) — absents si le routeur n'a rien
+  rapporté ;
 - **UPDATE AUTO-SYNC** — `buildRouterOSUpdate` pose
   `/system routerboard settings set auto-upgrade=yes` AVANT
   `/system package update install` (isolé on-error) : le MÊME redémarrage

@@ -5,6 +5,78 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-17 — N°132 — « Le guillemet qui tuait la vérification » : le script routeros_check généré par N°125 était syntaxiquement invalide (guillemet ouvrant manquant dans le rapport dynamique) — l'import échouait sur le VRAI routeur, la commande restait « sent » sans rapport à jamais et la mise à jour de flotte perdait toutes ses cibles ; au passage, auto-upgrade est lu au bon chemin
+
+### N°132 — Contexte : retour utilisateur
+« Le commit N°125 semble ne pas être fonctionnel et crée un bug : la
+vérification des mises à jour échoue et la mise à jour du parc ne fonctionne
+plus. »
+
+### Diagnostic
+- UNE CHAÎNE MANQUANTE : le rapport dynamique du check concatène les valeurs
+  lues côté routeur en sandwich RouterOS (« &cle=". $var . »). Le fragment
+  Go ajouté par N°125 commençait par `&fwCurrent="` SANS son guillemet
+  ouvrant — le script généré contenait `…&channel=". $rosChan .&fwCurrent=".
+  $fwCur…`, où l'opérateur de concaténation `.` est suivi de `&` au lieu
+  d'une chaîne : ERREUR DE SYNTAXE RouterOS.
+- CONSÉQUENCE EN CHAÎNE sur le parc réel (invisible en simulé : l'agent
+  joué en python POSTE le rapport lui-même, il ne PARSE jamais le script) :
+  l'`/import` du fichier de commandes avorte à la ligne fautive → AUCUN
+  rapport ne part → la commande `routeros_check` reste « sent » → la reprise
+  zombie (10 min, staleSentReadKinds) la re-file… avec le MÊME script cassé
+  → boucle d'échec infinie. La vérification n'aboutit jamais, et la mise à
+  jour de flotte — qui ne cible QUE les routeurs en état `available` détecté
+  par un check abouti — ne trouve plus aucune cible : « Aucune mise à jour
+  à lancer ».
+- AGGRAVANT : le script check voyage dans le lot prioritaire du check-in ; son
+  erreur de syntaxe avortait l'import du fichier ENTIER — les commandes
+  servies derrière dans le même lot n'étaient pas exécutées non plus.
+- SECOND DÉFAUT N°125 découvert au passage : `auto-upgrade` était lu sous
+  `/system routerboard get …` alors qu'il vit sous
+  `/system routerboard settings` sur le vrai matériel (le `set` du même
+  commit utilisait d'ailleurs le bon chemin). Lecture isolée donc non
+  fatale, mais `fwAuto` restait TOUJOURS vide : l'indicateur auto-upgrade ne
+  pouvait jamais s'afficher.
+
+### Technique
+- UNE LETTRE : `agent/routerosupdate.go` — le second fragment du rapport
+  devient `"&fwCurrent=". $fwCur …` (guillemet ouvrant rétabli, sandwich
+  identique aux six autres clés). Le script généré redevient parsable :
+  l'import s'exécute, le rapport part, la commande passe « done ».
+- CHEMIN CORRIGÉ : lecture `[/system routerboard settings get auto-upgrade]`
+  dans le check (miroir du `set` déjà correct de l'update).
+- NORMALISATION DURCIE : `firmwareAuto` accepte « true » ET « yes »
+  (précédent device-mode : certains builds stringifient les booléens).
+- GARDE ANTI-RÉGRESSION : `TestRouterOSScriptsQuoteParity` — chaque ligne
+  `http-data=` des trois scripts (check / update / firmware) doit porter un
+  nombre PAIR de guillemets (la ligne fautive de N°125 en portait 15).
+  Couplé au littéral exact `."&fwCurrent=". $fwCur …` et au chemin
+  `settings` assertés dans `TestRouterOSCheckScriptShape`, plus le cas
+  « yes » dans `TestNormalizeRouterOSCheckFirmware`.
+- Scan systématique : la classe de bug (jonction `.` + `&` entre fragments
+  Go) a été recherchée sur TOUT le codebase — une seule occurrence, celle-ci
+  (le seul autre hit est le commentaire du test qui cite le bug).
+
+### Auto-guérison du parc (aucune intervention requise)
+- `routeros_check` est idempotent et figure dans `staleSentReadKinds` : les
+  commandes « sent » zombies encore en base au moment du déploiement sont
+  re-filees au check-in suivant (≤ 10 min) et servies cette fois avec le
+  script CORRIGÉ (le générateur vit côté cloud) — le parc se rétablit
+  seul, check par check.
+
+### Vérifié
+- Reconstruction octet-exacte du script généré (Python, miroir du
+  compilateur) : sandwich complet `…&channel=". $rosChan ."&fwCurrent=".
+  $fwCur ."&fwStaged=". $fwStg ."&fwAuto=". $fwAuto) output=none` ; parité
+  des guillemets 16/16 sur la ligne ok du check, 8/8 sur firmware ; les
+  lignes statiques reportLine portent 4 guillemets par construction ;
+  équilibre accolades/parenthèses OK sur les 4 fichiers modifiés (checker
+  séquentiel conscient des chaînes/commentaires Go) ; zéro autre jonction
+  suspecte dans le codebase.
+- Sans toolchain Go local (sandbox réinitialisé) : la CI GitHub (Backend
+  Go : gofmt, vet, build, tests — dont les trois nouveaux gardes) et le build
+  Render tranchent au push ; frontend non touché.
+
 ## 2026-09-17 — N°131 — La vitrine retire le doublon et réveille son chat : le bouton « Essai gratuit » quitte le rail (le header le porte déjà), l'icône du tchat gagne une animation « wahou » qui dit au visiteur qu'il peut écrire sa question
 
 ### N°131 — Contexte : deux retours vitrine

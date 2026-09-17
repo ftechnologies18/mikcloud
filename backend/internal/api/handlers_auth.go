@@ -463,6 +463,10 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 	// v2 — chaque compte démarre aussi avec le profil « Staff » (accès personnel).
 	db.Profiles = append(db.Profiles, store.SeedProfilesFor(acc.ID)...)
 	a.logActivityBy(r, db, acc.ID, "compte", "Nouveau compte créé : "+acc.Name)
+	// N°146 — e-mail de bienvenue transactionnel (goroutine : la réponse
+	// d'inscription n'attend jamais Resend/SMTP). Copie des valeurs AVANT
+	// l'envoi : acc/u/sub sont des valeurs, pas des pointeurs du store.
+	a.queueWelcomeEmail(db, acc, u, db.SettingsByAccount[acc.ID].Subscription, passwordResetLinkBase(r))
 	a.store.Save()
 	a.store.Unlock()
 

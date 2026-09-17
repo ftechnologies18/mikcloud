@@ -323,6 +323,24 @@ func (a *API) applyStripeRenewalByUUID(id, paidAt string, amount float64) bool {
 		a.logActivity(db, g.AccountID, "billing",
 			fmt.Sprintf("Prélèvement carte confirmé (Stripe via GeniusPay) — abonnement %s activé/empilé %d mois (%d FCFA / %s), période jusqu'au %s",
 				label, months, sub.LastAmountFcfa, stripeCycleLabel(g.Cycle), sub.PeriodEnd))
+		// N°146 — reçu de paiement transactionnel (goroutine : le
+		// webhook Stripe est acquitté immédiatement). Idempotent par
+		// construction : un seul reçu par paiement réellement appliqué.
+		periodLabel := fmt.Sprintf("%d mois", months)
+		if months == 12 {
+			periodLabel = "1 an"
+		}
+		a.queueReceiptEmail(db, receiptEmailData{
+			AccountID:    g.AccountID,
+			PlanLabel:    label,
+			PeriodLabel:  periodLabel,
+			AmountFcfa:   sub.LastAmountFcfa,
+			Method:       "carte bancaire (Stripe)",
+			Ref:          g.UUID,
+			PaidAt:       now,
+			PeriodEnd:    sub.PeriodEnd,
+			FrontendBase: appPublicBaseURL(),
+		})
 		a.store.Save()
 		return true
 	}

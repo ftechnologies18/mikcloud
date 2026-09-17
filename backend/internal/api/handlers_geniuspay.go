@@ -470,6 +470,22 @@ func (a *API) finalizeBillingSuccess(db *model.DB, idx int, paidVia, resolvedBy,
 	if note != "" {
 		db.BillingRequests[idx].Note = note
 	}
+	// N°146 — reçu de paiement transactionnel (goroutine : le webhook ne
+	// répond jamais après Resend). La demande relue à jour porte le moyen
+	// EFFECTIVEMENT payé (le webhook GeniusPay peut avoir corrigé Wave ⇄
+	// carte avant l'appel).
+	brNow := db.BillingRequests[idx]
+	a.queueReceiptEmail(db, receiptEmailData{
+		AccountID:    brNow.AccountID,
+		PlanLabel:    label,
+		PeriodLabel:  periodLabelOf(brNow.PlanID),
+		AmountFcfa:   applied,
+		Method:       payMethodLabel(brNow.PayMethod),
+		Ref:          brNow.Ref,
+		PaidAt:       now,
+		PeriodEnd:    sub.PeriodEnd,
+		FrontendBase: appPublicBaseURL(),
+	})
 	return sub, label, applied
 }
 

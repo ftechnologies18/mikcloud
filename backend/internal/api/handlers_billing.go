@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -228,6 +229,27 @@ func (a *API) handleAdminBillingRequestResolve(w http.ResponseWriter, r *http.Re
 	db.BillingRequests[idx].PaidVia = "manual"
 	db.BillingRequests[idx].Note = strings.TrimSpace(req.Note)
 
+	// N°146 — reçu de paiement : uniquement si la plateforme a ENCAISSÉ
+	// (markPaid) — une extension offerte n'est pas un paiement. Le libellé
+	// de période suit les mois effectivement appliqués (1-36 possibles).
+	if req.MarkPaid {
+		periodLabel := strconv.Itoa(months) + " mois"
+		if months == 12 {
+			periodLabel = "1 an"
+		}
+		a.queueReceiptEmail(db, receiptEmailData{
+			AccountID:    br.AccountID,
+			PlanLabel:    label,
+			PeriodLabel:  periodLabel,
+			AmountFcfa:   amount,
+			Method:       payMethodLabel(br.PayMethod),
+			Ref:          br.Ref,
+			PaidAt:       now,
+			PeriodEnd:    sub.PeriodEnd,
+			FrontendBase: appPublicBaseURL(),
+		})
+	}
+
 	paid := ""
 	if req.MarkPaid {
 		paid = " encaissé"
@@ -429,6 +451,19 @@ func (a *API) handleWaveWebhook(w http.ResponseWriter, r *http.Request) {
 	a.logActivity(db, br.AccountID, "billing",
 		fmt.Sprintf("Paiement Wave confirmé — demande %s encaissée, abonnement %s activé (%d FCFA / %s)",
 			ref, label, applied, periodLabelOf(br.PlanID)))
+	// N°146 — reçu de paiement transactionnel (goroutine : le webhook
+	// Wave reçoit sa confirmation immédiatement, l'e-mail suit).
+	a.queueReceiptEmail(db, receiptEmailData{
+		AccountID:    br.AccountID,
+		PlanLabel:    label,
+		PeriodLabel:  periodLabelOf(br.PlanID),
+		AmountFcfa:   applied,
+		Method:       "Wave",
+		Ref:          br.Ref,
+		PaidAt:       now,
+		PeriodEnd:    sub.PeriodEnd,
+		FrontendBase: appPublicBaseURL(),
+	})
 	a.store.Save()
 	a.store.Unlock()
 

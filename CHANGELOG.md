@@ -5,6 +5,82 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-18 — N°146 — E-mails transactionnels « Reçu de paiement » et « Bienvenue » : gabarits brandés Aurora Emerald (texte + HTML multipart), un reçu par encaissement réel (Wave, carte Stripe, plateforme), bienvenue à l'inscription avec essai gratuit, envoi asynchrone sous goroutine qui ne bloque jamais webhooks ni signup
+
+### Contexte
+Suite de l'audit du système de notifications (question utilisateur : « dans
+quels cas l'utilisateur reçoit une notification par mail ») : les alertes
+automatiques (routeur, stock, pool, rapport) et le mot de passe oublié étaient
+couverts, mais AUCUN e-mail n'accompagnait les paiements (le client payait
+Wave/carte sans reçu) ni l'inscription (aucun e-mail de bienvenue). Demande :
+« ajouter des emails transactionnels de facturation (reçu de paiement) et mail
+de bienvenue, avec template Resend personnalisé ».
+
+### Ce qui est livré
+- **Deux nouveaux courriels transactionnels**, même mécanique que le mot de
+  passe oublié N°68/N°79 : deux pièces MIME (texte de repli + HTML brandé
+  « Aurora Emerald » — bandeau dégradé signature, wordmark duotone, carte
+  blanche sur papier menthe, liseré aurora, `color-scheme:light` garanti,
+  tables role="presentation", styles 100 % inline, largeur 600 px fluide,
+  échappement HTML de tout contenu utilisateur) délivrés par le fournisseur du
+  compte (API Resend ou SMTP direct — Resend en production via le compte
+  plateforme N°67 : les clients n'ont rien à régler).
+- **Reçu de paiement** — ticket pointillé façon voucher MikCloud : pastille
+  « PAYÉ ✔ », lignes MONTANT (format français « 2 500 FCFA »), ABONNEMENT +
+  période couverte, MOYEN DE PAIEMENT, DATE (française), ACTIF JUSQU'AU ;
+  CTA « Voir mon abonnement » vers la console ; note de conservation (reçu
+  tenant lieu de preuve, historique dans la console). Sujet : « MikCloud —
+  Reçu de paiement 2 500 FCFA ».
+- **Bienvenue** — à l'inscription publique : eyebrow et copie SEGMENTÉS par
+  usage (« VOTRE HOTSPOT » + vouchers/revendeurs/Mode Vente vs « VOTRE RÉSEAU
+  MAISON » + appareils/protection/couvre-feu), ticket d'essai pointillé
+  (« ESSAI GRATUIT · SANS CARTE BANCAIRE », badge « ⏱ 60 JOURS » Hotspot /
+  30 JOURS HomeNet, compte, identifiant, fin d'essai en date française), trois
+  premiers pas numérotés adaptés au mode, CTA « Ouvrir ma console ».
+
+### Déclencheurs (un reçu par ENCAISSEMENT RÉEL, jamais par extension offerte)
+- `finalizeBillingSuccess` (source unique des demandes) : Wave confirmé via
+  GeniusPay — poll client ET webhook signé ; la demande est relue à jour pour
+  le moyen EFFECTIVEMENT payé (le webhook peut corriger Wave ⇄ carte) ;
+- webhook Wave direct (`/api/webhooks/wave`, secret partagé) ;
+- résolution plateforme (`/api/admin/billing-requests/{id}/resolve`) UNIQUEMENT
+  si `markPaid` — une extension offerte n'est pas un paiement ;
+- `applyStripeRenewalByUUID` : prélèvement carte Stripe (webhook signé +
+  resynchronisation factures réelles) — idempotent par construction, donc un
+  seul reçu par paiement réellement appliqué ;
+- `handleRegister` : e-mail de bienvenue à la création du compte.
+
+### Architecture d'envoi (discipline de verrou préservée)
+- `queueReceiptEmail` / `queueWelcomeEmail` : résolutions (compte,
+  propriétaire, destinataire, expéditeur) sous le verrou de l'APPELANT (comme
+  `applySubscriptionLocked`), puis `dispatchEmailTask` — goroutine isolée
+  avec recover : l'envoi réseau (jusqu'à 12 s) ne bloque JAMAIS la réponse
+  HTTP d'un webhook, d'un poll ou de l'inscription ;
+- la trace d'historique reprend le verrou brièvement à la fin (même format
+  que N°68 : `notif_log`, kinds dédiés `payment_receipt` / `welcome`, statut
+  sent/error, corps explicite) ;
+- best-effort assumé : compte sans e-mail ou fournisseur non configuré →
+  envoi écarté silencieusement (jamais un échec de paiement à cause d'un
+  e-mail), échec d'envoi → trace serveur + historique « error » ;
+- `appPublicBaseURL()` : origine du frontend pour les webhooks (APP_PUBLIC_URL
+  → URL canonique), `passwordResetLinkBase` conservé pour le signup (origine
+  de la requête validée par ALLOWED_ORIGIN).
+
+### Fidélité
+Zéro route, zéro API, zéro schéma (CONTRACT-V2 inchangé) ; les réponses des
+webhooks, du poll GeniusPay, de la résolution plateforme et de l'inscription
+sont inchangées à l'octet près ; `payMethodLabel`, `formatFcfa`,
+`periodLabelOf`, `trialPeriodEnd` réutilisés (sources uniques existantes).
+
+### Vérifié
+`go build` 0, `go vet` 0, `gofmt` propre ; suite complète `go test ./...`
+OK (12 packages) ; `-race` OK sur les chemins e-mail (api + notify) ;
+9 nouveaux tests (gabarits reçu/bienvenue hotspot ET homenet, dates et
+montants français, échappement HTML anti-injection, E2E inscription →
+bienvenue + trace notif_log, E2E résolution markPaid → reçu + trace,
+extension non encaissée → AUCUN reçu, compte sans fournisseur → AUCUN envoi
+et paiement réussi quand même).
+
 ## 2026-09-18 — N°145 — Les modales d'impression deviennent réellement responsives en PWA mobile : aperçu 2 colonnes pleine taille, tickets indéformables, dialogues bornés à l'écran (même en paysage), impression papier inchangée
 
 ### Contexte

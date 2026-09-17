@@ -56,6 +56,14 @@ const (
 	// recyclage des IP zombies sera appliqué au prochain check-in SANS
 	// geste humain ; l'extension de pool reste manuelle (topologie).
 	KindPoolAuto = "pool_auto"
+	// KindPaymentReceipt — N°146 : reçu de paiement transactionnel —
+	// envoyé à chaque encaissement réel (Wave, carte Stripe, confirmation
+	// plateforme) sur l'e-mail du compte. Comme KindPasswordReset : à la
+	// demande du flux de facturation, hors moniteur automatique.
+	KindPaymentReceipt = "payment_receipt"
+	// KindWelcome — N°146 : e-mail de bienvenue transactionnel — envoyé
+	// à la création d'un compte (signup public), essai gratuit inclus.
+	KindWelcome = "welcome"
 )
 
 // EmailProviderOf — fournisseur du canal e-mail normalisé : "resend" ou

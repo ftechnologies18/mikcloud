@@ -25,6 +25,12 @@
 //	                            lui-même posé par le réglage console tenant.joinButton)
 //	{{MIKCLOUD_WAVE_LINK}}    — lien marchand Wave du tenant (ou "")
 //	{{MIKCLOUD_LOGO_URL}}     — logo du tenant (data URL, ou "")
+//	{{MIKCLOUD_LOGO_BLOCK}}   — bloc logo COMPLET du portail (N°135) : <img> du
+//	                                logo DU CLIENT quand LogoURL est défini, sinon
+//	                                l'initiale du tenant (repli neutre — le portail
+//	                                d'un client ne porte JAMAIS le logo d'un autre
+//	                                client, ce que faisait l'asset img/logo.png du
+//	                                template de référence — le logo du site pilote).
 //	{{MIKCLOUD_BANNER_URL}}   — bannière du portail du tenant (data URL ≤ 500 Ko
 //	                            ou URL https, ex. Cloudflare R2 ; ou "")
 //
@@ -39,6 +45,7 @@ import (
 	"encoding/json"
 	"html"
 	"strings"
+	"unicode"
 )
 
 // PortalConfig — personnalisation d'un portail pour un compte donné. Construit
@@ -181,10 +188,40 @@ func Personalize(content string, cfg PortalConfig) string {
 		"{{MIKCLOUD_JOIN_URL}}", html.EscapeString(cfg.JoinURL),
 		"{{MIKCLOUD_WAVE_LINK}}", html.EscapeString(cfg.WaveLink),
 		"{{MIKCLOUD_LOGO_URL}}", html.EscapeString(cfg.LogoURL),
+		"{{MIKCLOUD_LOGO_BLOCK}}", logoBlock(cfg),
 		"{{MIKCLOUD_BANNER_URL}}", html.EscapeString(cfg.BannerURL),
 		"{{MIKCLOUD_CONFIG_JSON}}", configJSON(cfg),
 	)
 	return repl.Replace(content)
+}
+
+// logoBlock — N°135 — le bloc HTML du logo du portail : l'<img> du logo DU
+// CLIENT quand LogoURL est défini (data URL ≤ 300 Ko, posée en console),
+// sinon l'initiale du tenant sur le dégradé teal — un repli NEUTRE : le
+// portail d'un client ne doit JAMAIS porter le logo d'un autre client (le
+// « défaut » historique, img/logo.png, était le logo du site pilote de
+// l'audit). Échappement strict (html.EscapeString) : ni le nom du tenant
+// ni l'URL du logo ne peuvent sortir de leur contexte attribut/contenu.
+func logoBlock(cfg PortalConfig) string {
+	initial := html.EscapeString(tenantInitial(cfg.TenantName))
+	if cfg.LogoURL == "" {
+		return `<span class="logo-fallback">` + initial + `</span>`
+	}
+	return `<img src="` + html.EscapeString(cfg.LogoURL) + `" alt="Logo ` + html.EscapeString(cfg.TenantName) +
+		`" class="rounded" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">` +
+		`<span class="logo-fallback" style="display:none;">` + initial + `</span>`
+}
+
+// tenantInitial — l'initiale d'affichage du tenant : première LETTRE
+// (unicode) du nom, majuscule. Repli « W » (WiFi) pour un nom vide ou sans
+// lettre — neutre sur un portail hotspot.
+func tenantInitial(name string) string {
+	for _, r := range strings.TrimSpace(name) {
+		if unicode.IsLetter(r) {
+			return strings.ToUpper(string(r))
+		}
+	}
+	return "W"
 }
 
 // configJSON — sérialise le PortalConfig en JSON, ÉCHAPPÉ pour insertion dans

@@ -92,19 +92,55 @@ func TestRawFileSecurity(t *testing.T) {
 	}
 }
 
-// TestFileBinary — les assets binaires (png, woff2) sont servis via File([]byte).
+// TestFileBinary — les assets binaires (jpg, woff2) sont servis via File([]byte).
+// N°135 — img/logo.png (le logo du site pilote, 288 Ko) a été RETIRÉ du
+// template : le logo du portail est celui DU CLIENT (marqueur LOGO_BLOCK)
+// ou l'initiale du tenant — pub1.jpg est l'asset binaire de référence.
 func TestFileBinary(t *testing.T) {
-	// logo.png existe dans le template de référence (testé à l'audit).
-	b, ok := File("img/logo.png")
+	b, ok := File("img/pub1.jpg")
 	if !ok {
-		t.Fatal("File(img/logo.png) = nil, attendu []byte — asset binaire non servi")
+		t.Fatal("File(img/pub1.jpg) = nil, attendu []byte — asset binaire non servi")
 	}
 	if len(b) < 1000 {
-		t.Errorf("File(img/logo.png) = %d octets, attendu > 1000 (logo.png ~288 Ko à l'audit)", len(b))
+		t.Errorf("File(img/pub1.jpg) = %d octets, attendu > 1000", len(b))
 	}
-	// Signature PNG : 89 50 4E 47 0D 0A 1A 0A
-	if len(b) < 8 || b[0] != 0x89 || b[1] != 0x50 || b[2] != 0x4E || b[3] != 0x47 {
-		t.Error("File(img/logo.png) — en-tête PNG invalide")
+	// Signature JPEG : FF D8 FF
+	if len(b) < 3 || b[0] != 0xFF || b[1] != 0xD8 || b[2] != 0xFF {
+		t.Error("File(img/pub1.jpg) — en-tête JPEG invalide")
+	}
+	// N°135 — le logo d'un autre client ne doit plus être embarqué.
+	if _, still := File("img/logo.png"); still {
+		t.Error("File(img/logo.png) existe encore — le logo du site pilote doit rester hors du template (N°135)")
+	}
+}
+
+// TestLoginTemplateLogoBlock — N°135 : login.html porte le marqueur du bloc
+// logo ({{MIKCLOUD_LOGO_BLOCK}}) et ne référence PLUS l'asset img/logo.png
+// — le logo par défaut historique était celui du site pilote de l'audit
+// (CYBER ESPACE SC) : tout portail sans logo configuré affichait le logo
+// d'un AUTRE client. Garde-fou anti-régression.
+func TestLoginTemplateLogoBlock(t *testing.T) {
+	body := RawFile("login.html")
+	if body == "" {
+		t.Fatal("login.html absent du template")
+	}
+	if !strings.Contains(body, "{{MIKCLOUD_LOGO_BLOCK}}") {
+		t.Fatal("marqueur {{MIKCLOUD_LOGO_BLOCK}} absent de login.html — le bloc logo n'est plus templatisé")
+	}
+	if strings.Contains(body, "img/logo.png") {
+		t.Fatal("login.html référence encore img/logo.png — le logo d'un autre client ne doit plus être servi par défaut")
+	}
+	if strings.Contains(body, "CYBER ESPACE SC") {
+		t.Fatal("login.html mentionne encore « CYBER ESPACE SC » — un autre client ne doit pas être nommé sur les portails")
+	}
+	// Le JS du fetch live doit savoir RETIRER le logo (repli initale) —
+	// un logo retiré en console ne doit pas survivre au fetch live.
+	if !strings.Contains(body, "logoImg.parentNode.removeChild(logoImg)") {
+		t.Fatal("le retrait dynamique du logo (fetch live sans logoUrl) absent de login.html")
+	}
+	// object-fit contain : le logo du client ne se rogne pas.
+	if !strings.Contains(body, "object-fit: contain") {
+		t.Fatal("object-fit: contain absent — le logo du client serait rogné par le cover historique")
 	}
 }
 
@@ -115,7 +151,8 @@ func TestHasFile(t *testing.T) {
 		"status.html":           true,
 		"md5.js":                true,
 		"css/bootstrap.min.css": true,
-		"img/logo.png":          true,
+		"img/pub1.jpg":          true,
+		"img/logo.png":          false, // N°135 — logo du site pilote retiré
 		"nonexistent.html":      false,
 		"../go.mod":             false,
 		"":                      false,

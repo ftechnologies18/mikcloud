@@ -271,7 +271,7 @@ Le ticket standard MikCloud (hors modèle) et le A4+QR appliquent la même règl
 ### Settings tenant (ajouts)
 ```go
 DNSName string `json:"dnsName,omitempty"` // ex. wifi.mondomaine.ci
-LogoURL string `json:"logoUrl,omitempty"` // data URL image ≤ 300 Ko
+LogoURL string `json:"logoUrl,omitempty"` // data URL image ≤ 300 Ko — tickets, centre des QR ET portail captif (N°135 : marqueur {{MIKCLOUD_LOGO_BLOCK}}, changement = re-déploiement auto ≤ 45 s, cf. §N°135)
 // N°45 — bannière du portail captif : data URL image ≤ 500 Ko OU URL https
 // (Cloudflare R2). Affichée en tête de la page login du portail (routeurs
 // agent) et exposée par GET /api/wifi/site/{slug}/info (page visiteur).
@@ -2264,6 +2264,50 @@ Migration boot idempotente : table `promo_events` (PK `id`, index
   `mikWatchPromos()` après rendu, dédup client `mikTracked`, `clientKey` =
   `clientMac`. Console : champ Lien par promo + panneau « Analyse de la
   vitrine » (headline semaine + vues/clics par ligne).
+
+## N°135 — Logo du client sur le portail captif (bloc cloud + sig branding)
+
+### Marqueur `{{MIKCLOUD_LOGO_BLOCK}}` (hotpage.Personalize)
+Remplace dans login.html le couple historique `<img src="img/logo.png">` +
+repli « SC » (le logo du site pilote de l'audit — le logo d'un AUTRE
+client). Généré côté cloud au moment du SERVE :
+- `tenant.logoUrl` défini → `<img src="{logoUrl}" alt="Logo {tenant}"
+  class="rounded" loading="lazy" onerror="…masque l'img, allume le repli…">`
+  + `<span class="logo-fallback" style="display:none;">{initiale}</span>` ;
+- `logoUrl` vide → `<span class="logo-fallback">{initiale}</span>` seul.
+`{initiale}` = `tenantInitial(tenant.name)` : première LETTRE unicode du
+nom (majuscule — « promax wifi » → P, « éclair Net » → É), repli « W » si
+le nom n'a aucune lettre. Échappement `html.EscapeString` partout (garde :
+TestPersonalizeLogoBlockInjection). `img/logo.png` est RETIRÉ du template ;
+`.logo-wrap img` passe en `object-fit: contain` (un logo ne se rogne pas).
+Le JS `applyConfig` (login.html) reste maître après le fetch live :
+crée / met à jour / RETIRE l'<img> (retour au repli initiale) — idempotent,
+compat vieux WebViews (pas d'optional chaining, `removeChild`).
+
+### Sig v2 — le branding re-déploie le portail (≤ 45 s)
+`ensureHotspotFilesLocked` signe désormais `hotspotFilesSig(files, db,
+router)` = `hash(hotpage.Sig(files) ⊕ portalBrandingFingerprint(db,
+router))` — 16 caractères dans `routers.hotspot_files_sig` (TEXT,
+inchangé). L'empreinte branding couvre TOUT ce qui atteint le fallback
+inliné : nom, `logoUrl`, `bannerUrl`, `waveLink`, joinButton effectif,
+hospitalité (style/welcome/promos/socials), `portalKey`, rétention
+journal effective, `APP_PUBLIC_URL`, 1er site WiFi actif lié (slug,
+marketingOptIn, quota via `wifiQuotaResp`), token du 1er lien join actif,
+offres payables (≤ 8 — même plafond que la config servie : une 9e offre ne
+déclenche pas de re-déploiement vain). Toute mutation de ces champs (logo
+posé en console, mode hospitalité, offre renommée…) re-file
+`hotspot_files` au check-in suivant. Les URL dérivées de la REQUÊTE
+(apiBase) restent hors empreinte (constantes par déploiement). Miroir de
+`buildPortalConfig` : un champ qui rejoint la config du portail DOIT
+rejoindre l'empreinte (garde : TestEnsureHotspotFilesLockedBrandingChange —
+logo posé → 1 commande ; sig à jour → 0).
+
+### Console
+- Carte « Vouchers » (onglet Expérience, section Hotspot) : le logo
+  (`logoUrl`, data URL ≤ 300 Ko) s'affiche sur les tickets, au centre des
+  QR ET sur le portail captif (copie FR/EN N°135).
+- Onglet « Portail » : note branding (`portal.brandingNote`, icône
+  Palette) — où poser le logo, re-déploiement automatique ≤ 45 s.
 
 ## PLAN DE FICHIERS
 

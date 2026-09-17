@@ -46,6 +46,62 @@ func TestPersonalizeMarkers(t *testing.T) {
 	}
 }
 
+// TestPersonalizeLogoBlock — N°135 : le bloc logo porte le logo DU CLIENT
+// quand il est configuré, sinon l'initiale du tenant — jamais un asset par
+// défaut (le logo historique du template était celui d'un autre client).
+func TestPersonalizeLogoBlock(t *testing.T) {
+	// Avec logo : <img> du client + repli initiale masqué.
+	cfg := PortalConfig{TenantName: "ProMax WIFI", LogoURL: "data:image/png;base64,abc"}
+	out := Personalize(`<div class="logo-wrap">{{MIKCLOUD_LOGO_BLOCK}}</div>`, cfg)
+	if !strings.Contains(out, `<img src="data:image/png;base64,abc"`) {
+		t.Errorf("img du logo client absent : %s", out)
+	}
+	if !strings.Contains(out, `alt="Logo ProMax WIFI"`) {
+		t.Errorf("alt du logo absent : %s", out)
+	}
+	if !strings.Contains(out, `<span class="logo-fallback" style="display:none;">P</span>`) {
+		t.Errorf("repli initiale masqué absent : %s", out)
+	}
+	// Sans logo : initiale visible (majuscule, même en minuscules au nom),
+	// AUCUN <img> — c'est l'initiale DU tenant qui signe le portail.
+	out = Personalize(`<div class="logo-wrap">{{MIKCLOUD_LOGO_BLOCK}}</div>`, PortalConfig{TenantName: "promax wifi"})
+	if !strings.Contains(out, `<div class="logo-wrap"><span class="logo-fallback">P</span></div>`) {
+		t.Errorf("initiale du tenant absente du bloc : %s", out)
+	}
+	if strings.Contains(out, "<img") {
+		t.Errorf("aucun <img> ne doit être rendu sans logo configuré : %s", out)
+	}
+	// Nom vide : repli neutre « W » (WiFi).
+	out = Personalize(`{{MIKCLOUD_LOGO_BLOCK}}`, PortalConfig{})
+	if !strings.Contains(out, `<span class="logo-fallback">W</span>`) {
+		t.Errorf("repli W attendu pour un tenant sans nom : %s", out)
+	}
+	// Nom accentué : l'initiale reste une lettre unicode majuscule.
+	out = Personalize(`{{MIKCLOUD_LOGO_BLOCK}}`, PortalConfig{TenantName: "éclair Net"})
+	if !strings.Contains(out, `<span class="logo-fallback">É</span>`) {
+		t.Errorf("initiale accentuée attendue : %s", out)
+	}
+}
+
+// TestPersonalizeLogoBlockInjection — un logo ou un nom malveillant ne peut
+// pas sortir du contexte attribut du bloc logo (échappement HTML strict).
+func TestPersonalizeLogoBlockInjection(t *testing.T) {
+	cfg := PortalConfig{
+		TenantName: `X" onmouseover="alert(1)`,
+		LogoURL:    `data:image/png;base64,x" onerror="alert(2)`,
+	}
+	out := Personalize(`{{MIKCLOUD_LOGO_BLOCK}}`, cfg)
+	if strings.Contains(out, `" onerror="alert(2)`) {
+		t.Errorf("injection via logoUrl non neutralisée : %s", out)
+	}
+	if strings.Contains(out, `" onmouseover="alert(1)`) {
+		t.Errorf("injection via tenantName non neutralisée : %s", out)
+	}
+	if !strings.Contains(out, `&#34;`) {
+		t.Errorf("guillemets non échappés en &#34; : %s", out)
+	}
+}
+
 // TestPersonalizeConfigJSON — le marqueur CONFIG_JSON est remplacé par un
 // objet JSON valide, parsable par encoding/json côté client.
 func TestPersonalizeConfigJSON(t *testing.T) {

@@ -16,22 +16,28 @@
 // l'ordre d'atomicité (assets → pages → login.html en dernier). Cette liste
 // est la même pour tous les routeurs d'un compte ; la personnalisation par
 // compte se fait au moment du SERVE (GET /portal/{token}/{path}), pas à
-// la mise en file — la sig reste stable tant que l'ensemble des fichiers
-// n'a pas changé de forme, pas tant que le branding n'a pas changé.
+// la mise en file.
 //
-// NOTE sur la signature : la sig est actuellement calculée sur la LISTE des
-// chemins (path1|path2|…), pas sur le CONTENU personnalisé. Conséquence :
-// un changement de branding seul ne déclenche PAS un re-déploiement (les
-// chemins sont les mêmes). C'est volontaire pour la phase initiale : le
-// portail hybride (login.html) récupère la config live au chargement via
-// fetch('/api/wifi/site/{slug}/portal') — pas besoin de re-déployer les
-// fichiers pour un branding. Le re-déploiement automatique se déclenche
-// uniquement quand l'ENSEMBLE des fichiers change (ajout/suppression d'un
-// asset, refonte du template). Un bouton « Re-déployer maintenant » dans
-// la console permet le forçage manuel (vidage de la sig).
+// NOTE sur la signature (N°135 — sig v2) : la sig couvre le CONTENU des
+// fichiers du template (N°48-b) ET l'empreinte du BRANDING du compte
+// (portalBrandingFingerprint : logo, nom, bannière, Wave, hospitalité,
+// offres payantes, site WiFi lié, lien join). Un changement de branding en
+// console — un logo posé dans la carte Vouchers par exemple — change la
+// sig → le portail est re-déployé au check-in suivant (≤ 45 s), comme la
+// doc du package hotpage l'a toujours promis. Avant N°135, la sig ne
+// couvrait que les fichiers : un logo posé en console n'atteignait JAMAIS
+// le portail déployé sans un « Re-déployer » manuel — et le fetch live ne
+// le rattrapait que pour les routeurs liés à un site WiFi actif (les
+// cybercafés pure-vouchers restaient sur le branding périmé, ou pire sur
+// le logo par défaut du template — celui d'un AUTRE client). Le bouton
+// « Re-déployer maintenant » reste pour le forçage manuel (vidage de sig).
 package api
 
 import (
+	"strconv"
+	"strings"
+
+	"mikcloud/hotspot-api/internal/agent"
 	"mikcloud/hotspot-api/internal/hotpage"
 	"mikcloud/hotspot-api/internal/model"
 )
@@ -48,9 +54,9 @@ func ensureHotspotFilesLocked(db *model.DB, router *model.Router) {
 	if len(files) == 0 {
 		return // template vide (build cassé) — on ne file rien
 	}
-	sig := hotpage.Sig(files)
+	sig := hotspotFilesSig(files, db, router) // N°135 — fichiers + branding du compte
 	if router.HotspotFilesSig == sig {
-		return // déjà déployé avec cet ensemble exact de fichiers
+		return // déjà déployé avec cet ensemble exact de fichiers + branding
 	}
 	for i := range db.Commands {
 		c := &db.Commands[i]
@@ -62,6 +68,86 @@ func ensureHotspotFilesLocked(db *model.DB, router *model.Router) {
 		"files": files,
 		"sig":   sig,
 	})
+}
+
+// hotspotFilesSig — N°135 — signature du portail POUR CE ROUTEUR :
+// empreinte des fichiers du template (hotpage.Sig) + empreinte du BRANDING
+// du compte (portalBrandingFingerprint), condensées en 16 caractères. La
+// sig v2 tient enfin la promesse documentée du package hotpage : « un
+// changement de config (branding, offres…) change la sig → re-déploiement
+// automatique au check-in suivant (≤ 45 s) ».
+func hotspotFilesSig(files []string, db *model.DB, router *model.Router) string {
+	return agent.HashToken(hotpage.Sig(files) + "\x1f" + portalBrandingFingerprint(db, router))[:16]
+}
+
+// portalBrandingFingerprint — empreinte stable de TOUT ce qui atteint le
+// fallback inliné du portail (bloc mikcloud-config + marqueurs du
+// template). Miroir volontairement compact de buildPortalConfig : mêmes
+// résolutions (1er site WiFi actif lié au routeur, 1er lien join actif,
+// profils payables max 8), mêmes helpers (wifiQuotaResp, joinLinkActive,
+// JoinButtonEnabled, LogRetentionDaysEffective) — si un champ rejoint la
+// config du portail sans rejoindre cette empreinte, le portail déployé
+// garderait une valeur périmée sans jamais se re-déployer.
+// Les URL dérivées de la REQUÊTE (apiBase) n'y figurent pas (constantes
+// par déploiement) ; APP_PUBLIC_URL y figure car il façonne wifiUrl/joinUrl
+// cuits au déploiement.
+func portalBrandingFingerprint(db *model.DB, router *model.Router) string {
+	acc := router.AccountID
+	settings := ensureSettings(db, acc)
+	t := settings.Tenant
+	parts := []string{
+		"v2",
+		t.Name,
+		t.LogoURL,
+		t.BannerURL,
+		t.WaveLink,
+		strconv.FormatBool(t.JoinButtonEnabled()),
+		t.PortalStyle,
+		t.PortalWelcome,
+		t.PortalPromos,
+		t.PortalSocials,
+		t.PortalKey,
+		strconv.Itoa(t.LogRetentionDaysEffective()),
+		getEnv("APP_PUBLIC_URL"),
+	}
+	// 1er site WiFi actif lié au routeur (même résolution que buildPortalConfig).
+	for i := range db.WifiSites {
+		s := &db.WifiSites[i]
+		if s.AccountID == acc && s.RouterID == router.ID && s.Active {
+			parts = append(parts, "wifi:"+s.Slug, strconv.FormatBool(s.MarketingOptIn))
+			if profile := findProfileScoped(db, s.ProfileID, acc); profile != nil {
+				ft, fd := wifiQuotaResp(s, profile)
+				parts = append(parts, "quota:"+strconv.FormatInt(ft, 10)+":"+strconv.FormatInt(fd, 10))
+			}
+			break
+		}
+	}
+	// 1er lien d'inscription actif lié : le TOKEN (l'URL cuite au déploiement
+	// en dépend — une révocation/création doit re-déployer pour l'ôter/le poser).
+	joinTok := ""
+	for i := range db.JoinLinks {
+		l := &db.JoinLinks[i]
+		if l.AccountID == acc && l.RouterID == router.ID && !l.Revoked && joinLinkActive(l) {
+			joinTok = l.Token
+			break
+		}
+	}
+	parts = append(parts, "join:"+joinTok)
+	// Offres payables du compte (max 8, même plafond que la config servie :
+	// une 9e offre ne change NI la config NI la sig — pas de re-déploiement vain).
+	offers := 0
+	for i := range db.Profiles {
+		p := &db.Profiles[i]
+		if p.AccountID != acc || p.Price <= 0 {
+			continue
+		}
+		offers++
+		if offers > 8 {
+			break
+		}
+		parts = append(parts, "offer:"+p.Name+":"+strconv.Itoa(p.Price)+":"+strconv.Itoa(p.ValidityMinutes())+":"+strconv.Itoa(p.DataQuotaMb))
+	}
+	return strings.Join(parts, "\x1f")
 }
 
 // hotspotFilesSigFromPayload — extrait la sig d'une commande hotspot_files

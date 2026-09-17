@@ -27,6 +27,7 @@ import {
   Eye,
   Loader2,
   Monitor,
+  Palette,
   RefreshCw,
   Router as RouterIcon,
 } from "lucide-react";
@@ -126,6 +127,14 @@ export function PortalContent() {
 
   return (
     <div className="space-y-6">
+      {/* N°135 — le logo du portail est celui DU CLIENT : la note dit où le
+          poser (onglet Expérience, carte Vouchers) et rappelle le
+          re-déploiement automatique au changement de branding (≤ 45 s). */}
+      <div className="flex items-start gap-3 rounded-xl border bg-muted/40 p-4 text-sm">
+        <Palette className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+        <p className="leading-relaxed text-muted-foreground">{t("portal.brandingNote")}</p>
+      </div>
+
       {routers.length === 0 ? (
         <EmptyState
           icon={Monitor}

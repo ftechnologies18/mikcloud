@@ -112,7 +112,7 @@
             background: linear-gradient(135deg, var(--primary), var(--primary-dark));
             display: flex; align-items: center; justify-content: center;
         }
-        .logo-wrap img { width: 100%; height: 100%; object-fit: cover; }
+        .logo-wrap img { width: 100%; height: 100%; object-fit: contain; } /* N°135 : contain — le logo du client ne se rogne pas */
         .logo-fallback { color: #fff; font-size: 2rem; font-weight: 800; letter-spacing: -1px; }
 
         /* Typing effect */
@@ -483,10 +483,10 @@
 
                 <!-- ====== COLONNE GAUCHE : LOGIN ====== -->
                 <div class="col-md-5 login-section">
-                    <div class="logo-wrap">
-                        <img src="img/logo.png" alt="Logo CYBER ESPACE SC" class="rounded" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
-                        <span class="logo-fallback" style="display:none;">SC</span>
-                    </div>
+                    <!-- N°135 — logo DU CLIENT : bloc généré par le cloud (img du compte
+                         quand un logo est configuré, sinon initiale du tenant) — JAMAIS
+                         l'asset d'un autre établissement. -->
+                    <div class="logo-wrap">{{MIKCLOUD_LOGO_BLOCK}}</div>
 
                     <div class="typing-effect"><span id="typed-output"></span></div>
 
@@ -849,12 +849,41 @@
             function applyConfig(cfg) {
                 if (!cfg || !cfg.tenantName) return;
 
-                // 1. Branding : titre de la page + logo si fourni.
+                // 1. Branding : titre de la page + logo DU CLIENT (N°135).
+                // Le bloc logo est servi par le cloud (img du compte ou
+                // initiale du tenant) ; le fetch live peut apporter un logo
+                // plus frais — ou sa RETRAITE — la mise à jour est
+                // idempotente : sans logo configuré, c'est l'initiale du
+                // tenant qui s'affiche, jamais le logo d'un autre client.
                 document.title = cfg.tenantName + ' > Connexion';
-                var logoImg = document.querySelector('.logo-wrap img');
-                if (logoImg && cfg.logoUrl) {
-                    logoImg.src = cfg.logoUrl;
-                    logoImg.alt = 'Logo ' + cfg.tenantName;
+                var logoWrap = document.querySelector('.logo-wrap');
+                if (logoWrap) {
+                    var logoImg = logoWrap.querySelector('img');
+                    var logoFb = logoWrap.querySelector('.logo-fallback');
+                    if (cfg.logoUrl) {
+                        if (!logoImg) {
+                            logoImg = document.createElement('img');
+                            logoImg.className = 'rounded';
+                            logoImg.loading = 'lazy';
+                            logoImg.onerror = function () {
+                                logoImg.style.display = 'none';
+                                var fb = logoWrap.querySelector('.logo-fallback');
+                                if (fb) fb.style.display = 'flex';
+                            };
+                            logoWrap.insertBefore(logoImg, logoWrap.firstChild);
+                        }
+                        if (logoImg.getAttribute('src') !== cfg.logoUrl) {
+                            logoImg.src = cfg.logoUrl;
+                        }
+                        logoImg.alt = 'Logo ' + cfg.tenantName;
+                        logoImg.style.display = '';
+                        if (logoFb) logoFb.style.display = 'none';
+                    } else {
+                        if (logoImg && logoImg.parentNode) {
+                            logoImg.parentNode.removeChild(logoImg);
+                        }
+                        if (logoFb) logoFb.style.display = 'flex';
+                    }
                 }
 
                 // 1 bis. N°65 — rétention PAR COMPTE : la note de confidentialité

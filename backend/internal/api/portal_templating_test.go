@@ -376,23 +376,83 @@ func TestPortalServeBinaryNotTemplated(t *testing.T) {
 		bannerUrl   string
 	}{tenantName: "Binary Test", wifiSlug: "", joinActive: false, profileName: "", profilePrc: 0, waveLink: ""})
 
-	resp, err := http.Get(ts.URL + "/portal/tok-binary/img/logo.png")
+	resp, err := http.Get(ts.URL + "/portal/tok-binary/img/pub1.jpg")
 	if err != nil {
-		t.Fatalf("GET logo.png : %v", err)
+		t.Fatalf("GET pub1.jpg : %v", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("statut %d", resp.StatusCode)
 	}
 	body, _ := io.ReadAll(resp.Body)
-	// En-tête PNG : 89 50 4E 47 0D 0A 1A 0A — preuve que le binaire est intact.
-	if len(body) < 8 || body[0] != 0x89 || body[1] != 0x50 || body[2] != 0x4E || body[3] != 0x47 {
-		t.Errorf("en-tête PNG invalide — binaire altéré par Personalize ? premiers octets : % x", body[:8])
+	// En-tête JPEG : FF D8 FF — preuve que le binaire est intact (N°135 :
+	// img/logo.png, le logo du site pilote, n'est plus dans le template).
+	if len(body) < 3 || body[0] != 0xFF || body[1] != 0xD8 || body[2] != 0xFF {
+		t.Errorf("en-tête JPEG invalide — binaire altéré par Personalize ? premiers octets : % x", body[:3])
 	}
 	// L'asset ne doit PAS contenir le tenant name (il n'y a aucun marqueur à
 	// substituer dans un PNG, mais on vérifie que Personalize n'a pas été appliqué).
 	if strings.Contains(string(body), "Binary Test") {
 		t.Error("le binaire contient le tenant name — Personalize a été appliqué à tort")
+	}
+}
+
+// TestPortalServeLogoBlock — N°135 : le login.html servi porte le logo DU
+// CLIENT quand il est configuré (img data URL cuite au déploiement), sinon
+// l'initiale du tenant — et ne référence JAMAIS img/logo.png (le logo du
+// site pilote de l'audit, qui s'affichait sur les portails de tous les
+// clients sans logo).
+func TestPortalServeLogoBlock(t *testing.T) {
+	st, ts := newTestServerWithStore(t)
+	seedRouterWithAccount(t, st, "tok-logo", struct {
+		tenantName  string
+		wifiSlug    string
+		joinActive  bool
+		profileName string
+		profilePrc  int
+		waveLink    string
+		bannerUrl   string
+	}{tenantName: "ProMax WIFI"})
+
+	fetchLogin := func() string {
+		resp, err := http.Get(ts.URL + "/portal/tok-logo/login.html")
+		if err != nil {
+			t.Fatalf("GET login.html : %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("statut %d", resp.StatusCode)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		return string(b)
+	}
+
+	// Sans logo configuré : initiale du tenant, AUCUN <img> dans le bloc.
+	body := fetchLogin()
+	if !strings.Contains(body, `<div class="logo-wrap"><span class="logo-fallback">P</span></div>`) {
+		t.Errorf("initiale du tenant absente du bloc logo servi : %s", body[:200])
+	}
+	if strings.Contains(body, "img/logo.png") {
+		t.Error("login.html servi référence img/logo.png — le logo d'un autre client ne doit plus apparaître")
+	}
+
+	// Le gérant pose le logo de SON établissement en console.
+	st.Lock()
+	db := st.Data()
+	s := db.SettingsByAccount["acc-portal-tok-logo"]
+	s.Tenant.LogoURL = "data:image/png;base64,LOGOPROMAX"
+	db.SettingsByAccount["acc-portal-tok-logo"] = s
+	st.Unlock()
+
+	body = fetchLogin()
+	if !strings.Contains(body, `<div class="logo-wrap"><img src="data:image/png;base64,LOGOPROMAX"`) {
+		t.Errorf("logo du client absent du login.html servi : %s", body[:200])
+	}
+	if !strings.Contains(body, `alt="Logo ProMax WIFI"`) {
+		t.Error("alt du logo client absent du login.html servi")
+	}
+	if !strings.Contains(body, `<span class="logo-fallback" style="display:none;">P</span>`) {
+		t.Error("repli initiale masqué absent du login.html servi")
 	}
 }
 

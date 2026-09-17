@@ -28,7 +28,7 @@ Hotspot Page/
 ├── favicon.ico       ← servi à la racine du portail
 ├── css/              ← bootstrap.min.css · all.min.css (Font Awesome) · swiper-bundle.min.css
 ├── js/               ← typed.umd.js · swiper-bundle.min.js
-├── img/              ← logo.png · pub1.jpg · pub2.jpg · pub3.jpg (carrousel Swiper)
+├── img/              ← pub1.jpg · pub2.jpg · pub3.jpg (carrousel Swiper — N°135 : logo.png RETIRÉ, le logo vient du cloud)
 └── webfonts/         ← polices Font Awesome (référencées par css/all.min.css : ../webfonts/)
 ```
 
@@ -69,7 +69,7 @@ Hotspot Page/
 | Couleurs / thème | variables `:root` dans login.html (`--primary`, `--bg-1…`) |
 | Offres & prix (liens Wave) | cartes `.creative-card` / `.card-featured` dans login.html |
 | Carrousel promo | remplacer `img/pub1..3.jpg` (mêmes noms) |
-| Logo | `img/logo.png` (+ fallback texte « SC » si absent) |
+| Logo | `{{MIKCLOUD_LOGO_BLOCK}}` — img du logo DU CLIENT (`logoUrl` console) ou repli initiale du tenant (N°135 : `img/logo.png` retiré — jamais le logo d'un autre client) |
 | Messages animés | tableau `strings` de `new Typed(...)` dans login.html |
 | Support WhatsApp / pied de page | lien `wa.me` et `.ftci-link` dans login.html |
 | Messages d'erreur | `errors.txt` (syntaxe `$(error-orig)` etc.) |

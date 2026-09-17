@@ -65,8 +65,9 @@ func TestEnsureHotspotFilesLockedSigMatch(t *testing.T) {
 		AgentTokenHash: agent.HashToken("tok-sigmatch"),
 	})
 	router := &db.Routers[len(db.Routers)-1]
-	// La sig est posée à la valeur courante → rien à déployer.
-	router.HotspotFilesSig = hotpage.Sig(hotpage.DefaultFiles())
+	// La sig est posée à la valeur courante (fichiers + branding — N°135)
+	// → rien à déployer.
+	router.HotspotFilesSig = hotspotFilesSig(hotpage.DefaultFiles(), db, router)
 
 	before := countHotspotCmds(db, router.ID)
 	ensureHotspotFilesLocked(db, router)
@@ -94,6 +95,46 @@ func TestEnsureHotspotFilesLockedNonAgent(t *testing.T) {
 	st.Unlock()
 	if n != 0 {
 		t.Fatalf("routeur non-agent : 0 commande attendue, %d trouvées", n)
+	}
+}
+
+// TestEnsureHotspotFilesLockedBrandingChange — N°135 : un changement de
+// branding du compte (logo posé en console) change la sig → la commande
+// hotspot_files est re-filée au check-in suivant. Garde-fou du bug
+// d'origine : la sig v1 ne couvrait que les fichiers du template — un logo
+// posé en console n'atteignait JAMAIS le portail déployé sans un
+// « Re-déployer » manuel (et le fetch live ne le rattrapait que pour les
+// routeurs liés à un site WiFi actif).
+func TestEnsureHotspotFilesLockedBrandingChange(t *testing.T) {
+	st, _ := newTestServerWithStore(t)
+	st.Lock()
+	db := st.Data()
+	db.Accounts = append(db.Accounts, model.Account{ID: "acc-brand", Name: "Cyber Brand"})
+	db.Routers = append(db.Routers, model.Router{
+		ID:             "r-brand",
+		AccountID:      "acc-brand",
+		Name:           "BrandRouter",
+		Mode:           "agent",
+		Status:         "online",
+		AgentTokenHash: agent.HashToken("tok-brand"),
+	})
+	router := &db.Routers[len(db.Routers)-1]
+	// Portail « déployé » : sig posée à la valeur courante (fichiers + branding).
+	router.HotspotFilesSig = hotspotFilesSig(hotpage.DefaultFiles(), db, router)
+	ensureHotspotFilesLocked(db, router)
+	if n := countHotspotCmds(db, router.ID); n != 0 {
+		st.Unlock()
+		t.Fatalf("sig à jour : 0 commande attendue, %d trouvées", n)
+	}
+	// Le gérant pose le logo de SON établissement en console (carte Vouchers).
+	s := db.SettingsByAccount["acc-brand"]
+	s.Tenant.LogoURL = "data:image/png;base64,LOGOPROMAX"
+	db.SettingsByAccount["acc-brand"] = s
+	ensureHotspotFilesLocked(db, router)
+	n := countHotspotCmds(db, router.ID)
+	st.Unlock()
+	if n != 1 {
+		t.Fatalf("changement de logo : 1 commande de re-déploiement attendue, %d trouvées", n)
 	}
 }
 
@@ -146,17 +187,18 @@ func TestPortalServeOK(t *testing.T) {
 		t.Errorf("Content-Type md5.js = %q, attendu application/javascript*", ct)
 	}
 
-	// GET /portal/tok-portal-ok/img/logo.png → 200 + image/png.
-	resp3, err := http.Get(ts.URL + "/portal/tok-portal-ok/img/logo.png")
+	// GET /portal/tok-portal-ok/img/pub1.jpg → 200 + image/jpeg (N°135 —
+	// img/logo.png, le logo du site pilote, n'est plus dans le template).
+	resp3, err := http.Get(ts.URL + "/portal/tok-portal-ok/img/pub1.jpg")
 	if err != nil {
-		t.Fatalf("GET logo.png : %v", err)
+		t.Fatalf("GET pub1.jpg : %v", err)
 	}
 	defer resp3.Body.Close()
 	if resp3.StatusCode != http.StatusOK {
-		t.Fatalf("GET logo.png : statut %d", resp3.StatusCode)
+		t.Fatalf("GET pub1.jpg : statut %d", resp3.StatusCode)
 	}
-	if ct := resp3.Header.Get("Content-Type"); !strings.HasPrefix(ct, "image/png") {
-		t.Errorf("Content-Type logo.png = %q, attendu image/png*", ct)
+	if ct := resp3.Header.Get("Content-Type"); !strings.HasPrefix(ct, "image/jpeg") {
+		t.Errorf("Content-Type pub1.jpg = %q, attendu image/jpeg*", ct)
 	}
 }
 

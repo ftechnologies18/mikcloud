@@ -24,6 +24,9 @@ export const enPortal: Record<string, string> = {
     "Force portal redeployment on \"{name}\"? The router will reload all files (login.html, status.html, assets) at its next check-in (≤ 45 s).",
   "portal.redeployQueued": "Redeploy scheduled",
   "portal.cancel": "Cancel",
+  // N°135 — the portal logo is the client's own: where to set it.
+  "portal.brandingNote":
+    "The logo shown on the portal is your establishment's own: set it in the Experience tab (\"Vouchers\" card) — the header banner is configured in the same area. Any branding change is redeployed to your routers automatically (≤ 45 s).",
   "portal.journal": "Deployment log",
   "portal.journalEmpty": "No deployment recorded",
 };

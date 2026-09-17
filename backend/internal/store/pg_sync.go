@@ -44,7 +44,8 @@ const syncTimeout = 20 * time.Second
 // dernière synchronisation réussie, par table, pour calculer les différences.
 
 // ---------------------------------------------------------------------------
-// Synchronisation différentielle (appelée par Store.Save, sous verrou)
+// Synchronisation différentielle (N°130 : appelée par le syncreur de fond,
+// sur un SNAPSHOT CloneDeep, HORS verrou global)
 // ---------------------------------------------------------------------------
 
 // Sync compare l'état mémoire aux empreintes de la dernière synchronisation
@@ -54,8 +55,8 @@ func (p *PG) Sync(db *model.DB) (err error) {
 	// N°71 — instrumentation santé : le defer alimente les compteurs exposés
 	// par GET /api/admin/sync-status (tentatives/succès/échecs, durée,
 	// volumétrie du delta). Aucun verrou supplémentaire sur le chemin
-	// critique : les compteurs ont leur micro-verrou (syncstats.go) et Save
-	// tient déjà le verrou global du store au moment de l'appel.
+	// critique : les compteurs ont leur micro-verrou (syncstats.go) et le
+	// syncreur de fond appelle Sync hors du verrou global du store.
 	start := time.Now()
 	delta := syncDelta{}
 	defer func() {
@@ -65,9 +66,14 @@ func (p *PG) Sync(db *model.DB) (err error) {
 		}
 		p.stats.recordSuccess(delta, time.Since(start))
 	}()
-	// N°74 — contexte borné : un Neon gelé ne peut plus tenir le verrou global
-	// du store indéfiniment (cf. syncTimeout) — l'incident se résout en une
-	// erreur retournée, retentée au Save suivant.
+	// N°130 — exclusion avec rebuildHashes (boot/Reload) qui réécrit le
+	// cache d'empreintes : un seul Sync à la fois (le syncreur de fond est
+	// la seule source d'appel en production).
+	p.syncMu.Lock()
+	defer p.syncMu.Unlock()
+	// N°74 — contexte borné : un Neon gelé ne peut plus tenir la
+	// synchronisation indéfiniment (cf. syncTimeout) — l'incident se
+	// résout en une erreur retournée, retentée par le syncreur.
 	ctx, cancel := context.WithTimeout(context.Background(), syncTimeout)
 	defer cancel()
 	tx, err := p.db.BeginTx(ctx, nil)
@@ -76,105 +82,115 @@ func (p *PG) Sync(db *model.DB) (err error) {
 	}
 	defer tx.Rollback() // no-op si Commit réussit
 
-	if err := syncTable(ctx, tx, p.hashes, accountSpec, db.Accounts, &delta); err != nil {
+	// N°130 — ATOMICITÉ du cache d'empreintes : les empreintes fraîches
+	// sont calculées dans « pending » et ne REMPLACENT p.hashes qu'APRÈS
+	// le Commit. L'ancien code rafraîchissait les empreintes table par
+	// table AVANT le commit : un échec à mi-parcours (rollback) laissait
+	// le cache croire synchronisées des lignes jamais écrites — le diff
+	// suivant ne les revoyait plus (perte silencieuse). Avec la sauvegarde
+	// asynchrone (retry automatique), ce cas serait devenu un bug actif :
+	// le retry repartait d'un cache pollué. Pending→commit→swap garantit
+	// qu'un échec retente les VRAIES différences.
+	pending := make(map[string]map[string]uint64, 32)
+	if err := syncTable(ctx, tx, p.hashes, pending, accountSpec, db.Accounts, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(ctx, tx, p.hashes, adminSpec, db.Users, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, adminSpec, db.Users, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(ctx, tx, p.hashes, routerSpec, db.Routers, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, routerSpec, db.Routers, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(ctx, tx, p.hashes, profileSpec, db.Profiles, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, profileSpec, db.Profiles, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(ctx, tx, p.hashes, hotspotUserSpec, db.HotspotUsers, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, hotspotUserSpec, db.HotspotUsers, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(ctx, tx, p.hashes, batchSpec, db.Batches, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, batchSpec, db.Batches, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(ctx, tx, p.hashes, resellerSpec, db.Resellers, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, resellerSpec, db.Resellers, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(ctx, tx, p.hashes, sellSessionSpec, db.SellSessions, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, sellSessionSpec, db.SellSessions, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(ctx, tx, p.hashes, passwordResetSpec, db.PasswordResets, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, passwordResetSpec, db.PasswordResets, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(ctx, tx, p.hashes, chatConversationSpec, db.ChatConversations, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, chatConversationSpec, db.ChatConversations, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(ctx, tx, p.hashes, chatMessageSpec, db.ChatMessages, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, chatMessageSpec, db.ChatMessages, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(ctx, tx, p.hashes, transactionSpec, db.Transactions, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, transactionSpec, db.Transactions, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(ctx, tx, p.hashes, sessionSpec, db.Sessions, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, sessionSpec, db.Sessions, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(ctx, tx, p.hashes, deviceSpec, db.Devices, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, deviceSpec, db.Devices, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(ctx, tx, p.hashes, activitySpec, db.Activity, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, activitySpec, db.Activity, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(ctx, tx, p.hashes, saleSpec, db.Sales, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, saleSpec, db.Sales, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(ctx, tx, p.hashes, commandSpec, db.Commands, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, commandSpec, db.Commands, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(ctx, tx, p.hashes, templateSpec, db.Templates, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, templateSpec, db.Templates, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(ctx, tx, p.hashes, userLogSpec, db.UserLogs, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, userLogSpec, db.UserLogs, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(ctx, tx, p.hashes, ipBindingSpec, db.IPBindings, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, ipBindingSpec, db.IPBindings, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(ctx, tx, p.hashes, schedulerTaskSpec, db.SchedulerTasks, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, schedulerTaskSpec, db.SchedulerTasks, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(ctx, tx, p.hashes, trafficSpec, db.Traffic, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, trafficSpec, db.Traffic, &delta); err != nil {
 		return err
 	}
 	// N°103 — agrégats quotidiens de qualité de ligne (mesure FAI).
-	if err := syncTable(ctx, tx, p.hashes, lineQualitySpec, db.LineQuality, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, lineQualitySpec, db.LineQuality, &delta); err != nil {
 		return err
 	}
 	notifRows := make([]model.NotificationSettings, 0, len(db.NotifSettings))
 	for _, v := range db.NotifSettings {
 		notifRows = append(notifRows, v)
 	}
-	if err := syncTable(ctx, tx, p.hashes, notifSettingsSpec, notifRows, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, notifSettingsSpec, notifRows, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(ctx, tx, p.hashes, notifLogSpec, db.NotifLog, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, notifLogSpec, db.NotifLog, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(ctx, tx, p.hashes, billingRequestSpec, db.BillingRequests, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, billingRequestSpec, db.BillingRequests, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(ctx, tx, p.hashes, purgeTombstoneSpec, db.PurgeTombstones, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, purgeTombstoneSpec, db.PurgeTombstones, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(ctx, tx, p.hashes, joinLinkSpec, db.JoinLinks, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, joinLinkSpec, db.JoinLinks, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(ctx, tx, p.hashes, registrationRequestSpec, db.RegistrationRequests, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, registrationRequestSpec, db.RegistrationRequests, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(ctx, tx, p.hashes, wifiSiteSpec, db.WifiSites, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, wifiSiteSpec, db.WifiSites, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(ctx, tx, p.hashes, wifiGuestSpec, db.WifiGuests, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, wifiGuestSpec, db.WifiGuests, &delta); err != nil {
 		return err
 	}
-	if err := syncTable(ctx, tx, p.hashes, promoEventSpec, db.PromoEvents, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, promoEventSpec, db.PromoEvents, &delta); err != nil {
 		return err
 	}
 	// N°71 — geniuspay_subs intègre la synchro différentielle : la spec
@@ -182,7 +198,7 @@ func (p *PG) Sync(db *model.DB) (err error) {
 	// carte créés en mémoire (avec a.store.Save() !) disparaissaient donc au
 	// redémarrage. La clé primaire « uuid » (≠ « id ») est désormais portée
 	// par la machinerie générique (cols[0] = cible ON CONFLICT, cf. upsertRows).
-	if err := syncTable(ctx, tx, p.hashes, geniusPaySubSpec, db.GeniusPaySubs, &delta); err != nil {
+	if err := syncTable(ctx, tx, p.hashes, pending, geniusPaySubSpec, db.GeniusPaySubs, &delta); err != nil {
 		return err
 	}
 	if err := p.syncSettings(ctx, tx, db); err != nil {
@@ -191,6 +207,9 @@ func (p *PG) Sync(db *model.DB) (err error) {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("pg sync (commit) : %w", err)
 	}
+	// Écriture confirmée : le cache d'empreintes bascule ATOMIQUEMENT sur
+	// les empreintes de CETTE synchronisation (cf. pending ci-dessus).
+	p.hashes = pending
 	p.touchDB() // écriture confirmée — le keep-alive saute ses pings inutiles
 	return nil
 }
@@ -200,12 +219,12 @@ func (p *PG) Sync(db *model.DB) (err error) {
 // suit le cycle de vie de son compte (suppression de compte client, retrait
 // du compte principal…). last_tick (valeur globale du moteur de simulation)
 // est répliquée sur chaque ligne.
-
-// syncSettings écrit une ligne par compte de SettingsByAccount (upsert par
-// id = account_id) et supprime les lignes orphelines : une ligne settings
-// suit le cycle de vie de son compte (suppression de compte client, retrait
-// du compte principal…). last_tick (valeur globale du moteur de simulation)
-// est répliquée sur chaque ligne.
+//
+// N°130 — l'élagage mémoire des réglages orphelins (ci-dessous) s'applique
+// au SNAPSHOT : la synchro travaille sur une photographie CloneDeep, l'état
+// vivant garde ces entrées en mémoire (charge négligeable — quelques structs
+// par compte disparu, re-purgés au prochain boot via loadSettings) tandis
+// que PostgreSQL reste correctement nettoyé.
 func (p *PG) syncSettings(ctx context.Context, tx *sql.Tx, db *model.DB) error {
 	accExists := map[string]bool{}
 	for i := range db.Accounts {
@@ -372,17 +391,14 @@ func loadInto[T any](p *PG, out *[]T, spec entitySpec[T]) error {
 }
 
 // syncTable — différentiel : détecte ajouts/modifications (comparaison
-// d'empreintes) et disparitions (id absents), applique le tout, puis rafraîchit
-// le cache UNIQUEMENT en cas de succès (un échec sera retenté au Save suivant).
-
-// syncTable — différentiel : détecte ajouts/modifications (comparaison
-// d'empreintes) et disparitions (id absents), applique le tout, puis rafraîchit
-// le cache UNIQUEMENT en cas de succès (un échec sera retenté au Save suivant).
-func syncTable[T any](ctx context.Context, tx *sql.Tx, hashes map[string]map[string]uint64, spec entitySpec[T], rows []T, delta *syncDelta) error {
+// d'empreintes) et disparitions (id absents), applique le tout. N°130 :
+// les empreintes fraîches sont posées dans « pending » (et non plus
+// directement dans le cache) — Sync ne bascule le cache qu'après le Commit
+// (un échec sera retenté sur les VRAIES différences).
+func syncTable[T any](ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, spec entitySpec[T], rows []T, delta *syncDelta) error {
 	cached := hashes[spec.table]
 	if cached == nil {
 		cached = map[string]uint64{}
-		hashes[spec.table] = cached
 	}
 
 	seen := make(map[string]struct{}, len(rows))
@@ -422,14 +438,9 @@ func syncTable[T any](ctx context.Context, tx *sql.Tx, hashes map[string]map[str
 		delta.removed += len(removed) // N°71 — volumétrie (comptée si écrite)
 	}
 
-	// Cache rafraîchi uniquement après succès des écritures — depuis les
-	// empreintes DÉJÀ CALCULÉES (plus aucun marshal ni idOf rejoué).
-	for id := range cached {
-		delete(cached, id)
-	}
-	for id, h := range fresh {
-		cached[id] = h
-	}
+	// Empreintes de CETTE table prêtes pour le commit — Sync les basculera
+	// dans p.hashes uniquement si la transaction entière passe.
+	pending[spec.table] = fresh
 	return nil
 }
 
@@ -528,8 +539,12 @@ func upsertRows[T any](ctx context.Context, tx *sql.Tx, spec entitySpec[T], rows
 // accountSpec — comptes clients SaaS (isolation multi-tenant).
 
 // rebuildHashes — reconstruit le cache d'empreintes à partir d'un état mémoire
-// (après un Load ou un seed initial).
+// (après un Load ou un seed initial). N°130 : sous syncMu — un Reload (admin)
+// peut recalibrer le cache pendant que le syncreur de fond synchronise l'état
+// précédent ; l'exclusion évite la course sur p.hashes.
 func (p *PG) rebuildHashes(db *model.DB) {
+	p.syncMu.Lock()
+	defer p.syncMu.Unlock()
 	p.hashes = map[string]map[string]uint64{
 		accountSpec.table:             hashRows(db.Accounts, accountSpec),
 		adminSpec.table:               hashRows(db.Users, adminSpec),

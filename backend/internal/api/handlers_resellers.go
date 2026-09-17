@@ -146,7 +146,10 @@ func (a *API) handleResellersList(w http.ResponseWriter, r *http.Request) {
 		m["activeDevices"] = activeDevices[rs[i].ID]
 		out[i] = m
 	}
-	writeJSON(w, http.StatusOK, out)
+	// N°130 — ETag/304 : les compteurs de la liste revendeurs bougent aux
+	// ventes/règlements ; entre deux changements, la revalidation
+	// conditionnelle épargne le re-téléchargement complet.
+	writeJSONCacheable(w, r, http.StatusOK, out)
 }
 
 // resellerPinPattern — PIN Mode Vente : 4 à 6 chiffres (N°8).

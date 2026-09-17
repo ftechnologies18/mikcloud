@@ -35,6 +35,24 @@ type Store struct {
 	db   *model.DB
 	path string // mode JSON uniquement
 	pg   *PG    // mode PostgreSQL uniquement
+
+	// N°130 — P0 audit performance : sauvegarde ASYNCHRONE (mode PG
+	// uniquement). Avant, CHAQUE lecture pollée (dashboard 15 s, sessions
+	// 10 s, listes utilisateurs, check-ins agent…) exécutait un Save()
+	// complet SOUS LE VERROU GLOBAL : re-hash JSON des 31 tables +
+	// transaction Neon (jusqu'à syncTimeout = 20 s sur un incident) — le
+	// 0,1 vCPU Render sérialisait tout, et chaque clic attendait la
+	// base. Désormais Save() pose un drapeau « sale » (micro-verrou
+	// dédié) et réveille le syncreur de fond : celui-ci photographie
+	// l'état sous le verrou (CloneDeep, quelques ms) puis synchronise
+	// HORS verrou — une requête ne peut plus être bloquée par une
+	// sauvegarde. Le mode JSON (dev/E2E) reste synchrone et inchangé.
+	saveMu   sync.Mutex
+	dirty    bool
+	closed   bool
+	saveCh   chan struct{} // réveil du syncreur (capacité 1, signal non bloquant)
+	closing  chan struct{} // arrêt propre (fermé par Close)
+	syncDone chan struct{} // syncreur terminé (flush final effectué)
 }
 
 // New charge l'état persisté (PostgreSQL si DATABASE_URL est défini, sinon
@@ -54,6 +72,12 @@ func New(dir string) (*Store, error) {
 		if err != nil {
 			return nil, err
 		}
+		// N°130 — canaux du syncreur de fond, posés AVANT tout Save() :
+		// les marquages « sale » du boot (migrations, override admin)
+		// restent en attente dans le canal jusqu'à son démarrage.
+		s.saveCh = make(chan struct{}, 1)
+		s.closing = make(chan struct{})
+		s.syncDone = make(chan struct{})
 		// Phase C « Speed App UX » — keep-alive Neon intelligent (cf. pg.go) :
 		// supprime le cold start (~0,5-1 s) payé par la première mutation
 		// pendant les périodes calmes, SANS ping superflu quand la base reçoit
@@ -112,7 +136,11 @@ func New(dir string) (*Store, error) {
 		s.Lock()
 		s.Save()
 		s.Unlock()
-		log.Println("store: persistance PostgreSQL active (DATABASE_URL)")
+		// N°130 — le syncreur de fond prend le relais : les marquages posés
+		// ci-dessus (migrations + override admin) sont flushés peu après le
+		// démarrage, puis à chaque mutation au rythme plafonné saveMinInterval.
+		go s.syncLoop()
+		log.Println("store: persistance PostgreSQL active (DATABASE_URL, sauvegarde asynchrone)")
 		return s, nil
 	}
 
@@ -911,13 +939,24 @@ func unsealSecrets(db *model.DB) {
 	}
 }
 
-// Save persiste la base (à appeler sous verrou) : synchro différentielle
-// PostgreSQL en production, écriture JSON atomique en développement.
+// Save persiste la base.
+//
+// Mode PostgreSQL (N°130) : ASYNCHRONE — simple marquage « sale » + réveil
+// du syncreur de fond. La requête rend la main immédiatement ; la synchro
+// différentielle (re-hash 31 tables + transaction Neon) s'exécute HORS du
+// verrou global, sur une photographie CloneDeep. Le micro-verrou saveMu
+// (indépendant du verrou global) rend le marquage sûr même pour un appelant
+// qui ne tiendrait pas le verrou.
+//
+// Mode JSON (développement, E2E) : écriture atomique synchrone inchangée.
 func (s *Store) Save() {
 	if s.pg != nil {
-		if err := s.pg.Sync(s.db); err != nil {
-			// L'état reste en mémoire : la prochaine sauvegarde retentera la synchro.
-			log.Printf("store: synchro PostgreSQL échouée (%v) — nouvelle tentative au prochain Save", err)
+		s.saveMu.Lock()
+		s.dirty = true
+		s.saveMu.Unlock()
+		select {
+		case s.saveCh <- struct{}{}:
+		default: // un réveil est déjà en attente — le drapeau suffit
 		}
 		return
 	}
@@ -937,11 +976,108 @@ func (s *Store) Save() {
 	}
 }
 
+// Cadences du syncreur de fond (N°130).
+const (
+	// saveDebounce — fenêtre de coalescence : la rafale de marquages qui
+	// suit un poll (télémétrie Tick → plusieurs handlers) se fondent en UNE
+	// photographie.
+	saveDebounce = 500 * time.Millisecond
+	// saveMinInterval — cadence PLAFOND des synchronisations Neon : la
+	// télémétrie Tick rend l'état sale à chaque lecture pollée ; sans
+	// plafond, le syncreur enchaînerait les transactions au rythme des 37
+	// sources de polling du front. 3 s borne la charge Neon (≤ 20
+	// transactions/min) au prix d'une fenêtre de perte au crash ≤ ~3 s
+	// (un arrêt propre SIGTERM flushe avant de rendre la main).
+	saveMinInterval = 3 * time.Second
+	// saveRetryBackoff — attente entre deux tentatives après un échec de
+	// synchro (chaque tentative reste bornée par syncTimeout).
+	saveRetryBackoff = 5 * time.Second
+)
+
+// syncLoop — goroutine de sauvegarde de fond (mode PostgreSQL uniquement,
+// démarrée par New). Attend un marquage, coalesce la rafale (debounce),
+// respecte la cadence plafond, puis flushe ; un échec est retenté avec
+// backoff (les empreintes n'étant rafraîchies qu'après succès, le retry
+// repart des VRAIES différences — cf. Sync).
+func (s *Store) syncLoop() {
+	defer close(s.syncDone)
+	var lastSync time.Time
+	for {
+		select {
+		case <-s.closing:
+			s.flush()
+			return
+		case <-s.saveCh:
+		}
+		// Coalescence : absorbe les marquages arrivant en rafale.
+		time.Sleep(saveDebounce)
+		// Cadence plafond : une transaction Neon au plus toutes les
+		// saveMinInterval (le drapeau « sale » garde la trace des
+		// marquages arrivés entre-temps — le flush les emportera).
+		if wait := saveMinInterval - time.Since(lastSync); wait > 0 {
+			select {
+			case <-s.closing:
+				s.flush()
+				return
+			case <-time.After(wait):
+			}
+		}
+		for !s.flush() {
+			select {
+			case <-s.closing:
+				return // échec persistant pendant l'arrêt : rien de plus à tenter
+			case <-time.After(saveRetryBackoff):
+			}
+		}
+		lastSync = time.Now()
+	}
+}
+
+// flush — UNE synchronisation : photographie sous le verrou global
+// (CloneDeep — quelques millisecondes, aucune E/S) puis synchro
+// PostgreSQL HORS verrou (re-hash 31 tables + transaction, bornées par
+// syncTimeout). Les requêtes concurrentes continuent d'être servies pendant
+// l'écriture. Retourne false sur échec : l'appelant retente avec backoff
+// (l'état re-marqué sale sera re-photographié à la tentative suivante).
+func (s *Store) flush() bool {
+	s.saveMu.Lock()
+	if !s.dirty {
+		s.saveMu.Unlock()
+		return true
+	}
+	s.dirty = false
+	s.saveMu.Unlock()
+
+	s.mu.Lock()
+	snap := s.db.CloneDeep()
+	s.mu.Unlock()
+
+	if err := s.pg.Sync(snap); err != nil {
+		log.Printf("store: synchro PostgreSQL différée échouée (%v) — nouvelle tentative", err)
+		s.saveMu.Lock()
+		s.dirty = true
+		s.saveMu.Unlock()
+		return false
+	}
+	return true
+}
+
 // Close ferme proprement la persistance (appelé au SIGTERM/SIGINT Render).
-// Le Save() synchrone garantit déjà l'écriture à chaque modification ; Close
-// ne fait que libérer la connexion PostgreSQL.
+// N°130 — le syncreur de fond reçoit l'ordre d'arrêt et exécute un FLUSH
+// FINAL de l'état sale éventuel (borné par syncTimeout) avant la fermeture
+// du pool : la fenêtre de perte asynchrone ne survit pas à un arrêt propre.
+// Idempotent (double Close sans panique).
 func (s *Store) Close() error {
 	if s.pg != nil {
+		s.saveMu.Lock()
+		if s.closed {
+			s.saveMu.Unlock()
+			return nil
+		}
+		s.closed = true
+		s.saveMu.Unlock()
+		close(s.closing)
+		<-s.syncDone
 		return s.pg.Close()
 	}
 	return nil

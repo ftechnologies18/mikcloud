@@ -81,6 +81,7 @@ import { useCurrency } from "@/components/hotspot/parts/sd-currency";
 import { copyToClipboard } from "@/components/hotspot/parts/uc-clipboard";
 import { PasswordCell } from "@/components/hotspot/parts/uc-password-cell";
 import { api, apiDownload } from "@/lib/hotspot/api";
+import { STALE_TIME } from "@/lib/hotspot/query";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { detailFromPath, viewToPath } from "@/lib/hotspot/view-path";
 import { formatBytes, formatCurrency, formatDate } from "@/lib/hotspot/format";
@@ -154,11 +155,15 @@ export default function UsersView() {
   const { data: profiles } = useQuery({
     queryKey: ["/api/profiles"],
     queryFn: () => api<Profile[]>("/api/profiles"),
+    // N°130 — donnée de référence : ne change qu'à l'écriture.
+    staleTime: STALE_TIME.reference,
   });
 
   const { data: routers } = useQuery({
     queryKey: ["/api/routers"],
     queryFn: () => api<RouterDevice[]>("/api/routers"),
+    // N°130 — état du parc : bouge aux check-ins agents (~45 s).
+    staleTime: STALE_TIME.operational,
   });
 
   const statusParam = statusFilter === "all" ? undefined : statusFilter;

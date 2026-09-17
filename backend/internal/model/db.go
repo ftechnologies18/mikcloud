@@ -272,3 +272,162 @@ func ResolvedStatus(u *HotspotUser, online bool, now time.Time) string {
 	}
 	return u.Status
 }
+
+// ---------------------------------------------------------------------------
+// N°130 — P0 audit performance : clone profond (photographie du syncreur)
+// ---------------------------------------------------------------------------
+
+// CloneDeep retourne une copie COMPLÈTEMENT détachée de l'état.
+//
+// La sauvegarde PostgreSQL est asynchrone (cf. store.syncLoop) : le syncreur
+// photographie l'état sous le verrou global puis synchronise la photographie
+// HORS verrou — les requêtes continuent de muter l'état vivant pendant que la
+// transaction Neon s'exécute. La copie doit donc être profonde : aucune
+// référence (pointeur, slice, map) partagée entre l'état vivant et le
+// snapshot, sous peine de course mémoire pendant la sérialisation.
+//
+// Les lignes sont des structs par VALEUR : recopier la tranche suffit. Quatre
+// familles portent des références et sont clonées ligne par ligne :
+//   - Command (maps Payload/Result) ;
+//   - RouterTraffic (slices Interfaces/History) ;
+//   - Settings (pointeurs Tenant.JoinButton, Tenant.LogRetentionDays,
+//     Platform, AutoImportRouterUsers — dans SettingsByAccount) ;
+//   - NotificationSettings (maps StockAlertState/PoolAlertState).
+//
+// Coût : quelques millisecondes pour des milliers de lignes (recopies
+// structurales, aucune sérialisation) — à comparer au re-hash JSON des 31
+// tables + transaction réseau que la synchro paiera HORS verrou.
+func (db *DB) CloneDeep() *DB {
+	clone := *db
+	clone.Accounts = append([]Account(nil), db.Accounts...)
+	clone.Users = append([]AdminUser(nil), db.Users...)
+	clone.Routers = append([]Router(nil), db.Routers...)
+	clone.Profiles = append([]Profile(nil), db.Profiles...)
+	clone.HotspotUsers = append([]HotspotUser(nil), db.HotspotUsers...)
+	clone.Batches = append([]Batch(nil), db.Batches...)
+	clone.Resellers = append([]Reseller(nil), db.Resellers...)
+	clone.Transactions = append([]Transaction(nil), db.Transactions...)
+	clone.Sessions = append([]Session(nil), db.Sessions...)
+	clone.Activity = append([]Activity(nil), db.Activity...)
+	clone.Sales = append([]Sale(nil), db.Sales...)
+	clone.Commands = cloneCommands(db.Commands)
+	clone.Templates = append([]VoucherTemplate(nil), db.Templates...)
+	clone.UserLogs = append([]UserLog(nil), db.UserLogs...)
+	clone.IPBindings = append([]IPBinding(nil), db.IPBindings...)
+	clone.SchedulerTasks = append([]SchedulerTask(nil), db.SchedulerTasks...)
+	clone.Traffic = cloneTrafficRows(db.Traffic)
+	clone.LineQuality = append([]LineQualityDay(nil), db.LineQuality...)
+	clone.NotifLog = append([]NotificationLog(nil), db.NotifLog...)
+	clone.BillingRequests = append([]BillingRequest(nil), db.BillingRequests...)
+	clone.PurgeTombstones = append([]PurgeTombstone(nil), db.PurgeTombstones...)
+	clone.JoinLinks = append([]JoinLink(nil), db.JoinLinks...)
+	clone.RegistrationRequests = append([]RegistrationRequest(nil), db.RegistrationRequests...)
+	clone.WifiSites = append([]WifiSite(nil), db.WifiSites...)
+	clone.WifiGuests = append([]WifiGuest(nil), db.WifiGuests...)
+	clone.PromoEvents = append([]PromoEvent(nil), db.PromoEvents...)
+	clone.GeniusPaySubs = append([]GeniusPaySub(nil), db.GeniusPaySubs...)
+	clone.SellSessions = append([]SellSession(nil), db.SellSessions...)
+	clone.Devices = append([]Device(nil), db.Devices...)
+	clone.PasswordResets = append([]PasswordReset(nil), db.PasswordResets...)
+	clone.ChatConversations = append([]ChatConversation(nil), db.ChatConversations...)
+	clone.ChatMessages = append([]ChatMessage(nil), db.ChatMessages...)
+	clone.SettingsByAccount = cloneSettingsByAccount(db.SettingsByAccount)
+	clone.NotifSettings = cloneNotifSettings(db.NotifSettings)
+	return &clone
+}
+
+// cloneCommands — copie les lignes ET leurs maps JSON (Payload/Result).
+func cloneCommands(src []Command) []Command {
+	if src == nil {
+		return nil
+	}
+	out := make([]Command, len(src))
+	for i, c := range src {
+		c.Payload = cloneAnyMap(c.Payload)
+		c.Result = cloneAnyMap(c.Result)
+		out[i] = c
+	}
+	return out
+}
+
+// cloneAnyMap — copie une map de valeurs JSON décodées (scalaires
+// immuables : string, float64, bool, nil — la copie de clés/valeurs suffit).
+func cloneAnyMap(src map[string]any) map[string]any {
+	if src == nil {
+		return nil
+	}
+	out := make(map[string]any, len(src))
+	for k, v := range src {
+		out[k] = v
+	}
+	return out
+}
+
+// cloneTrafficRows — copie les lignes ET leurs slices d'interfaces/historique.
+func cloneTrafficRows(src []RouterTraffic) []RouterTraffic {
+	if src == nil {
+		return nil
+	}
+	out := make([]RouterTraffic, len(src))
+	for i, t := range src {
+		t.Interfaces = append([]IfaceTraffic(nil), t.Interfaces...)
+		t.History = append([]TrafficPoint(nil), t.History...)
+		out[i] = t
+	}
+	return out
+}
+
+// cloneSettingsByAccount — copie la map ET détache les pointeurs de chaque
+// réglage (JoinButton, LogRetentionDays, Platform, AutoImportRouterUsers).
+func cloneSettingsByAccount(src map[string]Settings) map[string]Settings {
+	if src == nil {
+		return nil
+	}
+	out := make(map[string]Settings, len(src))
+	for k, s := range src {
+		if s.Tenant.JoinButton != nil {
+			v := *s.Tenant.JoinButton
+			s.Tenant.JoinButton = &v
+		}
+		if s.Tenant.LogRetentionDays != nil {
+			v := *s.Tenant.LogRetentionDays
+			s.Tenant.LogRetentionDays = &v
+		}
+		if s.Platform != nil {
+			p := *s.Platform
+			s.Platform = &p
+		}
+		if s.AutoImportRouterUsers != nil {
+			v := *s.AutoImportRouterUsers
+			s.AutoImportRouterUsers = &v
+		}
+		out[k] = s
+	}
+	return out
+}
+
+// cloneNotifSettings — copie la map ET les maps d'état d'alerte de chaque
+// réglage de notification (StockAlertState/PoolAlertState).
+func cloneNotifSettings(src map[string]NotificationSettings) map[string]NotificationSettings {
+	if src == nil {
+		return nil
+	}
+	out := make(map[string]NotificationSettings, len(src))
+	for k, v := range src {
+		v.StockAlertState = cloneStringMap(v.StockAlertState)
+		v.PoolAlertState = cloneStringMap(v.PoolAlertState)
+		out[k] = v
+	}
+	return out
+}
+
+func cloneStringMap(src map[string]string) map[string]string {
+	if src == nil {
+		return nil
+	}
+	out := make(map[string]string, len(src))
+	for k, v := range src {
+		out[k] = v
+	}
+	return out
+}

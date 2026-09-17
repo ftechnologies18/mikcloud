@@ -60,7 +60,7 @@ func (a *API) handleVouchersStats(w http.ResponseWriter, r *http.Request) {
 			allocated++
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeJSONCacheable(w, r, http.StatusOK, map[string]any{
 		"active":     active,
 		"used":       used,
 		"expired":    expired,
@@ -131,7 +131,12 @@ func (a *API) usersList(w http.ResponseWriter, r *http.Request, kindOverride str
 	if end > total {
 		end = total
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	// N°130 — ETag/304 : la liste paginée (l'une des payloads les plus lourdes
+	// de la console) ne change qu'aux mutations/expiration ; entre deux
+	// changements, la revalidation conditionnelle renvoie 304 sans corps.
+	// L'ETag couvre le CORPS scopé (filtres dans l'URL → une entrée de cache
+	// par variante, par compte).
+	writeJSONCacheable(w, r, http.StatusOK, map[string]any{
 		"data":     filtered[start:end],
 		"total":    total,
 		"page":     page,

@@ -38,6 +38,8 @@ import { useI18n } from "@/lib/hotspot/i18n";
 import { NAV_HOMENET_SECTIONS, NAV_PLATFORM_SECTIONS, NAV_SECTIONS } from "@/lib/hotspot/nav";
 import { roleLabel, userInitials } from "@/lib/hotspot/format";
 import { canView, isPlatformView, usageOf } from "@/lib/hotspot/roles";
+// N°130 — préchargement au survol de la navigation (chunks + requêtes).
+import { prefetchView } from "@/lib/hotspot/prefetch";
 import { isSettingsView, settingsLandingView } from "@/lib/hotspot/settings-sections";
 import { useHotspotStore } from "@/lib/hotspot/store";
 import type { AuthUser, HotspotSession, ViewId } from "@/lib/hotspot/types";
@@ -403,6 +405,9 @@ function NavList() {
   const setView = useHotspotStore((s) => s.setView);
   const user = useHotspotStore((s) => s.user);
   const shellMode = useHotspotStore((s) => s.shellMode);
+  // N°130 — prefetch au survol : le queryClient porte les requêtes
+  // principales de la vue visée (clés stables uniquement, cf. prefetch.ts).
+  const queryClient = useQueryClient();
   // N°30 — « registrations » est fusionné dans la page Utilisateurs (hub) :
   // la sidebar surligne et auto-ouvre « Utilisateurs » pour les deux ViewIds
   // (l'item « Inscriptions » n'existe plus dans la navigation).
@@ -535,6 +540,13 @@ function NavList() {
                     <button
                       type="button"
                       onClick={() => setView(item.id)}
+                      // N°130 — préchargement au survol (et au focus clavier) :
+                      // chunk de la vue + requêtes principales, pour que le clic
+                      // suivant rende immédiatement. Idempotent — aucun effet si
+                      // déjà en cache ; le tactile (sans survol) garde le trajet
+                      // normal au clic.
+                      onMouseEnter={() => prefetchView(item.id, queryClient)}
+                      onFocus={() => prefetchView(item.id, queryClient)}
                       aria-current={active ? "page" : undefined}
                       className={cn(
                         "sidebar-nav-item relative flex min-h-11 w-full items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium transition-all duration-200",

@@ -14,6 +14,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -23,6 +24,12 @@ import (
 type PG struct {
 	db     *sql.DB
 	hashes map[string]map[string]uint64
+	// N°130 — syncMu exclut le cache d'empreintes : le syncreur de fond
+	// (goroutine de sauvegarde asynchrone) lit/écrit p.hashes dans Sync,
+	// tandis qu'un Reload (admin) ou un boot le reconstruit via
+	// rebuildHashes. Aucune contention de parcours — les deux opérations
+	// sont rares et jamais sur le chemin des requêtes.
+	syncMu sync.Mutex
 	// N°71 — instrumentation santé de la synchro (syncstats.go) et mode du
 	// keep-alive mémorisé pour le diagnostic (vide = keep-alive désactivé).
 	stats  syncStats

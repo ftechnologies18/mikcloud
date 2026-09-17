@@ -23,7 +23,10 @@ func (a *API) handleProfilesList(w http.ResponseWriter, r *http.Request) {
 	}
 	a.store.Unlock()
 	sort.Slice(ps, func(i, j int) bool { return ps[i].CreatedAt > ps[j].CreatedAt })
-	writeJSON(w, http.StatusOK, ps)
+	// N°130 — ETag/304 : les profils changent uniquement à l'écriture (créer/
+	// modifier) ; la liste est re-téléchargée pour rien à chaque remontée de
+	// vue (prefetch, navigation) alors que le corps est stable des heures durant.
+	writeJSONCacheable(w, r, http.StatusOK, ps)
 }
 
 func (a *API) handleProfileCreate(w http.ResponseWriter, r *http.Request) {

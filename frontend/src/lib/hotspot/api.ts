@@ -108,11 +108,21 @@ export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
   if (opts.body !== undefined) headers["Content-Type"] = "application/json";
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
+  const method = opts.method ?? "GET";
   const res = await fetch(buildUrl(path, opts.params), {
-    method: opts.method ?? "GET",
+    method,
     headers,
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-    cache: "no-store",
+    // N°130 — P0 audit réactivité : les GET SANS CORPS passent en « no-cache »
+    // (stocké + revalidation conditionnelle) au lieu de « no-store » : le
+    // backend pose ETag + Cache-Control: no-cache sur les endpoints pollés
+    // (writeJSONCacheable — dashboard, sessions, devices, profils, modèles,
+    // revendeurs, liste utilisateurs, stats vouchers…) ; le navigateur
+    // renvoie If-None-Match et reçoit un 304 SANS CORPS quand rien n'a
+    // changé — l'ancien « no-store » re-téléchargeait la payload entière à
+    // CHAQUE poll (37 sources de polling côté front). Les mutations (et tout
+    // GET portant un corps) restent « no-store » : jamais de réutilisation.
+    cache: method === "GET" && opts.body === undefined ? "no-cache" : "no-store",
     signal: timeoutSignal(opts.timeoutMs, 20_000),
   });
 
@@ -191,11 +201,14 @@ export async function apiUpload<T>(path: string, form: FormData, opts: ApiOption
 export async function apiAnon<T>(path: string, opts: ApiOptions = {}): Promise<T> {
   const headers: Record<string, string> = {};
   if (opts.body !== undefined) headers["Content-Type"] = "application/json";
+  const method = opts.method ?? "GET";
   const res = await fetch(buildUrl(path, opts.params), {
-    method: opts.method ?? "GET",
+    method,
     headers,
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-    cache: "no-store",
+    // N°130 — même politique que api() : GET sans corps → revalidation
+    // conditionnelle (ETag/304), le reste sans stockage.
+    cache: method === "GET" && opts.body === undefined ? "no-cache" : "no-store",
     signal: timeoutSignal(opts.timeoutMs, 20_000),
   });
   let data: unknown = null;

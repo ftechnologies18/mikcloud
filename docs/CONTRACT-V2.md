@@ -929,6 +929,50 @@ orphelin `mikcloud-pool` référencé par personne).
 `PoolDoctorAt text` — migrations idempotentes, `omitempty` (absent tant
 que jamais diagnostiqué).
 
+## N°130 — Réactivité P0 : sauvegarde PostgreSQL asynchrone + revalidation ETag/304 étendue [P0]
+
+### Contexte
+Audit performance (Render free 0,1 vCPU + Vercel + Neon) : chaque lecture
+pollée (dashboard 15 s, sessions 10 s, listes, check-ins agents)
+exécutait un `Save()` complet SOUS LE VERROU GLOBAL du store — re-hash
+JSON des 31 tables + transaction Neon (bornée `syncTimeout` 20 s) ; côté
+client, `cache: "no-store"` neutralisait l'ETag/304 du N°75 (chaque poll
+re-téléchargeait la payload entière) et aucun préchargement n'existait.
+
+### Contrat de persistance (changement SÉMANTIQUE, mode PostgreSQL)
+- `Store.Save()` (mode PG) ne persiste PLUS synchronément : il marque
+  l'état « sale » et rend la main immédiatement. La persistance est
+  effective au plus tard `saveMinInterval` (3 s) + une durée de synchro
+  après le dernier marquage ; un arrêt propre (SIGTERM → `Close()`)
+  exécute un flush final. Un crash brutal peut perdre ≤ ~3 s d'écritures
+  (avant : 0 s, au prix de la latence de TOUTES les requêtes).
+- Le mode JSON (développement, E2E) reste strictement synchrone.
+- `GET /api/admin/sync-status` (N°71) reflète désormais le syncreur de
+  fond : cadence ≤ 1 transaction / 3 s, échecs retentis automatiquement
+  (backoff 5 s).
+
+### Contrat HTTP — revalidation conditionnelle (ETag/304)
+Réponses `Cache-Control: no-cache` + `ETag` (FNV-1a du corps scopé) :
+- déjà concernées (N°74/75) : `GET /api/dashboard`, `GET /api/sessions`,
+  `GET /api/devices`, branding WiFi, config live WiFi ;
+- NOUVEAU (N°130) : `GET /api/users` (liste paginée — l'ETag couvre le
+  CORPS rendu, une entrée de cache par variante d'URL/filtres),
+  `GET /api/vouchers/stats`, `GET /api/profiles`, `GET /api/templates`,
+  `GET /api/resellers`.
+Un client qui renvoie `If-None-Match` reçoit `304` SANS CORPS si le
+contenu n'a pas changé. L'ETag étant calculé sur le corps SCOPÉ par
+compte, il n'y a AUCUNE fuite inter-comptes (corps identiques ⟺ 304
+légitime). Le client officiel (`api()`/`apiAnon()`) envoie
+`cache: "no-cache"` sur les GET sans corps — les mutations restent
+`no-store`.
+
+### Préchargement (frontend)
+Survol/focus d'un item de navigation → téléchargement du chunk de la vue
+(miroir des `dynamic()`) + `prefetchQuery` des requêtes à clés STABLES
+uniquement. Fraîcheur graduée : `STALE_TIME.reference` 5 min
+(profils/modèles/revendeurs), `operational` 30 s (parc routeurs),
+`live` 10 s (défaut), `frozen` ∞ (catalogues).
+
 ## N°103 — Qualité de ligne : mesure passive du débit FAI [P1]
 
 ### Contexte

@@ -35,7 +35,9 @@ func (a *API) handleTemplatesList(w http.ResponseWriter, r *http.Request) {
 		}
 		return templates[i].CreatedAt > templates[j].CreatedAt
 	})
-	writeJSON(w, http.StatusOK, templates)
+	// N°130 — ETag/304 : les modèles de voucher changent uniquement à
+	// l'écriture ; corps stable → revalidation conditionnelle sans corps.
+	writeJSONCacheable(w, r, http.StatusOK, templates)
 }
 
 func (a *API) handleTemplateCreate(w http.ResponseWriter, r *http.Request) {

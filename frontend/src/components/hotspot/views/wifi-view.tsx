@@ -48,6 +48,7 @@ import {
   updateWifiSite,
   wifiGuestsCsvURL,
 } from "@/lib/hotspot/api";
+import { STALE_TIME } from "@/lib/hotspot/query";
 import { useI18n } from "@/lib/hotspot/i18n";
 import type { Profile, RouterDevice, WifiSite } from "@/lib/hotspot/types";
 
@@ -65,10 +66,15 @@ export default function WifiView() {
   const { data: routers } = useQuery({
     queryKey: ["/api/routers"],
     queryFn: () => api<RouterDevice[]>("/api/routers"),
+    // N°130 — état du parc (check-ins agents ~45 s) : épargne le re-fetch
+    // intégral à chaque remontée de vue.
+    staleTime: STALE_TIME.operational,
   });
   const { data: profiles } = useQuery({
     queryKey: ["/api/profiles"],
     queryFn: () => api<Profile[]>("/api/profiles"),
+    // N°130 — donnée de référence.
+    staleTime: STALE_TIME.reference,
   });
 
   const [dialogOpen, setDialogOpen] = useState(false);

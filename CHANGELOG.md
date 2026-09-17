@@ -5,6 +5,112 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-17 — N°130 — Réactivité P0 « le nuage qui rendait la main trop tard » : sauvegarde PostgreSQL asynchrone, révalidation 304 réactivée, préchargement au survol — l'audit performance passe à l'application
+
+### N°130 — Contexte : la lenteur au clic sur une architecture pourtant découplée
+Retour utilisateur : « J'ai constaté une lenteur au niveau du chargement des
+pages pour l'architecture découplée backend Go (Render), frontend Next.js
+(Vercel) et base de données Neon. Je ne sais pas d'où vient cette lenteur au
+clic. Fais un audit en profondeur suivi d'un plan d'action afin de faire de
+MikCloud une application qui réagit vite. » L'audit (mesures production +
+lecture du code) avait hiérarchisé quatre causes : (A) ~200 ms fixes par
+requête sur le plan Render free (proxy + 0,1 vCPU — non traitable sans
+changer de plan) ; (B) chaque lecture pollée exécutait un Save() complet
+SOUS LE VERROU GLOBAL — re-hash JSON des 31 tables + transaction Neon
+bornée à 20 s : le clic attendait la base ; (C) `cache: "no-store"` sur
+tous les fetch neutralisait le système ETag/304 du N°75 — chaque poll
+re-téléchargeait la payload entière ; (D) aucun prefetch — le premier clic
+sur chaque vue payait chunk (100-390 Ko) PUIS requêtes. Ce commit est le
+plan P0 de l'audit : B, C et D.
+
+### Produit — le clic ne attend plus la base (backend)
+- SAUVEGARDE ASYNCHRONE (mode PostgreSQL uniquement) : Save() devient un
+  marquage « sale » (micro-verrou dédié) + réveil non bloquant du syncreur
+  de fond — la requête rend la main IMMÉDIATEMENT. Le syncreur coalesce les
+  rafales (debounce 500 ms — les marquages d'un même poll se fondent en une
+  photographie), plafonne la cadence Neon (une transaction au plus toutes
+  les 3 s — la télémétrie Tick rend l'état sale à chaque lecture pollée ;
+  sans plafond, le syncreur enchaînerait au rythme des 37 sources de
+  polling), photographie l'état sous le verrou global (CloneDeep — quelques
+  millisecondes, aucune E/S) puis synchronise HORS verrou : un Neon gelé ne
+  fige plus QUE la sauvegarde, jamais les requêtes. Échec = re-marquage +
+  backoff 5 s (retry automatique, borné par syncTimeout).
+- FLUSH FINAL À L'ARRÊT : SIGTERM Render → Close() arrête le syncreur après
+  un dernier flush (borné syncTimeout) — la fenêtre de perte asynchrone
+  (≤ ~3 s en cas de crash brutal) ne survit pas à un arrêt propre.
+  Idempotent (double Close sans panique).
+- ATOMICITÉ DU CACHE D'EMPREINTES (correctif préventif découvert par
+  l'audit du retry) : syncTable rafraîchissait les empreintes table par
+  table AVANT le Commit — un échec à mi-parcours (rollback) laissait le
+  cache croire synchronisées des lignes jamais écrites (perte silencieuse
+  préexistante, masquée par le Save-synchrone-à-chaque-requête). Désormais
+  les empreintes fraîches vivent dans « pending » et ne remplacent
+  p.hashes qu'APRÈS le Commit — un échec retente les VRAIES différences.
+  rebuildHashes (boot/Reload) passe sous le même verrou (syncMu) : plus de
+  course avec le syncreur.
+- MODE JSON (développement, E2E) : Save() synchrone STRICTEMENT inchangé —
+  zéro changement de comportement pour les tests et la CI.
+
+### Produit — les payloads ne voyagent plus pour rien (contrat HTTP)
+- ETag/304 ÉTENDU aux listes STABLES et pollées : liste paginée des
+  utilisateurs (l'une des payloads les plus lourdes de la console —
+  l'ETag couvre le corps scopé, une entrée de cache par variante de
+  filtres), statistiques de stock vouchers, profils, modèles de voucher,
+  revendeurs — rejoignent dashboard/sessions/devices/branding WiFi du
+  N°75. Entre deux changements de données, la revalidation renvoie 304
+  SANS CORPS (~200 o d'en-têtes au lieu de plusieurs Ko).
+- Mesuré en conditions réelles (stack locale, compte vide) : sessions
+  (poll 10 s) et dashboard (poll 15 s) → 304 à CHAQUE poll après le
+  premier, 0 octet de corps, temps serveur 0-1 ms.
+
+### Produit — le premier clic ne télécharge plus rien (frontend)
+- CACHE « NO-CACHE » SUR LES GET : api() et apiAnon() passent les GET sans
+  corps en revalidation conditionnelle (stocké + If-None-Match) au lieu de
+  « no-store » — le navigateur renvoie l'ETag stocké et reçoit 304 quand
+  rien n'a changé. Mutations et GET à corps : « no-store » inchangé.
+  (L'ETag étant calculé sur le corps SCOPÉ par compte, deux comptes aux
+  données identiques partagent un 304… dont le corps est identique : aucune
+  fuite possible.)
+- PRÉCHARGEMENT AU SURVOL : survoler (ou focaliser au clavier) un item de
+  navigation télécharge EN AVANCE le chunk de la vue (miroir exact des
+  dynamic() de app-shell — 27 chargeurs) ET ses requêtes principales via
+  queryClient.prefetchQuery (clés STABLES uniquement, strictement
+  identiques à celles des vues : un prefetch mal calé doublerait le fetch
+  au clic). Idempotent ; le tactile (sans survol) garde le trajet normal.
+- FRAÎCHEUR GRADUÉE PAR NATURE DE DONNÉE : STALE_TIME.reference (5 min)
+  pour profils/modèles/revendeurs (ne changent qu'à l'écriture),
+  operational (30 s) pour le parc routeurs (check-ins ~45 s) — les
+  remontées de vue ne re-demandent plus TOUT pour des données de
+  référence inchangées. Le défaut (10 s, données vivantes) et les polls
+  explicites (refetchInterval) restent maîtres du rythme.
+
+### Technique
+- Backend : model/db.go (CloneDeep + clones ciblés Command.Payload/Result,
+  RouterTraffic.Interfaces/History, Settings et ses 4 pointeurs,
+  NotificationSettings et ses 2 maps — inventaire par réflexion : tout le
+  reste est struct par valeur) ; store/store.go (Store + saveMu/dirty/
+  canaux, Save() asynchrone, syncLoop/flush, Close à flush final) ;
+  store/pg.go (syncMu) ; store/pg_sync.go (pending→commit→swap,
+  syncTable à 2 cartes, rebuildHashes sous verrou, commentaires) ;
+  api/handlers_users.go + handlers_profiles.go + handlers_templates.go +
+  handlers_resellers.go (writeJSONCacheable).
+- Frontend : lib/hotspot/api.ts (cache conditionnel GET), lib/hotspot/
+  query.tsx (STALE_TIME gradué), lib/hotspot/prefetch.ts (NOUVEAU —
+  chargeurs miroir + requêtes stables), app-shell.tsx (onMouseEnter/
+  onFocus sur les items de nav), views users/vouchers/wifi/reports
+  (staleTime gradué sur les requêtes de référence).
+- Vérifié : gofmt vide, go vet OK, go build OK, go test 12 paquets verts
+  (dont TestDBCloneDeepIsolation/TestDBCloneDeepEquality — isolation
+  complète du snapshot sous mutation concurrente) ; eslint 0, tsgo 0,
+  next build OK (13 routes) ; E2E 14/14 verts (25,8 s, stack réelle) ;
+  smoke navigateur bout-en-bout : login → console plateforme → survol de
+  3 items (prefetch, 0 erreur) → clics fleet/comptes → bascule console
+  client → dashboard — LOGS BACKEND EN PREUVE : sessions → 304 (0 s) à
+  chaque poll 10 s, dashboard → 304 (1 ms) à chaque poll 15 s ; mobile
+  390 px scrollWidth 390 (zéro débordement) ; 0 erreur console.
+- Leçon consignée : un verrou global qui porte une E/S n'est pas un
+  verrou, c'est une file d'attente — la sauvegarde devait quitter le
+  chemin de la requête AVANT que quiconque ne mesure la lenteur.
 ## 2026-09-17 — N°129 — Le bot range sa boutique : clôture automatique après 15 minutes d'inactivité + purge périodique des conversations
 
 ### N°129 — Contexte : retour utilisateur « la console Conversations doit donner la possibilité au bot de clôturer la conversation automatiquement si pas de message du visiteur pendant 15 min ; combien de temps les conversations clôturées restent-elles dans le système, y a-t-il un mécanisme de purge pour éviter la pollution en cas d'affluence ? »

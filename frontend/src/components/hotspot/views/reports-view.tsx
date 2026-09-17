@@ -52,6 +52,7 @@ import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 import { api, apiDownload } from "@/lib/hotspot/api";
+import { STALE_TIME } from "@/lib/hotspot/query";
 import { localeOf, useI18n } from "@/lib/hotspot/i18n";
 import { useChartPalette, type ChartPalette } from "@/lib/hotspot/chart-theme";
 import type { Lang } from "@/lib/hotspot/i18n";
@@ -232,6 +233,8 @@ function AccountingTab({ visible }: { visible: boolean }) {
   const { data: routers } = useQuery({
     queryKey: ["/api/routers"],
     queryFn: () => api<RouterDevice[]>("/api/routers"),
+    // N°130 — état du parc (check-ins agents ~45 s).
+    staleTime: STALE_TIME.operational,
   });
 
   const { data, isLoading } = useQuery({

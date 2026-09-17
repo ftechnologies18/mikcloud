@@ -27,6 +27,7 @@ import { VoucherWizardDialog } from "@/components/hotspot/parts/voucher-wizard-d
 import { BatchDetailSheet } from "@/components/hotspot/parts/batch-detail-sheet";
 import { BatchPrintDialog } from "@/components/hotspot/parts/batch-print-dialog";
 import { api, apiDownload } from "@/lib/hotspot/api";
+import { STALE_TIME } from "@/lib/hotspot/query";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { detailFromPath, viewToPath } from "@/lib/hotspot/view-path";
 import { formatCurrency } from "@/lib/hotspot/format";
@@ -124,16 +125,22 @@ export default function VouchersView() {
   const { data: profiles } = useQuery({
     queryKey: ["/api/profiles"],
     queryFn: () => api<Profile[]>("/api/profiles"),
+    // N°130 — donnée de référence : ne change qu'à l'écriture.
+    staleTime: STALE_TIME.reference,
   });
 
   const { data: routers } = useQuery({
     queryKey: ["/api/routers"],
     queryFn: () => api<RouterDevice[]>("/api/routers"),
+    // N°130 — état du parc : bouge aux check-ins agents (~45 s).
+    staleTime: STALE_TIME.operational,
   });
 
   const { data: resellers } = useQuery({
     queryKey: ["/api/resellers"],
     queryFn: () => api<Reseller[]>("/api/resellers"),
+    // N°130 — donnée de référence : stock/attribution à l'écriture.
+    staleTime: STALE_TIME.reference,
   });
 
   // Modèles de vouchers (F2) pour le dialog d'impression — la query échoue en 404
@@ -141,7 +148,8 @@ export default function VouchersView() {
   const { data: templates } = useQuery({
     queryKey: ["/api/templates"],
     queryFn: () => api<VoucherTemplate[]>("/api/templates"),
-    staleTime: 5 * 60_000,
+    // N°130 — unifié sur la constante graduée (même valeur qu'avant).
+    staleTime: STALE_TIME.reference,
   });
 
   // Statistiques globales (page large sans filtre) — compteurs calculés côté

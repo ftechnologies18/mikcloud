@@ -5,6 +5,52 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-17 — N°134 — Localisation : « le serveur Vercel en Europe » — c'était déjà le cas (toute la stack est à Francfort), et le choix devient du CODE : la région des fonctions Vercel est épinglée à fra1 dans frontend/vercel.json
+
+### N°134 — Contexte : retour utilisateur
+« Changer la localisation du serveur Vercel pour Europe. »
+
+### Diagnostic : la stack est déjà intégralement à Francfort
+- VERCEL (API, équipe Ftech CI, projet mikcloud) : `serverlessFunctionRegion: fra1`
+  DEPUIS LA CRÉATION du projet (2026-08-29) — les 100 derniers déploiements
+  production listés (du 2026-09-06 à 659e01a) portent tous `regions: ["fra1"]`,
+  `originCacheRegion: fra1` : les fonctions (rendu SSR) n'ont JAMAIS tourné
+  ailleurs qu'en Europe.
+- RENDER (API v1) : service mikcloud, `region: "frankfurt"`
+  (`ssh.frankfurt.render.com`), plan free, autoDeploy sur main.
+- NEON : hôte `*.eu-central-1.aws.neon.tech` — Francfort (eu-central-1).
+- Conséquence réseau : les trois étages sont co-localisés dans le même
+  métropole (Render→Neon : RTT intra-région ~1-3 ms) ; pour un visiteur
+  d'Europe de l'Ouest/Afrique de l'Ouest, Vercel et Render sont à un bond
+  de câble sous-marin (RTT Abidjan→Francfort ~140-160 ms contre ~200-230 ms
+  vers la côte Est américaine).
+
+### Ce qui change : le réglage quitte le dashboard pour le dépôt
+- `frontend/vercel.json` (c'est LUI que Vercel lit — `rootDirectory: frontend`)
+  gagne `"regions": ["fra1"]` — STRICTEMENT la même valeur que la
+  configuration projet : aucun changement fonctionnel au prochain
+  déploiement, mais la région devient versionnée. Une manipulation du
+  dashboard ne peut plus la faire dériver silencieusement, et le choix
+  « Europe » est lisible, diffable et auditable dans Git.
+- Précision d'architecture pour la lecture du réglage : les FICHIERS
+  STATIQUES (HTML/CSS/JS) sont servis par l'edge network MONDIAL de Vercel
+  (POP au plus près de chaque visiteur — vérifié : HIT depuis un POP Asie
+  depuis ce sandbox ; rien à régler, c'est toujours « local »). La région
+  fra1 ne concerne que les FONCTIONS (rendu du HTML dynamique). L'app
+  étant majoritairement côté client (vues dynamic(), appels directs au
+  backend Render depuis le navigateur via NEXT_PUBLIC_API_BASE), l'impact
+  de la région sur les performances est modeste — mais le choix est
+  désormais explicite, aligné sur Render et Neon, et verrouillé.
+
+### Vérifié
+- API Vercel avant modification : `serverlessFunctionRegion: fra1`,
+  dernier déploiement production `regions: ["fra1"]`.
+- API Render : `region: "frankfurt"` dans serviceDetails.
+- Frontend : vercel.json valide (schéma officiel), lint 0, typecheck 0 —
+  `next build` ne lit pas vercel.json, la CI est neutre ; le déploiement
+  Vercel post-push est surveillé (région fra1 confirmée sur le déploiement
+  résultant, mikcloud.ftci.fr 200).
+
 
 ## 2026-09-17 — N°133 — Réactivité P1 « le verrou ne portait plus l'E/S, il portait le calcul » : synchronisation ciblée par tables marquées sales, agrégats du dashboard HORS verrou, en-tête Server-Timing — le plan structurel de l'audit performance passe à l'application
 

@@ -722,6 +722,9 @@
             navigation: { nextEl: '.swiper-button-next', prevEl: '.swiper-button-prev' },
             observer: true, observeParents: true,
         });
+        // N°136 — instance exposée pour le rafraîchissement après remplacement
+        // des slides par celles du gérant (applySlides → mikSwiperRefresh).
+        window.mikSwiper = swiper;
 
         // Login mode
         var userField = document.getElementById('input-user');
@@ -976,7 +979,17 @@
                     if (loginSectionB) loginSectionB.insertBefore(bannerWrap, loginSectionB.firstChild);
                 }
 
-                // 7. Mode hospitalité (N°55) : quand portalStyle vaut
+                // 7. Slides du carrousel commercial (N°136) : les images
+                // téléversées par le gérant (≤ 3 URLs https via la console)
+                // remplacent les trois visuels génériques pub1/2/3. Liste
+                // vide ou absente = défauts (config antérieure à N°136 :
+                // undefined → aucun changement — compatibilité totale des
+                // portails déployés). Idempotent : le fetch live (N°48) peut
+                // rappeler applyConfig — une signature d'état évite tout
+                // re-rendu superflu du swiper.
+                applySlides(cfg);
+
+                // 8. Mode hospitalité (N°55) : quand portalStyle vaut
                 // 'hospitality', la vitrine « vente de tickets » (slider pub
                 // générique, grille tarifaire hardcodée, Wave, services
                 // Mikhmon) s'efface au profit de celle de l'établissement :
@@ -1034,6 +1047,57 @@
                     card.setAttribute('data-promo-seen', '1');
                     mikTrack('impression', pid);
                 });
+            }
+
+            // ----------------------------------------------------------------
+            // N°136 — slides du carrousel COMMERCIAL : applySlides remplace les
+            // trois visuels génériques pub1/2/3 par les images du gérant
+            // (≤ 3 URLs https posées en console via /api/media → R2). Une
+            // seule image est dupliquée (le mode loop de Swiper exige ≥ 2
+            // slides — même visuel, zéro différence pour l'invité). Retour
+            // aux défauts quand la liste se vide (le fetch live corrige
+            // l'affichage d'un portail déjà ouvert). La signature d'état
+            // (data-mik-slides) rend l'ensemble idempotent.
+            // ----------------------------------------------------------------
+            function applySlides(cfg) {
+                var wrap = document.querySelector('.promo-slider .swiper-wrapper');
+                if (!wrap) return;
+                var slides = Array.isArray(cfg.portalSlides)
+                    ? cfg.portalSlides.filter(function (u) { return typeof u === 'string' && u; })
+                    : [];
+                var sig = slides.join('|');
+                var prev = wrap.getAttribute('data-mik-slides') || '';
+                if (prev === sig) return; // idempotent : rien à faire
+                wrap.setAttribute('data-mik-slides', sig);
+                if (!slides.length) {
+                    // Config vidée → restaurer les visuels génériques du template
+                    // (uniquement si on les avait remplacés).
+                    if (wrap.getAttribute('data-mik-custom') === '1') {
+                        wrap.innerHTML = '<div class="swiper-slide"><img src="img/pub1.jpg" alt="Promotion 1" loading="lazy"></div>'
+                            + '<div class="swiper-slide"><img src="img/pub2.jpg" alt="Promotion 2" loading="lazy"></div>'
+                            + '<div class="swiper-slide"><img src="img/pub3.jpg" alt="Promotion 3" loading="lazy"></div>';
+                        wrap.removeAttribute('data-mik-custom');
+                        mikSwiperRefresh();
+                    }
+                    return;
+                }
+                if (slides.length === 1) slides.push(slides[0]); // Swiper loop ≥ 2
+                var h = '';
+                for (var i = 0; i < slides.length; i++) {
+                    h += '<div class="swiper-slide"><img src="' + escapeHtml(slides[i]) + '" alt="Promotion ' + (i + 1) + '" loading="lazy"></div>';
+                }
+                wrap.innerHTML = h;
+                wrap.setAttribute('data-mik-custom', '1');
+                mikSwiperRefresh();
+            }
+
+            // mikSwiperRefresh — rafraîchit le carrousel après réécriture des
+            // slides (instance globale posée à l'init N°136 ; l'observer:true
+            // du swiper reste le filet si l'instance manque).
+            function mikSwiperRefresh() {
+                try {
+                    if (window.mikSwiper) { window.mikSwiper.update(); window.mikSwiper.slideTo(0, 0); }
+                } catch (e) { /* best-effort : observer:true veille */ }
             }
 
             // applyHospitality — bascule commerciale → hospitalité (N°55).

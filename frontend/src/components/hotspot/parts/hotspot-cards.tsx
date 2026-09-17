@@ -27,6 +27,7 @@ import {
   Image as ImageIcon,
   Images,
   Link as LinkIcon,
+  Loader2,
   MousePointerClick,
   Router as RouterIcon,
   Store,
@@ -79,6 +80,10 @@ export function HotspotExperience({ settings }: { settings: AppSettings }) {
 
       {/* Bannière du portail captif (N°45) — image tête de page login */}
       <PortalBannerCard settings={settings} />
+
+      {/* Slides du carrousel commercial (N°136) — les 3 visuels pub du
+          portail remplacés par les images du gérant */}
+      <PortalSlidesCard settings={settings} />
 
       {/* Mode hospitalité du portail captif (N°55) — vitrine de
           l'établissement (promos produits R2, bienvenue, réseaux
@@ -717,6 +722,181 @@ function PortalBannerCard({ settings }: { settings: AppSettings }) {
           disabled={saveMutation.isPending || bannerUrlInvalid}
         >
           {saveMutation.isPending ? t("common.saving") : t("common.save")}
+        </Button>
+      </CardFooter>
+    </Card>
+  );
+}
+
+// Carte Slides du carrousel commercial (N°136) — le gérant remplace les 3
+// visuels publicitaires génériques (pub1/2/3) du portail captif par SES
+// images : jusqu'à 3 slots, téléversement R2 via /api/media (URL https
+// permanente), suppression par slot. Sauvegarde PUT /api/settings
+// (champ portalSlides, plat + imbriqué — pattern PortalHospitalityCard).
+// Les listes sont VALIDÉES côté backend (≤ 3 URLs https ≤ 300 car.).
+function PortalSlidesCard({ settings }: { settings: AppSettings }) {
+  const { t, tf } = useI18n();
+  const queryClient = useQueryClient();
+  const [slides, setSlides] = useState<string[]>(() => {
+    try {
+      const parsed = JSON.parse(settings.tenant.portalSlides || "[]") as string[];
+      return Array.isArray(parsed) ? parsed.filter((u) => typeof u === "string" && u) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [uploadingIdx, setUploadingIdx] = useState<number | null>(null);
+  const [pendingIdx, setPendingIdx] = useState<number>(0);
+
+  const saveMutation = useMutation({
+    mutationFn: () =>
+      api<AppSettings>("/api/settings", {
+        method: "PUT",
+        // Corps défensif (pattern VoucherCard) : champs plats + forme
+        // imbriquée tenant{…} — le plat prime côté backend.
+        body: {
+          portalSlides: slides,
+          tenant: { portalSlides: slides },
+        },
+      }),
+    onSuccess: () => {
+      toast.success(t("settings.slides.savedToast"));
+      void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  // Image d'un slide : téléversement vers R2 (N°53) — URL permanente https
+  // (même flux que les images de promos et la bannière du portail).
+  async function handleSlideFile(idx: number, file?: File) {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error(t("settings.logoNotImage"));
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error(t("settings.bannerTooBig"));
+      return;
+    }
+    setUploadingIdx(idx);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await apiUpload<{ url: string }>("/api/media", form, { timeoutMs: 60_000 });
+      setSlides((list) => {
+        // Append (idx = prochaine place) ou remplacement (slot existant) —
+        // aucun trou possible : les entrées vides sont retirées.
+        const next = [...list];
+        next[idx] = res.url;
+        return next.filter((u) => u !== "");
+      });
+      toast.success(t("settings.bannerUploadOk"));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("settings.hosp.imageFail"));
+    } finally {
+      setUploadingIdx(null);
+    }
+  }
+
+  return (
+    <Card className="gap-4 py-4 sm:py-6">
+      <CardHeader className="px-4 sm:px-6">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
+            <Images className="size-4" />
+          </span>
+          {t("settings.slides.card")}
+        </CardTitle>
+        <CardDescription>{t("settings.slides.cardDesc")}</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-3 px-4 sm:px-6">
+        {slides.length === 0 && (
+          <p className="text-xs text-muted-foreground">{t("settings.slides.empty")}</p>
+        )}
+        {[0, 1, 2].map((idx) => {
+          const url = slides[idx];
+          if (!url) return null;
+          return (
+            <div key={idx} className="flex items-center gap-3 rounded-lg border p-3">
+              <img
+                src={url}
+                alt={tf("settings.slides.slot", { n: idx + 1 })}
+                className="h-12 w-20 rounded-md object-cover"
+                onError={(event) => {
+                  event.currentTarget.style.opacity = "0.3";
+                }}
+              />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium">{tf("settings.slides.slot", { n: idx + 1 })}</p>
+                <p className="truncate text-xs text-muted-foreground">{url}</p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={uploadingIdx === idx}
+                onClick={() => document.getElementById(`slide-file-${idx}`)?.click()}
+              >
+                <ImagePlus className="size-4" />
+                {uploadingIdx === idx ? t("settings.uploading") : t("settings.upload")}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setSlides((list) => list.filter((_, i) => i !== idx))}
+              >
+                <X className="size-4" />
+                <span className="sr-only">{t("settings.slides.remove")}</span>
+              </Button>
+              <input
+                id={`slide-file-${idx}`}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = "";
+                  void handleSlideFile(idx, file);
+                }}
+              />
+            </div>
+          );
+        })}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={slides.length >= 3}
+            onClick={() => {
+              // Ouvre le sélecteur pour le prochain slot libre.
+              setPendingIdx(slides.length);
+              document.getElementById("slide-file-new")?.click();
+            }}
+          >
+            <ImagePlus className="size-4" />
+            {t("settings.slides.add")}
+          </Button>
+          <span className="text-xs text-muted-foreground">{slides.length}/3</span>
+        </div>
+        <p className="text-xs text-muted-foreground">{t("settings.slides.hint")}</p>
+        <input
+          id="slide-file-new"
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = "";
+            void handleSlideFile(pendingIdx, file);
+          }}
+        />
+      </CardContent>
+      <CardFooter className="justify-end px-4 sm:px-6">
+        <Button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} className="gap-1.5">
+          {saveMutation.isPending ? <Loader2 className="size-4 animate-spin" /> : <BadgeCheck className="size-4" />}
+          {t("common.save")}
         </Button>
       </CardFooter>
     </Card>

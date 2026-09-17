@@ -666,6 +666,9 @@ func (p *PG) ensureSchema() error {
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS portal_welcome TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS portal_promos TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS portal_socials TEXT NOT NULL DEFAULT ''`,
+		// N°136 — slides du carrousel commercial du portail captif (JSON
+		// ["url",…] ≤ 3 URLs https ; pattern colonnes à-plats du repo).
+		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS portal_slides TEXT NOT NULL DEFAULT ''`,
 		// N°56 — clé publique du portail (analytics pré-auth) : générée
 		// une fois par compte côté Go (ensureSettings), simple TEXT.
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS portal_key TEXT NOT NULL DEFAULT ''`,

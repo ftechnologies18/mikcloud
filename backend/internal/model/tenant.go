@@ -44,6 +44,10 @@ type Tenant struct {
 	// Promos produits — JSON [{title,desc,imageUrl,priceLabel}] ≤ 6 items
 	// (structurés, persistés en string : pattern N°55, pas de table dédiée).
 	PortalPromos string `json:"portalPromos,omitempty"`
+	// N°136 — slides du carrousel commercial — JSON ["url", …] ≤ 3 URLs https
+	// (images R2 via /api/media). Remplace les 3 images génériques pub1/2/3
+	// du portail captif ; vide = images par défaut du template.
+	PortalSlides string `json:"portalSlides,omitempty"`
 	// Liens réseaux sociaux — JSON [{label,url}] ≤ 4 (WhatsApp, Facebook…).
 	PortalSocials string `json:"portalSocials,omitempty"`
 	// N°56 — clé publique du portail (16 hex, générée une fois par compte) :

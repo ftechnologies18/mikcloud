@@ -1145,6 +1145,9 @@ export interface AppSettings {
     portalWelcome?: string;
     /** N°55 : promos produits — JSON string [{id?,title,desc,imageUrl,priceLabel,link?}] ≤ 6. */
     portalPromos?: string;
+    /** N°136 : slides du carrousel commercial — JSON string ["url",…] ≤ 3 URLs
+     * https (R2). Remplace les 3 images génériques du portail captif. */
+    portalSlides?: string;
     /** N°55 : liens réseaux sociaux — JSON string [{label,url}] ≤ 4. */
     portalSocials?: string;
     /** N°56 : clé publique du portail (analytics pré-auth) — 16 hex, générée

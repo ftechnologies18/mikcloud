@@ -107,6 +107,11 @@ type PortalConfig struct {
 	Welcome string `json:"portalWelcome,omitempty"`
 	// Promos — vitrine produits de l'établissement (≤ 6, validées côté API).
 	Promos []PortalPromo `json:"portalPromos,omitempty"`
+	// N°136 — slides du carrousel COMMERCIAL : URLs https (R2 via /api/media)
+	// qui remplacent les 3 images génériques pub1/2/3 du slider. ≤ 3 entrées,
+	// validées côté API. Vide/absent = images par défaut du template (les
+	// portails déployés avant N°136 ignorent le champ sans erreur).
+	Slides []string `json:"portalSlides,omitempty"`
 	// Socials — liens réseaux sociaux (≤ 4, https, validés côté API).
 	Socials []PortalSocial `json:"portalSocials,omitempty"`
 	// N°56 — clé publique du portail (analytics) : résout le compte pour

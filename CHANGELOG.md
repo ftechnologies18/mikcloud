@@ -5,6 +5,99 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-17 — N°136 — Slides du carrousel commercial : chaque gérant remplace les 3 visuels publicitaires génériques du portail captif depuis la console (Paramètres → Hotspot → Expérience)
+
+### N°136 — Contexte : retour utilisateur
+Renumérotation : N°135 pris par le logo du portail captif (83ee601 — bloc
+logo cloud + sig v2 de re-déploiement automatique) pendant que ce travail
+attendait son push — il devient N°136.
+« Comment chaque client peut changer les 3 slides sur le portail captif
+depuis le frontend ? » — le portail commercial affiche par défaut trois
+visuels publicitaires génériques (img/pub1/2/3.jpg du template, carrousel
+Swiper) ; aucun chemin de console ne permettait de les personnaliser. La
+bannière (N°45) et la vitrine hospitalité (N°55) avaient leur carte
+Paramètres, pas le carrousel du mode commercial — le trou de la famille.
+
+### Produit — la carte « Portail : images du carrousel »
+- CONSOLE (onglet Expérience de la vue Hotspot, entre la bannière N°45 et le
+  mode hospitalité N°55) : jusqu'à 3 slots image, téléversement vers R2 via
+  `POST /api/media` (URL https permanente, même flux que bannière/promos —
+  ≤ 2 Mo, type image sniffé), remplacement slot par slot, suppression par
+  slot, compteur n/3, sauvegarde `PUT /api/settings` (corps défensif plats +
+  nested `tenant{…}`, pattern VoucherCard) puis invalidation du cache
+  settings. Retrait de toutes les images = retour aux visuels génériques.
+- VALIDATION SERVEUR (matrice bannière N°45) : `portalSlides` accepte ≤ 3
+  URLs `https://` de ≤ 300 car. (même plafond que les images de promos) ;
+  4 slides → 400, `http://`/`javascript:`/relatif → 400, entrées vides
+  ignorées, liste vide = effacement (retour aux défauts), `nil` = inchangé.
+- PORTAIL (login.html) : `applySlides(cfg)` remplace le contenu du
+  `.swiper-wrapper` par les images du gérant — idempotent par signature
+  d'état (`data-mik-slides` : le fetch live N°48 peut rappeler applyConfig
+  sans re-rendu superflu), restaure les visuels pub1/2/3 quand la config se
+  vide (un portail déjà ouvert se corrige en direct), échappe chaque URL
+  (`escapeHtml` — aucune injection), et duplique une image unique (le mode
+  loop de Swiper exige ≥ 2 slides — même visuel, zéro différence pour
+  l'invité). L'instance Swiper est exposée (`window.mikSwiper`) pour le
+  `update()`/`slideTo(0)` après réécriture (`observer:true` reste le filet).
+- CONFIG (deux chemins couverts) : `PortalConfig.Slides` est servi par le
+  servage routeur (`/portal/{token}/login.html`, config figée au moment du
+  déploiement du portail sur le routeur) ET par le fetch live (N°48,
+  `GET /api/wifi/site/{slug}/portal`).
+- PROPAGATION AUTOMATIQUE (intégration à la sig v2 du N°135) :
+  `portalSlides` rejoint `portalBrandingFingerprint` — la règle du contrat
+  y est explicite (« si un champ rejoint la config du portail sans rejoindre
+  cette empreinte, le portail déployé garderait une valeur périmée sans
+  jamais se re-déployer ») : changer les slides en console change la sig →
+  re-déploiement du portail au check-in suivant (≤ 45 s), pour TOUS les
+  routeurs du compte — même pure-vouchers (sans site WiFi, donc sans fetch
+  live). Et comme le CONTENU du template change aussi (applySlides),
+  `hotpage.Sig` change → les portails déployés AVANT ce commit reçoivent le
+  nouveau template automatiquement au check-in suivant : zéro manipulation
+  manuelle, l'astuce console dit simplement « le portail se met à jour au
+  check-in suivant ».
+
+### Technique
+Backend — model/tenant.go (`PortalSlides string`, JSON `["url",…]` ≤ 3,
+pattern N°55 des listes sérialisées), store/pg_schema.go (colonne à-plat
+`settings.portal_slides` TEXT NOT NULL DEFAULT '', migration boot
+idempotente), pg_load.go + pg_sync.go (lecture/synchronisation, placeholder
+$34), api/handlers_settings.go (champ plat + nested `tenantPut`, validation
+stricte, application nil-sûre), api/portal_serve.go (`portalSlidesList` :
+décodage DÉFENSIF au servage — JSON invalide/vide/non-https → nil, plafond 3
+RE-VÉRIFIÉ, défense en profondeur contre une ligne héritée d'un appel API
+direct ; branché dans `buildPortalConfig` ET `buildPortalConfigForSite`),
+hotpage/templatize.go (`PortalConfig.Slides []string`, omitempty — absent
+des configs pré-N°136), hotpage/template/login.html (applySlides +
+mikSwiperRefresh + instance globale), api/hotspot_files.go
+(`t.PortalSlides` rejoint portalBrandingFingerprint — la sig v2 du N°135
+déclenche le re-déploiement au changement d'images). Frontend —
+components/hotspot/parts/hotspot-cards.tsx (carte PortalSlidesCard : état
+local dérivé de `tenant.portalSlides`, upload R2 par slot, bouton
+« Ajouter une image » pour le prochain slot libre), lib/hotspot/types.ts
+(`AppSettings.tenant.portalSlides?: string`), i18n fr/en (8 clés
+`settings.slides.*`).
+
+### Vérifié
+- gofmt vide, go vet OK, go build OK, go test 12 paquets VERTS — dont
+  portal_slides_test.go NOUVEAU : TestPortalSlidesList (11 cas de décodage :
+  vide/invalide/objet → nil, http filtré, espaces trimés, plafond 3
+  re-vérifié), TestSettingsPortalSlidesValidation (matrice PUT : défaut
+  absent, 3 URLs persistées puis relues par GET, 4 slides → 400, schémas
+  interdits → 400, URL > 300 car. → 400, entrées vides ignorées, liste vide
+  = effacement), TestPortalServeSlides (la config JSON du login.html servi
+  embarque portalSlides — chemin routeur), TestWifiPortalSlides (le fetch
+  live porte les slides — chemin hybride), TestEnsureHotspotFilesLockedSlides
+  (poser les slides change la sig → la commande hotspot_files est re-filée —
+  la promesse de propagation automatique est gardée par test).
+- eslint 0, tsgo 0. Correctif attrapé par relecture AVANT commit : la carte
+  utilisait `t("settings.save")` (clé inexistante) au lieu de
+  `t("common.save")` utilisé par toutes les cartes sœurs.
+
+### Docs
+CHANGELOG N°136 + CONTRACT-V2 §N°136 (contrat de validation, contrat de
+servage/défense en profondeur, comportement du template par ancien/nouveau
+portail).
+
 ## 2026-09-17 — N°135 — Le portail captif porte le logo du client : le logo d'un autre établissement chassé du template (bloc logo cloud + initiale du tenant), re-déploiement automatique au changement de branding (sig v2)
 
 ### N°135 — Contexte : trois causes pour un logo qui n'était pas le bon
@@ -28,7 +121,6 @@ gofmt vide, go vet OK, go build OK, go test 11 paquets VERTS (dont 4 tests N°13
 
 ### Leçon
 Un « défaut » n'est neutre que s'il n'appartient à personne : le logo par défaut d'un template multi-client doit être une abstraction (initiale, glyphe), jamais l'asset du premier client qui a servi de référence — chaque déploiement suivant en fait de la publicité gratuite au mauvais destinataire. Et une signature de déploiement qui n'inclut pas les données personnalisées ferme la boucle AVANT les personnalisations : le template se met à jour tout seul, l'image de marque jamais.
-
 
 ## 2026-09-17 — N°134 — Localisation : « le serveur Vercel en Europe » — c'était déjà le cas (toute la stack est à Francfort), et le choix devient du CODE : la région des fonctions Vercel est épinglée à fra1 dans frontend/vercel.json
 

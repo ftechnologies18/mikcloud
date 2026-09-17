@@ -138,6 +138,44 @@ func TestEnsureHotspotFilesLockedBrandingChange(t *testing.T) {
 	}
 }
 
+// TestEnsureHotspotFilesLockedSlides — N°136 : poser les slides du carrousel
+// commercial en console change la sig (portalSlides rejoint
+// portalBrandingFingerprint) → la commande hotspot_files est re-filée au
+// check-in suivant : les nouvelles images atteignent le portail déployé
+// SANS manipulation manuelle, routeurs pure-vouchers inclus.
+func TestEnsureHotspotFilesLockedSlides(t *testing.T) {
+	st, _ := newTestServerWithStore(t)
+	st.Lock()
+	db := st.Data()
+	db.Accounts = append(db.Accounts, model.Account{ID: "acc-slides", Name: "Cyber Slides"})
+	db.Routers = append(db.Routers, model.Router{
+		ID:             "r-slides",
+		AccountID:      "acc-slides",
+		Name:           "SlidesRouter",
+		Mode:           "agent",
+		Status:         "online",
+		AgentTokenHash: agent.HashToken("tok-slides-sig"),
+	})
+	router := &db.Routers[len(db.Routers)-1]
+	// Portail « déployé » : sig posée à la valeur courante (fichiers + branding).
+	router.HotspotFilesSig = hotspotFilesSig(hotpage.DefaultFiles(), db, router)
+	ensureHotspotFilesLocked(db, router)
+	if n := countHotspotCmds(db, router.ID); n != 0 {
+		st.Unlock()
+		t.Fatalf("sig à jour : 0 commande attendue, %d trouvées", n)
+	}
+	// Le gérant pose SES images de carrousel en console (carte Expérience).
+	s := db.SettingsByAccount["acc-slides"]
+	s.Tenant.PortalSlides = `["https://pub-abc.r2.dev/slides/ete.jpg"]`
+	db.SettingsByAccount["acc-slides"] = s
+	ensureHotspotFilesLocked(db, router)
+	n := countHotspotCmds(db, router.ID)
+	st.Unlock()
+	if n != 1 {
+		t.Fatalf("changement de slides : 1 commande de re-déploiement attendue, %d trouvée(s)", n)
+	}
+}
+
 // TestPortalServeOK — GET /portal/{token}/login.html sert le fichier avec le
 // Content-Type HTML, et un token valide donne accès à tous les fichiers du
 // template (texte + binaire).

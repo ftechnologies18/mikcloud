@@ -106,6 +106,7 @@ func portalBrandingFingerprint(db *model.DB, router *model.Router) string {
 		t.PortalWelcome,
 		t.PortalPromos,
 		t.PortalSocials,
+		t.PortalSlides, // N°136 — slides du carrousel : servies dans la config, donc dans la sig
 		t.PortalKey,
 		strconv.Itoa(t.LogRetentionDaysEffective()),
 		getEnv("APP_PUBLIC_URL"),

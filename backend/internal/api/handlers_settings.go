@@ -44,6 +44,8 @@ type tenantPut struct {
 	PortalWelcome *string            `json:"portalWelcome"`
 	PortalPromos  *[]portalPromoReq  `json:"portalPromos"`
 	PortalSocials *[]portalSocialReq `json:"portalSocials"`
+	// N°136 — repli nested des slides du carrousel commercial (cf. req plat).
+	PortalSlides *[]string `json:"portalSlides"`
 	// N°65 — rétention du journal utilisateurs (repli nested du champ plat :
 	// 30/60/90 j, défaut 90).
 	LogRetentionDays *int `json:"logRetentionDays"`
@@ -93,6 +95,9 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		PortalWelcome *string            `json:"portalWelcome"`
 		PortalPromos  *[]portalPromoReq  `json:"portalPromos"`
 		PortalSocials *[]portalSocialReq `json:"portalSocials"`
+		// N°136 — slides du carrousel COMMERCIAL du portail captif : URLs
+		// https (R2 via /api/media) qui remplacent les 3 pub génériques.
+		PortalSlides *[]string `json:"portalSlides"`
 		// N°65 — rétention du journal utilisateurs (30/60/90 j ; nil = inchangé,
 		// défaut effectif 90).
 		LogRetentionDays *int `json:"logRetentionDays"`
@@ -116,6 +121,8 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	// N°55 — résolution plat > imbriqué des champs hospitalité.
 	portalStyle, portalWelcome := req.PortalStyle, req.PortalWelcome
 	portalPromos, portalSocials := req.PortalPromos, req.PortalSocials
+	// N°136 — même résolution pour les slides du carrousel commercial.
+	portalSlides := req.PortalSlides
 	// N°65 — même résolution plat > imbriqué pour la rétention du journal.
 	logRetentionDays := req.LogRetentionDays
 	if req.Tenant != nil {
@@ -163,6 +170,9 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		}
 		if portalSocials == nil {
 			portalSocials = req.Tenant.PortalSocials
+		}
+		if portalSlides == nil {
+			portalSlides = req.Tenant.PortalSlides
 		}
 		if logRetentionDays == nil {
 			logRetentionDays = req.Tenant.LogRetentionDays
@@ -326,6 +336,41 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		}
 		socialsJSON = v
 	}
+	// N°136 — validation des slides du carrousel commercial : ≤ 3 URLs https
+	// (images R2 via /api/media), chacune ≤ 300 car. (même règle que les images
+	// de promos). Liste vide = retour aux 3 images génériques du template.
+	var slidesJSON string
+	if portalSlides != nil {
+		list := *portalSlides
+		if len(list) > 3 {
+			writeErr(w, http.StatusBadRequest, "Slides invalides : au plus 3 slides")
+			return
+		}
+		out := make([]string, 0, len(list))
+		for _, it := range list {
+			u := strings.TrimSpace(it)
+			if u == "" {
+				continue // entrée vide ignorée (la console n'en envoie pas)
+			}
+			if !strings.HasPrefix(u, "https://") {
+				writeErr(w, http.StatusBadRequest, "Slides invalides : URL https:// requise")
+				return
+			}
+			if len(u) > 300 {
+				writeErr(w, http.StatusBadRequest, "Slides invalides : URL trop longue")
+				return
+			}
+			out = append(out, u)
+		}
+		if len(out) > 0 {
+			b, err := json.Marshal(out)
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, "Slides invalides : "+err.Error())
+				return
+			}
+			slidesJSON = string(b)
+		} // liste vidée = slides retirées → retour aux images par défaut
+	}
 	if expiryAfterDays != nil && (*expiryAfterDays < 0 || *expiryAfterDays > 365) {
 		writeErr(w, http.StatusBadRequest, "Le nombre de jours doit être compris entre 0 et 365")
 		return
@@ -378,6 +423,11 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if portalSocials != nil {
 		settings.Tenant.PortalSocials = socialsJSON
+	}
+	// N°136 — application des slides du carrousel commercial (nil = inchangé,
+	// liste vide = retour aux images génériques pub1/2/3 du template).
+	if portalSlides != nil {
+		settings.Tenant.PortalSlides = slidesJSON
 	}
 	if expiryMode != nil {
 		settings.Tenant.ExpiryPolicyMode = *expiryMode

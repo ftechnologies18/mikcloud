@@ -2215,6 +2215,58 @@ Migration boot idempotente : `settings.portal_style`, `portal_welcome`,
   injection vitrine (bienvenue, promos avec images R2, socials) ; commercial =
   retrait des injections et dé-masquage (réversible, idempotent).
 
+## N°136 — Slides du carrousel commercial du portail captif
+
+### Modèle (ajout Tenant)
+```go
+Tenant.PortalSlides  string // JSON ["url",…] ≤ 3 URLs https ≤ 300 car. (validé API)
+```
+Migration boot idempotente : `settings.portal_slides` (TEXT NOT NULL
+DEFAULT '') — pattern colonne à-plat, aucun changement de table.
+
+### Contrat de validation (PUT /api/settings)
+- Reçoit `portalSlides` ([]string) — plats + nested `tenant{…}`, plat prime.
+- ≤ 3 entrées ; chaque URL `https://` ≤ 300 car. (même plafond que les
+  images de promos N°55) ; `http://`/schémas relatifs → 400 ; entrées vides
+  ignorées ; `nil` = inchangé ; liste vide = effacement (retour aux visuels
+  génériques pub1/2/3 du template).
+- Persistance : JSON sérialisé dans la colonne à-plat (pattern N°55 des
+  listes du tenant) ; le champ RÉPONSE voyage comme chaîne JSON — le client
+  fait `JSON.parse`.
+
+### Contrat de servage (défense en profondeur)
+- `portalSlidesList(tenant)` décode AU SERVAGE : JSON invalide/vide, objet,
+  URLs non-https ou liste vide → `nil` (le portail garde ses images par
+  défaut, JAMAIS cassée) ; plafond 3 RE-VÉRIFIÉ au décodage (une ligne
+  héritée d'un appel API direct ne peut pas gonfler le carrousel) ; espaces
+  trimés.
+- `PortalConfig.Slides []string` (`portalSlides`, omitempty — absent des
+  configs pré-N°136) : servi par `/portal/{token}/login.html` (config figée
+  au déploiement du portail sur le routeur) ET par le fetch live N°48
+  (`GET /api/wifi/site/{slug}/portal`).
+
+### Comportement du template (login.html)
+- `applySlides(cfg)` — étape 7 d'applyConfig, AVANT le mode hospitalité
+  (N°55 ; en hospitalité le slider est masqué de toute façon). Remplace le
+  contenu de `.promo-slider .swiper-wrapper` par les images du gérant,
+  échappées par `escapeHtml`. Idempotent par signature d'état
+  (`data-mik-slides`) — le fetch live peut rappeler applyConfig sans
+  re-rendu superflu. Config vidée → restaure les visuels génériques
+  (marqueur `data-mik-custom`). Une image unique est dupliquée (Swiper loop
+  exige ≥ 2 slides). `window.mikSwiper` (instance exposée à l'init) permet
+  `update()`/`slideTo(0)` après réécriture ; `observer:true` reste le filet.
+- Propagation automatique : `t.PortalSlides` rejoint
+  `portalBrandingFingerprint` (sig v2 du N°135 — la règle « si un champ
+  rejoint la config du portail sans rejoindre cette empreinte… » s'applique
+  mot pour mot) : changer les slides en console change la sig →
+  re-déploiement au check-in suivant (≤ 45 s), routeurs pure-vouchers
+  inclus. Le changement de CONTENU du template (applySlides) change
+  `hotpage.Sig` → les portails déployés avant ce commit reçoivent le
+  nouveau template automatiquement — zéro manipulation manuelle. Un
+  portail déjà OUVERT dans le navigateur d'un invité se corrige par le
+  fetch live (N°48) ; l'ancien template (pré-N°136) ignorait simplement le
+  champ (`undefined` → aucun changement — jamais cassé).
+
 ## N°56 — Analytics du portail (impressions / clics par promo)
 
 ### Modèle

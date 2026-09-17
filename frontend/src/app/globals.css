@@ -889,8 +889,19 @@ html:not(.dark) .login-brand .glass-chip {
  * le contenu prérendu de la landing reste donc invisible pendant la fenêtre
  * pré-hydratation (fond nuit identitaire à la place). Dès la première
  * interface React rendue — login ou console selon la session — page.tsx pose
- * .pwa-ready et la landing redevient affichable (accessible via « Retour »). */
-html.pwa-standalone:not(.pwa-ready) main {
+ * .pwa-ready et la landing redevient affichable (accessible via « Retour »).
+ * N°141 — la règle ne cible PLUS tous les <main> mais UNIQUEMENT la vitrine
+ * (ancre .mik-landing-shell posée par page.tsx) : l'ancienne forme
+ * `html.pwa-standalone:not(.pwa-ready) main` voilait /login, /app/*, /sell,
+ * /join/*, /wifi/*, /reset-password et /legal/* à CHAQUE chargement direct
+ * (réouverture Android/iOS après kill du renderer — la dernière URL est
+ * restaurée —, actualisation, lien externe) alors que seule la route / pose
+ * .pwa-ready : le <main> de ces routes restait visibility:hidden pour
+ * toujours → page vide, le bug « reste blanche à la réouverture ». Le script
+ * inline du layout pose en outre pwa-ready de toute façon après 6 s — si
+ * React ne monte jamais (JS en échec), la vitrine est révélée au lieu d'un
+ * écran vide éternel. */
+html.pwa-standalone:not(.pwa-ready) .mik-landing-shell {
   visibility: hidden;
 }
 

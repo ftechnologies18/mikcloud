@@ -5,6 +5,109 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-17 — N°141 — Audit expert PWA : les pages blanches à la réouverture de l'app et à l'actualisation éradiquées (masquage anti-flash rescopé à la vitrine + garde-fou 6 s, navigations du service worker toutes bornées avec repli shell offline, frontières d'erreur racine, recharge unique sur échec de chunk)
+
+### N°141 — Contexte : « les pages qui ne s'affichent plus, qui restent blanches à la réouverture de l'app ou lorsqu'on actualise la page »
+Renumérotation : N°138 pris par le bandeau animé du portail captif (6372f66 — ticker
+{{MIKCLOUD_TICKER_JSON}}), puis N°139 (WhatsApp support) et N°140 (refonte UX de l'onglet
+Expérience) poussés par des sessions parallèles pendant que ce travail attendait son push —
+il devient N°141.
+Demande utilisateur : audit PWA en profondeur d'expert + plan d'amélioration, ciblé sur ce symptôme.
+L'audit a remonté TROIS familles de causes, dont une cause racine matching EXACT du signalement.
+
+### Diagnostic — la cause racine (P0) : le masquage anti-flash PWA voilait TOUT sauf la seule page qui se révèle
+Le mécanisme N°8 anti-flash de landing fonctionnait ainsi : un script inline du layout racine pose
+`.pwa-standalone` sur `<html>` AVANT le premier paint à CHAQUE chargement de document en mode standalone
+(TOUTES routes) ; la règle `html.pwa-standalone:not(.pwa-ready) main { visibility: hidden }` voilait donc
+le HTML prérendu ; SEULE la route `/` (page.tsx) pose `.pwa-ready` (au montage React). Or HUIT routes
+rendent un `<main>` : `/` (vitrine), `/login`, `/app/*` (console), `/sell` (Mode Vente), `/join/[token]`,
+`/wifi/[slug]`, `/reset-password`, `/legal/*`. En mode standalone, un chargement DIRECT de l'une des sept
+autres — réouverture après kill du renderer par Android/iOS (le système RESTAURE la dernière URL : le
+comptoir /sell du revendeur, la console du gérant), actualisation (pull-to-refresh/menu), lien externe —
+pose `.pwa-standalone` mais jamais `.pwa-ready` : le `<main>` de la route reste `visibility:hidden`
+POUR TOUJOURS → écran vide (fond nuit perçu « blanc »), sans aucun chemin de sortie. Le lancement par
+icône (start_url `/`) marche, d'où un bug intermittent précisément « à la réouverture ». Cas aggravé :
+si en plus le bundle JS échoue (réseau faible au moment de la réouverture), même `/` ne pose jamais
+`pwa-ready` → écran vide éternel, AUCUNE récupération.
+
+### Diagnostic — les deux familles complémentaires
+(P1) Navigations du service worker network-first SANS délai hors /sell : derrière un portail captif — le
+cas d'usage CENTRAL de MikCloud, le téléphone du revendeur vit sur le hotspot qu'il vend — un fetch de
+navigation peut PENDRE 75 s+ sans rejeter (documenté par le N°61 pour /sell mais corrigé uniquement pour
+/sell) : pendant toute l'attente la navigation n'est pas commise → écran vide. (P1) AUCUNE frontière
+d'erreur dans src/app/ : Next.js n'en installe pas en production — toute erreur de rendu client non
+attrapée démonte l'arbre React → page blanche, zéro récupération. (P2) Précachage SW atomique
+(`cache.addAll`) : un seul précaché indisponible au moment de l'install faisait échouer TOUT l'install →
+zéro repli offline. (P2) skipWaiting + purge des caches à l'activate : une session OUVERTE pendant un
+déploiement demande un chunk de l'ancien build → 404 Vercel → import dynamique rejeté → vue morte.
+Audité SAIN par ailleurs : manifeste N°60 (id stable, launch_handler, raccourcis, captures), offline.html
+(statique, autonome, jamais masqué — n'embarque pas le layout), file IndexedDB R6 (idempotente, ne
+rejette jamais), timeouts API N°78 partout, 401 → logout sans boucle de redirection, jambe /api jamais
+cachée, cache versionné N°59 avec purge bornée, registration.update() au focus (30 min).
+
+### Produit — N°141-A : le voile ne couvre plus que la vitrine, et se lève toujours
+(1) La règle globals.css devient `html.pwa-standalone:not(.pwa-ready) .mik-landing-shell` : seule la
+vitrine (ancre posée par page.tsx, la seule page qui possède ET l'ancre ET le posage de pwa-ready) est
+voilée pendant la fenêtre pré-hydratation. /login, /app/*, /sell, /join/*, /wifi/*, /reset-password et
+/legal/* s'affichent normalement en standalone — leur SSR est le ShellFallback (spinner sur fond nuit),
+précisément le comportement natif voulu. (2) Filet de sécurité : le script inline du layout pose
+`pwa-ready` de TOUTE FAÇON après 6 s — si React ne monte jamais (JS en échec), la vitrine est révélée
+au lieu d'un écran vide éternel (idempotent avec le posage React ; la fenêtre anti-flash normale est
+≪ 2 s). Comportement inchangé partout où l'ancien mécanisme marchait (lancement par icône : zéro flash
+de landing).
+
+### Produit — N°141-B : le service worker ouvre une page, jamais un écran vide
+(1) TOUTES les navigations (mode navigate) passent par `shellNavigation(request, délai)` : network-first
+BORNÉE — 4 s pour /sell (N°61 inchangé), 10 s pour les autres (généreux pour une 2G légitime, trop court
+pour pendre 75 s) — puis repli sur le SHELL DE L'URL EXACTE en cache, puis offline.html. (2) Chaque
+navigation réseau réussie (2xx non-redirigée) est copiée en cache (mécanique /sell du N°61 généralisée) :
+/, /login, /app/<vue>… deviennent ouvrables hors ligne — le shell hydraté prend le relais côté client
+(snapshots localStorage, file IndexedDB, replay 60 s). Les réponses d'erreur réseau (404/500) restent
+servies telles quelles (honnêtes) et n'entrent jamais au cache. (3) Précachage TOLÉRANT : chaque entrée
+est posée indépendamment (`cache.add` individuels) — un /sell momentanément indisponible à l'install
+n'emporte plus offline.html ; `/login` rejoint le PRECACHE (destination n°1 de la PWA offline). Jambe
+/api inchangée : JAMAIS cachée.
+
+### Produit — N°141-C : plus aucune page blanche sans sortie de secours
+(1) `src/app/error.tsx` (NOUVEAU) : frontière d'erreur racine des segments — écran autonome fond nuit
+(aucune dépendance au store/providers), bilingue compact FR/EN, deux sorties : « Réessayer » (reset() du
+segment) et « Accueil » (navigation DURE volontaire — un document neuf, pas la pile cassée). (2)
+`src/app/global-error.tsx` (NOUVEAU) : dernier filet si le LAYOUT RACINE crashe — embarque ses propres
+<html>/<body>/styles inline (la pile est suspecte), mêmes deux sorties. (3) `src/app/not-found.tsx`
+(NOUVEAU) : 404 cohérente avec l'identité (fond nuit, retour accueil qui re-déclenche les gardes de
+session). (4) `src/components/chunk-reload-guard.tsx` (NOUVEAU, monté au layout) : recharge UNIQUE de la
+page sur échec de chunk (déploiement pendant une session ouverte + purge des caches à l'activate →
+/_next/static/<ancien-hash> 404) — écouteur « error » en CAPTURE (les échecs <script>/<link> ne
+bouillonnent pas) filtré sur les src/href /_next/ + « unhandledrejection » filtré sur les messages
+d'import dynamique des trois moteurs ; garde-fou sessionStorage anti-boucle (une seule recharge par
+session ; si le chunk échoue toujours, la frontière d'erreur prend le relais).
+
+### Technique
+Frontend uniquement, ZÉRO route, ZÉRO API (CONTRACT-V2 inchangé), zéro backend : page.tsx (ancre
+mik-landing-shell), globals.css (règle rescopée + commentaire de diagnostic), layout.tsx (garde-fou 6 s
+dans PWA_BOOT_SCRIPT + montage ChunkReloadGuard), sw.js/route.ts (shellNavigation unifiée bornée + mise
+en cache des navigations réussies + précachage tolérant + /login au PRECACHE), error.tsx + global-error.tsx
++ not-found.tsx (NOUVEAUX), chunk-reload-guard.tsx (NOUVEAU).
+
+### Vérifié
+eslint 0 (navigation dure de error.tsx documentée + règle désactivée localement — intention : document
+neuf en sortie d'erreur), tsgo 0. Smoke navigateur (next dev) : la règle servie cible .mik-landing-shell
+et ne masque plus les <main> de /login /app /sell ; simulation standalone (classe pwa-standalone posée)
+— /login et /sell affichent leur contenu, la vitrine seule se voile sans pwa-ready et se révèle avec ;
+/sw.js servi avec la nouvelle logique bornée ; production après push : CI 5/5, Vercel LIVE, CSS et SW
+vérifiés servis.
+
+### Leçon
+Un mécanisme de masquage CSS piloté par UNE page mais appliqué à TOUTES est une bombe à retardement :
+chaque nouvelle route rendue directement (restauration Android/iOS de la dernière URL, actualisation,
+lien externe) hérite du voile sans hériter de la révélation. La portée d'un masquage pré-hydratation
+doit être ancrée sur la SEULE page concernée (classe dédiée), jamais sur un sélecteur générique (main)
+— et tout mécanisme « en attente de React » a besoin d'un garde-fou horloge : si React ne vient pas, le
+contenu s'affiche quand même. Règle générale PWA : chaque état d'attente doit avoir une limite, chaque
+échec un écran, chaque écran une sortie.
+
+---
+
 ## 2026-09-17 — N°140-fix : barre d'action N°140 en mobile — le compteur sur SA ligne (une, pas trois), les boutons partagent la suivante
 
 ### N°140-fix — Contexte : le compteur plié en trois lignes à 390 px
@@ -74,8 +177,7 @@ Backend : `model/tenant.go` (+`PortalTicker` JSON string, pattern N°55 sans tab
 gofmt vide, go vet OK, go build OK, go test 11 paquets VERTS (dont 9 tests N°138 nouveaux, verbose PASS) ; frontend eslint 0, tsgo 0 ; node --check sur les 3 blocs `<script>` de login.html PERSONNALISÉ (défauts + tenant hostile : 3/3 — le marqueur nu n'est pas du JS valide par design, il est substitué au serve) ; scan mojibake 0 sur tout le diff (backend édité en octet-précis via scripts Python à ancres uniques assertées — discipline N°128).
 
 ### Leçon
-Un template multi-client ne doit porter AUCUNE chaîne de présentation en dur — même « neutre », même « générique » : le message sous le logo était le seul branding figé restant parce qu'il semblait inoffensif. Et quand un marqueur atterrit DANS DU JS (pas dans du HTML), la vérification syntaxique doit porter sur la sortie PERSONNALISÉE (ce qui part en production), pas sur le template brut — et l'échappement doit rester celui d'encoding/json (`\u003c`), le seul qui empêche à la fois la sortie de `<script>` et la casse de la syntaxe.
----
+Un template multi-client ne doit porter AUCUNE chaîne de présentation en dur — même « neutre », même « générique » : le message sous le logo était le seul branding figé restant parce qu'il semblait inoffensif. Et quand un marqueur atterrit DANS DU JS (pas dans du HTML), la vérification syntaxique doit porter sur la sortie PERSONNALISÉE (ce qui part en production), pas sur le template brut — et l'échappement doit rester celui d'encoding/json (`\u003c`), le seul qui empêche à la fois la sortie de `<script>` et la casse de la syntaxe.---
 
 ## 2026-09-17 — N°137 — Les « Nos Services » du portail captif pilotés en console : les 4 services codés en dur chassés du template (bloc services cloud + whitelist d'icônes), re-déploiement automatique au changement
 

@@ -4,6 +4,7 @@ import { ThemeProvider } from "next-themes";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 import { PWARegister } from "@/components/pwa-register";
+import { ChunkReloadGuard } from "@/components/chunk-reload-guard";
 import VitalsReporter from "@/components/perf/vitals-reporter";
 import { QueryProvider } from "@/lib/hotspot/query";
 
@@ -58,7 +59,15 @@ const PWA_BIP_SCRIPT = `try{addEventListener("beforeinstallprompt",function(e){e
 // prérendu de la vitrine pendant la fenêtre pré-hydratation : la PWA
 // s'ouvre sur le fond nuit puis révèle l'écran de connexion (ou la console
 // si une session est active) — zéro flash de landing, rendu natif.
-const PWA_BOOT_SCRIPT = `try{if(matchMedia("(display-mode: standalone)").matches||navigator.standalone===true){document.documentElement.classList.add("pwa-standalone")}}catch(e){}`;
+//
+// N°141 — filet de sécurité 6 s : pwa-ready est posé de TOUTE FAÇON après
+// 6 s, même si React ne monte jamais (bundle JS en échec sur réseau faible,
+// crash avant hydratation). Avant ce garde-fou, un JS qui ne démarrait pas
+// laissait la vitrine voilée À VIE — écran vide sans aucune récupération.
+// Les 6 s couvrent la fenêtre anti-flash normale (montage React ≪ 2 s sur
+// le matériel cible) ; passé ce délai, mieux vaut montrer du contenu que
+// rien. Idempotent avec le posage React de page.tsx (classList.add).
+const PWA_BOOT_SCRIPT = `try{if(matchMedia("(display-mode: standalone)").matches||navigator.standalone===true){document.documentElement.classList.add("pwa-standalone");setTimeout(function(){document.documentElement.classList.add("pwa-ready")},6000)}}catch(e){}`;
 
 export const viewport: Viewport = {
   themeColor: [
@@ -118,6 +127,9 @@ export default function RootLayout({
           </QueryProvider>
           <Toaster richColors position="top-right" closeButton />
           <PWARegister />
+          {/* N°141 — recharge unique de la page sur échec de chunk (déploiement
+              pendant une session ouverte) : voir chunk-reload-guard.tsx. */}
+          <ChunkReloadGuard />
           {/* B2 « Speed App UX » — Core Web Vitals réels (LCP/INP/CLS/FCP/
            * TTFB) de tous les usagers vers POST /api/vitals : mesure de la
            * latence perçue (vitrine, login, console, Mode Vente) pour piloter

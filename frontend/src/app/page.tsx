@@ -10,6 +10,14 @@
 // Pendant la fenêtre d'évaluation, la vitrine prérendue reste affichée
 // (aucun flash) ; en PWA standalone, le masquage CSS pwa-standalone s'applique
 // jusqu'au premier rendu React (classe pwa-ready posée ci-dessous).
+//
+// N°141 — la classe mik-landing-shell est le ANCRAGE du masquage PWA : la
+// règle globals.css `html.pwa-standalone:not(.pwa-ready) .mik-landing-shell`
+// ne voile QUE cette vitrine. L'ancienne règle ciblait TOUS les <main> alors
+// que SEULE cette page pose pwa-ready — réouverture Android/iOS sur la
+// dernière URL, actualisation ou lien direct vers /login, /app/*, /sell,
+// /join/*, /wifi/* : le <main> de la route restait visibility:hidden
+// pour toujours → PAGE VIDE. Voir CHANGELOG N°141.
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -47,7 +55,10 @@ export default function Home() {
   if (mounted && (token || isStandalone)) return <ShellFallback />;
 
   return (
-    <main className="min-h-screen">
+    // mik-landing-shell : ancre du masquage pré-hydratation PWA (N°141) —
+    // c'est la SEULE page qui possède ce traitement, et c'est aussi la seule
+    // qui pose pwa-ready : les deux vivot ensemble.
+    <main className="mik-landing-shell min-h-screen">
       <LandingPage
         onSignIn={() => router.push("/login")}
         onSignUp={() => setSignupOpen(true)}

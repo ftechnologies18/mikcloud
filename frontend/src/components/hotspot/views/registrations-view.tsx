@@ -1240,26 +1240,28 @@ export default function RegistrationsView() {
 
       {/* Affiche A4 imprimable (window.print + .print-area, pattern uc-print-dialog) */}
       <Dialog open={posterLink !== null} onOpenChange={(open) => !open && setPosterLink(null)}>
-        <DialogContent className="gap-4 sm:max-w-2xl">
+        {/* N°145 — mobile PWA : flex colonne plafonné à 100dvh, padding
+            réduit sous sm, barre d'outils empilée (pattern N°140-fix). */}
+        <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col gap-4 p-4 sm:max-w-2xl sm:p-6">
           <div className="no-print flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">
               <DialogTitle className="truncate">{t("join.links.poster")}</DialogTitle>
               <DialogDescription className="truncate">{posterLink?.name}</DialogDescription>
             </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <Button variant="outline" onClick={() => setPosterLink(null)}>
+            <div className="flex w-full shrink-0 items-center gap-2 sm:ml-auto sm:w-auto">
+              <Button variant="outline" className="flex-1 sm:flex-none" onClick={() => setPosterLink(null)}>
                 {t("common.close")}
               </Button>
-              <Button onClick={() => window.print()}>
+              <Button className="flex-1 sm:flex-none" onClick={() => window.print()}>
                 <Printer className="size-4" />
                 {t("print.action")}
               </Button>
             </div>
           </div>
 
-          <div className="max-h-[65vh] overflow-y-auto print:max-h-none print:overflow-visible">
+          <div className="min-h-0 flex-1 overflow-y-auto print:max-h-none print:overflow-visible">
             {posterLink && (
-              <div className="print-area mx-auto flex w-full max-w-md flex-col items-center gap-6 rounded-lg bg-white p-8 text-black sm:p-10">
+              <div className="print-area mx-auto flex w-full max-w-md flex-col items-center gap-6 rounded-lg bg-white p-5 text-black sm:p-10">
                 {/* En-tête : organisation + titre */}
                 <div className="flex flex-col items-center gap-2 text-center">
                   <p className="text-2xl font-bold tracking-tight">{tenantName}</p>
@@ -1267,16 +1269,19 @@ export default function RegistrationsView() {
                   <p className="text-4xl font-extrabold tracking-tight">{t("join.poster.title")}</p>
                 </div>
 
-                {/* Grand QR centré (≥ 320 px) */}
+                {/* Grand QR centré (≥ 320 px) — N°145 : fluide sur mobile
+                    (il remplissait 320 px figés dans ~216 px utiles → débordement
+                    horizontal de la modale) ; 320 px rétablis dès que la place
+                    existe (max-w-80), impression inchangée. */}
                 <div
                   role="img"
                   aria-label={tf("join.links.qrAlt", { name: posterLink.name })}
-                  className="p-2"
+                  className="w-full max-w-80 p-2"
                 >
                   {origin ? (
-                    <QRCodeSVG value={joinUrl(posterLink)} size={320} level="M" className="size-80" />
+                    <QRCodeSVG value={joinUrl(posterLink)} size={320} level="M" className="h-auto w-full" />
                   ) : (
-                    <div className="size-80" />
+                    <div className="aspect-square w-full" />
                   )}
                 </div>
 

@@ -99,7 +99,9 @@ export function WifiPosterDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md">
+      {/* N°145 — mobile PWA : dvh (le vh saute quand la barre d'URL de la
+          PWA se réduit), padding réduit sous sm pour agrandir le QR. */}
+      <DialogContent className="max-h-[90dvh] overflow-y-auto p-4 sm:max-w-md sm:p-6">
         <DialogHeader>
           <DialogTitle>Affiche QR — {siteName}</DialogTitle>
           <DialogDescription>
@@ -148,7 +150,9 @@ export function WifiPosterDialog({
           </div>
         </div>
         <DialogFooter>
-          <Button onClick={() => window.print()} disabled={missingSsid}>
+          {/* N°145 — bouton pleine largeur sur mobile : cible tactile
+              confortable, cohérent avec les autres dialogs d'impression. */}
+          <Button className="w-full sm:w-auto" onClick={() => window.print()} disabled={missingSsid}>
             <Printer className="size-4" aria-hidden="true" /> Imprimer
           </Button>
         </DialogFooter>

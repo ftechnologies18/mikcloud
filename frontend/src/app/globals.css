@@ -582,6 +582,12 @@ html:not(.dark) .login-brand .glass-chip {
 }
 .tpl-ticket {
   break-inside: avoid;
+  /* N°145 — le ticket ne dépasse JAMAIS son conteneur : en aperçu mobile le
+     dialog fait ~280 px, un ticket thermique 80 mm (76 mm = 287 px) ou un
+     gabarit à largeur figée dépassait de quelques px et créait un scroll
+     horizontal dans la modale. À l'impression, 54/76 mm < 58/80 mm de rouleau. */
+  max-width: 100%;
+  box-sizing: border-box;
 }
 .tpl-format-58mm .tpl-ticket,
 .tpl-format-80mm .tpl-ticket {
@@ -601,6 +607,35 @@ html:not(.dark) .login-brand .glass-chip {
   }
   /* À l'impression, un ticket A4 est confiné à sa cellule : le contenu figé
      trop large est rogné au bord du ticket au lieu de repousser la grille. */
+  .tpl-format-a4 .tpl-ticket {
+    width: 100%;
+    overflow: hidden;
+  }
+}
+
+/* ─── Aperçu d'impression responsive — mobile PWA (N°145) ───
+   Retour utilisateur : sur téléphone, les modales d'impression débordaient et
+   les tickets paraissaient déformés. Cause racine : la grille A4 est planifiée
+   pour 210 mm de PAPIER (a4GridPlan : 3 à 5 colonnes selon le nombre de
+   tickets) mais l'aperçu se rend dans un dialog d'à peine ~280 px — des
+   cellules de 50 à 90 px écrasent texte et QR, le contenu déborde des cadres
+   pointillés. L'APERÇU mobile passe à 2 colonnes pleine taille ;
+   L'IMPRESSION N'EST PAS TOUCHÉE : ce bloc est @media screen uniquement, les
+   règles @media print restent pilotées par --vgrid-cols et styles inline
+   (le !important ci-dessous ne survit pas au média print). */
+@media screen and (max-width: 640px) {
+  .voucher-print-grid,
+  .tpl-format-a4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+  /* La réduction ×0,75 ne sert qu'à caser 4-5 colonnes sur une feuille A4 :
+     à 2 colonnes sur mobile, les tickets reprennent leur taille pleine. */
+  .voucher-print-grid > *,
+  .tpl-format-a4 > .tpl-ticket {
+    zoom: 1 !important;
+  }
+  /* Gabarit à contenu figé (QR, tableaux) : rogné au bord du ticket en aperçu
+     mobile — exactement le comportement déjà appliqué à l'impression. */
   .tpl-format-a4 .tpl-ticket {
     width: 100%;
     overflow: hidden;

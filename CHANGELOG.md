@@ -5,6 +5,91 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-18 — N°145 — Les modales d'impression deviennent réellement responsives en PWA mobile : aperçu 2 colonnes pleine taille, tickets indéformables, dialogues bornés à l'écran (même en paysage), impression papier inchangée
+
+### Contexte
+Retour utilisateur : « sur mobile app PWA la fenêtre modale d'impression ne sont
+pas responsables, débordé, les tickets semblent déformés ». Audit des CINQ
+modales d'impression (gérant uc-print-dialog avec modèles F2, revendeur
+sell-print-dialog, lots batch-print-dialog, affiche QR WiFi wifi-poster-dialog,
+affiche d'inscription registrations-view) contre un backend Go réel (JSON store
+éphémère, 30 vouchers générés — usernames de 12 caractères insécables, pire cas).
+
+### Causes racines (5)
+1. **Grille A4 planifiée pour le papier, pas pour l'écran** : a4GridPlan calcule
+   3 à 5 colonnes pour 210 mm de papier (794 px), rendues dans un dialog d'à
+   peine ~280 px sur téléphone — des cellules de 50 à 90 px écrasaient texte et
+   QR, le contenu débordait des cadres pointillés (tickets « déformés »).
+2. **Aucune protection de wrap sur le ticket standard** : un identifiant
+   monospace insécable (MTC143XXXXXX) ou un nom de tenant long débordait du
+   cadre en pointillés sans jamais revenir à la ligne.
+3. **Largeurs figées débordantes** : le QR `size-80` (320 px) de l'affiche
+   d'inscription vivait dans ~216 px utiles (débordement horizontal de la
+   modale) ; les tickets thermiques 80 mm (76 mm = 287 px) de l'aperçu modèle
+   n'avaient pas de max-width.
+4. **`max-h-[65vh]` dépassait l'écran en paysage** : à 375 px de haut (mobile
+   paysage), en-tête + 65 vh + padding > viewport → le dialogue était rogné
+   sans scroll global (boutons inatteignables).
+5. **Barre d'outils tassée** : formats + Fermer + Imprimer en flex-wrap non
+   maîtrisé se répartissaient sur 2-3 lignes désordonnées selon la largeur.
+
+### Correctifs
+- **Aperçu responsive `@media screen and (max-width: 640px)`** (globals.css) :
+  la grille d'aperçu passe à 2 colonnes pleine taille (`.voucher-print-grid`
+  et `.tpl-format-a4`, !important contre les styles inline), zoom ×0,75
+  neutralisé (rien à réduire à 2 colonnes), gabarits à contenu figé rognés au
+  bord du ticket (comportement déjà appliqué à l'impression).
+  **L'IMPRESSION N'EST PAS TOUCHÉE** : le bloc est `@media screen` uniquement,
+  les règles `@media print` restent pilotées par --vgrid-cols et styles inline.
+- **Ticket standard indéformable** (voucher-ticket-card) : `w-full min-w-0`
+  sur la racine (le ticket suit sa cellule minmax(0,1fr)) + `break-words` sur
+  chaque ligne de texte (tenant, identifiant, mot de passe, profil/prix) — un
+  texte insécable repasse à la ligne au lieu de déborder.
+- **`.tpl-ticket` borné** : `max-width: 100%` de base (le thermique 76 mm ne
+  dépasse plus jamais le dialog ; à l'impression 54/76 mm < 58/80 mm de rouleau).
+- **Dialogues bornés à l'écran** : DialogContent des 4 modales en flex colonne
+  `max-h-[calc(100dvh-2rem)]` + zone d'aperçu `min-h-0 flex-1 overflow-y-auto`
+  (le header et le bouton Imprimer restent visibles pendant le défilement) ;
+  padding réduit `p-4 sm:p-6` sous sm ; wifi-poster passe à `90dvh` (le vh
+  saute quand la barre d'URL de la PWA se réduit).
+- **Barre d'outils empilée** (pattern N°140-fix) : mobile = formats/sélecteur
+  sur SA ligne pleine largeur, Fermer + Imprimer se partagent la suivante
+  (flex-1, cibles tactiles confortables) ; desktop = rangée unique à droite du
+  titre, inchangée.
+- **QR fluide** (affiche d'inscription) : `h-auto w-full max-w-80` — il remplit
+  l'espace disponible sur mobile et retrouve ses 320 px dès que la place existe
+  (impression inchangée) ; fallback `aspect-square w-full`.
+- **Bouton Imprimer pleine largeur** sur mobile dans l'affiche QR WiFi.
+
+### Fidélité
+Zéro route, zéro API, zéro schéma (CONTRACT-V2 inchangé). Mêmes POST
+/api/vouchers/print, mêmes formats mémorisés en localStorage, mêmes modèles
+F2, même @page A4/58 mm/80 mm. Coexistence vérifiée avec le durcissement
+N°144 de ui/dialog.tsx (grid-cols-[minmax(0,1fr)]) : les DialogContent flex
+des modales d'impression restent bornés (tw-merge résout display correctement).
+
+### Renumérotation
+N°143 pris par la mascotte de connexion (996598f) et N°144 par la modale
+Transférer le stock (54ffd6b, sessions parallèles) — ce travail devient N°145.
+
+### Vérifié
+eslint 0, tsgo 0. E2E navigateur contre backend Go réel (compte propriétaire,
+30 vouchers, viewport 390×844 et paysage 844×390) : grille A4 2 colonnes de
+140 px (contre 5×50 px avant), zoom 1 mesuré, 29/29 tickets dans les cadres,
+58 mm = 204 px et 80 mm = 287 px sans débordement, aperçu modèle (renderBatch)
+2 colonnes, paysage dialogue 16→374 ≤ 390 avec aperçu défilant (l'ancien 65vh
+dépassait), barre d'outils 2 rangées propres (3 formats équitables puis
+Fermer/Imprimer 50/50), QR d'inscription fluide à 268 px (contre 320 px
+figés qui débordaient), zéro débordement de page partout, 0 erreur console.
+**Impression prouvée intacte par le pipeline réel** : PDF généré via
+page.pdf (CSS print actifs) — colonnes = --vgrid-cols inline (4 pour le lot
+d'alors), pagination multi-feuilles, VLM « COLUMNS: 4, VERDICT: CLEAN ».
+VLM 5/5 CLEAN (grille A4, thermique 58, paysage, poster QR, merge final).
+Leçon : `matchMedia` sous émulation print de l'outil navigateur ne bascule
+PAS le type média (`print` ne matche pas) — seule la génération PDF réelle
+prouve le rendu papier ; et une grille « adaptative au nombre » doit aussi
+s'adapter au support de son APERÇU (papier vs écran de poche).
+
 ## 2026-09-18 — N°144 — Le débordement de la modale « Transférer le stock » éradiqué sur desktop et mobile : champs et listes contenus dans la carte, méta financière en ligne de contexte, modale bornée à l'écran
 
 ### Contexte

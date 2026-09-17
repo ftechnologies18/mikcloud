@@ -55,29 +55,33 @@ export function VoucherTicketCard({
   const { t, lang: hookLang } = useI18n();
   const effectiveLang = lang ?? hookLang;
   return (
+    // N°145 — durcissement mobile PWA : w-full + min-w-0 (le ticket suit sa
+    // cellule, même minmax(0,1fr) écrasée en aperçu mobile) et break-words sur
+    // chaque ligne de texte : un identifiant/tenant non sécable ne peut plus
+    // déborder du cadre pointillé — il repasse à la ligne.
     <div
-      className={`flex flex-col items-center gap-1 rounded-lg border-2 border-dashed border-black p-3 text-center break-inside-avoid ${className}`}
+      className={`flex w-full min-w-0 flex-col items-center gap-1 rounded-lg border-2 border-dashed border-black p-3 text-center break-inside-avoid ${className}`}
       style={style}
     >
-      <p className="text-sm font-bold leading-tight">{tenantName || "MikCloud"}</p>
+      <p className="w-full break-words text-sm font-bold leading-tight">{tenantName || "MikCloud"}</p>
       <p className="text-[10px] uppercase tracking-widest text-emerald-700">
         {t("print.wifiHotspot")}
       </p>
-      <p className="mt-1 text-xl font-bold font-mono tracking-wider">{voucher.username}</p>
+      <p className="mt-1 w-full break-words text-xl font-bold font-mono tracking-wider">{voucher.username}</p>
       {/* Mode « mot de passe = identifiant » : le code seul sur le ticket. */}
       {!isSamePasswordMode(voucher) && (
-        <p className="font-mono text-sm">
+        <p className="w-full break-words font-mono text-sm">
           {t("print.passwordLabel")} {voucher.password}
         </p>
       )}
-      <p className="text-xs text-neutral-700">
+      <p className="w-full break-words text-xs text-neutral-700">
         {voucher.profileName}
         {validityMin ? ` · ${fmtRouterDuration(validityMin)}` : ""}
         {(voucher.dataQuotaMb ?? 0) > 0
           ? ` · ${formatBytes((voucher.dataQuotaMb ?? 0) * 1048576, effectiveLang)}`
           : ""}
       </p>
-      <p className="text-sm font-bold text-emerald-700">
+      <p className="break-words text-sm font-bold text-emerald-700">
         {formatCurrency(voucher.price, currency, effectiveLang)}
       </p>
       <p className="mt-1 w-full border-t border-neutral-300 pt-1 text-[10px] text-neutral-600">

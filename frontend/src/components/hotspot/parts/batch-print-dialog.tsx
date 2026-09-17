@@ -110,7 +110,9 @@ export function BatchPrintDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="gap-4 sm:max-w-3xl">
+      {/* N°145 — mobile PWA : flex colonne plafonné à 100dvh (l'ancien
+          max-h-65vh dépassait l'écran en paysage), padding réduit sous sm. */}
+      <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col gap-4 p-4 sm:max-w-3xl sm:p-6">
         {/* N°22 — bandeau « impression pour le compte des revendeurs »
             (hors impression : .no-print). */}
         {resellerCount > 0 && (
@@ -130,9 +132,12 @@ export function BatchPrintDialog({
                 : tf("print.ticketsReadySimple", { n: items.length, p: items.length > 1 ? "s" : "" })}
             </DialogDescription>
           </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {/* N°145 — mobile : formats sur SA ligne pleine largeur, Fermer/
+              Imprimer se partagent la suivante (pattern N°140-fix) ; desktop :
+              rangée unique à droite du titre, inchangée. */}
+          <div className="flex w-full shrink-0 flex-wrap items-center gap-2 sm:ml-auto sm:w-auto">
             <div
-              className="flex rounded-lg border bg-muted/30 p-0.5"
+              className="flex w-full rounded-lg border bg-muted/30 p-0.5 sm:w-auto"
               role="group"
               aria-label={t("print.formatAria")}
             >
@@ -142,7 +147,7 @@ export function BatchPrintDialog({
                   type="button"
                   onClick={() => changeFormat(opt.value)}
                   aria-pressed={fmt === opt.value}
-                  className={`min-h-9 rounded-md px-2.5 text-xs font-medium transition-colors ${
+                  className={`min-h-9 flex-1 rounded-md px-2.5 text-xs font-medium transition-colors sm:flex-none ${
                     fmt === opt.value
                       ? "bg-background text-foreground shadow-sm"
                       : "text-muted-foreground hover:text-foreground"
@@ -152,17 +157,17 @@ export function BatchPrintDialog({
                 </button>
               ))}
             </div>
-            <Button variant="outline" onClick={() => onOpenChange(false)}>
+            <Button variant="outline" className="flex-1 sm:flex-none" onClick={() => onOpenChange(false)}>
               {t("common.close")}
             </Button>
-            <Button onClick={() => window.print()} disabled={isLoading || items.length === 0}>
+            <Button className="flex-1 sm:flex-none" onClick={() => window.print()} disabled={isLoading || items.length === 0}>
               <Printer className="size-4" />
               {t("print.action")}
             </Button>
           </div>
         </div>
 
-        <div className="max-h-[65vh] overflow-y-auto print:max-h-none print:overflow-visible">
+        <div className="min-h-0 flex-1 overflow-y-auto print:max-h-none print:overflow-visible">
           {isLoading ? (
             <div className="rounded-lg border bg-white p-10 text-center text-sm text-neutral-500">
               <Loader2 className="mx-auto size-5 animate-spin" aria-hidden />

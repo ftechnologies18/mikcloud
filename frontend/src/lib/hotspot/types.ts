@@ -279,6 +279,55 @@ export interface FleetActionResponse {
   message: string;
 }
 
+/* ─── N°127 — assistant conversationnel public (console plateforme) ─── */
+
+/** Ligne d'inbox : conversation visiteur ↔ bot ↔ support. */
+export interface ChatConversationRow {
+  id: string;
+  lang: string;
+  status: "bot" | "human" | "closed";
+  createdAt: string;
+  updatedAt: string;
+  unread: number;
+  lastSender: string;
+  lastMessage: string;
+}
+
+/** Synthèse de l'inbox (compteurs par statut + non-lus). */
+export interface ChatSummary {
+  total: number;
+  human: number;
+  bot: number;
+  closed: number;
+  unread: number;
+}
+
+export interface ChatConversationsResponse {
+  conversations: ChatConversationRow[];
+  summary: ChatSummary;
+}
+
+/** Message du fil (côté console — jamais le secret visiteur). */
+export interface ChatAdminMessage {
+  id: string;
+  conversationId: string;
+  sender: "visitor" | "bot" | "agent";
+  body: string;
+  at: string;
+}
+
+export interface ChatConversationDetail {
+  conversation: {
+    id: string;
+    lang: string;
+    status: "bot" | "human" | "closed";
+    createdAt: string;
+    updatedAt: string;
+  };
+  total: number;
+  messages: ChatAdminMessage[];
+}
+
 /** Entrée du journal d'activité transverse (tous comptes — plateforme). */
 export interface PlatformActivityRow {
   id: string;
@@ -1529,6 +1578,7 @@ export type ViewId =
   | "logs"
   | "platform"
   | "platformFleet" // N°117 — parc routeurs global (console plateforme) : flotte tous comptes + mise à jour RouterOS de flotte
+  | "platformChat" // N°127 — inbox de l'assistant conversationnel public (console plateforme)
   | "platformLogs"
   | "platformTeam"
   | "platformSettings"

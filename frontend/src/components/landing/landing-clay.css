@@ -163,19 +163,6 @@
   transform: translateX(-8px);
   transition: opacity 0.3s 0.08s, transform 0.3s 0.08s;
 }
-/* N°124 — numérotation des sections, lisible quand le rail s'étend. */
-.mkl-rail .mkl-idx {
-  font-style: normal;
-  font-size: 0.64rem;
-  font-weight: 800;
-  letter-spacing: 0.1em;
-  color: var(--mkl-teal);
-  opacity: 0.75;
-  margin-right: 3px;
-}
-.mkl-rail a.mkl-active .mkl-idx {
-  color: var(--mkl-mint);
-}
 .mkl-rail:hover a .mkl-lbl,
 .mkl-rail:hover button .mkl-lbl,
 .mkl-rail:focus-within a .mkl-lbl,
@@ -1146,8 +1133,13 @@
 .mkl-pricing {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 26px;
+  gap: 28px;
   align-items: stretch;
+  /* N°127 — de l'air au-dessus des cartes : la formule centrale
+     (scale 1.05) et son badge débordent de leur boîte de layout.
+     Sans cette marge, ils recouvraient le hint du sélecteur et les
+     chips « clientèle cible » juste au-dessus. */
+  margin-top: 54px;
 }
 .mkl-price-card {
   border-radius: 2.2rem;
@@ -1186,6 +1178,10 @@
 .mkl-price-card .mkl-tagline {
   opacity: 0.65;
   font-size: 0.9rem;
+  /* N°127 — deux lignes réservées : les montants des trois cartes
+     restent alignés même quand les taglines n'ont pas la même
+     longueur d'un mode à l'autre. */
+  min-height: 2.9em;
 }
 .mkl-amount {
   font-family: var(--font-fraunces), Georgia, serif;
@@ -1227,6 +1223,7 @@
   top: -16px;
   left: 50%;
   transform: translateX(-50%);
+  animation: mkl-pop-in 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both;
   background: var(--mkl-cream-deep);
   color: var(--mkl-ink);
   padding: 8px 20px;
@@ -1238,6 +1235,16 @@
   box-shadow: 4px 5px 0 rgba(18, 59, 58, 0.15);
   white-space: nowrap;
 }
+@keyframes mkl-pop-in {
+  from {
+    transform: translateX(-50%) scale(0.55);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(-50%) scale(1);
+    opacity: 1;
+  }
+}
 .mkl-currency-note {
   margin-top: 40px;
   text-align: center;
@@ -1246,76 +1253,6 @@
   max-width: 62ch;
   margin-left: auto;
   margin-right: auto;
-}
-
-/* ============ FAQ CLAY ============ */
-/* N°124 — lavage menthe très doux derrière la FAQ : rythme ivoire →
-   sarcelle (stats) → ivoire (tarifs) → menthe (FAQ) → crème (CTA). */
-.mkl-page section#faq {
-  background: linear-gradient(
-    180deg,
-    rgba(223, 243, 233, 0) 0%,
-    var(--mkl-mint-soft) 14%,
-    var(--mkl-mint-soft) 86%,
-    rgba(223, 243, 233, 0) 100%
-  );
-}
-.mkl-faq {
-  max-width: 760px;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-.mkl-faq-item {
-  border-radius: 1.6rem;
-  background: var(--mkl-ivory);
-  box-shadow: 6px 8px 0 rgba(18, 59, 58, 0.08), var(--mkl-clay-inset);
-  overflow: hidden;
-}
-.mkl-faq-item[open] {
-  box-shadow: var(--mkl-clay-shadow), var(--mkl-clay-inset);
-}
-.mkl-faq-item summary {
-  list-style: none;
-  cursor: pointer;
-  padding: 20px 24px;
-  font-weight: 800;
-  font-size: 1rem;
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: center;
-}
-.mkl-faq-item summary::-webkit-details-marker {
-  display: none;
-}
-.mkl-faq-item summary:focus-visible {
-  outline: 3px solid var(--mkl-teal);
-  outline-offset: -3px;
-  border-radius: 1.6rem;
-}
-.mkl-faq-item summary .mkl-faq-plus {
-  flex: none;
-  width: 28px;
-  height: 28px;
-  border-radius: 10px;
-  display: grid;
-  place-items: center;
-  background: var(--mkl-cream);
-  color: var(--mkl-teal-dark);
-  font-weight: 900;
-  box-shadow: inset 2px 3px 6px rgba(255, 255, 255, 0.6),
-    inset -3px -4px 8px rgba(18, 59, 58, 0.12);
-  transition: transform 0.3s;
-}
-.mkl-faq-item[open] summary .mkl-faq-plus {
-  transform: rotate(45deg);
-}
-.mkl-faq-item .mkl-faq-body {
-  padding: 0 24px 22px;
-  color: var(--mkl-ink-70);
-  font-size: 0.92rem;
 }
 
 /* ============ CTA FINAL ============ */
@@ -1422,6 +1359,363 @@
   gap: 12px;
 }
 
+/* ============ CHAT WIDGET (N°127) ============ */
+/* Assistant conversationnel : la FAQ est devenue un chatbot. Bouton
+   flottant + panneau clay ; z-index 45 (au-dessus du rail 40, sous les
+   modales shadcn 50). */
+.mkl-chat-fab {
+  position: fixed;
+  right: 26px;
+  bottom: 26px;
+  z-index: 45;
+  width: 62px;
+  height: 62px;
+  border: none;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  border-radius: 22px;
+  color: var(--mkl-ivory);
+  background: var(--mkl-teal);
+  box-shadow: 10px 12px 0 rgba(18, 59, 58, 0.16),
+    inset 0 3px 0 rgba(255, 255, 255, 0.25),
+    inset 0 -4px 0 rgba(9, 66, 65, 0.35);
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 0.25s;
+}
+.mkl-chat-fab:hover {
+  transform: translateY(-3px) scale(1.04);
+  box-shadow: 12px 15px 0 rgba(18, 59, 58, 0.18),
+    inset 0 3px 0 rgba(255, 255, 255, 0.25),
+    inset 0 -4px 0 rgba(9, 66, 65, 0.35);
+}
+.mkl-chat-fab:focus-visible {
+  outline: 3px solid var(--mkl-teal-dark);
+  outline-offset: 3px;
+}
+/* Point d'attention : une réponse humaine attend le visiteur. */
+.mkl-chat-fab-dot {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--mkl-cream-deep);
+  box-shadow: 0 0 0 3px var(--mkl-teal);
+  animation: mkl-chat-pulse 1.6s ease-in-out infinite;
+}
+@keyframes mkl-chat-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.25); }
+}
+.mkl-chat-panel {
+  position: fixed;
+  right: 26px;
+  bottom: 104px;
+  z-index: 45;
+  width: min(392px, calc(100vw - 32px));
+  height: min(620px, calc(100dvh - 150px));
+  display: flex;
+  flex-direction: column;
+  border-radius: 1.9rem;
+  background: var(--mkl-ivory);
+  box-shadow: 14px 18px 0 rgba(18, 59, 58, 0.14), var(--mkl-clay-inset);
+  overflow: hidden;
+  animation: mkl-chat-in 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+@keyframes mkl-chat-in {
+  from { opacity: 0; transform: translateY(18px) scale(0.96); }
+  to { opacity: 1; transform: none; }
+}
+.mkl-chat-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--mkl-teal);
+  color: var(--mkl-ivory);
+  flex: none;
+}
+.mkl-chat-head-logo {
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  flex: none;
+  box-shadow: inset 2px 3px 6px rgba(255, 255, 255, 0.4),
+    inset -3px -4px 8px rgba(9, 66, 65, 0.3);
+}
+.mkl-chat-head b {
+  display: block;
+  font-family: var(--font-fraunces), Georgia, serif;
+  font-size: 1.02rem;
+  line-height: 1.15;
+}
+.mkl-chat-head span {
+  font-size: 0.72rem;
+  font-weight: 600;
+  opacity: 0.85;
+}
+.mkl-chat-close {
+  margin-left: auto;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border: none;
+  cursor: pointer;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: rgba(253, 249, 238, 0.16);
+  color: var(--mkl-ivory);
+  box-shadow: inset 0 -2px 0 rgba(9, 66, 65, 0.3);
+  transition: background 0.2s, transform 0.2s;
+}
+.mkl-chat-close:hover {
+  background: rgba(253, 249, 238, 0.28);
+  transform: translateY(-1px);
+}
+.mkl-chat-close:focus-visible {
+  outline: 3px solid var(--mkl-cream);
+  outline-offset: 2px;
+}
+.mkl-chat-note {
+  flex: none;
+  margin: 12px 14px 0;
+  padding: 10px 14px;
+  border-radius: 1rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.45;
+  background: var(--mkl-mint-soft);
+  color: var(--mkl-teal-dark);
+  box-shadow: inset 2px 3px 6px rgba(255, 255, 255, 0.6),
+    inset -3px -4px 8px rgba(18, 59, 58, 0.08);
+}
+.mkl-chat-body {
+  flex: 1;
+  min-height: 120px;
+  overflow-y: auto;
+  padding: 16px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--mkl-mint) transparent;
+  overscroll-behavior: contain;
+}
+.mkl-chat-body::-webkit-scrollbar {
+  width: 8px;
+}
+.mkl-chat-body::-webkit-scrollbar-thumb {
+  background: var(--mkl-mint);
+  border-radius: 8px;
+}
+.mkl-chat-loading {
+  align-self: flex-start;
+  display: flex;
+  gap: 5px;
+  padding: 12px 16px;
+  background: var(--mkl-mint-soft);
+  border-radius: 1.2rem 1.2rem 1.2rem 0.4rem;
+}
+.mkl-chat-loading i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--mkl-teal);
+  opacity: 0.5;
+  animation: mkl-chat-bounce 1s ease-in-out infinite;
+}
+.mkl-chat-loading i:nth-child(2) { animation-delay: 0.15s; }
+.mkl-chat-loading i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes mkl-chat-bounce {
+  0%, 100% { transform: translateY(0); opacity: 0.5; }
+  50% { transform: translateY(-4px); opacity: 1; }
+}
+.mkl-msg {
+  max-width: 86%;
+  display: flex;
+  flex-direction: column;
+}
+.mkl-msg p {
+  padding: 10px 14px;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.mkl-msg-meta {
+  font-size: 0.66rem;
+  opacity: 0.55;
+  margin: 2px 4px 0;
+}
+.mkl-msg-badge {
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--mkl-teal-dark);
+  margin: 0 4px 2px;
+}
+.mkl-msg-bot {
+  align-self: flex-start;
+}
+.mkl-msg-bot p {
+  background: var(--mkl-mint-soft);
+  color: var(--mkl-ink);
+  border-radius: 1.2rem 1.2rem 1.2rem 0.4rem;
+  box-shadow: inset 2px 3px 6px rgba(255, 255, 255, 0.6),
+    inset -3px -4px 8px rgba(18, 59, 58, 0.07);
+}
+.mkl-msg-agent {
+  align-self: flex-start;
+}
+.mkl-msg-agent p {
+  background: var(--mkl-cream);
+  color: var(--mkl-ink);
+  border-radius: 1.2rem 1.2rem 1.2rem 0.4rem;
+  box-shadow: inset 2px 3px 6px rgba(255, 255, 255, 0.55),
+    inset -3px -4px 8px rgba(18, 59, 58, 0.08);
+}
+.mkl-msg-visitor {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+.mkl-msg-visitor p {
+  background: var(--mkl-teal);
+  color: var(--mkl-ivory);
+  border-radius: 1.2rem 1.2rem 0.4rem 1.2rem;
+  box-shadow: 5px 6px 0 rgba(18, 59, 58, 0.12),
+    inset 0 2px 0 rgba(255, 255, 255, 0.18);
+}
+.mkl-msg-pending {
+  opacity: 0.55;
+}
+.mkl-chat-chips {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 14px 0;
+}
+.mkl-chat-chip {
+  border: none;
+  cursor: pointer;
+  padding: 8px 14px;
+  border-radius: 2rem;
+  background: var(--mkl-mint-soft);
+  color: var(--mkl-teal-dark);
+  font-family: var(--font-manrope), ui-sans-serif, sans-serif;
+  font-size: 0.78rem;
+  font-weight: 700;
+  box-shadow: inset 2px 3px 6px rgba(255, 255, 255, 0.7),
+    inset -3px -4px 8px rgba(18, 59, 58, 0.08);
+  transition: transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1),
+    background 0.22s;
+}
+.mkl-chat-chip:hover {
+  transform: translateY(-2px);
+  background: var(--mkl-mint);
+}
+.mkl-chat-chip:focus-visible {
+  outline: 3px solid var(--mkl-teal);
+  outline-offset: 2px;
+}
+.mkl-chat-err {
+  flex: none;
+  margin: 10px 14px 0;
+  padding: 8px 14px;
+  border-radius: 0.9rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+  background: #f8e3d6;
+  color: #7a3b12;
+}
+.mkl-chat-inputbar {
+  flex: none;
+  display: flex;
+  gap: 8px;
+  padding: 12px 14px 8px;
+}
+.mkl-chat-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  padding: 12px 16px;
+  border-radius: 1.2rem;
+  background: #ffffff;
+  color: var(--mkl-ink);
+  font-family: var(--font-manrope), ui-sans-serif, sans-serif;
+  font-size: 0.88rem;
+  box-shadow: var(--mkl-clay-inset);
+}
+.mkl-chat-input::placeholder {
+  color: var(--mkl-ink-60);
+}
+.mkl-chat-input:focus-visible {
+  outline: 3px solid var(--mkl-teal);
+  outline-offset: 1px;
+}
+.mkl-chat-send {
+  flex: none;
+  width: 48px;
+  height: 48px;
+  border: none;
+  cursor: pointer;
+  border-radius: 1.2rem;
+  display: grid;
+  place-items: center;
+  background: var(--mkl-teal);
+  color: var(--mkl-ivory);
+  box-shadow: 5px 6px 0 rgba(18, 59, 58, 0.12),
+    inset 0 2px 0 rgba(255, 255, 255, 0.2),
+    inset 0 -3px 0 rgba(9, 66, 65, 0.35);
+  transition: transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1),
+    opacity 0.2s;
+}
+.mkl-chat-send:hover:not(:disabled) {
+  transform: translateY(-2px);
+}
+.mkl-chat-send:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.mkl-chat-send:focus-visible {
+  outline: 3px solid var(--mkl-teal-dark);
+  outline-offset: 2px;
+}
+.mkl-chat-actions {
+  flex: none;
+  padding: 0 14px 14px;
+}
+.mkl-chat-human {
+  width: 100%;
+  border: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 11px 16px;
+  border-radius: 1.2rem;
+  background: var(--mkl-cream);
+  color: var(--mkl-ink);
+  font-family: var(--font-manrope), ui-sans-serif, sans-serif;
+  font-size: 0.82rem;
+  font-weight: 800;
+  box-shadow: inset 2px 3px 6px rgba(255, 255, 255, 0.55),
+    inset -3px -4px 8px rgba(18, 59, 58, 0.1);
+  transition: transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.mkl-chat-human:hover {
+  transform: translateY(-2px);
+}
+.mkl-chat-human:focus-visible {
+  outline: 3px solid var(--mkl-teal);
+  outline-offset: 2px;
+}
+
 /* ============ RESPONSIVE ============ */
 /* Desktop : le rail vertical réserve la place du contenu */
 @media (min-width: 1024px) {
@@ -1485,6 +1779,23 @@
   .mkl-rail-mobile .mkl-rail-cta-mobile {
     background: var(--mkl-cream-deep);
     color: var(--mkl-ink);
+  }
+  /* N°127 — widget chat au-dessus du rail tactile mobile. */
+  .mkl-chat-fab {
+    right: 16px;
+    /* au-dessus du rail tactile AVEC sa marge d'ombre clay (l'ombre
+       décalée 10-12 px ne doit pas frôler la barre au repos). */
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 108px);
+    width: 56px;
+    height: 56px;
+    border-radius: 20px;
+  }
+  .mkl-chat-panel {
+    left: 12px;
+    right: 12px;
+    width: auto;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 176px);
+    height: min(560px, calc(100dvh - 250px));
   }
   .mkl-foot-bottom {
     justify-content: center;

@@ -19,6 +19,7 @@ import {
   Users,
   UsersRound,
   Wifi,
+  MessagesSquare,
 } from "lucide-react";
 import { canView } from "./roles";
 import type { ViewId } from "./types";
@@ -192,6 +193,10 @@ export const NAV_PLATFORM_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
       // version installée vs disponible, vérification et mise à jour RouterOS
       // de flotte (le geste super-admin, miroir multi-comptes du N°115).
       { id: "platformFleet", labelKey: "nav.platformFleet", icon: RouterIcon },
+      // N°127 — inbox de l'assistant conversationnel public : le bot répond
+      // aux visiteurs de la vitrine, les demandes transmises à un humain
+      // arrivent ici (fil + réponse + clôture).
+      { id: "platformChat", labelKey: "nav.platformChat", icon: MessagesSquare },
       { id: "accounts", labelKey: "nav.accounts", icon: Building2 },
       // File des demandes de renouvellement (facturation) — badge en attente.
       { id: "billingRequests", labelKey: "nav.billingRequests", icon: ReceiptText },

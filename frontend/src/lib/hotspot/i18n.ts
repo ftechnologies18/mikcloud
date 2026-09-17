@@ -36,6 +36,7 @@ import { frNotif } from "./i18n-fr/notif";
 import { frPaywall } from "./i18n-fr/paywall";
 import { frPlatform } from "./i18n-fr/platform";
 import { frPlatformLogs } from "./i18n-fr/platform-logs";
+import { frPlatformChat } from "./i18n-fr/platform-chat";
 import { frPlatformSettings } from "./i18n-fr/platform-settings";
 import { frPlatformTeam } from "./i18n-fr/platform-team";
 import { frPortal } from "./i18n-fr/portal";
@@ -99,6 +100,7 @@ const fr: Record<string, string> = {
   ...frPaywall,
   ...frPlatform,
   ...frPlatformLogs,
+  ...frPlatformChat,
   ...frPlatformSettings,
   ...frPlatformTeam,
   ...frPortal,

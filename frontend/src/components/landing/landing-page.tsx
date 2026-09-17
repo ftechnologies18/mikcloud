@@ -44,6 +44,7 @@ import {
 import { FtciCredit } from "@/components/ftci-credit";
 import { useHotspotStore } from "@/lib/hotspot/store";
 import { landingCopy, type Lang } from "./landing-copy";
+import { LandingChatWidget } from "./chat-widget";
 import "./landing-clay.css";
 
 /* ─── Polices display (serif Fraunces) & texte (Manrope) ─── */
@@ -363,10 +364,7 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
               <span className="mkl-dot" aria-hidden="true">
                 <Icon />
               </span>
-              <span className="mkl-lbl">
-                <i className="mkl-idx" aria-hidden="true">0{i + 1}</i>
-                {copy.rail[key]}
-              </span>
+              <span className="mkl-lbl">{copy.rail[key]}</span>
             </a>
           );
         })}
@@ -790,31 +788,6 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
           </div>
         </section>
 
-        {/* ═══ FAQ ═══ */}
-        <section id="faq" style={{ paddingTop: 0 }}>
-          <div className="mkl-wrap">
-            <Reveal className="mkl-sec-head mkl-center">
-              <span className="mkl-kicker">{copy.faq.eyebrow}</span>
-              <h2>{copy.faq.title}</h2>
-            </Reveal>
-            <Reveal delay={0.1}>
-              <div className="mkl-faq">
-                {copy.faq.items.map((item) => (
-                  <details key={item.q} className="mkl-faq-item">
-                    <summary>
-                      {item.q}
-                      <span className="mkl-faq-plus" aria-hidden="true">
-                        +
-                      </span>
-                    </summary>
-                    <p className="mkl-faq-body">{item.a}</p>
-                  </details>
-                ))}
-              </div>
-            </Reveal>
-          </div>
-        </section>
-
         {/* ═══ CTA FINAL ═══ */}
         <section id="cta" style={{ paddingTop: 0 }}>
           <Reveal>
@@ -877,6 +850,9 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
           </div>
         </footer>
       </div>
+
+      {/* âââ ASSISTANT CHAT (NÂ°125 â remplace la FAQ) âââ */}
+      <LandingChatWidget />
     </div>
   );
 }

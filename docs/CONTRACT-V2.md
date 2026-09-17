@@ -1296,6 +1296,55 @@ sans AUCUN bridage**, encore. Autopsie AVEC les données de production
    profil throttle ne porte pas le marqueur — aucun bridage pour lui
    (le quota par lot reste une création MikCloud).
 
+### N°127 — Assistant conversationnel public (chatbot) + inbox support
+
+La section « Questions fréquentes » de la vitrine est remplacée par un
+assistant conversationnel : le bot répond depuis une base d'intents FAQ
+(FR/EN), et la conversation peut être transmise à un humain qui répond
+depuis la console plateforme (vue « Conversations »).
+
+**Modèle** : `ChatConversation` (`id` "chat-…", `token_hash` SHA-256 hex
+du secret visiteur — JAMAIS le secret en clair, `lang` fr|en, `status`
+`bot|human|closed`, `created_ip`, `created_at`, `updated_at`, `unread`)
+et `ChatMessage` (`id` "cmsg-…", `conversation_id`, `sender`
+`visitor|bot|agent`, `body`, `at`). Le fil est APPEND-ONLY : jamais
+réordonné ni inséré au milieu — les clients suivent par OFFSET (nombre de
+messages connus), pas par horloge.
+
+**Routes publiques** (sans JWT — le secret visiteur fait l'auth ; quota IP
+`a.chat` 30/10 min + 400/24 h sur les trois POST ; corps ≤ 1 000 car.) :
+
+| Route | Corps / Query | Réponse |
+|---|---|---|
+| `POST /api/chat/session` | `{lang}` ("fr" défaut) | `201 {id, token, status, total, messages[]}` — message de bienvenue |
+| `POST /api/chat/message` | `{token, body, offset}` | `{status, total, messages[]}` — fil depuis `offset` (inclut le message visiteur confirmé + la réponse bot) |
+| `GET /api/chat/messages` | `?token=&offset=` | `{status, total, messages[]}` — polling visiteur |
+| `POST /api/chat/handoff` | `{token, offset}` | `{status, total, messages[]}` — transmission explicite |
+
+Statuts : `bot` (l'assistant répond), `human` (transmis — le bot se tait,
+les messages visiteur incrémentent `unread`), `closed` (clôturée par le
+support, message de fin automatique côté visiteur). L'intent « humain »
+reconnu dans un message (mots-clés : humain, conseiller, support…) a le
+même effet qu'un handoff explicite. Mauvais token → `404`.
+
+**Routes console plateforme** (`requireRole(3)`) :
+
+| Route | Effet |
+|---|---|
+| `GET /api/admin/chat/conversations` | `{conversations[], summary}` — lignes sans le hash du secret (statut, langue, dernier message, non-lus, activité), tri human → bot → closed puis récent |
+| `GET /api/admin/chat/conversations/{id}` | `{conversation, total, messages[]}` — ouvrir le fil remet `unread` à 0 |
+| `POST /api/admin/chat/conversations/{id}/reply` | `{body}` (≤ 2 000 car.) → `{ok, message}` — la conversation passe (ou reste) `human` : après une intervention humaine le bot ne reprend jamais la main ; répondre à une clôturée la rouvre |
+| `POST /api/admin/chat/conversations/{id}/close` | → `{ok}` — statut `closed` + message de fin |
+
+**Rétention** (`chatPruneLocked`, exécutée sous le verrou à la création de
+session) : conversations `closed` de plus de 30 jours et `bot` sans
+activité depuis 7 jours purgées avec leurs messages ; les conversations
+`human` ne sont jamais purgées automatiquement ; garde-fou mémoire à
+2 000 conversations. Limite connue : une conversation très longue n'est
+pas plafonnée en messages (le volume est borné par la purge par statut).
+
+---
+
 ### N°123 — Badges annuels retirés, essai Hotspot 60 jours, migration des essais actifs
 
 Retour utilisateur : « Supprime les (2 mois offerts) sur les cartes

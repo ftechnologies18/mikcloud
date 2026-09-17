@@ -55,5 +55,9 @@ func BuildEmptyState() *model.DB {
 		// N°103 — agrégats quotidiens de qualité de ligne (base vide :
 		// slice non-nil → l'API sert [], la synchro PG n'insère rien).
 		LineQuality: []model.LineQualityDay{},
+		// N°127 — assistant conversationnel public (base vide :
+		// slices non-nil → l'API sert [], la synchro PG n'insère rien).
+		ChatConversations: []model.ChatConversation{},
+		ChatMessages:      []model.ChatMessage{},
 	}
 }

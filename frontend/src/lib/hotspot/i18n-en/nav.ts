@@ -39,6 +39,7 @@ export const enNav: Record<string, string> = {
   "nav.platform": "Overview",
   // N°117 — global router fleet (all tenants).
   "nav.platformFleet": "Router fleet",
+  "nav.platformChat": "Conversations",
   "nav.billingRequests": "Requests",
   "nav.platformLogs": "Platform log",
   "nav.platformTeam": "Platform team",

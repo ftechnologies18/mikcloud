@@ -601,6 +601,28 @@ func (p *PG) ensureSchema() error {
                 )`,
 		`CREATE INDEX IF NOT EXISTS idx_password_resets_account ON password_resets (account_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_password_resets_token  ON password_resets (token_hash)`,
+		// N°127 — assistant conversationnel public : conversations
+		// visiteur ↔ bot ↔ support (la FAQ du landing est devenue
+		// un chatbot, transmission à un humain depuis la console).
+		`CREATE TABLE IF NOT EXISTS chat_conversations (
+                        id         TEXT PRIMARY KEY,
+                        token_hash TEXT NOT NULL,
+                        lang       TEXT NOT NULL DEFAULT 'fr',
+                        status     TEXT NOT NULL DEFAULT 'bot',
+                        created_ip TEXT NOT NULL DEFAULT '',
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        unread     INTEGER NOT NULL DEFAULT 0
+                )`,
+		`CREATE INDEX IF NOT EXISTS idx_chat_conversations_status ON chat_conversations (status, updated_at)`,
+		`CREATE TABLE IF NOT EXISTS chat_messages (
+                        id              TEXT PRIMARY KEY,
+                        conversation_id TEXT NOT NULL,
+                        sender          TEXT NOT NULL,
+                        body            TEXT NOT NULL,
+                        at              TEXT NOT NULL
+                )`,
+		`CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation ON chat_messages (conversation_id)`,
 		// N°67 — Resend (API HTTP https://resend.com) comme fournisseur
 		// alternatif du canal e-mail : le provider choisit entre SMTP
 		// direct (défaut, '') et l'API Resend (clé secrète par compte).

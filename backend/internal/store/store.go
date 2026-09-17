@@ -815,6 +815,13 @@ func (s *Store) ensureSlices() {
 	if s.db.NotifLog == nil {
 		s.db.NotifLog = []model.NotificationLog{}
 	}
+	// N°127 — assistant conversationnel public de la vitrine.
+	if s.db.ChatConversations == nil {
+		s.db.ChatConversations = []model.ChatConversation{}
+	}
+	if s.db.ChatMessages == nil {
+		s.db.ChatMessages = []model.ChatMessage{}
+	}
 }
 
 // GetOrCreateNotifSettings — réglages de notification d'un compte, créés avec

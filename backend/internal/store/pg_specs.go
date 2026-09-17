@@ -257,6 +257,37 @@ var passwordResetSpec = entitySpec[model.PasswordReset]{
 	hashOf: hashEntity[model.PasswordReset],
 }
 
+// N°127 — assistant conversationnel public de la vitrine.
+var chatConversationSpec = entitySpec[model.ChatConversation]{
+	table: "chat_conversations",
+	cols:  []string{"id", "token_hash", "lang", "status", "created_ip", "created_at", "updated_at", "unread"},
+	idOf:  func(x *model.ChatConversation) string { return x.ID },
+	scan: func(r *sql.Rows) (model.ChatConversation, error) {
+		var x model.ChatConversation
+		err := r.Scan(&x.ID, &x.TokenHash, &x.Lang, &x.Status, &x.CreatedIP, &x.CreatedAt, &x.UpdatedAt, &x.Unread)
+		return x, err
+	},
+	args: func(x *model.ChatConversation) []any {
+		return []any{x.ID, x.TokenHash, x.Lang, x.Status, x.CreatedIP, x.CreatedAt, x.UpdatedAt, x.Unread}
+	},
+	hashOf: hashEntity[model.ChatConversation],
+}
+
+var chatMessageSpec = entitySpec[model.ChatMessage]{
+	table: "chat_messages",
+	cols:  []string{"id", "conversation_id", "sender", "body", "at"},
+	idOf:  func(x *model.ChatMessage) string { return x.ID },
+	scan: func(r *sql.Rows) (model.ChatMessage, error) {
+		var x model.ChatMessage
+		err := r.Scan(&x.ID, &x.ConversationID, &x.Sender, &x.Body, &x.At)
+		return x, err
+	},
+	args: func(x *model.ChatMessage) []any {
+		return []any{x.ID, x.ConversationID, x.Sender, x.Body, x.At}
+	},
+	hashOf: hashEntity[model.ChatMessage],
+}
+
 var transactionSpec = entitySpec[model.Transaction]{
 	table: "transactions",
 	cols:  []string{"id", "type", "reseller_id", "reseller_name", "amount", "note", "at", "account_id"},

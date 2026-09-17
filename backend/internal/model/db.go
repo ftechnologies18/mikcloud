@@ -66,9 +66,14 @@ type DB struct {
 	// oublié ? ») : token hashé, expiration 60 min, usage unique — voir
 	// PasswordReset. Borné par prunePasswordResetsLocked.
 	PasswordResets []PasswordReset `json:"passwordResets"`
-	Tenant         Tenant          `json:"tenant"`   // legacy mono-tenant
-	Settings       Settings        `json:"settings"` // legacy mono-tenant
-	LastTick       time.Time       `json:"lastTick"`
+	// N°127 — assistant conversationnel public de la vitrine :
+	// conversations visiteur ↔ bot ↔ support (la FAQ du landing
+	// est devenue un chatbot avec transmission humaine). Cf. chat.go.
+	ChatConversations []ChatConversation `json:"chatConversations"`
+	ChatMessages      []ChatMessage      `json:"chatMessages"`
+	Tenant            Tenant             `json:"tenant"`   // legacy mono-tenant
+	Settings          Settings           `json:"settings"` // legacy mono-tenant
+	LastTick          time.Time          `json:"lastTick"`
 	// LastSweep — N°64 — horodatage du dernier BALAYAGE PÉRIODIQUE de
 	// rétention (goroutine main.go, 1 h) : purge des journaux utilisateurs
 	// à 90 j + expirations/nettoyages, indépendamment des visites console

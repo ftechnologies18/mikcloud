@@ -5,6 +5,136 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-17 — N°127 — La FAQ devient un CHATBOT : assistant conversationnel sur la vitrine + relève humaine depuis la console plateforme — rail sans numéros, tarifs qui ne recouvrent plus
+
+### N°127 — Contexte : trois défauts de la vitrine et une demande d'assistance vivante
+Retour utilisateur : « Supprime la numérotation 01-06 des sections dans le
+rail et améliore la section Tarif, les cartes couvrent les textes au-dessus.
+Je souhaite aussi supprimer la section Questions fréquentes et créer un chat
+bot qui répond à ces questions avec possibilité de transmission de la
+conversation à un humain qui répond depuis la super-admin plateforme. »
+
+### Produit — Vitrine épurée
+- RAIL SANS NUMÉROTATION : les pastilles 01-06 devant les libellés de
+  sections disparaissent (TSX + CSS) — le rail garde ses icônes et son
+  détachement de section active, plus lisible au survol.
+- TARIFS QUI NE RECOUVRENT PLUS : la formule centrale (scale 1,05) et son
+  badge « Le plus choisi » débordaient de leur boîte de layout sur le hint
+  du sélecteur et les chips « clientèle cible » — `.mkl-pricing` gagne une
+  marge haute de 54 px (25 px de dégagement RÉEL mesuré au point le plus
+  haut, le badge) ; taglines à hauteur fixe (2 lignes réservées) pour que
+  les MONTANTS des trois cartes restent alignés d'un mode à l'autre ;
+  badge d'entrée animé (ressort clay, coupé par prefers-reduced-motion).
+- SECTION « QUESTIONS FRÉQUENTES » SUPPRIMÉE (TSX + CSS + copie FR/EN) —
+  son contenu vit désormais dans le cerveau du chatbot.
+
+### Produit — Assistant conversationnel (widget de la vitrine)
+- BOUTON FLOTTANT CLAY (sarcelle, ombre clay, point d'attention pulsé quand
+  une réponse humaine attend) en bas à droite — au-dessus du rail tactile
+  mobile (30 px de dégagement) ; panneau clay (ivoire, en-tête sarcelle au
+  VRAI logo MikCloud, statut vivant : « Assistant · réponses instantanées /
+  Un conseiller vous répond / Conversation clôturée »).
+- BOT FAQ BILINGUE (backend) : 13 intents (modes Hotspot/HomeNet, tarifs,
+  essai, routeur compatible, protections, arrêt de paiement, moyens de
+  paiement, vouchers, revendeurs, pays, salutations, remerciements +
+  l'intent spécial « humain » qui déclenche la transmission) — matching par
+  mots-clés normalisés (minuscules, accents retirés, ponctuation espacée ;
+  mot entier < 5 caractères, sous-chaîne au-delà), meilleur score gagne,
+  ordre de la liste tranche les égalités (pricing avant modes, etc.) ;
+  réponses 100 % produit réel (catalogue N°122/N°123, protections N°80+,
+  mode vente, grâce 30 j), FR/EN par langue de conversation.
+- SUGGESTIONS CLAY cliquables (4 questions types en mode bot), message
+  d'accueil, fallback honnête (« je n'ai pas de réponse certaine… je vous
+  transmets en un clic »), bulles horodatées (visiteur à droite sarcelle,
+  bot menthe, SUPPORT crème avec badge).
+- TRANSMISSION À UN HUMAIN : bouton « Parler à un humain » + détection
+  automatique de l'intent (« je veux parler à un conseiller ») → la
+  conversation passe « human », le bot se tait, un bandeau informe le
+  visiteur ; polling 4 s quand le panneau est ouvert — la réponse du
+  support arrive toute seule.
+- ROBUSTESSE : conversation restaurée au rechargement (localStorage
+  `mikcloud-chat`, token secret), message en vol en bulle semi-transparente
+  (une seule source de vérité : le serveur, contrat append-only par OFFSET
+  — jamais par horloge), clôture → bandeau + bouton « Nouvelle
+  conversation », erreur d'envoi restituée dans le champ.
+
+### Produit — Inbox « Conversations » (console plateforme, super-admin)
+- NOUVELLE VUE (nav plateforme, après « Parc routeurs », slug
+  /app/platform-chat) : 4 KPI (conversations, avec un humain, non lus, bot
+  actives), filtres Toutes/Humain/Bot/Fermées, liste (statut pastillé,
+  langue, dernier message, non-lus ambre, activité relative — max-h +
+  scroll, règle maison des longues listes).
+- FIL COMPLET : bulles visiteur/assistant/support horodatées, notes de
+  contexte (« l'assistant automatique répond — vous pouvez reprendre la
+  main » / « clôturée, lecture seule »), réponse par Textarea (Entrée =
+  envoyer, Maj+Entrée = saut de ligne), clôture sous AlertDialog (message
+  de fin côté visiteur, purge 30 j).
+- RÈGLE MÉTIER : répondre à une conversation bot la fait passer « human »
+  — après une intervention humaine, le bot ne reprend JAMAIS la main ;
+  l'ouverture du fil marque les non-lus comme lus.
+- POLLING ADAPTATIF : liste 8 s ; fil ouvert 4 s tant que la conversation
+  est vivante — la réponse du visiteur arrive quelques secondes plus tard.
+
+### Technique — Backend (Go, stdlib pur)
+- MODÈLE : `ChatConversation` (id, token_hash SHA-256, lang, status
+  bot|human|closed, created_ip, created_at, updated_at, unread) +
+  `ChatMessage` (id, conversation_id, sender visitor|bot|agent, body, at) ;
+  6 points de branchement (DB, BuildEmptyState, ensureSlices, DDL
+  chat_conversations/chat_messages + index, specs, load/sync) — même
+  recette que password_resets N°68.
+- SÉCURITÉ : secret visiteur 40 hex généré serveur, stocké UNIQUEMENT en
+  SHA-256 (l'identifiant public ne suffit ni à lire ni à écrire) ; quota
+  IP partagé par les POST publics (a.chat : 30/10 min + 400/24 h, même
+  limiteur S3, 429 + Retry-After) ; corps bornés (1 000 car. visiteur,
+  2 000 agent) ; le hash du secret ne quitte jamais le serveur (struct
+  d'affichage dédié) ; les logs serveur ne couvrent que le path (le token
+  en query n'y fuit pas).
+- RÉTENTION (chatPruneLocked, sous le verrou à la création de session) :
+  conversations « closed » > 30 jours et « bot » sans activité > 7 jours
+  purgées avec leurs messages ; « human » JAMAIS purgée automatiquement ;
+  garde-fou mémoire 2 000 conversations (les bot les plus anciennes d'abord).
+- ROUTES publiques (whitelist authMiddleware, préfixe /api/chat/) :
+  POST /session {lang} → 201 {id, token, status, total, messages} ;
+  POST /message {token, body, offset} → {status, total, messages} ;
+  GET /messages?token&offset → {status, total, messages} ;
+  POST /handoff {token, offset} → {status, total, messages}.
+- ROUTES plateforme (requireRole 3) : GET /api/admin/chat/conversations →
+  {conversations, summary} ; GET …/{id} → {conversation, total, messages}
+  (+ unread→0) ; POST …/{id}/reply {body} → {ok, message} ; POST …/{id}/close
+  → {ok} ; journalisation logActivityBy (compte plateforme) sur réponse et
+  clôture.
+- CERVEAU (`api/chatbot.go`) : base d'intents déclarative FR/EN, réponses
+  uniques en constantes (welcome, handoff, clôture, fallback),
+  normalizeChat stdlib pur (mapping de désaccentuation latin — pas de
+  dépendance x/text).
+
+### Technique — Frontend
+- `components/landing/chat-widget.tsx` (NOUVEAU) : widget client (bouton +
+  panneau), polling 4 s, localStorage, pending optimiste, handoff,
+  nouvelle conversation, FR/EN via la copie du landing (section `chat` de
+  landing-copy.ts, remplace `faq`).
+- `landing-clay.css` : + section CHAT WIDGET (préfixe mkl-chat-*, z-index
+  45 — au-dessus du rail 40, sous les modales shadcn 50), animation CSS
+  pure (le reduced-motion global la coupe), positionnement mobile
+  au-dessus du rail tactile.
+- Vue plateforme : `views/platform-chat-view.tsx` (NOUVEAU) + branchements
+  types/api/view-path/nav/roles/app-shell + fragments i18n
+  platform-chat.ts FR/EN (35 clés) + clés nav FR/EN.
+
+Vérifié : gofmt vide, go vet OK, go build OK, go test 12 paquets verts ;
+eslint 0 erreur, tsc 0 erreur ; SMOKE backend bout-en-bout 23/23 (session,
+welcome, FAQ modes/tarifs/EN, fallback, handoff intentionnel + explicite,
+silence du bot en mode human, 404 mauvais token, garde 401 admin, login,
+inbox, fil, unread remis à zéro, réponse agent REÇUE côté visiteur,
+clôture, nouvelle conversation) ; NAVIGATEUR bout-en-bout sur backend Go
+réel + next dev : rail sans numéros (0 .mkl-idx), FAQ absente, FAB présent,
+tarifs 25 px de dégagement réel badge/chips (VLM : aucun chevauchement,
+badge lisible, montants alignés), chat complet (question → réponse bot →
+transmission → réponse admin dans le fil → REÇUE côté visiteur par polling
+→ message visiteur vu par l'admin en 20 s → clôture → statut closed côté
+visiteur + nouvelle conversation), vue Conversations (KPIs, liste,
+filtres, fil, réponse, clôture), mobile 390 px zéro débordement (FAB à
+30 px du rail tactile, VLM confirme le détachement net), 0 erreur console.
 ## 2026-09-17 — N°126 — E2E HomeNet : « le test qui cherchait une maison rebaptisée »
 
 ### Contexte

@@ -79,6 +79,8 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 		{"wifi_sites", func() error { return loadInto(p, &db.WifiSites, wifiSiteSpec) }},
 		{"wifi_guests", func() error { return loadInto(p, &db.WifiGuests, wifiGuestSpec) }},
 		{"promo_events", func() error { return loadInto(p, &db.PromoEvents, promoEventSpec) }},
+		{"chat_conversations", func() error { return loadInto(p, &db.ChatConversations, chatConversationSpec) }},
+		{"chat_messages", func() error { return loadInto(p, &db.ChatMessages, chatMessageSpec) }},
 		{"settings", func() error { return p.loadSettings(db) }},
 	}
 	for _, st := range steps {

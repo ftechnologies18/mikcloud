@@ -131,10 +131,24 @@ export interface LandingCopy {
     }[];
     currencyNote: string;
   };
-  faq: {
-    eyebrow: string;
+  chat: {
+    fabLabel: string;
+    openLabel: string;
+    closeLabel: string;
     title: string;
-    items: { q: string; a: string }[];
+    statusBot: string;
+    statusHuman: string;
+    statusClosed: string;
+    placeholder: string;
+    send: string;
+    humanBtn: string;
+    newConv: string;
+    handoffNote: string;
+    closedNote: string;
+    suggestions: string[];
+    agentBadge: string;
+    inputLabel: string;
+    sendError: string;
   };
   finalCta: {
     kicker: string;
@@ -451,31 +465,29 @@ const fr: LandingCopy = {
     currencyNote:
       "Frais de paiement répercutés sur le prix de liste : carte +6 %, Wave −3 % (remise mobile money). Essai offert : 60 jours en mode Hotspot, 30 jours en mode HomeNet.",
   },
-  faq: {
-    eyebrow: "Questions fréquentes",
-    title: "Les réponses, sans jargon.",
-    items: [
-      {
-        q: "Quelle différence entre Hotspot et HomeNet ?",
-        a: "Le mode Hotspot s'adresse aux réseaux publics que vous exploitez (cybercafé, maquis, boutique) : vouchers, portail captif, revendeurs. Le mode HomeNet, c'est la sécurité internet résidentiel : pare-feu cloud, filtrage DNS, couvre-feu et contrôle des appareils pour votre foyer. Même console MikCloud, mêmes protections — seuls les tarifs diffèrent (HomeNet paie deux fois moins cher).",
-      },
-      {
-        q: "Faut-il un routeur particulier ?",
-        a: "MikCloud pilote les routeurs MikroTik sous RouterOS (hEX, RB, CHR…). L'agent sort du routeur vers le cloud : il fonctionne derrière CGNAT, Orange ou Starlink, sans IP publique ni port ouvert — un script à coller dans Winbox, environ 40 secondes.",
-      },
-      {
-        q: "Mes clients verront-ils la protection ?",
-        a: "Non. La navigation reste fluide et WhatsApp continue de passer. En coulisses : sites dangereux et publicités bloqués au DNS, ports d'administration et partage Windows inaccessibles depuis le WiFi public, couvre-feu et bloque-VPN si vous les activez.",
-      },
-      {
-        q: "Puis-je vendre des tickets sans boutique ?",
-        a: "Oui. Le Mode Vente tourne sur le téléphone de vos revendeurs (PWA protégée par PIN) : stock transféré, ventes même hors-ligne, reçu partageable sur WhatsApp et rapport de fin de journée.",
-      },
-      {
-        q: "Que devient mon réseau si j'arrête de payer ?",
-        a: "Vous avez 30 jours de grâce après l'échéance, puis la console est suspendue. Vos routeurs continuent de servir vos clients et vos données sont conservées — un règlement suffit à rouvrir l'accès.",
-      },
+  chat: {
+    fabLabel: "Discuter avec l'assistant",
+    openLabel: "Ouvrir la discussion",
+    closeLabel: "Fermer la discussion",
+    title: "Assistant MikCloud",
+    statusBot: "Assistant Â· rÃ©ponses instantanÃ©es",
+    statusHuman: "Un conseiller vous rÃ©pond",
+    statusClosed: "Conversation clÃ´turÃ©e",
+    placeholder: "Ãcrivez votre messageâ¦",
+    send: "Envoyer",
+    humanBtn: "Parler Ã  un humain",
+    newConv: "Nouvelle conversation",
+    handoffNote: "Transmis Ã  l'Ã©quipe MikCloud â vos prochains messages partent directement au conseiller.",
+    closedNote: "Cette conversation est terminÃ©e. Ã bientÃ´t sur MikCloud !",
+    suggestions: [
+      "Hotspot ou HomeNet ?",
+      "Quels sont les tarifs ?",
+      "Quel routeur faut-il ?",
+      "Essai gratuit ?",
     ],
+    agentBadge: "Support",
+    inputLabel: "Votre message",
+    sendError: "Ãchec d'envoi â rÃ©essayez",
   },
   finalCta: {
     kicker: "Prêt·e à passer au niveau supérieur ?",
@@ -815,31 +827,29 @@ const en: LandingCopy = {
     currencyNote:
       "Payment fees passed through the list price: card +6%, Wave −3% (mobile money discount). Free trial: 60 days in Hotspot mode, 30 days in HomeNet mode.",
   },
-  faq: {
-    eyebrow: "Frequently asked questions",
-    title: "Straight answers, no jargon.",
-    items: [
-      {
-        q: "What's the difference between Hotspot and HomeNet?",
-        a: "Hotspot mode targets the public networks you operate (cybercafé, bar, shop): vouchers, captive portal, resellers. HomeNet is residential internet security: cloud firewall, DNS filtering, curfew and device control for your household. Same MikCloud console, same protections — only the prices differ (HomeNet pays half the Hotspot rate).",
-      },
-      {
-        q: "Do I need a specific router?",
-        a: "MikCloud drives MikroTik routers running RouterOS (hEX, RB, CHR…). The agent dials out from the router to the cloud: it works behind CGNAT, Orange or Starlink, with no public IP and no open port — one script to paste into Winbox, about 40 seconds.",
-      },
-      {
-        q: "Will my customers notice the protection?",
-        a: "No. Browsing stays smooth and WhatsApp keeps working. Behind the scenes: dangerous sites and ads blocked at the DNS level, admin ports and Windows sharing unreachable from the public WiFi, curfew and VPN blocker if you enable them.",
-      },
-      {
-        q: "Can I sell tickets without a shop?",
-        a: "Yes. Sell Mode runs on your resellers' phones (PWA protected by a PIN): transferred stock, offline sales, receipts shareable on WhatsApp and an end-of-day report.",
-      },
-      {
-        q: "What happens to my network if I stop paying?",
-        a: "You get a 30-day grace period after the due date, then the console is suspended. Your routers keep serving your customers and your data is preserved — one payment reopens access.",
-      },
+  chat: {
+    fabLabel: "Chat with the assistant",
+    openLabel: "Open the conversation",
+    closeLabel: "Close the conversation",
+    title: "MikCloud Assistant",
+    statusBot: "Assistant Â· instant answers",
+    statusHuman: "An advisor is answering you",
+    statusClosed: "Conversation closed",
+    placeholder: "Type your messageâ¦",
+    send: "Send",
+    humanBtn: "Talk to a human",
+    newConv: "New conversation",
+    handoffNote: "Handed over to the MikCloud team â your next messages go straight to the advisor.",
+    closedNote: "This conversation is over. See you soon on MikCloud!",
+    suggestions: [
+      "Hotspot or HomeNet?",
+      "What are the prices?",
+      "Which router do I need?",
+      "Free trial?",
     ],
+    agentBadge: "Support",
+    inputLabel: "Your message",
+    sendError: "Sending failed â try again",
   },
   finalCta: {
     kicker: "Ready to level up?",

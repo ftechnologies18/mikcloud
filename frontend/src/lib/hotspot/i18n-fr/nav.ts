@@ -39,6 +39,7 @@ export const frNav: Record<string, string> = {
   "nav.platform": "Vue d'ensemble",
   // N°117 — parc routeurs global (flotte tous comptes).
   "nav.platformFleet": "Parc routeurs",
+  "nav.platformChat": "Conversations",
   "nav.billingRequests": "Demandes",
   "nav.platformLogs": "Journal plateforme",
   "nav.platformTeam": "Équipe plateforme",

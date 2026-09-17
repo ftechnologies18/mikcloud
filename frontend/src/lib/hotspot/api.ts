@@ -19,6 +19,9 @@ import type {
   AuthUser,
   BillingRequest,
   BillingRequestsResponse,
+  ChatAdminMessage,
+  ChatConversationDetail,
+  ChatConversationsResponse,
   FleetActionResponse,
   FleetOverview,
   InvoiceRow,
@@ -356,6 +359,41 @@ export async function fleetRouterOSCheck(routerIds?: string[]): Promise<FleetAct
   return api<FleetActionResponse>("/api/admin/fleet/routeros-check", {
     method: "POST",
     body: routerIds && routerIds.length > 0 ? { routerIds } : {},
+  });
+}
+
+/* ─── N°127 — inbox de l'assistant conversationnel (vue « Conversations ») ─── */
+
+/** fetchChatConversations — l'inbox du support : conversations de la
+ * vitrine (bot / transmises à un humain / clôturées) + synthèse. */
+export async function fetchChatConversations(): Promise<ChatConversationsResponse> {
+  return api<ChatConversationsResponse>("/api/admin/chat/conversations");
+}
+
+/** fetchChatConversation — le fil complet d'une conversation (marque les
+ * messages visiteur non lus comme lus côté serveur). */
+export async function fetchChatConversation(id: string): Promise<ChatConversationDetail> {
+  return api<ChatConversationDetail>(`/api/admin/chat/conversations/${id}`);
+}
+
+/** replyChatConversation — réponse du support : la conversation passe
+ * (ou reste) « human » — le bot ne reprend jamais la main ensuite. */
+export async function replyChatConversation(
+  id: string,
+  body: string,
+): Promise<{ ok: boolean; message: ChatAdminMessage }> {
+  return api<{ ok: boolean; message: ChatAdminMessage }>(
+    `/api/admin/chat/conversations/${id}/reply`,
+    { method: "POST", body: { body } },
+  );
+}
+
+/** closeChatConversation — clôture (message de fin côté visiteur, purge
+ * automatique 30 jours plus tard). */
+export async function closeChatConversation(id: string): Promise<{ ok: boolean }> {
+  return api<{ ok: boolean }>(`/api/admin/chat/conversations/${id}/close`, {
+    method: "POST",
+    body: {},
   });
 }
 

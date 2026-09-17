@@ -103,6 +103,12 @@ func (p *PG) Sync(db *model.DB) (err error) {
 	if err := syncTable(ctx, tx, p.hashes, passwordResetSpec, db.PasswordResets, &delta); err != nil {
 		return err
 	}
+	if err := syncTable(ctx, tx, p.hashes, chatConversationSpec, db.ChatConversations, &delta); err != nil {
+		return err
+	}
+	if err := syncTable(ctx, tx, p.hashes, chatMessageSpec, db.ChatMessages, &delta); err != nil {
+		return err
+	}
 	if err := syncTable(ctx, tx, p.hashes, transactionSpec, db.Transactions, &delta); err != nil {
 		return err
 	}

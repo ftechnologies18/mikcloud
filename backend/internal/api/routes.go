@@ -35,7 +35,12 @@ type API struct {
 	// N°68 — quota des demandes de réinitialisation de mot de passe (public) :
 	// 5/10 min + 20/24 h par IP — les e-mails de lien sont des envois RÉELS
 	// (Resend/SMTP), le flood est coupé avant d'atteindre le fournisseur.
-	reset  *signupLimiter
+	reset *signupLimiter
+	// N°127 — quota de l'assistant conversationnel public de la
+	// vitrine (session/message/handoff, par IP) : 30/10 min + 400/24 h —
+	// un humain en conversation active reste très loin du seuil, un
+	// script de spam est coupé.
+	chat   *signupLimiter
 	vitals *telemetry.Collector // B2 — Core Web Vitals (nil = collecte désactivée)
 	// N°72 — bande passante sortante du jour (octets de corps de réponse
 	// par catégorie : agents / portail / medias / console / autre), exposée
@@ -104,7 +109,7 @@ func New(s *store.Store, jwtSecret string) *API {
 	// groupe serial rejoue l'inscription déjà passée — cf. signup_abuse.go.
 	// Les autres limiteurs S3 (join, reset) gardent les constantes : aucune
 	// suite E2E ne les traverse.
-	return &API{store: s, secret: jwtSecret, gws: map[string]routeros.Gateway{}, pinLock: newPinLimiter(), signup: signupLimiterFromEnv(os.Getenv), join: newSignupLimiter(), wifiClaim: newSignupLimiterLimits(20, 100), portalTrack: newSignupLimiterLimits(300, 3000), reset: newSignupLimiter(), egress: newEgressStats(), readStateDone: map[string]time.Time{}, readAcc: map[string]*readStateAccum{}, readStateChunks: map[string]int{}, devicesDone: map[string]time.Time{}, attn: map[string]time.Time{}}
+	return &API{store: s, secret: jwtSecret, gws: map[string]routeros.Gateway{}, pinLock: newPinLimiter(), signup: signupLimiterFromEnv(os.Getenv), join: newSignupLimiter(), wifiClaim: newSignupLimiterLimits(20, 100), portalTrack: newSignupLimiterLimits(300, 3000), reset: newSignupLimiter(), chat: newSignupLimiterLimits(30, 400), egress: newEgressStats(), readStateDone: map[string]time.Time{}, readAcc: map[string]*readStateAccum{}, readStateChunks: map[string]int{}, devicesDone: map[string]time.Time{}, attn: map[string]time.Time{}}
 }
 
 // Handler — mux complet, protégé par le middleware d'authentification.
@@ -132,6 +137,14 @@ func (a *API) Handler() http.Handler {
 	// quota IP) puis consommation du lien (usage unique, 60 min).
 	mux.HandleFunc("POST /api/auth/forgot-password", a.handleForgotPassword)
 	mux.HandleFunc("POST /api/auth/reset-password", a.handleResetPassword)
+	// N°127 — assistant conversationnel public (remplace la FAQ de la
+	// vitrine) : le bot répond aux questions fréquentes, la conversation
+	// peut être transmise à un humain (console plateforme). Le secret
+	// visiteur fait l'authentification — voir handlers_chat.go.
+	mux.HandleFunc("POST /api/chat/session", a.handleChatSession)
+	mux.HandleFunc("POST /api/chat/message", a.handleChatMessage)
+	mux.HandleFunc("GET /api/chat/messages", a.handleChatMessages)
+	mux.HandleFunc("POST /api/chat/handoff", a.handleChatHandoff)
 
 	// N°7 — équipe & rôles (owner uniquement ; le super-admin plateforme est
 	// traité owner sur le compte consulté).
@@ -335,6 +348,13 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/admin/fleet/routers", a.requireRole(3, a.handleAdminFleetRouters))
 	mux.HandleFunc("POST /api/admin/fleet/routeros-check", a.requireRole(3, a.handleAdminFleetRouterOSCheck))
 	mux.HandleFunc("POST /api/admin/fleet/routeros-update", a.requireRole(3, a.handleAdminFleetRouterOSUpdate))
+	// N°127 — inbox du chatbot : conversations de la vitrine (bot,
+	// transmises à un humain, clôturées) — le support répond depuis la
+	// console plateforme. Voir handlers_chat.go.
+	mux.HandleFunc("GET /api/admin/chat/conversations", a.requireRole(3, a.handleAdminChatConversations))
+	mux.HandleFunc("GET /api/admin/chat/conversations/{id}", a.requireRole(3, a.handleAdminChatConversation))
+	mux.HandleFunc("POST /api/admin/chat/conversations/{id}/reply", a.requireRole(3, a.handleAdminChatReply))
+	mux.HandleFunc("POST /api/admin/chat/conversations/{id}/close", a.requireRole(3, a.handleAdminChatClose))
 	// N°71 — santé de la persistance (synchro différentielle FNV-1a → Neon) et
 	// des agents : diagnostic READ-ONLY pour l'opérateur (dernier sync,
 	// volumétrie du delta, erreurs, dérive mémoire/miroir, file de commandes).

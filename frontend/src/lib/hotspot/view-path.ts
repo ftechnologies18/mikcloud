@@ -82,6 +82,7 @@ const VIEW_SLUGS: Record<ViewId, string> = {
   platformTeam: "platform-team",
   platformSettings: "platform-settings",
   platformAnnouncements: "platform-announcements", // N°152 — annonces aux clients
+  platformNotifications: "platform-notifications", // N°153 — notifications du compte principal (relais e-mail, bot Telegram)
   billingRequests: "billing-requests",
   accounts: "accounts",
   notifications: "settings/notifications",

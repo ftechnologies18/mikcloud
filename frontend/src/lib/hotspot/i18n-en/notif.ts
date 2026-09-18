@@ -6,6 +6,8 @@ export const enNotif: Record<string, string> = {
 
   // — notifications (tier1: alerts + channels + history) —
   "notif.title": "Notifications",
+  // N°153 — navigation entry of the platform console (dedicated view).
+  "nav.platformNotifications": "Notifications",
   "notif.description": "Get router-offline alerts, low-stock warnings and the daily report — a manager should never learn about an outage from their customers.",
   "notif.errorTitle": "Notifications unavailable",
   "notif.errorModule": "The Notifications module is not available on the server yet (backend deployment in progress).",
@@ -51,6 +53,17 @@ export const enNotif: Record<string, string> = {
   // N°150 — platform email relay.
   "notif.emailRelayNote": "Sent through the MikCloud platform — just enter your address, no server to configure.",
   "notif.emailAdvanced": "My own email server (advanced)",
+  // N°153 — main account console (platform super-admin): the view switches
+  // voice — YOUR credentials carry the relay for every client.
+  "notif.platformDescription": "Alert settings for the main account, and the channels the platform provides to its clients: email relay and the official Telegram bot.",
+  "notif.platformBannerTitle": "Platform main account",
+  "notif.platformBannerBody": "The email credentials in the card below power the sending relay: every client without their own configuration sends their alerts through this account. The official Telegram bot {bot} is shared with everyone.",
+  "notif.platformBannerBodyNoBot": "The email credentials in the card below power the sending relay: every client without their own configuration sends their alerts through this account.",
+  "notif.platformRelayActive": "Email relay ACTIVE — your clients without their own configuration already send through your account.",
+  "notif.platformRelayInactive": "Email relay INACTIVE — enter your Resend or SMTP credentials in the “Platform email” card: the relay will activate automatically for all your clients, with no configuration on their side.",
+  "notif.emailPlatformCardTitle": "Platform email",
+  "notif.emailPlatformCardDesc": "Your Resend or SMTP credentials carry the alerts of every client without their own configuration — and of this account.",
+  "notif.emailPlatformConfig": "Platform sending credentials",
   "notif.waDesc": "Sent through Meta's WhatsApp Cloud API (Business account).",
   "notif.waToken": "Meta access token",
   "notif.waPhoneId": "Phone Number ID",

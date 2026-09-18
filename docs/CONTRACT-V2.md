@@ -2215,6 +2215,31 @@ Migration boot idempotente : `settings.portal_style`, `portal_welcome`,
   injection vitrine (bienvenue, promos avec images R2, socials) ; commercial =
   retrait des injections et dé-masquage (réversible, idempotent).
 
+## N°153 — Console plateforme « Notifications » : différenciation par COMPTE (isPlatformAccount)
+
+### GET /api/notifications — champ additionnel (rétrocompatible)
+```json
+{ "isPlatformAccount": false }  // true ssi accountScope(r) == acc-main
+```
+Le porteur (token propre du super-admin) EST le compte principal : la console
+y affiche « vos identifiants portent le relais de tous les clients » au lieu
+de « relais disponible ». Une SESSION SUPPORT sur un compte client voit false
+(la différenciation suit le COMPTE, jamais le rôle). PUT et toutes les autres
+routes : formes inchangées.
+
+### Vue plateforme (frontend)
+- ViewId `platformNotifications` (slug `/app/platform-notifications`), nav
+  console plateforme entre « Équipe plateforme » et « Paramètres plateforme »,
+  réservée isPlatformView (super-admin). Rend le MÊME composant que la section
+  client : le token super-admin cible acc-main, la vue reçoit
+  `isPlatformAccount: true` et se différencie seule.
+- Présentations : compte principal → bandeau dédié (statut relais ACTIF /
+  INACTIF calculé sur `emailPlatformRelay`), carte « E-mail plateforme »
+  (identifiants OUVERTS par défaut), PAS de note « envoi via la plateforme » ;
+  compte client (et session support) → présentation classique N°150
+  (destinataire + note relais + BYO replié). Le chemin historique
+  `/app/settings/notifications` reste celui des comptes clients.
+
 ## N°150 — Canaux de notification plateforme : Telegram « zéro setup » (bot FTCI, lien magique) + relais e-mail du compte principal
 
 ### Décisions de canaux (serveur, N°150)

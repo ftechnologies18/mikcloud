@@ -4,6 +4,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
   BarChart3,
+  Bell,
   Building2,
   Gauge,
   LayoutDashboard,
@@ -206,6 +207,11 @@ export const NAV_PLATFORM_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
       { id: "billingRequests", labelKey: "nav.billingRequests", icon: ReceiptText },
       { id: "platformLogs", labelKey: "nav.platformLogs", icon: ScrollText },
       { id: "platformTeam", labelKey: "nav.platformTeam", icon: UsersRound },
+      // N°153 — notifications du COMPTE PRINCIPAL : règles d'alerte de la
+      // plateforme + canaux partagés avec les clients (relais e-mail, bot
+      // Telegram officiel). Le token super-admin cible acc-main : la vue
+      // s'annonce comme « compte principal » (bandeau + carte e-mail dédiés).
+      { id: "platformNotifications", labelKey: "nav.platformNotifications", icon: Bell },
       // I (paramètres plateforme) — config globale du SaaS (nom, inscriptions,
       // sécurité, langue, purge globale).
       { id: "platformSettings", labelKey: "nav.platformSettings", icon: Settings },

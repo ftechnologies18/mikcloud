@@ -1123,6 +1123,10 @@ export interface NotifSettings {
   telegramBotUsername?: string;
   /** Le compte principal a des identifiants e-mail → relais : adresse + interrupteur suffisent. */
   emailPlatformRelay?: boolean;
+  /** N°153 — le porteur EST le compte principal de la plateforme : la console
+   * y remplace « relais disponible » par « vos identifiants portent le relais
+   * de tous les clients » (bandeau dédié + carte e-mail différenciée). */
+  isPlatformAccount?: boolean;
 }
 
 /** Canal de notification (corps de POST /api/notifications/test). */
@@ -1617,6 +1621,7 @@ export type ViewId =
   | "platformTeam"
   | "platformSettings"
   | "platformAnnouncements" // N°152 — diffusion d'annonces aux clients (console plateforme)
+  | "platformNotifications" // N°153 — notifications du compte principal (console plateforme) : règles d'alerte + canaux partagés (relais e-mail, bot Telegram)
   | "billingRequests"
   | "accounts"
   | "notifications"

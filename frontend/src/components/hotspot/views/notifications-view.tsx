@@ -16,6 +16,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BellOff,
   BellRing,
+  Building2,
   CheckCircle2,
   ChevronDown,
   ExternalLink,
@@ -129,7 +130,10 @@ export default function NotificationsView() {
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      <PageHeader title={t("notif.title")} description={t("notif.description")} />
+      <PageHeader
+        title={t("notif.title")}
+        description={data?.isPlatformAccount ? t("notif.platformDescription") : t("notif.description")}
+      />
 
       {isLoading ? (
         <LoadingCards cards={3} />
@@ -137,11 +141,78 @@ export default function NotificationsView() {
         <NotifErrorCard error={error} onRetry={() => void refetch()} retrying={isRefetching} />
       ) : data ? (
         <>
+          {/* N°153 — console du compte principal : bandeau différenciant avant
+              tout le reste (le super-admin pilote les canaux PARTAGÉS). */}
+          {data.isPlatformAccount && (
+            <PlatformAccountBanner
+              relayActive={data.emailPlatformRelay === true}
+              botUsername={data.telegramBotUsername}
+            />
+          )}
           <NotificationsForm initial={data} />
           <NotifLogCard />
         </>
       ) : null}
     </div>
+  );
+}
+
+/* ─────────────── N°153 — bandeau « compte principal de la plateforme » ─────────────── */
+
+// La console du super-admin (sur SON compte, acc-main) remplace le discours
+// client « relais disponible » par « VOS identifiants portent le relais » :
+// les réglages e-mail d'ici envoient les alertes de tous les clients sans
+// configuration propre, et le bot Telegram officiel est partagé. Le statut
+// du relais (actif / à configurer) est calculé sur emailPlatformRelay —
+// vrai dès que CES réglages portent des identifiants exploitables.
+function PlatformAccountBanner({
+  relayActive,
+  botUsername,
+}: {
+  relayActive: boolean;
+  botUsername?: string;
+}) {
+  const { t, tf } = useI18n();
+  return (
+    <Card className="gap-0 border-emerald-600/25 bg-emerald-500/5 py-0">
+      <CardContent className="flex items-start gap-3 p-4 sm:p-6">
+        <span
+          className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+          aria-hidden
+        >
+          <Building2 className="size-5" />
+        </span>
+        <div className="min-w-0 space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
+              {t("notif.platformBannerTitle")}
+            </h2>
+            <Badge
+              variant="outline"
+              className="border-emerald-600/30 bg-emerald-500/10 text-[10px] font-semibold uppercase tracking-widest text-emerald-700 dark:text-emerald-400"
+            >
+              FTCI
+            </Badge>
+          </div>
+          <p className="text-sm leading-relaxed text-foreground/80">
+            {botUsername
+              ? tf("notif.platformBannerBody", { bot: `@${botUsername}` })
+              : t("notif.platformBannerBodyNoBot")}
+          </p>
+          {relayActive ? (
+            <p className="flex items-center gap-2 text-xs font-medium text-emerald-700 dark:text-emerald-400">
+              <CheckCircle2 className="size-4 shrink-0" aria-hidden />
+              {t("notif.platformRelayActive")}
+            </p>
+          ) : (
+            <p className="flex items-start gap-2 rounded-lg border border-amber-600/25 bg-amber-500/10 p-2.5 text-xs leading-relaxed text-amber-800 dark:text-amber-300">
+              <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
+              {t("notif.platformRelayInactive")}
+            </p>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -272,6 +343,11 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
     );
   }
   const telegramLinked = form.telegramChatId.trim() !== "";
+
+  // N°153 — le porteur est le compte principal de la plateforme : la carte
+  // e-mail devient « E-mail plateforme » (identifiants OUVERTS par défaut,
+  // ils portent le relais) et la note relais client disparaît.
+  const isPlatformAccount = initial.isPlatformAccount === true;
 
   // Un canal est « configurable pour test » si activé, renseigné et prêt.
   // N°150 — le bot FTCI et le relais e-mail du compte principal comptent
@@ -589,11 +665,13 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
         </ChannelCard>
 
         {/* Email — SMTP direct ou API Resend (N°67) ; relais plateforme N°150 :
-            adresse + interrupteur suffisent quand le service porte l'envoi. */}
+            adresse + interrupteur suffisent quand le service porte l'envoi.
+            N°153 — compte principal : carte « E-mail plateforme », les
+            identifiants d'ici portent le relais de TOUS les clients. */}
         <ChannelCard
           icon={Mail}
-          title={t("notif.emailCardTitle")}
-          description={t("notif.emailDesc")}
+          title={isPlatformAccount ? t("notif.emailPlatformCardTitle") : t("notif.emailCardTitle")}
+          description={isPlatformAccount ? t("notif.emailPlatformCardDesc") : t("notif.emailDesc")}
           enabled={form.emailEnabled}
           onEnabledChange={(v) => setForm((f) => ({ ...f, emailEnabled: v }))}
           canTest={emailConfigured}
@@ -612,17 +690,21 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
             />
           </div>
 
-          {/* N°150 — relais plateforme : note quand le compte n'a pas d'identifiants propres. */}
-          {initial.emailPlatformRelay && !emailOwnConfigured && (
+          {/* N°150 — relais plateforme : note quand le compte n'a pas
+              d'identifiants propres (jamais pour le compte principal,
+              qui EST la source du relais). */}
+          {!isPlatformAccount && initial.emailPlatformRelay && !emailOwnConfigured && (
             <p className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs leading-relaxed text-muted-foreground">
               {t("notif.emailRelayNote")}
             </p>
           )}
 
-          {/* Fournisseur + identifiants — repliés quand le relais suffit. */}
-          <Collapsible defaultOpen={!initial.emailPlatformRelay || emailOwnConfigured}>
+          {/* Fournisseur + identifiants — repliés quand le relais suffit ;
+              OUVERTS pour le compte principal (c'est SA configuration).
+              Le libellé du repli suit la console (client : « avancé »). */}
+          <Collapsible defaultOpen={isPlatformAccount || !initial.emailPlatformRelay || emailOwnConfigured}>
             <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 rounded-md text-xs font-medium text-muted-foreground transition-colors hover:text-foreground">
-              <span>{t("notif.emailAdvanced")}</span>
+              <span>{isPlatformAccount ? t("notif.emailPlatformConfig") : t("notif.emailAdvanced")}</span>
               <ChevronDown className="size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-180" />
             </CollapsibleTrigger>
             <CollapsibleContent className="grid gap-4 pt-3">

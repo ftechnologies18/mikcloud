@@ -5,6 +5,81 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-18 — N°153 — La console plateforme gagne « Notifications » : le compte principal pilote ses canaux partagés (relais e-mail, bot Telegram) — et la vue sait QUI la regarde
+
+### Contexte
+Suite directe du N°150 (Telegram « zéro setup » + relais e-mail) : le relais
+d'alertes e-mail exige que le COMPTE PRINCIPAL pose ses identifiants Resend
+« dans sa console (Réglages → Notifications) » — mais cette console était
+INATTEIGNABLE : le compte principal (acc-main) n'apparaît pas dans la liste
+« Comptes » (ce n'est pas un client SaaS), la bascule vers une console client
+passe par l'impersonation d'un compte CLIENT, et le mode plateforme bloque
+les vues de la zone Paramètres. Pire : la vue notifications ne différenciait
+pas ses discours — le super-admin et un gérant lisaient les mêmes cartes, la
+note « envoyé par la plateforme » n'aurait eu aucun sens pour celui qui EST
+la plateforme.
+
+### Produit
+- **Nouvelle vue « Notifications » dans la console plateforme**
+  (/app/platform-notifications, entrée de nav entre « Équipe plateforme » et
+  « Paramètres plateforme ») : le MÊME composant que la section client — le
+  token super-admin cible acc-main, la vue reçoit `isPlatformAccount: true`
+  et se différencie seule. C'est le chemin unique vers les réglages
+  notifications du compte principal (règles d'alerte + canaux).
+- **Bandeau « Compte principal de la plateforme »** (émeraude, badge FTCI) :
+  « vos identifiants e-mail portent le relais d'envoi : chaque client sans
+  configuration propre envoie ses alertes via ce compte » + mention du bot
+  Telegram officiel quand son @username est connu. STATUT TEMPS RÉEL du
+  relais : « ACTIF — vos clients sans configuration envoient déjà via votre
+  compte » (émeraude) ou « INACTIF — renseignez vos identifiants Resend ou
+  SMTP dans la carte E-mail plateforme : le relais s'activera automatiquement
+  pour tous vos clients, sans configuration de leur côté » (ambre) — c'est la
+  consigne du N°150-a rendue lisible DANS le produit.
+- **Carte « E-mail plateforme »** (compte principal uniquement) : titre et
+  description dédiés (« vos identifiants Resend ou SMTP portent l'envoi des
+  alertes de TOUS les clients sans configuration propre — et de ce compte »),
+  section identifiants OUVERTE par défaut (« Identifiants d'envoi de la
+  plateforme » — c'est la configuration principale, pas un repli avancé) ;
+  la note « envoi via la plateforme » disparaît (le principal EST la source
+  du relais).
+- **Console client inchangée sur le fond** : présentation classique (adresse
+  + interrupteur, note relais quand le principal porte l'envoi, BYO replié).
+  Une SESSION SUPPORT (super-admin consultant la console d'un client) voit
+  la présentation CLIENT — la différenciation suit le COMPTE (accountScope),
+  jamais le rôle.
+
+### Technique
+- **Serveur** : `notifView` gagne `isPlatformAccount` (bool, rétrocompatible)
+  — `viewOf` reçoit le scope et compare à `model.AccountMainID` ; les deux
+  appel sites (GET/PUT /api/notifications) passent `accountScope(r)`. Zéro
+  route nouvelle, zéro schéma, PUT inchangé.
+- **Frontend** : ViewId `platformNotifications` (registre complet : types,
+  PLATFORM_VIEWS, nav + icône Bell, slug `platform-notifications`,
+  VIEW_TITLES, map VIEWS) ; `PlatformAccountBanner` dans notifications-view
+  (statut calculé sur `emailPlatformRelay`, vrai dès que CES réglages portent
+  des identifiants exploitables) ; description de page, titre/description de
+  carte et libellé de repli différenciés ; 11 clés i18n FR/EN
+  (platformDescription, platformBanner*, platformRelay*, emailPlatform*,
+  nav.platformNotifications).
+- **Fidélité** : champ de réponse ADDITIF uniquement ; aucun contrat existant
+  modifié ; la section client (/app/settings/notifications) reste le chemin
+  des comptes clients (hotspot ET homenet) et des sessions support.
+
+### Vérifié
+- `go build`/`go vet`/`gofmt` 0 ; `go test ./...` 12 paquets OK dont le
+  NOUVEAU TestNotifViewPlatformAccount (client false / principal true / relais
+  annoncé au client sans jamais le promouvoir / principal reste true relais
+  actif) ; eslint 0, tsc 0.
+- E2E navigateur contre backend Go réel (TELEGRAM_PLATFORM_BOT_TOKEN posé) :
+  console plateforme FR (bandeau + relais INACTIF ambre → identifiants Resend
+  posés via PUT → rechargement → relais ACTIF émeraude ; carte « E-mail
+  plateforme » identifiants OUVERTS ; carte Telegram « zéro setup » intacte) ;
+  console plateforme EN (tous libellés) ; console CLIENT (aucun marqueur
+  plateforme, note relais après le champ Destinataire, BYO replié) ; SESSION
+  SUPPORT sur le compte du client (banner:false, relayNote:true,
+  platformCard:false — différenciation par compte) ; deep-link
+  /app/platform-notifications ; 0 erreur console/page après rechargement.
+
 ## 2026-09-18 — N°152 — Diffusion d'annonces aux clients : le megaphone du super-admin (console d'émission, bandeau masquable + cloche côté clients, e-mail optionnel)
 
 ### Contexte

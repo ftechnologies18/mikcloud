@@ -68,9 +68,13 @@ type notifView struct {
 	TelegramPlatformAvailable bool   `json:"telegramPlatformAvailable"`
 	TelegramBotUsername       string `json:"telegramBotUsername,omitempty"`
 	EmailPlatformRelay        bool   `json:"emailPlatformRelay"`
+	// N°153 — le porteur EST le compte principal de la plateforme : la
+	// console remplace le discours « relais disponible » par « VOS
+	// identifiants portent le relais de tous les clients ».
+	IsPlatformAccount bool `json:"isPlatformAccount"`
 }
 
-func viewOf(cfg model.NotificationSettings, telegramPlatform bool, botUsername string, emailRelay bool) notifView {
+func viewOf(cfg model.NotificationSettings, acc string, telegramPlatform bool, botUsername string, emailRelay bool) notifView {
 	return notifView{
 		AccountID: cfg.AccountID,
 		Enabled:   cfg.Enabled,
@@ -101,6 +105,7 @@ func viewOf(cfg model.NotificationSettings, telegramPlatform bool, botUsername s
 		TelegramPlatformAvailable: telegramPlatform,
 		TelegramBotUsername:       botUsername,
 		EmailPlatformRelay:        emailRelay,
+		IsPlatformAccount:         acc == model.AccountMainID, // N°153
 	}
 }
 
@@ -147,7 +152,7 @@ func (a *API) handleNotifGet(w http.ResponseWriter, r *http.Request) {
 	a.tgMu.Lock()
 	botUsername := a.telegramBotUsername
 	a.tgMu.Unlock()
-	writeJSON(w, http.StatusOK, viewOf(cfg, notify.TelegramPlatformToken != "", botUsername, emailRelay))
+	writeJSON(w, http.StatusOK, viewOf(cfg, acc, notify.TelegramPlatformToken != "", botUsername, emailRelay))
 }
 
 // handleNotifPut — PUT /api/notifications
@@ -173,7 +178,7 @@ func (a *API) handleNotifPut(w http.ResponseWriter, r *http.Request) {
 	botUsername := a.telegramBotUsername
 	a.tgMu.Unlock()
 
-	writeJSON(w, http.StatusOK, viewOf(cfg, notify.TelegramPlatformToken != "", botUsername, emailRelay))
+	writeJSON(w, http.StatusOK, viewOf(cfg, acc, notify.TelegramPlatformToken != "", botUsername, emailRelay))
 }
 
 // applyNotifPut — fusionne le payload dans les réglages existants (les secrets

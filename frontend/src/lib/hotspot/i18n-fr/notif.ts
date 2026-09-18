@@ -6,6 +6,8 @@ export const frNotif: Record<string, string> = {
 
   // — notifications (tier1 : alertes + canaux + historique) —
   "notif.title": "Notifications",
+  // N°153 — entrée de navigation de la console plateforme (vue dédiée).
+  "nav.platformNotifications": "Notifications",
   "notif.description": "Recevez les alertes routeur hors ligne, stock bas et le rapport quotidien — un gérant ne doit pas découvrir une panne par ses clients.",
   "notif.errorTitle": "Notifications indisponibles",
   "notif.errorModule": "Le module Notifications n'est pas encore disponible sur le serveur (déploiement du backend en cours).",
@@ -51,6 +53,17 @@ export const frNotif: Record<string, string> = {
   // N°150 — relais e-mail plateforme.
   "notif.emailRelayNote": "Envoi via la plateforme MikCloud — indiquez simplement votre adresse, aucun serveur à configurer.",
   "notif.emailAdvanced": "Mon propre serveur e-mail (avancé)",
+  // N°153 — console du compte principal (super-admin plateforme) : la vue
+  // change de discours — VOS identifiants portent le relais de tous les clients.
+  "notif.platformDescription": "Réglages d'alertes du compte principal, et canaux que la plateforme fournit à ses clients : relais e-mail et bot Telegram officiel.",
+  "notif.platformBannerTitle": "Compte principal de la plateforme",
+  "notif.platformBannerBody": "Vos identifiants e-mail de la carte ci-dessous portent le relais d'envoi : chaque client sans configuration propre envoie ses alertes via ce compte. Le bot Telegram officiel {bot} est quant à lui partagé avec tous.",
+  "notif.platformBannerBodyNoBot": "Vos identifiants e-mail de la carte ci-dessous portent le relais d'envoi : chaque client sans configuration propre envoie ses alertes via ce compte.",
+  "notif.platformRelayActive": "Relais e-mail ACTIF — vos clients sans configuration propre envoient déjà via votre compte.",
+  "notif.platformRelayInactive": "Relais e-mail INACTIF — renseignez vos identifiants Resend ou SMTP dans la carte « E-mail plateforme » : le relais s'activera automatiquement pour tous vos clients, sans configuration de leur côté.",
+  "notif.emailPlatformCardTitle": "E-mail plateforme",
+  "notif.emailPlatformCardDesc": "Vos identifiants Resend ou SMTP portent l'envoi des alertes de TOUS les clients sans configuration propre — et de ce compte.",
+  "notif.emailPlatformConfig": "Identifiants d'envoi de la plateforme",
   "notif.waDesc": "Envoi via l'API Cloud WhatsApp de Meta (compte Business).",
   "notif.waToken": "Access token Meta",
   "notif.waPhoneId": "Phone Number ID",

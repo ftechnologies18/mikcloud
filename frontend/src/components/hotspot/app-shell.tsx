@@ -138,6 +138,7 @@ function viewTitle(view: ViewId, t: (key: string) => string): string {
     team: "nav.team",
     platformSettings: "platformSettings.title",
     platformAnnouncements: "ann.title",
+    platformNotifications: "nav.platformNotifications", // N°153 — notifications du compte principal
     home: "nav.home",
     devices: "nav.devices",
   };
@@ -174,6 +175,10 @@ const VIEWS: Record<ViewId, React.ComponentType> = {
   platformTeam: PlatformTeamView,
   platformSettings: PlatformSettingsView,
   platformAnnouncements: PlatformAnnouncementsView,
+  // N°153 — même composant que la section client (le token super-admin
+  // cible acc-main : la vue reçoit isPlatformAccount=true et se différencie
+  // seule — bandeau compte principal + carte « E-mail plateforme »).
+  platformNotifications: NotificationsView,
   billingRequests: BillingRequestsView,
   accounts: AccountsView,
   notifications: NotificationsView,

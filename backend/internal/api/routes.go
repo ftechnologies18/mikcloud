@@ -274,6 +274,11 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/stats/hourly", a.handleStatsHourly)
 
 	mux.HandleFunc("GET /api/activity", a.requireRole(2, a.handleActivityList))
+	// N°151 — boîte de notifications de la cloche : journal filtré RBAC +
+	// read-state SERVEUR par utilisateur (fin du localStorage par navigateur)
+	// + acquit monotone (voir handlers_bell.go).
+	mux.HandleFunc("GET /api/bell", a.requireRole(2, a.handleBellList))
+	mux.HandleFunc("POST /api/bell/seen", a.requireRole(2, a.handleBellSeen))
 	mux.HandleFunc("GET /api/settings", a.handleSettingsGet)
 	mux.HandleFunc("PUT /api/settings", a.requireRole(3, a.handleSettingsPut))
 

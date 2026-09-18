@@ -560,6 +560,8 @@ func (p *PG) ensureSchema() error {
 		// renommage du rôle historique « admin » → « platform_admin » (les
 		// tokens existants portant « admin » restent acceptés côté API).
 		`ALTER TABLE activity ADD COLUMN IF NOT EXISTS actor_id TEXT NOT NULL DEFAULT ''`,
+		// N°151 — acquit de la cloche par utilisateur (read-state serveur).
+		`ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS activity_seen_at TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE activity ADD COLUMN IF NOT EXISTS actor_name TEXT NOT NULL DEFAULT ''`,
 		`UPDATE admin_users SET role = 'platform_admin' WHERE role = 'admin'`,
 		// N°8 — Mode Vente : PIN revendeur + traçabilité des remises.

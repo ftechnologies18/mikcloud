@@ -861,10 +861,42 @@ export interface AccountActivity {
   at: string;
   actorId?: string;
   actorName?: string;
+  /** N°151 — items d'annonce dans la boîte (/api/bell) : niveau + copie. */
+  level?: "info" | "warning" | "critical";
+  title?: string;
+  body?: string;
 }
 
 /** fetchAccountActivity — journal d'activité du compte (filtrable côté client
  * sur le type et le message). Limit 1-200. */
 export async function fetchAccountActivity(limit = 100): Promise<AccountActivity[]> {
   return api<AccountActivity[]>("/api/activity", { params: { limit: String(limit) } });
+}
+
+/* ─── N°151 — boîte de notifications (cloche, GET/POST /api/bell) ─── */
+
+/** Réponse GET /api/bell — items filtrés RBAC + read-state serveur. */
+export interface BellResponse {
+  items: AccountActivity[];
+  /** Dernier acquit de CET utilisateur (vide = première visite, tout lu). */
+  seenAt: string;
+  /** Entrées visibles plus récentes que seenAt — calculé SERVEUR : le badge
+   * est cohérent multi-appareils et par membre de l'équipe (fin du
+   * localStorage mikcloud:activity-seen par navigateur). */
+  unread: number;
+}
+
+/** fetchBell — la boîte de notifications de la cloche (rang 2+). */
+export async function fetchBell(limit = 20): Promise<BellResponse> {
+  return api<BellResponse>("/api/bell", { params: { limit: String(limit) } });
+}
+
+/** markBellSeen — acquitte la cloche (POST /api/bell/seen). L'acquit optionnel
+ * `at` sert à la migration de l'ancien localStorage : l'utilisateur garde son
+ * avancement ; le serveur le borne à maintenant et ne recule jamais. */
+export async function markBellSeen(at?: string): Promise<{ seenAt: string }> {
+  return api<{ seenAt: string }>("/api/bell/seen", {
+    method: "POST",
+    body: at ? { at } : {},
+  });
 }

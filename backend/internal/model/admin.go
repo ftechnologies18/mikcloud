@@ -36,6 +36,14 @@ type AdminUser struct {
 	TOTPSecret string `json:"-"`
 	// TOTPEnabled — 2FA active : le login exige alors un code à 6 chiffres.
 	TOTPEnabled bool `json:"totpEnabled,omitempty"`
+	// ActivitySeenAt — N°151 : instant du dernier acquittement de la cloche
+	// (POST /api/bell/seen). LU PAR UTILISATEUR : chaque membre de l'équipe
+	// a sa propre boîte de notifications — le badge « non lus » est calculé
+	// côté serveur (cohérent multi-appareils, contrairement à l'ancien
+	// localStorage qui vivait par navigateur). Vide = première visite :
+	// tout est considéré lu (comportement historique conservé). Monotone :
+	// un acquit ne recule jamais.
+	ActivitySeenAt string `json:"activitySeenAt,omitempty"`
 }
 
 // NotificationSettings — canaux et règles d'alerte d'un compte SaaS. Les

@@ -797,9 +797,18 @@ export interface Transaction {
 
 export interface Activity {
   id: string;
-  type: "router" | "user" | "voucher" | "reseller" | "session" | "system";
+  /** Catégorie d'événement — types réellement émis par le backend :
+   * router, user, voucher, reseller, session, system, team, billing,
+   * registration, wifi, device, compte, announcement (N°151/N°151).
+   * Les entrées billing/team ne partent qu'au propriétaire (RBAC N°149). */
+  type: string;
   message: string;
   at: string;
+  /** N°151 — items de la boîte /api/bell : niveau des annonces plateforme. */
+  level?: "info" | "warning" | "critical";
+  /** N°151 — corps complet d'une annonce (items de type announcement). */
+  title?: string;
+  body?: string;
 }
 
 export interface Sale {

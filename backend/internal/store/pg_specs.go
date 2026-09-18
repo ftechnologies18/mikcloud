@@ -36,12 +36,15 @@ var accountSpec = entitySpec[model.Account]{
 }
 
 var adminSpec = entitySpec[model.AdminUser]{
+	// N°151 — colonne activity_seen_at en fin de liste (acquit de la cloche
+	// par utilisateur) : l'ordre cols/scan/args reste aligné, l'ALTER
+	// idempotent du schéma garantit la colonne sur les bases préexistantes.
 	table: "admin_users",
-	cols:  []string{"id", "name", "username", "role", "password_hash", "salt", "created_at", "account_id", "password_set_by_user", "env_password_hash", "session_epoch", "totp_secret", "totp_enabled"},
+	cols:  []string{"id", "name", "username", "role", "password_hash", "salt", "created_at", "account_id", "password_set_by_user", "env_password_hash", "session_epoch", "totp_secret", "totp_enabled", "activity_seen_at"},
 	idOf:  func(u *model.AdminUser) string { return u.ID },
 	scan: func(r *sql.Rows) (model.AdminUser, error) {
 		var u model.AdminUser
-		err := r.Scan(&u.ID, &u.Name, &u.Username, &u.Role, &u.PasswordHash, &u.Salt, &u.CreatedAt, &u.AccountID, &u.PasswordSetByUser, &u.EnvPasswordHash, &u.SessionEpoch, &u.TOTPSecret, &u.TOTPEnabled)
+		err := r.Scan(&u.ID, &u.Name, &u.Username, &u.Role, &u.PasswordHash, &u.Salt, &u.CreatedAt, &u.AccountID, &u.PasswordSetByUser, &u.EnvPasswordHash, &u.SessionEpoch, &u.TOTPSecret, &u.TOTPEnabled, &u.ActivitySeenAt)
 		// N°75 — le secret 2FA est stocké chiffré (AES-256-GCM) :
 		// lecture = déchiffrement (passthrough si valeur antérieure,
 		// migration assurée par migrateSealSecretColumns).
@@ -49,7 +52,7 @@ var adminSpec = entitySpec[model.AdminUser]{
 		return u, err
 	},
 	args: func(u *model.AdminUser) []any {
-		return []any{u.ID, u.Name, u.Username, u.Role, u.PasswordHash, u.Salt, u.CreatedAt, u.AccountID, u.PasswordSetByUser, u.EnvPasswordHash, u.SessionEpoch, secretbox.Encrypt(u.TOTPSecret), u.TOTPEnabled}
+		return []any{u.ID, u.Name, u.Username, u.Role, u.PasswordHash, u.Salt, u.CreatedAt, u.AccountID, u.PasswordSetByUser, u.EnvPasswordHash, u.SessionEpoch, secretbox.Encrypt(u.TOTPSecret), u.TOTPEnabled, u.ActivitySeenAt}
 	},
 	// N°75 — empreinte QUI COUVRE LE SECRET 2FA : le modèle porte
 	// json:"-" sur TOTPSecret (le secret ne sort jamais des réponses API),

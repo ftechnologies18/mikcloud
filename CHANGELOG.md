@@ -5,6 +5,57 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-18 — N°151 — La cloche devient une vraie boîte de notifications : read-state SERVEUR par utilisateur (fin du localStorage), badge multi-appareils, acquit monotone
+
+### Contexte
+Troisième volet de la refonte : le badge « non lus » était calculé côté CLIENT
+depuis un localStorage PAR NAVIGATEUR (clé globale `mikcloud:activity-seen`,
+indépendante de l'utilisateur) — incohérent d'un appareil à l'autre, entre les
+membres d'une même équipe, et muet sur la durée de vie réelle des non-lus
+(la clé n'était posée qu'à l'OUVERTURE de la cloche : deux onglets, deux
+vérités).
+
+### Correctifs
+- **Backend** — deux routes nouvelles (handlers_bell.go) :
+  - `GET /api/bell` → `{items, seenAt, unread}` : journal du compte filtré
+    RBAC (N°149), trié décroissant, borné (limit 20 par défaut) ; `seenAt`
+    lu sur LE PORTEUR du token (AdminUser.ActivitySeenAt — chaque membre a
+    sa boîte) ; `unread` compte TOUT le journal visible au-delà de la
+    limite (le badge « 9+ » ne ment pas sur une 21e entrée) ;
+  - `POST /api/bell/seen` → acquit : seenAt = maintenant, MONOTONE (un
+    acquit ancien qui arrive en retard ne rouvre pas les non-lus), borné au
+    futur (+1 min — un horodatage falsifié n'enterre pas les notifications
+    à venir), corps optionnel `{"at"}` pour la migration.
+- **Persistance** — colonne `activity_seen_at` sur `admin_users`
+  (ALTER idempotent, spec/scan/args alignés) : l'acquit survit aux
+  redémarrages et se synchronise vers Neon comme le reste.
+- **Frontend** — ActivityBell réécrite sur /api/bell : badge = `unread`
+  serveur ; ouverture = acquit best-effort (la boîte s'ouvre même si le
+  POST échoue, retenté à la prochaine ouverture) ; MIGRATION one-shot :
+  la première réponse « première visite » portant encore l'ancienne clé
+  localStorage envoie sa valeur au serveur (l'utilisateur garde son
+  avancement), puis la clé disparaît ; icônes par catégorie complétées
+  (team, billing, wifi, device, registration, compte — announcement en
+  place pour N°151) avec fallback Settings.
+
+### Fidélité
+GET /api/activity inchangé (la vue Journal et les autres consommateurs
+n'ont pas bougé) ; type Activity élargi sans rupture. CONTRACT-V2
+inchangé (routes ADDITIVES, documentées ici).
+
+### Vérifié
+go build 0, go vet 0, gofmt propre ; go test ./internal/api/ + store
+complets OK. 4 nouveaux tests : boîtes indépendantes (l'acquit du gérant
+n'éponge pas celui du propriétaire et réciproquement), acquit monotone +
+borné au futur + format invalide refusé, unread compte au-delà de la
+page (26 non-lus, page 20), RBAC dans la boîte (manager sans billing/team,
+owner avec). E2E navigateur contre backend Go réel : badge « 1 » posé par
+le serveur → ouverture → entrées visibles → badge tombé → RECHARGEMENT →
+badge toujours absent (read-state serveur persistant, la preuve
+multi-appareils) ; migration localStorage observée (clé 2020 posée à la
+main → login manager → clé DISPARUE, seenAt serveur = 2020, badge 5) ;
+0 erreur console, 0 erreur backend.
+
 ## 2026-09-18 — N°150 — Telegram « zéro setup » et relais e-mail : les canaux plateforme arrivent dans les notifications (bot FTCI à lien magique + envoi porté par le compte principal)
 
 ### Contexte
@@ -97,7 +148,6 @@ du principal (353 ms vers api.resend.com réel, « API key is invalid » du faux
 token tracé), webhook réel : mauvais secret 401 / bon secret 200 / sans
 header 401, WhatsApp inchangé, 0 erreur console/page ; VLM 4/4 (check vert +
 badge, note relais, carte WhatsApp intacte, aucun défaut de mise en page).
-
 ## 2026-09-18 — N°149 — Le journal d'activité respecte le RBAC : les entrées billing et team ne partent qu'au propriétaire
 
 ### Contexte

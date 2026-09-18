@@ -5,6 +5,81 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-18 — N°155 — La cloche devient une vraie boîte de réception : les non-lus restent marqués jusqu'à l'acquit explicite (« Tout marquer comme lu »), la cloche sonne, le badge rebondit
+
+### Contexte
+Dernier volet UX de la refonte des notifications : N°151 avait posé la boîte
+SERVEUR (read-state par utilisateur, badge multi-appareils) mais l'OUVERTURE
+acquittait immédiatement — l'utilisateur ne voyait jamais l'état « non lu »
+(le badge tombait avant même qu'il ouvre), impossible de garder des
+notifications « à traiter », et la clé i18n « topbar.bellMarkRead » existait
+dans les dictionnaires... sans aucun bouton pour l'afficher. Le panneau lui-
+même était minimal : 6 lignes aplaties, une seule couleur, temps relatif figé
+au rendu, état vide muet, aucun retour d'animation.
+
+### Produit
+1. **Ouvrir = consulter, pas acquitter** (patron Gmail/GitHub) — les non-lus
+   restent marqués jusqu'au bouton : fond teinté émeraude, texte medium et
+   pastille « NOUVEAU » (point + libellé) à côté de l'horodatage ; le badge
+   persiste à la fermeture si l'utilisateur n'a pas acquitté.
+2. **Bouton « Tout marquer comme lu »** dans le pied (icône CheckCheck,
+   visible SEULEMENT s'il reste des non-lus — rien à acquitter sinon),
+   spinner pendant l'envoi, toast en cas d'échec, garde anti double-clic ;
+   l'acquit avance le read-state serveur (monotone, multi-appareils —
+   contrat N°151 inchangé), puis les pastilles fondent et le badge disparaît
+   en ressort.
+3. **La cloche SONNE** — à l'arrivée d'une notification pendant que le
+   panneau est fermé (uniquement en HAUSSE du compteur non-lus, jamais au
+   chargement ni pendant la lecture) : balancement amorti de l'icône
+   (useAnimationControls, 0,85 s, transform seul — GPU-friendly).
+4. **Badge vivant** — apparition/disparition en ressort (spring) et re-pop
+   à chaque changement de compte ; le déclencheur porte un aria-label
+   dynamique « Notifications — N non lues ».
+5. **Cascade d'ouverture** — les items glissent en place avec un décalage
+   en cascade (45 ms/item, plafonné) à chaque ouverture du panneau.
+6. **Squelette shimmer** au premier chargement (4 rangées au rythme des
+   futures lignes) au lieu d'un panneau vide qui cligne.
+7. **État vide enrichi** — icône cloche dans une pastille émeraude, « Vous
+   êtes à jour » + ligne d'attente : la boîte célèbre le calme.
+8. **Annonces N°152 relookées** — barre de niveau sur tout le bord gauche
+   (émeraude/ambre/rouge) + vraie hiérarchie : titre en gras, corps en
+   retrait gris (au lieu du « titre — corps » aplati en une ligne).
+9. **Temps relatif vivant** — les « il y a X min » avancent pendant la
+   lecture : horloge interne qui ne tourne QUE panneau ouvert (tick 30 s,
+   zéro coût fenêtre fermée — le poll 60 s couvre déjà le badge).
+10. **Pastilles par catégorie** — palette Aurora Emerald cohérente
+    (routeur/wifi/billing émeraude, user/session/registration sarcelle,
+    voucher ambre, reseller/device orange, team rose, système neutre) ;
+    les annonces suivent leur niveau. Panneau élargi à 22,5rem, borné au
+    viewport mobile (min(22.5rem, 100vw-1.5rem)) ; 8 items au lieu de 6.
+
+### Technique
+Zéro route, zéro API, zéro schéma : le backend N°151 est inchangé —
+POST /api/bell/seen n'est plus appelé à l'ouverture mais AU CLIC (l'ouverture
+invalide juste la requête pour rafraîchir en tâche de fond) ; isUnread côté
+client est le miroir exact du calcul serveur (at > seenAt, seenAt vide =
+tout lu) ; la migration localStorage N°151 est conservée ; animations
+framer-motion 13 (AnimatePresence pour badge/pastilles, controls pour la
+sonnerie, motion.li pour la cascade) exclusivement transform/opacity ;
+9 clés i18n FR/EN nouvelles + titre du panneau « Notifications ».
+
+### Renumérotation
+N°153 (console plateforme « Notifications ») et N°154 (différenciation
+console + runbook WhatsApp plateforme) livrés par la session parallèle
+pendant ce travail — rebase propre, aucun fichier en commun, revalidation
+complète post-rebase.
+
+### Vérifié
+eslint 0, tsgo 0 (avant et après rebase) ; E2E navigateur sur backend Go
+réel + frontend dev : badge serveur visible, ouverture SANS acquit, 6
+pastilles « nouveau », annonces (barre ambre + titre gras + corps en
+retrait), acquit explicite (badge et pastilles fondus, bouton retiré),
+RECHARGEMENT → badge toujours absent (read-state serveur), dark mode,
+mobile 390 px (panneau 360 px borné), état vide « Vous êtes à jour »,
+0 erreur console/page — 23/24 asserts (le 24e est un faux échec du harnais :
+l'API renvoie 200 à la création de routeur, l'entrée est bien journalisée) ;
+revue visuelle VLM 5/5 CLEAN (jour, après-acquit, nuit, mobile, vide).
+
 ## 2026-09-18 — N°154 — La console plateforme cesse d'être une console client : le propriétaire SaaS n'a ni tickets ni stock — et le runbook WhatsApp plateforme (N°148-c) arrive pour guider les démarches Meta
 
 ### Contexte

@@ -4,18 +4,24 @@
 // - SearchPalette : palette de commandes ⌘K/Ctrl+K — navigue vers n'importe
 //   quelle vue autorisée + actions rapides (rafraîchir, thème, langue, logout)
 // - ActivityBell  : cloche de notification — boîte SERVEUR (/api/bell,
-//   N°151 : read-state par utilisateur, badge multi-appareils, filtre RBAC),
-//   ouverture = acquit
+//   N°151 : read-state par utilisateur, badge multi-appareils, filtre RBAC).
+//   N°153 : refonte UX — les non-lus restent marqués (fond teinté + pastille
+//   « nouveau ») jusqu'au bouton « Tout marquer comme lu » (patron Gmail/
+//   GitHub : ouvrir = consulter, pas acquitter), animations framer-motion
+//   (sonnerie à l'arrivée, badge ressort, cascade des items, acquit en fondu)
 // - LiveClock     : date + heure live (seconde par seconde), style console
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTheme } from "next-themes";
+import { AnimatePresence, motion, useAnimationControls } from "framer-motion";
 import {
   Bell,
+  BellRing,
   Building2,
-  Inbox,
+  CheckCheck,
   Languages,
+  Loader2,
   LogOut,
   Megaphone,
   MonitorSmartphone,
@@ -44,11 +50,13 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Skeleton } from "@/components/ui/skeleton";
 import { fetchBell, markBellSeen } from "@/lib/hotspot/api";
 import { localeOf, useI18n } from "@/lib/hotspot/i18n";
 import { navItemsFor } from "@/lib/hotspot/nav";
 import { canView } from "@/lib/hotspot/roles";
 import { useHotspotStore } from "@/lib/hotspot/store";
+import { cn } from "@/lib/utils";
 
 /* ─────────────────────────── LiveClock ─────────────────────────── */
 
@@ -249,11 +257,50 @@ const TYPE_ICON: Record<string, LucideIcon> = {
   announcement: Megaphone,
 };
 
-/** Temps relatif compact — « il y a 5 min », « hier »… selon la langue. */
-function relTime(iso: string, lang: string): string {
+// N°153 — pastille de l'icône par catégorie : palette Aurora Emerald
+// (émeraude, sarcelle, ambre, orange, rose — jamais d'indigo/bleu). Les
+// annonces ne s'y fient pas : elles suivent leur NIVEAU (info → primaire,
+// warning → ambre, critical → destructif) via announcementChip().
+const TYPE_TONE: Record<string, string> = {
+  router: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+  user: "bg-teal-500/10 text-teal-600 dark:text-teal-400",
+  voucher: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+  reseller: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
+  session: "bg-teal-500/10 text-teal-600 dark:text-teal-400",
+  system: "bg-foreground/10 text-foreground",
+  team: "bg-rose-500/10 text-rose-600 dark:text-rose-400",
+  billing: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+  registration: "bg-teal-500/10 text-teal-600 dark:text-teal-400",
+  wifi: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+  device: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
+  compte: "bg-foreground/10 text-foreground",
+  announcement: "bg-primary/10 text-primary",
+};
+
+// N°153 — barre de niveau sur le bord gauche des annonces (ancrage visuel
+// du megaphone plateforme : émeraude = info, ambre = avertissement, rouge =
+// critique).
+const ANNOUNCEMENT_BAR: Record<string, string> = {
+  info: "bg-primary",
+  warning: "bg-amber-500",
+  critical: "bg-destructive",
+};
+
+function announcementChip(level?: string): string {
+  if (level === "critical") return "bg-destructive/10 text-destructive";
+  if (level === "warning") return "bg-amber-500/10 text-amber-600 dark:text-amber-400";
+  return TYPE_TONE.announcement;
+}
+
+/** Temps relatif compact — « il y a 5 min », « hier »… selon la langue.
+ * N°153 : l'instant de référence est injecté (horloge vivante du panneau,
+ * tick 30 s uniquement quand il est ouvert) au lieu d'un Date.now() figé au
+ * rendu — les « il y a X min » avancent pendant la lecture. */
+function relTime(iso: string, lang: string, nowMs?: number): string {
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return "";
-  const diffMin = Math.round((Date.now() - then) / 60_000);
+  const now = nowMs ?? Date.now();
+  const diffMin = Math.round((now - then) / 60_000);
   const rtf = new Intl.RelativeTimeFormat(localeOf(lang as "fr" | "en"), { numeric: "auto" });
   if (diffMin < 1) return rtf.format(0, "minute");
   if (diffMin < 60) return rtf.format(-diffMin, "minute");
@@ -263,15 +310,22 @@ function relTime(iso: string, lang: string): string {
 }
 
 export function ActivityBell() {
-  const { t, lang } = useI18n();
+  const { t, tf, lang } = useI18n();
   const setView = useHotspotStore((s) => s.setView);
   const user = useHotspotStore((s) => s.user);
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
+  const [marking, setMarking] = useState(false);
   // Migration one-shot par session : l'ancien read-state localStorage est
   // porté au serveur la première fois que la boîte répond « première visite »
   // (seenAt vide) — l'utilisateur garde son avancement, puis la clé disparaît.
   const migratedRef = useRef(false);
+  // N°153 — garde anti double-clic sur l'acquit + sonnerie de la cloche.
+  const markingRef = useRef(false);
+  const prevUnreadRef = useRef<number | null>(null);
+  const bellControls = useAnimationControls();
+  // Horloge relative du panneau : tick 30 s UNIQUEMENT panneau ouvert.
+  const [nowTick, setNowTick] = useState(() => Date.now());
 
   // Le journal d'activité est réservé aux gérants+ (requireRole 2 côté API,
   // miroir canView côté client) — la cloche suit la même règle. N°100 — la
@@ -286,7 +340,7 @@ export function ActivityBell() {
   // team) + seenAt + unread. Le badge « non lus » est calculé serveur —
   // cohérent multi-appareils et par membre de l'équipe, contrairement à
   // l'ancien localStorage par navigateur.
-  const { data } = useQuery({
+  const { data, isPending } = useQuery({
     queryKey: ["/api/bell"],
     queryFn: () => fetchBell(20),
     enabled: allowed,
@@ -315,21 +369,61 @@ export function ActivityBell() {
       });
   }, [allowed, data, queryClient]);
 
-  const items = useMemo(() => (data?.items ?? []).slice(0, 6), [data]);
+  // N°153 — la cloche SONNE quand une notification arrive pendant que le
+  // panneau est fermé : petit balancement amorti (transform uniquement —
+  // GPU-friendly). Pas de sonnerie au premier chargement ni pendant la
+  // lecture : uniquement une HAUSSE du compteur non-lus.
+  useEffect(() => {
+    if (!data) return;
+    const prev = prevUnreadRef.current;
+    prevUnreadRef.current = data.unread;
+    if (prev === null || data.unread <= prev || open) return;
+    void bellControls.start(
+      { rotate: [0, 14, -12, 8, -5, 3, 0] },
+      { duration: 0.85, ease: "easeInOut" },
+    );
+  }, [data, open, bellControls]);
+
+  // N°153 — horloge relative : les « il y a X min » avancent pendant la
+  // lecture, mais le minuteur ne tourne QUE panneau ouvert (zéro coût
+  // fenêtre fermée — la boîte est déjà rafraîchie par le poll 60 s).
+  useEffect(() => {
+    if (!open) return;
+    const id = setInterval(() => setNowTick(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, [open]);
+
+  const items = useMemo(() => (data?.items ?? []).slice(0, 8), [data]);
   const unread = data?.unread ?? 0;
 
   function handleOpenChange(next: boolean) {
     setOpen(next);
-    // Ouvrir la cloche = acquitter : le read-state SERVEUR avance (monotone,
-    // multi-appareils — N°151). Best-effort : la boîte s'ouvre toujours,
-    // même si l'acquit réseau échoue (il sera retenté à la prochaine
-    // ouverture).
-    if (next && data?.items?.length) {
-      void markBellSeen()
-        .then(() => queryClient.invalidateQueries({ queryKey: ["/api/bell"] }))
-        .catch(() => {
-          /* best-effort */
-        });
+    // N°153 — ouvrir rafraîchit la boîte en tâche de fond, mais N'ACQUITTE
+    // PLUS : les non-lus restent marqués (fond teinté + pastille « nouveau »)
+    // jusqu'au bouton « Tout marquer comme lu » — l'ouverture est une
+    // consultation, pas un acquit (patron Gmail/GitHub). L'acquit serveur
+    // reste monotone et multi-appareils (N°151 inchangé).
+    if (next) {
+      void queryClient.invalidateQueries({ queryKey: ["/api/bell"] });
+    }
+  }
+
+  // N°153 — acquit EXPLICITE : le bouton « Tout marquer comme lu » avance le
+  // read-state serveur à maintenant, puis rafraîchit — les pastilles
+  // « nouveau » fondent (exit AnimatePresence) et le badge disparaît en
+  // ressort. Best-effort bloquant : un double-clic ne double pas l'envoi.
+  async function markAllRead() {
+    if (markingRef.current || unread === 0) return;
+    markingRef.current = true;
+    setMarking(true);
+    try {
+      await markBellSeen();
+      await queryClient.invalidateQueries({ queryKey: ["/api/bell"] });
+    } catch {
+      toast.error(t("topbar.bellMarkReadError"));
+    } finally {
+      setMarking(false);
+      markingRef.current = false;
     }
   }
 
@@ -347,63 +441,189 @@ export function ActivityBell() {
           variant="ghost"
           size="icon"
           className="relative size-10 text-muted-foreground hover:text-foreground"
-          aria-label={t("topbar.bell")}
+          aria-label={
+            unread > 0 ? tf("topbar.bellAriaUnread", { count: unread }) : t("topbar.bell")
+          }
         >
-          <Bell className="size-4.5" />
-          {unread > 0 && (
-            <span className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-bold leading-none text-primary-foreground shadow-sm">
-              {unread > 9 ? "9+" : unread}
-            </span>
-          )}
+          <motion.span animate={bellControls} className="flex origin-top">
+            <Bell className="size-4.5" aria-hidden />
+          </motion.span>
+          <AnimatePresence initial={false}>
+            {unread > 0 && (
+              <motion.span
+                key={unread}
+                initial={{ scale: 0.3, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.3, opacity: 0 }}
+                transition={{ type: "spring", stiffness: 550, damping: 26 }}
+                className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-bold leading-none text-primary-foreground shadow-sm"
+              >
+                {unread > 9 ? "9+" : unread}
+              </motion.span>
+            )}
+          </AnimatePresence>
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-80 p-0">
+      <PopoverContent align="end" className="w-[min(22.5rem,calc(100vw-1.5rem))] p-0">
+        {/* En-tête : titre + compteur non-lus */}
         <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
           <p className="text-sm font-semibold">{t("topbar.bellTitle")}</p>
-          {unread > 0 && (
-            <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-semibold text-primary">
-              {unread > 9 ? "9+" : unread}
-            </span>
-          )}
+          <AnimatePresence initial={false}>
+            {unread > 0 && (
+              <motion.span
+                initial={{ scale: 0.5, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.5, opacity: 0 }}
+                transition={{ type: "spring", stiffness: 500, damping: 28 }}
+                className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-semibold text-primary"
+              >
+                {unread > 9 ? "9+" : unread}
+              </motion.span>
+            )}
+          </AnimatePresence>
         </div>
 
-        {items.length === 0 ? (
-          <div className="flex flex-col items-center gap-2 px-4 py-8 text-center">
-            <Inbox className="size-7 text-muted-foreground/50" aria-hidden />
-            <p className="text-sm text-muted-foreground">{t("topbar.bellEmpty")}</p>
+        {isPending ? (
+          // N°153 — squelette de premier chargement : la boîte s'annonce
+          // chargée plutôt que de cligner (3 lignes shimmer au rythme des
+          // futures rangées).
+          <div className="space-y-2.5 p-3" role="status" aria-label={t("topbar.bellLoading")}>
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className="flex items-start gap-3 px-1">
+                <Skeleton className="size-7 shrink-0 rounded-lg" />
+                <div className="min-w-0 flex-1 space-y-1.5 pt-1">
+                  <Skeleton className="h-3 w-full" />
+                  <Skeleton className="h-3 w-2/5" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : items.length === 0 ? (
+          // N°153 — état vide enrichi : la cloche « à jour » célèbre le calme
+          // au lieu d'un simple panneau muet.
+          <div className="flex flex-col items-center gap-2.5 px-4 py-10 text-center">
+            <span className="flex size-11 items-center justify-center rounded-full bg-primary/10 text-primary">
+              <BellRing className="size-5" aria-hidden />
+            </span>
+            <p className="text-sm font-medium">{t("topbar.bellCaughtUp")}</p>
+            <p className="max-w-56 text-xs leading-relaxed text-muted-foreground">
+              {t("topbar.bellCaughtUpHint")}
+            </p>
           </div>
         ) : (
-          <ul className="max-h-72 divide-y divide-border/50 overflow-y-auto">
-            {items.map((a) => {
+          <ul className="max-h-80 divide-y divide-border/50 overflow-y-auto">
+            {items.map((a, i) => {
               const Icon = TYPE_ICON[a.type] ?? Settings;
               const isAnnouncement = a.type === "announcement";
+              // Non-lu = plus récent que le dernier acquit de CET utilisateur
+              // (miroir exact du calcul serveur : seenAt vide = tout lu).
+              const isUnread = Boolean(data?.seenAt && a.at > data.seenAt);
               return (
-                <li key={a.id} className="flex gap-3 px-4 py-3">
+                <motion.li
+                  key={a.id}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: Math.min(i * 0.045, 0.25), duration: 0.22, ease: "easeOut" }}
+                  className={cn(
+                    "relative flex list-none gap-3 px-4 py-3 transition-colors",
+                    isUnread && "bg-primary/5 dark:bg-primary/10",
+                  )}
+                >
+                  {isAnnouncement && (
+                    <span
+                      aria-hidden
+                      className={cn(
+                        "absolute bottom-0 left-0 top-0 w-[3px]",
+                        ANNOUNCEMENT_BAR[a.level ?? "info"],
+                      )}
+                    />
+                  )}
                   <span
-                    className={
-                      isAnnouncement && a.level === "critical"
-                        ? "flex size-7 shrink-0 items-center justify-center rounded-lg bg-destructive/10 text-destructive"
-                        : isAnnouncement && a.level === "warning"
-                          ? "flex size-7 shrink-0 items-center justify-center rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400"
-                          : "flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"
-                    }
+                    className={cn(
+                      "flex size-7 shrink-0 items-center justify-center rounded-lg",
+                      isAnnouncement ? announcementChip(a.level) : (TYPE_TONE[a.type] ?? TYPE_TONE.system),
+                    )}
                   >
                     <Icon className="size-3.5" aria-hidden />
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="line-clamp-2 text-[13px] leading-snug">{a.message}</p>
-                    <p className="mt-0.5 text-[11px] text-muted-foreground">{relTime(a.at, lang)}</p>
+                    {isAnnouncement && a.title ? (
+                      // N°153 — l'annonce gagne une vraie hiérarchie : titre
+                      // en gras + corps en retrait (au lieu d'un « titre —
+                      // corps » aplati en une ligne).
+                      <>
+                        <p className="line-clamp-1 text-[13px] font-semibold leading-snug">
+                          {a.title}
+                        </p>
+                        {a.body && (
+                          <p className="mt-0.5 line-clamp-2 text-xs leading-snug text-muted-foreground">
+                            {a.body}
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <p
+                        className={cn(
+                          "line-clamp-2 text-[13px] leading-snug",
+                          isUnread && "font-medium",
+                        )}
+                      >
+                        {a.message}
+                      </p>
+                    )}
+                    <div className="mt-1 flex items-center gap-2">
+                      <time className="text-[11px] text-muted-foreground">
+                        {relTime(a.at, lang, nowTick)}
+                      </time>
+                      <AnimatePresence>
+                        {isUnread && (
+                          <motion.span
+                            initial={{ opacity: 0, scale: 0.5 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            exit={{ opacity: 0, scale: 0.4 }}
+                            transition={{ duration: 0.18, ease: "easeOut" }}
+                            className="flex items-center gap-1 rounded-full bg-primary/15 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-primary"
+                          >
+                            <span className="size-1 rounded-full bg-primary" aria-hidden />
+                            {t("topbar.bellNew")}
+                          </motion.span>
+                        )}
+                      </AnimatePresence>
+                    </div>
                   </div>
-                </li>
+                </motion.li>
               );
             })}
           </ul>
         )}
 
-        <div className="border-t border-border/60 p-2">
-          <Button variant="ghost" size="sm" className="w-full text-muted-foreground hover:text-foreground" onClick={viewAll}>
+        {/* Pied : « Tout voir » + acquit explicite N°153 (visible seulement
+            quand il reste des non-lus — il n'y a rien à acquitter sinon). */}
+        <div className="flex items-center gap-1.5 border-t border-border/60 p-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="flex-1 text-muted-foreground hover:text-foreground"
+            onClick={viewAll}
+          >
             {t("topbar.bellViewAll")}
           </Button>
+          {unread > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-1.5 text-primary hover:text-primary"
+              onClick={markAllRead}
+              disabled={marking}
+            >
+              {marking ? (
+                <Loader2 className="size-3.5 animate-spin" aria-hidden />
+              ) : (
+                <CheckCheck className="size-3.5" aria-hidden />
+              )}
+              {t("topbar.bellMarkRead")}
+            </Button>
+          )}
         </div>
       </PopoverContent>
     </Popover>

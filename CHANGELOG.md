@@ -5,6 +5,79 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-18 — N°147 — Le formulaire « Nouveau revendeur » atteignable sur mobile : correction racine dans DialogContent (tout dialogue de l'app borné à l'écran) + patron pied-de-page collant sur le formulaire signalé
+
+### Contexte
+Retour utilisateur : « sur mobile le formulaire de création revendeur est très
+long, impossible de voir les boutons, créé revendeur caché ». Reproduit au
+navigateur contre backend Go réel (compte gérant, vue Revendeurs, viewport
+360×640 — le smartphone Android budget du terrain) : le dialogue création/
+édition mesurait **958 px de haut dans un écran de 640 px** — centré fixe par
+`top-50% translate-y-[-50%]`, il débordait DES DEUX côtés à la fois (159 px
+au-dessus ET en dessous) : l'en-tête « Nouveau revendeur » coupé en haut, le
+bouton **« Créer le revendeur » à 694 px — 54 px SOUS le bas de l'écran,
+invisible et inatteignable** (Radix verrouille le scroll du body : la page ne
+peut pas faire défiler un dialogue fixe).
+
+### Cause racine — troisième récidive d'une même classe de bug
+`ui/dialog.tsx` (DialogContent) n'avait **aucune borne de hauteur** : tout
+contenu plus haut que le viewport débordait hors écran. N°144 l'avait déjà
+constaté sur « Transférer le stock » (correctif ponctuel `max-h-[85dvh]`),
+N°145 sur les 5 modales d'impression (patron flex) — chaque fois un dialogue
+à la fois, la maladie réapparaissant au suivant (le formulaire revendeur :
+6 champs + sélecteur de mode de paiement + champ conditionnel dépôt-vente ou
+crédit initial). Trois signalements = correctif à la racine.
+
+### Correctifs (2 fichiers, frontend uniquement)
+1. **ui/dialog.tsx — borne racine** : DialogContent gagne
+   `max-h-[calc(100dvh-2rem)] overflow-y-auto` (marge 1 rem haut/bas, `dvh`
+   pour la barre d'URL mobile). **Les 43 fichiers utilisant des DialogContent
+   sont protégés d'un coup** : contenu qui tient = rendu strictement
+   inchangé ; contenu trop long = le dialogue défile, boutons atteignables.
+   Coexistence vérifiée par tw-merge : les dialogues qui gèrent leur propre
+   scroll passent outre — `overflow-hidden` (assistant vouchers, profil
+   utilisateur, palette de commandes) retire le scroll de base et garde leur
+   clipping maîtrisé ; les `max-h` existants (85/90/92vh de N°144/N°145)
+   gagnent le conflit tw-merge ; les patrons flex N°145 s'empilent
+   proprement (l'externe ne défile jamais, l'interne absorbe).
+2. **resellers-view.tsx — patron premium (miroir N°145)** sur le dialogue
+   création/édition : `flex max-h-[calc(100dvh-2rem)] flex-col p-4 sm:p-6` —
+   l'en-tête et le footer (« Créer le revendeur ») restent **visibles en
+   permanence**, seul le corps du formulaire défile (`min-h-0 flex-1
+   overflow-y-auto`). Padding compacté `p-4` en mobile (+32 px utiles).
+
+### Fidélité
+Zéro route, zéro API, zéro schéma, zéro clé i18n (CONTRACT-V2 inchangé) ;
+mêmes POST /api/resellers, mêmes gardes (nom/identifiant requis, PIN 4-6
+chiffres filtré à la saisie, plafond de créance exigé en dépôt-vente — toast
+de garde vérifié au navigateur), même bascule prépayé/dépôt-vente, mêmes
+champs conditionnels.
+
+### Vérifié
+eslint 0, tsc 0 ; navigateur agent-browser contre backend Go réel compilé
+(store JSON éphémère, port 4125, compte gérant semé par API) :
+- **AVANT (reproduit)** : 360×640 → dialogue 958 px, top −159, bouton
+  694 px = 54 px sous l'écran (capture VLM : titre ET boutons coupés).
+- **APRÈS** : 320×568, 360×640, 375×667, 390×844 → dialogue borné
+  16→(h−16) px pile, bouton visible partout (77 px de marge à 360×640) ;
+  paysage 740×360 → dialogue 16→344, bouton visible ; desktop 1440×900
+  inchangé (774 px, centré) — VLM « Pass ».
+- Corps défilant (730 px dans 396 px visibles), footer collant pendant le
+  défilement, dernier champ (crédit initial) atteint au scroll, mode
+  dépôt-vente (champ plafond en plus) absorbé sans déborder.
+- **Chemin d'or** : création réelle d'« Awa Diarra » (dépôt-vente, plafond
+  25 000) DEPUIS le formulaire mobile → toast de garde sans plafond, puis
+  succès : la revendeur apparaît dans la liste avec ses actions.
+- Non-régression : dialogue « Modifier » borné et bouton visible ;
+  « Encaisser » (court) rendu identique (242→602, centré) ; assistant
+  « Générer des vouchers » (overflow-hidden) tient à 360×640 (16→624) ;
+  SignupModal du landing désormais borné lui aussi (16→624 à 360×640) ;
+  0 erreur console/page.
+
+### Renumérotation
+N°146 pris par les e-mails transactionnels (bfd6a80, session parallèle) —
+ce travail devient N°147.
+
 ## 2026-09-18 — N°146 — E-mails transactionnels « Reçu de paiement » et « Bienvenue » : gabarits brandés Aurora Emerald (texte + HTML multipart), un reçu par encaissement réel (Wave, carte Stripe, plateforme), bienvenue à l'inscription avec essai gratuit, envoi asynchrone sous goroutine qui ne bloque jamais webhooks ni signup
 
 ### Contexte

@@ -698,14 +698,19 @@ export default function ResellersView() {
           }
         }}
       >
-        <DialogContent>
+        {/* N°147 — patron flex borné (miroir N°145) : l'en-tête et le footer
+            (« Créer le revendeur ») restent VISIBLES en permanence, seul le
+            corps du formulaire défile (min-h-0 flex-1) — le formulaire complet
+            (6 champs + sélecteur de mode + champ conditionnel) dépasse la
+            hauteur d'un écran mobile. */}
+        <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col p-4 sm:max-w-lg sm:p-6">
           <DialogHeader>
             <DialogTitle>{editTarget ? t("resellers.editTitle") : t("resellers.newTitle")}</DialogTitle>
             <DialogDescription>
               {editTarget ? t("resellers.editDesc") : t("resellers.newDesc")}
             </DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4">
+          <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto">
             <div className="grid gap-2">
               <Label htmlFor="reseller-name">{t("resellers.name")}</Label>
               <Input

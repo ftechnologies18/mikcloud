@@ -279,6 +279,9 @@ func (a *API) Handler() http.Handler {
 	// + acquit monotone (voir handlers_bell.go).
 	mux.HandleFunc("GET /api/bell", a.requireRole(2, a.handleBellList))
 	mux.HandleFunc("POST /api/bell/seen", a.requireRole(2, a.handleBellSeen))
+	// N°152 — annonces de la plateforme : lecture côté clients (bandeau +
+	// destination « tout voir » de la cloche) — voir handlers_announcements.go.
+	mux.HandleFunc("GET /api/announcements", a.requireRole(2, a.handleClientAnnouncements))
 	mux.HandleFunc("GET /api/settings", a.handleSettingsGet)
 	mux.HandleFunc("PUT /api/settings", a.requireRole(3, a.handleSettingsPut))
 
@@ -383,6 +386,10 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/admin/team", a.requireRole(3, a.handlePlatformTeamList))
 	mux.HandleFunc("POST /api/admin/team", a.requireRole(3, a.handlePlatformTeamCreate))
 	mux.HandleFunc("DELETE /api/admin/team/{id}", a.requireRole(3, a.handlePlatformTeamDelete))
+	// N°152 — diffusion d'annonces aux clients MikCloud (super-admin).
+	mux.HandleFunc("GET /api/admin/announcements", a.requireRole(3, a.handleAnnouncementsList))
+	mux.HandleFunc("POST /api/admin/announcements", a.requireRole(3, a.handleAnnouncementCreate))
+	mux.HandleFunc("DELETE /api/admin/announcements/{id}", a.requireRole(3, a.handleAnnouncementDelete))
 
 	// Facturation (verrou du cycle) — file des demandes de renouvellement +
 	// webhook d'encaissement Wave (public, authentifié par secret partagé).

@@ -123,6 +123,10 @@ func syncSteps(db *model.DB) []syncStep {
 		{chatMessageSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
 			return syncTable(ctx, tx, hashes, pending, chatMessageSpec, db.ChatMessages, delta)
 		}},
+		// N°152 — annonces de la plateforme (collection globale).
+		{announcementSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
+			return syncTable(ctx, tx, hashes, pending, announcementSpec, db.Announcements, delta)
+		}},
 		{transactionSpec.table, func(ctx context.Context, tx *sql.Tx, hashes, pending map[string]map[string]uint64, delta *syncDelta) error {
 			return syncTable(ctx, tx, hashes, pending, transactionSpec, db.Transactions, delta)
 		}},
@@ -655,6 +659,7 @@ func (p *PG) rebuildHashes(db *model.DB) {
 		// les autres : leurs empreintes sont posées comme les autres.
 		chatConversationSpec.table: hashRows(db.ChatConversations, chatConversationSpec),
 		chatMessageSpec.table:      hashRows(db.ChatMessages, chatMessageSpec),
+		announcementSpec.table:     hashRows(db.Announcements, announcementSpec),
 		deviceSpec.table:           hashRows(db.Devices, deviceSpec),
 	}
 	notifRows := make([]model.NotificationSettings, 0, len(db.NotifSettings))

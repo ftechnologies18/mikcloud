@@ -79,6 +79,10 @@ const (
 	// KindWelcome — N°146 : e-mail de bienvenue transactionnel — envoyé
 	// à la création d'un compte (signup public), essai gratuit inclus.
 	KindWelcome = "welcome"
+	// KindAnnouncement — N°152 : annonce de la plateforme diffusée aux
+	// clients (super-admin) — envoyée à la création de l'annonce quand la
+	// case e-mail est cochée, aux propriétaires des comptes destinataires.
+	KindAnnouncement = "announcement"
 )
 
 // EmailProviderOf — fournisseur du canal e-mail normalisé : "resend" ou

@@ -235,6 +235,8 @@ func liveTableRows(db *model.DB) []TableHealth {
 		{Table: "chat_conversations", Rows: len(db.ChatConversations)},
 		{Table: "chat_messages", Rows: len(db.ChatMessages)},
 		{Table: "devices", Rows: len(db.Devices)},
+		// N°152 — annonces de la plateforme (parité synchro différentielle).
+		{Table: "announcements", Rows: len(db.Announcements)},
 		{Table: "settings", Rows: len(db.SettingsByAccount)},
 	}
 }

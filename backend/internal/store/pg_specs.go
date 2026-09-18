@@ -823,3 +823,19 @@ var notifLogSpec = entitySpec[model.NotificationLog]{
 
 // rebuildHashes — reconstruit le cache d'empreintes à partir d'un état mémoire
 // (après un Load ou un seed initial).
+
+// announcementSpec — N°152 : annonces de la plateforme (collection globale).
+var announcementSpec = entitySpec[model.Announcement]{
+	table: "announcements",
+	cols:  []string{"id", "title", "body", "level", "audience", "created_at", "created_by", "created_by_name", "expires_at", "emailed_at", "emailed_count"},
+	idOf:  func(x *model.Announcement) string { return x.ID },
+	scan: func(r *sql.Rows) (model.Announcement, error) {
+		var x model.Announcement
+		err := r.Scan(&x.ID, &x.Title, &x.Body, &x.Level, &x.Audience, &x.CreatedAt, &x.CreatedBy, &x.CreatedByName, &x.ExpiresAt, &x.EmailedAt, &x.EmailedCount)
+		return x, err
+	},
+	args: func(x *model.Announcement) []any {
+		return []any{x.ID, x.Title, x.Body, x.Level, x.Audience, x.CreatedAt, x.CreatedBy, x.CreatedByName, x.ExpiresAt, x.EmailedAt, x.EmailedCount}
+	},
+	hashOf: hashEntity[model.Announcement],
+}

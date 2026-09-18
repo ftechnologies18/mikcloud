@@ -617,6 +617,19 @@ func (p *PG) ensureSchema() error {
                         unread     INTEGER NOT NULL DEFAULT 0
                 )`,
 		`CREATE INDEX IF NOT EXISTS idx_chat_conversations_status ON chat_conversations (status, updated_at)`,
+		`CREATE TABLE IF NOT EXISTS announcements (
+			id TEXT PRIMARY KEY,
+			title TEXT NOT NULL,
+			body TEXT NOT NULL DEFAULT '',
+			level TEXT NOT NULL DEFAULT 'info',
+			audience TEXT NOT NULL DEFAULT 'all',
+			created_at TEXT NOT NULL,
+			created_by TEXT NOT NULL DEFAULT '',
+			created_by_name TEXT NOT NULL DEFAULT '',
+			expires_at TEXT NOT NULL DEFAULT '',
+			emailed_at TEXT NOT NULL DEFAULT '',
+			emailed_count INTEGER NOT NULL DEFAULT 0
+		)`,
 		`CREATE TABLE IF NOT EXISTS chat_messages (
                         id              TEXT PRIMARY KEY,
                         conversation_id TEXT NOT NULL,

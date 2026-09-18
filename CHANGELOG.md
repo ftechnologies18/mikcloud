@@ -5,6 +5,77 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-18 — N°152 — Diffusion d'annonces aux clients : le megaphone du super-admin (console d'émission, bandeau masquable + cloche côté clients, e-mail optionnel)
+
+### Contexte
+Quatrième volet de la refonte des notifications : le super-admin MikCloud
+n'avait AUCUN canal pour parler à ses clients — ni maintenance planifiée, ni
+nouveauté, ni incident en cours. Ce travail pose le système de diffusion :
+une annonce est globale (collection plateforme), sa visibilité par compte se
+calcule à la lecture (audience × expiration).
+
+### Produit
+- **Console plateforme** — nouvelle vue « Annonces » (/app/platform-announcements,
+  super-admin) : tableau (niveau, audience, portée réelle en comptes actifs,
+  dates de diffusion/expiration, statut Visible/Expirée, trace e-mail) +
+  formulaire de création (titre 3-120, message 2000 max, niveau
+  info/warning/critical, audience tous/Hotspot/HomeNet, durée de visibilité
+  1-90 j ou jusqu'au retrait, case « envoyer aussi par e-mail ») + retrait
+  confirmé (AlertDialog).
+- **Côté clients** — la plus récente annonce ACTIVE non masquée s'affiche en
+  BANDEAU sous le header de la console (couleur par niveau : émeraude/ambre/
+  rouge), masquable par utilisateur et par annonce (localStorage — le bandeau
+  est informatif, la trace durable vit ailleurs) ; l'annonce entre dans la
+  CLOCHE comme item synthétique type « announcement » (icône mégaphone,
+  couleur par niveau) et compte dans le badge via le read-state serveur N°151 :
+  créée après le dernier acquit = non lue, jusqu'à ouverture de la cloche.
+  Session support : le bandeau du compte consulté s'affiche aussi (le
+  super-admin voit la vérité du client) ; le compte principal plateforme
+  n'est pas un client : rien.
+- **E-mail optionnel** — à la création si coché : un e-mail par compte
+  destinataire (audience, actif, e-mail connu, expéditeur résoluble), via les
+  réglages du compte sinon le compte principal (discipline N°146 : résolution
+  sous verrou, goroutine + recover, best-effort jamais bloquant), gabarit
+  Aurora Emerald (pastille niveau colorée, corps, CTA console, note
+  d'expiration) ; trace notif_log kind=announcement + EmailedAt/Count sur
+  l'annonce.
+
+### Technique
+Modèle Announcement (model/announcement.go : Active(usage, now) =
+audience OUverte × expiration stricte ; cap historique 100) + collection
+db.Announcements (CloneDeep) + table PostgreSQL `announcements` (CREATE
+idempotent, spec/scan/args, syncStep + rebuildHashes + loadInto + constante
+TableAnnouncements + volumétrie santé — le test de concordance N°133 passe à
+34 tables différentielles) + champs Level/Title/Body sur model.Activity pour
+les items synthétiques + routes GET/POST/DELETE /api/admin/announcements
+(requireRole(3) + garde isPlatformAdmin — un owner de compte client a le
+rang 3 mais ne parle pas au nom de la plateforme, comme toutes les routes
+/api/admin/*) + GET /api/announcements côté clients (rang 2, actives,
+plafond 10, compte principal vide) + injection dans GET /api/bell.
+Frontend : ViewId/platformAnnouncements (nav, slug, registre, viewTitle),
+vue console sur le squelette platform-team, bandeau parts/announcement-banner
+(modèle ImpersonationBanner, dismiss mikcloud:ann-dismissed:{user}:{ann}),
+fetchers api.ts, 45 clés i18n FR/EN (fragment announcements).
+
+### Fidélité
+Routes ADDITIVES uniquement ; GET /api/bell garde sa forme (les items
+d'annonce sont des Activity portant type=announcement) ; aucun contrat
+existant modifié (CONTRACT-V2 inchangé, les nouvelles routes sont
+documentées ici).
+
+### Vérifié
+go build/vet/gofmt 0 ; go test ./... complet (11 packages) OK ; -race OK
+(api annonces+cloche, model, notify). 4 nouveaux tests : cycle de vie +
+validations + client 403, audience × expiration (route ET cloche, hotspot
+vs homenet), e-mail best-effort (1 envoi par destinataire — le compte
+homenet hors audience « hotspot » n'en reçoit pas ; trace notif_log),
+injection cloche + compte principal muet. E2E navigateur contre backend Go
+réel : création warning/7 j → ligne complète (portée 1 compte, dates,
+Visible) → login client → BANDEAU ambre (VLM : propre, aucun
+chevauchement) + item annonce en tête de cloche + badge non-lu → Masquer →
+disparu et PERSISTANT après reload → retrait admin → toast + liste vide →
+bandeau parti côté client (localStorage nettoyé) ; 0 erreur console/page.
+
 ## 2026-09-18 — N°151 — La cloche devient une vraie boîte de notifications : read-state SERVEUR par utilisateur (fin du localStorage), badge multi-appareils, acquit monotone
 
 ### Contexte

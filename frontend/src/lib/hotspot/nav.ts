@@ -7,6 +7,7 @@ import {
   Building2,
   Gauge,
   LayoutDashboard,
+  Megaphone,
   MonitorSmartphone,
   ReceiptText,
   Radio,
@@ -197,6 +198,9 @@ export const NAV_PLATFORM_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
       // aux visiteurs de la vitrine, les demandes transmises à un humain
       // arrivent ici (fil + réponse + clôture).
       { id: "platformChat", labelKey: "nav.platformChat", icon: MessagesSquare },
+      // N°152 — diffusion d'annonces aux clients MikCloud (bandeau +
+      // cloche + e-mail optionnel) : le megaphone du super-admin.
+      { id: "platformAnnouncements", labelKey: "nav.platformAnnouncements", icon: Megaphone },
       { id: "accounts", labelKey: "nav.accounts", icon: Building2 },
       // File des demandes de renouvellement (facturation) — badge en attente.
       { id: "billingRequests", labelKey: "nav.billingRequests", icon: ReceiptText },

@@ -1616,6 +1616,7 @@ export type ViewId =
   | "platformLogs"
   | "platformTeam"
   | "platformSettings"
+  | "platformAnnouncements" // N°152 — diffusion d'annonces aux clients (console plateforme)
   | "billingRequests"
   | "accounts"
   | "notifications"
@@ -1629,6 +1630,49 @@ export type ViewId =
   // vues n'existent PAS pour les comptes hotspot (canView les leur refuse).
   | "home"
   | "devices";
+
+/* ─── N°152 — annonces de la plateforme (GET/POST/DELETE /api/admin/announcements,
+       GET /api/announcements côté clients) ─── */
+
+/** Niveau / audience d'une annonce (N°152). */
+export type AnnouncementLevel = "info" | "warning" | "critical";
+export type AnnouncementAudience = "all" | "hotspot" | "homenet";
+
+/** Une annonce diffusée par la plateforme aux comptes clients. */
+export interface Announcement {
+  id: string;
+  title: string;
+  body?: string;
+  level: "info" | "warning" | "critical";
+  audience: "all" | "hotspot" | "homenet";
+  createdAt: string;
+  createdBy?: string;
+  createdByName?: string;
+  /** Vide = visible jusqu'au retrait manuel. Passée : plus affichée. */
+  expiresAt?: string;
+  emailedAt?: string;
+  emailedCount?: number;
+}
+
+/** Ligne de GET /api/admin/announcements — annonce + état calculé. */
+export interface AdminAnnouncementRow extends Announcement {
+  /** Visible des clients à l'instant présent (audience × expiration). */
+  active: boolean;
+  /** Comptes clients actifs correspondant à l'audience. */
+  accountsCount: number;
+}
+
+/** Corps de POST /api/admin/announcements. */
+export interface AnnouncementCreatePayload {
+  title: string;
+  body?: string;
+  level: "info" | "warning" | "critical";
+  audience: "all" | "hotspot" | "homenet";
+  /** Jours de visibilité (0/absent = jusqu'au retrait manuel, max 365). */
+  expiresInDays?: number;
+  /** Diffuser aussi un e-mail aux propriétaires des comptes destinataires. */
+  email?: boolean;
+}
 
 /* ─── I (paramètres plateforme) : GET/PUT /api/admin/platform/settings ─── */
 

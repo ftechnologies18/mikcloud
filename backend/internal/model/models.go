@@ -673,6 +673,14 @@ type Activity struct {
 	// simulation, agent routeur, notifications automatiques).
 	ActorID   string `json:"actorId,omitempty"`
 	ActorName string `json:"actorName,omitempty"`
+	// N°152 — champs des items d'ANNONCE synthétiques (GET /api/bell) : une
+	// annonce de la plateforme n'est PAS une ligne du journal (collection
+	// globale) — elle entre dans la boîte portée par ces champs. Level pilote
+	// la couleur ; Title/Body portent la copie complète (le Message concatène
+	// déjà titre et corps pour l'affichage compact).
+	Level string `json:"level,omitempty"`
+	Title string `json:"title,omitempty"`
+	Body  string `json:"body,omitempty"`
 }
 
 // ActivityKeep — profondeur du journal d'activité (entrée la plus ancienne

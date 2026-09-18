@@ -66,6 +66,38 @@ func (a *API) handleBellList(w http.ResponseWriter, r *http.Request) {
 			unread++ // compté sur TOUT le journal visible, pas seulement la page
 		}
 	}
+	// N°152 — annonces de la plateforme : les annonces ACTIVES pour le compte
+	// (audience × expiration) entrent dans la boîte comme items synthétiques
+	// type « announcement » — pas de ligne d'activité par compte (une annonce
+	// est globale), mais elle compte dans le badge via le même read-state :
+	// créée après le dernier acquit = non lue, jusqu'à ouverture de la cloche.
+	// Le compte principal (plateforme) n'est pas un client : rien.
+	if acc != model.AccountMainID {
+		usage := model.AccountUsageHotspot
+		for _, a2 := range db.Accounts {
+			if a2.ID == acc {
+				usage = normalizeAccountUsage(a2.Usage)
+				break
+			}
+		}
+		now := model.NowISO()
+		for _, ann := range db.Announcements {
+			if !ann.Active(usage, now) {
+				continue
+			}
+			msg := ann.Title
+			if ann.Body != "" {
+				msg = ann.Title + " — " + ann.Body
+			}
+			acts = append(acts, model.Activity{
+				ID: ann.ID, Type: "announcement", Message: msg, At: ann.CreatedAt,
+				Level: ann.Level, Title: ann.Title, Body: ann.Body,
+			})
+			if seenAt != "" && ann.CreatedAt > seenAt {
+				unread++
+			}
+		}
+	}
 	a.store.Unlock()
 	sort.Slice(acts, func(i, j int) bool { return acts[i].At > acts[j].At })
 	if len(acts) > limit {

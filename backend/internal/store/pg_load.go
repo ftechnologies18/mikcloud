@@ -81,6 +81,7 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 		{"promo_events", func() error { return loadInto(p, &db.PromoEvents, promoEventSpec) }},
 		{"chat_conversations", func() error { return loadInto(p, &db.ChatConversations, chatConversationSpec) }},
 		{"chat_messages", func() error { return loadInto(p, &db.ChatMessages, chatMessageSpec) }},
+		{"announcements", func() error { return loadInto(p, &db.Announcements, announcementSpec) }},
 		{"settings", func() error { return p.loadSettings(db) }},
 	}
 	for _, st := range steps {

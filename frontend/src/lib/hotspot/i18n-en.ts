@@ -13,6 +13,7 @@
 
 // Fragments EN par domaine (N°87) — fusion ci-dessous, ordre alphabétique.
 import { enAccounts } from "./i18n-en/accounts";
+import { enAnnouncements } from "./i18n-en/announcements";
 import { enBadge } from "./i18n-en/badge";
 import { enBanner } from "./i18n-en/banner";
 import { enBillingRequests } from "./i18n-en/billing-requests";
@@ -63,6 +64,7 @@ import { enWifi } from "./i18n-en/wifi";
 /** Dictionnaire plat clé → texte anglais (fragments par domaine, N°87). */
 export const enDict: Record<string, string> = {
   ...enAccounts,
+  ...enAnnouncements,
   ...enBadge,
   ...enBanner,
   ...enBillingRequests,

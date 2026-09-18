@@ -18,6 +18,7 @@ import { useHotspotStore } from "./store";
 
 // Fragments FR par domaine (N°87) — fusion ci-dessous, ordre alphabétique.
 import { frAccounts } from "./i18n-fr/accounts";
+import { frAnnouncements } from "./i18n-fr/announcements";
 import { frBadge } from "./i18n-fr/badge";
 import { frBanner } from "./i18n-fr/banner";
 import { frBillingRequests } from "./i18n-fr/billing-requests";
@@ -82,6 +83,7 @@ export type Lang = "fr" | "en";
 
 const fr: Record<string, string> = {
   ...frAccounts,
+  ...frAnnouncements,
   ...frBadge,
   ...frBanner,
   ...frBillingRequests,

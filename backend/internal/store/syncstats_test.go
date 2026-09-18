@@ -88,7 +88,7 @@ func TestSyncHealthJSONMode(t *testing.T) {
 	if h.Sync != nil || h.Neon != nil {
 		t.Fatalf("en mode JSON, sync et neon doivent être absents : %+v %+v", h.Sync, h.Neon)
 	}
-	if len(h.Tables) != 34 {
+	if len(h.Tables) != 35 {
 		t.Fatalf("34 tables attendues (33 différentielles + settings — N°103 : line_quality, N°133 : chat ×2 + devices), obtenues %d", len(h.Tables))
 	}
 
@@ -118,7 +118,7 @@ func TestSyncHealthJSONMode(t *testing.T) {
 // table ajoutée à Sync sans être ajoutée ici doit faire échouer le compte).
 func TestLiveTableRowsConcordance(t *testing.T) {
 	rows := liveTableRows(BuildEmptyState())
-	if len(rows) != 34 {
+	if len(rows) != 35 {
 		t.Fatalf("34 entrées attendues (33 différentielles + settings — N°103 : line_quality, N°133 : chat ×2 + devices), obtenues %d", len(rows))
 	}
 	seen := map[string]bool{}

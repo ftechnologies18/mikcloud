@@ -14,6 +14,9 @@ import type {
   AccountStatus,
   AccountSummary,
   AccountUsage,
+  AdminAnnouncementRow,
+  Announcement,
+  AnnouncementCreatePayload,
   AuthResponse,
   AuthUser,
   BillingRequest,
@@ -899,4 +902,27 @@ export async function markBellSeen(at?: string): Promise<{ seenAt: string }> {
     method: "POST",
     body: at ? { at } : {},
   });
+}
+
+/* ─── N°152 — annonces de la plateforme (super-admin + clients) ─── */
+
+/** fetchAnnouncements — toutes les annonces (console plateforme, rang 3). */
+export async function fetchAnnouncements(): Promise<AdminAnnouncementRow[]> {
+  return api<AdminAnnouncementRow[]>("/api/admin/announcements");
+}
+
+/** createAnnouncement — diffuse une annonce (console plateforme). */
+export async function createAnnouncement(payload: AnnouncementCreatePayload): Promise<Announcement> {
+  return api<Announcement>("/api/admin/announcements", { method: "POST", body: payload });
+}
+
+/** deleteAnnouncement — retire définitivement une annonce (console plateforme). */
+export async function deleteAnnouncement(id: string): Promise<{ ok: boolean }> {
+  return api<{ ok: boolean }>(`/api/admin/announcements/${id}`, { method: "DELETE" });
+}
+
+/** fetchClientAnnouncements — annonces ACTIVES pour le compte du porteur
+ * (bandeau console + destination « tout voir » de la cloche). */
+export async function fetchClientAnnouncements(): Promise<Announcement[]> {
+  return api<Announcement[]>("/api/announcements");
 }

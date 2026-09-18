@@ -81,6 +81,7 @@ const VIEW_SLUGS: Record<ViewId, string> = {
   platformLogs: "platform-logs",
   platformTeam: "platform-team",
   platformSettings: "platform-settings",
+  platformAnnouncements: "platform-announcements", // N°152 — annonces aux clients
   billingRequests: "billing-requests",
   accounts: "accounts",
   notifications: "settings/notifications",

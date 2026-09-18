@@ -71,9 +71,14 @@ type DB struct {
 	// est devenue un chatbot avec transmission humaine). Cf. chat.go.
 	ChatConversations []ChatConversation `json:"chatConversations"`
 	ChatMessages      []ChatMessage      `json:"chatMessages"`
-	Tenant            Tenant             `json:"tenant"`   // legacy mono-tenant
-	Settings          Settings           `json:"settings"` // legacy mono-tenant
-	LastTick          time.Time          `json:"lastTick"`
+	// N°152 — annonces de la plateforme : messages diffusés par le
+	// super-admin aux comptes clients (collection GLOBALE — la visibilité
+	// par compte se calcule à la lecture : audience × expiration).
+	// Cf. announcement.go.
+	Announcements []Announcement `json:"announcements"`
+	Tenant        Tenant         `json:"tenant"`   // legacy mono-tenant
+	Settings      Settings       `json:"settings"` // legacy mono-tenant
+	LastTick      time.Time      `json:"lastTick"`
 	// LastSweep — N°64 — horodatage du dernier BALAYAGE PÉRIODIQUE de
 	// rétention (goroutine main.go, 1 h) : purge des journaux utilisateurs
 	// à 90 j + expirations/nettoyages, indépendamment des visites console
@@ -331,6 +336,7 @@ func (db *DB) CloneDeep() *DB {
 	clone.PasswordResets = append([]PasswordReset(nil), db.PasswordResets...)
 	clone.ChatConversations = append([]ChatConversation(nil), db.ChatConversations...)
 	clone.ChatMessages = append([]ChatMessage(nil), db.ChatMessages...)
+	clone.Announcements = append([]Announcement(nil), db.Announcements...)
 	clone.SettingsByAccount = cloneSettingsByAccount(db.SettingsByAccount)
 	clone.NotifSettings = cloneNotifSettings(db.NotifSettings)
 	return &clone

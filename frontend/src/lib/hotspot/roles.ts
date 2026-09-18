@@ -58,7 +58,7 @@ const VIEW_MIN_RANK: Record<string, number> = {
 /** Vues de la CONSOLE PLATEFORME — réservées au super-admin MikCloud
  * (platform_admin, ou « admin » historique). Le reste de la navigation
  * appartient à la console client. */
-const PLATFORM_VIEWS: ReadonlySet<string> = new Set(["platform", "platformFleet", "platformChat", "platformLogs", "platformTeam", "billingRequests", "platformSettings"]);
+const PLATFORM_VIEWS: ReadonlySet<string> = new Set(["platform", "platformFleet", "platformChat", "platformLogs", "platformTeam", "billingRequests", "platformSettings", "platformAnnouncements"]); // N°152 — annonces
 
 /** Cette vue appartient-elle à la console plateforme ? */
 export function isPlatformView(view: string): boolean {

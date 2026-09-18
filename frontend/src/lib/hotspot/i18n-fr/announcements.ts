@@ -1,0 +1,62 @@
+// Fragment FR du domaine « announcements » — N°152 : annonces de la
+// plateforme MikCloud (diffusion super-admin, bandeau + cloche côté clients).
+// Ne pas importer directement : passer par l'agrégateur.
+
+export const frAnnouncements: Record<string, string> = {
+  // — navigation console plateforme —
+  "nav.platformAnnouncements": "Annonces",
+
+  // — vue console plateforme —
+  "ann.title": "Annonces aux clients",
+  "ann.subtitle": "Diffusez un message à tous les comptes MikCloud — maintenance, nouveautés, incidents. L'annonce s'affiche en bandeau dans la console de chaque client destinataire et reste dans sa cloche.",
+  "ann.new": "Nouvelle annonce",
+  "ann.empty": "Aucune annonce diffusée pour le moment.",
+  "ann.emptyHint": "La première annonce atteindra tous les comptes clients actifs en quelques secondes.",
+  "ann.col.title": "Annonce",
+  "ann.col.level": "Niveau",
+  "ann.col.audience": "Audience",
+  "ann.col.created": "Diffusée",
+  "ann.col.expires": "Visible jusqu'au",
+  "ann.col.status": "Statut",
+  "ann.level.info": "Information",
+  "ann.level.warning": "Action recommandée",
+  "ann.level.critical": "Incident",
+  "ann.audience.all": "Tous les comptes",
+  "ann.audience.hotspot": "Comptes Hotspot",
+  "ann.audience.homenet": "Comptes HomeNet",
+  "ann.status.active": "Visible",
+  "ann.status.expired": "Expirée",
+  "ann.noExpiry": "Jusqu'au retrait",
+  "ann.reach": "{count} compte(s) destinataire(s)",
+  "ann.delete": "Retirer",
+  "ann.deleteTitle": "Retirer cette annonce ?",
+  "ann.deleteBody":
+    "« {title} » disparaîtra immédiatement du bandeau et de la cloche de tous les comptes clients. Cette action est définitive.",  "ann.deleteCancel": "Annuler",
+  "ann.deleteConfirm": "Retirer l'annonce",
+
+  // — formulaire de création —
+  "ann.form.title": "Diffuser une annonce",
+  "ann.form.description": "L'annonce apparaît en bandeau dans la console de chaque compte destinataire (masquable par le gérant) et dans sa cloche de notifications.",
+  "ann.form.titleLabel": "Titre",
+  "ann.form.titlePlaceholder": "Ex. Maintenance planifiée samedi soir",
+  "ann.form.bodyLabel": "Message (optionnel)",
+  "ann.form.bodyPlaceholder": "Ex. Le cloud MikCloud sera indisponible de 22h à 23h. Les routeurs continuent de délivrer l'accès.",
+  "ann.form.bodyHint": "2000 caractères max.",
+  "ann.form.levelLabel": "Niveau",
+  "ann.form.levelHint": "Pilote la couleur du bandeau : vert (information), ambre (action recommandée), rouge (incident).",
+  "ann.form.audienceLabel": "Audience",
+  "ann.form.expiryLabel": "Durée de visibilité",
+  "ann.form.expiry.days": "{n} jours",
+  "ann.form.expiry.none": "Jusqu'au retrait manuel",
+  "ann.form.expiryHint": "Passé ce délai, l'annonce disparaît d'elle-même des consoles.",
+  "ann.form.email": "Envoyer aussi par e-mail aux propriétaires",
+  "ann.form.emailHint": "Un e-mail par compte destinataire (adresse du compte) — best-effort, jamais bloquant.",
+  "ann.form.submit": "Diffuser l'annonce",
+  "ann.form.cancel": "Annuler",
+  "ann.created": "Annonce diffusée",
+  "ann.deleted": "Annonce retirée",
+
+  // — bandeau côté client —
+  "ann.banner.dismiss": "Masquer",
+  "ann.banner.platform": "Annonce MikCloud",
+};

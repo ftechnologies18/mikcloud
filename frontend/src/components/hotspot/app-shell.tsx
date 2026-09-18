@@ -47,6 +47,7 @@ import { ThemeToggle } from "./theme-toggle";
 import { UserProfileDialog } from "./parts/user-profile-dialog";
 import { SettingsSidebar } from "./settings/settings-shell";
 import { ActivityBell, LiveClock, SearchPalette } from "./parts/topbar-widgets";
+import { AnnouncementBanner } from "./parts/announcement-banner";
 
 // Perf — vues en chargement différé : chaque vue = chunk distinct chargé à
 // l'ouverture. Les librairies lourdes (recharts, qrcode…) ne sont plus
@@ -83,6 +84,8 @@ const PlatformFleetView = dynamic(() => import("./views/platform-fleet-view"), {
 const PlatformChatView = dynamic(() => import("./views/platform-chat-view"), { loading: () => ViewFallback });
 const PlatformSettingsView = dynamic(() => import("./views/platform-settings-view"), { loading: () => ViewFallback });
 const PlatformTeamView = dynamic(() => import("./views/platform-team-view"), { loading: () => ViewFallback });
+// N°152 — diffusion d'annonces aux clients MikCloud (console plateforme).
+const PlatformAnnouncementsView = dynamic(() => import("./views/platform-announcements-view"), { loading: () => ViewFallback });
 const ProfilesView = dynamic(() => import("./views/profiles-view"), { loading: () => ViewFallback });
 // N°83 — vue Protection : l'état de sécurité du WiFi (verdict + 3 cartes
 // SafeWiFi/Shield/FamilyGuard) vit dans la navigation principale.
@@ -134,6 +137,7 @@ function viewTitle(view: ViewId, t: (key: string) => string): string {
     security: "settings.tabAdvanced",
     team: "nav.team",
     platformSettings: "platformSettings.title",
+    platformAnnouncements: "ann.title",
     home: "nav.home",
     devices: "nav.devices",
   };
@@ -169,6 +173,7 @@ const VIEWS: Record<ViewId, React.ComponentType> = {
   platformLogs: PlatformLogsView,
   platformTeam: PlatformTeamView,
   platformSettings: PlatformSettingsView,
+  platformAnnouncements: PlatformAnnouncementsView,
   billingRequests: BillingRequestsView,
   accounts: AccountsView,
   notifications: NotificationsView,
@@ -850,6 +855,11 @@ export default function AppShell() {
       <div className="flex min-w-0 flex-1 flex-col lg:pl-64">
         <Topbar />
         <ImpersonationBanner />
+        {/* N°152 — annonce de la plateforme : bandeau masquable (la trace
+            durable vit dans la cloche). En mode client Y COMPRIS session
+            support — le super-admin consulte la vérité du compte visité ;
+            le mode plateforme n'est pas un client (liste vide côté serveur). */}
+        {!platformMode ? <AnnouncementBanner /> : null}
         <main className="flex-1" aria-label={viewTitle(view, t)}>
           <div className="mx-auto max-w-7xl space-y-6 p-4 sm:p-6">
             {/* N°57-c — zone Paramètres : le contenu rend la vue comme tout

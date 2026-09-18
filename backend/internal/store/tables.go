@@ -64,7 +64,9 @@ const (
 	TableChatConversations    = "chat_conversations"
 	TableChatMessages         = "chat_messages"
 	TableDevices              = "devices"
-	TableSettings             = "settings" // hors diff d'empreintes (syncSettings)
+	// N°152 — annonces de la plateforme (collection globale, diff simple).
+	TableAnnouncements = "announcements"
+	TableSettings      = "settings" // hors diff d'empreintes (syncSettings)
 )
 
 // syncKnownTables — registre des noms acceptés par SaveTables/SyncTables :
@@ -104,6 +106,7 @@ var syncKnownTables = map[string]bool{
 	TableChatConversations:    true,
 	TableChatMessages:         true,
 	TableDevices:              true,
+	TableAnnouncements:        true,
 	TableSettings:             true,
 }
 

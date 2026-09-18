@@ -35,11 +35,23 @@ func (a *API) handleTransactionsList(w http.ResponseWriter, r *http.Request) {
 func (a *API) handleActivityList(w http.ResponseWriter, r *http.Request) {
 	acc := accountScope(r)
 	limit := queryInt(r, "limit", 20, 1, 200)
+	// N°149 — la cloche respecte le RBAC : les catégories sensibles du
+	// journal (billing : montants et prélèvements ; team : membres et
+	// rôles) ne partent qu'au propriétaire du compte — miroir serveur des
+	// barrières produit (« gérant = tout SAUF équipe et réglages/billing »),
+	// défense en profondeur : l'UI masque déjà les vues correspondantes.
+	// Le super-admin plateforme (rang 3, y compris en session support) voit
+	// tout. Le filtre s'applique AVANT le tri et la limite : le gérant
+	// reçoit bien ses `limit` entrées visibles, pas une liste amputée.
+	rank := 0
+	if c := claimsFrom(r); c != nil {
+		rank = roleRank(c.Role)
+	}
 	a.store.Lock()
 	db := a.store.Data()
 	acts := []model.Activity{}
 	for _, act := range db.Activity {
-		if act.AccountID == acc {
+		if act.AccountID == acc && activityTypeMinRank(act.Type) <= rank {
 			acts = append(acts, act)
 		}
 	}

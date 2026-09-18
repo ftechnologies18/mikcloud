@@ -122,6 +122,25 @@ func (a *API) logActivityBy(r *http.Request, db *model.DB, acc, typ, message str
 	})
 }
 
+// activityTypeMinRank — rang MINIMAL pour voir une catégorie du journal
+// d'activité (N°149 : la cloche respecte le RBAC). Miroir exact des barrières
+// produit : « gérant = tout le compte SAUF équipe et réglages/billing » —
+// les entrées billing (prélèvements, encaissements, montants) et team
+// (membres ajoutés/retirés, rôles) sont réservées au propriétaire, comme
+// le sont déjà les vues Équipe (/api/team) et les réglages facturation.
+// Le reste (router, user, voucher, reseller, session, system, registration,
+// wifi, device, compte) intéresse tout gérant — dont « Session support
+// ouverte » (transparence de l'accès plateforme) et les transitions hors
+// ligne (N°148).
+func activityTypeMinRank(typ string) int {
+	switch typ {
+	case "billing", "team":
+		return 3
+	default:
+		return 2
+	}
+}
+
 func (a *API) gatewayFor(r model.Router) routeros.Gateway {
 	a.gwMu.Lock()
 	defer a.gwMu.Unlock()

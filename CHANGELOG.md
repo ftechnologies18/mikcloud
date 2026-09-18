@@ -5,6 +5,44 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-18 — N°149 — Le journal d'activité respecte le RBAC : les entrées billing et team ne partent qu'au propriétaire
+
+### Contexte
+Suite de l'audit de la cloche (N°148) : `GET /api/activity` était
+`requireRole(2)` SANS filtre par catégorie — un gérant (manager, défini
+produit « tout le compte SAUF équipe et réglages/billing ») voyait dans sa
+cloche « Prélèvement carte confirmé — 25 000 FCFA » et les mouvements
+d'équipe (membres ajoutés/retirés, rôles). L'UI masque déjà les vues Équipe
+et réglages, mais le serveur servait le journal complet : la défense en
+profondeur était rompue sur cette route.
+
+### Correctif
+- `activityTypeMinRank` (helpers.go) : rang minimal par catégorie — billing
+  (montants, prélèvements) et team (membres, rôles) exigent le rang 3
+  (propriétaire) ; tout le reste (router, user, voucher, reseller, session,
+  system, registration, wifi, device, compte) reste au rang 2 — dont
+  « Session support ouverte » (transparence de l'accès plateforme) et les
+  transitions hors ligne (N°148) qui intéressent tout gérant.
+- `handleActivityList` filtre AVANT le tri et la limite : le gérant reçoit
+  bien ses `limit` entrées visibles, pas une liste amputée par les entrées
+  filtrées plus récentes. Le super-admin plateforme (rang 3, y compris en
+  session support) voit tout ; `handleAdminActivity` (journal transverse,
+  rang 3 déjà) inchangé.
+
+### Fidélité
+Aucune route, aucun schéma (CONTRACT-V2 inchangé) — la réponse de
+/api/activity garde sa forme (tableau trié décroissant) ; seules les
+catégories sensibles disparaissent de la vue d'un gérant. La vue Journal
+(console) bénéficie du même filtre pour les managers, cohérent avec les
+barrières des vues Équipe/Paramètres.
+
+### Vérifié
+go build 0, go vet 0, gofmt propre ; go test ./internal/api/ complet OK.
+2 nouveaux tests : TestActivityRBACManagerBlindToBillingTeam (owner voit
+router/system/billing/team ; manager voit router/system, JAMAIS billing ni
+team) et TestActivityRBACLimitAppliesAfterFilter (limit=3 → exactement 3
+entrées visibles, aucune billing/team).
+
 ## 2026-09-18 — N°148 — La synchro de routine quitte le journal d'activité : la cloche ne sonne plus tous les 45 s, les vraies transitions (hors ligne / retour en ligne) y entrent
 
 ### Contexte

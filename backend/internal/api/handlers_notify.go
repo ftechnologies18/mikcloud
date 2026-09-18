@@ -27,6 +27,9 @@ func (a *API) registerNotifRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/notifications", a.requireRole(2, a.handleNotifPut))
 	mux.HandleFunc("POST /api/notifications/test", a.requireRole(2, a.handleNotifTest))
 	mux.HandleFunc("GET /api/notifications/log", a.requireRole(2, a.handleNotifLog))
+	// N°150 — pairage du canal Telegram plateforme (lien magique t.me/<bot>?start=<code>).
+	mux.HandleFunc("POST /api/notifications/telegram/pair-code", a.requireRole(2, a.handleTelegramPairCode))
+	mux.HandleFunc("GET /api/notifications/telegram/pair-status", a.requireRole(2, a.handleTelegramPairStatus))
 }
 
 // notifView — réglages exposés à la console : les secrets ne partent JAMAIS,
@@ -59,9 +62,15 @@ type notifView struct {
 	LowStockThreshold int  `json:"lowStockThreshold"`
 	DailyReport       bool `json:"dailyReport"`
 	ReportHour        int  `json:"reportHour"`
+	// N°150 — disponibilité des canaux plateforme : la console adapte ses
+	// cartes (Telegram « zéro setup » quand le bot FTCI est actif, e-mail
+	// simplifié quand le relais du compte principal peut porter l'envoi).
+	TelegramPlatformAvailable bool   `json:"telegramPlatformAvailable"`
+	TelegramBotUsername       string `json:"telegramBotUsername,omitempty"`
+	EmailPlatformRelay        bool   `json:"emailPlatformRelay"`
 }
 
-func viewOf(cfg model.NotificationSettings) notifView {
+func viewOf(cfg model.NotificationSettings, telegramPlatform bool, botUsername string, emailRelay bool) notifView {
 	return notifView{
 		AccountID: cfg.AccountID,
 		Enabled:   cfg.Enabled,
@@ -85,10 +94,13 @@ func viewOf(cfg model.NotificationSettings) notifView {
 		ResendFrom:      cfg.ResendFrom,
 		EmailTo:         cfg.EmailTo,
 
-		OfflineAfterSec:   cfg.OfflineAfterSec,
-		LowStockThreshold: cfg.LowStockThreshold,
-		DailyReport:       cfg.DailyReport,
-		ReportHour:        cfg.ReportHour,
+		OfflineAfterSec:           cfg.OfflineAfterSec,
+		LowStockThreshold:         cfg.LowStockThreshold,
+		DailyReport:               cfg.DailyReport,
+		ReportHour:                cfg.ReportHour,
+		TelegramPlatformAvailable: telegramPlatform,
+		TelegramBotUsername:       botUsername,
+		EmailPlatformRelay:        emailRelay,
 	}
 }
 
@@ -127,10 +139,15 @@ type notifPutPayload struct {
 func (a *API) handleNotifGet(w http.ResponseWriter, r *http.Request) {
 	acc := accountScope(r)
 	a.store.Lock()
-	cfg := store.GetOrCreateNotifSettings(a.store.Data(), acc)
-	a.store.Save() // persister la création éventuelle (défauts)
+	db := a.store.Data()
+	cfg := store.GetOrCreateNotifSettings(db, acc)
+	emailRelay := a.platformEmailRelayLocked(db) // N°150
+	a.store.Save()                               // persister la création éventuelle (défauts)
 	a.store.Unlock()
-	writeJSON(w, http.StatusOK, viewOf(cfg))
+	a.tgMu.Lock()
+	botUsername := a.telegramBotUsername
+	a.tgMu.Unlock()
+	writeJSON(w, http.StatusOK, viewOf(cfg, notify.TelegramPlatformToken != "", botUsername, emailRelay))
 }
 
 // handleNotifPut — PUT /api/notifications
@@ -149,10 +166,14 @@ func (a *API) handleNotifPut(w http.ResponseWriter, r *http.Request) {
 	applyNotifPut(&cfg, &req)
 	store.SetNotifSettings(db, cfg)
 	a.logActivityBy(r, db, acc, "system", "Configuration des notifications mise à jour")
+	emailRelay := a.platformEmailRelayLocked(db) // N°150
 	a.store.Save()
 	a.store.Unlock()
+	a.tgMu.Lock()
+	botUsername := a.telegramBotUsername
+	a.tgMu.Unlock()
 
-	writeJSON(w, http.StatusOK, viewOf(cfg))
+	writeJSON(w, http.StatusOK, viewOf(cfg, notify.TelegramPlatformToken != "", botUsername, emailRelay))
 }
 
 // applyNotifPut — fusionne le payload dans les réglages existants (les secrets
@@ -237,6 +258,11 @@ func applyNotifPut(cfg *model.NotificationSettings, req *notifPutPayload) {
 	}
 }
 
+// deliverNotif — envoi réel multi-canaux (variable pour les tests, même
+// discipline que sendAccountEmail N°146 : les tests api capturent sans
+// réseau ; le relais plateforme est couvert par les tests notify).
+var deliverNotif = notify.DeliverWithPlatform
+
 // handleNotifTest — POST /api/notifications/test {channel: telegram|whatsapp|email}
 func (a *API) handleNotifTest(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -257,7 +283,13 @@ func (a *API) handleNotifTest(w http.ResponseWriter, r *http.Request) {
 	cfg := store.GetOrCreateNotifSettings(a.store.Data(), acc)
 	a.store.Unlock()
 
-	if !notify.Configured(&cfg, channel) {
+	var platformEmail *model.NotificationSettings // N°150 : relais e-mail du compte principal
+	if channel == "email" {
+		a.store.Lock()
+		platformEmail = a.platformEmailRelayPtrLocked(a.store.Data())
+		a.store.Unlock()
+	}
+	if !notify.ConfiguredWithPlatform(&cfg, platformEmail, channel) {
 		writeErr(w, http.StatusBadRequest, "Ce canal n'est pas encore configuré : activez-le et renseignez tous les champs requis")
 		return
 	}
@@ -265,7 +297,7 @@ func (a *API) handleNotifTest(w http.ResponseWriter, r *http.Request) {
 	title := "MikCloud — Test de notification"
 	body := "Canal " + channel + " opérationnel ✔\n" +
 		"Vous recevrez ici : routeur hors ligne, stock de vouchers bas et rapport quotidien."
-	logs := notify.Deliver(&cfg, notify.KindTest, title, body, channel)
+	logs := deliverNotif(&cfg, platformEmail, notify.KindTest, title, body, channel)
 
 	// Historique sous verrou (les envois réseau sont déjà terminés).
 	var firstErr string
@@ -307,4 +339,23 @@ func (a *API) handleNotifLog(w http.ResponseWriter, r *http.Request) {
 		logs = logs[:50]
 	}
 	writeJSON(w, http.StatusOK, logs)
+}
+
+// platformEmailRelayLocked — N°150 : le compte principal a-t-il des
+// identifiants e-mail exploitables (relais) ? À appeler SOUS VERROU du
+// store. Sert uniquement à AFFICHER la disponibilité (vue console).
+func (a *API) platformEmailRelayLocked(db *model.DB) bool {
+	return a.platformEmailRelayPtrLocked(db) != nil
+}
+
+// platformEmailRelayPtrLocked — N°150 : réglages e-mail du compte principal
+// (copie du map, déréférencée après déverrouillage sans danger), nil si pas
+// d'identifiants. Même résolution que le moniteur (notify.platformEmailLocked
+// vit dans le package notify pour la boucle de surveillance ; l'API a son
+// propre accès au store).
+func (a *API) platformEmailRelayPtrLocked(db *model.DB) *model.NotificationSettings {
+	if cfg, ok := db.NotifSettings[model.AccountMainID]; ok && notify.EmailCredentialsOK(&cfg) {
+		return &cfg
+	}
+	return nil
 }

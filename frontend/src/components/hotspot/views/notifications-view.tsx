@@ -16,6 +16,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BellOff,
   BellRing,
+  CheckCircle2,
+  ChevronDown,
+  ExternalLink,
   History,
   Loader2,
   Mail,
@@ -38,6 +41,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -226,21 +230,71 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
     onError: (err: Error) => toast.error(err.message || t("notif.testFailed")),
   });
 
+  // N°150 — pairage Telegram plateforme (lien magique) : demande de code,
+  // ouverture de Telegram, polling du statut jusqu'à liaison (ou expiration).
+  // Zéro useEffect (règle react-hooks/set-state-in-effect) : la liaison est
+  // SYNCHRONISÉE PENDANT LE RENDU (patron officiel React « ajuster l'état
+  // quand une valeur externe change », garde syncedChatId) et l'expiration
+  // se rend EN LIGNE (bouton « nouveau code ») plutôt qu'en toast.
+  const [pair, setPair] = useState<{ code: string; url: string } | null>(null);
+  const pairMutation = useMutation({
+    mutationFn: () =>
+      api<{ code: string; url: string; botUsername: string; expiresAt: string }>(
+        "/api/notifications/telegram/pair-code",
+        { method: "POST", body: {} },
+      ),
+    onSuccess: (data) => {
+      setPair({ code: data.code, url: data.url });
+      window.open(data.url, "_blank", "noopener,noreferrer");
+    },
+    onError: (err: Error) => toast.error(err.message || t("notif.tgPairError")),
+  });
+  const pairQuery = useQuery({
+    queryKey: ["/api/notifications/telegram/pair-status", pair?.code],
+    queryFn: () =>
+      api<{ status: "pending" | "linked" | "expired"; chatId?: string }>(
+        `/api/notifications/telegram/pair-status?code=${encodeURIComponent(pair?.code ?? "")}`,
+      ),
+    enabled: !!pair && !form.telegramChatId,
+    refetchInterval: (query) =>
+      query.state.data?.status === "pending" ? 3000 : false,
+    retry: false,
+  });
+  const linkedFromQuery = pairQuery.data?.status === "linked" ? pairQuery.data.chatId ?? "" : "";
+  const pairExpired = pair !== null && pairQuery.data?.status === "expired";
+  const [syncedChatId, setSyncedChatId] = useState<string | null>(null);
+  if (linkedFromQuery && linkedFromQuery !== syncedChatId) {
+    setSyncedChatId(linkedFromQuery);
+    setForm((f) =>
+      f.telegramChatId === linkedFromQuery
+        ? f
+        : { ...f, telegramEnabled: true, telegramChatId: linkedFromQuery },
+    );
+  }
+  const telegramLinked = form.telegramChatId.trim() !== "";
+
   // Un canal est « configurable pour test » si activé, renseigné et prêt.
+  // N°150 — le bot FTCI et le relais e-mail du compte principal comptent
+  // comme identifiants (le serveur a la même lecture, ConfiguredWithPlatform).
   const telegramConfigured =
-    (form.telegramBotTokenSet || form.telegramBotToken.trim() !== "") && form.telegramChatId.trim() !== "";
+    form.telegramChatId.trim() !== "" &&
+    (form.telegramBotTokenSet ||
+      form.telegramBotToken.trim() !== "" ||
+      initial.telegramPlatformAvailable === true);
   const whatsappConfigured =
     (form.whatsappTokenSet || form.whatsappToken.trim() !== "") &&
     form.whatsappPhoneId.trim() !== "" &&
     form.whatsappTo.trim() !== "";
   // Email : les champs requis dépendent du fournisseur (N°67) — SMTP a besoin
   // d'un hôte + port, Resend d'une clé API (déjà stockée ou fraîchement saisie).
+  // N°150 : sans identifiants propres, le relais plateforme suffit.
   const emailResendConfigured =
     (form.resendApiKeySet || form.resendApiKey.trim() !== "") && form.emailTo.trim() !== "";
-  const emailConfigured =
+  const emailOwnConfigured =
     form.emailProvider === "resend"
       ? emailResendConfigured
       : form.smtpHost.trim() !== "" && form.smtpPort > 0 && form.emailTo.trim() !== "";
+  const emailConfigured = emailOwnConfigured || (initial.emailPlatformRelay === true && form.emailTo.trim() !== "");
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -352,43 +406,141 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
       {/* ─── Domaine 2 : webhooks & canaux de diffusion ─── */}
       <SectionHeading icon={Webhook} title={t("notif.section.channels")} description={t("notif.section.channelsDesc")} />
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        {/* Telegram */}
+        {/* Telegram — N°150 : bot plateforme « zéro setup » (lien magique)
+            quand le service l'expose, BYO repliable ; sinon carte BYO pleine. */}
         <ChannelCard
           icon={Send}
           title="Telegram"
-          description={t("notif.tgDesc")}
+          description={initial.telegramPlatformAvailable ? t("notif.tgPlatformDesc") : t("notif.tgDesc")}
           enabled={form.telegramEnabled}
           onEnabledChange={(v) => setForm((f) => ({ ...f, telegramEnabled: v }))}
           canTest={telegramConfigured}
           testing={testMutation.isPending && testMutation.variables === "telegram"}
           onTest={() => testMutation.mutate("telegram")}
         >
-          <div className="grid gap-2">
-            <Label htmlFor="tg-token">{t("notif.botToken")}</Label>
-            <Input
-              id="tg-token"
-              type="password"
-              autoComplete="off"
-              placeholder={form.telegramBotTokenSet ? t("notif.secretConfigured") : "123456789:AA…"}
-              value={form.telegramBotToken}
-              onChange={(e) => setForm((f) => ({ ...f, telegramBotToken: e.target.value }))}
-            />
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="tg-chat">{t("notif.chatId")}</Label>
-            <Input
-              id="tg-chat"
-              inputMode="numeric"
-              placeholder={t("notif.chatIdPlaceholder")}
-              value={form.telegramChatId}
-              onChange={(e) => setForm((f) => ({ ...f, telegramChatId: e.target.value }))}
-            />
-          </div>
-          <div className="rounded-lg bg-muted/50 p-3 text-[11px] leading-relaxed text-muted-foreground">
-            <p>{t("notif.tgHelp1")}</p>
-            <p>{t("notif.tgHelp2")}</p>
-            <p>{t("notif.tgHelp3")}</p>
-          </div>
+          {initial.telegramPlatformAvailable && (
+            <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
+              {telegramLinked ? (
+                <div className="flex items-start gap-2.5">
+                  <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-primary" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">{t("notif.tgLinked")}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">{t("notif.tgLinkedHint")}</p>
+                    <Badge variant="outline" className="mt-2 border-primary/25 bg-primary/10 font-mono text-[11px] text-primary">
+                      {form.telegramChatId}
+                    </Badge>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid gap-2">
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    {t("notif.tgPlatformNote")}
+                  </p>
+                  {pair ? (
+                    <div className="grid gap-2">
+                      {pairExpired ? (
+                        <p className="text-sm font-medium text-destructive">{t("notif.tgPairExpired")}</p>
+                      ) : (
+                        <p className="text-sm font-medium">{t("notif.tgPending")}</p>
+                      )}
+                      {!pairExpired && (
+                        <div className="flex items-center gap-2 rounded-md bg-background px-3 py-2 font-mono text-xs tracking-widest">
+                          <span aria-hidden>⏳</span>
+                          {pair.code}
+                        </div>
+                      )}
+                      <div className="flex flex-wrap gap-2">
+                        {pairExpired ? (
+                          <Button
+                            type="button"
+                            className="h-8 min-h-8 text-xs"
+                            onClick={() => pairMutation.mutate()}
+                            disabled={pairMutation.isPending}
+                          >
+                            {pairMutation.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+                            {t("notif.tgNewCode")}
+                          </Button>
+                        ) : (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="h-8 min-h-8 text-xs"
+                            onClick={() => window.open(pair.url, "_blank", "noopener,noreferrer")}
+                          >
+                            <ExternalLink className="size-3.5" />
+                            {t("notif.tgOpenAgain")}
+                          </Button>
+                        )}
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="h-8 min-h-8 text-xs"
+                          onClick={() => setPair(null)}
+                        >
+                          {t("notif.tgCancel")}
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <Button
+                      type="button"
+                      className="min-h-10 w-full"
+                      onClick={() => pairMutation.mutate()}
+                      disabled={pairMutation.isPending}
+                    >
+                      {pairMutation.isPending ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : (
+                        <Send className="size-4" />
+                      )}
+                      {t("notif.tgConnect")}
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* BYO — replié par défaut quand la plateforme est dispo et qu'aucun
+              bot propre n'est configuré ; ouvert sinon (comportement historique). */}
+          <Collapsible
+            defaultOpen={!initial.telegramPlatformAvailable || form.telegramBotTokenSet}
+          >
+            <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 rounded-md text-xs font-medium text-muted-foreground transition-colors hover:text-foreground">
+              <span>{initial.telegramPlatformAvailable ? t("notif.tgAdvanced") : t("notif.tgManual")}</span>
+              <ChevronDown className="size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-180" />
+            </CollapsibleTrigger>
+            <CollapsibleContent className="grid gap-4 pt-3">
+              <div className="grid gap-2">
+                <Label htmlFor="tg-token">{t("notif.botToken")}</Label>
+                <Input
+                  id="tg-token"
+                  type="password"
+                  autoComplete="off"
+                  placeholder={form.telegramBotTokenSet ? t("notif.secretConfigured") : "123456789:AA…"}
+                  value={form.telegramBotToken}
+                  onChange={(e) => setForm((f) => ({ ...f, telegramBotToken: e.target.value }))}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="tg-chat">{t("notif.chatId")}</Label>
+                <Input
+                  id="tg-chat"
+                  inputMode="numeric"
+                  placeholder={t("notif.chatIdPlaceholder")}
+                  value={form.telegramChatId}
+                  onChange={(e) => setForm((f) => ({ ...f, telegramChatId: e.target.value }))}
+                />
+              </div>
+              {!initial.telegramPlatformAvailable && (
+                <div className="rounded-lg bg-muted/50 p-3 text-[11px] leading-relaxed text-muted-foreground">
+                  <p>{t("notif.tgHelp1")}</p>
+                  <p>{t("notif.tgHelp2")}</p>
+                  <p>{t("notif.tgHelp3")}</p>
+                </div>
+              )}
+            </CollapsibleContent>
+          </Collapsible>
         </ChannelCard>
 
         {/* WhatsApp Cloud API */}
@@ -436,7 +588,8 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
           </div>
         </ChannelCard>
 
-        {/* Email — SMTP direct ou API Resend (N°67) */}
+        {/* Email — SMTP direct ou API Resend (N°67) ; relais plateforme N°150 :
+            adresse + interrupteur suffisent quand le service porte l'envoi. */}
         <ChannelCard
           icon={Mail}
           title={t("notif.emailCardTitle")}
@@ -447,102 +600,7 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
           testing={testMutation.isPending && testMutation.variables === "email"}
           onTest={() => testMutation.mutate("email")}
         >
-          {/* Fournisseur du canal e-mail : SMTP direct (défaut) ou API Resend. */}
-          <div className="grid gap-2">
-            <Label htmlFor="email-provider">{t("notif.emailProvider")}</Label>
-            <Select
-              value={form.emailProvider}
-              onValueChange={(v) =>
-                setForm((f) => ({ ...f, emailProvider: v === "resend" ? "resend" : "smtp" }))
-              }
-            >
-              <SelectTrigger id="email-provider" className="h-10">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="smtp">{t("notif.emailProviderSmtp")}</SelectItem>
-                <SelectItem value="resend">{t("notif.emailProviderResend")}</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          {form.emailProvider === "resend" ? (
-            <>
-              <div className="grid gap-2">
-                <Label htmlFor="resend-key">{t("notif.resendApiKey")}</Label>
-                <Input
-                  id="resend-key"
-                  type="password"
-                  autoComplete="off"
-                  placeholder={form.resendApiKeySet ? t("notif.secretConfigured") : "re_…"}
-                  value={form.resendApiKey}
-                  onChange={(e) => setForm((f) => ({ ...f, resendApiKey: e.target.value }))}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="resend-from">{t("notif.resendFrom")}</Label>
-                <Input
-                  id="resend-from"
-                  placeholder="MikCloud <alertes@mondomaine.ci>"
-                  value={form.resendFrom}
-                  onChange={(e) => setForm((f) => ({ ...f, resendFrom: e.target.value }))}
-                />
-                <p className="text-xs text-muted-foreground">{t("notif.resendFromHint")}</p>
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_100px]">
-                <div className="grid gap-2">
-                  <Label htmlFor="smtp-host">{t("notif.smtpHost")}</Label>
-                  <Input
-                    id="smtp-host"
-                    placeholder="smtp.gmail.com"
-                    value={form.smtpHost}
-                    onChange={(e) => setForm((f) => ({ ...f, smtpHost: e.target.value }))}
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="smtp-port">{t("notif.smtpPort")}</Label>
-                  <Input
-                    id="smtp-port"
-                    type="number"
-                    min={1}
-                    max={65535}
-                    inputMode="numeric"
-                    placeholder="587"
-                    value={form.smtpPort || ""}
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, smtpPort: e.target.value === "" ? 0 : Number(e.target.value) }))
-                    }
-                  />
-                </div>
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="smtp-user">{t("notif.smtpUser")}</Label>
-                <Input
-                  id="smtp-user"
-                  autoComplete="off"
-                  placeholder="alertes@mondomaine.ci"
-                  value={form.smtpUser}
-                  onChange={(e) => setForm((f) => ({ ...f, smtpUser: e.target.value }))}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="smtp-pass">{t("notif.smtpPass")}</Label>
-                <Input
-                  id="smtp-pass"
-                  type="password"
-                  autoComplete="new-password"
-                  placeholder={form.smtpPassSet ? t("notif.secretConfigured") : "••••••••"}
-                  value={form.smtpPass}
-                  onChange={(e) => setForm((f) => ({ ...f, smtpPass: e.target.value }))}
-                />
-              </div>
-            </>
-          )}
-
-          {/* Destinataire — commun aux deux fournisseurs. */}
+          {/* Destinataire — commun à tous les fournisseurs, toujours visible. */}
           <div className="grid gap-2">
             <Label htmlFor="smtp-to">{t("notif.recipient")}</Label>
             <Input
@@ -553,6 +611,117 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
               onChange={(e) => setForm((f) => ({ ...f, emailTo: e.target.value }))}
             />
           </div>
+
+          {/* N°150 — relais plateforme : note quand le compte n'a pas d'identifiants propres. */}
+          {initial.emailPlatformRelay && !emailOwnConfigured && (
+            <p className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs leading-relaxed text-muted-foreground">
+              {t("notif.emailRelayNote")}
+            </p>
+          )}
+
+          {/* Fournisseur + identifiants — repliés quand le relais suffit. */}
+          <Collapsible defaultOpen={!initial.emailPlatformRelay || emailOwnConfigured}>
+            <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 rounded-md text-xs font-medium text-muted-foreground transition-colors hover:text-foreground">
+              <span>{t("notif.emailAdvanced")}</span>
+              <ChevronDown className="size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-180" />
+            </CollapsibleTrigger>
+            <CollapsibleContent className="grid gap-4 pt-3">
+              {/* Fournisseur du canal e-mail : SMTP direct (défaut) ou API Resend. */}
+              <div className="grid gap-2">
+                <Label htmlFor="email-provider">{t("notif.emailProvider")}</Label>
+                <Select
+                  value={form.emailProvider}
+                  onValueChange={(v) =>
+                    setForm((f) => ({ ...f, emailProvider: v === "resend" ? "resend" : "smtp" }))
+                  }
+                >
+                  <SelectTrigger id="email-provider" className="h-10">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="smtp">{t("notif.emailProviderSmtp")}</SelectItem>
+                    <SelectItem value="resend">{t("notif.emailProviderResend")}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {form.emailProvider === "resend" ? (
+                <>
+                  <div className="grid gap-2">
+                    <Label htmlFor="resend-key">{t("notif.resendApiKey")}</Label>
+                    <Input
+                      id="resend-key"
+                      type="password"
+                      autoComplete="off"
+                      placeholder={form.resendApiKeySet ? t("notif.secretConfigured") : "re_…"}
+                      value={form.resendApiKey}
+                      onChange={(e) => setForm((f) => ({ ...f, resendApiKey: e.target.value }))}
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="resend-from">{t("notif.resendFrom")}</Label>
+                    <Input
+                      id="resend-from"
+                      placeholder="MikCloud <alertes@mondomaine.ci>"
+                      value={form.resendFrom}
+                      onChange={(e) => setForm((f) => ({ ...f, resendFrom: e.target.value }))}
+                    />
+                    <p className="text-xs text-muted-foreground">{t("notif.resendFromHint")}</p>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_100px]">
+                    <div className="grid gap-2">
+                      <Label htmlFor="smtp-host">{t("notif.smtpHost")}</Label>
+                      <Input
+                        id="smtp-host"
+                        placeholder="smtp.gmail.com"
+                        value={form.smtpHost}
+                        onChange={(e) => setForm((f) => ({ ...f, smtpHost: e.target.value }))}
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="smtp-port">{t("notif.smtpPort")}</Label>
+                      <Input
+                        id="smtp-port"
+                        type="number"
+                        min={1}
+                        max={65535}
+                        inputMode="numeric"
+                        placeholder="587"
+                        value={form.smtpPort || ""}
+                        onChange={(e) =>
+                          setForm((f) => ({ ...f, smtpPort: e.target.value === "" ? 0 : Number(e.target.value) }))
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="smtp-user">{t("notif.smtpUser")}</Label>
+                    <Input
+                      id="smtp-user"
+                      autoComplete="off"
+                      placeholder="alertes@mondomaine.ci"
+                      value={form.smtpUser}
+                      onChange={(e) => setForm((f) => ({ ...f, smtpUser: e.target.value }))}
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="smtp-pass">{t("notif.smtpPass")}</Label>
+                    <Input
+                      id="smtp-pass"
+                      type="password"
+                      autoComplete="new-password"
+                      placeholder={form.smtpPassSet ? t("notif.secretConfigured") : "••••••••"}
+                      value={form.smtpPass}
+                      onChange={(e) => setForm((f) => ({ ...f, smtpPass: e.target.value }))}
+                    />
+                  </div>
+                </>
+              )}
+            </CollapsibleContent>
+          </Collapsible>
         </ChannelCard>
       </div>
     </div>

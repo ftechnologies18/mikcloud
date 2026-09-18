@@ -1107,6 +1107,13 @@ export interface NotifSettings {
   dailyReport: boolean;
   /** Heure d'envoi du rapport, 0-23 UTC (= heure d'Abidjan, GMT+0). */
   reportHour: number;
+  // N°150 — disponibilité des canaux plateforme (le serveur adapte la console).
+  /** Bot Telegram FTCI actif sur le service → pairage « zéro setup » par lien magique. */
+  telegramPlatformAvailable?: boolean;
+  /** @username du bot plateforme (sans @) — sert au lien t.me/<bot>?start=<code>. */
+  telegramBotUsername?: string;
+  /** Le compte principal a des identifiants e-mail → relais : adresse + interrupteur suffisent. */
+  emailPlatformRelay?: boolean;
 }
 
 /** Canal de notification (corps de POST /api/notifications/test). */

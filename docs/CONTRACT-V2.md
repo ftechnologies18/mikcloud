@@ -2215,6 +2215,72 @@ Migration boot idempotente : `settings.portal_style`, `portal_welcome`,
   injection vitrine (bienvenue, promos avec images R2, socials) ; commercial =
   retrait des injections et dé-masquage (réversible, idempotent).
 
+## N°150 — Canaux de notification plateforme : Telegram « zéro setup » (bot FTCI, lien magique) + relais e-mail du compte principal
+
+### Décisions de canaux (serveur, N°150)
+`notify.ConfiguredWithPlatform(cfg, platformEmail, channel)` étend `Configured` :
+- **telegram** : configuré si `telegramEnabled && telegramChatId != "" && (telegramBotToken != "" || TELEGRAM_PLATFORM_BOT_TOKEN != "")` — le bot FTCI remplace le bot du compte quand ce dernier n'en a pas (le bot PROPRE reste prioritaire) ;
+- **email** : configuré si `emailEnabled && emailTo != ""` et (identifiants propres OU `platformEmail` = réglages du compte principal `acc-main` avec `EmailCredentialsOK`) ;
+- **whatsapp** : inchangé (BYO strict — le canal plateforme à templates Meta est un chantier futur).
+
+Le moniteur (alertes automatiques) décide ET délivre avec ces identifiants
+plateforme (`DeliverWithPlatform`) : la trace notif_log reste au COMPTE
+ÉMETTEUR même quand l'envoi emprunte les identifiants du compte principal.
+Les e-mails transactionnels (N°68/N°146) avaient déjà ce repli — les ALERTES
+l'ont désormais aussi.
+
+### GET /api/notifications — champs ajoutés (rétrocompatibles, optionnels)
+```json
+{
+  "telegramPlatformAvailable": true,   // TELEGRAM_PLATFORM_BOT_TOKEN posé sur le service
+  "telegramBotUsername": "MikCloudAlertesBot", // cache getMe (omis si inconnu)
+  "emailPlatformRelay": true          // compte principal a des identifiants e-mail
+}
+```
+PUT /api/notifications : forme inchangée. POST /api/notifications/test :
+la garde accepte les canaux portés par la plateforme (même lecture que le
+moniteur), l'envoi emploie `DeliverWithPlatform`.
+
+### POST /api/notifications/telegram/pair-code (auth, rang ≥ 2)
+Crée un code de pairage éphémère (8 car. crypto/rand, alphabet sans sosies,
+TTL 15 min, USAGE UNIQUE, UN code actif par compte — le nouveau remplace
+l'ancien). Réponse :
+```json
+{ "code": "AB2CD3EF", "url": "https://t.me/<bot>?start=AB2CD3EF",
+  "botUsername": "MikCloudAlertesBot", "expiresAt": "2026-09-18T12:00:00Z" }
+```
+503 si le bot plateforme est absent du service ou getMe injoignable.
+
+### GET /api/notifications/telegram/pair-status?code=… (auth, rang ≥ 2)
+`{ "status": "pending" | "linked", "chatId"?: "…" }` — linked dès que le
+compte porte un chat ID (code consommé au webhook OU liaison antérieure) ;
+`{ "status": "expired" }` sinon (code inconnu/expiré/consommé sans liaison).
+
+### POST /api/webhooks/telegram (PUBLIC — serveurs Telegram uniquement)
+Authentifié par l'en-tête `X-Telegram-Bot-Api-Secret-Token` (comparaison à
+temps constant contre `TELEGRAM_WEBHOOK_SECRET` ; sans variable → 503 fermé,
+discipline Wave). Corps = update Bot API ; seul `message.text = "/start <code>"`
+agit : consomme le code sous tgMu seul, écrit `telegramChatId` +
+`telegramEnabled=true` sous le verrou store, journal d'activité « Canal
+Telegram connecté (lien magique) », puis le bot répond la confirmation
+(best-effort). Tout update reçoit 200 (Telegram ne doit jamais ressiner) ;
+code invalide/expiré → réponse d'aide, rien n'est écrit.
+
+### Environnement service (Render)
+- `TELEGRAM_PLATFORM_BOT_TOKEN` — token du bot FTCI (absent = canal BYO pur) ;
+- `TELEGRAM_WEBHOOK_SECRET` — secret du header webhook + posé au setWebhook ;
+- URL publique : `RENDER_EXTERNAL_URL` (fourni par Render) ou `PUBLIC_BASE_URL` —
+  le bootstrap (goroutine au boot) fait getMe (cache du @username) + setWebhook
+  vers `<base>/api/webhooks/telegram`, best-effort journalisé.
+
+### Console (frontend)
+Carte Telegram : bloc plateforme (Connecter Telegram → ouvre t.me/<bot>?start=
+<code>, polling pair-status 3 s, état connecté + badge chat ID, expiration
+rendue en ligne) + section BYO REPLIABLE (ouverte par défaut si bot propre
+configuré ou plateforme absente). Carte e-mail : destinataire toujours visible,
+note de relais + section fournisseur/SMTP/Resend repliée quand le relais
+suffit. Zéro clé i18n cassée : 16 clés nouvelles (tg.*, emailRelay*).
+
 ## N°139 — Numéro WhatsApp support du portail piloté en console
 
 ### Settings — `tenant.portalWhatsapp` (JSON string, pattern N°55)

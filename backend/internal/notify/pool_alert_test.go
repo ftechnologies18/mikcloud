@@ -40,6 +40,12 @@ func seedPoolRouter(t *testing.T, cap, hosts int) (*store.Store, *Service, *mode
 }
 
 // poolAlerts — extrait les alertes pool de l'outbox d'un passage.
+// firstCollect — N°150 : collect renvoie désormais (outbox, relais e-mail
+// plateforme) ; les tests du moniteur n'inspectent que l'outbox.
+func firstCollect(items []outboxItem, _ *model.NotificationSettings) []outboxItem {
+	return items
+}
+
 func poolAlerts(outbox []outboxItem) []outboxItem {
 	var out []outboxItem
 	for _, item := range outbox {
@@ -55,7 +61,7 @@ func TestPoolAlertHighThenFullThenCalm(t *testing.T) {
 	now := time.Now().UTC()
 
 	// Transition ok → high : UNE alerte, message « presque plein ».
-	alerts := poolAlerts(svc.collect(now))
+	alerts := poolAlerts(firstCollect(svc.collect(now)))
 	if len(alerts) != 1 {
 		t.Fatalf("premier passage : %d alerte(s) pool, attendu 1", len(alerts))
 	}
@@ -64,7 +70,7 @@ func TestPoolAlertHighThenFullThenCalm(t *testing.T) {
 	}
 
 	// Anti-spam : même état au passage suivant → rien.
-	if alerts = poolAlerts(svc.collect(now.Add(30 * time.Second))); len(alerts) != 0 {
+	if alerts = poolAlerts(firstCollect(svc.collect(now.Add(30 * time.Second)))); len(alerts) != 0 {
 		t.Fatalf("état inchangé : %d alerte(s), attendu 0", len(alerts))
 	}
 
@@ -72,7 +78,7 @@ func TestPoolAlertHighThenFullThenCalm(t *testing.T) {
 	st.Lock()
 	router.PoolHosts = 245
 	st.Unlock()
-	alerts = poolAlerts(svc.collect(now.Add(time.Minute)))
+	alerts = poolAlerts(firstCollect(svc.collect(now.Add(time.Minute))))
 	if len(alerts) != 1 {
 		t.Fatalf("passage à full : %d alerte(s), attendu 1", len(alerts))
 	}
@@ -87,7 +93,7 @@ func TestPoolAlertHighThenFullThenCalm(t *testing.T) {
 	st.Lock()
 	router.PoolHosts = 100
 	st.Unlock()
-	if alerts = poolAlerts(svc.collect(now.Add(2 * time.Minute))); len(alerts) != 0 {
+	if alerts = poolAlerts(firstCollect(svc.collect(now.Add(2 * time.Minute)))); len(alerts) != 0 {
 		t.Fatalf("retour au calme : %d alerte(s), attendu 0", len(alerts))
 	}
 	st.Lock()
@@ -101,7 +107,7 @@ func TestPoolAlertHighThenFullThenCalm(t *testing.T) {
 	st.Lock()
 	router.PoolHosts = 254
 	st.Unlock()
-	if alerts = poolAlerts(svc.collect(now.Add(3 * time.Minute))); len(alerts) != 1 {
+	if alerts = poolAlerts(firstCollect(svc.collect(now.Add(3 * time.Minute)))); len(alerts) != 1 {
 		t.Fatalf("re-saturation : %d alerte(s), attendu 1", len(alerts))
 	}
 }
@@ -109,7 +115,7 @@ func TestPoolAlertHighThenFullThenCalm(t *testing.T) {
 func TestPoolAlertSilentWithoutCapacityOrChannel(t *testing.T) {
 	// Capacité inconnue (PoolCap=0 : jamais diagnostiqué) → jamais d'alerte.
 	st, svc, router := seedPoolRouter(t, 0, 500)
-	if alerts := poolAlerts(svc.collect(time.Now().UTC())); len(alerts) != 0 {
+	if alerts := poolAlerts(firstCollect(svc.collect(time.Now().UTC()))); len(alerts) != 0 {
 		t.Fatalf("capacité inconnue : %d alerte(s), attendu 0", len(alerts))
 	}
 
@@ -123,7 +129,7 @@ func TestPoolAlertSilentWithoutCapacityOrChannel(t *testing.T) {
 	cfg.TelegramBotToken = ""
 	store.SetNotifSettings(st.Data(), cfg)
 	st.Unlock()
-	if alerts := poolAlerts(svc.collect(time.Now().UTC())); len(alerts) != 0 {
+	if alerts := poolAlerts(firstCollect(svc.collect(time.Now().UTC()))); len(alerts) != 0 {
 		t.Fatalf("sans canal : %d alerte(s), attendu 0", len(alerts))
 	}
 	st.Lock()
@@ -162,7 +168,7 @@ func TestPoolAutoRepairMarksPendingOnTransition(t *testing.T) {
 	st.Lock()
 	router.PoolAutoPending = false
 	st.Unlock()
-	items := poolAutoNotifs(svc.collect(now))
+	items := poolAutoNotifs(firstCollect(svc.collect(now)))
 	if len(items) != 1 {
 		t.Fatalf("premier passage : %d confirmation(s) auto, attendu 1", len(items))
 	}
@@ -177,7 +183,7 @@ func TestPoolAutoRepairMarksPendingOnTransition(t *testing.T) {
 	}
 
 	// Même pression au tick suivant : RIEN (anti-spam par transition).
-	if items = poolAutoNotifs(svc.collect(now.Add(30 * time.Second))); len(items) != 0 {
+	if items = poolAutoNotifs(firstCollect(svc.collect(now.Add(30 * time.Second)))); len(items) != 0 {
 		t.Fatalf("pression inchangée : %d confirmation(s), attendu 0", len(items))
 	}
 
@@ -187,7 +193,7 @@ func TestPoolAutoRepairMarksPendingOnTransition(t *testing.T) {
 	st.Lock()
 	router.PoolAutoPending = false
 	st.Unlock()
-	if items = poolAutoNotifs(svc.collect(now.Add(time.Minute))); len(items) != 0 {
+	if items = poolAutoNotifs(firstCollect(svc.collect(now.Add(time.Minute)))); len(items) != 0 {
 		t.Fatalf("pression haute après consommation : %d confirmation(s), attendu 0", len(items))
 	}
 	st.Lock()
@@ -203,7 +209,7 @@ func TestPoolAutoRepairMarksPendingOnTransition(t *testing.T) {
 	st.Lock()
 	router.PoolHosts = 245 // 96 % → full
 	st.Unlock()
-	if items = poolAutoNotifs(svc.collect(now.Add(90 * time.Second))); len(items) != 1 {
+	if items = poolAutoNotifs(firstCollect(svc.collect(now.Add(90 * time.Second)))); len(items) != 1 {
 		t.Fatalf("passage à full : %d confirmation(s), attendu 1", len(items))
 	}
 	if !containsStr(items[0].body, "no more free addresses") {
@@ -215,11 +221,11 @@ func TestPoolAutoRepairMarksPendingOnTransition(t *testing.T) {
 	st.Lock()
 	router.PoolHosts = 100
 	st.Unlock()
-	svc.collect(now.Add(2 * time.Minute))
+	firstCollect(svc.collect(now.Add(2 * time.Minute)))
 	st.Lock()
 	router.PoolHosts = 210
 	st.Unlock()
-	if items = poolAutoNotifs(svc.collect(now.Add(3 * time.Minute))); len(items) != 1 {
+	if items = poolAutoNotifs(firstCollect(svc.collect(now.Add(3 * time.Minute)))); len(items) != 1 {
 		t.Fatalf("re-montée après calme : %d confirmation(s), attendu 1", len(items))
 	}
 	st.Lock()
@@ -236,7 +242,7 @@ func TestPoolAutoRepairMarksPendingOnTransition(t *testing.T) {
 func TestPoolAutoRepairRequiresOptInAndAgent(t *testing.T) {
 	// Switch OFF : pression haute, rien ne part.
 	st, svc, router := seedPoolRouter(t, 254, 210)
-	svc.collect(time.Now().UTC())
+	firstCollect(svc.collect(time.Now().UTC()))
 	st.Lock()
 	pending := router.PoolAutoPending
 	st.Unlock()
@@ -249,7 +255,7 @@ func TestPoolAutoRepairRequiresOptInAndAgent(t *testing.T) {
 	router.PoolAuto = true
 	router.Mode = "simulated"
 	st.Unlock()
-	if items := poolAutoNotifs(svc.collect(time.Now().UTC())); len(items) != 0 {
+	if items := poolAutoNotifs(firstCollect(svc.collect(time.Now().UTC()))); len(items) != 0 {
 		t.Fatalf("mode simulé : %d confirmation(s), attendu 0", len(items))
 	}
 	st.Lock()
@@ -273,7 +279,7 @@ func TestPoolAutoRepairWorksWithoutChannels(t *testing.T) {
 	store.SetNotifSettings(st.Data(), cfg)
 	st.Unlock()
 
-	if items := poolAutoNotifs(svc.collect(time.Now().UTC())); len(items) != 0 {
+	if items := poolAutoNotifs(firstCollect(svc.collect(time.Now().UTC()))); len(items) != 0 {
 		t.Fatalf("sans canal : %d confirmation(s), attendu 0", len(items))
 	}
 	st.Lock()

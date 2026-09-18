@@ -29,6 +29,21 @@ const httpTimeout = 12 * time.Second
 // remplacent par un serveur httptest local (aucun réseau réel en CI).
 var resendEndpoint = "https://api.resend.com/emails"
 
+// telegramEndpoint — N°150 : racine de l'API Bot Telegram. Variable de
+// package : les tests la remplacent par un serveur httptest local (aucun
+// réseau réel en CI, même discipline que resendEndpoint).
+var telegramEndpoint = "https://api.telegram.org"
+
+// TelegramPlatformToken — N°150 : token du BOT PLATEFORME MikCloud (env
+// TELEGRAM_PLATFORM_BOT_TOKEN, posé par main.go avant l'écoute). Un compte
+// sans bot propre (TelegramBotToken vide) envoie ses alertes via CE bot :
+// le gérant clique « Connecter Telegram » en console, démarre la
+// conversation, le webhook /api/webhooks/telegram enregistre son chat ID —
+// zéro @BotFather pour le client. Vide (défaut) : comportement BYO
+// historique strict, aucune fonctionnalité plateforme active. Les tests
+// posent/retirent cette variable de package directement.
+var TelegramPlatformToken = ""
+
 // resendDefaultFrom — expéditeur par défaut quand ResendFrom est vide : le
 // domaine d'essai Resend ne délivre qu'à l'adresse du propriétaire du compte
 // Resend ; en production, renseignez ResendFrom avec un domaine vérifié.
@@ -99,31 +114,88 @@ func HasAnyChannel(cfg *model.NotificationSettings) bool {
 	return Configured(cfg, "telegram") || Configured(cfg, "whatsapp") || Configured(cfg, "email")
 }
 
+// ConfiguredWithPlatform — N°150 : Configured étendu aux identifiants
+// plateforme. Telegram : le bot FTCI (TelegramPlatformToken) remplace le
+// bot du compte quand ce dernier n'en a pas. E-mail : le relais du compte
+// principal (réglages résolus SOUS VERROU par l'appelant, nil si le compte
+// principal n'a pas d'identifiants exploitables) porte l'envoi quand le
+// compte n'a ni SMTP ni Resend. WhatsApp : inchangé (BYO — le canal
+// plateforme à templates est le chantier N°149).
+func ConfiguredWithPlatform(cfg *model.NotificationSettings, platformEmail *model.NotificationSettings, channel string) bool {
+	switch channel {
+	case "telegram":
+		if !cfg.TelegramEnabled || cfg.TelegramChatID == "" {
+			return false
+		}
+		return cfg.TelegramBotToken != "" || TelegramPlatformToken != ""
+	case "email":
+		if !cfg.EmailEnabled || cfg.EmailTo == "" {
+			return false
+		}
+		if EmailCredentialsOK(cfg) {
+			return true
+		}
+		return platformEmail != nil && EmailCredentialsOK(platformEmail)
+	}
+	return Configured(cfg, channel)
+}
+
+// HasAnyChannelWithPlatform — N°150 : HasAnyChannel étendu aux identifiants
+// plateforme (décisions du moniteur : un compte dont SEUL le canal relais
+// est utilisable doit quand même produire des alertes).
+func HasAnyChannelWithPlatform(cfg *model.NotificationSettings, platformEmail *model.NotificationSettings) bool {
+	return ConfiguredWithPlatform(cfg, nil, "telegram") ||
+		Configured(cfg, "whatsapp") ||
+		ConfiguredWithPlatform(cfg, platformEmail, "email")
+}
+
 // Deliver envoie une notification sur les canaux configurés du compte
 // (onlyChannel non vide → uniquement ce canal). Retourne une entrée de log
 // par canal tenté ; aucun canal tenté (tout désactivé) → une entrée « system »
 // explicite pour l'historique. Ne JAMAIS appeler sous verrou du store : les
 // envois réseau peuvent durer jusqu'à httpTimeout par canal.
+//
+// N°150 : Telegram consulte déjà le bot plateforme via la variable de
+// package (TelegramPlatformToken) — le wrapper Deliver garde donc le canal
+// « zéro setup » actif partout où il est appelé. L'e-mail, lui, exige les
+// réglages du compte principal résolus sous verrou : c'est
+// DeliverWithPlatform.
 func Deliver(cfg *model.NotificationSettings, kind, title, body, onlyChannel string) []model.NotificationLog {
+	return DeliverWithPlatform(cfg, nil, kind, title, body, onlyChannel)
+}
+
+// DeliverWithPlatform — N°150 : Deliver avec relai plateforme pour l'e-mail
+// (platformEmail = réglages du compte principal, nil = pas de relais). Les
+// traces restent au COMPTE ÉMETTEUR (logEntry sous cfg du compte) même quand
+// l'envoi emprunte les identifiants du compte principal.
+func DeliverWithPlatform(cfg *model.NotificationSettings, platformEmail *model.NotificationSettings, kind, title, body, onlyChannel string) []model.NotificationLog {
 	var logs []model.NotificationLog
 	try := func(channel string) bool { return onlyChannel == "" || onlyChannel == channel }
 
-	if try("telegram") && Configured(cfg, "telegram") {
-		err := sendTelegram(cfg.TelegramBotToken, cfg.TelegramChatID, title, body)
+	if try("telegram") && ConfiguredWithPlatform(cfg, nil, "telegram") {
+		token := cfg.TelegramBotToken
+		if token == "" {
+			token = TelegramPlatformToken // bot FTCI (N°150)
+		}
+		err := sendTelegram(token, cfg.TelegramChatID, title, body)
 		logs = append(logs, logEntry(cfg, "telegram", kind, title, body, err))
 	}
 	if try("whatsapp") && Configured(cfg, "whatsapp") {
 		err := sendWhatsApp(cfg.WhatsAppToken, cfg.WhatsAppPhoneID, cfg.WhatsAppTo, title, body)
 		logs = append(logs, logEntry(cfg, "whatsapp", kind, title, body, err))
 	}
-	if try("email") && Configured(cfg, "email") {
+	if try("email") && ConfiguredWithPlatform(cfg, platformEmail, "email") {
 		var err error
 		// Notifications automatiques : corps texte seul (le HTML
 		// brandé est réservé aux e-mails transactionnels — N°79).
-		if EmailProviderOf(cfg) == "resend" {
-			err = sendEmailResend(cfg.ResendAPIKey, cfg.ResendFrom, cfg.EmailTo, title, body, "")
+		sender := cfg // identifiants du compte, sinon relais du compte principal (N°150)
+		if !EmailCredentialsOK(cfg) && platformEmail != nil && EmailCredentialsOK(platformEmail) {
+			sender = platformEmail
+		}
+		if EmailProviderOf(sender) == "resend" {
+			err = sendEmailResend(sender.ResendAPIKey, sender.ResendFrom, cfg.EmailTo, title, body, "")
 		} else {
-			err = sendEmail(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPass, cfg.EmailTo, title, body, "")
+			err = sendEmail(sender.SMTPHost, sender.SMTPPort, sender.SMTPUser, sender.SMTPPass, cfg.EmailTo, title, body, "")
 		}
 		logs = append(logs, logEntry(cfg, "email", kind, title, body, err))
 	}
@@ -190,12 +262,16 @@ func logEntry(cfg *model.NotificationSettings, channel, kind, title, body string
 // ---------------------------------------------------------------------------
 
 func sendTelegram(botToken, chatID, title, body string) error {
+	text := title
+	if body != "" {
+		text = title + "\n\n" + body
+	}
 	payload := map[string]any{
 		"chat_id": chatID,
-		"text":    title + "\n\n" + body,
+		"text":    text,
 	}
 	b, _ := json.Marshal(payload)
-	url := "https://api.telegram.org/bot" + botToken + "/sendMessage"
+	url := telegramEndpoint + "/bot" + botToken + "/sendMessage"
 	client := &http.Client{Timeout: httpTimeout}
 	resp, err := client.Post(url, "application/json", bytes.NewReader(b))
 	if err != nil {
@@ -211,6 +287,68 @@ func sendTelegram(botToken, chatID, title, body string) error {
 	}
 	if !out.OK {
 		return fmt.Errorf("telegram : %s", strings.TrimSpace(out.Description))
+	}
+	return nil
+}
+
+// SendTelegramRaw — N°150 : message libre par le bot (confirmations du
+// pairage, aide du webhook). Exposé pour l'API ; le moniteur continue
+// d'utiliser Deliver.
+func SendTelegramRaw(token, chatID, text string) error {
+	return sendTelegram(token, chatID, text, "")
+}
+
+// TelegramGetMe — N°150 : @username du bot (sans @) — mis en cache par le
+// bootstrap de l'API pour construire le lien magique t.me/<bot>?start=<code>.
+func TelegramGetMe(token string) (string, error) {
+	url := telegramEndpoint + "/bot" + token + "/getMe"
+	client := &http.Client{Timeout: httpTimeout}
+	resp, err := client.Post(url, "application/json", nil)
+	if err != nil {
+		return "", fmt.Errorf("telegram getMe injoignable : %w", err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		OK     bool `json:"ok"`
+		Result struct {
+			Username string `json:"username"`
+		} `json:"result"`
+		Description string `json:"description"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", fmt.Errorf("telegram getMe : réponse illisible (HTTP %d)", resp.StatusCode)
+	}
+	if !out.OK || out.Result.Username == "" {
+		return "", fmt.Errorf("telegram getMe : %s", strings.TrimSpace(out.Description))
+	}
+	return out.Result.Username, nil
+}
+
+// TelegramSetWebhook — N°150 : branche l'URL publique du webhook et pose le
+// secret validé à CHAQUE update via l'en-tête X-Telegram-Bot-Api-Secret-Token
+// (comparaison à temps constant côté handler).
+func TelegramSetWebhook(token, url, secret string) error {
+	b, _ := json.Marshal(map[string]any{"url": url, "secret_token": secret})
+	req, err := http.NewRequest(http.MethodPost, telegramEndpoint+"/bot"+token+"/setWebhook", bytes.NewReader(b))
+	if err != nil {
+		return fmt.Errorf("telegram setWebhook : requête invalide : %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: httpTimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("telegram setWebhook injoignable : %w", err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return fmt.Errorf("telegram setWebhook : réponse illisible (HTTP %d)", resp.StatusCode)
+	}
+	if !out.OK {
+		return fmt.Errorf("telegram setWebhook : %s", strings.TrimSpace(out.Description))
 	}
 	return nil
 }

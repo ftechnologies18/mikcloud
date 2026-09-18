@@ -5,6 +5,99 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-18 — N°150 — Telegram « zéro setup » et relais e-mail : les canaux plateforme arrivent dans les notifications (bot FTCI à lien magique + envoi porté par le compte principal)
+
+### Contexte
+Question utilisateur : « Webhooks & canaux — Destinations des alertes : Telegram,
+WhatsApp Cloud API… pour recevoir les notifications via WhatsApp Cloud API chaque
+client doit-il disposer de sa propre API ou comment implémenter cela ? ».
+Décision produit (option B validée) : la PLATEFORME porte les canaux pour que le
+gérant n'ait RIEN à créer — analyse des 3 canaux : WhatsApp Cloud API exige des
+démarches Meta par client (WABA, vérification, templates, fenêtre 24 h — chantier
+futur), Telegram et e-mail sont activables immédiatement côté plateforme.
+
+### Produit
+1. **Telegram « zéro setup »** — le gérant clique « Connecter Telegram » en
+   console, Telegram s'ouvre sur le bot officiel FTCI avec un code éphémère,
+   il appuie sur Démarrer : le chat ID est enregistré, le canal est actif.
+   Zéro @BotFather, zéro token, zéro chat ID à récupérer. Le bot PROPRE du
+   compte reste prioritaire s'il existe (BYO conservé, section repliable).
+2. **Relais e-mail** — un compte sans SMTP ni Resend reçoit ses alertes par
+   e-mail en ne donnant que son adresse : l'envoi est porté par les
+   identifiants du compte principal (même mécanique que les transactionnels
+   N°68/N°146, désormais étendue aux ALERTES automatiques du moniteur).
+   SMTP/Resend propres toujours disponibles en section avancée.
+
+### Technique
+- notify : `TelegramPlatformToken` (var de package posée par main.go depuis
+  `TELEGRAM_PLATFORM_BOT_TOKEN`), `telegramEndpoint` testable,
+  `ConfiguredWithPlatform`/`HasAnyChannelWithPlatform`/`DeliverWithPlatform`
+  (telegram → bot FTCI si le compte n'a pas le sien ; email → relais principal,
+  trace au compte émetteur), `TelegramGetMe`/`TelegramSetWebhook`/
+  `SendTelegramRaw` (protocole Bot API, secret_token au setWebhook).
+- moniteur : `platformEmailLocked` (réglages e-mail de `acc-main` sous verrou)
+  résolu pendant la collecte, délivré APRÈS déverrouillage (N°74 inchangé) ;
+  les 7 décisions `HasAnyChannel` deviennent plateforme-averties — un compte
+  dont seul le relais est utilisable produit enfin ses alertes.
+- API : `POST /api/notifications/telegram/pair-code` (code 8 car. crypto/rand
+  sans sosies, TTL 15 min variable, usage unique, un code actif par compte),
+  `GET /api/notifications/telegram/pair-status?code=` (pending/linked/expired —
+  linked lu dans les réglages D'ABORD car le code est consommé au webhook),
+  `POST /api/webhooks/telegram` PUBLIC validé par l'en-tête
+  `X-Telegram-Bot-Api-Secret-Token` à temps constant (sans
+  `TELEGRAM_WEBHOOK_SECRET` → 503 fermé, discipline Wave) ; middleware :
+  l'URL rejoint la liste publique. GET/PUT /api/notifications portent
+  `telegramPlatformAvailable`/`telegramBotUsername`/`emailPlatformRelay` ;
+  POST test : garde et envoi plateforme-avertis. tgMu JAMAIS imbriqué avec le
+  verrou store. Bootstrap goroutine : getMe (cache @username) + setWebhook
+  (`RENDER_EXTERNAL_URL` ou `PUBLIC_BASE_URL`), best-effort journalisé.
+- Console : carte Telegram à bloc plateforme (bouton Connecter, code affiché,
+  polling 3 s, état connecté + badge chat ID, expiration en ligne + nouveau
+  code — zéro useEffect, la liaison se synchronise PENDANT le rendu, patron
+  officiel React, règle react-hooks/set-state-in-effect) + BYO repliable ;
+  carte e-mail à destinataire toujours visible + note de relais + section
+  fournisseur/identifiants repliée quand le relais suffit ; 16 clés i18n
+  FR/EN ; types NotifSettings + 3 champs optionnels.
+
+### Fidélité
+Zéro route existante modifiée, zéro schéma (les colonnes telegram_chat_id /
+email_to / enabled existaient — le pairage n'écrit QUE ces champs) ; PUT
+/api/notifications forme inchangée ; BYO historique intact (bot propre
+prioritaire, SMTP/Resend propres prioritaires) ; secrets jamais exposés.
+
+### Renumérotation
+N°148 pris par la synchro de routine retirée du journal (afb5768) et N°149
+par le RBAC du journal d'activité (2c637f9, sessions parallèles) — rebase
+avec conflit monitor.go résolu à la main (journalisation des transitions +
+décisions plateforme cohabitent), ce travail devient N°150.
+
+### Vérifié
+go build 0, go vet 0, gofmt propre, go test 12 paquets VERTS (avec les tests
+des N°148/N°149 parallèles) ; eslint 0, tsgo 0. 11 tests nouveaux — notify :
+TestDeliverTelegramPlatformToken (envoi via le bot FTCI, trace au compte),
+TestDeliverTelegramOwnTokenWins, TestConfiguredWithPlatformMatrix,
+TestDeliverEmailPlatformRelay (clé Resend du principal, destinataire + trace
+du compte), TestTelegramGetMeSetWebhook (protocole + secret_token) ; api :
+TestTelegramPairFlow (E2E : pair-code → lien magique exact → mauvais secret
+401 → /start valide → chat ID + canal activé + vue → statut linked →
+confirmation au bon chat → code à usage unique → réponse d'aide au rejeu),
+TestTelegramPairExpiry (code expiré : 200 poli, rien d'écrit, aide envoyée),
+TestTelegramWebhookDisabled (503 sans secret d'env), TestTelegramPairCodeNeedsPlatform
+(503 sans bot plateforme), TestNotifTestEmailViaRelay (garde ouverte par le
+relais, envoi reçoit les identifiants du principal, trace sent au compte).
+Navigateur agent-browser contre backend Go réel compilé (bot plateforme
+actif, secret webhook posé, compte principal semé Resend dans le store) :
+vue simplifiée rendue (Connecter Telegram + sections avancées repliées),
+graceful 503 au clic quand getMe échoue (faux token), état connecté + badge
+424242 après liaison, envoi test telegram PARTI VIA LE BOT PLATEFORME (580 ms
+vers api.telegram.org réel, « Unauthorized » du faux token tracé dans
+l'historique — preuve du chemin), relais e-mail : emailPlatformRelay:true,
+note rendue, garde ouverte SANS identifiants propres, envoi parti via la clé
+du principal (353 ms vers api.resend.com réel, « API key is invalid » du faux
+token tracé), webhook réel : mauvais secret 401 / bon secret 200 / sans
+header 401, WhatsApp inchangé, 0 erreur console/page ; VLM 4/4 (check vert +
+badge, note relais, carte WhatsApp intacte, aucun défaut de mise en page).
+
 ## 2026-09-18 — N°149 — Le journal d'activité respecte le RBAC : les entrées billing et team ne partent qu'au propriétaire
 
 ### Contexte

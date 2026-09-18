@@ -83,6 +83,18 @@ type API struct {
 	// depuis le middleware d'auth, hors section critique).
 	attnMu sync.Mutex
 	attn   map[string]time.Time
+	// N°150 — pairage Telegram plateforme (bot FTCI, lien magique) :
+	// codes éphémères code → compte (15 min, usage unique) servis par
+	// POST /api/notifications/telegram/pair-code, consommés par le webhook
+	// public POST /api/webhooks/telegram (validé par l'en-tête secret
+	// X-Telegram-Bot-Api-Secret-Token). tgMu protège les trois champs ;
+	// JAMAIS de section critique tgMu imbriquée avec le verrou du store
+	// (les écritures de réglages prennent le store APRÈS avoir consommé le
+	// code sous tgMu seul).
+	tgMu                sync.Mutex
+	tgPairings          map[string]telegramPairing
+	tgAccountCode       map[string]string
+	telegramBotUsername string
 }
 
 // readStateMinInterval — N°74 — intervalle minimum entre deux read_state
@@ -109,7 +121,7 @@ func New(s *store.Store, jwtSecret string) *API {
 	// groupe serial rejoue l'inscription déjà passée — cf. signup_abuse.go.
 	// Les autres limiteurs S3 (join, reset) gardent les constantes : aucune
 	// suite E2E ne les traverse.
-	return &API{store: s, secret: jwtSecret, gws: map[string]routeros.Gateway{}, pinLock: newPinLimiter(), signup: signupLimiterFromEnv(os.Getenv), join: newSignupLimiter(), wifiClaim: newSignupLimiterLimits(20, 100), portalTrack: newSignupLimiterLimits(300, 3000), reset: newSignupLimiter(), chat: newSignupLimiterLimits(30, 400), egress: newEgressStats(), readStateDone: map[string]time.Time{}, readAcc: map[string]*readStateAccum{}, readStateChunks: map[string]int{}, devicesDone: map[string]time.Time{}, attn: map[string]time.Time{}}
+	return &API{store: s, secret: jwtSecret, gws: map[string]routeros.Gateway{}, pinLock: newPinLimiter(), signup: signupLimiterFromEnv(os.Getenv), join: newSignupLimiter(), wifiClaim: newSignupLimiterLimits(20, 100), portalTrack: newSignupLimiterLimits(300, 3000), reset: newSignupLimiter(), chat: newSignupLimiterLimits(30, 400), egress: newEgressStats(), readStateDone: map[string]time.Time{}, readAcc: map[string]*readStateAccum{}, readStateChunks: map[string]int{}, devicesDone: map[string]time.Time{}, attn: map[string]time.Time{}, tgPairings: map[string]telegramPairing{}, tgAccountCode: map[string]string{}}
 }
 
 // Handler — mux complet, protégé par le middleware d'authentification.
@@ -374,6 +386,10 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/webhooks/wave", a.handleWaveWebhook)
 	// webhook d'encaissement GeniusPay (public, authentifié par signature HMAC).
 	mux.HandleFunc("POST /api/webhooks/geniuspay", a.handleGeniusPayWebhook)
+	// N°150 — webhook Telegram (public : appelé par les serveurs de Telegram,
+	// authentifié par l'en-tête X-Telegram-Bot-Api-Secret-Token posé au
+	// setWebhook — même discipline que Wave/GeniusPay : un secret d'env).
+	mux.HandleFunc("POST /api/webhooks/telegram", a.handleTelegramWebhook)
 
 	// P0 (audit Mikhmon) — voir docs/CONTRACT-V2.md (F2 à F5, découpage :
 	// handlers_templates.go, handlers_userlogs.go, handlers_users_ops.go ;

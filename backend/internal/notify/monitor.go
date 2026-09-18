@@ -88,10 +88,12 @@ type outboxItem struct {
 // tick — un passage complet de surveillance : collecte sous verrou (avec
 // libération garantie par defer), puis délivrance réseau HORS verrou.
 func (s *Service) tick() {
-	outbox := s.collect(time.Now().UTC())
+	outbox, platformEmail := s.collect(time.Now().UTC())
 	// Délivrance hors verrou (réseau), puis écriture de l'historique.
+	// N°150 : platformEmail = relais du compte principal, résolu sous verrou
+	// pendant la collecte — l'envoi peut durer, il part APRÈS déverrouillage.
 	for i := range outbox {
-		logs := Deliver(&outbox[i].cfg, outbox[i].kind, outbox[i].title, outbox[i].body, "")
+		logs := DeliverWithPlatform(&outbox[i].cfg, platformEmail, outbox[i].kind, outbox[i].title, outbox[i].body, "")
 		s.appendLogs(logs)
 	}
 }
@@ -99,13 +101,17 @@ func (s *Service) tick() {
 // collect — phase sous verrou du passage de surveillance : décisions
 // (offline/rappels/stock/rapport) et constitution de l'outbox. Le verrou est
 // libéré par un defer — il survit même à une panique interne (N°74).
-func (s *Service) collect(now time.Time) []outboxItem {
+// N°150 : retourne aussi les réglages e-mail du compte principal (relais
+// plateforme) pour la délivrance — un compte sans SMTP/Resend propre mais
+// avec l'alerte e-mail active reçoit désormais ses envois via la plateforme.
+func (s *Service) collect(now time.Time) ([]outboxItem, *model.NotificationSettings) {
 	var outbox []outboxItem
 
 	s.st.Lock()
 	defer s.st.Unlock()
 	db := s.st.Data()
 	changed := false
+	platformEmail := platformEmailLocked(db)
 
 	// Statut des comptes SaaS (les comptes désactivés ne reçoivent rien).
 	accDisabled := map[string]bool{}
@@ -146,13 +152,15 @@ func (s *Service) collect(now time.Time) []outboxItem {
 				// n'y écrivent plus. Les comptes désactivés ne
 				// polluent pas leur propre journal pour autant.
 				if !accDisabled[r.AccountID] {
-					away := now.Sub(seen).Round(time.Minute)
+					away0 := now.Sub(seen).Round(time.Minute)
 					model.AppendActivity(db, model.Activity{
 						AccountID: r.AccountID, Type: "router",
-						Message: "Routeur «" + r.Name + "» hors ligne — sans check-in depuis " + formatDuration(away),
+						Message: "Routeur «" + r.Name + "» hors ligne — sans check-in depuis " + formatDuration(away0),
 					})
 				}
-				if cfg.Enabled && HasAnyChannel(&cfg) {
+				// N°150 — les identifiants plateforme (bot FTCI, relais e-mail du
+				// compte principal) comptent pour la décision d'alerte.
+				if cfg.Enabled && HasAnyChannelWithPlatform(&cfg, platformEmail) {
 					away := now.Sub(seen).Round(time.Minute)
 					outbox = append(outbox, outboxItem{cfg: cfg, kind: KindRouterOffline,
 						title: "🔴 Routeur hors ligne — " + r.Name,
@@ -167,7 +175,7 @@ func (s *Service) collect(now time.Time) []outboxItem {
 		// Statut « offline » : rappel périodique tant que la panne dure.
 		if last, ok := s.notifiedOffline[r.ID]; ok && now.Sub(last) >= reminderEvery {
 			s.notifiedOffline[r.ID] = now
-			if cfg.Enabled && HasAnyChannel(&cfg) {
+			if cfg.Enabled && HasAnyChannelWithPlatform(&cfg, platformEmail) {
 				away := now.Sub(seen).Round(time.Minute)
 				outbox = append(outbox, outboxItem{cfg: cfg, kind: KindRouterOffline,
 					title: "⏳ Toujours hors ligne — " + r.Name,
@@ -200,7 +208,7 @@ func (s *Service) collect(now time.Time) []outboxItem {
 			})
 			changed = true // l'entrée d'activité doit être persistée
 			cfg := store.GetOrCreateNotifSettings(db, r.AccountID)
-			if cfg.Enabled && HasAnyChannel(&cfg) {
+			if cfg.Enabled && HasAnyChannelWithPlatform(&cfg, platformEmail) {
 				outbox = append(outbox, outboxItem{cfg: cfg, kind: KindRouterBack,
 					title: "🟢 Routeur de retour en ligne — " + r.Name,
 					body: "Le routeur «" + r.Name + "» (« " + routerSiteLabel(r) + " ») répond de nouveau " +
@@ -273,7 +281,7 @@ func (s *Service) collect(now time.Time) []outboxItem {
 		}
 		setStockState(r.AccountID, r.ID, state)
 		changed = true
-		if !cfg.Enabled || !HasAnyChannel(&cfg) {
+		if !cfg.Enabled || !HasAnyChannelWithPlatform(&cfg, platformEmail) {
 			continue
 		}
 		title, body := stockMessage(r, info[0], state, cfg.LowStockThreshold)
@@ -340,7 +348,7 @@ func (s *Service) collect(now time.Time) []outboxItem {
 					r.PoolAutoPending = true
 					changed = true
 				}
-				if cfg.Enabled && HasAnyChannel(&cfg) {
+				if cfg.Enabled && HasAnyChannelWithPlatform(&cfg, platformEmail) {
 					title, body := poolAutoMessage(r, usage, r.PoolHosts, r.PoolCap, state)
 					outbox = append(outbox, outboxItem{cfg: cfg, kind: KindPoolAuto, title: title, body: body})
 				}
@@ -358,7 +366,7 @@ func (s *Service) collect(now time.Time) []outboxItem {
 		}
 		setPoolState(r.AccountID, r.ID, state)
 		changed = true
-		if state == "" || !HasAnyChannel(&cfg) {
+		if state == "" || !HasAnyChannelWithPlatform(&cfg, platformEmail) {
 			continue
 		}
 		title, body := poolMessage(r, usage, r.PoolHosts, r.PoolCap, state)
@@ -383,7 +391,7 @@ func (s *Service) collect(now time.Time) []outboxItem {
 		cfg.LastReportDate = today
 		store.SetNotifSettings(db, cfg)
 		changed = true
-		if HasAnyChannel(&cfg) {
+		if HasAnyChannelWithPlatform(&cfg, platformEmail) {
 			outbox = append(outbox, outboxItem{cfg: cfg, kind: KindDailyReport, title: title, body: body})
 		}
 	}
@@ -391,7 +399,18 @@ func (s *Service) collect(now time.Time) []outboxItem {
 	if changed {
 		s.st.Save()
 	}
-	return outbox
+	return outbox, platformEmail
+}
+
+// platformEmailLocked — N°150 : réglages e-mail du compte principal (relais
+// plateforme), à appeler SOUS VERROU du store. Nil si le compte principal
+// n'a pas d'identifiants exploitables (ni Resend ni SMTP) — le comportement
+// BYO historique s'applique alors partout.
+func platformEmailLocked(db *model.DB) *model.NotificationSettings {
+	if cfg, ok := db.NotifSettings[model.AccountMainID]; ok && EmailCredentialsOK(&cfg) {
+		return &cfg
+	}
+	return nil
 }
 
 // appendLogs — écrit l'historique sous verrou (persisté + purgé par compte).

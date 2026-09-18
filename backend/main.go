@@ -101,6 +101,14 @@ func main() {
 	monitor := notify.NewService(st)
 	go monitor.Run()
 
+	// N°150 — bot Telegram PLATEFORME : le token (env) active le canal
+	// « zéro setup » (pairage par lien magique, relais e-mail du compte
+	// principal). Posé AVANT l'écoute pour être visible dès la première
+	// requête ; absent → comportement BYO historique strict.
+	if tok := strings.TrimSpace(os.Getenv("TELEGRAM_PLATFORM_BOT_TOKEN")); tok != "" {
+		notify.TelegramPlatformToken = tok
+	}
+
 	// N°64 — balayage PÉRIODIQUE de rétention : purge des journaux (90 j),
 	// expirations et nettoyages ne dépendent plus des seules visites console
 	// (Tick paresseux) — un compte dormant est couvert aussi. Rattrapage au
@@ -113,6 +121,11 @@ func main() {
 	// (fermées purgées à 30 j, bot inactives à 7 j) — l'inbox support
 	// ne gonfle pas sous affluence, même sans nouvelle session visiteur.
 	go engine.RunChatSweepForever()
+	// N°150 — bootstrap Telegram plateforme : getMe (cache du @username
+	// pour le lien magique) + setWebhook (URL publique RENDER_EXTERNAL_URL
+	// ou PUBLIC_BASE_URL + secret d'env). Best-effort : un échec réseau au
+	// boot est journalisé, le handler pair-code retente getMe à la demande.
+	go engine.BootstrapTelegramPlatform()
 
 	handler := logRequests(securityHeaders(corsMiddleware(limitBody(authRateLimit(engine.Handler())))))
 	// Sécurité P1 #12 — timeouts HTTP complets. ReadHeaderTimeout seul laissait

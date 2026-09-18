@@ -5,6 +5,103 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-18 — N°154 — La console plateforme cesse d'être une console client : le propriétaire SaaS n'a ni tickets ni stock — et le runbook WhatsApp plateforme (N°148-c) arrive pour guider les démarches Meta
+
+### Contexte
+Retour utilisateur juste après le N°153 : « la vue app/platform-notifications
+et app/settings/notifications sont pareil — or le super-admin n'a pas de
+ticket ni de stock, il est le propriétaire SaaS ». Le diagnostic est juste :
+N°153 avait différencié le DISCOURS (bandeau, carte e-mail) mais la page
+restait STRUCTURÉE comme une console client — la première carte, la plus
+proéminente, était « Alertes » (seuil routeur hors ligne, seuil de stock de
+vouchers, rapport quotidien) : trois réglages qui ne correspondent à RIEN
+pour le compte principal (aucun routeur, aucun voucher, aucun hotspot). Le
+canal WhatsApp BYO, destinataire de SES alertes, était tout aussi vide de
+sens. Dans le même mouvement : le corps du message de test promettait au
+super-admin « routeur hors ligne, stock de vouchers bas et rapport
+quotidien » (faux pour lui), et le moniteur pouvait lui enfiler un rapport
+quotidien VIDE si ses réglages hérités portaient DailyReport+Enabled.
+
+### Produit
+1. **La carte « Règles d'alerte » disparaît de la console plateforme** —
+   elle est CONSOLE CLIENT uniquement. La page du compte principal devient :
+   bandeau de statut (N°153) → section « Canaux partagés de la plateforme »
+   → E-mail plateforme EN TÊTE (le relais qui porte les envois de tous les
+   clients) + Telegram (bot officiel) → historique. Le propriétaire SaaS
+   pilote ce qu'il PORTE, pas des alertes qu'il n'a pas.
+2. **Le bouton « Enregistrer » suit la console** : pied de la carte « Alertes »
+   côté client (comportement historique inchangé), EN-TÊTE de la section des
+   canaux côté plateforme (SectionHeading gagne un slot `action` — sinon la
+   suppression de la carte aurait emporté le seul bouton de sauvegarde).
+3. **WhatsApp BYO réservé aux clients** : la carte disparaît de la console
+   plateforme (le canal actuel est destinataire d'alertes que le principal
+   ne reçoit pas) ; la grille passe à 2 colonnes. Le canal « WhatsApp
+   plateforme » (émetteur porté par le WABA du compte principal, N°148-c)
+   prendra la place qui est la sienne dans cette même section.
+4. **Journal différencié** : « Les 50 derniers envois de CE compte — les
+   envois relayés pour vos clients sont tracés sur leur propre compte » côté
+   plateforme (évite la confusion « où sont les envois de mes clients ? ») ;
+   libellé historique côté client.
+5. **Message de test compte-aware** (backend) : le compte principal reçoit
+   « Vos identifiants portent le relais d'envoi… » (e-mail) / « Le bot
+   officiel de la plateforme vous joindra ici… » (Telegram) — le discours
+   client « routeur hors ligne, stock, rapport » ne lui est plus servi.
+6. **Le moniteur ne journalise plus de rapport quotidien au compte
+   principal** : garde `acc == AccountMainID → continue` dans la boucle du
+   rapport quotidien (même discipline que les annonces N°152 : le principal
+   parle, il n'est pas destinataire) — un état hérité DailyReport+Enabled ne
+   produit plus de rapport vide chaque jour.
+7. **Runbook « WhatsApp plateforme »** (docs/RUNBOOK-WHATSAPP-PLATEFORME.md)
+   : le guide opérateur pas-à-pas des démarches Meta attendues par le
+   N°148-c — Business Manager, application Business, WABA de production,
+   numéro dédié, vérification d'entreprise, jeton System User permanent, et
+   les 4-5 templates UTILITY (un par kind d'alerte, propositions de corps
+   incluses) — plus les variables Render à poser (`WHATSAPP_PLATFORM_TOKEN`,
+   `WHATSAPP_PLATFORM_PHONE_ID`, `WHATSAPP_PLATFORM_WABA_ID`) et le tableau
+   des pannes fréquentes.
+
+### Technique
+- Frontend : les quatre cartes (alertes/telegram/whatsapp/email) deviennent
+  des VARIABLES JSX et la composition suit `isPlatformAccount` — client :
+  [Alertes, Telegram, WhatsApp, E-mail] sur 3 colonnes ; plateforme :
+  [E-mail plateforme, Telegram] sur 2 colonnes, WhatsApp absent, Alertes
+  absente. `SectionHeading` gagne `action?: React.ReactNode` ;
+  `NotifLogCard` gère `platform` pour la description. 3 clés i18n FR/EN
+  (platformChannelsTitle/Desc, logDescPlatform). Aucune route, aucun contrat
+  API touché — le PUT repart avec les champs non exposés (seuils, rapport)
+  inchangés depuis l'état initial : zéro perte de données.
+- Backend : `notifTestBody(acc, channel)` (handlers_notify.go) — le corps du
+  POST /api/notifications/test suit le PORTEUR ; moniteur (monitor.go) —
+  garde de saut du compte principal dans la boucle du rapport quotidien.
+- Docs : CHANGELOG, CONTRACT-V2 §N°154, RUNBOOK-WHATSAPP-PLATEFORME.md.
+
+### Fidélité
+Zéro route, zéro schéma, zéro contrat existant modifié (CONTRACT-V2
+inchangé sur les endpoints) ; la console CLIENT est visuellement et
+fonctionnellement IDENTIQUE à avant (mêmes cartes, même ordre, même bouton
+au même endroit) ; session support sur un client → présentation client
+(la différenciation suit le COMPTE, discipline N°153) ; le PUT du compte
+principal conserve les réglages d'alerte existants même non éditables.
+
+### Vérifié
+go build/vet/gofmt 0, go test ./... 12 paquets OK dont 2 nouveaux —
+TestDailyReportSkipsPlatformAccount (le principal n'entre jamais dans la
+file du rapport, le client voisin y entre) et TestNotifTestBodyPlatformAccount
+(e-mail principal → discours relais SANS « stock de vouchers », telegram
+principal → « bot officiel », contre-épreuve client → discours historique) ;
+eslint 0, tsgo 0. E2E navigateur contre backend Go réel compilé (port 4000,
+store JSON frais, bot Telegram fake) : login super-admin → /app/platform-
+notifications → bandeau « Compte principal » + relais INACTIF ambre, carte
+Alertes ABSENTE (ni seuil stock, ni rapport, ni routeur), section « Canaux
+partagés de la plateforme », cartes [E-mail plateforme, Telegram] sur 2
+colonnes, WhatsApp absent, journal différencié ; remplissage Resend →
+ENREGISTRE VIA LE BOUTON DE L'EN-TÊTE DE SECTION → bandeau « Relais e-mail
+ACTIF » émeraude (preuve du bouton déplacé) ; version EN complète (banner/
+channels/email/log) ; login gérant client → /app/settings/notifications →
+carte Alertes présente avec SON bouton Enregistrer, [Alertes, Telegram,
+WhatsApp, E-mail] sur 3 colonnes, note relais plateforme rendue, ZÉRO
+marqueur plateforme ; 0 erreur console/page, backend log 100 % 2xx.
+
 ## 2026-09-18 — N°153 — La console plateforme gagne « Notifications » : le compte principal pilote ses canaux partagés (relais e-mail, bot Telegram) — et la vue sait QUI la regarde
 
 ### Contexte

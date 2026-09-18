@@ -2215,6 +2215,43 @@ Migration boot idempotente : `settings.portal_style`, `portal_welcome`,
   injection vitrine (bienvenue, promos avec images R2, socials) ; commercial =
   retrait des injections et dé-masquage (réversible, idempotent).
 
+## N°154 — Console plateforme : le propriétaire SaaS n'est pas un client (composition différenciée)
+
+### Comportements (aucun endpoint nouveau ni modifié dans sa forme)
+- **POST /api/notifications/test — corps du message compte-aware** : le
+  compte principal reçoit un discours de PROPRIÉTAIRE (e-mail : « vos
+  identifiants portent le relais d'envoi… » ; telegram : « le bot officiel
+  de la plateforme vous joindra ici… » ; autre : « canal prêt pour les
+  envois de la plateforme ») — le discours client (« routeur hors ligne,
+  stock de vouchers bas et rapport quotidien ») ne lui est plus servi.
+  Statut et forme de réponse inchangés.
+- **Moniteur — rapport quotidien** : la boucle du rapport quotidien SAUTE le
+  compte principal (`acc-main`) même si ses réglages portent
+  `dailyReport`+`enabled` (état hérité) : il n'est pas un client SaaS, son
+  rapport serait vide. Même discipline que les annonces N°152.
+
+### Vue plateforme (frontend) — composition par console
+- `isPlatformAccount: true` → la carte « Règles d'alerte » (interrupteur,
+  seuils routeur/stock, rapport quotidien) est ABSENTE ; la section s'intitule
+  « Canaux partagés de la plateforme » avec le bouton Enregistrer dans SON
+  en-tête ; cartes [E-mail plateforme, Telegram] sur 2 colonnes ; la carte
+  WhatsApp Cloud API (BYO) est réservée aux consoles clients (le canal
+  « WhatsApp plateforme » N°148-c prendra sa place ici) ; description du
+  journal différenciée (« envois relayés pour vos clients tracés sur leur
+  propre compte »).
+- Console client (et session support) → composition historique inchangée :
+  [Alertes (avec le bouton Enregistrer), Telegram, WhatsApp, E-mail] sur
+  3 colonnes. Le PUT du compte principal repart avec les champs non exposés
+  inchangés depuis l'état initial (aucune perte).
+
+### Runbook N°148-c (docs/RUNBOOK-WHATSAPP-PLATEFORME.md)
+Guide opérateur des démarches Meta : Business Manager vérifié, application
+Business + produit WhatsApp, WABA de production, numéro dédié, jeton System
+User permanent, 4-5 templates UTILITY (un par kind d'alerte), variables
+Render attendues (`WHATSAPP_PLATFORM_TOKEN`, `WHATSAPP_PLATFORM_PHONE_ID`,
+`WHATSAPP_PLATFORM_WABA_ID`) — l'implémentation backend suivra une fois les
+démarches terminées.
+
 ## N°153 — Console plateforme « Notifications » : différenciation par COMPTE (isPlatformAccount)
 
 ### GET /api/notifications — champ additionnel (rétrocompatible)

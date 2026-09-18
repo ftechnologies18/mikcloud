@@ -137,3 +137,58 @@ func TestMonitorLogsOfflineBackTransitions(t *testing.T) {
 		t.Fatalf("état stable : aucune nouvelle écriture attendue, %d entrée(s) au total", n)
 	}
 }
+
+// TestDailyReportSkipsPlatformAccount — N°154 : le compte principal n'est pas
+// un client SaaS. Même si ses réglages portent Enabled+DailyReport (état
+// hérité d'avant la console différenciée), le moniteur ne lui enfile JAMAIS
+// le rapport quotidien — il serait vide (ni routeurs, ni ventes, ni stock) et
+// sonnerait chaque jour dans la boîte du propriétaire. Le compte client
+// voisin, lui, le reçoit normalement.
+func TestDailyReportSkipsPlatformAccount(t *testing.T) {
+	st, err := store.New(t.TempDir())
+	if err != nil {
+		t.Fatalf("store.New impossible : %v", err)
+	}
+	svc := NewService(st)
+
+	st.Lock()
+	db := st.Data()
+	db.Accounts = []model.Account{
+		{ID: model.AccountMainID, Name: "Plateforme MikCloud", Status: "active"},
+		{ID: "acc-cli", Name: "Cyber Client", Status: "active"},
+	}
+	for _, acc := range []string{model.AccountMainID, "acc-cli"} {
+		store.SetNotifSettings(db, model.NotificationSettings{
+			AccountID:        acc,
+			Enabled:          true,
+			DailyReport:      true,
+			ReportHour:       0,
+			TelegramEnabled:  true,
+			TelegramBotToken: "123:own", // canal configurable sans dépendre du bot plateforme
+			TelegramChatID:   "42",
+		})
+	}
+	st.Save()
+	st.Unlock()
+
+	outbox, _ := svc.collect(time.Now().UTC())
+
+	cliReport, mainReport := false, false
+	for _, item := range outbox {
+		if item.kind != KindDailyReport {
+			continue
+		}
+		if item.cfg.AccountID == model.AccountMainID {
+			mainReport = true
+		}
+		if item.cfg.AccountID == "acc-cli" {
+			cliReport = true
+		}
+	}
+	if mainReport {
+		t.Fatal("rapport quotidien du compte principal dans la file : AUCUN attendu (le propriétaire SaaS n'est pas un client)")
+	}
+	if !cliReport {
+		t.Fatal("rapport quotidien du compte client absent de la file : la garde ne doit toucher qu'au compte principal")
+	}
+}

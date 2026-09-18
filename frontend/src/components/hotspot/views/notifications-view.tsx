@@ -4,10 +4,15 @@
 // (/app/settings/notifications), réorganisée en TROIS domaines nommés —
 // SANS onglet interne, tout visible d'un coup d'œil :
 //   1. Règles d'alerte — interrupteur, seuils (routeur hors ligne, stock),
-//      rapport quotidien (carte « Alertes », enregistrement global) ;
+//      rapport quotidien (carte « Alertes », enregistrement global) —
+//      CONSOLE CLIENT UNIQUEMENT (N°154 : le compte principal n'est pas un
+//      client SaaS, sa console saute ce domaine) ;
 //   2. Webhooks & canaux — les destinations : Telegram, WhatsApp Cloud API,
-//      e-mail (SMTP direct ou API Resend N°67 — cartes canaux + test d'envoi) ;
-//   3. Historique des envois — journal réel (GET /api/notifications/log).
+//      e-mail (SMTP direct ou API Resend N°67 — cartes canaux + test d'envoi).
+//      N°154 — console plateforme : « Canaux partagés », E-mail plateforme en
+//      tête, WhatsApp BYO absent (canal plateforme N°148-c à venir) ;
+//   3. Historique des envois — journal réel (GET /api/notifications/log),
+//      description différenciée selon le porteur (N°154).
 // Contrat API : GET/PUT /api/notifications, POST /api/notifications/test,
 // GET /api/notifications/log (voir lib/hotspot/types.ts).
 
@@ -150,7 +155,7 @@ export default function NotificationsView() {
             />
           )}
           <NotificationsForm initial={data} />
-          <NotifLogCard />
+          <NotifLogCard platform={data.isPlatformAccount === true} />
         </>
       ) : null}
     </div>
@@ -259,20 +264,28 @@ function SectionHeading({
   icon: Icon,
   title,
   description,
+  action,
 }: {
   icon: LucideIcon;
   title: string;
   description: string;
+  /** N°154 — action alignée à droite (bouton Enregistrer de la console
+   * plateforme, dont la carte « Alertes » — pied historique du bouton —
+   * n'existe pas). */
+  action?: React.ReactNode;
 }) {
   return (
-    <div className="flex items-start gap-3">
-      <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
-        <Icon className="size-4" aria-hidden />
-      </span>
-      <div className="min-w-0">
-        <h2 className="text-base font-semibold tracking-tight">{title}</h2>
-        <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex items-start gap-3">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
+          <Icon className="size-4" aria-hidden />
+        </span>
+        <div className="min-w-0">
+          <h2 className="text-base font-semibold tracking-tight">{title}</h2>
+          <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>
+        </div>
       </div>
+      {action}
     </div>
   );
 }
@@ -372,9 +385,26 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
       : form.smtpHost.trim() !== "" && form.smtpPort > 0 && form.emailTo.trim() !== "";
   const emailConfigured = emailOwnConfigured || (initial.emailPlatformRelay === true && form.emailTo.trim() !== "");
 
-  return (
-    <div className="space-y-4 sm:space-y-6">
-      {/* ─── Domaine 1 : règles d'alerte (interrupteur + seuils + rapport) ─── */}
+  // N°154 — le bouton d'enregistrement suit la console : pied de la carte
+  // « Alertes » côté client (comportement historique), en-tête de la section
+  // des canaux côté plateforme.
+  const saveButton = (
+    <Button
+      className="min-h-10 shrink-0"
+      onClick={() => saveMutation.mutate()}
+      disabled={saveMutation.isPending}
+    >
+      {saveMutation.isPending && <Loader2 className="size-4 animate-spin" />}
+      {t("common.save")}
+    </Button>
+  );
+
+  // N°154 — les cartes deviennent des variables : la COMPOSITION suit la
+  // console. La carte « Alertes » (interrupteur, seuils routeur/stock,
+  // rapport quotidien) est CONSOLE CLIENT — le compte principal n'est pas un
+  // client SaaS : ni routeurs, ni stock de tickets, ni rapport quotidien,
+  // sa console va droit aux canaux partagés qu'il porte pour ses clients.
+  const alertsCard = (
       <Card className="gap-4 py-4 sm:py-6">
         <CardHeader className="flex flex-row items-start justify-between gap-3 px-4 sm:px-6">
           <div className="min-w-0">
@@ -386,14 +416,7 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
             </CardTitle>
             <CardDescription>{t("notif.alertsDesc")}</CardDescription>
           </div>
-          <Button
-            className="min-h-10 shrink-0"
-            onClick={() => saveMutation.mutate()}
-            disabled={saveMutation.isPending}
-          >
-            {saveMutation.isPending && <Loader2 className="size-4 animate-spin" />}
-            {t("common.save")}
-          </Button>
+          {saveButton}
         </CardHeader>
 
         <CardContent className="grid gap-4 px-4 sm:grid-cols-2 sm:px-6">
@@ -478,12 +501,11 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
           </div>
         </CardContent>
       </Card>
+  );
 
-      {/* ─── Domaine 2 : webhooks & canaux de diffusion ─── */}
-      <SectionHeading icon={Webhook} title={t("notif.section.channels")} description={t("notif.section.channelsDesc")} />
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        {/* Telegram — N°150 : bot plateforme « zéro setup » (lien magique)
-            quand le service l'expose, BYO repliable ; sinon carte BYO pleine. */}
+  // Telegram — N°150 : bot plateforme « zéro setup » (lien magique) quand le
+  // service l'expose, BYO repliable ; sinon carte BYO pleine.
+  const telegramCard = (
         <ChannelCard
           icon={Send}
           title="Telegram"
@@ -618,8 +640,13 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
             </CollapsibleContent>
           </Collapsible>
         </ChannelCard>
+  );
 
-        {/* WhatsApp Cloud API */}
+  // WhatsApp Cloud API — BYO strict, canal du CLIENT (N°154 : réservé aux
+  // consoles clients ; le canal WhatsApp plateforme — envoi porté par le
+  // compte principal, N°148-c — attend les démarches Meta et prendra la
+  // place qui est la sienne ici).
+  const whatsappCard = (
         <ChannelCard
           icon={MessageCircle}
           title="WhatsApp Cloud API"
@@ -663,11 +690,13 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
             <p className="text-xs text-muted-foreground">{t("notif.waToHint")}</p>
           </div>
         </ChannelCard>
+  );
 
-        {/* Email — SMTP direct ou API Resend (N°67) ; relais plateforme N°150 :
-            adresse + interrupteur suffisent quand le service porte l'envoi.
-            N°153 — compte principal : carte « E-mail plateforme », les
-            identifiants d'ici portent le relais de TOUS les clients. */}
+  // Email — SMTP direct ou API Resend (N°67) ; relais plateforme N°150 :
+  // adresse + interrupteur suffisent quand le service porte l'envoi.
+  // N°153 — compte principal : carte « E-mail plateforme », les
+  // identifiants d'ici portent le relais de TOUS les clients.
+  const emailCard = (
         <ChannelCard
           icon={Mail}
           title={isPlatformAccount ? t("notif.emailPlatformCardTitle") : t("notif.emailCardTitle")}
@@ -805,6 +834,43 @@ function NotificationsForm({ initial }: { initial: NotifSettings }) {
             </CollapsibleContent>
           </Collapsible>
         </ChannelCard>
+  );
+
+  return (
+    <div className="space-y-4 sm:space-y-6">
+      {/* ─── Domaine 1 : règles d'alerte — CONSOLE CLIENT uniquement
+              (le compte principal n'est pas un client SaaS, cf. alertsCard). ─── */}
+      {!isPlatformAccount && alertsCard}
+
+      {/* ─── Domaine 2 : canaux — « Webhooks & canaux » côté client ;
+              « Canaux partagés de la plateforme » côté compte principal :
+              E-mail plateforme EN TÊTE (le relais porte les envois de tous
+              les clients), WhatsApp BYO réservé aux clients. ─── */}
+      <SectionHeading
+        icon={Webhook}
+        title={isPlatformAccount ? t("notif.platformChannelsTitle") : t("notif.section.channels")}
+        description={isPlatformAccount ? t("notif.platformChannelsDesc") : t("notif.section.channelsDesc")}
+        action={isPlatformAccount ? saveButton : undefined}
+      />
+      <div
+        className={
+          isPlatformAccount
+            ? "grid grid-cols-1 gap-4 lg:grid-cols-2"
+            : "grid grid-cols-1 gap-4 lg:grid-cols-3"
+        }
+      >
+        {isPlatformAccount ? (
+          <>
+            {emailCard}
+            {telegramCard}
+          </>
+        ) : (
+          <>
+            {telegramCard}
+            {whatsappCard}
+            {emailCard}
+          </>
+        )}
       </div>
     </div>
   );
@@ -883,7 +949,7 @@ const KIND_KEYS: Record<NotifLogEntry["kind"], string> = {
   settings: "notif.kind.settings",
 };
 
-function NotifLogCard() {
+function NotifLogCard({ platform }: { platform: boolean }) {
   const { t, tf } = useI18n();
   const { data, isLoading, isError, error, refetch, isRefetching } = useQuery({
     queryKey: ["/api/notifications/log"],
@@ -901,7 +967,7 @@ function NotifLogCard() {
           </span>
           {t("notif.logTitle")}
         </CardTitle>
-        <CardDescription>{t("notif.logDesc")}</CardDescription>
+        <CardDescription>{platform ? t("notif.logDescPlatform") : t("notif.logDesc")}</CardDescription>
       </CardHeader>
       <CardContent className="p-0">
         {isLoading ? (

@@ -64,6 +64,11 @@ export const enNotif: Record<string, string> = {
   "notif.emailPlatformCardTitle": "Platform email",
   "notif.emailPlatformCardDesc": "Your Resend or SMTP credentials carry the alerts of every client without their own configuration — and of this account.",
   "notif.emailPlatformConfig": "Platform sending credentials",
+  // N°154 — platform console: shared channels section (the tickets/stock/
+  //report “Alerts” card is reserved for client consoles).
+  "notif.platformChannelsTitle": "Platform shared channels",
+  "notif.platformChannelsDesc": "The credentials below carry the sends: the email relay serves every client without their own configuration, and the official Telegram bot connects them in one click.",
+  "notif.logDescPlatform": "The last 50 sends from this account — sends relayed for your clients are traced on their own account.",
   "notif.waDesc": "Sent through Meta's WhatsApp Cloud API (Business account).",
   "notif.waToken": "Meta access token",
   "notif.waPhoneId": "Phone Number ID",

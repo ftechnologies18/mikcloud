@@ -64,6 +64,11 @@ export const frNotif: Record<string, string> = {
   "notif.emailPlatformCardTitle": "E-mail plateforme",
   "notif.emailPlatformCardDesc": "Vos identifiants Resend ou SMTP portent l'envoi des alertes de TOUS les clients sans configuration propre — et de ce compte.",
   "notif.emailPlatformConfig": "Identifiants d'envoi de la plateforme",
+  // N°154 — console plateforme : section des canaux partagés (la carte
+  // « Alertes » tickets/stock/rapport est réservée aux consoles clients).
+  "notif.platformChannelsTitle": "Canaux partagés de la plateforme",
+  "notif.platformChannelsDesc": "Les identifiants ci-dessous portent les envois : le relais e-mail sert chaque client sans configuration propre, le bot Telegram officiel les rejoint en un clic.",
+  "notif.logDescPlatform": "Les 50 derniers envois de ce compte — les envois relayés pour vos clients sont tracés sur leur propre compte.",
   "notif.waDesc": "Envoi via l'API Cloud WhatsApp de Meta (compte Business).",
   "notif.waToken": "Access token Meta",
   "notif.waPhoneId": "Phone Number ID",

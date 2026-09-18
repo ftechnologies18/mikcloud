@@ -380,6 +380,13 @@ func (s *Service) collect(now time.Time) ([]outboxItem, *model.NotificationSetti
 		if accDisabled[acc.ID] {
 			continue
 		}
+		// N°154 — le compte principal n'est pas un client SaaS : ni routeurs,
+		// ni ventes, ni stock de vouchers — son rapport quotidien serait vide
+		// (bruit quotidien dans la boîte du propriétaire). Même discipline que
+		// les annonces N°152 : le principal parle, il n'est pas destinataire.
+		if acc.ID == model.AccountMainID {
+			continue
+		}
 		cfg := store.GetOrCreateNotifSettings(db, acc.ID)
 		if !cfg.Enabled || !cfg.DailyReport || cfg.LastReportDate == today {
 			continue

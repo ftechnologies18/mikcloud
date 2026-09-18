@@ -320,3 +320,86 @@ func TestNotifTestEmailViaRelay(t *testing.T) {
 		t.Errorf("la trace doit rester au compte émetteur %s, obtenu %v", accID, entries[0]["accountId"])
 	}
 }
+
+// TestNotifTestBodyPlatformAccount — N°154 : le corps du message de test suit
+// le PORTEUR. Le compte principal (super-admin, propriétaire SaaS — pas un
+// client) ne reçoit pas le discours « routeur hors ligne, stock de vouchers,
+// rapport quotidien » : son test e-mail parle du RELAIS qu'il porte pour ses
+// clients, son test Telegram du bot officiel partagé. Le gérant client garde
+// le discours historique.
+func TestNotifTestBodyPlatformAccount(t *testing.T) {
+	ts, st := newPairServer(t, nil) // bot plateforme actif (777:FTCI) : garde telegram ouverte
+
+	// Compte principal : relais Resend + chat Telegram lié au bot officiel.
+	st.Lock()
+	db := st.Data()
+	store.SetNotifSettings(db, model.NotificationSettings{
+		AccountID:       model.AccountMainID,
+		EmailProvider:   "resend",
+		ResendAPIKey:    "re_main",
+		EmailTo:         "plateforme@ftci.fr",
+		EmailEnabled:    true,
+		TelegramEnabled: true,
+		TelegramChatID:  "424242",
+	})
+	st.Save()
+	st.Unlock()
+
+	var mu sync.Mutex
+	gotBodies := map[string]string{}
+	oldDeliver := deliverNotif
+	deliverNotif = func(cfg *model.NotificationSettings, _ *model.NotificationSettings, _, _, body, channel string) []model.NotificationLog {
+		mu.Lock()
+		gotBodies[channel+"/"+cfg.AccountID] = body
+		mu.Unlock()
+		return []model.NotificationLog{notify.LogEntry(cfg, channel, notify.KindTest, "MikCloud — Test de notification", "", nil)}
+	}
+	t.Cleanup(func() { deliverNotif = oldDeliver })
+
+	adminToken := adminLogin(t, ts) // super-admin → scope compte principal
+
+	status, out := doJSON(t, ts, "POST", "/api/notifications/test", adminToken, map[string]string{"channel": "email"})
+	if status != http.StatusOK {
+		t.Fatalf("test e-mail du compte principal : %d %v", status, out)
+	}
+	mu.Lock()
+	body := gotBodies["email/"+model.AccountMainID]
+	mu.Unlock()
+	if !strings.Contains(body, "relais d'envoi") {
+		t.Errorf("compte principal, e-mail : discours relais attendu, obtenu %q", body)
+	}
+	if strings.Contains(body, "stock de vouchers") {
+		t.Errorf("compte principal : le discours client ne doit pas apparaître, obtenu %q", body)
+	}
+
+	status, out = doJSON(t, ts, "POST", "/api/notifications/test", adminToken, map[string]string{"channel": "telegram"})
+	if status != http.StatusOK {
+		t.Fatalf("test telegram du compte principal : %d %v", status, out)
+	}
+	mu.Lock()
+	body = gotBodies["telegram/"+model.AccountMainID]
+	mu.Unlock()
+	if !strings.Contains(body, "bot officiel") {
+		t.Errorf("compte principal, telegram : discours bot officiel attendu, obtenu %q", body)
+	}
+
+	// Contre-épreuve : un gérant CLIENT garde le discours historique.
+	token, accID, _ := registerAccount(t, ts, "gerant-discours", "")
+	st.Lock()
+	cliCfg := store.GetOrCreateNotifSettings(st.Data(), accID)
+	cliCfg.TelegramEnabled = true
+	cliCfg.TelegramChatID = "77"
+	store.SetNotifSettings(st.Data(), cliCfg)
+	st.Save()
+	st.Unlock()
+	status, out = doJSON(t, ts, "POST", "/api/notifications/test", token, map[string]string{"channel": "telegram"})
+	if status != http.StatusOK {
+		t.Fatalf("test telegram du client : %d %v", status, out)
+	}
+	mu.Lock()
+	body = gotBodies["telegram/"+accID]
+	mu.Unlock()
+	if !strings.Contains(body, "stock de vouchers") {
+		t.Errorf("client : discours historique attendu, obtenu %q", body)
+	}
+}

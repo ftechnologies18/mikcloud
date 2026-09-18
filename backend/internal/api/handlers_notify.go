@@ -300,8 +300,7 @@ func (a *API) handleNotifTest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	title := "MikCloud — Test de notification"
-	body := "Canal " + channel + " opérationnel ✔\n" +
-		"Vous recevrez ici : routeur hors ligne, stock de vouchers bas et rapport quotidien."
+	body := notifTestBody(acc, channel) // N°154 — le discours suit le porteur
 	logs := deliverNotif(&cfg, platformEmail, notify.KindTest, title, body, channel)
 
 	// Historique sous verrou (les envois réseau sont déjà terminés).
@@ -324,6 +323,26 @@ func (a *API) handleNotifTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "channel": channel})
+}
+
+// notifTestBody — N°154 : le corps du message de test suit le PORTEUR. Un
+// client découvre la liste de ses alertes (routeurs, stock, rapport) ; le
+// compte principal — propriétaire SaaS, pas client — n'en reçoit AUCUNE :
+// son test prouve le canal PARTAGÉ que ses identifiants portent (relais
+// e-mail pour les clients sans configuration propre, bot officiel Telegram).
+func notifTestBody(acc, channel string) string {
+	head := "Canal " + channel + " opérationnel ✔\n"
+	if acc == model.AccountMainID {
+		switch channel {
+		case "email":
+			return head + "Vos identifiants portent le relais d'envoi : chaque client sans configuration propre envoie ses alertes via ce compte."
+		case "telegram":
+			return head + "Le bot officiel de la plateforme vous joindra ici ; vos clients s'y relient en un clic, sans rien créer."
+		default:
+			return head + "Canal prêt pour les envois de la plateforme."
+		}
+	}
+	return head + "Vous recevrez ici : routeur hors ligne, stock de vouchers bas et rapport quotidien."
 }
 
 // handleNotifLog — GET /api/notifications/log : 50 derniers envois du compte.

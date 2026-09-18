@@ -140,6 +140,18 @@ func (s *Service) collect(now time.Time) []outboxItem {
 				r.Status = "offline"
 				changed = true
 				s.notifiedOffline[r.ID] = now
+				// N°148 — la TRANSITION est journalisée dans le
+				// compte d'activité (la cloche) : c'est un événement
+				// réel, contrairement aux synchros de routine qui
+				// n'y écrivent plus. Les comptes désactivés ne
+				// polluent pas leur propre journal pour autant.
+				if !accDisabled[r.AccountID] {
+					away := now.Sub(seen).Round(time.Minute)
+					model.AppendActivity(db, model.Activity{
+						AccountID: r.AccountID, Type: "router",
+						Message: "Routeur «" + r.Name + "» hors ligne — sans check-in depuis " + formatDuration(away),
+					})
+				}
 				if cfg.Enabled && HasAnyChannel(&cfg) {
 					away := now.Sub(seen).Round(time.Minute)
 					outbox = append(outbox, outboxItem{cfg: cfg, kind: KindRouterOffline,
@@ -179,6 +191,14 @@ func (s *Service) collect(now time.Time) []outboxItem {
 			if accDisabled[r.AccountID] {
 				continue
 			}
+			// N°148 — retour en ligne : la transition symétrique est
+			// journalisée aussi (le gérant voit la panne ET la fin de
+			// panne dans sa cloche, comme dans ses canaux).
+			model.AppendActivity(db, model.Activity{
+				AccountID: r.AccountID, Type: "router",
+				Message: "Routeur «" + r.Name + "» de retour en ligne (check-in reçu)",
+			})
+			changed = true // l'entrée d'activité doit être persistée
 			cfg := store.GetOrCreateNotifSettings(db, r.AccountID)
 			if cfg.Enabled && HasAnyChannel(&cfg) {
 				outbox = append(outbox, outboxItem{cfg: cfg, kind: KindRouterBack,

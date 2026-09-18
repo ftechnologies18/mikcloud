@@ -675,6 +675,31 @@ type Activity struct {
 	ActorName string `json:"actorName,omitempty"`
 }
 
+// ActivityKeep — profondeur du journal d'activité (entrée la plus ancienne
+// évincée au-delà). N°148 — le cap protège le journal des NOYAUX
+// d'événements réels (connexions, ventes, pannes) : la resynchronisation
+// de routine n'y écrit plus (une synchro réussie est l'état NORMAL d'un
+// routeur agent, pas un événement — 464 lignes/24 h noyaient tout avant).
+const ActivityKeep = 500
+
+// AppendActivity — insère une entrée EN TÊTE du journal et borne le journal
+// à ActivityKeep lignes. N°148 — un seul point d'écriture partagé par
+// l'API (logActivity/logActivityBy) ET le moniteur de surveillance (les
+// transitions hors ligne / retour en ligne deviennent visibles dans la
+// cloche). À appeler sous verrou.
+func AppendActivity(db *DB, e Activity) {
+	if e.ID == "" {
+		e.ID = NewID("act-")
+	}
+	if e.At == "" {
+		e.At = NowISO()
+	}
+	db.Activity = append([]Activity{e}, db.Activity...)
+	if len(db.Activity) > ActivityKeep {
+		db.Activity = db.Activity[:ActivityKeep]
+	}
+}
+
 // Sale — vente de vouchers (par lot), attribuée au routeur (site) émetteur.
 
 // Sale — vente de vouchers (par lot), attribuée au routeur (site) émetteur.

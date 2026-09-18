@@ -731,7 +731,11 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 		// ni pour la cadence (readStateDone au FINAL seulement — sinon
 		// le cadenceur re-enfilerait pendant le cycle) ni pour le
 		// journal (7 lignes/cycle pour un parc de 3 500 users = bruit).
-		final, synced := a.applyReadState(db, router, vals)
+		// N°148 — « synced » (réconciliation complète) n'est plus
+		// journalisé non plus : c'est l'état NORMAL d'un routeur agent
+		// sain, pas un événement (la valeur reste portée par
+		// applyReadState pour les tests de complétude du cycle).
+		final, _ := a.applyReadState(db, router, vals)
 		if final {
 			a.readStateDone[router.ID] = time.Now().UTC()
 			if a.readStateChunks == nil {
@@ -749,10 +753,18 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 			}
 			a.readStateChunks[router.ID] = chunks // cadence adaptée à la taille du parc
 		}
-		if synced {
-			a.logActivity(db, router.AccountID, "router", "Routeur «"+router.Name+"» synchronisé ("+
-				strconv.Itoa(router.ActiveSessions)+" session(s) active(s), "+strconv.Itoa(router.HotspotUsers)+" utilisateur(s))")
-		}
+		// N°148 — plus AUCUNE ligne de journal pour une synchro de routine.
+		// En production cette ligne tombait à CHAQUE cycle read_state complet
+		// (toutes les ~20-45 s par routeur « sous attention ») : elle noyait
+		// le journal (464 entrées/24 h sur un compte, 100 % du volume —
+		// l'audit N°7 était évincé en ~26 h par le cap 500) et la cloche
+		// sonnait en permanence pour l'état NORMAL d'un routeur agent.
+		// Ce qui reste dans le journal, côté télémétrie : les TRANSITIONS
+		// (moniteur notify : hors ligne / retour en ligne), les changements
+		// de version RouterOS, les imports, les découvertes, les commandes —
+		// des événements, pas des battements de cœur. Les compteurs
+		// (sessions actives, parc) vivent dans les cartes routeurs, mis à
+		// jour par chaque chunk d'applyReadState, indépendamment d'ici.
 		// N°74 — télémétrie cadencée : plus de re-enfilement inconditionnel
 		// ici (l'ancienne boucle servait un read_state à CHAQUE check-in,
 		// 24 h/24). Le cadenceur du check-in suivant (ensureReadStateDue,

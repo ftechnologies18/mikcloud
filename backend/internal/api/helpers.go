@@ -100,13 +100,13 @@ func ptrInt(i int) *int { return &i }
 
 // logActivity ajoute une entrée en tête du journal DU COMPTE (sous verrou).
 // Acteur vide = moteur interne (simulation, agent, notifications).
+// N°148 — délègue à model.AppendActivity (point d'écriture partagé avec le
+// moniteur de surveillance : les transitions hors ligne / retour en ligne
+// y sont journalisées aussi).
 func (a *API) logActivity(db *model.DB, acc, typ, message string) {
-	db.Activity = append([]model.Activity{{
-		ID: model.NewID("act-"), AccountID: acc, Type: typ, Message: message, At: model.NowISO(),
-	}}, db.Activity...)
-	if len(db.Activity) > 500 {
-		db.Activity = db.Activity[:500]
-	}
+	model.AppendActivity(db, model.Activity{
+		AccountID: acc, Type: typ, Message: message,
+	})
 }
 
 // logActivityBy — journal d'AUDIT (N°7) : trace l'acteur authentifié à
@@ -116,13 +116,10 @@ func (a *API) logActivityBy(r *http.Request, db *model.DB, acc, typ, message str
 	if c := claimsFrom(r); c != nil {
 		actorID, actorName = c.Sub, c.Name
 	}
-	db.Activity = append([]model.Activity{{
-		ID: model.NewID("act-"), AccountID: acc, Type: typ, Message: message, At: model.NowISO(),
+	model.AppendActivity(db, model.Activity{
+		AccountID: acc, Type: typ, Message: message,
 		ActorID: actorID, ActorName: actorName,
-	}}, db.Activity...)
-	if len(db.Activity) > 500 {
-		db.Activity = db.Activity[:500]
-	}
+	})
 }
 
 func (a *API) gatewayFor(r model.Router) routeros.Gateway {

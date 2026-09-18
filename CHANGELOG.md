@@ -5,6 +5,48 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-18 — N°148 — La synchro de routine quitte le journal d'activité : la cloche ne sonne plus tous les 45 s, les vraies transitions (hors ligne / retour en ligne) y entrent
+
+### Contexte
+Audit d'expert du système de notification (cloche) : en production, chaque
+cycle read_state COMPLET d'un routeur agent journalisait « Routeur «X»
+synchronisé (N sessions, M utilisateurs) ». La cadence réelle (~20 s par
+routeur « sous attention », chunks paginés + ré-enfilements post-écriture)
+faisait de cette ligne 100 % du journal d'un compte sain : 464 entrées/24 h
+comptées sur un compte client, les deux seuls événements réels noyés, et
+l'audit N°7 évincé en ~26 h par le cap 500 entrées. La cloche sonnait en
+permanence pour l'état NORMAL d'un routeur — fatigue d'alerte assurée.
+
+### Correctifs
+- **La synchro de routine n'écrit plus RIEN** (agent_handlers.go) : une
+  réconciliation complète (synced=true) est l'état NORMAL, pas un événement.
+  Les compteurs (sessions actives, parc) continuent d'être posés par chaque
+  chunk d'applyReadState — les cartes routeurs restent fraîches, seul le
+  journal se tait.
+- **Les transitions entrent dans le journal** (notify/monitor.go) : le
+  moniteur qui détecte hors ligne / retour en ligne journalise désormais
+  ces transitions dans l'activité du compte — une ligne par TRANSITION,
+  jamais par tick, jamais pour un compte désactivé. Le gérant voit la panne
+  ET la fin de panne dans sa cloche, comme dans ses canaux.
+- **Point d'écriture unique** : model.AppendActivity (models.go) partagé par
+  l'API (logActivity/logActivityBy refactorées dessus) et le moniteur —
+  insertion en tête, cap ActivityKeep = 500 documenté au même endroit.
+
+### Fidélité
+Aucune route, aucune API, aucun schéma (CONTRACT-V2 inchangé). Le rapport
+read_state, sa réponse et son application (badges, compteurs, sessions,
+imports) sont inchangés à l'octet près — seule la ligne de journal de routine
+disparaît. applyReadState garde sa signature (final, synced) : la sémantique
+de complétude reste testée.
+
+### Vérifié
+go build 0, go vet 0, gofmt propre ; go test ./internal/api/ + notify + model
+OK ; -race OK (notify, model). 2 nouveaux tests : TestReadStateRoutineSilentInJournal
+(E2E : 3 cycles read_state complets via le VRAI chemin HTTP → 0 ligne
+« synchronisé », compteurs parc/sessions bien posés) et
+TestMonitorLogsOfflineBackTransitions (1 ligne par transition hors ligne et
+retour, rien sur les ticks stables ni les rappels 30 min, compte désactivé muet).
+
 ## 2026-09-18 — N°147 — Le formulaire « Nouveau revendeur » atteignable sur mobile : correction racine dans DialogContent (tout dialogue de l'app borné à l'écran) + patron pied-de-page collant sur le formulaire signalé
 
 ### Contexte

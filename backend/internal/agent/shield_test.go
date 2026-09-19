@@ -89,6 +89,50 @@ func TestShieldScriptOff(t *testing.T) {
 	}
 }
 
+// TestShieldScriptResilient — N°159 — ajout RÉSILIENT + traçage par étape :
+// chaque règle est posée en tête (place-before=0) PUIS, si l'ancre est
+// rejetée par ce RouterOS dans cet état de table (constat production 19/09 :
+// post-boot, familles firewall en échec perpétuel sur CYBER/ProMax), la
+// MÊME règle est retentée SANS position — une règle présente en fin de table
+// protège, une règle absente ne protège pas. Le rapport d'échec embarque
+// l'étape atteinte ($step, pattern walled-garden N°32).
+func TestShieldScriptResilient(t *testing.T) {
+	b := Builder{BaseURL: "https://api.example", Token: "tok"}
+	cmd := model.Command{ID: "c-sh2", Kind: model.CmdShield, Payload: map[string]any{"level": model.ShieldOn}}
+	s := b.buildShield(cmd)
+
+	if !strings.Contains(s, `:local step "start"`) {
+		t.Error("la variable de traçage $step manque")
+	}
+	for _, step := range []string{"in-tcp", "in-udp", "fwd-invalid", "fwd-tcp", "fwd-udp", "count"} {
+		if !strings.Contains(s, `:set step "`+step+`"`) {
+			t.Errorf("l'étape %q manque (diagnostic sans accès console)", step)
+		}
+	}
+	// Chacune des 5 règles existe en DEUX formes : primaire ancrée
+	// (place-before=0) puis repli SANS ancre — le repli reprend la règle
+	// INTÉGRALEMENT (mêmes chain/interface/ports/commentaire).
+	if got := strings.Count(s, "place-before=0"); got != 5 {
+		t.Errorf("%d formes primaires place-before=0, attendu 5 (une par règle)", got)
+	}
+	// Les REPLIS (sans ancre) : chain= et in-interface adjacents.
+	if got := strings.Count(s, "/ip firewall filter add chain=input in-interface=$shi"); got != 2 {
+		t.Errorf("%d replis chain=input (sans ancre), attendu 2", got)
+	}
+	if got := strings.Count(s, "/ip firewall filter add chain=forward in-interface=$shi"); got != 3 {
+		t.Errorf("%d replis chain=forward (sans ancre), attendu 3", got)
+	}
+	// Le repli de la première règle input reprend la règle INTÉGRALEMENT.
+	fallback := "/ip firewall filter add chain=input in-interface=$shi action=drop protocol=tcp dst-port=" + ShieldAdminTCPPorts
+	if got := strings.Count(s, fallback); got != 1 {
+		t.Errorf("règle input tcp sans ancre : %d occurrence (repli), attendu 1", got)
+	}
+	// Rapport d'échec dynamique : l'étape atteinte voyage dans le fetch.
+	if !strings.Contains(s, `&status=error&message=echec_des_regles_du_bouclier_sur_le_routeur&step=" . $step`) {
+		t.Error("le rapport d'échec doit embarquer $step (étape fautive)")
+	}
+}
+
 // TestShieldLevelFromPayload — normalisation du niveau (repli prudent :
 // toute valeur inconnue retombe sur off — le script ne pose alors rien).
 func TestShieldLevelFromPayload(t *testing.T) {

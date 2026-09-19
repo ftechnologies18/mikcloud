@@ -236,13 +236,41 @@ func (b Builder) buildQueueEnsure(cmd model.Command) string {
 	return sb.String()
 }
 
+// rosQueueTargetCSV — N°159 — lit la cible d'une file et la rend en liste
+// À VIRGULES dans la variable $qtc : RouterOS imprime une cible MULTIPLE en
+// liste à points-virgules (« 11.11.11.0/24;10.77.0.0/21 ») — or « ; » est
+// LE séparateur d'entrées du protocole de rapport : la ligne
+// « queue|mikcloud-qos|11.11.11.0/24;10.77.0.0/21|… » se scindait en deux
+// fragments malformés que parseQueueRows rejetait (len<6 / tag absent) →
+// la relecture de vérification n'aboutissait JAMAIS pour une file
+// multi-cibles : signature jamais posée, re-file à chaque check-in
+// (production 19/09 : Benie wifi et ProMax WIFI, ~1 630 queue_ensure
+// « done » non vérifiés en 12 h — 27 % du volume agent — pendant que le
+// mono-cible CYBER S.C convergeait). Le get renvoie un TABLEAU pour une
+// cible multiple (typeof array) : il est rejoint à virgules ; une cible
+// simple reste la chaîne telle quelle.
+func rosQueueTargetCSV(varName string) string {
+	return ":local qtg [/queue simple get $" + varName + " target]\n" +
+		":local qtc [:tostr $qtg]\n" +
+		":if ([:typeof $qtg] = \"array\") do={\n" +
+		"  :set qtc \"\"\n" +
+		"  :foreach t in=$qtg do={\n" +
+		"    :if ([:len $qtc] > 0) do={ :set qtc ($qtc . \",\") }\n" +
+		"    :set qtc ($qtc . [:tostr $t])\n" +
+		"  }\n" +
+		"}\n"
+}
+
 // queueReadLine — concatène dans $rdata la ligne de relecture d'une file :
-// « queue|name|target|max-limit|queue|disabled; ». Les stats (bytes/rate)
+// « queue|name|target|max-limit|queue|disabled; ». La cible est normalisée
+// EN VIRGULES (rosQueueTargetCSV, N°159) : le « ; » séparateur de RouterOS
+// scindait la ligne pour une cible multiple. Les stats (bytes/rate)
 // suivent le même format via buildQueueRead (7 colonnes : +bytes|rate) —
 // le parseur cloud tolère les deux profondeurs.
 func queueReadLine(varName string) string {
-	return "      :set rdata ($rdata . \"queue|\" . \"" + QoSQueueName + "\" . \"|\" ." +
-		" [:tostr [/queue simple get $" + varName + " target]] . \"|\" ." +
+	return rosQueueTargetCSV(varName) +
+		"      :set rdata ($rdata . \"queue|\" . \"" + QoSQueueName + "\" . \"|\" ." +
+		" $qtc . \"|\" ." +
 		" [:tostr [/queue simple get $" + varName + " max-limit]] . \"|\" ." +
 		" [:tostr [/queue simple get $" + varName + " queue]] . \"|\" ." +
 		" [:tostr [/queue simple get $" + varName + " disabled]] . \";\")\n"
@@ -264,7 +292,11 @@ func (b Builder) buildQueueRead(cmd model.Command) string {
 	sb.WriteString("  :foreach qe in=[/queue simple find] do={\n")
 	sb.WriteString("    :if ($qn < 60) do={\n")
 	sb.WriteString("      :local qnm [:tostr [/queue simple get $qe name]]\n")
-	sb.WriteString("      :local qtg [:tostr [/queue simple get $qe target]]\n")
+	// N°159 — la cible est lue PUIS normalisée en virgules : une cible
+	// multiple scindait la ligne de rapport (cf. rosQueueTargetCSV) —
+	// le monitoring queue_read vidait alors la signature d'une file
+	// pourtant conforme (aucune ligne ne matchait).
+	sb.WriteString("      " + rosQueueTargetCSV("qe"))
 	sb.WriteString("      :local qml [:tostr [/queue simple get $qe max-limit]]\n")
 	sb.WriteString("      :local qtp [:tostr [/queue simple get $qe queue]]\n")
 	sb.WriteString("      :local qds [:tostr [/queue simple get $qe disabled]]\n")
@@ -275,7 +307,7 @@ func (b Builder) buildQueueRead(cmd model.Command) string {
 	// sont lus tels quels — le protocole d'agent du projet fait confiance à
 	// cette source depuis la vague F9 (aucun assainissement des noms non plus
 	// côté read_resources).
-	sb.WriteString(`      :set rdata ($rdata . "queue|" . $qnm . "|" . $qtg . "|" . $qml . "|" . $qtp . "|" . $qds . "|" . $qbs . "|" . $qrt . "|" . $qdy . ";")` + "\n")
+	sb.WriteString(`      :set rdata ($rdata . "queue|" . $qnm . "|" . $qtc . "|" . $qml . "|" . $qtp . "|" . $qds . "|" . $qbs . "|" . $qrt . "|" . $qdy . ";")` + "\n")
 	sb.WriteString("      :set qn ($qn + 1)\n")
 	sb.WriteString("    }\n  }\n")
 	sb.WriteString("} on-error={ :set " + okVar + " false }\n")

@@ -296,12 +296,24 @@ func (a *API) ensureQoSLocked(db *model.DB, router *model.Router) {
 		if qosCommandInFlight(db, router.ID, model.CmdQueueRemove) {
 			return
 		}
+		// N°159 — backoff : un retrait en échec répété attend son palier.
+		if a.watcherBackoffBlocks(router.ID, model.CmdQueueRemove, time.Now().UTC()) {
+			return
+		}
 		queueCommandLocked(db, router.AccountID, router.ID, model.CmdQueueRemove, map[string]any{})
 		return
 	}
 	sig := qosSig(router)
 	if router.QoSSig != sig || !qosFresh(router) {
 		if qosCommandInFlight(db, router.ID, model.CmdQueueEnsure) {
+			return
+		}
+		// N°159 — backoff : le correctif multi-cibles (normalisation de la
+		// cible dans le rapport) fait converger les files étendues, mais
+		// un échec RÉEL persistant ne doit plus marteler chaque check-in
+		// (production 19/09 : ~1 630 queue_ensure « done » NON vérifiés
+		// sur 12 h — 27 % du volume agent — pour 2 routeurs multi-cibles).
+		if a.watcherBackoffBlocks(router.ID, model.CmdQueueEnsure, time.Now().UTC()) {
 			return
 		}
 		burstUp, burstDown, thrUp, thrDown := agent.QoSDerived(router.QoSMaxUpBps, router.QoSMaxDownBps)

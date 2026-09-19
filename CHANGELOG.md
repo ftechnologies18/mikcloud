@@ -45,6 +45,99 @@ Chaque taux lu sur la page officielle par sélection explicite (marché
 Rest of Africa + devise USD + chaque catégorie cliquée une à une) ; les
 règles de facturation croisées avec la doc pricing Meta (.md officiel,
 effective juil. 2025/2026) ; conversion FCFA marquée « indicative ».
+## 2026-09-19 — N°159 — Le moteur de volume est démonté : la fraîcheur post-écriture gagne un plancher de 30 s, les files QoS multi-cibles convergent enfin, et les watchers en échec cessent de marteler
+
+### Contexte
+Suivi documenté du N°157 (le plafond de 6 000 lignes avait borné la table,
+le volume restait à traiter à la racine). Mesure réelle sur Neon (fenêtre de
+12 h, 3 routeurs agents, ~6 000 commandes ≈ 12 000/jour) : read_state 3 157
+(52 %), queue_ensure 1 631 (27 %), shield 943 erreurs, safewifi 218 erreurs.
+Trois moteurs distincts, démontrés par les données de production :
+(1) la fraîcheur post-écriture (N°76) enfilait un read_state après CHAQUE
+rapport d'écriture — chaque re-file de watcher produisait donc sa propre
+lecture : lecture = écriture × 2 en volume ;
+(2) queue_ensure ne convergeait JAMAIS sur les files multi-cibles : la
+relecture RouterOS imprime une cible multiple en liste à points-virgules
+(« 11.11.11.0/24;10.77.0.0/21 ») — or « ; » est LE séparateur d'entrées du
+protocole de rapport : la ligne se scindait en fragments malformés que
+parseQueueRows rejetait, la signature n'était jamais posée (Benie wifi et
+ProMax WIFI en re-file perpétuel ~967 commandes/12 h chacun, pendant que le
+mono-cible CYBER S.C convergeait — la preuve par le contre-exemple) ; le
+monitoring queue_read (30 min) vidait de plus la signature d'une file
+pourtant conforme ;
+(3) shield et safewifi échouaient en boucle depuis le BOOT des routeurs sur
+ProMax (808 échecs shield/12 h, 107 safewifi) et CYBER (112 + 112) — les
+routeurs sont restés SANS bouclier ni filtrage DNS pendant ces fenêtres,
+chaque échec re-filant au check-in suivant (~950 commandes/jour qui ne
+pouvaient pas converger : l'état routeur ne change pas en 20 s).
+
+### Produit
+1. **Plancher de fraîcheur post-écriture (30 s par routeur)** —
+   queueReadStateFreshLocked devient cadencé : la première écriture enfile
+   sa lecture, les écritures dans la fenêtre ne filent rien mais posent un
+   bord tirant (readStateFreshPending) balayé par ensureReadStateDue dès
+   l'expiration — la fraîcheur est retardée de quelques secondes, JAMAIS
+   perdue ; une rafale d'écritures produit UNE lecture. Le rafraîchissement
+   MANUEL de la console garde sa voie express (queueReadStateNowLocked) : le
+   geste explicite du gérant attend « ≤ 45 s », pas « 30 s + 45 s ». La garde
+   de cycle paginé N°76 est strictement conservée.
+2. **Files QoS multi-cibles : convergence rétablie** — le script de relecture
+   (queue_ensure comme queue_read) normalise la cible en liste à VIRGULES :
+   lecture brute du get, détection typeof array, rejoint à virgules
+   (rosQueueTargetCSV). La vérification bit à bit (ensembles N°110) porte
+   enfin sur une ligne entière : signature posée, fin du re-file, et le
+   monitoring ne vide plus la signature d'une file conforme.
+3. **Watchers résilients et traçables** — chaque ajout de règle shield/
+   safewifi (NAT et filter) devient RÉSILIENT (resilientAdd) : place-before=0
+   en intention, retentative SANS ancre en fin de table si elle est rejetée —
+   une règle présente en fin de table protège (premier match), une règle
+   absente ne protège pas ; la vérification cloud (compte de règles marquées)
+   ne dépend pas de la position. Le rapport d'échec embarque l'étape atteinte
+   ($step : in-tcp, nat-move, filter-doh…, pattern walled-garden N°32) — le
+   prochain échec dira QUELLE ligne a échoué, sans accès console au routeur.
+4. **Backoff des watchers en échec répété** — shield, safewifi, familyguard,
+   antivpn, queue_ensure et queue_remove ne re-filent plus à chaque check-in
+   après un échec : paliers progressifs 1 min → 5 min → 15 min → plafond
+   30 min, réinitialisés par un « ok » (réactivité de convergence inchangée :
+   changement de config et auto-réparation 6 h restent servis au check-in
+   suivant) et par le redémarrage (état volatile : une panne passagère garde
+   le comportement historique). ~48 tentatives/jour au plafond au lieu de
+   ~2 000, chaque échec restant journalisé.
+
+### Technique
+Plancher : readStateFreshAt/readStateFreshPending sur l'API (sous verrou du
+store, miroir readStateDone N°74) ; l'enfilement cadencé acquitte aussi le
+bord tirant. Backoff : watcherFailN/watcherFailAt par routeur+kind,
+alimentés dans handleAgentResult (ok → reset, error → palier), consultés par
+les ensure* avant queueCommandLocked. QoS : rosQueueTargetCSV côté builder
+(agent/queue.go), zéro changement du protocole de rapport (les lignes
+mono-cible sont identiques au byte près). Scripts : resilientAdd retire
+mécaniquement l'ancre pour le repli (la forme primaire reste inchangée).
+
+### Fidélité
+Zéro route, zéro API, zéro schéma, zéro contrat — GET /api/commands/{id}
+porte simplement un champ step supplémentaire dans Result en cas d'échec
+shield/safewifi (additif). Les sels de version (sh-v1, sw-v4, qos-v1) ne
+bougent PAS : les règles émises sont identiques, seuls le repli et le traçage
+s'ajoutent — les routeurs en échec re-filent de toute façon à chaque check-in
+et recevront le nouveau script immédiatement, les convergés à leur
+rafraîchissement 6 h. Comportements conservés : garde de cycle paginé,
+cadence N°74/N°76, économie de veille N°75, zombie N°73, rétention N°157.
+
+### Vérifié
+go build/vet/gofmt 0 ; go test ./... 12 paquets OK dont les 8 nouveaux tests
+(plancher : diffère + balayage + voie express + garde de cycle ; backoff :
+paliers, blocage/libération, isolation par kind et routeur, nil-safe ;
+qosEnsureVerified multi-cibles : rapport normalisé accepté, ordre inversé
+accepté, rapport historique scindé refusé, limites divergentes refusées ;
+scripts : normalisation $qtc, replis sans ancre, étapes $step). go test -race
+store+agent OK, api -race 0 data race sur 9 min (timeout harnais local, CI =
+30 m comme N°155/N°157). Harnais réel backend Go (file store, agent simulé
+au protocole) : 17/17 — queue_ensure multi-cibles convergé (plus AUCUN
+re-file au check-in suivant), lecture de fraîcheur enfilée après le
+queue_ensure puis différée dans la fenêtre 30 s, bord tirant balayé à
+l'expiration, shield en échec bloqué deux check-ins puis re-filé après le
+palier 1 min, étape in-tcp visible dans l'historique de commande.
 
 ## 2026-09-19 — N°157 — La synchro Neon sort de l'impasse : le hachage quitte la fenêtre SQL (incident « upsert commands : context deadline exceeded », 105 échecs consécutifs) et l'historique des commandes devient borné
 

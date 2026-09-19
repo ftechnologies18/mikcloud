@@ -579,6 +579,30 @@ func header(cmd model.Command) string {
 	return "# mikcloud cmd " + cmd.ID + " " + cmd.Kind + "\n"
 }
 
+// resilientAdd — N°159 — un ajout de règle RÉSILIENT : la position en tête de
+// table (place-before=0) est l'INTENTION, pas une exigence. Constat
+// production 19/09 : au premier check-in suivant le BOOT du routeur, les
+// familles firewall (shield ×808 échecs/12 h sur ProMax, safewifi ×107 ;
+// idem CYBER — « echec_des_regles... ») échouaient à se reposer TANT que
+// durait l'état de table post-boot, laissant le WiFi SANS bouclier ni
+// filtrage DNS et re-filant à chaque check-in ; la règle elle-même est
+// valide, seule l'ancre de position est refusée. L'ajout retombe donc SANS
+// place-before (fin de table) : une règle présente en fin de table protège
+// déjà (premier match — et la table en cause ne contenait AUCUNE règle
+// statique concurrente, sinon l'ajout primaire réussit), une règle ABSENTE
+// ne protège pas. Seul l'échec des DEUX formes porte failVar à false —
+// vérification cloud inchangée (le compte de règles marquées ne dépend pas
+// de la position). La règle reçue DOIT porter « place-before=0 » (contrat
+// du builder — le repli le retire mécaniquement).
+func resilientAdd(ruleWithPlace, failVar string) string {
+	fallback := strings.Replace(ruleWithPlace, " place-before=0", "", 1)
+	if fallback == ruleWithPlace {
+		fallback = ruleWithPlace // défense : sans ancre, pas de repli distinct
+	}
+	return ":do {\n    " + ruleWithPlace + "\n  } on-error={\n" +
+		"    :do { " + fallback + " } on-error={ :set " + failVar + " false }\n  }\n"
+}
+
 // ---------------------------------------------------------------------------
 // Builders par kind
 // ---------------------------------------------------------------------------

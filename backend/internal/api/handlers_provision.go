@@ -110,10 +110,12 @@ func (a *API) handleRouterRefresh(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Le rafraîchissement agent ne s'applique qu'au mode agent")
 		return
 	}
-	// N°76 — via la garde de cycle : un read_state paginé en cours EST déjà
+	// N°76/N°159 — via la garde de cycle : un read_state paginé en cours EST déjà
 	// la synchronisation demandée (le casser désordonnerait l'accumulateur) ;
-	// la commande retournée est alors le cycle en vol lui-même.
-	cmd := queueReadStateFreshLocked(db, cur)
+	// la commande retournée est alors le cycle en vol lui-même. La voie
+	// EXPRESS (queueReadStateNowLocked) ne se plie PAS au plancher de
+	// fraîcheur : c'est un geste explicite du gérant qui attend « ≤ 45 s ».
+	cmd := a.queueReadStateNowLocked(db, cur)
 	a.store.Save()
 	cmdID := cmd.ID
 	a.store.Unlock()

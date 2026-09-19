@@ -295,6 +295,10 @@ func (b Builder) buildSafeWifi(cmd model.Command) string {
 	var sb strings.Builder
 	sb.WriteString(header(cmd))
 	sb.WriteString(":local " + okVar + " true\n")
+	// N°159 — traçage par étape (pattern walled-garden N°32) : le rapport
+	// d'échec embarque la dernière étape atteinte — la production 19/09 a
+	// montré 219 échecs/12 h muets (« echec_des_regles_de_protection »).
+	sb.WriteString(`:local step "start"` + "\n")
 	// Retraits idempotents — IPv4 (NAT, FILTER, liste DoH)…
 	sb.WriteString(":do {\n  /ip firewall nat remove [find comment=\"" + SafeWifiMarker + "\"]\n} on-error={}\n")
 	sb.WriteString(":do {\n  /ip firewall filter remove [find comment=\"" + SafeWifiMarker + "\"]\n} on-error={}\n")
@@ -324,10 +328,12 @@ func (b Builder) buildSafeWifi(cmd model.Command) string {
 		// par hs-input. Tout client AUTHENTIFIÉ — le matcher ne matche plus
 		// — conserve le chemin dst-nat → résolveur filtrant (promesse N°85
 		// intacte), de même que le LAN du gérant et tout DNS externe.
-		sb.WriteString(":do {\n  /ip firewall nat add chain=dstnat place-before=0 hotspot=from-client,!auth action=redirect to-ports=" + SafeWifiHotspotDnsPort +
-			" protocol=udp dst-port=53 comment=\"" + SafeWifiMarker + "\"\n} on-error={ :set swnat false }\n")
-		sb.WriteString(":do {\n  /ip firewall nat add chain=dstnat place-before=0 hotspot=from-client,!auth action=redirect to-ports=" + SafeWifiHotspotDnsPort +
-			" protocol=tcp dst-port=53 comment=\"" + SafeWifiMarker + "\"\n} on-error={ :set swnat false }\n")
+		sb.WriteString(`:set step "nat-r-udp"` + "\n")
+		sb.WriteString(resilientAdd("/ip firewall nat add chain=dstnat place-before=0 hotspot=from-client,!auth action=redirect to-ports="+SafeWifiHotspotDnsPort+
+			" protocol=udp dst-port=53 comment=\""+SafeWifiMarker+"\"", "swnat"))
+		sb.WriteString(`:set step "nat-r-tcp"` + "\n")
+		sb.WriteString(resilientAdd("/ip firewall nat add chain=dstnat place-before=0 hotspot=from-client,!auth action=redirect to-ports="+SafeWifiHotspotDnsPort+
+			" protocol=tcp dst-port=53 comment=\""+SafeWifiMarker+"\"", "swnat"))
 		// 2. dst-nat vers le résolveur filtrant (N°80/N°85) — en TÊTE de table
 		// (place-before=0) : une règle dstnat antérieure — redirect DNS hérité
 		// d'une config Mikhmon/tutoriel — ne peut pas prendre le port 53 avant
@@ -336,10 +342,12 @@ func (b Builder) buildSafeWifi(cmd model.Command) string {
 		// d'émission : il est IMPOSÉ par le bloc move N°95 qui suit et
 		// VÉRIFIÉ par le layout du rapport — plus jamais de régression
 		// silencieuse d'ordonnancement.
-		sb.WriteString(":do {\n  /ip firewall nat add chain=dstnat place-before=0 action=dst-nat to-addresses=" + dns +
-			" to-ports=53 protocol=udp dst-port=53 comment=\"" + SafeWifiMarker + "\"\n} on-error={ :set swnat false }\n")
-		sb.WriteString(":do {\n  /ip firewall nat add chain=dstnat place-before=0 action=dst-nat to-addresses=" + dns +
-			" to-ports=53 protocol=tcp dst-port=53 comment=\"" + SafeWifiMarker + "\"\n} on-error={ :set swnat false }\n")
+		sb.WriteString(`:set step "nat-d-udp"` + "\n")
+		sb.WriteString(resilientAdd("/ip firewall nat add chain=dstnat place-before=0 action=dst-nat to-addresses="+dns+
+			" to-ports=53 protocol=udp dst-port=53 comment=\""+SafeWifiMarker+"\"", "swnat"))
+		sb.WriteString(`:set step "nat-d-tcp"` + "\n")
+		sb.WriteString(resilientAdd("/ip firewall nat add chain=dstnat place-before=0 action=dst-nat to-addresses="+dns+
+			" to-ports=53 protocol=tcp dst-port=53 comment=\""+SafeWifiMarker+"\"", "swnat"))
 		// 3. N°95 — réordonnancement DÉTERMINISTE de la famille NAT : quelle
 		// que soit la sémantique de place-before du RouterOS visé (ordre
 		// d'émission, empilement inverse — les deux existent selon versions),
@@ -354,6 +362,7 @@ func (b Builder) buildSafeWifi(cmd model.Command) string {
 		// dst-nat).
 		sb.WriteString(":local swtgt \"\"\n" +
 			":if ($swnat) do={\n" +
+			`  :set step "nat-move"` + "\n" +
 			"  :do {\n" +
 			"    :foreach r in=[/ip firewall nat find comment=\"" + SafeWifiMarker + "\"] do={\n" +
 			"      :if (($swtgt = \"\") && ([/ip firewall nat get $r action] = \"dst-nat\")) do={ :set swtgt $r }\n" +
@@ -386,6 +395,7 @@ func (b Builder) buildSafeWifi(cmd model.Command) string {
 		// portail.
 		sb.WriteString(":if (!$swnat) do={\n  :do {\n    /ip firewall nat remove [find comment=\"" + SafeWifiMarker + "\"]\n  } on-error={}\n  :set " + okVar + " false\n}\n")
 		// 2a. Liste DoH IPv4 — endpoints publics connus (bloqués en tcp/443).
+		sb.WriteString(`:set step "list-v4"` + "\n")
 		for _, ip := range SafeWifiDoHIPv4 {
 			sb.WriteString(":do {\n  /ip firewall address-list add list=\"" + SafeWifiDoHList + "\" address=" + ip +
 				"\n} on-error={ :set " + okVar + " false }\n")
@@ -402,10 +412,12 @@ func (b Builder) buildSafeWifi(cmd model.Command) string {
 		sb.WriteString(":foreach h in=[/ip hotspot find] do={\n")
 		sb.WriteString("  :set swn ($swn + 1)\n")
 		sb.WriteString("  :local swi [/ip hotspot get $h interface]\n")
-		sb.WriteString("  :do {\n    /ip firewall filter add chain=forward place-before=0 in-interface=$swi action=drop protocol=tcp dst-port=853 comment=\"" + SafeWifiMarker +
-			"\"\n  } on-error={ :set " + okVar + " false }\n")
-		sb.WriteString("  :do {\n    /ip firewall filter add chain=forward place-before=0 in-interface=$swi action=drop protocol=tcp dst-port=443 dst-address-list=" + SafeWifiDoHList +
-			" comment=\"" + SafeWifiMarker + "\"\n  } on-error={ :set " + okVar + " false }\n")
+		sb.WriteString(`  :set step "filter-dot"` + "\n")
+		sb.WriteString("  " + resilientAdd("/ip firewall filter add chain=forward place-before=0 in-interface=$swi action=drop protocol=tcp dst-port=853 comment=\""+SafeWifiMarker+
+			"\"", okVar))
+		sb.WriteString(`  :set step "filter-doh"` + "\n")
+		sb.WriteString("  " + resilientAdd("/ip firewall filter add chain=forward place-before=0 in-interface=$swi action=drop protocol=tcp dst-port=443 dst-address-list="+SafeWifiDoHList+
+			" comment=\""+SafeWifiMarker+"\"", okVar))
 		sb.WriteString("  :do {\n    /ipv6 firewall filter add chain=forward place-before=0 in-interface=$swi action=drop protocol=tcp dst-port=53 comment=\"" + SafeWifiMarker +
 			"\"\n  } on-error={}\n")
 		sb.WriteString("  :do {\n    /ipv6 firewall filter add chain=forward place-before=0 in-interface=$swi action=drop protocol=udp dst-port=53 comment=\"" + SafeWifiMarker +
@@ -443,7 +455,12 @@ func (b Builder) buildSafeWifi(cmd model.Command) string {
 	sb.WriteString("}\n")
 	ok := `/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
 		`" http-method=post http-data=("cmd=` + urlEscape(cmd.ID) + `&status=ok&rules=". $swr . "&hs=". $swn . "&layout=". $swlay) output=none`
-	ko := b.reportLine(cmd.ID, false, map[string]string{"message": "echec des regles de protection sur le routeur"})
+	// N°159 — l'échec embarque l'étape atteinte ($step) : sans accès console
+	// au routeur client, « echec_des_regles_de_protection » ne disait pas
+	// quelle famille (NAT redirect/dst-nat, move, liste, filter) ni quel
+	// protocole avait échoué.
+	ko := `/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
+		`" http-method=post http-data=("cmd=` + urlEscape(cmd.ID) + `&status=error&message=echec_des_regles_de_protection_sur_le_routeur&step=" . $step) output=none`
 	sb.WriteString(":if ($" + okVar + ") do={\n  " + ok + "\n} else={\n  " + ko + "\n}\n")
 	return sb.String()
 }

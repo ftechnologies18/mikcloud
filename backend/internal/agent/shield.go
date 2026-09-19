@@ -86,31 +86,46 @@ func (b Builder) buildShield(cmd model.Command) string {
 	var sb strings.Builder
 	sb.WriteString(header(cmd))
 	sb.WriteString(":local " + okVar + " true\n")
+	sb.WriteString(`:local step "start"` + "\n")
 	sb.WriteString(":do {\n  /ip firewall filter remove [find comment=\"" + ShieldMarker + "\"]\n} on-error={}\n")
 	sb.WriteString(":local shn 0\n")
 	if level != model.ShieldOff {
 		sb.WriteString(":foreach h in=[/ip hotspot find] do={\n")
 		sb.WriteString("  :set shn ($shn + 1)\n")
 		sb.WriteString("  :local shi [/ip hotspot get $h interface]\n")
-		sb.WriteString("  :do {\n    /ip firewall filter add chain=input place-before=0 in-interface=$shi action=drop protocol=tcp dst-port=" + ShieldAdminTCPPorts +
-			" comment=\"" + ShieldMarker + "\"\n  } on-error={ :set " + okVar + " false }\n")
-		sb.WriteString("  :do {\n    /ip firewall filter add chain=input place-before=0 in-interface=$shi action=drop protocol=udp dst-port=" + ShieldAdminUDPPorts +
-			" comment=\"" + ShieldMarker + "\"\n  } on-error={ :set " + okVar + " false }\n")
-		sb.WriteString("  :do {\n    /ip firewall filter add chain=forward place-before=0 in-interface=$shi action=drop connection-state=invalid comment=\"" + ShieldMarker + "\"\n  } on-error={ :set " + okVar + " false }\n")
-		sb.WriteString("  :do {\n    /ip firewall filter add chain=forward place-before=0 in-interface=$shi action=drop protocol=tcp dst-port=" + ShieldMalwareTCPPorts +
-			" comment=\"" + ShieldMarker + "\"\n  } on-error={ :set " + okVar + " false }\n")
-		sb.WriteString("  :do {\n    /ip firewall filter add chain=forward place-before=0 in-interface=$shi action=drop protocol=udp dst-port=" + ShieldMalwareUDPPorts +
-			" comment=\"" + ShieldMarker + "\"\n  } on-error={ :set " + okVar + " false }\n")
+		// N°159 — traçage par étape (pattern walled-garden N°32) : le rapport
+		// d'échec embarque la DERNIÈRE étape atteinte — sans accès console au
+		// routeur client, « echec_des_regles_du_bouclier » ne disait pas QUEL
+		// ajout avait échoué (production 19/09 : 950 échecs/jour muets).
+		// N°159 — ajout RÉSILIENT (resilientAdd) : place-before=0 en intention,
+		// repli sans position en fin de table — cf. agent.go.
+		sb.WriteString(`  :set step "in-tcp"` + "\n")
+		sb.WriteString("  " + resilientAdd("/ip firewall filter add chain=input place-before=0 in-interface=$shi action=drop protocol=tcp dst-port="+ShieldAdminTCPPorts+
+			" comment=\""+ShieldMarker+"\"", okVar))
+		sb.WriteString(`  :set step "in-udp"` + "\n")
+		sb.WriteString("  " + resilientAdd("/ip firewall filter add chain=input place-before=0 in-interface=$shi action=drop protocol=udp dst-port="+ShieldAdminUDPPorts+
+			" comment=\""+ShieldMarker+"\"", okVar))
+		sb.WriteString(`  :set step "fwd-invalid"` + "\n")
+		sb.WriteString("  " + resilientAdd("/ip firewall filter add chain=forward place-before=0 in-interface=$shi action=drop connection-state=invalid comment=\""+ShieldMarker+"\"", okVar))
+		sb.WriteString(`  :set step "fwd-tcp"` + "\n")
+		sb.WriteString("  " + resilientAdd("/ip firewall filter add chain=forward place-before=0 in-interface=$shi action=drop protocol=tcp dst-port="+ShieldMalwareTCPPorts+
+			" comment=\""+ShieldMarker+"\"", okVar))
+		sb.WriteString(`  :set step "fwd-udp"` + "\n")
+		sb.WriteString("  " + resilientAdd("/ip firewall filter add chain=forward place-before=0 in-interface=$shi action=drop protocol=udp dst-port="+ShieldMalwareUDPPorts+
+			" comment=\""+ShieldMarker+"\"", okVar))
 		sb.WriteString("}\n")
 	}
 	// Rapport — vérité routeur : le compte de règles marquées présentes
 	// après application ET le nombre de serveurs hotspots trouvés (valeurs
 	// DYNAMIQUES calculées côté routeur, pattern fetchResultData : le
-	// cloud ne croit que ce que le routeur rapporte).
+	// cloud ne croit que ce que le routeur rapporte). N°159 : le rapport
+	// d'échec embarque l'étape fautive ($step).
+	sb.WriteString(`:set step "count"` + "\n")
 	sb.WriteString(":local shr [:len [/ip firewall filter find comment=\"" + ShieldMarker + "\"]]\n")
 	ok := `/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
 		`" http-method=post http-data=("cmd=` + urlEscape(cmd.ID) + `&status=ok&rules=". $shr . "&hs=". $shn) output=none`
-	ko := b.reportLine(cmd.ID, false, map[string]string{"message": "echec des regles du bouclier sur le routeur"})
+	ko := `/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
+		`" http-method=post http-data=("cmd=` + urlEscape(cmd.ID) + `&status=error&message=echec_des_regles_du_bouclier_sur_le_routeur&step=" . $step) output=none`
 	sb.WriteString(":if ($" + okVar + ") do={\n  " + ok + "\n} else={\n  " + ko + "\n}\n")
 	return sb.String()
 }
@@ -139,8 +154,8 @@ func (b Builder) buildShield(cmd model.Command) string {
 // couvre-feu partir à la mauvaise heure). La bascule s'applique au check-in
 // suivant (≤ 45 s console ouverte, ≤ 180 s en veille).
 //
-//	active=false : retire les règles marquées (retour à l'état antérieur) ;
-//	active=true  : les repose — exactement 1 règle par serveur hotspot.
+//      active=false : retire les règles marquées (retour à l'état antérieur) ;
+//      active=true  : les repose — exactement 1 règle par serveur hotspot.
 //
 // Idempotent : seules les règles marquées "mikcloud-familyguard" sont
 // remplacées. Le rapport échoe le nombre de règles marquées présentes APRÈS

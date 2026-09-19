@@ -146,26 +146,92 @@ func queueReadCycleRestLocked(db *model.DB, router *model.Router, total, count i
 	}
 }
 
-// queueReadStateFreshLocked — N°76 — enfile un read_state de BASE (chunk 0) si
-// et seulement si AUCUN cycle n'est en cours pour ce routeur (aucun read_state
-// queued/sent — chunks compris). Un cycle paginé en cours EST déjà une
-// synchronisation : le casser par un chunk 0 concurrent désordonnerait
-// l'accumulateur (chunks orphelins). Retourne la commande enfilée, ou le
-// cycle en cours (l'appelant y lit l'ID — la fraîcheur viendra de lui).
+// readStateFreshFloor — N°159 — plancher de cadence de la fraîcheur
+// post-écriture. Avant : CHAQUE rapport « ok » d'une commande d'écriture
+// enfilait un read_state immédiat (N°76) — le moteur de volume de
+// l'incident N°157 (les re-files queue_ensure/shield produisaient chacun
+// leur rapport, donc leur lecture) portait les read_state à ~52 % du volume
+// agent (~3 150 sur 12 h pour 3 routeurs). Un plancher de 30 s par routeur
+// borne la fraîcheur à ≤ 1 read/30 s SANS jamais la perdre : une écriture
+// pendant la fenêtre pose le drapeau readStateFreshPending, le balayage du
+// check-in (ensureReadStateDue) enfile dès l'expiration — bord tirant.
+// 30 s : assez court pour que la console reste vive (la vue Sessions se
+// rafraîchit au check-in suivant de toute façon), assez long pour absorber
+// une rafale complète de watchers.
+const readStateFreshFloor = 30 * time.Second
 
-// queueReadStateFreshLocked — N°76 — enfile un read_state de BASE (chunk 0) si
-// et seulement si AUCUN cycle n'est en cours pour ce routeur (aucun read_state
-// queued/sent — chunks compris). Un cycle paginé en cours EST déjà une
-// synchronisation : le casser par un chunk 0 concurrent désordonnerait
-// l'accumulateur (chunks orphelins). Retourne la commande enfilée, ou le
-// cycle en cours (l'appelant y lit l'ID — la fraîcheur viendra de lui).
-func queueReadStateFreshLocked(db *model.DB, router *model.Router) *model.Command {
+// markReadStateFreshEnqueued — un read_state (de fraîcheur, de cadence ou
+// manuel) vient d'être ENFILÉ pour ce routeur : le plancher repart de
+// maintenant et l'éventuel bord tirant est acquitté (cette lecture-là
+// couvrira l'écriture qui l'a demandée). Sous verrou.
+func (a *API) markReadStateFreshEnqueued(routerID string) {
+	if a.readStateFreshAt == nil {
+		a.readStateFreshAt = map[string]time.Time{}
+	}
+	if a.readStateFreshPending == nil {
+		a.readStateFreshPending = map[string]bool{}
+	}
+	a.readStateFreshAt[routerID] = time.Now().UTC()
+	a.readStateFreshPending[routerID] = false
+}
+
+// queueReadStateFreshLocked — N°76/N°159 — enfile un read_state de BASE
+// (chunk 0) si et seulement si AUCUN cycle n'est en cours pour ce routeur
+// (aucun read_state queued/sent — chunks compris) ET que le plancher de
+// fraîcheur (readStateFreshFloor) est expiré. Un cycle paginé en cours EST
+// déjà une synchronisation : le casser par un chunk 0 concurrent
+// désordonnerait l'accumulateur (chunks orphelins) — il couvre la fraîcheur
+// (l'horodatage du plancher est posé, le bord tirant éventuel survit). Dans
+// la fenêtre de plancher, RIEN n'est enfilé mais l'écriture est marquée
+// (readStateFreshPending) : le balayage du check-in enfilera à l'expiration
+// — la fraîcheur est retardée de quelques secondes, jamais perdue. Retourne
+// la commande enfilée, le cycle en cours, ou nil (différée par le plancher).
+func (a *API) queueReadStateFreshLocked(db *model.DB, router *model.Router) *model.Command {
 	for i := range db.Commands {
 		c := &db.Commands[i]
 		if c.RouterID == router.ID && c.Kind == model.CmdReadState && (c.Status == "queued" || c.Status == "sent") {
+			// Le cycle couvre la fraîcheur (sémantique N°76 inchangée) —
+			// l'horodatage du plancher suit, le drapeau éventuel survit :
+			// si l'écriture est arrivée APRÈS le début du cycle, le
+			// balayage tranchera à l'expiration (au plus UNE lecture).
+			if a.readStateFreshAt == nil {
+				a.readStateFreshAt = map[string]time.Time{}
+			}
+			a.readStateFreshAt[router.ID] = time.Now().UTC()
 			return c // cycle en cours : ne pas le casser
 		}
 	}
+	if time.Since(a.readStateFreshAt[router.ID]) < readStateFreshFloor {
+		// Plancher : différer — le bord tirant garantit la fraîcheur
+		// (balayage par ensureReadStateDue au check-in suivant).
+		if a.readStateFreshPending == nil {
+			a.readStateFreshPending = map[string]bool{}
+		}
+		a.readStateFreshPending[router.ID] = true
+		return nil
+	}
+	a.markReadStateFreshEnqueued(router.ID)
+	return queueCommandLocked(db, router.AccountID, router.ID, model.CmdReadState, map[string]any{})
+}
+
+// queueReadStateNowLocked — N°159 — la voie EXPRESS de la fraîcheur : le
+// rafraîchissement MANUEL de la console (handleRouterRefresh) est un geste
+// explicite du gérant — il ne se plie PAS au plancher (l'attente max serait
+// de 30 s pour un clic qui attend « ≤ 45 s »). Même garde de cycle que la
+// voie cadencée ; l'enfilement repose le plancher pour les écritures
+// suivantes. Retourne toujours une commande (enfilée ou cycle en vol).
+func (a *API) queueReadStateNowLocked(db *model.DB, router *model.Router) *model.Command {
+	for i := range db.Commands {
+		c := &db.Commands[i]
+		if c.RouterID == router.ID && c.Kind == model.CmdReadState && (c.Status == "queued" || c.Status == "sent") {
+			if a.readStateFreshAt == nil {
+				a.readStateFreshAt = map[string]time.Time{}
+			}
+			a.readStateFreshAt[router.ID] = time.Now().UTC()
+			return c
+		}
+	}
+	a.markReadStateFreshEnqueued(router.ID)
 	return queueCommandLocked(db, router.AccountID, router.ID, model.CmdReadState, map[string]any{})
 }
 

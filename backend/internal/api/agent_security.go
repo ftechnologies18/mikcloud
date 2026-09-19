@@ -366,6 +366,12 @@ func (a *API) ensureSafeWifiLocked(db *model.DB, router *model.Router) {
 			return // une mise à jour est déjà en vol
 		}
 	}
+	// N°159 — backoff (miroir shield : un échec répété attend son palier —
+	// production 19/09 : safewifi en échec ×107/12 h sur ProMax, ×112 sur
+	// CYBER, toutes « echec_des_regles_de_protection »).
+	if a.watcherBackoffBlocks(router.ID, model.CmdSafeWifi, time.Now().UTC()) {
+		return
+	}
 	queueCommandLocked(db, router.AccountID, router.ID, model.CmdSafeWifi, map[string]any{
 		"level": level,
 		"sig":   sig,
@@ -489,6 +495,13 @@ func (a *API) ensureShieldLocked(db *model.DB, router *model.Router) {
 			(c.Status == "queued" || c.Status == "sent") {
 			return // une mise à jour est déjà en vol
 		}
+	}
+	// N°159 — backoff : un bouclier en échec répété (echec_des_regles sur le
+	// routeur) attend son palier — le re-file par check-in ne convergait rien
+	// (production 19/09 : 808 échecs en 12 h sur ProMax) et nourrissait le
+	// ping-pong de fraîcheur. Un « ok » rétablit la réactivité immédiate.
+	if a.watcherBackoffBlocks(router.ID, model.CmdShield, time.Now().UTC()) {
+		return
 	}
 	queueCommandLocked(db, router.AccountID, router.ID, model.CmdShield, map[string]any{
 		"level": level,
@@ -655,6 +668,10 @@ func (a *API) ensureFamilyGuardLocked(db *model.DB, router *model.Router) {
 			return // une mise à jour est déjà en vol
 		}
 	}
+	// N°159 — backoff (miroir shield : un échec répété attend son palier).
+	if a.watcherBackoffBlocks(router.ID, model.CmdFamilyGuard, time.Now().UTC()) {
+		return
+	}
 	queueCommandLocked(db, router.AccountID, router.ID, model.CmdFamilyGuard, map[string]any{
 		"spec":   router.FamilyGuardSpec,
 		"active": active,
@@ -768,6 +785,10 @@ func (a *API) ensureAntiVpnLocked(db *model.DB, router *model.Router) {
 			(c.Status == "queued" || c.Status == "sent") {
 			return // une mise à jour est déjà en vol
 		}
+	}
+	// N°159 — backoff (miroir shield : un échec répété attend son palier).
+	if a.watcherBackoffBlocks(router.ID, model.CmdAntiVpn, time.Now().UTC()) {
+		return
 	}
 	queueCommandLocked(db, router.AccountID, router.ID, model.CmdAntiVpn, map[string]any{
 		"level": level,

@@ -52,8 +52,8 @@ func TestSafeWifiScriptActiveLevels(t *testing.T) {
 		if !strings.Contains(s, `remove [find comment="`+SafeWifiMarker+`"]`) {
 			t.Errorf("niveau %s : le retrait idempotent des règles marquées manque", tc.level)
 		}
-		if got := strings.Count(s, `action=dst-nat to-addresses=`+tc.dns+` to-ports=53`); got != 2 {
-			t.Errorf("niveau %s : %d règles dst-nat vers %s, attendu 2 (udp+tcp)", tc.level, got, tc.dns)
+		if got := strings.Count(s, `action=dst-nat to-addresses=`+tc.dns+` to-ports=53`); got != 4 {
+			t.Errorf("niveau %s : %d occurrences dst-nat vers %s, attendu 4 (2 règles udp+tcp × primaire+repli N°159 — une seule s'exécute sur le routeur)", tc.level, got, tc.dns)
 		}
 		if got := strings.Count(s, `place-before=0 action=dst-nat`); got != 2 {
 			t.Errorf("niveau %s : %d règles dst-nat en tête de table (place-before=0), attendu 2 — une règle dstnat antérieure ne doit JAMAIS passer devant (N°85)", tc.level, got)
@@ -61,8 +61,8 @@ func TestSafeWifiScriptActiveLevels(t *testing.T) {
 		// N°93 — bouclier pré-authentification : le port 53 des clients
 		// hotspot NON authentifiés part vers le servlet DNS natif (64872)
 		// via le matcher NATIF du hotspot — udp ET tcp, en tête de table.
-		if got := strings.Count(s, `hotspot=from-client,!auth action=redirect to-ports=`+SafeWifiHotspotDnsPort); got != 2 {
-			t.Errorf("niveau %s : %d règles redirect pré-auth (matcher hotspot), attendu 2 (udp+tcp) — sans ce bouclier le portail captif n'est plus détectable avant le login (régression N°85 corrigée N°93)", tc.level, got)
+		if got := strings.Count(s, `hotspot=from-client,!auth action=redirect to-ports=`+SafeWifiHotspotDnsPort); got != 4 {
+			t.Errorf("niveau %s : %d occurrences redirect pré-auth (matcher hotspot), attendu 4 (udp+tcp × primaire+repli N°159) — sans ce bouclier le portail captif n'est plus détectable avant le login (régression N°85 corrigée N°93)", tc.level, got)
 		}
 		if got := strings.Count(s, `place-before=0 hotspot=from-client,!auth action=redirect`); got != 2 {
 			t.Errorf("niveau %s : %d boucliers pré-auth en tête de table, attendu 2 — posés via place-before=0, ordre final garanti par le move N°95", tc.level, got)
@@ -206,5 +206,44 @@ func TestSafeWifiRulesExpected(t *testing.T) {
 	}
 	if len(SafeWifiDoHIPv4) == 0 || len(SafeWifiDoHIPv6) == 0 {
 		t.Error("les listes DoH v4/v6 ne doivent jamais être vides — le durcissement N°85 disparaîtrait silencieusement")
+	}
+}
+
+// TestSafeWifiScriptResilient — N°159 — ajout RÉSILIENT + traçage par étape :
+// les 4 règles NAT et les 2 règles FILTER par hotspot sont posées ancrées
+// (place-before=0) PUIS retentées SANS ancre si elle est rejetée (constat
+// production 19/09 : post-boot, « echec_des_regles_de_protection » en boucle
+// sur CYBER/ProMax — le WiFi restait sans filtrage DNS) ; le rapport
+// d'échec embarque l'étape atteinte ($step).
+func TestSafeWifiScriptResilient(t *testing.T) {
+	b := Builder{BaseURL: "https://api.example", Token: "tok"}
+	cmd := model.Command{ID: "c-sw2", Kind: model.CmdSafeWifi, Payload: map[string]any{"level": model.SafeWifiThreats}}
+	s := b.buildSafeWifi(cmd)
+
+	if !strings.Contains(s, `:local step "start"`) {
+		t.Error("la variable de traçage $step manque")
+	}
+	for _, step := range []string{"nat-r-udp", "nat-r-tcp", "nat-d-udp", "nat-d-tcp", "nat-move", "list-v4", "filter-dot", "filter-doh"} {
+		if !strings.Contains(s, `:set step "`+step+`"`) {
+			t.Errorf("l'étape %q manque (diagnostic sans accès console)", step)
+		}
+	}
+	// Famille NAT : 4 primaires ancrées + 4 replis sans ancre (chain=dstnat
+	// directement suivi de action= — sans place-before intercalé).
+	if got := strings.Count(s, "place-before=0"); got != 10 {
+		t.Errorf("%d formes primaires place-before=0, attendu 10 (4 NAT + 2 filter + 4 IPv6 best-effort)", got)
+	}
+	if got := strings.Count(s, "/ip firewall nat add chain=dstnat action="); got != 2 {
+		t.Errorf("%d replis dst-nat sans ancre, attendu 2", got)
+	}
+	if got := strings.Count(s, "/ip firewall nat add chain=dstnat hotspot=from-client,!auth"); got != 2 {
+		t.Errorf("%d replis redirect sans ancre, attendu 2", got)
+	}
+	if got := strings.Count(s, "/ip firewall filter add chain=forward in-interface=$swi"); got != 2 {
+		t.Errorf("%d replis filter sans ancre, attendu 2 (DoT + DoH)", got)
+	}
+	// Rapport d'échec dynamique : l'étape atteinte voyage dans le fetch.
+	if !strings.Contains(s, `&status=error&message=echec_des_regles_de_protection_sur_le_routeur&step=" . $step`) {
+		t.Error("le rapport d'échec doit embarquer $step (étape fautive)")
 	}
 }

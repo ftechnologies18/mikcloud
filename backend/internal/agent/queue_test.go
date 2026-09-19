@@ -200,6 +200,47 @@ func TestBuildQueueRemoveInvalidName(t *testing.T) {
 	}
 }
 
+// TestBuildQueueReadScript — N°159 — la cible est normalisée EN VIRGULES dans
+// le rapport (rosQueueTargetCSV) : RouterOS imprime une cible multiple en
+// liste à points-virgules — or « ; » est le séparateur d'entrées du
+// protocole, la ligne de relecture se scindait en fragments malformés et la
+// vérification (queue_ensure comme le monitoring queue_read) n'aboutissait
+// JAMAIS pour une file multi-cibles (Benie/ProMax, production 19/09).
+func TestBuildQueueReadScriptTargetCSV(t *testing.T) {
+	b := Builder{BaseURL: "https://cloud.example", Token: "tok"}
+	script, err := b.ScriptFor(model.Command{ID: "c-qr2", Kind: model.CmdQueueRead})
+	if err != nil {
+		t.Fatalf("script queue_read : %v", err)
+	}
+	for _, want := range []string{
+		`:local qtg [/queue simple get $qe target]`, // lecture BRUTE (tableau si multiple)
+		`[:typeof $qtg] = "array"`,                  // détection du multi-cibles
+		`:set qtc ($qtc . ",")`,                     // rejoint à VIRGULES
+		`"queue|" . $qnm . "|" . $qtc . "|" . $qml`, // la ligne rapporte la cible normalisée
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("normalisation de cible absente : %q\n%s", want, trunc700(script))
+		}
+	}
+	// La relecture de vérification du queue_ensure porte la même normalisation
+	// (lecture brute de $mkq + relecture rapportant $qtc).
+	scriptQE, err := b.ScriptFor(model.Command{ID: "c-qe3", Kind: model.CmdQueueEnsure, Payload: map[string]any{
+		"target": "192.168.10.0/24,10.77.0.0/21", "sig": "x",
+		"maxUpBps": int64(19_000_000), "maxDownBps": int64(104_500_000),
+	}})
+	if err != nil {
+		t.Fatalf("script queue_ensure : %v", err)
+	}
+	for _, want := range []string{
+		`:local qtg [/queue simple get $mkq target]`,
+		`$qtc . "|"`,
+	} {
+		if !strings.Contains(scriptQE, want) {
+			t.Fatalf("queue_ensure : fragment %q absent (relecture normalisée)\n%s", want, trunc700(scriptQE))
+		}
+	}
+}
+
 // trunc700 — extrait lisible en cas d'échec (miroir de preview, côté agent).
 func trunc700(s string) string {
 	if len(s) > 700 {

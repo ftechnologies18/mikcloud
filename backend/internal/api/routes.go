@@ -70,6 +70,21 @@ type API struct {
 	// scripts servus (7 × ~2 Ko par cycle) reste dans le régime N°75.
 	// Accédé UNIQUEMENT sous le verrou du store.
 	readStateChunks map[string]int
+	// N°159 — plancher de cadence de la fraîcheur post-écriture : horodatage du
+	// dernier read_state de fraîcheur ENFILÉ par routeur. Le moteur de volume
+	// de l'incident N°157 (ping-pong rapport d'écriture → read_state immédiat,
+	// chaque re-file queue_ensure/shield en produisant un) portait les
+	// read_state à ~52 % du volume agent : un plancher de 30 s par routeur borne
+	// la fraîcheur à ≤ 1 read/30 s, les écritures en rafale produisant UNE
+	// lecture (bord tirant : readStateFreshPending + balayage au check-in).
+	// Accédé UNIQUEMENT sous le verrou du store.
+	readStateFreshAt map[string]time.Time
+	// N°159 — bord tirant du plancher : une écriture survenue PENDANT la
+	// fenêtre de plancher ne perd JAMAIS sa fraîcheur — le drapeau est balayé
+	// par ensureReadStateDue dès l'expiration du plancher (aucun timer : la
+	// cadence de check-in du routeur porte le rappel). Accédé UNIQUEMENT sous
+	// le verrou du store.
+	readStateFreshPending map[string]bool
 	// N°101 — cadence de l'inventaire HomeNet : horodatage du dernier
 	// rapport read_dhcp APPLIQUÉ par routeur (handleAgentResult) — borne
 	// le cycle à devicesMinInterval (2 min), miroir de readStateDone.
@@ -83,6 +98,17 @@ type API struct {
 	// depuis le middleware d'auth, hors section critique).
 	attnMu sync.Mutex
 	attn   map[string]time.Time
+	// N°159 — backoff des watchers en échec répété : compte et horodatage du
+	// dernier rapport « error » par routeur+kind (clé watcherKey). Un watcher
+	// dont la commande ÉCHOUE ne re-file plus à CHAQUE check-in (production
+	// 19/09 : shield ×808 et safewifi ×107 en 12 h sur ProMax, toutes en
+	// « echec_des_regles... » depuis le boot) mais attend
+	// watcherBackoffDelay(fails). Un « ok » réinitialise ; un redémarrage
+	// réinitialise aussi (état volatile : le premier post-boot re-tente
+	// immédiatement — inchangé pour les pannes passagères). Accédé UNIQUEMENT
+	// sous le verrou du store (ensure* comme handleAgentResult y vivent tous).
+	watcherFailN  map[string]int
+	watcherFailAt map[string]time.Time
 	// N°150 — pairage Telegram plateforme (bot FTCI, lien magique) :
 	// codes éphémères code → compte (15 min, usage unique) servis par
 	// POST /api/notifications/telegram/pair-code, consommés par le webhook
@@ -121,7 +147,7 @@ func New(s *store.Store, jwtSecret string) *API {
 	// groupe serial rejoue l'inscription déjà passée — cf. signup_abuse.go.
 	// Les autres limiteurs S3 (join, reset) gardent les constantes : aucune
 	// suite E2E ne les traverse.
-	return &API{store: s, secret: jwtSecret, gws: map[string]routeros.Gateway{}, pinLock: newPinLimiter(), signup: signupLimiterFromEnv(os.Getenv), join: newSignupLimiter(), wifiClaim: newSignupLimiterLimits(20, 100), portalTrack: newSignupLimiterLimits(300, 3000), reset: newSignupLimiter(), chat: newSignupLimiterLimits(30, 400), egress: newEgressStats(), readStateDone: map[string]time.Time{}, readAcc: map[string]*readStateAccum{}, readStateChunks: map[string]int{}, devicesDone: map[string]time.Time{}, attn: map[string]time.Time{}, tgPairings: map[string]telegramPairing{}, tgAccountCode: map[string]string{}}
+	return &API{store: s, secret: jwtSecret, gws: map[string]routeros.Gateway{}, pinLock: newPinLimiter(), signup: signupLimiterFromEnv(os.Getenv), join: newSignupLimiter(), wifiClaim: newSignupLimiterLimits(20, 100), portalTrack: newSignupLimiterLimits(300, 3000), reset: newSignupLimiter(), chat: newSignupLimiterLimits(30, 400), egress: newEgressStats(), readStateDone: map[string]time.Time{}, readAcc: map[string]*readStateAccum{}, readStateChunks: map[string]int{}, readStateFreshAt: map[string]time.Time{}, readStateFreshPending: map[string]bool{}, devicesDone: map[string]time.Time{}, attn: map[string]time.Time{}, watcherFailN: map[string]int{}, watcherFailAt: map[string]time.Time{}, tgPairings: map[string]telegramPairing{}, tgAccountCode: map[string]string{}}
 }
 
 // Handler — mux complet, protégé par le middleware d'authentification.

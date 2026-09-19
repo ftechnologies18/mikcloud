@@ -332,15 +332,96 @@ func TestQueueReadStateFreshSkipsInFlightCycle(t *testing.T) {
 		{ID: "c-chunk", RouterID: "r-1", AccountID: "acc", Kind: model.CmdReadState, Status: "queued",
 			Payload: map[string]any{"start": 500, "count": 500}},
 	}
-	cmd := queueReadStateFreshLocked(db, router)
-	if cmd.ID != "c-chunk" {
-		t.Fatalf("cycle en cours : la garde doit retourner le chunk en file, obtenu %v", cmd.ID)
+	a := &API{readStateFreshAt: map[string]time.Time{}, readStateFreshPending: map[string]bool{}}
+	cmd := a.queueReadStateFreshLocked(db, router)
+	if cmd == nil || cmd.ID != "c-chunk" {
+		t.Fatalf("cycle en cours : la garde doit retourner le chunk en file, obtenu %v", cmd)
 	}
-	// Rien en file/en vol → base enfilée.
+	// Rien en file/en vol → base enfilée (le piggyback a posé l'horodatage du
+	// plancher : une NOUVELLE API simule le contexte d'un cycle terminé depuis
+	// plus de 30 s — le plancher N°159 est couvert par son propre test).
 	db.Commands = nil
-	cmd = queueReadStateFreshLocked(db, router)
-	if cmd.Kind != model.CmdReadState || int(plPayloadInt(cmd.Payload, "start")) != 0 {
+	a = &API{readStateFreshAt: map[string]time.Time{}, readStateFreshPending: map[string]bool{}}
+	cmd = a.queueReadStateFreshLocked(db, router)
+	if cmd == nil || cmd.Kind != model.CmdReadState || int(plPayloadInt(cmd.Payload, "start")) != 0 {
 		t.Fatalf("aucun cycle : un read_state de base doit être enfilé, obtenu %+v", cmd)
+	}
+}
+
+// TestReadStateFreshFloorDefersAndSweeps — N°159 — le plancher de 30 s de la
+// fraîcheur post-écriture : la PREMIÈRE écriture enfile immédiatement, les
+// écritures dans la fenêtre ne filent RIEN mais posent le bord tirant, et le
+// check-in qui suit l'expiration enfile la lecture promise — la fraîcheur est
+// retardée, jamais perdue.
+func TestReadStateFreshFloorDefersAndSweeps(t *testing.T) {
+	db := &model.DB{}
+	router := &model.Router{ID: "r-fl", AccountID: "acc", Mode: "agent"}
+	a := &API{readStateDone: map[string]time.Time{}, readStateChunks: map[string]int{},
+		readStateFreshAt: map[string]time.Time{}, readStateFreshPending: map[string]bool{}}
+
+	// Première écriture (aucun plancher posé) : enfilement immédiat.
+	cmd := a.queueReadStateFreshLocked(db, router)
+	if cmd == nil || cmd.Kind != model.CmdReadState {
+		t.Fatal("première écriture : un read_state doit être enfilé immédiatement")
+	}
+	if len(db.Commands) != 1 {
+		t.Fatalf("première écriture : 1 commande attendue, obtenu %d", len(db.Commands))
+	}
+
+	// La commande servie puis rapportée (simulée : plus rien en file) ; une
+	// écriture DANS la fenêtre de plancher ne re-file rien, mais marque.
+	db.Commands = nil
+	cmd = a.queueReadStateFreshLocked(db, router)
+	if cmd != nil {
+		t.Fatal("écriture dans la fenêtre de plancher : RIEN ne doit être enfilé (retour nil)")
+	}
+	if len(db.Commands) != 0 {
+		t.Fatalf("plancher : 0 commande attendue, obtenu %d", len(db.Commands))
+	}
+	if !a.readStateFreshPending[router.ID] {
+		t.Fatal("plancher : le bord tirant (readStateFreshPending) doit être posé")
+	}
+
+	// Check-in AVANT l'expiration : le balayage ne déclenche pas (la cadence
+	// N°74, très fraîche, ne déclenche pas non plus).
+	a.readStateDone[router.ID] = time.Now().UTC()
+	a.ensureReadStateDue(db, router)
+	if len(db.Commands) != 0 {
+		t.Fatal("check-in avant expiration : aucune lecture ne doit partir")
+	}
+	if !a.readStateFreshPending[router.ID] {
+		t.Fatal("le bord tirant doit survivre jusqu'à l'expiration")
+	}
+
+	// Expiration du plancher : le check-in suivant enfile la lecture promise
+	// et acquitte le drapeau.
+	a.readStateFreshAt[router.ID] = time.Now().UTC().Add(-readStateFreshFloor - time.Second)
+	a.ensureReadStateDue(db, router)
+	if len(db.Commands) != 1 || db.Commands[0].Kind != model.CmdReadState {
+		t.Fatalf("check-in post-expiration : la lecture promise doit être enfilée, obtenu %d commande(s)", len(db.Commands))
+	}
+	if a.readStateFreshPending[router.ID] {
+		t.Fatal("le bord tirant doit être acquitté par l'enfilement")
+	}
+}
+
+// TestReadStateFreshFloorManualBypass — N°159 — le rafraîchissement MANUEL
+// (queueReadStateNowLocked) ne se plie pas au plancher : un geste explicite
+// du gérant attend « ≤ 45 s », pas « ≤ 30 s + 45 s ».
+func TestReadStateFreshFloorManualBypass(t *testing.T) {
+	db := &model.DB{}
+	router := &model.Router{ID: "r-man", AccountID: "acc"}
+	a := &API{readStateFreshAt: map[string]time.Time{}, readStateFreshPending: map[string]bool{}}
+	// Plancher tout juste posé (fenêtre pleine) et bord tirant en attente :
+	// la voie express enfile quand même ET acquitte le drapeau.
+	a.readStateFreshAt[router.ID] = time.Now().UTC()
+	a.readStateFreshPending[router.ID] = true
+	cmd := a.queueReadStateNowLocked(db, router)
+	if cmd == nil || cmd.Kind != model.CmdReadState {
+		t.Fatal("rafraîchissement manuel : doit enfiler malgré le plancher")
+	}
+	if a.readStateFreshPending[router.ID] {
+		t.Fatal("l'enfilement manuel acquitte le bord tirant éventuel")
 	}
 }
 

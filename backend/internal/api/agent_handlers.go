@@ -344,6 +344,16 @@ func (a *API) ensureReadStateDue(db *model.DB, router *model.Router) {
 			return // déjà en file ou en vol (chunks compris) : rien à faire
 		}
 	}
+	// N°159 — BORD TIRANT du plancher de fraîcheur : une écriture survenue
+	// pendant la fenêtre de 30 s a posé readStateFreshPending — dès
+	// l'expiration, CE check-in enfile la lecture promise (aucun timer : la
+	// cadence de check-in porte le rappel, la fraîcheur n'est jamais perdue).
+	if a.readStateFreshPending[router.ID] &&
+		time.Since(a.readStateFreshAt[router.ID]) >= readStateFreshFloor {
+		a.markReadStateFreshEnqueued(router.ID)
+		queueCommandLocked(db, router.AccountID, router.ID, model.CmdReadState, map[string]any{})
+		return
+	}
 	last, ok := a.readStateDone[router.ID]
 	// N°76 — cadence adaptée à la taille du parc : un cycle paginé de N
 	// chunks coûte N scripts servis — l'intervalle minimum est multiplié
@@ -356,6 +366,10 @@ func (a *API) ensureReadStateDue(db *model.DB, router *model.Router) {
 	if ok && time.Since(last) < interval {
 		return // pas encore dû
 	}
+	// N°159 — l'enfilement cadencé couvre AUSSI la fraîcheur : le plancher
+	// repart de maintenant et l'éventuel bord tirant est acquitté (cette
+	// lecture-ci lira l'état post-écriture).
+	a.markReadStateFreshEnqueued(router.ID)
 	queueCommandLocked(db, router.AccountID, router.ID, model.CmdReadState, map[string]any{})
 }
 
@@ -718,6 +732,19 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 	// state/status/latestVersion/installedVersion/channel.
 	if ok && cmd.Kind == model.CmdRouterOSCheck {
 		normalizeRouterOSCheck(cmd.Result)
+	}
+	// N°159 — backoff des watchers : l'issue de LA commande du watcher pilote
+	// la cadence de son re-file — « ok » le rend immédiatement réactif (un
+	// changement de config reste servi au check-in suivant, contrat N°49/8x),
+	// « error » fait monter le palier (1 min → 5 → 15 → 30) : un échec
+	// persistant ne martèle plus le routeur ni la file (production 19/09 :
+	// ~950 commandes/jour de shield+safewifi en échec sur 2 routeurs).
+	if watcherBackoffKind(cmd.Kind) {
+		if ok {
+			a.resetWatcherBackoff(router.ID, cmd.Kind)
+		} else {
+			a.recordWatcherError(router.ID, cmd.Kind, time.Now().UTC())
+		}
 	}
 
 	switch {
@@ -1108,11 +1135,12 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 		} else {
 			a.logActivity(db, router.AccountID, "router", "Commande "+cmd.Kind+" exécutée sur «"+router.Name+"»")
 		}
-		// N°76 — fraîcheur post-écriture : via la garde de cycle (un
-		// read_state paginé en cours est DÉJÀ la synchronisation — le
-		// casser désordonnerait l'accumulateur ; cf.
-		// queueReadStateFreshLocked).
-		queueReadStateFreshLocked(db, router)
+		// N°76/N°159 — fraîcheur post-écriture CADENCÉE : via la garde de cycle
+		// (un read_state paginé en cours est DÉJÀ la synchronisation — le
+		// casser désordonnerait l'accumulateur ; cf. queueReadStateFreshLocked)
+		// et le plancher de 30 s (une rafale d'écritures produit UNE lecture —
+		// bord tirant balayé au check-in suivant, jamais perdu).
+		a.queueReadStateFreshLocked(db, router)
 	default:
 		a.logActivity(db, router.AccountID, "router", "Commande "+cmd.Kind+" ÉCHOUÉE sur «"+router.Name+"» ("+vals.Get("message")+")")
 	}

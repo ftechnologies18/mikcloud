@@ -5,7 +5,7 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
-## 2026-09-19 — N°159 — WhatsApp vs SMS Orange CI : le comparatif qui valide le choix du canal — utility ~2,4 FCFA contre 7,25 FCFA/SMS, et 6 à 8x moins cher en coût réel MikCloud
+## 2026-09-19 — N°160 — WhatsApp vs SMS Orange CI : le comparatif qui valide le choix du canal — utility ~2,4 FCFA contre 7,25 FCFA/SMS, et 6 à 8x moins cher en coût réel MikCloud
 
 ### Contexte
 Deuxième question de budgétisation avant les démarches Meta (N°148-c) :
@@ -54,7 +54,10 @@ Zéro code, zéro route, zéro schéma — documentation opérateur uniquement.
 Grille lue sur la page officielle Orange Developer (onglet Pricing cliqué,
 tableau 4 bundles + notes de bas de page) ; confrontée aux taux N°158
 (relevés la même session sur la grille Meta interactive) ; conversions FCFA
-indicatives.
+indicatives. Renumérotation : le message de commit d’origine (fc4c8f7) porte
+N°159 par collision avec la session parallèle (moteur de dévolume, 66a4812, poussée dans la
+même fenêtre) — correctif forward, branche main protégée : pas de réécriture d’historique ;
+l’entrée canonique du CHANGELOG est N°160, prochaine numérotation : N°161.
 
 ## 2026-09-19 — N°158 — Les tarifs WhatsApp Business de la Côte d'Ivoire passent d'« indicatifs » à VÉRIFIÉS dans le runbook : utility 0,0040 $/message (Rest of Africa), budget MikCloud chiffré
 

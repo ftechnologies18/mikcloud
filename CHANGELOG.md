@@ -80,6 +80,74 @@ mobile 390 px (panneau 360 px borné), état vide « Vous êtes à jour »,
 l'API renvoie 200 à la création de routeur, l'entrée est bien journalisée) ;
 revue visuelle VLM 5/5 CLEAN (jour, après-acquit, nuit, mobile, vide).
 
+## 2026-09-19 — N°156 — Le runbook WhatsApp plateforme reflète le flux Meta de sept. 2026 : création d'app par cas d'usage, Coexistence à la vérification du numéro, option Direct Send (GA utility) et tarification précisée
+
+### Contexte
+Retour utilisateur au démarrage des démarches Meta du N°148-c (WhatsApp
+plateforme) : « il me semble que la création et la configuration de compte
+WhatsApp plateforme a changé » — l'interface ne correspondait plus au runbook
+N°154 (rédigé la veille sur la base du flux historique). Le runbook a donc été
+re-vérifié SOURCE EN MAIN sur la documentation officielle Meta (doc « Get
+Started » mise à jour 16 juin 2026, changelog des plateforms mis à jour
+22 sept. 2026, pages pricing et Direct Send au 31 juil. 2026), pages lues via
+navigateur headless + versions markdown officielles.
+
+### Constats — ce qui a réellement changé chez Meta
+1. **Création d'app par CAS D'USAGE** : l'écran « Autre → type Business » a
+   disparu — le chemin WhatsApp est « Connect with customers through
+   WhatsApp », et le Business Portfolio se choisit/crée PENDANT la création
+   (un WABA peut même être créé automatiquement si le portfolio est neuf).
+2. **Tableau de bord « Quickstart → Start using the API »** : nouvelle porte
+   d'entrée vers la page API Setup (jeton temporaire + identifiants).
+3. **Nouveau modèle de compte WhatsApp / Coexistence** (changelog 03/09 et
+   22/09/2026) : un numéro déjà actif sur l'app WhatsApp Business n'est plus
+   refusé — l'onboarding entre automatiquement dans le flux Coexistence qui
+   convertit le compte en « Messaging account » rétrocompatible (waba_id
+   conservé).
+4. **Direct Send GA pour l'utility** (31/07/2026) : envoi de messages utility
+   SANS template pré-créé (champ `category:"utility"`, Meta génère/matche les
+   templates en arrière-plan) — solution premium, éligibilité par bandeau
+   dans WhatsApp Manager.
+5. **Tarification précisée** : par message livré depuis juil. 2025 ; les
+   templates utility sont GRATUITS dans une fenêtre de service ouverte
+   (`free_customer_service`) ; Côte d'Ivoire = région « Rest of Africa » ;
+   mise à jour 01/10/2026 sans impact pour cette région ; gel aux 1er
+   janv./avr./juil./oct.
+6. La doc développeur a migré vers /documentation/business-messaging/whatsapp/
+   avec versions .md officielles (précieuses pour re-vérifier au fil du temps).
+
+### Runbook (docs/RUNBOOK-WHATSAPP-PLATEFORME.md)
+- §1 renommé « Business Portfolio (ex-Business Manager) » + note « création
+  en cours de route possible au §2 ».
+- §2 réécrit « Créer l'application Meta (par cas d'usage — flux 2026) » :
+  cas d'usage « Connect with customers through WhatsApp », sélection du
+  portfolio, « Start using the API » → API Setup, jeton temporaire 24 h.
+- §4 : chemin d'ajout de numéro depuis API Setup + NOUVEAU §4.4 Coexistence
+  (numéro déjà utilisé → conversion Messaging account au lieu du refus).
+- §8 : NOUVEAU §8.0 « Vérifier l'éligibilité Direct Send » AVANT la
+  soumission manuelle (bandeau WhatsApp Manager, test d'éligibilité avec le
+  message d'erreur exact `(#100) … requires Direct Send`, limites, discipline
+  anti-marketing, revue wadirectsendapisupport@meta.com) ; la soumission des
+  4-5 templates devient §8.1 « Voie classique » — conservée OBLIGATOIRE
+  comme plancher (Direct Send = éligibilité non garantie).
+- §10 : tarification précisée (facturation au message livré, gratuité CSW
+  ouverte, région CI « Rest of Africa » + grille interactive, calendrier
+  trimestriel, note 01/10/2026).
+- §11 : 2 nouvelles lignes de dépannage (compte non éligible Direct Send ;
+  avertissement « utility used as marketing »).
+
+### Fidélité
+Zéro code, zéro route, zéro schéma — documentation opérateur uniquement ; la
+voie classique à templates reste le plancher du runbook (aucune dépendance
+forte à Direct Send tant que l'éligibilité n'est pas constatée sur LE compte).
+
+### Vérifié
+Sources officielles Meta citées ligne à ligne (Get Started 16/06/2026,
+changelog 22/09/2026, Direct Send 31/07/2026, pricing 01/07/2026) — pages
+rendues en navigateur headless et versions .md archivées localement ; relecture
+croisée des 6 points de changement avec le runbook N°154 pour isoler les
+deltas exacts.
+
 ## 2026-09-18 — N°154 — La console plateforme cesse d'être une console client : le propriétaire SaaS n'a ni tickets ni stock — et le runbook WhatsApp plateforme (N°148-c) arrive pour guider les démarches Meta
 
 ### Contexte

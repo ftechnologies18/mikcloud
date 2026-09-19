@@ -7,7 +7,13 @@
 > relais e-mail est porté par ses identifiants Resend/SMTP. Ce runbook couvre
 > VOS démarches côté Meta (entreprise, numéro, jeton, templates) ; l'extension
 > du backend MikCloud qui consommera ces identifiants suit en N°148-c une fois
-> les démarches terminées. Dernière mise à jour : N°154 (2026-09-18).
+> les démarches terminées. Dernière mise à jour : N°156 (2026-09-19) — flux
+> Meta re-vérifié sur la documentation officielle (mise à jour sept. 2026) :
+> création d'app par CAS D'USAGE (fin du « Autre → type Business »), tableau de
+> bord « Quickstart → Start using the API », nouveau modèle de compte WhatsApp
+> (Coexistence) à la vérification du numéro, et option **Direct Send** (GA
+> utility depuis juillet 2026) qui peut dispenser de la soumission manuelle
+> des templates §8.
 
 ## 0. Ce que vous allez obtenir (et ce qu'il faut avant)
 
@@ -34,28 +40,41 @@ minutes à 48 h).
 rédaction — Meta remanie régulièrement ses menus : en cas d'écart, chercher
 l'équivalent dans « Paramètres de l'entreprise » / « WhatsApp Manager ».
 
-## 1. Créer le Business Manager
+## 1. Créer le Business Portfolio (ex-Business Manager)
 
 1. Ouvrir https://business.facebook.com → « Créer un compte » (se connecter
-   avec le compte Facebook de l'opérateur).
+   avec le compte Facebook de l'opérateur). Meta parle désormais de
+   **Business Portfolio** — même chose, nouvelle dénomination.
 2. Nom de l'entreprise : **Freelance Technologies CI** (nom juridique exact),
    e-mail professionnel, pays : Côte d'Ivoire.
 3. Une fois créé : Paramètres de l'entreprise → Renseigner l'adresse, le site
    (https://mikcloud.ftci.fr), le numéro — ces champs alimentent la
    vérification du §5.
 
-## 2. Créer l'application Meta (type Business)
+⚠️ Si vous n'avez pas encore de Business Portfolio, pas d'inquiétude : le
+flux de création d'app du §2 propose d'en créer un EN COURS DE ROUTE.
+
+## 2. Créer l'application Meta (par cas d'usage — flux 2026)
+
+> CHANGEMENT 2026 : l'écran « Autre → type Business » a disparu. La création
+> d'app est désormais pilotée par CAS D'USAGE ; pour WhatsApp c'est le chemin
+> direct « Connect with customers through WhatsApp ».
 
 1. Ouvrir https://developers.facebook.com → « Mes applications » → « Créer une
    application ».
-2. Cas d'usage : « Autre » → type **Business** ; nom : `mikcloud-alertes` ;
-   e-mail de contact professionnel ; créer.
-3. Dans le tableau de bord de l'app : ajouter le produit **WhatsApp** (« API
-   WhatsApp » → Configurer).
-4. Meta crée alors automatiquement un WABA de TEST avec un numéro de test et
-   un jeton temporaire — **suffisant pour développer, PAS pour la
-   production**. Notez le « Phone number ID » et le « WhatsApp Business
-   Account ID » affichés sur la page API Setup : ils servent de repère.
+2. Nom : `mikcloud-alertes` ; e-mail de contact professionnel ; cas d'usage :
+   **« Connect with customers through WhatsApp »** → Suivant.
+3. **Sélectionner un Business Portfolio existant ou en créer un nouveau**
+   (si vous en créez un ici, Meta peut créer AUTOMATIQUEMENT un WABA — le
+   vérifier au §3 avant d'en créer un second).
+4. Une liste d'exigences de publication peut s'afficher (aucune à ce stade)
+   → Suivant ; confirmez → **Créer l'app**.
+5. Vous arrivez sur le tableau de bord « Customize use case → Connect on
+   WhatsApp → **Quickstart** ». Cliquer **« Start using the API »** : c'est
+   la nouvelle porte d'entrée vers la page **API Setup**.
+6. La page API Setup affiche le jeton TEMPORAIRE (24 h — développement
+   uniquement, le jeton permanent suit au §6) et les identifiants de repère
+   (Phone number ID, WABA ID) — les relever.
 
 ## 3. Créer le WABA de production et y rattacher le numéro
 
@@ -70,15 +89,23 @@ l'équivalent dans « Paramètres de l'entreprise » / « WhatsApp Manager ».
 ## 4. Ajouter le numéro d'envoi
 
 1. WhatsApp Manager → « Vue d'ensemble » → **Numéros de téléphone** →
-   « Ajouter un numéro ».
+   « Ajouter un numéro » (ou depuis la page API Setup de l'app, champ
+   « From phone number » → ajouter).
 2. Saisir le numéro dédié (code pays + numéro, ex. +225 …) ; choisir la
    vérification par **SMS ou appel** ; noter le code à 6 chiffres (ou le
    suivre à l'écran en cas d'appel vocal).
 3. ⚠️ Le numéro ne doit être actif sur AUCUN autre compte WhatsApp : si c'est
    un numéro que vous utilisiez dans l'app WhatsApp personnelle, désinstallez
    l'app / supprimez le compte WhatsApp lié AVANT la vérification — sinon
-   Meta la refuse.
-4. Une fois affiché « Connecté » avec un Phone number ID (ex.
+   Meta propose désormais le flux **Coexistence**.
+4. **CHANGEMENT sept. 2026 — nouveau modèle de compte / Coexistence** : si le
+   numéro est (ou a été) actif sur l'app WhatsApp Business, Meta ne refuse
+   plus systématiquement — l'onboarding entre AUTOMATIQUEMENT dans le flux
+   « Coexistence » : le compte WhatsApp existant est converti en compte
+   « Messaging » rétrocompatible (l'ID `waba_id` est conservé, le partage
+   fonctionne). Pour un numéro DÉDIÉ jamais utilisé sur WhatsApp, vous ne
+   verrez pas cet écran — vérification SMS/appel classique.
+5. Une fois affiché « Connecté » avec un Phone number ID (ex.
    `123456789012345`), le relever : c'est l'identifiant d'envoi.
 
 ## 5. Vérifier l'entreprise (obligatoire pour produire)
@@ -134,6 +161,35 @@ ouverte.
 
 ## 8. Soumettre les templates « utility » (l'anti-fenêtre 24 h)
 
+### 8.0 AVANT TOUT — vérifier l'éligibilité Direct Send (nouveau, GA 07/2026)
+
+> CHANGEMENT JUILLET 2026 : **Direct Send** est désormais GA pour les
+> messages UTILITY. Principe : on envoie le message SANS template avec un
+> champ `category: "utility"`, et Meta génère/matche automatiquement les
+> templates en arrière-plan (contenu PII-redaté, langue détectée). S'il est
+> éligible, votre compte peut DISPENSER de la soumission manuelle ci-dessous.
+
+1. WhatsApp Manager → chercher le **bandeau Direct Send** : il indique si le
+   compte est éligible. (Sinon, exprimer votre intérêt via le lien du bandeau.)
+2. Test d'éligibilité direct : envoyer un message utility avec le champ
+   `category` — si le compte n'y a pas droit, l'API répond `(#100) Invalid
+   parameter … requires Direct Send, which isn't enabled for this account.
+   Use an approved message template instead.` → revenir à la voie classique
+   ci-dessous.
+3. Si éligible : les alertes MikCloud partent en `type:"text"` +
+   `category:"utility"` — mêmes limites que les templates (corps 1 024 car.,
+   formats text/interactifs, en-têtes image/vidéo/document en accès
+   restreint). Discipline inchangée : contenu strictement transactionnel —
+   Meta surveille l'usage utility comme marketing (e-mails d'avertissement,
+   templates auto-pausés ; revue possible via wadirectsendapisupport@meta.com).
+4. ⚠️ Direct Send reste une solution « premium » : mêmes tarifs par message
+   que les templates utility (§10) et éligibilité au cas par cas — si le
+   bandeau n'apparaît pas, NE PAS compter dessus pour le go-live : soumettre
+   les 4 templates du tableau ci-dessous (ils restent requis par le runbook
+   MikCloud et fonctionnent dans tous les cas).
+
+### 8.1 Voie classique — soumission manuelle
+
 Règle WhatsApp : hors d'une conversation ouverte par le destinataire depuis
 moins de 24 h, SEULS les messages partant d'un **template approuvé** partent.
 Chaque type d'alerte MikCloud doit donc avoir son template — les corps
@@ -178,10 +234,19 @@ Démarche, pour chaque template :
 
 ## 10. Coûts et limites (indicatif — la grille Meta fait foi)
 
-- Depuis juillet 2025, la facturation est **par template envoyé** : les
-  utility se facturent typiquement quelques centimes d'USD par message selon
-  le marché (grille : Meta Business Help Center → Pricing). Les réponses
-  libres dans la fenêtre 24 h (conversations de service) restent gratuites.
+- Depuis juillet 2025, la facturation est **par template envoyé** (uniquement
+  les messages `type:"template"` LIVRÉS ; les non-template dans la fenêtre de
+  service restent gratuits) : les utility se facturent typiquement quelques
+  centimes d'USD par message selon le marché — la Côte d'Ivoire (+225) relève
+  de la région tarifaire « **Rest of Africa** » (grille interactive :
+  business.whatsapp.com/products/platform-pricing#rates).
+- **Utility GRATUITS dans une fenêtre de service ouverte** : si le gérant a
+  répondu au canal depuis moins de 24 h, les templates utility envoyés dans
+  cette fenêtre ne sont PAS facturés (statut webhook
+  `type:"free_customer_service"`).
+- Mise à jour tarifaire connue au 1er octobre 2026 : création de marchés
+  standalone (Bangladesh, Irak, Maroc, etc.) — **aucun impact pour « Rest of
+  Africa »** ; les changements n'interviennent plus qu'aux 1er janv./avr./juil./oct.
 - Ordre de grandeur MikCloud : ~4-6 alertes/mois par client actif → quelques
   centimes par client et par mois — à intégrer au prix de l'abonnement.
 - Les messages rejetés (numéro invalide, hors opt-in) ne sont pas facturés.
@@ -192,6 +257,8 @@ Démarche, pour chaque template :
 |---|---|---|
 | « Recipient phone number not in allowed list » | toujours en mode développement | terminer la vérification entreprise (§5) + paiement actif |
 | Template « En attente » > 48 h | revue manuelle | vérifier la catégorie UTILITY et le contenu strictement transactionnel ; resoumettre |
-| Numéro refusé à la vérification | actif sur un autre WhatsApp | désinstaller l'app WhatsApp liée au numéro, attendre, recommencer (§4.3) |
-| Token invalide après quelques semaines | jeton temporaire utilisé (celui de l'app) | regénérer un jeton SYSTEM USER (§6), pas celui du tableau de bord |
+| Numéro refusé à la vérification | actif sur un autre WhatsApp | désinstaller l'app WhatsApp liée au numéro, attendre, recommencer (§4.3) — ou suivre le flux Coexistence proposé (§4.4) |
+| Token invalide après quelques semaines | jeton temporaire utilisé (celui de l'app, 24 h) | regénérer un jeton SYSTEM USER (§6), pas celui du tableau de bord |
 | Envoi 131047 / « Re-engagement message » | template inexistant pour ce kind | soumettre le template manquant du §8 |
+| `(#100) … requires Direct Send` | compte non éligible Direct Send (§8.0) | utiliser un template approuvé (voie classique §8.1) |
+| Avertissement « utility used as marketing » | contenu sorti du cadre transactionnel | resserrer le libellé des alertes ; revue possible auprès de wadirectsendapisupport@meta.com |

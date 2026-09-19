@@ -141,7 +141,10 @@ et le volume (1 000 → 10 000 → 100 000).
    « Ajouter » : nom `mikcloud-backend`, rôle « Employé de l'entreprise »
    (ou Admin si l'interface l'exige).
 2. Sélectionner l'utilisateur système → « Attribuer des éléments » →
-   l'application `mikcloud-alertes` → gestion complète.
+   l'application `ftci-apps` → gestion complète. **Attribuer AUSSI le WABA
+   MikCloud** (Comptes → Comptes WhatsApp → le WABA « MikCloud Alertes » →
+   gestion complète) : sans cela, le jeton ne pourra pas envoyer — et pour
+   chaque futur produit (§12), c'est ICI qu'on revient cocher son WABA.
 3. « **Générer un jeton** » : cocher les permissions
    `whatsapp_business_messaging`, `whatsapp_business_management`,
    `business_management` (+ `show_in_console` si proposé).

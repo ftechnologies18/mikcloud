@@ -5,6 +5,69 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-19 — N°161 — L'app Meta devient un PARAPLUIE : `ftci-apps` servira MikCloud ET les futures applications FTCI — un portfolio, une app, un jeton, un WABA par produit
+
+### Contexte
+Deux questions de l'opérateur avant de créer l'app Meta du N°148-c :
+(1) « l'implémentation objectif 0 coût des commit N°72 à N°77 avec
+correctifs N°157 et N°159 peut-elle tenir l'objectif ? » ; (2) « ok pour
+WhatsApp mais je souhaite créer une app qui pourra me servir pour mes
+autres applications, pas seulement MikCloud ». La réponse à (2) change le
+nom de l'app à créer (`mikcloud-alertes` → `ftci-apps`) et mérite une
+section dédiée dans le runbook AVANT que l'opérateur ne clique.
+
+### Réponse (1) — l'objectif 0 coût tient (analyse livrée dans la conversation)
+La contrainte maîtresse « 0 coût jusqu'au premier client payant » (N°80) est
+désormais protégée STRUCTURELLEMENT, en stock ET en flux :
+- STOCK (Neon 0,5 Go) : N°157 borne la table commands (balayage 48 h +
+  plafond 6 000 lignes ≈ 4-5 Mo contre 49 Mo à l'incident) — plus de
+  croissance non bornée.
+- FLUX (Render 0,1 vCPU) : N°159 démonte les trois moteurs de volume mesurés
+  (read_state 52 % → plancher 30 s ; queue_ensure 27 % → convergence
+  multi-cibles enfin possible, bug du séparateur « ; » ; erreurs shield/
+  safewifi → backoff 1/5/15/30 min) — ~12 000 commandes/jour pour 3
+  routeurs réduites au plancher structurel, et chaque entité ajoutée paie
+  un volume BORNÉ (plancher, cap, backoff).
+- Les optimisations N°72-77 restent toutes actives (gzip N°72, zombies N°73,
+  cadenceurs N°74, veille adaptative 45 s ↔ 180 s + ETag N°75, read_state
+  paginé N°76, veilleur d'invités conditionnel N°77 — ~1,2 Ko/min
+  uniquement pendant qu'un invité est sur le portail).
+- Le canal WhatsApp n'ajoute AUCUN coût d'infrastructure : uniquement de la
+  dépense variable alignée sur l'usage client (~2,4 FCFA/message utility,
+  N°158/N°160) — cohérente avec « 0 coût FIXE jusqu'au premier client
+  payant ». Le mur capacité (≈ centaines de routeurs sur le free Render) ne
+  se juge qu'à la croissance du parc — avec un chemin de sortie clair
+  (Render Starter) le jour où les clients paient.
+
+### Réponse (2) — architecture parapluie (runbook §12 NOUVEAU)
+- PARTAGÉ une fois pour tous les produits : Business Portfolio
+  « Freelance Technologies CI » (vérifié UNE fois), app `ftci-apps`
+  (§2 renommé en conséquence), jeton System User unique (§6 — il opère
+  tout WABA assigné), carte bancaire (§5).
+- PAR PRODUIT (isolation native) : WABA + numéro dédié + nom affiché
+  (« MikCloud Alertes » pour MikCloud — SEUL nom visible des
+  destinataires) + templates + note de qualité (par numéro : un produit
+  dégradé n'entraîne pas les autres) + éligibilité Direct Send.
+- Recette d'ajout d'un produit (5 étapes, zéro nouvelle démarche Meta :
+  un WABA + une SIM + l'assignation au system user + ses templates) ;
+  contre-argument d'une app par produit (aucun bénéfice — le nom d'app
+  n'est jamais visible, la qualité est par numéro) ; limite du modèle
+  documentée (Tech Provider / Embedded Signup = AUTRE programme, pour le
+  jour où des clients apporteraient LEUR numéro).
+- §0, §3 et §9 alignés (tableau des livrables, rappel WABA par produit,
+  variables Render : jeton partagé, PHONE_ID/WABA_ID par produit).
+
+### Fidélité
+Zéro code, zéro route, zéro schéma — documentation opérateur uniquement ;
+l'implémentation backend N°148-c reste inchangée (elle ne consomme que
+TOKEN + PHONE_ID + WABA_ID).
+
+### Vérifié
+Cohérence relue de bout en bout du runbook (§0 → §12) après renommage :
+aucune référence résiduelle à `mikcloud-alertes` ; les affirmations Meta
+(app invisible des destinataires, jeton multi-WABAs, qualité par numéro)
+croisées avec la doc officielle consultée en N°156.
+
 ## 2026-09-19 — N°160 — WhatsApp vs SMS Orange CI : le comparatif qui valide le choix du canal — utility ~2,4 FCFA contre 7,25 FCFA/SMS, et 6 à 8x moins cher en coût réel MikCloud
 
 ### Contexte

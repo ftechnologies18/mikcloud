@@ -19,12 +19,12 @@
 
 | Élément | Valeur attendue |
 |---|---|
-| Business Manager vérifié | « Freelance Technologies CI » (ou le nom juridique exact de vos documents) |
-| Application Meta | type Business, produit « WhatsApp » actif |
-| WABA de production | WhatsApp Business Account portant le numéro d'envoi |
-| Numéro d'envoi dédié | un numéro qui n'est actif sur AUCUN autre WhatsApp |
-| Jeton d'accès permanent | System User (ne s'expire pas) — secret de niveau coffre |
-| Templates utility approuvés | 4 obligatoires + 1 optionnel (§8) |
+| Business Manager vérifié | « Freelance Technologies CI » (ou le nom juridique exact de vos documents) — vérifié UNE fois pour TOUS vos produits |
+| Application Meta (parapluie) | UNE seule app pour tous vos produits (§12) — cas d'usage « WhatsApp » actif |
+| WABA de production | UN WhatsApp Business Account PAR PRODUIT — celui de MikCloud porte le numéro d'envoi et le nom « MikCloud Alertes » |
+| Numéro d'envoi dédié | un numéro qui n'est actif sur AUCUN autre WhatsApp (un PAR produit qui envoie) |
+| Jeton d'accès permanent | System User (ne s'expire pas) — UN SEUL jeton partagé entre produits, secret de niveau coffre |
+| Templates utility approuvés | 4 obligatoires + 1 optionnel (§8) — propres au WABA MikCloud |
 
 **Prérequis** : un compte Facebook personnel (celui de l'opérateur), les
 documents de l'entreprise (registre de commerce / extrait — le nom doit
@@ -62,8 +62,11 @@ flux de création d'app du §2 propose d'en créer un EN COURS DE ROUTE.
 
 1. Ouvrir https://developers.facebook.com → « Mes applications » → « Créer une
    application ».
-2. Nom : `mikcloud-alertes` ; e-mail de contact professionnel ; cas d'usage :
-   **« Connect with customers through WhatsApp »** → Suivant.
+2. Nom : `ftci-apps` (app PARAPLUIE — voir §12 : elle servira MikCloud ET vos
+   autres applications ; ce nom n'apparaît JAMAIS aux destinataires, seul le
+   nom du WABA — « MikCloud Alertes » — est visible) ; e-mail de contact
+   professionnel ; cas d'usage : **« Connect with customers through
+   WhatsApp »** → Suivant.
 3. **Sélectionner un Business Portfolio existant ou en créer un nouveau**
    (si vous en créez un ici, Meta peut créer AUTOMATIQUEMENT un WABA — le
    vérifier au §3 avant d'en créer un second).
@@ -78,12 +81,16 @@ flux de création d'app du §2 propose d'en créer un EN COURS DE ROUTE.
 
 ## 3. Créer le WABA de production et y rattacher le numéro
 
+> Rappel architecture (§12) : le WABA est PAR PRODUIT. Celui créé ici est
+> celui de MikCloud ; un futur produit aura le sien, dans le MÊME portfolio
+> et la MÊME app — sans nouvelle démarche d'entreprise.
+
 1. Depuis l'app (produit WhatsApp → API Setup) ou depuis Business Manager →
    Comptes → Comptes WhatsApp : **créer un compte WhatsApp Business** (et non
    réutiliser le WABA de test).
 2. Nom de profil : **MikCloud Alertes** — c'est le nom que verront les
    destinataires (les gérants clients qui activent le canal).
-3. Rattacher le WABA à l'application `mikcloud-alertes` (Business Manager →
+3. Rattacher le WABA à l'application `ftci-apps` (Business Manager →
    Paramètres → Applications → « Ajouter » → lier au WABA).
 
 ## 4. Ajouter le numéro d'envoi
@@ -221,9 +228,13 @@ Démarche, pour chaque template :
 1. Render (service `mikcloud`, `srv-da974o142hec73euul60`) → Environment →
    ajouter les variables (même discipline que
    `TELEGRAM_PLATFORM_BOT_TOKEN` au N°150) :
-   - `WHATSAPP_PLATFORM_TOKEN` = jeton permanent du §6
-   - `WHATSAPP_PLATFORM_PHONE_ID` = Phone Number ID du §7
-   - `WHATSAPP_PLATFORM_WABA_ID` = WABA ID du §7
+   - `WHATSAPP_PLATFORM_TOKEN` = jeton permanent du §6 — le JETON est partagé
+     entre produits (§12) ; c'est l'identifiant de chaque produit qui change
+   - `WHATSAPP_PLATFORM_PHONE_ID` = Phone Number ID du §7 (celui du WABA
+     MikCloud)
+   - `WHATSAPP_PLATFORM_WABA_ID` = WABA ID du §7 (celui de MikCloud)
+   Un futur produit aura ses propres PHONE_ID/WABA_ID (variables de SON
+   backend), avec le MÊME jeton.
 2. Save → redéploiement automatique.
 3. Prévenir l'opérateur de développement : l'implémentation N°148-c du
    backend (relais WhatsApp — les clients activent le canal en ne donnant que
@@ -327,3 +338,62 @@ hors périmètre actuel).**
 | Envoi 131047 / « Re-engagement message » | template inexistant pour ce kind | soumettre le template manquant du §8 |
 | `(#100) … requires Direct Send` | compte non éligible Direct Send (§8.0) | utiliser un template approuvé (voie classique §8.1) |
 | Avertissement « utility used as marketing » | contenu sorti du cadre transactionnel | resserrer le libellé des alertes ; revue possible auprès de wadirectsendapisupport@meta.com |
+
+## 12. Une app Meta pour TOUS vos produits (architecture parapluie)
+
+> Décision opérateur (N°161) : l'app créée au §2 ne sert pas qu'à MikCloud —
+> elle porte les notifications WhatsApp de toutes vos applications
+> (FTCI). L'architecture : UN portfolio + UNE app + UN jeton, et UN WABA
+> (avec son numéro et ses templates) PAR PRODUIT.
+
+### Ce qui est PARTAGÉ (une seule fois pour tout)
+
+| Élément | Où | Effort |
+|---|---|---|
+| Business Portfolio « Freelance Technologies CI » | §1 | créé + vérifié UNE fois (§5) |
+| Application Meta `ftci-apps` | §2 | créée UNE fois |
+| Jeton System User permanent | §6 | UN SEUL jeton — il opère tous les WABAs qu'on lui assigne |
+| Vérification entreprise + carte bancaire | §5 | UNE fois — exigence du PORTFOLIO, pas du produit |
+
+### Ce qui est PAR PRODUIT (isolation native)
+
+| Élément | Isolation |
+|---|---|
+| WABA (compte WhatsApp Business) | ses propres templates, son propre paiement/pays de facturation |
+| Numéro d'envoi dédié | une SIM par produit qui envoie |
+| Nom affiché aux destinataires | « MikCloud Alertes » côté MikCloud — chaque produit porte SA marque |
+| Note de qualité (quality rating) | PAR NUMÉRO : un produit dégradé (spam, blocages) n'entraîne PAS les autres |
+| Éligibilité Direct Send (§8.0) | PAR WABA |
+| Templates | PAR WABA — les 4-5 du §8 vivent sur le WABA MikCloud uniquement |
+
+### Ajouter un futur produit (ex. « appX ») — la recette
+
+1. Business Settings → Comptes → Comptes WhatsApp → **créer un WABA**
+   (nom affiché = la marque du produit, ex. « appX Notifications »).
+2. WhatsApp Manager (sur ce WABA) → Numéros de téléphone → **ajouter le
+   numéro dédié** du produit (nouvelle SIM, vérification SMS/appel §4).
+3. Business Settings → Utilisateurs système → votre system user →
+   **Attribuer des éléments** → cocher le NOUVEAU WABA (le jeton du §6
+   l'opère immédiatement — rien à regénérer).
+4. Soumettre les templates du nouveau produit sur CE WABA (discipline §8.1).
+5. Côté backend du produit : le MÊME jeton + SES Phone Number ID / WABA ID
+   (variables d'environnement propres, cf. §9).
+
+Coût d'ajout : UNE SIM + les messages à l'usage (mêmes taux §10). Zéro
+nouvelle démarche d'entreprise, zéro nouvelle app, zéro nouveau jeton.
+
+### Pourquoi PAS une app par produit ?
+
+- Aucun bénéfice : le nom de l'app n'est JAMAIS visible des destinataires
+  (seul le nom du WABA l'est) ; la qualité est notée par numéro, pas par app.
+- Que des coûts : multiplié les jetons à garder, les écrans de dashboard, la
+  charge mentale — et Meta limite le nombre d'apps par compte développeur.
+
+### Limite du modèle (pour mémoire)
+
+Ce modèle couvre VOS produits qui envoient depuis VOS numéros. Le jour où
+vous voudriez que vos CLIENTS apportent LEUR propre numéro WhatsApp dans
+votre plateforme (onboarding automatisé), c'est un AUTRE programme Meta —
+« Tech Provider » / Embedded Signup (validation d'app, revue, contrat
+partenaire) : hors périmètre de ce runbook, à ouvrir seulement si ce besoin
+concret apparaît.

@@ -5,6 +5,47 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-19 — N°158 — Les tarifs WhatsApp Business de la Côte d'Ivoire passent d'« indicatifs » à VÉRIFIÉS dans le runbook : utility 0,0040 $/message (Rest of Africa), budget MikCloud chiffré
+
+### Contexte
+Question de l'opérateur AVANT de démarrer les démarches Meta du N°148-c :
+« quels sont les tarifs WhatsApp Business pour la Côte d'Ivoire ? » — le §10
+du runbook N°156 restait prudent (« quelques centimes d'USD par message selon
+le marché ») sans chiffres : impossible de budgéter ou de rassurer avant
+d'engager la carte bancaire. Les taux ont donc été relevés sur la grille
+officielle INTERACTIVE (business.whatsapp.com/products/platform-pricing,
+sélecteur marché « Rest of Africa » — région tarifaire de la CI +225 —
+devise USD, les 4 catégories une à une + paliers de volume), en navigateur
+headless.
+
+### Chiffres relevés (grille effective juil. 2026, USD, par message livré)
+- **Utility : 0,0040 $** (~2,5 FCFA) — la seule catégorie que MikCloud
+  utilisera (toutes les alertes).
+- Authentication : 0,0040 $ (non utilisé).
+- Marketing : 0,0225 $ (interdit par la discipline MikCloud).
+- Service : **gratuit** (réponses dans la fenêtre 24 h).
+- Paliers volume utility/auth : 0,0038 $ dès 100 k msg/mois (-5 %) jusqu'à
+  0,0030 $ au-delà de 80 M (-25 %) — sans objet pour les volumes MikCloud.
+- **Budget MikCloud chiffré** : ~4-6 alertes/mois/client × 0,0040 $ ≈
+  **0,02 $/mois par client (~12 FCFA)** ; 50 clients actifs ≈ **1 $/mois** ;
+  zéro abonnement, zéro minimum — la carte bancaire n'engage que ce qui part.
+
+### Runbook (docs/RUNBOOK-WHATSAPP-PLATEFORME.md §10)
+Réécrit « Coûts et limites — taux vérifiés pour la Côte d'Ivoire » :
+tableau par catégorie avec conversion FCFA indicative, paliers de volume,
+règles de facturation consolidées (livré ≠ envoyé, gratuité CSW ouverte,
+FEP 72 h, non-livrés non facturés, calendrier trimestriel + note 01/10/2026
+sans impact Rest of Africa) et budget MikCloud en toutes lettres.
+
+### Fidélité
+Zéro code, zéro route, zéro schéma — documentation opérateur uniquement.
+
+### Vérifié
+Chaque taux lu sur la page officielle par sélection explicite (marché
+Rest of Africa + devise USD + chaque catégorie cliquée une à une) ; les
+règles de facturation croisées avec la doc pricing Meta (.md officiel,
+effective juil. 2025/2026) ; conversion FCFA marquée « indicative ».
+
 ## 2026-09-19 — N°157 — La synchro Neon sort de l'impasse : le hachage quitte la fenêtre SQL (incident « upsert commands : context deadline exceeded », 105 échecs consécutifs) et l'historique des commandes devient borné
 
 ### Contexte

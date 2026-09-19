@@ -232,24 +232,43 @@ Démarche, pour chaque template :
    Elle fera apparaître la carte « WhatsApp plateforme » dans la console
    plateforme et une carte simplifiée dans les consoles clients.
 
-## 10. Coûts et limites (indicatif — la grille Meta fait foi)
+## 10. Coûts et limites — taux vérifiés pour la Côte d'Ivoire (région « Rest of Africa », USD, grille effective juil. 2026)
 
-- Depuis juillet 2025, la facturation est **par template envoyé** (uniquement
-  les messages `type:"template"` LIVRÉS ; les non-template dans la fenêtre de
-  service restent gratuits) : les utility se facturent typiquement quelques
-  centimes d'USD par message selon le marché — la Côte d'Ivoire (+225) relève
-  de la région tarifaire « **Rest of Africa** » (grille interactive :
-  business.whatsapp.com/products/platform-pricing#rates).
+Taux par message **livré** (lus sur la grille officielle interactive
+business.whatsapp.com/products/platform-pricing, marché « Rest of Africa » —
+la Côte d'Ivoire +225 en fait partie) :
+
+| Catégorie | Taux CIF (Rest of Africa) | ≈ FCFA* |
+|---|---|---|
+| **Utility** (toutes les alertes MikCloud) | **0,0040 $/message** | ~2,5 |
+| Authentication (non utilisé par MikCloud) | 0,0040 $/message | ~2,5 |
+| Marketing (interdit par la discipline MikCloud) | 0,0225 $/message | ~13,5 |
+| Service (réponses dans la fenêtre 24 h) | **gratuit** | 0 |
+
+\* conversion indicative 1 USD ≈ 600 XOF.
+
+Paliers de volume utility/authentication (remises automatiques) :
+0-100 k msg/mois : 0,0040 $ · 100 k-1 M : 0,0038 $ (-5 %) · 1-4,5 M : 0,0036 $
+(-10 %) · 4,5-40 M : 0,0034 $ (-15 %) · 40-80 M : 0,0032 $ (-20 %) · >80 M :
+0,0030 $ (-25 %) — sans objet pour les volumes MikCloud, cités pour mémoire.
+
+Règles de facturation (détail doc pricing Meta, effective juil. 2025) :
+- On ne paie que le message **livré** (pas « envoyé ») ; les non-livrés
+  (numéro invalide, hors opt-in) ne sont pas facturés.
 - **Utility GRATUITS dans une fenêtre de service ouverte** : si le gérant a
   répondu au canal depuis moins de 24 h, les templates utility envoyés dans
   cette fenêtre ne sont PAS facturés (statut webhook
   `type:"free_customer_service"`).
-- Mise à jour tarifaire connue au 1er octobre 2026 : création de marchés
-  standalone (Bangladesh, Irak, Maroc, etc.) — **aucun impact pour « Rest of
-  Africa »** ; les changements n'interviennent plus qu'aux 1er janv./avr./juil./oct.
-- Ordre de grandeur MikCloud : ~4-6 alertes/mois par client actif → quelques
-  centimes par client et par mois — à intégrer au prix de l'abonnement.
-- Les messages rejetés (numéro invalide, hors opt-in) ne sont pas facturés.
+- Fenêtre « Free Entry Point » 72 h (ads Click-to-WhatsApp) : hors sujet
+  MikCloud, citée pour mémoire.
+- Mise à jour tarifaire connue au 1er octobre 2026 : marchés standalone
+  (Bangladesh, Irak, Maroc, etc.) — **aucun impact pour « Rest of
+  Africa »** ; les changements n'interviennent plus qu'aux 1er
+  janv./avr./juil./oct.
+- **Budget MikCloud** : ~4-6 alertes/mois par client actif, toutes utility →
+  **~0,02 $/mois par client (~12 FCFA)**, soit ~0,25 $/an. Ex. 50 clients
+  actifs : ~1 $/mois. La carte bancaire (§5.5) reste le seul engagement
+  réel — pas d'abonnement, pas de minimum : on ne paie que ce qui part.
 
 ## 11. Problèmes fréquents
 

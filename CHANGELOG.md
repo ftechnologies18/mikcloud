@@ -5,6 +5,57 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-19 — N°159 — WhatsApp vs SMS Orange CI : le comparatif qui valide le choix du canal — utility ~2,4 FCFA contre 7,25 FCFA/SMS, et 6 à 8x moins cher en coût réel MikCloud
+
+### Contexte
+Deuxième question de budgétisation avant les démarches Meta (N°148-c) :
+« compare ce tarif à l'API SMS d'Orange Côte d'Ivoire "Bundle 1 - 100 SMS
+for 725 FCFA (for 30 days)" ». La grille Orange complète a été relevée sur
+la page officielle developer.orange.com → APIs → SMS Cote d'Ivoire 2.0 →
+onglet Pricing (navigateur headless), puis confrontée aux taux WhatsApp
+vérifiés en N°158.
+
+### Chiffres relevés (grille officielle Orange CI)
+- Bundle 0 (1 seul achat) : 20 SMS / 145 F / 7 j · Bundle 1 : 100 SMS /
+  725 F / 30 j · Bundle 2 : 1 000 / 7 260 F / 45 j · Bundle 3 : 10 000 /
+  72 600 F / 60 j → **prix unitaire constant ~7,25-7,26 FCFA/SMS** (le texte
+  marketing « as low as 10 FCFA » est un arrondi périmé).
+- Paiement Airtime/Orange Money (USSD #144*621#), plafond 100 000 F/jour/
+  SIM, 5 transactions/s, **SMS non consommés PERDUS à expiration**, sender
+  name personnalisable gratuit sur approbation, livraison CI tous
+  opérateurs.
+
+### Verdict comparatif (5 alertes/mois/client, utility/texte court)
+- Prix unitaire : WhatsApp ~2,4 F vs SMS 7,25 F → **3x**.
+- Coût réel 10 clients : ~120 F/mois (WhatsApp à l'usage) vs 725 F/mois
+  (Bundle 1, moitié perdue) → **6x**.
+- Coût réel 50 clients : ~600 F/mois vs ~4 900 F/mois (Bundle 2 cadencé à
+  45 j) → **8x**.
+- L'écart dépasse le rapport unitaire parce que : bundles expirants vs
+  facturation au livré sans minimum, utility gratuits en fenêtre service
+  ouverte, SMS long = plusieurs unités facturées vs 1 024 car. en un
+  message WhatsApp.
+- Ce que le SMS garde : universalité (sans internet), inscription légère
+  sans vérification Meta ni carte bancaire — mais la cible MikCloud (gérants
+  hotspots/WISP) est connectée par définition.
+
+### Runbook (docs/RUNBOOK-WHATSAPP-PLATEFORME.md §10.1)
+Nouvelle sous-section « Comparatif avec l'API SMS d'Orange Côte d'Ivoire » :
+grille des 4 bundles, contraintes, tableau du verdict par profil (10/50/100
+clients), explication de l'écart, atouts résiduels du SMS, conclusion —
+**le choix WhatsApp (N°148-c) est confirmé par les chiffres** ; SMS Orange
+consigné comme piste de canal de repli (développement séparé, hors
+périmètre).
+
+### Fidélité
+Zéro code, zéro route, zéro schéma — documentation opérateur uniquement.
+
+### Vérifié
+Grille lue sur la page officielle Orange Developer (onglet Pricing cliqué,
+tableau 4 bundles + notes de bas de page) ; confrontée aux taux N°158
+(relevés la même session sur la grille Meta interactive) ; conversions FCFA
+indicatives.
+
 ## 2026-09-19 — N°158 — Les tarifs WhatsApp Business de la Côte d'Ivoire passent d'« indicatifs » à VÉRIFIÉS dans le runbook : utility 0,0040 $/message (Rest of Africa), budget MikCloud chiffré
 
 ### Contexte

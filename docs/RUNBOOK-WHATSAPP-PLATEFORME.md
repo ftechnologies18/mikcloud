@@ -270,6 +270,52 @@ Règles de facturation (détail doc pricing Meta, effective juil. 2025) :
   actifs : ~1 $/mois. La carte bancaire (§5.5) reste le seul engagement
   réel — pas d'abonnement, pas de minimum : on ne paie que ce qui part.
 
+### 10.1 Comparatif avec l'API SMS d'Orange Côte d'Ivoire (relevé sept. 2026)
+
+Grille officielle developer.orange.com → APIs → SMS Cote d'Ivoire 2.0 →
+Pricing (paiement Airtime ou Orange Money, USSD #144*621#) :
+
+| Bundle Orange | SMS | Prix (FCFA) | Validité | Prix/SMS |
+|---|---|---|---|---|
+| Bundle 0* (1 seul achat) | 20 | 145 | 7 j | 7,25 F |
+| **Bundle 1** | 100 | **725** | **30 j** | **7,25 F** |
+| Bundle 2 | 1 000 | 7 260 | 45 j | 7,26 F |
+| Bundle 3 | 10 000 | 72 600 | 60 j | 7,26 F |
+
+Contraintes Orange : achat plafonné à 100 000 FCFA/jour/SIM ; 5
+transactions/s ; SMS non consommés PERDUS à expiration (sauf rachat qui
+fusionne et relance la validité) ; sender name personnalisable gratuit
+(approbation équipe locale) ; livraison en CI tous opérateurs.
+
+**Verdict par le calcul (alertes MikCloud ~5/mois/client, toutes
+utility/texte court)** :
+
+| Profil | Orange (bundles) | WhatsApp (à l'usage) | Écart |
+|---|---|---|---|
+| Prix unitaire | 7,25 F/SMS | ~2,4 F/msg | **3x** |
+| 10 clients (~50 msg/mois) | Bundle 1 : 725 F/mois (50 SMS perdus) | ~120 F/mois | **6x** |
+| 50 clients (~250 msg/mois) | Bundle 2 : ~7 260 F/45 j ≈ 4 900 F/mois | ~600 F/mois | **8x** |
+| 100 clients (~500 msg/mois) | Bundle 2 : ~7 260 F/30 j | ~1 200 F/mois | **6x** |
+
+Pourquoi l'écart dépasse le simple rapport 3x : (1) les bundles EXPIRENT —
+à petit volume on paie des SMS jamais envoyés (expiration 30-60 j,
+rachat obligé pour garder le solde) ; (2) WhatsApp ne facture que le livré
+à l'unité, sans minimum ; (3) les utility WhatsApp sont gratuits en fenêtre
+de service ouverte (gérant ayant répondu < 24 h) ; (4) un SMS long
+(> 160 car.) = plusieurs SMS facturés, un message WhatsApp = 1 024 car.
+
+Ce que le SMS garde pour lui : universalité (téléphone basique sans
+internet), inscription légère (pas de vérification Business Meta, pas de
+carte bancaire — paiement Orange Money local), démarrage en 10 minutes.
+Mais la cible MikCloud = gérants de hotspots/WISP, connectés par
+définition et déjà sur WhatsApp — l'argument d'universalité ne pèse pas.
+
+**Conclusion tenue dans le runbook : le choix WhatsApp (N°148-c) est
+confirmé par les chiffres — 6 à 8x moins cher sur les profils MikCloud
+réalistes ; l'API SMS Orange reste une piste de canal de repli si un jour
+des clients sans WhatsApp apparaissent (développement backend séparé,
+hors périmètre actuel).**
+
 ## 11. Problèmes fréquents
 
 | Symptôme | Cause probable | Remède |

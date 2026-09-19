@@ -6,6 +6,7 @@ import (
 	"log"
 	"mikcloud/hotspot-api/internal/agent"
 	"mikcloud/hotspot-api/internal/model"
+	"sort"
 	"time"
 )
 
@@ -196,67 +197,117 @@ func profileRef(p model.Profile) map[string]any {
 	}
 }
 
-// purgeOldCommands — supprime les commandes terminées de plus de 7 jours (sous verrou).
+// N°157 — bornes de rétention de l'historique des commandes terminées.
 //
-// N°73 — ferme d'abord les zombies « sent » orphelins de plus de 7 jours :
-// un rapport perdu (blip réseau entre l'exécution routeur et le POST
-// /agent/result, fenêtre de suspension plateforme, reboot du routeur en
-// plein check-in…) laissait la commande « sent » À VIE — les écritures ne
-// sont jamais re-exécutées (cf. requeueStaleReadsLocked : seules les
-// idempotentes repartent en file, double-exécution interdite) et RIEN ne
-// fermait ces lignes : le compteur « zombies » de la carte Maintenance
-// affichait éternellement une commande à l'issue réelle inconnue (vécu au
-// réveil post-suspension du 10/09 : un user_remove dont SEUL le rapport
-// avait été perdu). Après 7 jours sans retour, la commande est close
-// « error » avec un message explicite et DoneAt = maintenant : visible
-// 7 jours dans l'historique (l'opérateur constate la fermeture), puis
-// balayée par le nettoyage ci-dessous comme tout done/error ancien —
-// double phase. Le statut « error » (et non « done ») est le seul
-// honnête : l'issue réelle côté routeur est inconnue.
+// Incident du 19/09 (synchro Neon en échec, 105 consécutifs) : 7 jours
+// d'historique × ~21 000 commandes/jour (ping-pong read_state de fraîcheur
+// + re-files queue_ensure/shield des parcs agents) = 70 321 lignes, chacune
+// re-hachée (json.Marshal + FNV) à CHAQUE diff complet — sur le 0,1 vCPU
+// Render, le budget syncTimeout partait avant le premier upsert. Deux
+// garde-fous bornent désormais la table QUELLE QUE SOIT la croissance du
+// volume agent :
+//   - commandDoneRetention : fenêtre de visibilité opérateur (48 h — un
+//     incident se regarde le jour même) ;
+//   - commandDoneCap : plafond global de lignes terminées, les plus
+//     anciennes (DoneAt, puis CreatedAt au tie-break) partant en premier.
 //
-// Les « queued » ne sont PAS touchées : un routeur muet qui revient les
-// exécute et les rapporte normalement — seul le « sent » sans rapport est
-// une fuite. Les sent récents gardent leur fenêtre de reprise
-// idempotente (10 min) puis d'observation.
+// La fermeture des zombies « sent » (N°73) garde SA fenêtre de 7 jours :
+// les zombies sont rarissimes et l'opérateur doit voir la fermeture.
+const (
+	// commandDoneRetention — done/error plus anciens que cette fenêtre sont
+	// balayés (48 h au lieu des 7 j du N°73 : la table ne doit plus dériver
+	// avec le volume).
+	commandDoneRetention = 48 * time.Hour
+	// commandDoneCap — plafond GLOBAL de commandes terminées conservées.
+	commandDoneCap = 6000
+	// commandZombieWindow — « sent » sans rapport depuis cette fenêtre →
+	// fermé « error » (N°73 : double phase, visible jusqu'au balayage).
+	commandZombieWindow = 7 * 24 * time.Hour
+)
 
-// purgeOldCommands — supprime les commandes terminées de plus de 7 jours (sous verrou).
+// purgeOldCommands — rétention de l'historique des commandes (sous verrou).
 //
-// N°73 — ferme d'abord les zombies « sent » orphelins de plus de 7 jours :
-// un rapport perdu (blip réseau entre l'exécution routeur et le POST
-// /agent/result, fenêtre de suspension plateforme, reboot du routeur en
-// plein check-in…) laissait la commande « sent » À VIE — les écritures ne
-// sont jamais re-exécutées (cf. requeueStaleReadsLocked : seules les
-// idempotentes repartent en file, double-exécution interdite) et RIEN ne
-// fermait ces lignes : le compteur « zombies » de la carte Maintenance
-// affichait éternellement une commande à l'issue réelle inconnue (vécu au
-// réveil post-suspension du 10/09 : un user_remove dont SEUL le rapport
-// avait été perdu). Après 7 jours sans retour, la commande est close
-// « error » avec un message explicite et DoneAt = maintenant : visible
-// 7 jours dans l'historique (l'opérateur constate la fermeture), puis
-// balayée par le nettoyage ci-dessous comme tout done/error ancien —
-// double phase. Le statut « error » (et non « done ») est le seul
-// honnête : l'issue réelle côté routeur est inconnue.
+// N°73 — ferme d'abord les zombies « sent » orphelins : un rapport perdu
+// (blip réseau entre l'exécution routeur et le POST /agent/result, fenêtre
+// de suspension plateforme, reboot du routeur en plein check-in…) laissait
+// la commande « sent » À VIE — les écritures ne sont jamais re-exécutées
+// (cf. requeueStaleReadsLocked : seules les idempotentes repartent en
+// file, double-exécution interdite) et RIEN ne fermait ces lignes : le
+// compteur « zombies » de la carte Maintenance affichait éternellement
+// une commande à l'issue réelle inconnue. Après la fenêtre sans retour,
+// la commande est close « error » avec un message explicite et DoneAt =
+// maintenant — visible jusqu'au balayage, double phase. Le statut
+// « error » (et non « done ») est le seul honnête : l'issue réelle côté
+// routeur est inconnue.
 //
 // Les « queued » ne sont PAS touchées : un routeur muet qui revient les
 // exécute et les rapporte normalement — seul le « sent » sans rapport est
 // une fuite. Les sent récents gardent leur fenêtre de reprise
 // idempotente (10 min) puis d'observation.
+//
+// N°157 — puis balaye les terminés au-delà de commandDoneRetention ET
+// plafonne le total à commandDoneCap (les plus anciennes d'abord) : la
+// taille de la table — donc le coût du re-hash à chaque diff complet —
+// est bornée structurellement.
 func purgeOldCommands(db *model.DB) {
-	lim := time.Now().UTC().Add(-7 * 24 * time.Hour).Format(time.RFC3339)
+	now := time.Now().UTC()
+	zLim := now.Add(-commandZombieWindow).Format(time.RFC3339)
 	for i := range db.Commands {
 		c := &db.Commands[i]
-		if c.Status == "sent" && c.SentAt != "" && c.SentAt < lim {
+		if c.Status == "sent" && c.SentAt != "" && c.SentAt < zLim {
 			c.Status = "error"
 			c.Result = map[string]any{"message": "rapport perdu (zombie « sent » fermé après 7 j sans retour)"}
 			c.DoneAt = model.NowISO()
 		}
 	}
+
+	// Fenêtre de rétention : les terminés trop anciens partent.
+	rLim := now.Add(-commandDoneRetention).Format(time.RFC3339)
 	kept := db.Commands[:0]
 	for _, c := range db.Commands {
-		if (c.Status == "done" || c.Status == "error") && c.DoneAt != "" && c.DoneAt < lim {
+		if (c.Status == "done" || c.Status == "error") && c.DoneAt != "" && c.DoneAt < rLim {
 			continue
 		}
 		kept = append(kept, c)
+	}
+	db.Commands = kept
+
+	// Plafond : au-delà de commandDoneCap terminées, les plus anciennes
+	// partent les premières (DoneAt, puis CreatedAt au tie-break). Comptage
+	// d'abord : en régime établi la passe de tri ne court que si le plafond
+	// est franchi (chaque commande terminée ré-entre sous le plafond au
+	// passage suivant).
+	nDone := 0
+	for _, c := range db.Commands {
+		if (c.Status == "done" || c.Status == "error") && c.DoneAt != "" {
+			nDone++
+		}
+	}
+	if nDone <= commandDoneCap {
+		return
+	}
+	idx := make([]int, 0, nDone)
+	for i, c := range db.Commands {
+		if (c.Status == "done" || c.Status == "error") && c.DoneAt != "" {
+			idx = append(idx, i)
+		}
+	}
+	sort.Slice(idx, func(a, b int) bool {
+		ca, cb := db.Commands[idx[a]], db.Commands[idx[b]]
+		if ca.DoneAt != cb.DoneAt {
+			return ca.DoneAt < cb.DoneAt
+		}
+		return ca.CreatedAt < cb.CreatedAt
+	})
+	drop := make(map[int]bool, nDone-commandDoneCap)
+	for _, i := range idx[:nDone-commandDoneCap] {
+		drop[i] = true
+	}
+	kept = db.Commands[:0]
+	for i, c := range db.Commands {
+		if !drop[i] {
+			kept = append(kept, c)
+		}
 	}
 	db.Commands = kept
 }

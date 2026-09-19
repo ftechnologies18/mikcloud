@@ -5,6 +5,152 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-19 — N°157 — La synchro Neon sort de l'impasse : le hachage quitte la fenêtre SQL (incident « upsert commands : context deadline exceeded », 105 échecs consécutifs) et l'historique des commandes devient borné
+
+### Contexte
+Incident production, 19/09 vers 00:40 UTC : la carte « Santé de la persistance »
+affiche « Synchro en échec (105 consécutifs) — Neon ne reçoit plus les deltas ».
+Diagnostic réel (logs Render API + interrogation Neon + revue du moteur) : la
+table `commands` (file des commandes agent) avait accumulé 70 321 lignes /
+49 Mo — 7 jours de rétention (N°73) × ~21 000 commandes/jour, volume porté par
+le ping-pong des parcs agents (read_state de fraîcheur post-écriture non
+throttlé + re-files queue_ensure ~25 s / shield ~40 s sur ProMax WIFI et Benie
+wifi). Or CHAQUE diff complet re-hache TOUTES les lignes de CHAQUE table
+(json.Marshal + FNV par ligne, N°78-bis) — et ce hachage s'exécutait DANS la
+fenêtre syncTimeout de 20 s de la transaction (N°74) : sur le 0,1 vCPU Render,
+~70 000 commandes + 4 500 utilisateurs + 5 000 journaux ≈ 15-25 s de CPU avant
+même le premier upsert. À 00:40 le budget a été franchi ; l'échec forçait
+dirtyAll (diff complet au retry, N°133) donc CHAQUE tentative repartait du
+hachage intégral : échec garanti à vie, aucune auto-guérison (tentatives toutes
+les ~35 s = timeout + backoff + CloneDeep sous verrou). Neon était sain tout du
+long (connexion 1,3 s, zéro contention, index propres, aucune écriture depuis
+00:41:45) — c'était le budget, pas la base.
+
+### Produit
+1. **Le hachage sort de la fenêtre SQL** — syncPlan est scindé en deux phases :
+   PHASE 1 (CPU pur, hors contexte borné) : diff de toutes les tables —
+   empreintes fraîches posées dans « pending », plans d'application typés
+   collectés ; PHASE 2 (SQL borné) : BeginTx(syncTimeout) → upserts et
+   suppressions des plans → settings → Commit. syncTimeout ne borne désormais
+   QUE le SQL : un diff coûteux retarde la sauvegarde, il ne peut plus la faire
+   échouer — l'erreur de référence « upsert commands : context deadline
+   exceeded » devient structurellement impossible.
+2. **Historique des commandes borné** — done/error balayés à 48 h (au lieu de
+   7 j) ET plafond global de 6 000 lignes terminées (drop des plus anciennes
+   par DoneAt puis CreatedAt au tie-break) : la taille de la table — donc le
+   coût du re-hash à chaque diff complet — est bornée quel que soit le volume
+   émis. Les zombies « sent » gardent leur fenêtre de fermeture de 7 j (N°73 :
+   rarissimes, l'opérateur doit voir la fermeture) ; les queued/sent ne sont
+   jamais touchés.
+
+### Technique
+- syncStep prend une forme diff (retourne un tableApplier) ; syncTable devient
+  diffTable (phase CPU) + tablePlan[T].apply (phase SQL, générique).
+  L'atomicité N°130 (pending → commit → swap des empreintes), la volumétrie
+  N°71 (delta compté si écrit) et le ciblage SyncTables (N°133 : tables non
+  marquées → empreintes reportées) sont strictement conservés.
+- purgeOldCommands : constantes commandDoneRetention (48 h) / commandDoneCap
+  (6 000) / commandZombieWindow (7 j) ; comptage AVANT tri — en régime établi
+  la passe de tri ne court que si le plafond est franchi.
+- Nettoyage ONE-SHOT de production (avant déploiement) : DELETE des commandes
+  terminées de plus de 48 h + alignement au plafond + VACUUM — le boot
+  post-déploiement charge ~6 000 lignes au lieu de 70 321. Le redémarrage
+  déploie perd l'état mémoire non synchronisé depuis ~00:41 (journal
+  activité/connexions et comptages de la fenêtre — trafic nocturne minimal) ;
+  cette fenêtre cessait de toute façon de croître uniquement au premier
+  succès, que l'ancien code ne pouvait plus atteindre.
+- Suivi documenté (volontairement NON traité ici) : le MOTEUR de volume — le
+  read_state de fraîcheur post-écriture (queueReadStateFreshLocked) est
+  assumé immédiat (N°74) et les watchers queue_ensure/shield re-file tant que
+  la signature vérifiée n'est pas posée : ~21 000 commandes/jour pour
+  3 routeurs. Avec le plafond N°157 ce volume ne menace plus la synchro ; une
+  cadence dédiée (ex. fraîcheur post-écriture plancher 30 s) relèvera d'un
+  numéro dédié.
+
+### Fidélité
+Zéro route, zéro API, zéro schéma, zéro contrat : GET /api/admin/sync-status
+et la carte « Santé de la persistance » sont inchangés (c'est elle qui a
+signalé l'incident) ; les empreintes ne basculent qu'après Commit ; les
+garde-fous source (syncPlan doit appeler syncSettings après la boucle des
+steps, concordance des 34 tables) passent sans modification.
+
+### Vérifié
+go build/vet/gofmt 0 ; go test ./... 12 paquets OK dont les 3 tests
+purgeOldCommands (zombies N°73 inchangés, balayage 48 h, plafond : cap+3 →
+cap avec les 3 plus anciennes droppées et une queued ancienne jamais touchée) ;
+go test -race store OK ; harnais réel contre Neon post-nettoyage : OpenPG →
+Load → Sync → succès, delta nul. Reprise de production observée
+post-déploiement : fin des « store: synchro PostgreSQL différée échouée »
+dans les logs Render et horodatages des tables chaudes qui reprennent.
+
+## 2026-09-19 — N°156 — Le runbook WhatsApp plateforme reflète le flux Meta de sept. 2026 : création d'app par cas d'usage, Coexistence à la vérification du numéro, option Direct Send (GA utility) et tarification précisée
+
+### Contexte
+Retour utilisateur au démarrage des démarches Meta du N°148-c (WhatsApp
+plateforme) : « il me semble que la création et la configuration de compte
+WhatsApp plateforme a changé » — l'interface ne correspondait plus au runbook
+N°154 (rédigé la veille sur la base du flux historique). Le runbook a donc été
+re-vérifié SOURCE EN MAIN sur la documentation officielle Meta (doc « Get
+Started » mise à jour 16 juin 2026, changelog des plateforms mis à jour
+22 sept. 2026, pages pricing et Direct Send au 31 juil. 2026), pages lues via
+navigateur headless + versions markdown officielles.
+
+### Constats — ce qui a réellement changé chez Meta
+1. **Création d'app par CAS D'USAGE** : l'écran « Autre → type Business » a
+   disparu — le chemin WhatsApp est « Connect with customers through
+   WhatsApp », et le Business Portfolio se choisit/crée PENDANT la création
+   (un WABA peut même être créé automatiquement si le portfolio est neuf).
+2. **Tableau de bord « Quickstart → Start using the API »** : nouvelle porte
+   d'entrée vers la page API Setup (jeton temporaire + identifiants).
+3. **Nouveau modèle de compte WhatsApp / Coexistence** (changelog 03/09 et
+   22/09/2026) : un numéro déjà actif sur l'app WhatsApp Business n'est plus
+   refusé — l'onboarding entre automatiquement dans le flux Coexistence qui
+   convertit le compte en « Messaging account » rétrocompatible (waba_id
+   conservé).
+4. **Direct Send GA pour l'utility** (31/07/2026) : envoi de messages utility
+   SANS template pré-créé (champ `category:"utility"`, Meta génère/matche les
+   templates en arrière-plan) — solution premium, éligibilité par bandeau
+   dans WhatsApp Manager.
+5. **Tarification précisée** : par message livré depuis juil. 2025 ; les
+   templates utility sont GRATUITS dans une fenêtre de service ouverte
+   (`free_customer_service`) ; Côte d'Ivoire = région « Rest of Africa » ;
+   mise à jour 01/10/2026 sans impact pour cette région ; gel aux 1er
+   janv./avr./juil./oct.
+6. La doc développeur a migré vers /documentation/business-messaging/whatsapp/
+   avec versions .md officielles (précieuses pour re-vérifier au fil du temps).
+
+### Runbook (docs/RUNBOOK-WHATSAPP-PLATEFORME.md)
+- §1 renommé « Business Portfolio (ex-Business Manager) » + note « création
+  en cours de route possible au §2 ».
+- §2 réécrit « Créer l'application Meta (par cas d'usage — flux 2026) » :
+  cas d'usage « Connect with customers through WhatsApp », sélection du
+  portfolio, « Start using the API » → API Setup, jeton temporaire 24 h.
+- §4 : chemin d'ajout de numéro depuis API Setup + NOUVEAU §4.4 Coexistence
+  (numéro déjà utilisé → conversion Messaging account au lieu du refus).
+- §8 : NOUVEAU §8.0 « Vérifier l'éligibilité Direct Send » AVANT la
+  soumission manuelle (bandeau WhatsApp Manager, test d'éligibilité avec le
+  message d'erreur exact `(#100) … requires Direct Send`, limites, discipline
+  anti-marketing, revue wadirectsendapisupport@meta.com) ; la soumission des
+  4-5 templates devient §8.1 « Voie classique » — conservée OBLIGATOIRE
+  comme plancher (Direct Send = éligibilité non garantie).
+- §10 : tarification précisée (facturation au message livré, gratuité CSW
+  ouverte, région CI « Rest of Africa » + grille interactive, calendrier
+  trimestriel, note 01/10/2026).
+- §11 : 2 nouvelles lignes de dépannage (compte non éligible Direct Send ;
+  avertissement « utility used as marketing »).
+
+### Fidélité
+Zéro code, zéro route, zéro schéma — documentation opérateur uniquement ; la
+voie classique à templates reste le plancher du runbook (aucune dépendance
+forte à Direct Send tant que l'éligibilité n'est pas constatée sur LE compte).
+
+### Vérifié
+Sources officielles Meta citées ligne à ligne (Get Started 16/06/2026,
+changelog 22/09/2026, Direct Send 31/07/2026, pricing 01/07/2026) — pages
+rendues en navigateur headless et versions .md archivées localement ; relecture
+croisée des 6 points de changement avec le runbook N°154 pour isoler les
+deltas exacts.
+
 ## 2026-09-18 — N°155 — La cloche devient une vraie boîte de réception : les non-lus restent marqués jusqu'à l'acquit explicite (« Tout marquer comme lu »), la cloche sonne, le badge rebondit
 
 ### Contexte
@@ -79,74 +225,6 @@ mobile 390 px (panneau 360 px borné), état vide « Vous êtes à jour »,
 0 erreur console/page — 23/24 asserts (le 24e est un faux échec du harnais :
 l'API renvoie 200 à la création de routeur, l'entrée est bien journalisée) ;
 revue visuelle VLM 5/5 CLEAN (jour, après-acquit, nuit, mobile, vide).
-
-## 2026-09-19 — N°156 — Le runbook WhatsApp plateforme reflète le flux Meta de sept. 2026 : création d'app par cas d'usage, Coexistence à la vérification du numéro, option Direct Send (GA utility) et tarification précisée
-
-### Contexte
-Retour utilisateur au démarrage des démarches Meta du N°148-c (WhatsApp
-plateforme) : « il me semble que la création et la configuration de compte
-WhatsApp plateforme a changé » — l'interface ne correspondait plus au runbook
-N°154 (rédigé la veille sur la base du flux historique). Le runbook a donc été
-re-vérifié SOURCE EN MAIN sur la documentation officielle Meta (doc « Get
-Started » mise à jour 16 juin 2026, changelog des plateforms mis à jour
-22 sept. 2026, pages pricing et Direct Send au 31 juil. 2026), pages lues via
-navigateur headless + versions markdown officielles.
-
-### Constats — ce qui a réellement changé chez Meta
-1. **Création d'app par CAS D'USAGE** : l'écran « Autre → type Business » a
-   disparu — le chemin WhatsApp est « Connect with customers through
-   WhatsApp », et le Business Portfolio se choisit/crée PENDANT la création
-   (un WABA peut même être créé automatiquement si le portfolio est neuf).
-2. **Tableau de bord « Quickstart → Start using the API »** : nouvelle porte
-   d'entrée vers la page API Setup (jeton temporaire + identifiants).
-3. **Nouveau modèle de compte WhatsApp / Coexistence** (changelog 03/09 et
-   22/09/2026) : un numéro déjà actif sur l'app WhatsApp Business n'est plus
-   refusé — l'onboarding entre automatiquement dans le flux Coexistence qui
-   convertit le compte en « Messaging account » rétrocompatible (waba_id
-   conservé).
-4. **Direct Send GA pour l'utility** (31/07/2026) : envoi de messages utility
-   SANS template pré-créé (champ `category:"utility"`, Meta génère/matche les
-   templates en arrière-plan) — solution premium, éligibilité par bandeau
-   dans WhatsApp Manager.
-5. **Tarification précisée** : par message livré depuis juil. 2025 ; les
-   templates utility sont GRATUITS dans une fenêtre de service ouverte
-   (`free_customer_service`) ; Côte d'Ivoire = région « Rest of Africa » ;
-   mise à jour 01/10/2026 sans impact pour cette région ; gel aux 1er
-   janv./avr./juil./oct.
-6. La doc développeur a migré vers /documentation/business-messaging/whatsapp/
-   avec versions .md officielles (précieuses pour re-vérifier au fil du temps).
-
-### Runbook (docs/RUNBOOK-WHATSAPP-PLATEFORME.md)
-- §1 renommé « Business Portfolio (ex-Business Manager) » + note « création
-  en cours de route possible au §2 ».
-- §2 réécrit « Créer l'application Meta (par cas d'usage — flux 2026) » :
-  cas d'usage « Connect with customers through WhatsApp », sélection du
-  portfolio, « Start using the API » → API Setup, jeton temporaire 24 h.
-- §4 : chemin d'ajout de numéro depuis API Setup + NOUVEAU §4.4 Coexistence
-  (numéro déjà utilisé → conversion Messaging account au lieu du refus).
-- §8 : NOUVEAU §8.0 « Vérifier l'éligibilité Direct Send » AVANT la
-  soumission manuelle (bandeau WhatsApp Manager, test d'éligibilité avec le
-  message d'erreur exact `(#100) … requires Direct Send`, limites, discipline
-  anti-marketing, revue wadirectsendapisupport@meta.com) ; la soumission des
-  4-5 templates devient §8.1 « Voie classique » — conservée OBLIGATOIRE
-  comme plancher (Direct Send = éligibilité non garantie).
-- §10 : tarification précisée (facturation au message livré, gratuité CSW
-  ouverte, région CI « Rest of Africa » + grille interactive, calendrier
-  trimestriel, note 01/10/2026).
-- §11 : 2 nouvelles lignes de dépannage (compte non éligible Direct Send ;
-  avertissement « utility used as marketing »).
-
-### Fidélité
-Zéro code, zéro route, zéro schéma — documentation opérateur uniquement ; la
-voie classique à templates reste le plancher du runbook (aucune dépendance
-forte à Direct Send tant que l'éligibilité n'est pas constatée sur LE compte).
-
-### Vérifié
-Sources officielles Meta citées ligne à ligne (Get Started 16/06/2026,
-changelog 22/09/2026, Direct Send 31/07/2026, pricing 01/07/2026) — pages
-rendues en navigateur headless et versions .md archivées localement ; relecture
-croisée des 6 points de changement avec le runbook N°154 pour isoler les
-deltas exacts.
 
 ## 2026-09-18 — N°154 — La console plateforme cesse d'être une console client : le propriétaire SaaS n'a ni tickets ni stock — et le runbook WhatsApp plateforme (N°148-c) arrive pour guider les démarches Meta
 

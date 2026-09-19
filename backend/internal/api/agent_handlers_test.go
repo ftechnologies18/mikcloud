@@ -1,11 +1,13 @@
 package api
 
-// Tests N°73 — purgeOldCommands : fermeture des zombies « sent » orphelins
-// (rapport perdu depuis plus de 7 jours) en « error » avec message, SANS
-// toucher les sent récents ni les queued ; double phase — fermé aujourd'hui,
-// balayé 7 jours plus tard comme tout done/error ancien.
+// Tests N°73/N°157 — purgeOldCommands : fermeture des zombies « sent »
+// orphelins (rapport perdu depuis plus de 7 jours) en « error » avec message,
+// SANS toucher les sent récents ni les queued ; balayage des terminés au-delà
+// de la fenêtre de rétention N°157 (48 h) ; plafond N°157 (commandDoneCap) :
+// au-delà, les plus anciennes partent en premier — queued/sent jamais.
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -44,7 +46,7 @@ func TestPurgeOldCommandsClosesAncientSentZombies(t *testing.T) {
 		t.Fatalf("zombie ancien : status %q attendu, %q obtenu", "error", z.Status)
 	}
 	if z.DoneAt == "" {
-		t.Fatal("zombie ancien : DoneAt attendu (double phase : visible 7 j), vide obtenu")
+		t.Fatal("zombie ancien : DoneAt attendu (fermé maintenant, visible jusqu'au balayage), vide obtenu")
 	}
 	if msg, _ := z.Result["message"].(string); msg == "" {
 		t.Fatal("zombie ancien : message de fermeture absent du résultat")
@@ -59,8 +61,9 @@ func TestPurgeOldCommandsClosesAncientSentZombies(t *testing.T) {
 }
 
 // TestPurgeOldCommandsSweepsClosedZombies — la seconde phase : un zombie
-// fermé au cycle précédent (error + DoneAt de plus de 7 jours) est balayé
-// par le nettoyage existant, comme tout done/error ancien.
+// fermé au cycle précédent (error + DoneAt de plus de la fenêtre de
+// rétention N°157) est balayé par le nettoyage existant, comme tout
+// done/error ancien.
 func TestPurgeOldCommandsSweepsClosedZombies(t *testing.T) {
 	db := &model.DB{}
 	ancient := time.Now().UTC().Add(-8 * 24 * time.Hour).Format(time.RFC3339)
@@ -82,7 +85,7 @@ func TestPurgeOldCommandsSweepsClosedZombies(t *testing.T) {
 			}
 		}
 		if found {
-			t.Fatalf("%s (terminé de plus de 7 j) aurait dû être balayé", id)
+			t.Fatalf("%s (terminé de plus de 48 h) aurait dû être balayé", id)
 		}
 	}
 	foundFresh := false
@@ -93,5 +96,57 @@ func TestPurgeOldCommandsSweepsClosedZombies(t *testing.T) {
 	}
 	if !foundFresh {
 		t.Fatal("error récent (DoneAt 20 min) ne doit PAS encore être balayé")
+	}
+}
+
+// TestPurgeOldCommandsCapDropsOldestFirst — N°157 : le plafond global
+// commandDoneCap borne le nombre de terminées (done/error) quel que soit le
+// volume émis — les plus anciennes partent en premier, les queued/sent et
+// la plus récente restent.
+func TestPurgeOldCommandsCapDropsOldestFirst(t *testing.T) {
+	db := &model.DB{}
+	now := time.Now().UTC()
+	// commandDoneCap + 3 terminées, échelonnées de 20 s : toutes dans la
+	// fenêtre de 48 h — c'est bien le plafond (pas la rétention) qui drop.
+	total := commandDoneCap + 3
+	for i := 0; i < total; i++ {
+		at := now.Add(-time.Duration(total-i) * 20 * time.Second).Format(time.RFC3339)
+		db.Commands = append(db.Commands, model.Command{
+			ID: fmt.Sprintf("c-%05d", i), RouterID: "r1", Kind: "read_state",
+			Status: "done", CreatedAt: at, DoneAt: at,
+		})
+	}
+	old := now.Add(-72 * time.Hour).Format(time.RFC3339)
+	db.Commands = append(db.Commands, model.Command{
+		ID: "c-queued-ancienne", RouterID: "r1", Kind: "user_add", Status: "queued", CreatedAt: old,
+	})
+
+	purgeOldCommands(db)
+
+	nDone, sawQueued, sawNewest, sawOldest := 0, false, false, false
+	for _, c := range db.Commands {
+		switch c.ID {
+		case "c-queued-ancienne":
+			sawQueued = c.Status == "queued"
+		case "c-00000", "c-00001", "c-00002":
+			sawOldest = true // les 3 plus anciennes doivent être parties
+		case fmt.Sprintf("c-%05d", total-1):
+			sawNewest = true
+		}
+		if (c.Status == "done" || c.Status == "error") && c.DoneAt != "" {
+			nDone++
+		}
+	}
+	if nDone != commandDoneCap {
+		t.Fatalf("plafond : %d terminées attendues après purge, %d obtenues", commandDoneCap, nDone)
+	}
+	if sawOldest {
+		t.Fatal("les 3 plus anciennes auraient dû être droppées par le plafond")
+	}
+	if !sawNewest {
+		t.Fatal("la plus récente doit être conservée")
+	}
+	if !sawQueued {
+		t.Fatal("une queued ancienne n'est JAMAIS touchée par le plafond")
 	}
 }

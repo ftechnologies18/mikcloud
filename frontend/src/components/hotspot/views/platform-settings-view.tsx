@@ -142,6 +142,15 @@ interface SyncStatus {
   mode: "postgresql" | "json";
   sync: SyncStatusSync | null;
   neon: { lastContactAt?: string; keepAliveMode: string } | null;
+  /** N°164 — boot résilient : mode dégradé (base injoignable au boot) ou
+   * souvenir de la dernière récupération réussie. Absent en mode JSON. */
+  degraded?: {
+    degraded: boolean;
+    since?: string;
+    recoveredAt?: string;
+    recoveryTries: number;
+    lastError?: string;
+  } | null;
   tables: { table: string; rows: number; mirrored?: number }[];
   agents: {
     routers: number;
@@ -592,6 +601,39 @@ function SyncStatusCard() {
                 </Badge>
               )}
             </div>
+
+            {data.degraded?.degraded && (
+              <div
+                className="grid gap-1 rounded-lg border border-destructive/40 bg-destructive/10 p-3"
+                role="alert"
+              >
+                <p className="text-sm font-medium text-destructive">
+                  {t("platformSettings.syncHealth.degradedTitle")}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {t("platformSettings.syncHealth.degradedBody")}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {data.degraded.since
+                    ? `${tf("platformSettings.syncHealth.degradedSince", {
+                        since: formatDateTime(data.degraded.since, lang),
+                      })} · `
+                    : ""}
+                  {tf("platformSettings.syncHealth.degradedMeta", {
+                    tries: data.degraded.recoveryTries,
+                  })}
+                  {data.degraded.lastError ? ` · ${data.degraded.lastError}` : ""}
+                </p>
+              </div>
+            )}
+
+            {data.degraded && !data.degraded.degraded && data.degraded.recoveredAt && (
+              <p className="text-xs text-muted-foreground">
+                {tf("platformSettings.syncHealth.recoveredAt", {
+                  at: formatDateTime(data.degraded.recoveredAt, lang),
+                })}
+              </p>
+            )}
 
             {data.mode === "json" && (
               <p className="text-sm text-muted-foreground">

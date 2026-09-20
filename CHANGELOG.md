@@ -207,6 +207,76 @@ off, temporaire, documentée et réversible d'une commande) — aucune
 route, aucun schéma, aucun contrat touchés. Tâche WhatsApp N°148-c
 inchangée, en attente de reprise.
 
+## 2026-09-21 — N°164 — Boot résilient : un démarrage sans PostgreSQL ne tue plus le service + modèle de cohabitation Supabase(prod)/Neon(secours quotidien)
+
+### Contexte
+Suite de l'incident N°162 (quota compute Neon épuisé, backend en mémoire
+seule depuis le 20/09). Le redéploiement pendant une indisponibilité base
+était un crash garanti : store.New → OpenPG/Load en erreur → log.Fatalf.
+La revue d'implémentation a imposé la garde anti-écrasement : un mode
+dégradé naïf serait plus dangereux que le crash (démarrage mémoire vide →
+retour de la base → écrasement possible des 34 tables de production).
+
+### Produit
+- (1) BOOT RÉSILIENT (store/recovery.go) : OpenPG/Load en échec au boot →
+  démarrage DÉGRADÉ au lieu du Fatal — état de mise en service en mémoire,
+  migrations idempotentes + admin d'environnement (l'opérateur peut se
+  connecter pour VOIR la dégradation), persistance SUSPENDUE (les marquages
+  s'accumulent, rien n'est poussé), récupération en arrière-plan (15 s).
+- (2) GARDE ANTI-ÉCRASEMENT — deux verrous structurels : le syncreur n'est
+  JAMAIS démarré avant qu'un Load ait réussi (sans empreintes semées par un
+  vrai Load, Sync ne peut émettre AUCUNE suppression — les « removed »
+  naissent de la différence empreintes↔mémoire) ; et au retour de la base
+  l'état de la fenêtre dégradée est FUSIONNÉ avec l'état chargé (union par
+  clé primaire sur les 33 collections + cartes settings/notif, mémoire
+  gagnante sur collision, tombstones de purge respectées pour les usernames
+  — anti-résurgence, horloges LastTick/LastSweep au plus récent). La base
+  retrouve son historique ET conserve les écritures de la fenêtre.
+- (3) Scénario dual inchangé par conception : un process démarré AVANT la
+  panne (cas du 20/09) ne passe pas par la récupération — le syncreur
+  existant réessaie indéfiniment (backoff 5 s, empreintes conservées) et
+  rattrape tout au retour.
+- (4) VISIBILITÉ : bloc « degraded » dans GET /api/admin/sync-status
+  (degraded/since/recoveryTries/lastError/recoveredAt) + carte Santé
+  (bloc rouge role=alert en mode dégradé, ligne « dernière récupération ») +
+  bannière plateforme non masquable dans le shell (DatabaseZap, destructive)
+  + 11 clés i18n FR/EN.
+- (5) Close() réparé pour le mode dégradé : l'attente de syncDone est
+  conditionnée au démarrage effectif du syncreur (l'ancien close aurait
+  bloqué à jamais sur un canal jamais fermé) ; double garde fermeture dans
+  l'installation de la récupération (verrou d'installation sous saveMu,
+  re-check sous le même verrou) ; Reload refusé proprement en mode dégradé.
+- (6) COHABITATION (décision opérateur) : workflow standby-restore.yml —
+  restore quotidien pg_dump --no-owner --no-privileges --clean --if-exists
+  (Supabase session pooler) → psql (Neon endpoint DIRECT, hors pooler) +
+  contrôle d'intégrité par comptages + hygiène connexions one-shot (le
+  compute Neon se rendort ~5 min après, piège N°162 évité par construction).
+  RPO 24 h écrit noir sur blanc (runbook §10) : historique ventes/journal =
+  backup quotidien ; état routeurs/utilisateurs = reconstituable par agents.
+- (7) RUNBOOK-POSTGRES.md amendé : §10 cohabitation (rôles, math quota
+  1-2 CU-h/mois, secrets SUPABASE_DATABASE_URL/NEON_STANDBY_DATABASE_URL,
+  bascule de secours 15-30 min, rollback) + §11 séquence du 1er octobre en
+  UNE vague (réveil Neon → rattrapage → migration → fusion n163+n164 →
+  DATABASE_URL Supabase + NEON_KEEPALIVE=off → unique redéploiement →
+  armement du secours quotidien).
+
+### Fidélité
+Zéro route, zéro contrat API existant cassé (le bloc « degraded » est
+additif et optionnel) ; le comportement boot-normal est strictement
+inchangé (boot résilient = chemin d'ERREUR seulement) ; le mode JSON
+(dév/E2E) est intact.
+
+### Vérifié
+go build/vet/gofmt 0 ; go test ./... 11 paquets OK ; -race store OK ;
+4 nouveaux tests (fusion union/mémoire-gagnante, tombstones
+anti-résurgence, cartes+horloges, boot dégradé sans Fatal + Close
+non-bloquant — la régression exacte de l'incident) ; tsgo 0 ; eslint 0.
+
+### Déploiement — GEL (inchangé)
+Fusion et déploiement le 1er octobre avec n163 (séquence runbook §11) :
+tout redémarrage avant le retour du quota Neon casserait la production
+(état mémoire orphelin depuis le 20/09).
+
 ## 2026-09-20 — N°163 — Le lot de vouchers dit la vérité + autoréparation des absents : l'incident « Wifi Zikisso » (tickets « Actif / absent du routeur », connexion impossible) est corrigé à la racine
 
 ### Contexte : incident client réel (20/09)

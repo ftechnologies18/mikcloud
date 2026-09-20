@@ -154,6 +154,18 @@ type TableHealth struct {
 	Mirrored int    `json:"mirrored,omitempty"`
 }
 
+// PersistenceDegraded — N°164 : état du boot résilient. Présent dès que le
+// mode PostgreSQL est décidé : Degraded=true tant qu'aucun Load n'a réussi
+// (boot en mémoire seule + récupération en cours), puis un bloc de souvenir
+// avec RecoveredAt (dernière récupération réussie).
+type PersistenceDegraded struct {
+	Degraded      bool   `json:"degraded"`
+	Since         string `json:"since,omitempty"`       // début du mode dégradé (RFC3339)
+	RecoveredAt   string `json:"recoveredAt,omitempty"` // dernière récupération réussie
+	RecoveryTries int64  `json:"recoveryTries"`         // tentatives de récupération cumulées
+	LastError     string `json:"lastError,omitempty"`   // dernière erreur de récupération
+}
+
 // SyncHealth — photographie de la persistance (partie de la réponse de
 // GET /api/admin/sync-status ; le bloc agents est calculé par l'API, qui
 // possède les constantes de fraîcheur des check-ins).
@@ -161,10 +173,11 @@ type TableHealth struct {
 // Mode : "postgresql" (production Render + Neon) ou "json" (développement,
 // fichier local atomique — Sync et Neon absents).
 type SyncHealth struct {
-	Mode   string             `json:"mode"`
-	Sync   *SyncStatsSnapshot `json:"sync,omitempty"`
-	Neon   *NeonHealth        `json:"neon,omitempty"`
-	Tables []TableHealth      `json:"tables"`
+	Mode     string               `json:"mode"`
+	Sync     *SyncStatsSnapshot   `json:"sync,omitempty"`
+	Neon     *NeonHealth          `json:"neon,omitempty"`
+	Tables   []TableHealth        `json:"tables"`
+	Degraded *PersistenceDegraded `json:"degraded,omitempty"` // N°164 — boot résilient
 }
 
 // SyncHealth — prend le verrou global le temps de la photographie (compteurs
@@ -173,10 +186,29 @@ func (s *Store) SyncHealth() SyncHealth {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	h := SyncHealth{Mode: "json", Tables: liveTableRows(s.db)}
+	if !s.pgActive.Load() {
+		return h // mode JSON (développement/E2E) : pas de bloc dégradé
+	}
+	h.Mode = "postgresql"
+	// N°164 — boot résilient : dégradé (pool pas encore installé) ou
+	// souvenir de la dernière récupération.
+	if s.pgDegraded.Load() {
+		d := &PersistenceDegraded{Degraded: true, RecoveryTries: s.pgRecoverTries.Load()}
+		if since := s.pgDegradedSince.Load(); since > 0 {
+			d.Since = isoUTC(time.Unix(since, 0))
+		}
+		if e := s.pgRecoverErr.Load(); e != nil {
+			d.LastError = *e
+		}
+		h.Degraded = d
+		return h // sync/neon/empreintes : aucun sens tant que rien n'est installé
+	}
+	if at := s.pgRecoveredAt.Load(); at > 0 {
+		h.Degraded = &PersistenceDegraded{RecoveredAt: isoUTC(time.Unix(at, 0))}
+	}
 	if s.pg == nil {
 		return h
 	}
-	h.Mode = "postgresql"
 	h.Sync = s.pg.stats.snapshot()
 	ka := s.pg.kaMode
 	if ka == "" {

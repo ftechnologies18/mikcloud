@@ -232,3 +232,85 @@ Starter avec, cf. RUNBOOK-KEEPALIVE).
   crise (§3) ;
 - aucune modification de code : la sortie de crise est purement
   opérateur (migration d'hébergeur ou upgrade), documentée ici.
+
+## 10. Amendement N°164 — modèle de COHABITATION (décision opérateur du 21/09)
+
+Le plan du §5 se termine par « supprimer le projet Neon ». **Décision finale
+de l'opérateur : Neon est conservé comme secours** — le duo cohabite avec un
+rôle chacun, à coût total 0 € :
+
+| Rôle | Service | Cadence |
+|---|---|---|
+| **Production** (écritures 24/7 du backend) | Supabase Free | permanent |
+| **Secours vivant** (copy restaurée) | Neon Free | 1×/jour (restore `standby-restore.yml`) |
+| **Archive froide chiffrée** (AES-256-GCM) | artefacts GitHub | 1×/semaine (`backup.yml`, 90 j de rétention) |
+
+Pourquoi pas une double-écriture simultanée : le moteur de synchro est
+mono-primaire par conception, et surtout écrire en continu sur Neon
+réveillerait son compute en continu — l'incident N°162 reconstitué. Le
+secours doit être un restaurateur quotidien (batch), jamais un second
+écrivain.
+
+**Math du quota** : 1 réveil Neon/jour de 5-10 min ≈ 1-2 CU-h/mois
+(plafond 100). Soutenable indéfiniment. NE JAMAIS passer le restore en
+horaire (~30-60 CU-h/mois).
+
+**RPO écrit noir sur blanc** : le secours a jusqu'à **24 h de retard** sur
+la production. En cas de perte simultanée de la production ET du process
+Render : l'état des **routeurs/utilisateurs hotspot est reconstituable par
+les agents** (le routeur détient la vérité opérationnelle) ; l'**historique
+de ventes/journal/annonces** dépend du backup (RPO 24 h). Cette distinction
+est assumée.
+
+**Bascule de secours** (production morte > quelques heures) : reprendre le
+dump le plus frais (artefact `mikcloud-backup` OU base Neon elle-même) →
+`pg_restore`/psql vers un nouveau projet Supabase (ou upgrade immédiat) →
+pointer `DATABASE_URL` → déployer. Fenêtre ~15-30 min. Le boot résilient
+N°164 couvre le démarrage pendant la fenêtre base-morte.
+
+**Secrets GitHub à définir** (Settings → Secrets → Actions) :
+- `SUPABASE_DATABASE_URL` — DSN production (session pooler `:5432`) ;
+- `NEON_STANDBY_DATABASE_URL` — DSN secours, **endpoint DIRECT Neon**
+  (SANS `-pooler` dans le nom d'hôte : le DDL massif sur pooler est
+  déconseillé) ;
+- (`BACKUP_KEY`/`DATABASE_URL` existent déjà pour `backup.yml` — après la
+  bascule du 1er octobre, mettre `DATABASE_URL` à la valeur Supabase pour
+  que l'archive hebdomadaire suive la production.)
+
+## 11. Séquence du 1er octobre — migration + vague de déploiement (UNE SEULE)
+
+Le redémarrage du service casse la mémoire (état orphelin depuis le 20/09) :
+**tout se joue en une seule vague**, jamais avant le retour du quota Neon
+(reset 1er octobre ~00:00 UTC).
+
+1. **Vérifier le réveil Neon** : `psql "<DSN Neon>"` doit répondre (sinon
+   attendre — le reset s'applique au fil des heures).
+2. **Laisser le rattrapage se faire** (~1-2 h) : le syncreur en échec
+   depuis le 20/09 rejoue les deltas accumulés. Vérifier : carte Santé →
+   synchro OK + `commands.done_at` récents.
+3. **Préparer Supabase** : opérateur fournit le DSN (Settings → Database →
+   Connection string → URI, mode **Session pooler, port 5432** — l'endpoint
+   direct `db.<ref>.supabase.co` est IPv6-only, Render sort en IPv4).
+4. **Migrer les données** : `pg_dump --no-owner --no-privileges <Neon> |
+   psql <Supabase>` puis contrôle d'intégrité (comptages par table —
+   même méthode que `standby-restore.yml`). (~25 Mo : quelques minutes.)
+5. **Fusionner les branches** : `n163-zikisso-repair` (correctif Zikisso :
+   vérité du lot + autoréparation) puis `n164-persistence-safety` (boot
+   résilient + garde anti-écrasement + carte Santé/bannière dégradée) dans
+   `main`. CI verte.
+6. **Basculer Render** : `DATABASE_URL` = DSN Supabase + `NEON_KEEPALIVE=off`
+   (inutile et nuisible sur Supabase) ; réactiver l'autoDeploy (§3) ; le
+   push de la fusion déploie la vague complète — UNIQUE redémarrement.
+7. **Vérifier** : boot « état chargé depuis PostgreSQL » dans les logs
+   Render, carte Santé verte (mode postgresql, synchro OK), agents qui
+   checkent (commandes), portail client, tickets — la vague
+   d'autoréparation Zikisso se déclenche au premier read_state complet.
+8. **Armer le secours** : poser les secrets `SUPABASE_DATABASE_URL` +
+   `NEON_STANDBY_DATABASE_URL` (§10), déclencher `standby-restore.yml`
+   manuellement (workflow_dispatch) pour valider le premier restore, puis
+   laisser le cron quotidien faire.
+
+Rollback (si la production Supabase pose problème dans les 24 h) : le projet
+Neon contient l'état au 30/09 au soir + le rattrapage du 1er au matin ;
+repointer `DATABASE_URL` vers Neon et redéployer — le boot résilient N°164
+absorbe la fenêtre de bascule sans Fatal.

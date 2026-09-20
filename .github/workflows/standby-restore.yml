@@ -1,0 +1,118 @@
+# Secours quotidien — restore de la base PRODUCTION vers le projet Neon de
+# secours (modèle de cohabitation N°164 : Supabase = production, Neon =
+# backup vivant restauré 1×/jour ; l'archive chiffrée froide reste le
+# workflow « backup » hebdomadaire).
+#
+# Ce que fait ce job (une seule vague, connexions fermées à la sortie — le
+# compute Neon se rendort ~5 min après, l'autosuspend fait le ménage) :
+#   1. pg_dump de la production (Supabase, session pooler 5432 — compatible
+#      pg_dump) avec --no-owner --no-privileges (les rôles propriétaires
+#      diffèrent entre hébergeurs) et --clean --if-exists (restore idempotent) ;
+#   2. psql du dump dans le projet Neon de secours (endpoint DIRECT, pas le
+#      pooler — le DDL massif sur pooler est déconseillé) ;
+#   3. contrôle d'intégrité : comptages par table des deux côtés comparés ;
+#   4. (rappel) l'archive chiffrée AES-256-GCM reste « backup.yml » (hebdo).
+#
+# Prérequis (secrets GitHub, cf. docs/RUNBOOK-POSTGRES.md §10) :
+#   - SUPABASE_DATABASE_URL   DSN production (session pooler :5432)
+#   - NEON_STANDBY_DATABASE_URL  DSN secours Neon ENDPOINT DIRECT (sans -pooler)
+# Sans ces secrets, le workflow s'arrête proprement (pas d'échec rouge).
+#
+# RPO assumé (écrit noir sur blanc, runbook §10) : le secours a jusqu'à 24 h
+# de retard sur la production. L'état des routeurs/utilisateurs hotspot est
+# reconstituable par les agents ; l'historique de ventes/journal dépend de ce
+# backup quotidien.
+#
+# Coût quota Neon : ~1 réveil/jour de 5-10 min ≈ 1-2 CU-h/mois (plafond 100).
+name: standby-restore
+
+on:
+  schedule:
+    # 02:43 UTC quotidiennement — nuit Abidjan (GMT), décalé des minutes
+    # rondes (charge des runners GitHub, cf. keepalive.yml).
+    - cron: "43 2 * * *"
+  workflow_dispatch: {}
+
+# Un seul restore à la fois — jamais de cancel (un restore à moitié fait
+# serait pire qu'un retard : le suivant le répare complètement).
+concurrency:
+  group: standby-restore
+  cancel-in-progress: false
+
+permissions: {} # ce workflow ne lit/écrit RIEN côté GitHub (psql/pg_dump)
+
+jobs:
+  restore:
+    name: Restore quotidien vers Neon (secours)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Vérifier la présence des secrets
+        id: cfg
+        env:
+          SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
+          NEON_STANDBY_DATABASE_URL: ${{ secrets.NEON_STANDBY_DATABASE_URL }}
+        run: |
+          if [ -z "${SUPABASE_DATABASE_URL}" ] || [ -z "${NEON_STANDBY_DATABASE_URL}" ]; then
+            echo "Secrets SUPABASE_DATABASE_URL/NEON_STANDBY_DATABASE_URL absents — secours sauté (cf. RUNBOOK-POSTGRES.md §10)."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: pg_dump production → psql secours (restore complet)
+        if: steps.cfg.outputs.configured == 'true'
+        env:
+          SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
+          NEON_STANDBY_DATABASE_URL: ${{ secrets.NEON_STANDBY_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          echo "→ Dump de la production (Supabase)…"
+          pg_dump --no-owner --no-privileges --clean --if-exists \
+            --exclude-table='s4check_*' \
+            "$SUPABASE_DATABASE_URL" > /tmp/standby.sql
+          echo "→ Dump : $(du -h /tmp/standby.sql | cut -f1), $(grep -c '^COPY ' /tmp/standby.sql) table(s)."
+          echo "→ Restore vers le secours (Neon, endpoint direct)…"
+          # v ON_ERROR_STOP=0 : le --clean émet des DROP ... IF EXISTS sur des
+          # tables parfois absentes au premier run (NOTICE, pas erreur) ; une
+          # vraie erreur de données sera attrapée par le contrôle d'intégrité.
+          psql -v ON_ERROR_STOP=0 --quiet "$NEON_STANDBY_DATABASE_URL" < /tmp/standby.sql
+          echo "→ Restore terminé."
+
+      - name: Contrôle d'intégrité (comptages par table)
+        if: steps.cfg.outputs.configured == 'true'
+        env:
+          SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
+          NEON_STANDBY_DATABASE_URL: ${{ secrets.NEON_STANDBY_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          TABLES=$(psql -t -A --quiet "$SUPABASE_DATABASE_URL" -c \
+            "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' ORDER BY table_name")
+          if [ -z "$TABLES" ]; then
+            echo "Aucune table trouvée côté production ?!" >&2; exit 1
+          fi
+          FAILED=0
+          for T in $TABLES; do
+            SRC=$(psql -t -A --quiet "$SUPABASE_DATABASE_URL" -c "SELECT count(*) FROM \"$T\"")
+            DST=$(psql -t -A --quiet "$NEON_STANDBY_DATABASE_URL" -c "SELECT count(*) FROM \"$T\"" || echo "ERR")
+            if [ "$SRC" != "$DST" ]; then
+              echo "✗ $T : production=$SRC secours=$DST"
+              FAILED=1
+            else
+              echo "✓ $T : $SRC ligne(s)"
+            fi
+          done
+          if [ "$FAILED" -ne 0 ]; then
+            echo "Divergence détectée — le secours n'est pas fidèle." >&2
+            exit 1
+          fi
+          echo "Intégrité vérifiée : le secours est une copie fidèle de la production."
+
+      - name: Hygiène (fermeture des connexions)
+        if: steps.cfg.outputs.configured == 'true'
+        run: |
+          # Rien à faire de plus : pg_dump/psql sont des process one-shot,
+          # leurs connexions sont déjà fermées. Le compute Neon se rendort
+          # de lui-même (autosuspend 5 min) — le piège du « compute éveillé
+          # en continu » (incident N°162) est évité PAR CONSTRUCTION.
+          echo "Connexions fermées — le compute Neon de secours va s'endormir (~5 min)."

@@ -5,6 +5,82 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-20 — N°162 — Le mur de la persistance n'était pas le volume mais le TEMPS D'ÉVEIL : plafond compute du Neon gratuit épuisé (110 CU-h mesurés vs 100) — runbook de sortie de crise (migration Supabase Free recommandée), amendement du verdict 0 coût du N°161
+
+### Contexte
+Incident production déclaré par l'opérateur le 20/09 vers 21:40
+(capture console Neon, page Facturation → Plan de mise à niveau) :
+« le compute Neon a atteint son quota — impossible de tenir avec
+l'implémentation objectif 0 coût des N°72-77 + correctifs N°157/N°159 ;
+y a-t-il une alternative viable dans la durée, et si je devais payer,
+lequel choisir sur la capture ? ». La tâche WhatsApp (N°148-c/N°161)
+est mise en attente.
+
+### Incident MESURÉ (API Neon org « FTech CI », projet `Mikcloud`, plan free)
+- `active_time` 1 487 959 s ≈ **413 h d'éveil** du 1er au 20/09
+  (~20,8 h/jour) ; `compute_time` 396 250 CU-s ≈ **110 CU-h
+  facturables** — le plafond gratuit 2026 (**100 CU-h/mois/projet**)
+  est franchi vers le 19-20/09 ; reset le 1er octobre (période
+  2026-09-01 → 2026-10-01) ; taille logique **~25 Mo** (le stock
+  n'a jamais été le problème).
+- Test direct : connexion au pooler refusée « Your account or project
+  has exceeded the quota » — compute SUSPENDU jusqu'au reset.
+- Backend Render UP (dernier déploiement live = N°159 `66a4812` du
+  19/09 05:20 UTC) : l'état complet vit en mémoire, la synchro échoue
+  en continu (dirtyAll en attente).
+
+### Pourquoi N°72-77 + N°157/N°159 n'y pouvaient rien (amendement N°161)
+Le plafond facture le TEMPS D'ÉVEIL, pas le travail : MikCloud est
+conçu pour un compute toujours éveillé (check-ins agents 45-180 s →
+Save → Sync 24/7 + keep-alive 4 min < autosuspend 5 min) → ~165
+CU-h/mois nécessaires contre 100 offerts (écart structurel 1,65×,
+aucune optimisation de volume ne le comble). Le keep-alive avait été
+calibré sur l'ANCIEN plafond (191,9 CU-h/mois — cf. commentaires
+`pg.go`) ; Neon est passé à 100 CU-h/projet/mois. Le verdict N°161
+reste vrai en STOCK (N°157) et en FLUX CPU (N°159) mais doit être
+précisé : **pas sur le Neon gratuit** — changement de pricing de
+l'hébergeur, non régression du produit.
+
+### Réponses aux deux questions (runbook `docs/RUNBOOK-POSTGRES.md` NOUVEAU)
+- **Alternative viable dans la durée : OUI — Supabase Free** :
+  500 Mo (25 Mo utilisés = 20× de marge), PAS de quota d'heures
+  compute, pause seulement après 7 jours d'inactivité totale
+  (impossible : agents 24/7), Postgres standard → zéro changement de
+  code (pgx v5 + `DATABASE_URL` + `ensureSchema` au boot). Limites à
+  surveiller : egress 5 Go/mois (2,96 Go mesurés sur 20 j PRÉ-N°159 ;
+  ~1-2 Go attendus après démontage des moteurs de volume) ; 2 projets
+  actifs max.
+- **Si payer : LANCEMENT** (0,106 $/CU-h × ~165 CU-h/mois mesurés ≈
+  **18 $/mois**), jamais Échelle (0,222 $/CU-h : SOC 2/HIPAA/SLA sans
+  objet) — mais la vraie bonne affaire payante est hors capture :
+  **Render PostgreSQL Starter ~6-7 $/mois**, colocalisé au backend
+  (~3× moins cher) — cible naturelle au premier client payant.
+- **Plan recommandé (coût de passage ~1-3 $)** : upgrade Lancement
+  (réveille le compute → le dirtyAll rétablit la persistance sans
+  perte, ~0,58 $/jour) → pg_dump Neon → restore Supabase → basculer
+  `DATABASE_URL` (session pooler 5432) + `NEON_KEEPALIVE=off` →
+  valider 24-48 h → supprimer le projet Neon → retour à 0 $/mois.
+
+### Protections posées pendant la fenêtre (20/09 → 1er octobre)
+Tout redéploiement pendant la suspension = crash au boot
+(`store.New` : PostgreSQL injoignable → erreur fatale) = service DOWN
+jusqu'au 1er octobre — or l'auto-déploiement Render (trigger commit
+`main`) redémarre le backend à TOUT push, documentation comprise,
+sessions parallèles comprises. **autoDeploy Render DÉSACTIVÉ** via
+l'API (patch `{"autoDeploy":"no"}`) — à RÉACTIVER en fin de crise
+(procédure au runbook §3). Les push GitHub redeviennent sans danger ;
+les déploiements se font manuellement.
+
+### Fidélité
+Zéro code modifié — documentation opérateur uniquement (CHANGELOG +
+`docs/RUNBOOK-POSTGRES.md` : incident mesuré, amendement N°161,
+options vérifiées avec sources 2026, plan de migration en 6 étapes,
+surveillance premier mois Supabase, réactivation autoDeploy). La
+seule modification de production est la config Render (autoDeploy
+off, temporaire, documentée et réversible d'une commande) — aucune
+route, aucun schéma, aucun contrat touchés. Tâche WhatsApp N°148-c
+inchangée, en attente de reprise.
+
 ## 2026-09-19 — N°161 — L'app Meta devient un PARAPLUIE : `ftci-apps` servira MikCloud ET les futures applications FTCI — un portfolio, une app, un jeton, un WABA par produit
 
 ### Contexte

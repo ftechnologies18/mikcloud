@@ -4,12 +4,17 @@
 // Le megaphone du SaaS : diffuser une annonce à tous les comptes MikCloud
 // (maintenance, nouveauté, incident) — bandeau dans la console de chaque
 // destinataire + entrée dans sa cloche + e-mail optionnel aux propriétaires.
+// N°165 — DIFFUSION PROGRAMMÉE : « Programmer une date » retarde l'apparition
+// du bandeau (et l'e-mail) à l'instant choisi — une maintenance de samedi
+// 04h se rédige vendredi matin. Le statut de chaque ligne dit si l'annonce
+// est visible, programmée (publication automatique) ou expirée.
 // Contrats : GET/POST /api/admin/announcements, DELETE /api/admin/announcements/{id}
 // (voir lib/hotspot/types.ts et api.ts).
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Clock,
   Loader2,
   Megaphone,
   Send,
@@ -25,7 +30,13 @@ import {
   fetchAnnouncements,
 } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
-import type { AdminAnnouncementRow, AnnouncementLevel, AnnouncementAudience } from "@/lib/hotspot/types";
+import type {
+  AdminAnnouncementRow,
+  AdminAnnouncementState,
+  AnnouncementAudience,
+  AnnouncementCreatePayload,
+  AnnouncementLevel,
+} from "@/lib/hotspot/types";
 import { EmptyState } from "@/components/hotspot/empty-state";
 import { PageHeader } from "@/components/hotspot/page-header";
 import {
@@ -78,6 +89,41 @@ const LEVEL_BADGE: Record<AnnouncementLevel, string> = {
 /** Durées proposées (jours) — 0 = jusqu'au retrait manuel. */
 const EXPIRY_CHOICES = [0, 1, 7, 30, 90];
 
+/** Badge de statut (N°165) : visible / programmée / expirée — la
+ * programmation porte l'horloge. Repli sur « active » si le backend déployé
+ * n'envoie pas encore state (fenêtre de transition). */
+function StatusBadge({ state }: { state: AdminAnnouncementState }) {
+  const { t } = useI18n();
+  if (state === "scheduled") {
+    return (
+      <Badge variant="secondary" className="bg-teal-500/10 text-teal-600 dark:text-teal-400">
+        <Clock className="mr-1 size-3" aria-hidden />
+        {t("ann.status.scheduled")}
+      </Badge>
+    );
+  }
+  if (state === "active") {
+    return (
+      <Badge className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" variant="secondary">
+        {t("ann.status.active")}
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="outline" className="text-muted-foreground">
+      {t("ann.status.expired")}
+    </Badge>
+  );
+}
+
+/** Maintenant au format valeur locale d'un input datetime-local (borne min
+ * du champ : on ne programme pas dans le passé). */
+function localInputNow(): string {
+  const d = new Date();
+  d.setSeconds(0, 0);
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
+
 export default function PlatformAnnouncementsView() {
   const { t, tf, lang } = useI18n();
   const queryClient = useQueryClient();
@@ -91,6 +137,10 @@ export default function PlatformAnnouncementsView() {
   const [audience, setAudience] = useState<AnnouncementAudience>("all");
   const [expiresInDays, setExpiresInDays] = useState(7);
   const [email, setEmail] = useState(true);
+  // N°165 — diffusion immédiate ou programmée (datetime-local, heure du
+  // navigateur du gérant — Abidjan GMT en pratique).
+  const [publishMode, setPublishMode] = useState<"now" | "scheduled">("now");
+  const [publishAtLocal, setPublishAtLocal] = useState("");
 
   const { data: rows, isLoading, error } = useQuery({
     queryKey: ANNOUNCEMENTS_KEY,
@@ -103,17 +153,32 @@ export default function PlatformAnnouncementsView() {
     void queryClient.invalidateQueries({ queryKey: ANNOUNCEMENTS_KEY });
   }
 
+  function resetForm() {
+    setTitle("");
+    setBody("");
+    setLevel("info");
+    setAudience("all");
+    setExpiresInDays(7);
+    setEmail(true);
+    setPublishMode("now");
+    setPublishAtLocal("");
+  }
+
   const createMutation = useMutation({
     mutationFn: createAnnouncement,
-    onSuccess: () => {
-      toast.success(t("ann.created"));
+    onSuccess: (ann, vars) => {
+      // Garde de transition N°165 : un backend PAS ENCORE redéployé ignore
+      // publishAt (champ JSON inconnu pour lui) — l'annonce serait partie
+      // IMMÉDIATEMENT. On le dit au lieu de laisser croire à une programmation.
+      if (vars.publishAt && !ann.publishAt) {
+        toast.warning(t("ann.fallbackImmediate"));
+      } else if (vars.publishAt) {
+        toast.success(t("ann.scheduledToast"));
+      } else {
+        toast.success(t("ann.created"));
+      }
       setCreateOpen(false);
-      setTitle("");
-      setBody("");
-      setLevel("info");
-      setAudience("all");
-      setExpiresInDays(7);
-      setEmail(true);
+      resetForm();
       invalidate();
     },
     onError: (err) => toast.error(err.message),
@@ -129,10 +194,21 @@ export default function PlatformAnnouncementsView() {
     onError: (err) => toast.error(err.message),
   });
 
+  // Date de programmation demandée : valide et dans le futur ?
+  const scheduledDate =
+    publishMode === "scheduled" && publishAtLocal ? new Date(publishAtLocal) : null;
+  const publishOK =
+    publishMode === "now" ||
+    (scheduledDate !== null &&
+      !Number.isNaN(scheduledDate.getTime()) &&
+      scheduledDate.getTime() > Date.now());
+  const isScheduled = scheduledDate !== null && publishOK;
+
   const canSubmit =
     title.trim().length >= 3 &&
     title.length <= 120 &&
     body.length <= 2000 &&
+    publishOK &&
     !createMutation.isPending;
 
   const dateFmt = new Intl.DateTimeFormat(lang === "fr" ? "fr-FR" : "en-US", {
@@ -192,58 +268,61 @@ export default function PlatformAnnouncementsView() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {rows.map((row) => (
-                    <TableRow key={row.id}>
-                      <TableCell className="max-w-[280px] pl-4 sm:pl-6">
-                        <p className="truncate font-medium">{row.title}</p>
-                        <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
-                          {row.body || "—"}
-                        </p>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="secondary" className={LEVEL_BADGE[row.level]}>
-                          {t(`ann.level.${row.level}`)}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        <p>{t(`ann.audience.${row.audience}`)}</p>
-                        <p className="text-xs text-muted-foreground/70">{tf("ann.reach", { count: row.accountsCount })}</p>
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                        {dateFmt.format(new Date(row.createdAt))}
-                        {row.emailedAt ? (
-                          <p className="mt-0.5 text-xs text-muted-foreground/70">
-                            ✉ {row.emailedCount ?? 0}
+                  {rows.map((row) => {
+                    // Repli de transition : un backend pas encore redéployé
+                    // n'envoie pas state (N°165) — on le déduit d'active.
+                    const state: AdminAnnouncementState = row.state ?? (row.active ? "active" : "expired");
+                    return (
+                      <TableRow key={row.id}>
+                        <TableCell className="max-w-[280px] pl-4 sm:pl-6">
+                          <p className="truncate font-medium">{row.title}</p>
+                          <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
+                            {row.body || "—"}
                           </p>
-                        ) : null}
-                      </TableCell>
-                      <TableCell className="hidden whitespace-nowrap text-sm text-muted-foreground md:table-cell">
-                        {row.expiresAt ? dateFmt.format(new Date(row.expiresAt)) : t("ann.noExpiry")}
-                      </TableCell>
-                      <TableCell className="pr-4 text-right sm:pr-6">
-                        <div className="flex items-center justify-end gap-2">
-                          {row.active ? (
-                            <Badge className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" variant="secondary">
-                              {t("ann.status.active")}
-                            </Badge>
-                          ) : (
-                            <Badge variant="outline" className="text-muted-foreground">
-                              {t("ann.status.expired")}
-                            </Badge>
-                          )}
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="size-8 text-muted-foreground hover:text-destructive"
-                            aria-label={t("ann.delete")}
-                            onClick={() => setDeleteRow(row)}
-                          >
-                            <Trash2 className="size-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="secondary" className={LEVEL_BADGE[row.level]}>
+                            {t(`ann.level.${row.level}`)}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          <p>{t(`ann.audience.${row.audience}`)}</p>
+                          <p className="text-xs text-muted-foreground/70">{tf("ann.reach", { count: row.accountsCount })}</p>
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                          {dateFmt.format(new Date(row.createdAt))}
+                          {row.publishAt ? (
+                            <p className="mt-0.5 text-xs text-teal-600 dark:text-teal-400">
+                              <Clock className="mr-0.5 inline size-3 align-[-1px]" aria-hidden />
+                              {tf("ann.autoPublish", { date: dateFmt.format(new Date(row.publishAt)) })}
+                            </p>
+                          ) : null}
+                          {row.emailedAt ? (
+                            <p className="mt-0.5 text-xs text-muted-foreground/70">
+                              ✉ {row.emailedCount ?? 0}
+                            </p>
+                          ) : null}
+                        </TableCell>
+                        <TableCell className="hidden whitespace-nowrap text-sm text-muted-foreground md:table-cell">
+                          {row.expiresAt ? dateFmt.format(new Date(row.expiresAt)) : t("ann.noExpiry")}
+                        </TableCell>
+                        <TableCell className="pr-4 text-right sm:pr-6">
+                          <div className="flex items-center justify-end gap-2">
+                            <StatusBadge state={state} />
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-8 text-muted-foreground hover:text-destructive"
+                              aria-label={t("ann.delete")}
+                              onClick={() => setDeleteRow(row)}
+                            >
+                              <Trash2 className="size-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>
@@ -315,6 +394,40 @@ export default function PlatformAnnouncementsView() {
               </div>
             </div>
 
+            {/* N°165 — diffusion immédiate ou programmée */}
+            <div className="space-y-2">
+              <Label>{t("ann.form.publishLabel")}</Label>
+              <Select
+                value={publishMode}
+                onValueChange={(v) => setPublishMode(v as "now" | "scheduled")}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="now">{t("ann.form.publish.now")}</SelectItem>
+                  <SelectItem value="scheduled">{t("ann.form.publish.schedule")}</SelectItem>
+                </SelectContent>
+              </Select>
+              {publishMode === "scheduled" ? (
+                <div className="space-y-2 rounded-lg border border-border/60 p-3">
+                  <Label htmlFor="ann-publishat">{t("ann.form.publishAtLabel")}</Label>
+                  <Input
+                    id="ann-publishat"
+                    type="datetime-local"
+                    value={publishAtLocal}
+                    min={localInputNow()}
+                    step={300}
+                    onChange={(e) => setPublishAtLocal(e.target.value)}
+                    aria-invalid={!publishOK}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {publishOK ? t("ann.form.publishHint") : t("ann.form.publishInvalid")}
+                  </p>
+                </div>
+              ) : null}
+            </div>
+
             <div className="space-y-2">
               <Label>{t("ann.form.expiryLabel")}</Label>
               <Select
@@ -341,7 +454,9 @@ export default function PlatformAnnouncementsView() {
                 <Label htmlFor="ann-email" className="cursor-pointer text-sm">
                   {t("ann.form.email")}
                 </Label>
-                <p className="text-xs text-muted-foreground">{t("ann.form.emailHint")}</p>
+                <p className="text-xs text-muted-foreground">
+                  {isScheduled ? t("ann.form.emailScheduledHint") : t("ann.form.emailHint")}
+                </p>
               </div>
             </div>
           </div>
@@ -351,19 +466,22 @@ export default function PlatformAnnouncementsView() {
               {t("ann.form.cancel")}
             </Button>
             <Button
-              onClick={() => createMutation.mutate({
-                title: title.trim(),
-                body: body.trim() || undefined,
-                level,
-                audience,
-                expiresInDays: expiresInDays > 0 ? expiresInDays : undefined,
-                email,
-              })}
+              onClick={() =>
+                createMutation.mutate({
+                  title: title.trim(),
+                  body: body.trim() || undefined,
+                  level,
+                  audience,
+                  expiresInDays: expiresInDays > 0 ? expiresInDays : undefined,
+                  email,
+                  publishAt: isScheduled ? scheduledDate!.toISOString() : undefined,
+                })
+              }
               disabled={!canSubmit}
               className="min-h-10 flex-1 sm:flex-none"
             >
-              {createMutation.isPending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
-              {t("ann.form.submit")}
+              {createMutation.isPending ? <Loader2 className="size-4 animate-spin" /> : isScheduled ? <Clock className="size-4" /> : <Send className="size-4" />}
+              {isScheduled ? t("ann.form.submitScheduled") : t("ann.form.submit")}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -89,11 +89,14 @@ func (a *API) handleBellList(w http.ResponseWriter, r *http.Request) {
 			if ann.Body != "" {
 				msg = ann.Title + " — " + ann.Body
 			}
+			// N°165 — date EFFECTIVE : PublishAt si programmée (sa cloche
+			// « sonne » à sa publication, pas à sa rédaction), CreatedAt sinon.
+			eff := ann.EffectiveAt()
 			acts = append(acts, model.Activity{
-				ID: ann.ID, Type: "announcement", Message: msg, At: ann.CreatedAt,
+				ID: ann.ID, Type: "announcement", Message: msg, At: eff,
 				Level: ann.Level, Title: ann.Title, Body: ann.Body,
 			})
-			if seenAt != "" && ann.CreatedAt > seenAt {
+			if seenAt != "" && eff > seenAt {
 				unread++
 			}
 		}

@@ -1651,20 +1651,29 @@ export interface Announcement {
   level: "info" | "warning" | "critical";
   audience: "all" | "hotspot" | "homenet";
   createdAt: string;
+  /** N°165 — date de diffusion programmée (RFC 3339). Vide = diffusion immédiate. */
+  publishAt?: string;
   createdBy?: string;
   createdByName?: string;
   /** Vide = visible jusqu'au retrait manuel. Passée : plus affichée. */
   expiresAt?: string;
   emailedAt?: string;
   emailedCount?: number;
+  /** N°165 — e-mail demandé pour une annonce programmée, pas encore parti. */
+  emailPending?: boolean;
 }
+
+/** État calculé d'une annonce côté console plateforme (N°165). */
+export type AdminAnnouncementState = "active" | "scheduled" | "expired";
 
 /** Ligne de GET /api/admin/announcements — annonce + état calculé. */
 export interface AdminAnnouncementRow extends Announcement {
-  /** Visible des clients à l'instant présent (audience × expiration). */
+  /** Visible des clients à l'instant présent (audience × programmation × expiration). */
   active: boolean;
   /** Comptes clients actifs correspondant à l'audience. */
   accountsCount: number;
+  /** N°165 — active | scheduled | expired (source de vérité du badge de statut). */
+  state: AdminAnnouncementState;
 }
 
 /** Corps de POST /api/admin/announcements. */
@@ -1677,6 +1686,9 @@ export interface AnnouncementCreatePayload {
   expiresInDays?: number;
   /** Diffuser aussi un e-mail aux propriétaires des comptes destinataires. */
   email?: boolean;
+  /** N°165 — date de diffusion programmée (RFC 3339). Absent/passé = immédiat ;
+   * futur = l'annonce apparaît d'elle-même à cette date, e-mail différé inclus. */
+  publishAt?: string;
 }
 
 /* ─── I (paramètres plateforme) : GET/PUT /api/admin/platform/settings ─── */

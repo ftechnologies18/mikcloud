@@ -624,12 +624,18 @@ func (p *PG) ensureSchema() error {
 			level TEXT NOT NULL DEFAULT 'info',
 			audience TEXT NOT NULL DEFAULT 'all',
 			created_at TEXT NOT NULL,
+			publish_at TEXT NOT NULL DEFAULT '',
 			created_by TEXT NOT NULL DEFAULT '',
 			created_by_name TEXT NOT NULL DEFAULT '',
 			expires_at TEXT NOT NULL DEFAULT '',
 			emailed_at TEXT NOT NULL DEFAULT '',
+			email_pending BOOLEAN NOT NULL DEFAULT FALSE,
 			emailed_count INTEGER NOT NULL DEFAULT 0
 		)`,
+		// N°165 — annonces programmées : date de diffusion + e-mail différé
+		// (migration douce pour les bases créées avant, idempotente).
+		`ALTER TABLE announcements ADD COLUMN IF NOT EXISTS publish_at TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE announcements ADD COLUMN IF NOT EXISTS email_pending BOOLEAN NOT NULL DEFAULT FALSE`,
 		`CREATE TABLE IF NOT EXISTS chat_messages (
                         id              TEXT PRIMARY KEY,
                         conversation_id TEXT NOT NULL,

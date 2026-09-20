@@ -5,6 +5,132 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-20 — N°165 — Les annonces de la plateforme apprennent l'heure : diffusion PROGRAMMÉE (`publishAt`) et bandeau enfin lisible de bout en bout (lecture complète des messages longs)
+
+### Contexte
+Pendant la préparation de la communication d'incident N°162 (annonce A à
+publier pour l'incident Neon, annonces B/C à venir pour la fenêtre de
+migration), l'opérateur pointe DEUX limites du système d'annonces N°152 :
+(1) il ne sait publier qu'à l'instant T de la rédaction — une maintenance
+de samedi 04h doit se rédiger à 04h ; (2) le bandeau coupe les messages
+longs sans issue : titre tronqué, corps masqué sur mobile, aucune lecture
+complète ni défilement — le message semble tronqué et le reste.
+
+Renumérotation : N°163 et N°164 sont pris par les branches parallèles
+gelées `n163-zikisso-repair` (vérité du lot de vouchers + autoréparation
+Zikisso) et `n164-persistence-safety` (boot résilient + cohabitation
+Supabase/Neon — fusion prévue le 1er octobre, runbook §11) ; le CHANGELOG
+reste le document canonique, cette entrée est donc N°165. Prochaine
+numérotation : N°166.
+
+### Produit — (1) diffusion programmée
+- `POST /api/admin/announcements` accepte `publishAt` (RFC 3339) : FUTUR =
+  annonce PROGRAMMÉE, invisible des clients (bandeau, cloche, liste)
+  jusqu'à cette date ; vide ou passé = diffusion immédiate (comportement
+  historique). Bornée à 365 jours d'avance, formats invalides rejetés.
+- La visibilité se calcule à la LECTURE (`Active` borne par la
+  programmation) : l'annonce apparaît d'elle-même à l'heure choisie, sans
+  aucune action de fond — les lectures suivantes la voient (bandeau ≤ 5 min,
+  cloche ≤ 60 s).
+- E-mail DIFFÉRÉ : une annonce programmée avec e-mail demandé pose
+  `EmailPending` ; le balayage d'annonces (par minute, rattrapage au boot)
+  l'envoie AU MOMENT de la publication — jamais avant (sinon l'annonce
+  serait connue par e-mail avant d'apparaître en console). Idempotent :
+  trace `EmailedAt`/`EmailedCount` posée et drapeau épongé SOUS le verrou
+  avant la moindre mise en file — un redémarrage ne double jamais l'envoi.
+  Les destinataires sont résolus à l'instant de la publication : un compte
+  créé entre la programmation et la parution en fait partie.
+- Console plateforme : chaque ligne porte un état calculé `state`
+  (active | scheduled | expired) — badge « Programmée » à l'horloge +
+  « publication automatique le … » sous la date de rédaction. Le
+  formulaire gagne « Diffusion : Immédiatement / Programmer une date » +
+  champ date-heure (borne min = maintenant, heure locale du gérant),
+  bouton « Programmer l'annonce », toast dédié.
+- Garde de transition : pendant la fenêtre incident N°162 (frontend Vercel
+  redéployé AVANT le backend Render), un vieux backend IGNORE `publishAt`
+  et publierait immédiatement — le frontend le DÉTECTE (réponse sans
+  `publishAt` malgré la demande) et l'annonce le toast au lieu de laisser
+  croire à une programmation ; l'état des lignes replie sur
+  active/expired tant que `state` est absent.
+
+### Produit — (2) bandeau lisible de bout en bout
+- La zone de message du bandeau devient un bouton (cible tactile large) +
+  chevron « Lire » : une fenêtre affiche le titre, le niveau, le CORPS
+  INTÉGRAL (retours à la ligne préservés, défilement autonome jusqu'à
+  55 dvh, mots protégés), la date de publication et la fin de visibilité —
+  plus AUCUN message tronqué sans issue ; l'extrait reste élégamment
+  tronqué en ligne, le corps reste visible dès `md`.
+- Tri par date EFFECTIVE (`EffectiveAt` : `PublishAt` sinon `CreatedAt`) :
+  la liste client ET la cloche classent une annonce programmée qui vient
+  d'être publiée DEVANT une info rédigée avant elle — le bandeau suit la
+  publication, pas la rédaction ; le badge non-lu compte à partir de la
+  publication (la cloche « sonne » à `PublishAt`, pas à la rédaction).
+
+### Technique
+- `model.Announcement` : champs `PublishAt` + `EmailPending` ;
+  `Active()` bornée par la programmation (comparaison lexicographique
+  RFC 3339 UTC, cohérente avec l'`ExpiresAt` historique) ; `EffectiveAt()` ;
+  `State(now)`.
+- Handlers : création (validation `publishAt`, journal distinct « Annonce
+  programmée pour le … ») ; liste console + `state` ; liste client triée
+  par date effective ; cloche à la date effective (item `At` + read-state).
+- Factorisation e-mail : `resolveAnnouncementTargetsLocked` +
+  `sendAnnouncementEmails` extraits du corps de création (sémantique
+  inchangée), réutilisés par le balayage — discipline N°146 conservée
+  (résolution sous verrou, envois en goroutine après).
+- `announcement_sweep.go` NOUVEAU : `RunAnnouncementSweepForever`
+  (goroutine main.go, patron N°64/N°129 — panique récupérée, rattrapage au
+  démarrage) ; `RunAnnouncementSweep` (due = `EmailPending` &&
+  `PublishAt` atteint ; `Save` seulement si l'état a changé ; traces et
+  envois après déverrouillage).
+- Persistance : colonnes `announcements.publish_at` (TEXT) +
+  `email_pending` (BOOLEAN) — `CREATE TABLE` à jour + `ALTER TABLE ADD
+  COLUMN IF NOT EXISTS` (migration douce idempotente) + spec
+  (cols/scan/args alignés). Les empreintes changent une fois (hashEntity
+  marshale les nouveaux champs) → re-push unique du panier borné
+  (100 lignes max) au premier sync.
+- Frontend : `announcement-banner.tsx` (fenêtre de lecture complète),
+  `platform-announcements-view.tsx` (programmation + badges d'état +
+  garde de transition), `types.ts` (`publishAt`, `emailPending`, `state`,
+  `AdminAnnouncementState`), i18n FR/EN (+18 clés appariées).
+
+### Fidélité
+- Zéro route, zéro endpoint : GET/POST/DELETE `/api/admin/announcements`
+  et GET `/api/announcements` inchangés — `publishAt`, `emailPending` et
+  `state` sont ADDITIFS (l'ancien frontend reste fonctionnel contre le
+  nouveau backend, et réciproquement dans la limite de la garde de
+  transition ci-dessus).
+- Comportements N°152 conservés : masquage par utilisateur/annonce
+  (localStorage), cap 100 annonces, plafond 10 côté client, e-mail un par
+  compte destinataire best-effort, compte plateforme jamais destinataire,
+  garde `isPlatformAdmin` sur les trois routes admin.
+- Aucune table nouvelle (34 tables différentielles inchangées), migration
+  de schéma exclusivement additive, sels de version inchangés.
+- L'annonce A (incident N°162) se publie via la console EXISTANTE pendant
+  la fenêtre : la publication immédiate marche depuis N°152, aucune
+  dépendance à ce numéro.
+
+### Vérifié
+- `go build ./...` ; `go vet ./...` ; `gofmt -l .` → 0 écart.
+- `go test ./... -count=1` : 12 paquets OK (api 44 s) dont 2 tests N°165
+  NOUVEAUX — `TestAnnouncementScheduling` (validations `publishAt` :
+  hors RFC 3339 rejeté, > 365 j rejeté, passé = immédiate sans
+  `publishAt` ; programmée invisible route + cloche ; `state=scheduled`
+  en console ; publication à la lecture + cloche à la date effective ;
+  tri des listes clientes par date effective) et
+  `TestAnnouncementSweepDeferredEmail` (aucun e-mail à la création ni au
+  balayage prématuré ; envoi unique à la publication ; trace posée +
+  drapeau épongé ; second passage sans doublon).
+- Frontend : `bun run typecheck` (tsgo --noEmit) → 0 erreur ; `bun run
+  lint` (eslint .) → 0 avertissement ; clés i18n FR/EN appariées (65/65).
+- Déploiement : frontend Vercel immédiat au push ; backend Render SOUS
+  FENÊTRE INCIDENT N°162 (autoDeploy désactivé — un redéploiement
+  crasherait au boot tant que Neon est suspendu) : la programmation et
+  l'e-mail différé n'entrent en production qu'au prochain déploiement
+  sécurisé (boot résilient ou réveil Neon du 1er octobre) — la garde de
+  transition du frontend couvre exactement cette fenêtre, et l'annonce A
+  est publiée en immédiat via la console existante.
+
 ## 2026-09-20 — N°162 — Le mur de la persistance n'était pas le volume mais le TEMPS D'ÉVEIL : plafond compute du Neon gratuit épuisé (110 CU-h mesurés vs 100) — runbook de sortie de crise (migration Supabase Free recommandée), amendement du verdict 0 coût du N°161
 
 ### Contexte

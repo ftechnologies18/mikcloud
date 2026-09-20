@@ -121,6 +121,11 @@ func main() {
 	// (fermées purgées à 30 j, bot inactives à 7 j) — l'inbox support
 	// ne gonfle pas sous affluence, même sans nouvelle session visiteur.
 	go engine.RunChatSweepForever()
+	// N°165 — balayage des annonces programmées par minute : l'e-mail différé
+	// d'une annonce programmée part au moment de sa publication (la
+	// visibilité, elle, se calcule à la lecture — Active borne bandeau,
+	// cloche et listes clients, rien à balayer de ce côté).
+	go engine.RunAnnouncementSweepForever()
 	// N°150 — bootstrap Telegram plateforme : getMe (cache du @username
 	// pour le lien magique) + setWebhook (URL publique RENDER_EXTERNAL_URL
 	// ou PUBLIC_BASE_URL + secret d'env). Best-effort : un échec réseau au

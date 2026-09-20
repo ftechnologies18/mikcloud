@@ -5,13 +5,15 @@
 //
 //	GET    /api/admin/announcements          → toutes (tri récentes, pour l'historique)
 //	POST   /api/admin/announcements          → crée + journalise + e-mail optionnel
+//	                                         (N°165 : publishAt futur = programmée,
+//	                                         e-mail différé au moment de la publication)
 //	DELETE /api/admin/announcements/{id}     → retire définitivement
 //
 // Côté clients (rang 2) :
 //
 //	GET    /api/announcements                → annonces ACTIVES pour le compte
-//	                                         (audience × expiration ; le compte
-//	                                         principal plateforme n'en reçoit pas)
+//	                                         (audience × programmation × expiration ;
+//	                                         le compte principal plateforme n'en reçoit pas)
 //
 // La cloche (GET /api/bell, N°151) injecte les annonces actives en items
 // synthétiques type « announcement » : elles comptent dans le badge via le
@@ -22,6 +24,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -50,8 +53,9 @@ func (a *API) handleAnnouncementsList(w http.ResponseWriter, r *http.Request) {
 	db := a.store.Data()
 	type row struct {
 		model.Announcement
-		Active        bool `json:"active"`        // visible des clients à l'instant présent
-		AccountsCount int  `json:"accountsCount"` // comptes clients actifs correspondant à l'audience
+		Active        bool   `json:"active"`        // visible des clients à l'instant présent
+		AccountsCount int    `json:"accountsCount"` // comptes clients actifs correspondant à l'audience
+		State         string `json:"state"`         // N°165 — active | scheduled | expired
 	}
 	rows := []row{}
 	now := model.NowISO()
@@ -69,6 +73,7 @@ func (a *API) handleAnnouncementsList(w http.ResponseWriter, r *http.Request) {
 			Announcement:  ann,
 			Active:        ann.Active("hotspot", now) || ann.Active("homenet", now),
 			AccountsCount: activeByUsage[ann.Audience],
+			State:         ann.State(now), // N°165 — état calculé, badge de la liste
 		})
 	}
 	a.store.Unlock()
@@ -76,9 +81,12 @@ func (a *API) handleAnnouncementsList(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAnnouncementCreate — POST /api/admin/announcements (rang 3).
-// Corps : {title, body?, level, audience, expiresInDays?, email?} —
+// Corps : {title, body?, level, audience, expiresInDays?, email?, publishAt?} —
 // validations strictes (le super-admin écrit à TOUS les clients : jamais de
-// titre vide ou de niveau inconnu).
+// titre vide ou de niveau inconnu). N°165 — publishAt (RFC 3339) futur :
+// l'annonce est PROGRAMMÉE, invisible des clients jusqu'à cette date, et
+// l'éventuel e-mail part au moment de la publication (EmailPending + balayage
+// d'annonces), jamais avant.
 func (a *API) handleAnnouncementCreate(w http.ResponseWriter, r *http.Request) {
 	if !isPlatformAdmin(r) {
 		writeErr(w, http.StatusForbidden, "Réservé aux administrateurs de la plateforme")
@@ -92,6 +100,7 @@ func (a *API) handleAnnouncementCreate(w http.ResponseWriter, r *http.Request) {
 		Audience      string `json:"audience"`
 		ExpiresInDays int    `json:"expiresInDays"`
 		Email         bool   `json:"email"`
+		PublishAt     string `json:"publishAt"` // N°165 — RFC 3339 ; futur = programmée
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
@@ -128,24 +137,48 @@ func (a *API) handleAnnouncementCreate(w http.ResponseWriter, r *http.Request) {
 		expires = time.Now().UTC().AddDate(0, 0, req.ExpiresInDays).Format(time.RFC3339)
 	}
 
+	// N°165 — programmation : publishAt RFC 3339 optionnel. Vide ou PASSÉ =
+	// diffusion immédiate (comportement historique) ; futur = l'annonce devient
+	// visible d'elle-même à cette date (Active borne chaque lecture, aucune
+	// action de fond pour « publier »). Bornée à 365 jours d'avance.
+	publish := ""
+	if req.PublishAt != "" {
+		pt, err := time.Parse(time.RFC3339, req.PublishAt)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "Date de diffusion invalide (horodatage attendu)")
+			return
+		}
+		now := time.Now().UTC()
+		if pt.After(now.Add(365 * 24 * time.Hour)) {
+			writeErr(w, http.StatusBadRequest, "Programmation : 365 jours maximum à l'avance")
+			return
+		}
+		if pt.After(now) {
+			publish = pt.UTC().Format(time.RFC3339)
+		}
+	}
+
 	claims := claimsFrom(r)
 	ann := model.Announcement{
 		Title: req.Title, Body: req.Body, Level: req.Level, Audience: req.Audience,
-		ExpiresAt: expires,
+		PublishAt: publish, ExpiresAt: expires,
 	}
 	if claims != nil {
 		ann.CreatedBy, ann.CreatedByName = claims.Sub, claims.Name
+	}
+	// N°165 — annonce programmée + e-mail demandé : l'envoi est DIFFÉRÉ à la
+	// publication (RunAnnouncementSweep) — jamais d'e-mail avant que le
+	// bandeau n'apparaisse. Une annonce immédiate envoie tout de suite.
+	deferredEmail := false
+	if publish != "" && req.Email {
+		ann.EmailPending = true
+		deferredEmail = true
 	}
 
 	// Résolution des destinataires e-mail SOUS le verrou (copies), envoi en
 	// goroutine après (discipline N°146 : la réponse HTTP n'attend jamais
 	// Resend/SMTP, et AUCUNE lecture d'état hors verrou).
-	type mailTarget struct {
-		acc  model.Account
-		name string // nom de salutation (propriétaire sinon compte)
-		cfg  model.NotificationSettings
-	}
-	var targets []mailTarget
+	var targets []announcementMailTarget
 
 	a.store.Lock()
 	db := a.store.Data()
@@ -154,54 +187,29 @@ func (a *API) handleAnnouncementCreate(w http.ResponseWriter, r *http.Request) {
 	ann.ID = model.NewID("ann-")
 	ann.CreatedAt = model.NowISO()
 	model.AppendAnnouncement(db, ann)
-	if req.Email {
+	if req.Email && !deferredEmail {
 		ann.EmailedAt = model.NowISO()
 		ann.EmailedCount = 0
-		for _, acc := range db.Accounts {
-			if acc.ID == model.AccountMainID || acc.Status != "active" {
-				continue // pas le compte plateforme, pas les comptes désactivés
-			}
-			if req.Audience != model.AnnouncementAudienceAll &&
-				req.Audience != normalizeAccountUsage(acc.Usage) {
-				continue
-			}
-			if strings.TrimSpace(acc.Email) == "" {
-				continue // compte sans e-mail connu : bandeau + cloche suffisent
-			}
-			cfg, ok := transactionalSenderLocked(db, acc.ID)
-			if !ok {
-				continue // aucun expéditeur exploitable : silencieux, jamais bloquant
-			}
-			name := acc.Name
-			for _, u := range db.Users {
-				if u.AccountID == acc.ID && u.Role == model.RoleOwner && u.Name != "" {
-					name = u.Name
-					break
-				}
-			}
-			targets = append(targets, mailTarget{acc: acc, name: name, cfg: cfg})
-		}
+		targets = resolveAnnouncementTargetsLocked(db, ann)
 		ann.EmailedCount = len(targets)
 		// la copie en tête porte la trace de diffusion
 		db.Announcements[0] = ann
 	}
-	a.logActivityBy(r, db, "", "system",
-		"Annonce diffusée aux clients ("+announceScopeLabel(req.Audience)+") : «"+ann.Title+"»")
+	logMsg := "Annonce diffusée aux clients (" + announceScopeLabel(req.Audience) + ") : «" + ann.Title + "»"
+	if publish != "" {
+		if pt, err := time.Parse(time.RFC3339, publish); err == nil {
+			logMsg = "Annonce programmée pour le " + formatDateFr(pt) + " (" + announceScopeLabel(req.Audience) + ") : «" + ann.Title + "»"
+		}
+	}
+	a.logActivityBy(r, db, "", "system", logMsg)
 	a.store.Save()
 	a.store.Unlock()
 
 	// E-mails best-effort : un par compte destinataire, expéditeurs déjà
 	// résolus sous verrou — la goroutine ne touche plus l'état partagé.
-	if len(targets) > 0 {
-		title, textBody, htmlBody := buildAnnouncementEmail(ann)
-		for _, tg := range targets {
-			logBody := "Annonce plateforme — " + ann.Title
-			closureTarget := tg
-			dispatchEmailTask(func() {
-				a.dispatchAccountEmail(notify.KindAnnouncement, title, logBody, closureTarget.cfg,
-					strings.TrimSpace(closureTarget.acc.Email), textBody+closureTarget.name, htmlBody)
-			})
-		}
+	// (Programmée : RIEN maintenant — le balayage enverra à la publication.)
+	if !deferredEmail {
+		a.sendAnnouncementEmails(ann, targets)
 	}
 
 	writeJSON(w, http.StatusCreated, ann)
@@ -253,14 +261,78 @@ func announceScopeLabel(audience string) string {
 }
 
 // ---------------------------------------------------------------------------
+// Destinataires e-mail d'une annonce (N°165 — factorisés : corps de la
+// création immédiate ET balayage de publication, announcement_sweep.go)
+// ---------------------------------------------------------------------------
+
+// announcementMailTarget — copie de destinataire résolue SOUS le verrou
+// (l'envoi, lui, part en goroutine après déverrouillage — discipline N°146).
+type announcementMailTarget struct {
+	acc  model.Account
+	name string // nom de salutation (propriétaire sinon compte)
+	cfg  model.NotificationSettings
+}
+
+// resolveAnnouncementTargetsLocked — comptes destinataires d'une annonce :
+// actifs, dans l'audience, e-mail connu, expéditeur résoluble. TOUJOURS sous
+// le verrou du store ; ne retourne que des copies. (N°165 — extrait du corps
+// de la création, sémantique inchangée.)
+func resolveAnnouncementTargetsLocked(db *model.DB, ann model.Announcement) []announcementMailTarget {
+	targets := []announcementMailTarget{}
+	for _, acc := range db.Accounts {
+		if acc.ID == model.AccountMainID || acc.Status != "active" {
+			continue // pas le compte plateforme, pas les comptes désactivés
+		}
+		if ann.Audience != model.AnnouncementAudienceAll &&
+			ann.Audience != normalizeAccountUsage(acc.Usage) {
+			continue
+		}
+		if strings.TrimSpace(acc.Email) == "" {
+			continue // compte sans e-mail connu : bandeau + cloche suffisent
+		}
+		cfg, ok := transactionalSenderLocked(db, acc.ID)
+		if !ok {
+			continue // aucun expéditeur exploitable : silencieux, jamais bloquant
+		}
+		name := acc.Name
+		for _, u := range db.Users {
+			if u.AccountID == acc.ID && u.Role == model.RoleOwner && u.Name != "" {
+				name = u.Name
+				break
+			}
+		}
+		targets = append(targets, announcementMailTarget{acc: acc, name: name, cfg: cfg})
+	}
+	return targets
+}
+
+// sendAnnouncementEmails — file les envois best-effort (un par compte
+// destinataire) APRÈS déverrouillage : ni la réponse HTTP, ni le passage de
+// balayage, n'attendent Resend/SMTP.
+func (a *API) sendAnnouncementEmails(ann model.Announcement, targets []announcementMailTarget) {
+	if len(targets) == 0 {
+		return
+	}
+	title, textBody, htmlBody := buildAnnouncementEmail(ann)
+	for _, tg := range targets {
+		logBody := "Annonce plateforme — " + ann.Title
+		closureTarget := tg
+		dispatchEmailTask(func() {
+			a.dispatchAccountEmail(notify.KindAnnouncement, title, logBody, closureTarget.cfg,
+				strings.TrimSpace(closureTarget.acc.Email), textBody+closureTarget.name, htmlBody)
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Côté clients
 // ---------------------------------------------------------------------------
 
 // handleClientAnnouncements — GET /api/announcements (rang 2) : les annonces
-// ACTIVES pour le compte du porteur (audience × expiration), les plus
-// récentes d'abord, plafonnées à 10 — le bandeau console et la destination
-// « tout voir » de la cloche y lisent la même vérité. Le compte principal
-// (plateforme) n'est pas un client : liste vide.
+// ACTIVES pour le compte du porteur (audience × programmation × expiration),
+// les plus récentes d'abord, plafonnées à 10 — le bandeau console et la
+// destination « tout voir » de la cloche y lisent la même vérité. Le compte
+// principal (plateforme) n'est pas un client : liste vide.
 func (a *API) handleClientAnnouncements(w http.ResponseWriter, r *http.Request) {
 	acc := accountScope(r)
 	usage := model.AccountUsageHotspot
@@ -285,7 +357,12 @@ func (a *API) handleClientAnnouncements(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	a.store.Unlock()
-	// tri déjà récent-d'abord (insertion en tête) ; plafond 10.
+	// N°165 — tri par date EFFECTIVE décroissante puis plafond 10 : une
+	// annonce programmée qui vient d'être publiée précède une info rédigée
+	// avant elle (l'insertion en tête suit la date de RÉDACTION, pas celle de
+	// diffusion) — le bandeau montre toujours l'annonce la plus pertinente du
+	// moment. Miroir du tri de la cloche (EffectiveAt).
+	sort.Slice(out, func(i, j int) bool { return out[i].EffectiveAt() > out[j].EffectiveAt() })
 	if len(out) > 10 {
 		out = out[:10]
 	}

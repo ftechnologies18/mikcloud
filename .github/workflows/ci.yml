@@ -205,8 +205,28 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # N°165 — GEL DU DÉPLOIEMENT (incident N°162 : quota compute Neon
+      # épuisé, suspension jusqu'au 1er octobre). Tant que le sentinel
+      # RENDER-DEPLOY-FROZEN existe à la racine du dépôt, AUCUN
+      # déploiement Render n'est déclenché — un boot sans PostgreSQL est un
+      # crash garanti (store.New → log.Fatalf ; le boot résilient arrive
+      # avec la branche n164-persistence-safety, fusion prévue le 1er oct).
+      # Levée du gel : supprimer le fichier sentinel dans le commit de
+      # reprise (runbook docs/RUNBOOK-POSTGRES.md §11) — le déploiement
+      # redevient automatique au push suivant.
+      - name: Gel du déploiement (incident N°162 — sentinel)
+        id: freeze
+        run: |
+          if [ -f RENDER-DEPLOY-FROZEN ]; then
+            echo "RENDER-DEPLOY-FROZEN présent — déploiement Render GELÉ (incident N°162 : un boot sans PostgreSQL crasherait)."
+            echo "frozen=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Aucun gel actif."
+            echo "frozen=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Déclencher le déploiement Render
-        if: steps.backend.outputs.changed == 'true'
+        if: steps.backend.outputs.changed == 'true' && steps.freeze.outputs.frozen != 'true'
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
         run: |

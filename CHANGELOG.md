@@ -5,6 +5,45 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-21 — N°170 — Le dépôt PGDG s'appelle « noble-pgdg », pas « noble » : les installs de clients PostgreSQL des workflows corrigées avant le premier vrai run
+
+### Contexte
+Premier dispatch RÉEL de `migrate-neon-supabase` (run 35647321019, 19:50Z)
+après la levée du quota par carte de paiement : échec immédiat à
+l'installation du client — `apt-get update` refuse
+`https://apt.postgresql.org/pub/repos/apt noble Release` : le dépôt PGDG
+ne publie pas de suite portant le nom de code NU, mais
+`<codename>-pgdg` (vérifié en direct : `dists/noble-pgdg/Release` =
+HTTP 200, `dists/noble/Release` = 404 ; le pattern officiel
+postgresql.org est `$(lsb_release -cs)-pgdg main`). Le workflow n'avait
+jamais tourné (rédigé pendant la fenêtre où le quota figeait Neon :
+aucun dump n'était possible, l'installation du client n'a jamais été
+exercée) — le bug était latent depuis N°166.
+
+### Produit
+- `migrate-neon-supabase.yml` (main) : `${CODENAME} main` →
+  `${CODENAME}-pgdg main` — l'unique ligne fautive.
+- `standby-restore.yml` (branche `n164-persistence-safety`, même bug par
+  copie du même patron) : même correctif sur la branche, AVANT la fusion
+  de l'étape 6 — le cron quotidien 02:43 UTC et le dispatch de validation
+  de l'étape 8 en dépendent.
+- `backup.yml` épargné par construction : il exporte via l'outil Go
+  `mikbackup` (pgx), sans client apt.
+
+### Fidélité
+- Workflows d'exploitation uniquement : zéro code backend/frontend, zéro
+  changement des étapes dump/restore/contrôle/RLS — la détection monorepo
+  du job deploy-render saute, sentinel N°165-b et autoDeploy=no restent en
+  place : ce commit ne peut pas déployer.
+
+### Vérifié
+- Suites PGDG interrogées en direct (noble-pgdg 200 / noble 404) ;
+  inventaire complet des occurrences `pub/repos/apt` sur main, n163 et
+  n164 : 3 occurrences, toutes traitées (la copie migrate de n164 sera
+  supplantée par la version corrigée de main à la fusion — seul
+  standby-restore.yml, propre à la branche, exigeait le correctif en
+  branche).
+
 ## 2026-09-21 — N°169 — Le contrôle d'intégrité de la migration apprend la source vivante : les comptages de référence deviennent le dump lui-même
 
 ### Contexte

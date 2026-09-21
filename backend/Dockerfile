@@ -15,7 +15,7 @@ FROM alpine:3.20
 # *.pooler.supabase.com sert une chaîne signée par la PKI PRIVÉE
 # « Supabase Root 2021 CA » (racine auto-signée, absente des magasins
 # publics) — sans elle, verify-full vers Supabase échoue en
-# « x509: certificate signed by unknown authority » (reproduit le 20/09/2025).
+# « x509: certificate signed by unknown authority » (reproduit le 20/09/2026).
 # Certificat PUBLIC (empreinte SHA-256 80:70:25:AD:…:E6:CA:FA, valable
 # jusqu'au 26/04/2031) — cf. docs/RUNBOOK-POSTGRES.md §12.
 RUN apk add --no-cache ca-certificates

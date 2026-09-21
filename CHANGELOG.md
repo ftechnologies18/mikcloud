@@ -130,6 +130,24 @@ numérotation : N°166.
   sécurisé (boot résilient ou réveil Neon du 1er octobre) — la garde de
   transition du frontend couvre exactement cette fenêtre, et l'annonce A
   est publiée en immédiat via la console existante.
+- CI main (run 35545998608) : e2e + govulncheck + frontend VERTS ;
+  backend ROUGE au premier passage sur un flaky PRÉEXISTANT sans lien
+  avec ce numéro — `TestGzipSkipsTinyResponses` comparait litéralement
+  deux réponses de `/` dont l'horodatage « time » peut basculer à la
+  seconde ENTRE les deux requêtes (exposé par `-race`, plus lent) ;
+  corrigé au commit N°165-c par normalisation des champs volatils
+  (« time », « lastSweepAt ») avant comparaison — la garantie testée est
+  « le même JSON servi en clair », pas « la même seconde ».
+- Incident ÉVITÉ pendant la poussée (commit N°165-b) : le job CI
+  `deploy-render` (qui appelle LUI-MÊME l'API de déploiement Render,
+  non couvert par l'autoDeploy=no du N°162) avait démarré pour la
+  poussée N°165 (changements backend présents) — run 35545840619 ANNULÉ
+  avant l'exécution du job, service vérifié UP (HTTP 200) ;
+  coupe-circuit permanent posé : sentinel `RENDER-DEPLOY-FROZEN` +
+  étape « Gel du déploiement » dans le job (toute poussée, toutes
+  sessions comprises : aucun déploiement Render tant que le sentinel
+  existe ; levée du gel = le supprimer dans le commit de reprise,
+  runbook §11).
 
 ## 2026-09-20 — N°162 — Le mur de la persistance n'était pas le volume mais le TEMPS D'ÉVEIL : plafond compute du Neon gratuit épuisé (110 CU-h mesurés vs 100) — runbook de sortie de crise (migration Supabase Free recommandée), amendement du verdict 0 coût du N°161
 

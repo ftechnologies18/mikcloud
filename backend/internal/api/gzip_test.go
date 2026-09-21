@@ -65,7 +65,26 @@ func TestGzipSkipsTinyResponses(t *testing.T) {
 		t.Fatalf("le corps doit être servi en clair : %s", gzBody)
 	}
 	_, plain := doGzipReq(t, ts, http.MethodGet, "/", "", "identity", "")
-	if gzBody != plain {
+	// N°165-c — le corps de / embarque un horodatage PAR REQUÊTE (« time »,
+	// et un « lastSweepAt » potentiellement mouvant) : la comparaison
+	// litérale échouait quand la seconde basculait ENTRE les deux requêtes
+	// (flaky CI -race, run 35545998608). La garantie testée est « le même
+	// JSON servi en clair », pas « la même seconde » — on normalise les
+	// champs volatils avant de comparer.
+	stripVolatile := func(s string) string {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(s), &m); err != nil {
+			return s
+		}
+		delete(m, "time")
+		delete(m, "lastSweepAt")
+		out, err := json.Marshal(m)
+		if err != nil {
+			return s
+		}
+		return string(out)
+	}
+	if stripVolatile(gzBody) != stripVolatile(plain) {
 		t.Fatalf("corps identiques attendus\nclair : %s\ngzip : %s", plain, gzBody)
 	}
 }

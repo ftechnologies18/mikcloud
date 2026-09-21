@@ -1,0 +1,157 @@
+# Migration unique Neon → Supabase — étape 4 de la séquence du 1er octobre
+# (docs/RUNBOOK-POSTGRES.md §11). Ne s'exécute QUE manuellement
+# (workflow_dispatch), jamais par cron ni par push.
+#
+# Séquence du job :
+#   1. pg_dump complet de la SOURCE (secret DATABASE_URL — encore la base
+#      Neon de production tant que la bascule n'a pas eu lieu), sans les
+#      artefacts s4check_* du test de restauration hebdomadaire ;
+#   2. remise à zéro contrôlée du schéma public Supabase (DROP + CREATE :
+#      idempotent, re-runnable) puis restore du dump ;
+#   3. contrôle d'intégrité : comptages par table source vs cible ;
+#   4. durcissement RLS : le dump Neon ne porte pas les drapeaux RLS — on
+#      les pose explicitement pour que l'API Data Supabase (PostgREST +
+#      clé publishable) ne voie RIEN, même pendant la fenêtre restore →
+#      déploiement. ensureSchema (N°166) les ré-affirme à chaque boot.
+#
+# N°166 — mêmes exigences que standby-restore.yml, découvertes le 20/09 :
+#   - client pg_dump ≥ serveur source : Neon = PostgreSQL 18.6 →
+#     installation de postgresql-client-18 (le client 16 du runner refuse) ;
+#   - verify-full vers le pooler Supabase exige la racine committée
+#     backend/certs/supabase-prod-ca-2021.crt (PKI privée Supabase).
+#
+# Prérequis (secrets GitHub) :
+#   - DATABASE_URL          DSN Neon SOURCE (production actuelle) ;
+#   - SUPABASE_DATABASE_URL DSN Supabase CIBLE (session pooler :5432, sans
+#     paramètre sslmode — verify-full + racine forcés par ce workflow).
+#
+# APRÈS la bascule Render (DATABASE_URL Render = Supabase), mettre à jour le
+# secret DATABASE_URL vers la valeur Supabase (cf. backup.yml) : ce workflow
+# devient alors inopérant (source = cible) et reste le véhicule documenté de
+# toute future re-migration.
+name: migrate-neon-supabase
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: migrate-neon-supabase
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  migrate:
+    name: Dump Neon → restore Supabase (+ intégrité + RLS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Client PostgreSQL 18 (≥ serveur Neon 18.6, sinon pg_dump refuse)
+        run: |
+          set -euo pipefail
+          CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME")
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${CODENAME} main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-18
+          pg_dump --version && psql --version
+
+      - name: Vérifier la présence des secrets
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
+        run: |
+          if [ -z "${DATABASE_URL}" ] || [ -z "${SUPABASE_DATABASE_URL}" ]; then
+            echo "Secrets DATABASE_URL/SUPABASE_DATABASE_URL absents — migration impossible (cf. RUNBOOK-POSTGRES.md §11)." >&2
+            exit 1
+          fi
+
+      - name: Dump de la production Neon
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          echo "→ pg_dump de la source (Neon)…"
+          pg_dump --no-owner --no-privileges --exclude-table='s4check_*' \
+            "$DATABASE_URL" > /tmp/migration.sql
+          echo "→ Dump : $(du -h /tmp/migration.sql | cut -f1), $(grep -c '^COPY ' /tmp/migration.sql) table(s)."
+
+      - name: Remise à zéro contrôlée + restore vers Supabase
+        env:
+          SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          export PGSSLMODE=verify-full
+          export PGSSLROOTCERT="$GITHUB_WORKSPACE/backend/certs/supabase-prod-ca-2021.crt"
+          echo "→ Remise à zéro du schéma public Supabase (idempotent — re-run sûr)…"
+          psql -v ON_ERROR_STOP=1 --quiet "$SUPABASE_DATABASE_URL" <<'SQL'
+          DROP SCHEMA public CASCADE;
+          CREATE SCHEMA public;
+          GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+          SQL
+          echo "→ Restore du dump…"
+          psql -v ON_ERROR_STOP=1 --quiet "$SUPABASE_DATABASE_URL" < /tmp/migration.sql
+          echo "→ Restore terminé."
+
+      - name: Contrôle d'intégrité (comptages par table)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          export PGSSLMODE=verify-full
+          export PGSSLROOTCERT="$GITHUB_WORKSPACE/backend/certs/supabase-prod-ca-2021.crt"
+          TABLES=$(psql -t -A --quiet "$DATABASE_URL" -c \
+            "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' AND table_name NOT LIKE 's4check_%' ORDER BY table_name")
+          if [ -z "$TABLES" ]; then
+            echo "Aucune table trouvée côté source ?!" >&2; exit 1
+          fi
+          FAILED=0
+          for T in $TABLES; do
+            SRC=$(psql -t -A --quiet "$DATABASE_URL" -c "SELECT count(*) FROM \"$T\"")
+            DST=$(psql -t -A --quiet "$SUPABASE_DATABASE_URL" -c "SELECT count(*) FROM \"$T\"" || echo "ERR")
+            if [ "$SRC" != "$DST" ]; then
+              echo "✗ $T : source=$SRC cible=$DST"
+              FAILED=1
+            else
+              echo "✓ $T : $SRC ligne(s)"
+            fi
+          done
+          if [ "$FAILED" -ne 0 ]; then
+            echo "Divergence — migration invalide, NE PAS basculer Render." >&2
+            exit 1
+          fi
+          echo "Intégrité vérifiée : la cible est une copie fidèle de la source."
+
+      - name: Durcissement RLS (aveugle pour l'API Data Supabase)
+        env:
+          SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          export PGSSLMODE=verify-full
+          export PGSSLROOTCERT="$GITHUB_WORKSPACE/backend/certs/supabase-prod-ca-2021.crt"
+          echo "→ ENABLE ROW LEVEL SECURITY sur toutes les tables publiques…"
+          psql -v ON_ERROR_STOP=1 --quiet "$SUPABASE_DATABASE_URL" <<'SQL'
+          DO $$
+          DECLARE t text;
+          BEGIN
+            FOR t IN SELECT table_name FROM information_schema.tables
+                     WHERE table_schema='public' AND table_type='BASE TABLE'
+            LOOP
+              EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
+            END LOOP;
+          END $$;
+          SQL
+          NO_RLS=$(psql -t -A --quiet "$SUPABASE_DATABASE_URL" -c \
+            "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND NOT c.relrowsecurity")
+          if [ "$NO_RLS" != "0" ]; then
+            echo "$NO_RLS table(s) sans RLS — durcissement incomplet." >&2
+            exit 1
+          fi
+          echo "RLS actif sur toutes les tables — l'API Data (clé publishable) ne voit rien."

@@ -5,6 +5,54 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-21 — N°179 — La surveillance du premier mois Supabase (runbook §8) devient un outil : `ops/mois1/surveille.sh` + journal de mesures de référence
+
+### Contexte
+La migration étant opérationnelle depuis 20:16Z (§5-§8 du runbook exécutés),
+il reste le §8 : surveiller le PREMIER MOIS (taille, egress, carte Santé,
+synchro/check-ins) — jusqu'ici quatre lectures manuelles de dashboards,
+sans mesure initiale consignée ni seuils vérifiés.
+
+### Produit
+- `ops/mois1/surveille.sh` (NOUVEAU, lecture seule, zéro secret embarqué —
+  même discipline que `ops/oct1/`) : les QUATRE indicateurs §8 mesurés
+  sans dashboard — (1) taille par SQL direct (`pg_database_size`, top
+  tables, lignes public, croissance commands 24 h) avec verdict contre
+  350 Mo ; (2) egress sous deux angles : compteur applicatif N°72 (bloc
+  « bandwidth » de la carte Santé, projection 31 j) + proxy dump (taille
+  du dernier artefact chiffré `mikcloud-backup` via l'API GitHub) — la
+  figure exacte du quota Supabase reste le dashboard Reports/Usage (aucun
+  token `sbp_` au coffre, consigné) ; (3) carte Santé par login admin +
+  `/api/admin/sync-status` (mode, succès/échecs/consécutifs, âge de la
+  dernière synchro vs seuil « échec > 5 min », degraded) ; (4) logs Render
+  par API avec la pagination qui suit `hasMore`.
+- Syntaxe de l'API logs Render MESURÉE au passage :
+  `GET /v1/logs?ownerId=…&resource={serviceId}&startTime=…&endTime=…&limit=…`
+  — les paramètres plats `owner`/`name`/`service`/`serviceId` renvoient
+  tous « could not parse filter parameters: invalid path » ; consignée
+  dans l'en-tête du script et le runbook §8.1.
+- Runbook §8 enrichi : §8.1 (l'outil et ce que chaque check mesure),
+  §8.2 (journal de suivi du mois, deux mesures de référence déjà
+  consignées) + projection de croissance documentée (commands
+  ~3 350 lignes/24 h → month-end ~120 Mo, loin du seuil 350 Mo, à
+  re-mesurer après extinction des vagues de rattrapage post-migration).
+
+### Fidélité
+- Fichiers opérationnels et documentation seuls : `ops/mois1/` + runbook +
+  changelog. Zéro code applicatif, aucun déploiement déclenché par ce
+  contenu (la détection monorepo du workflow CI ne regarde que
+  `backend/` ; le push porte aussi N°178, lui, change `backend/`).
+
+### Vérifié
+- Exécution réelle complète le 21/09 23:30Z : **8 OK · 0 avertissement ·
+  0 échec** — base 29,67 Mo (8,5 % du seuil), 19 085 lignes public,
+  egress applicatif 1,46 Mo/jour (projection 45 Mo/31 j vs 3 500 Mo),
+  dump chiffré 11,28 Mo/jour, carte Santé 1 693/0/0 âge 2 s
+  degraded=null, 1 000 logs/2 h : 0 « synchro différée échouée », 0
+  error, 847 requêtes /agent/*.
+- Bugs d'`eval` corrigés au premier passage réel (les valeurs contenant
+  « ; »/espaces — top tables, catégories — sont ré-émises quotées).
+
 ## 2026-09-21 — N°178 — Le race detector de la CI attrape une course mémoire dans le stub des e-mails transactionnels (run 457) : indirections synchronisées
 
 ### Contexte

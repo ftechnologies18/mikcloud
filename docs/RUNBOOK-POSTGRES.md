@@ -219,6 +219,54 @@ chose pour ~3× moins cher, colocalisé au backend (§4-D).
 | Carte « Santé de la persistance » | MikCloud (admin) | tout échec > 5 min |
 | Synchro / check-ins | logs Render | retour des « store: synchro PostgreSQL différée échouée » |
 
+### 8.1 Outil de mesure (N°179) — `ops/mois1/surveille.sh`
+
+Les quatre indicateurs sont mesurables SANS dashboard, en lecture seule :
+
+```
+ops/mois1/surveille.sh          # fenêtre logs 6 h par défaut
+MIKCLOUD_LOG_WINDOW_HOURS=24 ops/mois1/surveille.sh
+```
+
+Secrets lus de l'environnement ou du coffre (`SUPABASE_DATABASE_URL`,
+`GITHUB_TOKEN`, `RENDER_API_KEY`, `ADMIN_PASSWORD` — même discipline que
+`ops/oct1/preflight.sh`, zéro secret embarqué). Ce que chaque check mesure :
+
+1. **Taille** — SQL direct : `pg_database_size` + top tables + lignes du
+   schéma public + croissance `commands` 24 h ;
+2. **Egress** — deux angles : (a) le compteur applicatif N°72 (bloc
+   « bandwidth » de la carte Santé : octets sortis du jour par catégorie,
+   projeté sur 31 j en garde-fou) ; (b) le proxy dump : taille du dernier
+   artefact chiffré `mikcloud-backup` (le dump quotidien participe à
+   l'egress Supabase). La figure EXACTE du quota reste le dashboard →
+   Reports/Usage (aucun token d'API Management `sbp_` au coffre) ;
+3. **Carte Santé** — login admin + `/api/admin/sync-status` : mode,
+   succès/échecs/consécutifs, âge de la dernière synchro (verdict sur le
+   seuil « échec > 5 min »), état dégradé ;
+4. **Synchro / check-ins** — API logs Render (syntaxe mesurée N°179 :
+   `GET /v1/logs?ownerId=…&resource={serviceId}&startTime=…&endTime=…&limit=…`
+   — les paramètres plats `owner`/`name`/`service` renvoient « invalid
+   path ») : occurrences de « store: synchro PostgreSQL différée
+   échouée », entrées error/fatal, trafic agents `/agent/*`.
+
+Sortie : verdict `OK/avertissements/échecs` par check, code retour non
+nul si un seuil est franchi.
+
+### 8.2 Journal de suivi du premier mois (21/09 → 21/10/2026)
+
+| Date (UTC) | Taille base | Lignes public | Egress app. du jour | Dump chiffré | Santé (succès/échec/conséc.) | Logs Render (fenêtre) | Verdict |
+|---|---|---|---|---|---|---|---|
+| 21/09 22:30 (J0, migration 20:16Z) | 29 Mo (8,3 % seuil) | 19 151 | 1,06 Mo (proj. ~33 Mo/31 j) | 6,0 Mo | 892/0/0, synchro à la seconde | 1 200 logs, 0 échec synchro, agents 2-3 ms | ✓ conformes |
+| 21/09 23:30 (J0+nuit, 1re mesure outillée) | 29,67 Mo (8,5 %) | 19 085 | 1,46 Mo (proj. 45 Mo/31 j) | 11,28 Mo | 1 693/0/0, âge 2 s, degraded=null | 1 000 logs/2 h : 0 échec synchro, 0 error, 847 req /agent/* | ✓ 8 OK · 0 échec |
+
+Cadence recommandée : une mesure par mesure de `surveille.sh`, à
+journaler ici — puis décision au terme du mois (ou dès qu'un seuil
+franchit 70 %). Croissance observée au 21/09 soir : `commands`
+~3 350 lignes/24 h (≈ 2,8 Mo/jour avec index) → projection month-end
+~120 Mo, loin du seuil 350 Mo ; à re-mesurer après extinction des vagues
+de rattrapage post-migration (rejeu N°163 Zikisso + syncreur), qui
+gonflent artificiellement la volumétrie des premiers jours.
+
 Si un seuil est franchi au fil de la croissance du parc : Render
 PostgreSQL Starter (~6-7 $/mois, §4-D) — idéalement au moment où le
 premier client payant finance le basculement (et le backend Render

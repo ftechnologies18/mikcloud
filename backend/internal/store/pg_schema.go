@@ -12,6 +12,17 @@ import (
 // Schéma (idempotent)
 // ---------------------------------------------------------------------------
 
+// rlsStatements — N°166 — un « ALTER TABLE ... ENABLE ROW LEVEL SECURITY »
+// par table du registre syncKnownTables. Généré DU registre pour qu'une table
+// future soit couverte automatiquement (garde TestRLSStatementsCoverRegistry).
+func rlsStatements() []string {
+	out := make([]string, 0, len(syncKnownTables))
+	for name := range syncKnownTables {
+		out = append(out, `ALTER TABLE `+name+` ENABLE ROW LEVEL SECURITY`)
+	}
+	return out
+}
+
 // ensureSchema crée les tables et index si absents. Les horodatages sont
 // conservés en TEXT (RFC3339) pour garantir un aller-retour strictement
 // identique avec le modèle Go ; last_tick seul est en TIMESTAMPTZ (time.Time).
@@ -930,6 +941,15 @@ func (p *PG) ensureSchema() error {
                           AND NOT EXISTS (SELECT 1 FROM profiles p WHERE p.account_id = a.id AND LOWER(p.name) = 'staff')`,
 		`UPDATE accounts SET staff_seeded = TRUE WHERE staff_seeded = FALSE`,
 	}
+	// N°166 — RLS systématique : sur un hébergeur mutualisé doté d'une API
+	// Data (Supabase : PostgREST + clé publishable), une table sans RLS
+	// est LISIBLE par les rôles anon/authenticated. ENABLE ROW LEVEL
+	// SECURITY sans politique = aucune ligne visible pour eux ; le compte
+	// applicatif (propriétaire des tables) contourne RLS — zéro effet sur
+	// le backend, ordre inerte sur Neon. Idempotent : rejoué à chaque
+	// boot, la passe protège aussi les tables restaurées d'un dump sans
+	// RLS (migration du 1er octobre) et toute table future.
+	stmts = append(stmts, rlsStatements()...)
 	for _, q := range stmts {
 		if _, err := p.db.Exec(q); err != nil {
 			return fmt.Errorf("création du schéma : %w (requête : %.80s)", err, q)

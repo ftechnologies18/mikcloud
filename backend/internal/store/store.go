@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"mikcloud/hotspot-api/internal/auth"
@@ -62,6 +63,19 @@ type Store struct {
 	saveCh      chan struct{} // réveil du syncreur (capacité 1, signal non bloquant)
 	closing     chan struct{} // arrêt propre (fermé par Close)
 	syncDone    chan struct{} // syncreur terminé (flush final effectué)
+
+	// N°164 — boot résilient. pgActive distingue le mode PostgreSQL
+	// DÉCIDÉ (Save ne passe plus par JSON) du pool réellement ouvert
+	// (pg != nil seulement après un Load réussi — boot normal ou
+	// récupération). Les drapeaux dégradés sont atomiques : lus par la
+	// carte Santé sans verrou, posés par la boucle de récupération.
+	pgActive        atomic.Bool
+	pgDegraded      atomic.Bool
+	pgDegradedSince atomic.Int64           // unix secondes
+	pgRecoveredAt   atomic.Int64           // unix secondes (0 = jamais)
+	pgRecoverTries  atomic.Int64           // tentatives de récupération
+	pgRecoverErr    atomic.Pointer[string] // dernière erreur de récupération
+	syncRunning     bool                   // sous saveMu : le syncreur est-il démarré ?
 }
 
 // New charge l'état persisté (PostgreSQL si DATABASE_URL est défini, sinon
@@ -79,7 +93,11 @@ func New(dir string) (*Store, error) {
 	if strings.HasPrefix(databaseURL, "postgres://") || strings.HasPrefix(databaseURL, "postgresql://") {
 		pg, err := OpenPG(databaseURL)
 		if err != nil {
-			return nil, err
+			// N°164 — boot résilient : base injoignable ≠ service
+			// mort. Démarrage dégradé (mémoire seule) + récupération
+			// en arrière-plan (fusion sans perte au retour).
+			s.bootDegraded(databaseURL, err)
+			return s, nil
 		}
 		// N°130 — canaux du syncreur de fond, posés AVANT tout Save() :
 		// les marquages « sale » du boot (migrations, override admin)
@@ -103,7 +121,10 @@ func New(dir string) (*Store, error) {
 		db, found, err := pg.Load()
 		if err != nil {
 			pg.Close()
-			return nil, err
+			// N°164 — base joignable mais illisible : même traitement
+			// (la boucle de récupération rejoue OpenPG + Load).
+			s.bootDegraded(databaseURL, err)
+			return s, nil
 		}
 		if found {
 			log.Printf("store: état chargé depuis PostgreSQL (%d utilisateurs hotspot, %d routeurs, %d comptes)",
@@ -148,6 +169,10 @@ func New(dir string) (*Store, error) {
 		// N°130 — le syncreur de fond prend le relais : les marquages posés
 		// ci-dessus (migrations + override admin) sont flushés peu après le
 		// démarrage, puis à chaque mutation au rythme plafonné saveMinInterval.
+		s.pgActive.Store(true)
+		s.saveMu.Lock()
+		s.syncRunning = true
+		s.saveMu.Unlock()
 		go s.syncLoop()
 		log.Println("store: persistance PostgreSQL active (DATABASE_URL, sauvegarde asynchrone)")
 		return s, nil
@@ -965,7 +990,10 @@ func unsealSecrets(db *model.DB) {
 //
 // Mode JSON (développement, E2E) : écriture atomique synchrone inchangée.
 func (s *Store) Save() {
-	if s.pg != nil {
+	// N°164 — le mode PostgreSQL est décidé dès le boot (pgActive), même
+	// dégradé (pool pas encore ouvert) : les marquages s'accumulent et le
+	// premier flush de la récupération les emportera (diff complet).
+	if s.pgActive.Load() {
 		s.saveMu.Lock()
 		s.dirtyAll = true
 		s.saveMu.Unlock()
@@ -995,7 +1023,8 @@ func (s *Store) Save() {
 // Mode JSON : pas de diff possible — retombe sur l'écriture complète
 // synchrone (strictement identique à Save).
 func (s *Store) SaveTables(names ...string) {
-	if s.pg == nil {
+	// N°164 — même garde que Save : mode PG décidé (dégradé inclus).
+	if !s.pgActive.Load() {
 		s.saveJSON()
 		return
 	}
@@ -1154,19 +1183,32 @@ func (s *Store) flush() bool {
 // N°130 — le syncreur de fond reçoit l'ordre d'arrêt et exécute un FLUSH
 // FINAL de l'état sale éventuel (borné par syncTimeout) avant la fermeture
 // du pool : la fenêtre de perte asynchrone ne survit pas à un arrêt propre.
-// Idempotent (double Close sans panique).
+// N°164 — en mode dégradé (syncreur jamais démarré), l'attente de syncDone
+// est sautée (elle ne serait jamais satisfaite) et la boucle de récupération
+// est prévenue par closing. Idempotent (double Close sans panique).
 func (s *Store) Close() error {
-	if s.pg != nil {
-		s.saveMu.Lock()
-		if s.closed {
-			s.saveMu.Unlock()
-			return nil
-		}
-		s.closed = true
+	if !s.pgActive.Load() {
+		return nil // mode JSON : rien à fermer
+	}
+	s.saveMu.Lock()
+	if s.closed {
 		s.saveMu.Unlock()
-		close(s.closing)
+		return nil
+	}
+	s.closed = true
+	s.saveMu.Unlock()
+	close(s.closing)
+	s.saveMu.Lock()
+	running := s.syncRunning
+	s.saveMu.Unlock()
+	if running {
 		<-s.syncDone
-		return s.pg.Close()
+	}
+	s.saveMu.Lock()
+	p := s.pg
+	s.saveMu.Unlock()
+	if p != nil {
+		return p.Close()
 	}
 	return nil
 }
@@ -1207,6 +1249,9 @@ func (s *Store) Reload() (ReloadStats, error) {
 			return ReloadStats{}, errors.New("base vide — rechargement refusé, état mémoire conservé")
 		}
 		db = loaded
+	} else if s.pgActive.Load() {
+		// N°164 — mode dégradé : pas de pool, pas de rechargement.
+		return ReloadStats{}, errors.New("persistance degradée (PostgreSQL injoignable) — rechargement impossible tant que la récupération n'a pas abouti")
 	} else {
 		data, err := os.ReadFile(s.path)
 		if err != nil {

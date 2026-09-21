@@ -11,7 +11,16 @@ FROM alpine:3.20
 # N°75 — ca-certificates : prérequis du sslmode=verify-full vers Neon (racines
 # publiques pour la validation de la chaîne de certification). Sans elles, le
 # driver pgx refuse la connexion TLS stricte → la synchro casse au démarrage.
+# N°166 — la racine Supabase s'ajoute au magasin système : le pooler
+# *.pooler.supabase.com sert une chaîne signée par la PKI PRIVÉE
+# « Supabase Root 2021 CA » (racine auto-signée, absente des magasins
+# publics) — sans elle, verify-full vers Supabase échoue en
+# « x509: certificate signed by unknown authority » (reproduit le 20/09/2026).
+# Certificat PUBLIC (empreinte SHA-256 80:70:25:AD:…:E6:CA:FA, valable
+# jusqu'au 26/04/2031) — cf. docs/RUNBOOK-POSTGRES.md §12.
 RUN apk add --no-cache ca-certificates
+COPY certs/supabase-prod-ca-2021.crt /usr/local/share/ca-certificates/
+RUN update-ca-certificates
 RUN adduser -D -u 10001 mikcloud
 WORKDIR /app
 COPY --from=builder /app/server /app/server

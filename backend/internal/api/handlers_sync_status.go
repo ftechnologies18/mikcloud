@@ -109,6 +109,7 @@ func (a *API) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 		"mode":      h.Mode,                              // postgresql (production) | json (développement)
 		"sync":      h.Sync,                              // compteurs différentiels — null en mode JSON
 		"neon":      h.Neon,                              // contact + keep-alive — null en mode JSON
+		"degraded":  h.Degraded,                          // N°164 — boot résilient : mode dégradé / dernière récupération
 		"tables":    h.Tables,                            // lignes mémoire vs répliquées par table
 		"agents":    agents,                              // fraîcheur check-ins + file de commandes
 		"bandwidth": a.egress.snapshot(time.Now().UTC()), // N°72 — octets sortis du jour, par catégorie (borne basse : corps uniquement)

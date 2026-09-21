@@ -186,6 +186,14 @@ CREATE TABLE IF NOT EXISTS web_vitals (
 	if err == nil {
 		_, err = c.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_web_vitals_at ON web_vitals (sampled_at DESC)`)
 	}
+	if err == nil {
+		// N°166 — même durcissement RLS que ensureSchema : web_vitals
+		// vit hors du registre syncKnownTables (table créée ici, jamais
+		// synchronisée) — sans RLS elle serait lisible via l'API Data
+		// de l'hébergeur (rôles anon/authenticated). Le compte
+		// applicatif, propriétaire, contourne RLS : aucun effet mesurable.
+		_, err = c.db.ExecContext(ctx, `ALTER TABLE web_vitals ENABLE ROW LEVEL SECURITY`)
+	}
 	if err != nil {
 		log.Printf("vitals: schéma Neon non prêt (%v) — nouvelle tentative au prochain flush", err)
 		return

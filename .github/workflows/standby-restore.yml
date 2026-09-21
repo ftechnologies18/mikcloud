@@ -1,0 +1,156 @@
+# Secours quotidien — restore de la base PRODUCTION vers le projet Neon de
+# secours (modèle de cohabitation N°164 : Supabase = production, Neon =
+# backup vivant restauré 1×/jour ; l'archive chiffrée froide reste le
+# workflow « backup » hebdomadaire).
+#
+# Ce que fait ce job (une seule vague, connexions fermées à la sortie — le
+# compute Neon se rendort ~5 min après, l'autosuspend fait le ménage) :
+#   1. pg_dump de la production (Supabase, session pooler 5432 — compatible
+#      pg_dump) avec --no-owner --no-privileges (les rôles propriétaires
+#      diffèrent entre hébergeurs) et --clean --if-exists (restore idempotent) ;
+#   2. psql du dump dans le projet Neon de secours (endpoint DIRECT, pas le
+#      pooler — le DDL massif sur pooler est déconseillé) ;
+#   3. contrôle d'intégrité : comptages par table des deux côtés comparés ;
+#   4. (rappel) l'archive chiffrée AES-256-GCM reste « backup.yml » (hebdo).
+#
+# N°166 — deux exigences découvertes en validant le projet Supabase (20/09) :
+#   - le client pg_dump du runner (16 par défaut) REFUSE de dumper un serveur
+#     PostgreSQL 17 (celui du projet Supabase) — « aborting because of server
+#     version mismatch » → installation de postgresql-client-17 (dépôt PGDG) ;
+#   - le pooler Supabase sert une PKI PRIVÉE (« Supabase Root 2021 CA »,
+#     racine auto-signée absente des magasins publics) : sslmode=verify-full
+#     exige la racine committée backend/certs/supabase-prod-ca-2021.crt
+#     (PGSSLROOTCERT). Le secours est vérifié TLS comme le reste de l'app.
+#
+# Prérequis (secrets GitHub, cf. docs/RUNBOOK-POSTGRES.md §10) :
+#   - SUPABASE_DATABASE_URL   DSN production (session pooler :5432, SANS
+#     paramètre sslmode — ce workflow force verify-full + racine Supabase) ;
+#   - NEON_STANDBY_DATABASE_URL  DSN secours Neon ENDPOINT DIRECT (SANS
+#     `-pooler` dans le nom d'hôte : le DDL massif sur pooler est
+#     déconseillé) — sslmode=require recommandé DANS le DSN.
+# Sans ces secrets, le workflow s'arrête proprement (pas d'échec rouge).
+#
+# RPO assumé (écrit noir sur blanc, runbook §10) : le secours a jusqu'à 24 h
+# de retard sur la production. L'état des routeurs/utilisateurs hotspot est
+# reconstituable par les agents ; l'historique de ventes/journal dépend de ce
+# backup quotidien.
+#
+# Coût quota Neon : ~1 réveil/jour de 5-10 min ≈ 1-2 CU-h/mois (plafond 100).
+name: standby-restore
+
+on:
+  schedule:
+    # 02:43 UTC quotidiennement — nuit Abidjan (GMT), décalé des minutes
+    # rondes (charge des runners GitHub, cf. keepalive.yml).
+    - cron: "43 2 * * *"
+  workflow_dispatch: {}
+
+# Un seul restore à la fois — jamais de cancel (un restore à moitié fait
+# serait pire qu'un retard : le suivant le répare complètement).
+concurrency:
+  group: standby-restore
+  cancel-in-progress: false
+
+# Lecture du dépôt nécessaire : la racine TLS Supabase y est committée.
+permissions:
+  contents: read
+
+jobs:
+  restore:
+    name: Restore quotidien vers Neon (secours)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Client PostgreSQL 17 (≥ serveur Supabase, sinon pg_dump refuse)
+        run: |
+          set -euo pipefail
+          CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME")
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${CODENAME}-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+          pg_dump --version && psql --version
+
+      - name: Vérifier la présence des secrets
+        id: cfg
+        env:
+          SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
+          NEON_STANDBY_DATABASE_URL: ${{ secrets.NEON_STANDBY_DATABASE_URL }}
+        run: |
+          if [ -z "${SUPABASE_DATABASE_URL}" ] || [ -z "${NEON_STANDBY_DATABASE_URL}" ]; then
+            echo "Secrets SUPABASE_DATABASE_URL/NEON_STANDBY_DATABASE_URL absents — secours sauté (cf. RUNBOOK-POSTGRES.md §10)."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: pg_dump production → psql secours (restore complet)
+        if: steps.cfg.outputs.configured == 'true'
+        env:
+          SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
+          NEON_STANDBY_DATABASE_URL: ${{ secrets.NEON_STANDBY_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          # N°166 — TLS strict vers le pooler Supabase (PKI privée : la
+          # racine est committée dans le dépôt). Le DSN Neon garde ses
+          # propres paramètres (sslmode=require dans le DSN l'emporte sur
+          # l'environnement ; sans paramètre, verify-full passe aussi — PKI
+          # publique des endpoints Neon, présente dans le magasin du runner).
+          export PGSSLMODE=verify-full
+          export PGSSLROOTCERT="$GITHUB_WORKSPACE/backend/certs/supabase-prod-ca-2021.crt"
+          echo "→ Dump de la production (Supabase)…"
+          pg_dump --no-owner --no-privileges --clean --if-exists \
+            --exclude-table='s4check_*' \
+            "$SUPABASE_DATABASE_URL" > /tmp/standby.sql
+          echo "→ Dump : $(du -h /tmp/standby.sql | cut -f1), $(grep -c '^COPY ' /tmp/standby.sql) table(s)."
+          echo "→ Restore vers le secours (Neon, endpoint direct)…"
+          # v ON_ERROR_STOP=0 : le --clean émet des DROP ... IF EXISTS sur des
+          # tables parfois absentes au premier run (NOTICE, pas erreur) ; une
+          # vraie erreur de données sera attrapée par le contrôle d'intégrité.
+          psql -v ON_ERROR_STOP=0 --quiet "$NEON_STANDBY_DATABASE_URL" < /tmp/standby.sql
+          echo "→ Restore terminé."
+
+      - name: Contrôle d'intégrité (comptages par table)
+        if: steps.cfg.outputs.configured == 'true'
+        env:
+          SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
+          NEON_STANDBY_DATABASE_URL: ${{ secrets.NEON_STANDBY_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          export PGSSLMODE=verify-full
+          export PGSSLROOTCERT="$GITHUB_WORKSPACE/backend/certs/supabase-prod-ca-2021.crt"
+          TABLES=$(psql -t -A --quiet "$SUPABASE_DATABASE_URL" -c \
+            "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' ORDER BY table_name")
+          if [ -z "$TABLES" ]; then
+            echo "Aucune table trouvée côté production ?!" >&2; exit 1
+          fi
+          FAILED=0
+          for T in $TABLES; do
+            SRC=$(psql -t -A --quiet "$SUPABASE_DATABASE_URL" -c "SELECT count(*) FROM \"$T\"")
+            DST=$(psql -t -A --quiet "$NEON_STANDBY_DATABASE_URL" -c "SELECT count(*) FROM \"$T\"" || echo "ERR")
+            if [ "$SRC" != "$DST" ]; then
+              echo "✗ $T : production=$SRC secours=$DST"
+              FAILED=1
+            else
+              echo "✓ $T : $SRC ligne(s)"
+            fi
+          done
+          if [ "$FAILED" -ne 0 ]; then
+            echo "Divergence détectée — le secours n'est pas fidèle." >&2
+            exit 1
+          fi
+          echo "Intégrité vérifiée : le secours est une copie fidèle de la production."
+
+      - name: Hygiène (fermeture des connexions)
+        if: steps.cfg.outputs.configured == 'true'
+        run: |
+          # Rien à faire de plus : pg_dump/psql sont des process one-shot,
+          # leurs connexions sont déjà fermées. Le compute Neon de secours
+          # se rendort de lui-même (autosuspend 5 min) — le piège du « compute
+          # éveillé en continu » (incident N°162) est évité PAR CONSTRUCTION.
+          echo "Connexions fermées — le compute Neon de secours va s'endormir (~5 min)."

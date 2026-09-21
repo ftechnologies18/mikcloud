@@ -48,6 +48,9 @@ import { UserProfileDialog } from "./parts/user-profile-dialog";
 import { SettingsSidebar } from "./settings/settings-shell";
 import { ActivityBell, LiveClock, SearchPalette } from "./parts/topbar-widgets";
 import { AnnouncementBanner } from "./parts/announcement-banner";
+// N°164 — bannière de persistance dégradée (mode plateforme uniquement : le
+// diagnostic complet vit dans la carte Santé, réservée rang 3).
+import { PersistenceDegradedBanner } from "./parts/persistence-degraded-banner";
 
 // Perf — vues en chargement différé : chaque vue = chunk distinct chargé à
 // l'ouverture. Les librairies lourdes (recharts, qrcode…) ne sont plus
@@ -865,6 +868,9 @@ export default function AppShell() {
             support — le super-admin consulte la vérité du compte visité ;
             le mode plateforme n'est pas un client (liste vide côté serveur). */}
         {!platformMode ? <AnnouncementBanner /> : null}
+        {/* N°164 — persistance suspendue (boot résilient) : visible du mode
+            plateforme pour agir vite ; la carte Santé porte le détail. */}
+        {platformMode ? <PersistenceDegradedBanner /> : null}
         <main className="flex-1" aria-label={viewTitle(view, t)}>
           <div className="mx-auto max-w-7xl space-y-6 p-4 sm:p-6">
             {/* N°57-c — zone Paramètres : le contenu rend la vue comme tout

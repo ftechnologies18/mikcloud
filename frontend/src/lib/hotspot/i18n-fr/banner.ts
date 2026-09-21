@@ -6,4 +6,6 @@ export const frBanner: Record<string, string> = {
   "banner.expired.title": "Abonnement expiré",
   "banner.expired.desc": "Votre abonnement a expiré le {date}. La console est en lecture seule — contactez MikCloud pour renouveler.",
   "banner.expired.descNoDate": "Votre abonnement a expiré. La console est en lecture seule — contactez MikCloud pour renouveler.",
+  // N°164 — boot résilient : bannière plateforme de persistance suspendue.
+  "banner.persistenceDegraded": "Persistance suspendue — mode dégradé : le service fonctionne en mémoire seule, récupération automatique en cours (détails : Paramètres plateforme → Santé de la persistance).",
 };

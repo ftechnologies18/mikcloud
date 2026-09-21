@@ -133,7 +133,7 @@ func doExport(dsn string) (*backupFile, error) {
 
 	var tables []string
 	rows, err := conn.Query(ctx, `SELECT table_name FROM information_schema.tables
-		WHERE table_schema='public' AND table_type='BASE TABLE' ORDER BY table_name`)
+                WHERE table_schema='public' AND table_type='BASE TABLE' ORDER BY table_name`)
 	if err != nil {
 		return nil, fmt.Errorf("liste des tables : %w", err)
 	}
@@ -232,11 +232,18 @@ func doRestoreCheck(dsn string, bk *backupFile) error {
 				pgx.Identifier{mirror}.Sanitize(), pgx.Identifier{t}.Sanitize())); err != nil {
 				return fmt.Errorf("create %s : %w", mirror, err)
 			}
-			for _, line := range bk.Tables[t].Rows {
-				// Postgres re-typage natif : populate_record rejette toute
-				// valeur incompatible (dates, bytea, contraintes, types).
-				if _, err := tx.Exec(ctx, fmt.Sprintf(`INSERT INTO public.%s SELECT * FROM json_populate_record(NULL::public.%s, $1::json)`,
-					pgx.Identifier{mirror}.Sanitize(), pgx.Identifier{t}.Sanitize()), line); err != nil {
+			if len(bk.Tables[t].Rows) > 0 {
+				// N°177 — Postgres re-typage natif, UNE instruction par table :
+				// json_populate_recordset rejette toute valeur incompatible
+				// (dates, bytea, contraintes, types) exactement comme
+				// json_populate_record le faisait ligne à ligne, mais sans
+				// un aller-retour réseau par ligne (mesuré en prod le
+				// 21/09 : 6 017 lignes de commands ≈ 10 min en ligne à
+				// ligne sur le WAN Supabase — deadline interne explosée ;
+				// en recordset : quelques secondes).
+				arr := "[" + strings.Join(bk.Tables[t].Rows, ",") + "]"
+				if _, err := tx.Exec(ctx, fmt.Sprintf(`INSERT INTO public.%s SELECT * FROM json_populate_recordset(NULL::public.%s, $1::json)`,
+					pgx.Identifier{mirror}.Sanitize(), pgx.Identifier{t}.Sanitize()), arr); err != nil {
 					return fmt.Errorf("insert %s : %w", mirror, err)
 				}
 			}

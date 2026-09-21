@@ -34,6 +34,44 @@ déploiement — la production reste sur le build N°159 en cours).
   combinaison fusionnée n163+n164 n'avait jamais été compilée ensemble
   avant : elle est saine.
 
+## 2026-09-21 — N°177 — Le restore-check du backup apprend le recordset : une instruction par table au lieu d'un aller-retour par ligne
+
+### Contexte
+Avec le timeout workflow porté à 30 min (N°176), le run de validation
+35655182827 va ENFIN au bout de sa logique — et révèle l'étage suivant :
+« table commands : insert s4check_commands : timeout: context deadline
+exceeded » après EXACTEMENT 10 minutes internes. Le restore-check de
+mikbackup insérait les lignes UNE PAR UNE (INSERT… SELECT *
+json_populate_record par ligne) : ~6 000 allers-retours WAN vers le
+pooler Supabase ≈ 10 min pour la seule table commands — la deadline
+interne de 10 min (main.go:211) explosait en plein vol. L'export lui
+reste de 12 secondes.
+
+### Produit
+- `cmd/mikbackup/main.go` (doRestoreCheck) : les lignes d'une table sont
+  réinsérées en UNE instruction — `INSERT… SELECT * FROM
+  json_populate_recordset(NULL::public.t, $1::json)` avec le tableau
+  JSON `[ligne1,ligne2,…]` — le re-typage natif Postgres (dates, bytea,
+  contraintes, types) reste EXACTEMENT celui de json_populate_record
+  (même famille de fonctions, même rejet des valeurs incompatibles),
+  mais le coût réseau passe de N allers-retours à 1 par table. Table
+  vide : pas d'INSERT (le comptage 0/0 tranche).
+
+### Fidélité
+- Outil de sauvegarde seul (cmd/mikbackup) : zéro code applicatif, zéro
+  route, zéro schéma ; le format de fichier, le chiffrement AES-GCM et
+  les garanties du contrôle (comptages par table, transaction par table,
+  miroirs s4check_* nettoyés) sont INCHANGÉS.
+
+### Vérifié
+- **Contre la production réelle** (clé jetable, fichier temporaire) :
+  export 36 tables / 19 153 lignes ✓, restore-check complet ✓ en
+  1 min 16 s tout compris (compilation `go run` incluse) — contre
+  > 10 min sans finir auparavant ; miroirs créés puis DROP dans les
+  transactions, base propre.
+- gofmt (1.27.0 = version EXACTE de la CI, et 1.27.1) : 0 signalement ;
+  `go vet` OK ; `go test ./...` 12 paquets OK.
+
 ## 2026-09-21 — N°176 — Les « annulations » du backup de la soirée étaient des TIMEOUTS : 10 min ne suffisaient pas au premier restore-check réel
 
 ### Contexte

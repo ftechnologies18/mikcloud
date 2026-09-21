@@ -5,6 +5,94 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-21 — N°168 — L'étape 5 du 1er octobre change de mains : la clé API Render livrée par l'opérateur rend la bascule pilotable de bout en bout — kit ops/oct1 (preflight, flip Render, flip secret, armement secours) validé en conditions réelles
+
+### Contexte
+Le 21/09 au matin, l'opérateur livre le jeu de clés complet (GitHub PAT,
+Neon DSN + clé `napi_`, Supabase DSN, **clé API Render `rnd_`**, token
+Vercel) avec la consigne : ne créer aucun nouveau projet, baser tout sur
+le monorepo, pousser strictement vers GitHub sous l'identité
+`ftechnologies18 <freelancetechnologies.ci@gmail.com>`. La clé Render
+comble la SEULE étape opérateur restante du §11 (étape 5 : env
+`DATABASE_URL` + `NEON_KEEPALIVE=off` + ré-activation autoDeploy).
+
+### Produit — ops/oct1/ NOUVEAU (posé sur `main`, commit 58365c5)
+- **preflight.sh** — vérifications read-only des étapes 1-3 du §11 :
+  horloge vs reset 2026-10-01T00:00:00Z ; API Neon (période, CU, état
+  compute) ; SQL Neon en **IPv4 forcé** avec détection du quota 53000
+  (GO/NO-GO de la journée — le DNS du pooler expose 3×AAAA que le
+  sandbox sans IPv6 poursuit en vain) ; SQL Supabase (joignabilité +
+  comptage du schéma public : 0 = livraison) ; API Render (service,
+  autoDeploy, hôte `DATABASE_URL`) ; GitHub (5 secrets attendus, états
+  des 4 workflows, sentinel sur `main`, dernière CI) ; santé HTTP
+  production ; **carte Santé admin** (login + sync-status : mode,
+  succès/échecs consécutifs, dernière synchro OK, dernière erreur —
+  l'observatoire du rattrapage de l'étape 2).
+- **step5-render-flip.sh** — LA bascule de l'étape 5 : validations
+  DURES du DSN (refus `:6543` transactionnel, `sslmode=`, `pgbouncer=`,
+  `channel_binding=` — pièges documentés §10/§12) ; snapshot des
+  variables d'avant-bascule au coffre (rollback) ; `PATCH env-vars`
+  (upsert `DATABASE_URL` + `NEON_KEEPALIVE=off`) puis `PATCH
+  autoDeploy=yes` ; relecture de vérification. **DRY-RUN par défaut**,
+  `--exec` pour appliquer.
+- **step8-flip-secret.py** — retour du secret GitHub `DATABASE_URL`
+  vers la valeur Supabase (sealed box PyNaCl + PUT, relecture de
+  l'horodatage).
+- **step8-arm-standby.sh** — ré-activation `backup.yml` + dispatchs de
+  validation backup et standby-restore (l'étape 8 complète).
+- **README.md** — feuille de route §11→kit : dispatch de la migration,
+  procédure de fusion (levée du sentinel DANS la poussée — détection
+  monorepo `event.before…sha`), rollback.
+- Zéro secret embarqué : lecture env > coffre `/home/z/.secrets` (hors
+  dépôt), identifiants d'infrastructure seulement (déjà publics dans le
+  runbook).
+
+### Runbook (cette branche)
+§11 étapes 5 et 8 amendées : mention « étape pilotée par le tuteur »,
+commandes exactes, ordre impératif de l'étape 8 (flip du secret PUIS
+export — sinon l'archive chiffrerait l'ancienne base), base d'URL de
+l'API Render consignée (`https://api.render.com/v1`, vérifiée :
+`PATCH /v1/services/{id}/env-vars` upsert sans toucher aux autres clés).
+
+### Validation du 21/09 (réelle, SANS aucune écriture sur la production)
+- Preflight exécuté contre les vraies API : **15 OK, 3 avertissements
+  attendus** (pré-reset : période septembre affichée, compute idle,
+  échéance à 228 h) et 1 « échec » qui est l'état correct d'aujourd'hui
+  (53000 actif) — le check est conçu pour virer ✓ le 1er octobre.
+- Carte Santé mesurée en direct : mode postgresql, **19 516 échecs
+  consécutifs** depuis le 20/09 03:39:22Z, dernière erreur 53000
+  visible, keep-alive business — l'incident N°162 photographié par le
+  futur outil de sortie de crise.
+- Dry-runs des étapes 5/8a/8b conformes (état Render lu, clé publique
+  du dépôt GitHub atteinte, plans exacts).
+- Sandbox réinitialisé entre sessions (clone et coffre disparus) :
+  re-clonage + coffre reconstruit + **copie persistante** dans
+  `my-project/operator-keys/` (gitignorée) pour survivre aux resets ;
+  toutes les clés re-vérifiées une à une (GitHub : admin ; Render :
+  service visible, autoDeploy=no, déploiement live = N°159 du 19/09 ;
+  Neon : 110,07 CU-h, reset 2026-10-01T00:00:00Z confirmé ; Supabase :
+  PG 17.6, 0 table = livraison ; Vercel : projet mikcloud visible).
+
+### Leçons d'implémentation (inscrites dans le code du kit)
+1. Une fonction shell `head()` éclipse `/usr/bin/head` dans les
+   substitutions de commandes — la lecture des secrets du coffre
+   retournait silencieusement des en-têtes de section. Renommée
+   `section()` ; `/usr/bin/head` appelé par chemin absolu dans les
+   substitutions sensibles.
+2. Python 3.12 refuse les f-strings à quotes échappées dans un contexte
+   `python3 -c '…'` (bash single-quote interdit les quotes simples
+   internes) : parseurs réécrits par concaténation — zéro échappement.
+
+### Fidélité
+Zéro code backend/frontend, zéro workflow modifié, sentinel
+`RENDER-DEPLOY-FROZEN` intact, autoDeploy Render off — le commit
+`main` 58365c5 ne touche que `ops/` (nouveau) : la détection monorepo
+saute le déploiement et le gel N°165-b reste la seconde barrière. CI
+déclenchée normalement (run 35595076126). Cette entrée voyage sur la
+branche n164 (précédent N°167 : fichiers opérationnels sur `main`,
+documentation sur la branche — les deux convergent à la fusion du
+1er octobre).
+
 ## 2026-09-21 — N°167 — Armement complet du 1er octobre : workflow de migration rendu dispatchable (trou de séquencement), trois secrets posés (l'archive froide n'avait JAMAIS tourné), projet Neon passé au banc d'essai API — quota_reset_at confirmé, autosuspend vérifié
 
 ### Contexte

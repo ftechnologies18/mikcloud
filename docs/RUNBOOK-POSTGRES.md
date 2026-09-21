@@ -336,6 +336,15 @@ cf. §13).
    l'autoDeploy (§3). Sans effet immédiat : les variables Render
    s'appliquent au prochain démarrage — le service tourne toujours sur
    l'état mémoire.
+   **N°168 — étape pilotée par le tuteur** : l'opérateur a livré la clé
+   API Render (`rnd_…`, coffre `/home/z/.secrets/render-api-key.txt`) le
+   21/09 — l'exécution est `ops/oct1/step5-render-flip.sh --exec`
+   (posé sur `main` par N°168 ; DRY-RUN sans `--exec`, validations dures
+   du DSN, snapshot avant-bascule au coffre pour rollback). La base
+   d'URL de l'API Render est `https://api.render.com/v1` (vérifiée au
+   21/09 : `PATCH /v1/services/{id}/env-vars` upsert les clés listées
+   sans toucher aux autres, `PATCH /v1/services/{id}` porte
+   `autoDeploy:"yes"`).
 6. **Fusionner et déployer en UNE vague** : `n163-zikisso-repair` (correctif
    Zikisso : vérité du lot + autoréparation) puis `n164-persistence-safety`
    (boot résilient + garde anti-écrasement + carte Santé/bannière dégradée +
@@ -358,6 +367,12 @@ cf. §13).
    **RÉ-ACTIVER le workflow `backup`** (désactivé le 21/09, cf. §10 —
    bouton « Enable » dans l'onglet Actions du dépôt) et le déclencher une
    fois pour valider le premier export chiffré réel.
+   **N°168 — étape pilotée par le tuteur** : `python3
+   ops/oct1/step8-flip-secret.py --exec` (retour du secret, AVANT tout
+   export) puis `ops/oct1/step8-arm-standby.sh --exec` (ré-activation +
+   dispatchs de validation backup et standby-restore — le PAT `ghp_…`
+   livré le 21/09 est au coffre). Ordre impératif : flip du secret PUIS
+   export, sinon l'archive chiffrerait l'ancienne base.
 
 Rollback (si la production Supabase pose problème dans les 24 h) : le projet
 Neon contient l'état au 30/09 au soir + le rattrapage du 1er au matin ;

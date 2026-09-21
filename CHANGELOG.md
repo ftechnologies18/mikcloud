@@ -5,6 +5,56 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-21 — N°169 — Le contrôle d'intégrité de la migration apprend la source vivante : les comptages de référence deviennent le dump lui-même
+
+### Contexte
+L'opérateur ajoute une carte de paiement à Neon le 21/09 au soir : la
+restriction de quota 53000 (compute suspendu depuis le 20/09 03:39) est
+LEVÉE immédiatement — la séquence du runbook §11 (initialement calée sur
+le reset du 1er octobre) peut s'exécuter 10 jours plus tôt. Le pré-vol
+(`ops/oct1/preflight.sh`) confirme : SQL Neon OK, rattrapage du syncreur
+complet (échecs consécutifs retombés à 0, données live jusqu'à la
+seconde), Supabase à l'état de livraison, gel N°165-b en place. Mais la
+source est redevenue VIVANTE — mesuré en direct sur 3 minutes :
+`sessions` oscille de ±46 lignes par fenêtre de 30 s (démarrages/fin de
+sessions hotspot), `commands` dérive de quelques unités par minute. Le
+contrôle d'intégrité de `migrate-neon-supabase.yml` comptait la SOURCE
+EN DIRECT APRÈS le restore : conçu pendant la fenêtre où le quota
+figeait Neon (zéro écriture possible), ce contrôle aurait échoué à coup
+sûr par simple course avec les écritures de production entre le dump
+(instant T) et le comptage (T + 1 à 3 min).
+
+### Produit
+- Le contrôle compare désormais la CIBLE aux comptages PARSÉS DU DUMP
+  lui-même : chaque table y figure comme un bloc `COPY public.… FROM
+  stdin;` terminé par `\.`, dont les lignes de données sont comptées —
+  c'est l'instantané EXACT à l'instant T du dump, hors de portée de toute
+  écriture ultérieure. Sémantique validée : « cible == dump à l'instant
+  T », la seule correcte pour une source vivante.
+- Parseur awk discriminant : les en-têtes `COPY` ne sont reconnus
+  qu'HORS bloc (une ligne de données commençant littéralement par
+  « COPY public.… » est comptée comme donnée, pas comme en-tête), le
+  terminateur est comparé par égalité stricte sur la ligne à 2 caractères
+  `\.`, les tables vides comptent 0. Validé sur banc d'essai synthétique
+  (données piégeuses incluses) avant poussée.
+- Le message d'échec conserve sa sémantique d'origine (« Divergence —
+  migration invalide, NE PAS basculer Render ») : une divergence
+  dump↔cible reste un vrai défaut de copie, seule la référence a changé.
+
+### Fidélité
+- Workflow d'exploitation SEUL : aucun code backend/frontend, aucune
+  route, aucun schéma — la détection monorepo du job deploy-render saute
+  (aucun changement sous `backend/`), le sentinel N°165-b reste en place
+  comme seconde barrière et `autoDeploy=no` comme troisième : ce commit
+  ne peut pas déployer.
+- Les étapes dump / reset+restore / RLS du workflow sont INCHANGÉES.
+
+### Vérifié
+- Parseur : banc d'essai synthétique (tables vides, lignes de données
+  mimant un en-tête COPY, données échappées) — comptages exacts.
+- YAML : `yaml.safe_load` OK, 7 steps dans l'ordre attendu.
+- `bash -n` implicite via le parseur ; aucun secret dans le fichier.
+
 ## 2026-09-20 — N°165 — Les annonces de la plateforme apprennent l'heure : diffusion PROGRAMMÉE (`publishAt`) et bandeau enfin lisible de bout en bout (lecture complète des messages longs)
 
 ### Contexte

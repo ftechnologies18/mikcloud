@@ -8,7 +8,10 @@
 #      artefacts s4check_* du test de restauration hebdomadaire ;
 #   2. remise à zéro contrôlée du schéma public Supabase (DROP + CREATE :
 #      idempotent, re-runnable) puis restore du dump ;
-#   3. contrôle d'intégrité : comptages par table source vs cible ;
+#   3. contrôle d'intégrité : comptages par table DUMP vs cible (N°169 — la
+#      source est vivante : les comptages de référence sont parsés du dump
+#      lui-même, instantané exact à l'instant T, hors de portée des écritures
+#      de production qui continuent entre le dump et le contrôle) ;
 #   4. durcissement RLS : le dump Neon ne porte pas les drapeaux RLS — on
 #      les pose explicitement pour que l'API Data Supabase (PostgREST +
 #      clé publishable) ne voie RIEN, même pendant la fenêtre restore →
@@ -99,35 +102,53 @@ jobs:
           psql -v ON_ERROR_STOP=1 --quiet "$SUPABASE_DATABASE_URL" < /tmp/migration.sql
           echo "→ Restore terminé."
 
-      - name: Contrôle d'intégrité (comptages par table)
+      - name: Contrôle d'intégrité (comptages du dump vs cible)
+        # N°169 — la source est VIVANTE depuis la levée du quota (carte de
+        # paiement, 21/09 au soir) : mesuré en direct, `sessions` oscille de
+        # ±46 lignes par 30 s et `commands` dérive de quelques unités par
+        # minute — l'ancien contrôle (compter la source en direct APRÈS le
+        # restore) aurait échoué à coup sûr par course avec les écritures de
+        # production. La copie fidèle à valider est « cible == dump à
+        # l'instant T du dump » : les comptages de référence sont donc parsés
+        # DU DUMP lui-même (un bloc « COPY public.… FROM stdin; » par table,
+        # terminateur « \. »), exempts de toute course.
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
           SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
         run: |
           set -euo pipefail
           export PGSSLMODE=verify-full
           export PGSSLROOTCERT="$GITHUB_WORKSPACE/backend/certs/supabase-prod-ca-2021.crt"
-          TABLES=$(psql -t -A --quiet "$DATABASE_URL" -c \
-            "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' AND table_name NOT LIKE 's4check_%' ORDER BY table_name")
-          if [ -z "$TABLES" ]; then
-            echo "Aucune table trouvée côté source ?!" >&2; exit 1
+          echo "→ Comptages de référence : parsage du dump (instantané exact à l'instant T)…"
+          DUMP_COUNTS="$(awk '
+            BEGIN { intable = 0 }
+            !intable && /^COPY public\./ {
+              t = $0; sub(/^COPY public\./, "", t); sub(/ .*/, "", t)
+              intable = 1; n = 0; next
+            }
+            intable && $0 == "\\." { printf "%s %d\n", t, n; intable = 0; next }
+            intable { n++ }
+          ' /tmp/migration.sql)"
+          if [ -z "$DUMP_COUNTS" ]; then
+            echo "Aucun bloc COPY trouvé dans le dump — dump vide ou format inattendu ?!" >&2
+            exit 1
           fi
+          NTABLES="$(printf '%s\n' "$DUMP_COUNTS" | wc -l)"
+          echo "  · $NTABLES table(s) dans le dump"
           FAILED=0
-          for T in $TABLES; do
-            SRC=$(psql -t -A --quiet "$DATABASE_URL" -c "SELECT count(*) FROM \"$T\"")
-            DST=$(psql -t -A --quiet "$SUPABASE_DATABASE_URL" -c "SELECT count(*) FROM \"$T\"" || echo "ERR")
-            if [ "$SRC" != "$DST" ]; then
-              echo "✗ $T : source=$SRC cible=$DST"
+          while read -r T N; do
+            DST=$(psql -t -A --quiet "$SUPABASE_DATABASE_URL" -c "SELECT count(*) FROM \"$T\"")
+            if [ "$N" != "$DST" ]; then
+              echo "✗ $T : dump=$N cible=$DST"
               FAILED=1
             else
-              echo "✓ $T : $SRC ligne(s)"
+              echo "✓ $T : $DST ligne(s)"
             fi
-          done
+          done <<< "$DUMP_COUNTS"
           if [ "$FAILED" -ne 0 ]; then
             echo "Divergence — migration invalide, NE PAS basculer Render." >&2
             exit 1
           fi
-          echo "Intégrité vérifiée : la cible est une copie fidèle de la source."
+          echo "Intégrité vérifiée : la cible est une copie fidèle du dump (à l'instant T du dump)."
 
       - name: Durcissement RLS (aveugle pour l'API Data Supabase)
         env:

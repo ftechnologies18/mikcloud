@@ -22,7 +22,12 @@ jobs:
   export:
     name: Export chiffré Neon
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # N°176 — le premier export RÉEL (21/09, source Supabase) mesuré :
+    # export 12 s (36 tables, 19 165 lignes) mais restore-check (réinsertion
+    # complète en tables miroir s4check_*) au-delà de 9,5 min sans finir —
+    # TROIS runs tués à 10,3 min exactement (les « cancelled » de la soirée
+    # étaient des TIMEOUTS). Marge : 30 min.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
 

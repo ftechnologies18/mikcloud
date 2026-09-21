@@ -34,6 +34,36 @@ déploiement — la production reste sur le build N°159 en cours).
   combinaison fusionnée n163+n164 n'avait jamais été compilée ensemble
   avant : elle est saine.
 
+## 2026-09-21 — N°176 — Les « annulations » du backup de la soirée étaient des TIMEOUTS : 10 min ne suffisaient pas au premier restore-check réel
+
+### Contexte
+Trois runs backup « cancelled » dans la soirée (20:22, 20:42, 20:53) —
+y compris un tué EN cours d'étape d'export. Corrélation mesurée sur les
+trois : durée de job 10,2-10,3 min EXACTEMENT = `timeout-minutes: 10` du
+workflow — GitHub marque un timeout de job comme « cancelled », d'où
+l'illusion d'annulations croisées entre sessions parallèles. Le log du
+dernier run (35653860434) dit la vérité phase par phase : export
+**12 secondes** (« Sauvegarde OK : 36 tables, 19165 lignes », source
+Supabase via le secret retourné, TLS racine privée) puis restore-check
+(réinsertion complète des 19 165 lignes en tables miroir s4check_*)
+**au-delà de 9,5 min sans finir** quand le timeout frappe (« Terminate
+orphan process: mikbackup »). Les runs « verts » des semaines passées
+étaient des skips propres (« Secrets absents ») — le pipeline n'avait
+JAMAIS exporté pour de vrai.
+
+### Produit
+- `backup.yml` : `timeout-minutes` 10 → **30** (marge confortable pour
+  la réinsertion WAN ; l'export lui-même est de 12 s).
+
+### Fidélité
+- Workflow d'exploitation seul : zéro code, zéro backend/ — aucun
+  déploiement possible depuis ce commit.
+
+### Vérifié
+- Durées des trois jobs lues à l'API (10,2/10,3/10,3 min) ; log du run
+  35653860434 relu ligne à ligne (export 20:53:37→20:53:49, check tué à
+  ~21:03) ; YAML `safe_load` OK.
+
 ## 2026-09-21 — N°175 — TLS du secours quotidien SÉPARÉ PAR CONNEXION : le premier restore réel échouait (certificat Neon vérifié contre la racine Supabase)
 
 ### Contexte

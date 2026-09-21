@@ -102,14 +102,16 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="/usr/lib/postgresql/17/bin:$PATH"   # N°171/N°173
-          # N°166 — TLS strict vers le pooler Supabase (PKI privée : la
-          # racine est committée dans le dépôt). Le DSN Neon garde ses
-          # propres paramètres (sslmode=require dans le DSN l'emporte sur
-          # l'environnement ; sans paramètre, verify-full passe aussi — PKI
-          # publique des endpoints Neon, présente dans le magasin du runner).
-          export PGSSLMODE=verify-full
-          export PGSSLROOTCERT="$GITHUB_WORKSPACE/backend/certs/supabase-prod-ca-2021.crt"
-          echo "→ Dump de la production (Supabase)…"
+          # N°174 — TLS SÉPARÉ PAR CONNEXION : le premier run réel a échoué
+          # (« psql: SSL error: certificate verify failed » sur l'endpoint
+          # DIRECT Neon) — les exports GLOBAUX verify-full + racine Supabase
+          # (posés pour le pg_dump de la production, PKI privée) s'appliquaient
+          # AUSSI à la connexion Neon (PKI publique) ; le DSN du secret ne
+          # porte PAS sslmode, l'environnement s'appliquait donc tel quel.
+          # Désormais : chaque connexion porte SES variables inline.
+          echo "→ Dump de la production (Supabase — verify-full + racine committée)…"
+          PGSSLMODE=verify-full \
+          PGSSLROOTCERT="$GITHUB_WORKSPACE/backend/certs/supabase-prod-ca-2021.crt" \
           pg_dump --no-owner --no-privileges --clean --if-exists \
             --exclude-table='s4check_*' \
             "$SUPABASE_DATABASE_URL" > /tmp/standby.sql
@@ -118,6 +120,10 @@ jobs:
           # v ON_ERROR_STOP=0 : le --clean émet des DROP ... IF EXISTS sur des
           # tables parfois absentes au premier run (NOTICE, pas erreur) ; une
           # vraie erreur de données sera attrapée par le contrôle d'intégrité.
+          # N°174 — Neon : PKI publique, chiffrement SANS vérification contre
+          # la racine Supabase (require explicite inline, ne dépend plus de
+          # la présence d'un paramètre sslmode dans le secret).
+          PGSSLMODE=require \
           psql -v ON_ERROR_STOP=0 --quiet "$NEON_STANDBY_DATABASE_URL" < /tmp/standby.sql
           echo "→ Restore terminé."
 
@@ -151,7 +157,7 @@ jobs:
           echo "  · $NTABLES table(s) dans le dump"
           FAILED=0
           while read -r T N; do
-            DST=$(psql -t -A --quiet "$NEON_STANDBY_DATABASE_URL" -c "SELECT count(*) FROM \"$T\"" || echo "ERR")
+            DST=$(PGSSLMODE=require psql -t -A --quiet "$NEON_STANDBY_DATABASE_URL" -c "SELECT count(*) FROM \"$T\"" || echo "ERR")
             if [ "$N" != "$DST" ]; then
               echo "✗ $T : dump=$N secours=$DST"
               FAILED=1

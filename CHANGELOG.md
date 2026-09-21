@@ -34,6 +34,33 @@ déploiement — la production reste sur le build N°159 en cours).
   combinaison fusionnée n163+n164 n'avait jamais été compilée ensemble
   avant : elle est saine.
 
+## 2026-09-21 — N°175 — TLS du secours quotidien SÉPARÉ PAR CONNEXION : le premier restore réel échouait (certificat Neon vérifié contre la racine Supabase)
+
+### Contexte
+Le premier run réel de standby-restore (validation de l'étape 8b, run
+35650595147) a échoué : « psql: SSL error: certificate verify failed » sur
+l'endpoint DIRECT Neon — les exports GLOBAUX `PGSSLMODE=verify-full` +
+`PGSSLROOTCERT` (racine Supabase, posés pour le pg_dump de la production à
+PKI privée) s'appliquaient AUSSI à la connexion Neon (PKI publique) ; le
+commentaire affirmait que le `sslmode=require` du DSN l'emporterait sur
+l'environnement — le secret ne porte PAS le paramètre, l'environnement
+s'appliquait donc tel quel (mesuré au run).
+
+### Produit
+`standby-restore.yml` : TLS scoping PAR CONNEXION — pg_dump production
+(Supabase) en `verify-full` + racine committée en variables INLINE, psql
+de restore ET psql de comptage vers Neon en `PGSSLMODE=require` inline ;
+plus aucun export global ne peut fuiter d'une connexion à l'autre.
+
+### Fidélité
+Zéro code applicatif ; un workflow d'exploitation seul ; commandes
+pg_dump/psql inchangées (seul le passage des variables TLS change).
+
+### Vérifié
+`yaml.safe_load` OK ; lecture croisée des trois connexions du workflow
+(dump Supabase, restore Neon, comptage Neon) ; le correctif est validé par
+le second dispatch de validation (étape 8b rejouée après ce push).
+
 ## 2026-09-21 — N°173 — Le secours quotidien apprend lui aussi la source vivante et le PATH du runner : standby-restore durci avant son premier cron
 
 ### Contexte

@@ -317,7 +317,7 @@ func (a *API) sendAnnouncementEmails(ann model.Announcement, targets []announcem
 	for _, tg := range targets {
 		logBody := "Annonce plateforme — " + ann.Title
 		closureTarget := tg
-		dispatchEmailTask(func() {
+		emailTaskDispatch()(func() {
 			a.dispatchAccountEmail(notify.KindAnnouncement, title, logBody, closureTarget.cfg,
 				strings.TrimSpace(closureTarget.acc.Email), textBody+closureTarget.name, htmlBody)
 		})

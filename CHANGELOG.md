@@ -5,6 +5,55 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-21 — N°178 — Le race detector de la CI attrape une course mémoire dans le stub des e-mails transactionnels (run 457) : indirections synchronisées
+
+### Contexte
+La CI du N°177 (run 35656707265, `df1111f`) échoue sur
+`TestAnnouncementSweepDeferredEmail` : « race detected during execution of
+test ». Le rapport désigne la paire exacte : ÉCRITURE de
+`sendAccountEmail` par `stubAccountEmailCapture`
+(transactional_emails_test.go:40) contre LECTURE précédente du même
+pointeur par `dispatchAccountEmail` (transactional_emails.go:512) —
+exécutée dans une goroutine d'envoi « welcome » encore en vol, dispatchée
+par la PRODUCTION (`dispatchEmailTask` réel) lors du
+`registerAccount(t, ts, "ann-sweep", "")` deux lignes plus tôt. La
+séquence du test (inscrire PUIS stuber) laisse la goroutine welcome lire
+le pointeur pendant que le test l'écrase — sans synchronisation. Le même
+patron latent existait dans `TestAnnouncementEmailBestEffort`. (N°177 ne
+touchait que `cmd/mikbackup` : la course était déjà là, c'est le
+scheduling chargé du run qui l'a fait émerger.)
+
+### Produit
+- **Production** (`transactional_emails.go`) : verrou `emailIndirectMu`
+  (RWMutex) + accesseurs `accountEmailSender()` / `emailTaskDispatch()`
+  — les quatre sites de lecture (`dispatchAccountEmail`, `queueReceiptEmail`,
+  `queueWelcomeEmail`, `sendAnnouncementEmails`) passent par la copie
+  synchronisée du pointeur ; l'appel long reste HORS verrou (l'envoi
+  réseau ne bloque ni les autres lecteurs ni le helper de stub).
+- **Tests** : `stubAccountEmailCapture` écrit/restaure les deux pointeurs
+  sous `emailIndirectMu` ; la capture append-e sous `sentEmailMu`
+  (goroutines wg-suivies qui peuvent se chevaucher) ; nouveau
+  `resetSentEmails` (vidage sous le même verrou).
+- **Ré-ordonnancement des deux tests déviants** vers le patron canonique
+  de `TestRegisterSendsWelcomeEmail` (stub AVANT l'inscription) : le
+  welcome part alors sous le dispatch capturé — `wg.Wait()` le draine,
+  `resetSentEmails` l'écarte — plus AUCUNE goroutine production en vol
+  pendant l'installation du stub.
+
+### Fidélité
+- La sémantique de production est inchangée : mêmes indirections, mêmes
+  signatures, le verrou ne couvre QUE la lecture/écriture des pointeurs.
+- Les assertions des deux tests réordonnés restent identiques (elles ne
+  comptaient déjà pas le welcome).
+
+### Vérifié
+- `go test -race` : les quatre tests du secteur ×3 consécutifs OK ;
+  paquet `internal/api` complet sous race — 0 « WARNING: DATA RACE »
+  (tranche A→Sell puis ^Test[S-Z] : ok 201 s, le sandbox local étant plus
+  lent que le runner CI, la suite y est découpée) ; les 11 autres
+  paquets sous race OK. gofmt (1.27.0 EXACT — version CI, pas de piège
+  de parité) : 0 fichier ; vet OK ; build OK.
+
 ## 2026-09-21 — N°174 — gofmt ! La CI de la vague attrape un alignement de commentaires que les branches n'avaient jamais vu (recovery_test.go)
 
 ### Contexte

@@ -40,6 +40,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"mikcloud/hotspot-api/internal/model"
@@ -50,8 +51,25 @@ import (
 // Indirections de test (aucun réseau en CI — même patron que sendResetEmail)
 // ---------------------------------------------------------------------------
 
+// emailIndirectMu — verrou des indirections d'envoi (N°178). Les tests
+// remplacent ces pointeurs à CHAUD alors que des goroutines d'envoi encore
+// en vol (welcome d'une inscription d'un test antérieur, dispatchées par la
+// production) peuvent les lire — le race detector de la CI l'a prouvé (run
+// 457 sur df1111f, TestAnnouncementSweepDeferredEmail). Les lecteurs
+// passent par les accesseurs ci-dessous, le helper de stub écrit sous
+// verrou : lecture/écriture du pointeur toujours synchronisées.
+var emailIndirectMu sync.RWMutex
+
 // sendAccountEmail — envoi réel via le fournisseur du compte (Resend ou SMTP).
 var sendAccountEmail = notify.SendEmailTo
+
+// accountEmailSender — copie synchronisée du pointeur d'envoi (la valeur est
+// lue sous verrou puis appelée hors verrou : l'appel long ne bloque personne).
+func accountEmailSender() func(cfg *model.NotificationSettings, to, title, textBody, htmlBody string) error {
+	emailIndirectMu.RLock()
+	defer emailIndirectMu.RUnlock()
+	return sendAccountEmail
+}
 
 // dispatchEmailTask — exécute une tâche d'envoi : goroutine + recover en
 // production (un plantage d'envoi ne doit JAMAIS abattre le serveur) ;
@@ -65,6 +83,13 @@ var dispatchEmailTask = func(fn func()) {
 		}()
 		fn()
 	}()
+}
+
+// emailTaskDispatch — copie synchronisée du pointeur de file d'envoi.
+func emailTaskDispatch() func(fn func()) {
+	emailIndirectMu.RLock()
+	defer emailIndirectMu.RUnlock()
+	return dispatchEmailTask
 }
 
 // appPublicBaseURL — origine canonique du frontend pour les webhooks (pas
@@ -509,7 +534,9 @@ func transactionalSenderLocked(db *model.DB, accID string) (model.NotificationSe
 // dispatchAccountEmail — envoi + trace d'historique. Toujours appelé via
 // dispatchEmailTask (goroutine en production) : l'appelant ne bloque jamais.
 func (a *API) dispatchAccountEmail(kind, title, logBody string, cfg model.NotificationSettings, to, textBody, htmlBody string) {
-	err := sendAccountEmail(&cfg, to, title, textBody, htmlBody)
+	// Pointeur lu synchronisé (N°178) : une goroutine en vol depuis un test
+	// antérieur peut croiser un remplacement de stub sans course mémoire.
+	err := accountEmailSender()(&cfg, to, title, textBody, htmlBody)
 	entry := notify.LogEntry(&cfg, "email", kind, title, "", err)
 	if err != nil {
 		// Best-effort : l'échec d'un reçu ne remonte jamais au flux de
@@ -549,7 +576,7 @@ func (a *API) queueReceiptEmail(db *model.DB, rc receiptEmailData) {
 		formatFcfaMail(rc.AmountFcfa) + " via " + rc.Method + ", réf. " + rc.Ref
 	textBody := buildReceiptEmailText(rc, ownerName, acc.Name)
 	htmlBody := buildReceiptEmailHTML(rc, ownerName, acc.Name)
-	dispatchEmailTask(func() {
+	emailTaskDispatch()(func() {
 		a.dispatchAccountEmail(notify.KindPaymentReceipt, title, logBody, cfg, to, textBody, htmlBody)
 	})
 }
@@ -589,7 +616,7 @@ func (a *API) queueWelcomeEmail(db *model.DB, acc model.Account, owner model.Adm
 		" jours, " + usageLabelFr(d.Usage) + ")"
 	textBody := buildWelcomeEmailText(d)
 	htmlBody := buildWelcomeEmailHTML(d)
-	dispatchEmailTask(func() {
+	emailTaskDispatch()(func() {
 		a.dispatchAccountEmail(notify.KindWelcome, title, logBody, cfg, to, textBody, htmlBody)
 	})
 }

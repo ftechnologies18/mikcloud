@@ -170,11 +170,19 @@ func TestAnnouncementScheduling(t *testing.T) {
 func TestAnnouncementSweepDeferredEmail(t *testing.T) {
 	ts, st := newTransactionalServer(t)
 	adminToken := adminTokenOf(t, ts)
-	seedResend(t, st, model.AccountMainID)  // expéditeur : réglages du compte principal
-	registerAccount(t, ts, "ann-sweep", "") // destinataire (e-mail connu)
 
+	// Stub AVANT l'inscription du destinataire (N°178) : son e-mail de
+	// bienvenue part alors sous le dispatch capturé — wg.Wait() le draine —
+	// au lieu de partir sous le dispatch PRODUCTION et rester en vol PENDANT
+	// l'installation du stub (la course mémoire mesurée par le run 457 de la
+	// CI : lecture du pointeur par la goroutine welcome non synchronisée
+	// avec l'écriture du remplacement).
 	var calls []sentEmail
 	wg := stubAccountEmailCapture(t, &calls)
+	seedResend(t, st, model.AccountMainID)  // expéditeur : réglages du compte principal
+	registerAccount(t, ts, "ann-sweep", "") // destinataire (e-mail connu)
+	wg.Wait()                               // le welcome est capté…
+	resetSentEmails(&calls)                 // …et écarté : seuls les e-mail d'ANNONCE comptent
 
 	// Programmée dans 1 h + e-mail : RIEN ne part maintenant.
 	inOneHour := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)

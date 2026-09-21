@@ -220,15 +220,22 @@ func TestAnnouncementAudienceAndExpiry(t *testing.T) {
 func TestAnnouncementEmailBestEffort(t *testing.T) {
 	ts, st := newTransactionalServer(t) // (server, store) — ordre inverse de newTestServerWithStore
 	adminToken := adminTokenOf(t, ts)
+
+	// Stub AVANT les inscriptions (N°178) : les e-mails de bienvenue
+	// partiront sous le dispatch capturé (drainables par wg.Wait()) au lieu
+	// de rester en vol sous le dispatch production pendant l'installation du
+	// stub — la même course mémoire que le run 457 de la CI.
+	var calls []sentEmail
+	wg := stubAccountEmailCapture(t, &calls)
+
 	// Expéditeur : réglages du compte principal (fallback plateforme).
 	seedResend(t, st, model.AccountMainID)
 
 	// Deux comptes : un hotspot avec e-mail, un homenet (hors audience « hotspot »).
 	registerAccount(t, ts, "ann-mail1", "")
 	createAdminAccount(t, ts, adminToken, "ann-mail2", "homenet")
-
-	var calls []sentEmail
-	wg := stubAccountEmailCapture(t, &calls)
+	wg.Wait()               // le welcome de ann-mail1 est capté…
+	resetSentEmails(&calls) // …et écarté : seuls les e-mail d'ANNONCE comptent
 
 	s, out := createAnnouncement(t, ts, adminToken, map[string]any{
 		"title": "Maintenance samedi soir", "body": "Indisponibilité brève du cloud.",

@@ -27,18 +27,43 @@ import (
 // Stubs déterministes (même patron que password_reset_test.go)
 // ---------------------------------------------------------------------------
 
+// sentEmailMu — verrou du tampon de capture : les goroutines d'envoi
+// wg-suivies peuvent se chevaucher, et la réinitialisation (drain du
+// welcome avant l'observation propre au test, N°178) doit elle aussi
+// passer par resetSentEmails pour rester synchronisée.
+var sentEmailMu sync.Mutex
+
+// resetSentEmails — vide le tampon de capture SOUS verrou : s'utilise après
+// un wg.Wait() pour rejeter les e-mails hors sujet (ex. le welcome d'une
+// inscription préparatoire) sans course avec un append résiduel.
+func resetSentEmails(calls *[]sentEmail) {
+	sentEmailMu.Lock()
+	*calls = nil
+	sentEmailMu.Unlock()
+}
+
 // stubAccountEmailCapture — remplace sendAccountEmail (capture) et rend
 // dispatchEmailTask observable : chaque tâche part BIEN en goroutine (la
 // discipline de verrou de la production — un dispatch synchrone under lock
 // serait un deadlock), le test attend leur complétion via wg.Wait(). Tout est
 // restauré à la fin du test (t.Cleanup).
+//
+// N°178 : les remplacements s'écrivent SOUS emailIndirectMu (les goroutines
+// d'envoi en vol lisent les pointeurs via les accesseurs synchronisés de la
+// production), et la capture append-e sous sentEmailMu. À installer AVANT
+// toute action déclenchant un envoi — le patron de
+// TestRegisterSendsWelcomeEmail — sinon le welcome part sous le dispatch
+// PRODUCTION, insuivable par wg et donc non drainable avant l'assertion.
 func stubAccountEmailCapture(t *testing.T, calls *[]sentEmail) *sync.WaitGroup {
 	t.Helper()
-	*calls = nil
+	resetSentEmails(calls)
 	var wg sync.WaitGroup
+	emailIndirectMu.Lock()
 	oldSend := sendAccountEmail
 	sendAccountEmail = func(cfg *model.NotificationSettings, to, title, textBody, htmlBody string) error {
+		sentEmailMu.Lock()
 		*calls = append(*calls, sentEmail{*cfg, to, title, textBody, htmlBody})
+		sentEmailMu.Unlock()
 		return nil
 	}
 	oldDispatch := dispatchEmailTask
@@ -49,9 +74,12 @@ func stubAccountEmailCapture(t *testing.T, calls *[]sentEmail) *sync.WaitGroup {
 			fn()
 		}()
 	}
+	emailIndirectMu.Unlock()
 	t.Cleanup(func() {
+		emailIndirectMu.Lock()
 		sendAccountEmail = oldSend
 		dispatchEmailTask = oldDispatch
+		emailIndirectMu.Unlock()
 	})
 	return &wg
 }

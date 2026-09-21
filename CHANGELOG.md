@@ -5,6 +5,79 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-21 — N°167 — Armement complet du 1er octobre : workflow de migration rendu dispatchable (trou de séquencement), trois secrets posés (l'archive froide n'avait JAMAIS tourné), projet Neon passé au banc d'essai API — quota_reset_at confirmé, autosuspend vérifié
+
+### Contexte
+L'opérateur livre le 21/09 nuit le DSN Neon attendu (dernière entrée
+opérateur du runbook §10) + une clé API Neon `napi_`. Objectif : armer
+TOUT ce qui peut l'être avant le 1er octobre, sans toucher à la production
+(gel N°162/N°165-b maintenu).
+
+### Découvertes empiriques (mesurées via API, aucune déduite)
+1. **L'API Neon a déménagé** : `api.neon.tech` est mort en DNS public
+   (A/AAAA/CNAME vides via dns.google — pas un blocage sandbox). L'API vit
+   sous `console.neon.tech/api/v2`, la clé `napi_` y fonctionne (neonctl
+   v5.0.0). Org « FTech CI » (`org-blue-forest-04016555`), projet
+   « Mikcloud » `long-feather-75906741` (aws-eu-central-1, PG 18,
+   93,86 Mo, créé 29/08). L'API expose `read_write_host` DIRECT et
+   `read_write_pooled_host` — le DSN livré pointait le pooler, les
+   secrets utilisent le DIRECT.
+2. **Quota confirmé par l'API** : `quota_reset_at` = 2026-10-01T00:00:00Z
+   (date officielle) ; `cpu_used_sec` 396 250 = 110,07 CU-h (concordance
+   exacte avec la capture console du 20/09) ; compute idle depuis le
+   20/09 03:39, 53000 toujours actif au 21/09 ~01:00 UTC sur les deux
+   hôtes (TLS passe, certificat public — c'est le quota qui barre).
+3. **Autosuspend écarté comme piège** : `suspend_timeout_seconds: 0` =
+   DÉFAUT DU PLAN (300 s sur Free), PAS « jamais » (c'est `-1`) — définition
+   officielle de l'API. Le modèle secours (1 réveil/jour de 5-10 min puis
+   rendormissage) fonctionne sans réglage ; le PATCH à 300 s renvoie 412
+   « modifying the suspend interval is not permitted on this account »
+   (Free verrouillé — sans importance). Compute 0,25 CU min.
+
+### Trois trous du plan du 1er octobre bouchés
+1. **Trou de séquencement** : `migrate-neon-supabase.yml` n'existait que
+   sur la branche n164 — un `workflow_dispatch` exige le fichier sur la
+   branche PAR DÉFAUT : l'étape 4 du runbook §11 (migration AVANT la
+   fusion) était **indispatchable**. Correctif : workflow + racine TLS
+   Supabase (`backend/certs/supabase-prod-ca-2021.crt`) posés sur `main`
+   (commit 498326f, copies exactes de n164). `standby-restore.yml` (cron
+   02:43) reste sur la branche : il s'activera à la fusion, quand
+   Supabase sera production avec données.
+2. **Archive froide fantôme** : le runbook §10 prétendait
+   « BACKUP_KEY/DATABASE_URL existent déjà » — FAUX. Les logs des 4 runs
+   `backup.yml` (03/09 → 20/09) : « Secrets absents — sauvegarde sautée ».
+   L'archive chiffrée n'avait JAMAIS exporté. Correctif : `BACKUP_KEY`
+   générée (`openssl rand -hex 32`, coffre local + remise opérateur) et
+   `DATABASE_URL` posé (DSN Neon DIRECT, `sslmode=require`, SANS
+   `channel_binding=require` — inutile à un one-shot runner, cassant à
+   travers un pooler). `backup.yml` DÉSACTIVÉ (disabled_manually, comme
+   keepalive) jusqu'au flip du 1er oct — sinon son cron du 27/09 03:17
+   aurait exporté vers un Neon 53000 → run rouge garanti.
+3. **Secours armé** : `NEON_STANDBY_DATABASE_URL` posé (endpoint DIRECT,
+   `sslmode=require` dans le DSN — la forme exigée par
+   `standby-restore.yml`). Inerte tant que le workflow n'est pas fusionné.
+
+### Fidélité
+Zéro route, zéro endpoint, zéro comportement applicatif — un workflow et
+un certificat recopiés à l'identique depuis n164, des secrets posés via
+API (PyNaCl sealed box, PUT 201 ×3 : DATABASE_URL,
+NEON_STANDBY_DATABASE_URL, BACKUP_KEY), un workflow désactivé. La clé
+`napi_` reste au coffre local (surveillance : `quota_reset_at`,
+`cpu_used_sec`, `current_state`). Runbook §10/§11 corrigés + §13 NOUVEAU
+(faits mesurés Neon). Réveil du 1er oct : aucun besoin API — le syncreur
+Render (backoff 5 s) réveille le compute par sa reconnexion.
+
+### Vérifié
+Identité des fichiers posés sur main avec n164 (git diff vide) ;
+certificat SHA-256 `80:70:25:AD:…:E6:CA:FA` (triple vérification N°166) ;
+CI verte sur `main` après le push (sentinel RENDER-DEPLOY-FROZEN : aucune
+possibilité de déploiement — deuxième validation en conditions réelles) ;
+secrets listés par API (5 entrées : RENDER_API_KEY, SUPABASE_DATABASE_URL,
+DATABASE_URL, NEON_STANDBY_DATABASE_URL, BACKUP_KEY) ; état des workflows
+vérifié (backup + keepalive disabled_manually, CI active) ; 53000
+reproduit sur les deux hôtes Neon ; aucun déploiement, production
+Render intouchée (service mémoire-seule inchangé).
+
 ## 2026-09-21 — N°166 — Le projet Supabase passe au banc d'essau réel et il résiste : TLS privé apprivoisé (racine committée), RLS systématique dans le DDL, clients pg_dump des workflows corrigés, boot complet + relecture validés puis base remise à zéro — la migration du 1er octobre est outillée de bout en bout
 
 ### Contexte

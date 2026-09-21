@@ -268,17 +268,33 @@ dump le plus frais (artefact `mikcloud-backup` OU base Neon elle-même) →
 pointer `DATABASE_URL` → déployer. Fenêtre ~15-30 min. Le boot résilient
 N°164 couvre le démarrage pendant la fenêtre base-morte.
 
-**Secrets GitHub** (Settings → Secrets and variables → Actions) :
-- `SUPABASE_DATABASE_URL` — **POSÉ le 21/09** (via API) : DSN production,
-  session pooler `:5432`, SANS paramètre sslmode (les workflows forcent
-  `verify-full` + la racine committée, cf. §12) ;
-- `NEON_STANDBY_DATABASE_URL` — **seule entrée opérateur restante** : DSN
-  secours, **endpoint DIRECT Neon** (SANS `-pooler` dans le nom d'hôte : le
-  DDL massif sur pooler est déconseillé), avec `?sslmode=require` DANS le
-  DSN. À poser avant l'armement du secours (§11 étape 8) ;
-- (`BACKUP_KEY`/`DATABASE_URL` existent déjà pour `backup.yml` — après la
-  bascule du 1er octobre, mettre `DATABASE_URL` à la valeur Supabase pour
-  que l'archive hebdomadaire suive la production.)
+**Secrets GitHub** (Settings → Secrets and variables → Actions) — état
+réel au 21/09 nuit (N°167 : tout est posé, vérifié par API) :
+- `SUPABASE_DATABASE_URL` — POSÉ le 21/09 : DSN production, session pooler
+  `:5432`, SANS paramètre sslmode (les workflows forcent `verify-full` + la
+  racine committée, cf. §12) ;
+- `NEON_STANDBY_DATABASE_URL` — POSÉ le 21/09 nuit (N°167) : DSN secours,
+  **endpoint DIRECT Neon** `ep-flat-cloud-b1et1qdt.c-5.eu-central-1.aws.neon.tech`
+  (le `read_write_host` officiel de l'API, cf. §13 — SANS `-pooler` : le DDL
+  massif sur pooler est déconseillé), `?sslmode=require` DANS le DSN, SANS
+  `channel_binding=require` (paramètre du DSN livré par le dashboard :
+  inutile à un one-shot runner, cassant à travers un pooler) ;
+- `DATABASE_URL` — POSÉ le 21/09 nuit (N°167) : même DSN Neon endpoint
+  DIRECT — c'est la SOURCE du workflow de migration (étape 4 du §11).
+  **Correction d'une erreur de ce runbook** : la version précédente
+  prétendait « BACKUP_KEY/DATABASE_URL existent déjà » — FAUX. Les logs des
+  4 runs `backup.yml` (03/09 → 20/09) affichaient tous « Secrets absents —
+  sauvegarde sautée » : **l'archive chiffrée n'avait JAMAIS tourné**, la
+  seule protection des données était l'historique Neon (6 h) ;
+- `BACKUP_KEY` — POSÉE le 21/09 nuit (N°167) : `openssl rand -hex 32`
+  générée par le tuteur, copie au coffre local `/home/z/.secrets/backup-key.txt`
+  + remise à l'opérateur (à conserver dans SON coffre : sans elle, les
+  artefacts `mikcloud-backup` sont indéchiffrables) ;
+- **`backup.yml` est DÉSACTIVÉ** (disabled_manually, comme `keepalive.yml`)
+  jusqu'au flip du 1er octobre : sinon son cron du dimanche 27/09 03:17 UTC
+  exporterait vers un Neon quota-bloqué (53000) → run rouge garanti.
+  Ré-activation en §11 étape 8, APRÈS le flip de `DATABASE_URL` vers
+  Supabase.
 
 **Mapping des étiquettes du dashboard Supabase** (piège des conventions
 Prisma/serverless, cf. §12) : la ligne étiquetée `DATABASE_URL` dans le
@@ -291,10 +307,13 @@ de prepared statements de pgx (42P05 reproduit) — jamais pour l'app.
 
 Le redémarrage du service casse la mémoire (état orphelin depuis le 20/09) :
 **tout se joue en une seule vague**, jamais avant le retour du quota Neon
-(reset 1er octobre ~00:00 UTC).
+(reset 1er octobre 00:00 UTC — `quota_reset_at` confirmé PAR L'API Neon,
+cf. §13).
 
 1. **Vérifier le réveil Neon** : `psql "<DSN Neon>"` doit répondre (sinon
-   attendre — le reset s'applique au fil des heures).
+   attendre — le reset s'applique au fil des heures). Aucune action API
+   nécessaire : le syncreur Render réessaie en continu (backoff 5 s), sa
+   reconnexion réveille le compute d'elle-même dès le reset (§13).
 2. **Laisser le rattrapage se faire** (~1-2 h) : le syncreur en échec
    depuis le 20/09 rejoue les deltas accumulés. Vérifier : carte Santé →
    synchro OK + `commands.done_at` récents.
@@ -302,7 +321,9 @@ Le redémarrage du service casse la mémoire (état orphelin depuis le 20/09) :
    `xmqtakuqicujxgcvqfnt` (eu-west-1, PostgreSQL 17.6) à l'état de
    livraison, secret `SUPABASE_DATABASE_URL` posé — rien à préparer.
 4. **Migrer les données** : onglet Actions → workflow
-   **`migrate-neon-supabase`** → Run (workflow_dispatch). Le job installe
+   **`migrate-neon-supabase`** → Run (workflow_dispatch — le workflow est
+   sur `main` depuis N°167 : un dispatch exige le fichier sur la branche
+   par défaut, il l'était seulement sur cette branche avant). Le job installe
    le client PostgreSQL 18, dump la production Neon (secret
    `DATABASE_URL`), remet à zéro le schéma public Supabase, restore,
    contrôle l'intégrité par comptages et pose les drapeaux RLS. Vert =
@@ -329,11 +350,14 @@ Le redémarrage du service casse la mémoire (état orphelin depuis le 20/09) :
    Render, carte Santé verte (mode postgresql, synchro OK), agents qui
    checkent (commandes), portail client, tickets — la vague
    d'autoréparation Zikisso se déclenche au premier read_state complet.
-8. **Armer le secours** : poser le secret `NEON_STANDBY_DATABASE_URL`
-   (§10 — seule entrée manquante), déclencher `standby-restore.yml`
-   manuellement (workflow_dispatch) pour valider le premier restore, puis
-   laisser le cron quotidien faire. Mettre à jour le secret `DATABASE_URL`
-   (valeur Supabase) pour que `backup.yml` suive la production.
+8. **Armer le secours et l'archive froide** : `NEON_STANDBY_DATABASE_URL`
+   est déjà posé (N°167) — déclencher `standby-restore.yml` manuellement
+   (workflow_dispatch) pour valider le premier restore, puis laisser le
+   cron quotidien faire (02:43 UTC). **Retourner le secret `DATABASE_URL`
+   vers la valeur Supabase** (celle de `SUPABASE_DATABASE_URL`), puis
+   **RÉ-ACTIVER le workflow `backup`** (désactivé le 21/09, cf. §10 —
+   bouton « Enable » dans l'onglet Actions du dépôt) et le déclencher une
+   fois pour valider le premier export chiffré réel.
 
 Rollback (si la production Supabase pose problème dans les 24 h) : le projet
 Neon contient l'état au 30/09 au soir + le rattrapage du 1er au matin ;
@@ -400,3 +424,58 @@ que `pgActive` ne soit posé (ordre historique N°130) — en production le
 premier check-in agent réveille le syncreur sous 45-180 s, aucune perte
 (la mémoire reste la vérité) ; (b) message cosmétique « renommage
 impossible : rename .tmp » en mode PG (`s.path` vide) — sans effet.
+
+## 13. Armement N°167 (21/09 nuit) — faits mesurés sur le projet Neon via API
+
+L'opérateur a livré le DSN Neon + une clé API (`napi_`). Tout ce qui suit est
+mesuré, pas déduit.
+
+**L'API Neon a déménagé** : `api.neon.tech` est MORT en DNS public (A, AAAA
+et CNAME vides — vérifié via dns.google : ce n'est PAS un blocage sandbox,
+le nom n'existe plus). L'API vit sous **`console.neon.tech/api/v2`** et la
+clé `napi_` y fonctionne (outil : `bunx neonctl` v5.0.0 avec
+`NEON_API_KEY` ; le listing des projets exige `org_id`, obtenu par
+`neonctl orgs list`).
+
+**Identité du projet** : org « FTech CI » (`org-blue-forest-04016555`),
+projet **« Mikcloud » `long-feather-75906741`** (aws-eu-central-1,
+PostgreSQL 18, 93,86 Mo, créé le 29/08 — concorde avec la capture console
+du 20/09). L'endpoint `ep-flat-cloud-b1et1qdt` expose par API un
+`read_write_host` DIRECT (`ep-flat-cloud-b1et1qdt.c-5…`, sans suffixe) et un
+`read_write_pooled_host` (`-pooler`) : le DSN livré par le dashboard
+pointait le POOLER, les secrets posés (§10) utilisent le DIRECT.
+
+**Quota — confirmé par l'API** : `quota_reset_at` =
+**2026-10-01T00:00:00Z** (le « ~00:00 » supposé est désormais une date
+officielle) ; `cpu_used_sec` = 396 250 = 110,07 CU-h (concordance exacte
+avec la capture console du 20/09) ; compute `idle` depuis le 20/09 03:39
+UTC ; l'erreur 53000 est toujours active au 21/09 ~01:00 UTC (testée sur
+les DEUX hôtes, direct et pooler — le TLS passe, certificat public vérifié,
+c'est le quota qui barre au démarrage de session).
+
+**Autosuspend — le piège écarté** : l'endpoint affiche
+`suspend_timeout_seconds: 0`. Définition officielle de l'API : `0` = défaut
+du plan (300 s sur Free), `-1` = jamais suspendre. Le compute se rendort
+donc PAR DÉFAUT 5 min après la dernière requête : le modèle secours
+(1 réveil/jour de 5-10 min puis rendormissage) fonctionne sans aucun
+réglage — math inchangée, 1-2 CU-h/mois. Poser 300 s explicitement renvoie
+412 « modifying the suspend interval is not permitted on this account »
+(plan Free verrouillé — sans importance, le défaut EST 300 s). Taille du
+compute : min 0,25 CU / max 2 CU.
+
+**Réveil du 1er octobre** : AUCUNE action API requise — le syncreur Render
+réessaie en continu (backoff 5 s) ; dès le reset (00:00 UTC), sa
+reconnexion réveille le compute d'elle-même. La clé `napi_` reste au
+coffre local (`/home/z/.secrets/neon-credentials.txt`) pour la
+surveillance : `bunx neonctl projects list --org-id org-blue-forest-04016555`
+suit `cpu_used_sec`, `current_state` et `quota_reset_at`.
+
+**Correctif de séquencement (le trou bouché)** : `migrate-neon-supabase.yml`
+n'existait que sur cette branche — un `workflow_dispatch` exige le fichier
+sur la branche PAR DÉFAUT : l'étape 4 du §11 était **indispatchable** le
+1er octobre (la fusion vient APRÈS la migration). Le workflow + la racine
+TLS Supabase (`backend/certs/supabase-prod-ca-2021.crt`) sont posés sur
+`main` par N°167 (commit 498326f, copies exactes de cette branche) ;
+`standby-restore.yml` (cron 02:43) reste sur cette branche — il s'activera
+à la fusion du 1er octobre, quand Supabase sera production AVEC données
+(avant, son cron aurait restauré un schéma public Supabase VIDE).

@@ -29,8 +29,8 @@ func TestMergeRecoveredUnion(t *testing.T) {
 	}
 	src := &model.DB{
 		Accounts: []model.Account{
-			{ID: "acc-1", Name: "base-gelée"},   // ne doit PAS écraser
-			{ID: "acc-3", Name: "base-seule"},   // doit être restauré
+			{ID: "acc-1", Name: "base-gelée"}, // ne doit PAS écraser
+			{ID: "acc-3", Name: "base-seule"}, // doit être restauré
 		},
 		Routers: []model.Router{{ID: "rt-1"}, {ID: "rt-2"}},
 	}
@@ -68,9 +68,9 @@ func TestMergeRecoveredTombstones(t *testing.T) {
 	}
 	src := &model.DB{
 		HotspotUsers: []model.HotspotUser{
-			{ID: "hu-1", Username: "vivant"},        // présent des deux côtés
-			{ID: "hu-2", Username: "purge"},         // tombstoné (casse différente)
-			{ID: "hu-3", Username: "restaure"},      // doit revenir
+			{ID: "hu-1", Username: "vivant"},   // présent des deux côtés
+			{ID: "hu-2", Username: "purge"},    // tombstoné (casse différente)
+			{ID: "hu-3", Username: "restaure"}, // doit revenir
 		},
 		PurgeTombstones: []model.PurgeTombstone{{ID: "pt-2", Username: "autre"}},
 	}
@@ -109,7 +109,7 @@ func TestMergeRecoveredMapsAndClocks(t *testing.T) {
 	}
 	src := &model.DB{
 		SettingsByAccount: map[string]model.Settings{
-			"acc-1": {Tenant: model.Tenant{Name: "base"}}, // ne doit PAS écraser
+			"acc-1": {Tenant: model.Tenant{Name: "base"}},  // ne doit PAS écraser
 			"acc-2": {Tenant: model.Tenant{Name: "base2"}}, // doit être complétée
 		},
 		NotifSettings: map[string]model.NotificationSettings{

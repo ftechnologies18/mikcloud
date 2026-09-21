@@ -5,6 +5,35 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-21 — N°174 — gofmt ! La CI de la vague attrape un alignement de commentaires que les branches n'avaient jamais vu (recovery_test.go)
+
+### Contexte
+La CI de la vague de fusion (run 35649909509) échoue à sa PREMIÈRE étape :
+`gofmt -l .` signale `internal/store/recovery_test.go` — alignement de
+commentaires en fin de ligne (espaces deplacés). Les branches n163/n164
+n'ont JAMAIS été vérifiées par la CI (elle ne tourne que sur `main` —
+comportement documenté), et la vérification gofmt locale de l'époque
+était passée à côté. Le reste du run est vert (govulncheck, E2E, Frontend)
+et le job deploy-render a été SAGEMENT sauté (CI rouge = pas de
+déploiement — la production reste sur le build N°159 en cours).
+
+### Produit
+- `gofmt -w internal/store/recovery_test.go` : ré-alignement des
+  commentaires trailing (aucune sémantique touchée).
+
+### Fidélité
+- Fichier de test seul, zéro code de production. Ce push porte des
+  changements `backend/` + sentinel absent (retiré à ba8fab2) → c'est LUI
+  qui déclenche le déploiement attendu (CI verte → deploy-render →
+  redémarrage unique sur Supabase).
+
+### Vérifié
+- Batterie complète rejouée localement (Go 1.27.1, checksum officiel) :
+  `gofmt -l` 0 fichier, `go vet` OK, `go build` 23 Mo,
+  `go test ./...` 12 paquets OK (43,9 s pour internal/api) — la
+  combinaison fusionnée n163+n164 n'avait jamais été compilée ensemble
+  avant : elle est saine.
+
 ## 2026-09-21 — N°173 — Le secours quotidien apprend lui aussi la source vivante et le PATH du runner : standby-restore durci avant son premier cron
 
 ### Contexte

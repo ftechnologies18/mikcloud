@@ -1,23 +1,29 @@
 "use client";
 
-// N°152 — bandeau d'annonces de la plateforme : la plus récente annonce
-// ACTIVE non masquée s'affiche sous le header de la console client, couleur
-// selon le niveau (info = émeraude, warning = ambre, critical = rouge).
+// N°152 — bandeau d'annonces de la plateforme : l'annonce ACTIVE non
+// masquée la plus importante s'affiche sous le header de la console client,
+// couleur selon le niveau (N°179 — 5 niveaux : gris info, émeraude nouveauté,
+// sarcelle maintenance, ambre action recommandée, rouge incident).
+// N°179 — PRIORITÉ DE SÉVÉRITÉ : à plusieurs annonces actives, le bandeau
+// montre la plus GRAVE d'abord (un incident ne se laisse pas chasser par une
+// info plus récente) ; à sévérité égale, la plus récente l'emporte (comportement
+// historique). La cloche, elle, liste tout par récence.
 // Masquage PAR UTILISATEUR ET PAR ANNONCE (localStorage : le bandeau est
 // informatif, la trace durable vit dans la cloche). L'annonce reste
 // accessible via la cloche et la destination « tout voir ».
 // N°165 — plus aucun message tronqué sans issue : la zone de message ouvre
 // une fenêtre de LECTURE COMPLÈTE (titre + corps intégral, défilement,
-// retours à la ligne préservés, date de fin de visibilité). Le titre et
-// l'extrait restent élégamment tronqués en ligne, mais le chevron « Lire »
-// et le clic sur le bandeau donnent toujours accès au texte entier — la
-// cloche et cette fenêtre lisent la même vérité (tri par date effective :
-// une annonce programmée qui vient d'être publiée passe devant).
+// retours à la ligne préservés, date de fin de visibilité + temps restant
+// N°179). Le titre et l'extrait restent élégamment tronqués en ligne, mais
+// le chevron « Lire » et le clic sur le bandeau donnent toujours accès au
+// texte entier — la cloche et cette fenêtre lisent la même vérité (tri par
+// date effective : une annonce programmée qui vient d'être publiée passe
+// devant).
 // Contrat : GET /api/announcements (rang 2+, annonces actives du compte).
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, Info, Megaphone, TriangleAlert, X } from "lucide-react";
+import { ChevronDown, Info, Megaphone, Sparkles, TriangleAlert, Wrench, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -31,19 +37,37 @@ import {
 import { fetchClientAnnouncements } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { useHotspotStore } from "@/lib/hotspot/store";
-import type { Announcement } from "@/lib/hotspot/types";
+import { ANNOUNCEMENT_SEVERITY } from "@/lib/hotspot/types";
+import type { Announcement, AnnouncementLevel } from "@/lib/hotspot/types";
 
 /** Clé de masquage par (utilisateur, annonce) — namespace mikcloud:. */
 function dismissKey(userID: string, announcementID: string): string {
   return `mikcloud:ann-dismissed:${userID}:${announcementID}`;
 }
 
-/** Habillage du bandeau selon le niveau — miroir des couleurs console. */
-const LEVEL_STYLES = {
+/** Habillage du bandeau selon le niveau (N°179 — 5 niveaux, miroir des
+ * couleurs console). L'incident porte une pulsation discrète sur son
+ * icône : c'est le seul niveau qui réclame l'attention immédiate. */
+const LEVEL_STYLES: Record<AnnouncementLevel, {
+  wrapper: string;
+  text: string;
+  icon: string;
+  pulse?: boolean;
+}> = {
   info: {
+    wrapper: "border-b border-border bg-foreground/[0.04]",
+    text: "text-foreground/80",
+    icon: "text-muted-foreground",
+  },
+  success: {
     wrapper: "border-b border-emerald-600/20 bg-emerald-500/10",
     text: "text-emerald-700 dark:text-emerald-400",
     icon: "text-emerald-600 dark:text-emerald-400",
+  },
+  maintenance: {
+    wrapper: "border-b border-teal-600/20 bg-teal-500/10",
+    text: "text-teal-700 dark:text-teal-300",
+    icon: "text-teal-600 dark:text-teal-400",
   },
   warning: {
     wrapper: "border-b border-amber-600/25 bg-amber-500/10",
@@ -54,14 +78,42 @@ const LEVEL_STYLES = {
     wrapper: "border-b border-destructive/25 bg-destructive/10",
     text: "text-destructive",
     icon: "text-destructive",
+    pulse: true,
   },
-} as const;
+};
 
-const LEVEL_ICON = {
+const LEVEL_ICON: Record<AnnouncementLevel, typeof Info> = {
   info: Info,
+  success: Sparkles,
+  maintenance: Wrench,
   warning: TriangleAlert,
   critical: TriangleAlert,
-} as const;
+};
+
+/** effectiveAt — instant d'apparition côté clients : publishAt si
+ * programmée, createdAt sinon (miroir du EffectiveAt backend, N°165). */
+function effectiveAt(ann: Announcement): string {
+  return ann.publishAt || ann.createdAt;
+}
+
+/** Temps de visibilité restant, lisible (N°179) : « 45 min », « 6 h »,
+ * « 2 j 3 h » (le symbole des jours suit la langue). Retourne "" si
+ * expiré/indécodable. */
+function remainingLabel(expiresAt: string, lang: string): string {
+  const daySym = lang === "fr" ? "j" : "d";
+  const end = new Date(expiresAt).getTime();
+  if (Number.isNaN(end)) return "";
+  const ms = end - Date.now();
+  if (ms <= 0) return "";
+  const min = Math.round(ms / 60_000);
+  if (min < 60) return `${Math.max(1, min)} min`;
+  const hours = Math.floor(min / 60);
+  if (hours < 24) return `${hours} h`;
+  const days = Math.floor(hours / 24);
+  const restHours = hours % 24;
+  if (restHours === 0) return `${days} ${daySym}`;
+  return `${days} ${daySym} ${restHours} h`;
+}
 
 export function AnnouncementBanner() {
   const { t, tf, lang } = useI18n();
@@ -81,19 +133,26 @@ export function AnnouncementBanner() {
     retry: false,
   });
 
-  // La plus récente non masquée (les annonces viennent triées récent-d'abord
-  // par date effective ; un incident plus récent chasse une info plus ancienne).
+  // L'annonce AFFICHÉE (N°179) : la plus GRAVE des actives non masquées —
+// un incident reste au bandeau même si une info plus récente arrive ; à
+  // sévérité égale, la plus récente (date effective) l'emporte.
   const current = useMemo(() => {
     const userID = user?.id ?? "";
     if (!data?.length) return null;
-    for (const ann of data) {
+    const visible = data.filter((ann) => {
       const key = dismissKey(userID, ann.id);
-      const locallyDismissed =
+      return !(
         dismissed[key] ||
-        (typeof window !== "undefined" && window.localStorage.getItem(key) === "1");
-      if (!locallyDismissed) return ann;
-    }
-    return null;
+        (typeof window !== "undefined" && window.localStorage.getItem(key) === "1")
+      );
+    });
+    if (visible.length === 0) return null;
+    return visible.reduce((best, ann) => {
+      const sevA = ANNOUNCEMENT_SEVERITY[ann.level] ?? 0;
+      const sevB = ANNOUNCEMENT_SEVERITY[best.level] ?? 0;
+      if (sevA !== sevB) return sevA > sevB ? ann : best;
+      return effectiveAt(ann) > effectiveAt(best) ? ann : best;
+    });
   }, [data, dismissed, user?.id]);
 
   if (!current) return null;
@@ -134,7 +193,10 @@ export function AnnouncementBanner() {
           title={t("ann.banner.read")}
           className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1 text-left text-sm ${styles.text} hover:bg-foreground/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring`}
         >
-          <Icon className={`size-4 shrink-0 ${styles.icon}`} aria-hidden />
+          <Icon
+            className={`size-4 shrink-0 ${styles.icon}${styles.pulse ? " animate-pulse" : ""}`}
+            aria-hidden
+          />
           <span className="min-w-0 flex-1">
             <span className="block truncate font-medium">{current.title}</span>
             {current.body ? (
@@ -171,7 +233,10 @@ export function AnnouncementBanner() {
                   const ReadIcon = LEVEL_ICON[readDialog.level] ?? Megaphone;
                   const readStyles = LEVEL_STYLES[readDialog.level] ?? LEVEL_STYLES.info;
                   return (
-                    <ReadIcon className={`mt-0.5 size-5 shrink-0 ${readStyles.icon}`} aria-hidden />
+                    <ReadIcon
+                      className={`mt-0.5 size-5 shrink-0 ${readStyles.icon}${readStyles.pulse ? " animate-pulse" : ""}`}
+                      aria-hidden
+                    />
                   );
                 })()
               ) : null}
@@ -200,11 +265,21 @@ export function AnnouncementBanner() {
           </p>
 
           <DialogFooter>
-            {readDialog?.expiresAt ? (
-              <p className="mr-auto text-xs text-muted-foreground">
-                {tf("ann.banner.until", { date: dateFmt.format(new Date(readDialog.expiresAt)) })}
-              </p>
-            ) : null}
+            {readDialog?.expiresAt ? (() => {
+              // N°179 — date de fin ET temps restant lisible : une durée
+              // courte (heures) se lit d'un coup d'œil sans calcul mental.
+              const remaining = remainingLabel(readDialog.expiresAt, lang);
+              return (
+                <p className="mr-auto text-xs text-muted-foreground">
+                  {tf("ann.banner.until", { date: dateFmt.format(new Date(readDialog.expiresAt)) })}
+                  {remaining ? (
+                    <span className="ml-1 font-medium text-foreground/70">
+                      {tf("ann.banner.remaining", { duration: remaining })}
+                    </span>
+                  ) : null}
+                </p>
+              );
+            })() : null}
             <Button variant="outline" onClick={() => setReading(null)} className="min-h-10">
               {t("ann.banner.close")}
             </Button>

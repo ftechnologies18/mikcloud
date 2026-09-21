@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"mikcloud/hotspot-api/internal/model"
 )
@@ -336,4 +337,76 @@ func newServerOnly(t *testing.T) *httptest.Server {
 	t.Helper()
 	_, ts := newTestServerWithStore(t)
 	return ts
+}
+
+// TestAnnouncementHoursDurationAndLevels — N°179 : la durée de visibilité se
+// règle en JOURS et/ou HEURES (durée totale plafonnée à 365 jours), et les
+// deux nouveaux niveaux (success, maintenance) sont acceptés — l'ancien
+// trois-niveaux ne connaissait que les jours.
+func TestAnnouncementHoursDurationAndLevels(t *testing.T) {
+	_, ts := newTestServerWithStore(t)
+	adminToken := adminTokenOf(t, ts)
+
+	// Nouveaux niveaux acceptés, avec durée purement horaire.
+	s, out := createAnnouncement(t, ts, adminToken, map[string]any{
+		"title": "Nouveauté : rapports mensuels", "level": "success",
+		"audience": "all", "expiresInHours": 6,
+	})
+	if s != 201 {
+		t.Fatalf("création success/6h : 201 attendu, %d obtenu (%v)", s, out)
+	}
+	expiresAt, _ := out["expiresAt"].(string)
+	et, err := time.Parse(time.RFC3339, expiresAt)
+	if err != nil {
+		t.Fatalf("expiresAt indécodable : %q", expiresAt)
+	}
+	// ~6 h à partir de maintenant (tolérance d'exécution : 5 h 55 → 6 h 05).
+	if d := time.Until(et); d < 5*time.Hour+55*time.Minute || d > 6*time.Hour+5*time.Minute {
+		t.Fatalf("durée de 6 h attendue, obtenu %v (expiresAt=%s)", d, expiresAt)
+	}
+
+	// Niveau maintenance + durée MIXTE jours/heures.
+	s, out = createAnnouncement(t, ts, adminToken, map[string]any{
+		"title": "Maintenance samedi soir", "level": "maintenance",
+		"audience": "all", "expiresInDays": 1, "expiresInHours": 12,
+	})
+	if s != 201 {
+		t.Fatalf("création maintenance/1j12h : 201 attendu, %d obtenu (%v)", s, out)
+	}
+	expiresAt, _ = out["expiresAt"].(string)
+	et, err = time.Parse(time.RFC3339, expiresAt)
+	if err != nil {
+		t.Fatalf("expiresAt indécodable : %q", expiresAt)
+	}
+	if d := time.Until(et); d < 36*time.Hour-5*time.Minute || d > 36*time.Hour+5*time.Minute {
+		t.Fatalf("durée de 36 h attendue, obtenu %v (expiresAt=%s)", d, expiresAt)
+	}
+
+	// Bornes : durée totale > 365 jours refusée, même répartie sur les deux
+	// champs ; heures négatives refusées ; niveau inconnu toujours refusé.
+	if s, _ := createAnnouncement(t, ts, adminToken, map[string]any{
+		"title": "Trop long", "level": "info", "audience": "all",
+		"expiresInDays": 365, "expiresInHours": 1,
+	}); s != 400 {
+		t.Fatalf("durée 365j+1h : 400 attendu, %d obtenu", s)
+	}
+	if s, _ := createAnnouncement(t, ts, adminToken, map[string]any{
+		"title": "Heures négatives", "level": "info", "audience": "all",
+		"expiresInHours": -2,
+	}); s != 400 {
+		t.Fatalf("heures négatives : 400 attendu, %d obtenu", s)
+	}
+	if s, _ := createAnnouncement(t, ts, adminToken, map[string]any{
+		"title": "Niveau inconnu", "level": "urgent", "audience": "all",
+	}); s != 400 {
+		t.Fatalf("niveau inconnu : 400 attendu, %d obtenu", s)
+	}
+
+	// Aucune durée fournie : pas d'expiration (comportement historique).
+	s, out = createAnnouncement(t, ts, adminToken, map[string]any{
+		"title": "Sans expiration", "level": "info", "audience": "all",
+	})
+	if s != 201 || out["expiresAt"] != nil {
+		t.Fatalf("sans durée : 201 sans expiresAt attendu, obtenu %d %v", s, out["expiresAt"])
+	}
 }

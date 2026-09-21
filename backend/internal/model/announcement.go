@@ -4,12 +4,23 @@
 package model
 
 // Niveaux d'annonce — pilotent la couleur du bandeau et de l'entrée de
-// cloche côté client.
+// cloche côté client. N°179 : la palette passe de 3 à 5 niveaux — l'émeraude
+// devient la couleur des BONNES NOUVELLES (nouveautés), la sarcelle celle des
+// interventions planifiées, l'info redevient neutre.
 const (
-	AnnouncementInfo     = "info"     // information neutre (nouveautés, conseils)
-	AnnouncementWarning  = "warning"  // action recommandée (maintenance, migration)
-	AnnouncementCritical = "critical" // incident/urgence (service dégradé)
+	AnnouncementInfo        = "info"        // information neutre (conseils, avis)
+	AnnouncementSuccess     = "success"     // bonne nouvelle (nouveauté, fonctionnalité livrée)
+	AnnouncementMaintenance = "maintenance" // intervention planifiée (maintenance, migration)
+	AnnouncementWarning     = "warning"     // action recommandée côté client
+	AnnouncementCritical    = "critical"    // incident/urgence (service dégradé)
 )
+
+// AnnouncementLevels — niveaux acceptés à la création (N°179 — 5 niveaux,
+// du plus neutre au plus grave).
+var AnnouncementLevels = []string{
+	AnnouncementInfo, AnnouncementSuccess, AnnouncementMaintenance,
+	AnnouncementWarning, AnnouncementCritical,
+}
 
 // Audiences de diffusion — ciblage par usage du compte client.
 const (

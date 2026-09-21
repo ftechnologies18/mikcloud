@@ -5,7 +5,70 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-21 — N°180 — Annonces : la durée de visibilité apprend les HEURES (jours et/ou heures, 1 h → 365 j) et les niveaux passent de 3 à 5 (nouveauté, maintenance)
+
+### Contexte
+Demande opérateur : la durée de visibilité d'une annonce ne se règlait
+qu'en JOURS ENTIERS (presets 0/1/7/30/90) — une maintenance de samedi
+22 h→23 h restait affichée des jours entiers, ou disparaissait trop tôt
+si l'opérateur bricolait « 1 jour ». Et les 3 niveaux (info, warning,
+critical) mélangeaient des registres : « nouveauté livrée » et « conseil
+d'usage » partageaient l'émeraude, « maintenance planifiée » et « action
+recommandée » l'ambre.
+
+### Produit
+- Backend `handleAnnouncementCreate` : nouveau champ `expiresInHours`
+  (int) qui se COMBINE à `expiresInDays` — durée totale = jours + heures,
+  plafonnée à 365 jours, plancher 1 heure, bornes strictes (jours 0-365,
+  heures 0-8760, négatifs refusés). `ExpiresAt` reste un RFC 3339 : la
+  mécanique Active/State/balayage est inchangée.
+- Niveaux `model.AnnouncementLevels` : 3 → 5 — `success` (nouveauté,
+  émeraude), `maintenance` (intervention planifiée, sarcelle), `info`
+  redevient NEUTRE (gris), `warning` (ambre) et `critical` (rouge)
+  inchangés. Miroir partout : e-mail (libellés + couleurs, repli neutre
+  sur niveau inconnu), badges console plateforme, bandeau client, cloche.
+- Frontend formulaire : presets heures/jours (2 h, 6 h, 12 h, 1 j, 3 j,
+  7 j, 30 j, jusqu'au retrait) + « Durée personnalisée… » (champs jours +
+  heures combinés, total affiché en clair, validation locale et serveur).
+- Bandeau client : PRIORITÉ DE SÉVÉRITÉ — à plusieurs annonces actives,
+  la plus GRAVE s'affiche (un incident n'est plus chassé du bandeau par
+  une info plus récente) ; à sévérité égale, la plus récente l'emporte
+  (comportement historique). La cloche, elle, liste tout par récence.
+  L'icône d'incident pulse discrètement (seul niveau réclamant l'œil).
+- Fenêtre de lecture : la date de fin de visibilité est accompagnée du
+  TEMPS RESTANT lisible (« encore 45 min », « encore 2 j 3 h » — le
+  symbole des jours suit la langue).
+- Garde de transition N°179 : un backend pas encore redéployé ignore
+  `expiresInHours` — une durée purement horaire deviendrait « sans
+  expiration » ; le toast le dit au lieu de laisser croire à la durée
+  (miroir de la garde publishAt de N°165).
+
+### Fidélité
+- Les annonces EXISTANTES (niveaux info/warning/critical) restent
+  valides et visibles : les 3 anciens niveaux sont inclus dans les 5.
+  `expiresInDays` seul continue de marcher à l'identique (champ
+  inchangé, sémantique inchangée). Aucune migration, aucun format
+  modifié — `ExpiresAt` reste la seule source de vérité de l'expiration.
+- Ce push touche backend/ et frontend/ → déploiement Render + Vercel
+  attendu (gel levé depuis ba8fab2, autoDeploy réarmé).
+
+### Vérifié
+- Backend : gofmt 0, vet OK, build OK ; nouveau test
+  `TestAnnouncementHoursDurationAndLevels` (success 6 h → expiresAt à
+  6 h ± 5 min ; maintenance 1 j + 12 h → 36 h ± 5 min ; 365 j + 1 h
+  refusé ; heures négatives refusées ; sans durée = sans expiration) ;
+  familles Announcement/Receipt/Welcome vertes ×2 sous -race.
+- Frontend : ESLint 0 erreur, tsgo typecheck OK, build production OK.
+- Symbiose : N°178/N°179 pris en parallèle par l'autre session (course
+  e-mail corrigée par accesseurs + outil de surveillance Supabase) — ce
+  N°180 est rebasé dessus : le site d'envoi d'annonce passe par LEUR
+  accesseur synchronisé `emailTaskDispatch()` (au lieu d'un wrapper
+  maison), et TOUTE la batterie ci-dessus a été rejouée sur l'arbre
+  fusionné (leurs tests réordonnés + mon nouveau test ensemble, -race
+  vert).
+
 ## 2026-09-21 — N°179 — La surveillance du premier mois Supabase (runbook §8) devient un outil : `ops/mois1/surveille.sh` + journal de mesures de référence
+d714a82 (N°179 — Annonces : la durée de visibilité apprend les HEURES (jours et/ou heures, 1 h → 365 j) et les niveaux passent de 3 à 5 (success nouveauté, maintenance planifiée). Contexte : demande opérateur — la durée ne se réglait qu'en JOURS ENTIERS (presets 0/1/7/30/90) : une maintenance de samedi 22 h→23 h restait affichée des jours entiers ; et les 3 niveaux mélangeaient les registres (nouveauté et conseil partageaient l'émeraude, maintenance et action recommandée l'ambre). Produit backend : champ expiresInHours qui se COMBINE à expiresInDays (durée totale = jours + heures, plafond 365 j, plancher 1 h, bornes strictes 0-365 j / 0-8760 h, négatifs refusés — ExpiresAt reste un RFC 3339, la mécanique Active/State/balayage est inchangée) ; model.AnnouncementLevels 3 → 5 (success émeraude, maintenance sarcelle, info redevient NEUTRE gris, warning ambre et critical rouge inchangés) ; gabarit e-mail miroir (libellés + couleurs + repli neutre sur niveau inconnu). Produit frontend : formulaire à presets heures/jours (2 h, 6 h, 12 h, 1 j, 3 j, 7 j, 30 j, retrait) + « Durée personnalisée… » (champs jours + heures, total affiché en clair, double validation locale/serveur) ; bandeau client à PRIORITÉ DE SÉVÉRITÉ (la plus GRAVE des actives non masquées s'affiche — un incident n'est plus chassé par une info plus récente ; à sévérité égale la plus récente l'emporte ; la cloche liste toujours tout par récence) ; icône d'incident pulsante ; fenêtre de lecture avec TEMPS RESTANT lisible (« encore 45 min », « encore 2 j 3 h », symbole des jours selon la langue) ; cloche et badges console plateforme miroir des 5 couleurs ; garde de transition (backend non redéployé ignorant expiresInHours → toast explicite, miroir de la garde publishAt N°165). Fidélité : les 3 anciens niveaux restent valides (inclus dans les 5), expiresInDays seul marche à l'identique, aucune migration — ExpiresAt reste la seule source de vérité. Push backend/ + frontend/ → déploiement Render + Vercel attendus. Vérifié : gofmt 0, vet OK, build OK ; TestAnnouncementHoursDurationAndLevels (success 6 h → expiresAt à 6 h ± 5 min ; maintenance 1 j + 12 h → 36 h ± 5 min ; 365 j + 1 h refusé ; heures négatives refusées ; sans durée = sans expiration) ; familles Announcement/Email ×2 sous -race vertes ; ESLint 0, tsgo typecheck OK, build production Next.js OK.)
 
 ### Contexte
 La migration étant opérationnelle depuis 20:16Z (§5-§8 du runbook exécutés),

@@ -81,12 +81,15 @@ func (a *API) handleAnnouncementsList(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAnnouncementCreate — POST /api/admin/announcements (rang 3).
-// Corps : {title, body?, level, audience, expiresInDays?, email?, publishAt?} —
-// validations strictes (le super-admin écrit à TOUS les clients : jamais de
-// titre vide ou de niveau inconnu). N°165 — publishAt (RFC 3339) futur :
-// l'annonce est PROGRAMMÉE, invisible des clients jusqu'à cette date, et
-// l'éventuel e-mail part au moment de la publication (EmailPending + balayage
-// d'annonces), jamais avant.
+// Corps : {title, body?, level, audience, expiresInDays?, expiresInHours?,
+// email?, publishAt?} — validations strictes (le super-admin écrit à TOUS
+// les clients : jamais de titre vide ou de niveau inconnu). N°165 —
+// publishAt (RFC 3339) futur : l'annonce est PROGRAMMÉE, invisible des
+// clients jusqu'à cette date, et l'éventuel e-mail part au moment de la
+// publication (EmailPending + balayage d'annonces), jamais avant.
+// N°179 — durée de visibilité en JOURS et/ou HEURES (durée totale = jours
+// + heures, plafonnée à 365 jours ; une maintenance de 6 h se règle enfin
+// à l'heure près sans jamais « traîner » des jours entiers).
 func (a *API) handleAnnouncementCreate(w http.ResponseWriter, r *http.Request) {
 	if !isPlatformAdmin(r) {
 		writeErr(w, http.StatusForbidden, "Réservé aux administrateurs de la plateforme")
@@ -94,13 +97,14 @@ func (a *API) handleAnnouncementCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Title         string `json:"title"`
-		Body          string `json:"body"`
-		Level         string `json:"level"`
-		Audience      string `json:"audience"`
-		ExpiresInDays int    `json:"expiresInDays"`
-		Email         bool   `json:"email"`
-		PublishAt     string `json:"publishAt"` // N°165 — RFC 3339 ; futur = programmée
+		Title          string `json:"title"`
+		Body           string `json:"body"`
+		Level          string `json:"level"`
+		Audience       string `json:"audience"`
+		ExpiresInDays  int    `json:"expiresInDays"`
+		ExpiresInHours int    `json:"expiresInHours"` // N°179 — granularité horaire
+		Email          bool   `json:"email"`
+		PublishAt      string `json:"publishAt"` // N°165 — RFC 3339 ; futur = programmée
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
@@ -116,10 +120,15 @@ func (a *API) handleAnnouncementCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Le message est trop long (2000 caractères max)")
 		return
 	}
-	switch req.Level {
-	case model.AnnouncementInfo, model.AnnouncementWarning, model.AnnouncementCritical:
-	default:
-		writeErr(w, http.StatusBadRequest, "Niveau invalide (info, warning ou critical)")
+	levelOK := false
+	for _, lv := range model.AnnouncementLevels {
+		if req.Level == lv {
+			levelOK = true
+			break
+		}
+	}
+	if !levelOK {
+		writeErr(w, http.StatusBadRequest, "Niveau invalide (info, success, maintenance, warning ou critical)")
 		return
 	}
 	switch req.Audience {
@@ -129,12 +138,24 @@ func (a *API) handleAnnouncementCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	expires := ""
-	if req.ExpiresInDays > 0 {
-		if req.ExpiresInDays > 365 {
-			writeErr(w, http.StatusBadRequest, "Expiration : 365 jours max")
+	// N°179 — durée TOTALE = jours + heures (les deux bornes seules ne
+	// veulent rien dire : 365 jours + 23 h reste > 365 j). Plancher implicite :
+	// toute durée fournie vit au moins une heure.
+	if req.ExpiresInDays != 0 || req.ExpiresInHours != 0 {
+		if req.ExpiresInDays < 0 || req.ExpiresInDays > 365 {
+			writeErr(w, http.StatusBadRequest, "Expiration : 0 à 365 jours")
 			return
 		}
-		expires = time.Now().UTC().AddDate(0, 0, req.ExpiresInDays).Format(time.RFC3339)
+		if req.ExpiresInHours < 0 || req.ExpiresInHours > 365*24 {
+			writeErr(w, http.StatusBadRequest, "Expiration : 0 à 8760 heures")
+			return
+		}
+		dur := time.Duration(req.ExpiresInDays)*24*time.Hour + time.Duration(req.ExpiresInHours)*time.Hour
+		if dur <= 0 || dur > 365*24*time.Hour {
+			writeErr(w, http.StatusBadRequest, "Durée de visibilité : 1 heure à 365 jours maximum")
+			return
+		}
+		expires = time.Now().UTC().Add(dur).Format(time.RFC3339)
 	}
 
 	// N°165 — programmation : publishAt RFC 3339 optionnel. Vide ou PASSÉ =
@@ -378,11 +399,18 @@ func (a *API) handleClientAnnouncements(w http.ResponseWriter, r *http.Request) 
 // suffixé du nom du destinataire par l'appelant (salutation personnalisée).
 func buildAnnouncementEmail(ann model.Announcement) (title, textBody, htmlBody string) {
 	title = "MikCloud — Annonce : " + ann.Title
+	// N°179 — 5 niveaux : l'émeraude passe aux nouveautés, la sarcelle à la
+	// maintenance, l'info redevient neutre (miroir du bandeau console).
 	levelLabel := map[string]string{
-		model.AnnouncementInfo:     "Information",
-		model.AnnouncementWarning:  "Action recommandée",
-		model.AnnouncementCritical: "Incident en cours",
+		model.AnnouncementInfo:        "Information",
+		model.AnnouncementSuccess:     "Nouveauté",
+		model.AnnouncementMaintenance: "Maintenance planifiée",
+		model.AnnouncementWarning:     "Action recommandée",
+		model.AnnouncementCritical:    "Incident en cours",
 	}[ann.Level]
+	if levelLabel == "" {
+		levelLabel = "Information"
+	}
 
 	var b strings.Builder
 	b.WriteString("MikCloud — " + levelLabel + "\n\n")
@@ -401,15 +429,25 @@ func buildAnnouncementEmail(ann model.Announcement) (title, textBody, htmlBody s
 	// ── HTML ──
 	const aurora = "linear-gradient(90deg,#009558 0%,#009073 55%,#008687 100%)"
 	levelColor := map[string]string{
-		model.AnnouncementInfo:     "#009558",
-		model.AnnouncementWarning:  "#B45309",
-		model.AnnouncementCritical: "#B91C1C",
+		model.AnnouncementInfo:        "#53645C",
+		model.AnnouncementSuccess:     "#009558",
+		model.AnnouncementMaintenance: "#0F766E",
+		model.AnnouncementWarning:     "#B45309",
+		model.AnnouncementCritical:    "#B91C1C",
 	}[ann.Level]
+	if levelColor == "" {
+		levelColor = "#53645C"
+	}
 	levelBg := map[string]string{
-		model.AnnouncementInfo:     "#E7F6EE",
-		model.AnnouncementWarning:  "#FCF3E3",
-		model.AnnouncementCritical: "#FDECEC",
+		model.AnnouncementInfo:        "#F2F6F4",
+		model.AnnouncementSuccess:     "#E7F6EE",
+		model.AnnouncementMaintenance: "#E6F4F2",
+		model.AnnouncementWarning:     "#FCF3E3",
+		model.AnnouncementCritical:    "#FDECEC",
 	}[ann.Level]
+	if levelBg == "" {
+		levelBg = "#F2F6F4"
+	}
 	esc := func(s string) string {
 		s = strings.ReplaceAll(s, "&", "&amp;")
 		s = strings.ReplaceAll(s, "<", "&lt;")

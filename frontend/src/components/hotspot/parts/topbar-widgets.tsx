@@ -278,18 +278,32 @@ const TYPE_TONE: Record<string, string> = {
 };
 
 // N°153 — barre de niveau sur le bord gauche des annonces (ancrage visuel
-// du megaphone plateforme : émeraude = info, ambre = avertissement, rouge =
-// critique).
+// du megaphone plateforme). N°179 — 5 niveaux, miroir du bandeau client :
+// gris = info, émeraude = nouveauté, sarcelle = maintenance, ambre = action
+// recommandée, rouge = incident.
 const ANNOUNCEMENT_BAR: Record<string, string> = {
-  info: "bg-primary",
+  info: "bg-foreground/40",
+  success: "bg-emerald-500",
+  maintenance: "bg-teal-500",
   warning: "bg-amber-500",
   critical: "bg-destructive",
 };
 
 function announcementChip(level?: string): string {
-  if (level === "critical") return "bg-destructive/10 text-destructive";
-  if (level === "warning") return "bg-amber-500/10 text-amber-600 dark:text-amber-400";
-  return TYPE_TONE.announcement;
+  // N°179 — la pastille suit le niveau (5 couleurs du bandeau) ; repli
+  // neutre pour un niveau inconnu (transition backend/frontend).
+  switch (level) {
+    case "critical":
+      return "bg-destructive/10 text-destructive";
+    case "warning":
+      return "bg-amber-500/10 text-amber-600 dark:text-amber-400";
+    case "maintenance":
+      return "bg-teal-500/10 text-teal-600 dark:text-teal-400";
+    case "success":
+      return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400";
+    default:
+      return "bg-foreground/10 text-foreground/80";
+  }
 }
 
 /** Temps relatif compact — « il y a 5 min », « hier »… selon la langue.

@@ -1639,17 +1639,43 @@ export type ViewId =
 /* ─── N°152 — annonces de la plateforme (GET/POST/DELETE /api/admin/announcements,
        GET /api/announcements côté clients) ─── */
 
-/** Niveau / audience d'une annonce (N°152). */
-export type AnnouncementLevel = "info" | "warning" | "critical";
+/** Niveau / audience d'une annonce (N°152 — N°179 : 5 niveaux, du plus
+ *  neutre au plus grave). */
+export type AnnouncementLevel =
+  | "info"
+  | "success"
+  | "maintenance"
+  | "warning"
+  | "critical";
 export type AnnouncementAudience = "all" | "hotspot" | "homenet";
+
+/** Niveaux acceptés par le formulaire (miroir de model.AnnouncementLevels). */
+export const ANNOUNCEMENT_LEVELS: readonly AnnouncementLevel[] = [
+  "info",
+  "success",
+  "maintenance",
+  "warning",
+  "critical",
+] as const;
+
+/** Poids de sévérité d'un niveau (N°179) — le bandeau client montre
+ * l'annonce ACTIVE non masquée la plus GRAVE d'abord (à sévérité égale,
+ * la plus récente l'emporte). Plus haut = plus prioritaire. */
+export const ANNOUNCEMENT_SEVERITY: Record<AnnouncementLevel, number> = {
+  info: 0,
+  success: 1,
+  maintenance: 2,
+  warning: 3,
+  critical: 4,
+};
 
 /** Une annonce diffusée par la plateforme aux comptes clients. */
 export interface Announcement {
   id: string;
   title: string;
   body?: string;
-  level: "info" | "warning" | "critical";
-  audience: "all" | "hotspot" | "homenet";
+  level: AnnouncementLevel;
+  audience: AnnouncementAudience;
   createdAt: string;
   /** N°165 — date de diffusion programmée (RFC 3339). Vide = diffusion immédiate. */
   publishAt?: string;
@@ -1680,10 +1706,13 @@ export interface AdminAnnouncementRow extends Announcement {
 export interface AnnouncementCreatePayload {
   title: string;
   body?: string;
-  level: "info" | "warning" | "critical";
-  audience: "all" | "hotspot" | "homenet";
+  level: AnnouncementLevel;
+  audience: AnnouncementAudience;
   /** Jours de visibilité (0/absent = jusqu'au retrait manuel, max 365). */
   expiresInDays?: number;
+  /** N°179 — heures de visibilité, se COMBINENT aux jours (durée totale
+   * plafonnée à 365 jours). Une maintenance de 6 h se règle à l'heure près. */
+  expiresInHours?: number;
   /** Diffuser aussi un e-mail aux propriétaires des comptes destinataires. */
   email?: boolean;
   /** N°165 — date de diffusion programmée (RFC 3339). Absent/passé = immédiat ;

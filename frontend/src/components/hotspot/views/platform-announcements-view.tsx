@@ -37,6 +37,7 @@ import type {
   AnnouncementCreatePayload,
   AnnouncementLevel,
 } from "@/lib/hotspot/types";
+import { ANNOUNCEMENT_LEVELS } from "@/lib/hotspot/types";
 import { EmptyState } from "@/components/hotspot/empty-state";
 import { PageHeader } from "@/components/hotspot/page-header";
 import {
@@ -79,15 +80,57 @@ import { Textarea } from "@/components/ui/textarea";
 
 const ANNOUNCEMENTS_KEY = ["/api/admin/announcements"] as const;
 
-/** Variantes visuelles du niveau — miroir des couleurs du bandeau client. */
+/** Variantes visuelles du niveau (N°179 — 5 niveaux) — miroir des couleurs
+ * du bandeau client : l'émeraude passe aux nouveautés, la sarcelle à la
+ * maintenance, l'info redevient neutre. */
 const LEVEL_BADGE: Record<AnnouncementLevel, string> = {
-  info: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+  info: "bg-foreground/10 text-foreground",
+  success: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+  maintenance: "bg-teal-500/10 text-teal-600 dark:text-teal-400",
   warning: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
   critical: "bg-destructive/10 text-destructive",
 };
 
-/** Durées proposées (jours) — 0 = jusqu'au retrait manuel. */
-const EXPIRY_CHOICES = [0, 1, 7, 30, 90];
+/** Durées proposées (N°179 — heures ET jours) : 0/0 = jusqu'au retrait
+ * manuel ; "custom" = durée personnalisée jours + heures. */
+const EXPIRY_PRESETS = [
+  { key: "none", days: 0, hours: 0 },
+  { key: "2h", days: 0, hours: 2 },
+  { key: "6h", days: 0, hours: 6 },
+  { key: "12h", days: 0, hours: 12 },
+  { key: "1d", days: 1, hours: 0 },
+  { key: "3d", days: 3, hours: 0 },
+  { key: "7d", days: 7, hours: 0 },
+  { key: "30d", days: 30, hours: 0 },
+  { key: "custom", days: -1, hours: -1 },
+] as const;
+type ExpiryKey = (typeof EXPIRY_PRESETS)[number]["key"];
+
+/** Libellé d'un preset (heures pures, jour singulier, jours). */
+function expiryLabel(
+  key: ExpiryKey,
+  t: (k: string) => string,
+  tf: (k: string, p: Record<string, number | string>) => string,
+): string {
+  const preset = EXPIRY_PRESETS.find((p) => p.key === key);
+  if (!preset || preset.days < 0) return t("ann.form.expiry.custom");
+  if (preset.days === 0 && preset.hours === 0) return t("ann.form.expiry.none");
+  if (preset.days === 0) return tf("ann.form.expiry.hours", { n: preset.hours });
+  if (preset.days === 1) return tf("ann.form.expiry.day", { n: 1 });
+  return tf("ann.form.expiry.days", { n: preset.days });
+}
+
+/** formatHours — durée totale en heures vers « X j Y h » lisible (N°179).
+ * Le symbole des jours suit la langue (j/d — heures et minutes sont
+ * naturellement identiques). */
+function formatHours(total: number, lang: string): string {
+  const daySym = lang === "fr" ? "j" : "d";
+  const days = Math.floor(total / 24);
+  const hours = total % 24;
+  if (days === 0) return `${hours} h`;
+  if (hours === 0) return `${days} ${daySym}`;
+  return `${days} ${daySym} ${hours} h`;
+}
 
 /** Badge de statut (N°165) : visible / programmée / expirée — la
  * programmation porte l'horloge. Repli sur « active » si le backend déployé
@@ -135,7 +178,11 @@ export default function PlatformAnnouncementsView() {
   const [body, setBody] = useState("");
   const [level, setLevel] = useState<AnnouncementLevel>("info");
   const [audience, setAudience] = useState<AnnouncementAudience>("all");
-  const [expiresInDays, setExpiresInDays] = useState(7);
+  // N°179 — durée de visibilité : preset (heures et/ou jours) ou durée
+  // personnalisée (champs jours + heures combinés).
+  const [expiryKey, setExpiryKey] = useState<ExpiryKey>("7d");
+  const [customDays, setCustomDays] = useState(0);
+  const [customHours, setCustomHours] = useState(6);
   const [email, setEmail] = useState(true);
   // N°165 — diffusion immédiate ou programmée (datetime-local, heure du
   // navigateur du gérant — Abidjan GMT en pratique).
@@ -158,7 +205,9 @@ export default function PlatformAnnouncementsView() {
     setBody("");
     setLevel("info");
     setAudience("all");
-    setExpiresInDays(7);
+    setExpiryKey("7d");
+    setCustomDays(0);
+    setCustomHours(6);
     setEmail(true);
     setPublishMode("now");
     setPublishAtLocal("");
@@ -174,6 +223,11 @@ export default function PlatformAnnouncementsView() {
         toast.warning(t("ann.fallbackImmediate"));
       } else if (vars.publishAt) {
         toast.success(t("ann.scheduledToast"));
+      } else if ((vars.expiresInHours ?? 0) > 0 && !ann.expiresAt) {
+        // Garde de transition N°179 : un backend pas encore redéployé ignore
+        // expiresInHours — une durée purement horaire serait perdue (annonce
+        // sans expiration). On le dit au lieu de laisser croire à la durée.
+        toast.warning(t("ann.fallbackNoExpiry"));
       } else {
         toast.success(t("ann.created"));
       }
@@ -204,11 +258,20 @@ export default function PlatformAnnouncementsView() {
       scheduledDate.getTime() > Date.now());
   const isScheduled = scheduledDate !== null && publishOK;
 
+  // N°179 — durée résolue depuis le preset ou les champs personnalisés :
+  // total en heures, borné 1 h → 365 j (365*24 h).
+  const expiryPreset = EXPIRY_PRESETS.find((p) => p.key === expiryKey)!;
+  const expiryDays = expiryKey === "custom" ? customDays : expiryPreset.days;
+  const expiryHours = expiryKey === "custom" ? customHours : expiryPreset.hours;
+  const totalHours = expiryDays * 24 + expiryHours;
+  const expiryOK = totalHours === 0 || (totalHours >= 1 && totalHours <= 365 * 24);
+
   const canSubmit =
     title.trim().length >= 3 &&
     title.length <= 120 &&
     body.length <= 2000 &&
     publishOK &&
+    expiryOK &&
     !createMutation.isPending;
 
   const dateFmt = new Intl.DateTimeFormat(lang === "fr" ? "fr-FR" : "en-US", {
@@ -371,9 +434,11 @@ export default function PlatformAnnouncementsView() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="info">{t("ann.level.info")}</SelectItem>
-                    <SelectItem value="warning">{t("ann.level.warning")}</SelectItem>
-                    <SelectItem value="critical">{t("ann.level.critical")}</SelectItem>
+                    {ANNOUNCEMENT_LEVELS.map((lv) => (
+                      <SelectItem key={lv} value={lv}>
+                        {t(`ann.level.${lv}`)}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">{t("ann.form.levelHint")}</p>
@@ -428,24 +493,67 @@ export default function PlatformAnnouncementsView() {
               ) : null}
             </div>
 
+            {/* N°179 — durée de visibilité : presets heures/jours OU durée
+                personnalisée (jours + heures combinés, 1 h → 365 j). */}
             <div className="space-y-2">
               <Label>{t("ann.form.expiryLabel")}</Label>
-              <Select
-                value={String(expiresInDays)}
-                onValueChange={(v) => setExpiresInDays(Number(v))}
-              >
+              <Select value={expiryKey} onValueChange={(v) => setExpiryKey(v as ExpiryKey)}>
                 <SelectTrigger className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {EXPIRY_CHOICES.map((d) => (
-                    <SelectItem key={d} value={String(d)}>
-                      {d === 0 ? t("ann.form.expiry.none") : tf("ann.form.expiry.days", { n: d })}
+                  {EXPIRY_PRESETS.map((p) => (
+                    <SelectItem key={p.key} value={p.key}>
+                      {expiryLabel(p.key, t, tf)}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">{t("ann.form.expiryHint")}</p>
+              {expiryKey === "custom" ? (
+                <div className="space-y-2 rounded-lg border border-border/60 p-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="ann-exp-days">{t("ann.form.expiry.daysField")}</Label>
+                      <Input
+                        id="ann-exp-days"
+                        type="number"
+                        inputMode="numeric"
+                        min={0}
+                        max={365}
+                        value={customDays}
+                        onChange={(e) =>
+                          setCustomDays(Math.max(0, Math.min(365, Number(e.target.value) || 0)))
+                        }
+                        aria-invalid={!expiryOK}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="ann-exp-hours">{t("ann.form.expiry.hoursField")}</Label>
+                      <Input
+                        id="ann-exp-hours"
+                        type="number"
+                        inputMode="numeric"
+                        min={0}
+                        max={23}
+                        value={customHours}
+                        onChange={(e) =>
+                          setCustomHours(Math.max(0, Math.min(23, Number(e.target.value) || 0)))
+                        }
+                        aria-invalid={!expiryOK}
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {expiryOK
+                      ? totalHours === 0
+                        ? t("ann.form.expiry.none")
+                        : tf("ann.form.expiry.total", { n: formatHours(totalHours, lang) })
+                      : t("ann.form.expiryCustomInvalid")}
+                  </p>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">{t("ann.form.expiryHint")}</p>
+              )}
             </div>
 
             <div className="flex items-start gap-3 rounded-lg border border-border/60 p-3">
@@ -472,7 +580,8 @@ export default function PlatformAnnouncementsView() {
                   body: body.trim() || undefined,
                   level,
                   audience,
-                  expiresInDays: expiresInDays > 0 ? expiresInDays : undefined,
+                  expiresInDays: expiryDays > 0 ? expiryDays : undefined,
+                  expiresInHours: expiryHours > 0 ? expiryHours : undefined,
                   email,
                   publishAt: isScheduled ? scheduledDate!.toISOString() : undefined,
                 })

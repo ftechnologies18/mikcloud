@@ -9,6 +9,30 @@
 #      et il réveillerait le compute Neon de secours en continu) ;
 #   3. autoDeploy     ← yes (ré-arme le déploiement automatique, §3).
 #
+# N°172 — MÉTHODE CORRIGÉE : le point d'entrée env-vars de l'API Render
+#   n'accepte QUE GET et PUT (mesuré au premier --exec réel, 21/09 20:08Z :
+#   PATCH → 405, Allow: GET/PUT) — le PUT envoie la liste COMPLÈTE des
+#   variables (lues à l'instant : les autres sont re-émises à l'identique,
+#   DATABASE_URL remplacée, NEON_KEEPALIVE ajoutée si absente). La
+#   vérification post-bascule contrôle aussi qu'AUCUNE variable n'a été
+#   perdue. PATCH /v1/services/{id} (autoDeploy) reste valable (200 mesuré).
+#
+# N°172 — MÉTHODE CORRIGÉE : le point d'entrée env-vars de l'API Render
+#   n'accepte QUE GET et PUT (mesuré au premier --exec réel, 21/09 20:08Z :
+#   PATCH → 405, Allow: GET/PUT) — le PUT envoie la liste COMPLÈTE des
+#   variables (lues à l'instant : les autres sont re-émises à l'identique,
+#   DATABASE_URL remplacée, NEON_KEEPALIVE ajoutée si absente). La
+#   vérification post-bascule contrôle aussi qu'AUCUNE variable n'a été
+#   perdue. PATCH /v1/services/{id} (autoDeploy) reste valable (200 mesuré).
+#
+# N°172 — MÉTHODE CORRIGÉE : le point d'entrée env-vars de l'API Render
+#   n'accepte QUE GET et PUT (mesuré au premier --exec réel, 21/09 20:08Z :
+#   PATCH → 405, Allow: GET, PUT) — le PUT envoie la liste COMPLÈTE des
+#   variables (lues à l'instant : les autres sont re-émises à l'identique,
+#   DATABASE_URL remplacée, NEON_KEEPALIVE ajoutée si absente). La
+#   vérification post-bascule contrôle aussi qu'AUCUNE variable n'a été
+#   perdue. PATCH /v1/services/{id} (autoDeploy) reste valable (200 mesuré).
+#
 # SANS EFFET IMMÉDIAT : les variables Render s'appliquent au prochain
 # démarrage du service. Le process tourne toujours sur son état mémoire ;
 # le redémarrage unique vient avec la fusion n163+n164 (étape 6).
@@ -106,9 +130,10 @@ say ""
 
 # ── Plan ───────────────────────────────────────────────────────────────────
 say "Plan d'exécution :"
-say "  1. PATCH /services/$SERVICE_ID/env-vars"
+say "  1. PUT  /services/$SERVICE_ID/env-vars   (liste COMPLÈTE — N°172)"
 say "       DATABASE_URL   = postgresql://…@<session pooler :5432 masqué>…"
 say "       NEON_KEEPALIVE = off"
+say "       + les autres variables lues ci-dessus, re-émises à l'identique"
 say "  2. PATCH /services/$SERVICE_ID   autoDeploy=yes"
 say ""
 say "Rappel : AUCUN effet sur le process en cours — les variables ne"
@@ -121,20 +146,36 @@ if [ "$EXEC" -eq 0 ]; then
 fi
 
 # ── Exécution ──────────────────────────────────────────────────────────────
-say "→ PATCH des variables d'environnement…"
-PAYLOAD="$(python3 -c '
+say "→ Construction de la liste complète (état lu + bascule DATABASE_URL + NEON_KEEPALIVE)…"
+PUT_PAYLOAD="$(python3 -c '
 import json, sys
-dsn = sys.argv[1]
-print(json.dumps([{"key": "DATABASE_URL", "value": dsn},
-                  {"key": "NEON_KEEPALIVE", "value": "off"}]))' "$SUPABASE_DATABASE_URL")"
-RESP="$(curl -fsS --max-time 30 -X PATCH \
+envs = json.loads(sys.argv[1])
+supabase_dsn = sys.argv[2]
+lst = []
+seen_ka = False
+for e in envs:
+    k = e["envVar"]["key"]
+    v = e["envVar"].get("value") or ""
+    if k == "DATABASE_URL":
+        v = supabase_dsn
+    elif k == "NEON_KEEPALIVE":
+        v = "off"
+        seen_ka = True
+    lst.append({"key": k, "value": v})
+if not seen_ka:
+    lst.append({"key": "NEON_KEEPALIVE", "value": "off"})
+print(json.dumps(lst))' "$ENV_JSON" "$SUPABASE_DATABASE_URL")"
+NPUT="$(printf '%s' "$PUT_PAYLOAD" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
+say "   $NPUT variable(s) dans le PUT — aucune perte : état complet + NEON_KEEPALIVE"
+say "→ PUT des variables d'environnement…"
+RESP="$(curl -fsS --max-time 30 -X PUT \
   -H "Authorization: Bearer $RENDER_API_KEY" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json" \
-  -d "$PAYLOAD" \
+  -d "$PUT_PAYLOAD" \
   "$API/services/$SERVICE_ID/env-vars")" \
-  || die "ÉCHEC du PATCH env-vars — vérifier la réponse Render ci-dessus"
-say "   ✓ variables posées (DATABASE_URL + NEON_KEEPALIVE=off)"
+  || die "ÉCHEC du PUT env-vars — vérifier la réponse Render ci-dessus"
+say "   ✓ variables posées (DATABASE_URL → Supabase, NEON_KEEPALIVE=off, $((NPUT-2)) conservées)"
 
 say "→ PATCH autoDeploy=yes…"
 curl -fsS --max-time 30 -X PATCH \
@@ -161,6 +202,14 @@ VERDICT="$(printf '%s' "$CHECK" | head -1)"
 [ "$VERDICT" = "OK" ] || die "La relecture ne confirme PAS la bascule — inspecter manuellement"
 say "   ✓ DATABASE_URL → $(printf '%s' "$CHECK" | sed -n '2p')"
 say "   ✓ NEON_KEEPALIVE=off"
+# N°172 — garde anti-perte : toutes les clés de l'état AVANT doivent survivre
+LOST="$(python3 -c '
+import json, sys
+before = {e["envVar"]["key"] for e in json.loads(sys.argv[1])}
+after = {e["envVar"]["key"] for e in json.loads(sys.argv[2])}
+print(" ".join(sorted(before - after)))' "$ENV_JSON" "$ENV_AFTER")"
+[ -z "$LOST" ] || die "VARIABLES PERDUES au PUT : $LOST — restaurer depuis le snapshot du coffre"
+say "   ✓ aucune variable perdue"
 
 AUTO_AFTER="$(curl -fsS --max-time 20 -H "Authorization: Bearer $RENDER_API_KEY" "$API/services/$SERVICE_ID" | python3 -c 'import json,sys; print(json.load(sys.stdin)["autoDeploy"])')"
 [ "$AUTO_AFTER" = "yes" ] || die "autoDeploy n'est pas passé à yes"

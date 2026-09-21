@@ -5,6 +5,44 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-21 — N°172 — L'API Render env-vars ne connaît pas PATCH : la bascule du kit passe en PUT de liste complète avec garde anti-perte
+
+### Contexte
+Premier `--exec` réel de `step5-render-flip.sh` (20:08Z) : le PATCH des
+variables retourne **405** — le point d'entrée
+`/v1/services/{id}/env-vars` n'accepte que **GET et PUT** (mesuré :
+`Allow: GET, PUT`). L'affirmation du runbook §11-5 (« PATCH upsert les
+clés listées sans toucher aux autres », dite « vérifiée au 21/09 »)
+était erronée — sans doute confondue avec le PATCH de
+`/v1/services/{id}` (autoDeploy), qui fonctionne lui (200 mesuré, y
+comme no-op). Le kit corrigé avant la bascule réelle : c'est lui le
+véhicule documenté du rollback comme de la bascule.
+
+### Produit
+- `ops/oct1/step5-render-flip.sh` : le remplacement des variables passe
+  par **PUT de la liste COMPLÈTE** — les variables lues à l'état AVANT
+  sont re-émises à l'identique, `DATABASE_URL` remplacée par le DSN
+  Supabase session pooler, `NEON_KEEPALIVE=off` ajoutée si absente
+  (remplacée si présente) ; le plan affiché et l'en-tête documentent la
+  méthode réelle.
+- **Garde anti-perte** en vérification post-bascule : les clés de
+  l'état AVANT doivent toutes survivre au PUT — toute disparition
+  (l'écosystème compte 15 variables : JWT_SECRET, ADMIN_PASSWORD,
+  secrets Telegram/R2/GeniusPay/Wave…) fait échouer le script avec
+  instruction de restauration depuis le snapshot du coffre.
+- Le PATCH `autoDeploy=yes` et le snapshot avant-bascule (matière à
+  rollback) sont inchangés.
+
+### Fidélité
+- Outil d'exploitation seul (ops/) : zéro code backend/frontend — la
+  détection monorepo du job deploy-render saute, sentinel N°165-b et
+  autoDeploy=no restent en place : ce commit ne peut pas déployer.
+
+### Vérifié
+- Mesures directes : PATCH env-vars → 405 corps vide, `Allow: GET/PUT` ;
+  PATCH service → 200 ; snapshot local 15 variables [{key, value}] ;
+  `bash -n` OK ; dry-run conforme après correction.
+
 ## 2026-09-21 — N°171 — Le PATH du runner préfère son pg_dump 16 au 18 fraîchement installé : chaque étape des workflows force le binaire versionné
 
 ### Contexte

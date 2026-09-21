@@ -5,6 +5,45 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-21 — N°171 — Le PATH du runner préfère son pg_dump 16 au 18 fraîchement installé : chaque étape des workflows force le binaire versionné
+
+### Contexte
+Deuxième dispatch RÉEL de `migrate-neon-supabase` (run 35647671095) :
+l'installation du client passe enfin (suite `noble-pgdg`, N°170) mais le
+dump échoue — `pg_dump: error: aborting because of server version
+mismatch ; server version: 18.6 ; pg_dump version: 16.15`. Mesuré dans
+le run : `psql --version` → 18.6 (paquet installé) tandis que
+`pg_dump --version` → 16.15 (préinstallé du runner, build pgdg 24.04) —
+la résolution PATH/pg_wrapper du runner est INCOHÉRENTE entre les deux
+binaires, et pg_dump abortit dès que le serveur (Neon 18.6) est plus
+récent que le client. Un export d'environnement ne survit pas au-delà
+d'un step : chaque étape doit forcer son PATH.
+
+### Produit
+- `migrate-neon-supabase.yml` (main) : les 5 étapes qui touchent les
+  binaires (install+affichage, dump, reset+restore, contrôle, RLS)
+  exportent `PATH="/usr/lib/postgresql/18/bin:$PATH"` en tête ; l'étape
+  d'installation affiche en plus `command -v pg_dump psql` (les chemins
+  réels, pas seulement les versions — le prochain écart de résolution
+  sera visible AVANT de consommer le binaire).
+- `standby-restore.yml` (vague de fusion) : même correctif avec
+  `/usr/lib/postgresql/17/bin` — même bug latent (le runner résoudrait
+  son pg_dump 16 contre le serveur Supabase 17.6 : abort garanti),
+  corrigé dans la vague de fusion de l'étape 6 puisque le fichier ne
+  vit que sur la branche n164.
+
+### Fidélité
+- Workflows d'exploitation uniquement : zéro code backend/frontend, les
+  commandes pg_dump/psql elles-mêmes sont INCHANGÉES (seul le chemin de
+  résolution est épinglé) — détection monorepo du job deploy-render
+  saute, sentinel N°165-b et autoDeploy=no en place : ce commit ne peut
+  pas déployer.
+
+### Vérifié
+- Log du run 35647671095 : psql 18.6 vs pg_dump 16.15 (l'écart de
+  résolution est un FAIT mesuré, pas une hypothèse) ; YAML `safe_load`
+  OK ; 5 exports PATH présents.
+
 ## 2026-09-21 — N°170 — Le dépôt PGDG s'appelle « noble-pgdg », pas « noble » : les installs de clients PostgreSQL des workflows corrigées avant le premier vrai run
 
 ### Contexte

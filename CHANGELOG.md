@@ -5,6 +5,43 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-21 — N°173 — Le secours quotidien apprend lui aussi la source vivante et le PATH du runner : standby-restore durci avant son premier cron
+
+### Contexte
+Pendant la vague de fusion de l'étape 6 (migration exécutée, bascule Render
+faite), les deux défauts découverts sur `migrate-neon-supabase` au fil du
+preier dispatch réel existaient À L'IDENTIQUE dans `standby-restore.yml` —
+qui vivra son premier cron à 02:43 UTC dès la nuit suivante : (1) la
+résolution PATH du runner préférerait son pg_dump 16 préinstallé au
+client-17 fraîchement installé (N°171 — abort « server version mismatch »
+garanti contre Supabase 17.6) ; (2) le contrôle d'intégrité comptait la
+production EN DIRECT après le restore (N°169 — course perdue d'avance
+contre une source vivante, rouge une nuit sur deux). Le runbook §11-5
+portait en outre l'affirmation erronée d'un « PATCH upsert » env-vars
+(démentie au premier `--exec` : 405, Allow GET/PUT — N°172).
+
+### Produit
+- `standby-restore.yml` : les 3 étapes à binaires exportent
+  `PATH="/usr/lib/postgresql/17/bin:$PATH"` (+ `command -v` à l'install) ;
+  le contrôle d'intégrité compare le secours aux comptages PARSÉS DU DUMP
+  (blocs `COPY public.…`/terminateur `\.`, awk discriminant — même
+  parseur que N°169, validé sur banc d'essai synthétique puis éprouvé par
+  le run réel de migration : 36/36 tables, données piégeuses ignorées).
+- `docs/RUNBOOK-POSTGRES.md` §11-5 : la note d'API Render dit la vérité
+  mesurée (GET/PUT seulement, PATCH 405 — liste complète + garde
+  anti-perte, N°172).
+
+### Fidélité
+- Livré DANS la vague de fusion de l'étape 6 (runbook §11) : le fichier
+  ne vit que sur la branche n164, le runbook arrive par la même fusion.
+  Les étapes dump/restore du workflow sont inchangées ; seule la
+  référence du contrôle et la résolution des binaires bougent.
+
+### Vérifié
+- `yaml.safe_load` OK (6 steps) ; `bash -n` implicite via le runner ;
+  parseur déjà éprouvé en production par le run 35648092062 (N°169) ;
+  runbook relu ligne à ligne après correction.
+
 ## 2026-09-21 — N°172 — L'API Render env-vars ne connaît pas PATCH : la bascule du kit passe en PUT de liste complète avec garde anti-perte
 
 ### Contexte

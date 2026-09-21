@@ -341,10 +341,12 @@ cf. §13).
    21/09 — l'exécution est `ops/oct1/step5-render-flip.sh --exec`
    (posé sur `main` par N°168 ; DRY-RUN sans `--exec`, validations dures
    du DSN, snapshot avant-bascule au coffre pour rollback). La base
-   d'URL de l'API Render est `https://api.render.com/v1` (vérifiée au
-   21/09 : `PATCH /v1/services/{id}/env-vars` upsert les clés listées
-   sans toucher aux autres, `PATCH /v1/services/{id}` porte
-   `autoDeploy:"yes"`).
+   d'URL de l'API Render est `https://api.render.com/v1` (corrigé N°172 au
+   premier `--exec` réel, 21/09 20:08Z : le point d'entrée env-vars
+   n'accepte QUE GET et PUT — `PATCH` retourne 405 — le script envoie
+   la liste COMPLÈTE des variables via PUT avec garde anti-perte, et
+   `PATCH /v1/services/{id}` porte `autoDeploy:"yes"` ; l'affirmation
+   initiale d'un « PATCH upsert » était erronée).
 6. **Fusionner et déployer en UNE vague** : `n163-zikisso-repair` (correctif
    Zikisso : vérité du lot + autoréparation) puis `n164-persistence-safety`
    (boot résilient + garde anti-écrasement + carte Santé/bannière dégradée +

@@ -366,6 +366,15 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 		}
 	}
 
+	// N°162 — autoréparation des absents : la réconciliation COMPLÈTE
+	// vient de poser/entretenir les badges. Un utilisateur ACTIF badgé
+	// absent est une créature du registre cloud qui DOIT vivre sur son
+	// routeur : renvoi en commande de réparation idempotente, cadencée
+	// par le backoff N°159 (incident Zikisso : lot complet en échec
+	// silencieux, tickets « Actif / absent du routeur » invendables,
+	// sans retrouvabilité — les écritures n'étant jamais rejouées).
+	a.queueMissingRepair(db, router, now, tomb)
+
 	// Sessions actives : "user|ip|uptime|bytes-in|bytes-out;…" (script v3).
 	// N°76 — la liste n'est rapportée que par le chunk final et reste
 	// bornée à 250 : au-delà (stotal > 250), le diff fabrique des logouts

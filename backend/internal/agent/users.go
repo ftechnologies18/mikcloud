@@ -112,7 +112,13 @@ func (b Builder) buildVoucherBatch(cmd model.Command) string {
 	server := plStr(cmd.Payload, "server")
 	// N°106 — débit de bridage du profil (mode throttle uniquement).
 	throttleRate := plStr(cmd.Payload, "throttleRate")
+	// N°162 — réparation : commande d'autoréparation émise par la
+	// réconciliation read_state pour les absents du routeur. Idempotente
+	// (un nom déjà présent n'est ni recompté ni retouché) et véridique
+	// (même compteur d'échecs que la génération).
+	repair := plBool(cmd.Payload, "repair")
 	okVar := "ok" + idSafe(cmd.ID)
+	failsVar := "fails" + idSafe(cmd.ID)
 	// Commentaire router : la traçabilité MikCloud (lot) reste toujours présente ;
 	// le commentaire libre du gérant est préfixé devant s'il existe.
 	comment := ""
@@ -124,42 +130,80 @@ func (b Builder) buildVoucherBatch(cmd model.Command) string {
 	case batch != "":
 		comment = "mikcloud:" + batch
 	}
-	throttled := prof.QuotaThrottle && quota > 0 && throttleRate != ""
-	if throttled {
-		// N°106 — marqueur mikq:<octets>,<débit> en TÊTE (survit à la troncature
-		// d'import à 60 caractères) : relu par les scripts du profil et le tick
-		// mikcloud-quota — le quota ne devient PAS un limit-bytes-total (coupe).
-		comment = PrefixQuotaComment(QuotaMarker(quota, throttleRate), comment)
-	}
+	// N°106 — le mode bridage est une propriété du PROFIL ; le marqueur
+	// mikq: est posé PAR VOUCHER ci-dessous (N°162 : la réparation porte
+	// les quotas résolus à la génération, individuels par ticket).
+	throttled := prof.QuotaThrottle && throttleRate != ""
 	var sb strings.Builder
 	sb.WriteString(header(cmd))
 	sb.WriteString(":local " + okVar + " true\n")
+	sb.WriteString(":local " + failsVar + " 0\n")
 	sb.WriteString(profileEnsureLine(prof))
 	for _, u := range users {
-		line := `/ip hotspot user add name="` + rosEscape(SanitizeName(u.Name)) + `" password="` + rosEscape(u.Password) +
+		// N°162 — limites PAR VOUCHER : la réparation recompose les valeurs
+		// résolues à la génération (stockées par ticket) ; la génération
+		// classique n'en pose pas et hérite du lot (comportement inchangé).
+		uQuota := u.LimitBytesTotal
+		if uQuota == 0 {
+			uQuota = quota
+		}
+		uUptime := u.LimitUptimeMin
+		if uUptime == 0 {
+			uUptime = uptime
+		}
+		uComment := comment
+		if throttled && uQuota > 0 {
+			// N°106 — marqueur mikq:<octets>,<débit> en TÊTE (survit à la
+			// troncature d'import à 60 caractères) : le quota ne devient PAS
+			// un limit-bytes-total (le routeur déconnecterait à l'épuisement).
+			uComment = PrefixQuotaComment(QuotaMarker(uQuota, throttleRate), comment)
+		}
+		name := SanitizeName(u.Name)
+		line := `/ip hotspot user add name="` + rosEscape(name) + `" password="` + rosEscape(u.Password) +
 			`" profile="` + rosEscape(prof.Name) + `"`
 		// Quota de temps TOTAL du ticket (parité Mikhmon, cf. buildUserAdd) :
 		// limit-uptime du lot (override) ou du profil ; cumul épuisé = refus.
-		if uptime > 0 {
-			line += " limit-uptime=" + rosMinutes(int(uptime))
+		if uUptime > 0 {
+			line += " limit-uptime=" + rosMinutes(int(uUptime))
 		}
 		// Parité Mikhmon : serveur hotspot RouterOS visé ("all" ou nom précis).
 		if server != "" {
 			line += ` server="` + rosEscape(server) + `"`
 		}
-		if quota > 0 && !throttled {
+		if uQuota > 0 && !throttled {
 			// Quota de données du lot (ex. « 5 Go = 500 F ») : limit-bytes-total
 			// en octets — le routeur déconnecte le voucher une fois épuisé (mode
 			// « cut » ; en mode throttle le quota vit dans le marqueur mikq: du
 			// commentaire, posé ci-dessus).
-			line += fmt.Sprintf(" limit-bytes-total=%d", quota)
+			line += fmt.Sprintf(" limit-bytes-total=%d", uQuota)
 		}
-		if comment != "" {
-			line += ` comment="` + rosEscape(comment) + `"`
+		if uComment != "" {
+			line += ` comment="` + rosEscape(uComment) + `"`
 		}
-		sb.WriteString(":do { " + line + " } on-error={ :log warning \"mikcloud: add voucher echoue\" }\n")
+		// N°162 — VÉRITÉ du lot : un add qui échoue est COMPTÉ. L'ancien
+		// script avalait l'échec dans un log routeur et rapportait « ok »
+		// même sans AUCUN utilisateur créé (incident Zikisso : lot complet
+		// badgé « absent du routeur », tickets invendables — et sans aucune
+		// retrouvabilité, les écritures n'étant jamais rejouées).
+		if repair {
+			// Idempotence de la réparation : un nom DÉJÀ présent compte pour
+			// réussi (c'est l'état voulu) sans retoucher l'existant (verrou MAC,
+			// marqueur mikq:, comment de traçabilité préservés).
+			sb.WriteString(`:if ([:len [/ip hotspot user find name="` + rosEscape(name) + `"]] = 0) do={ :do { ` + line +
+				` } on-error={ :set ` + failsVar + ` (` + failsVar + ` + 1); :log warning "mikcloud: add voucher echoue" } }` + "\n")
+		} else {
+			sb.WriteString(`:do { ` + line + ` } on-error={ :set ` + failsVar + ` (` + failsVar + ` + 1); :log warning "mikcloud: add voucher echoue" }` + "\n")
+		}
 	}
-	sb.WriteString(b.resultLines(cmd.ID, okVar, map[string]string{"created": fmt.Sprintf("%d", len(users))}))
+	// N°162 — le lot passe « error » dès le PREMIER échec : compteurs
+	// créés/en échec dans le rapport (pattern dynamique $step du N°159).
+	sb.WriteString(":if ($" + failsVar + " > 0) do={ :set " + okVar + " false }\n")
+	okLine := b.reportLine(cmd.ID, true, map[string]string{"created": fmt.Sprintf("%d", len(users))})
+	koLine := `/tool fetch url="` + strings.TrimRight(b.BaseURL, "/") + `/agent/result?token=` + urlEscape(b.Token) +
+		`" http-method=post http-data=("cmd=` + urlEscape(cmd.ID) +
+		`&status=error&message=ajouts_en_echec_sur_le_routeur&created=" . (` +
+		fmt.Sprintf("%d", len(users)) + ` - $` + failsVar + `) . "&failed=" . $` + failsVar + `) output=none`
+	sb.WriteString(":if ($" + okVar + ") do={\n  " + okLine + "\n} else={\n  " + koLine + "\n}\n")
 	return sb.String()
 }
 
@@ -256,6 +300,12 @@ func (b Builder) buildUserReset(cmd model.Command) string {
 type VoucherRef struct {
 	Name     string
 	Password string
+	// N°162 — limites résolues PAR VOUCHER (posées uniquement par la
+	// réparation des absents : quotas/uptime stockés par ticket à la
+	// génération ; un lot de GÉNÉRATION classique n'envoie que
+	// name/password et hérite des valeurs du lot).
+	LimitBytesTotal int64
+	LimitUptimeMin  int64
 }
 
 func plUserList(p map[string]any, k string) []VoucherRef {
@@ -265,7 +315,11 @@ func plUserList(p map[string]any, k string) []VoucherRef {
 		out := make([]VoucherRef, 0, len(items))
 		for _, it := range items {
 			if m, ok := it.(map[string]any); ok {
-				out = append(out, VoucherRef{Name: plStr(m, "name"), Password: plStr(m, "password")})
+				out = append(out, VoucherRef{
+					Name: plStr(m, "name"), Password: plStr(m, "password"),
+					LimitBytesTotal: plInt64(m, "limitBytesTotal"),
+					LimitUptimeMin:  plInt64(m, "limitUptimeMin"),
+				})
 			}
 		}
 		return out

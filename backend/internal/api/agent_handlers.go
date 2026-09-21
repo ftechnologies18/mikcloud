@@ -746,6 +746,22 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 			a.recordWatcherError(router.ID, cmd.Kind, time.Now().UTC())
 		}
 	}
+	// N°162 — réparation des absents : l'issue de LA vague pilote son
+	// backoff DÉDIÉ (clé synthétique user_repair — les lots de
+	// GÉNÉRATION classiques, sans marqueur repair, ne touchent pas
+	// cette cadence). « ok » : la vague suivante reste immédiate (les
+	// absents restants repartent au read_state complet suivant) ;
+	// « error » : palier 1 → 5 → 15 → 30 min — une cause racine non
+	// corrigée (ressource référencée absente du routeur) ne martèle pas.
+	if cmd.Kind == model.CmdVoucherBatch {
+		if isRepair, _ := cmd.Payload["repair"].(bool); isRepair {
+			if ok {
+				a.resetWatcherBackoff(router.ID, repairBackoffKind)
+			} else {
+				a.recordWatcherError(router.ID, repairBackoffKind, time.Now().UTC())
+			}
+		}
+	}
 
 	switch {
 	case cmd.Kind == model.CmdRouterOSCheck && ok:

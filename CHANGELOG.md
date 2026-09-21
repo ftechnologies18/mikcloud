@@ -391,6 +391,95 @@ off, temporaire, documentée et réversible d'une commande) — aucune
 route, aucun schéma, aucun contrat touchés. Tâche WhatsApp N°148-c
 inchangée, en attente de reprise.
 
+## 2026-09-20 — N°163 — Le lot de vouchers dit la vérité + autoréparation des absents : l'incident « Wifi Zikisso » (tickets « Actif / absent du routeur », connexion impossible) est corrigé à la racine
+
+### Contexte : incident client réel (20/09)
+Le compte Zikisso (DEUX routeurs) génère des tickets pour le routeur
+« Wifi Zikisso » : connexion impossible pour les clients finaux, et les
+tickets affichent « Actif / absent du routeur ». Diagnostic sur le code (la
+réconciliation read_state est saine — le multi-routeurs est correctement
+scopé par `u.RouterID != router.ID`) : le badge est VÉRIDIQUE, les
+utilisateurs n'existent pas sur le routeur. La racine est dans le script de
+lot : `buildVoucherBatch` avalait chaque échec d'ajout dans un log routeur
+(`on-error={ :log warning }` sans compteur, là où `buildUserAdd` pose
+`:set ok false`) et rapportait « ok / created=N » même sans AUCUN
+utilisateur créé. Conséquence en chaîne : commande marquée done (jamais
+rejouée — les écritures ne sont pas ré-exécutées, N°73), tickets « Actif »,
+read_state ne les trouve pas → badge « absent du routeur », connexion
+refusée par le hotspot. Causes racines possibles côté routeur (asymétrie de
+configuration d'un parc à deux routeurs) : profil référençant une ressource
+absente de CE routeur (address-pool, parent-queue), serveur hotspot cité
+dans la génération inexistant ici, ou collision de nom — le script ne
+pouvait pas le dire : l'échec n'était ni compté ni rapporté.
+
+### Produit
+1. **Vérité du lot** (`buildVoucherBatch`) : chaque `user add` échoué
+   incrémente un compteur routeur ; le lot passe « error » dès le premier
+   échec et le rapport d'erreur porte les compteurs dynamiques calculés
+   côté routeur (`created = total - failed`, `failed`), pattern du `$step`
+   N°159 — l'opérateur voit enfin « N ajouts en échec » dans l'historique
+   au lieu d'un faux « ok ».
+2. **Autoréparation des absents** (`user_repair.go`, NOUVEAU) : la
+   réconciliation read_state COMPLÈTE renvoie les utilisateurs ACTIFS
+   badgés absents (post-grâce) en commandes de réparation `voucher_batch`
+   marquées `repair:true` — le cloud est le registre durable, une créature
+   du registre doit vivre sur son routeur. La vague est idempotente côté
+   routeur (garde d'existence par nom : un utilisateur déjà présent n'est
+   ni recompté ni retouché — verrou MAC, marqueur mikq:, comment de
+   traçabilité préservés) et FIDÈLE au ticket vendu : profil (profileRef
+   → profileEnsureLine réaligne le profil cloud, l'autoguérison du profil
+   voyage avec la vague), mot de passe, quota et temps résolus à la
+   génération et stockés PAR TICKET (réparer un « 5 Go » sans limite serait
+   offrir des données).
+3. **Discipline de volume** (N°159 conservée) : une seule vague en file par
+   routeur (garde in-flight sur queued/sent marqués repair), bornée à 100
+   utilisateurs par commande (script loin de la limite RouterOS ~64 Ko,
+   les grands parcs se drainent une vague par cycle), évaluée uniquement
+   aux réconciliations complètes, cadencée par le backoff des watchers
+   (1 → 5 → 15 → 30 min après échec, reset sur succès) sous une clé
+   SYNTHÉTIQUE `user_repair` — les lots de GÉNÉRATION classiques ne
+   touchent pas cette cadence. Tombstones respectées : un username purgé
+   n'est jamais ressuscité ; profil supprimé = hors vague (le gérant
+   réaffecte) ; users used/disabled et trop récents (grâce) exclus ; la
+   FIFO du check-in sert la vague en PRIORITÉ actionnable.
+4. **Limites par voucher dans le protocole** : `VoucherRef` gagne
+   `limitBytesTotal`/`limitUptimeMin` (posés uniquement par la réparation ;
+   la génération classique n'envoie que name/password et hérite du lot —
+   comportement inchangé) ; le marqueur mikq: du mode bridage est posé par
+   voucher avec SON quota.
+
+### Fidélité
+Zéro route, zéro API, zéro schéma, zéro contrat : les lots de génération
+produisent les mêmes lignes routeur qu'avant (mêmes commentaires, mêmes
+limites héritées du lot) ; le seul changement visible est le RAPPORT
+(error + compteurs quand des ajouts échouent — le faux « ok » était le
+bug). Le champ `step` N°159 et le protocole de rapport sont inchangés.
+
+### Vérifié
+go build/vet/gofmt 0 ; go test ./... 12 paquets OK dont 9 nouveaux tests
+(agent : compteur d'échecs + bascule error + compteurs dynamiques, garde
+d'existence repair (et contre-épreuve génération sans garde), limites par
+voucher + héritage du lot inchangé, marqueur mikq: par voucher ; api :
+vague fidèle au ticket (profil, password, quota 5 Go, 60 min) avec
+contre-exemples exclus (autre routeur, used, disabled, profil supprimé,
+grâce, tombstoné), pas de doublon en file/en vol (et lot de génération ne
+bloquant PAS la vague), backoff bloquant puis libéré à l'expiration, hook
+/agent/result par le VRAI handler HTTP : error → palier 1 puis blocage,
+ok → reset immédiat, lot de génération en error sans effet sur la cadence).
+
+### Déploiement — GEL jusqu'à restauration Neon (incident CONCOMITANT)
+Découvert au diagnostic : le quota du projet Neon (free tier) est ÉPUISÉ
+(refus 53000 « exceeded the quota ») — la synchro PostgreSQL est en échec
+depuis le 19-20/09 et le backend vit en mémoire seule. Le service Render
+n'a pas redémarré (état intact, syncLoop réessaie indéfiniment — rien
+n'est perdu, tout repartira à la restauration), MAIS un boot sans Neon est
+un `log.Fatalf` : TOUT déploiement maintenant mettrait la production à
+terre jusqu'au 1er octobre (reset gratuit) ou à un upgrade. Le correctif
+N°163 part donc sur une BRANCHE — fusion et déploiement APRÈS restauration
+de Neon (le `syncLoop` pousse alors les deltas accumulés, puis le
+redémarrage recharge l'état complet et la vague de réparation guérit les
+tickets Zikisso au premier read_state complet).
+
 ## 2026-09-19 — N°161 — L'app Meta devient un PARAPLUIE : `ftci-apps` servira MikCloud ET les futures applications FTCI — un portfolio, une app, un jeton, un WABA par produit
 
 ### Contexte

@@ -5,6 +5,94 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-21 — N°166 — Le projet Supabase passe au banc d'essau réel et il résiste : TLS privé apprivoisé (racine committée), RLS systématique dans le DDL, clients pg_dump des workflows corrigés, boot complet + relecture validés puis base remise à zéro — la migration du 1er octobre est outillée de bout en bout
+
+### Contexte
+L'opérateur livre les deux DSN du dashboard Supabase (projet
+`xmqtakuqicujxgcvqfnt`, eu-west-1) : la ligne étiquetée `DATABASE_URL`
+(pooler transactionnel `:6543`, `?pgbouncer=true`) et la ligne `DIRECT_URL`
+(session `:5432`) — des conventions pensées pour Prisma/serverless, pas
+pour le backend Go longue durée de mikcloud. Objectif : transformer le plan
+théorique du runbook §11 en mécanique VÉRIFIÉE avant le 1er octobre,
+sans toucher à la production (gel N°162/N°165-b maintenu).
+
+### Découvertes empiriques (toutes reproduites, aucune déduite)
+1. **La PKI du pooler Supabase est PRIVÉE** : `*.pooler.supabase.com` ←
+   « Supabase Intermediate 2021 CA » ← « Supabase Root 2021 CA » (racine
+   auto-signée absente des magasins publics) — le `sslmode=verify-full`
+   par défaut (N°75) échoue en `x509: certificate signed by unknown
+   authority`. Racine extraite de la chaîne servie, croisée trois fois
+   (chaîne identique sur eu-west-1/us-east-1/ap-southeast-1, copie publique
+   indépendante à empreinte strictement identique, c'est le certificat que
+   le dashboard distribue) puis **committée** :
+   `backend/certs/supabase-prod-ca-2021.crt` (SHA-256
+   `80:70:25:AD:…:E6:CA:FA`, valable jusqu'au 26/04/2031), installée dans
+   l'image Docker (`update-ca-certificates`) et passée aux workflows
+   (`PGSSLROOTCERT`). Aucun changement de DSN ni de code TLS : verify-full
+   passe désormais tel quel.
+2. **Le transactionnel `:6543` casse pgx** (`42P05 prepared statement
+   "stmtcache_…" already exists` — cache de prepared statements × pooling
+   transactionnel) : la décision « session pooler 5432 pour l'app » du
+   runbook est confirmée par la reproduction. Le serveur est
+   **PostgreSQL 17.6**.
+3. **Le client pg_dump 16 des runners GitHub REFUSE les serveurs 17/18**
+   (« server version mismatch ») : `standby-restore.yml` aurait échoué dès
+   son premier cron — il installe désormais `postgresql-client-17` (dépôt
+   PGDG), le nouveau workflow de migration installe `-18` (Neon = 18.6).
+4. **RLS non garanti après restore** : au premier boot, les 35 tables
+   étaient bien sous RLS (défauts du projet neuf) — mais un dump Neon ne
+   porte PAS les drapeaux RLS, et les default-privileges du projet meurent
+   au premier `DROP SCHEMA` (mesuré : anon passe de 35 tables lisibles à
+   0). La posture doit être EXPLICITE, pas héritée des défauts d'hébergeur.
+
+### Produit
+- **RLS systématique dans ensureSchema** (N°166) : 35
+  `ALTER TABLE … ENABLE ROW LEVEL SECURITY` générés DU registre
+  `syncKnownTables` (`rlsStatements()`), rejoués idempotemment à CHAQUE
+  boot — inertes sur Neon (le propriétaire contourne RLS), protecteurs sur
+  tout hébergeur à API Data ; `web_vitals` (telemetry, hors registre)
+  couverte dans son propre bootstrap. Garde
+  `TestRLSStatementsCoverRegistry` : une table future du registre sans RLS
+  fait échouer les tests.
+- **Workflow `migrate-neon-supabase.yml` NOUVEAU** (dispatch manuel
+  uniquement) : le véhicule de l'étape 4 du 1er octobre — client 18, dump
+  Neon (secret `DATABASE_URL`, `--no-owner --no-privileges`, sans les
+  artefacts `s4check_*`), remise à zéro idempotente du schéma public
+  Supabase, restore, contrôle d'intégrité par comptages, durcissement RLS
+  AVANT le premier boot (fenêtre restore→déploiement couverte), échec
+  bruyant si divergence.
+- **Workflows durcis** : `standby-restore.yml` (client 17 + checkout de la
+  racine + `verify-full`/`PGSSLROOTCERT` vers Supabase, permissions
+  `contents: read`) ; `backup.yml` (TLS strict CONDITIONNEL — seulement si
+  `DATABASE_URL` pointe le pooler Supabase, pour ne pas casser les runs
+  Neon de la fenêtre).
+- **Runbook §10/§11/§12 amendés** : secret `SUPABASE_DATABASE_URL` marqué
+  POSÉ (via API, valeur = session pooler sans paramètre), mapping des
+  étiquettes dashboard documenté, §11 réordonné pour intégrer le sentinel
+  N°165-b (bascule env Render AVANT la fusion ; levée du gel DANS le commit
+  de fusion — un commit sans changement `backend/` serait ignoré par la
+  détection monorepo), §12 NOUVEAU = les faits mesurés ci-dessus, noir sur
+  blanc pour le 1er octobre.
+
+### Validation live (programme éphémère `cmd/supatest`, hors dépôt)
+`store.New` complet sur Supabase — le chemin production exact (verify-full,
+pool 4 connexions, ping retry) : DDL 35 tables sur PG 17.6, admin
+environnement, écritures du syncreur visibles (`admin_users=1`), fermeture
+propre, **rechargement identique** (round-trip intégral) — puis remise à
+zéro du schéma public : le projet est rendu à son état de livraison
+(0 table, grants standard). API Data testée : clé publishable → `[]` sur
+tout ; clé secrète (coffre) → tout.
+
+### Fidélité
+Zéro route, zéro API, zéro contrat ; DDL purement additif et idempotent
+(RLS invisible pour l'app sur les deux hébergeurs) ; secrets jamais
+committés (DSN au coffre local + secret GitHub) ; le gel de déploiement
+N°165-b est conservé (branches, pas de main). Vérifié : go build/vet/gofmt
+0 ; `go test ./...` 12 paquets OK dont la nouvelle garde RLS ; deux boots
+live complets + round-trip + reset sur le projet réel. Reste une seule
+entrée opérateur pour le 1er octobre : `NEON_STANDBY_DATABASE_URL`
+(runbook §10).
+
 ## 2026-09-20 — N°165 — Les annonces de la plateforme apprennent l'heure : diffusion PROGRAMMÉE (`publishAt`) et bandeau enfin lisible de bout en bout (lecture complète des messages longs)
 
 ### Contexte
@@ -131,6 +219,76 @@ numérotation : N°166.
   transition du frontend couvre exactement cette fenêtre, et l'annonce A
   est publiée en immédiat via la console existante.
 
+## 2026-09-21 — N°164 — Boot résilient : un démarrage sans PostgreSQL ne tue plus le service + modèle de cohabitation Supabase(prod)/Neon(secours quotidien)
+
+### Contexte
+Suite de l'incident N°162 (quota compute Neon épuisé, backend en mémoire
+seule depuis le 20/09). Le redéploiement pendant une indisponibilité base
+était un crash garanti : store.New → OpenPG/Load en erreur → log.Fatalf.
+La revue d'implémentation a imposé la garde anti-écrasement : un mode
+dégradé naïf serait plus dangereux que le crash (démarrage mémoire vide →
+retour de la base → écrasement possible des 34 tables de production).
+
+### Produit
+- (1) BOOT RÉSILIENT (store/recovery.go) : OpenPG/Load en échec au boot →
+  démarrage DÉGRADÉ au lieu du Fatal — état de mise en service en mémoire,
+  migrations idempotentes + admin d'environnement (l'opérateur peut se
+  connecter pour VOIR la dégradation), persistance SUSPENDUE (les marquages
+  s'accumulent, rien n'est poussé), récupération en arrière-plan (15 s).
+- (2) GARDE ANTI-ÉCRASEMENT — deux verrous structurels : le syncreur n'est
+  JAMAIS démarré avant qu'un Load ait réussi (sans empreintes semées par un
+  vrai Load, Sync ne peut émettre AUCUNE suppression — les « removed »
+  naissent de la différence empreintes↔mémoire) ; et au retour de la base
+  l'état de la fenêtre dégradée est FUSIONNÉ avec l'état chargé (union par
+  clé primaire sur les 33 collections + cartes settings/notif, mémoire
+  gagnante sur collision, tombstones de purge respectées pour les usernames
+  — anti-résurgence, horloges LastTick/LastSweep au plus récent). La base
+  retrouve son historique ET conserve les écritures de la fenêtre.
+- (3) Scénario dual inchangé par conception : un process démarré AVANT la
+  panne (cas du 20/09) ne passe pas par la récupération — le syncreur
+  existant réessaie indéfiniment (backoff 5 s, empreintes conservées) et
+  rattrape tout au retour.
+- (4) VISIBILITÉ : bloc « degraded » dans GET /api/admin/sync-status
+  (degraded/since/recoveryTries/lastError/recoveredAt) + carte Santé
+  (bloc rouge role=alert en mode dégradé, ligne « dernière récupération ») +
+  bannière plateforme non masquable dans le shell (DatabaseZap, destructive)
+  + 11 clés i18n FR/EN.
+- (5) Close() réparé pour le mode dégradé : l'attente de syncDone est
+  conditionnée au démarrage effectif du syncreur (l'ancien close aurait
+  bloqué à jamais sur un canal jamais fermé) ; double garde fermeture dans
+  l'installation de la récupération (verrou d'installation sous saveMu,
+  re-check sous le même verrou) ; Reload refusé proprement en mode dégradé.
+- (6) COHABITATION (décision opérateur) : workflow standby-restore.yml —
+  restore quotidien pg_dump --no-owner --no-privileges --clean --if-exists
+  (Supabase session pooler) → psql (Neon endpoint DIRECT, hors pooler) +
+  contrôle d'intégrité par comptages + hygiène connexions one-shot (le
+  compute Neon se rendort ~5 min après, piège N°162 évité par construction).
+  RPO 24 h écrit noir sur blanc (runbook §10) : historique ventes/journal =
+  backup quotidien ; état routeurs/utilisateurs = reconstituable par agents.
+- (7) RUNBOOK-POSTGRES.md amendé : §10 cohabitation (rôles, math quota
+  1-2 CU-h/mois, secrets SUPABASE_DATABASE_URL/NEON_STANDBY_DATABASE_URL,
+  bascule de secours 15-30 min, rollback) + §11 séquence du 1er octobre en
+  UNE vague (réveil Neon → rattrapage → migration → fusion n163+n164 →
+  DATABASE_URL Supabase + NEON_KEEPALIVE=off → unique redéploiement →
+  armement du secours quotidien).
+
+### Fidélité
+Zéro route, zéro contrat API existant cassé (le bloc « degraded » est
+additif et optionnel) ; le comportement boot-normal est strictement
+inchangé (boot résilient = chemin d'ERREUR seulement) ; le mode JSON
+(dév/E2E) est intact.
+
+### Vérifié
+go build/vet/gofmt 0 ; go test ./... 11 paquets OK ; -race store OK ;
+4 nouveaux tests (fusion union/mémoire-gagnante, tombstones
+anti-résurgence, cartes+horloges, boot dégradé sans Fatal + Close
+non-bloquant — la régression exacte de l'incident) ; tsgo 0 ; eslint 0.
+
+### Déploiement — GEL (inchangé)
+Fusion et déploiement le 1er octobre avec n163 (séquence runbook §11) :
+tout redémarrage avant le retour du quota Neon casserait la production
+(état mémoire orphelin depuis le 20/09).
+
 ## 2026-09-20 — N°162 — Le mur de la persistance n'était pas le volume mais le TEMPS D'ÉVEIL : plafond compute du Neon gratuit épuisé (110 CU-h mesurés vs 100) — runbook de sortie de crise (migration Supabase Free recommandée), amendement du verdict 0 coût du N°161
 
 ### Contexte
@@ -206,76 +364,6 @@ seule modification de production est la config Render (autoDeploy
 off, temporaire, documentée et réversible d'une commande) — aucune
 route, aucun schéma, aucun contrat touchés. Tâche WhatsApp N°148-c
 inchangée, en attente de reprise.
-
-## 2026-09-21 — N°164 — Boot résilient : un démarrage sans PostgreSQL ne tue plus le service + modèle de cohabitation Supabase(prod)/Neon(secours quotidien)
-
-### Contexte
-Suite de l'incident N°162 (quota compute Neon épuisé, backend en mémoire
-seule depuis le 20/09). Le redéploiement pendant une indisponibilité base
-était un crash garanti : store.New → OpenPG/Load en erreur → log.Fatalf.
-La revue d'implémentation a imposé la garde anti-écrasement : un mode
-dégradé naïf serait plus dangereux que le crash (démarrage mémoire vide →
-retour de la base → écrasement possible des 34 tables de production).
-
-### Produit
-- (1) BOOT RÉSILIENT (store/recovery.go) : OpenPG/Load en échec au boot →
-  démarrage DÉGRADÉ au lieu du Fatal — état de mise en service en mémoire,
-  migrations idempotentes + admin d'environnement (l'opérateur peut se
-  connecter pour VOIR la dégradation), persistance SUSPENDUE (les marquages
-  s'accumulent, rien n'est poussé), récupération en arrière-plan (15 s).
-- (2) GARDE ANTI-ÉCRASEMENT — deux verrous structurels : le syncreur n'est
-  JAMAIS démarré avant qu'un Load ait réussi (sans empreintes semées par un
-  vrai Load, Sync ne peut émettre AUCUNE suppression — les « removed »
-  naissent de la différence empreintes↔mémoire) ; et au retour de la base
-  l'état de la fenêtre dégradée est FUSIONNÉ avec l'état chargé (union par
-  clé primaire sur les 33 collections + cartes settings/notif, mémoire
-  gagnante sur collision, tombstones de purge respectées pour les usernames
-  — anti-résurgence, horloges LastTick/LastSweep au plus récent). La base
-  retrouve son historique ET conserve les écritures de la fenêtre.
-- (3) Scénario dual inchangé par conception : un process démarré AVANT la
-  panne (cas du 20/09) ne passe pas par la récupération — le syncreur
-  existant réessaie indéfiniment (backoff 5 s, empreintes conservées) et
-  rattrape tout au retour.
-- (4) VISIBILITÉ : bloc « degraded » dans GET /api/admin/sync-status
-  (degraded/since/recoveryTries/lastError/recoveredAt) + carte Santé
-  (bloc rouge role=alert en mode dégradé, ligne « dernière récupération ») +
-  bannière plateforme non masquable dans le shell (DatabaseZap, destructive)
-  + 11 clés i18n FR/EN.
-- (5) Close() réparé pour le mode dégradé : l'attente de syncDone est
-  conditionnée au démarrage effectif du syncreur (l'ancien close aurait
-  bloqué à jamais sur un canal jamais fermé) ; double garde fermeture dans
-  l'installation de la récupération (verrou d'installation sous saveMu,
-  re-check sous le même verrou) ; Reload refusé proprement en mode dégradé.
-- (6) COHABITATION (décision opérateur) : workflow standby-restore.yml —
-  restore quotidien pg_dump --no-owner --no-privileges --clean --if-exists
-  (Supabase session pooler) → psql (Neon endpoint DIRECT, hors pooler) +
-  contrôle d'intégrité par comptages + hygiène connexions one-shot (le
-  compute Neon se rendort ~5 min après, piège N°162 évité par construction).
-  RPO 24 h écrit noir sur blanc (runbook §10) : historique ventes/journal =
-  backup quotidien ; état routeurs/utilisateurs = reconstituable par agents.
-- (7) RUNBOOK-POSTGRES.md amendé : §10 cohabitation (rôles, math quota
-  1-2 CU-h/mois, secrets SUPABASE_DATABASE_URL/NEON_STANDBY_DATABASE_URL,
-  bascule de secours 15-30 min, rollback) + §11 séquence du 1er octobre en
-  UNE vague (réveil Neon → rattrapage → migration → fusion n163+n164 →
-  DATABASE_URL Supabase + NEON_KEEPALIVE=off → unique redéploiement →
-  armement du secours quotidien).
-
-### Fidélité
-Zéro route, zéro contrat API existant cassé (le bloc « degraded » est
-additif et optionnel) ; le comportement boot-normal est strictement
-inchangé (boot résilient = chemin d'ERREUR seulement) ; le mode JSON
-(dév/E2E) est intact.
-
-### Vérifié
-go build/vet/gofmt 0 ; go test ./... 11 paquets OK ; -race store OK ;
-4 nouveaux tests (fusion union/mémoire-gagnante, tombstones
-anti-résurgence, cartes+horloges, boot dégradé sans Fatal + Close
-non-bloquant — la régression exacte de l'incident) ; tsgo 0 ; eslint 0.
-
-### Déploiement — GEL (inchangé)
-Fusion et déploiement le 1er octobre avec n163 (séquence runbook §11) :
-tout redémarrage avant le retour du quota Neon casserait la production
-(état mémoire orphelin depuis le 20/09).
 
 ## 2026-09-20 — N°163 — Le lot de vouchers dit la vérité + autoréparation des absents : l'incident « Wifi Zikisso » (tickets « Actif / absent du routeur », connexion impossible) est corrigé à la racine
 

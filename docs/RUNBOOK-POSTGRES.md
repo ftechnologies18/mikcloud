@@ -268,14 +268,24 @@ dump le plus frais (artefact `mikcloud-backup` OU base Neon elle-même) →
 pointer `DATABASE_URL` → déployer. Fenêtre ~15-30 min. Le boot résilient
 N°164 couvre le démarrage pendant la fenêtre base-morte.
 
-**Secrets GitHub à définir** (Settings → Secrets → Actions) :
-- `SUPABASE_DATABASE_URL` — DSN production (session pooler `:5432`) ;
-- `NEON_STANDBY_DATABASE_URL` — DSN secours, **endpoint DIRECT Neon**
-  (SANS `-pooler` dans le nom d'hôte : le DDL massif sur pooler est
-  déconseillé) ;
+**Secrets GitHub** (Settings → Secrets and variables → Actions) :
+- `SUPABASE_DATABASE_URL` — **POSÉ le 21/09** (via API) : DSN production,
+  session pooler `:5432`, SANS paramètre sslmode (les workflows forcent
+  `verify-full` + la racine committée, cf. §12) ;
+- `NEON_STANDBY_DATABASE_URL` — **seule entrée opérateur restante** : DSN
+  secours, **endpoint DIRECT Neon** (SANS `-pooler` dans le nom d'hôte : le
+  DDL massif sur pooler est déconseillé), avec `?sslmode=require` DANS le
+  DSN. À poser avant l'armement du secours (§11 étape 8) ;
 - (`BACKUP_KEY`/`DATABASE_URL` existent déjà pour `backup.yml` — après la
   bascule du 1er octobre, mettre `DATABASE_URL` à la valeur Supabase pour
   que l'archive hebdomadaire suive la production.)
+
+**Mapping des étiquettes du dashboard Supabase** (piège des conventions
+Prisma/serverless, cf. §12) : la ligne étiquetée `DATABASE_URL` dans le
+dashboard (pooler transactionnel `:6543`, `?pgbouncer=true`) n'est PAS
+celle de mikcloud ; notre `DATABASE_URL` Render = la ligne étiquetée
+`DIRECT_URL` (**session pooler `:5432`**). Le transactionnel casse le cache
+de prepared statements de pgx (42P05 reproduit) — jamais pour l'app.
 
 ## 11. Séquence du 1er octobre — migration + vague de déploiement (UNE SEULE)
 
@@ -288,29 +298,105 @@ Le redémarrage du service casse la mémoire (état orphelin depuis le 20/09) :
 2. **Laisser le rattrapage se faire** (~1-2 h) : le syncreur en échec
    depuis le 20/09 rejoue les deltas accumulés. Vérifier : carte Santé →
    synchro OK + `commands.done_at` récents.
-3. **Préparer Supabase** : opérateur fournit le DSN (Settings → Database →
-   Connection string → URI, mode **Session pooler, port 5432** — l'endpoint
-   direct `db.<ref>.supabase.co` est IPv6-only, Render sort en IPv4).
-4. **Migrer les données** : `pg_dump --no-owner --no-privileges <Neon> |
-   psql <Supabase>` puis contrôle d'intégrité (comptages par table —
-   même méthode que `standby-restore.yml`). (~25 Mo : quelques minutes.)
-5. **Fusionner les branches** : `n163-zikisso-repair` (correctif Zikisso :
-   vérité du lot + autoréparation) puis `n164-persistence-safety` (boot
-   résilient + garde anti-écrasement + carte Santé/bannière dégradée) dans
-   `main`. CI verte.
-6. **Basculer Render** : `DATABASE_URL` = DSN Supabase + `NEON_KEEPALIVE=off`
-   (inutile et nuisible sur Supabase) ; réactiver l'autoDeploy (§3) ; le
-   push de la fusion déploie la vague complète — UNIQUE redémarrement.
+3. **Supabase est PRÊT** (validé le 21/09, cf. §12) : projet
+   `xmqtakuqicujxgcvqfnt` (eu-west-1, PostgreSQL 17.6) à l'état de
+   livraison, secret `SUPABASE_DATABASE_URL` posé — rien à préparer.
+4. **Migrer les données** : onglet Actions → workflow
+   **`migrate-neon-supabase`** → Run (workflow_dispatch). Le job installe
+   le client PostgreSQL 18, dump la production Neon (secret
+   `DATABASE_URL`), remet à zéro le schéma public Supabase, restore,
+   contrôle l'intégrité par comptages et pose les drapeaux RLS. Vert =
+   copie fidèle prête. (~25 Mo : quelques minutes.)
+5. **Basculer l'ENVIRONNEMENT Render AVANT la fusion** : `DATABASE_URL`
+   = DSN Supabase session pooler `:5432` (la valeur exacte du secret
+   `SUPABASE_DATABASE_URL`, SANS paramètre sslmode — l'app ajoute
+   `verify-full` elle-même, pg.go N°75, et la racine est dans l'image) +
+   `NEON_KEEPALIVE=off` (inutile et nuisible sur Supabase) ; réactiver
+   l'autoDeploy (§3). Sans effet immédiat : les variables Render
+   s'appliquent au prochain démarrage — le service tourne toujours sur
+   l'état mémoire.
+6. **Fusionner et déployer en UNE vague** : `n163-zikisso-repair` (correctif
+   Zikisso : vérité du lot + autoréparation) puis `n164-persistence-safety`
+   (boot résilient + garde anti-écrasement + carte Santé/bannière dégradée +
+   durcissements N°166 : racine TLS Supabase dans l'image, RLS
+   systématique, workflows durcis) dans `main`, et **supprimer le sentinel
+   `RENDER-DEPLOY-FROZEN` dans le commit de fusion** (posé N°165-b — c'est
+   la condition de son exonération : un commit sans changement `backend/`
+   serait ignoré par la détection monorepo, il FAUT que la levée voyage
+   avec la fusion). CI verte → deploy-render se déclenche → UNIQUE
+   redémarrage, sur la base Supabase déjà migrée.
 7. **Vérifier** : boot « état chargé depuis PostgreSQL » dans les logs
    Render, carte Santé verte (mode postgresql, synchro OK), agents qui
    checkent (commandes), portail client, tickets — la vague
    d'autoréparation Zikisso se déclenche au premier read_state complet.
-8. **Armer le secours** : poser les secrets `SUPABASE_DATABASE_URL` +
-   `NEON_STANDBY_DATABASE_URL` (§10), déclencher `standby-restore.yml`
+8. **Armer le secours** : poser le secret `NEON_STANDBY_DATABASE_URL`
+   (§10 — seule entrée manquante), déclencher `standby-restore.yml`
    manuellement (workflow_dispatch) pour valider le premier restore, puis
-   laisser le cron quotidien faire.
+   laisser le cron quotidien faire. Mettre à jour le secret `DATABASE_URL`
+   (valeur Supabase) pour que `backup.yml` suive la production.
 
 Rollback (si la production Supabase pose problème dans les 24 h) : le projet
 Neon contient l'état au 30/09 au soir + le rattrapage du 1er au matin ;
 repointer `DATABASE_URL` vers Neon et redéployer — le boot résilient N°164
 absorbe la fenêtre de bascule sans Fatal.
+
+## 12. Validation du 21/09 — faits mesurés sur le projet Supabase
+
+Le projet a été validé de bout en bout le 21/09 (boot réel du backend,
+écritures, relecture), puis **remis à l'état de livraison** (schéma public
+vide, 0 table) pour que la migration du 1er octobre parte d'une base propre.
+
+**Identité** : réf `xmqtakuqicujxgcvqfnt`, région `aws-1-eu-west-1`
+(Irlande), serveur **PostgreSQL 17.6**, pooler **IPv4-only** (3×A, 0×AAAA)
+— compatible sortie IPv4 Render.
+
+**Choix du pooler — reproduit, pas déduit** : le transactionnel `:6543`
+s'authentifie puis échoue en requête (`42P05 prepared statement "stmtcache_…"
+already exists` — cache de prepared statements pgx × pooling transactionnel).
+Le session `:5432` passe le chemin complet de l'app (auth + requêtes +
+DDL + écritures syncreur + relecture). Verdict : `DATABASE_URL` Render =
+session pooler 5432, point final.
+
+**TLS — la PKI Supabase est PRIVÉE** : le pooler sert `*.pooler.supabase.com`
+← « Supabase Intermediate 2021 CA » ← « Supabase Root 2021 CA » (racine
+auto-signée, **absente des magasins publics**). Sans action,
+`sslmode=verify-full` (défaut N°75) échoue : `x509: certificate signed by
+unknown authority` (reproduit, donc aussi depuis Render). Correctif N°166 :
+racine **committée** `backend/certs/supabase-prod-ca-2021.crt` —
+certificat PUBLIC, empreinte SHA-256
+`80:70:25:AD:50:D4:ED:21:9D:2C:9C:7D:29:9C:00:4F:82:4E:B0:0C:F7:F6:5A:FE:F6:07:D0:7B:72:E6:CA:FA`,
+valable jusqu'au 26/04/2031. Triple vérification croisée : chaîne identique
+sur 3 régions (eu-west-1 / us-east-1 / ap-southeast-1), copie publique
+indépendante (empreinte strictement identique), et c'est le certificat que
+le dashboard Supabase distribue (Database settings → SSL — doc officielle
+« Connecting to Postgres »). Installée dans l'image Docker
+(`update-ca-certificates`) et passée aux workflows (`PGSSLROOTCERT`).
+
+**Boot réel** (programme éphémère `cmd/supatest`, hors dépôt) :
+`store.New` → OpenPG (verify-full) → ensureSchema (35 tables, DDL complet
+sur PG 17.6) → Load → admin override → syncreur : écritures visibles
+(`admin_users=1`), fermeture propre, **rechargement identique** (round-trip
+intégral). Le session pooler accepte les 4 connexions de l'app sans fléchir.
+
+**Sécurité Data API** (PostgREST) : clé publishable (front) → `[]` sur tout ;
+clé secrète (coffre) → tout. Deux barrières indépendantes : **RLS sans
+politique** sur les 35 tables + zéro privilège table pour
+anon/authenticated. Le DDL N°166 (35 `ENABLE ROW LEVEL SECURITY` générés du
+registre, `web_vitals` comprise) ré-affirme les drapeaux à CHAQUE boot —
+idempotent, inerte sur Neon (le propriétaire contourne RLS) ; le workflow
+de migration les pose AVANT le premier boot : la fenêtre
+restore→déploiement est couverte.
+
+**Clients pg_dump** : le client 16 des runners GitHub REFUSE les serveurs 17
+(Supabase) et 18 (Neon) — `standby-restore.yml` installe
+`postgresql-client-17`, `migrate-neon-supabase.yml` installe
+`postgresql-client-18` (dépôt PGDG). Si un jour le serveur Supabase passe
+en 18, ajuster le pin (échec bruyant et explicite : « server version
+mismatch »).
+
+**Observations non bloquantes** (préexistantes, hors périmètre du gel) :
+(a) au boot normal, les `Save()` initiaux partent sur le chemin JSON avant
+que `pgActive` ne soit posé (ordre historique N°130) — en production le
+premier check-in agent réveille le syncreur sous 45-180 s, aucune perte
+(la mémoire reste la vérité) ; (b) message cosmétique « renommage
+impossible : rename .tmp » en mode PG (`s.path` vide) — sans effet.

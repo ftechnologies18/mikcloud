@@ -51,6 +51,14 @@ jobs:
           BACKUP_KEY: ${{ secrets.BACKUP_KEY }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
+          # N°166 — TLS strict SI la cible est le pooler Supabase (PKI privée
+          # « Supabase Root 2021 CA » : verify-full exige la racine committée
+          # backend/certs/). Neon (PKI publique) vérifie via le magasin système
+          # du runner — rien à exporter tant que DATABASE_URL pointe Neon.
+          if echo "${DATABASE_URL}" | grep -q "pooler.supabase.com"; then
+            export PGSSLMODE=verify-full
+            export PGSSLROOTCERT="${GITHUB_WORKSPACE}/backend/certs/supabase-prod-ca-2021.crt"
+          fi
           STAMP=$(date -u +%Y%m%dT%H%M%SZ)
           go run ./cmd/mikbackup export -dsn "${DATABASE_URL}" -out "/tmp/mikcloud-backup-${STAMP}.enc" -key "${BACKUP_KEY}"
           # Chaque sauvegarde est AUTOMATIQUEMENT vérifiée : réinsertion

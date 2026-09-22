@@ -242,7 +242,13 @@ Secrets lus de l'environnement ou du coffre (`SUPABASE_DATABASE_URL`,
    Reports/Usage (aucun token d'API Management `sbp_` au coffre) ;
 3. **Carte Santé** — login admin + `/api/admin/sync-status` : mode,
    succès/échecs/consécutifs, âge de la dernière synchro (verdict sur le
-   seuil « échec > 5 min »), état dégradé ;
+   seuil « échec > 5 min »), état dégradé. Depuis N°181, la carte est
+   PERSISTANTE : les compteurs sont cumulés (repris de la table
+   `health_checkpoint` au boot — ils survivent aux redéploiements Render),
+   la chaîne d'échecs reste valable À TRAVERS un restart survenu pendant
+   un incident, et le bloc `history` expose `bootAt`/`bootCount`/
+   `checkpointAt` (démarrage courant, démarrages cumulés persistés,
+   dernier point de contrôle écrit avec succès) ;
 4. **Synchro / check-ins** — API logs Render (syntaxe mesurée N°179 :
    `GET /v1/logs?ownerId=…&resource={serviceId}&startTime=…&endTime=…&limit=…`
    — les paramètres plats `owner`/`name`/`service` renvoient « invalid
@@ -251,6 +257,18 @@ Secrets lus de l'environnement ou du coffre (`SUPABASE_DATABASE_URL`,
 
 Sortie : verdict `OK/avertissements/échecs` par check, code retour non
 nul si un seuil est franchi.
+
+### 8.1-bis Sémantique des compteurs (N°181)
+
+Avant N°181, les compteurs de la colonne « Santé » du journal
+représentaient « depuis le démarrage du process » — chaque ligne du
+journal mesurait donc un compteur remis à zéro par le redéploiement
+précédent. Depuis N°181, ils sont CUMULATIFS (persistés en base) : les
+nouvelles lignes du journal ne repartent plus de zéro après un
+redéploiement ; pour retrouver l'équivalent « depuis le démarrage »,
+soustraire la valeur au `bootAt` correspondant (bloc `history` de la
+même réponse), ou lire `bootCount` pour savoir combien de démarrages
+ont eu lieu depuis la dernière mesure.
 
 ### 8.2 Journal de suivi du premier mois (21/09 → 21/10/2026)
 

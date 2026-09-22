@@ -264,9 +264,14 @@ func (p *PG) syncPlan(db *model.DB, only map[string]bool) (err error) {
 	defer func() {
 		if err != nil {
 			p.stats.recordFailure(err, time.Since(start))
-			return
+		} else {
+			p.stats.recordSuccess(delta, time.Since(start))
 		}
-		p.stats.recordSuccess(delta, time.Since(start))
+		// N°181 — carte Santé persistante : point de contrôle best-effort
+		// après CHAQUE résultat (upsert SÉPARÉ, hors transaction
+		// différentielle — la synchro ne peut pas échouer à cause de la
+		// carte qui l'observe).
+		p.writeHealthCheckpoint()
 	}()
 	// N°130 — exclusion avec rebuildHashes (boot/Reload) qui réécrit le
 	// cache d'empreintes : un seul Sync à la fois (le syncreur de fond est

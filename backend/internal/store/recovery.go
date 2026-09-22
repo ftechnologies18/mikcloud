@@ -106,6 +106,11 @@ func (s *Store) recoveryLoop(databaseURL string) {
 			)
 			db, found, err = pg.Load()
 			if err == nil {
+				// N°181 — carte Santé persistante : l'historique est
+				// repris AVANT l'installation (la garde healthAdopted
+				// ne compte qu'un démarrage par process, même si la
+				// récupération rejoue OpenPG+Load).
+				s.adoptHealthCheckpoint(pg)
 				if s.installRecovered(pg, db, found) {
 					return // installé (ou service en arrêt) — boucle terminée
 				}

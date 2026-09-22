@@ -76,6 +76,12 @@ type Store struct {
 	pgRecoverTries  atomic.Int64           // tentatives de récupération
 	pgRecoverErr    atomic.Pointer[string] // dernière erreur de récupération
 	syncRunning     bool                   // sous saveMu : le syncreur est-il démarré ?
+
+	// N°181 — carte Santé persistante : l'adoption du point de contrôle
+	// (reprise de l'historique + comptage du démarrage) ne doit arriver qu'UNE
+	// fois par process, même si la boucle de récupération N°164 rejoue
+	// OpenPG+Load après un échec d'installation.
+	healthAdopted atomic.Bool
 }
 
 // New charge l'état persisté (PostgreSQL si DATABASE_URL est défini, sinon
@@ -134,6 +140,12 @@ func New(dir string) (*Store, error) {
 			log.Println("store: base PostgreSQL vide — état de mise en service (aucune donnée démo)")
 			s.db = BuildEmptyState()
 		}
+		// N°181 — carte Santé persistante : l'historique (compteurs cumulés,
+		// démarrages) est repris de la base AVANT toute synchro — la carte
+		// n'annonce plus « aucune synchro depuis le démarrage » juste après
+		// un redéploiement, et la chaîne d'échecs d'un incident en cours
+		// reste lisible à travers le restart.
+		s.adoptHealthCheckpoint(pg)
 		// Migration mono-tenant → multi-tenant (avant l'override admin),
 		// détachement plateforme, puis persistance immédiate si l'état a changé.
 		mtChanged := migrateMultiTenant(s.db)
@@ -1208,6 +1220,11 @@ func (s *Store) Close() error {
 	p := s.pg
 	s.saveMu.Unlock()
 	if p != nil {
+		// N°181 — arrêt propre : le point de contrôle final capture l'état exact
+		// de la carte (le dernier flush peut avoir eu lieu juste avant un
+		// marquage absorbé) — best-effort borné 5 s, jamais au-delà du flush
+		// final lui-même.
+		p.writeHealthCheckpoint()
 		return p.Close()
 	}
 	return nil

@@ -629,20 +629,20 @@ func (p *PG) ensureSchema() error {
                 )`,
 		`CREATE INDEX IF NOT EXISTS idx_chat_conversations_status ON chat_conversations (status, updated_at)`,
 		`CREATE TABLE IF NOT EXISTS announcements (
-			id TEXT PRIMARY KEY,
-			title TEXT NOT NULL,
-			body TEXT NOT NULL DEFAULT '',
-			level TEXT NOT NULL DEFAULT 'info',
-			audience TEXT NOT NULL DEFAULT 'all',
-			created_at TEXT NOT NULL,
-			publish_at TEXT NOT NULL DEFAULT '',
-			created_by TEXT NOT NULL DEFAULT '',
-			created_by_name TEXT NOT NULL DEFAULT '',
-			expires_at TEXT NOT NULL DEFAULT '',
-			emailed_at TEXT NOT NULL DEFAULT '',
-			email_pending BOOLEAN NOT NULL DEFAULT FALSE,
-			emailed_count INTEGER NOT NULL DEFAULT 0
-		)`,
+                        id TEXT PRIMARY KEY,
+                        title TEXT NOT NULL,
+                        body TEXT NOT NULL DEFAULT '',
+                        level TEXT NOT NULL DEFAULT 'info',
+                        audience TEXT NOT NULL DEFAULT 'all',
+                        created_at TEXT NOT NULL,
+                        publish_at TEXT NOT NULL DEFAULT '',
+                        created_by TEXT NOT NULL DEFAULT '',
+                        created_by_name TEXT NOT NULL DEFAULT '',
+                        expires_at TEXT NOT NULL DEFAULT '',
+                        emailed_at TEXT NOT NULL DEFAULT '',
+                        email_pending BOOLEAN NOT NULL DEFAULT FALSE,
+                        emailed_count INTEGER NOT NULL DEFAULT 0
+                )`,
 		// N°165 — annonces programmées : date de diffusion + e-mail différé
 		// (migration douce pour les bases créées avant, idempotente).
 		`ALTER TABLE announcements ADD COLUMN IF NOT EXISTS publish_at TEXT NOT NULL DEFAULT ''`,
@@ -940,6 +940,27 @@ func (p *PG) ensureSchema() error {
                         WHERE a.staff_seeded = FALSE
                           AND NOT EXISTS (SELECT 1 FROM profiles p WHERE p.account_id = a.id AND LOWER(p.name) = 'staff')`,
 		`UPDATE accounts SET staff_seeded = TRUE WHERE staff_seeded = FALSE`,
+		// N°181 — carte Santé persistante : table OPÉRATIONNELLE (une
+		// seule ligne, id='global') hors état métier — aucun diff
+		// d'empreintes, aucun Load : le store y pose ses points de
+		// contrôle (health_checkpoint.go) pour que les compteurs de
+		// /api/admin/sync-status survivent aux redéploiements.
+		`CREATE TABLE IF NOT EXISTS health_checkpoint (
+                        id                TEXT PRIMARY KEY,
+                        attempts          BIGINT NOT NULL DEFAULT 0,
+                        successes         BIGINT NOT NULL DEFAULT 0,
+                        failures          BIGINT NOT NULL DEFAULT 0,
+                        consecutive_fails BIGINT NOT NULL DEFAULT 0,
+                        last_success_at   TEXT NOT NULL DEFAULT '',
+                        last_success_ms   BIGINT NOT NULL DEFAULT 0,
+                        last_changed_rows INTEGER NOT NULL DEFAULT 0,
+                        last_removed_rows INTEGER NOT NULL DEFAULT 0,
+                        last_error        TEXT NOT NULL DEFAULT '',
+                        last_error_at     TEXT NOT NULL DEFAULT '',
+                        boot_count        BIGINT NOT NULL DEFAULT 0,
+                        last_boot_at      TEXT NOT NULL DEFAULT '',
+                        updated_at        TEXT NOT NULL DEFAULT ''
+                )`,
 	}
 	// N°166 — RLS systématique : sur un hébergeur mutualisé doté d'une API
 	// Data (Supabase : PostgREST + clé publishable), une table sans RLS
@@ -950,6 +971,12 @@ func (p *PG) ensureSchema() error {
 	// boot, la passe protège aussi les tables restaurées d'un dump sans
 	// RLS (migration du 1er octobre) et toute table future.
 	stmts = append(stmts, rlsStatements()...)
+	// N°181 — health_checkpoint est VOLONTAIREMENT hors registre
+	// syncKnownTables (table opérationnelle, pas de l'état métier) : sa
+	// RLS se pose ici, même discipline N°166 — rien de lisible côté
+	// anon/authenticated Supabase (la ligne ne contient aucun secret,
+	// seulement compteurs et horodatages).
+	stmts = append(stmts, `ALTER TABLE health_checkpoint ENABLE ROW LEVEL SECURITY`)
 	for _, q := range stmts {
 		if _, err := p.db.Exec(q); err != nil {
 			return fmt.Errorf("création du schéma : %w (requête : %.80s)", err, q)

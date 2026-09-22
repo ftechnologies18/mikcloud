@@ -151,6 +151,15 @@ interface SyncStatus {
     recoveryTries: number;
     lastError?: string;
   } | null;
+  /** N°181 — carte Santé persistante : contexte de démarrage et fraîcheur du
+   * point de contrôle (table health_checkpoint). Les compteurs « sync » sont
+   * CUMULATIFS — repris de la base au boot. Absent en mode JSON. */
+  history?: {
+    bootAt: string;
+    bootCount: number;
+    checkpointAt?: string;
+    restored: boolean;
+  } | null;
   tables: { table: string; rows: number; mirrored?: number }[];
   agents: {
     routers: number;
@@ -551,6 +560,8 @@ function SyncStatusCard() {
   const sync = data?.sync ?? null;
   const neon = data?.neon ?? null;
   const agents = data?.agents ?? null;
+  // N°181 — carte Santé persistante : contexte de démarrage + point de contrôle.
+  const history = data?.history ?? null;
   // N°72 — volumétrie d'une catégorie de bande passante (« — » si absente).
   const catBytes = (name: string): string => {
     const cat = data?.bandwidth?.categories.find((c) => c.name === name);
@@ -586,6 +597,11 @@ function SyncStatusCard() {
                   ? t("platformSettings.syncHealth.modePostgres")
                   : t("platformSettings.syncHealth.modeJson")}
               </Badge>
+              {history && (
+                <Badge variant="secondary">
+                  {t("platformSettings.syncHealth.persistentBadge")}
+                </Badge>
+              )}
               {sync && sync.consecutiveFailures > 0 && (
                 <Badge variant="destructive">
                   {tf("platformSettings.syncHealth.failingBadge", {
@@ -670,6 +686,35 @@ function SyncStatusCard() {
                     failures: sync.failures,
                   })}
                 />
+                {history && (
+                  <StatRow
+                    label={t("platformSettings.syncHealth.bootAt")}
+                    value={`${timeAgo(history.bootAt, lang)} · ${formatDateTime(history.bootAt, lang)}`}
+                  />
+                )}
+                {history && (
+                  <StatRow
+                    label={t("platformSettings.syncHealth.bootCount")}
+                    value={tf("platformSettings.syncHealth.bootsValue", {
+                      count: history.bootCount,
+                    })}
+                  />
+                )}
+                {history && (
+                  <StatRow
+                    label={t("platformSettings.syncHealth.checkpointAt")}
+                    value={
+                      history.checkpointAt
+                        ? `${timeAgo(history.checkpointAt, lang)} · ${formatDateTime(history.checkpointAt, lang)}`
+                        : "—"
+                    }
+                  />
+                )}
+                {history && (
+                  <p className="text-xs text-muted-foreground">
+                    {t("platformSettings.syncHealth.persistHint")}
+                  </p>
+                )}
                 {neon && (
                   <StatRow
                     label={t("platformSettings.syncHealth.neonContact")}
@@ -750,7 +795,7 @@ function SyncStatusCard() {
               </div>
             )}
 
-            {sync && sync.lastError && (
+            {sync && sync.consecutiveFailures > 0 && sync.lastError && (
               <div className="grid gap-1 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm">
                 <p className="flex items-center gap-2 font-medium text-destructive">
                   <TriangleAlert className="size-4 shrink-0" />
@@ -760,6 +805,15 @@ function SyncStatusCard() {
                 </p>
                 <p className="break-all font-mono text-xs opacity-80">{sync.lastError}</p>
               </div>
+            )}
+
+            {sync && sync.consecutiveFailures === 0 && sync.lastError && (
+              <p className="break-all font-mono text-xs text-muted-foreground">
+                {tf("platformSettings.syncHealth.lastErrorHistorical", {
+                  err: sync.lastError,
+                  at: sync.lastErrorAt ? formatDateTime(sync.lastErrorAt, lang) : "",
+                })}
+              </p>
             )}
 
             <Collapsible>

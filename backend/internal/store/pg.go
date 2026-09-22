@@ -35,6 +35,18 @@ type PG struct {
 	stats  syncStats
 	kaMode string
 
+	// N°181 — carte Santé persistante (health_checkpoint.go) : contexte de
+	// démarrage et fraîcheur du point de contrôle. healthBootCount/
+	// healthBootAt/healthRestored sont posés UNE fois par adoptHealthCheckpoint
+	// AVANT que le pool ne soit installé sous le verrou du store (SyncHealth
+	// les lit ensuite sous ce même verrou) ; healthCheckpointAt est atomique
+	// (posé par le syncreur à chaque point de contrôle réussi).
+	healthBootCount    int64
+	healthBootAt       string
+	healthRestored     bool
+	healthCheckpointAt atomic.Int64
+	healthCpErrLog     time.Time // dernier journal d'échec d'écriture (borné 1/h)
+
 	// lastWrite — horodatage (unix, atomic) du dernier contact CONFIRMÉ avec
 	// Neon (ping d'ouverture, Load, Sync, ping du keep-alive). Base de la
 	// décision du keep-alive (Phase C) : si une écriture réelle est passée

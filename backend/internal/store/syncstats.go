@@ -131,6 +131,36 @@ func (s *syncStats) snapshot() *SyncStatsSnapshot {
 	return snap
 }
 
+// restore — N°181 — reprend les compteurs d'un point de contrôle persisté
+// (health_checkpoint.go) au moment où la persistance devient disponible : la
+// carte Santé devient CUMULATIVE — elle survit aux redéploiements — au lieu
+// de repartir de zéro à chaque démarrage. La chaîne d'échecs reprise garde
+// l'alerte « échec > 5 min » (runbook §8) valable À TRAVERS un restart survenu
+// pendant un incident.
+func (s *syncStats) restore(h *healthCheckpoint) {
+	if h == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.attempts = h.Attempts
+	s.successes = h.Successes
+	s.failures = h.Failures
+	s.consecutiveFails = h.ConsecutiveFails
+	s.lastSuccessMs = h.LastSuccessMs
+	s.lastChangedRows = h.LastChangedRows
+	s.lastRemovedRows = h.LastRemovedRows
+	if at, err := time.Parse(time.RFC3339, h.LastSuccessAt); err == nil {
+		s.lastSuccessAt = at
+	}
+	if h.LastError != "" {
+		s.lastError = h.LastError
+		if at, err := time.Parse(time.RFC3339, h.LastErrorAt); err == nil {
+			s.lastErrorAt = at
+		}
+	}
+}
+
 // isoUTC — RFC3339 UTC, chaîne vide pour le zéro.
 func isoUTC(t time.Time) string {
 	if t.IsZero() {
@@ -178,6 +208,20 @@ type SyncHealth struct {
 	Neon     *NeonHealth          `json:"neon,omitempty"`
 	Tables   []TableHealth        `json:"tables"`
 	Degraded *PersistenceDegraded `json:"degraded,omitempty"` // N°164 — boot résilient
+	History  *HealthHistory       `json:"history,omitempty"`  // N°181 — carte Santé persistante
+}
+
+// HealthHistory — N°181 — carte Santé persistante : contexte de démarrage et
+// fraîcheur du point de contrôle (bloc « history » de GET /api/admin/sync-status).
+// BootCount compte les démarrages cumulés PERSISTÉS en base : un redéploiement
+// Render compte pour un démarrage — l'opérateur voit enfin la fréquence des
+// restarts. CheckpointAt prouve que la persistance de la carte écrit bien
+// (absent tant qu'aucun point de contrôle n'a réussi depuis le démarrage).
+type HealthHistory struct {
+	BootAt       string `json:"bootAt"`                 // démarrage du process courant (RFC3339)
+	BootCount    int64  `json:"bootCount"`              // démarrages cumulés (persisté en base)
+	CheckpointAt string `json:"checkpointAt,omitempty"` // dernier point de contrôle persisté avec succès
+	Restored     bool   `json:"restored"`               // historique repris de la base à ce démarrage
 }
 
 // SyncHealth — prend le verrou global le temps de la photographie (compteurs
@@ -210,6 +254,18 @@ func (s *Store) SyncHealth() SyncHealth {
 		return h
 	}
 	h.Sync = s.pg.stats.snapshot()
+	// N°181 — carte Santé persistante : contexte de démarrage + fraîcheur
+	// du point de contrôle (les compteurs ci-dessus sont cumulatifs —
+	// repris de la base par adoptHealthCheckpoint au boot).
+	hh := &HealthHistory{
+		BootAt:    s.pg.healthBootAt,
+		BootCount: s.pg.healthBootCount,
+		Restored:  s.pg.healthRestored,
+	}
+	if at := s.pg.healthCheckpointAt.Load(); at > 0 {
+		hh.CheckpointAt = isoUTC(time.Unix(at, 0))
+	}
+	h.History = hh
 	ka := s.pg.kaMode
 	if ka == "" {
 		ka = "off"

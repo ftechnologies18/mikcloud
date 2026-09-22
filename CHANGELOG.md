@@ -5,6 +5,74 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-22 — N°181 — La carte Santé devient PERSISTANTE dans les paramètres admin plateforme : `health_checkpoint` (compteurs cumulés + historique de démarrages)
+
+### Contexte
+Avec l'architecture améliorée (Supabase migrée, boot résilient N°164,
+syncreur asynchrone N°130), il restait une amnésie opérationnelle : les
+compteurs de la carte « Santé de la persistance » (Paramètres plateforme →
+Maintenance, N°71) ne vivaient qu'en mémoire — chaque redéploiement Render
+les remettait à zéro. Juste après un déploiement, la carte affichait
+« Aucune [synchro] depuis le démarrage » alors que la persistance tournait
+depuis des jours ; la chaîne d'échecs consécutifs d'un incident en cours
+disparaissait au restart (l'alerte « échec > 5 min » du runbook §8 perdait
+son sens à travers un redéploiement) ; aucune trace du nombre de
+redémarrages du service.
+
+### Produit
+- **Table `health_checkpoint`** (NOUVELLE, UNE ligne `id='global'`,
+  opérationnelle — volontairement HORS registre `syncKnownTables` : aucun
+  diff d'empreintes, aucun Load, elle n'est pas de l'état métier) : compteurs
+  différentiels, volumétrie du dernier delta, dernière erreur, ET historique
+  de démarrages (`boot_count`, `last_boot_at`). RLS dédiée posée dans
+  `ensureSchema` (même discipline N°166 — rien de lisible côté
+  anon/authenticated Supabase). Le backup quotidien l'embarque
+  automatiquement (découverte dynamique `information_schema` de mikbackup,
+  N°177) et le restore-check la re-valide (parseur dynamique N°169/N°173).
+- **Backend `internal/store/health_checkpoint.go`** (NOUVEAU) :
+  `adoptHealthCheckpoint` au boot (normal et récupération N°164, garde
+  `healthAdopted` : un démarrage compté par process même si la récupération
+  rejoue OpenPG+Load) reprend l'historique puis inscrit CE démarrage
+  immédiatement ; `writeHealthCheckpoint` pose un point de contrôle
+  best-effort (upsert monoligne, borné 5 s, journal d'échec borné 1/h)
+  APRÈS CHAQUE résultat de synchro — hors transaction différentielle, la
+  synchro ne peut pas échouer à cause de la carte qui l'observe ; point de
+  contrôle final dans `Close` (arrêt propre : l'état exact survit au
+  redéploiement).
+- **Compteurs cumulatifs** : `syncStats.restore` resème les compteurs au
+  boot — la carte n'annonce plus « jamais synchronisé » après un
+  redéploiement, la chaîne d'échecs et l'âge de la dernière synchro restent
+  exacts À TRAVERS un restart survenu pendant un incident.
+- **API** : `GET /api/admin/sync-status` gagne le bloc `history`
+  (`bootAt`, `bootCount`, `checkpointAt`, `restored`) — additif, surveille.sh
+  (N°179) continue de parser `sync`/`degraded` à l'identique.
+- **Frontend** : la carte affiche le badge « Historique persisté », les
+  lignes Démarrage du service / Démarrages cumulés / Dernier point de
+  contrôle, une note d'explication ; le bloc d'erreur destructif ne s'affiche
+  plus qu'en échec ACTIF (`consecutiveFailures > 0`) — une dernière erreur
+  PERSISTÉE mais rétablie devient une ligne neutre « rétablie » (sinon elle
+  serait alarmante à vie). Libellés i18n FR/EN ajustés (« cumulés »,
+  « Aucune depuis la mise en service »).
+
+### Fidélité
+Zéro changement de l'état métier : la synchro différentielle, le boot
+résilient, le keep-alive et les 35 tables du diff sont inchangés. Le point
+de contrôle est un upsert SÉPARÉ (jamais dans la transaction de synchro) ;
+si la base est injoignable il échoue silencieusement (journal borné) et
+repart au prochain succès — l'état mémoire reste la vérité temps réel, la
+ligne base est un point de contrôle durable (au pire, un crash pendant une
+indisponibilité perd les échecs de la fenêtre ; le prochain succès réécrit
+l'état cohérent). Mode JSON (développement/E2E) intact : pas de bloc
+`history`, pas de table.
+
+### Vérifié
+gofmt 0 fichier · go vet OK · build OK · `go test ./...` 12 paquets OK ·
+lint ESLint OK · typecheck tsgo OK · store -race OK (vérification production : table créée
+au premier boot, ligne `global` écrite, bloc `history` servi — cf. journal
+§8.2 du runbook). RENUMÉROTÉ N°180→N°181 : le N°180 a été pris en
+parallèle par l'autre session (annonces heures/niveaux) — rebasé
+proprement dessus.
+
 ## 2026-09-21 — N°180 — Annonces : la durée de visibilité apprend les HEURES (jours et/ou heures, 1 h → 365 j) et les niveaux passent de 3 à 5 (nouveauté, maintenance)
 
 ### Contexte

@@ -3,13 +3,8 @@
 package api
 
 import (
-	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
-
-	"mikcloud/hotspot-api/internal/hotpage"
-	"mikcloud/hotspot-api/internal/model"
 )
 
 func (a *API) handleSettingsGet(w http.ResponseWriter, r *http.Request) {
@@ -247,27 +242,17 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Le nom DNS doit faire au plus 100 caractères")
 		return
 	}
-	if logoURL != nil && *logoURL != "" {
-		if !strings.HasPrefix(*logoURL, "data:image/") {
-			writeErr(w, http.StatusBadRequest, "Logo invalide : image intégrée (data:image/…) requise")
-			return
-		}
-		if len(*logoURL) > 300*1024 {
-			writeErr(w, http.StatusBadRequest, "Logo trop volumineux (300 Ko max)")
+	if logoURL != nil {
+		if err := portalValidateLogo(*logoURL); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 	}
-	// N°45 — bannière du portail : data:image/… ≤ 500 Ko OU URL https://
-	// (Cloudflare R2 et tout hébergeur d'images — le portail et la page
-	// WiFi exigent https pour éviter le mixed content). Vide = retirée.
-	if bannerURL != nil && *bannerURL != "" {
-		v := strings.TrimSpace(*bannerURL)
-		if !strings.HasPrefix(v, "data:image/") && !strings.HasPrefix(v, "https://") {
-			writeErr(w, http.StatusBadRequest, "Bannière invalide : image intégrée (data:image/…) ou URL https:// requise")
-			return
-		}
-		if strings.HasPrefix(v, "data:image/") && len(v) > 500*1024 {
-			writeErr(w, http.StatusBadRequest, "Bannière trop volumineuse (500 Ko max)")
+	// N°45 — bannière du portail (validation partagée N°182 avec les
+	// surcharges site/routeur : mêmes bornes aux trois niveaux).
+	if bannerURL != nil {
+		if err := portalValidateBanner(*bannerURL); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 	}
@@ -275,152 +260,24 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Politique d'expiration invalide (keep ou remove)")
 		return
 	}
-	// N°55 — validations hospitalité : style borné, bienvenue courte, promos
-	// ≤ 6 (titres/descriptions/prix bornés, image https ou R2 via /api/media),
-	// socials ≤ 4 (URL https). Le JSON final est resérialisé côté serveur —
-	// le client ne peut rien injecter d'autre que ces champs validés.
-	encodePromos := func(list []portalPromoReq) (string, error) {
-		if len(list) > 6 {
-			return "", fmt.Errorf("au plus 6 promos")
-		}
-		type promo struct {
-			ID         string `json:"id,omitempty"`
-			Title      string `json:"title"`
-			Desc       string `json:"desc,omitempty"`
-			ImageURL   string `json:"imageUrl,omitempty"`
-			PriceLabel string `json:"priceLabel,omitempty"`
-			Link       string `json:"link,omitempty"`
-		}
-		out := make([]promo, 0, len(list))
-		for _, it := range list {
-			title := strings.TrimSpace(it.Title)
-			if title == "" || len(title) > 60 {
-				return "", fmt.Errorf("titre de promo requis (1-60 caractères)")
-			}
-			desc := strings.TrimSpace(it.Desc)
-			if len(desc) > 160 {
-				return "", fmt.Errorf("description de promo trop longue (160 caractères max)")
-			}
-			img := strings.TrimSpace(it.ImageURL)
-			if img != "" && !strings.HasPrefix(img, "https://") {
-				return "", fmt.Errorf("image de promo invalide : URL https:// requise")
-			}
-			if len(img) > 300 {
-				return "", fmt.Errorf("URL d'image trop longue")
-			}
-			price := strings.TrimSpace(it.PriceLabel)
-			if len(price) > 30 {
-				return "", fmt.Errorf("prix trop long (30 caractères max)")
-			}
-			// N°56 — ID : conservé tel quel s'il est déjà bien formé
-			// (le round-trip console GET→PUT ne doit JAMAIS
-			// régénérer les ids, sinon les compteurs analytics
-			// repartiraient de zéro à chaque enregistrement) ; sinon
-			// un id aléatoire est posé (premier enregistrement d'une
-			// ligne, y compris les lignes envoyées sans id par un
-			// appelant API). Link : https only, comme l'image (le
-			// portail captive est mixte-content-free).
-			id := strings.TrimSpace(it.ID)
-			if id != "" && !promoIDValid(id) {
-				return "", fmt.Errorf("id de promo invalide")
-			}
-			if id == "" {
-				id = model.NewID("p")
-			}
-			link := strings.TrimSpace(it.Link)
-			if link != "" && (!strings.HasPrefix(link, "https://") || len(link) > 300) {
-				return "", fmt.Errorf("lien de promo invalide (https://, 300 caractères max)")
-			}
-			out = append(out, promo{ID: id, Title: title, Desc: desc, ImageURL: img, PriceLabel: price, Link: link})
-		}
-		if len(out) == 0 {
-			return "", nil // liste vidée = promos retirées
-		}
-		b, err := json.Marshal(out)
-		if err != nil {
-			return "", err
-		}
-		return string(b), nil
-	}
-	encodeSocials := func(list []portalSocialReq) (string, error) {
-		if len(list) > 4 {
-			return "", fmt.Errorf("au plus 4 liens sociaux")
-		}
-		type social struct {
-			Label string `json:"label"`
-			URL   string `json:"url"`
-		}
-		out := make([]social, 0, len(list))
-		for _, it := range list {
-			label := strings.TrimSpace(it.Label)
-			url := strings.TrimSpace(it.URL)
-			if label == "" || len(label) > 30 {
-				return "", fmt.Errorf("libellé de lien requis (1-30 caractères)")
-			}
-			if !strings.HasPrefix(url, "https://") || len(url) > 200 {
-				return "", fmt.Errorf("URL de lien invalide (https://, 200 caractères max)")
-			}
-			out = append(out, social{Label: label, URL: url})
-		}
-		if len(out) == 0 {
-			return "", nil
-		}
-		b, err := json.Marshal(out)
-		if err != nil {
-			return "", err
-		}
-		return string(b), nil
-	}
-	// N°137 — services de la section « Nos Services » du portail : ≤ 6
-	// lignes, libellé 1-60 car., icône dans la whitelist curée (défaut
-	// fa-wifi). Le JSON final est resérialisé côté serveur — le client ne peut
-	// rien injecter d'autre que ces champs validés (même contrat que les promos).
-	encodeServices := func(list []portalServiceReq) (string, error) {
-		if len(list) > 6 {
-			return "", fmt.Errorf("au plus 6 services")
-		}
-		type service struct {
-			Icon  string `json:"icon,omitempty"`
-			Label string `json:"label"`
-		}
-		out := make([]service, 0, len(list))
-		for _, it := range list {
-			label := strings.TrimSpace(it.Label)
-			if label == "" || len(label) > 60 {
-				return "", fmt.Errorf("nom de service requis (1-60 caractères)")
-			}
-			icon := strings.TrimSpace(it.Icon)
-			if icon == "" {
-				icon = "fa-wifi"
-			}
-			if !portalServiceIcons[icon] {
-				return "", fmt.Errorf("icône non supportée : %s", icon)
-			}
-			out = append(out, service{Icon: icon, Label: label})
-		}
-		if len(out) == 0 {
-			return "", nil // liste vidée = section « Nos Services » masquée
-		}
-		b, err := json.Marshal(out)
-		if err != nil {
-			return "", err
-		}
-		return string(b), nil
-	}
+	// N°55/N°137 — les encodeurs promos/socials/services sont PARTAGÉS avec
+	// les surcharges site/routeur de la chaîne N°182 (portal_branding.go) :
+	// mêmes bornes, mêmes messages, aux trois niveaux de personnalisation.
 	if portalStyle != nil {
-		v := strings.TrimSpace(*portalStyle)
-		if v != "" && v != "commercial" && v != "hospitality" {
-			writeErr(w, http.StatusBadRequest, "Style de portail invalide (commercial ou hospitality)")
+		if err := portalValidateStyle(*portalStyle); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 	}
-	if portalWelcome != nil && len(strings.TrimSpace(*portalWelcome)) > 200 {
-		writeErr(w, http.StatusBadRequest, "Message de bienvenue trop long (200 caractères max)")
-		return
+	if portalWelcome != nil {
+		if err := portalValidateWelcome(*portalWelcome); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	var promosJSON, socialsJSON, servicesJSON string
 	if portalPromos != nil {
-		v, err := encodePromos(*portalPromos)
+		v, err := portalEncodePromos(*portalPromos)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "Promos invalides : "+err.Error())
 			return
@@ -428,118 +285,50 @@ func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		promosJSON = v
 	}
 	if portalSocials != nil {
-		v, err := encodeSocials(*portalSocials)
+		v, err := portalEncodeSocials(*portalSocials)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "Liens sociaux invalides : "+err.Error())
 			return
 		}
 		socialsJSON = v
 	}
-	// N°136 — validation des slides du carrousel commercial : ≤ 3 URLs https
-	// (images R2 via /api/media), chacune ≤ 300 car. (même règle que les images
-	// de promos). Liste vide = retour aux 3 images génériques du template.
+	// N°136 — slides du carrousel commercial (encodeur partagé N°182).
 	var slidesJSON string
 	if portalSlides != nil {
-		list := *portalSlides
-		if len(list) > 3 {
-			writeErr(w, http.StatusBadRequest, "Slides invalides : au plus 3 slides")
+		v, err := portalEncodeSlides(*portalSlides)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		out := make([]string, 0, len(list))
-		for _, it := range list {
-			u := strings.TrimSpace(it)
-			if u == "" {
-				continue // entrée vide ignorée (la console n'en envoie pas)
-			}
-			if !strings.HasPrefix(u, "https://") {
-				writeErr(w, http.StatusBadRequest, "Slides invalides : URL https:// requise")
-				return
-			}
-			if len(u) > 300 {
-				writeErr(w, http.StatusBadRequest, "Slides invalides : URL trop longue")
-				return
-			}
-			out = append(out, u)
-		}
-		if len(out) > 0 {
-			b, err := json.Marshal(out)
-			if err != nil {
-				writeErr(w, http.StatusBadRequest, "Slides invalides : "+err.Error())
-				return
-			}
-			slidesJSON = string(b)
-		} // liste vidée = slides retirées → retour aux images par défaut
+		slidesJSON = v
 	}
 	if portalServices != nil {
-		v, err := encodeServices(*portalServices)
+		v, err := portalEncodeServices(*portalServices)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "Services du portail invalides : "+err.Error())
 			return
 		}
 		servicesJSON = v
 	}
-	// N°138 — validation des messages du bandeau animé sous le logo :
-	// ≤ 5 messages, 1-80 caractères chacun (texte brut trimé — le portail
-	// les affiche tels quels, Typed.js tape le texte ; aucun HTML n'est
-	// interprété). Liste vide = retour aux 3 messages par défaut du
-	// template (même contrat que les slides N°136).
+	// N°138 — messages du bandeau animé (encodeur partagé N°182).
 	var tickerJSON string
 	if portalTicker != nil {
-		list := *portalTicker
-		if len(list) > 5 {
-			writeErr(w, http.StatusBadRequest, "Messages du bandeau invalides : au plus 5 messages")
+		v, err := portalEncodeTicker(*portalTicker)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		tickerOut := make([]string, 0, len(list))
-		for _, it := range list {
-			m := strings.TrimSpace(it)
-			if m == "" {
-				continue // entrée vide ignorée (la console n'en envoie pas)
-			}
-			if len(m) > 80 {
-				writeErr(w, http.StatusBadRequest, "Messages du bandeau invalides : 80 caractères max par message")
-				return
-			}
-			tickerOut = append(tickerOut, m)
-		}
-		if len(tickerOut) > 0 {
-			b, err := json.Marshal(tickerOut)
-			if err != nil {
-				writeErr(w, http.StatusBadRequest, "Messages du bandeau invalides : "+err.Error())
-				return
-			}
-			tickerJSON = string(b)
-		} // liste vidée = messages retirés → retour aux 3 défauts du template
+		tickerJSON = v
 	}
-	// N°139 — validation du numéro WhatsApp SUPPORT : format international
-	// en chiffres seuls après nettoyage (espaces, +, -, parenthèses tolérés
-	// puis retirés), 8-15 chiffres ; label d'affichage optionnel ≤ 30 car.
-	// Number vide = numéro retiré → retour au support MikCloud (repli). Le
-	// JSON final est resérialisé côté serveur (même contrat que les promos).
+	// N°139 — numéro WhatsApp SUPPORT (encodeur partagé N°182).
 	var whatsappJSON string
 	if portalWhatsapp != nil {
-		num := hotpage.WhatsappNumber(portalWhatsapp.Number)
-		if portalWhatsapp.Number != "" && num == "" {
-			writeErr(w, http.StatusBadRequest, "Numéro WhatsApp invalide : 8 à 15 chiffres en format international requis (ex. 2250708091012)")
+		v, err := portalEncodeWhatsapp(*portalWhatsapp)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		label := strings.TrimSpace(portalWhatsapp.Label)
-		if len(label) > 30 {
-			writeErr(w, http.StatusBadRequest, "Libellé WhatsApp trop long (30 caractères max)")
-			return
-		}
-		if num != "" {
-			type wa struct {
-				Number string `json:"number"`
-				Label  string `json:"label,omitempty"`
-			}
-			b, err := json.Marshal(wa{Number: num, Label: label})
-			if err != nil {
-				writeErr(w, http.StatusBadRequest, "Numéro WhatsApp invalide : "+err.Error())
-				return
-			}
-			whatsappJSON = string(b)
-		} // number vide = numéro retiré → repli support MikCloud
+		whatsappJSON = v
 	}
 	if expiryAfterDays != nil && (*expiryAfterDays < 0 || *expiryAfterDays > 365) {
 		writeErr(w, http.StatusBadRequest, "Le nombre de jours doit être compris entre 0 et 365")

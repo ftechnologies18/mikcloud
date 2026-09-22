@@ -451,6 +451,60 @@ export interface RouterDevice {
    * renseignée) — « Orange CI 110M/20M » pour CE site, jamais globale. */
   lineDownBps?: number;
   lineUpBps?: number;
+  /** N°182 : site physique auquel le routeur est assigné (vide/absent = hors
+   * site → portail du compte). L'assignation change la signature de
+   * déploiement → re-déploiement automatique au check-in suivant (≤ 45 s). */
+  siteId?: string;
+  /** N°182 : surcharge INDIVIDUELLE du portail du routeur (JSON canonique
+   * backend, vide/absent = hériter du site puis du compte). */
+  portalOverride?: string;
+}
+
+/** N°182 — surcharge de branding du portail (site ou routeur), MÊMES champs
+ * que les réglages du compte : champ vide = hérite du niveau supérieur
+ * (jamais de masquage — vider côté compte et surcharger ailleurs). */
+export interface PortalOverrideData {
+  displayName?: string;
+  logoUrl?: string;
+  bannerUrl?: string;
+  waveLink?: string;
+  portalStyle?: string;
+  portalWelcome?: string;
+  portalPromos?: { id?: string; title: string; desc?: string; imageUrl?: string; priceLabel?: string; link?: string }[];
+  portalSocials?: { label: string; url: string }[];
+  portalServices?: { icon?: string; label: string }[];
+  portalSlides?: string[];
+  portalTicker?: string[];
+  portalWhatsapp?: { number: string; label?: string };
+}
+
+/** N°182 — un site physique du compte (regroupement de routeurs + identité
+ * de portail optionnelle). */
+export interface SiteResponse {
+  id: string;
+  accountId: string;
+  name: string;
+  description?: string;
+  location?: string;
+  /** JSON canonique de la surcharge ("" = aucune — les routeurs assignés
+   * servent le portail du compte). À décoder via parsePortalOverride. */
+  portalOverride?: string;
+  createdAt: string;
+  updatedAt: string;
+  routerCount: number;
+  routerIds: string[];
+  hasOverride: boolean;
+}
+
+/** parsePortalOverride — décode le JSON canonique d'une surcharge (repli
+ * objet vide si absent/invalide — jamais d'écran cassé). */
+export function parsePortalOverride(raw?: string): PortalOverrideData {
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw) as PortalOverrideData;
+  } catch {
+    return {};
+  }
 }
 
 /** Réponse de création d'un routeur en mode agent (script + token à copier). */

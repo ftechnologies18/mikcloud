@@ -26,7 +26,6 @@ import (
 	"testing"
 
 	"mikcloud/hotspot-api/internal/hotpage"
-	"mikcloud/hotspot-api/internal/model"
 )
 
 // TestPortalWhatsappInfo — matrice du décodeur défensif : un JSON invalide,
@@ -55,7 +54,7 @@ func TestPortalWhatsappInfo(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := portalWhatsappInfo(model.Tenant{PortalWhatsapp: tc.json})
+			got := portalWhatsappInfo(tc.json)
 			if tc.want == nil {
 				if got != nil {
 					t.Fatalf("portalWhatsappInfo(%q) = %v, attendu nil", tc.json, got)

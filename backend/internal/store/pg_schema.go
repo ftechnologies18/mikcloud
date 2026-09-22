@@ -655,6 +655,27 @@ func (p *PG) ensureSchema() error {
                         at              TEXT NOT NULL
                 )`,
 		`CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation ON chat_messages (conversation_id)`,
+		// N°182 — SITES PHYSIQUES : regroupement de routeurs du compte portant
+		// une surcharge de branding du portail captif (chaîne ROUTEUR → SITE →
+		// COMPTE, champ par champ — vide = hérite). La surcharge vit en UNE
+		// colonne JSON canonique (model.CanonicalPortalOverride) : ajouter un
+		// champ de surcharge demain n'ajoutera AUCUNE colonne SQL.
+		`CREATE TABLE IF NOT EXISTS sites (
+                        id              TEXT PRIMARY KEY,
+                        account_id      TEXT NOT NULL,
+                        name            TEXT NOT NULL,
+                        description     TEXT NOT NULL DEFAULT '',
+                        location        TEXT NOT NULL DEFAULT '',
+                        portal_override TEXT NOT NULL DEFAULT '',
+                        created_at      TEXT NOT NULL,
+                        updated_at      TEXT NOT NULL
+                )`,
+		`CREATE INDEX IF NOT EXISTS idx_sites_account ON sites (account_id)`,
+		// N°182 — assignation d'un routeur à un site (vide = hors site :
+		// portail du compte) + surcharge individuelle du portail du routeur
+		// (JSON canonique, vide = hériter du site puis du compte).
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS site_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS portal_override TEXT NOT NULL DEFAULT ''`,
 		// N°67 — Resend (API HTTP https://resend.com) comme fournisseur
 		// alternatif du canal e-mail : le provider choisit entre SMTP
 		// direct (défaut, '') et l'API Resend (clé secrète par compte).

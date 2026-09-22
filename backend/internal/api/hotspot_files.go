@@ -88,6 +88,11 @@ func hotspotFilesSig(files []string, db *model.DB, router *model.Router) string 
 // JoinButtonEnabled, LogRetentionDaysEffective) — si un champ rejoint la
 // config du portail sans rejoindre cette empreinte, le portail déployé
 // garderait une valeur périmée sans jamais se re-déployer.
+// N°182 — le branding EFFECTIF dépend de la chaîne ROUTEUR → SITE → COMPTE :
+// les parts site/rovr en fin d'empreinte couvrent les deux surcharges (le
+// compte reste couvert par les parts v2 ci-dessus ; le waveLink effectif des
+// offres suit la surcharge — le part "offer:" ne porte que prix/durée/quota,
+// le lien marchand complet est couvert par t.WaveLink + les parts site/rovr).
 // Les URL dérivées de la REQUÊTE (apiBase) n'y figurent pas (constantes
 // par déploiement) ; APP_PUBLIC_URL y figure car il façonne wifiUrl/joinUrl
 // cuits au déploiement.
@@ -150,6 +155,21 @@ func portalBrandingFingerprint(db *model.DB, router *model.Router) string {
 			break
 		}
 		parts = append(parts, "offer:"+p.Name+":"+strconv.Itoa(p.Price)+":"+strconv.Itoa(p.ValidityMinutes())+":"+strconv.Itoa(p.DataQuotaMb))
+	}
+	// N°182 — niveaux SITE et ROUTEUR de la chaîne de personnalisation. Les
+	// parts sont APPENDÉES après celles du compte : sans site ni surcharge
+	// elles sont ABSENTES et la sig reste STRICTEMENT identique à v2 — aucun
+	// re-déploiement parasite pour les comptes existants au premier démarrage
+	// migré. Un site assigné (même sans surcharge) et une surcharge non vide
+	// changent la sig → re-déploiement automatique au check-in (≤ 45 s), comme
+	// tout changement de branding : le portail part TOUJOURS d'un état servi
+	// connu. La part porte le JSON CANONIQUE BRUT (pas le branding effectif) :
+	// miroir déterministe des deux sources de variation sous la partie v2.
+	if site := model.FindSiteScoped(db, router.SiteID, router.AccountID); site != nil {
+		parts = append(parts, "site:"+site.ID+"\x1e"+site.PortalOverride)
+	}
+	if router.PortalOverride != "" {
+		parts = append(parts, "rovr:"+router.PortalOverride)
 	}
 	return strings.Join(parts, "\x1f")
 }

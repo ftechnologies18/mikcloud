@@ -42,6 +42,7 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 		WifiSites:         []model.WifiSite{},
 		WifiGuests:        []model.WifiGuest{},
 		Devices:           []model.Device{},
+		Sites:             []model.Site{},
 	}
 
 	steps := []struct {
@@ -82,6 +83,7 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 		{"chat_conversations", func() error { return loadInto(p, &db.ChatConversations, chatConversationSpec) }},
 		{"chat_messages", func() error { return loadInto(p, &db.ChatMessages, chatMessageSpec) }},
 		{"announcements", func() error { return loadInto(p, &db.Announcements, announcementSpec) }},
+		{"sites", func() error { return loadInto(p, &db.Sites, siteSpec) }},
 		{"settings", func() error { return p.loadSettings(db) }},
 	}
 	for _, st := range steps {

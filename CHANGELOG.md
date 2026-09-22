@@ -5,6 +5,114 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-22 — N°182 — Sites physiques et personnalisation du portail captif par ROUTEUR → SITE → COMPTE : trois régimes au choix du gérant (unifié, par site, individuel)
+
+### Contexte
+Le portail captif était verrouillé au COMPTE : `buildPortalConfig` lisait
+le branding directement dans `Settings.Tenant`, et un compte à N routeurs
+servait N portails identiques — impossible pour une chaîne (hôtel
+multi-bâtiments, cybercafés de quartiers différents, campus) de différencier
+l'identité de portail par établissement, et impossible d'individualiser UN
+routeur précis. L'analyse d'expert (option 3 sur 3, validée par l'opérateur)
+a établi que le DÉPLOIEMENT était déjà par routeur (`ensureHotspotFilesLocked`
+au check-in, sig par routeur, servage `/portal/{token}/{path}` par routeur,
+aperçu console par routeur) — il ne manquait qu'une source de VARIATION entre
+routeurs : c'est la refonte « Site » de premier ordre qui l'apporte.
+
+### Produit — backend
+- **Table `sites`** (NOUVELLE, registre `syncKnownTables` complet : load au
+  boot, diff syncSteps, rebuildHashes, RLS générée, liveTableRows) : id,
+  compte, nom (unique par compte, ≤ 60), description (≤ 200), localisation
+  (≤ 120), `portal_override` (JSON canonique), created/updated. Index
+  `idx_sites_account`. Plafond 20 sites/compte.
+- **`model.PortalOverride`** — les 12 champs de surcharge de branding (nom
+  affiché, logo, bannière, lien Wave, style, bienvenue, promos, socials,
+  services, slides, ticker, WhatsApp), sérialisés en UNE colonne JSON
+  canonique sur `sites` ET sur `routers` (`ALTER TABLE … ADD COLUMN IF NOT
+  EXISTS site_id, portal_override`) : ajouter un champ de surcharge demain
+  n'ajoutera AUCUNE colonne SQL.
+- **Chaîne de résolution `resolvePortalBranding`** (portal_serve.go) : le
+  branding servi part du compte, la surcharge du SITE du routeur écrase champ
+  par champ, la surcharge INDIVIDUELLE du routeur écrase en dernier.
+  Sémantique stricte **VIDE = HÉRITE** (un champ vide ne touche rien ; une
+  surcharge ne peut pas masquer un élément que le compte affiche — pour ce
+  cas, vider côté compte et surcharger ailleurs). Les helpers de décodage
+  (hospitalité, slides, services, ticker, WhatsApp) sont généralisés aux
+  strings JSON résolues — formats PERSISTÉS inchangés, décodage défensif
+  identique.
+- **`buildPortalConfig` et `buildPortalConfigForSite`** (fetch live) passent
+  par la chaîne : TenantName, logo, bannière, style, bienvenue, promos,
+  slides, services, ticker, WhatsApp ET le `waveLink` EFFECTIF des offres
+  payantes (deep-links Wave du site/routeur) suivent la résolution.
+- **Miroir de signature `portalBrandingFingerprint`** : les parts
+  `site:<id>:<override>` et `rovr:<override>` sont APPENDÉES après les parts
+  v2 du compte — **sans site ni surcharge elles sont ABSENTES et la sig est
+  strictement identique à v2** : aucun re-déploiement parasite pour les
+  comptes existants au premier démarrage migré (prouvé par test : un SiteID
+  hors du compte ne change PAS la sig ; retour à l'état vierge = sig de base
+  EXACTE). Assigner un site ou poser une surcharge change la sig →
+  re-déploiement automatique au check-in (≤ 45 s), comme tout branding.
+- **API console** (RBAC manager+ `requireRole(2)`, `guardAccountWrite`,
+  isolation multi-tenant vérifiée à CHAQUE résolution — jamais à
+  l'assignation seule) : `GET/POST /api/sites`, `PUT/DELETE /api/sites/{id}`
+  (la suppression DÉTACHE les routeurs restants — réponse `detached`),
+  `PUT /api/routers/{id}/site` (assignation/détachement),
+  `PUT /api/routers/{id}/portal` (surcharge individuelle, corps complet,
+  tous vides = hérite). Les validateurs de branding sont EXTRAITS et
+  PARTAGÉS entre les réglages du compte et les surcharges
+  (portal_branding.go : mêmes bornes, mêmes messages aux trois niveaux ;
+  `assemblePortalOverride` produit le canonique).
+- **L'aperçu `/api/routers/{id}/portal-preview`** reflète la chaîne
+  automatiquement (il passe par `buildPortalConfig`).
+
+### Produit — frontend (onglet Portail du hub Hotspot, refondu)
+- **Section Sites** : cartes (nom, localisation, description, badge
+  « Portail personnalisé / Portail du compte », compteurs de routeurs),
+  création/édition (SiteDialog : champs descriptifs + identité de portail),
+  suppression avec AlertDialog explicite (« N routeur(s) seront détachés… »).
+- **Section Routeurs** (enrichie) : par routeur — Select de site (« Hors
+  site (portail du compte) » + liste), badge de régime (Portail : compte /
+  site · {nom} / personnalisé), SigBadge de déploiement conservé, bouton
+  **Personnaliser** (dialog de surcharge individuelle avec « Réinitialiser
+  (hériter) »), Aperçu et Re-déployer inchangés.
+- **`OverrideFields`** (formulaire partagé site/routeur) : nom affiché, logo
+  (data URL), bannière, lien Wave, style (Hériter/Commercial/Hospitalité),
+  message de bienvenue, WhatsApp (numéro + libellé), ticker (≤ 5 lignes),
+  services (≤ 6 lignes), slides (≤ 3 lignes) — les listes en « une entrée
+  par ligne », bornées, champs vides = hérite. Les promos/socials (mode
+  hospitalité structuré) restent au niveau du compte en v1 console (l'API
+  les accepte déjà aux trois niveaux — l'éditeur enrichi viendra avec le
+  besoin).
+- Journal des déploiements étendu aux messages « Portail du routeur… ».
+  i18n FR/EN complet (46 clés nouvelles).
+
+### Fidélité
+- **Rétrocompatibilité TOTALE, prouvée par tests** : routeur sans site ni
+  surcharge → portail EXACTEMENT celui du compte (sig v2 inchangée, aucune
+  vague de re-déploiement au premier démarrage migré) ; les champs
+  `site_id`/`portal_override` sont `omitempty` dans le JSON du Router (hash
+  de synchro des routeurs existants inchangé → aucun re-upsert parasite) ;
+  aucune migration destructrice (CREATE TABLE IF NOT EXISTS + ADD COLUMN IF
+  NOT EXISTS, idempotentes, zéro coupure Supabase) ; le mode JSON (E2E) et
+  `ensureSlices` couvrent la nouvelle collection ; le WiFi jetable et les
+  liens d'inscription restent résolus PAR ROUTEUR (inchangés) ; les
+  annonces, l'offre `joinEnabled` et la rétention du journal restent au
+  niveau du compte (assumé — périmètre branding).
+- Concours des tests de concordance mis à jour (36 tables au snapshot santé,
+  35 différentielles au plan de synchro, RLS générée depuis le registre —
+  le test de couverture RLS vérifie `sites` automatiquement).
+
+### Vérifié
+gofmt 0 fichier · go vet OK · build OK · `go test ./...` 12 paquets OK
+(nouvelles familles : TestSitesCRUDLifecycle, TestSitesMaxPerAccount,
+TestSitesIsolationCrossAccount, TestRouterSiteAssignFlows,
+TestRouterPortalOverridePut, TestPortalBrandingInheritanceChain (les 3
+niveaux, champ par champ, héritage waveLink/ticker prouvé),
+TestHotspotFilesSigChain (rétrocompat sig + parts site/rovr + retour à
+l'état vierge), TestBuildPortalConfigEffectiveWaveLink (deep-links Wave du
+site), TestPortalPreviewResolvesChain (l'aperçu porte le DisplayName du
+site)) · ESLint 0 · typecheck tsgo 0 · build production Next.js OK.
+
 ## 2026-09-22 — N°181 — La carte Santé devient PERSISTANTE dans les paramètres admin plateforme : `health_checkpoint` (compteurs cumulés + historique de démarrages)
 
 ### Contexte

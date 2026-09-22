@@ -66,7 +66,10 @@ const (
 	TableDevices              = "devices"
 	// N°152 — annonces de la plateforme (collection globale, diff simple).
 	TableAnnouncements = "announcements"
-	TableSettings      = "settings" // hors diff d'empreintes (syncSettings)
+	// N°182 — sites physiques : regroupement de routeurs + surcharge de
+	// branding du portail captif (chaîne ROUTEUR → SITE → COMPTE).
+	TableSites    = "sites"
+	TableSettings = "settings" // hors diff d'empreintes (syncSettings)
 )
 
 // syncKnownTables — registre des noms acceptés par SaveTables/SyncTables :
@@ -107,6 +110,7 @@ var syncKnownTables = map[string]bool{
 	TableChatMessages:         true,
 	TableDevices:              true,
 	TableAnnouncements:        true,
+	TableSites:                true,
 	TableSettings:             true,
 }
 

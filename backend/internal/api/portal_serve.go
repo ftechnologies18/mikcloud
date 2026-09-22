@@ -16,6 +16,13 @@
 // id="mikcloud-config">{{MIKCLOUD_CONFIG_JSON}}</script> que la page lit côté
 // client (N°35-c pour la consommation hybride fetch/fallback).
 //
+// N°182 — chaîne de personnalisation ROUTEUR → SITE → COMPTE : le branding
+// servi n'est plus lu directement sur le tenant du compte, mais RÉSOLU par
+// resolvePortalBranging : la surcharge individuelle du routeur (si posée)
+// prime, sinon celle de son site (si assigné et surchargé), sinon le compte.
+// Champ par champ, vide = hérite — un routeur sans site ni surcharge sert
+// EXACTEMENT le portail du compte (rétrocompatibilité stricte).
+//
 // Sécurité :
 //   - token agent haché (routerByToken) → seul un routeur légitime peut fetch ;
 //   - path sanitize (sanitizePortalPath côté agent + HasFile côté hotpage) :
@@ -86,8 +93,9 @@ func (a *API) handlePortalFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// N°35-b — personnalisation : les fichiers texte sont passés par Personalize.
-	// Les fichiers binaires (png, ico, woff2, jpg) sont servis tels quels — aucun
-	// marqueur à substituer, gain de cycles et zéro risque de corruption binaire.
+	// Les fichiers binaires (png, ico, woff2, jpg) retournent false → servis
+	// tels quels — aucun marqueur à substituer, gain de cycles et zéro risque
+	// de corruption binaire.
 	if isTextAsset(rawPath) {
 		body = []byte(hotpage.Personalize(string(body), cfg))
 	}
@@ -108,13 +116,129 @@ func isTextAsset(p string) bool {
 	return false
 }
 
-// portalHospitality — décode le branding hospitalité du tenant (N°55).
-// Les listes sont persistées en JSON (model.Tenant.PortalPromos/Socials) :
-// un JSON invalide ou un champ vide donne des listes vides — la page reste
-// cohérente (mode commercial ou hospitalité sans vitrine), jamais cassée.
-func portalHospitality(t model.Tenant) (style, welcome string, promos []hotpage.PortalPromo, socials []hotpage.PortalSocial) {
-	style, welcome = t.PortalStyle, t.PortalWelcome
-	if t.PortalPromos != "" {
+// ---------------------------------------------------------------------------
+// N°182 — chaîne de personnalisation ROUTEUR → SITE → COMPTE.
+// ---------------------------------------------------------------------------
+
+// portalBranding — le branding EFFECTIF du portail d'un routeur, après
+// résolution de la chaîne N°182. Les listes restent en strings JSON (formats
+// PERSISTÉS du tenant : [{id,title,desc,imageUrl,priceLabel,link}] pour les
+// promos, ["msg"] pour le ticker, etc.) : les surcharges model.PortalOverride
+// sont converties dans ces formats par applyPortalOverride — les helpers de
+// décodage ci-dessous restent homéomorphes aux réglages du compte.
+type portalBranding struct {
+	DisplayName  string // nom affiché sur le portail (tenant.name sinon)
+	LogoURL      string
+	BannerURL    string
+	WaveLink     string
+	Style        string // "" | commercial | hospitality
+	Welcome      string
+	PromosJSON   string
+	SocialsJSON  string
+	ServicesJSON string
+	TickerJSON   string
+	WhatsappJSON string
+	SlidesJSON   string
+}
+
+// resolvePortalBranding — part du branding du COMPTE (settings du compte acc),
+// applique la surcharge du SITE du routeur (si assigné au compte, sinon
+// ignoré — l'isolation multi-tenant se revérifie à CHAQUE résolution), puis
+// la surcharge INDIVIDUELLE du routeur. router nil = branding du compte seul
+// (fetch live d'un site WiFi au routeur introuvable — N°35-c). À appeler sous
+// verrou (lit les settings et les sites).
+func resolvePortalBranding(db *model.DB, acc string, router *model.Router) portalBranding {
+	settings := ensureSettings(db, acc)
+	t := settings.Tenant
+	b := portalBranding{
+		DisplayName:  t.Name,
+		LogoURL:      t.LogoURL,
+		BannerURL:    t.BannerURL,
+		WaveLink:     t.WaveLink,
+		Style:        t.PortalStyle,
+		Welcome:      t.PortalWelcome,
+		PromosJSON:   t.PortalPromos,
+		SocialsJSON:  t.PortalSocials,
+		ServicesJSON: t.PortalServices,
+		TickerJSON:   t.PortalTicker,
+		WhatsappJSON: t.PortalWhatsapp,
+		SlidesJSON:   t.PortalSlides,
+	}
+	if router == nil {
+		return b
+	}
+	if site := model.FindSiteScoped(db, router.SiteID, router.AccountID); site != nil {
+		applyPortalOverride(&b, model.ParsePortalOverride(site.PortalOverride))
+	}
+	applyPortalOverride(&b, model.ParsePortalOverride(router.PortalOverride))
+	return b
+}
+
+// applyPortalOverride — écrase champ par champ les valeurs NON VIDES de la
+// surcharge. SÉMANTIQUE « VIDE = HÉRITE » (N°182) : un champ vide ne touche
+// rien ; une liste vide non plus ; Whatsapp nil ou number vide non plus. La
+// surcharge ne peut donc pas MASQUER un élément que le compte affiche — pour
+// ce cas, vider le champ côté compte et le surcharger là où il doit
+// apparaître (documenté console). Les listes structurées (types model miroirs
+// des json tags persistés) sont re-sérialisées en JSON : les helpers de
+// décodage aval ne font aucune différence entre un réglage du compte et une
+// surcharge résolue.
+func applyPortalOverride(b *portalBranding, ov model.PortalOverride) {
+	if ov.DisplayName != "" {
+		b.DisplayName = ov.DisplayName
+	}
+	if ov.LogoURL != "" {
+		b.LogoURL = ov.LogoURL
+	}
+	if ov.BannerURL != "" {
+		b.BannerURL = ov.BannerURL
+	}
+	if ov.WaveLink != "" {
+		b.WaveLink = ov.WaveLink
+	}
+	if ov.Style != "" {
+		b.Style = ov.Style
+	}
+	if ov.Welcome != "" {
+		b.Welcome = ov.Welcome
+	}
+	if len(ov.Promos) > 0 {
+		b.PromosJSON = mustJSON(ov.Promos)
+	}
+	if len(ov.Socials) > 0 {
+		b.SocialsJSON = mustJSON(ov.Socials)
+	}
+	if len(ov.Services) > 0 {
+		b.ServicesJSON = mustJSON(ov.Services)
+	}
+	if len(ov.Slides) > 0 {
+		b.SlidesJSON = mustJSON(ov.Slides)
+	}
+	if len(ov.Ticker) > 0 {
+		b.TickerJSON = mustJSON(ov.Ticker)
+	}
+	if ov.Whatsapp != nil && ov.Whatsapp.Number != "" {
+		b.WhatsappJSON = mustJSON(ov.Whatsapp)
+	}
+}
+
+// mustJSON — marshaling des types simples de surcharge (échec impossible en
+// pratique ; repli chaîne vide = hérite, jamais de portail cassé).
+func mustJSON(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// portalHospitalityLists — décode le branding hospitalité (N°55) depuis les
+// strings JSON PERSISTÉS (réglage du compte OU surcharge N°182 résolue —
+// formats identiques). Les listes invalides ou vides donnent des listes
+// vides — la page reste cohérente (mode commercial ou hospitalité sans
+// vitrine), jamais cassée.
+func portalHospitalityLists(promosJSON, socialsJSON string) (promos []hotpage.PortalPromo, socials []hotpage.PortalSocial) {
+	if promosJSON != "" {
 		var raw []struct {
 			ID         string `json:"id"`
 			Title      string `json:"title"`
@@ -123,14 +247,14 @@ func portalHospitality(t model.Tenant) (style, welcome string, promos []hotpage.
 			PriceLabel string `json:"priceLabel"`
 			Link       string `json:"link"`
 		}
-		if json.Unmarshal([]byte(t.PortalPromos), &raw) == nil {
+		if json.Unmarshal([]byte(promosJSON), &raw) == nil {
 			for _, it := range raw {
 				// N°56 — chaque promo part avec un ID : celui posé à
 				// l'enregistrement console (stable), ou à défaut un id
-				// déterministe dérivé du contenu (lignes héritées
-				// d'avant N°56, jamais ré-enregistrées). Sans id, la
-				// carte resterait hors analytics — le gérant perdrait
-				// ses compteurs jusqu'au prochain enregistrement.
+				// déterministe dérivé du contenu (lignes héritées d'avant
+				// N°56, jamais ré-enregistrées). Sans id, la carte resterait
+				// hors analytics — le gérant perdrait ses compteurs jusqu'au
+				// prochain enregistrement.
 				id := it.ID
 				if id == "" {
 					id = promoFallbackID(it.Title, it.Desc, it.ImageURL, it.PriceLabel)
@@ -139,31 +263,32 @@ func portalHospitality(t model.Tenant) (style, welcome string, promos []hotpage.
 			}
 		}
 	}
-	if t.PortalSocials != "" {
+	if socialsJSON != "" {
 		var raw []struct {
 			Label string `json:"label"`
 			URL   string `json:"url"`
 		}
-		if json.Unmarshal([]byte(t.PortalSocials), &raw) == nil {
+		if json.Unmarshal([]byte(socialsJSON), &raw) == nil {
 			for _, it := range raw {
 				socials = append(socials, hotpage.PortalSocial{Label: it.Label, URL: it.URL})
 			}
 		}
 	}
-	return style, welcome, promos, socials
+	return promos, socials
 }
 
-// portalSlidesList — décode les slides du carrousel COMMERCIAL du tenant
-// (N°136) : JSON ["url",…] ≤ 3 URLs https. Un JSON invalide, vide ou une
-// liste vide donne nil — la page garde ses 3 images génériques (jamais
-// cassée). Le plafond est re-vérifié au décodage (défense en profondeur :
-// une ligne héritée d'un appel API direct ne peut pas gonfler le carrousel).
-func portalSlidesList(t model.Tenant) []string {
-	if t.PortalSlides == "" {
+// portalSlidesList — décode les slides du carrousel COMMERCIAL (N°136) depuis
+// la string JSON persistée : JSON ["url",…] ≤ 3 URLs https. Un JSON invalide,
+// vide ou une liste vide donne nil — la page garde ses 3 images génériques
+// (jamais cassée). Le plafond est re-vérifié au décodage (défense en
+// profondeur : une ligne héritée d'un appel API direct ne peut pas gonfler le
+// carrousel).
+func portalSlidesList(s string) []string {
+	if s == "" {
 		return nil
 	}
 	var raw []string
-	if json.Unmarshal([]byte(t.PortalSlides), &raw) != nil {
+	if json.Unmarshal([]byte(s), &raw) != nil {
 		return nil
 	}
 	out := make([]string, 0, len(raw))
@@ -181,20 +306,19 @@ func portalSlidesList(t model.Tenant) []string {
 	return out
 }
 
-// portalServicesList — décode les services de l'établissement du tenant
-// (N°137, section « Nos Services » du portail commercial). Persisté en JSON
-// (model.Tenant.PortalServices) : un JSON invalide ou un champ vide donne
-// une liste vide — la section est masquée côté page, jamais cassée
-// (même robustesse que portalHospitality).
-func portalServicesList(t model.Tenant) []hotpage.PortalService {
-	if t.PortalServices == "" {
+// portalServicesList — décode les services de l'établissement (N°137, section
+// « Nos Services » du portail commercial) depuis la string JSON persistée :
+// un JSON invalide ou un champ vide donne une liste vide — la section est
+// masquée côté page, jamais cassée (même robustesse que portalHospitalityLists).
+func portalServicesList(s string) []hotpage.PortalService {
+	if s == "" {
 		return nil
 	}
 	var raw []struct {
 		Icon  string `json:"icon"`
 		Label string `json:"label"`
 	}
-	if json.Unmarshal([]byte(t.PortalServices), &raw) != nil {
+	if json.Unmarshal([]byte(s), &raw) != nil {
 		return nil
 	}
 	var out []hotpage.PortalService
@@ -207,18 +331,17 @@ func portalServicesList(t model.Tenant) []hotpage.PortalService {
 	return out
 }
 
-// portalTickerList — décode les messages du bandeau animé sous le logo du
-// tenant (N°138, effet Typed.js du login.html). Persisté en JSON
-// (model.Tenant.PortalTicker) : un JSON invalide ou un champ vide donne nil
-// — le template garde ses 3 messages historiques (jamais cassé). Le plafond
-// (5) et la longueur (80) sont re-vérifiés au décodage (défense en
-// profondeur, même discipline que portalSlidesList).
-func portalTickerList(t model.Tenant) []string {
-	if t.PortalTicker == "" {
+// portalTickerList — décode les messages du bandeau animé sous le logo
+// (N°138, effet Typed.js du login.html) depuis la string JSON persistée :
+// un JSON invalide ou un champ vide donne nil — le template garde ses 3
+// messages historiques (jamais cassé). Le plafond (5) et la longueur (80)
+// sont re-vérifiés au décodage (défense en profondeur).
+func portalTickerList(s string) []string {
+	if s == "" {
 		return nil
 	}
 	var raw []string
-	if json.Unmarshal([]byte(t.PortalTicker), &raw) != nil {
+	if json.Unmarshal([]byte(s), &raw) != nil {
 		return nil
 	}
 	out := make([]string, 0, len(raw))
@@ -236,22 +359,21 @@ func portalTickerList(t model.Tenant) []string {
 	return out
 }
 
-// portalWhatsappInfo — décode le numéro WhatsApp SUPPORT du tenant (N°139,
-// lien du footer login/logout/error). Persisté en JSON
-// (model.Tenant.PortalWhatsapp) : un JSON invalide, un champ vide ou un
-// numéro mal formé donnent nil — le portail garde le numéro du support
-// MikCloud (repli historique, jamais cassé). Le format est revalidé au
-// décodage via hotpage.WhatsappNumber (défense en profondeur, même
-// discipline que portalTickerList).
-func portalWhatsappInfo(t model.Tenant) *hotpage.PortalWhatsapp {
-	if t.PortalWhatsapp == "" {
+// portalWhatsappInfo — décode le numéro WhatsApp SUPPORT (N°139, lien du
+// footer login/logout/error) depuis la string JSON persistée : un JSON
+// invalide, un champ vide ou un numéro mal formé donnent nil — le portail
+// garde le numéro du support MikCloud (repli historique, jamais cassé). Le
+// format est revalidé au décodage via hotpage.WhatsappNumber (défense en
+// profondeur).
+func portalWhatsappInfo(s string) *hotpage.PortalWhatsapp {
+	if s == "" {
 		return nil
 	}
 	var raw struct {
 		Number string `json:"number"`
 		Label  string `json:"label"`
 	}
-	if json.Unmarshal([]byte(t.PortalWhatsapp), &raw) != nil {
+	if json.Unmarshal([]byte(s), &raw) != nil {
 		return nil
 	}
 	d := hotpage.WhatsappNumber(raw.Number)
@@ -263,9 +385,11 @@ func portalWhatsappInfo(t model.Tenant) *hotpage.PortalWhatsapp {
 
 // buildPortalConfig — construit le PortalConfig pour le compte propriétaire
 // du routeur, à partir du store. À appeler SOUS VERROU (lit db.SettingsByAccount,
-// db.WifiSites, db.JoinLinks, db.Profiles).
+// db.Sites, db.WifiSites, db.JoinLinks, db.Profiles).
 //
-// Raisonnement sur la résolution des entités liées au routeur :
+// N°182 — le branding passe par resolvePortalBranding (chaîne ROUTEUR →
+// SITE → COMPTE, champ par champ). Les résolutions LIÉES AU ROUTEUR sont
+// inchangées :
 //   - WifiSlug : on cherche le site WiFi jetable du compte qui est LIÉ à ce
 //     routeur (WifiSite.RouterID == router.ID) ET actif. Si plusieurs, on prend
 //     le 1er (ordre d'itération du store). Si aucun, on laisse WifiSlug vide
@@ -277,28 +401,30 @@ func portalWhatsappInfo(t model.Tenant) *hotpage.PortalWhatsapp {
 //     laisse vide — la page cachera le bloc inscription.
 //   - Offers : on prend les profils du compte à prix > 0 (max 8, ordre
 //     d'itération), on construit le waveUrl pré-construit via le lien marchand
-//     Wave du tenant (si configuré).
+//     Wave EFFECTIF (N°182 : la surcharge site/routeur prime sur le compte).
 func buildPortalConfig(db *model.DB, router *model.Router, r *http.Request) hotpage.PortalConfig {
 	acc := router.AccountID
 	settings := ensureSettings(db, acc) // défauts si absent
+	b := resolvePortalBranding(db, acc, router)
 	cfg := hotpage.PortalConfig{
-		TenantName: settings.Tenant.Name,
+		TenantName: b.DisplayName,
 		APIBase:    agentBaseURL(r),
-		WaveLink:   settings.Tenant.WaveLink,
-		LogoURL:    settings.Tenant.LogoURL,
-		BannerURL:  settings.Tenant.BannerURL,
+		WaveLink:   b.WaveLink,
+		LogoURL:    b.LogoURL,
+		BannerURL:  b.BannerURL,
 		// N°46 — l'affichage du bouton « S'inscrire » est piloté par le
 		// réglage console (défaut effectif ON pour les comptes existants).
 		JoinEnabled: settings.Tenant.JoinButtonEnabled(),
 		// N°65 — rétention du journal du compte (note de confidentialité).
 		LogRetentionDays: settings.Tenant.LogRetentionDaysEffective(),
 	}
-	cfg.Style, cfg.Welcome, cfg.Promos, cfg.Socials = portalHospitality(settings.Tenant) // N°55
-	cfg.Slides = portalSlidesList(settings.Tenant)                                       // N°136 — carrousel commercial
-	cfg.PortalKey = settings.Tenant.PortalKey                                            // N°56 — analytics pré-auth
-	cfg.Services = portalServicesList(settings.Tenant)                                   // N°137 — section « Nos Services »
-	cfg.Ticker = portalTickerList(settings.Tenant)                                       // N°138 — bandeau animé sous le logo
-	cfg.Whatsapp = portalWhatsappInfo(settings.Tenant)                                   // N°139 — support WhatsApp du footer
+	cfg.Style, cfg.Welcome = b.Style, b.Welcome
+	cfg.Promos, cfg.Socials = portalHospitalityLists(b.PromosJSON, b.SocialsJSON) // N°55
+	cfg.Slides = portalSlidesList(b.SlidesJSON)                                   // N°136 — carrousel commercial
+	cfg.PortalKey = settings.Tenant.PortalKey                                     // N°56 — analytics pré-auth
+	cfg.Services = portalServicesList(b.ServicesJSON)                             // N°137 — section « Nos Services »
+	cfg.Ticker = portalTickerList(b.TickerJSON)                                   // N°138 — bandeau animé sous le logo
+	cfg.Whatsapp = portalWhatsappInfo(b.WhatsappJSON)                             // N°139 — support WhatsApp du footer
 	// WifiSlug — 1er site WiFi actif lié à ce routeur.
 	for i := range db.WifiSites {
 		s := &db.WifiSites[i]
@@ -350,10 +476,10 @@ func buildPortalConfig(db *model.DB, router *model.Router, r *http.Request) hotp
 			DataQuotaMb: p.DataQuotaMb,
 		}
 		// WaveURL — deep-link Wave pré-construit : {waveLink}/amount/{priceFcfa}/
-		// (cf. handlers_subscription.go wavePayLink). Vide si le tenant n'a pas
-		// configuré son lien marchand Wave.
-		if settings.Tenant.WaveLink != "" {
-			offer.WaveURL = strings.TrimRight(settings.Tenant.WaveLink, "/") + "/amount/" + strconv.Itoa(p.Price) + "/"
+		// (cf. handlers_subscription.go wavePayLink). N°182 : waveLink EFFECTIF
+		// (surcharge site/routeur comprise). Vide si aucun lien marchand.
+		if b.WaveLink != "" {
+			offer.WaveURL = strings.TrimRight(b.WaveLink, "/") + "/amount/" + strconv.Itoa(p.Price) + "/"
 		}
 		cfg.Offers = append(cfg.Offers, offer)
 	}
@@ -389,7 +515,8 @@ func joinLinkActive(l *model.JoinLink) bool {
 // pause que si le routeur est introuvable (sinon il bascule sur
 // buildPortalConfig, qui résout le 1er site actif du routeur).
 // Le joinURL est résolu via le routeur lié au site (1er JoinLink actif du
-// routeur).
+// routeur). N°182 : le branding passe par la même chaîne ROUTEUR → SITE →
+// COMPTE (routeur nil = branding du compte).
 //
 // Note : le PortalConfig renvoyé ne contient PAS de secret (pas de token
 // agent, pas de mots de passe). C'est la même structure que celle inlinée
@@ -397,12 +524,13 @@ func joinLinkActive(l *model.JoinLink) bool {
 func buildPortalConfigForSite(db *model.DB, site *model.WifiSite, router *model.Router, r *http.Request) hotpage.PortalConfig {
 	acc := site.AccountID
 	settings := ensureSettings(db, acc)
+	b := resolvePortalBranding(db, acc, router)
 	cfg := hotpage.PortalConfig{
-		TenantName: settings.Tenant.Name,
+		TenantName: b.DisplayName,
 		APIBase:    agentBaseURL(r),
-		WaveLink:   settings.Tenant.WaveLink,
-		LogoURL:    settings.Tenant.LogoURL,
-		BannerURL:  settings.Tenant.BannerURL,
+		WaveLink:   b.WaveLink,
+		LogoURL:    b.LogoURL,
+		BannerURL:  b.BannerURL,
 		// N°46 — même pilotage que le fallback inliné : le fetch live
 		// prime sur le fallback, le réglage s'applique donc sans
 		// re-déploiement sur les portails des routeurs déjà déployés.
@@ -415,12 +543,13 @@ func buildPortalConfigForSite(db *model.DB, site *model.WifiSite, router *model.
 		WifiSlug:       site.Slug,
 		Active:         site.Active, // N°51 — état réel (peut être en pause)
 	}
-	cfg.Style, cfg.Welcome, cfg.Promos, cfg.Socials = portalHospitality(settings.Tenant) // N°55
-	cfg.Slides = portalSlidesList(settings.Tenant)                                       // N°136 — carrousel commercial
-	cfg.PortalKey = settings.Tenant.PortalKey                                            // N°56 — analytics pré-auth
-	cfg.Services = portalServicesList(settings.Tenant)                                   // N°137 — section « Nos Services »
-	cfg.Ticker = portalTickerList(settings.Tenant)                                       // N°138 — bandeau animé sous le logo
-	cfg.Whatsapp = portalWhatsappInfo(settings.Tenant)                                   // N°139 — support WhatsApp du footer
+	cfg.Style, cfg.Welcome = b.Style, b.Welcome
+	cfg.Promos, cfg.Socials = portalHospitalityLists(b.PromosJSON, b.SocialsJSON) // N°55
+	cfg.Slides = portalSlidesList(b.SlidesJSON)                                   // N°136 — carrousel commercial
+	cfg.PortalKey = settings.Tenant.PortalKey                                     // N°56 — analytics pré-auth
+	cfg.Services = portalServicesList(b.ServicesJSON)                             // N°137 — section « Nos Services »
+	cfg.Ticker = portalTickerList(b.TickerJSON)                                   // N°138 — bandeau animé sous le logo
+	cfg.Whatsapp = portalWhatsappInfo(b.WhatsappJSON)                             // N°139 — support WhatsApp du footer
 	if origin := publicFrontendURL(r); origin != "" {
 		cfg.WifiURL = origin + "/wifi/" + site.Slug
 	}
@@ -456,8 +585,9 @@ func buildPortalConfigForSite(db *model.DB, site *model.WifiSite, router *model.
 			ValidityMin: p.ValidityMinutes(),
 			DataQuotaMb: p.DataQuotaMb,
 		}
-		if settings.Tenant.WaveLink != "" {
-			offer.WaveURL = strings.TrimRight(settings.Tenant.WaveLink, "/") + "/amount/" + strconv.Itoa(p.Price) + "/"
+		// N°182 — waveLink EFFECTIF (surcharge site/routeur comprise).
+		if b.WaveLink != "" {
+			offer.WaveURL = strings.TrimRight(b.WaveLink, "/") + "/amount/" + strconv.Itoa(p.Price) + "/"
 		}
 		cfg.Offers = append(cfg.Offers, offer)
 	}
@@ -476,7 +606,7 @@ func publicFrontendURL(r *http.Request) string {
 	if v := strings.TrimSpace(getEnv("APP_PUBLIC_URL")); v != "" {
 		return strings.TrimRight(v, "/")
 	}
-	// En l'absence d'APP_PUBLIC_URL, on ne peut pas deviner l'origine du
+	// En l'absence de APP_PUBLIC_URL, on ne peut pas deviner l'origine du
 	// frontend (Render ≠ Vercel). On retourne "" : la page devra utiliser
 	// l'APIBase (backend Render) pour construire les liens relatifs /wifi/{slug}
 	// et /join/{token} — le backend Render redirige ou proxie vers le frontend.

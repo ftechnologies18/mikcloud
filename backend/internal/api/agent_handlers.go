@@ -55,6 +55,15 @@ func (a *API) registerAgentRoutes(mux *http.ServeMux) {
 	// N°35-d — portail captif : re-déploiement forcé + aperçu HTML (console).
 	mux.HandleFunc("POST /api/routers/{id}/redeploy-portal", a.handleRouterRedeployPortal)
 	mux.HandleFunc("GET /api/routers/{id}/portal-preview", a.handleRouterPortalPreview)
+	// N°182 — sites physiques + personnalisation du portail par site et par
+	// routeur (chaîne ROUTEUR → SITE → COMPTE). Gestion niveau manager (2),
+	// comme le reste du parc routeurs.
+	mux.HandleFunc("GET /api/sites", a.handleSitesList)
+	mux.HandleFunc("POST /api/sites", a.requireRole(2, a.handleSiteCreate))
+	mux.HandleFunc("PUT /api/sites/{id}", a.requireRole(2, a.handleSiteUpdate))
+	mux.HandleFunc("DELETE /api/sites/{id}", a.requireRole(2, a.handleSiteDelete))
+	mux.HandleFunc("PUT /api/routers/{id}/site", a.requireRole(2, a.handleRouterSiteAssign))
+	mux.HandleFunc("PUT /api/routers/{id}/portal", a.requireRole(2, a.handleRouterPortalPut))
 	// N°49 — walled-garden : réparation forcée (console gérant).
 	mux.HandleFunc("POST /api/routers/{id}/repair-walled-garden", a.handleRouterRepairWalledGarden)
 	// N°80 — SafeWiFi : niveau de protection DNS du WiFi public (console).

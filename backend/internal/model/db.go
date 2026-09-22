@@ -76,9 +76,13 @@ type DB struct {
 	// par compte se calcule à la lecture : audience × expiration).
 	// Cf. announcement.go.
 	Announcements []Announcement `json:"announcements"`
-	Tenant        Tenant         `json:"tenant"`   // legacy mono-tenant
-	Settings      Settings       `json:"settings"` // legacy mono-tenant
-	LastTick      time.Time      `json:"lastTick"`
+	// N°182 — sites physiques du compte : regroupement de routeurs portant
+	// une surcharge de branding du portail captif (chaîne ROUTEUR → SITE →
+	// COMPTE). Cf. sites.go.
+	Sites    []Site    `json:"sites"`
+	Tenant   Tenant    `json:"tenant"`   // legacy mono-tenant
+	Settings Settings  `json:"settings"` // legacy mono-tenant
+	LastTick time.Time `json:"lastTick"`
 	// LastSweep — N°64 — horodatage du dernier BALAYAGE PÉRIODIQUE de
 	// rétention (goroutine main.go, 1 h) : purge des journaux utilisateurs
 	// à 90 j + expirations/nettoyages, indépendamment des visites console

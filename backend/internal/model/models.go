@@ -336,6 +336,20 @@ type Router struct {
 	// auto-réparation périodique (qosRefresh) ET marqueur de retrait
 	// (non vide + désactivé = une file à retirer).
 	QoSAppliedAt string `json:"qosAppliedAt,omitempty"`
+	// N°182 — SITE PHYSIQUE : regroupement de routeurs du compte (hôtel
+	// multi-bâtiments, chaîne de cybercafés). Vide = routeur hors site : son
+	// portail est celui du compte (statu quo historique). Un site peut porter
+	// une surcharge de branding (Site.PortalOverride) qui s'applique à TOUS
+	// ses routeurs ; le routeur peut à son tour la surcharger individuellement
+	// (champ ci-dessous) — chaîne de résolution ROUTEUR → SITE → COMPTE,
+	// champ par champ, vide = hérite du niveau supérieur.
+	SiteID string `json:"siteId,omitempty"`
+	// N°182 — surcharge de branding du portail CAPTIF propre à CE routeur
+	// (JSON canonique model.PortalOverride). Vide = le routeur sert le
+	// portail de son site (si assigné) sinon celui du compte. Le changement
+	// de cette valeur change la signature hotspot_files → re-déploiement
+	// automatique au check-in suivant (≤ 45 s), comme tout branding.
+	PortalOverride string `json:"portalOverride,omitempty"`
 }
 
 // SchedulerSecEffective — pas de scheduler connu du routeur (N°75). 0 =

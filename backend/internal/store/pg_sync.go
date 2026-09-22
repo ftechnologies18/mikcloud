@@ -166,6 +166,10 @@ func syncSteps(db *model.DB) []syncStep {
 		{announcementSpec.table, func(hashes, pending map[string]map[string]uint64) tableApplier {
 			return diffTable(hashes, pending, announcementSpec, db.Announcements)
 		}},
+		// N°182 — sites physiques (regroupement de routeurs + surcharge portail).
+		{siteSpec.table, func(hashes, pending map[string]map[string]uint64) tableApplier {
+			return diffTable(hashes, pending, siteSpec, db.Sites)
+		}},
 		{transactionSpec.table, func(hashes, pending map[string]map[string]uint64) tableApplier {
 			return diffTable(hashes, pending, transactionSpec, db.Transactions)
 		}},
@@ -707,6 +711,7 @@ func (p *PG) rebuildHashes(db *model.DB) {
 		chatConversationSpec.table: hashRows(db.ChatConversations, chatConversationSpec),
 		chatMessageSpec.table:      hashRows(db.ChatMessages, chatMessageSpec),
 		announcementSpec.table:     hashRows(db.Announcements, announcementSpec),
+		siteSpec.table:             hashRows(db.Sites, siteSpec),
 		deviceSpec.table:           hashRows(db.Devices, deviceSpec),
 	}
 	notifRows := make([]model.NotificationSettings, 0, len(db.NotifSettings))

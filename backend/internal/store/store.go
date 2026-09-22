@@ -847,6 +847,10 @@ func (s *Store) ensureSlices() {
 	if s.db.Routers == nil {
 		s.db.Routers = []model.Router{}
 	}
+	// N°182 — sites physiques (slice toujours non nil, comme les autres).
+	if s.db.Sites == nil {
+		s.db.Sites = []model.Site{}
+	}
 	if s.db.Profiles == nil {
 		s.db.Profiles = []model.Profile{}
 	}

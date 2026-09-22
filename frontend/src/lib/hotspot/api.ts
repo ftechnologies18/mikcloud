@@ -35,6 +35,7 @@ import type {
   PurgeResponse,
   PlatformTeamMember,
   RegisterPayload,
+  SiteResponse,
   SubscriptionInfo,
   SubscriptionUpdatePayload,
 } from "./types";
@@ -709,6 +710,77 @@ export async function repairRouterWalledGarden(routerId: string): Promise<Repair
     `/api/routers/${encodeURIComponent(routerId)}/repair-walled-garden`,
     { method: "POST" },
   );
+}
+
+/* — N°182 : sites physiques + personnalisation du portail par site/routeur — */
+
+/** Corps de création/édition d'un site (override remplacé en entier quand
+ * fourni — la console renvoie l'état complet du formulaire). */
+export interface SiteUpsertBody {
+  name?: string;
+  description?: string;
+  location?: string;
+  portalOverride?: Record<string, unknown>;
+}
+
+/** Réponse générique des mutations sites (suppression : nombre détaché). */
+export interface SitesMutationResponse {
+  message: string;
+  detached?: number;
+}
+
+/** fetchSites — N°182 : liste les sites physiques du compte avec compteurs
+ * de routeurs assignés. */
+export async function fetchSites(): Promise<SiteResponse[]> {
+  return api<SiteResponse[]>("/api/sites");
+}
+
+/** createSite — N°182 : crée un site (regroupement de routeurs + identité
+ * de portail optionnelle). */
+export async function createSite(body: SiteUpsertBody): Promise<SiteResponse> {
+  return api<SiteResponse>("/api/sites", { method: "POST", body });
+}
+
+/** updateSite — N°182 : édite un site (champs descriptifs partiels ;
+ * override remplacé en entier quand fourni). */
+export async function updateSite(siteId: string, body: SiteUpsertBody): Promise<SiteResponse> {
+  return api<SiteResponse>(`/api/sites/${encodeURIComponent(siteId)}`, {
+    method: "PUT",
+    body,
+  });
+}
+
+/** deleteSite — N°182 : supprime un site ; les routeurs encore assignés
+ * sont détachés automatiquement (portail du compte réappliqué, re-déploiement
+ * ≤ 45 s). La réponse porte le nombre détaché. */
+export async function deleteSite(siteId: string): Promise<SitesMutationResponse> {
+  return api<SitesMutationResponse>(`/api/sites/${encodeURIComponent(siteId)}`, {
+    method: "DELETE",
+  });
+}
+
+/** assignRouterSite — N°182 : assigne un routeur à un site (siteId vide =
+ * détachement). La signature de déploiement change → re-déploiement auto. */
+export async function assignRouterSite(
+  routerId: string,
+  siteId: string,
+): Promise<{ message: string; siteId: string }> {
+  return api(`/api/routers/${encodeURIComponent(routerId)}/site`, {
+    method: "PUT",
+    body: { siteId },
+  });
+}
+
+/** updateRouterPortal — N°182 : surcharge INDIVIDUELLE du portail d'un
+ * routeur (corps complet ; tous champs vides = hérite site puis compte). */
+export async function updateRouterPortal(
+  routerId: string,
+  portalOverride: Record<string, unknown>,
+): Promise<{ message: string; portalOverride: string }> {
+  return api(`/api/routers/${encodeURIComponent(routerId)}/portal`, {
+    method: "PUT",
+    body: portalOverride,
+  });
 }
 
 /* — N°80 : SafeWiFi (protection DNS du WiFi public) — */

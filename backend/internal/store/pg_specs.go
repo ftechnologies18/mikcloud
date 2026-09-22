@@ -96,7 +96,8 @@ var routerSpec = entitySpec[model.Router]{
 		"pool_cap", "pool_hosts", "pool_ranges", "pool_doctor_at",
 		"pool_auto", "pool_auto_pending", "pause_sig",
 		"wan_iface", "line_down_bps", "line_up_bps",
-		"qos_enabled", "qos_target", "qos_max_up_bps", "qos_max_down_bps", "qos_sig", "qos_applied_at"},
+		"qos_enabled", "qos_target", "qos_max_up_bps", "qos_max_down_bps", "qos_sig", "qos_applied_at",
+		"site_id", "portal_override"},
 	idOf: func(x *model.Router) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Router, error) {
 		var x model.Router
@@ -110,7 +111,8 @@ var routerSpec = entitySpec[model.Router]{
 			&x.AntiVpnLevel, &x.AntiVpnSig, &x.AntiVpnAppliedAt,
 			&x.PoolCap, &x.PoolHosts, &x.PoolRanges, &x.PoolDoctorAt, &x.PoolAuto, &x.PoolAutoPending, &x.PauseSig,
 			&x.WanIface, &x.LineDownBps, &x.LineUpBps,
-			&x.QoSEnabled, &x.QoSTarget, &x.QoSMaxUpBps, &x.QoSMaxDownBps, &x.QoSSig, &x.QoSAppliedAt)
+			&x.QoSEnabled, &x.QoSTarget, &x.QoSMaxUpBps, &x.QoSMaxDownBps, &x.QoSSig, &x.QoSAppliedAt,
+			&x.SiteID, &x.PortalOverride)
 		// Sécurité P0 #6 — le mot de passe routeur est stocké chiffré
 		// (AES-256-GCM) : lecture = déchiffrement (passthrough si valeur
 		// antérieure au correctif, migration assurée par
@@ -133,9 +135,29 @@ var routerSpec = entitySpec[model.Router]{
 			x.AntiVpnLevel, x.AntiVpnSig, x.AntiVpnAppliedAt,
 			x.PoolCap, x.PoolHosts, x.PoolRanges, x.PoolDoctorAt, x.PoolAuto, x.PoolAutoPending, x.PauseSig,
 			x.WanIface, x.LineDownBps, x.LineUpBps,
-			x.QoSEnabled, x.QoSTarget, x.QoSMaxUpBps, x.QoSMaxDownBps, x.QoSSig, x.QoSAppliedAt}
+			x.QoSEnabled, x.QoSTarget, x.QoSMaxUpBps, x.QoSMaxDownBps, x.QoSSig, x.QoSAppliedAt,
+			x.SiteID, x.PortalOverride}
 	},
 	hashOf: hashEntity[model.Router],
+}
+
+// siteSpec — N°182 : sites physiques (regroupement de routeurs + surcharge
+// de branding du portail captif). La surcharge vit dans portal_override en
+// JSON canonique — une seule colonne, aucun champ aplati à maintenir en
+// parallèle du model.PortalOverride.
+var siteSpec = entitySpec[model.Site]{
+	table: "sites",
+	cols:  []string{"id", "account_id", "name", "description", "location", "portal_override", "created_at", "updated_at"},
+	idOf:  func(x *model.Site) string { return x.ID },
+	scan: func(r *sql.Rows) (model.Site, error) {
+		var x model.Site
+		err := r.Scan(&x.ID, &x.AccountID, &x.Name, &x.Description, &x.Location, &x.PortalOverride, &x.CreatedAt, &x.UpdatedAt)
+		return x, err
+	},
+	args: func(x *model.Site) []any {
+		return []any{x.ID, x.AccountID, x.Name, x.Description, x.Location, x.PortalOverride, x.CreatedAt, x.UpdatedAt}
+	},
+	hashOf: hashEntity[model.Site],
 }
 
 // migrateSealRouterPasswords — passe de démarrage (idempotente) : chiffre

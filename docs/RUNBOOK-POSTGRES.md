@@ -276,6 +276,7 @@ ont eu lieu depuis la dernière mesure.
 |---|---|---|---|---|---|---|---|
 | 21/09 22:30 (J0, migration 20:16Z) | 29 Mo (8,3 % seuil) | 19 151 | 1,06 Mo (proj. ~33 Mo/31 j) | 6,0 Mo | 892/0/0, synchro à la seconde | 1 200 logs, 0 échec synchro, agents 2-3 ms | ✓ conformes |
 | 21/09 23:30 (J0+nuit, 1re mesure outillée) | 29,67 Mo (8,5 %) | 19 085 | 1,46 Mo (proj. 45 Mo/31 j) | 11,28 Mo | 1 693/0/0, âge 2 s, degraded=null | 1 000 logs/2 h : 0 échec synchro, 0 error, 847 req /agent/* | ✓ 8 OK · 0 échec |
+| 22/09 00:54 (J0+nuit, déploy N°181 — carte Santé persistante) | 30,12 Mo (8,6 %) | 19 053 | 0,02 Mo (compteur reset minuit UTC — projection sans objet à J0+) | 11,28 Mo | 185/0/0 **cumulatifs** (N°181 : boot n°2, historique repris de la base, `restored=true`) · âge 3 s, degraded=null | 1 000 logs/2 h : 0 échec synchro, 0 error, 934 req /agent/* | ✓ 8 OK · 0 échec |
 
 Cadence recommandée : une mesure par mesure de `surveille.sh`, à
 journaler ici — puis décision au terme du mois (ou dès qu'un seuil

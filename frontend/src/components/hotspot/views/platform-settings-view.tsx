@@ -160,6 +160,16 @@ interface SyncStatus {
     checkpointAt?: string;
     restored: boolean;
   } | null;
+  /** N°183 — sonde du canal d'images Cloudflare R2 (slides/bannières des
+   * portails servies via /api/media). tokenStatus : valid | invalid |
+   * unknown, ou vide quand le canal n'est pas configuré. Absent sur un
+   * backend non redéployé (bloc purement additif). */
+  media?: {
+    configured: boolean;
+    bucket?: string;
+    tokenStatus: "valid" | "invalid" | "unknown" | "";
+    checkedAt?: string;
+  } | null;
   tables: { table: string; rows: number; mirrored?: number }[];
   agents: {
     routers: number;
@@ -562,6 +572,8 @@ function SyncStatusCard() {
   const agents = data?.agents ?? null;
   // N°181 — carte Santé persistante : contexte de démarrage + point de contrôle.
   const history = data?.history ?? null;
+  // N°183 — sonde R2 : jeton du canal d'images des portails.
+  const media = data?.media ?? null;
   // N°72 — volumétrie d'une catégorie de bande passante (« — » si absente).
   const catBytes = (name: string): string => {
     const cat = data?.bandwidth?.categories.find((c) => c.name === name);
@@ -614,6 +626,11 @@ function SyncStatusCard() {
                   {tf("platformSettings.syncHealth.conflictBadge", {
                     count: agents.routersConflict,
                   })}
+                </Badge>
+              )}
+              {media?.tokenStatus === "invalid" && (
+                <Badge variant="destructive">
+                  {t("platformSettings.syncHealth.mediaBadge")}
                 </Badge>
               )}
             </div>
@@ -732,6 +749,36 @@ function SyncStatusCard() {
                       mode: neon.keepAliveMode,
                     })}
                   />
+                )}
+              </div>
+            )}
+
+            {media && (
+              <div className="grid gap-2">
+                <p className="text-sm font-medium">
+                  {t("platformSettings.syncHealth.mediaTitle")}
+                </p>
+                <StatRow
+                  label={t("platformSettings.syncHealth.mediaChannel")}
+                  value={
+                    !media.configured
+                      ? t("platformSettings.syncHealth.mediaUnconfigured")
+                      : media.tokenStatus === "valid"
+                        ? t("platformSettings.syncHealth.mediaValid")
+                        : media.tokenStatus === "invalid"
+                          ? t("platformSettings.syncHealth.mediaInvalid")
+                          : t("platformSettings.syncHealth.mediaUnknown")
+                  }
+                />
+                {media.configured && (
+                  <p className="text-xs text-muted-foreground">
+                    {tf("platformSettings.syncHealth.mediaHint", {
+                      bucket: media.bucket ?? "—",
+                      at: media.checkedAt
+                        ? timeAgo(media.checkedAt, lang)
+                        : "—",
+                    })}
+                  </p>
                 )}
               </div>
             )}

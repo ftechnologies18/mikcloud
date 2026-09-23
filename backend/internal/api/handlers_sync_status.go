@@ -9,7 +9,10 @@
 //     commandes (en attente / envoyées / zombies > staleSentLimit), conflits
 //     d'identité S6 ;
 //   - N°181 : bloc « history » — la carte est PERSISTANTE (compteurs cumulés
-//     repris de la table health_checkpoint au boot, démarrages comptés).
+//     repris de la table health_checkpoint au boot, démarrages comptés) ;
+//   - N°183 : bloc « media » — sonde du canal d'images Cloudflare R2 (jeton
+//     configuré/valide/invalide) : pendant l'incident de septembre le 502
+//     des slides n'était visible NULLE part dans la console.
 //
 // Aucune écriture : l'endpoint ne peut pas perturber le service qu'il observe.
 // Les compteurs de synchro vivent dans le package store (syncstats.go) —
@@ -113,6 +116,7 @@ func (a *API) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 		"neon":      h.Neon,                              // contact + keep-alive — null en mode JSON
 		"degraded":  h.Degraded,                          // N°164 — boot résilient : mode dégradé / dernière récupération
 		"history":   h.History,                           // N°181 — carte Santé persistante : démarrages + dernier point de contrôle
+		"media":     r2MediaHealthSnapshot(),             // N°183 — sonde R2 : jeton du canal d'images des portails (cache 5 min)
 		"tables":    h.Tables,                            // lignes mémoire vs répliquées par table
 		"agents":    agents,                              // fraîcheur check-ins + file de commandes
 		"bandwidth": a.egress.snapshot(time.Now().UTC()), // N°72 — octets sortis du jour, par catégorie (borne basse : corps uniquement)

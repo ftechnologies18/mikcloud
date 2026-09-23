@@ -169,8 +169,19 @@ func (a *API) handleMediaUpload(w http.ResponseWriter, r *http.Request) {
 // ne re-télécharge jamais une image déjà vue.
 func (a *API) handleMediaGet(w http.ResponseWriter, r *http.Request) {
 	mc := mediaConfig()
+	if mc == nil {
+		// N°183 — « pas configuré » n'est PAS « introuvable » : le 404
+		// générique d'avant rendait l'absence de configuration impossible
+		// à distinguer d'une vraie image manquante dans les logs. Le code
+		// media_unconfigured (miroir du 503 d'upload) rend l'état
+		// diagnostiquable ; la sonde de la carte Santé (media_health.go)
+		// l'affiche en continu.
+		writeErrCode(w, http.StatusServiceUnavailable, "media_unconfigured",
+			"Stockage d'images non configuré (R2)", nil)
+		return
+	}
 	key := r.PathValue("key")
-	if mc == nil || !mediaKeyRe.MatchString(key) {
+	if !mediaKeyRe.MatchString(key) {
 		writeErr(w, http.StatusNotFound, "Image introuvable")
 		return
 	}

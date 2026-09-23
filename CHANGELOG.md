@@ -5,6 +5,88 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-23 — N°183 — Observabilité du canal d'images Cloudflare R2 : sonde « Stockage d'images » dans la carte Santé, 503 media_unconfigured distinct du 404, rotation du jeton clé en main (ops/media/r2-rotate-token.sh)
+
+### Contexte
+L'opérateur signale que « depuis la migration Supabase » les images et
+slides ne s'affichent plus sur certains portails. Diagnostic mesuré : le
+portail n'héberge PAS ses images — les slides/bannières téléversées vivent
+dans un compartiment **Cloudflare R2** et sont re-jouées par le backend
+(`GET /api/media/{key}`, N°53) via l'API REST Cloudflare. Le jeton
+`R2_API_TOKEN` de Render est **mort** : Cloudflare le refuse
+(verify → Invalid API Token ; format sain `cfat_…` 53 car. — pas de
+mangling). Chronologie établie par les logs Render : premiers
+`[media] get … : r2 get: statut 401` le **20/09 à 23:44:59Z**, soit ~20 h
+AVANT la bascule Supabase (21/09 20:16Z) — la migration est hors de cause,
+l'expiration du jeton a coïncidé avec la soirée de l'incident de quota
+Neon. Périmètre réel mesuré en base : UN compte (les 3 slides du carrousel
+de son `portal_slides`), les autres comptes servant les images génériques
+embarquées — d'où le « certains portails ». Pendant 3 jours, AUCUN signal
+n'existait côté console : le portail absorbe l'échec côté client (onerror
+retire l'image discrètement) et le 502 du proxy n'était visible qu'en
+corrélant les logs.
+
+### Produit — backend
+- **Sonde R2** (`media_health.go` NOUVEAU) : verdict de l'API Cloudflare
+  `/user/tokens/verify` exposé dans `GET /api/admin/sync-status` (bloc
+  `media`, purement additif — surveille.sh N°179 et les consommateurs
+  existants ignorent les blocs inconnus) : `configured` (variables
+  R2 posées), `tokenStatus` (valid | invalid | unknown), `bucket`,
+  `checkedAt`. Cache mémoire 5 min (au plus un appel Cloudflare par
+  fenêtre, même avec la console qui poll toutes les 15 s), timeout borné
+  4 s, aucune écriture, verrou jamais tenu pendant le réseau — la sonde
+  ne peut pas perturber le canal qu'elle observe. Appel injectable en
+  tests (`r2VerifyCall`).
+- **`handleMediaGet`** : « pas configuré » répond désormais **503
+  media_unconfigured** (miroir du 503 d'upload) au lieu d'un 404
+  « Image introuvable » qui rendait l'état indistinguable d'une vraie
+  image manquante dans les logs ; le 404 reste pour les clés hors contrat
+  (`mediaKeyRe`).
+
+### Produit — frontend
+- Carte Santé (Paramètres → Maintenance) : NOUVELLE section « Stockage
+  d'images (portail) » — Canal Cloudflare R2 : **Opérationnel** /
+  **Jeton invalide ou expiré — rotation nécessaire (RUNBOOK-SECRETS
+  §2.7)** / Non configuré / Vérification impossible, avec compartiment et
+  fraîcheur du verdict en note ; badge destructeur « Images du portail
+  HS » en tête de carte quand le jeton est refusé. Bloc additif : absent
+  sur un backend non redéployé, la carte reste conforme. i18n FR/EN
+  (8 clés nouvelles).
+
+### Ops
+- **`ops/media/r2-rotate-token.sh`** NOUVEAU (dry-run par défaut, `--exec`
+  pour appliquer) : vérifie le NOUVEAU jeton auprès de Cloudflare AVANT
+  toute écriture, contrôle la permission R2 (listage des compartiments du
+  compte lu dans l'env Render), PUT env-vars en liste complète
+  (discipline N°172) avec garde anti-perte étendue aux VALEURS
+  (une variable illisible en GET serait vidée par le PUT — refus net),
+  déclenche le redéploiement (l'env ne s'applique qu'au boot), suit le
+  déploiement jusqu'au live et fume-teste une URL média témoin. Testé
+  en réel : la garde refuse un jeton invalide sans rien toucher.
+- **RUNBOOK-SECRETS.md** : le jeton R2 entre à l'inventaire (§0) avec sa
+  règle de rotation (SANS expiration à la création, ou rappel
+  calendaire), les variables R2 sont listées côté Render (§1) et la
+  procédure §2.7 complète est documentée (symptômes, création du jeton,
+  rotation, vérification finale).
+
+### Fidélité
+- Aucun changement du servage existant : avec un jeton valide, upload et
+  lecture se comportent à l'identique ; le 503 nouveau ne survient que
+  dans l'état « non configuré » qui répondait 404. La sonde est read-only
+  et additive ; sync-status garde tous ses blocs existants au byte près.
+- Le jeton mort n'est PAS remplacé ici : aucun identifiant Cloudflare
+  n'est disponible côté machine — l'opérateur crée le jeton (étapes
+  documentées) et la rotation s'exécute par le script. La sonde fera
+  alors passer la carte Santé du rouge (« Jeton invalide ») au vert
+  (« Opérationnel ») — c'est la vérification de bout en bout.
+
+### Vérifié
+- gofmt 0 fichier, go vet OK, build OK ; tests ciblés N°183 verts
+  (verdicts valid/invalid/unknown, non-configuré sans appel réseau, cache
+  5 min : 1 appel pour 5 lectures, bloc media de sync-status, 503 vs 404
+  sans aucun fetch réseau) ; familles sync-status/egress existantes
+  rejouées vertes ; ESLint 0, typecheck tsgo 0, build Next.js OK.
+
 ## 2026-09-22 — N°182 — Sites physiques et personnalisation du portail captif par ROUTEUR → SITE → COMPTE : trois régimes au choix du gérant (unifié, par site, individuel)
 
 ### Contexte

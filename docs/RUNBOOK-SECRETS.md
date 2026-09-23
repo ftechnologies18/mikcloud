@@ -17,6 +17,7 @@
 | Vercel token (`vcp_…`) | CLI/CI Vercel | Coffre | 90 jours |
 | `BACKUP_KEY` | Chiffrement des sauvegardes mikbackup | Secret GitHub `BACKUP_KEY` + coffre de l'opérateur | 12 mois (la rotation impose un nouveau cycle de sauvegarde complet) |
 | Webhook GeniusPay HMAC | Anti-falsification webhooks | Variable Render | Sur incident |
+| Jeton API Cloudflare R2 (`R2_API_TOKEN`, format `cfat_…`) | Upload ET lecture des images des portails (slides, bannières) via l'API REST R2 — servies par le backend `/api/media` | Variables Render `R2_ACCOUNT_ID` + `R2_API_TOKEN` + `R2_BUCKET` + coffre | **À la création : SANS expiration, ou rappel calendaire AVANT l'échéance** — un jeton expiré tue les images des portails SANS alerte (incident 20/09→23/09/2026, N°183 ; sonde désormais visible dans la carte Santé) |
 
 Règles transverses :
 - **Aucun secret dans le dépôt** (le secret scanning + push protection S3
@@ -29,9 +30,10 @@ Règles transverses :
 
 - **Render** (backend `mikcloud`, service `srv-da974o142hec73euul60`) :
   Dashboard → Environment → Variables (`DATABASE_URL`, `JWT_SECRET`,
-  `ADMIN_PASSWORD`, `REGISTER_KEY`, `WEBHOOK_…`). Non secrète :
-  `NEON_KEEPALIVE` (`business` par défaut — keep-alive Neon fenêtré
-  05:00–24:00 UTC ; `on` 24/7 ; `off` pour laisser Neon s'endormir).
+  `ADMIN_PASSWORD`, `REGISTER_KEY`, `WEBHOOK_…`, `R2_ACCOUNT_ID`,
+  `R2_API_TOKEN`, `R2_BUCKET` — canal d'images des portails, cf. §2.7).
+  Non secrète : `NEON_KEEPALIVE` (`business` par défaut — keep-alive Neon
+  fenêtré 05:00–24:00 UTC ; `on` 24/7 ; `off` pour laisser Neon s'endormir).
 - **Vercel** (frontend) : Settings → Environment Variables
   (`NEXT_PUBLIC_API_BASE`).
 - **GitHub** (repo `ftechnologies18/mikcloud`) : Settings → Secrets and
@@ -88,6 +90,38 @@ Règles transverses :
    Security → Secret scanning alerts).
 4. Journaliser l'incident (date, périmètre, actions) — exigence loi 2013-450
    (article 15 : notification des violations) et RGPD art. 33/34.
+
+### 2.7 Jeton API Cloudflare R2 (`R2_API_TOKEN`) — images des portails
+
+**Symptôme d'un jeton mort** : les slides et bannières téléversées ne
+s'affichent PLUS sur les portails concernés (le portail, lui, fonctionne —
+les images sont optionnelles côté client) ; les téléversements en console
+échouent (« Stockage média indisponible ») ; la carte Santé → « Stockage
+d'images (portail) » lit **Jeton invalide ou expiré** (sonde N°183) ; les
+logs Render montrent des rafales `[media] get … : r2 get: statut 401`.
+
+**Créer le jeton neuf** : Dashboard Cloudflare → My Profile → API Tokens →
+Create Token → Custom Token — Permissions : **Account → R2 → Edit** ;
+Account Resources : le compte MikCloud ; TTL : **aucune expiration**
+conseillée (sinon, créer le rappel calendaire AVANT l'échéance).
+
+**Rotation clé en main** (< 5 min, après création du jeton) :
+
+```
+R2_NEW_TOKEN="cfat_…" ops/media/r2-rotate-token.sh          # dry-run : vérifie TOUT, ne touche à rien
+R2_NEW_TOKEN="cfat_…" ops/media/r2-rotate-token.sh --exec  # applique : PUT env + redéploiement + fume-test
+```
+
+Le script refuse d'agir si : le jeton est refusé par Cloudflare, la
+permission R2 manque, ou une variable Render est illisible en lecture
+(garde anti-perte N°172 étendue aux valeurs, N°183). Il déclenche ensuite
+le redéploiement (l'env ne s'applique qu'au boot) et fume-teste une URL
+média témoin.
+
+**Vérification finale** : console → Paramètres → Maintenance → carte Santé
+→ « Stockage d'images (portail) » doit lire **Opérationnel** ; ouvrir un
+portail concerné et constater le retour des slides. Ranger le jeton au
+coffre (jamais dans le dépôt ni le chat).
 
 ## 3. Sauvegardes Neon chiffrées (mikbackup) — testées chaque semaine
 

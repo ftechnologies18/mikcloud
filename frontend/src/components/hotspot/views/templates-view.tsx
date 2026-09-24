@@ -11,6 +11,12 @@
 // - aperçu d'impression sur vouchers d'exemple (UcPrintDialog en mode modèle).
 // Le PageHeader de l'ancienne vue devient une barre d'outils compacte : le hub
 // porte déjà le titre de section, les actions restent accessibles en tête.
+//
+// N°184 — l'onglet devient « Vouchers & tickets » : la POLITIQUE des tickets
+// (expiration, import auto, DNS/logo/QR — ex-onglet Expérience, N°140/N°142)
+// rejoint les gabarits DANS le même onglet — la préoccupation « ticket » du
+// réglage à l'impression. Le formulaire (rang 3, masqué au gérant) se rend
+// en TÊTE, au-dessus de la barre d'outils des gabarits (rang 2).
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -68,6 +74,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { EmptyState } from "@/components/hotspot/empty-state";
+import { VoucherPolicyForm } from "@/components/hotspot/parts/hotspot-cards";
 import { useCurrency, useSettings } from "@/components/hotspot/parts/sd-currency";
 import {
   TEMPLATE_PRESETS,
@@ -421,13 +428,25 @@ function TemplateEditorDialog({ open, onOpenChange, template, ctx, sampleVoucher
 
 // ─── Vue ───
 
-/** Contenu de l'onglet « Modèles » du hub Hotspot (N°57-d) — tout le
- * comportement de l'ancienne vue ; les actions principales (aperçu,
- * nouveau) vivent dans une barre d'outils compacte en tête d'onglet. */
-export function TemplatesContent() {
+/** Contenu de l'onglet « Vouchers & tickets » du hub Hotspot (N°57-d,
+ * devenu ex-« Modèles » au N°184) — la politique des tickets du propriétaire
+ * en tête, puis les gabarits d'impression ; les actions principales
+ * (aperçu, nouveau) vivent dans une barre d'outils compacte. */
+export function TemplatesContent({
+  withPolicy,
+  onDirtyChange,
+}: {
+  /** N°184 — affiche le formulaire « Politique & identité des tickets »
+   * (expiration, import auto, DNS/logo/QR) : rang 3 (PUT /api/settings),
+   * masqué au gérant — miroir canView côté hub. */
+  withPolicy?: boolean;
+  /** Remonte le compteur de saisie du formulaire au hub — garde de sortie
+   * d'onglet (N°142). Stable (useCallback côté hub). */
+  onDirtyChange?: (count: number) => void;
+}) {
   const { t, tf, lang } = useI18n();
   const currency = useCurrency();
-  const { data: settings } = useSettings();
+  const { data: settings, isLoading: settingsLoading } = useSettings();
   const queryClient = useQueryClient();
 
   const [editorOpen, setEditorOpen] = useState(false);
@@ -528,6 +547,18 @@ export function TemplatesContent() {
 
   return (
     <div className="space-y-4 sm:space-y-6">
+      {/* N°184 — SECTION « POLITIQUE & IDENTITÉ DES TICKETS » (ex-onglet
+          Expérience) : le formulaire du propriétaire (rang 3, masqué au
+          gérant) en tête d'onglet — la préoccupation « ticket » du réglage
+          (expiration, import auto, DNS/logo/QR) à côté des gabarits qui
+          l'impriment. Il porte sa propre barre d'enregistrement (N°140) et
+          ses gardes (N°142) ; le gérant ne voit que les gabarits. */}
+      {withPolicy && settings ? (
+        <VoucherPolicyForm settings={settings} onDirtyChange={onDirtyChange} />
+      ) : withPolicy && settingsLoading ? (
+        <Skeleton className="h-72 rounded-xl" aria-hidden="true" />
+      ) : null}
+
       {/* Barre d'outils de l'onglet (l'ancien PageHeader réduit à ses
           actions : le hub porte le titre de section). */}
       <div className="flex flex-wrap items-center justify-between gap-3">

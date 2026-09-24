@@ -25,20 +25,23 @@ export const frPortal: Record<string, string> = {
   "portal.redeployQueued": "Re-déploiement programmé",
   "portal.cancel": "Annuler",
   // N°135 — le logo du portail est celui du client : où le poser.
+  // N°184 — l'onglet Expérience a disparu (fusion dans l'onglet Portail) :
+  // le logo et le branding du compte se posent dans la section « Portail
+  // du compte », en tête de l'onglet Portail.
   "portal.brandingNote":
-    "Le logo affiché sur le portail est celui de votre établissement : posez-le dans l'onglet Expérience (carte « Vouchers ») — la bannière d'en-tête, la liste « Nos Services » et le bandeau animé sous le logo se règlent dans la même zone. Tout changement de branding est re-déployé automatiquement sur vos routeurs (≤ 45 s).",
+    "Le logo affiché sur le portail est celui de votre établissement : posez-le dans la section « Portail du compte » en tête de l'onglet Portail — la bannière d'en-tête, la liste « Nos Services » et le bandeau animé sous le logo se règlent dans le même formulaire. Tout changement de branding est re-déployé automatiquement sur vos routeurs (≤ 45 s).",
   "portal.journal": "Journal des déploiements",
   "portal.journalEmpty": "Aucun déploiement enregistré",
 
   // — N°182 — sites physiques + personnalisation par site et par routeur —
   "portal.chainNote":
-    "Chaque routeur sert le premier portail défini en remontant sa chaîne : sa personnalisation propre → celle de son site → celle du compte. Un champ vide hérite toujours du niveau supérieur ; tout changement est re-déployé automatiquement (≤ 45 s).",
+    "Chaque routeur sert le premier portail défini en remontant sa chaîne : sa personnalisation propre → celle de son site → celle du compte (réglée ci-dessous par le propriétaire). Un champ vide hérite toujours du niveau supérieur ; tout changement est re-déployé automatiquement (≤ 45 s).",
   "portal.sites": "Sites",
   "portal.sitesHint":
     "Regroupez vos routeurs par établissement (bâtiment, boutique, campus) et donnez à chaque site sa propre identité de portail.",
   "portal.newSite": "Nouveau site",
   "portal.noSites":
-    "Aucun site — tous vos routeurs servent le portail unifié du compte (réglages de l'onglet Expérience).",
+    "Aucun site — tous vos routeurs servent le portail du compte.",
   "portal.siteRouters": "{count} routeur(s)",
   "portal.sitePortalCustom": "Portail personnalisé",
   "portal.sitePortalAccount": "Portail du compte",

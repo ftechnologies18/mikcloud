@@ -5,6 +5,100 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-23 — N°184 — Fusion « Expérience → Portail » : la chaîne ROUTEUR → SITE → COMPTE réunie dans UN onglet, les tickets regroupés du réglage à l'impression (hub Hotspot à 2 onglets)
+
+### Contexte
+Depuis le N°182, le portail captif se personnalise à trois niveaux
+(ROUTEUR → SITE → COMPTE)… mais la console vivait cette chaîne COUPÉE EN
+DEUX : les surcharges SITE/ROUTEUR dans l'onglet « Portail », la base
+COMPTE dans l'onglet « Expérience ». Mesuré dans le code : l'onglet Portail
+RENVOYAIT littéralement ailleurs pour la base de sa propre chaîne
+(portal-view : « COMPTE (statu quo) : onglet Expérience ») ; un bouton
+« Voir le portail » faisait le pont entre les deux onglets (deux onglets
+qui se renvoient l'un à l'autre sur la même préoccupation = préoccupation
+coupée en deux) ; DEUX éditeurs incohérents pour les mêmes champs (formulaire
+riche côté compte — uploads R2, éditeurs de listes, aperçus QR/bannière —
+contre textareas « une entrée par ligne » dans les dialogs de surcharge) ;
+et le gérant (rang 2) configurait des surcharges À L'AVEUGLE, sans jamais
+voir le portail du compte qu'il surchargeait. L'analyse d'expert a validé
+l'option « fusion ciblée » : ne PAS tout transférer (l'Expérience mélangeait
+deux domaines — 7 groupes de branding portail sur 10, le reste étant la
+politique des vouchers imprimés), mais réunir la chaîne d'un côté et les
+tickets de l'autre.
+
+### Produit — navigation
+- **Hub Hotspot à 2 onglets** (au lieu de 3) : « Portail »
+  (/app/settings/hotspot/portail, URL inchangée) et « Vouchers & tickets »
+  (/app/settings/hotspot/modeles, URL inchangée — ex-« Modèles »).
+- **ViewId « hotspot » RETIRÉ** (types.ts, VIEW_SLUGS, VIEWS, titleMap,
+  VIEW_MIN_RANK, prefetch) — l'onglet Expérience disparaît. Sa carte
+  « Portail captif » rejoint l'onglet Portail, sa carte « Vouchers &
+  tickets » l'onglet éponyme.
+- **L'ancienne racine /app/settings/hotspot reste deep-linkable** :
+  LEGACY_SLUG_VIEWS `"settings/hotspot" → "portal"` puis re-normalisation
+  app-route (replace, zéro entrée d'historique parasite) — même mécanique
+  éprouvée N°57-d/N°112 ; jamais une page morte. La vue n'étant PAS
+  persistée dans le store (partialize), aucun signet localStorage ne peut
+  la ressusciter.
+- **Section de zone** (settings-sections) : la section Hotspot devient
+  `{ id: "portal", views: ["portal", "templates"] }` — atterrissage sur
+  l'onglet Portail. Comportement du gérant INCHANGÉ (il atterrissait déjà
+  sur Portail : l'Expérience rang 3 lui était masquée) ; le propriétaire
+  atterrit désormais au sommet de sa chaîne.
+
+### Produit — onglet Portail (la chaîne ENTIÈRE)
+- **Section « Portail du compte » en tête** (rang 3, masquée au gérant —
+  miroir canView, pattern N°7) : le formulaire riche de l'Expérience côté
+  portail (inscription, bannière, carrousel, services, bandeau animé,
+  WhatsApp, mode d'affichage) — barre d'action unique N°140, scrollspy,
+  uploads R2 avec repli data URL, garde N°142. La note pédagogique de la
+  chaîne se lit désormais dans l'ordre de la page (base → sites →
+  routeurs), et le bouton « Voir le portail » disparaît (les aperçus par
+  routeur sont à portée de scroll dans le MÊME onglet).
+
+### Produit — onglet Vouchers & tickets
+- **Section « Politique & identité des tickets » en tête** (rang 3, masquée
+  au gérant) : expiration, import auto des routeurs, DNS + logo + aperçu
+  QR — déménagés de l'Expérience, AU-DESSUS des gabarits d'impression : la
+  préoccupation « ticket » du réglage à l'impression.
+
+### Produit — formulaire SPLITTÉ, contrat inchangé
+- **Un moteur, deux variantes** (hotspot-cards) : `ExperienceForm` interne
+  + exports `AccountPortalForm` / `VoucherPolicyForm`. Chaque variante rend
+  SES sous-sections, ne compte QUE ses groupes « modifiés » (le compteur
+  de la barre et la garde de sortie d'onglet reflètent le domaine édité),
+  ne valide QUE ses champs et n'envoie QUE son domaine dans le
+  PUT /api/settings (nil = inchangé côté Go — un enregistrement « tickets »
+  ne peut pas écraser une saisie « portail » en cours dans l'autre onglet,
+  et réciproquement). Ancres de nav rapide propres à chaque variante
+  (identifiels de sous-sections stables, onglets jamais montés ensemble).
+- **Garde de sortie d'onglet étendue aux DEUX formulaires** (N°142) : le
+  hub tient deux compteurs (portail/tickets), la confirmation consulte
+  celui de l'onglet actif.
+
+### Fidélité
+- **Zéro backend, zéro migration, zéro contrat API touché** : PUT
+  /api/settings accepte déjà tout champ présent (nil = inchangé), la
+  chaîne resolvePortalBranding et la signature de déploiement sont
+  inchangées — déploiement Vercel SEUL (Render non concerné).
+- **Permissions inchangées** : rang 3 sur les formulaires du compte
+  (masqués au gérant), rang 2 sur sites/routeurs/gabarits — exactement
+  comme avant (l'onglet Expérience était déjà rang 3).
+- **URLs profondes conservées** : /app/settings/hotspot/portail et
+  /app/settings/hotspot/modeles restent canoniques ; seule l'ancienne
+  racine /app/settings/hotspot devient legacy (→ Portail).
+- **Comportements de champs conservés à l'identique** : téléversements R2
+  avec repli data URL, aperçu QR régénéré, analytics de la vitrine,
+  indices et limites — seule l'armature UX déménage.
+- i18n FR/EN : 6 clés nouvelles (libellé d'onglet, titres de cartes,
+  ancres tickets), textes mis à jour (chaîne, note branding N°135, hint,
+  description de section), clés mortes purgées (tabExperience,
+  previewPortal, navVouchers, cardVouchers, cardPortal).
+
+### Vérifié
+ESLint 0 ; typecheck tsgo 0 ; build production Next.js OK (11 routes
+statiques générées). Push frontend/ → déploiement Vercel attendu.
+
 ## 2026-09-23 — N°183 — Observabilité du canal d'images Cloudflare R2 : sonde « Stockage d'images » dans la carte Santé, 503 media_unconfigured distinct du 404, rotation du jeton clé en main (ops/media/r2-rotate-token.sh)
 
 ### Contexte

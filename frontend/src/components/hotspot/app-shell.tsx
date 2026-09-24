@@ -73,9 +73,10 @@ const DashboardView = dynamic(() => import("./views/dashboard-view"), { loading:
 // (chunks dédiés — un foyer ne paie jamais le bundle du dashboard métier).
 const DevicesView = dynamic(() => import("./views/devices-view"), { loading: () => ViewFallback });
 const HomeView = dynamic(() => import("./views/home-view"), { loading: () => ViewFallback });
-// N°57-d — hub Hotspot : « hotspot », « portal » et « templates » rendent la
-// MÊME page (onglet dérivé du ViewId — pattern N°30) : /app/settings/hotspot,
-// /app/settings/hotspot/portail et /app/settings/hotspot/modeles.
+// N°57-d — hub Hotspot : « portal » et « templates » rendent la MÊME page
+// (onglet dérivé du ViewId — pattern N°30) : /app/settings/hotspot/portail
+// et /app/settings/hotspot/modeles. N°184 — plus de vue « hotspot » (onglet
+// Expérience retiré — fusion dans le hub, l'ancienne URL re-normalisée).
 const HotspotView = dynamic(() => import("./views/hotspot-view"), { loading: () => ViewFallback });
 const LogsView = dynamic(() => import("./views/logs-view"), { loading: () => ViewFallback });
 const NotificationsView = dynamic(() => import("./views/notifications-view"), { loading: () => ViewFallback });
@@ -136,7 +137,6 @@ function viewTitle(view: ViewId, t: (key: string) => string): string {
     accounts: "nav.accounts",
     notifications: "nav.notifications",
     settings: "settings.tabGeneral",
-    hotspot: "settings.tabHotspot",
     security: "settings.tabAdvanced",
     team: "nav.team",
     platformSettings: "platformSettings.title",
@@ -160,9 +160,9 @@ const VIEWS: Record<ViewId, React.ComponentType> = {
   users: UsersHubView,
   registrations: UsersHubView,
   vouchers: VouchersView,
-  // N°57-d — hub Hotspot : les trois ViewIds pointent le même hub
-  // (Expérience / Portail / Modèles dérivent du ViewId, pattern N°30).
-  hotspot: HotspotView,
+  // N°57-d — hub Hotspot : les DEUX ViewIds pointent le même hub
+  // (Portail / Vouchers & tickets dérivent du ViewId, pattern N°30).
+  // N°184 — la vue racine « hotspot » a disparu avec l'onglet Expérience.
   portal: HotspotView,
   templates: HotspotView,
   profiles: ProfilesView,

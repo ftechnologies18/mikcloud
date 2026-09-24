@@ -23,6 +23,12 @@
 // /app/settings/portal, /app/settings/templates) restent deep-linkables
 // via LEGACY_SLUG_VIEWS puis re-normalisés.
 //
+// N°184 — le hub Hotspot passe à DEUX onglets (fusion Expérience → Portail,
+// cf. view-path et hotspot-view) : « Portail » (settings/hotspot/portail,
+// racine de la chaîne ROUTEUR → SITE → COMPTE) et « Vouchers & tickets »
+// (settings/hotspot/modeles). L'ancienne racine du hub /app/settings/hotspot
+// devient LEGACY → vue « portal » (re-normalisée, jamais une page morte).
+//
 // N°57-e — l’Abonnement (vue dédiée M) rejoint la zone : /app/settings/
 // subscription. L’ancien chemin racine /app/subscription reste deep-linkable
 // (LEGACY_SLUG_VIEWS) puis re-normalisé — signets et historiques navigateur
@@ -44,7 +50,8 @@ export const APP_BASE_PATH = "/app";
  * « settings/<section> ». N°57-d : « settings » = Général (settings/general),
  * « hotspot » = hub à 3 segments (portail/modeles = onglets deep-linkables).
  * N°112 : « routers » retrouve son segment SIMPLE d'avant la zone — la vue
- * vit en navigation principale (/app/routers). */
+ * vit en navigation principale (/app/routers). N°184 : plus de vue « hotspot »
+ * — le hub vit sur ses deux onglets adressables (portal/templates). */
 const VIEW_SLUGS: Record<ViewId, string> = {
   dashboard: "dashboard",
   sessions: "sessions",
@@ -87,7 +94,6 @@ const VIEW_SLUGS: Record<ViewId, string> = {
   accounts: "accounts",
   notifications: "settings/notifications",
   settings: "settings/general",
-  hotspot: "settings/hotspot",
   security: "settings/security",
   team: "settings/team",
 };
@@ -113,6 +119,12 @@ const LEGACY_SLUG_VIEWS: Record<string, ViewId> = {
   settings: "settings",
   "settings/portal": "portal",
   "settings/templates": "templates",
+  // N°184 — ancienne racine du hub Hotspot (pré-fusion Expérience → Portail) :
+  // /app/settings/hotspot atterrit sur l'onglet Portail, première
+  // préoccupation de la section (le gérant y atterrissait déjà — l'onglet
+  // Expérience lui était masqué ; le propriétaire retrouve sa carte
+  // « Portail du compte » DANS l'onglet).
+  "settings/hotspot": "portal",
   // N°57-e — ancien chemin racine de la vue Abonnement (pré-zone).
   subscription: "subscription",
   // N°112 — ancien chemin canonique N°57 de la vue Routeurs (pré-retour

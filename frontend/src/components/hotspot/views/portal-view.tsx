@@ -1,24 +1,25 @@
 "use client";
 
-// N°182 — contenu « Portail » de la section Hotspot (onglet du hub
+// N°184 — contenu « Portail » de la section Hotspot (onglet du hub
 // components/hotspot/views/hotspot-view.tsx — /app/settings/hotspot/portail).
 //
-// REFONTE « option 3 » validée par l'opérateur : le portail captif se
+// REFONTE « option 3 » validée par l'opérateur (N°182) : le portail captif se
 // personnalise à TROIS niveaux, chaque routeur servant le premier portail
 // défini en remontant sa chaîne ROUTEUR → SITE → COMPTE :
 //
-//   - SITES (nouveaux) : regroupements de routeurs par établissement
-//     (bâtiment, boutique, campus) portant une identité de portail
-//     (nom affiché, logo, bannière, Wave, style, WhatsApp, ticker…) ;
+//   - COMPTE (N°184, ex-onglet Expérience) : le formulaire « Portail du
+//     compte » en tête de l'onglet — la BASE de la chaîne, au même endroit
+//     que ses surcharges (rang 3, masqué au gérant) ;
+//   - SITES : regroupements de routeurs par établissement (bâtiment,
+//     boutique, campus) portant une identité de portail (nom affiché, logo,
+//     bannière, Wave, style, WhatsApp, ticker…) ;
 //   - ROUTEURS : un Select de site par routeur + une surcharge INDIVIDUELLE
-//     du portail (le niveau le plus fin) ;
-//   - COMPTE (statu quo) : onglet Expérience — un routeur sans site ni
-//     surcharge sert exactement le portail du compte.
+//     du portail (le niveau le plus fin).
 //
-// Tout changement (assignation, surcharge) rejoint la signature de
-// déploiement côté backend → re-déploiement automatique au check-in (≤ 45 s),
-// exactement comme un changement de branding du compte (N°135). L'aperçu
-// par routeur (existant N°35-d) reflète la chaîne résolue.
+// Tout changement (formulaire du compte, assignation, surcharge) rejoint la
+// signature de déploiement côté backend → re-déploiement automatique au
+// check-in (≤ 45 s), exactement comme un changement de branding du compte
+// (N°135). L'aperçu par routeur (existant N°35-d) reflète la chaîne résolue.
 //
 // Sémantique des surcharges : VIDE = HÉRITE (un champ vide ne touche rien —
 // la surcharge ne peut pas masquer un élément que le compte affiche ; pour
@@ -78,6 +79,8 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 
 import { EmptyState } from "@/components/hotspot/empty-state";
+import { AccountPortalForm } from "@/components/hotspot/parts/hotspot-cards";
+import { useSettings } from "@/components/hotspot/parts/sd-currency";
 import {
   AccountActivity,
   api,
@@ -481,11 +484,27 @@ function portalRegime(router: RouterDevice, sites: SiteResponse[]) {
   return "account" as const;
 }
 
-/** Contenu de l'onglet « Portail » du hub Hotspot — N°182 : sections Sites
- * puis Routeurs, journal des déploiements en pied. */
-export function PortalContent() {
+/** Contenu de l'onglet « Portail » du hub Hotspot — N°184 : la chaîne
+ * ENTIÈRE au même endroit : portail du compte (propriétaire seulement),
+ * sections Sites puis Routeurs, journal des déploiements en pied. */
+export function PortalContent({
+  withAccount,
+  onDirtyChange,
+}: {
+  /** N°184 — affiche le formulaire « Portail du compte » (base de la
+   * chaîne) : rang 3 (PUT /api/settings), masqué au gérant — miroir
+   * canView côté hub. */
+  withAccount: boolean;
+  /** Remonte le compteur de saisie du formulaire au hub — garde de sortie
+   * d'onglet (N°142). Stable (useCallback côté hub). */
+  onDirtyChange?: (count: number) => void;
+}) {
   const { t, tf } = useI18n();
   const queryClient = useQueryClient();
+
+  // N°184 — réglages du compte : alimentent le formulaire « Portail du
+  // compte » (chargé seulement pour le propriétaire, pas pour le gérant).
+  const settingsQuery = useSettings();
 
   // Liste des routeurs et des sites du compte.
   const routersQuery = useQuery<RouterDevice[]>({
@@ -568,11 +587,28 @@ export function PortalContent() {
 
   return (
     <div className="space-y-6">
-      {/* N°182 — pédagogie de la chaîne ROUTEUR → SITE → COMPTE. */}
+      {/* N°182/N°184 — pédagogie de la chaîne ROUTEUR → SITE → COMPTE : la
+          base se règle désormais CI-DESSOUS (formulaire du compte,
+          propriétaire) — la note se lit dans l'ordre de la page. */}
       <div className="flex items-start gap-3 rounded-xl border bg-muted/40 p-4 text-sm">
         <Palette className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
         <p className="leading-relaxed text-muted-foreground">{t("portal.chainNote")}</p>
       </div>
+
+      {/* — SECTION PORTAIL DU COMPTE (base de la chaîne, N°184) —
+          réservée au propriétaire (PUT /api/settings, rang 3) : masquée au
+          gérant, comme l'était l'onglet Expérience (miroir canView). Le
+          formulaire porte sa propre barre d'enregistrement (N°140) et ses
+          gardes (N°142) ; la sauvegarde invalide les réglages partagés —
+          les badges de régime ci-dessous restent exacts. */}
+      {withAccount &&
+        (settingsQuery.isLoading || !settingsQuery.data ? (
+          <div className="flex h-24 items-center justify-center text-muted-foreground" role="status" aria-live="polite">
+            <Loader2 className="size-5 animate-spin" />
+          </div>
+        ) : (
+          <AccountPortalForm settings={settingsQuery.data} onDirtyChange={onDirtyChange} />
+        ))}
 
       {/* — SECTION SITES — */}
       <section className="space-y-3" aria-label={t("portal.sites")}>

@@ -1,7 +1,20 @@
 "use client";
 
+// N°184 — le formulaire « Expérience » (N°140/N°142) est SPLITTÉ EN DEUX :
+// sa carte « Portail captif » vit désormais dans l'onglet Portail du hub
+// (AccountPortalForm — la base COMPTE de la chaîne ROUTEUR → SITE → COMPTE
+// de la N°182, enfin au même endroit que ses surcharges site/routeur), sa
+// carte « Vouchers & tickets » dans l'onglet éponyme (VoucherPolicyForm,
+// au-dessus des gabarits d'impression). Le moteur (formulaire contrôlé,
+// barre d'action unique, scrollspy, gardes N°142) est PARTAGÉ : chaque
+// variante n'embarque que SES sous-sections, SES validations et SES champs
+// dans le PUT /api/settings (nil = inchangé côté Go — un enregistrement
+// « tickets » ne peut pas écraser une saisie « portail » en cours dans
+// l'autre onglet, et réciproquement). L'onglet Expérience disparaît (cf.
+// hotspot-view) ; les comportements de champs sont conservés À L'IDENTIQUE.
+//
 // N°140 — Refonte UX de l'onglet « Expérience » (hub Hotspot,
-// components/hotspot/views/hotspot-view.tsx).
+// components/hotspot/views/hotspot-view.tsx) — historique.
 //
 // Retour utilisateur : « chaque réglage du portail captif est dans une carte
 // séparée avec chacun son bouton d'enregistrement, ce qui complexifie
@@ -44,8 +57,9 @@
 //   • GARDE DE SORTIE D'ONGLET — le formulaire remonte son compteur de
 //     groupes modifiés au hub (onDirtyChange) : changer d'onglet avec des
 //     saisies non enregistrées ouvre une confirmation au lieu de tout
-//     jeter silencieusement ; « Voir le portail » (onPreviewPortal)
-//     traverse la même garde.
+//     jeter silencieusement (N°184 : le bouton « Voir le portail » a
+//     disparu avec l'onglet Expérience — le formulaire vit DANS l'onglet
+//     Portail, la garde couvre le changement d'onglet du hub).
 //   • NAVIGATION MOBILE + SCROLLSPY — les puces d'ancres, desktop-only au
 //     N°140, deviennent une rangée défilante sur téléphone (le gérant de
 //     cyber est mobile-first) ; la puce de la section lue se remplit.
@@ -268,9 +282,10 @@ function computeDirty(form: HotspotForm, base: HotspotForm): DirtyGroups {
 }
 
 /* Ancres de la navigation rapide — module scope : partagées par les puces
- * et le scrollspy (la puce de la section lue se remplit au scroll). */
-const ANCHORS = [
-  { id: "hot-exp-vouchers", labelKey: "settings.exp.navVouchers" },
+ * et le scrollspy (la puce de la section lue se remplit au scroll).
+ * N°184 — une liste PAR variante : les identifiels de sous-sections restent
+ * stables, les deux onglets ne sont jamais montés ensemble. */
+const PORTAL_ANCHORS = [
   { id: "hot-exp-join", labelKey: "settings.exp.navJoin" },
   { id: "hot-exp-banner", labelKey: "settings.exp.navBanner" },
   { id: "hot-exp-slides", labelKey: "settings.exp.navSlides" },
@@ -279,20 +294,36 @@ const ANCHORS = [
   { id: "hot-exp-whatsapp", labelKey: "settings.exp.navWhatsapp" },
   { id: "hot-exp-mode", labelKey: "settings.exp.navMode" },
 ];
+const TICKETS_ANCHORS = [
+  { id: "hot-exp-vouchers", labelKey: "settings.exp.navExpiry" },
+  { id: "hot-exp-autoimport", labelKey: "settings.exp.navAutoImport" },
+  { id: "hot-exp-voucher", labelKey: "settings.exp.navTicketId" },
+];
 
-/* ─── Onglet « Expérience » — un formulaire, deux cartes, une barre ─── */
+/* Groupes « modifiés » comptés par la barre — PAR variante (N°184) : le
+ * compteur (et la garde de sortie d'onglet) reflète le domaine édité. */
+const PORTAL_GROUPS = ["join", "banner", "slides", "services", "ticker", "whatsapp", "hospitality"] as const;
+const TICKETS_GROUPS = ["expiry", "autoImport", "voucher"] as const;
 
-export function HotspotExperience({
-  settings,
-  onDirtyChange,
-  onPreviewPortal,
-}: {
+/* ─── Formulaire « Expérience » (N°184 : deux variantes, un moteur) ─── */
+
+interface ExperienceFormProps {
   settings: AppSettings;
   /** Remonte le nombre de groupes modifiés au hub — garde de sortie d'onglet (N°142). */
   onDirtyChange?: (count: number) => void;
-  /** « Voir le portail » — navigue vers l'onglet Portail via la garde du hub (N°142). */
-  onPreviewPortal?: () => void;
-}) {
+}
+
+/** ExperienceForm — moteur partagé des DEUX formulaires du hub (N°184) :
+ * variante « portal » (AccountPortalForm — base de la chaîne N°182, onglet
+ * Portail) et « tickets » (VoucherPolicyForm — politique des tickets, onglet
+ * Vouchers & tickets). Chaque variante rend SES sous-sections, ne compte QUE
+ * ses groupes « modifiés », ne valide QUE ses champs et n'envoie QUE son
+ * domaine dans le PUT /api/settings (nil = inchangé côté Go). */
+function ExperienceForm({
+  settings,
+  variant,
+  onDirtyChange,
+}: ExperienceFormProps & { variant: "portal" | "tickets" }) {
   const { t, tf } = useI18n();
   const queryClient = useQueryClient();
   const [form, setForm] = useState<HotspotForm>(() => initialForm(settings));
@@ -309,7 +340,13 @@ export function HotspotExperience({
   const patchWith = useCallback((fn: (f: HotspotForm) => HotspotForm) => setForm(fn), []);
 
   const dirty = useMemo(() => computeDirty(form, baseline), [form, baseline]);
-  const dirtyCount = useMemo(() => Object.values(dirty).filter(Boolean).length, [dirty]);
+  // N°184 — la barre ne compte QUE les groupes de SA variante : le compteur
+  // (et la garde de sortie d'onglet) reflète le domaine édité — les groupes
+  // de l'autre variante ne divergent jamais (non rendus = non éditables).
+  const dirtyCount = useMemo(
+    () => (variant === "portal" ? PORTAL_GROUPS : TICKETS_GROUPS).filter((k) => dirty[k]).length,
+    [dirty, variant],
+  );
 
   // N°142 — le hub garde le compte pour confirmer les sorties d'onglet
   // (le callback est stable — useCallback côté hub).
@@ -319,8 +356,11 @@ export function HotspotExperience({
 
   // N°142 — scrollspy : la puce de la dernière section dont l'en-tête a
   // passé la ligne de lecture (topbar sticky + respiration) se remplit ;
-  // la rangée défilante (mobile) la suit pour rester cadrée.
-  const [activeAnchor, setActiveAnchor] = useState(ANCHORS[0].id);
+  // la rangée défilante (mobile) la suit pour rester cadrée. N°184 — les
+  // ancres sont celles de la variante (constantes de module : identité
+  // stable, l'effet ne se ré-exécute pas à l'identique).
+  const anchors = variant === "portal" ? PORTAL_ANCHORS : TICKETS_ANCHORS;
+  const [activeAnchor, setActiveAnchor] = useState(anchors[0].id);
   const chipNavRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
     let raf = 0;
@@ -334,12 +374,12 @@ export function HotspotExperience({
         const doc = document.documentElement;
         const maxScroll = doc.scrollHeight - window.innerHeight;
         if (maxScroll > 0 && window.scrollY >= maxScroll - 60) {
-          setActiveAnchor(ANCHORS[ANCHORS.length - 1].id);
+          setActiveAnchor(anchors[anchors.length - 1].id);
           return;
         }
         const line = 140;
-        let current = ANCHORS[0].id;
-        for (const anchor of ANCHORS) {
+        let current = anchors[0].id;
+        for (const anchor of anchors) {
           const el = document.getElementById(anchor.id);
           if (el && el.getBoundingClientRect().top <= line) current = anchor.id;
         }
@@ -354,7 +394,7 @@ export function HotspotExperience({
       window.removeEventListener("resize", measure);
       cancelAnimationFrame(raf);
     };
-  }, []);
+  }, [anchors]);
   useEffect(() => {
     // N°142-bis — correction : suivre la puce active NE DOIT toucher qu'au
     // défilement HORIZONTAL de la rangée. scrollIntoView(block:"nearest")
@@ -376,17 +416,19 @@ export function HotspotExperience({
   // de saisie d'un coup — plus de misclick fatal).
   const [confirmReset, setConfirmReset] = useState(false);
 
-  /* Validations locales — miroir des garde-fous des anciennes cartes.
+  /* Validations locales — miroir des garde-fous des anciennes cartes, PAR
+   * VARIANTE (N°184) : chaque formulaire ne bloque que sur SES champs.
    * L'enregistrement reste bloqué tant qu'un champ triche. */
   const daysNum = parseInt(form.expiryDays, 10);
   const daysValid = Number.isInteger(daysNum) && daysNum >= 1 && daysNum <= 365;
-  const expiryInvalid = form.expiryMode === "remove" && !daysValid;
+  const expiryInvalid = variant === "tickets" && form.expiryMode === "remove" && !daysValid;
   const bannerInvalid =
+    variant === "portal" &&
     form.bannerUrl.trim() !== "" &&
     !form.bannerUrl.trim().startsWith("https://") &&
     !form.bannerUrl.trim().startsWith("data:image/");
   const waDigits = form.waNumber.replace(/[^0-9]/g, "");
-  const waInvalid = waDigits !== "" && (waDigits.length < 8 || waDigits.length > 15);
+  const waInvalid = variant === "portal" && waDigits !== "" && (waDigits.length < 8 || waDigits.length > 15);
   const canSave = !expiryInvalid && !bannerInvalid && !waInvalid;
 
   // N°142 — l'erreur de la barre devient un raccourci : mène au premier
@@ -409,29 +451,36 @@ export function HotspotExperience({
 
   const saveMutation = useMutation({
     mutationFn: () => {
-      // Sérialisation À L'IDENTIQUE des anciennes cartes, fusionnée en un
-      // seul corps : champs plats + forme imbriquée tenant{…} (le plat
-      // prime côté backend, le décodeur Go ignore les champs inconnus).
+      // Sérialisation À L'IDENTIQUE des anciennes cartes — N°184 : chaque
+      // variante n'envoie QUE son domaine (champs plats + forme imbriquée
+      // tenant{…} — le plat prime côté backend, le décodeur Go ignore les
+      // champs inconnus, nil = inchangé). Un enregistrement « tickets » ne
+      // peut pas écraser une saisie « portail » en cours dans l'autre
+      // onglet, et réciproquement.
       // expiryPolicyAfterDays omis en mode « conserver » (undefined = pas
       // de JSON = nil = inchangé côté serveur — comportement ExpiryCard).
       const afterDays = form.expiryMode === "remove" && daysValid ? daysNum : undefined;
-      const flat = {
-        expiryPolicyMode: form.expiryMode,
-        expiryPolicyAfterDays: afterDays,
-        autoImportRouterUsers: form.autoImport,
-        joinButton: form.joinButton,
-        dnsName: form.dnsName.trim(),
-        logoUrl: form.logoUrl,
-        bannerUrl: form.bannerUrl.trim(),
-        portalSlides: form.slides,
-        portalServices: form.services,
-        portalTicker: form.ticker,
-        portalWhatsapp: { number: form.waNumber, label: form.waLabel },
-        portalStyle: form.portalStyle,
-        portalWelcome: form.welcome,
-        portalPromos: form.promos,
-        portalSocials: form.socials,
-      };
+      const flat =
+        variant === "portal"
+          ? {
+              joinButton: form.joinButton,
+              bannerUrl: form.bannerUrl.trim(),
+              portalSlides: form.slides,
+              portalServices: form.services,
+              portalTicker: form.ticker,
+              portalWhatsapp: { number: form.waNumber, label: form.waLabel },
+              portalStyle: form.portalStyle,
+              portalWelcome: form.welcome,
+              portalPromos: form.promos,
+              portalSocials: form.socials,
+            }
+          : {
+              expiryPolicyMode: form.expiryMode,
+              expiryPolicyAfterDays: afterDays,
+              autoImportRouterUsers: form.autoImport,
+              dnsName: form.dnsName.trim(),
+              logoUrl: form.logoUrl,
+            };
       return api<AppSettings>("/api/settings", {
         method: "PUT",
         body: { ...flat, tenant: { ...flat } },
@@ -448,7 +497,7 @@ export function HotspotExperience({
   });
   const { mutate: saveAll, isPending: saving } = saveMutation;
 
-  /* Garde-fou navigation : ne pas perdre 10 groupes de saisie sur un
+  /* Garde-fou navigation : ne pas perdre la saisie non enregistrée sur un
    * clic accidentel hors de la page. */
   useEffect(() => {
     if (dirtyCount === 0) return;
@@ -483,14 +532,17 @@ export function HotspotExperience({
       {/* Navigation rapide + rappel du modèle d'enregistrement unique.
           Mobile : rangée défilante (le gérant de cyber est mobile-first) ;
           la puce de la section lue se remplit (scrollspy) et la rangée la
-          suit pour rester cadrée. Desktop : rangée enroulée inchangée. */}
+          suit pour rester cadrée. Desktop : rangée enroulée inchangée.
+          N°184 — le bouton « Voir le portail » a disparu avec l'onglet
+          Expérience : le formulaire vit DANS l'onglet Portail, les aperçus
+          par routeur sont à portée de scroll. */}
       <div className="space-y-2">
         <nav
           ref={chipNavRef}
           className="flex items-center gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none] sm:flex-wrap sm:overflow-visible [&::-webkit-scrollbar]:hidden"
           aria-label={t("settings.exp.jumpAria")}
         >
-          {ANCHORS.map((anchor) => {
+          {anchors.map((anchor) => {
             const active = anchor.id === activeAnchor;
             return (
               <button
@@ -511,68 +563,56 @@ export function HotspotExperience({
             );
           })}
         </nav>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs text-muted-foreground">{t("settings.exp.hint")}</p>
-          {onPreviewPortal && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="gap-1.5 text-xs"
-              onClick={onPreviewPortal}
-            >
-              <Eye className="size-3.5" aria-hidden />
-              {t("settings.exp.previewPortal")}
-            </Button>
-          )}
-        </div>
+        <p className="text-xs text-muted-foreground">{t("settings.exp.hint")}</p>
       </div>
 
-      {/* ══ CARTE 1 — Vouchers & tickets imprimés ══ */}
+      {/* ══ CARTE unique de la variante — « Portail du compte » (base de la
+           chaîne N°182, au-dessus des sections Sites/Routeurs de l'onglet)
+           ou « Politique & identité des tickets » (au-dessus des gabarits
+           d'impression). Même armature N°140 : en-tête pictogramme,
+           sous-sections séparées par des Separator, point « modifié ». ══ */}
       <Card className="gap-4 py-4 sm:py-6">
         <CardHeader className="px-4 sm:px-6">
           <CardTitle className="flex items-center gap-2 text-base">
             <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
-              <Ticket className="size-4" />
+              {variant === "portal" ? (
+                <MonitorSmartphone className="size-4" />
+              ) : (
+                <Ticket className="size-4" />
+              )}
             </span>
-            {t("settings.exp.cardVouchers")}
+            {t(variant === "portal" ? "settings.exp.cardAccountPortal" : "settings.exp.cardTickets")}
           </CardTitle>
-          <CardDescription>{t("settings.exp.cardVouchersDesc")}</CardDescription>
+          <CardDescription>
+            {t(variant === "portal" ? "settings.exp.cardPortalDesc" : "settings.exp.cardVouchersDesc")}
+          </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-6 px-4 sm:px-6">
-          <ExpiryFields form={form} patch={patch} dirty={dirty.expiry} daysValid={daysValid} />
-          <Separator />
-          <AutoImportFields form={form} patch={patch} dirty={dirty.autoImport} />
-          <Separator />
-          <VoucherFields form={form} patch={patch} dirty={dirty.voucher} />
-        </CardContent>
-      </Card>
-
-      {/* ══ CARTE 2 — Portail captif : ce que voient vos invités ══ */}
-      <Card className="gap-4 py-4 sm:py-6">
-        <CardHeader className="px-4 sm:px-6">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
-              <MonitorSmartphone className="size-4" />
-            </span>
-            {t("settings.exp.cardPortal")}
-          </CardTitle>
-          <CardDescription>{t("settings.exp.cardPortalDesc")}</CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-6 px-4 sm:px-6">
-          <JoinFields form={form} patch={patch} dirty={dirty.join} />
-          <Separator />
-          <BannerFields form={form} patch={patch} dirty={dirty.banner} invalid={bannerInvalid} />
-          <Separator />
-          <SlidesFields form={form} patch={patch} patchWith={patchWith} dirty={dirty.slides} />
-          <Separator />
-          <ServicesFields form={form} patch={patch} dirty={dirty.services} />
-          <Separator />
-          <TickerFields form={form} patch={patch} dirty={dirty.ticker} />
-          <Separator />
-          <WhatsappFields form={form} patch={patch} dirty={dirty.whatsapp} invalid={waInvalid} />
-          <Separator />
-          <HospitalityFields form={form} patch={patch} patchWith={patchWith} dirty={dirty.hospitality} />
+          {variant === "portal" ? (
+            <>
+              <JoinFields form={form} patch={patch} dirty={dirty.join} />
+              <Separator />
+              <BannerFields form={form} patch={patch} dirty={dirty.banner} invalid={bannerInvalid} />
+              <Separator />
+              <SlidesFields form={form} patch={patch} patchWith={patchWith} dirty={dirty.slides} />
+              <Separator />
+              <ServicesFields form={form} patch={patch} dirty={dirty.services} />
+              <Separator />
+              <TickerFields form={form} patch={patch} dirty={dirty.ticker} />
+              <Separator />
+              <WhatsappFields form={form} patch={patch} dirty={dirty.whatsapp} invalid={waInvalid} />
+              <Separator />
+              <HospitalityFields form={form} patch={patch} patchWith={patchWith} dirty={dirty.hospitality} />
+            </>
+          ) : (
+            <>
+              <ExpiryFields form={form} patch={patch} dirty={dirty.expiry} daysValid={daysValid} />
+              <Separator />
+              <AutoImportFields form={form} patch={patch} dirty={dirty.autoImport} />
+              <Separator />
+              <VoucherFields form={form} patch={patch} dirty={dirty.voucher} />
+            </>
+          )}
         </CardContent>
       </Card>
 
@@ -667,6 +707,28 @@ export function HotspotExperience({
   );
 }
 
+/* ─── Variantes exportées (N°184) ─── */
+
+/** AccountPortalForm — la base COMPTE de la chaîne ROUTEUR → SITE → COMPTE
+ * (N°182) : rendue en TÊTE de l'onglet Portail du hub (portal-view),
+ * au-dessus des sections Sites et Routeurs qui la surchargent — le
+ * propriétaire règle enfin la base de sa chaîne au même endroit que ses
+ * surcharges. Réservée au propriétaire (PUT /api/settings, rang 3 — la
+ * section est masquée au gérant, miroir canView). */
+export function AccountPortalForm(props: ExperienceFormProps) {
+  return <ExperienceForm {...props} variant="portal" />;
+}
+
+/** VoucherPolicyForm — politique et identité des tickets imprimés
+ * (expiration des vouchers, import auto des routeurs, DNS + logo + aperçu
+ * QR) : rendue en TÊTE de l'onglet Vouchers & tickets (templates-view),
+ * au-dessus des gabarits d'impression — la préoccupation « ticket » du
+ * réglage à l'impression. Réservée au propriétaire (rang 3, masquée au
+ * gérant). */
+export function VoucherPolicyForm(props: ExperienceFormProps) {
+  return <ExperienceForm {...props} variant="tickets" />;
+}
+
 /* ─── Briques communes des sous-sections ─── */
 
 /** En-tête de sous-section : pictogramme (repère des anciennes cartes) +
@@ -758,7 +820,7 @@ function DualStateDesc({
 interface SectionProps {
   form: HotspotForm;
   patch: (p: Partial<HotspotForm>) => void;
-  /** Mise à jour fonctionnelle (téléversements async — cf. HotspotExperience). */
+  /** Mise à jour fonctionnelle (téléversements async — cf. ExperienceForm). */
   patchWith?: (fn: (f: HotspotForm) => HotspotForm) => void;
   dirty: boolean;
 }

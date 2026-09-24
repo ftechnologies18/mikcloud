@@ -1680,7 +1680,11 @@ export type ViewId =
   | "accounts"
   | "notifications"
   | "settings"
-  | "hotspot" // N°57-d — section Hotspot de la zone (hub à onglets : expérience/portail/modèles)
+  // N°184 — le ViewId « hotspot » (onglet Expérience, N°57-d) est RETIRÉ :
+  // sa carte « Portail captif » vit désormais DANS l'onglet Portail
+  // (chaîne ROUTEUR → SITE → COMPTE réunie), sa carte « Vouchers & tickets »
+  // dans l'onglet éponyme. L'ancienne URL /app/settings/hotspot reste
+  // deep-linkable (LEGACY_SLUG_VIEWS → vue « portal », re-normalisée).
   | "security" // N°57-d — section Sécurité de la zone (mot de passe, 2FA, activité)
   | "team"
   // N°100 — console HomeNet (comptes usage « homenet ») : le foyer a SA

@@ -17,7 +17,7 @@ export const frSettings: Record<string, string> = {
 
   // N°57-d — sections réorganisées de la zone Paramètres.
   "settings.generalDesc": "Identité de l'établissement, préférences régionales et abonnement.",
-  "settings.hotspotDesc": "Portail captif, modèles de tickets et règles du service WiFi.",
+  "settings.hotspotDesc": "Portail captif (compte, sites, routeurs) et vouchers & tickets du service WiFi.",
   "settings.securitySectionDesc": "Mot de passe, double authentification et activités récentes.",
   "settings.securityActivity": "Activité récente",
   "settings.securityActivityDesc": "Dernières actions enregistrées sur votre espace.",
@@ -190,14 +190,18 @@ export const frSettings: Record<string, string> = {
   "settings.joinButton.enabledDesc": "Quand activé, le bouton « S'inscrire » s'affiche si un lien d'inscription publique actif est lié au routeur — le client s'inscrit avec sa MAC pré-détectée (quota anti-doublon actif).",
   "settings.joinButton.disabledDesc": "Quand désactivé, aucun bouton d'inscription n'apparaît sur le portail : les clients se connectent uniquement avec un ticket, un compte ou le WiFi offert.",
   "settings.joinButton.aria": "Affichage du bouton S'inscrire sur le portail captif",
-  // — N°140 : refonte UX de l'onglet Expérience (un seul enregistrement) —
-  "settings.exp.cardVouchers": "Vouchers & tickets imprimés",
+  // — N°140/N°184 : formulaires du compte (un seul enregistrement, un par
+  // domaine — portail du compte dans l'onglet Portail, tickets dans
+  // l'onglet Vouchers & tickets) —
+  "settings.exp.cardTickets": "Politique & identité des tickets",
   "settings.exp.cardVouchersDesc":
     "Politique de nettoyage, import des routeurs et identité imprimée sur les tickets.",
-  "settings.exp.cardPortal": "Portail captif — ce que voient vos invités",
+  "settings.exp.cardAccountPortal": "Portail du compte",
   "settings.exp.cardPortalDesc":
-    "Inscription, images, messages et support de la page de connexion WiFi.",
-  "settings.exp.navVouchers": "Vouchers & tickets",
+    "Inscription, images, messages et support de la page de connexion WiFi — la base de la chaîne ROUTEUR → SITE → COMPTE, surchargée par vos sites et routeurs ci-dessous.",
+  "settings.exp.navExpiry": "Expiration",
+  "settings.exp.navAutoImport": "Import auto",
+  "settings.exp.navTicketId": "Identité du ticket",
   "settings.exp.navJoin": "Inscription",
   "settings.exp.navBanner": "Bannière",
   "settings.exp.navSlides": "Carrousel",
@@ -206,7 +210,7 @@ export const frSettings: Record<string, string> = {
   "settings.exp.navWhatsapp": "WhatsApp",
   "settings.exp.navMode": "Mode d'affichage",
   "settings.exp.jumpAria": "Aller à une section des réglages",
-  "settings.exp.hint": "Modifiez librement — un seul bouton enregistre tous les réglages de cette page (Ctrl+Entrée fonctionne aussi).",
+  "settings.exp.hint": "Modifiez librement — un seul bouton enregistre tous les réglages de cette carte (Ctrl+Entrée fonctionne aussi).",
   "settings.exp.changes": "{n} modification(s) non enregistrée(s)",
   "settings.exp.reset": "Réinitialiser",
   "settings.exp.saveAll": "Enregistrer tout",
@@ -214,7 +218,6 @@ export const frSettings: Record<string, string> = {
   "settings.exp.invalid": "Corrigez les champs signalés avant d'enregistrer.",
   "settings.exp.waInvalid": "Numéro invalide — 8 à 15 chiffres (ex. 2250708091012), ou vide.",
   // — N°142 : durcissement UX (garde d'onglet, nav mobile, reset confirmé) —
-  "settings.exp.previewPortal": "Voir le portail",
   "settings.exp.resetTitle": "Réinitialiser {n} modification(s) ?",
   "settings.exp.resetDesc": "Votre saisie non enregistrée sera perdue. Cette action ne peut pas être annulée.",
   "settings.exp.tabGuardTitle": "Quitter sans enregistrer ?",

@@ -29,8 +29,9 @@ import type { ViewId } from "./types";
 /**
  * Chargeurs de chunks — MIROIR des dynamic() de app-shell.tsx : appeler le
  * chargeur télécharge le module ; next/dynamic le réutilise au rendu.
- * (users → users-hub-view et hotspot → hotspot-view : hubs à onglets, même
- * miroir que la navigation.)
+ * (users → users-hub-view et portal/templates → hotspot-view : hubs à
+ * onglets, même miroir que la navigation — N°184 : plus de vue « hotspot »,
+ * le hub se préchauffe par ses deux onglets.)
  */
 const CHUNK_LOADERS: Partial<Record<ViewId, () => Promise<unknown>>> = {
   accounts: () => import("@/components/hotspot/views/accounts-view"),
@@ -38,7 +39,6 @@ const CHUNK_LOADERS: Partial<Record<ViewId, () => Promise<unknown>>> = {
   dashboard: () => import("@/components/hotspot/views/dashboard-view"),
   devices: () => import("@/components/hotspot/views/devices-view"),
   home: () => import("@/components/hotspot/views/home-view"),
-  hotspot: () => import("@/components/hotspot/views/hotspot-view"),
   logs: () => import("@/components/hotspot/views/logs-view"),
   notifications: () => import("@/components/hotspot/views/notifications-view"),
   platform: () => import("@/components/hotspot/views/platform-overview-view"),
@@ -49,6 +49,9 @@ const CHUNK_LOADERS: Partial<Record<ViewId, () => Promise<unknown>>> = {
   platformTeam: () => import("@/components/hotspot/views/platform-team-view"),
   profiles: () => import("@/components/hotspot/views/profiles-view"),
   protection: () => import("@/components/hotspot/views/protection-view"),
+  // N°184 — le hub Hotspot se préchauffe par ses deux onglets adressables
+  // (la vue racine « hotspot » a disparu avec l'onglet Expérience).
+  portal: () => import("@/components/hotspot/views/hotspot-view"),
   reports: () => import("@/components/hotspot/views/reports-view"),
   resellers: () => import("@/components/hotspot/views/resellers-view"),
   routers: () => import("@/components/hotspot/views/routers-view"),
@@ -57,6 +60,7 @@ const CHUNK_LOADERS: Partial<Record<ViewId, () => Promise<unknown>>> = {
   settings: () => import("@/components/hotspot/views/settings-view"),
   subscription: () => import("@/components/hotspot/views/subscription-view"),
   team: () => import("@/components/hotspot/views/team-view"),
+  templates: () => import("@/components/hotspot/views/hotspot-view"),
   users: () => import("@/components/hotspot/views/users-hub-view"),
   wifi: () => import("@/components/hotspot/views/wifi-view"),
   vouchers: () => import("@/components/hotspot/views/vouchers-view"),

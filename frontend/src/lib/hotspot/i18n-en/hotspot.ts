@@ -3,5 +3,7 @@
 // Ne pas importer directement : passer par l'agrégateur (fusion + logique de résolution).
 
 export const enHotspot: Record<string, string> = {
-  "hotspot.tabExperience": "Experience",
+  // N°184 — the "Experience" tab is gone (merged into the hub): the label
+  // becomes the tickets tab's (policy + print templates).
+  "hotspot.tabVouchers": "Vouchers & tickets",
 };

@@ -46,7 +46,8 @@ const VIEW_MIN_RANK: Record<string, number> = {
   // ci-dessous ne ferme la vue aux comptes homenet, dont la facturation
   // vit AUSSI dans la zone Paramètres).
   subscription: 1,
-  hotspot: 2, // N°57-d — hub Hotspot : l'expérience (PUT /api/settings, rang 3) y est masquée pour le gérant, l'onglet Portail/Modèles (rang 2) reste accessible
+  // N°184 — plus de vue « hotspot » (onglet Expérience retiré — fusion
+  // dans le hub, cf. settings-sections) : la section atterrit sur « portal ».
   security: 3, // N°57-d — mot de passe + 2FA (ex-onglet Avancé de la vue Paramètres, rang 3)
   team: 3,
   accounts: 3, // + vérification isPlatformAdmin côté vue

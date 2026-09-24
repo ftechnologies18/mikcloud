@@ -25,20 +25,23 @@ export const enPortal: Record<string, string> = {
   "portal.redeployQueued": "Redeploy scheduled",
   "portal.cancel": "Cancel",
   // N°135 — the portal logo is the client's own: where to set it.
+  // N°184 — the Experience tab is gone (merged into the Portail tab): the
+  // account's logo and branding live in the "Account portal" section at
+  // the top of the Portail tab.
   "portal.brandingNote":
-    "The logo shown on the portal is your establishment's own: set it in the Experience tab (\"Vouchers\" card) — the header banner, the \"Our Services\" list and the animated banner under the logo are configured in the same area. Any branding change is redeployed to your routers automatically (≤ 45 s).",
+    "The logo shown on the portal is your establishment's own: set it in the “Account portal” section at the top of the Portail tab — the header banner, the “Our Services” list and the animated banner under the logo are configured in the same form. Any branding change is redeployed to your routers automatically (≤ 45 s).",
   "portal.journal": "Deployment log",
   "portal.journalEmpty": "No deployment recorded",
 
   // — N°182 — physical sites + per-site/per-router portal branding —
   "portal.chainNote":
-    "Each router serves the first portal found up its chain: its own customization → its site's → the account's. An empty field always inherits from the level above; every change redeploys automatically (≤ 45 s).",
+    "Each router serves the first portal found up its chain: its own customization → its site's → the account's (set below by the owner). An empty field always inherits from the level above; every change redeploys automatically (≤ 45 s).",
   "portal.sites": "Sites",
   "portal.sitesHint":
     "Group your routers per establishment (building, shop, campus) and give each site its own portal identity.",
   "portal.newSite": "New site",
   "portal.noSites":
-    "No site yet — all your routers serve the account's unified portal (Experience tab settings).",
+    "No site yet — all your routers serve the account's portal.",
   "portal.siteRouters": "{count} router(s)",
   "portal.sitePortalCustom": "Custom portal",
   "portal.sitePortalAccount": "Account portal",

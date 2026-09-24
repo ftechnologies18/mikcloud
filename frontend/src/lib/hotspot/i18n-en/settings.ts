@@ -17,7 +17,7 @@ export const enSettings: Record<string, string> = {
 
   // N°57-d — réorganised sections of the Settings zone.
   "settings.generalDesc": "Establishment identity, regional preferences and subscription.",
-  "settings.hotspotDesc": "Captive portal, ticket templates and WiFi service rules.",
+  "settings.hotspotDesc": "Captive portal (account, sites, routers) and the WiFi service’s vouchers & tickets.",
   "settings.securitySectionDesc": "Password, two-factor authentication and recent activity.",
   "settings.securityActivity": "Recent activity",
   "settings.securityActivityDesc": "Latest recorded actions on your workspace.",
@@ -190,14 +190,17 @@ export const enSettings: Record<string, string> = {
   "settings.joinButton.enabledDesc": "When enabled, the “Sign up” button is shown if an active public signup link is linked to the router — guests sign up with their MAC pre-detected (anti-duplicate quota active).",
   "settings.joinButton.disabledDesc": "When disabled, no signup button appears on the portal: guests connect only with a voucher, an account, or the free WiFi.",
   "settings.joinButton.aria": "Show the Sign up button on the captive portal",
-  // — N°140: UX overhaul of the Experience tab (single save) —
-  "settings.exp.cardVouchers": "Vouchers & printed tickets",
+  // — N°140/N°184: account forms (single save, one per domain — account
+  // portal in the Portail tab, tickets in the Vouchers & tickets tab) —
+  "settings.exp.cardTickets": "Ticket policy & identity",
   "settings.exp.cardVouchersDesc":
     "Cleanup policy, router imports and the identity printed on tickets.",
-  "settings.exp.cardPortal": "Captive portal — what your guests see",
+  "settings.exp.cardAccountPortal": "Account portal",
   "settings.exp.cardPortalDesc":
-    "Signup, images, messages and support on the WiFi login page.",
-  "settings.exp.navVouchers": "Vouchers & tickets",
+    "Signup, images, messages and support on the WiFi login page — the base of the ROUTER → SITE → ACCOUNT chain, overridden by your sites and routers below.",
+  "settings.exp.navExpiry": "Expiry",
+  "settings.exp.navAutoImport": "Auto import",
+  "settings.exp.navTicketId": "Ticket identity",
   "settings.exp.navJoin": "Signup",
   "settings.exp.navBanner": "Banner",
   "settings.exp.navSlides": "Carousel",
@@ -206,7 +209,7 @@ export const enSettings: Record<string, string> = {
   "settings.exp.navWhatsapp": "WhatsApp",
   "settings.exp.navMode": "Display mode",
   "settings.exp.jumpAria": "Jump to a settings section",
-  "settings.exp.hint": "Edit freely — a single button saves every setting on this page (Ctrl+Enter works too).",
+  "settings.exp.hint": "Edit freely — a single button saves every setting on this card (Ctrl+Enter works too).",
   "settings.exp.changes": "{n} unsaved change(s)",
   "settings.exp.reset": "Reset",
   "settings.exp.saveAll": "Save all",
@@ -214,7 +217,6 @@ export const enSettings: Record<string, string> = {
   "settings.exp.invalid": "Fix the highlighted fields before saving.",
   "settings.exp.waInvalid": "Invalid number — 8 to 15 digits (e.g. 2250708091012), or empty.",
   // — N°142: UX hardening (tab guard, mobile nav, confirmed reset) —
-  "settings.exp.previewPortal": "Preview portal",
   "settings.exp.resetTitle": "Reset {n} change(s)?",
   "settings.exp.resetDesc": "Your unsaved edits will be lost. This action cannot be undone.",
   "settings.exp.tabGuardTitle": "Leave without saving?",

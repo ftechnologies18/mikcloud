@@ -3,5 +3,7 @@
 // Ne pas importer directement : passer par l'agrégateur (fusion + logique de résolution).
 
 export const frHotspot: Record<string, string> = {
-  "hotspot.tabExperience": "Expérience",
+  // N°184 — l'onglet « Expérience » disparaît (fusion dans le hub) : le
+  // libellé devient celui de l'onglet tickets (politique + gabarits).
+  "hotspot.tabVouchers": "Vouchers & tickets",
 };

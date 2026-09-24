@@ -1,31 +1,36 @@
 "use client";
 
-// N°184 — contenu « Portail » de la section Hotspot (onglet du hub
+// N°186 — contenu « Portail » de la section Hotspot (onglet du hub
 // components/hotspot/views/hotspot-view.tsx — /app/settings/hotspot/portail).
 //
-// REFONTE « option 3 » validée par l'opérateur (N°182) : le portail captif se
-// personnalise à TROIS niveaux, chaque routeur servant le premier portail
-// défini en remontant sa chaîne ROUTEUR → SITE → COMPTE :
+// Le portail captif se personnalise à TROIS niveaux, chaque routeur servant
+// le premier portail défini en remontant sa chaîne ROUTEUR → SITE → COMPTE :
 //
-//   - COMPTE (N°184, ex-onglet Expérience) : le formulaire « Portail du
-//     compte » en tête de l'onglet — la BASE de la chaîne, au même endroit
-//     que ses surcharges (rang 3, masqué au gérant) ;
+//   - COMPTE : la base de la chaîne — « Portail du compte » (rang 3, PUT
+//     /api/settings) ;
 //   - SITES : regroupements de routeurs par établissement (bâtiment,
-//     boutique, campus) portant une identité de portail (nom affiché, logo,
-//     bannière, Wave, style, WhatsApp, ticker…) ;
-//   - ROUTEURS : un Select de site par routeur + une surcharge INDIVIDUELLE
-//     du portail (le niveau le plus fin).
+//     boutique, campus) portant une identité de portail ;
+//   - ROUTEURS : la surcharge INDIVIDUELLE, le niveau le plus fin.
+//
+// N°186 — ÉDITEUR UNIFIÉ à sélecteur de contexte : UN endroit (en tête
+// d'onglet) édite la chaîne ENTIÈRE. Le sélecteur « Vous personnalisez »
+// bascule entre le compte, un site ou un routeur ; les MÊMES briques riches
+// (uploads R2, éditeurs de listes, aperçus) se rendent aux trois niveaux ;
+// chaque groupe affiche la valeur HÉRITÉE résolue et sa provenance. Les
+// anciens dialogs de surcharge (textareas « une entrée par ligne ») ont
+// disparu : le dialog site ne garde que les champs descriptifs (nom,
+// localisation, description), la personnalisation vit dans l'éditeur.
 //
 // Tout changement (formulaire du compte, assignation, surcharge) rejoint la
 // signature de déploiement côté backend → re-déploiement automatique au
-// check-in (≤ 45 s), exactement comme un changement de branding du compte
-// (N°135). L'aperçu par routeur (existant N°35-d) reflète la chaîne résolue.
+// check-in (≤ 45 s). L'aperçu par routeur (N°35-d) reflète la chaîne
+// résolue.
 //
 // Sémantique des surcharges : VIDE = HÉRITE (un champ vide ne touche rien —
 // la surcharge ne peut pas masquer un élément que le compte affiche ; pour
 // ce cas, vider le champ côté compte et le surcharger ailleurs).
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -79,7 +84,13 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 
 import { EmptyState } from "@/components/hotspot/empty-state";
-import { AccountPortalForm } from "@/components/hotspot/parts/hotspot-cards";
+import {
+  PortalUnifiedEditor,
+  contextFromKey,
+  contextKeyOf,
+  type PortalContext,
+  type UnifiedTarget,
+} from "@/components/hotspot/parts/portal-editor";
 import { useSettings } from "@/components/hotspot/parts/sd-currency";
 import {
   AccountActivity,
@@ -91,252 +102,56 @@ import {
   fetchRouterPortalPreview,
   fetchSites,
   redeployRouterPortal,
-  updateRouterPortal,
   updateSite,
 } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
-import {
-  parsePortalOverride,
-  type PortalOverrideData,
-  type RouterDevice,
-  type SiteResponse,
-} from "@/lib/hotspot/types";
+import type { RouterDevice, SiteResponse } from "@/lib/hotspot/types";
 
 // ---------------------------------------------------------------------------
-// Formulaire de surcharge (partagé site / routeur)
+// Dialog site (création / édition — champs descriptifs SEULES)
 // ---------------------------------------------------------------------------
 
-/** OverrideForm — état local du formulaire de surcharge. Les listes sont
- * éditées en « une entrée par ligne » (textarea) : simple, lisible, borné. */
-interface OverrideForm {
-  displayName: string;
-  logoUrl: string;
-  bannerUrl: string;
-  waveLink: string;
-  portalStyle: "" | "commercial" | "hospitality";
-  portalWelcome: string;
-  waNumber: string;
-  waLabel: string;
-  tickerText: string;
-  servicesText: string;
-  slidesText: string;
-}
-
-/** formFromOverride — décode une surcharge persistée (JSON canonique) vers
- * l'état local du formulaire. Vide/absente → formulaire vierge. */
-function formFromOverride(raw?: string): OverrideForm {
-  const ov: PortalOverrideData = parsePortalOverride(raw);
-  return {
-    displayName: ov.displayName ?? "",
-    logoUrl: ov.logoUrl ?? "",
-    bannerUrl: ov.bannerUrl ?? "",
-    waveLink: ov.waveLink ?? "",
-    portalStyle: (ov.portalStyle as OverrideForm["portalStyle"]) ?? "",
-    portalWelcome: ov.portalWelcome ?? "",
-    waNumber: ov.portalWhatsapp?.number ?? "",
-    waLabel: ov.portalWhatsapp?.label ?? "",
-    tickerText: (ov.portalTicker ?? []).join("\n"),
-    servicesText: (ov.portalServices ?? []).map((s) => s.label).join("\n"),
-    slidesText: (ov.portalSlides ?? []).join("\n"),
-  };
-}
-
-/** lines — découpe un textarea en lignes nettoyées (vides ignorées, bornées). */
-function lines(text: string, max: number): string[] {
-  const out = text
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l !== "")
-    .slice(0, max);
-  return out;
-}
-
-/** formToPayload — construit le corps de surcharge pour l'API. Les champs
- * vides ne partent PAS (sémantique vide = hérite côté backend). */
-function formToPayload(f: OverrideForm): Record<string, unknown> {
-  const payload: Record<string, unknown> = {};
-  if (f.displayName.trim()) payload.displayName = f.displayName.trim();
-  if (f.logoUrl.trim()) payload.logoUrl = f.logoUrl.trim();
-  if (f.bannerUrl.trim()) payload.bannerUrl = f.bannerUrl.trim();
-  if (f.waveLink.trim()) payload.waveLink = f.waveLink.trim();
-  if (f.portalStyle) payload.portalStyle = f.portalStyle;
-  if (f.portalWelcome.trim()) payload.portalWelcome = f.portalWelcome.trim();
-  const ticker = lines(f.tickerText, 5);
-  if (ticker.length > 0) payload.portalTicker = ticker;
-  const services = lines(f.servicesText, 6);
-  if (services.length > 0) payload.portalServices = services.map((label) => ({ label }));
-  const slides = lines(f.slidesText, 3);
-  if (slides.length > 0) payload.portalSlides = slides;
-  if (f.waNumber.trim()) {
-    payload.portalWhatsapp = { number: f.waNumber.trim(), label: f.waLabel.trim() };
-  }
-  return payload;
-}
-
-/** OverrideFields — les champs de surcharge (visibles dans les dialogs site
- * et routeur). Chaque champ porte la mention « vide = hérite ». */
-function OverrideFields({
-  form,
-  patch,
-  t,
-}: {
-  form: OverrideForm;
-  patch: (p: Partial<OverrideForm>) => void;
-  t: (key: string, fallback?: string) => string;
-}) {
-  return (
-    <div className="space-y-4">
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-2">
-          <Label htmlFor="ov-name">{t("portal.displayName")}</Label>
-          <Input
-            id="ov-name"
-            value={form.displayName}
-            onChange={(e) => patch({ displayName: e.target.value })}
-            maxLength={80}
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="ov-style">{t("portal.style")}</Label>
-          <Select
-            value={form.portalStyle || "inherit"}
-            onValueChange={(v) => patch({ portalStyle: v === "inherit" ? "" : (v as OverrideForm["portalStyle"]) })}
-          >
-            <SelectTrigger id="ov-style">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="inherit">{t("portal.styleInherit")}</SelectItem>
-              <SelectItem value="commercial">{t("portal.styleCommercial")}</SelectItem>
-              <SelectItem value="hospitality">{t("portal.styleHospitality")}</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor="ov-logo">{t("portal.logoUrl")}</Label>
-        <Input
-          id="ov-logo"
-          value={form.logoUrl}
-          onChange={(e) => patch({ logoUrl: e.target.value })}
-          placeholder="data:image/png;base64,…"
-        />
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor="ov-banner">{t("portal.bannerUrl")}</Label>
-        <Input
-          id="ov-banner"
-          value={form.bannerUrl}
-          onChange={(e) => patch({ bannerUrl: e.target.value })}
-          placeholder="data:image/… ou https://…"
-        />
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor="ov-wave">{t("portal.waveLink")}</Label>
-        <Input
-          id="ov-wave"
-          value={form.waveLink}
-          onChange={(e) => patch({ waveLink: e.target.value })}
-          placeholder="https://pay.wave.com/m/…/c/ci/"
-        />
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor="ov-welcome">{t("portal.welcome")}</Label>
-        <Textarea
-          id="ov-welcome"
-          value={form.portalWelcome}
-          onChange={(e) => patch({ portalWelcome: e.target.value })}
-          maxLength={200}
-          rows={2}
-        />
-      </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-2">
-          <Label htmlFor="ov-wa">{t("portal.whatsappNumber")}</Label>
-          <Input
-            id="ov-wa"
-            value={form.waNumber}
-            onChange={(e) => patch({ waNumber: e.target.value })}
-            placeholder="2250708091012"
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="ov-wa-label">{t("portal.whatsappLabel")}</Label>
-          <Input
-            id="ov-wa-label"
-            value={form.waLabel}
-            onChange={(e) => patch({ waLabel: e.target.value })}
-            maxLength={30}
-          />
-        </div>
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor="ov-ticker">{t("portal.ticker")}</Label>
-        <Textarea
-          id="ov-ticker"
-          value={form.tickerText}
-          onChange={(e) => patch({ tickerText: e.target.value })}
-          rows={3}
-        />
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor="ov-services">{t("portal.services")}</Label>
-        <Textarea
-          id="ov-services"
-          value={form.servicesText}
-          onChange={(e) => patch({ servicesText: e.target.value })}
-          rows={3}
-        />
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor="ov-slides">{t("portal.slides")}</Label>
-        <Textarea
-          id="ov-slides"
-          value={form.slidesText}
-          onChange={(e) => patch({ slidesText: e.target.value })}
-          rows={3}
-        />
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Dialog site (création / édition)
-// ---------------------------------------------------------------------------
-
-/** SiteDialog — création et édition d'un site (champs descriptifs + identité
- * de portail). site null = création ; sinon édition. */
+/** SiteDialog — création et édition d'un site (nom, localisation,
+ * description). N°186 : l'identité de portail ne vit PLUS ici — elle se
+ * personnalise dans l'éditeur unifié (le bouton « Portail du site » de la
+ * carte y bascule) ; après CRÉATION, l'éditeur s'ouvre directement sur le
+ * nouveau site (la personnalisation suit la création, comme dans l'ancien
+ * flow). site null = création ; sinon édition. */
 function SiteDialog({
   site,
   onClose,
+  onCreated,
   t,
 }: {
   site: SiteResponse | null;
   onClose: () => void;
+  /** Après création : bascule l'éditeur unifié sur le portail du nouveau
+   * site (appelé une fois les sites rafraîchis — la cible doit exister
+   * dans la liste pour se résoudre). */
+  onCreated?: (siteId: string) => void;
   t: (key: string, fallback?: string) => string;
 }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState(site?.name ?? "");
   const [location, setLocation] = useState(site?.location ?? "");
   const [description, setDescription] = useState(site?.description ?? "");
-  const [form, setForm] = useState<OverrideForm>(() => formFromOverride(site?.portalOverride));
-  const patch = (p: Partial<OverrideForm>) => setForm((f) => ({ ...f, ...p }));
 
   const mutation = useMutation({
     mutationFn: async () => {
-      const override = formToPayload(form);
-      const body = { name: name.trim(), location: location.trim(), description: description.trim(), portalOverride: override };
+      // Champs descriptifs SEULS : portalOverride nil = inchangé côté Go
+      // (l'éditeur unifié est l'unique point d'écriture de la surcharge).
+      const body = { name: name.trim(), location: location.trim(), description: description.trim() };
       if (site) return updateSite(site.id, body);
       return createSite(body);
     },
-    onSuccess: (_data, _vars, ctx) => {
+    onSuccess: async (data) => {
       toast.success(site ? t("portal.siteUpdated") : t("portal.siteCreated"), {
-        description: t("portal.siteSaved"),
+        description: site ? t("portal.siteSaved") : t("portal.siteCreatedDesc"),
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/sites"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
-      void ctx;
+      // Attend le refetch des sites AVANT de basculer l'éditeur.
+      await queryClient.invalidateQueries({ queryKey: ["/api/sites"] });
+      void queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
+      if (!site) onCreated?.(data.id);
       onClose();
     },
     onError: (err: Error) => toast.error(err.message),
@@ -344,7 +159,7 @@ function SiteDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{site ? t("portal.siteEdit") : t("portal.newSite")}</DialogTitle>
           <DialogDescription>{t("portal.sitesHint")}</DialogDescription>
@@ -380,13 +195,9 @@ function SiteDialog({
               rows={2}
             />
           </div>
-          <div className="space-y-3 rounded-xl border bg-muted/40 p-4">
-            <div className="flex items-center gap-2 text-sm font-medium">
-              <Palette className="size-4 text-primary" aria-hidden="true" />
-              {t("portal.identitySection")}
-            </div>
-            <OverrideFields form={form} patch={patch} t={t} />
-          </div>
+          <p className="rounded-lg border bg-muted/40 p-3 text-xs leading-relaxed text-muted-foreground">
+            {t("portal.siteDialogBrandingHint")}
+          </p>
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onClose} disabled={mutation.isPending}>
@@ -396,73 +207,6 @@ function SiteDialog({
             {mutation.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
             {t("portal.save")}
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Dialog surcharge individuelle du portail d'un routeur
-// ---------------------------------------------------------------------------
-
-/** RouterPortalDialog — surcharge INDIVIDUELLE du portail d'un routeur (le
- * niveau le plus fin de la chaîne). « Réinitialiser » renvoie un corps vide :
- * le routeur hérite de son site puis du compte. */
-function RouterPortalDialog({
-  router,
-  onClose,
-  t,
-}: {
-  router: RouterDevice;
-  onClose: () => void;
-  t: (key: string, fallback?: string) => string;
-}) {
-  const queryClient = useQueryClient();
-  const [form, setForm] = useState<OverrideForm>(() => formFromOverride(router.portalOverride));
-  const patch = (p: Partial<OverrideForm>) => setForm((f) => ({ ...f, ...p }));
-
-  const mutation = useMutation({
-    mutationFn: (payload: Record<string, unknown>) => updateRouterPortal(router.id, payload),
-    onSuccess: () => {
-      toast.success(t("portal.overrideSaved"));
-      queryClient.invalidateQueries({ queryKey: ["/api/routers"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
-      onClose();
-    },
-    onError: (err: Error) => toast.error(err.message),
-  });
-
-  return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>{t("portal.customizeTitle", `Portail de «${router.name}»`)}</DialogTitle>
-          <DialogDescription>{t("portal.customizeHint")}</DialogDescription>
-        </DialogHeader>
-        <OverrideFields form={form} patch={patch} t={t} />
-        <DialogFooter className="flex-row justify-between gap-2 sm:justify-between">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => mutation.mutate({})}
-            disabled={mutation.isPending}
-          >
-            {t("portal.resetOverride")}
-          </Button>
-          <div className="flex gap-2">
-            <Button type="button" variant="outline" onClick={onClose} disabled={mutation.isPending}>
-              {t("portal.cancel")}
-            </Button>
-            <Button
-              type="button"
-              onClick={() => mutation.mutate(formToPayload(form))}
-              disabled={mutation.isPending}
-            >
-              {mutation.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
-              {t("portal.save")}
-            </Button>
-          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -484,26 +228,29 @@ function portalRegime(router: RouterDevice, sites: SiteResponse[]) {
   return "account" as const;
 }
 
-/** Contenu de l'onglet « Portail » du hub Hotspot — N°184 : la chaîne
- * ENTIÈRE au même endroit : portail du compte (propriétaire seulement),
- * sections Sites puis Routeurs, journal des déploiements en pied. */
+/** Contenu de l'onglet « Portail » du hub Hotspot — N°186 : l'éditeur
+ * unifié à sélecteur de contexte en tête (compte / site / routeur — LA
+ * chaîne entière au même endroit), puis les sections Sites et Routeurs
+ * (vue d'ensemble + navigation vers l'éditeur), journal des déploiements
+ * en pied. */
 export function PortalContent({
   withAccount,
   onDirtyChange,
 }: {
-  /** N°184 — affiche le formulaire « Portail du compte » (base de la
-   * chaîne) : rang 3 (PUT /api/settings), masqué au gérant — miroir
-   * canView côté hub. */
+  /** N°184/N°186 — l'option « Compte » du sélecteur (PUT /api/settings,
+   * rang 3) : masquée au gérant — miroir canView côté hub. */
   withAccount: boolean;
-  /** Remonte le compteur de saisie du formulaire au hub — garde de sortie
-   * d'onglet (N°142). Stable (useCallback côté hub). */
+  /** Remonte le compteur de saisie du formulaire ACTIF (compte OU
+   * surcharge) au hub — garde de sortie d'onglet (N°142). Stable
+   * (useCallback côté hub). */
   onDirtyChange?: (count: number) => void;
 }) {
   const { t, tf } = useI18n();
   const queryClient = useQueryClient();
 
-  // N°184 — réglages du compte : alimentent le formulaire « Portail du
-  // compte » (chargé seulement pour le propriétaire, pas pour le gérant).
+  // Réglages du compte : base de la chaîne — alimentent le formulaire du
+  // compte ET les valeurs héritées des surcharges (GET ouvert au gérant :
+  // le rang 2 voit ce qu'il surcharge, fin du réglage à l'aveugle).
   const settingsQuery = useSettings();
 
   // Liste des routeurs et des sites du compte.
@@ -535,10 +282,91 @@ export function PortalContent({
         /Portail du routeur/i.test(a.message)),
   );
 
+  // — N°186 : contexte de l'éditeur unifié —
+  // Défaut : le compte pour le propriétaire (le sommet de sa chaîne) ; le
+  // gérant choisit (site ou routeur) — les valeurs héritées restent
+  // visibles dans les résumés de groupes.
+  const [context, setContext] = useState<PortalContext | null>(() =>
+    withAccount ? { kind: "compte" } : null,
+  );
+  // Compteur de saisie du formulaire ACTIF (compte OU surcharge — un seul
+  // monté à la fois) : garde de changement de contexte ET remontée au hub.
+  const [formDirty, setFormDirty] = useState(0);
+  const [pendingContext, setPendingContext] = useState<PortalContext | null>(null);
+
+  const handleEditorDirty = useCallback(
+    (count: number) => {
+      setFormDirty(count);
+      onDirtyChange?.(count);
+    },
+    [onDirtyChange],
+  );
+
+  // Cible RÉSOLUE : l'entité doit exister dans les listes (une cible
+  // disparue — site supprimé, routeur retiré — retombe sur null). TOUT EST
+  // DÉRIVÉ, sans effet : le sélecteur reçoit le contexte seulement s'il
+  // résout (sinon placeholder), l'éditeur rend son état vide, et les
+  // formulaires signalent 0 à leur DÉMONTAGE (compteur jamais fantôme).
+  const target = useMemo<UnifiedTarget | null>(() => {
+    if (!context) return null;
+    if (context.kind === "compte") return withAccount ? { kind: "compte" } : null;
+    if (context.kind === "site") {
+      const site = sites.find((s) => s.id === context.siteId);
+      return site ? { kind: "site", site } : null;
+    }
+    const router = routers.find((r) => r.id === context.routerId);
+    if (!router) return null;
+    return { kind: "router", router, site: sites.find((s) => s.id === router.siteId) ?? null };
+  }, [context, withAccount, sites, routers]);
+
+  const scrollToEditor = useCallback(() => {
+    // requestAnimationFrame : laisse le formulaire de la nouvelle cible se
+    // monter avant d'ancrer le défilement.
+    window.requestAnimationFrame(() => {
+      document.getElementById("portal-editor")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+  }, []);
+
+  const applyContext = useCallback(
+    (next: PortalContext | null, scroll = true) => {
+      setContext(next);
+      if (scroll) scrollToEditor();
+    },
+    [scrollToEditor],
+  );
+
+  // Changement de contexte demandé (sélecteur OU bouton d'une carte) —
+  // garde N°142 : saisie en cours → confirmation au lieu de tout jeter.
+  // Fonction simple (recréée au rendu, hors chemins mémoïsés) : lit l'état
+  // le plus frais au moment du clic.
+  const requestContext = (next: PortalContext | null) => {
+    if (contextKeyOf(next) === contextKeyOf(context)) {
+      scrollToEditor();
+      return;
+    }
+    if (formDirty > 0) {
+      setPendingContext(next);
+      return;
+    }
+    applyContext(next);
+  };
+
+  const confirmContext = () => {
+    const next = pendingContext;
+    setPendingContext(null);
+    if (next) applyContext(next);
+  };
+
+  const handleSelectContext = (key: string) => {
+    requestContext(contextFromKey(key));
+  };
+
   // États locaux : dialogs.
   const [siteDialogFor, setSiteDialogFor] = useState<SiteResponse | null | undefined>(undefined); // undefined fermé, null création
   const [deleteFor, setDeleteFor] = useState<SiteResponse | null>(null);
-  const [customizeFor, setCustomizeFor] = useState<RouterDevice | null>(null);
   const [previewFor, setPreviewFor] = useState<RouterDevice | null>(null);
   const [redeployFor, setRedeployFor] = useState<RouterDevice | null>(null);
 
@@ -587,28 +415,29 @@ export function PortalContent({
 
   return (
     <div className="space-y-6">
-      {/* N°182/N°184 — pédagogie de la chaîne ROUTEUR → SITE → COMPTE : la
-          base se règle désormais CI-DESSOUS (formulaire du compte,
-          propriétaire) — la note se lit dans l'ordre de la page. */}
+      {/* N°182/N°186 — pédagogie de la chaîne ROUTEUR → SITE → COMPTE : la
+          note se lit dans l'ordre de la page (sélecteur → base → surcharges). */}
       <div className="flex items-start gap-3 rounded-xl border bg-muted/40 p-4 text-sm">
         <Palette className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
         <p className="leading-relaxed text-muted-foreground">{t("portal.chainNote")}</p>
       </div>
 
-      {/* — SECTION PORTAIL DU COMPTE (base de la chaîne, N°184) —
-          réservée au propriétaire (PUT /api/settings, rang 3) : masquée au
-          gérant, comme l'était l'onglet Expérience (miroir canView). Le
-          formulaire porte sa propre barre d'enregistrement (N°140) et ses
-          gardes (N°142) ; la sauvegarde invalide les réglages partagés —
+      {/* — N°186 : ÉDITEUR UNIFIÉ à sélecteur de contexte — LA chaîne
+          entière s'édite ici : compte (rang 3), site ou routeur. Les
+          formulaires portent leur propre barre d'enregistrement (N°140) et
+          leurs gardes (N°142) ; les sauvegardes invalident les listes —
           les badges de régime ci-dessous restent exacts. */}
-      {withAccount &&
-        (settingsQuery.isLoading || !settingsQuery.data ? (
-          <div className="flex h-24 items-center justify-center text-muted-foreground" role="status" aria-live="polite">
-            <Loader2 className="size-5 animate-spin" />
-          </div>
-        ) : (
-          <AccountPortalForm settings={settingsQuery.data} onDirtyChange={onDirtyChange} />
-        ))}
+      <PortalUnifiedEditor
+        context={target ? context : null}
+        target={target}
+        withAccount={withAccount}
+        settings={settingsQuery.data}
+        settingsLoading={settingsQuery.isLoading}
+        sites={sites}
+        routers={routers}
+        onSelectContext={handleSelectContext}
+        onDirtyChange={handleEditorDirty}
+      />
 
       {/* — SECTION SITES — */}
       <section className="space-y-3" aria-label={t("portal.sites")}>
@@ -664,6 +493,17 @@ export function PortalContent({
                     {tf("portal.siteRouters", { count: site.routerCount })}
                   </p>
                   <div className="flex flex-wrap gap-2">
+                    {/* N°186 — la personnalisation vit dans l'éditeur
+                        unifié : ce bouton Y bascule (contexte site). */}
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="gap-1.5"
+                      onClick={() => requestContext({ kind: "site", siteId: site.id })}
+                    >
+                      <Palette className="size-3.5" />
+                      {t("portal.siteCustomize")}
+                    </Button>
                     <Button
                       type="button"
                       variant="outline"
@@ -762,12 +602,13 @@ export function PortalContent({
                     </div>
 
                     <div className="flex flex-wrap gap-2">
+                      {/* N°186 — la personnalisation vit dans l'éditeur
+                          unifié (ancien dialog textareas supprimé). */}
                       <Button
                         type="button"
-                        variant="outline"
                         size="sm"
                         className="gap-1.5"
-                        onClick={() => setCustomizeFor(router)}
+                        onClick={() => requestContext({ kind: "router", routerId: router.id })}
                       >
                         <Palette className="size-3.5" />
                         {t("portal.customize")}
@@ -833,14 +674,14 @@ export function PortalContent({
         )}
       </div>
 
-      {/* Dialog site (création/édition) */}
+      {/* Dialog site (création/édition descriptive) */}
       {siteDialogFor !== undefined ? (
-        <SiteDialog site={siteDialogFor} onClose={() => setSiteDialogFor(undefined)} t={t} />
-      ) : null}
-
-      {/* Dialog personnalisation routeur */}
-      {customizeFor ? (
-        <RouterPortalDialog router={customizeFor} onClose={() => setCustomizeFor(null)} t={t} />
+        <SiteDialog
+          site={siteDialogFor}
+          onClose={() => setSiteDialogFor(undefined)}
+          onCreated={(siteId) => applyContext({ kind: "site", siteId })}
+          t={t}
+        />
       ) : null}
 
       {/* AlertDialog suppression site */}
@@ -901,6 +742,31 @@ export function PortalContent({
                 <RefreshCw className="size-4" />
               )}
               {t("portal.redeploy")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* N°186 — confirmation de changement de contexte (miroir de la garde
+          de sortie d'onglet N°142 : la saisie du formulaire ACTIF — compte
+          ou surcharge — serait perdue). */}
+      <AlertDialog
+        open={pendingContext !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingContext(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("portal.ctxGuardTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {tf("portal.ctxGuardDesc", { n: formDirty })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("settings.exp.tabGuardStay")}</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmContext}>
+              {t("settings.exp.tabGuardLeave")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

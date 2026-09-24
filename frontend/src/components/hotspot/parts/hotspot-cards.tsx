@@ -126,6 +126,14 @@ import type {
   PromoStats,
 } from "@/lib/hotspot/types";
 import { PORTAL_SERVICE_ICONS } from "@/lib/hotspot/types";
+import {
+  parsePromos,
+  parseServices,
+  parseSocials,
+  parseStringArray,
+  parseWhatsapp,
+  type PortalBrandingFields,
+} from "@/lib/hotspot/portal-branding";
 import { qrWithLogoDataUrl } from "@/components/hotspot/parts/template-render";
 import {
   AlertDialog,
@@ -171,55 +179,11 @@ interface HotspotForm {
   socials: PortalSocial[];
 }
 
-/* Décodeurs défensifs — identiques aux anciennes cartes (JSON invalide ou
- * absent du compte = valeur neutre, jamais de page cassée). */
-function parseStringArray(raw: string | undefined): string[] {
-  try {
-    const parsed = JSON.parse(raw || "[]") as string[];
-    return Array.isArray(parsed) ? parsed.filter((u) => typeof u === "string" && u) : [];
-  } catch {
-    return [];
-  }
-}
-
-function parseServices(raw: string | undefined): PortalService[] {
-  try {
-    const parsed = JSON.parse(raw || "[]") as PortalService[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function parseWhatsapp(raw: string | undefined): { number: string; label: string } {
-  try {
-    const parsed = JSON.parse(raw || "{}") as { number?: unknown; label?: unknown };
-    return {
-      number: typeof parsed.number === "string" ? parsed.number : "",
-      label: typeof parsed.label === "string" ? parsed.label : "",
-    };
-  } catch {
-    return { number: "", label: "" };
-  }
-}
-
-function parsePromos(raw: string | undefined): PortalPromo[] {
-  try {
-    const parsed = JSON.parse(raw || "[]") as PortalPromo[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function parseSocials(raw: string | undefined): PortalSocial[] {
-  try {
-    const parsed = JSON.parse(raw || "[]") as PortalSocial[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
+/* Décodeurs défensifs — DÉPLACÉS vers la lib partagée portal-branding.ts
+ * (N°186) : ils servent désormais AUSSI à décoder les valeurs héritées du
+ * compte dans l'éditeur de surcharge à sélecteur de contexte. Comportement
+ * conservé À L'IDENTIQUE (JSON invalide ou absent = valeur neutre, jamais
+ * de page cassée). */
 
 /** État initial — même lecture défensive que les anciennes cartes (champ
  * absent du JSON = défaut effectif historique, pas « vide »). */
@@ -338,6 +302,14 @@ function ExperienceForm({
   // comme les setXxx((list) => …) des anciennes cartes, elle part TOUJOURS
   // de l'état le plus frais, même si deux téléversements se chevauchent.
   const patchWith = useCallback((fn: (f: HotspotForm) => HotspotForm) => setForm(fn), []);
+  // N°186 — adaptateur des briques PARTAGÉES : elles mettent à jour la seule
+  // vue branding (PortalBrandingFields) ; ici on l'étend au formulaire
+  // COMPLET du compte (les champs hors branding chevauchent la vue).
+  const patchBrandingWith = useCallback(
+    (fn: (f: PortalBrandingFields) => PortalBrandingFields) =>
+      patchWith((f) => ({ ...f, ...fn(f) })),
+    [patchWith],
+  );
 
   const dirty = useMemo(() => computeDirty(form, baseline), [form, baseline]);
   // N°184 — la barre ne compte QUE les groupes de SA variante : le compteur
@@ -349,9 +321,13 @@ function ExperienceForm({
   );
 
   // N°142 — le hub garde le compte pour confirmer les sorties d'onglet
-  // (le callback est stable — useCallback côté hub).
+  // (le callback est stable — useCallback côté hub). N°186 : le DÉMONTAGE
+  // signale 0 — un formulaire démonté (changement de contexte de l'éditeur
+  // unifié, cible disparue, sortie d'onglet) ne laisse AUCUN compteur
+  // fantôme bloquer les gardes.
   useEffect(() => {
     onDirtyChange?.(dirtyCount);
+    return () => onDirtyChange?.(0);
   }, [dirtyCount, onDirtyChange]);
 
   // N°142 — scrollspy : la puce de la dernière section dont l'en-tête a
@@ -594,7 +570,7 @@ function ExperienceForm({
               <Separator />
               <BannerFields form={form} patch={patch} dirty={dirty.banner} invalid={bannerInvalid} />
               <Separator />
-              <SlidesFields form={form} patch={patch} patchWith={patchWith} dirty={dirty.slides} />
+              <SlidesFields form={form} patch={patch} patchWith={patchBrandingWith} dirty={dirty.slides} />
               <Separator />
               <ServicesFields form={form} patch={patch} dirty={dirty.services} />
               <Separator />
@@ -602,7 +578,7 @@ function ExperienceForm({
               <Separator />
               <WhatsappFields form={form} patch={patch} dirty={dirty.whatsapp} invalid={waInvalid} />
               <Separator />
-              <HospitalityFields form={form} patch={patch} patchWith={patchWith} dirty={dirty.hospitality} />
+              <HospitalityFields form={form} patch={patch} patchWith={patchBrandingWith} dirty={dirty.hospitality} />
             </>
           ) : (
             <>
@@ -733,8 +709,10 @@ export function VoucherPolicyForm(props: ExperienceFormProps) {
 
 /** En-tête de sous-section : pictogramme (repère des anciennes cartes) +
  * libellé + point « modifié » (pulse discret quand le groupe diverge de
- * l'état enregistré) + description. L'id EST l'ancre de la nav rapide. */
-function SubSectionHeader({
+ * l'état enregistré) + description. L'id EST l'ancre de la nav rapide.
+ * N°186 — exportée : l'éditeur unifié (portal-editor) s'en sert pour sa
+ * brique « Identité », mêmes repères visuels que le formulaire du compte. */
+export function SubSectionHeader({
   id,
   icon: Icon,
   title,
@@ -822,6 +800,22 @@ interface SectionProps {
   patch: (p: Partial<HotspotForm>) => void;
   /** Mise à jour fonctionnelle (téléversements async — cf. ExperienceForm). */
   patchWith?: (fn: (f: HotspotForm) => HotspotForm) => void;
+  dirty: boolean;
+}
+
+/** PortalFieldsProps — N°186 : les briques de branding PORTAIL (bannière,
+ * carrousel, services, bandeau, WhatsApp, mode d'affichage) prennent la
+ * forme STRUCTURELLE PortalBrandingFields (lib portal-branding) : le
+ * HotspotForm du compte ET le PortalOverrideForm de l'éditeur unifié à
+ * sélecteur de contexte la satisfont tous deux — les mêmes briques riches
+ * (téléversements R2, éditeurs de listes, aperçus) se rendent aux TROIS
+ * niveaux de la chaîne ROUTEUR → SITE → COMPTE. */
+export interface PortalFieldsProps {
+  form: PortalBrandingFields;
+  patch: (p: Partial<PortalBrandingFields>) => void;
+  /** Mise à jour fonctionnelle sur la seule vue branding (téléversements
+   * async — l'appelant l'étend à sa forme complète). */
+  patchWith?: (fn: (f: PortalBrandingFields) => PortalBrandingFields) => void;
   dirty: boolean;
 }
 
@@ -1079,8 +1073,10 @@ function JoinFields({ form, patch, dirty }: SectionProps) {
 
 /** Bannière du portail (N°45) — image de tête de la page de connexion.
  * Téléversement R2 (URL https permanente) avec repli data URL ≤ 500 Ko
- * si le stockage est indisponible — le gérant n'est jamais bloqué. */
-function BannerFields({ form, patch, dirty, invalid }: SectionProps & { invalid: boolean }) {
+ * si le stockage est indisponible — le gérant n'est jamais bloqué.
+ * N°186 — brique PARTAGÉE : compte (ExperienceForm) et surcharges
+ * site/routeur (éditeur unifié). */
+export function BannerFields({ form, patch, dirty, invalid }: PortalFieldsProps & { invalid: boolean }) {
   const { t } = useI18n();
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1196,13 +1192,14 @@ function BannerFields({ form, patch, dirty, invalid }: SectionProps & { invalid:
 }
 
 /** Slides du carrousel commercial (N°136) — ≤ 3 visuels R2 remplaçant
- * les images génériques du portail (mode commercial). */
-function SlidesFields({
+ * les images génériques du portail (mode commercial). N°186 — brique
+ * PARTAGÉE : compte et surcharges site/routeur. */
+export function SlidesFields({
   form,
   patch,
   patchWith,
   dirty,
-}: SectionProps) {
+}: PortalFieldsProps) {
   const { t, tf } = useI18n();
   const [uploadingIdx, setUploadingIdx] = useState<number | null>(null);
   const [pendingIdx, setPendingIdx] = useState<number>(0);
@@ -1337,8 +1334,9 @@ function SlidesFields({
 }
 
 /** Services du portail (N°137) — section « Nos Services » (mode
- * commercial) : ≤ 6 lignes {icône curée + libellé}. */
-function ServicesFields({ form, patch, dirty }: SectionProps) {
+ * commercial) : ≤ 6 lignes {icône curée + libellé}. N°186 — brique
+ * PARTAGÉE : compte et surcharges site/routeur. */
+export function ServicesFields({ form, patch, dirty }: PortalFieldsProps) {
   const { t } = useI18n();
   const services = form.services;
 
@@ -1449,8 +1447,8 @@ const PORTAL_SERVICE_LUCIDE: Record<string, LucideIcon> = {
 };
 
 /** Bandeau animé du portail (N°138) — messages Typed.js sous le logo,
- * ≤ 5 messages de texte brut (80 car.). */
-function TickerFields({ form, patch, dirty }: SectionProps) {
+ * ≤ 5 messages de texte brut (80 car.). N°186 — brique PARTAGÉE. */
+export function TickerFields({ form, patch, dirty }: PortalFieldsProps) {
   const { t } = useI18n();
   const msgs = form.ticker;
 
@@ -1510,8 +1508,9 @@ function TickerFields({ form, patch, dirty }: SectionProps) {
 }
 
 /** Support WhatsApp du portail (N°139) — le numéro que les invités
- * cliquent (footer login/logout/error), repli : support MikCloud. */
-function WhatsappFields({ form, patch, dirty, invalid }: SectionProps & { invalid: boolean }) {
+ * cliquent (footer login/logout/error), repli : support MikCloud.
+ * N°186 — brique PARTAGÉE. */
+export function WhatsappFields({ form, patch, dirty, invalid }: PortalFieldsProps & { invalid: boolean }) {
   const { t } = useI18n();
   // Aperçu du lien réellement servi (chiffres seuls — même normalisation
   // que le serveur).
@@ -1566,8 +1565,9 @@ function WhatsappFields({ form, patch, dirty, invalid }: SectionProps & { invali
 
 /** Mode d'affichage du portail (N°55) — commercial (grille tarifaire +
  * Wave, défaut) ou hospitalité (vitrine : bienvenue, promos R2, réseaux
- * sociaux). Inclut l'analyse de la vitrine (N°56). */
-function HospitalityFields({ form, patch, patchWith, dirty }: SectionProps) {
+ * sociaux). Inclut l'analyse de la vitrine (N°56). N°186 — brique
+ * PARTAGÉE : compte et surcharges site/routeur. */
+export function HospitalityFields({ form, patch, patchWith, dirty }: PortalFieldsProps) {
   const { t } = useI18n();
   const promos = form.promos;
   const socials = form.socials;

@@ -5,9 +5,11 @@
 export const frPortal: Record<string, string> = {
 
   // — N°35-d — portail captif (vue Portail) —
-  "portal.title": "Portail captif",
-  "portal.subtitle":
-    "Déploiement automatique du portail sur vos routeurs agents — zéro intervention humaine.",
+  // N°186 — purge des clés mortes : title/subtitle (vue autonome
+  // pré-N°57-d) et les libellés des anciens dialogs textareas
+  // (customizeTitle/customizeHint/resetOverride/identitySection,
+  // bannerUrl/style/styleInherit/welcome/whatsapp*/ticker/services/
+  // slides) — remplacés par l'éditeur unifié et ses clés propres.
   "portal.empty": "Aucun routeur agent en ligne",
   "portal.emptyHint":
     "Les routeurs en mode agent déploient le portail automatiquement. Ajoutez un routeur en mode agent dans la section Infrastructure pour activer le portail captif.",
@@ -34,8 +36,10 @@ export const frPortal: Record<string, string> = {
   "portal.journalEmpty": "Aucun déploiement enregistré",
 
   // — N°182 — sites physiques + personnalisation par site et par routeur —
+  // N°186 — la note mentionne le sélecteur « Vous personnalisez » (éditeur
+  // unifié compte / site / routeur en tête d'onglet).
   "portal.chainNote":
-    "Chaque routeur sert le premier portail défini en remontant sa chaîne : sa personnalisation propre → celle de son site → celle du compte (réglée ci-dessous par le propriétaire). Un champ vide hérite toujours du niveau supérieur ; tout changement est re-déployé automatiquement (≤ 45 s).",
+    "Chaque routeur sert le premier portail défini en remontant sa chaîne : sa personnalisation propre → celle de son site → celle du compte. Choisissez le niveau à éditer avec « Vous personnalisez » : chaque groupe non personnalisé hérite du niveau supérieur, et tout changement est re-déployé automatiquement (≤ 45 s).",
   "portal.sites": "Sites",
   "portal.sitesHint":
     "Regroupez vos routeurs par établissement (bâtiment, boutique, campus) et donnez à chaque site sa propre identité de portail.",
@@ -52,11 +56,14 @@ export const frPortal: Record<string, string> = {
     "Ses {count} routeur(s) seront détachés et serviront à nouveau le portail du compte — mise à jour automatique au check-in suivant (≤ 45 s).",
   "portal.siteDeleted": "Site supprimé",
   "portal.siteCreated": "Site créé",
+  "portal.siteCreatedDesc": "L'éditeur s'ouvre sur son portail : personnalisez-le groupe par groupe.",
   "portal.siteUpdated": "Site modifié",
   "portal.siteName": "Nom du site",
   "portal.siteLocation": "Localisation (ville, quartier)",
   "portal.siteDescription": "Description",
-  "portal.identitySection": "Identité du portail — vide = hérite du compte",
+  "portal.siteCustomize": "Portail du site",
+  "portal.siteDialogBrandingHint":
+    "L'identité du portail du site (logo, bannière, services, messages…) se personnalise dans l'éditeur « Vous personnalisez » en tête d'onglet — le bouton « Portail du site » de sa carte y bascule.",
   "portal.routerSection": "Routeurs",
   "portal.routerSite": "Site",
   "portal.routerNoSite": "Hors site (portail du compte)",
@@ -64,26 +71,61 @@ export const frPortal: Record<string, string> = {
   "portal.regimeSite": "Portail : site",
   "portal.regimeCustom": "Portail : personnalisé",
   "portal.customize": "Personnaliser",
-  "portal.customizeTitle": "Portail du routeur «{name}»",
-  "portal.customizeHint":
-    "Ces réglages remplacent, pour CE routeur, ceux de son site puis ceux du compte. Un champ vide hérite — le portail se re-déploie automatiquement (≤ 45 s).",
-  "portal.resetOverride": "Réinitialiser (hériter)",
   "portal.overrideSaved": "Portail du routeur mis à jour — re-déploiement ≤ 45 s",
   "portal.siteSaved": "Site enregistré — portails re-déployés automatiquement (≤ 45 s)",
   "portal.assignSaved": "Routeur rattaché au site",
   "portal.displayName": "Nom affiché sur le portail",
   "portal.logoUrl": "Logo (data:image/… ≤ 300 Ko)",
-  "portal.bannerUrl": "Bannière (data:image/… ou URL https://)",
   "portal.waveLink": "Lien marchand Wave",
-  "portal.style": "Style du portail",
-  "portal.styleInherit": "Hériter",
   "portal.styleCommercial": "Commercial",
   "portal.styleHospitality": "Hospitalité",
-  "portal.welcome": "Message de bienvenue (mode hospitalité)",
-  "portal.whatsappNumber": "WhatsApp support (chiffres, 8-15)",
-  "portal.whatsappLabel": "Libellé WhatsApp",
-  "portal.ticker": "Messages du bandeau animé (un par ligne, 5 max)",
-  "portal.services": "Services « Nos Services » (un par ligne, 6 max)",
-  "portal.slides": "Slides du carrousel (URL https par ligne, 3 max)",
   "portal.save": "Enregistrer",
+
+  // — N°186 — éditeur UNIFIÉ à sélecteur de contexte (Compte / Site /
+  // Routeur) — les mêmes briques riches aux trois niveaux, l'héritage
+  // rendu visible (valeur résolue + provenance par groupe). —
+  "portal.editorSection": "Éditeur du portail — chaîne Compte · Site · Routeur",
+  "portal.ctxLabel": "Vous personnalisez :",
+  "portal.ctxPlaceholder": "Compte, site ou routeur…",
+  "portal.ctxGroupAccount": "Compte",
+  "portal.ctxAccountItem": "Compte — {name}",
+  "portal.editorHintAccount": "La base de la chaîne : les sites puis les routeurs héritent de ces réglages.",
+  "portal.editorHintSite": "Les groupes non personnalisés héritent du compte — {n} routeur(s) servent ce portail.",
+  "portal.editorHintRouter": "Les groupes non personnalisés héritent de {source}, puis du compte.",
+  "portal.editorHintNone": "Sélectionnez le niveau à personnaliser : chaque groupe affiche d'abord la valeur héritée.",
+  "portal.editorEmptyTitle": "Choisissez le portail à personnaliser",
+  "portal.editorEmptyHint":
+    "Sélectionnez un site ou un routeur dans le sélecteur ci-dessus, ou cliquez « Personnaliser » sur une carte ci-dessous. Chaque groupe affiche la valeur héritée du niveau supérieur avant personnalisation.",
+  "portal.editorSiteTitle": "Portail du site «{name}»",
+  "portal.editorRouterTitle": "Portail du routeur «{name}»",
+  "portal.editorOverrideDesc":
+    "Personnalisez groupe par groupe : un groupe « Hérité » suit le niveau supérieur, un groupe « Personnalisé » s'applique ici. Un seul bouton enregistre (Ctrl+Entrée fonctionne aussi).",
+  "portal.editorOverrideCardDesc":
+    "Chaque groupe laissé « Hérité » suit le niveau supérieur ; « Personnaliser » le pré-remplit avec la valeur héritée, « Réinitialiser » le lui rend. Enregistrer re-déploie le portail au check-in suivant (≤ 45 s).",
+  "portal.editorSiteSaved": "Portail du site mis à jour — re-déploiement ≤ 45 s",
+  "portal.navIdentity": "Identité",
+  "portal.identityCard": "Identité du portail",
+  "portal.identityCardDesc": "Nom affiché, logo et lien marchand Wave propres à ce niveau.",
+  "portal.identityNamePlaceholder": "Nom affiché sur le portail",
+  "portal.identityLogoHint":
+    "Image ≤ 300 Ko, intégrée (data:image/…) — remplace le logo du compte pour ce niveau.",
+  "portal.groupInherited": "Hérité",
+  "portal.groupPersonalized": "Personnalisé",
+  "portal.groupPersonalize": "Personnaliser",
+  "portal.groupReset": "Réinitialiser (hériter)",
+  "portal.inheritedFromAccount": "Hérité du compte",
+  "portal.inheritedFromSite": "Hérité du site «{name}»",
+  "portal.summaryNothing": "Rien de réglé au-dessus — le portail garde ses valeurs par défaut.",
+  "portal.summarySlides": "{n} slide(s)",
+  "portal.summaryPromos": "{n} promo(s)",
+  "portal.summarySocials": "{n} réseau(x)",
+  "portal.summaryWave": "Wave lié",
+  "portal.removeOverride": "Retirer toute la personnalisation",
+  "portal.removeOverrideTitle": "Retirer toute la personnalisation ?",
+  "portal.removeOverrideDesc":
+    "Tous les groupes personnalisés de ce niveau reviendront hériter du niveau supérieur — re-déploiement automatique au check-in suivant (≤ 45 s).",
+  "portal.overrideRemoved": "Personnalisation retirée — le portail hérite à nouveau (≤ 45 s)",
+  "portal.ctxGuardTitle": "Changer de portail ?",
+  "portal.ctxGuardDesc":
+    "{n} modification(s) non enregistrée(s) sur le portail en cours d'édition seront perdues.",
 };

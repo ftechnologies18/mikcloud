@@ -5,6 +5,105 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-24 — N°186 — Éditeur UNIFIÉ à sélecteur de contexte « Vous personnalisez » : Compte / Site / Routeur dans UN seul formulaire riche, l'héritage rendu visible (v2 naturelle par-dessus la fusion N°184)
+
+### Contexte
+La fusion N°184 avait réuni la chaîne ROUTEUR → SITE → COMPTE dans un seul
+onglet… mais il restait DEUX éditeurs pour les MÊMES champs : le formulaire
+riche côté compte (téléversements R2, éditeurs de listes, aperçus QR et
+bannière) contre des textareas « une entrée par ligne » dans les dialogs de
+surcharge site/routeur — promos, réseaux sociaux et icônes de services
+n'étaient même PAS éditables en surcharge. Et le gérant (rang 2) configurait
+encore À L'AVEUGLE : il ne voyait jamais le portail du compte qu'il
+surchargeait. L'option 3 validée par l'opérateur : l'éditeur unifié à
+sélecteur de contexte, construit directement par-dessus la fusion.
+
+### Produit — l'éditeur unifié (parts/portal-editor.tsx NOUVEAU)
+- **SÉLECTEUR « Vous personnalisez » en tête d'onglet** : le compte
+  (propriétaire — PUT /api/settings), chaque site, chaque routeur — options
+  groupées par niveau (SelectLabel), marque « · Personnalisé » sur les
+  entités qui portent une surcharge. Les cartes Sites/Routeurs y basculent
+  aussi (« Portail du site » / « Personnaliser ») avec défilement doux vers
+  l'éditeur ; le gérant atterrit sur un guide de démarrage (choix explicite,
+  jamais une cible surprise), le propriétaire sur le sommet de sa chaîne.
+- **PARITÉ TOTALE DE CHAMPS aux trois niveaux** : les briques riches du
+  formulaire du compte (BannerFields, SlidesFields, ServicesFields,
+  TickerFields, WhatsappFields, HospitalityFields) sont exportées de
+  hotspot-cards et partagées via une forme structurelle
+  PortalBrandingFields — téléversements R2 avec repli data URL, sélecteur
+  d'icônes curées, éditeurs de promos et de réseaux sociaux, aperçu du lien
+  WhatsApp. Une brique « Identité » (nom affiché, logo ≤ 300 Ko, lien
+  marchand Wave) propre aux surcharges complète la couche.
+- **L'HÉRITAGE RENDU VISIBLE** : chaque groupe affiche « Hérité » avec la
+  VALEUR RÉSOLUE de la chaîne (miroir exact de resolvePortalBranding :
+  compte → site → routeur, calculé côté client depuis les réglages et les
+  surcharges persistées) et sa PROVENANCE (« Hérité du compte » /
+  « Hérité du site “X” ») — vignettes bannière/logo, compteurs carrousel,
+  libellés services, messages du bandeau, mode d'affichage. Le gérant voit
+  enfin ce qu'il surcharge (GET /api/settings ouvert au rang 2 ; le PUT
+  reste rang 3).
+- **« Personnaliser » PRÉ-REMPLIT depuis l'hérité** : l'utilisateur part de
+  ce qui est servi aujourd'hui et ajuste ; « Réinitialiser (hériter) » rend
+  le groupe au niveau supérieur ; « Retirer toute la personnalisation »
+  (confirmé) envoie un corps vide — le niveau supérieur reprend tout,
+  re-déploiement au check-in suivant.
+- **MÊME ARMATURE N°140/N°142 que le compte** : barre d'action sticky avec
+  compteur de groupes modifiés, erreur localisée menant au champ fautif,
+  Cmd/Ctrl+Entrée, garde beforeunload, puces d'ancres + scrollspy (rangée
+  défilante mobile), Réinitialiser confirmé.
+- **GARDE DE CHANGEMENT DE CONTEXTE** : basculer de contexte (sélecteur ou
+  carte) avec des saisies non enregistrées demande confirmation — miroir de
+  la garde de sortie d'onglet. Les formulaires signalent 0 à leur DÉMONTAGE
+  : plus AUCUN compteur fantôme après un changement de contexte confirmé ou
+  une cible disparue (site supprimé en pleine édition) — la cible résolue
+  est entièrement DÉRIVÉE des listes, sans effet.
+
+### Produit — intégration (views/portal-view.tsx)
+- **SiteDialog allégé** : champs descriptifs seuls (nom, localisation,
+  description) — l'identité de portail déménage dans l'éditeur ; après
+  CRÉATION, l'éditeur s'ouvre DIRECTEMENT sur le nouveau site (refetch
+  attendu pour que la cible résolve) : la personnalisation suit la création,
+  comme dans l'ancien flux où le dialog embarquait l'identité.
+- **RouterPortalDialog et OverrideFields SUPPRIMÉS** (textareas « une entrée
+  par ligne ») — remplacés par l'éditeur ; le dialog site n'écrit plus que
+  les champs descriptifs (PUT sites : nil = inchangé pour l'override).
+- **Lib partagée lib/hotspot/portal-branding.ts NOUVELLE** : forme d'édition
+  à 13 champs, décodeurs défensifs (déplacés de hotspot-cards, comportement
+  identique), résolution de chaîne, prédicats et manipulations par groupe,
+  construction du corps de surcharge — les MÊMES règles de lecture et
+  d'écriture aux trois niveaux, miroir du validateur partagé
+  portal_branding.go.
+
+### Fidélité
+- **Zéro backend, zéro migration, zéro contrat API touché** : PUT
+  /api/sites/{id} accepte déjà un corps portalOverride SEUL (champs
+  descriptifs nil = inchangés), PUT /api/routers/{id}/portal le corps
+  complet ; sémantique « vide = hérite » et remplacement ENTIER de la
+  surcharge conservées — l'éditeur envoie l'état complet souhaité (un groupe
+  réinitialisé disparaît du corps). Déploiement Vercel SEUL (Render non
+  concerné).
+- **Permissions inchangées** : compte = rang 3 (option masquée au gérant) ;
+  sites/routeurs = rang 2 ; le gérant ne voit le compte qu'en LECTURE (les
+  valeurs héritées de ses résumés) — exactement la visibilité GET
+  existante, aucune autorisation nouvelle.
+- **Comportements conservés** : le formulaire du compte (AccountPortalForm)
+  est rendu TEL QUEL dans le contexte compte (mêmes groupes, mêmes
+  validations, même PUT /api/settings) ; l'aperçu par routeur (N°35-d), le
+  journal des déploiements, les badges de régime et le Select d'assignation
+  de site sont inchangés.
+- i18n FR/EN : 42 clés nouvelles (sélecteur, groupes, héritage, résumés,
+  gardes, guide de démarrage), textes mis à jour (note de chaîne —
+  désormais orientée sélecteur), purge de 15 clés mortes (libellés des
+  dialogs textareas + title/subtitle orphelins de la vue autonome
+  pré-N°57-d).
+- RENUMÉROTÉ N°185→N°186 : le N°185 a été pris en parallèle par l'autre
+  session (rotation réelle du jeton R2, commit 815a20d) — rebasé
+  proprement dessus, zéro conflit (backend/ops vs frontend/hotspot).
+
+### Vérifié
+ESLint 0 ; typecheck tsgo 0 ; build production Next.js OK (11 routes
+statiques générées). Push frontend/ → déploiement Vercel attendu.
+
 ## 2026-09-24 — N°185 — Rotation réelle du jeton R2 : piège « cfat_ » découvert et corrigé (la sonde et le script de rotation validaient via /user/tokens/verify, qui REFUSE les jetons cfat_ de la console R2 alors qu'ils fonctionnent) — sondage désormais sur l'API R2 elle-même
 
 ### Contexte

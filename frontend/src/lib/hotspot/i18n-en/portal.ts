@@ -5,9 +5,10 @@
 export const enPortal: Record<string, string> = {
 
   // — N°35-d — captive portal (Portal view) —
-  "portal.title": "Captive portal",
-  "portal.subtitle":
-    "Automatic portal deployment on your agent routers — zero manual intervention.",
+  // N°186 — dead-key purge: title/subtitle (pre-N°57-d standalone view)
+  // and the old textarea-dialog labels (customizeTitle/customizeHint/
+  // resetOverride/identitySection, bannerUrl/style/styleInherit/welcome/
+  // whatsapp*/ticker/services/slides) — replaced by the unified editor.
   "portal.empty": "No agent router online",
   "portal.emptyHint":
     "Agent-mode routers deploy the portal automatically. Add an agent-mode router in the Infrastructure section to enable the captive portal.",
@@ -34,8 +35,10 @@ export const enPortal: Record<string, string> = {
   "portal.journalEmpty": "No deployment recorded",
 
   // — N°182 — physical sites + per-site/per-router portal branding —
+  // N°186 — the note mentions the "You are customizing" selector (unified
+  // account / site / router editor at the top of the tab).
   "portal.chainNote":
-    "Each router serves the first portal found up its chain: its own customization → its site's → the account's (set below by the owner). An empty field always inherits from the level above; every change redeploys automatically (≤ 45 s).",
+    "Each router serves the first portal found up its chain: its own customization → its site's → the account's. Pick the level to edit with “You are customizing”: every non-customized group inherits from the level above, and every change redeploys automatically (≤ 45 s).",
   "portal.sites": "Sites",
   "portal.sitesHint":
     "Group your routers per establishment (building, shop, campus) and give each site its own portal identity.",
@@ -52,11 +55,14 @@ export const enPortal: Record<string, string> = {
     "Its {count} router(s) will be detached and serve the account portal again — automatic update at next check-in (≤ 45 s).",
   "portal.siteDeleted": "Site deleted",
   "portal.siteCreated": "Site created",
+  "portal.siteCreatedDesc": "The editor opens on its portal: customize it group by group.",
   "portal.siteUpdated": "Site updated",
   "portal.siteName": "Site name",
   "portal.siteLocation": "Location (city, area)",
   "portal.siteDescription": "Description",
-  "portal.identitySection": "Portal identity — empty = inherits from the account",
+  "portal.siteCustomize": "Site portal",
+  "portal.siteDialogBrandingHint":
+    "The site's portal identity (logo, banner, services, messages…) is customized in the “You are customizing” editor at the top of the tab — the “Site portal” button on its card switches there.",
   "portal.routerSection": "Routers",
   "portal.routerSite": "Site",
   "portal.routerNoSite": "No site (account portal)",
@@ -64,26 +70,61 @@ export const enPortal: Record<string, string> = {
   "portal.regimeSite": "Portal: site",
   "portal.regimeCustom": "Portal: custom",
   "portal.customize": "Customize",
-  "portal.customizeTitle": "Portal of router \"{name}\"",
-  "portal.customizeHint":
-    "These settings override, for THIS router, its site's then the account's. An empty field inherits — the portal redeploys automatically (≤ 45 s).",
-  "portal.resetOverride": "Reset (inherit)",
   "portal.overrideSaved": "Router portal updated — redeploy ≤ 45 s",
   "portal.siteSaved": "Site saved — portals redeployed automatically (≤ 45 s)",
   "portal.assignSaved": "Router attached to the site",
   "portal.displayName": "Name shown on the portal",
   "portal.logoUrl": "Logo (data:image/… ≤ 300 KB)",
-  "portal.bannerUrl": "Banner (data:image/… or https:// URL)",
   "portal.waveLink": "Wave merchant link",
-  "portal.style": "Portal style",
-  "portal.styleInherit": "Inherit",
   "portal.styleCommercial": "Commercial",
   "portal.styleHospitality": "Hospitality",
-  "portal.welcome": "Welcome message (hospitality mode)",
-  "portal.whatsappNumber": "Support WhatsApp (digits, 8-15)",
-  "portal.whatsappLabel": "WhatsApp label",
-  "portal.ticker": "Animated banner messages (one per line, max 5)",
-  "portal.services": "\"Our Services\" lines (one per line, max 6)",
-  "portal.slides": "Carousel slides (https URL per line, max 3)",
   "portal.save": "Save",
+
+  // — N°186 — UNIFIED editor with context selector (Account / Site /
+  // Router) — the same rich bricks at all three levels, inheritance made
+  // visible (resolved value + per-group source). —
+  "portal.editorSection": "Portal editor — Account · Site · Router chain",
+  "portal.ctxLabel": "You are customizing:",
+  "portal.ctxPlaceholder": "Account, site or router…",
+  "portal.ctxGroupAccount": "Account",
+  "portal.ctxAccountItem": "Account — {name}",
+  "portal.editorHintAccount": "The base of the chain: sites then routers inherit these settings.",
+  "portal.editorHintSite": "Non-customized groups inherit from the account — {n} router(s) serve this portal.",
+  "portal.editorHintRouter": "Non-customized groups inherit from {source}, then the account.",
+  "portal.editorHintNone": "Pick the level to customize: each group first shows the inherited value.",
+  "portal.editorEmptyTitle": "Choose the portal to customize",
+  "portal.editorEmptyHint":
+    "Pick a site or router in the selector above, or click “Customize” on a card below. Each group shows the value inherited from the level above before customizing.",
+  "portal.editorSiteTitle": "Portal of site \"{name}\"",
+  "portal.editorRouterTitle": "Portal of router \"{name}\"",
+  "portal.editorOverrideDesc":
+    "Customize group by group: an “Inherited” group follows the level above, a “Customized” group applies here. One button saves everything (Ctrl+Enter works too).",
+  "portal.editorOverrideCardDesc":
+    "Each group left “Inherited” follows the level above; “Customize” pre-fills it with the inherited value, “Reset” gives it back. Saving redeploys the portal at the next check-in (≤ 45 s).",
+  "portal.editorSiteSaved": "Site portal updated — redeploy ≤ 45 s",
+  "portal.navIdentity": "Identity",
+  "portal.identityCard": "Portal identity",
+  "portal.identityCardDesc": "Display name, logo and Wave merchant link specific to this level.",
+  "portal.identityNamePlaceholder": "Name shown on the portal",
+  "portal.identityLogoHint":
+    "Image ≤ 300 KB, embedded (data:image/…) — replaces the account logo at this level.",
+  "portal.groupInherited": "Inherited",
+  "portal.groupPersonalized": "Customized",
+  "portal.groupPersonalize": "Customize",
+  "portal.groupReset": "Reset (inherit)",
+  "portal.inheritedFromAccount": "Inherited from the account",
+  "portal.inheritedFromSite": "Inherited from site \"{name}\"",
+  "portal.summaryNothing": "Nothing set above — the portal keeps its defaults.",
+  "portal.summarySlides": "{n} slide(s)",
+  "portal.summaryPromos": "{n} promo(s)",
+  "portal.summarySocials": "{n} network(s)",
+  "portal.summaryWave": "Wave linked",
+  "portal.removeOverride": "Remove all customization",
+  "portal.removeOverrideTitle": "Remove all customization?",
+  "portal.removeOverrideDesc":
+    "All customized groups at this level will inherit from the level above again — automatic redeploy at the next check-in (≤ 45 s).",
+  "portal.overrideRemoved": "Customization removed — the portal inherits again (≤ 45 s)",
+  "portal.ctxGuardTitle": "Switch portal?",
+  "portal.ctxGuardDesc":
+    "{n} unsaved change(s) on the portal being edited will be lost.",
 };

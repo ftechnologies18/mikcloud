@@ -5,6 +5,75 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-24 — N°187 — Icônes « Nos Services » invisibles sur le portail : la police Font Awesome sous-ensemblée (N°75) n'avait jamais été régénérée pour la whitelist N°137 — 14 glyphes manquants, dont 4 utilisés en production
+
+### Contexte
+Signalement opérateur : sur le portail captif, certaines lignes « Nos
+Services » s'affichent avec une **case à icône vide** — pas toutes, ce qui
+écartait d'emblée un échec complet du chargement CSS/police. Diagnostic
+mesuré : les données de production sont SAINES (les deux comptes dotés de
+services n'utilisent que des icônes de la whitelist, en base à la date du
+24/09), le CSS embarqué contient bien les 20 classes de la whitelist — mais
+`webfonts/fa-solid-900.woff2` est un **sous-ensemble de 37 glyphes** (4,1 Ko)
+hérité de l'amaigrissement N°75, généré à partir des SEULES icônes alors
+codées en dur dans les 8 pages. La section « Nos Services » console-pilotée
+(N°137) avait ensuite introduit une whitelist de 20 icônes sans que la
+police soit re-sous-ensemblée : 14 classes CSS sans glyphe, dont
+`fa-money-bill-wave`, `fa-phone`, `fa-print` et `fa-store` — précisément
+celles choisies par les gérants en production (4 des 5 services du compte
+témoin rendaient une case vide). Le commentaire de la whitelist affirmait
+« toutes embarquées dans le template css/all.min.css — vérifiées une à
+une » : les classes y étaient, les GLYPHES non — la vérification avait
+contraint le mauvais artefact.
+
+### Produit — backend
+- **Polices régénérées** (`webfonts/fa-solid-900.woff2` 37 → 51 glyphes,
+  4,1 → 5,3 Ko ; `fa-brands-400.woff2` inchangé en couverture, 0,7 → 0,5 Ko)
+  : sous-ensemble reconstruit depuis les DEUX sources de vérité — les classes
+  `fa-*` des 8 pages (HTML + JS embarqué, famille `fab`/`solid` comprise)
+  ET la whitelist complète. Coût routeur : +1,3 Ko de flash (discipline
+  N°75 préservée). La signature de contenu (`hotpage.Sig`, N°48-b)
+  re-pousse automatiquement le portail vers chaque routeur agent au
+  check-in suivant — aucune action manuelle.
+- **Whitelist déménagée** : `portalServiceIcons` quitte
+  `api/handlers_settings.go` pour `hotpage/serviceicons.go`
+  (`hotpage.PortalServiceIcons`) — la donnée vit dans le paquet qui rend le
+  portail ET qui garde la police ; l'api garde un simple alias (zéro
+  changement de contrat, les validations N°182 site/routeur partagent la
+  même liste via `portal_branding.go`).
+- **Test gardien NOUVEAU** (`hotpage/webfonts_test.go`,
+  `TestPortalWebfontsCoverIcons`) : à chaque CI — (1) le sha256 des woff2
+  embarqués DOIT correspondre au manifeste `webfonts_glyphs.json` (une
+  police remplacée hors script casse ici), (2) chaque icône de la
+  whitelist DOIT avoir son glyphe dans la police solid, (3) chaque classe
+  `fa-*` référencée par les 8 pages DOIT être couverte (typos comprises :
+  classe inconnue du CSS = échec). C'est le lien whitelist ↔ police qui
+  manquait à N°137 ; vérifié en simulation (ajout de `fa-train` à la
+  whitelist sans régénérer → échec immédiat avec message actionnable).
+
+### Ops
+- **Script de régénération NOUVEAU** (`ops/portal/fa-subset.py`, Python
+  fontTools) : extraction automatique des classes des 8 pages (piège des
+  alias FA6 multi-sélecteurs couvert, piège `fab` vs `fas` couvert) +
+  whitelist lue DIRECTMENT dans le source Go (aucune copie à maintenir),
+  sous-ensemblage pyftsubset, auto-vérification du cmap des sorties, écriture
+  du manifeste (hors `template/` : jamais déployé aux routeurs). Les polices
+  complètes FA 6.4.0 restent hors dépôt (cache `~/.cache/mikcloud-fa/` ou
+  `--download`) ; la version est épinglée à 6.4.0 pour appairer avec le
+  `all.min.css` embarqué.
+- **Documentation** : `TEMPLATE.md` gagne la section « Webfonts Font
+  Awesome (sous-ensemblage) » — les deux sources de vérité, la procédure de
+  régénération, l'incident d'origine ; le commentaire `types.ts`
+  (`PORTAL_SERVICE_ICONS`) détaille désormais les 3 étapes d'ajout d'une
+  icône (whitelist Go, police, traductions).
+
+### Fidélité
+Aucun changement de comportement contractuel : contrats JSON identiques,
+validation services identique (même liste, même alias), pages servies
+identiques — seuls les octets des deux woff2 et leur couverture changent.
+Vérifié : gofmt 0, vet OK, build OK, `go test ./...` 12 paquets OK (gardien
+vert : solid 51 / brands 1 / whitelist 20 / pages 8), ESLint 0, tsc 0.
+
 ## 2026-09-24 — N°186 — Éditeur UNIFIÉ à sélecteur de contexte « Vous personnalisez » : Compte / Site / Routeur dans UN seul formulaire riche, l'héritage rendu visible (v2 naturelle par-dessus la fusion N°184)
 
 ### Contexte

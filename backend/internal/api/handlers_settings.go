@@ -5,6 +5,8 @@ package api
 import (
 	"net/http"
 	"strings"
+
+	"mikcloud/hotspot-api/internal/hotpage"
 )
 
 func (a *API) handleSettingsGet(w http.ResponseWriter, r *http.Request) {
@@ -88,20 +90,13 @@ type portalWhatsappReq struct {
 	Label  string `json:"label"`
 }
 
-// portalServiceIcons — N°137 — whitelist des icônes Font Awesome 6 free
-// acceptées pour la section « Nos Services » du portail (toutes embarquées
-// dans le template css/all.min.css — vérifiées une à une). La validation EST la
-// whitelist : aucune classe arbitraire ne peut rejoindre le portail
-// (défense en profondeur — le rendu hotpage échappe déjà, mais une classe
-// inconnue casserait le glyphe). Miroir frontend : PORTAL_SERVICE_ICONS
-// (types.ts).
-var portalServiceIcons = map[string]bool{
-	"fa-wifi": true, "fa-globe": true, "fa-laptop": true, "fa-tools": true,
-	"fa-code": true, "fa-print": true, "fa-credit-card": true, "fa-money-bill-wave": true,
-	"fa-phone": true, "fa-headset": true, "fa-gamepad": true, "fa-mug-hot": true,
-	"fa-utensils": true, "fa-car": true, "fa-bolt": true, "fa-store": true,
-	"fa-camera": true, "fa-scissors": true, "fa-book": true, "fa-spa": true,
-}
+// portalServiceIcons — N°187 — alias de la source unique
+// hotpage.PortalServiceIcons (créée N°137 ici même, déplacée N°187 pour que
+// le test gardien hotpage.TestPortalWebfontsCoverIcons couvre la whitelist
+// ET la police embarquée d'un même endroit — l'incident « icônes de
+// services invisibles » venait exactement de ce désamorçage : whitelist
+// côté api, police côté hotpage, rien ne reliait les deux).
+var portalServiceIcons = hotpage.PortalServiceIcons
 
 func (a *API) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	acc := accountScope(r)

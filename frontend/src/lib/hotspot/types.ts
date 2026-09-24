@@ -2131,10 +2131,16 @@ export interface PortalService {
   label: string;
 }
 
-/** N°137 — icônes Font Awesome 6 free acceptées pour les services du portail
- * (toutes embarquées dans le template css/all.min.css). Miroir EXACT de la
- * whitelist serveur portalServiceIcons (handlers_settings.go) : la validation
- * backend EST cette liste — toute divergence ferait refuser un choix valide. */
+/** N°137/N°187 — icônes Font Awesome 6 free acceptées pour les services du
+ * portail (couverture GLYPHE garantie dans la police embarquée — gardé par
+ * hotpage.TestPortalWebfontsCoverIcons côté backend). Miroir EXACT de la
+ * whitelist serveur hotpage.PortalServiceIcons (serviceicons.go) : la
+ * validation backend EST cette liste — toute divergence ferait refuser un
+ * choix valide. AJOUTER UNE ICÔNE ICI EXIGE : 1) serviceicons.go, 2) la
+ * régénération de la police (ops/portal/fa-subset.py — cf. TEMPLATE.md
+ * §Webfonts), 3) les traductions settings.svc.icon.* (i18n-fr/en). L'incident
+ * N°187 (icônes invisibles sur le portail) venait d'une whitelist étendue
+ * sans régénérer la police sous-ensemblée. */
 export const PORTAL_SERVICE_ICONS = [
   "fa-wifi",
   "fa-globe",

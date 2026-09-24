@@ -75,6 +75,39 @@ Hotspot Page/
 | Support WhatsApp / pied de page | `{{MIKCLOUD_WHATSAPP_HREF}}` + `{{MIKCLOUD_WHATSAPP_LABEL}}` — numéro DU TENANT (`portalWhatsapp` console, chiffres 8-15 + libellé ≤ 30 car.) ou repli support MikCloud, posés dans login/logout/error (N°139) ; le crédit `.ftci-link` reste serve (éditeur) |
 | Messages d'erreur | `errors.txt` (syntaxe `$(error-orig)` etc.) |
 
+## Webfonts Font Awesome (sous-ensemblage — N°75/N°187)
+
+`webfonts/fa-solid-900.woff2` + `fa-brands-400.woff2` sont des SOUS-ENSEMBLES
+(~5 Ko + 0,5 Ko vs 150 Ko + 108 Ko complets) : le flash MikroTik est compté,
+le portail n'a besoin que des icônes réellement affichables.
+
+**Ce que le sous-ensemble DOIT couvrir (les deux sources de vérité) :**
+
+1. chaque classe `fa-*` référencée par les 8 pages (HTML + JS embarqué),
+   famille comprise (`fab` → brands, le reste → solid) ;
+2. la whitelist des icônes « Nos Services » (`hotpage.PortalServiceIcons`,
+   `serviceicons.go`) — le renderer services écrit `class="fas " + icône`.
+
+**Régénérer après toute addition** (icône dans une page, whitelist étendue) :
+
+```
+pip install fonttools brotli
+python3 ops/portal/fa-subset.py            # cache ~/.cache/mikcloud-fa/
+python3 ops/portal/fa-subset.py --download # si le cache est vide
+```
+
+Le script écrit les deux woff2 + le manifeste `webfonts_glyphs.json` (sha256 +
+glyphes, DANS le paquet Go, jamais déployé aux routeurs). Le test gardien
+`hotpage.TestPortalWebfontsCoverIcons` casse la CI si pages/whitelist et
+police divergent, ou si le manifeste ne décrit plus les octets embarqués.
+
+> Incident d'origine (N°187) : la whitelist N°137 (20 icônes) avait été
+> ajoutée sans régénérer la police sous-ensemblée N°75 (37 glyphes) — 14
+> icônes sans glyphe, dont `fa-money-bill-wave`/`fa-phone`/`fa-print`/
+> `fa-store` utilisés en production : cases à icônes VIDES sur le portail.
+> La version FA doit rester 6.4.0, appairée au `css/all.min.css` embarqué
+> (les points de code dépendent de la version).
+
 ## Historique du nettoyage (N°34)
 
 Le commit d'origine (`913b151`) contenait le template Mikhmon brut. Ont été

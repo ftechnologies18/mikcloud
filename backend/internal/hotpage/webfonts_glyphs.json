@@ -1,0 +1,67 @@
+{
+ "source": "Font Awesome Free 6.4.0 (cdnjs) — ops/portal/fa-subset.py",
+ "fonts": {
+  "webfonts/fa-solid-900.woff2": {
+   "sha256": "c37d6f0f0c4683acecbc9332709c2e11b1bc00e9b179d0f9d77068c4afedced0",
+   "glyphs": [
+    "f007",
+    "f00c",
+    "f011",
+    "f015",
+    "f017",
+    "f01e",
+    "f023",
+    "f029",
+    "f02d",
+    "f02f",
+    "f030",
+    "f05a",
+    "f061",
+    "f06a",
+    "f06b",
+    "f071",
+    "f073",
+    "f095",
+    "f09d",
+    "f0a1",
+    "f0ac",
+    "f0c4",
+    "f0e7",
+    "f0ed",
+    "f0ee",
+    "f109",
+    "f11b",
+    "f121",
+    "f145",
+    "f185",
+    "f1b9",
+    "f1c0",
+    "f1eb",
+    "f251",
+    "f252",
+    "f256",
+    "f2e7",
+    "f2f1",
+    "f2f6",
+    "f35d",
+    "f3ff",
+    "f521",
+    "f53a",
+    "f54e",
+    "f590",
+    "f5bb",
+    "f6ff",
+    "f783",
+    "f784",
+    "f7b6",
+    "f7d9"
+   ]
+  },
+  "webfonts/fa-brands-400.woff2": {
+   "sha256": "50fcc40a9a6b367429faa980ffd06a3b1526efb124726bedc167d312039426ec",
+   "glyphs": [
+    "f232"
+   ]
+  }
+ }
+}

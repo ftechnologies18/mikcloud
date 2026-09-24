@@ -5,6 +5,60 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-24 — N°188 — L'onglet Portail ne s'affichait PLUS : `SelectLabel` rendu hors `SelectGroup` — crash Radix au premier rendu du sélecteur « Vous personnalisez » (N°186), invisible pour lint/tsc/build (renuméroté : N°187 pris en parallèle)
+
+### Contexte
+Symptôme remonté à chaud juste après le déploiement de l'éditeur unifié :
+`/app/settings/hotspot` n'affichait plus rien — l'écran d'erreur global
+« Une erreur est survenue — Réessayer / Accueil » à CHAQUE ouverture de
+l'onglet Portail, y compris par lien direct. Le reste de la console restait
+fonctionnel : seule la section Hotspot était à terre, donc TOUTE la chaîne
+de personnalisation ROUTEUR → SITE → COMPTE (N°182/N°184/N°186) devenait
+inaccessible.
+
+### Diagnostic
+Reproduit sur un stack local complet (backend Go état JSON + frontend dev +
+navigateur headless piloté, compte propriétaire de test avec 1 site et
+2 routeurs agents) — la console du navigateur a livré la cause racine :
+`Error: `SelectLabel` must be used within `SelectGroup``, attrapée par
+l'ErrorBoundary de la page. Le sélecteur « Vous personnalisez » de l'éditeur
+unifié (N°186) rendait ses trois groupes d'options (Compte / Sites /
+Routeurs) avec un `SelectLabel` posé DIRECTEMENT sous `SelectContent` —
+le contrat Radix UI exige que `SelectLabel` vive dans un `SelectGroup` ;
+hors groupe, le composant lève au rendu et fait tomber l'onglet ENTIER.
+C'était la première utilisation de `SelectLabel` du codebase : le composant
+existait bien dans ui/select (exporté d'origine shadcn), mais son contrat
+d'usage n'a pas été respecté — et AUCUNE barrière qualité ne pouvait le voir :
+le crash est un contrat RUNTIME (le composant vérifie son contexte au
+montage), ESLint/tsgo/build passent, la CI était verte, et l'onglet n'est
+monté qu'à l'ouverture (dynamic import — le build ne l'exécute jamais).
+
+### Produit
+- `portal-editor.tsx` : chacun des trois blocs du sélecteur (compte, sites,
+  routeurs) enveloppe désormais son `SelectLabel` + ses `SelectItem` dans un
+  `SelectGroup` — seuls changements fonctionnels : AUCUN (même rendu visuel,
+  même valeur par item, même comportement du sélecteur).
+- Commentaire gardien sur place : le contrat Radix est désormais documenté
+  AU niveau du JSX pour le prochain qui copiera le pattern.
+
+### Fidélité
+Correctif purement structurel (2 imports + 3 paires de balises) : aucune
+clé i18n, aucun contrat API, aucun état, aucun style touchés. Zéro backend,
+zéro migration — déploiement Vercel seul.
+
+### Vérifié
+Navigation complète du golden path sur le stack local reproduit, avant puis
+après correctif : avant — écran d'erreur systématique + l'erreur Radix en
+console ; après — redirection legacy `/app/settings/hotspot` →
+`/app/settings/hotspot/portail`, éditeur du compte rendu (7 groupes),
+ouverture du sélecteur (3 groupes d'options), bascule vers le site
+(`OverrideEditor` avec héritage « Hérité du compte » visible par groupe),
+« Personnaliser » pré-rempli avec la valeur héritée, garde de sortie
+d'onglet N°142 (saisie en cours → confirmation), onglet « Vouchers &
+tickets » (politique + identité + gabarits) — ZÉRO erreur console et ZÉRO
+erreur page sur tout le parcours. Sur l'arbre fusionné post-rebase :
+ESLint 0, tsgo 0, build Next.js OK.
+
 ## 2026-09-24 — N°187 — Icônes « Nos Services » invisibles sur le portail : la police Font Awesome sous-ensemblée (N°75) n'avait jamais été régénérée pour la whitelist N°137 — 14 glyphes manquants, dont 4 utilisés en production
 
 ### Contexte

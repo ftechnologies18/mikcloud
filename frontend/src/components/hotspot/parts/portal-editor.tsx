@@ -113,6 +113,7 @@ import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectLabel,
   SelectTrigger,
@@ -265,8 +266,12 @@ export function PortalUnifiedEditor({
                 <SelectValue placeholder={t("portal.ctxPlaceholder")} />
               </SelectTrigger>
               <SelectContent>
+                {/* N°187 — SelectLabel n'existe QUE dans un SelectGroup
+                    (contrat Radix : hors groupe, le label CRASH au rendu —
+                    « `SelectLabel` must be used within `SelectGroup` »,
+                    écran d'erreur sur TOUT l'onglet Portail). */}
                 {withAccount ? (
-                  <>
+                  <SelectGroup>
                     <SelectLabel>{t("portal.ctxGroupAccount")}</SelectLabel>
                     <SelectItem value="compte">
                       <span className="inline-flex items-center gap-2">
@@ -274,10 +279,10 @@ export function PortalUnifiedEditor({
                         {tf("portal.ctxAccountItem", { name: settings?.tenant.name ?? "…" })}
                       </span>
                     </SelectItem>
-                  </>
+                  </SelectGroup>
                 ) : null}
                 {sites.length > 0 ? (
-                  <>
+                  <SelectGroup>
                     <SelectLabel>{t("portal.sites")}</SelectLabel>
                     {sites.map((s) => (
                       <SelectItem key={s.id} value={`site:${s.id}`}>
@@ -292,10 +297,10 @@ export function PortalUnifiedEditor({
                         </span>
                       </SelectItem>
                     ))}
-                  </>
+                  </SelectGroup>
                 ) : null}
                 {routers.length > 0 ? (
-                  <>
+                  <SelectGroup>
                     <SelectLabel>{t("portal.routerSection")}</SelectLabel>
                     {routers.map((r) => (
                       <SelectItem key={r.id} value={`router:${r.id}`}>
@@ -310,7 +315,7 @@ export function PortalUnifiedEditor({
                         </span>
                       </SelectItem>
                     ))}
-                  </>
+                  </SelectGroup>
                 ) : null}
               </SelectContent>
             </Select>

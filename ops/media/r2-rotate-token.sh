@@ -7,26 +7,37 @@
 # portails, SANS aucun signal console. Ce script fait la rotation complète
 # en < 5 minutes une fois le nouveau jeton créé côté Cloudflare :
 #
-#   1. VÉRIFIE le nouveau jeton contre l'API Cloudflare (verify) AVANT de
-#      toucher à quoi que ce soit — un jeton faux ne doit jamais entrer en
-#      production ;
-#   2. VÉRIFIE la permission R2 (listage des compartiments du compte lu
-#      dans l'env Render) ;
+#   1. LIT l'environnement Render (LECTURE SEULE — rien n'est écrit avant
+#      que le nouveau jeton soit prouvé bon) : compte, compartiment, garde
+#      anti-perte sur les valeurs illisibles ;
+#   2. VALIDE le nouveau jeton sur l'API R2 ELLE-MÊME (listage des
+#      compartiments) — validité + permission R2 en un seul appel ;
 #   3. PUT env-vars Render : liste COMPLÈTE (discipline N°172), seule
 #      R2_API_TOKEN est remplacée — garde anti-perte sur les CLÉS et sur
 #      les VALEURS illisibles ;
 #   4. Déclenche le redéploiement Render (l'env ne s'applique qu'au boot) ;
 #   5. Fume-test : une URL média témoin doit répondre 200.
 #
-# CRÉATION DU JETON (à faire dans Cloudflare avant le script) :
-#   Dashboard Cloudflare → My Profile (en haut à droite) → API Tokens →
-#   Create Token → Custom Token :
-#     - Permissions : Account → R2 → Edit
-#     - Account Resources : Include → <le compte MikCloud>
-#     - TTL : de préférence AUCUNE expiration (sinon : rappel calendaire
-#       AVANT l'expiration — cf. RUNBOOK-SECRETS §2.7 : c'est une
-#       expiration silencieuse qui a causé l'incident de septembre)
-#   → Continue to summary → Create Token → copier le jeton (cfat_…).
+# N°185 (24/09/2026) — PIÈGE « cfat_ » : la version N°183 validait le jeton
+# via /user/tokens/verify. Or les jetons créés depuis la CONSOLE R2 (« R2 →
+# Manage R2 API Tokens », format cfat_…, qui délivrent AUSSI une paire
+# d'identifiants S3) sont REFUSÉS par cet endpoint (« Invalid API Token »,
+# code 1000) alors qu'ils fonctionnent PARFAITEMENT sur l'API R2. La
+# rotation réelle du 24/09 est morte à l'étape 1 sur un jeton POURTANT
+# VALIDE. Règle désormais gravée ici : NE JAMAIS utiliser /user/tokens/verify
+# pour valider un jeton R2 — le sondage se fait sur l'API R2 elle-même.
+#
+# CRÉATION DU JETON (à faire dans Cloudflare avant le script) — DEUX voies :
+#   Voie A — console R2 : R2 → Manage R2 API Tokens → Create API Token
+#     (Object Read & Write, ou Admin Read & Write) → le jeton cfat_… est la
+#     « Valeur du jeton » ; la paire S3 qui l'accompagne ne sert PAS au
+#     backend (API REST Bearer) — la ranger au coffre pour les outils S3
+#     (rclone, aws cli, inspections de secours).
+#   Voie B — jeton classique : My Profile → API Tokens → Create Token →
+#     Custom Token — Permissions : Account → R2 → Edit.
+#   Dans les DEUX cas : TTL de préférence AUCUNE expiration (sinon : rappel
+#   calendaire AVANT l'expiration — cf. RUNBOOK-SECRETS §2.7 : c'est une
+#   expiration silencieuse qui a causé l'incident de septembre).
 #
 # Usage :
 #   R2_NEW_TOKEN="cfat_…" ops/media/r2-rotate-token.sh            # DRY-RUN
@@ -68,24 +79,16 @@ fi
 
 WITNESS="${MEDIA_WITNESS_URL:-https://mikcloud.onrender.com/api/media/media/acc-6e2e34a620c9/2026/188c56c5b5990e623c291d89b15eef01.jpg}"
 
-say "═══ Rotation du jeton R2 (N°183) ═══"
+say "═══ Rotation du jeton R2 (N°183/N°185) ═══"
 [ "$EXEC" -eq 0 ] && say "MODE DRY-RUN (aucune écriture — ajouter --exec pour appliquer)"
 say ""
 
-# ── 1. Le nouveau jeton est-il VALIDE côté Cloudflare ? ───────────────────
-say "→ 1/5 Vérification du NOUVEAU jeton auprès de Cloudflare…"
-# Pas de -f ici : un jeton refusé renvoie 401 avec un corps JSON {success:false}
-# — c'est le VERDICT qu'on veut lire, pas une erreur réseau.
-VERIFY="$(curl -sS --max-time 20 -H "Authorization: Bearer $R2_NEW_TOKEN" "$CF/user/tokens/verify")" \
-  || die "API Cloudflare injoignable (réseau)"
-VERIFY_OK="$(printf '%s' "$VERIFY" | python3 -c 'import json,sys
-try: print(json.load(sys.stdin).get("success") is True)
-except Exception: print("False")')"
-[ "$VERIFY_OK" = "True" ] || die "Cloudflare REFUSE le nouveau jeton (verify ≠ success) — recréer le jeton, ne rien pousser"
-say "   ✓ jeton accepté par Cloudflare"
-
-# ── 2. Lecture de l'env Render + contrôle de permission R2 ────────────────
-say "→ 2/5 Lecture de l'environnement Render…"
+# ── 1. Lecture de l'environnement Render (LECTURE SEULE) ──────────────────
+# Rien n'est écrit avant l'étape 4 : lire l'env Render est sans risque, et
+# le compte extrait ici (R2_ACCOUNT_ID) sert à l'étape 2 pour valider le
+# jeton sur la BONNE API (l'API R2 a besoin du compte, /user/tokens/verify
+# n'en avait pas besoin — c'est le seul motif de cette inversion d'étapes).
+say "→ 1/5 Lecture de l'environnement Render (lecture seule)…"
 ENV_JSON="$(curl -fsS --max-time 20 -H "Authorization: Bearer $RENDER_API_KEY" "$API/services/$SERVICE_ID/env-vars")" \
   || die "Lecture des variables Render impossible"
 ACCOUNT="$(printf '%s' "$ENV_JSON" | python3 -c '
@@ -100,20 +103,6 @@ for e in json.load(sys.stdin):
 [ -n "$BUCKET" ] || BUCKET="mikcloud-media"
 say "   compte Cloudflare : $ACCOUNT · compartiment : $BUCKET"
 
-BUCKETS="$(curl -fsS --max-time 20 -H "Authorization: Bearer $R2_NEW_TOKEN" \
-  "$CF/accounts/$ACCOUNT/r2/buckets" || true)"
-if printf '%s' "$BUCKETS" | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("success") else 1)' 2>/dev/null; then
-  HAS_BUCKET="$(printf '%s' "$BUCKETS" | python3 -c "
-import json,sys
-d = json.load(sys.stdin)
-names = [b['name'] for b in d.get('result',{}).get('buckets',[])]
-print('vue' if '$BUCKET' in names else ('NON vue (compartiments vus : %s)' % ', '.join(names[:5]) if names else 'vue (aucun compartiment listé)'))")"
-  say "   ✓ permission R2 effective — compartiment cible : $HAS_BUCKET"
-else
-  die "Le nouveau jeton n'arrive pas à lister les compartiments R2 (permission Account → R2 : Edit requise)"
-fi
-
-# ── 3. Construction du PUT (liste complète, discipline N°172) ─────────────
 # Garde anti-perte AMÉLIORÉE vs N°172 : une variable dont la valeur est
 # ILLISIBLE (null) en GET serait ré-émise VIDE par le PUT — refus net,
 # l'opérateur inspecte (les valeurs volontairement vides, ex. REGISTER_KEY
@@ -129,6 +118,36 @@ import json,sys
 print("oui" if any(e["envVar"]["key"] == "R2_API_TOKEN" for e in json.load(sys.stdin)) else "non")')"
 say "   R2_API_TOKEN déjà présente sur le service : $HAS_TOKEN"
 
+# ── 2. Le nouveau jeton est-il VALIDE et R2-capable ? ─────────────────────
+# Sondage sur l'API R2 elle-même (N°185) : le listage des compartiments
+# valide le jeton ET la permission en un seul appel, pour TOUS les types de
+# jetons (cfat_ de la console R2 comme classiques). Un jeton mort y répond
+# 401 « Authentication error » (code 10000). NE PAS revenir à
+# /user/tokens/verify : il refuse les cfat_ valides (faux négatif prouvé).
+say "→ 2/5 Validation du NOUVEAU jeton sur l'API R2 (listage des compartiments)…"
+BODY_FILE="$(mktemp)"
+trap 'rm -f "$BODY_FILE"' EXIT
+CODE="$(curl -sS --max-time 20 -o "$BODY_FILE" -w '%{http_code}' \
+  -H "Authorization: Bearer $R2_NEW_TOKEN" \
+  "$CF/accounts/$ACCOUNT/r2/buckets" || echo 000)"
+case "$CODE" in
+  200) ;;
+  401|403) die "Cloudflare REFUSE le nouveau jeton (HTTP $CODE) — recréer le jeton (voies A/B en tête de script), ne rien pousser" ;;
+  *) die "Réponse inattendue de Cloudflare (HTTP $CODE) — ne rien pousser, réessayer" ;;
+esac
+if python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("success") else 1)' "$BODY_FILE" 2>/dev/null; then
+  HAS_BUCKET="$(python3 -c '
+import json,sys
+d = json.load(open(sys.argv[1]))
+target = sys.argv[2]
+names = [b["name"] for b in d.get("result",{}).get("buckets",[])]
+print("vue" if target in names else ("NON vue (compartiments vus : %s)" % ", ".join(names[:5]) if names else "vue (aucun compartiment listé)"))' "$BODY_FILE" "$BUCKET")"
+  say "   ✓ jeton accepté par l'API R2 — compartiment cible : $HAS_BUCKET"
+else
+  die "Cloudflare a répondu 200 sans succès — corps inattendu, ne rien pousser"
+fi
+
+# ── 3. Construction du PUT (liste complète, discipline N°172) ─────────────
 PUT_PAYLOAD="$(python3 -c '
 import json, sys
 envs = json.loads(sys.argv[1])
@@ -178,10 +197,18 @@ case "$CHECK" in
 esac
 
 say "   → Déclenchement du redéploiement (l'env ne s'applique qu'au boot)…"
+# NB : le POST /deploys renvoie l'objet à plat, mais la LISTE /deploys
+# emballe chaque entrée dans {"deploy": {…}, "cursor": …} (pagination
+# v1 Render) — la boucle de suivi ci-dessous tient compte des DEUX formes
+# (bug latent N°183 corrigé N°185 : KeyError 'id' à chaque poll sinon).
 DEPLOY_ID="$(curl -fsS --max-time 30 -X POST \
   -H "Authorization: Bearer $RENDER_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{}' "$API/services/$SERVICE_ID/deploys" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')" \
+  -d '{}' "$API/services/$SERVICE_ID/deploys" | python3 -c '
+import json,sys
+d = json.load(sys.stdin)
+d = d.get("deploy", d)
+print(d["id"])')" \
   || die "ÉCHEC du déclenchement de déploiement"
 say "   déploiement $DEPLOY_ID en cours — attente du live (≤ 8 min)…"
 LIVE=""
@@ -189,10 +216,11 @@ for i in $(seq 1 48); do
   sleep 10
   STATUS="$(curl -fsS --max-time 20 -H "Authorization: Bearer $RENDER_API_KEY" \
     "$API/services/$SERVICE_ID/deploys?limit=10" \
-    | python3 -c "
+    | python3 -c '
 import json,sys
-for d in json.load(sys.stdin):
-    if d['id'] == '$DEPLOY_ID': print(d['status']); break" || echo "?")"
+for e in json.load(sys.stdin):
+    d = e.get("deploy") if isinstance(e, dict) else None
+    if d and d.get("id") == sys.argv[1]: print(d.get("status", "?")); break' "$DEPLOY_ID" || echo "?")"
   say "      [$((i*10))s] $STATUS"
   case "$STATUS" in
     live) LIVE="yes"; break ;;
@@ -214,6 +242,6 @@ fi
 say ""
 say "═══ ROTATION TERMINÉE ═══"
 say "Dernière vérification conseillée : console → Paramètres → Santé →"
-say "« Stockage d'images (portail) » doit lire Opérationnel (sonde N°183)."
+say "« Stockage d'images (portail) » doit lire Opérationnel (sonde N°185)."
 say "Puis ranger le jeton au coffre et révoquer l'ancien côté Cloudflare"
 say "(il est déjà mort, mais pour la traçabilité)."

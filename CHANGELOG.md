@@ -5,6 +5,83 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-24 — N°185 — Rotation réelle du jeton R2 : piège « cfat_ » découvert et corrigé (la sonde et le script de rotation validaient via /user/tokens/verify, qui REFUSE les jetons cfat_ de la console R2 alors qu'ils fonctionnent) — sondage désormais sur l'API R2 elle-même
+
+### Contexte
+L'opérateur fournit le jeton de remplacement promis par N°183 (jeton
+`cfat_…` créé depuis la console R2, accompagné d'identifiants S3) et la
+rotation réelle révèle un **faux négatif** : `/user/tokens/verify` refuse
+le jeton neuf (« Invalid API Token », code 1000) alors que le MÊME jeton
+passe parfaitement les appels RÉELS du backend — listage des compartiments
+ET téléchargement de l'objet témoin (200, JPEG 110 Ko). Les jetons créés
+depuis « R2 → Manage R2 API Tokens » (format `cfat_…`, qui délivrent aussi
+une paire S3) ne sont tout simplement pas reconnus par l'endpoint verify,
+réservé aux jetons « utilisateur » classiques. Conséquence sans correctif :
+la sonde N°183 aurait affiché « Jeton invalide » EN PERMANENCE sur un canal
+pourtant rétabli, et chaque rotation future serait morte à l'étape 1 du
+script. Vérifications croisées du jour : l'ancien jeton Render (mort) est
+bien refusé par l'API R2 (401 code 10000 « Authentication error ») — la
+régression de l'incident reste attrapée par le nouveau sondage ; les 4
+objets du compartiment sont intacts (3 slides du compte témoin + 1 PNG de
+test) ; les identifiants S3 fournis sont authentiques (ListBuckets 200)
+mais le backend n'en a pas besoin (canal REST Bearer).
+
+### Produit — backend
+- **Sonde R2** (`media_health.go`) : le sondage passe de
+  `/user/tokens/verify` au **listage des compartiments R2**
+  (`GET /accounts/{compte}/r2/buckets`) — test STRICTEMENT meilleur : il
+  valide le jeton ET la portée R2 (la permission exacte que le servage
+  exige) en un seul appel, pour TOUS les types de jetons (`cfat_` de la
+  console R2 comme classiques My Profile). Verdicts inchangés côté
+  consommateur : `valid` (200 + succès), `invalid` (401/403 — mort,
+  révoqué ou sans portée R2), `unknown` (réseau KO, 5xx, ou 200 sans
+  succès : réponse ambiguë, la sonde ne conclut pas). `r2VerifyCall`
+  devient `r2ProbeCall(compte, jeton) → (code, corps, erreur)`, contrat
+  JSON du bloc « media » de sync-status STRICTEMENT inchangé (configured /
+  bucket / tokenStatus / checkedAt) — aucun changement frontend requis.
+- **Tests** (`media_health_test.go`) : corps de réponse RÉELS constatés le
+  24/09 (jeton cfat_ valide → 200 success ; jeton mort → 401 code 10000) ;
+  cas 403 (sans portée R2), 5xx et 200-sans-succès → unknown ; nouveau
+  test de câblage (la sonde reçoit le compte et le jeton de la
+  configuration — un sondage qui interrogerait le mauvais compte vaudrait
+  un faux verdict pour un vrai canal).
+
+### Ops
+- **Rotation** (`ops/media/r2-rotate-token.sh`) : l'étape de validation du
+  jeton neuf passe de `/user/tokens/verify` à l'API R2 elle-même (même
+  piège, même correctif) ; les étapes sont réordonnées — lecture de l'env
+  Render D'ABORD (lecture seule, sans risque), validation du jeton
+  ENSUITE (l'API R2 exige le compte, extrait de `R2_ACCOUNT_ID`) ; aucune
+  écriture n'a lieu avant que le jeton ne soit prouvé bon (garde
+  inchangée). En-tête documenté : deux voies de création (console R2 —
+  voie A, jeton classique My Profile — voie B), piège cfat_ gravé, note
+  sur la paire S3 (coffre, outils S3 uniquement).
+- **Boucle d'attente du déploiement** (bug latent N°183 corrigé) : la
+  liste Render `/deploys` emballe chaque entrée dans `{"deploy": {…},
+  "cursor": …}` alors que le POST renvoie l'objet à plat — le suivi de
+  statut faisait `KeyError: 'id'` à chaque poll et mourait en « pas de
+  live en 8 min » APRÈS un déploiement pourtant réussi (première
+  exécution réelle du chemin succès : rotation du 24/09, déploiement
+  live en 42 s). La boucle lit désormais les deux formes.
+- **RUNBOOK-SECRETS** : §0 inventaire — ligne « Paire S3 R2 » (outils S3
+  uniquement, le backend n'en a pas besoin) + rappel du piège cfat_ sur la
+  ligne du jeton ; §2.7 — paragraphe « Piège cfat_ », deux voies de
+  création, garde du script reformulée (refus 401/403, réponse ambiguë).
+
+### Fidélité
+- Contrat JSON du bloc « media » inchangé : console et surveille.sh N°179
+  ignorent les blocs inconnus et les verdicts gardent leur sémantique.
+- Zéro changement du servage (`handlers_media.go` intact) : le canal
+  mettait/retire des images exactement pareil — seul l'OUTIL DE
+  DIAGNOSTIC sondait au mauvais endroit.
+- Rotation exécutée avec le script corrigé (PUT liste complète N°172 +
+  garde anti-perte, redéploiement suivi, fume-test témoin).
+
+### Vérifié
+gofmt 0 · go vet OK · go build OK · go test ./... 12 paquets OK · familles
+media/sync-status -race OK · ESLint 0 · tsgo 0 · build Next.js OK (zéro
+changement frontend — batteries rejouées par prudence).
+
 ## 2026-09-23 — N°184 — Fusion « Expérience → Portail » : la chaîne ROUTEUR → SITE → COMPTE réunie dans UN onglet, les tickets regroupés du réglage à l'impression (hub Hotspot à 2 onglets)
 
 ### Contexte
@@ -98,6 +175,7 @@ tickets de l'autre.
 ### Vérifié
 ESLint 0 ; typecheck tsgo 0 ; build production Next.js OK (11 routes
 statiques générées). Push frontend/ → déploiement Vercel attendu.
+
 
 ## 2026-09-23 — N°183 — Observabilité du canal d'images Cloudflare R2 : sonde « Stockage d'images » dans la carte Santé, 503 media_unconfigured distinct du 404, rotation du jeton clé en main (ops/media/r2-rotate-token.sh)
 

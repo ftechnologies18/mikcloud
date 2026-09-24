@@ -1,4 +1,4 @@
-// media_health.go — N°183 : observabilité du stockage d'images Cloudflare R2.
+// media_health.go — N°183/N°185 : observabilité du stockage d'images Cloudflare R2.
 //
 // Contexte incident (20/09/2026) : les images du portail captif (slides du
 // carrousel, bannières téléversées via POST /api/media) vivent dans un
@@ -9,20 +9,36 @@
 // AUCUN signal côté console (les images sont « optionnelles » côté client :
 // onerror les retire discrètement). Le diagnostic n'a été possible qu'en
 // corrélant les logs Render ([media] get … statut 401 en rafale) avec l'API
-// Cloudflare (token verify → Invalid). Vingt heures AVANT la bascule Supabase
-// — la migration était hors de cause, mais rien ne le disait dans la console.
+// Cloudflare. Vingt heures AVANT la bascule Supabase — la migration était
+// hors de cause, mais rien ne le disait dans la console.
+//
+// N°185 (24/09/2026) — la sonde N°183 interrogeait /user/tokens/verify, et
+// la rotation réelle a révélé un FAUX NÉGATIF : les jetons R2 créés depuis
+// la console R2 (« Manage R2 API Tokens », format cfat_…, qui délivrent
+// AUSSI une paire d'identifiants S3) sont REFUSÉS par cet endpoint
+// (« Invalid API Token », code 1000) alors qu'ils fonctionnent
+// PARFAITEMENT sur l'API R2 elle-même (prouvé en direct : listage des
+// compartiments + téléchargement de l'objet témoin, tous deux en 200 avec
+// le jeton cfat_ refusé par verify). La sonde interroge désormais l'API R2
+// DIRECTEMENT — listage des compartiments du compte — ce qui est de toute
+// façon un test STRICTEMENT meilleur : il valide le jeton ET la portée R2
+// (la permission exacte que le servage exige) en un seul appel, chose que
+// verify ne pouvait pas faire. Un jeton mort y répond 401 « Authentication
+// error » (code 10000 — constaté sur l'ancien jeton Render de l'incident) :
+// la régression de l'incident reste attrapée.
 //
 // Produit : une SONDE volontairement minimaliste, exposée dans
 // GET /api/admin/sync-status (bloc « media », purement additif — surveille.sh
 // N°179 et les consommateurs existants ignorent les blocs inconnus) :
 //
 //	configured  les variables R2_ACCOUNT_ID + R2_API_TOKEN sont posées ;
-//	tokenStatus verdict de l'API Cloudflare /user/tokens/verify —
-//	            "valid"   jeton actif (upload et lecture peuvent passer) ;
-//	            "invalid" jeton refusé (expiré ou révoqué) → rotation
-//	                      nécessaire (RUNBOOK-SECRETS §2.7) ;
-//	            "unknown" Cloudflare injoignable/timeout — sonde sans
-//	                      conclusion, on ne crie pas au loup ;
+//	tokenStatus verdict du sondage R2 (listage des compartiments) —
+//	            "valid"   jeton accepté par l'API R2 (le servage peut passer) ;
+//	            "invalid" jeton refusé (401/403 : expiré, révoqué ou sans
+//	                      portée R2) → rotation nécessaire (RUNBOOK-SECRETS §2.7) ;
+//	            "unknown" Cloudflare injoignable, timeout ou réponse ambiguë
+//	                      (5xx, 200 sans succès) — sonde sans conclusion, on
+//	                      ne crie pas au loup ;
 //	bucket      compartiment lu dans la configuration (contexte opérateur) ;
 //	checkedAt   horodatage RFC3339 du verdict.
 //
@@ -36,8 +52,10 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 )
@@ -49,10 +67,14 @@ const r2ProbeTTL = 5 * time.Minute
 // doit pas accrocher sur une lenteur externe).
 const r2ProbeTimeout = 4 * time.Second
 
-// r2VerifyEndpoint — vérification de jeton côté Cloudflare. La réponse ne
-// divulgue RIEN au-delà du statut du jeton fourni (pas de listing, pas
-// d'identifiants) — c'est l'endpoint de diagnostic officiel de Cloudflare.
-const r2VerifyEndpoint = "https://api.cloudflare.com/client/v4/user/tokens/verify"
+// r2BucketsListFmt — listage des compartiments du compte : LE sondage de
+// référence (N°185). Un jeton qui passe cet appel possède exactement ce que
+// le servage exige (authentification + portée R2 du compte) ; un jeton mort
+// y reçoit 401 « Authentication error » (code 10000 — constaté sur l'ancien
+// jeton Render de l'incident). Ne JAMAIS remplacer par /user/tokens/verify :
+// cet endpoint refuse les jetons R2 de type cfat_ (console R2) alors qu'ils
+// fonctionnent parfaitement ici — faux négatif prouvé le 24/09/2026.
+const r2BucketsListFmt = "https://api.cloudflare.com/client/v4/accounts/%s/r2/buckets"
 
 // mediaHealth — photographie du canal média (sérialisée telle quelle dans le
 // bloc « media » de sync-status).
@@ -74,23 +96,28 @@ var (
 	r2ProbeCache *r2ProbeState
 )
 
-// r2VerifyCall — appel réseau réel (injectable en tests : remplacé par un
-// compteur/stub, cf. media_health_test.go). Renvoie le corps de la réponse
-// Cloudflare (borné 64 Ko) ou l'erreur réseau.
-var r2VerifyCall = func(token string) ([]byte, error) {
+// r2ProbeCall — appel réseau réel (injectable en tests : remplacé par un
+// compteur/stub, cf. media_health_test.go). Renvoie le code HTTP et le corps
+// de la réponse Cloudflare (borné 64 Ko), ou l'erreur réseau.
+var r2ProbeCall = func(account, token string) (int, []byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), r2ProbeTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, r2VerifyEndpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		fmt.Sprintf(r2BucketsListFmt, url.PathEscape(account)), nil)
 	if err != nil {
-		return nil, err
+		return 0, nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := mediaHTTPClient.Do(req)
 	if err != nil {
-		return nil, err
+		return 0, nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	return io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	if err != nil {
+		return resp.StatusCode, nil, err
+	}
+	return resp.StatusCode, body, nil
 }
 
 // r2MediaHealthSnapshot — verdict du canal R2, cache 5 min. Ne renvoie
@@ -115,17 +142,21 @@ func r2MediaHealthSnapshot() mediaHealth {
 	r2ProbeMu.Unlock()
 
 	status := "unknown"
-	if body, err := r2VerifyCall(mc.token); err == nil {
+	if code, body, err := r2ProbeCall(mc.account, mc.token); err == nil {
 		var v struct {
 			Success bool `json:"success"`
 		}
-		if json.Unmarshal(body, &v) == nil {
-			if v.Success {
-				status = "valid"
-			} else {
-				status = "invalid"
-			}
+		switch {
+		case code == http.StatusOK && json.Unmarshal(body, &v) == nil && v.Success:
+			status = "valid"
+		case code == http.StatusUnauthorized || code == http.StatusForbidden:
+			// Refus explicite de Cloudflare : jeton mort, révoqué ou sans
+			// portée R2 — les trois exigent la même action opérateur
+			// (rotation, RUNBOOK-SECRETS §2.7).
+			status = "invalid"
 		}
+		// Tout le reste (5xx, corps illisible, 200 sans succès) : réponse
+		// ambiguë — la sonde ne conclut pas, "unknown".
 	}
 	h := mediaHealth{
 		Configured:  true,

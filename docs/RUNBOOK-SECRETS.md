@@ -17,7 +17,8 @@
 | Vercel token (`vcp_…`) | CLI/CI Vercel | Coffre | 90 jours |
 | `BACKUP_KEY` | Chiffrement des sauvegardes mikbackup | Secret GitHub `BACKUP_KEY` + coffre de l'opérateur | 12 mois (la rotation impose un nouveau cycle de sauvegarde complet) |
 | Webhook GeniusPay HMAC | Anti-falsification webhooks | Variable Render | Sur incident |
-| Jeton API Cloudflare R2 (`R2_API_TOKEN`, format `cfat_…`) | Upload ET lecture des images des portails (slides, bannières) via l'API REST R2 — servies par le backend `/api/media` | Variables Render `R2_ACCOUNT_ID` + `R2_API_TOKEN` + `R2_BUCKET` + coffre | **À la création : SANS expiration, ou rappel calendaire AVANT l'échéance** — un jeton expiré tue les images des portails SANS alerte (incident 20/09→23/09/2026, N°183 ; sonde désormais visible dans la carte Santé) |
+| Jeton API Cloudflare R2 (`R2_API_TOKEN`, format `cfat_…`) | Upload ET lecture des images des portails (slides, bannières) via l'API REST R2 — servies par le backend `/api/media` | Variables Render `R2_ACCOUNT_ID` + `R2_API_TOKEN` + `R2_BUCKET` + coffre | **À la création : SANS expiration, ou rappel calendaire AVANT l'échéance** — un jeton expiré tue les images des portails SANS alerte (incident 20/09→23/09/2026, N°183 ; sonde désormais visible dans la carte Santé). **Piège cfat_ (N°185)** : ne JAMAIS valider ces jetons via `/user/tokens/verify` (refuse les `cfat_` valides — cf. §2.7) |
+| Paire S3 R2 (Access Key ID + Secret, endpoint `…r2.cloudflarestorage.com`) | Outils S3 UNIQUEMENT (rclone, aws cli, inspections de secours du compartiment) — le backend n'en a PAS besoin (API REST Bearer) | Coffre | Sur fuite ; liée au jeton `cfat_` de la console R2 (même écran de création) |
 
 Règles transverses :
 - **Aucun secret dans le dépôt** (le secret scanning + push protection S3
@@ -97,13 +98,29 @@ Règles transverses :
 s'affichent PLUS sur les portails concernés (le portail, lui, fonctionne —
 les images sont optionnelles côté client) ; les téléversements en console
 échouent (« Stockage média indisponible ») ; la carte Santé → « Stockage
-d'images (portail) » lit **Jeton invalide ou expiré** (sonde N°183) ; les
+d'images (portail) » lit **Jeton invalide ou expiré** (sonde N°183/N°185) ; les
 logs Render montrent des rafales `[media] get … : r2 get: statut 401`.
 
-**Créer le jeton neuf** : Dashboard Cloudflare → My Profile → API Tokens →
-Create Token → Custom Token — Permissions : **Account → R2 → Edit** ;
-Account Resources : le compte MikCloud ; TTL : **aucune expiration**
-conseillée (sinon, créer le rappel calendaire AVANT l'échéance).
+**Piège `cfat_` (découvert N°185, 24/09/2026)** : les jetons créés depuis la
+**console R2** (« R2 → Manage R2 API Tokens ») sont refusés par
+`/user/tokens/verify` (« Invalid API Token », code 1000) alors qu'ils
+fonctionnent **parfaitement** sur l'API R2 elle-même. Règle : ne JAMAIS
+valider un jeton R2 via `/user/tokens/verify` — la sonde de la carte Santé
+ET le script de rotation interrogent l'API R2 directement (listage des
+compartiments : validité + permission en un seul appel).
+
+**Créer le jeton neuf** — deux voies :
+- **Voie A (console R2)** : R2 → Manage R2 API Tokens → Create API Token
+  (Object Read & Write, ou Admin Read & Write) → copier la « Valeur du
+  jeton » (`cfat_…`). L'écran délivre AUSSI une paire d'identifiants S3 :
+  elle ne sert PAS au backend (API REST Bearer) — la ranger au coffre pour
+  les outils S3 (rclone, aws cli, inspections de secours).
+- **Voie B (jeton classique)** : My Profile → API Tokens → Create Token →
+  Custom Token — Permissions : **Account → R2 → Edit** ; Account
+  Resources : le compte MikCloud.
+
+TTL : **aucune expiration** conseillée (sinon, créer le rappel calendaire
+AVANT l'échéance).
 
 **Rotation clé en main** (< 5 min, après création du jeton) :
 
@@ -112,11 +129,11 @@ R2_NEW_TOKEN="cfat_…" ops/media/r2-rotate-token.sh          # dry-run : vérif
 R2_NEW_TOKEN="cfat_…" ops/media/r2-rotate-token.sh --exec  # applique : PUT env + redéploiement + fume-test
 ```
 
-Le script refuse d'agir si : le jeton est refusé par Cloudflare, la
-permission R2 manque, ou une variable Render est illisible en lecture
-(garde anti-perte N°172 étendue aux valeurs, N°183). Il déclenche ensuite
-le redéploiement (l'env ne s'applique qu'au boot) et fume-teste une URL
-média témoin.
+Le script refuse d'agir si : le jeton est refusé par l'API R2 (401/403 —
+jeton mort, révoqué ou sans portée R2), la réponse Cloudflare est ambiguë,
+ou une variable Render est illisible en lecture (garde anti-perte N°172
+étendue aux valeurs, N°183/N°185). Il déclenche ensuite le redéploiement
+(l'env ne s'applique qu'au boot) et fume-teste une URL média témoin.
 
 **Vérification finale** : console → Paramètres → Maintenance → carte Santé
 → « Stockage d'images (portail) » doit lire **Opérationnel** ; ouvrir un

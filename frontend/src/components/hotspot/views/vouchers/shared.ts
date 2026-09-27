@@ -30,6 +30,21 @@ export function shortBatch(batchId: string): string {
 
 // VouchersStats — N°74 — compteurs de stock renvoyés par GET /api/vouchers/stats
 // (calcul serveur sur l'ensemble du stock, plus de plafond pageSize 200).
+// N°191 — byRouter : ventilation par routeur des MÊMES compteurs (loupe
+// routeur de la console) ; absent sur un backend antérieur (dégradé propre :
+// la loupe affiche 0).
+export type RouterStockStats = {
+  routerId: string;
+  routerName: string;
+  active: number;
+  used: number;
+  expired: number;
+  disabled: number;
+  allocated: number;
+  stockValue: number;
+  total: number;
+};
+
 export type VouchersStats = {
   active: number;
   used: number;
@@ -38,4 +53,5 @@ export type VouchersStats = {
   allocated: number;
   stockValue: number;
   total: number;
+  byRouter?: RouterStockStats[];
 };

@@ -45,24 +45,65 @@ func (a *API) handleVouchersStats(w http.ResponseWriter, r *http.Request) {
 	a.store.SaveTables(touched.Names()...)
 	a.store.Unlock()
 
+	// routerStock — N°191 : ventilation par routeur des MÊMES compteurs que
+	// les globaux (dérivée du même `filtered` : mêmes filtres respectés).
+	// Additif : les clients antérieurs ignorent le champ ; la « loupe
+	// routeur » de la console Vouchers affiche le stock vivant par point
+	// d'accès SANS re-télécharger la liste paginée.
+	type routerStock struct {
+		RouterID   string `json:"routerId"`
+		RouterName string `json:"routerName"`
+		Active     int    `json:"active"`
+		Used       int    `json:"used"`
+		Expired    int    `json:"expired"`
+		Disabled   int    `json:"disabled"`
+		Allocated  int    `json:"allocated"`
+		StockValue int    `json:"stockValue"`
+		Total      int    `json:"total"`
+	}
 	active, used, expired, disabled, allocated, stockValue := 0, 0, 0, 0, 0, 0
+	byRouter := map[string]*routerStock{}
 	for i := range filtered {
 		u := &filtered[i]
+		rs := byRouter[u.RouterID]
+		if rs == nil {
+			rs = &routerStock{RouterID: u.RouterID, RouterName: u.RouterName}
+			byRouter[u.RouterID] = rs
+		}
+		rs.Total++
 		switch u.Status {
 		case "active":
 			active++
 			stockValue += u.Price
+			rs.Active++
+			rs.StockValue += u.Price
 		case "used":
 			used++
+			rs.Used++
 		case "expired":
 			expired++
+			rs.Expired++
 		case "disabled":
 			disabled++
+			rs.Disabled++
 		}
 		if u.ResellerID != "" {
 			allocated++
+			rs.Allocated++
 		}
 	}
+	// Ordre stable du tableau JSON : nom de routeur puis id (les doublons de
+	// nom restent déterministes).
+	perRouter := make([]routerStock, 0, len(byRouter))
+	for _, rs := range byRouter {
+		perRouter = append(perRouter, *rs)
+	}
+	sort.Slice(perRouter, func(i, j int) bool {
+		if perRouter[i].RouterName != perRouter[j].RouterName {
+			return perRouter[i].RouterName < perRouter[j].RouterName
+		}
+		return perRouter[i].RouterID < perRouter[j].RouterID
+	})
 	writeJSONCacheable(w, r, http.StatusOK, map[string]any{
 		"active":     active,
 		"used":       used,
@@ -71,6 +112,7 @@ func (a *API) handleVouchersStats(w http.ResponseWriter, r *http.Request) {
 		"allocated":  allocated,
 		"stockValue": stockValue,
 		"total":      len(filtered),
+		"byRouter":   perRouter,
 	})
 }
 

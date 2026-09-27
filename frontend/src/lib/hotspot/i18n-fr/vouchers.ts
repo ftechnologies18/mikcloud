@@ -12,6 +12,7 @@ export const frVouchers: Record<string, string> = {
   "vouchers.tabBatches": "Lots",
   "vouchers.kpi.active": "Vouchers actifs",
   "vouchers.kpi.activeSub": "prêts à la vente",
+  "vouchers.kpi.activeSubScoped": "prêts à vendre sur {name}",
   "vouchers.kpi.used": "Utilisés",
   "vouchers.kpi.usedSub": "tickets consommés",
   "vouchers.kpi.expired": "Expirés",
@@ -312,4 +313,8 @@ export const frVouchers: Record<string, string> = {
   "vouchers.gen.recapPrice": "Prix de vente (Price)",
   "vouchers.gen.recapLock": "Verrou 1er appareil (Lock User)",
   "vouchers.gen.recapExpiry": "Expiration (Expired Mode)",
+
+  // N°191 — loupe routeur (rail de portée).
+  "vouchers.scopeCountTitle": "{count} ticket(s) actif(s) sur {name}",
+  "vouchers.scopeAllTitle": "{count} ticket(s) actif(s) au total",
 };

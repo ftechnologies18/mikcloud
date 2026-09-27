@@ -1,9 +1,10 @@
 "use client";
 
-// Onglet « Vouchers » de la vue Vouchers — présentation pure : statistiques
-// du stock (KPI serveur N°74), barre de filtres (recherche debouncée, statut,
-// détenteur, profil), table des tickets (codes, mots de passe révélables,
-// quota, prix, statut, lot cliquable) et pagination.
+// Onglet « Vouchers » de la vue Vouchers — présentation pure : loupe
+// routeur (N°191), statistiques du stock (KPI serveur N°74 — au niveau de
+// la loupe), barre de filtres (recherche debouncée, statut, détenteur,
+// profil), table des tickets (codes, mots de passe révélables, quota,
+// prix, statut, lot cliquable) et pagination.
 // L'état et les requêtes vivent dans le shell (views/vouchers-view.tsx) :
 // ce composant ne fait que rendre ce qu'on lui passe.
 
@@ -48,23 +49,34 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState } from "@/components/hotspot/empty-state";
 import { LoadingCards, LoadingRows } from "@/components/hotspot/loading";
+import { RouterScopeRail } from "@/components/hotspot/parts/router-scope";
 import { StatCard } from "@/components/hotspot/stat-card";
 import { StatusBadge } from "@/components/hotspot/status-badge";
 import { useCurrency } from "@/components/hotspot/parts/sd-currency";
 import { PasswordCell } from "@/components/hotspot/parts/uc-password-cell";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { formatBytes, formatCurrency, formatDate } from "@/lib/hotspot/format";
-import type { HotspotUser, Profile } from "@/lib/hotspot/types";
+import type { HotspotUser, Profile, RouterDevice } from "@/lib/hotspot/types";
 import { PAGE_SIZE, STATUS_OPTIONS, shortBatch } from "./shared";
 
 interface VouchersTabProps {
-  // Statistiques du stock (compteurs serveur N°74)
+  // Statistiques du stock (compteurs serveur N°74 — déjà au niveau de la loupe)
   statsLoading: boolean;
   activeCount: number;
   usedCount: number;
   expiredCount: number;
   allocatedCount: number;
   stockValue: number;
+  // N°191 — loupe routeur (l'état vit dans le shell — callbacks de changement)
+  routers: RouterDevice[] | undefined;
+  /** Routeur sélectionné ("" = tous). */
+  scopeRouter: string;
+  onScopeRouter: (routerId: string) => void;
+  /** Stock vivant par routeur (badges du rail). */
+  scopeCounts: Record<string, number> | undefined;
+  scopeTotal: number | undefined;
+  /** Nom du routeur de la loupe (null = ouverte sur « tous » / parc en chargement). */
+  scopeName: string | null;
   // Filtres (l'état vit dans le shell — callbacks de changement)
   searchInput: string;
   onSearchInput: (value: string) => void;
@@ -105,6 +117,12 @@ export function VouchersTab({
   expiredCount,
   allocatedCount,
   stockValue,
+  routers,
+  scopeRouter,
+  onScopeRouter,
+  scopeCounts,
+  scopeTotal,
+  scopeName,
   searchInput,
   onSearchInput,
   statusFilter,
@@ -146,12 +164,33 @@ export function VouchersTab({
 
   return (
     <>
-      {/* Statistiques du stock */}
+      {/* N°191 — loupe routeur : porte TOUT l'onglet ci-dessous (KPI +
+          filtres + table). Masquée sous 2 routeurs ; badges = stock vivant
+          (actifs) par point d'accès. */}
+      <RouterScopeRail
+        routers={routers}
+        value={scopeRouter}
+        onChange={onScopeRouter}
+        counts={scopeCounts}
+        total={scopeTotal}
+        countTitle={(name, count) =>
+          name === null
+            ? tf("vouchers.scopeAllTitle", { count })
+            : tf("vouchers.scopeCountTitle", { name, count })
+        }
+      />
+
+      {/* Statistiques du stock (au niveau de la loupe) */}
       {statsLoading ? (
         <LoadingCards cards={5} />
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
-          <StatCard title={t("vouchers.kpi.active")} value={String(activeCount)} sub={t("vouchers.kpi.activeSub")} icon={Ticket} />
+          <StatCard
+            title={t("vouchers.kpi.active")}
+            value={String(activeCount)}
+            sub={scopeName ? tf("vouchers.kpi.activeSubScoped", { name: scopeName }) : t("vouchers.kpi.activeSub")}
+            icon={Ticket}
+          />
           <StatCard title={t("vouchers.kpi.used")} value={String(usedCount)} sub={t("vouchers.kpi.usedSub")} icon={CheckCircle2} />
           <StatCard title={t("vouchers.kpi.expired")} value={String(expiredCount)} sub={t("vouchers.kpi.expiredSub")} icon={Clock} />
           {/* N°23 (W3/W4) — stock confié aux revendeurs, visible d'un coup d'œil. */}

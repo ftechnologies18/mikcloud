@@ -29,4 +29,9 @@ export const enSessions: Record<string, string> = {
   "sessions.theUser": "the user",
   "sessions.throttled": "Throttled",
   "sessions.throttledTitle": "Data quota used up: speed is reduced (throttle mode) until the session's time expires.",
+  // N°191 — router scope rail.
+  "sessions.scopeCountTitle": "{count} active session(s) on {name}",
+  "sessions.scopeAllTitle": "{count} active session(s) in total",
+  "sessions.kpi.sessionsSubScoped": "connected on {name}",
+  "sessions.emptyScopedDesc": "No client is currently connected on {name}.",
 };

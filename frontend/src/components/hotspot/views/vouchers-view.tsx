@@ -10,7 +10,7 @@
 // onglets a déménagé dans ./vouchers/ (vouchers-tab, batches-tab,
 // confirm-dialogs) — composants de présentation pure alimentés par props.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Layers, Ticket, TicketPlus, Zap } from "lucide-react";
@@ -29,6 +29,7 @@ import { BatchPrintDialog } from "@/components/hotspot/parts/batch-print-dialog"
 import { api, apiDownload } from "@/lib/hotspot/api";
 import { STALE_TIME } from "@/lib/hotspot/query";
 import { useI18n } from "@/lib/hotspot/i18n";
+import { useHotspotStore } from "@/lib/hotspot/store";
 import { detailFromPath, viewToPath } from "@/lib/hotspot/view-path";
 import { formatCurrency } from "@/lib/hotspot/format";
 import type {
@@ -52,6 +53,27 @@ import {
   RepriseConfirmDialog,
 } from "./vouchers/confirm-dialogs";
 
+// N°191 — miroir module des filtres de l'onglet Vouchers : le catch-all
+// /app/[[...vue]] REMONTE à chaque changement de params (vérifié au
+// navigateur — MÊME à nombre de segments constant) : basculer la loupe
+// routeur réinitialiserait recherche + statut + détenteur + profil à
+// chaque chip. Piège de séquencement (découvert en vérification
+// navigateur) : l'initialisateur du NOUVEL arbre tourne AVANT le cleanup
+// de l'ancien — une sauvegarde au démontage arrive TROP TARD. Le miroir
+// est donc écrit EN CONTINU (effet sur les filtres), UNIQUEMENT en ère
+// loupe (sans détail lot : l'ère détail lot est pilotée par l'effet
+// Phase D, le miroir ne doit pas lui survivre — sinon la recherche
+// resterait « coincée » sur l'id de lot au retour-navigation) ; il est
+// vidé au démontage si la vue a vraiment changé (vraie sortie → la
+// prochaine entrée repart propre, comportement inchangé).
+let vouchersKeptFilters: {
+  searchInput: string;
+  search: string;
+  statusFilter: string;
+  holderFilter: string;
+  profileFilter: string;
+} | null = null;
+
 export default function VouchersView() {
   const { t, tf, lang } = useI18n();
   const currency = useCurrency();
@@ -63,12 +85,12 @@ export default function VouchersView() {
   const [tab, setTab] = useState<"vouchers" | "batches">("vouchers");
 
   // Filtres de la table (recherche avec debounce ~400 ms)
-  const [searchInput, setSearchInput] = useState("");
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [searchInput, setSearchInput] = useState(() => vouchersKeptFilters?.searchInput ?? "");
+  const [search, setSearch] = useState(() => vouchersKeptFilters?.search ?? "");
+  const [statusFilter, setStatusFilter] = useState(() => vouchersKeptFilters?.statusFilter ?? "all");
   // N°23 (W3/W4) — détenteur du stock : direct (gérant) / alloué (revendeurs).
-  const [holderFilter, setHolderFilter] = useState("all");
-  const [profileFilter, setProfileFilter] = useState("all");
+  const [holderFilter, setHolderFilter] = useState(() => vouchersKeptFilters?.holderFilter ?? "all");
+  const [profileFilter, setProfileFilter] = useState(() => vouchersKeptFilters?.profileFilter ?? "all");
   const [page, setPage] = useState(1);
 
   // Filtres des lots
@@ -129,7 +151,7 @@ export default function VouchersView() {
     staleTime: STALE_TIME.reference,
   });
 
-  const { data: routers } = useQuery({
+  const { data: routers, isLoading: routersLoading } = useQuery({
     queryKey: ["/api/routers"],
     queryFn: () => api<RouterDevice[]>("/api/routers"),
     // N°130 — état du parc : bouge aux check-ins agents (~45 s).
@@ -152,6 +174,61 @@ export default function VouchersView() {
     staleTime: STALE_TIME.reference,
   });
 
+  // N°191 — LOUPE ROUTEUR : le segment d'URL de la vue porte SOIT le
+  // deep-link lot (Phase D : /app/vouchers/<batchId>, un UUID), SOIT la
+  // portée routeur « router:<id> » (préfixe réservé — les ids de lot sont
+  // des UUID, jamais ce préfixe ; même convention que la clé canonique de
+  // l'éditeur Portail, N°190). La loupe VIT dans l'URL (pattern Protection) :
+  // rafraîchissement, partage et signet retombent sur la portée ; chaque
+  // changement de chip la remplace (applyScope — replace, un réglage pas
+  // une navigation). Dérivé de l'URL au premier rendu : aucune
+  // synchronisation effet→état.
+  const router = useRouter();
+  const pathname = usePathname();
+  const detailSegment = detailFromPath(pathname, "vouchers");
+  const scopeRouterId = detailSegment?.startsWith("router:")
+    ? detailSegment.slice("router:".length)
+    : null;
+  const detailBatchId = detailSegment && !detailSegment.startsWith("router:") ? detailSegment : null;
+
+  function applyScope(routerId: string) {
+    router.replace(viewToPath("vouchers", routerId ? `router:${routerId}` : undefined), { scroll: false });
+  }
+
+  // N°191 — segment orphelin (routeur supprimé, signet périmé) :
+  // re-normalisation vers la racine de la vue — replace, zéro entrée
+  // d'historique parasite (miroir Portail N°190). Attends le parc : un
+  // routeur pas encore chargé n'est PAS orphelin.
+  useEffect(() => {
+    if (!scopeRouterId || routersLoading) return;
+    if (!routers?.some((r) => r.id === scopeRouterId)) {
+      router.replace(viewToPath("vouchers"), { scroll: false });
+    }
+  }, [scopeRouterId, routersLoading, routers, router]);
+
+  // N°191 — miroir écrit EN CONTINU, en ère loupe uniquement (sans détail
+  // lot) : l'initialisateur du nouvel arbre court avant le cleanup de
+  // l'ancien, toute sauvegarde différée arriverait trop tard. En ère détail
+  // lot, le miroir est VIDE (l'effet Phase D pilote les filtres — le
+  // retour-navigation doit retomber propre, pas sur un lot fantôme).
+  useEffect(() => {
+    vouchersKeptFilters =
+      !detailSegment || detailSegment.startsWith("router:")
+        ? { searchInput, search, statusFilter, holderFilter, profileFilter }
+        : null;
+  }, [detailSegment, searchInput, search, statusFilter, holderFilter, profileFilter]);
+  useEffect(
+    () => () => {
+      // Démontage : vue toujours sur vouchers → remontage du catch-all
+      // (loupe) : le miroir continu fait son œuvre. Sinon → vraie sortie de
+      // vue : vider (la prochaine entrée repart propre).
+      if (useHotspotStore.getState().view !== "vouchers") {
+        vouchersKeptFilters = null;
+      }
+    },
+    [],
+  );
+
   // Statistiques globales (page large sans filtre) — compteurs calculés côté
   // SERVEUR (N°74) : l'ancien poll pageSize:500 téléchargeait jusqu'à 200
   // objets complets toutes les 20 s (~10-15 Ko gzip) et comptait FAUX dès que
@@ -163,24 +240,53 @@ export default function VouchersView() {
     refetchInterval: 20_000,
   });
 
-  const activeCount = statsData?.active ?? 0;
-  const usedCount = statsData?.used ?? 0;
-  const expiredCount = statsData?.expired ?? 0;
+  // N°191 — KPI au niveau de la loupe : ventilation byRouter du serveur
+  // (absente sur un backend antérieur → compteurs à 0, dégradé propre).
+  const scopedStats = scopeRouterId
+    ? statsData?.byRouter?.find((s) => s.routerId === scopeRouterId)
+    : undefined;
+  const activeCount = scopeRouterId ? (scopedStats?.active ?? 0) : (statsData?.active ?? 0);
+  const usedCount = scopeRouterId ? (scopedStats?.used ?? 0) : (statsData?.used ?? 0);
+  const expiredCount = scopeRouterId ? (scopedStats?.expired ?? 0) : (statsData?.expired ?? 0);
   // N°23 (W3/W4) — visibilité du stock confié aux revendeurs.
-  const allocatedCount = statsData?.allocated ?? 0;
-  const stockValue = statsData?.stockValue ?? 0;
+  const allocatedCount = scopeRouterId ? (scopedStats?.allocated ?? 0) : (statsData?.allocated ?? 0);
+  const stockValue = scopeRouterId ? (scopedStats?.stockValue ?? 0) : (statsData?.stockValue ?? 0);
 
-  // Liste paginée filtrée
+  // N°191 — badges du rail : stock vivant (actifs) par routeur, glissé sur
+  // la ventilation byRouter du serveur (zéro requête supplémentaire).
+  // Chaque routeur du parc porte un badge, MÊME à 0 — mais seulement quand
+  // la ventilation existe (backend antérieur → pas de badge plutôt qu'un
+  // « 0 » mensonger : inconnu ≠ vide).
+  const stockByRouter = useMemo(() => {
+    if (!statsData?.byRouter) return undefined;
+    const counts: Record<string, number> = {};
+    for (const r of routers ?? []) counts[r.id] = 0;
+    for (const rs of statsData.byRouter) counts[rs.routerId] = rs.active;
+    return counts;
+  }, [statsData, routers]);
+  const totalActive = statsData?.active ?? 0;
+  // Routeur de la loupe (nom pour les libellés) — le parc peut être en
+  // chargement : les KPI scopés gardent alors leur sous-texte générique.
+  const scopedRouter = routers?.find((r) => r.id === scopeRouterId) ?? null;
+
+  // Liste paginée filtrée — N°191 : le filtre routeur vit CÔTÉ SERVEUR
+  // (param routerId de filterUsers, contrat existant) : la loupe ne
+  // télécharge pas les pages des autres points d'accès.
   const statusParam = statusFilter === "all" ? undefined : statusFilter;
   const profileParam = profileFilter === "all" ? undefined : profileFilter;
   // N°23 (W3/W4) — détenteur : direct (gérant) / alloué (revendeurs).
   const holderParam = holderFilter === "all" ? undefined : holderFilter;
+  const scopeRouterParam = scopeRouterId ?? undefined;
 
   const { data: pagedData, isLoading, isFetching } = useQuery({
-    queryKey: ["/api/vouchers", "list", { search, status: statusParam, profileId: profileParam, holder: holderParam, page }],
+    queryKey: [
+      "/api/vouchers",
+      "list",
+      { search, status: statusParam, profileId: profileParam, holder: holderParam, routerId: scopeRouterParam, page },
+    ],
     queryFn: () =>
       api<PagedUsers>("/api/vouchers", {
-        params: { search, status: statusParam, profileId: profileParam, holder: holderParam, page, pageSize: PAGE_SIZE },
+        params: { search, status: statusParam, profileId: profileParam, holder: holderParam, routerId: scopeRouterParam, page, pageSize: PAGE_SIZE },
       }),
     refetchInterval: 20_000,
     placeholderData: (previous) => previous,
@@ -199,9 +305,7 @@ export default function VouchersView() {
   // on est déjà sur l'URL). Segment consommé localement : ni le store ni
   // app-route ne changent (fix 192ad9f préservé). À la sortie du détail
   // (Retour navigateur), le filtre lot est levé s'il n'a pas divergé.
-  const router = useRouter();
-  const pathname = usePathname();
-  const detailBatchId = detailFromPath(pathname, "vouchers");
+  // (La lecture du segment et la loupe routeur vivent plus haut — N°191.)
   const prevDetail = useRef<string | null>(null);
   // Miroir de la recherche lu par l'effet ci-dessous : synchronisé dans un
   // effet (jamais pendant le rendu — règle react-hooks/refs), déclaré
@@ -623,7 +727,11 @@ export default function VouchersView() {
   }
 
   const hasFilters =
-    search !== "" || statusFilter !== "all" || profileFilter !== "all" || holderFilter !== "all";
+    scopeRouterId !== null ||
+    search !== "" ||
+    statusFilter !== "all" ||
+    profileFilter !== "all" ||
+    holderFilter !== "all";
   // Refonte v2 — filtres « fiche de vie » des lots (recherche + site + canal +
   // cycle + détenteur). Le DÉFAUT du statut est désormais « stock » (Vivants) :
   // un filtre n'est « actif » que s'il diverge de ce défaut.
@@ -688,6 +796,13 @@ export default function VouchersView() {
           expiredCount={expiredCount}
           allocatedCount={allocatedCount}
           stockValue={stockValue}
+          /* N°191 — loupe routeur (rail + KPI scopés). */
+          routers={routers}
+          scopeRouter={scopeRouterId ?? ""}
+          onScopeRouter={applyScope}
+          scopeCounts={stockByRouter}
+          scopeTotal={totalActive}
+          scopeName={scopedRouter?.name ?? null}
           searchInput={searchInput}
           onSearchInput={setSearchInput}
           statusFilter={statusFilter}

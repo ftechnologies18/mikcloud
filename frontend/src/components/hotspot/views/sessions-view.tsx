@@ -3,7 +3,7 @@
 // Vue Sessions actives — temps réel (poll auto-refresh, durées qui avancent, kick).
 
 import { useEffect, useMemo, useState } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -21,14 +21,17 @@ import { toast } from "sonner";
 
 import { api } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
-import { detailFromPath } from "@/lib/hotspot/view-path";
-import type { HotspotSession } from "@/lib/hotspot/types";
+import { STALE_TIME } from "@/lib/hotspot/query";
+import { useHotspotStore } from "@/lib/hotspot/store";
+import { detailFromPath, viewToPath } from "@/lib/hotspot/view-path";
+import type { HotspotSession, RouterDevice } from "@/lib/hotspot/types";
 import { formatBytes, formatDuration } from "@/lib/hotspot/format";
 // Sémantique trafic verrouillée : bytesIn=upload / bytesOut=download (RouterOS).
 import { downBytes, upBytes } from "@/lib/hotspot/traffic-semantics";
 import { EmptyState } from "@/components/hotspot/empty-state";
 import { LoadingRows } from "@/components/hotspot/loading";
 import { PageHeader } from "@/components/hotspot/page-header";
+import { RouterScopeRail } from "@/components/hotspot/parts/router-scope";
 import { StatCard } from "@/components/hotspot/stat-card";
 import {
   AlertDialog,
@@ -53,12 +56,35 @@ const REFRESH_OPTIONS = [
   { value: "30000", label: "30 s" },
 ];
 
+// N°191 — miroir module de la saisie de recherche : le catch-all
+// /app/[[...vue]] REMONTE à chaque changement de params (vérifié au
+// navigateur — MÊME à nombre de segments constant, contrairement à la note
+// N°190 qui ne documentait que les changements de NOMBRE) : basculer la
+// loupe routeur réinitialiserait la saisie à chaque chip. Piège de
+// séquencement (découvert en vérification navigateur) : l'initialisateur
+// du NOUVEL arbre tourne AVANT le cleanup de l'ancien — une sauvegarde
+// au démontage arrive TROP TARD. Le miroir est donc écrit EN CONTINU
+// (effet sur la saisie) et vidé au démontage UNIQUEMENT si la vue a
+// vraiment changé (remontage loupe → conserver ; vraie sortie → repartir
+// propre, comportement inchangé pour les navigations normales).
+let sessionsKeptSearch: string | null = null;
+
 export default function SessionsView() {
   const { t, tf, lang } = useI18n();
   const queryClient = useQueryClient();
+  const nav = useRouter();
   const [refreshMs, setRefreshMs] = useState(5000);
   const [now, setNow] = useState(() => Date.now());
   const [kickTarget, setKickTarget] = useState<HotspotSession | null>(null);
+
+  // N°191 — parc routeurs pour la loupe (état du parc : bouge aux check-ins
+  // agents ~45 s ; points de statut des chips).
+  const routersQuery = useQuery({
+    queryKey: ["/api/routers"],
+    queryFn: () => api<RouterDevice[]>("/api/routers"),
+    staleTime: STALE_TIME.operational,
+  });
+  const routers = routersQuery.data;
 
   const { data, dataUpdatedAt, isLoading } = useQuery({
     queryKey: ["/api/sessions"],
@@ -72,10 +98,55 @@ export default function SessionsView() {
   // (état DÉRIVÉ de l'URL — aucune synchronisation effet→état). Sortie du
   // détail sans saisie → le filtre retombe naturellement ; avec saisie →
   // la saisie est conservée (le segment ne marque que le point d'entrée).
-  const [typedQuery, setTypedQuery] = useState<string | null>(null);
+  //
+  // N°191 — le segment porte désormais DEUX lectures : le username
+  // (deep-link Phase D) OU la loupe routeur « router:<id> » (préfixe
+  // réservé — les usernames générés ne commencent jamais par « router: » ;
+  // même convention que la clé canonique de l'éditeur Portail, N°190). La
+  // loupe VIT dans l'URL (pattern Protection) : rafraîchissement, partage
+  // et signet retombent sur la portée ; chaque changement de chip la
+  // remplace (applyScope — replace, un réglage pas une navigation).
+  const [typedQuery, setTypedQuery] = useState<string | null>(() => sessionsKeptSearch);
   const pathname = usePathname();
-  const detailUsername = detailFromPath(pathname, "sessions");
+  const detailSegment = detailFromPath(pathname, "sessions");
+  const scopeRouterId = detailSegment?.startsWith("router:")
+    ? detailSegment.slice("router:".length)
+    : null;
+  const detailUsername = detailSegment && !detailSegment.startsWith("router:") ? detailSegment : null;
   const query = typedQuery ?? detailUsername ?? "";
+
+  // N°191 — miroir écrit EN CONTINU (l'initialisateur du nouvel arbre court
+  // avant le cleanup de l'ancien : toute sauvegarde différée arrive trop
+  // tard, découvert en vérification navigateur).
+  useEffect(() => {
+    sessionsKeptSearch = typedQuery;
+  }, [typedQuery]);
+  useEffect(
+    () => () => {
+      // Démontage : vue TOUJOURS sur sessions → remontage du catch-all
+      // (loupe) : le miroir continu fait son œuvre. Sinon → vraie sortie
+      // de vue : vider (la prochaine entrée repart propre).
+      if (useHotspotStore.getState().view !== "sessions") {
+        sessionsKeptSearch = null;
+      }
+    },
+    [],
+  );
+
+  function applyScope(routerId: string) {
+    nav.replace(viewToPath("sessions", routerId ? `router:${routerId}` : undefined), { scroll: false });
+  }
+
+  // N°191 — segment orphelin (routeur supprimé, signet périmé) :
+  // re-normalisation vers la racine de la vue — replace, zéro entrée
+  // d'historique parasite (miroir Portail N°190). Attends le parc : un
+  // routeur pas encore chargé n'est PAS orphelin.
+  useEffect(() => {
+    if (!scopeRouterId || routersQuery.isLoading) return;
+    if (!routers?.some((r) => r.id === scopeRouterId)) {
+      nav.replace(viewToPath("sessions"), { scroll: false });
+    }
+  }, [scopeRouterId, routersQuery.isLoading, routers, nav]);
 
   // Horloge locale (1 s) : fait visuellement avancer les durées entre deux polls.
   useEffect(() => {
@@ -88,16 +159,43 @@ export default function SessionsView() {
     [data],
   );
 
-  // Phase D — liste affichée = filtre local (les KPI restent globaux).
+  // N°191 — la loupe scope TOUTE la page : KPI, table et empty state (le
+  // filtre de recherche reste un filtre de table PAR-DESSUS, Phase D
+  // inchangée). Les comptes des chips restent GLOBAUX (la loupe se choisit
+  // précisément en voyant tout le parc d'un coup d'œil).
+  const scopedSessions = useMemo(
+    () => (scopeRouterId ? sessions.filter((s) => s.routerId === scopeRouterId) : sessions),
+    [sessions, scopeRouterId],
+  );
+
+  // Phase D — liste affichée = filtre local (portée routeur × recherche).
   const filteredSessions = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return sessions;
-    return sessions.filter((s) => s.username.toLowerCase().includes(q));
-  }, [sessions, query]);
+    if (!q) return scopedSessions;
+    return scopedSessions.filter((s) => s.username.toLowerCase().includes(q));
+  }, [scopedSessions, query]);
+
+  // N°191 — badges du rail : sessions vivantes par routeur (glissées sur le
+  // poll, zéro requête supplémentaire). Chaque routeur du parc porte un
+  // badge, MÊME à 0 (l'opérateur distingue « vide » de « inconnu ») ; un
+  // routeur supprimé du parc mais portant des sessions résiduelles reste
+  // visible dans le total « tous » uniquement.
+  const countsByRouter = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const r of routers ?? []) counts[r.id] = 0;
+    for (const s of sessions) counts[s.routerId] = (counts[s.routerId] ?? 0) + 1;
+    return counts;
+  }, [routers, sessions]);
+
+  // Routeur de la loupe (nom pour les libellés) — le parc peut être en
+  // chargement : les KPI scopés affichent alors le sous-texte générique.
+  const scopedRouter = routers?.find((r) => r.id === scopeRouterId) ?? null;
 
   const elapsedSec = Math.max(0, Math.floor((now - dataUpdatedAt) / 1000));
-  const totalIn = sessions.reduce((acc, s) => acc + s.bytesIn, 0);
-  const totalOut = sessions.reduce((acc, s) => acc + s.bytesOut, 0);
+  // N°191 — KPI au niveau de la loupe (globaux quand elle est ouverte sur
+  // « tous », par routeur sinon).
+  const totalIn = scopedSessions.reduce((acc, s) => acc + s.bytesIn, 0);
+  const totalOut = scopedSessions.reduce((acc, s) => acc + s.bytesOut, 0);
   // Sémantique RouterOS verrouillée : bytesOut = download (descendant),
   // bytesIn = upload (montant) — voir traffic-semantics.ts (doc MikroTik).
   const totalDown = totalOut;
@@ -170,8 +268,33 @@ export default function SessionsView() {
         }
       />
 
+      {/* N°191 — loupe routeur : porte TOUTE la vue ci-dessous (KPI + table).
+          Masquée sous 2 routeurs ; badges = sessions vivantes par point d'accès. */}
+      <RouterScopeRail
+        routers={routers}
+        value={scopeRouterId ?? ""}
+        onChange={applyScope}
+        counts={countsByRouter}
+        total={sessions.length}
+        countTitle={(name, count) =>
+          name === null
+            ? tf("sessions.scopeAllTitle", { count })
+            : tf("sessions.scopeCountTitle", { name, count })
+        }
+      />
+
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatCard title={t("sessions.kpi.sessions")} value={String(sessions.length)} sub={t("sessions.kpi.sessionsSub")} icon={Radio} live />
+        <StatCard
+          title={t("sessions.kpi.sessions")}
+          value={String(scopedSessions.length)}
+          sub={
+            scopedRouter
+              ? tf("sessions.kpi.sessionsSubScoped", { name: scopedRouter.name })
+              : t("sessions.kpi.sessionsSub")
+          }
+          icon={Radio}
+          live
+        />
         <StatCard
           title={t("sessions.kpi.download")}
           value={formatBytes(totalDown, lang)}
@@ -188,7 +311,11 @@ export default function SessionsView() {
           <EmptyState
             icon={WifiOff}
             title={t("sessions.empty")}
-            description={t("sessions.emptyDesc")}
+            description={
+              scopedRouter
+                ? tf("sessions.emptyScopedDesc", { name: scopedRouter.name })
+                : t("sessions.emptyDesc")
+            }
           />
         ) : (
           <Table>

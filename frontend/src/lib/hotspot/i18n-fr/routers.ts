@@ -93,4 +93,7 @@ export const frRouters: Record<string, string> = {
   "routers.reinstall.regenerate": "Régénérer et afficher le script",
   "routers.backToList": "Tous les routeurs",
   "routers.openCardAria": "Ouvrir la fiche de {name}",
+  // N°191 — loupe routeur : la fiche routeur devient un pivot.
+  "routers.viewSessions": "Voir les sessions",
+  "routers.viewVouchers": "Voir les vouchers",
 };

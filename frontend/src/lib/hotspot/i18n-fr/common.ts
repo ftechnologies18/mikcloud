@@ -27,6 +27,7 @@ export const frCommon: Record<string, string> = {
   "common.allStatuses": "Tous les statuts",
   "common.allProfiles": "Tous les profils",
   "common.allRouters": "Tous les routeurs",
+  "common.routerScopeLabel": "Filtrer par routeur",
   "common.allSites": "Tous les sites",
   "common.statusActive": "Actifs",
   "common.statusOnline": "En ligne",

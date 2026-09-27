@@ -93,4 +93,7 @@ export const enRouters: Record<string, string> = {
   "routers.reinstall.regenerate": "Regenerate and show script",
   "routers.backToList": "All routers",
   "routers.openCardAria": "Open {name} router page",
+  // N°191 — loupe routeur : la fiche routeur devient un pivot.
+  "routers.viewSessions": "View sessions",
+  "routers.viewVouchers": "View vouchers",
 };

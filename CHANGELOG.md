@@ -5,6 +5,109 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-27 — N°191 — « Loupe routeur » sur Sessions et Vouchers : rail de portée partagé, badges vivants par point d'accès, portée adressable dans l'URL (router:<id>) — la fiche routeur devient un pivot (Voir les sessions / Voir les vouchers)
+
+### Contexte
+Demande opérateur : « /app/sessions — ajouter un filtre pour afficher les
+sessions PAR ROUTEUR… propose un système unique et extraordinaire. Fait
+pareil pour /app/vouchers ». Le multi-points d'accès est le quotidien du
+gestionnaire (parc mesuré en prod : 5 routeurs) : il vivait des vues
+AGRÉGÉES — le trafic d'un site précis exigeait de deviner quel client
+appartient à quel routeur dans un tableau global.
+
+### Produit — la « loupe routeur » (un système, trois pièces)
+- **Rail de portée partagé** (`parts/router-scope.tsx`, nouveau) : une rangée
+  de chips « Tous les routeurs » + une par point d'accès, sous l'en-tête de
+  la vue. Chaque chip porte : point de statut (en ligne = vert pulsant,
+  hors ligne = destructif — mêmes conventions que StatusBadge), nom, et
+  **badge de compte vivant** — sessions actives sur la vue Sessions, stock
+  vivant (actifs) sur la vue Vouchers, plafonné « 99+ ». Masqué sous
+  2 routeurs (un seul point d'accès = la vue EST déjà sa loupe) ;
+  squelette de chips au chargement du parc. Chips = boutons `aria-pressed`
+  dans un groupe labellisé (clavier natif).
+- **Portée adressable dans l'URL** (pattern Protection N°83 / Portail
+  N°190) : `/app/sessions/router:<id>` et `/app/vouchers/router:<id>` —
+  le segment vit dans l'URL (rafraîchissement, partage et signet
+  retombent sur la portée), remplacé à chaque chip (replace : un réglage,
+  pas une navigation). Préfixe `router:` réservé — usernames et ids de lot
+  (UUID) ne commencent jamais par lui ; coexistence native avec les
+  deep-links existants (username Phase D côté sessions, `<batchId>` côté
+  vouchers : l'ère détail lot reste pilotée par l'effet Phase D, la loupe
+  ne le lui dispute pas). Auto-guérison des segments orphelins (routeur
+  supprimé, signet périmé) après chargement du parc — replace vers la
+  racine, miroir Portail N°190.
+- **La loupe scope TOUTE la page** : KPI, table et empty state suivent la
+  portée (recherche = filtre de table PAR-DESSUS, Phase D inchangée).
+  Sessions : compte + trafic du routeur, sous-texte « connectés sur
+  {name} », empty state dédié. Vouchers : filtre **côté serveur** (param
+  `routerId` de `filterUsers`, contrat existant — la loupe ne télécharge
+  pas les pages des autres points d'accès), KPI par routeur via la
+  ventilation `byRouter` (voir Backend), empty state filtré.
+- **Fiche routeur = pivot** (vue Infrastructure) : « Voir les sessions » /
+  « Voir les vouchers » dans le menu d'actions de la fiche — pousse la vue
+  cible DIRECTEMENT scopée sur ce routeur. Garde `canView` (miroir N°190) :
+  jamais un lien mort.
+
+### Backend (additif, zéro rupture de contrat)
+- `GET /api/vouchers/stats` gagne `byRouter: [{routerId, routerName, active,
+  used, expired, disabled, allocated, stockValue, total}]` — ventilation
+  par routeur des MÊMES compteurs (dérivée du même `filtered` : mêmes
+  filtres respectés), ordre stable (nom puis id). Les clients antérieurs
+  ignorent le champ ; le frontend dégrade proprement (loupe sans badges
+  ni KPI par routeur sur un backend antérieur — inconnu ≠ vide).
+
+### Pièges découverts et corrigés (vérification navigateur)
+- **Le catch-all `/app/[[...vue]]` REMONTE à CHAQUE changement de params —
+  même à nombre de segments constant** (marque DOM : l'élément est
+  reconstruit ; la note N°190 ne documentait que les changements de
+  NOMBRE). Le cache TanStack survit (QueryProvider au layout racine) mais
+  l'état local de la vue est réinitialisé : la saisie de recherche et les
+  filtres se vidaient à CHAQUE chip.
+- **Piège de séquencement** : l'initialisateur `useState` du NOUVEL arbre
+  court AVANT le cleanup du démontage de l'ancien — un miroir module écrit
+  au démontage arrive TROP TARD (première implémentation réfutée au
+  navigateur). Solution : miroir module écrit **EN CONTINU** (effet sur
+  l'état filtré), vidé au démontage UNIQUEMENT si la vue a vraiment changé
+  (remontage loupe → conserver ; vraie sortie → repartir propre). Côté
+  Vouchers, le miroir n'existe qu'en « ère loupe » (sans détail lot) : le
+  retour-navigation d'un détail lot retombe propre, pas sur une recherche
+  fantôme.
+- Outil d'édition Go : l'éditeur de fichiers de la session convertit les
+  TABULATIONS en espaces (gofmt CI rouge, diff x15) — patch appliqué via
+  Python binaire-tab-safe.
+
+### Vérifié (stack locale complète : backend JSON :4000 + frontend dev :3100 + navigateur headless, owner hotspot, 3 routeurs agents dont 1 sans session, 6 sessions, 8 vouchers + 6 réguliers)
+- Sessions : rail + comptes exacts (Tous 6 · Cocody 2 · Abidjan 4 ·
+  Yamoussoukro 0 — chaque routeur porte un badge, MÊME à 0 : vide ≠
+  inconnu), chip → URL scopée + KPI « 4 · connectés sur Routeur Abidjan »
+  + table filtrée, recherche × loupe combinées, saisie CONSERVÉE à chaque
+  chip (miroir), empty state scopé dédié, orphelin → auto-guérison.
+- Vouchers : rail + badges stock vivant, chip → filtre serveur (3 tickets
+  Abidjan seulement), KPI « 3 · prêts à vendre sur Routeur Abidjan » +
+  valeur en stock par routeur, saisie conservée, deep-link lot → loupe
+  RETOMBE PROPRE (ère lot quittée sans recherche fantôme), Retour
+  navigateur → URL d'origine (scopée) sans filtre coincé.
+- Cross-nav : fiche Routeur Cocody → « Voir les sessions » →
+  /app/sessions/router:<id> avec KPI scopé « 2 · connectés sur Routeur
+  Cocody ».
+- Mobile 390 px : scrollW = clientW (zéro débordement) sessions et
+  vouchers, rail scrollable, KPI empilés ; QA visuelle VLM des captures :
+  chips, sélection, grilles et table conformes.
+- ZÉRO erreur console/page sur tout le parcours ; ESLint 0, tsgo 0, build
+  Next.js OK ; gofmt CLEAN, go vet OK, build 23 Mo, `go test ./...`
+  11 paquets OK, `-race` internal/api vert (découpe A–R + S–Z + secteur
+  vouchers/users/stats, le paquet entier dépassant le timeout sandbox).
+
+### Fichiers
+- Nouveau : `frontend/src/components/hotspot/parts/router-scope.tsx`.
+- Backend : `internal/api/handlers_users.go` (byRouter, +42 lignes
+  additives).
+- Frontend : `sessions-view.tsx`, `vouchers-view.tsx`,
+  `vouchers/vouchers-tab.tsx` (rail + props), `vouchers/shared.ts`
+  (type `RouterStockStats`), `routers-view.tsx` (pivot fiche).
+- i18n FR/EN : 13 clés nouvelles (scope, infobulles de comptes,
+  sous-textes KPI scopés, empty state scopé, actions pivot).
+
 ## 2026-09-27 — N°190 — Raccourci « Personnaliser le portail » depuis la fiche routeur de l'Infrastructure : l'éditeur unifié s'ouvre DIRECTEMENT sur CE routeur (deep-link adressable), le régime du portail visible sur la fiche
 
 ### Contexte

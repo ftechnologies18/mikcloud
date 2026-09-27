@@ -39,6 +39,7 @@ import {
   Router as RouterIcon,
   ShieldCheck,
   Terminal,
+  Ticket,
   TriangleAlert,
   Trash2,
   Users,
@@ -652,6 +653,36 @@ export default function RoutersView() {
                           >
                             <Activity className="size-4" />
                             {t("routers.stats")}
+                          </DropdownMenuItem>
+                        )}
+                        {/* N°191 — la loupe routeur : la fiche devient un
+                            pivot vers SES sessions et SES vouchers (deep-link
+                            /app/<vue>/router:<id> — la vue cible s'ouvre
+                            DIRECTEMENT scopée sur ce routeur). Garde canView
+                            (miroir N°190) : jamais un lien mort. */}
+                        {(canView(role, "sessions", usage) || canView(role, "vouchers", usage)) && (
+                          <DropdownMenuSeparator />
+                        )}
+                        {canView(role, "sessions", usage) && (
+                          <DropdownMenuItem
+                            className="min-h-10"
+                            onClick={() =>
+                              router.push(viewToPath("sessions", `router:${selected.id}`), { scroll: false })
+                            }
+                          >
+                            <Radio className="size-4" />
+                            {t("routers.viewSessions")}
+                          </DropdownMenuItem>
+                        )}
+                        {canView(role, "vouchers", usage) && (
+                          <DropdownMenuItem
+                            className="min-h-10"
+                            onClick={() =>
+                              router.push(viewToPath("vouchers", `router:${selected.id}`), { scroll: false })
+                            }
+                          >
+                            <Ticket className="size-4" />
+                            {t("routers.viewVouchers")}
                           </DropdownMenuItem>
                         )}
                         <DropdownMenuItem className="min-h-10" onClick={() => openEdit(selected)}>

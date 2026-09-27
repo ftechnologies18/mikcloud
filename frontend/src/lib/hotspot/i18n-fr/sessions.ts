@@ -29,4 +29,9 @@ export const frSessions: Record<string, string> = {
   "sessions.theUser": "l'utilisateur",
   "sessions.throttled": "Bridé",
   "sessions.throttledTitle": "Quota de données épuisé : le débit est réduit (mode bridage) jusqu'à l'expiration du temps de la session.",
+  // N°191 — loupe routeur (rail de portée).
+  "sessions.scopeCountTitle": "{count} session(s) active(s) sur {name}",
+  "sessions.scopeAllTitle": "{count} session(s) active(s) au total",
+  "sessions.kpi.sessionsSubScoped": "connectés sur {name}",
+  "sessions.emptyScopedDesc": "Aucun client n'est connecté sur {name} pour le moment.",
 };

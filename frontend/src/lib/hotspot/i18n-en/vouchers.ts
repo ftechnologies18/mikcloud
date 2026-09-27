@@ -12,6 +12,7 @@ export const enVouchers: Record<string, string> = {
   "vouchers.tabBatches": "Batches",
   "vouchers.kpi.active": "Active vouchers",
   "vouchers.kpi.activeSub": "ready to sell",
+  "vouchers.kpi.activeSubScoped": "ready to sell on {name}",
   "vouchers.kpi.used": "Used",
   "vouchers.kpi.usedSub": "tickets redeemed",
   "vouchers.kpi.expired": "Expired",
@@ -312,4 +313,8 @@ export const enVouchers: Record<string, string> = {
   "vouchers.gen.recapPrice": "Selling price (Price)",
   "vouchers.gen.recapLock": "First-device lock (Lock User)",
   "vouchers.gen.recapExpiry": "Expiry (Expired Mode)",
+
+  // N°191 — router scope rail.
+  "vouchers.scopeCountTitle": "{count} active ticket(s) on {name}",
+  "vouchers.scopeAllTitle": "{count} active ticket(s) in total",
 };

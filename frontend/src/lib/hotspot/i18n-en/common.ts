@@ -27,6 +27,7 @@ export const enCommon: Record<string, string> = {
   "common.allStatuses": "All statuses",
   "common.allProfiles": "All profiles",
   "common.allRouters": "All routers",
+  "common.routerScopeLabel": "Filter by router",
   "common.allSites": "All sites",
   "common.statusActive": "Active",
   "common.statusOnline": "Online",

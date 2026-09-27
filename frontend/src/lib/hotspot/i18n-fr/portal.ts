@@ -44,8 +44,12 @@ export const frPortal: Record<string, string> = {
   "portal.sitesHint":
     "Regroupez vos routeurs par établissement (bâtiment, boutique, campus) et donnez à chaque site sa propre identité de portail.",
   "portal.newSite": "Nouveau site",
-  "portal.noSites":
-    "Aucun site — tous vos routeurs servent le portail du compte.",
+  "portal.noSites": "Aucun site — et ce n'est pas obligatoire.",
+  // N°189 — pédagogie du chemin direct : la personnalisation d'UN routeur
+  // ne passe PAS par la création d'un site (bouton « Personnaliser » de sa
+  // carte — section Routeurs, désormais AVANT les sites).
+  "portal.noSitesHint":
+    "Pour personnaliser un seul routeur, utilisez le bouton « Personnaliser » de sa carte dans la section Routeurs ci-dessus — aucun site n'est requis. Créez un site seulement pour partager une même identité de portail entre PLUSIEURS routeurs.",
   "portal.siteRouters": "{count} routeur(s)",
   "portal.sitePortalCustom": "Portail personnalisé",
   "portal.sitePortalAccount": "Portail du compte",
@@ -65,6 +69,10 @@ export const frPortal: Record<string, string> = {
   "portal.siteDialogBrandingHint":
     "L'identité du portail du site (logo, bannière, services, messages…) se personnalise dans l'éditeur « Vous personnalisez » en tête d'onglet — le bouton « Portail du site » de sa carte y bascule.",
   "portal.routerSection": "Routeurs",
+  // N°189 — le niveau le plus fin d'abord : chaque routeur peut porter SON
+  // portail SANS aucun site (chemin direct « Personnaliser »).
+  "portal.routerSectionHint":
+    "Chaque routeur peut porter son PROPRE portail — sans créer de site. Sans personnalisation, il sert le portail du compte.",
   "portal.routerSite": "Site",
   "portal.routerNoSite": "Hors site (portail du compte)",
   "portal.regimeAccount": "Portail : compte",

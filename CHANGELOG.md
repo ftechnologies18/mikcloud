@@ -5,6 +5,74 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-27 — N°189 — Le chemin direct « personnaliser UN routeur SANS site » rendu premier plan : section Routeurs AVANT Sites, hint sous le titre, empty state pédagogique — l'architecture COMPTE → SITE → ROUTEUR inchangée (réponse à la question opérateur)
+
+### Contexte
+Question opérateur : « au lieu d'une personnalisation en créant un site, on
+fait directement une personnalisation par routeur ? ». L'analyse a établi que
+le régime « individuel par routeur » EXISTE DÉJÀ (N°182 : surcharge
+`Router.PortalOverride`, résolution `resolvePortalBranding` ; N°186 : bouton
+« Personnaliser » sur chaque carte routeur, éditeur unifié à contexte
+routeur) — mais la PAGE racontait l'histoire inverse : la section Sites
+venait AVANT les Routeurs, et son empty state (« Aucun site — tous vos
+routeurs servent le portail du compte ») laissait croire que le site était
+l'entrée obligatoire de la personnalisation. Mesuré en production (lecture
+SQL Supabase) : 4 comptes, 5 routeurs, 1 seul site — le niveau routeur
+direct n'a JAMAIS été utilisé, le niveau site exactement une fois (surcharge
+« WIFI Zikisso », 521 car., 1 routeur attaché) : le chemin direct était
+disponible mais invisible.
+
+### Décision (analyse livrée à l'opérateur avant implémentation)
+Architecture conservée : la chaîne COMPTE → SITE → ROUTEUR reste la source
+de vérité (le niveau site = le « appliquer à plusieurs » des chaînes
+multi-établissements ; le supprimer serait une migration destructive +
+rewrite de l'éditeur fraîchement stabilisé N°186→N°188, pour casser la seule
+personnalisation réelle en production). À la place, le chemin direct
+« par routeur » devient PREMIER PLAN dans l'UX — sans toucher au backend,
+aux contrats API ni à la sémantique « vide = hérite ».
+
+### Produit
+- `portal-view.tsx` : ordre des sections inversé — ROUTEURS AVANT SITES. Le
+  niveau le plus fin d'abord (le chemin direct « Personnaliser » sans site),
+  les sites en regroupement optionnel ; l'ordre de lecture colle désormais à
+  l'ordre de la chaîne décrit par la note pédagogique (routeur → site →
+  compte). Contenu des sections inchangé (mêmes cartes, mêmes boutons,
+  mêmes badges de régime).
+- Hint sous le titre Routeurs (`portal.routerSectionHint`) : « Chaque
+  routeur peut porter son PROPRE portail — sans créer de site. Sans
+  personnalisation, il sert le portail du compte. » — symétrique du hint
+  existant de la section Sites.
+- Empty state Sites enrichi (`portal.noSites` reformulé + `portal.noSitesHint`
+  nouvelle) : « Aucun site — et ce n'est pas obligatoire. Pour personnaliser
+  un seul routeur, utilisez le bouton « Personnaliser » de sa carte dans la
+  section Routeurs ci-dessus — aucun site n'est requis. Créez un site
+  seulement pour partager une même identité de portail entre PLUSIEURS
+  routeurs. » — la réponse à la question opérateur, écrite DANS l'écran.
+- i18n FR/EN : 2 clés nouvelles + 1 reformulée, miroir exact.
+
+### Fidélité
+Zéro backend, zéro contrat API, zéro migration, zéro changement d'état : un
+déplacement de blocs JSX (contenu verbatim), un paragraphe de hint, un
+empty state enrichi, 3 clés i18n. Sélecteur « Vous personnalisez », éditeur
+unifié, badges de régime, dialogs, journal : inchangés. Déploiement Vercel
+seul.
+
+### Vérifié
+Stack local complet reproduit (backend Go état JSON :4000 + frontend dev
+:3000 derrière le gateway, navigateur headless, compte propriétaire de test
+formule annuelle, 2 routeurs agents, 0 site au départ) : redirection legacy
+`/app/settings/hotspot` → `/portail` ✓ ; éditeur du compte rendu (7 groupes)
+✓ ; section Routeurs AVANT Sites dans le DOM ✓ ; hint Routeurs visible ✓ ;
+empty state Sites pédagogique (avant création) ✓ ; « Personnaliser » sur la
+carte Routeur Cocody → sélecteur bascule « Routeur Cocody », hint
+d'héritage correct ✓ ; ouverture du sélecteur (groupes Compte/Routeurs, pas
+de groupe Sites vide — rendu conditionnel) sans crash Radix (le piège N°188
+ne revient pas) ✓ ; création du site « Site Plateau » → carte rendue sous
+les routeurs, éditeur bascule sur son portail (flux N°186 intact) ✓ ;
+mobile 390 px : cartes empilées, zéro débordement horizontal ✓ ; ZÉRO
+erreur console et ZÉRO erreur page sur tout le parcours. Sur l'arbre
+complet : ESLint 0, tsgo 0, build Next.js OK.
+
 ## 2026-09-24 — N°188 — L'onglet Portail ne s'affichait PLUS : `SelectLabel` rendu hors `SelectGroup` — crash Radix au premier rendu du sélecteur « Vous personnalisez » (N°186), invisible pour lint/tsc/build (renuméroté : N°187 pris en parallèle)
 
 ### Contexte

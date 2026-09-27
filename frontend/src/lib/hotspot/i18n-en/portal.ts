@@ -43,8 +43,12 @@ export const enPortal: Record<string, string> = {
   "portal.sitesHint":
     "Group your routers per establishment (building, shop, campus) and give each site its own portal identity.",
   "portal.newSite": "New site",
-  "portal.noSites":
-    "No site yet — all your routers serve the account's portal.",
+  "portal.noSites": "No sites — and none required.",
+  // N°189 — direct-path pedagogy: customizing ONE router does NOT require
+  // creating a site ("Customize" button on its card — Routers section,
+  // now shown BEFORE sites).
+  "portal.noSitesHint":
+    "To customize a single router, just use the “Customize” button on its card in the Routers section above — no site needed. Create a site only to share one portal identity across SEVERAL routers.",
   "portal.siteRouters": "{count} router(s)",
   "portal.sitePortalCustom": "Custom portal",
   "portal.sitePortalAccount": "Account portal",
@@ -64,6 +68,10 @@ export const enPortal: Record<string, string> = {
   "portal.siteDialogBrandingHint":
     "The site's portal identity (logo, banner, services, messages…) is customized in the “You are customizing” editor at the top of the tab — the “Site portal” button on its card switches there.",
   "portal.routerSection": "Routers",
+  // N°189 — the finest level first: every router can carry its OWN portal
+  // with NO site at all (direct “Customize” path).
+  "portal.routerSectionHint":
+    "Every router can carry its OWN portal — no site required. Without customization, it serves the account portal.",
   "portal.routerSite": "Site",
   "portal.routerNoSite": "No site (account portal)",
   "portal.regimeAccount": "Portal: account",

@@ -29,6 +29,12 @@
 // Sémantique des surcharges : VIDE = HÉRITE (un champ vide ne touche rien —
 // la surcharge ne peut pas masquer un élément que le compte affiche ; pour
 // ce cas, vider le champ côté compte et le surcharger ailleurs).
+//
+// N°189 — ORDRE DES SECTIONS : les Routeurs AVANT les Sites — le niveau le
+// plus fin d'abord (le chemin DIRECT « Personnaliser » sans créer de site),
+// les sites en regroupement OPTIONNEL ; l'empty state Sites le dit
+// explicitement (réponse à la question opérateur « personnaliser par routeur
+// sans passer par un site » — l'architecture reste COMPTE → SITE → ROUTEUR).
 
 import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -230,9 +236,10 @@ function portalRegime(router: RouterDevice, sites: SiteResponse[]) {
 
 /** Contenu de l'onglet « Portail » du hub Hotspot — N°186 : l'éditeur
  * unifié à sélecteur de contexte en tête (compte / site / routeur — LA
- * chaîne entière au même endroit), puis les sections Sites et Routeurs
- * (vue d'ensemble + navigation vers l'éditeur), journal des déploiements
- * en pied. */
+ * chaîne entière au même endroit), puis les sections Routeurs puis Sites
+ * (N°189 : les routeurs d'abord — le niveau le plus fin, le chemin direct
+ * « Personnaliser » sans site ; les sites en regroupement optionnel), le
+ * journal des déploiements en pied. */
 export function PortalContent({
   withAccount,
   onDirtyChange,
@@ -439,103 +446,15 @@ export function PortalContent({
         onDirtyChange={handleEditorDirty}
       />
 
-      {/* — SECTION SITES — */}
-      <section className="space-y-3" aria-label={t("portal.sites")}>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h2 className="text-lg font-semibold tracking-tight">{t("portal.sites")}</h2>
-            <p className="text-sm text-muted-foreground">{t("portal.sitesHint")}</p>
-          </div>
-          <Button type="button" size="sm" className="gap-1.5" onClick={() => setSiteDialogFor(null)}>
-            <Plus className="size-3.5" />
-            {t("portal.newSite")}
-          </Button>
-        </div>
-        {sitesQuery.isLoading ? (
-          <div className="flex h-24 items-center justify-center text-muted-foreground">
-            <Loader2 className="size-5 animate-spin" />
-          </div>
-        ) : sites.length === 0 ? (
-          <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
-            {t("portal.noSites")}
-          </p>
-        ) : (
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {sites.map((site) => (
-              <Card key={site.id}>
-                <CardContent className="space-y-4 p-4">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <Building2 className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-                        <span className="truncate font-medium">{site.name}</span>
-                      </div>
-                      {site.location ? (
-                        <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
-                          <MapPin className="size-3" aria-hidden="true" />
-                          {site.location}
-                        </p>
-                      ) : null}
-                      {site.description ? (
-                        <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{site.description}</p>
-                      ) : null}
-                    </div>
-                    {site.hasOverride ? (
-                      <Badge className="gap-1 bg-emerald-100 text-emerald-700 hover:bg-emerald-100">
-                        <Palette className="size-3" />
-                        {t("portal.sitePortalCustom")}
-                      </Badge>
-                    ) : (
-                      <Badge variant="outline">{t("portal.sitePortalAccount")}</Badge>
-                    )}
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    {tf("portal.siteRouters", { count: site.routerCount })}
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {/* N°186 — la personnalisation vit dans l'éditeur
-                        unifié : ce bouton Y bascule (contexte site). */}
-                    <Button
-                      type="button"
-                      size="sm"
-                      className="gap-1.5"
-                      onClick={() => requestContext({ kind: "site", siteId: site.id })}
-                    >
-                      <Palette className="size-3.5" />
-                      {t("portal.siteCustomize")}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="gap-1.5"
-                      onClick={() => setSiteDialogFor(site)}
-                    >
-                      <Pencil className="size-3.5" />
-                      {t("portal.siteEdit")}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="gap-1.5 text-destructive hover:text-destructive"
-                      onClick={() => setDeleteFor(site)}
-                      disabled={deleteMutation.isPending}
-                    >
-                      <Trash2 className="size-3.5" />
-                      {t("portal.siteDelete")}
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* — SECTION ROUTEURS — */}
+      {/* — SECTION ROUTEURS — N°189 : AVANT les Sites — chaque routeur peut
+          porter SON portail SANS créer de site (chemin direct « Personnaliser
+          ») ; les sites restent le regroupement OPTIONNEL pour partager une
+          identité entre PLUSIEURS routeurs. */}
       <section className="space-y-3" aria-label={t("portal.routerSection")}>
-        <h2 className="text-lg font-semibold tracking-tight">{t("portal.routerSection")}</h2>
+        <div>
+          <h2 className="text-lg font-semibold tracking-tight">{t("portal.routerSection")}</h2>
+          <p className="text-sm text-muted-foreground">{t("portal.routerSectionHint")}</p>
+        </div>
         {routers.length === 0 ? (
           <EmptyState
             icon={Monitor}
@@ -639,6 +558,108 @@ export function PortalContent({
                 </Card>
               );
             })}
+          </div>
+        )}
+      </section>
+
+      {/* — SECTION SITES — N°189 : APRÈS les Routeurs — regroupement
+          OPTIONNEL : un site n'est PAS requis pour personnaliser un routeur. */}
+      <section className="space-y-3" aria-label={t("portal.sites")}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-lg font-semibold tracking-tight">{t("portal.sites")}</h2>
+            <p className="text-sm text-muted-foreground">{t("portal.sitesHint")}</p>
+          </div>
+          <Button type="button" size="sm" className="gap-1.5" onClick={() => setSiteDialogFor(null)}>
+            <Plus className="size-3.5" />
+            {t("portal.newSite")}
+          </Button>
+        </div>
+        {sitesQuery.isLoading ? (
+          <div className="flex h-24 items-center justify-center text-muted-foreground">
+            <Loader2 className="size-5 animate-spin" />
+          </div>
+        ) : sites.length === 0 ? (
+          /* N°189 — pédagogie du chemin direct : un site n'est PAS requis
+             pour personnaliser un routeur — « Personnaliser » sur sa carte
+             ci-dessus suffit ; les sites partagent une identité entre
+             PLUSIEURS routeurs. */
+          <div className="space-y-1 rounded-xl border border-dashed p-4">
+            <p className="text-sm font-medium">{t("portal.noSites")}</p>
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              {t("portal.noSitesHint")}
+            </p>
+          </div>
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {sites.map((site) => (
+              <Card key={site.id}>
+                <CardContent className="space-y-4 p-4">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <Building2 className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                        <span className="truncate font-medium">{site.name}</span>
+                      </div>
+                      {site.location ? (
+                        <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+                          <MapPin className="size-3" aria-hidden="true" />
+                          {site.location}
+                        </p>
+                      ) : null}
+                      {site.description ? (
+                        <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{site.description}</p>
+                      ) : null}
+                    </div>
+                    {site.hasOverride ? (
+                      <Badge className="gap-1 bg-emerald-100 text-emerald-700 hover:bg-emerald-100">
+                        <Palette className="size-3" />
+                        {t("portal.sitePortalCustom")}
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline">{t("portal.sitePortalAccount")}</Badge>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {tf("portal.siteRouters", { count: site.routerCount })}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {/* N°186 — la personnalisation vit dans l'éditeur
+                        unifié : ce bouton Y bascule (contexte site). */}
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="gap-1.5"
+                      onClick={() => requestContext({ kind: "site", siteId: site.id })}
+                    >
+                      <Palette className="size-3.5" />
+                      {t("portal.siteCustomize")}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5"
+                      onClick={() => setSiteDialogFor(site)}
+                    >
+                      <Pencil className="size-3.5" />
+                      {t("portal.siteEdit")}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5 text-destructive hover:text-destructive"
+                      onClick={() => setDeleteFor(site)}
+                      disabled={deleteMutation.isPending}
+                    >
+                      <Trash2 className="size-3.5" />
+                      {t("portal.siteDelete")}
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
           </div>
         )}
       </section>

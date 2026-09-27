@@ -25,6 +25,10 @@ export const enRouters: Record<string, string> = {
   "routers.repairWg": "Repair the walled garden",
   "routers.repairWgHint": "Re-applies the signup portal access rules (the “Sign up” button and QR) on this router — useful if the /join page is unreachable from the WiFi",
   "routers.repairWgToast": "Walled garden repair scheduled for “{name}”",
+
+  // N°190 — fiche shortcut to the unified editor of the Portal tab
+  // (deep-link /app/settings/hotspot/portail/router:<id>).
+  "routers.customizePortal": "Customize portal",
   "routers.test": "Test connection",
   "routers.stats": "Statistics",
   "routers.routeros": "RouterOS",

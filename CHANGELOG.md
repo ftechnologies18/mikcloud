@@ -5,6 +5,88 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-27 — N°190 — Raccourci « Personnaliser le portail » depuis la fiche routeur de l'Infrastructure : l'éditeur unifié s'ouvre DIRECTEMENT sur CE routeur (deep-link adressable), le régime du portail visible sur la fiche
+
+### Contexte
+Suite directe de N°189 (le chemin direct « personnaliser UN routeur SANS
+site » rendu premier plan dans l'onglet Portail) : l'opérateur vit sur son
+parc matériel — la vue Infrastructure (/app/routers) est SON terrain. Y
+personnaliser le portail d'un routeur exigeait de connaître l'onglet
+Portail, d'y retrouver LE routeur dans la liste, puis de cliquer
+« Personnaliser » : trois contextes pour un réglage qui concerne CE
+routeur précis.
+
+### Produit
+- `routers-view.tsx` (fiche routeur) : bouton « Personnaliser le portail »
+  (icône Palette) dans la rangée d'actions de la fiche — pousse
+  `/app/settings/hotspot/portail/router:<id>` et l'éditeur unifié (N°186)
+  s'ouvre DIRECTEMENT sur ce routeur (sélecteur « Vous personnalisez »
+  positionné, formulaire de surcharge rendu). Réservé aux routeurs AGENT
+  (les seuls à déployer le portail) et aux sessions autorisées sur la vue
+  Portail — garde `canView(role, "portal", usage)` : miroir exact de la
+  barrière de navigation (l'onglet est invisible des comptes homenet,
+  liste fermée N°100 ; rang 2 gérant+), jamais un lien mort.
+- Badge de régime sur la fiche : un routeur portant SA PROPRE surcharge
+  (N°182, `Router.PortalOverride` non vide) affiche le badge ambre
+  « Portail : personnalisé » dans son en-tête — même sémantique, mêmes
+  couleurs que la carte de l'onglet Portail. La visibilité du régime
+  entre enfin dans l'Infrastructure, où vit l'opérateur.
+- `view-path.ts` : « portal » rejoint DETAIL_VIEWS — le 4e segment
+  `/app/settings/hotspot/portail/<clé>` est adressable (deep-link,
+  signet, partage).
+
+### Architecture — le segment d'URL EST le contexte du sélecteur
+La clé du segment est la clé canonique du sélecteur « Vous personnalisez »
+(`contextKeyOf` du portal-editor : `compte` / `site:<id>` / `router:<id>`)
+— UN seul format, zéro traduction.
+- `portal-view.tsx` : le contexte d'arrivée est DÉRIVÉ de l'URL au premier
+  rendu (`contextFromKey(detailFromPath(…))` — pattern sessions/Protection :
+  état dérivé, aucune synchronisation effet→état, la nouvelle règle ESLint
+  `react-hooks/set-state-in-effect` reste verte) ;
+- le segment VIT dans l'URL (pattern Protection) : rafraîchissement,
+  signet et partage retombent sur LE contexte édité ;
+- tout changement de contexte (sélecteur, cartes, création de site)
+  `replace` l'URL en miroir (`applyContext`) : les échanges gardent 4
+  segments — ZÉRO remontage, zéro entrée d'historique (un réglage n'est
+  pas une navigation) ;
+- segment orphelin (routeur/site supprimé, signet périmé) :
+  re-normalisation vers la racine de la vue après chargement des listes
+  (miroir exact de la vue Protection) — l'URL s'auto-guérit.
+
+### Piège documenté (découvert en vérification locale)
+Le catch-all `/app/[[...vue]]` REMONTE la page à chaque changement de
+NOMBRE de segments (comportement déjà documenté dans app-shell pour
+`zoneReturnView`). La première implémentation « consomme le segment puis
+le retire » (strip 4→3) est morte en test : le strip remontait la page et
+le contexte se ré-initialisait sur la valeur « sans segment » (Compte) —
+exactement le symptôme observé et tracé au navigateur avant correction.
+Le segment persiste donc dans l'URL ; la sortie d'onglet (setView) pousse
+elle-même l'URL canonique 3 segments.
+
+### Non-régressions
+- `applyContext` porte aussi le `replace` miroir → le flux N°186
+  (création de site → éditeur basculé sur le site) et la garde N°142
+  (saisie en cours → confirmation) sont inchangés ;
+- la clé `router:<id>` est inlinée dans routers-view (pas d'import du
+  portal-editor : le module éditeur — lourd — resterait hors chunk différé
+  et gonflerait le bundle principal) ;
+- rangée d'actions de la fiche : `min-w-0 flex-wrap` — les deux boutons +
+  menu se répartissent sur plusieurs lignes en mobile 390 px (l'ajout du
+  bouton faisait déborder le viewport de 50 px, corrigé et mesuré).
+
+### Vérifié sur stack local (mock API :4000 + frontend dev + navigateur headless)
+Compte owner hotspot, 2 routeurs agents (dont un avec surcharge) + 1
+routeur manual : bouton visible + badge « Portail : personnalisé » sur la
+fiche du routeur surchargé ; bouton visible, PAS de badge sur l'agent sans
+surcharge ; bouton CACHÉ sur le manual ; clic → deep-link → éditeur ouvert
+sur LE routeur (soft-nav ET chargement complet) ; sélecteur basculé sur
+Compte → URL `/portail/compte`, zéro remontage ; Retour navigateur →
+fiche d'origine ; signet orphelin `router:nonexistent` → auto-guérison
+vers la racine + Compte ; mobile 390 px : zéro débordement (mesuré) sur
+fiche et portail ; ZÉRO erreur console/page. ESLint 0, tsgo 0, build
+Next.js OK. Zéro backend, zéro contrat API : 5 fichiers frontend, 2 clés
+i18n FR/EN, tout le reste est du commentaire d'architecture.
+
 ## 2026-09-27 — N°189 — Le chemin direct « personnaliser UN routeur SANS site » rendu premier plan : section Routeurs AVANT Sites, hint sous le titre, empty state pédagogique — l'architecture COMPTE → SITE → ROUTEUR inchangée (réponse à la question opérateur)
 
 ### Contexte

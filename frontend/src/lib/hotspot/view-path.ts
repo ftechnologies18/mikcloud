@@ -177,8 +177,26 @@ export function viewFromPath(pathname: string | null): ViewId | null {
  * N°57-d : « routers » expose la FICHE routeur (carte cliquable → page de
  * détail, /app/routers/<id> — plus de modale d'inspection).
  * N°83 : « protection » adresse le routeur sélectionné (le CTA du résumé
- * de l'onglet Système ouvre CE routeur, /app/protection/<id>). */
-const DETAIL_VIEWS: ReadonlySet<ViewId> = new Set<ViewId>(["users", "vouchers", "sessions", "routers", "protection"]);
+ * de l'onglet Système ouvre CE routeur, /app/protection/<id>).
+ * N°190 : « portal » adresse le CONTEXTE de l'éditeur unifié — le segment
+ * est la clé canonique du sélecteur « Vous personnalisez » (« compte » /
+ * « site:<id> » / « router:<id> », cf. contextKeyOf du portal-editor) ; le
+ * raccourci « Personnaliser le portail » de la fiche routeur (vue
+ * Infrastructure) pousse /app/settings/hotspot/portail/router:<id>. Le
+ * segment VIT dans l'URL (pattern Protection : rafraîchissement et partage
+ * retombent sur le contexte édité) — jamais retiré en place : le catch-all
+ * /app/[[...vue]] REMONTE à chaque changement de nombre de segments (un
+ * strip 4→3 ré-initialiserait le contexte) ; la sortie d'onglet (setView)
+ * pousse l'URL canonique 3 segments, et la vue re-normalise elle-même les
+ * segments orphelins (entité supprimée). */
+const DETAIL_VIEWS: ReadonlySet<ViewId> = new Set<ViewId>([
+  "users",
+  "vouchers",
+  "sessions",
+  "routers",
+  "protection",
+  "portal",
+]);
 
 /** Identifiant de détail d'un chemin /app/<slug>/<détail> — null si absent
  * ou si la vue n'expose pas de détail. Ne lit QUE le segment suivant le

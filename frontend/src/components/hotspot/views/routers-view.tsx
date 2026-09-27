@@ -31,6 +31,7 @@ import {
   Download,
   Loader2,
   MoreHorizontal,
+  Palette,
   Pencil,
   Plus,
   QrCode,
@@ -85,6 +86,8 @@ import { StatusBadge } from "@/components/hotspot/status-badge";
 import { api, repairRouterWalledGarden } from "@/lib/hotspot/api";
 import { localeOf, useI18n } from "@/lib/hotspot/i18n";
 import { formatDuration, timeAgo } from "@/lib/hotspot/format";
+import { canView, usageOf } from "@/lib/hotspot/roles";
+import { useHotspotStore } from "@/lib/hotspot/store";
 import { viewToPath, detailFromPath } from "@/lib/hotspot/view-path";
 import type { RouterDevice, RouterMode, RouterRotateTokenResponse, RouterStats, RouterTestResult } from "@/lib/hotspot/types";
 import { Badge } from "@/components/ui/badge";
@@ -284,6 +287,15 @@ export default function RoutersView() {
   const [reinstallScript, setReinstallScript] = useState<string | null>(null);
 
   const nf = (value: number): string => new Intl.NumberFormat(localeOf(lang)).format(value);
+
+  // N°190 — raccourci « Personnaliser le portail » (fiche) : l'onglet
+  // Portail du hub Hotspot est réservé au produit HOTSPOT (console homenet :
+  // liste fermée canView, rang 2 gérant+) — le raccourci ne se montre que si
+  // la vue cible est réellement OUVERTE au rôle ET à l'usage de session
+  // (miroir exact de la barrière de navigation, jamais un lien mort).
+  const role = useHotspotStore((s) => s.user?.role);
+  const usage = usageOf(useHotspotStore((s) => s.user?.usage));
+  const canPortal = canView(role, "portal", usage);
 
   const { data: routers, isLoading } = useQuery({
     queryKey: ["/api/routers"],
@@ -515,6 +527,16 @@ export default function RoutersView() {
                       <p className="truncate font-semibold leading-tight text-lg">{selected.name}</p>
                       <StatusBadge status={selected.mode} />
                       <StatusBadge status={selected.status} dot />
+                      {/* N°190 — visibilité du régime de portail directement
+                          dans l'Infrastructure : ce routeur porte SA PROPRE
+                          personnalisation (surcharge individuelle, N°182) —
+                          même badge ambre que la carte de l'onglet Portail. */}
+                      {canPortal && selected.portalOverride ? (
+                        <Badge className="gap-1 bg-amber-100 text-amber-700 hover:bg-amber-100">
+                          <Palette className="size-3" />
+                          {t("portal.regimeCustom")}
+                        </Badge>
+                      ) : null}
                     </div>
                     <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
                       {selected.mode === "agent"
@@ -525,7 +547,34 @@ export default function RoutersView() {
                     </p>
                   </div>
 
-                  <div className="flex shrink-0 items-center gap-2">
+                  {/* N°190 — la rangée d'actions rétrécit et se répartit sur
+                      plusieurs lignes sur écran étroit (mobile 390 px) au
+                      lieu de déborder du viewport : sans shrink-0, la
+                      largeur max-content des DEUX boutons + menu (440 px)
+                      forçait le débordement ; en desktop la ligne entière
+                      tient et rien ne change. */}
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    {/* N°190 — raccourci « Personnaliser le portail » : ouvre
+                        l'éditeur unifié de l'onglet Portail DIRECTEMENT sur ce
+                        routeur (deep-link /app/settings/hotspot/portail/router:<id>
+                        — le segment est la clé canonique du sélecteur « Vous
+                        personnalisez », cf. contextKeyOf du portal-editor ; clé
+                        inlinée ici pour ne pas tirer le module éditeur — lourd —
+                        dans le bundle principal). Réservé aux routeurs AGENT
+                        (les seuls à déployer le portail) et aux sessions
+                        autorisées sur la vue Portail (canPortal). */}
+                    {canPortal && selected.mode === "agent" ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-10 gap-1.5"
+                        onClick={() => router.push(viewToPath("portal", `router:${selected.id}`), { scroll: false })}
+                      >
+                        <Palette className="size-4" />
+                        {t("routers.customizePortal")}
+                      </Button>
+                    ) : null}
                     <Button
                       type="button"
                       size="sm"

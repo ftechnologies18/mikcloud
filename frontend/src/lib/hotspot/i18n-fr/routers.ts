@@ -25,6 +25,10 @@ export const frRouters: Record<string, string> = {
   "routers.repairWg": "Réparer le walled-garden",
   "routers.repairWgHint": "Réapplique les règles d'accès au portail d'inscription (bouton « S'inscrire » et QR) sur ce routeur — utile si la page /join est injoignable depuis le WiFi",
   "routers.repairWgToast": "Réparation du walled-garden programmée pour « {name} »",
+
+  // N°190 — raccourci de la fiche routeur vers l'éditeur unifié de l'onglet
+  // Portail (deep-link /app/settings/hotspot/portail/router:<id>).
+  "routers.customizePortal": "Personnaliser le portail",
   "routers.test": "Tester la connexion",
   "routers.stats": "Statistiques",
   "routers.routeros": "RouterOS",

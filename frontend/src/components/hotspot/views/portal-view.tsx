@@ -36,8 +36,9 @@
 // explicitement (réponse à la question opérateur « personnaliser par routeur
 // sans passer par un site » — l'architecture reste COMPTE → SITE → ROUTEUR).
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { usePathname, useRouter } from "next/navigation";
 import {
   AlertTriangle,
   Building2,
@@ -112,6 +113,7 @@ import {
 } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
 import type { RouterDevice, SiteResponse } from "@/lib/hotspot/types";
+import { detailFromPath, viewToPath } from "@/lib/hotspot/view-path";
 
 // ---------------------------------------------------------------------------
 // Dialog site (création / édition — champs descriptifs SEULES)
@@ -293,8 +295,26 @@ export function PortalContent({
   // Défaut : le compte pour le propriétaire (le sommet de sa chaîne) ; le
   // gérant choisit (site ou routeur) — les valeurs héritées restent
   // visibles dans les résumés de groupes.
-  const [context, setContext] = useState<PortalContext | null>(() =>
-    withAccount ? { kind: "compte" } : null,
+  //
+  // N°190 — deep-link depuis l'Infrastructure : le segment d'URL EST le
+  // contexte du sélecteur (clé canonique « compte » / « site:<id> » /
+  // « router:<id> » — mêmes valeurs que le Select, cf. contextKeyOf). Le
+  // raccourci « Personnaliser le portail » de la fiche routeur pousse
+  // /app/settings/hotspot/portail/router:<id> ; le contexte d'arrivée est
+  // DÉRIVÉ de l'URL au PREMIER rendu (pattern sessions/Protection : état
+  // dérivé, aucune synchronisation effet→état). Le segment VIT dans l'URL
+  // (pattern Protection) : rafraîchissement et partage retombent sur LE
+  // contexte — tout changement du sélecteur le remplace (applyContext).
+  // NB : le catch-all /app/[[...vue]] REMONTE à chaque changement de
+  // NOMBRE de segments — c'est pourquoi le segment n'est JAMAIS retiré en
+  // place (un strip 4→3 remonte la page et ré-initialiserait le contexte
+  // sur la valeur « sans segment ») : la sortie de l'onglet (setView)
+  // pousse elle-même l'URL canonique 3 segments, proprement.
+  const pathname = usePathname();
+  const nav = useRouter();
+  const detailKey = detailFromPath(pathname, "portal");
+  const [context, setContext] = useState<PortalContext | null>(
+    () => contextFromKey(detailKey ?? "") ?? (withAccount ? { kind: "compte" } : null),
   );
   // Compteur de saisie du formulaire ACTIF (compte OU surcharge — un seul
   // monté à la fois) : garde de changement de contexte ET remontée au hub.
@@ -340,9 +360,15 @@ export function PortalContent({
   const applyContext = useCallback(
     (next: PortalContext | null, scroll = true) => {
       setContext(next);
+      // N°190 — l'URL PORTE le contexte (pattern Protection : le segment
+      // vit dans l'URL). replace — les échanges de contexte gardent 4
+      // segments (ZÉRO remontage du catch-all, zéro entrée d'historique :
+      // un changement de sélecteur est un réglage, pas une navigation) ;
+      // la sortie d'onglet (setView) pousse l'URL canonique propre.
+      nav.replace(viewToPath("portal", contextKeyOf(next) || undefined), { scroll: false });
       if (scroll) scrollToEditor();
     },
-    [scrollToEditor],
+    [scrollToEditor, nav],
   );
 
   // Changement de contexte demandé (sélecteur OU bouton d'une carte) —
@@ -370,6 +396,23 @@ export function PortalContent({
   const handleSelectContext = (key: string) => {
     requestContext(contextFromKey(key));
   };
+
+  // N°190 — segment orphelin (routeur/site supprimé, signet périmé) :
+  // re-normalisation vers la racine de la vue — replace, zéro entrée
+  // d'historique parasite (miroir exact de la vue Protection). Attends les
+  // listes : une cible pas encore chargée n'est PAS orpheline.
+  useEffect(() => {
+    if (!detailKey || routersQuery.isLoading || sitesQuery.isLoading) return;
+    const c = contextFromKey(detailKey);
+    const resolved = !c
+      ? false
+      : c.kind === "compte"
+        ? withAccount
+        : c.kind === "site"
+          ? sites.some((s) => s.id === c.siteId)
+          : routers.some((r) => r.id === c.routerId);
+    if (!resolved) nav.replace(viewToPath("portal"), { scroll: false });
+  }, [detailKey, routersQuery.isLoading, sitesQuery.isLoading, sites, routers, withAccount, nav]);
 
   // États locaux : dialogs.
   const [siteDialogFor, setSiteDialogFor] = useState<SiteResponse | null | undefined>(undefined); // undefined fermé, null création

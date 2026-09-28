@@ -2,7 +2,13 @@
 <html lang="fr">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- N°192 — viewport-fit=cover : en lancement PWA standalone, la page
+         respire hors des zones système (encoche iOS, barre de geste) via
+         les env(safe-area-inset-*) du padding body. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <!-- N°192 — la barre système du navigateur s'accorde au fond nuit quand
+         ce repli statique est servi hors de la coquille applicative. -->
+    <meta name="theme-color" content="#101012" />
     <title>MikCloud — Hors ligne</title>
     <style>
       :root { color-scheme: dark; }
@@ -15,11 +21,21 @@
         color: #fafafa;
         font-family: system-ui, -apple-system, sans-serif;
         text-align: center;
-        padding: 24px;
+        padding:
+          max(24px, env(safe-area-inset-top))
+          max(24px, env(safe-area-inset-right))
+          max(24px, env(safe-area-inset-bottom))
+          max(24px, env(safe-area-inset-left));
       }
       .logo { width: 64px; height: 64px; border-radius: 16px; margin-bottom: 16px; }
       h1 { font-size: 20px; margin: 0 0 8px; }
-      p { color: #a1a1aa; font-size: 14px; line-height: 1.5; margin: 0 0 24px; }
+      p { color: #a1a1aa; font-size: 14px; line-height: 1.5; margin: 0 0 20px; max-width: 36ch; }
+      /* N°192 — état réseau vivant : attente pulsée, retour en vert avant la
+         reconnexion automatique (le repli n'est plus un cul-de-sac). */
+      .status { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 13px; color: #a1a1aa; margin: 0 0 20px; }
+      .dot { width: 8px; height: 8px; border-radius: 999px; background: #f59e0b; animation: pulse 1.6s ease-in-out infinite; }
+      .dot.ok { background: #10b981; animation: none; }
+      @keyframes pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
       button {
         background: #10b981; color: #052e22; border: 0; border-radius: 12px;
         padding: 12px 24px; font-size: 15px; font-weight: 600; cursor: pointer;
@@ -31,10 +47,30 @@
       <img class="logo" src="/logo.png" alt="MikCloud" />
       <h1>Hors ligne</h1>
       <p>
-        MikCloud est hors ligne. Les ventes reprendront dès le retour du réseau —
-        les vouchers remis restent enregistrés sur le serveur.
+        MikCloud est hors ligne. La console et le comptoir de vente reviennent
+        dès le retour du réseau — les vouchers remis restent enregistrés sur le
+        serveur.
       </p>
+      <div class="status">
+        <span class="dot" id="dot"></span><span id="label">En attente du réseau…</span>
+      </div>
       <button onclick="location.reload()">Réessayer</button>
     </main>
+    <script>
+      // N°192 — auto-guérison : dès que le navigateur annonce le retour du
+      // réseau, la page se recharge d'elle-même (la navigation repasse par le
+      // service worker, network-first borné → page réelle dès que le réseau
+      // répond). Un faux positif retombe ICI sans boucle : chaque
+      // rechargement est une nouvelle page et l'écouteur ne vit qu'une fois.
+      try {
+        addEventListener("online", function () {
+          var dot = document.getElementById("dot");
+          var label = document.getElementById("label");
+          if (dot) dot.className = "dot ok";
+          if (label) label.textContent = "Réseau de retour — reconnexion…";
+          setTimeout(function () { location.reload(); }, 500);
+        });
+      } catch (e) {}
+    </script>
   </body>
 </html>

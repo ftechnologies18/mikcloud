@@ -5,6 +5,103 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-28 — N°192 — PWA remise au goût du jour : le manifeste reflète la console actuelle (raccourci « Sessions », 5 captures réelles dont la loupe routeur et le tableau de bord multi-sites), repli hors-ligne auto-guérissant
+
+### Contexte
+Demande opérateur : « Modernise et met à jour la PWA afin qu'elle reflète
+les changements ». La coquille PWA datait de N°60 : la description ne
+parlait que du Mode Vente, les raccourcis d'icône ignoraient la
+supervision, et les captures du dialogue d'installation (login, vitrine)
+montraient un produit d'avant N°184-191 — la loupe routeur, le tableau de
+bord multi-sites et l'éditeur de portail unifié n'existaient nulle part
+dans le parcours d'installation.
+
+### Manifeste (dialogue d'installation Android riche + desktop Chrome)
+- **Description** : « Hotspot MikroTik multi-routeurs : sessions et
+  vouchers par point d'accès, portail captif personnalisable, Mode Vente
+  revendeur. » — la supervision multi-points d'accès et le portail par
+  routeur (N°182-191) remplacent la focalisation « Mode Vente » d'origine.
+- **Raccourci « Sessions »** (/app/sessions) : le geste quotidien du
+  gestionnaire depuis la loupe routeur — la vue s'ouvre prête à filtrer
+  par point d'accès (les chips vivent au-dessus de la table). Long-press
+  icône : Vente · Sessions · Console ; les routes gardent leurs
+  redirections d'authentification.
+- **5 captures RÉELLES régénérées** (dimensions verrouillées 780×1688 /
+  1280×800, référencées en dur) dont DEUX écrans console inédits : la
+  loupe routeur côté Sessions (rail « Tous les routeurs » + badges vivants
+  + KPI + table) et le tableau de bord multi-sites (6 KPI + cartes par
+  point d'accès). Le dialogue d'installation montre désormais le produit
+  TEL QU'IL EST.
+
+### Repli hors-ligne (offline.html) — moderne et auto-guérissant
+- `theme-color` + `viewport-fit=cover` : la barre système s'accorde au fond
+  nuit et le contenu respire hors des zones système (encoche iOS, barre de
+  geste Android) via `env(safe-area-inset-*)`.
+- **Auto-guérison** : au retour du réseau (`online`), la page passe en
+  « Réseau de retour — reconnexion… » (point vert) puis se recharge
+  d'elle-même — la navigation repasse par le service worker (network-first
+  borné N°141) et retombe sur la page réelle dès que le réseau répond. Un
+  faux positif retombe sur le repli SANS boucle (chaque rechargement est
+  une nouvelle page, l'écouteur ne vit qu'une fois). Bouton « Réessayer »
+  conservé pour le déclenchement manuel.
+- Copie étendue à TOUTE l'app : « la console et le comptoir de vente
+  reviennent dès le retour du réseau » (l'ancienne ne parlait que des
+  ventes).
+
+### Ops — `frontend/ops/pwa-capture.ts` (nouveau, UNE commande)
+Régénère les 5 captures depuis la stack locale réelle : démarre ce qui
+manque (backend Go store JSON éphémère + `next start -p 3100`, réutilisation
+sinon — pattern webServer e2e), sème un parc complet PAR L'API RÉELLE
+(gérant, 3 routeurs simulés Abidjan, 2 profils, 56 vouchers, revendeur, 5
+ventes du jour), fait vivre la simulation jusqu'à ≥ 5 sessions sur ≥ 2
+routeurs (chaque GET /api/sessions déclenche un Tick — la loupe a des
+badges vivants à montrer), puis capture (390×844 @2x et 1280×800 @1x,
+`reducedMotion` pour aboutir les révélations d'entrée, timezone
+Africa/Abidjan).
+
+### Pièges découverts et corrigés (vérification navigateur)
+- **L'essai plafonne à 1 routeur** (garde `plan_router_limit`, 402) : le
+  seed monte le compte en formule annuelle par le CHEMIN RÉEL — demande
+  client `POST /api/subscription` puis activation plateforme (login admin
+  via `ADMIN_PASSWORD` → billing request → `resolve activate`) — jamais
+  une manipulation du store.
+- **Orphelin de `go run` retient le pipe de sortie** : un `kill` du seul
+  parent laisse le binaire enfant vivant avec le fd stdout hérité → le
+  consommateur aval (tail) ne voit jamais EOF → timeout fantôme du runner
+  alors que le script ÉTAIT sorti. Fix : serveurs lancés en GROUPE de
+  processus DÉTACHÉ (setsid) avec logs en fichiers, tués par
+  `kill(-pid)` — le groupe entier meurt, la sortie n'est jamais retenue.
+- **`networkidle` jamais atteint sur /login** (activité réseau continue) :
+  attente `load` + rôles visibles (`heading`, bouton du rail) — plus
+  robuste que le silence réseau.
+- **`getByText("Sessions actives")` résout un élément CACHÉ** (item de
+  sidebar masqué en mobile) : attente par RÔLE `heading` (le PageHeader
+  rend un h1) — visible par construction.
+- **Révélations framer-motion attrapées à mi-course** : le libellé du CTA
+  héro sortait semi-transparent (texte fantôme). `reducedMotion: "reduce"`
+  sur les contextes Playwright : les animations aboutissent instantanément
+  (elles respectent prefers-reduced-motion), captures nettes.
+
+### Vérifié (stack locale : backend JSON :4000 + frontend `next start` :3100 + navigateur headless)
+- Captures : dimensions exactes (780×1688 / 1280×800), QA visuelle VLM —
+  loupe routeur avec badges (Tous 5 · Résidence Ébrié 2), KPI non nuls,
+  table de sessions, dashboard 6 KPI + 3 cartes multi-sites, CTA vitrine
+  NET après reducedMotion, zéro état d'erreur/squelette/artefact.
+- Manifeste servi (`/manifest.webmanifest`) : description nouvelle, 3
+  raccourcis (Vente · Sessions · Console), 5 captures 200 OK.
+- Repli hors-ligne : événement `online` au navigateur → label
+  « Réseau de retour — reconnexion… » + point vert PUIS reload compté
+  (2 chargements) — auto-guérison prouvée, pas de boucle.
+- ESLint 0, tsgo 0, build Next.js OK (routes /manifest.webmanifest et
+  /sw.js présentes).
+
+### Fichiers
+- Nouveau : `frontend/ops/pwa-capture.ts` (capture reproductible).
+- Modifiés : `frontend/src/app/manifest.ts` (description, raccourci,
+  captures), `frontend/public/offline.html` (auto-guérison, theme-color,
+  safe-area, copie), `frontend/public/screenshots/*.jpg` (3 régénérées +
+  `console-sessions-narrow.jpg` + `console-wide.jpg` nouvelles).
+
 ## 2026-09-27 — N°191 — « Loupe routeur » sur Sessions et Vouchers : rail de portée partagé, badges vivants par point d'accès, portée adressable dans l'URL (router:<id>) — la fiche routeur devient un pivot (Voir les sessions / Voir les vouchers)
 
 ### Contexte

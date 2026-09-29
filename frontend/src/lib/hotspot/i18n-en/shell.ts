@@ -24,13 +24,13 @@ export const enShell: Record<string, string> = {
   "shell.exitImpersonationToast": "Back to the platform console",
   "shell.impersonateError": "Failed to open the console",
 
-  // N°195 — sidebar control (3 modes): Expanded / Collapsed / Hover.
-  // Quick toggle via the rail button or Ctrl+B.
+  // N°195/N°196 — sidebar control (3 modes): Expanded / Collapsed / Hover.
+  // The header sidebar BUTTON opens the picker menu; Ctrl+B remains the
+  // quick toggle.
   "shell.sidebarMode": "Sidebar",
   "shell.sidebarModeExpanded": "Expanded",
   "shell.sidebarModeReduced": "Collapsed",
   "shell.sidebarModeHover": "Hover",
   "shell.sidebarModeHoverHint": "Hover the rail to reveal the sidebar",
-  "shell.sidebarCollapse": "Collapse the sidebar (Ctrl+B)",
-  "shell.sidebarExpand": "Open the sidebar (Ctrl+B)",
+  "shell.sidebarModeButtonTitle": "Sidebar — Ctrl+B to toggle",
 };

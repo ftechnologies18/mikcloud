@@ -24,13 +24,13 @@ export const frShell: Record<string, string> = {
   "shell.exitImpersonationToast": "Retour sur la console plateforme",
   "shell.impersonateError": "Ouverture de la console impossible",
 
-  // N°195 — contrôle de la barre latérale (3 modes) : Étendu / Réduit /
-  // Survol. Bascule rapide par le bouton du rail ou Ctrl+B.
+  // N°195/N°196 — contrôle de la barre latérale (3 modes) : Étendu / Réduit /
+  // Survol. Le BOUTON LATÉRAL de l'en-tête ouvre le menu de choix ; Ctrl+B
+  // reste la bascule rapide.
   "shell.sidebarMode": "Barre latérale",
   "shell.sidebarModeExpanded": "Étendu",
   "shell.sidebarModeReduced": "Réduit",
   "shell.sidebarModeHover": "Survol",
   "shell.sidebarModeHoverHint": "Le survol du rail ouvre la barre latérale",
-  "shell.sidebarCollapse": "Replier la barre latérale (Ctrl+B)",
-  "shell.sidebarExpand": "Ouvrir la barre latérale (Ctrl+B)",
+  "shell.sidebarModeButtonTitle": "Barre latérale — Ctrl+B pour basculer",
 };

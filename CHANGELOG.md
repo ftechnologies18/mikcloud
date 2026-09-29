@@ -5,6 +5,76 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-29 — N°196 — Sélecteur de mode déplacé AU BOUTON LATÉRAL (clic → menu de choix) — le menu de la carte utilisateur redevient MINIMAL
+
+### Contexte
+Retour opérateur sur N°195 : « je souhaite pas cette section, je trouve que
+c'est une surcharge pour le menu avatar (desktop) qui doit être le plus
+simple. […] est-il possible de faire pareil : au clic sur le bouton, un menu
+s'affiche pour choisir ». La section « Barre latérale » (label + 3 options)
+alourdit le menu de la carte utilisateur ; le choix du mode doit vivre AU
+bouton de la sidebar, sur le modèle des consoles Azure/OneDrive (bouton
+PanelLeft → popover avec les options d'affichage et la coche sur l'actif).
+
+### Produit
+- **Menu avatar REDEVENU MINIMAL** : identité, Profil, Paramètres,
+  English, séparateur, Se déconnecter — plus AUCUNE section « Barre
+  latérale » (vérifié au navigateur : les mots Étendu/Réduit/Survol sont
+  absents du menu). Les props `sidebarMode`/`onSidebarMode` de `UserCard`
+  disparaissent avec la section.
+- **BOUTON LATÉRAL = sélecteur** (même emplacement qu'avant : en-tête de
+  colonne en mode Étendu, sous le logo en mode rail). Icône neutre
+  `PanelLeft` (le bouton ne bascule plus directement — il OUVRE un menu).
+  Au clic : DropdownMenu porté au body (jamais coupé par l'overflow-hidden
+  de l'aside pendant les transitions de largeur), libellé « Barre
+  latérale » + les TROIS modes avec coche sur l'actif et hint Survol
+  conservé (title natif). Positionnement adapté : `side="bottom"
+  align="end"` en mode Étendu, `side="right"` en mode rail (à droite du
+  bouton, comme les infobulles du rail).
+- **Ctrl+B reste la bascule rapide** Étendu ↔ dernier mode rail (mémoire
+  N°195 conservée) — le title du bouton le rappelle : « Barre latérale —
+  Ctrl+B pour basculer ». C'est désormais le SEUL geste de bascule directe
+  (le clic bouton ouvre le sélecteur, conformément à la demande).
+- **Sheet mobile** : aucun bouton de modes (le tiroir n'a pas de modes
+  desktop à régler) — inchangé.
+
+### Pièges rencontrés et tranchés
+- **Surcouche immédiate au choix « Survol »** : le menu du bouton s'ouvre
+  SOUS le bouton, DANS le rectangle de l'aside — au basculement le pointeur
+  y est encore, et l'ouverture idempotente N°195 (mouseenter + mousemove)
+  déclenche la surcouche aussitôt (mesuré : aside w=256 avec main.x=64 —
+  le contenu RESTE à pl-16, c'est bien la SURCOUCHE, pas un reste Étendu).
+  Comportement INTENTIONNEL et cohérent : dès la sortie du pointeur, la
+  grâce 150 ms referme (vérifié). L'invariant testé devient « contenu
+  jamais décalé », pas « largeur 64 ».
+- Les clés i18n `shell.sidebarCollapse`/`shell.sidebarExpand` (libellés de
+  l'ancien bouton-toggle) deviennent orphelines → REMPLACÉES par la clé
+  unique `shell.sidebarModeButtonTitle` (FR/EN) ; zéro autre usage dans le
+  code (grep vérifié).
+
+### Vérifications (stack locale : backend Go JSON :4000 + build
+NEXT_PUBLIC_API_BASE + next start :3100, Playwright headless, owner, FR)
+- 24/24 PASS : Étendu défaut w-64 ; bouton présent avec title exact ;
+  clic → menu 3 modes + coche Étendu + hint Survol ; menu avatar minimal
+  (section ABSENTE) ; choix Réduit → rail w-16 + localStorage ; coche
+  suit le mode au menu du rail (side right, capture propre) ; choix
+  Étendu → w-64 ; Ctrl+B replie/rouvre ; choix Survol → localStorage
+  hover + contenu JAMAIS décalé (main.x=64) ; surcouche au survol ;
+  menu du bouton pendant surcouche (coche Survol, garde Radix) ; sortie
+  pointeur → fermeture ; reload → mode restauré ; tiroir mobile SANS
+  bouton de modes ; mobile 390 px scrollW=390 ; ZÉRO erreur console/page.
+- QA visuelle VLM 4/4 (captures élément-scopées) : menu du bouton
+  conforme, menu avatar minimal confirmé sans section, rail propre,
+  menu rail à droite lisible avec coche sur Réduit.
+- ESLint 0, tsgo 0, build Next.js OK.
+
+### Fichiers
+- `frontend/src/components/hotspot/app-shell.tsx` — BrandHeader porteur
+  du menu-sélecteur, UserCard minimal, câblage AppShell.
+- `frontend/src/lib/hotspot/i18n-fr/shell.ts` + `i18n-en/shell.ts` —
+  2 clés orphelines remplacées par `shell.sidebarModeButtonTitle`.
+- `CHANGELOG.md` — cette entrée.
+
 ## 2026-09-29 — N°195 — Contrôle de la sidebar : TROIS modes (Étendu / Réduit / Survol) — bouton du rail + Ctrl+B pour replier/ouvrir, rail d'icônes à infobulles, surcouche flottante au survol qui ne décale JAMAIS le contenu
 
 ### Contexte

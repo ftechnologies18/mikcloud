@@ -13,6 +13,7 @@ import {
   LogOut,
   Menu,
   MousePointer2,
+  PanelLeft,
   PanelLeftClose,
   PanelLeftOpen,
   RefreshCw,
@@ -221,10 +222,10 @@ let zoneReturnView: ViewId | null = null;
  *  • "hover"    — Survol : rail d'icônes, le SURVOL ouvre la sidebar en
  *    SURCOUCHE (le contenu ne se décale JAMAIS — l'ouverture flotte au-dessus,
  *    ombre portée, et se referme à la sortie du pointeur).
- * Bascule rapide : bouton du rail (en-tête de la sidebar) ou Ctrl+B —
- * Étendu ↔ dernier mode rail utilisé (mémoire : un amateur de Survol le
- * retrouve au prochain repli). Sélecteur explicite des 3 modes dans le menu
- * de la carte utilisateur. Préférence persistée localStorage (pattern
+ * Bascule rapide : Ctrl+B — Étendu ↔ dernier mode rail utilisé (mémoire :
+ * un amateur de Survol le retrouve au prochain repli). Sélecteur explicite
+ * au BOUTON LATÉRAL de l'en-tête (N°196 — menu dédié au clic, le menu
+ * avatar reste minimal). Préférence persistée localStorage (pattern
  * mikcloud.*, N°193) — lecture sûre : l'app-shell ne rend qu'après montage
  * (ShellFallback pré-montage, N°100). */
 type SidebarMode = "expanded" | "reduced" | "hover";
@@ -273,11 +274,24 @@ function ViewTransition({ viewKey, children }: { viewKey: ViewId; children: Reac
   );
 }
 
-/** En-tête de marque — logo + nom MikCloud. N°195 : porte le BOUTON DU RAIL
- *  (bascule Étendu ↔ rail, même geste que Ctrl+B) — en mode Étendu il siège
- *  en bout de ligne ; en mode rail, sous le logo (colonne centrée). Sur le
- *  Sheet mobile, aucun bouton (la fermeture vit au voile du tiroir). */
-function BrandHeader({ rail = false, onToggle }: { rail?: boolean; onToggle?: () => void }) {
+/** En-tête de marque — logo + nom MikCloud. N°196 : le bouton latéral
+ *  ouvre un MENU DE CHOIX DU MODE (Étendu / Réduit / Survol, coche sur
+ *  l'actif) sur le modèle des consoles Azure/OneDrive — retour opérateur :
+ *  le sélecteur au menu de la carte utilisateur était une surcharge, ce menu
+ *  redevient minimal. En mode Étendu le bouton siège en bout de ligne
+ *  (menu dessous, aligné à droite) ; en mode rail, sous le logo (menu à
+ *  droite du bouton). Ctrl+B reste la bascule rapide Étendu ↔ dernier mode
+ *  rail. Sur le Sheet mobile, aucun bouton (la fermeture vit au voile du
+ *  tiroir — pas de modes desktop au mobile). */
+function BrandHeader({
+  rail = false,
+  sidebarMode,
+  onSidebarMode,
+}: {
+  rail?: boolean;
+  sidebarMode?: SidebarMode;
+  onSidebarMode?: (m: SidebarMode) => void;
+}) {
   const { t } = useI18n();
   const logo = (
     <Image
@@ -288,26 +302,31 @@ function BrandHeader({ rail = false, onToggle }: { rail?: boolean; onToggle?: ()
       className="sidebar-logo size-9 shrink-0 rounded-xl shadow-md shadow-primary/20"
     />
   );
-  const toggle = onToggle && (
-    <button
-      type="button"
-      onClick={onToggle}
-      aria-label={rail ? t("shell.sidebarExpand") : t("shell.sidebarCollapse")}
-      title={rail ? t("shell.sidebarExpand") : t("shell.sidebarCollapse")}
-      className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground outline-none transition-colors hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      {rail ? (
-        <PanelLeftOpen className="size-4" aria-hidden />
-      ) : (
-        <PanelLeftClose className="size-4" aria-hidden />
-      )}
-    </button>
+  // Le menu est PORTÉ au body par Radix (portal) : jamais coupé par
+  // l'overflow-hidden de l'aside pendant les transitions de largeur.
+  const modeMenu = sidebarMode && onSidebarMode && (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label={t("shell.sidebarModeButtonTitle")}
+          title={t("shell.sidebarModeButtonTitle")}
+          className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground outline-none transition-colors hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <PanelLeft className="size-4" aria-hidden />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side={rail ? "right" : "bottom"} align={rail ? "start" : "end"} className="w-56">
+        <DropdownMenuLabel>{t("shell.sidebarMode")}</DropdownMenuLabel>
+        <SidebarModeItems mode={sidebarMode} onPick={onSidebarMode} />
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
   if (rail) {
     return (
       <div className="flex flex-col items-center gap-1 px-2 py-4">
         {logo}
-        {toggle}
+        {modeMenu}
       </div>
     );
   }
@@ -323,7 +342,7 @@ function BrandHeader({ rail = false, onToggle }: { rail?: boolean; onToggle?: ()
           PRO
         </Badge>
       </div>
-      {toggle}
+      {modeMenu}
     </div>
   );
 }
@@ -339,10 +358,11 @@ function LanguageMenuItem() {
   );
 }
 
-/** N°195 — items du sélecteur de mode de la barre latérale (menu de la
- *  carte utilisateur) : Étendu / Réduit / Survol, l'option active cochée.
- *  Le hint « Survol » (le survol ouvre la barre latérale) voyage en attribut
- *  title — l'infobulle native du menu déroulant reste discrète. */
+/** N°195/N°196 — items du sélecteur de mode de la barre latérale (menu
+ *  ouvert par le BOUTON LATÉRAL de l'en-tête) : Étendu / Réduit / Survol,
+ *  l'option active cochée. Le hint « Survol » (le survol ouvre la barre
+ *  latérale) voyage en attribut title — l'infobulle native du menu déroulant
+ *  reste discrète. */
 function SidebarModeItems({ mode, onPick }: { mode: SidebarMode; onPick: (m: SidebarMode) => void }) {
   const { t } = useI18n();
   const options: { value: SidebarMode; labelKey: string; hintKey?: string; icon: LucideIcon }[] = [
@@ -368,15 +388,7 @@ function SidebarModeItems({ mode, onPick }: { mode: SidebarMode; onPick: (m: Sid
   );
 }
 
-function UserCard({
-  rail = false,
-  sidebarMode,
-  onSidebarMode,
-}: {
-  rail?: boolean;
-  sidebarMode: SidebarMode;
-  onSidebarMode: (m: SidebarMode) => void;
-}) {
+function UserCard({ rail = false }: { rail?: boolean }) {
   const { t, lang } = useI18n();
   const user = useHotspotStore((s) => s.user);
   const logout = useHotspotStore((s) => s.logout);
@@ -451,11 +463,9 @@ function UserCard({
             {t("shell.settings")}
           </DropdownMenuItem>
           <LanguageMenuItem />
-          {/* N°195 — contrôle de la barre latérale : les 3 modes. Desktop
-              uniquement (le menu mobile n'a pas de barre latérale à régler). */}
-          <DropdownMenuSeparator />
-          <DropdownMenuLabel>{t("shell.sidebarMode")}</DropdownMenuLabel>
-          <SidebarModeItems mode={sidebarMode} onPick={onSidebarMode} />
+          {/* N°196 — retour opérateur : le menu de la carte utilisateur
+              redevient MINIMAL (identité / actions de compte) — le choix du
+              mode de barre latérale vit au bouton latéral de l'en-tête. */}
           <DropdownMenuSeparator />
           <DropdownMenuItem
             onClick={handleLogout}
@@ -1075,9 +1085,9 @@ export default function AppShell() {
     }
   }, [sidebarMode]);
 
-  // Bascule Étendu ↔ dernier mode rail — LE geste du bouton du rail et de
-  // Ctrl+B ("replier via le rail ou Ctrl+B" / "ouvrir via le rail ou
-  // Ctrl+B"). useCallback : l'écouteur clavier vit au niveau fenêtre.
+  // Bascule Étendu ↔ dernier mode rail — le geste de Ctrl+B (le bouton
+  // latéral ouvre le sélecteur de mode depuis N°196, il ne bascule plus
+  // directement). useCallback : l'écouteur clavier vit au niveau fenêtre.
   const toggleSidebarMode = useCallback(() => {
     setRailHover(false);
     setSidebarMode((m) => (m === "expanded" ? lastRailMode : "expanded"));
@@ -1098,7 +1108,7 @@ export default function AppShell() {
     return () => window.removeEventListener("keydown", onKey);
   }, [toggleSidebarMode]);
 
-  // Sélecteur explicite (menu carte utilisateur) : remplace le mode et
+  // Sélecteur explicite (menu du bouton latéral) : remplace le mode et
   // referme toute surcouche résiduelle.
   function applySidebarMode(m: SidebarMode) {
     setRailHover(false);
@@ -1155,7 +1165,7 @@ export default function AppShell() {
           portée) SANS jamais le décaler. overflow-hidden : pendant la
           transition de largeur, les libellés tronqués ne débordent pas.
           Survol : mouseenter ET mousemove — un pointeur DÉJÀ dans le rail
-          quand le mode bascule (choix « Survol » au menu pendant que la
+          quand le mode bascule (choix « Survol » au sélecteur pendant que la
           sidebar est ouverte) doit pouvoir ouvrir sans ressortir. */}
       <aside
         onMouseEnter={sidebarMode === "hover" ? openRailOverlay : undefined}
@@ -1167,14 +1177,14 @@ export default function AppShell() {
           overlayOpen && "shadow-2xl",
         )}
       >
-        <BrandHeader rail={!expandedNow} onToggle={toggleSidebarMode} />
+        <BrandHeader rail={!expandedNow} sidebarMode={sidebarMode} onSidebarMode={applySidebarMode} />
         {zoneRender ? (
           <SettingsSidebar rail={!expandedNow} onBack={handleZoneBack} />
         ) : (
           <NavList rail={!expandedNow} />
         )}
         <div className={expandedNow ? "px-3 pb-4" : "px-2 pb-4"}>
-          <UserCard rail={!expandedNow} sidebarMode={sidebarMode} onSidebarMode={applySidebarMode} />
+          <UserCard rail={!expandedNow} />
           {/* Crédit FTCI : texte long — masqué en rail (l'identité complète
               vit en mode Étendu / surcouche ouverte ; whitespace-nowrap pour
               que la transition ne le replie jamais sur plusieurs lignes). */}

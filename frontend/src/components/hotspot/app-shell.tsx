@@ -1,21 +1,26 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Image from "next/image";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Check,
   ChevronDown,
   ChevronsUpDown,
   Languages,
   Loader2,
   LogOut,
   Menu,
+  MousePointer2,
+  PanelLeftClose,
+  PanelLeftOpen,
   RefreshCw,
   Settings,
   ShieldCheck,
   UserRound,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 
 import { FtciCredit } from "@/components/ftci-credit";
@@ -31,6 +36,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PaywallOverlay } from "@/components/hotspot/parts/paywall-overlay";
 import { cn } from "@/lib/utils";
 import { api, fetchBillingRequests } from "@/lib/hotspot/api";
@@ -209,6 +215,50 @@ const VIEWS: Record<ViewId, React.ComponentType> = {
  * entre consoles. */
 let zoneReturnView: ViewId | null = null;
 
+/** N°195 — contrôle de la barre latérale desktop, TROIS modes :
+ *  • "expanded" — Étendu : sidebar pleine largeur (w-64, contenu décalé) ;
+ *  • "reduced"  — Réduit : rail d'icônes (w-16, contenu décalé du rail) ;
+ *  • "hover"    — Survol : rail d'icônes, le SURVOL ouvre la sidebar en
+ *    SURCOUCHE (le contenu ne se décale JAMAIS — l'ouverture flotte au-dessus,
+ *    ombre portée, et se referme à la sortie du pointeur).
+ * Bascule rapide : bouton du rail (en-tête de la sidebar) ou Ctrl+B —
+ * Étendu ↔ dernier mode rail utilisé (mémoire : un amateur de Survol le
+ * retrouve au prochain repli). Sélecteur explicite des 3 modes dans le menu
+ * de la carte utilisateur. Préférence persistée localStorage (pattern
+ * mikcloud.*, N°193) — lecture sûre : l'app-shell ne rend qu'après montage
+ * (ShellFallback pré-montage, N°100). */
+type SidebarMode = "expanded" | "reduced" | "hover";
+const SIDEBAR_MODE_KEY = "mikcloud-sidebar-mode";
+
+function readSidebarMode(): SidebarMode {
+  try {
+    const raw = localStorage.getItem(SIDEBAR_MODE_KEY);
+    return raw === "reduced" || raw === "hover" ? raw : "expanded";
+  } catch {
+    return "expanded";
+  }
+}
+
+/** Dernier mode « rail » choisi (reduced | hover) — destination du repli
+ * Ctrl+B / bouton du rail. Niveau MODULE : l'app-shell est REMONTÉ par
+ * Next à chaque changement de segment du catch-all (pattern zoneReturnView
+ * N°112) — un état d'instance perdrait la mémoire à chaque navigation. */
+let lastRailMode: Exclude<SidebarMode, "expanded"> = "reduced";
+
+/** Infobulle du rail — libellé à droite de l'icône (modes Réduit/Survol :
+ * le rail seul ne dit pas tout, l'infobulle si). Composant Tooltip shadcn
+ * auto-porté (provider interne, N°193 — mêmes infobulles que vouchers). */
+function RailTip({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent side="right" className="font-medium">
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 /** Transition d'apparition de la vue active — fade + translation légère.
  * Extraite du rendu principal (N°57) : identique zone Paramètres ou non
  * (N°57-c — la zone vit dans la sidebar substituée, pas dans le contenu).
@@ -223,19 +273,48 @@ function ViewTransition({ viewKey, children }: { viewKey: ViewId; children: Reac
   );
 }
 
-/** En-tête de marque — logo + nom MikCloud. */
-function BrandHeader() {
+/** En-tête de marque — logo + nom MikCloud. N°195 : porte le BOUTON DU RAIL
+ *  (bascule Étendu ↔ rail, même geste que Ctrl+B) — en mode Étendu il siège
+ *  en bout de ligne ; en mode rail, sous le logo (colonne centrée). Sur le
+ *  Sheet mobile, aucun bouton (la fermeture vit au voile du tiroir). */
+function BrandHeader({ rail = false, onToggle }: { rail?: boolean; onToggle?: () => void }) {
   const { t } = useI18n();
+  const logo = (
+    <Image
+      src="/logo.png"
+      alt={t("shell.logoAlt")}
+      width={36}
+      height={36}
+      className="sidebar-logo size-9 shrink-0 rounded-xl shadow-md shadow-primary/20"
+    />
+  );
+  const toggle = onToggle && (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-label={rail ? t("shell.sidebarExpand") : t("shell.sidebarCollapse")}
+      title={rail ? t("shell.sidebarExpand") : t("shell.sidebarCollapse")}
+      className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground outline-none transition-colors hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {rail ? (
+        <PanelLeftOpen className="size-4" aria-hidden />
+      ) : (
+        <PanelLeftClose className="size-4" aria-hidden />
+      )}
+    </button>
+  );
+  if (rail) {
+    return (
+      <div className="flex flex-col items-center gap-1 px-2 py-4">
+        {logo}
+        {toggle}
+      </div>
+    );
+  }
   return (
     <div className="flex items-center gap-3 px-5 py-5">
-      <Image
-        src="/logo.png"
-        alt={t("shell.logoAlt")}
-        width={36}
-        height={36}
-        className="sidebar-logo size-9 shrink-0 rounded-xl shadow-md shadow-primary/20"
-      />
-      <div className="flex min-w-0 items-center gap-2">
+      {logo}
+      <div className="flex min-w-0 flex-1 items-center gap-2">
         <span className="text-aurora truncate text-base font-semibold tracking-tight">MikCloud</span>
         <Badge
           variant="outline"
@@ -244,6 +323,7 @@ function BrandHeader() {
           PRO
         </Badge>
       </div>
+      {toggle}
     </div>
   );
 }
@@ -259,7 +339,44 @@ function LanguageMenuItem() {
   );
 }
 
-function UserCard() {
+/** N°195 — items du sélecteur de mode de la barre latérale (menu de la
+ *  carte utilisateur) : Étendu / Réduit / Survol, l'option active cochée.
+ *  Le hint « Survol » (le survol ouvre la barre latérale) voyage en attribut
+ *  title — l'infobulle native du menu déroulant reste discrète. */
+function SidebarModeItems({ mode, onPick }: { mode: SidebarMode; onPick: (m: SidebarMode) => void }) {
+  const { t } = useI18n();
+  const options: { value: SidebarMode; labelKey: string; hintKey?: string; icon: LucideIcon }[] = [
+    { value: "expanded", labelKey: "shell.sidebarModeExpanded", icon: PanelLeftOpen },
+    { value: "reduced", labelKey: "shell.sidebarModeReduced", icon: PanelLeftClose },
+    { value: "hover", labelKey: "shell.sidebarModeHover", hintKey: "shell.sidebarModeHoverHint", icon: MousePointer2 },
+  ];
+  return (
+    <>
+      {options.map((opt) => (
+        <DropdownMenuItem
+          key={opt.value}
+          className="min-h-10"
+          title={opt.hintKey ? t(opt.hintKey) : undefined}
+          onClick={() => onPick(opt.value)}
+        >
+          <opt.icon className="size-4" />
+          <span className="flex-1">{t(opt.labelKey)}</span>
+          {mode === opt.value && <Check className="size-4 shrink-0 text-primary" aria-hidden />}
+        </DropdownMenuItem>
+      ))}
+    </>
+  );
+}
+
+function UserCard({
+  rail = false,
+  sidebarMode,
+  onSidebarMode,
+}: {
+  rail?: boolean;
+  sidebarMode: SidebarMode;
+  onSidebarMode: (m: SidebarMode) => void;
+}) {
   const { t, lang } = useI18n();
   const user = useHotspotStore((s) => s.user);
   const logout = useHotspotStore((s) => s.logout);
@@ -277,29 +394,45 @@ function UserCard() {
     void queryClient.clear();
   }
 
+  // N°195 — en mode rail, le déclencheur se réduit à l'avatar centré (même
+  // menu, mêmes actions) ; l'identité complète vit dans l'infobulle aria.
+  const trigger = rail ? (
+    <button
+      type="button"
+      aria-label={t("shell.profileMenu")}
+      className="sidebar-usercard flex size-10 items-center justify-center rounded-lg border border-border/70 bg-card/60 outline-none transition-colors hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-accent/60 data-[state=open]:text-accent-foreground"
+    >
+      <Avatar className="size-8 shrink-0">
+        <AvatarFallback className="sidebar-avatar bg-primary/15 text-xs font-semibold text-primary">
+          {userInitials(name)}
+        </AvatarFallback>
+      </Avatar>
+    </button>
+  ) : (
+    <button
+      type="button"
+      aria-label={t("shell.profileMenu")}
+      className="sidebar-usercard flex w-full items-center gap-3 rounded-lg border border-border/70 bg-card/60 px-3 py-3 text-left outline-none transition-colors hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-accent/60 data-[state=open]:text-accent-foreground"
+    >
+      <Avatar className="size-9 shrink-0">
+        <AvatarFallback className="sidebar-avatar bg-primary/15 text-xs font-semibold text-primary">
+          {userInitials(name)}
+        </AvatarFallback>
+      </Avatar>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-medium">{name}</span>
+        <span className="block truncate text-xs text-muted-foreground">
+          {roleLabel(user?.role ?? "", lang)}
+        </span>
+      </span>
+      <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+    </button>
+  );
+
   return (
     <>
       <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button
-            type="button"
-            aria-label={t("shell.profileMenu")}
-            className="sidebar-usercard flex w-full items-center gap-3 rounded-lg border border-border/70 bg-card/60 px-3 py-3 text-left outline-none transition-colors hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-accent/60 data-[state=open]:text-accent-foreground"
-          >
-            <Avatar className="size-9 shrink-0">
-              <AvatarFallback className="sidebar-avatar bg-primary/15 text-xs font-semibold text-primary">
-                {userInitials(name)}
-              </AvatarFallback>
-            </Avatar>
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-medium">{name}</span>
-              <span className="block truncate text-xs text-muted-foreground">
-                {roleLabel(user?.role ?? "", lang)}
-              </span>
-            </span>
-            <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-          </button>
-        </DropdownMenuTrigger>
+        <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
         <DropdownMenuContent side="top" align="start" className="w-60">
           <DropdownMenuLabel>
             <p className="truncate text-sm font-medium">{name}</p>
@@ -318,6 +451,11 @@ function UserCard() {
             {t("shell.settings")}
           </DropdownMenuItem>
           <LanguageMenuItem />
+          {/* N°195 — contrôle de la barre latérale : les 3 modes. Desktop
+              uniquement (le menu mobile n'a pas de barre latérale à régler). */}
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel>{t("shell.sidebarMode")}</DropdownMenuLabel>
+          <SidebarModeItems mode={sidebarMode} onPick={onSidebarMode} />
           <DropdownMenuSeparator />
           <DropdownMenuItem
             onClick={handleLogout}
@@ -337,8 +475,9 @@ function UserCard() {
  * quand l'admin plateforme est en session support (impersonation d'un compte
  * client). La bascule vers une console client se fait depuis la vue « Comptes
  * SaaS » (accounts-view) qui dispose d'un bouton « Ouvrir la console » par
- * compte — le sélecteur de la sidebar était redondant et a été retiré (H). */
-function ModeSwitch() {
+ * compte — le sélecteur de la sidebar était redondant et a été retiré (H).
+ * N°195 — en mode rail : même bouton réduit à l'icône + infobulle. */
+function ModeSwitch({ rail = false }: { rail?: boolean }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const user = useHotspotStore((s) => s.user);
@@ -352,6 +491,23 @@ function ModeSwitch() {
     exitImpersonation();
     queryClient.clear();
     toast.success(t("shell.exitImpersonationToast"));
+  }
+
+  if (rail) {
+    return (
+      <div className="px-2 pb-2">
+        <RailTip label={t("shell.exitImpersonation")}>
+          <button
+            type="button"
+            onClick={backToPlatform}
+            aria-label={t("shell.exitImpersonation")}
+            className="flex min-h-11 w-full items-center justify-center rounded-lg border border-sidebar-border bg-card/50 text-muted-foreground outline-none transition-colors hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <ShieldCheck className="size-4" aria-hidden />
+          </button>
+        </RailTip>
+      </div>
+    );
   }
 
   return (
@@ -412,7 +568,7 @@ function ImpersonationBanner() {
   );
 }
 
-function NavList() {
+function NavList({ rail = false }: { rail?: boolean }) {
   const { t } = useI18n();
   const view = useHotspotStore((s) => s.view);
   const setView = useHotspotStore((s) => s.setView);
@@ -513,6 +669,72 @@ function NavList() {
   // disparu (la facturation vit dans la zone Paramètres). Le statut reste
   // visible passivement via le bandeau du dashboard (expiré / échéance
   // proche) et le mur P5 (PaywallOverlay, autonome).
+
+  // N°195 — MODE RAIL (Réduit/Survol, ou surcouche fermée) : icônes seules,
+  // infobulles à droite, séparateurs entre sections (les libellés de section
+  // ne tiennent pas dans 64 px — la voix complète vit dans l'infobulle).
+  // Préchargement N°130 conservé (survol/focus d'une icône = prefetch de la
+  // vue) ; point « live » conservé (sessions/appareils/file de facturation) ;
+  // la sélection reste surlignée (nav-active).
+  if (rail) {
+    return (
+      <nav className="flex-1 overflow-y-auto overflow-x-hidden px-2 pb-4" aria-label={t("nav.main")}>
+        <ModeSwitch rail />
+        {sections.map((section, idx) => {
+          const items = section.items.filter(
+            (item) => (item.id !== "accounts" || isAdmin) && canView(user?.role, item.id, usage),
+          );
+          if (items.length === 0) return null;
+          return (
+            <div key={section.labelKey}>
+              {idx > 0 && (
+                <div className="mx-2 mb-2 h-px bg-border/60" role="separator" aria-hidden />
+              )}
+              <ul className="space-y-1">
+                {items.map((item) => {
+                  const active = item.id === navView;
+                  const live =
+                    ((item.id === "sessions" || item.id === "devices") && sessionsCount > 0) ||
+                    (item.id === "billingRequests" && billingPending > 0);
+                  return (
+                    <li key={item.id}>
+                      <RailTip label={t(item.labelKey)}>
+                        <button
+                          type="button"
+                          onClick={() => setView(item.id)}
+                          onMouseEnter={() => prefetchView(item.id, queryClient)}
+                          onFocus={() => prefetchView(item.id, queryClient)}
+                          aria-current={active ? "page" : undefined}
+                          aria-label={t(item.labelKey)}
+                          className={cn(
+                            "sidebar-nav-item relative flex min-h-11 w-full items-center justify-center rounded-lg transition-all duration-200",
+                            active
+                              ? "nav-active"
+                              : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+                          )}
+                        >
+                          <span className="relative flex shrink-0 items-center">
+                            <item.icon className="size-4.5" aria-hidden />
+                            {live && (
+                              <span
+                                className="live-dot absolute -right-1.5 -top-1 block size-2 rounded-full bg-primary"
+                                aria-hidden
+                              />
+                            )}
+                          </span>
+                        </button>
+                      </RailTip>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          );
+        })}
+      </nav>
+    );
+  }
+
   return (
     <nav className="flex-1 space-y-1 overflow-y-auto px-3 pb-4" aria-label={t("nav.main")}>
       <ModeSwitch />
@@ -536,7 +758,7 @@ function NavList() {
               onClick={() => toggleSection(section.labelKey)}
               aria-expanded={open}
               aria-label={t(section.labelKey)}
-              className="flex w-full items-center gap-1.5 rounded-md px-2.5 py-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70 transition-colors hover:bg-accent/40 hover:text-foreground"
+              className="flex w-full items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70 transition-colors hover:bg-accent/40 hover:text-foreground"
             >
               <ChevronDown
                 className={`size-3.5 shrink-0 transition-transform duration-200 ${open ? "" : "-rotate-90"}`}
@@ -825,6 +1047,98 @@ export default function AppShell() {
   }, [view]);
   const handleZoneBack = () => setView(zoneReturnView ?? clientLanding);
 
+  // ══ N°195 — contrôle de la barre latérale (Étendu / Réduit / Survol) ══
+  // Préférence persistée (pattern mikcloud.* N°193) ; lecture sûre : la
+  // coquille ne rend qu'après montage (ShellFallback pré-montage, N°100).
+  const [sidebarMode, setSidebarMode] = useState<SidebarMode>(readSidebarMode);
+  // Mode Survol uniquement : le pointeur est-il sur le rail ? L'ouverture
+  // se fait en SURCOUCHE (le contenu ne se décale jamais — pl reste celui
+  // du rail, la sidebar flotte au-dessus avec ombre portée).
+  const [railHover, setRailHover] = useState(false);
+  const railCloseTimer = useRef<number | null>(null);
+
+  // Décompte du mode effectif — « railPersistent » décide du DÉCALAGE du
+  // contenu (le mode Survol ne décale jamais, même ouvert en surcouche) ;
+  // « expandedNow » décide du RENDU de la sidebar (pleine ou rail).
+  const railPersistent = sidebarMode !== "expanded";
+  const overlayOpen = sidebarMode === "hover" && railHover;
+  const expandedNow = sidebarMode === "expanded" || overlayOpen;
+
+  // Persistance + mémoire du dernier mode rail (destination du repli
+  // Ctrl+B / bouton du rail — un amateur de Survol le retrouve intact).
+  useEffect(() => {
+    if (sidebarMode !== "expanded") lastRailMode = sidebarMode;
+    try {
+      localStorage.setItem(SIDEBAR_MODE_KEY, sidebarMode);
+    } catch {
+      /* stockage indisponible — état de session uniquement */
+    }
+  }, [sidebarMode]);
+
+  // Bascule Étendu ↔ dernier mode rail — LE geste du bouton du rail et de
+  // Ctrl+B ("replier via le rail ou Ctrl+B" / "ouvrir via le rail ou
+  // Ctrl+B"). useCallback : l'écouteur clavier vit au niveau fenêtre.
+  const toggleSidebarMode = useCallback(() => {
+    setRailHover(false);
+    setSidebarMode((m) => (m === "expanded" ? lastRailMode : "expanded"));
+  }, []);
+
+  // Ctrl+B / ⌘B — même famille que ⌘K de la palette (topbar-widgets) : le
+  // seul conflit potentiel (composant shadcn ui/sidebar) n'est jamais monté
+  // dans la console (import nul — vérifié). preventDefault : Ctrl+B n'a pas
+  // d'action native utile ici (aucun éditeur riche).
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.key === "b" || e.key === "B") && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        toggleSidebarMode();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggleSidebarMode]);
+
+  // Sélecteur explicite (menu carte utilisateur) : remplace le mode et
+  // referme toute surcouche résiduelle.
+  function applySidebarMode(m: SidebarMode) {
+    setRailHover(false);
+    setSidebarMode(m);
+  }
+
+  // Mode Survol — ouverture immédiate, fermeture avec GRÂCE (150 ms : un
+  // balayage accidentel du rail ne fait pas clignoter la sidebar). Garde à
+  // la fermeture : un menu Radix OUVERT (porté hors du rail — p.ex. le menu
+  // de la carte utilisateur) retient l'ouverture le temps qu'il se referme ;
+  // un état ouvert résiduel se guérit au prochain passage du pointeur.
+  // NB (1) pas d'ouverture au FOCUS volontaire (Tab) : l'expansion remplace
+  // le bouton sous le curseur entre mousedown et mouseup → un clic pouvait
+  // se PERDRE ; le clavier garde Ctrl+B et le bouton du rail (focusables et
+  // labellés). NB (2) la garde ne regarde PAS document.activeElement : à la
+  // fermeture d'un menu, Radix rend le focus au déclencheur DANS le rail —
+  // une garde focus retiendrait alors la surcouche indéfiniment.
+  function openRailOverlay() {
+    if (railCloseTimer.current !== null) {
+      window.clearTimeout(railCloseTimer.current);
+      railCloseTimer.current = null;
+    }
+    setRailHover(true);
+  }
+  function scheduleRailClose() {
+    if (railCloseTimer.current !== null) window.clearTimeout(railCloseTimer.current);
+    railCloseTimer.current = window.setTimeout(() => {
+      railCloseTimer.current = null;
+      if (document.querySelector("[data-radix-popper-content-wrapper]")) return;
+      setRailHover(false);
+    }, 150);
+  }
+  // Nettoyage du minuteur au démontage (remontage du catch-all — N°112).
+  useEffect(
+    () => () => {
+      if (railCloseTimer.current !== null) window.clearTimeout(railCloseTimer.current);
+    },
+    [],
+  );
+
   return (
     <div className="flex min-h-screen">
       {/* PaywallOverlay (P5) — mur total si compte suspendu (PeriodEnd + 30j).
@@ -834,18 +1148,46 @@ export default function AppShell() {
       {/* Sidebar desktop — colonne de marque Aurora. N°57-c : dans la zone
           Paramètres, la sidebar de sections REMPLACE NavList (substitution
           dans le même conteneur — le layout reste à 2 colonnes, la marque,
-          la carte utilisateur et le crédit FTCI restent en place). */}
-      <aside className="sidebar-aurora fixed inset-y-0 left-0 z-30 hidden w-64 flex-col lg:flex">
-        <BrandHeader />
-        {zoneRender ? <SettingsSidebar onBack={handleZoneBack} /> : <NavList />}
-        <div className="px-3 pb-4">
-          <UserCard />
-          <FtciCredit className="mt-3 w-full text-center text-[10px] text-muted-foreground/70" />
+          la carte utilisateur et le crédit FTCI restent en place).
+          N°195 : la colonne devient un RAIL d'icônes (w-16) en modes Réduit
+          et Survol — transitions de largeur 200 ms ; en Survol, l'ouverture
+          survolée flotte au-dessus du contenu (z-30 > topbar z-20, ombre
+          portée) SANS jamais le décaler. overflow-hidden : pendant la
+          transition de largeur, les libellés tronqués ne débordent pas.
+          Survol : mouseenter ET mousemove — un pointeur DÉJÀ dans le rail
+          quand le mode bascule (choix « Survol » au menu pendant que la
+          sidebar est ouverte) doit pouvoir ouvrir sans ressortir. */}
+      <aside
+        onMouseEnter={sidebarMode === "hover" ? openRailOverlay : undefined}
+        onMouseMove={sidebarMode === "hover" ? openRailOverlay : undefined}
+        onMouseLeave={sidebarMode === "hover" ? scheduleRailClose : undefined}
+        className={cn(
+          "sidebar-aurora fixed inset-y-0 left-0 z-30 hidden flex-col overflow-hidden transition-[width] duration-200 ease-out lg:flex",
+          expandedNow ? "w-64" : "w-16",
+          overlayOpen && "shadow-2xl",
+        )}
+      >
+        <BrandHeader rail={!expandedNow} onToggle={toggleSidebarMode} />
+        {zoneRender ? (
+          <SettingsSidebar rail={!expandedNow} onBack={handleZoneBack} />
+        ) : (
+          <NavList rail={!expandedNow} />
+        )}
+        <div className={expandedNow ? "px-3 pb-4" : "px-2 pb-4"}>
+          <UserCard rail={!expandedNow} sidebarMode={sidebarMode} onSidebarMode={applySidebarMode} />
+          {/* Crédit FTCI : texte long — masqué en rail (l'identité complète
+              vit en mode Étendu / surcouche ouverte ; whitespace-nowrap pour
+              que la transition ne le replie jamais sur plusieurs lignes). */}
+          {expandedNow && (
+            <FtciCredit className="mt-3 w-full whitespace-nowrap text-center text-[10px] text-muted-foreground/70" />
+          )}
         </div>
       </aside>
 
       {/* Sidebar mobile (Sheet) — pas de carte utilisateur : le profil
-          reste accessible via l'avatar du header sur mobile. */}
+          reste accessible via l'avatar du header sur mobile. N°195 : rendu
+          complet permanent (rail={false} implicite) — le mobile vit en
+          tiroir, les modes desktop n'ont pas de prise ici. */}
       <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
         <SheetContent side="left" className="sidebar-aurora flex w-72 flex-col gap-0 p-0">
           <SheetHeader className="border-b border-sidebar-border pb-0">
@@ -859,8 +1201,16 @@ export default function AppShell() {
         </SheetContent>
       </Sheet>
 
-      {/* Contenu principal */}
-      <div className="flex min-w-0 flex-1 flex-col lg:pl-64">
+      {/* Contenu principal — le décalage suit le mode PERSISTENT (rail en
+          modes Réduit/Survol : la surcouche du Survol ne décale JAMAIS le
+          contenu, c'est ce qui la distingue d'un Étendu). Transition de
+          padding synchronisée avec celle de la largeur de la colonne. */}
+      <div
+        className={cn(
+          "flex min-w-0 flex-1 flex-col transition-[padding] duration-200 ease-out",
+          railPersistent ? "lg:pl-16" : "lg:pl-64",
+        )}
+      >
         <Topbar />
         <ImpersonationBanner />
         {/* N°152 — annonce de la plateforme : bandeau masquable (la trace

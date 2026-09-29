@@ -1,6 +1,6 @@
 "use client";
 
-// N°57-c — Sidebar de la zone Paramètres : elle REMPLPLACE la sidebar
+// N°57-c — Sidebar de la zone Paramètres : elle REMPLACE la sidebar
 // principale (jamais côte à côte).
 //
 // Retour utilisateur sur N°57 (split-view) : la zone portait une sidebar
@@ -20,8 +20,14 @@
 // Style : mêmes classes que NavList (items `sidebar-nav-item`, état actif
 // `nav-active`, icônes lucide) — la substitution est invisible au regard,
 // seule la liste change. Aucune dépendance externe.
+//
+// N°195 — prop `rail` : en modes Réduit/Survol de la barre latérale, la zone
+// vit AUSSI en rail d'icônes (Retour + sections, infobulles à droite) —
+// l'app-shell rend cette variante dans le même <aside> (substitution
+// inchangée, seul le gabarit change ; surcouche du mode Survol incluse).
 
 import { ArrowLeft } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { settingsSectionsFor } from "@/lib/hotspot/settings-sections";
 import { useHotspotStore } from "@/lib/hotspot/store";
@@ -29,17 +35,20 @@ import { cn } from "@/lib/utils";
 
 export interface SettingsSidebarProps {
   /** Sortie de la zone : rouvre la dernière vue métier visitée (la sidebar
-   * principale reprend sa place dans l'app-shell). */
+   *  principale reprend sa place dans l'app-shell). */
   onBack: () => void;
+  /** N°195 — rendu rail d'icônes (modes Réduit/Survol de la barre latérale).
+   *  Défaut false : rendu complet historique (Sheet mobile, mode Étendu). */
+  rail?: boolean;
 }
 
 /** Sidebar de la zone Paramètres — bouton Retour + sections (filtrées par
- * rôle). Rendue par l'app-shell DANS le <aside> principal à la place de
- * NavList (desktop) et dans le Sheet mobile (même substitution). L'item
- * actif = vue courante du store ; la navigation pousse l'URL via la synchro
- * store → URL d'app-route, exactement comme la sidebar principale : pas de
- * <Link>, même mécanique. */
-export function SettingsSidebar({ onBack }: SettingsSidebarProps) {
+ *  rôle). Rendue par l'app-shell DANS le <aside> principal à la place de
+ *  NavList (desktop) et dans le Sheet mobile (même substitution). L'item
+ *  actif = vue courante du store ; la navigation pousse l'URL via la synchro
+ *  store → URL d'app-route, exactement comme la sidebar principale : pas de
+ *  <Link>, même mécanique. */
+export function SettingsSidebar({ onBack, rail = false }: SettingsSidebarProps) {
   const { t } = useI18n();
   const setView = useHotspotStore((s) => s.setView);
   const view = useHotspotStore((s) => s.view);
@@ -49,6 +58,63 @@ export function SettingsSidebar({ onBack }: SettingsSidebarProps) {
   // établissements, endpoints 404 pour lui).
   const sections = settingsSectionsFor(user?.role, user?.usage);
   if (sections.length === 0) return null;
+
+  // N°195 — rail d'icônes : Retour + sections, infobulles à droite (le
+  // gabarit complet vit en mode Étendu / surcouche ouverte).
+  if (rail) {
+    return (
+      <nav className="flex-1 overflow-y-auto overflow-x-hidden px-2 pb-4" aria-label={t("nav.settings")}>
+        <div className="pb-2">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={onBack}
+                aria-label={t("settings.zone.back")}
+                className="sidebar-nav-item relative flex min-h-11 w-full items-center justify-center rounded-lg text-muted-foreground transition-all duration-200 hover:bg-accent/60 hover:text-foreground"
+              >
+                <span className="relative flex shrink-0 items-center">
+                  <ArrowLeft className="size-4.5" aria-hidden />
+                </span>
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right">{t("settings.zone.back")}</TooltipContent>
+          </Tooltip>
+        </div>
+        <div className="mx-2 mb-2 h-px bg-border/60" role="separator" aria-hidden />
+        <ul className="space-y-1">
+          {sections.map((section) => {
+            // N°57-d — actif sur TOUTES les vues de la section.
+            const active = section.views.includes(view);
+            return (
+              <li key={section.id}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => setView(section.id)}
+                      aria-current={active ? "page" : undefined}
+                      aria-label={t(section.labelKey)}
+                      className={cn(
+                        "sidebar-nav-item relative flex min-h-11 w-full items-center justify-center rounded-lg transition-all duration-200",
+                        active ? "nav-active" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+                      )}
+                    >
+                      <span className="relative flex shrink-0 items-center">
+                        <section.icon className="size-4.5" aria-hidden />
+                      </span>
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">{t(section.labelKey)}</TooltipContent>
+                </Tooltip>
+              </li>
+            );
+          })}
+        </ul>
+      </nav>
+    );
+  }
+
   return (
     <nav className="flex-1 space-y-1 overflow-y-auto px-3 pb-4" aria-label={t("nav.settings")}>
       {/* Bouton « Retour » — en tête, là où ModeSwitch siège dans la sidebar
@@ -67,8 +133,9 @@ export function SettingsSidebar({ onBack }: SettingsSidebarProps) {
       </button>
 
       {/* Libellé de zone — ancre « où suis-je » (la liste qui suit remplace
-          les sections métier de NavList). */}
-      <p className="px-2.5 pb-2 pt-1 text-xs font-medium uppercase tracking-wider text-muted-foreground/70">
+          les sections métier de NavList). N°195 : whitespace-nowrap — la
+          transition de largeur de la colonne ne le replie jamais. */}
+      <p className="whitespace-nowrap px-2.5 pb-2 pt-1 text-xs font-medium uppercase tracking-wider text-muted-foreground/70">
         {t("nav.settings")}
       </p>
 

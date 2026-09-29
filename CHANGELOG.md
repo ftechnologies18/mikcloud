@@ -5,6 +5,115 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-29 — N°195 — Contrôle de la sidebar : TROIS modes (Étendu / Réduit / Survol) — bouton du rail + Ctrl+B pour replier/ouvrir, rail d'icônes à infobulles, surcouche flottante au survol qui ne décale JAMAIS le contenu
+
+### Contexte
+Demande opérateur : « crée un Contrôle de la sidebar — Mode Étendu :
+replier via le rail ou Ctrl+B ; Mode Réduit : ouvrir via le rail ou
+Ctrl+B ; Mode Survol : le survol ouvre la sidebar ». La colonne de marque
+Aurora vivait jusqu'ici en w-64 permanent (pl-64) : sur les écrans
+chargés (KPI, tableaux), l'espace horizontal manque, et aucun repli
+n'existait.
+
+### Produit — les trois modes
+- **UN état partagé** `sidebarMode: "expanded" | "reduced" | "hover"`
+  (localStorage `mikcloud-sidebar-mode`, pattern mikcloud.* N°193 —
+  lecture sûre : la coquille ne rend qu'après montage, ShellFallback
+  pré-montage N°100).
+- **Mode Étendu** : sidebar pleine largeur (w-64), contenu décalé
+  `lg:pl-64` — comportement historique inchangé. Le BOUTON DU RAIL
+  (PanelLeftClose, en en-tête de colonne) ou **Ctrl+B** la replie.
+- **Mode Réduit** : rail d'icônes w-16, contenu décalé `lg:pl-16`.
+  Icônes seules avec INFOBULLES à droite (Tooltip shadcn auto-porté,
+  mêmes infobulles que vouchers N°193), séparateurs entre sections,
+  point « live » conservé (sessions/appareils/file de facturation),
+  item actif surligné (nav-active), préchargement N°130 conservé (survol
+  d'une icône = prefetch de la vue). Le bouton du rail (PanelLeftOpen,
+  sous le logo) ou **Ctrl+B** rouvre.
+- **Mode Survol** : rail d'icônes, LE SURVOL OUVRE la sidebar en
+  SURCOUCHE — l'aside s'élargit à w-64 en flottant AU-DESSUS du contenu
+  (z-30 > topbar z-20, ombre portée shadow-2xl) pendant que le contenu
+  RESTE à son décalage rail (`lg:pl-16`) : c'est LA signature du mode,
+  prouvée à la géométrie DOM (main/h1/première carte à x identiques
+  rail↔surcouche). Sortie du pointeur → fermeture avec grâce 150 ms (un
+  balayage accidentel ne fait pas clignoter) ; un menu Radix OUVERT
+  (porté hors du rail) retient l'ouverture le temps qu'il se referme.
+- **Bascule intelligente** : Ctrl+B/bouton font Étendu ↔ DERNIER mode
+  rail utilisé (mémoire au niveau module — l'app-shell est remonté par
+  Next à chaque changement de segment, pattern zoneReturnView N°112) :
+  un amateur de Survol le retrouve intact au prochain repli, vérifié
+  Ctrl+B×2.
+- **Sélecteur explicite** des 3 modes dans le menu de la carte
+  utilisateur (libellé « Barre latérale », option active cochée, hint
+  Survol en title) — desktop uniquement, le menu mobile n'a pas de
+  barre latérale à régler.
+- **Zone Paramètres incluse** : la sidebar substituée (N°57-c) vit
+  AUSSI en rail (prop `rail` sur SettingsSidebar — Retour + sections en
+  icônes, surcouche du Survol comprise) ; le tiroir mobile (Sheet)
+  reste en rendu complet permanent.
+- **Transitions** : largeur de la colonne et padding du contenu animés
+  200 ms ease-out ; overflow-hidden sur l'aside + whitespace-nowrap sur
+  les libellés longs (sections, crédit FTCI) — aucun débordement ni
+  repli de texte pendant l'animation.
+
+### Pièges découverts et corrigés en vérification
+- **Le focus restauré par Radix retenait la surcouche à vie** : à la
+  fermeture d'un menu, Radix rend le focus au déclencheur DANS le rail
+  — la première garde de fermeture (`aside.contains(activeElement)`)
+  bloquait alors indéfiniment le repli après le choix d'un mode au
+  menu. Correctif : la garde ne regarde QUE la présence d'un menu
+  ouvert (`[data-radix-popper-content-wrapper]`).
+- **Un pointeur DÉJÀ dans le rail ne déclenche pas mouseenter** :
+  choisir « Survol » au menu pendant que la sidebar est ouverte laisse
+  la souris dans l'aside — sans re-sortir, aucun mouseenter ne
+  surviendrait. Correctif : ouverture sur mouseenter ET mousemove
+  (idempotent — React ignore setRailHover(true) déjà vrai).
+- **Pas d'ouverture au focus clavier (Tab), volontairement** :
+  l'expansion remplace le bouton sous le curseur ENTRE mousedown et
+  mouseup → un clic pouvait se PERDRE (cible du click = ancêtre commun
+  du bouton démonté). Le clavier garde Ctrl+B et le bouton du rail
+  (focusables, labellés, anneaux focus-visible).
+- Bun `fetch` refuse `localhost:4000` (résolution ::1 vs écoute IPv4)
+  alors que curl passe — les scripts de vérification passent par
+  127.0.0.1.
+- Le sandbox tue les processus entre les invocations bash : stack
+  locale complète (backend + frontend + Playwright + nettoyage) dans
+  UNE commande, détachement setsid (leçon N°192).
+- QA visuelle VLM : un « décalage du contenu » signalé en Survol était
+  une LECTURE ERRONÉE (le contenu couvert par la surcouche est le
+  comportement attendu) — réfuté par preuve géométrique DOM
+  (main/h1/carte à x identiques) ; les diffs pixel résiduels entre
+  captures étaient du contenu vivant (horloge du topbar, timestamps).
+
+### Fidélité
+- Zéro backend, zéro route, zéro contrat API : 2 composants frontend
+  (app-shell.tsx + settings-shell.tsx) + 2 fragments i18n FR/EN
+  (8 clés neuves shell.sidebarMode*).
+- Le mode Étendu par défaut = comportement historique au byte près
+  (aucun utilisateur ne voit de changement sans action explicite).
+- Le tiroir mobile et le Sheet de zone restent en rendu complet —
+  les modes n'ont de prise QUE sur la colonne desktop (lg:+).
+- Sélecteur masqué au menu mobile (lg:hidden — pas d'objet).
+
+### Vérifié (stack locale : backend Go JSON :4000 + frontend `next start` :3100, build propre NEXT_PUBLIC_API_BASE, navigateur headless Chromium/Playwright, compte gérant owner, 1280×800 + 390×844)
+- 13/13 checks : Étendu par défaut (w-64, pl-64, bouton du rail) ;
+  Ctrl+B → Réduit (w-16, pl-16, wordmark caché, préférence reduced) ;
+  infobulle du rail au survol ; clic icône rail → navigation
+  /app/sessions rail conservé ; bouton du rail → Étendu ; sélecteur 3
+  options + coche + Survol choisi → rail + hover persisté ; SURVOL
+  ouvre w-64 en surcouche avec contenu INTACT à 64 et shadow-2xl ;
+  sortie du pointeur referme (grâce 150 ms) ; Ctrl+B×2 retombe sur
+  SURVOL (mémoire) ; rechargement conserve le mode ; zone Paramètres
+  en rail (Retour + sections icônes, retour métier) ; surcouche sur la
+  zone ; mobile 390 px scrollWidth=390, tiroir complet w-72 inchangé.
+  ZÉRO erreur console/page (desktop + mobile).
+- QA visuelle VLM : Étendu PASS, Réduit PASS (rail 64 px, actif
+  surligné, avatar, contenu à ras du rail), tooltip Vouchers PASS
+  (position droite, lisible), surcouche PASS (ombre + labels) —
+  « décalage » réfuté par géométrie DOM.
+- ESLint 0, tsgo typecheck 0, build production Next.js OK (rebuild
+  propre sans env locale avant commit).
+
 ## 2026-09-29 — N°194 — Le mur des 750 heures d'instance Render : réponse à l'alerte e-mail du 29/09 (« 627 of its 750 free instance hours ») — verdict mesuré AUCUNE interruption avant le 1er octobre (marge ~80 h), analyse structurelle du plafond qui facture la PRÉSENCE (744 h sur tout mois de 31 jours = 0,8 % de marge) et règle de décision datée
 
 ### Contexte

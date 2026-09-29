@@ -23,4 +23,14 @@ export const enShell: Record<string, string> = {
   "shell.impersonateToast": "{name}'s console opened — support session",
   "shell.exitImpersonationToast": "Back to the platform console",
   "shell.impersonateError": "Failed to open the console",
+
+  // N°195 — sidebar control (3 modes): Expanded / Collapsed / Hover.
+  // Quick toggle via the rail button or Ctrl+B.
+  "shell.sidebarMode": "Sidebar",
+  "shell.sidebarModeExpanded": "Expanded",
+  "shell.sidebarModeReduced": "Collapsed",
+  "shell.sidebarModeHover": "Hover",
+  "shell.sidebarModeHoverHint": "Hover the rail to reveal the sidebar",
+  "shell.sidebarCollapse": "Collapse the sidebar (Ctrl+B)",
+  "shell.sidebarExpand": "Open the sidebar (Ctrl+B)",
 };

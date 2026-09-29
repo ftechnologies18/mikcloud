@@ -80,6 +80,7 @@ import { StatusBadge } from "@/components/hotspot/status-badge";
 import { useCurrency } from "@/components/hotspot/parts/sd-currency";
 import { copyToClipboard } from "@/components/hotspot/parts/uc-clipboard";
 import { PasswordCell } from "@/components/hotspot/parts/uc-password-cell";
+import { PageSizeSelect, usePageSize } from "@/components/hotspot/parts/page-size-select";
 import { api, apiDownload } from "@/lib/hotspot/api";
 import { STALE_TIME } from "@/lib/hotspot/query";
 import { useI18n } from "@/lib/hotspot/i18n";
@@ -87,8 +88,6 @@ import { detailFromPath, viewToPath } from "@/lib/hotspot/view-path";
 import { formatBytes, formatCurrency, formatDate } from "@/lib/hotspot/format";
 import type { HotspotUser, PagedUsers, Profile, RouterDevice } from "@/lib/hotspot/types";
 import { cn } from "@/lib/utils";
-
-const PAGE_SIZE = 10;
 
 const STATUS_OPTIONS = [
   { value: "all", labelKey: "common.allStatuses" },
@@ -120,6 +119,8 @@ export default function UsersView() {
   const [profileFilter, setProfileFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [page, setPage] = useState(1);
+  // N°193 — sélecteur de pagination : densité mémorisée par vue.
+  const [pageSize, setPageSize] = usePageSize("users");
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -171,20 +172,20 @@ export default function UsersView() {
 
   // La borne réelle vient de pagedData : safePage évite une page hors bornes après suppression/filtrage.
   const { data: pagedData, isLoading, isFetching } = useQuery({
-    queryKey: ["/api/users", { kind: "regular", search, status: statusParam, profileId: profileParam, page }],
+    queryKey: ["/api/users", { kind: "regular", search, status: statusParam, profileId: profileParam, page, pageSize }],
     queryFn: () =>
       api<PagedUsers>("/api/users", {
-        params: { kind: "regular", search, status: statusParam, profileId: profileParam, page, pageSize: PAGE_SIZE },
+        params: { kind: "regular", search, status: statusParam, profileId: profileParam, page, pageSize },
       }),
     placeholderData: (previous) => previous,
   });
 
   const users = pagedData?.data ?? [];
   const totalCount = pagedData?.total ?? 0;
-  const maxPage = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const maxPage = Math.max(1, Math.ceil(totalCount / pageSize));
   const safePage = Math.min(page, maxPage);
-  const rangeStart = totalCount === 0 ? 0 : (safePage - 1) * PAGE_SIZE + 1;
-  const rangeEnd = Math.min(safePage * PAGE_SIZE, totalCount);
+  const rangeStart = totalCount === 0 ? 0 : (safePage - 1) * pageSize + 1;
+  const rangeEnd = Math.min(safePage * pageSize, totalCount);
 
   // Préférence d'affichage restaurée au montage (localStorage).
   useEffect(() => {
@@ -1075,6 +1076,13 @@ export default function UsersView() {
                   : tf("common.range", { start: rangeStart, end: rangeEnd, total: totalCount })}
               </p>
               <div className="flex items-center gap-2">
+                <PageSizeSelect
+                  value={pageSize}
+                  onChange={(size) => {
+                    setPageSize(size);
+                    setPage(1);
+                  }}
+                />
                 <Button
                   variant="outline"
                   size="sm"

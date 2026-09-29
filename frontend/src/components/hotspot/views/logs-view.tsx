@@ -24,13 +24,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { EmptyState } from "@/components/hotspot/empty-state";
 import { LoadingRows } from "@/components/hotspot/loading";
 import { PageHeader } from "@/components/hotspot/page-header";
+import { PageSizeSelect, usePageSize } from "@/components/hotspot/parts/page-size-select";
 import { useSettings } from "@/components/hotspot/parts/sd-currency";
 import { api, apiDownload } from "@/lib/hotspot/api";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { formatDateTime } from "@/lib/hotspot/format";
 import type { PagedUserLogs, RouterDevice, UserLogAction } from "@/lib/hotspot/types";
-
-const PAGE_SIZE = 20;
 
 const ACTION_OPTIONS = [
   { value: "all", labelKey: "logs.allActions" },
@@ -67,6 +66,9 @@ export default function LogsView() {
   const [actionFilter, setActionFilter] = useState("all");
   const [page, setPage] = useState(1);
   const [exporting, setExporting] = useState(false);
+  // N°193 — sélecteur de pagination : densité mémorisée par vue (défaut
+  // normalisé 20 → 25 pour vivre dans l'échelle commune 10/25/50/100).
+  const [pageSize, setPageSize] = usePageSize("logs", 25);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -85,10 +87,10 @@ export default function LogsView() {
   const actionParam = actionFilter === "all" ? undefined : actionFilter;
 
   const { data: pagedData, isLoading, isFetching } = useQuery({
-    queryKey: ["/api/user-logs", { search, routerId: routerParam, action: actionParam, page }],
+    queryKey: ["/api/user-logs", { search, routerId: routerParam, action: actionParam, page, pageSize }],
     queryFn: () =>
       api<PagedUserLogs>("/api/user-logs", {
-        params: { search, routerId: routerParam, action: actionParam, page, pageSize: PAGE_SIZE },
+        params: { search, routerId: routerParam, action: actionParam, page, pageSize },
       }),
     refetchInterval: 10_000,
     placeholderData: (previous) => previous,
@@ -100,10 +102,10 @@ export default function LogsView() {
 
   const logs = pagedData?.data ?? [];
   const totalCount = pagedData?.total ?? 0;
-  const maxPage = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const maxPage = Math.max(1, Math.ceil(totalCount / pageSize));
   const safePage = Math.min(page, maxPage);
-  const rangeStart = totalCount === 0 ? 0 : (safePage - 1) * PAGE_SIZE + 1;
-  const rangeEnd = Math.min(safePage * PAGE_SIZE, totalCount);
+  const rangeStart = totalCount === 0 ? 0 : (safePage - 1) * pageSize + 1;
+  const rangeEnd = Math.min(safePage * pageSize, totalCount);
 
   async function handleExportCsv() {
     try {
@@ -262,6 +264,13 @@ export default function LogsView() {
                   : tf("common.range", { start: rangeStart, end: rangeEnd, total: totalCount })}
               </p>
               <div className="flex items-center gap-2">
+                <PageSizeSelect
+                  value={pageSize}
+                  onChange={(size) => {
+                    setPageSize(size);
+                    setPage(1);
+                  }}
+                />
                 <Button
                   variant="outline"
                   size="sm"

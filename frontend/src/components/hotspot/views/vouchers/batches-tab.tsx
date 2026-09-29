@@ -60,7 +60,8 @@ import { useI18n } from "@/lib/hotspot/i18n";
 import { formatCurrency, formatDate } from "@/lib/hotspot/format";
 import type { BatchSummary, BatchWithStats, Reseller, RouterDevice } from "@/lib/hotspot/types";
 import { cn } from "@/lib/utils";
-import { BATCH_PAGE_SIZE, BATCH_STATUS_OPTIONS, shortBatch } from "./shared";
+import { BATCH_STATUS_OPTIONS, shortBatch } from "./shared";
+import { PageSizeSelect } from "@/components/hotspot/parts/page-size-select";
 
 interface BatchesTabProps {
   // Pipeline « tour de contrôle » (totaux sur l'ensemble FILTRÉ)
@@ -95,6 +96,10 @@ interface BatchesTabProps {
   batchTotal: number;
   batchPage: number;
   onSetBatchPage: (updater: (page: number) => number) => void;
+  // N°193 — sélecteur de pagination : densité mémorisée par vue (état +
+  // persistance dans le shell, la requête vit là-bas).
+  batchPageSize: number;
+  onSetBatchPageSize: (size: number) => void;
   printingBatchId: string | null;
   multiPrintBatch: BatchWithStats | null;
   onGenerate: () => void;
@@ -133,6 +138,8 @@ export function BatchesTab({
   batchTotal,
   batchPage,
   onSetBatchPage,
+  batchPageSize,
+  onSetBatchPageSize,
   printingBatchId,
   multiPrintBatch,
   onGenerate,
@@ -147,10 +154,10 @@ export function BatchesTab({
   const currency = useCurrency();
 
   // Pagination — mêmes formules que le shell d'origine.
-  const batchMaxPage = Math.max(1, Math.ceil(batchTotal / BATCH_PAGE_SIZE));
+  const batchMaxPage = Math.max(1, Math.ceil(batchTotal / batchPageSize));
   const batchSafePage = Math.min(batchPage, batchMaxPage);
-  const batchRangeStart = batchTotal === 0 ? 0 : (batchSafePage - 1) * BATCH_PAGE_SIZE + 1;
-  const batchRangeEnd = Math.min(batchSafePage * BATCH_PAGE_SIZE, batchTotal);
+  const batchRangeStart = batchTotal === 0 ? 0 : (batchSafePage - 1) * batchPageSize + 1;
+  const batchRangeEnd = Math.min(batchSafePage * batchPageSize, batchTotal);
 
   // Refonte v2 — un filtre n'est « actif » que s'il diverge du DÉFAUT
   // (statut « stock » = Vivants) ; ces indicateurs sont calculés par le shell
@@ -708,6 +715,7 @@ export function BatchesTab({
                   : tf("vouchers.batches.range", { start: batchRangeStart, end: batchRangeEnd, total: batchTotal })}
               </p>
               <div className="flex items-center gap-2">
+                <PageSizeSelect value={batchPageSize} onChange={onSetBatchPageSize} />
                 <Button
                   variant="outline"
                   size="sm"

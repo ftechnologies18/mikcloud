@@ -1,6 +1,13 @@
 "use client";
 
 // Vue Sessions actives — temps réel (poll auto-refresh, durées qui avancent, kick).
+//
+// N°193 — pagination côté client : la vue vivait SANS bornes (filtre local
+// complet, Phase D) — sur un parc chargé (des centaines de connectés), le
+// tableau devenait un défilement sans fin sur mobile. Le sélecteur « N / page »
+// arrive avec : la page affichée est une FENÊTRE sur filteredSessions ; les
+// KPI et les badges du rail restent calculés sur l'ENSEMBLE scopé (le compte
+// « connectés » ne devient jamais le compte de la page courante).
 
 import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
@@ -11,6 +18,8 @@ import {
   ArrowDownCircle,
   ArrowUp,
   ArrowUpCircle,
+  ChevronLeft,
+  ChevronRight,
   LogOut,
   Radio,
   Search,
@@ -32,6 +41,7 @@ import { EmptyState } from "@/components/hotspot/empty-state";
 import { LoadingRows } from "@/components/hotspot/loading";
 import { PageHeader } from "@/components/hotspot/page-header";
 import { RouterScopeRail } from "@/components/hotspot/parts/router-scope";
+import { PageSizeSelect, usePageSize } from "@/components/hotspot/parts/page-size-select";
 import { StatCard } from "@/components/hotspot/stat-card";
 import {
   AlertDialog,
@@ -76,6 +86,11 @@ export default function SessionsView() {
   const [refreshMs, setRefreshMs] = useState(5000);
   const [now, setNow] = useState(() => Date.now());
   const [kickTarget, setKickTarget] = useState<HotspotSession | null>(null);
+
+  // N°193 — pagination côté client (fenêtre sur filteredSessions) :
+  // densité mémorisée par vue, comme toutes les tables de la console.
+  const [pageSize, setPageSize] = usePageSize("sessions");
+  const [page, setPage] = useState(1);
 
   // N°191 — parc routeurs pour la loupe (état du parc : bouge aux check-ins
   // agents ~45 s ; points de statut des chips).
@@ -135,6 +150,10 @@ export default function SessionsView() {
 
   function applyScope(routerId: string) {
     nav.replace(viewToPath("sessions", routerId ? `router:${routerId}` : undefined), { scroll: false });
+    // N°193 — nouvelle portée → retour à la première page (miroir des
+    // filtres des autres vues : un filtre qui rétrécit ne doit pas laisser
+    // une page hors bornes).
+    setPage(1);
   }
 
   // N°191 — segment orphelin (routeur supprimé, signet périmé) :
@@ -174,6 +193,18 @@ export default function SessionsView() {
     if (!q) return scopedSessions;
     return scopedSessions.filter((s) => s.username.toLowerCase().includes(q));
   }, [scopedSessions, query]);
+
+  // N°193 — fenêtre paginée : bornes recalculées à chaque rendu (le poll
+  // vivant fait bouger total ET contenu ; safePage recadre une page devenue
+  // hors bornes — kick, expiration, sortie — sans état coincé).
+  const maxPage = Math.max(1, Math.ceil(filteredSessions.length / pageSize));
+  const safePage = Math.min(page, maxPage);
+  const rangeStart = filteredSessions.length === 0 ? 0 : (safePage - 1) * pageSize + 1;
+  const rangeEnd = Math.min(safePage * pageSize, filteredSessions.length);
+  const pagedSessions = useMemo(
+    () => filteredSessions.slice((safePage - 1) * pageSize, safePage * pageSize),
+    [filteredSessions, safePage, pageSize],
+  );
 
   // N°191 — badges du rail : sessions vivantes par routeur (glissées sur le
   // poll, zéro requête supplémentaire). Chaque routeur du parc porte un
@@ -243,7 +274,12 @@ export default function SessionsView() {
               <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
               <Input
                 value={query}
-                onChange={(event) => setTypedQuery(event.target.value)}
+                onChange={(event) => {
+                  setTypedQuery(event.target.value);
+                  // N°193 — la recherche rétrécit la liste : retour page 1
+                  // (même règle que les filtres des vues paginées serveur).
+                  setPage(1);
+                }}
                 placeholder={t("sessions.searchPlaceholder")}
                 className="h-10 w-40 pl-9 sm:w-56"
                 aria-label={t("sessions.searchPlaceholder")}
@@ -318,89 +354,129 @@ export default function SessionsView() {
             }
           />
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                <TableHead className="pl-4 text-muted-foreground sm:pl-6">{t("common.user")}</TableHead>
-                <TableHead className="text-muted-foreground">{t("common.profile")}</TableHead>
-                <TableHead className="text-muted-foreground">{t("common.ip")}</TableHead>
-                <TableHead className="hidden text-muted-foreground md:table-cell">{t("common.mac")}</TableHead>
-                <TableHead className="hidden text-muted-foreground xl:table-cell">{t("common.router")}</TableHead>
-                <TableHead className="text-muted-foreground">{t("sessions.connectedSince")}</TableHead>
-                <TableHead className="text-muted-foreground">↓ / ↑</TableHead>
-                <TableHead className="pr-4 text-right text-muted-foreground sm:pr-6">{t("common.actions")}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              <AnimatePresence initial={false}>
-                {filteredSessions.map((session) => (
-                  <motion.tr
-                    key={session.id}
-                    layout
-                    initial={{ opacity: 0, y: -8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -8 }}
-                    transition={{ duration: 0.25, ease: "easeOut" }}
-                    className="border-b transition-colors hover:bg-muted/50"
-                  >
-                    <TableCell className="pl-4 font-mono text-sm font-medium sm:pl-6">
-                      {session.username}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <Badge variant="outline">{session.profileName}</Badge>
-                        {session.throttled && (
-                          <Badge
-                            variant="outline"
-                            className="gap-1 border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"
-                            title={t("sessions.throttledTitle")}
-                          >
-                            <Gauge className="size-3" aria-hidden />
-                            {t("sessions.throttled")}
-                          </Badge>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell className="font-mono text-muted-foreground">{session.ip}</TableCell>
-                    <TableCell className="hidden font-mono text-muted-foreground md:table-cell">
-                      {session.mac}
-                    </TableCell>
-                    <TableCell className="hidden max-w-40 truncate text-muted-foreground xl:table-cell">
-                      {session.routerName}
-                    </TableCell>
-                    <TableCell className="tabular-nums">
-                      {formatDuration(session.uptimeSec + elapsedSec)}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-3 text-muted-foreground">
-                        {/* ↓ download = bytes-out · ↑ upload = bytes-in (RouterOS). */}
-                        <span className="inline-flex items-center gap-1 tabular-nums">
-                          <ArrowDown className="size-3 opacity-60" aria-hidden />
-                          {formatBytes(downBytes(session), lang)}
-                        </span>
-                        <span className="inline-flex items-center gap-1 tabular-nums">
-                          <ArrowUp className="size-3 opacity-60" aria-hidden />
-                          {formatBytes(upBytes(session), lang)}
-                        </span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="pr-4 text-right sm:pr-6">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-10 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                        onClick={() => setKickTarget(session)}
-                        aria-label={tf("sessions.kickAria", { name: session.username })}
-                        title={t("sessions.kick")}
-                      >
-                        <LogOut className="size-4" />
-                      </Button>
-                    </TableCell>
-                  </motion.tr>
-                ))}
-              </AnimatePresence>
-            </TableBody>
-          </Table>
+          <>
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="pl-4 text-muted-foreground sm:pl-6">{t("common.user")}</TableHead>
+                  <TableHead className="text-muted-foreground">{t("common.profile")}</TableHead>
+                  <TableHead className="text-muted-foreground">{t("common.ip")}</TableHead>
+                  <TableHead className="hidden text-muted-foreground md:table-cell">{t("common.mac")}</TableHead>
+                  <TableHead className="hidden text-muted-foreground xl:table-cell">{t("common.router")}</TableHead>
+                  <TableHead className="text-muted-foreground">{t("sessions.connectedSince")}</TableHead>
+                  <TableHead className="text-muted-foreground">↓ / ↑</TableHead>
+                  <TableHead className="pr-4 text-right text-muted-foreground sm:pr-6">{t("common.actions")}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                <AnimatePresence initial={false}>
+                  {pagedSessions.map((session) => (
+                    <motion.tr
+                      key={session.id}
+                      layout
+                      initial={{ opacity: 0, y: -8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -8 }}
+                      transition={{ duration: 0.25, ease: "easeOut" }}
+                      className="border-b transition-colors hover:bg-muted/50"
+                    >
+                      <TableCell className="pl-4 font-mono text-sm font-medium sm:pl-6">
+                        {session.username}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <Badge variant="outline">{session.profileName}</Badge>
+                          {session.throttled && (
+                            <Badge
+                              variant="outline"
+                              className="gap-1 border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                              title={t("sessions.throttledTitle")}
+                            >
+                              <Gauge className="size-3" aria-hidden />
+                              {t("sessions.throttled")}
+                            </Badge>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="font-mono text-muted-foreground">{session.ip}</TableCell>
+                      <TableCell className="hidden font-mono text-muted-foreground md:table-cell">
+                        {session.mac}
+                      </TableCell>
+                      <TableCell className="hidden max-w-40 truncate text-muted-foreground xl:table-cell">
+                        {session.routerName}
+                      </TableCell>
+                      <TableCell className="tabular-nums">
+                        {formatDuration(session.uptimeSec + elapsedSec)}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-3 text-muted-foreground">
+                          {/* ↓ download = bytes-out · ↑ upload = bytes-in (RouterOS). */}
+                          <span className="inline-flex items-center gap-1 tabular-nums">
+                            <ArrowDown className="size-3 opacity-60" aria-hidden />
+                            {formatBytes(downBytes(session), lang)}
+                          </span>
+                          <span className="inline-flex items-center gap-1 tabular-nums">
+                            <ArrowUp className="size-3 opacity-60" aria-hidden />
+                            {formatBytes(upBytes(session), lang)}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="pr-4 text-right sm:pr-6">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-10 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                          onClick={() => setKickTarget(session)}
+                          aria-label={tf("sessions.kickAria", { name: session.username })}
+                          title={t("sessions.kick")}
+                        >
+                          <LogOut className="size-4" />
+                        </Button>
+                      </TableCell>
+                    </motion.tr>
+                  ))}
+                </AnimatePresence>
+              </TableBody>
+            </Table>
+
+            {/* N°193 — pagination : la fenêtre courante de la liste vivante.
+                Le total porte sur l'ensemble filtré (pas la page) : le compte
+                reste cohérent avec le KPI « connectés » et les badges du rail. */}
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3 sm:px-6">
+              <p className="text-xs text-muted-foreground">
+                {tf("common.range", { start: rangeStart, end: rangeEnd, total: filteredSessions.length })}
+              </p>
+              <div className="flex items-center gap-2">
+                <PageSizeSelect
+                  value={pageSize}
+                  onChange={(size) => {
+                    setPageSize(size);
+                    setPage(1);
+                  }}
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-10"
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={safePage <= 1}
+                >
+                  <ChevronLeft className="size-4" />
+                  {t("common.previous")}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-10"
+                  onClick={() => setPage((p) => Math.min(maxPage, p + 1))}
+                  disabled={safePage >= maxPage}
+                >
+                  {t("common.next")}
+                  <ChevronRight className="size-4" />
+                </Button>
+              </div>
+            </div>
+          </>
         )}
       </Card>
 

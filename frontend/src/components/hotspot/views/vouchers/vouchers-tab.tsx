@@ -54,10 +54,11 @@ import { StatCard } from "@/components/hotspot/stat-card";
 import { StatusBadge } from "@/components/hotspot/status-badge";
 import { useCurrency } from "@/components/hotspot/parts/sd-currency";
 import { PasswordCell } from "@/components/hotspot/parts/uc-password-cell";
+import { PageSizeSelect } from "@/components/hotspot/parts/page-size-select";
 import { useI18n } from "@/lib/hotspot/i18n";
 import { formatBytes, formatCurrency, formatDate } from "@/lib/hotspot/format";
 import type { HotspotUser, Profile, RouterDevice } from "@/lib/hotspot/types";
-import { PAGE_SIZE, STATUS_OPTIONS, shortBatch } from "./shared";
+import { STATUS_OPTIONS, shortBatch } from "./shared";
 
 interface VouchersTabProps {
   // Statistiques du stock (compteurs serveur N°74 — déjà au niveau de la loupe)
@@ -108,6 +109,10 @@ interface VouchersTabProps {
   totalCount: number;
   page: number;
   onSetPage: (updater: (page: number) => number) => void;
+  // N°193 — sélecteur de pagination : densité mémorisée par vue (état +
+  // persistance dans le shell, la requête vit là-bas).
+  pageSize: number;
+  onSetPageSize: (size: number) => void;
 }
 
 export function VouchersTab({
@@ -151,16 +156,18 @@ export function VouchersTab({
   totalCount,
   page,
   onSetPage,
+  pageSize,
+  onSetPageSize,
 }: VouchersTabProps) {
   const { t, tf, lang } = useI18n();
   const currency = useCurrency();
 
-  // Pagination — bornes recalculées localement (PAGE_SIZE partagé, mêmes formules
-  // que le shell d'origine : safePage = min(page, maxPage)).
-  const maxPage = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  // Pagination — bornes recalculées localement (pageSize du shell, mêmes
+  // formules que le shell d'origine : safePage = min(page, maxPage)).
+  const maxPage = Math.max(1, Math.ceil(totalCount / pageSize));
   const safePage = Math.min(page, maxPage);
-  const rangeStart = totalCount === 0 ? 0 : (safePage - 1) * PAGE_SIZE + 1;
-  const rangeEnd = Math.min(safePage * PAGE_SIZE, totalCount);
+  const rangeStart = totalCount === 0 ? 0 : (safePage - 1) * pageSize + 1;
+  const rangeEnd = Math.min(safePage * pageSize, totalCount);
 
   return (
     <>
@@ -507,6 +514,7 @@ export function VouchersTab({
                   : tf("common.range", { start: rangeStart, end: rangeEnd, total: totalCount })}
               </p>
               <div className="flex items-center gap-2">
+                <PageSizeSelect value={pageSize} onChange={onSetPageSize} />
                 <Button
                   variant="outline"
                   size="sm"

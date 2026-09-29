@@ -24,6 +24,10 @@ export const frCommon: Record<string, string> = {
   "common.actions": "Actions",
   "common.actionsFor": "Actions pour {name}",
   "common.range": "{start}–{end} sur {total}",
+  // N°193 — sélecteur de pagination (Page size)
+  "common.perPageUnit": "page",
+  "common.pageSizeLabel": "Nombre de résultats par page",
+  "common.pageSizeHint": "Indique le nombre de résultats maximum par page",
   "common.allStatuses": "Tous les statuts",
   "common.allProfiles": "Tous les profils",
   "common.allRouters": "Tous les routeurs",

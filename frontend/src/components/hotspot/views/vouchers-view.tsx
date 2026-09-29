@@ -44,7 +44,8 @@ import type {
   RouterDevice,
   VoucherTemplate,
 } from "@/lib/hotspot/types";
-import { BATCH_PAGE_SIZE, PAGE_SIZE, shortBatch, VouchersStats } from "./vouchers/shared";
+import { BATCH_STATUS_OPTIONS, shortBatch, VouchersStats } from "./vouchers/shared";
+import { usePageSize } from "@/components/hotspot/parts/page-size-select";
 import { VouchersTab } from "./vouchers/vouchers-tab";
 import { BatchesTab } from "./vouchers/batches-tab";
 import {
@@ -92,12 +93,19 @@ export default function VouchersView() {
   const [holderFilter, setHolderFilter] = useState(() => vouchersKeptFilters?.holderFilter ?? "all");
   const [profileFilter, setProfileFilter] = useState(() => vouchersKeptFilters?.profileFilter ?? "all");
   const [page, setPage] = useState(1);
+  // N°193 — sélecteur de pagination (les deux tables de la vue, une
+  // préférence mémorisée CHACUNE : densité utile différente entre le stock
+  // et la traçabilité des lots). Défaut vouchers normalisé 12 → 10 pour
+  // vivre dans l'échelle commune 10/25/50/100.
+  const [pageSize, setPageSize] = usePageSize("vouchers");
 
   // Filtres des lots
   const [batchSearchInput, setBatchSearchInput] = useState("");
   const [batchSearch, setBatchSearch] = useState("");
   const [batchRouterFilter, setBatchRouterFilter] = useState("all");
   const [batchPage, setBatchPage] = useState(1);
+  // N°193 — sélecteur de pagination des lots.
+  const [batchPageSize, setBatchPageSize] = usePageSize("batches");
   // Refonte « fiche de vie » — filtres canal (provenance), cycle de vie et
   // détenteur LIVE du stock vendable (direct | resellers | id du revendeur).
   // v2 — DÉFAUT « stock » (Vivants) : l'onglet ouvre sur le stock vivant.
@@ -282,11 +290,11 @@ export default function VouchersView() {
     queryKey: [
       "/api/vouchers",
       "list",
-      { search, status: statusParam, profileId: profileParam, holder: holderParam, routerId: scopeRouterParam, page },
+      { search, status: statusParam, profileId: profileParam, holder: holderParam, routerId: scopeRouterParam, page, pageSize },
     ],
     queryFn: () =>
       api<PagedUsers>("/api/vouchers", {
-        params: { search, status: statusParam, profileId: profileParam, holder: holderParam, routerId: scopeRouterParam, page, pageSize: PAGE_SIZE },
+        params: { search, status: statusParam, profileId: profileParam, holder: holderParam, routerId: scopeRouterParam, page, pageSize },
       }),
     refetchInterval: 20_000,
     placeholderData: (previous) => previous,
@@ -471,6 +479,7 @@ export default function VouchersView() {
         holder: batchHolderParam,
         channel: batchChannelParam,
         page: batchPage,
+        pageSize: batchPageSize,
       },
     ],
     queryFn: () =>
@@ -482,7 +491,7 @@ export default function VouchersView() {
           holder: batchHolderParam,
           channel: batchChannelParam,
           page: batchPage,
-          pageSize: BATCH_PAGE_SIZE,
+          pageSize: batchPageSize,
         },
       }),
     refetchInterval: 30_000,
@@ -840,6 +849,11 @@ export default function VouchersView() {
           totalCount={totalCount}
           page={page}
           onSetPage={setPage}
+          pageSize={pageSize}
+          onSetPageSize={(size) => {
+            setPageSize(size);
+            setPage(1);
+          }}
         />
       )}
 
@@ -886,6 +900,11 @@ export default function VouchersView() {
           batchTotal={batchTotal}
           batchPage={batchPage}
           onSetBatchPage={setBatchPage}
+          batchPageSize={batchPageSize}
+          onSetBatchPageSize={(size) => {
+            setBatchPageSize(size);
+            setBatchPage(1);
+          }}
           printingBatchId={printingBatchId}
           multiPrintBatch={multiPrintBatch}
           onGenerate={() => setGenOpen(true)}

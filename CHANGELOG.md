@@ -5,6 +5,139 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-29 — N°193 — Sélecteur de pagination « N / page » sur TOUTES les tables de la console (préférence mémorisée par vue) + la lacune PWA qui rendait les déploiements INVISIBLES corrigée (reload sur controllerchange — réponse au signalement « N°191/192 pas visibles sur mobile PWA et navigateur »)
+
+### Contexte
+Deux sujets dans la même livraison. (1) Demande opérateur : « ajouter
+Sélecteur de pagination (Page size) : indique le nombre de résultats
+maximum par page » — les quatre tables paginées serveur (Users,
+Vouchers, Lots, Journal) vivaient chacune avec une taille de page codée
+en dur (10/12/10/20), et la vue Sessions n'était PAS paginée du tout
+(filtre client complet, Phase D) : sur un parc chargé, des centaines de
+connectés = un défilement sans fin sur mobile. (2) Signalement précédent :
+« les modifications des commits 191 & 192 ne sont pas visibles sur
+mobile PWA et page web navigateur » — diagnostic : la production était
+pourtant À JOUR (sw.js servi versionné `1fae4b9` = commit N°192,
+manifeste N°192 servi, 5 captures 200 OK) ; la stale était ENTIÈREMENT
+côté client, et la cause racine est une lacune de conception du
+mécanisme PWA (voir ci-dessous).
+
+### Produit — le sélecteur « N / page »
+- **UN composant partagé** (`parts/page-size-select.tsx`) : le select
+  compact « 25 / page » dans la barre de pagination de chaque table,
+  aria-label « Nombre de résultats par page » et tooltip pédagogique
+  « Indique le nombre de résultats maximum par page » (la formulation
+  exacte de la demande).
+- **Échelle commune 10 / 25 / 50 / 100** : 100 reste sous TOUS les
+  plafonds API (users/vouchers 200, lots/journal 100 via queryInt) — le
+  sélecteur ne peut jamais demander une page que le serveur ramènerait
+  en silence au plafond (compte « sur {total} » et bornes de page
+  désynchronisés sans rien qui rougeoie).
+- **Préférence MÉMORISÉE PAR VUE** (localStorage
+  `mikcloud.pageSize.<vue>`) : la densité utile n'est pas la même selon
+  la table — 100 tickets d'un coup en gestion de stock, 10 sessions sur
+  un téléphone en tournée. La valeur restaurée est VALIDÉE contre
+  l'échelle (une préférence hors échelle retombe sur le défaut, jamais
+  d'état incohérent avec le select).
+- **Changement de taille = retour page 1** (même règle que les filtres,
+  dans les handlers — jamais d'effet), et la taille entre dans la
+  queryKey React Query des listes serveur (piège : le param était déjà
+  envoyé mais HORS clé — un changement de taille sans refetch de clé
+  distinct servait le cache de l'ancienne taille).
+- **Sessions devient paginée côté client** : la page affichée est une
+  FENÊTRE sur filteredSessions ; les KPI et les badges du rail restent
+  calculés sur l'ENSEMBLE scopé (le compte « connectés » ne devient
+  jamais le compte de la page courante) ; bornes recalculées à chaque
+  rendu — le poll vivant fait bouger total ET contenu, safePage recadre
+  une page devenue hors bornes (kick, expiration) sans état coincé ;
+  recherche et loupe routeur ramènent à la page 1.
+- **Deux défauts historiques normalisés** pour que le défaut de CHAQUE
+  table vive dans l'échelle commune : vouchers 12 → 10, journal 20 →
+  25. Les PAGE_SIZE/BATCH_PAGE_SIZE de vouchers/shared.ts disparaissent
+  (l'état et les défauts vivent dans les usePageSize du shell).
+
+### PWA — pourquoi N°191/192 étaient « invisibles » et le correctif
+- **Cause racine** : skipWaiting + clients.claim (N°59) rendent le
+  NOUVEAU service worker actif en arrière-plan, mais la page EN COURS
+  continue d'exécuter les ANCIENS bundles. Sur Android, rouvrir la PWA
+  ne déclenche AUCUNE navigation (`launch_handler: focus-existing`) :
+  sans reload, l'ancienne interface peut vivre des JOURS malgré des
+  déploiements quotidiens. Le navigateur desktop avait le même symptôme
+  sur un onglet resté ouvert (pas de navigation au retour d'onglet).
+- **controllerchange → reload UNE fois** par vie de document (garde
+  module anti-boucle ; après reload c'est un nouveau document, un
+  déploiement ultérieur rechargera de nouveau — voulu).
+- **Première installation ignorée** : `hadController` capturé AVANT le
+  register — si la page n'était contrôlée par aucun SW, le
+  controllerchange qui suit claim() est l'installation initiale, rien à
+  recharger (sinon : un reload parasite à la toute première visite).
+- **Comptoir protégé** : pas de reload si le Mode Vente est ouvert — le
+  geste du comptoir n'est jamais interrompu (les ventes en file IndexedDB
+  seraient rejouées après reload, mais pas au milieu d'une remise au
+  client) ; le reload est REPORTÉ et un watcher léger (pathname, 10 s)
+  l'applique à la sortie du comptoir.
+- **Throttle 30 min RÉARMÉ au passage en arrière-plan** : chaque
+  réouverture de la PWA rechecke le sw.js (avant : une PWA rouverte
+  moins de 30 min après sa dernière consultation ne voyait JAMAIS un
+  déploiement frais) ; les micro-focus au sein d'une session restent
+  throttlés.
+- **Check périodique 30 min** (kiosque de comptoir : la page peut vivre
+  des heures en premier plan sans aucun visibilitychange — passe par le
+  même throttle, un GET conditionnel tant que le sw.js n'a pas changé).
+- **updateViaCache: "none"** — le sw.js ne passe jamais par le cache
+  HTTP pour son byte-check (ceinture et bretelles ; la route le sert
+  déjà en max-age=0, must-revalidate).
+
+### Pièges découverts en vérification
+- `pkill -f <motif>` depuis la ligne de commande de l'agent : le
+  pattern matche la COMMANDE elle-même → l'agent tue sa propre session
+  bash (erreur vide, sortie immédiate). Remède : tuer par port
+  (`ss -tlnp` + kill des PID), jamais par motif qui apparaît dans la
+  ligne de commande courante.
+- Rebuild `.next` pendant qu'un `next start` tourne : le VIEUX serveur
+  garde sa carte des chunks en mémoire et sert des 500 sur des fichiers
+  qui n'existent plus (page blanche) — et le nouveau serveur meurt en
+  EADDRINUSE silencieux pendant que le health-check passe… sur le vieux.
+  Toujours vérifier `EADDRINUSE` dans le log ET tuer par port avant
+  chaque (re)démarrage de stack locale.
+- `NEXT_PUBLIC_API_BASE` est inliné AU BUILD : le passer à `next start`
+  ne change RIEN au bundle déjà compilé (la stack locale doit rebuilder
+  avec, ou tomber sur le mode passerelle XTransformPort qui n'existe pas
+  hors sandbox Caddy).
+- Le total vouchers bouge PENDANT la vérification (la simulation
+  consomme des tickets à chaque Tick) : les assertions sur « sur {total} »
+  doivent lire la valeur AVANT d'agir, jamais la comparer entre deux
+  étapes éloignées.
+
+### Vérifié (stack locale : backend Go JSON :4000 + frontend `next start` :3100, build propre avec NEXT_PUBLIC_API_BASE, navigateur headless Chromium/Playwright, compte owner annuel, 3 routeurs simulés, 80 vouchers dont 62 sur un routeur, 15 utilisateurs réguliers)
+- Vouchers : plage par défaut « 1–10 sur 80 » ; Suivant → « 11–20 sur
+  80 » ; taille 50 → « 1–50 sur 80 » (retour page 1) ; préférence
+  persistée `mikcloud.pageSize.vouchers=50` ; après RELOAD la plage
+  « 1–50 sur 80 » est conservée ; taille 100 → « 1–80 sur 80 » page
+  unique, Suivant désactivé ; trigger « 10 / page » puis « 50 / page » ;
+  aria-label FR présent.
+- Lots : sélecteur présent + plage rendue ; Users : « 1–10 sur 15 »,
+  Suivant → « 11–15 sur 15 », taille 25 → page unique, préférence
+  persistée ; Journal : sélecteur présent.
+- Sessions : pied de pagination + sélecteur présents, plage cohérente
+  avec le KPI « connectés » (total = ensemble scopé, pas la page).
+- Mobile 390 px : AUCUN débordement horizontal (scrollWidth mesuré =
+  390) ; rail loupe N°191 toujours vivant (chips + badges).
+- ZÉRO erreur console/page sur tout le parcours (y compris
+  l'enregistrement SW en build production).
+
+### Fichiers (11 : 1 nouveau + 10 modifiés, zéro backend, zéro contrat API)
+- `frontend/src/components/hotspot/parts/page-size-select.tsx` (NOUVEAU —
+  usePageSize + PageSizeSelect, échelle 10/25/50/100, persistance par vue)
+- `frontend/src/components/hotspot/views/users-view.tsx`,
+  `vouchers-view.tsx`, `vouchers/vouchers-tab.tsx`,
+  `vouchers/batches-tab.tsx`, `vouchers/shared.ts`, `logs-view.tsx`,
+  `sessions-view.tsx` (pagination côté client nouvelle)
+- `frontend/src/components/pwa-register.tsx` (reload controllerchange +
+  report Mode Vente + throttle réarmé + check périodique + updateViaCache)
+- `frontend/src/lib/hotspot/i18n-fr/common.ts` + `i18n-en/common.ts`
+  (3 clés : perPageUnit, pageSizeLabel, pageSizeHint — FR/EN)
+
 ## 2026-09-28 — N°192 — PWA remise au goût du jour : le manifeste reflète la console actuelle (raccourci « Sessions », 5 captures réelles dont la loupe routeur et le tableau de bord multi-sites), repli hors-ligne auto-guérissant
 
 ### Contexte

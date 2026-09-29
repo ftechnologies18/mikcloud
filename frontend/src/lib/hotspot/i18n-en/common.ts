@@ -24,6 +24,10 @@ export const enCommon: Record<string, string> = {
   "common.actions": "Actions",
   "common.actionsFor": "Actions for {name}",
   "common.range": "{start}–{end} of {total}",
+  // N°193 — page size selector
+  "common.perPageUnit": "page",
+  "common.pageSizeLabel": "Results per page",
+  "common.pageSizeHint": "Maximum number of results per page",
   "common.allStatuses": "All statuses",
   "common.allProfiles": "All profiles",
   "common.allRouters": "All routers",

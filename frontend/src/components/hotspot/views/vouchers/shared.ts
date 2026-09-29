@@ -1,9 +1,10 @@
 // Constantes, options et helpers partagés entre le shell vouchers-view et
 // ses onglets extraits (vouchers-tab, batches-tab, confirm-dialogs).
 // Fichier délibérément sans dépendance React : données pures seulement.
-
-export const PAGE_SIZE = 12;
-export const BATCH_PAGE_SIZE = 10;
+//
+// N°193 — PAGE_SIZE et BATCH_PAGE_SIZE vivaient ici ; la taille de page est
+// désormais un ÉTAT du shell (usePageSize — sélecteur « N / page », préférence
+// mémorisée par vue) : les défauts vivent dans les appels usePageSize du shell.
 
 export const STATUS_OPTIONS = [
   { value: "all", labelKey: "common.allStatuses" },

@@ -13,6 +13,14 @@
 > un déploiement) quasi invisible, (3) le workflow GitHub dort en repli
 > (réactivable en une commande). Option B (Render Starter) reste le
 > correctif de fond au premier trafic réel payant.
+>
+> **STATUT (2026-09-29, N°194) : le mur des 750 heures — voir §6.** Alerte
+> e-mail Render reçue le 29/09 (627/750 h d'instance du mois). Verdict :
+> AUCUNE interruption avant le reset du 1er octobre (marge ~80 h), mais
+> chaque mois de 31 jours jouera le ras du plafond (~744 h nécessaires,
+> 0,8 % de marge). Option B (Starter) : la réponse structurelle, à prendre
+> au premier client payant — ou dès que la règle du 29/10 (§6.5) la
+> déclenche.
 
 ## 1. Constat mesuré (septembre 2026)
 
@@ -138,6 +146,12 @@ git commit -m "N°XX — Render Starter : suppression du keep-alive devenu inuti
 > NB (2026-09-13) : l'Option A couvre désormais ce besoin à 0 $ — l'Option B
 > redevient pertinente au premier trafic réel payant ou si le gérant veut
 > se passer de tout compte tiers.
+>
+> NB (2026-09-29, N°194) : l'alerte « 750 heures d'instance » du plan free
+> (§6) donne un NOUVEAU déclencheur à cette option : au-delà des cold boots,
+> c'est le seul moyen d'éliminer le PLAFOND D'HEURES — un backend de
+> supervision 24/7 consomme ~744 h sur tout mois de 31 jours, soit 99,2 %
+> du budget gratuit du workspace.
 
 ## 4. Table de décision
 
@@ -164,3 +178,104 @@ time curl -s -o /dev/null -w '%{http_code}\n' https://mikcloud.onrender.com/
 # Historique GitHub : onglet Actions → Keep-alive Render
 #   (historique jusqu'au 13/09/2026 11:06 UTC — workflow désormais désactivé).
 ```
+
+## 6. Le mur des 750 heures d'instance — alerte Render du 29/09/2026 (N°194)
+
+### 6.1 Le mail (données mesurées)
+
+> « You're approaching the monthly usage limit for free web services —
+> Your workspace has used **627 of its 750 free instance hours** this
+> month. If you run out of free instance hours, your free web services
+> will be suspended for the rest of the month: **mikcloud**. These
+> services will resume automatically at the start of the next calendar
+> month when your free usage resets. To make sure a service remains
+> active, upgrade it to any paid instance type from its Settings page in
+> the Render Dashboard. »
+
+Le plan FREE de Render plafonne le **workspace** (pas le service) à
+**750 heures d'instance par mois calendaire** — reset le 1er à 00:00 UTC
+(= minuit local Abidjan, même fuseau). `mikcloud` est l'unique service free
+du workspace (le mail ne liste que lui ; le scheduler `mikcloud-quota` vit
+sur les ROUTEURS en RouterOS — il ne consomme rien chez Render).
+
+### 6.2 Verdict immédiat : AUCUNE interruption avant le 1er octobre
+
+Mesuré le 29/09 05:42 UTC :
+
+- Reste à couvrir : **42,5 h** (29/09 05:42 → 01/10 00:00 UTC) ;
+- Budget restant : 750 − 627 = **123 h** ;
+- **Marge : ~80 h (≈ 2× le temps restant)** → le service tiendra jusqu'au
+  reset SANS RIEN FAIRE. Le mail est le warning automatique de Render
+  (déclenché vers 84 % du quota), pas une suspension.
+
+### 6.3 Le mur structurel : chaque mois de 31 jours joue le ras du plafond
+
+Un backend de supervision hotspot doit rester joignable 24/7 : les
+check-ins agents (45-180 s, N°75) ne laissent JAMAIS 15 min sans trafic →
+jamais d'hibernation (l'Option A verrouille ce comportement, mais les
+agents le garantiraient seuls — retirer UptimeRobot ne gagnerait ~rien).
+
+| Mois | Heures nécessaires (24/7) | Plafond | Marge |
+|---|---|---|---|
+| 30 jours (novembre) | 720 h | 750 h | 30 h (4 %) |
+| 31 jours (octobre, décembre…) | **744 h** | 750 h | **6 h (0,8 %)** |
+
+Septembre n'a consommé que 627 h parce que le service hibernait par
+fenêtres avant le monitor UptimeRobot (13/09) — le ping GitHub réel
+mesuré ~2 h 50 (§1) laissait le service dormir (écart ≈ 50 h vs le 24/7
+intégral, cohérent). **Octobre sera le premier mois PLEIN sans aucune
+hibernation : la consommation convergera vers 744 h.**
+
+Le plafond facture la **PRÉSENCE**, pas le travail : même famille de mur
+que le Neon N°162 (temps d'éveil vs volume). Les optimisations
+N°72-77 + N°157/N°159 (bande passante, lignes, CPU) et la migration
+Supabase (persistance) n'ont AUCUN levier sur des heures d'instance — et
+leurs promesses restent tenues par ailleurs (base 8,6 % du quota Supabase,
+egress applicatif projeté ~45 Mo/31 j vs 5 Go, mesurés N°179).
+
+### 6.4 Ce que signifie une suspension (si le mur tombait un jour)
+
+- **Frontend Vercel** : reste UP (statique) mais la console est inutilisable
+  (API injoignable) ;
+- **Portail captif** : la page de login est servie PAR LE ROUTEUR (repli
+  local N°75) → elle s'affiche toujours, mais la soumission du login
+  valide côté cloud → **aucun NOUVEAU client ne peut se connecter**
+  pendant la fenêtre. Les sessions déjà établies continuent (elles vivent
+  sur RouterOS) ;
+- **Agents** : check-ins en échec, retry continu — sans perte (comportement
+  prouvé par l'incident N°163 : les deltas repartent à la reprise). À la
+  reprise, le boot recharge l'état complet depuis Supabase (chemin de boot
+  normal, sain depuis la migration) — c'est LA différence avec l'ère Neon :
+  une suspension est aujourd'hui **survivable**, pas fatale ;
+- **Comptoir / ventes / e-mails transactionnels** : morts pendant la
+  fenêtre ;
+- Reprise AUTOMATIQUE au 1er du mois suivant 00:00 UTC.
+
+### 6.5 Décision recommandée (règle simple)
+
+1. **Maintenant → 1er octobre : ne rien faire** (§6.2). Ne PAS retirer le
+   keep-alive : les agents maintiennent l'éveil de toute façon (gain ~0)
+   et le retrait rouvrirait la porte aux cold boots si le parc agent se
+   vidait un jour.
+2. **Octobre : laisser filer, avec une règle de sortie datée.** Le compteur
+   se lit sur le dashboard Render (heures d'instance du workspace) ; le
+   mail de warning reviendra vers ~84 % (≈ 25-27/10). **Règle : au matin
+   du 29/10, projeter `heures consommées + heures restantes jusqu'au
+   reset` — si la projection ≥ 745 h, upgrader immédiatement en Starter**
+   (facturé à l'usage : ~1-2 $ pour les dernières heures) OU assumer une
+   fenêtre de suspension le 31/10 en soirée — le 31/10/2026 est un
+   SAMEDI (soirée Halloween : potentiellement le pire moment pour couper
+   des hotspots).
+3. **Réponse structurelle (au premier client payant) : Option B — Render
+   Starter ~7 $/mois** (§3) : élimine le plafond d'heures ET le spin-down ;
+   le monitor UptimeRobot devient alors inutile (à retirer). Avec Render
+   PostgreSQL Starter (~6-7 $) pour la base au même moment
+   (RUNBOOK-POSTGRES §4-D) : **~14 $/mois** le tout — la trajectoire
+   documentée depuis le 13/09.
+
+NB : une « pause nocturne planifiée » (suspendre le service la nuit pour
+économiser des heures) est envisageable sur le papier mais INACCEPTABLE
+dès qu'un gérant vend des forfaits 24 h (un ticket acheté à 20 h doit
+connecter à 2 h du matin) — à réserver à un parc strictement diurne, et
+le comportement exact du compteur sur suspend/resume manuel n'est pas
+mesuré.

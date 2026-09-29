@@ -5,6 +5,84 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-09-29 — N°194 — Le mur des 750 heures d'instance Render : réponse à l'alerte e-mail du 29/09 (« 627 of its 750 free instance hours ») — verdict mesuré AUCUNE interruption avant le 1er octobre (marge ~80 h), analyse structurelle du plafond qui facture la PRÉSENCE (744 h sur tout mois de 31 jours = 0,8 % de marge) et règle de décision datée
+
+### Contexte
+Mail Render reçu par l'opérateur le 29/09 : « You're approaching the
+monthly usage limit for free web services — Your workspace has used 627
+of its 750 free instance hours this month. If you run out of free
+instance hours, your free web services will be suspended for the rest of
+the month: mikcloud. […] resume automatically at the start of the next
+calendar month. ». Question posée, avec l'inquiétude que l'implémentation
+objectif 0 coût (N°72-77 + correctifs N°157/N°159 + migration Supabase)
+« semble ne pas tenir l'objectif » : dois-je craindre une interruption
+de service, quel est ton conseil ?
+
+### Verdict (mesuré le 29/09 05:42 UTC)
+- **Cette semaine : NON, aucune interruption.** Reste à couvrir 42,5 h
+  avant le reset du 1er octobre 00:00 UTC pour 123 h de budget restant
+  (750 − 627) : **marge ~80 h ≈ 2× le temps restant**. Le mail est le
+  warning automatique de Render (déclenché vers 84 % du quota), pas une
+  suspension.
+- **Le mur est structurel mais étroit.** Un backend de supervision
+  hotspot est éveillé 24/7 (check-ins agents 45-180 s → jamais 15 min
+  sans trafic, jamais d'hibernation — les agents le garantissent seuls,
+  UptimeRobot le verrouille) : **tout mois de 31 jours consomme ~744 h
+  pour 750 offertes = marge 6 h (0,8 %)** ; les mois de 30 jours
+  respirent (720 h, marge 30 h). Septembre n'a consommé que 627 h parce
+  que le service hibernait par fenêtres avant le monitor UptimeRobot du
+  13/09 (écart ≈ 50 h vs le 24/7 intégral, cohérent avec le ping GitHub
+  réel mesuré ~2 h 50) : **octobre sera le premier mois PLEIN éveillé**.
+- **L'objectif 0 coût tient ses promesses MESURÉES côté volume** : base
+  29-30 Mo (8,6 % du quota Supabase 500 Mo), egress applicatif projeté
+  ~45 Mo/31 j (vs 5 Go), zéro quota d'heures côté Supabase (N°179). Le
+  plafond Render facture la **PRÉSENCE de l'instance, pas le travail** :
+  même famille de mur que le Neon N°162 (temps d'éveil vs volume) —
+  aucun levier des N°72-77/157/159 ni de la migration Supabase, qui ont
+  attaqué le volume (bande passante, lignes, CPU) et la persistance.
+  `mikcloud` est l'unique service free du workspace (le mail ne liste
+  que lui ; le scheduler `mikcloud-quota` vit sur les ROUTEURS en
+  RouterOS — il ne consomme rien chez Render).
+- **Impact d'une suspension** (si le mur tombait un jour) : frontend
+  Vercel UP mais console inutilisable ; page de login servie PAR LE
+  ROUTEUR (repli local N°75) mais validation cloud → aucun NOUVEAU
+  login client pendant la fenêtre (les sessions établies continuent sur
+  RouterOS) ; agents en retry continu SANS perte (comportement prouvé
+  N°163) ; à la reprise le boot recharge tout depuis Supabase — une
+  suspension est aujourd'hui SURVIVABLE, la différence cruciale avec
+  l'ère Neon ; reprise automatique au 1er du mois 00:00 UTC.
+
+### Décision recommandée (règle simple, RUNBOOK-KEEPALIVE §6.5)
+1. Maintenant → 1er octobre : NE RIEN FAIRE (et ne pas retirer le
+   keep-alive : les agents maintiennent l'éveil de toute façon, gain ~0).
+2. Octobre : laisser filer avec une règle de sortie datée — au matin du
+   29/10, projeter « consommé + heures restantes jusqu'au reset » ; si
+   ≥ 745 h, upgrader immédiatement en Starter (facturé à l'usage,
+   ~1-2 $ pour la fin de mois) OU assumer une fenêtre de suspension le
+   31/10 en soirée — le 31/10/2026 est un SAMEDI (soirée Halloween :
+   potentiellement le pire moment pour couper des hotspots).
+3. Réponse structurelle au premier client payant : Render Starter
+   ~7 $/mois (élimine plafond d'heures ET spin-down, UptimeRobot devient
+   inutile) + Render PostgreSQL Starter ~6-7 $ → ~14 $/mois le tout —
+   la trajectoire documentée depuis le 13/09.
+
+### Fidélité
+Documentation seule : RUNBOOK-KEEPALIVE (STATUT 29/09 + NB au §3/Option B
++ NOUVEAU §6 complet : mail, verdict, table 30/31 jours, impact
+suspension, règle de décision, NB pause nocturne rejetée pour les
+forfaits 24 h) ; RUNBOOK-POSTGRES §8 (5e indicateur « heures d'instance
+Render » + précision §8.1 dashboard-only + note au §8.2) ; CHANGELOG.
+Zéro code, zéro route, zéro contrat — aucun déploiement déclenché (la
+détection monorepo de la CI ne regarde que backend/).
+
+### Vérifié
+Calculs datés et rejouables : 29/09 05:42 UTC → reset 01/10 00:00 UTC =
+42,5 h restantes vs 123 h de budget (marge 80,5 h) ; 31 j × 24 h = 744 ;
+30 j × 24 h = 720 ; jour de semaine du 31/10/2026 = samedi (vérifié
+calendrier) ; `mikcloud-quota` = scheduler RouterOS (greps CHANGELOG
+N°106/N°130 : posé par l'agent sur les routeurs, pas un cron Render) ;
+unique service free = mikcloud (le mail Render ne liste que lui).
+
 ## 2026-09-29 — N°193 — Sélecteur de pagination « N / page » sur TOUTES les tables de la console (préférence mémorisée par vue) + la lacune PWA qui rendait les déploiements INVISIBLES corrigée (reload sur controllerchange — réponse au signalement « N°191/192 pas visibles sur mobile PWA et navigateur »)
 
 ### Contexte

@@ -218,10 +218,14 @@ chose pour ~3× moins cher, colocalisé au backend (§4-D).
 | Egress mensuel | dashboard Supabase → Reports/Usage | > 3,5 Go (70 % des 5 Go gratuits) |
 | Carte « Santé de la persistance » | MikCloud (admin) | tout échec > 5 min |
 | Synchro / check-ins | logs Render | retour des « store: synchro PostgreSQL différée échouée » |
+| Heures d'instance Render (workspace) *(ajouté 29/09, N°194)* | dashboard Render + mail automatique (~84 %) | projection fin de mois ≥ 745 h — règle de décision au 29 du mois : RUNBOOK-KEEPALIVE §6.5 |
 
 ### 8.1 Outil de mesure (N°179) — `ops/mois1/surveille.sh`
 
-Les quatre indicateurs sont mesurables SANS dashboard, en lecture seule :
+Les quatre premiers indicateurs sont mesurables SANS dashboard, en lecture
+seule (le 5e — heures d'instance Render — se lit sur le dashboard Render
+ou le mail automatique : aucune API publique documentée pour ce compteur,
+consigné N°194) :
 
 ```
 ops/mois1/surveille.sh          # fenêtre logs 6 h par défaut
@@ -290,6 +294,16 @@ Si un seuil est franchi au fil de la croissance du parc : Render
 PostgreSQL Starter (~6-7 $/mois, §4-D) — idéalement au moment où le
 premier client payant finance le basculement (et le backend Render
 Starter avec, cf. RUNBOOK-KEEPALIVE).
+
+*(29/09, N°194)* **Ajout du 5e indicateur — heures d'instance Render.**
+Alerte e-mail Render reçue le 29/09 à 627/750 h : verdict mesuré AUCUNE
+interruption avant le reset du 1er octobre (marge ~80 h), mais chaque
+mois de 31 jours consommera ~744 h (99,2 % du plafond — le backend est
+éveillé 24/7 par les check-ins agents). Analyse complète, impact d'une
+suspension et règle de décision : **RUNBOOK-KEEPALIVE §6**. L'objectif
+0 coût reste tenu côté Supabase (base 8,6 %, egress ~1,3 %) — le plafond
+Render facture la PRÉSENCE de l'instance, pas le volume : aucun levier
+des N°72-77/157/159, même famille de mur que le Neon N°162.
 
 ## 9. Récapitulatif des actions déjà effectuées (20/09 au soir)
 

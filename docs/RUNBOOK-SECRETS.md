@@ -140,6 +140,73 @@ ou une variable Render est illisible en lecture (garde anti-perte N°172
 portail concerné et constater le retour des slides. Ranger le jeton au
 coffre (jamais dans le dépôt ni le chat).
 
+## 2.8 Rotation S4 du 01/10/2026 — périmètre exécutable par API (mesuré) + ordre des gestes manuels
+
+Contexte : règle §2.6 appliquée après exposition de tous les identifiants au
+canal chat. Ce qui suit est MESURÉ ce jour-là (chaque verdict provient d'un
+appel réel), pas déduit.
+
+**Exécuté automatiquement le 01/10 (22:25 UTC)** :
+- `ADMIN_PASSWORD` (Render) — rotée par API (PUT env-vars en bloc des 16
+  variables, seule celle-ci modifiée) + redéploiement ; l'ancienne valeur
+  était en DOUBLON du mot de passe de la base Supabase (double exposition
+  potentielle) — la nouvelle valeur est distincte de tout autre secret et ne
+  vit QUE dans le dashboard Render (jamais le chat). Vérifié : login admin
+  OK avec la nouvelle, l'ancienne est rejetée.
+- Vérification du pipeline de secours : `standby-restore` déclenché
+  manuellement après la vague N°198-N°201 — SUCCÈS (37 tables y compris
+  `volume_days` et `monthly_journals` restaurées vers Neon, comptages
+  conformes).
+
+**Ce qui N'est PAS automatisable par API (verdicts mesurés)** :
+- **DSN Supabase** : `ALTER ROLE postgres PASSWORD …` → `permission denied
+  to alter role` (SQLSTATE 42501), même via le session pooler :5432. La
+  rotation passe par le dashboard Supabase (Project → Database → Settings →
+  Reset database password) ou l'API Management Supabase (jeton `sbp_…`,
+  non délivré à ce jour). Puis : Render `DATABASE_URL` + secrets GitHub
+  `DATABASE_URL` ET `SUPABASE_DATABASE_URL` (le secours et le backup
+  hebdo lisent la production).
+- **Neon (`napi_` + DSN standby)** : `api.neon.tech` mort en DNS public
+  (cf. RUNBOOK-POSTGRES §12) ; sur `console.neon.tech/api/v2`, la clé
+  `napi_` accepte orgs/projects/endpoints MAIS les routes roles
+  (`…/branches/{br}/roles`, reset password compris) répondent 401
+  « supplied credentials do not pass authentication » — impossible de
+  gérer les rôles (ni lister, ni réinitialiser) avec cette clé. Rotation :
+  console Neon (API Keys pour le jeton ; Roles → Reset password pour le
+  DSN) puis secret GitHub `NEON_STANDBY_DATABASE_URL`.
+- **Vercel (`vcp_`)** : `POST /v3/tokens` → 404 (aucune création de jeton
+  par API). Dashboard → Settings → Tokens uniquement.
+- **Render (`rnd_`)** : aucune route de création/roll de clé API. Account
+  Settings → API Keys → Roll, puis secret GitHub `RENDER_API_KEY`.
+- **Cloudflare R2 (`cfat_`)** : `POST /user/tokens` avec le jeton R2 → 403
+  « Invalid access token » (portée R2, pas de gestion de jetons). Console
+  R2 → nouveau jeton → `ops/media/r2-rotate-token.sh --exec` (applique +
+  fume-teste, cf. §2.7).
+- **GitHub PAT** : pas de création par API (par conception). §2.1.
+
+**Ordre recommandé des gestes manuels** (chacun < 10 min, à froid) :
+1. **Supabase** (la nuit de préférence — entre le reset du mot de passe et
+   le redéploiement Render, les NOUVELLES connexions du backend échouent ;
+   les connexions établies survivent, fenêtre ≈ 3 min) : Reset password →
+   mettre à jour Render `DATABASE_URL` → deploy → secrets GitHub
+   `DATABASE_URL` + `SUPABASE_DATABASE_URL` → déclencher `standby-restore`
+   manuellement (vérification) → la carte Santé de la console doit rester
+   verte.
+2. **Neon** : Reset password du rôle standby → secret GitHub
+   `NEON_STANDBY_DATABASE_URL` → `standby-restore` manuel vert → nouveau
+   jeton `napi_` au coffre → révoquer l'ancien.
+3. **Render** : Roll la clé API → secret GitHub `RENDER_API_KEY` → un push
+   quelconque (CI → job deploy-render vert prouve la nouvelle clé).
+4. **Vercel** : nouveau token au coffre → révoquer l'ancien.
+5. **R2** : nouveau `cfat_` (§2.7) → script de rotation → carte Santé
+   « Stockage d'images (portail) : Opérationnel ».
+6. **GitHub PAT en DERNIER** (§2.1) : créer le nouveau → le ranger au
+   coffre → révoquer l'ancien — les sessions/outils qui l'utilisent
+   perdront l'accès à la révocation.
+
+Leçon consignée : `ADMIN_PASSWORD` ne doit JAMAIS réutiliser la valeur d'un
+autre secret (le doublon du 01/10 exposait les deux d'un seul geste).
+
 ## 3. Sauvegardes Neon chiffrées (mikbackup) — testées chaque semaine
 
 Outil : `backend/cmd/mikbackup` (export chiffré AES-256-GCM + **test de

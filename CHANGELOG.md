@@ -5,6 +5,37 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-01 — N°202 — Sécurité S4 : rotation ADMIN_PASSWORD exécutée (API Render) + RUNBOOK-SECRETS §2.8 — le périmètre automatisable de la rotation mesuré au feu, l'ordre des gestes manuels restants
+
+### Contexte
+Règle §2.6 du RUNBOOK-SECRETS appliquée : tous les identifiants avaient
+transité par le canal chat. Constat supplémentaire : l'`ADMIN_PASSWORD`
+Render était en DOUBLON EXACT du mot de passe de la base Supabase (un seul
+geste d'exposition compromettait les deux).
+
+### Produit / Opérations
+- **ADMIN_PASSWORD rotée par API** (PUT en bloc des 16 variables Render,
+  seule celle-ci modifiée — DATABASE_URL/JWT_SECRET intacts vérifiés) +
+  redéploiement ; nouvelle valeur aléatoire 24 caractères, distincte de
+  tout autre secret, vivant UNIQUEMENT dans le dashboard Render (jamais le
+  chat ni le dépôt). Vérifié de bout en bout : login admin ÉMET un JWT
+  avec la nouvelle valeur, l'ancienne est REJETÉE.
+- **Pipeline de secours vérifié sur le nouveau main** : `standby-restore`
+  déclenché manuellement — SUCCÈS (37 tables y compris `volume_days`
+  N°199 et `monthly_journals` N°200 restaurées vers Neon, comptages
+  d'intégrité conformes).
+- **RUNBOOK-SECRETS §2.8 (NOUVEAU)** : verdicts MESURÉS du périmètre
+  automatisable — Supabase `ALTER ROLE` refusé (42501, rotation par
+  dashboard), routes roles Neon 401 avec `napi_` (orgs/projects/endpoints
+  OK, rôles inaccessibles), Vercel `POST /v3/tokens` 404, Render sans API
+  de roll, Cloudflare `POST /user/tokens` 403 avec un jeton R2 — plus
+  l'ordre recommandé des 6 gestes manuels (Supabase la nuit avec fenêtre
+  ≈ 3 min documentée → Neon → Render → Vercel → R2 → GitHub PAT en
+  dernier) et la leçon du doublon.
+
+### Fichiers
+- docs/RUNBOOK-SECRETS.md (§2.8), CHANGELOG.md.
+
 ## 2026-10-01 — N°201 — Correctif durable QoS : le parent-queue est résolu PAR ROUTEUR — fin de l'incident dormant Zikisso (profil tué sur une box dont le QoS est désactivé)
 
 ### Contexte

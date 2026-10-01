@@ -373,31 +373,45 @@ func (a *API) handleProfileUpdate(w http.ResponseWriter, r *http.Request) {
 // session-timeout, rate-limit, shared-users et verrou « 1er appareil » via
 // on-login). Les modes real/simulated n'exposent pas les profils hotspot via
 // la gateway : la synchro y est sans effet (mode agent requis).
+//
+// N°201 — le payload est RÉSOLU PAR ROUTEUR (queueProfileSetForRouterLocked) :
+// le parent-queue managé mikcloud-qos n'est référencé que sur les box où la
+// file existe (QoS activée + convergée). Fin du fan-out aveugle de l'incident
+// Zikisso : un compte multi-box dont UNE box a le QoS désactivé reçoit un
+// profile_set SANS parent-queue sur cette box — l'add du profil réussit, les
+// utilisateurs suivent.
 func (a *API) queueProfileSetLocked(db *model.DB, acc string, p model.Profile) {
-	name := agent.SanitizeName(p.Name)
 	for i := range db.Routers {
 		r := &db.Routers[i]
 		if r.AccountID == acc && r.Mode == "agent" {
-			queueCommandLocked(db, acc, r.ID, model.CmdProfileSet, map[string]any{
-				"name":              name,
-				"rateLimit":         p.RateLimit,
-				"sessionTimeoutMin": p.SessionTimeoutMin,
-				"sharedUsers":       p.SharedUsers,
-				"lockFirstDevice":   p.LockFirstDevice,
-				"addressPool":       p.AddressPool,
-
-				"parentQueue": p.ParentQueue,
-
-				// N°106 — mode bridage (scripts on-login/on-logout du profil) +
-
-				// débit (embarqué dans les marqueurs mikq: à la création).
-
-				"quotaMode": p.QuotaModeEffective(),
-
-				"throttleRate": p.ThrottleRate,
-			})
+			a.queueProfileSetForRouterLocked(db, r, p)
 		}
 	}
+}
+
+// queueProfileSetForRouterLocked — N°201 — UNE commande profile_set pour UN
+// routeur donné, payload résolu pour SA réalité QoS (cf. parentQueueForRouter).
+func (a *API) queueProfileSetForRouterLocked(db *model.DB, r *model.Router, p model.Profile) {
+	payload := map[string]any{
+		"name":              agent.SanitizeName(p.Name),
+		"rateLimit":         p.RateLimit,
+		"sessionTimeoutMin": p.SessionTimeoutMin,
+		"sharedUsers":       p.SharedUsers,
+		"lockFirstDevice":   p.LockFirstDevice,
+		"addressPool":       p.AddressPool,
+
+		// N°106 — mode bridage (scripts on-login/on-logout du profil) +
+		// débit (embarqué dans les marqueurs mikq: à la création).
+		"quotaMode": p.QuotaModeEffective(),
+
+		"throttleRate": p.ThrottleRate,
+	}
+	// N°201 — parent-queue : clé omise si la file managée n'existe pas sur
+	// cette box (la clé absente ne touche pas au parent-queue local).
+	if pq, ok := parentQueueForRouter(p, r); ok {
+		payload["parentQueue"] = pq
+	}
+	queueCommandLocked(db, r.AccountID, r.ID, model.CmdProfileSet, payload)
 }
 
 func (a *API) handleProfileDelete(w http.ResponseWriter, r *http.Request) {

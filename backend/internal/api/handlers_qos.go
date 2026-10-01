@@ -371,7 +371,9 @@ func qosQueueReadStale(db *model.DB, routerID string, now time.Time) bool {
 // machinerie profile_set existante converge l'état complet vers les routeurs.
 // appelée au retour VÉRIFIÉ du queue_ensure — la file existe AVANT que les
 // commandes profile_set ne partent (l'ordre est garanti par la causalité,
-// pas par la chance).
+// pas par la chance). Retourne le nombre de profils rattachés (0 = garde
+// multi-box honnête ou rien à faire — l'appelant N°201 enchaîne alors la
+// republication par routeur).
 //
 // ARBITRAGE (documenté) : le champ Profile.ParentQueue est ACCOUNT-level
 // (parité Mikhmon, poussé à tous les routeurs agents du compte). Le
@@ -381,7 +383,16 @@ func qosQueueReadStale(db *model.DB, routerID string, now time.Time) bool {
 // que la file existe : read_resources). Un parent-queue pointant une file
 // inexistante sur une AUTRE box serait du bruit silencieux, jamais une
 // décision prise à son insu.
-func (a *API) qosAttachProfilesLocked(db *model.DB, router *model.Router, queue string) {
+//
+// N°201 — le mot « bruit silencieux » de l'arbitrage ci-dessus décrivait
+// exactement l'incident Zikisso : ce « bruit » TUAIT le profil (add en échec
+// avalé, user_add en cascade, vagues de réparation infinies). L'arbitrage
+// N°104 est conservé (pas d'attach automatique en multi-box), mais le
+// fan-out n'est plus aveugle : parentQueueForRouter ne référence la file
+// managée que sur les box où elle EXISTE, et la convergence d'une box
+// réaligne ses profils (requeueProfilesForRouterLocked) sans écrire le
+// champ account-level.
+func (a *API) qosAttachProfilesLocked(db *model.DB, router *model.Router, queue string) int {
 	agentRouters := 0
 	for i := range db.Routers {
 		if db.Routers[i].AccountID == router.AccountID && db.Routers[i].Mode == "agent" {
@@ -389,7 +400,7 @@ func (a *API) qosAttachProfilesLocked(db *model.DB, router *model.Router, queue 
 		}
 	}
 	if agentRouters != 1 {
-		return
+		return 0
 	}
 	rewired := 0
 	for i := range db.Profiles {
@@ -403,6 +414,33 @@ func (a *API) qosAttachProfilesLocked(db *model.DB, router *model.Router, queue 
 	if rewired > 0 {
 		a.logActivity(db, router.AccountID, "router", "QoS : "+strconv.Itoa(rewired)+
 			" profil(s) rattaché(s) à la file "+queue+" (files utilisateurs filles du plafond agrégat)")
+	}
+	return rewired
+}
+
+// requeueProfilesForRouterLocked — N°201 — auto-guérison à la convergence :
+// quand la file agrégat vient d'être CONFIRMÉE sur une box (sig posée au
+// retour vérifié du queue_ensure), les profils du compte qui référencent
+// mikcloud-qos sont réalignés SUR CETTE BOX uniquement — le parent-queue
+// leur était omis tant que la file n'existait pas (parentQueueForRouter),
+// la box le découvre maintenant. Sans écriture du champ account-level
+// (arbitrage N°104 intact : en multi-box, l'attach automatique ne court
+// pas — ici on ne RE-publie que ce que le gérant a déjà choisi). En
+// mono-box, qosAttachProfilesLocked a déjà tout reconvergé (le payload
+// par routeur y est identique) : l'appelant ne nous appelle pas.
+func (a *API) requeueProfilesForRouterLocked(db *model.DB, router *model.Router) {
+	republished := 0
+	for i := range db.Profiles {
+		p := &db.Profiles[i]
+		if p.AccountID == router.AccountID && p.ParentQueue == agent.QoSQueueName {
+			a.queueProfileSetForRouterLocked(db, router, *p)
+			republished++
+		}
+	}
+	if republished > 0 {
+		a.logActivity(db, router.AccountID, "router", "QoS : "+strconv.Itoa(republished)+
+			" profil(s) réaligné(s) sur «"+router.Name+"» — la file "+agent.QoSQueueName+
+			" existe désormais sur cette box (parent-queue réactivé)")
 	}
 }
 

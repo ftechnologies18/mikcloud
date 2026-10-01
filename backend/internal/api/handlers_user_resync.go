@@ -117,7 +117,9 @@ func (a *API) handleUserResync(w http.ResponseWriter, r *http.Request) {
 			"comment":  comment,
 		}
 		if profile != nil {
-			payload["profile"] = profileRef(*profile)
+			// N°201 — résolu pour LE routeur du resync (parent-queue managé
+			// omis si la file n'existe pas sur cette box).
+			payload["profile"] = profileRefFor(*profile, router)
 		} else {
 			payload["profile"] = map[string]any{"name": agent.SanitizeName(profileName)}
 		}

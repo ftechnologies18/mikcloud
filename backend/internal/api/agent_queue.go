@@ -235,11 +235,53 @@ func (a *API) queueReadStateNowLocked(db *model.DB, router *model.Router) *model
 	return queueCommandLocked(db, router.AccountID, router.ID, model.CmdReadState, map[string]any{})
 }
 
-// profileRef — construit la référence compacte d'un profil pour les payloads.
+// qosQueueLiveOnRouter — N°201 — la file agrégat managée (mikcloud-qos)
+// existe-t-elle sur CE routeur ? Vérité = QoSEnabled && QoSSig != "" : la
+// signature n'est posée qu'au retour VÉRIFIÉ du queue_ensure (relecture
+// conforme bit à bit) et vidée au retrait comme à la dérive monitoring —
+// jamais la foi en une commande en vol. C'est LE garde qui manquait à
+// l'incident Zikisso : un profil au parent-queue mikcloud-qos poussé à une
+// box où la file n'existe pas faisait échouer l'add du profil (avalé en
+// silence par le :do/on-error), puis TOUS les user_add/voucher_batch qui
+// l'ensuivaient — vagues de réparation en boucle sur une cause de config,
+// jamais transitoire.
+func qosQueueLiveOnRouter(r *model.Router) bool {
+	return r != nil && r.Mode == "agent" && r.QoSEnabled && r.QoSSig != ""
+}
 
-// profileRef — construit la référence compacte d'un profil pour les payloads.
-func profileRef(p model.Profile) map[string]any {
-	return map[string]any{
+// parentQueueForRouter — N°201 — résout le parent-queue d'un profil POUR un
+// routeur cible. Trois régimes :
+//   - profil SANS file parent ("") : clé présente à vide → le set routeur
+//     aligne parent-queue=none (sémantique historique inchangée) ;
+//   - file CUSTOM du gérant (≠ mikcloud-qos) : passée telle quelles — le
+//     cloud ne connaît pas l'existence des files custom box par box, le
+//     choix du gérant prime (arbitrage N°104) ;
+//   - file managée mikcloud-qos : référencée UNIQUEMENT si elle existe sur
+//     la box cible (qosQueueLiveOnRouter) — sinon la clé est OMISE du
+//     payload : le générateur agent ne touche alors PAS au parent-queue
+//     local (le queue_remove l'a déjà nettoyé à la désactivation), l'add
+//     du profil réussit, les user_add/voucher_batch qui suivent aussi.
+//
+// Retour (valeur, cléPrésente).
+func parentQueueForRouter(p model.Profile, r *model.Router) (string, bool) {
+	if p.ParentQueue == "" {
+		return "", true
+	}
+	if p.ParentQueue == agent.QoSQueueName && !qosQueueLiveOnRouter(r) {
+		return "", false
+	}
+	return p.ParentQueue, true
+}
+
+// profileRefFor — N°201 — construit la référence compacte d'un profil pour
+// les payloads, RÉSOLUE POUR LE ROUTEUR CIBLE (user_add, user_set,
+// voucher_batch, réparation, resync, claim wifi) : le parent-queue managé
+// n'entre dans le payload que si la file existe sur CETTE box (cf.
+// parentQueueForRouter — l'incident Zikisso est né de ce fan-out aveugle).
+// profileRef (sans routeur) n'existe plus : toute commande agent est
+// adressée à UN routeur précis, la référence doit l'être aussi.
+func profileRefFor(p model.Profile, r *model.Router) map[string]any {
+	ref := map[string]any{
 		"name":              agent.SanitizeName(p.Name),
 		"rateLimit":         p.RateLimit,
 		"sessionTimeoutMin": p.SessionTimeoutMin,
@@ -249,18 +291,19 @@ func profileRef(p model.Profile) map[string]any {
 		// (chaque user_add / voucher_batch aligne le profil sur le cloud).
 		"addressPool": p.AddressPool,
 
-		"parentQueue": p.ParentQueue,
-
 		// N°106 — mode bridage : porté par le profil dans CHAQUE commande
-
 		// user_add/voucher_batch/profile_set (l'agent y lit ses scripts
-
 		// on-login/on-logout génériques ; le débit de bridage, lui, voyage
-
 		// au niveau racine du payload — cf. throttleRate).
-
 		"quotaMode": p.QuotaModeEffective(),
 	}
+	// N°201 — parent-queue résolu par routeur : omis si la file managée
+	// n'existe pas sur la box cible (la clé absente ne touche à rien côté
+	// routeur — cf. plProfile/HasQueue côté agent).
+	if pq, ok := parentQueueForRouter(p, r); ok {
+		ref["parentQueue"] = pq
+	}
+	return ref
 }
 
 // N°157 — bornes de rétention de l'historique des commandes terminées.

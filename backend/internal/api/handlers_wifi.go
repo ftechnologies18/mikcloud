@@ -511,7 +511,9 @@ func (a *API) handleWifiClaim(w http.ResponseWriter, r *http.Request) {
 		var cmdID string
 		if isAgent {
 			payload := map[string]any{
-				"profile": profileRef(profileCopy),
+				// N°201 — résolu pour LE routeur du site (parent-queue
+				// managé omis si la file n'existe pas sur cette box).
+				"profile": profileRefFor(profileCopy, &routerCopy),
 				"users":   []map[string]any{{"name": voucher.Username, "password": voucher.Password}},
 				"batch":   batchID,
 			}

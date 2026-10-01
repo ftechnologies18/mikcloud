@@ -307,7 +307,9 @@ func (a *API) createHotspotUser(r *http.Request, acc, kind, username, password, 
 		liftPurgeTombstone(db, acc, u.Username)
 		userPayload := map[string]any{
 			"name": u.Username, "password": u.Password,
-			"profile": profileRef(*profile), "comment": u.Comment,
+			// N°201 — résolu pour LE routeur de l'utilisateur (parent-queue
+			// managé omis si la file n'existe pas sur cette box).
+			"profile": profileRefFor(*profile, &routerCopy), "comment": u.Comment,
 		}
 		if profile.DataQuotaMb > 0 {
 
@@ -462,7 +464,8 @@ func (a *API) handleUserUpdate(w http.ResponseWriter, r *http.Request) {
 			payload["password"] = u.Password
 		}
 		if p := findProfileScoped(a.store.Data(), u.ProfileID, acc); p != nil {
-			payload["profile"] = profileRef(*p)
+			// N°201 — résolu pour LE routeur de l'utilisateur.
+			payload["profile"] = profileRefFor(*p, routerCopy)
 		}
 		if existing := findUserScoped(a.store.Data(), id, acc); existing != nil {
 			*existing = u

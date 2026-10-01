@@ -465,7 +465,9 @@ func (a *API) handleVouchersGenerate(w http.ResponseWriter, r *http.Request) {
 		db = a.store.Data()
 		db.HotspotUsers = append(db.HotspotUsers, vouchers...)
 		batchPayload := map[string]any{
-			"profile": profileRef(*profile), "users": names, "batch": batchID,
+			// N°201 — résolu pour LE routeur du batch (parent-queue managé
+			// omis si la file n'existe pas sur cette box).
+			"profile": profileRefFor(*profile, &routerCopy), "users": names, "batch": batchID,
 		}
 		if quotaMb > 0 {
 			// limit-bytes-total s'exprime en octets sur le routeur (Mo × 1 048 576).

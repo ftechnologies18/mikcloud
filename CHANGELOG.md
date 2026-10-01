@@ -5,6 +5,95 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-01 — N°201 — Correctif durable QoS : le parent-queue est résolu PAR ROUTEUR — fin de l'incident dormant Zikisso (profil tué sur une box dont le QoS est désactivé)
+
+### Contexte
+Reste connu ouvert depuis l'incident Zikisso (N°163, 20/09) et reporté de
+session en session : `Profile.ParentQueue` est ACCOUNT-level (parité Mikhmon,
+rattaché automatiquement à la file agrégat `mikcloud-qos` à l'activation QoS
+— arbitrage N°104 : attach auto uniquement si le compte n'a QU'UN routeur
+agent). Le fan-out `queueProfileSetLocked` poussait le parent-queue à TOUTES
+les box du compte SANS distinguer leur réalité QoS : sur une box où la file
+n'existe pas (QoS désactivée), l'`add` du profil référençant
+`parent-queue="mikcloud-qos"` échoue (RouterOS valide la référence), échec
+AVALÉ par le `:do{}on-error` — le profil n'est jamais créé, et TOUS les
+user_add/voucher_batch qui l'ensuivent échouent en cascade. Symptôme de
+production : tickets « Actif / absent du routeur » + vagues de réparation
+`user_repair` en boucle de backoff (cause de config, jamais transitoire).
+Débloquage appliqué à l'époque sur WIFI Zikisso : QoS forcée avec plafond
+neutre 1G/1G (contournement opérationnel, pas un correctif). Le correctif
+durable (« omettre parent-queue quand le routeur CIBLE a le QoS désactivé »)
+n'avait jamais été entamé.
+
+### Produit
+- **Plus aucun profil tué par une file absente** : sur une box dont le QoS
+  est désactivé (ou activé mais pas encore convergé), les commandes
+  profile_set / user_add / user_set / voucher_batch / réparation / resync /
+  claim wifi créent et alignent le profil SANS le parent-queue managé — la
+  box exécute l'add, les utilisateurs suivent. Le comportement sain des box
+  où la file existe est inchangé (référence émise comme avant).
+- **Auto-guérison à la convergence** : quand une box active sa QoS et que la
+  file est CONFIRMÉE (relecture vérifiée du queue_ensure), les profils du
+  compte qui référencent `mikcloud-qos` sont réalignés SUR CETTE BOX
+  (profile_set avec le parent-queue, désormais légitime). Le gérant voit
+  l'événement au journal d'activité. Aucun champ account-level n'est écrit
+  en multi-box : l'arbitrage N°104 (attach automatique mono-box uniquement)
+  est conservé à l'identique — on ne republie que le choix DÉJÀ pris.
+- **Sémantiques inchangées par ailleurs** : profil sans file parent →
+  `parent-queue=none` (détachement explicite, historique) ; file CUSTOM du
+  gérant (≠ mikcloud-qos) → passée telle quelle (le cloud ne connaît pas
+  l'existence des files custom box par box, le choix prime).
+
+### Technique
+- **`parentQueueForRouter` + `qosQueueLiveOnRouter`** (agent_queue.go) :
+  vérité « la file existe sur CETTE box » = `QoSEnabled && QoSSig != ""`
+  (sig posée uniquement au retour VÉRIFIÉ du queue_ensure, vidée au retrait
+  et à la dérive monitoring) ; trois régimes de résolution (vide / custom /
+  managée vivante / managée omise).
+- **`profileRefFor(p, router)`** remplace `profileRef(p)` : la référence
+  profil des payloads agent est résolue POUR LE ROUTEUR CIBLE — 6 sites
+  appelants mis à jour (user_add, user_set, voucher_batch, claim wifi,
+  resync, vagues de réparation user_repair — le chemin exact de Zikisso).
+  Une clé `parentQueue` OMISE ne touche à rien côté routeur (mécanisme
+  HasQueue existant du générateur : le set ne porte pas le paramètre).
+- **`queueProfileSetForRouterLocked`** (handlers_profiles.go) : le fan-out
+  profile_set construit désormais le payload PAR ROUTEUR ; la clé
+  parentQueue n'entre dans la commande que si la file existe sur la box.
+- **`requeueProfilesForRouterLocked`** (handlers_qos.go) + retour de décompte
+  de `qosAttachProfilesLocked` : au point de convergence
+  (agent_handlers.go), mono-box → attach automatique reconverge tout
+  (comme avant) ; multi-box → republication par routeur des seuls profils
+  référençant la file managée. Commentaire d'arbitrage N°104 annoté N°201
+  (le « bruit silencieux » y décrivait en réalité un profil TUÉ).
+
+### Vérifié
+- gofmt 0, go vet OK, go build OK, `go test ./...` 12 paquets OK.
+- NOUVELLES familles (3) : résolution à l'unité (nil / non-agent / activée
+  non convergée / vivante ; vide / custom / managée) ; fan-out multi-box
+  HTTP (2 box agents, l'une QoS vivante l'autre muette — profile_set AVEC
+  la file sur la première, SANS la clé sur la seconde ; user_add sans
+  parent-queue sur la box muette — le chemin exact des vagues Zikisso —
+  AVEC sur la box saine ; custom et vide passent tels quels) ; convergence
+  multi-box (PUT qos → check-in → rapport honnête → sig posée →
+  republication AVEC parent-queue sur cette box uniquement, aucune commande
+  parasite sur l'autre, aucun profil sans file republié, champ account-level
+  intact).
+- Test agent (génération du script) : les trois régimes portent exactement
+  les bons paramètres RouterOS (add+set avec la file ; set none ; clé omise
+  = AUCUN parent-queue ET l'add reste émis — c'est tout l'enjeu).
+- RÉGRESSIONS vertes : TestQoSEndToEnd (mono-box complet : activation →
+  attach → désactivation → détachement) et toute la famille QoS existante.
+
+### Fichiers
+- Backend : agent_queue.go (qosQueueLiveOnRouter + parentQueueForRouter +
+  profileRefFor), handlers_profiles.go (fan-out par routeur +
+  queueProfileSetForRouterLocked), handlers_qos.go (décompte attach +
+  requeueProfilesForRouterLocked + annotation d'arbitrage),
+  agent_handlers.go (point de convergence), user_repair.go /
+  handlers_users.go ×2 / handlers_vouchers.go / handlers_wifi.go /
+  handlers_user_resync.go (profileRefFor).
+- Tests : +qos_parentqueue_test.go (3 familles),
+  +agent/profiles_parentqueue_test.go (régimes du générateur).
 ## 2026-10-01 — N°200 — Rapports : JOURNAUX MENSUELS GELÉS — chaque mois devient un document comptable immuable — 3ᵉ étape (P2) de la refonte validée sur l'audit
 
 ### Contexte

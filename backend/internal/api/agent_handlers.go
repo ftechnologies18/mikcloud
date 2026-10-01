@@ -1079,7 +1079,16 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 					// existe déjà (retour vérifié), l'ordre est
 					// garanti par la causalité.
 					if prev != sig {
-						a.qosAttachProfilesLocked(db, router, agent.QoSQueueName)
+						// N°201 — mono-box : l'attach automatique
+						// reconverge tout (il écrit ParentQueue au
+						// passage). Multi-box : l'arbitrage N°104 le
+						// neutralise, mais les profils qui référencent
+						// mikcloud-qos doivent être réalignés SUR CETTE
+						// box — le parent-queue leur était omis tant
+						// que la file n'existait pas.
+						if a.qosAttachProfilesLocked(db, router, agent.QoSQueueName) == 0 {
+							a.requeueProfilesForRouterLocked(db, router)
+						}
 					}
 				}
 				a.logActivity(db, router.AccountID, "router", "QoS appliquée sur «"+router.Name+"» — file "+agent.QoSQueueName+" vérifiée (plafond agrégat du hotspot)")

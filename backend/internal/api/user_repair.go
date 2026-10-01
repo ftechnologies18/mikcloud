@@ -136,7 +136,12 @@ func (a *API) queueMissingRepair(db *model.DB, router *model.Router, now time.Ti
 			users = append(users, entry)
 		}
 		payload := map[string]any{
-			"profile": profileRef(*g.profile),
+			// N°201 — référence de profil RÉSOLUE POUR CE ROUTEUR : le
+			// parent-queue managé n'y entre que si la file existe sur
+			// cette box (c'est exactement la vague qui échouait en
+			// boucle sur WIFI Zikisso — profil rattaché côté cloud,
+			// file absente côté box).
+			"profile": profileRefFor(*g.profile, router),
 			"users":   users,
 			// Traçabilité routeur : « mikcloud:repair » (le marqueur mikq:
 			// du mode bridage est posé par voucher dans le script).

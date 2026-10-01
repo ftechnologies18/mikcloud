@@ -366,14 +366,18 @@ function PeriodOverview() {
               icon={Users}
               trend={deltaTrend(kpis.logins, kpis.loginsPrev, lang)}
             />
-            {/* Volume de données — mesure PARTIELLE honnête (sessions vivantes
-                uniquement) : aucun Δ% tant que l'accumulateur journalier
-                (N°199) n'a pas été déployé. */}
+            {/* Volume de données — N°199 : agrégats journaliers persistés
+                (une ligne par compte, routeur et jour au fuseau du compte),
+                alimentés en live par les deltas read_state — les sessions
+                fermées comptent enfin. Le badge Δ% n'apparaît qu'une fois
+                une base de comparaison réellement observée (dataBytesPrev
+                > 0 — jamais de comparaison au vide, décision D2). */}
             <StatCard
               title={t("reports.overview.dataVolume")}
               value={formatBytes(kpis.dataBytes, lang)}
               sub={t("reports.overview.dataSub")}
               icon={Database}
+              trend={deltaTrend(kpis.dataBytes, kpis.dataBytesPrev, lang)}
               live
             />
           </div>

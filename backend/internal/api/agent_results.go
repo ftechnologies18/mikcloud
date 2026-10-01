@@ -492,9 +492,9 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 			// routeur. Garde anti-régression : compteur décroissant
 			// (reset-counters) → delta 0.
 			if s.UserID != "" && (s.BytesIn > prev.BytesIn || s.BytesOut > prev.BytesOut) {
-				addUserBytes(db, s.UserID,
+				addUserBytes(db, router, s.UserID,
 					max(int64(0), s.BytesIn-prev.BytesIn),
-					max(int64(0), s.BytesOut-prev.BytesOut))
+					max(int64(0), s.BytesOut-prev.BytesOut), now)
 			}
 		} else {
 			s.StartedAt = model.NowISO()
@@ -504,7 +504,7 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 			// intégralement au compteur du user — les deltas des polls
 			// suivants complètent le cumul jusqu'à la déconnexion.
 			if s.UserID != "" && (s.BytesIn > 0 || s.BytesOut > 0) {
-				addUserBytes(db, s.UserID, s.BytesIn, s.BytesOut)
+				addUserBytes(db, router, s.UserID, s.BytesIn, s.BytesOut, now)
 			}
 		}
 		live = append(live, s)
@@ -645,11 +645,18 @@ func accumulateUptime(db *model.DB, s model.Session) {
 // le suivi data reste lisible côté cloud même quand la session dure plusieurs
 // jours. À appeler sous verrou, par deltas uniquement (jamais un cumul
 // absolu — une session déjà comptée ne doit pas l'être deux fois).
-func addUserBytes(db *model.DB, userID string, dIn, dOut int64) {
+//
+// N°199 — chaque delta verse AUSSI dans l'agrégat journalier (compte,
+// routeur, jour au fuseau du compte) : la base honnête du KPI « Volume de
+// données » de l'aperçu de période (les sessions fermées quittent le store,
+// l'agrégat, lui, reste). Le versement se fait au jour de l'OBSERVATION —
+// précision de l'accumulateur = cadence read_state (~45 s).
+func addUserBytes(db *model.DB, router *model.Router, userID string, dIn, dOut int64, now time.Time) {
 	for i := range db.HotspotUsers {
 		if db.HotspotUsers[i].ID == userID {
 			db.HotspotUsers[i].BytesIn += dIn
 			db.HotspotUsers[i].BytesOut += dOut
+			model.AccumulateVolumeDay(db, router.AccountID, router.ID, dIn, dOut, now)
 			return
 		}
 	}

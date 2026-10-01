@@ -27,12 +27,10 @@ import (
 // accountTimezone — fuseau du compte (SettingsByAccount → Tenant.Timezone).
 // Repli UTC si absent ou inconnu (time/tzdata embarqué → jamais d'échec réel).
 func accountTimezone(db *model.DB, acc string) *time.Location {
-	if s, ok := db.SettingsByAccount[acc]; ok && s.Tenant.Timezone != "" {
-		if loc, err := time.LoadLocation(s.Tenant.Timezone); err == nil {
-			return loc
-		}
-	}
-	return time.UTC
+	// N°199 — la résolution déménage côté modèle (model.AccountTimezone) :
+	// l'accumulateur journalier de volume (model/store) découpe les jours au
+	// fuseau du compte sans dépendre du package api. Délégation pure.
+	return model.AccountTimezone(db, acc)
 }
 
 // hourBucket — début d'heure locale (tronque min/séc) d'un instant.

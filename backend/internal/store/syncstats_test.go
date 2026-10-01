@@ -88,8 +88,8 @@ func TestSyncHealthJSONMode(t *testing.T) {
 	if h.Sync != nil || h.Neon != nil {
 		t.Fatalf("en mode JSON, sync et neon doivent être absents : %+v %+v", h.Sync, h.Neon)
 	}
-	if len(h.Tables) != 36 {
-		t.Fatalf("36 tables attendues (35 différentielles + settings — N°103 : line_quality, N°133 : chat ×2 + devices, N°182 : sites), obtenues %d", len(h.Tables))
+	if len(h.Tables) != 37 {
+		t.Fatalf("37 tables attendues (36 différentielles + settings — N°103 : line_quality, N°133 : chat ×2 + devices, N°182 : sites, N°199 : volume_days), obtenues %d", len(h.Tables))
 	}
 
 	// Une mutation mémoire apparaît dans les lignes, sans réplique (mirrored
@@ -119,8 +119,8 @@ func TestSyncHealthJSONMode(t *testing.T) {
 // table ajoutée à Sync sans être ajoutée ici doit faire échouer le compte).
 func TestLiveTableRowsConcordance(t *testing.T) {
 	rows := liveTableRows(BuildEmptyState())
-	if len(rows) != 36 {
-		t.Fatalf("36 entrées attendues (35 différentielles + settings — N°103 : line_quality, N°133 : chat ×2 + devices, N°182 : sites), obtenues %d", len(rows))
+	if len(rows) != 37 {
+		t.Fatalf("37 entrées attendues (36 différentielles + settings — N°103 : line_quality, N°133 : chat ×2 + devices, N°182 : sites, N°199 : volume_days), obtenues %d", len(rows))
 	}
 	seen := map[string]bool{}
 	for _, th := range rows {

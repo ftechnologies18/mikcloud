@@ -51,6 +51,7 @@ const (
 	TableSchedulerTasks       = "scheduler_tasks"
 	TableTraffic              = "traffic"
 	TableLineQuality          = "line_quality"
+	TableVolumeDays           = "volume_days"
 	TableNotifSettings        = "notif_settings"
 	TableNotifLog             = "notif_log"
 	TableBillingRequests      = "billing_requests"
@@ -96,6 +97,7 @@ var syncKnownTables = map[string]bool{
 	TableSchedulerTasks:       true,
 	TableTraffic:              true,
 	TableLineQuality:          true,
+	TableVolumeDays:           true,
 	TableNotifSettings:        true,
 	TableNotifLog:             true,
 	TableBillingRequests:      true,

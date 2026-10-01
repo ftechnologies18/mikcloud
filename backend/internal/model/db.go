@@ -32,6 +32,11 @@ type DB struct {
 	// débit FAI) : une ligne par (routeur, jour, interface), rétention
 	// 90 jours (PruneLineQuality). Cf. linequality.go.
 	LineQuality []LineQualityDay `json:"lineQuality"`
+	// N°199 — agrégats quotidiens du volume de données servi (une ligne par
+	// compte, routeur et jour au fuseau du compte) : la base honnête du KPI
+	// « Volume de données » de l'aperçu de période. Rétention 730 jours
+	// (PruneVolumeDays). Cf. volumeday.go.
+	VolumeDays []VolumeDay `json:"volumeDays"`
 	// Tier 1 — notifications multi-canaux.
 	NotifSettings map[string]NotificationSettings `json:"notifSettings"` // accountId → réglages
 	NotifLog      []NotificationLog               `json:"notifLog"`
@@ -326,6 +331,7 @@ func (db *DB) CloneDeep() *DB {
 	clone.SchedulerTasks = append([]SchedulerTask(nil), db.SchedulerTasks...)
 	clone.Traffic = cloneTrafficRows(db.Traffic)
 	clone.LineQuality = append([]LineQualityDay(nil), db.LineQuality...)
+	clone.VolumeDays = append([]VolumeDay(nil), db.VolumeDays...)
 	clone.NotifLog = append([]NotificationLog(nil), db.NotifLog...)
 	clone.BillingRequests = append([]BillingRequest(nil), db.BillingRequests...)
 	clone.PurgeTombstones = append([]PurgeTombstone(nil), db.PurgeTombstones...)

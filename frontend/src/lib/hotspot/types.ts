@@ -1040,11 +1040,15 @@ export interface StatsOverview {
     /** Connexions réellement journalisées (UserLogs login). */
     logins: number;
     loginsPrev: number;
-    /** Volume de données des sessions ENCORE VIVANTES de la période —
-     *  mesure partielle honnête : pas de base précédente (les sessions
-     *  fermées ne sont pas conservées) tant que l'accumulateur journalier
-     *  (N°199) n'a pas été déployé. */
+    /** Volume de données servi sur la période — agrégats journaliers
+     *  persistés (N°199) : sessions vives ET fermées, alimentés en live
+     *  par les deltas read_state. Historique borné au déploiement de
+     *  l'accumulateur (décision D2 : pas de rétrofabrication). */
     dataBytes: number;
+    /** Base de comparaison « même durée écoulée » (heures 0..en cours de
+     *  la ligne frontière) — 0 tant qu'aucun historique n'existe : le
+     *  badge Δ% reste masqué plutôt que de comparer au vide. */
+    dataBytesPrev: number;
   };
   /** Série intrapériode — échelle adaptée (heures/jours/mois), dernier
    *  bucket partiel. Servie pour les graphes à venir (N°201). */

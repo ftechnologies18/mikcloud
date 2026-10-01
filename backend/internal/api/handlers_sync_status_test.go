@@ -111,8 +111,8 @@ func TestSyncStatusContract(t *testing.T) {
 	// (35 différentielles + settings — N°133 : chat ×2 + devices ; N°152 :
 	// + announcements ; N°182 : + sites).
 	tables, ok := out["tables"].([]any)
-	if !ok || len(tables) != 36 {
-		t.Fatalf("36 tables attendues (35 différentielles + settings — N°182 : sites), obtenu %v", len(tables))
+	if !ok || len(tables) != 37 {
+		t.Fatalf("37 tables attendues (36 différentielles + settings — N°182 : sites, N°199 : volume_days), obtenu %v", len(tables))
 	}
 	findTable := func(name string) map[string]any {
 		for _, e := range tables {

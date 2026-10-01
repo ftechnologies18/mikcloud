@@ -107,5 +107,5 @@ export const enReports: Record<string, string> = {
   "reports.overview.loginsTitle": "Connections",
   "reports.overview.loginsSub": "Logged connections",
   "reports.overview.dataVolume": "Data volume",
-  "reports.overview.dataSub": "Live sessions only — full history coming soon",
+  "reports.overview.dataSub": "Data served in the period",
 };

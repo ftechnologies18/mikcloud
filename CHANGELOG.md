@@ -5,6 +5,119 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-01 — N°199 — Rapports : ACCUMULATEUR JOURNALIER du volume de données — le KPI « Volume » devient complet (sessions fermées comprises) avec Δ% honnête — 2ᵉ étape (P1) de la refonte validée sur l'audit
+
+### Contexte
+Constat C2 de l'audit « app/reports » : le volume de données n'était
+mesurable que sur les sessions ENCORE VIVANTES — les sessions fermées
+quittent le store, donc le KPI « Volume de données » de l'aperçu de période
+(N°198) sous-comptait tout ce qui n'était plus connecté à l'instant de la
+lecture, et son badge Δ% restait masqué (aucune base de comparaison honnête
+possible). N°199 = P1 du plan : un agrégat journalier persisté alimenté en
+live par les deltas de trafic. Décision D2 de l'opérateur : DÉMARRAGE À
+ZÉRO — pas de rétrofabrication des compteurs d'avant déploiement, le Δ%
+n'apparaît qu'une fois une base réellement observée.
+
+### Produit
+- **Carte « Volume de données » complète** : la valeur reflète désormais
+  TOUT le trafic servi sur la période (sessions vives ET fermées — la ligne
+  du jour en cours est partielle par nature, l'accumulation est live à la
+  cadence read_state ~45 s). Nouveau libellé honnête « Trafic servi sur la
+  période » (FR) / « Data served in the period » (EN), à la place de
+  « Sessions encore actives — historique complet à venir ».
+- **Badge Δ% du volume** : comparaison vs la période équivalente précédente
+  AU MÊME MOMENT (doctrine N°198 étendue au volume) — grâce à un
+  HISTOGRAMME HORAIRE « h0,…,h23 » embarqué dans chaque ligne journalière :
+  la fenêtre précédente coupe la ligne frontière aux heures 0..heure en
+  cours (les deux fenêtres partagent la même plage d'heures ; seule la
+  dernière heure est complète côté précédent — biais borné < 1 h de trafic,
+  documenté). Tant qu'aucune base n'existe (premier cycle post-déploiement,
+  décision D2), dataBytesPrev vaut 0 et le badge reste MASQUÉ — jamais de
+  comparaison au vide.
+
+### Technique
+- **Modèle VolumeDay** (backend/internal/model/volumeday.go — NOUVEAU) :
+  une ligne par (compte, routeur, jour au FUSEAU DU COMPTE), totaux
+  BytesIn/BytesOut + histogramme horaire canonique « h0,…,h23 » (somme
+  in+out par heure locale). ID DÉTERMINISTE « vd-<compte>:<routeur>:<jour> »
+  (clé naturelle : une ligne perdue puis recréée retrouve le même id →
+  upsert PostgreSQL, jamais de doublon qui doublerait le comptage ; la
+  fusion de récupération N°164 fusionne par clé réelle). Deltas clampés à 0
+  par direction (agrégat MONOTONE). Parcours à REBOURS (le jour courant vit
+  en queue de table). Rétention 730 jours (PruneVolumeDays, moteur commun
+  applyExpiry — l'aperçu « Année » relit l'année précédente au 31 décembre).
+- **Accumulation aux DEUX sources de trafic** : mode agent — addUserBytes
+  (deltas entre read_state successifs + octets initiaux d'une nouvelle
+  session) verse chaque delta dans l'agrégat du jour, au jour de
+  l'OBSERVATION ; mode simulé — la progression du Tick verse pareillement
+  (la démo se comporte comme un vrai site aux rapports). Compteurs
+  utilisateur (miroir limit-bytes-total) inchangés.
+- **Table volume_days** (36ᵉ table différentielle) : spec, DDL idempotent
+  (CREATE TABLE IF NOT EXISTS + index compte/routeur — migration automatique
+  au démarrage Render), chargement, applier + empreintes de synchro, fusion
+  de récupération, volumétrie santé, base vide — les 8 points
+  d'enregistrement + tests de concordance mis à jour (35 → 36).
+- **model.AccountTimezone** (timezone.go — NOUVEAU) : la résolution du
+  fuseau du compte déménage du package api vers le modèle, sans duplication
+  (api.accountTimezone délègue) — l'accumulateur et le Tick découpent les
+  jours au fuseau du compte sans dépendre d'api.
+- **/api/stats/overview** : le KPI volume lit les agrégats journaliers (une
+  session vivante sans ligne ne compte plus — l'accumulateur est la seule
+  source) ; dataBytesPrev servi (0 tant que pas d'historique).
+- Frontend : types (dataBytesPrev), carte volume avec trend deltaTrend
+  (badge auto-masqué à base nulle), i18n FR/EN (libellé).
+
+### Vérifié
+- gofmt 0, go vet OK, go build OK, go test ./... 12 paquets OK dont 8
+  NOUVELLES familles : attribution jour/heure au fuseau America/New_York +
+  bascule de jour local (2 lignes, la veille intacte) + clamp monotone +
+  repli UTC compte inconnu ; histogramme (parse tolérant, bornes h<0/h>23,
+  somme 0..h) ; rétention 730 j (borne incluse, idempotente) ;
+  AccountTimezone (NY/ invalide / inconnu / base vide) ; overview jour
+  (lignes agrégées, autre compte exclu, session VIVANTE sans ligne non
+  comptée, histogramme d'hier coupé à l'heure en cours, filtre site) ;
+  overview semaine (jours pleins + ligne frontière, zone morte exclue —
+  déterminisme par frontières recalculées côté test) ; read_state (octets
+  initiaux puis DELTAS sans double comptage, reset-counters monotone) ;
+  Tick simulé (ligne = compteurs user, marquage volume_days) et parc agent
+  (AUCUNE ligne, aucun marquage).
+- ESLint 0, tsgo 0, build Next.js OK.
+- Navigateur (stack locale : backend Go JSON :4100 + next start :3100, semis
+  DÉTERMINISTE par édition directe de db.json — 2 routeurs mode real, lignes
+  volume jour 2,3 Go + 0,5 Go, veille à histogramme 300 Mo/h sur h0..h4,
+  jours -2/-3, vouchers écoulés + trésorerie 2 000 + 7 logins, session
+  vivante de 1 Go qui NE DOIT PAS compter) : **20/20 PASS** — volume du
+  jour « 2,6 Go » (lignes agrégées, la session vive exclue), badge exact
+  « ▲ 86,7 % », libellé « Trafic servi sur la période », autres KPI exacts
+  (2 / 2 500 XOF / 650 XOF / 4), Semaine « 4,7 Go » (aucun badge : rien
+  dans la fenêtre précédente), Mois, filtre site Ébrié « 2,1 Go » + « ▲
+  53,3 % » + revenus 800 XOF, site Cocody « 477 Mo » SANS badge (veille à
+  zéro — jamais de comparaison au vide), ZÉRO erreur console desktop ET
+  mobile, mobile 390 px scrollWidth=390.
+- QA visuelle VLM 4/4 CONFORMES (desktop : valeur « 2,6 Go » sur une ligne,
+  badge présent, 5 cartes alignées sans chevauchement ; carte volume en
+  élément : badge à droite sans recouvrir la valeur ; mobile : aucun
+  débordement ; carte volume mobile : valeur sur une ligne, badge propre) —
+  les « défauts » remontés sur la capture desktop sont des artefacts
+  d'état (menu déroulant ouvert au moment de la capture, bord de fenêtre),
+  classe de fausses alertes déjà tranchée au N°197.
+
+### Pièges tranchés (consignés)
+- `:has(p:text-is(…))` Playwright matche AUSSI la carte ANCÊTRE (l'aperçu
+  contient les StatCards) → tout cardByTitle retournait la première carte
+  (Ventes). Remède : `:not(:has([data-slot="card"]))` pour exclure les
+  conteneurs. Les onglets « Semaine » existent en DOUBLE (aperçu +
+  comptabilité) → clics bornés à la carte aperçu (strict mode).
+- formatBytes : valeurs ≥ 100 arrondies à l'ENTIER (« 477 Mo », pas
+  « 476,8 Mo ») — les attentes du script doivent réutiliser la fonction,
+  pas refaire le calcul mentalement.
+- Le mode routeur « real » rend /api/sessions LENT (~10 s : tentative de
+  connexion RouterOS à un hôte injoignable) — sans impact sur l'aperçu
+  (endpoints séparés), bruit de log QA attendu.
+- L'environnement sandbox fait fuiter DATABASE_URL (projet voisin) → le
+  backend Go refuse de démarrer (« JWT_SECRET obligatoire en production ») :
+  toujours `env -u DATABASE_URL` au lancement de la stack locale.
+
 ## 2026-10-01 — N°198 — Rapports : PÉRIODES CALENDIAIRES (Aujourd'hui / Semaine / Mois / Année) au fuseau du compte + cohérence des chiffres — 1ʳᵉ étape de la refonte validée sur l'audit « les données ne reflètent pas la réalité »
 
 ### Contexte

@@ -95,6 +95,22 @@ type LineQualityDay struct {
 	UpdatedAt string `json:"updatedAt"`
 }
 
+// VolumeDay — N°199 — agrégat JOURNALIER du volume de données servi par un
+// routeur : une ligne par (compte, routeur, jour au fuseau du compte),
+// alimentée en live par les deltas read_state. L'histogramme horaire « h0,…
+// h23 » (somme in+out par heure locale) porte la granularité de la
+// comparaison « même durée écoulée » de l'aperçu de période. Cf. volumeday.go.
+type VolumeDay struct {
+	ID        string `json:"id"`
+	AccountID string `json:"accountId"`
+	RouterID  string `json:"routerId"`
+	Day       string `json:"day"` // « 2006-01-02 » au fuseau du compte
+	BytesIn   int64  `json:"bytesIn"`
+	BytesOut  int64  `json:"bytesOut"`
+	Hours     string `json:"hours"` // « h0,…,h23 » octets (in+out) par heure locale
+	UpdatedAt string `json:"updatedAt"`
+}
+
 // IPBinding — règle hotspot IP binding (F7) : bypass ou blocage par MAC.
 
 // IPBinding — règle hotspot IP binding (F7) : bypass ou blocage par MAC.

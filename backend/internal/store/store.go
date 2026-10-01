@@ -1462,6 +1462,12 @@ func Tick(db *model.DB, now time.Time, touched *TableSet) {
 		u.BytesIn += dIn
 		u.BytesOut += dOut
 		u.UptimeUsedSec += dt
+		// N°199 — la progression simulée verse AUSSI dans l'agrégat
+		// journalier de volume (le KPI « Volume de données » de l'aperçu
+		// de période lit ces lignes — la démo doit se comporter comme un
+		// vrai site, pas comme un site invisible aux rapports).
+		model.AccumulateVolumeDay(db, s.AccountID, s.RouterID, dIn, dOut, now)
+		touched.Mark(TableVolumeDays)
 		sessionsChanged = true
 		usersChanged = true
 		kept = append(kept, s)
@@ -1690,6 +1696,11 @@ func applyExpiry(db *model.DB, now time.Time, touched *TableSet) map[string][]st
 	// return : tous les chemins d'applyExpiry passent par ici).
 	if model.PruneLineQuality(db, now) > 0 {
 		touched.Mark(TableLineQuality)
+	}
+	// 5. N°199 — rétention des agrégats journaliers de volume servi
+	// (730 jours : l'aperçu « Année » relit l'année précédente).
+	if model.PruneVolumeDays(db, now) > 0 {
+		touched.Mark(TableVolumeDays)
 	}
 
 	// 1. Passage « expired » (grâce du profil prise en compte). Comme

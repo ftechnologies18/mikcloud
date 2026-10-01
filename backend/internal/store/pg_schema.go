@@ -320,6 +320,21 @@ func (p *PG) ensureSchema() error {
                 )`,
 		`CREATE INDEX IF NOT EXISTS idx_line_quality_account ON line_quality (account_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_line_quality_router  ON line_quality (router_id)`,
+		// N°199 — volume de données servi : une ligne par (compte,
+		// routeur, jour au fuseau du compte). Histogramme horaire en
+		// TEXT canonique « h0,…,h23 » (cf. model/volumeday.go).
+		`CREATE TABLE IF NOT EXISTS volume_days (
+			id         TEXT PRIMARY KEY, -- vd-<compte>:<routeur>:<jour> (clé naturelle)
+			account_id TEXT NOT NULL DEFAULT '',
+			router_id  TEXT NOT NULL,
+			day        TEXT NOT NULL,
+			bytes_in   BIGINT NOT NULL,
+			bytes_out  BIGINT NOT NULL,
+			hours      TEXT NOT NULL DEFAULT '',
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_volume_days_account ON volume_days (account_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_volume_days_router  ON volume_days (router_id)`,
 		`CREATE TABLE IF NOT EXISTS settings (
                         id               TEXT PRIMARY KEY, -- = account_id : une ligne par compte SaaS
                         account_id       TEXT NOT NULL DEFAULT '',

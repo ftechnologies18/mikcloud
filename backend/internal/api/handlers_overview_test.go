@@ -259,7 +259,12 @@ func TestStatsOverviewKPIs(t *testing.T) {
 	seedLogin(t, st, "ov-kpi-l5", accID, "rt-a", prevMid.Add(2*time.Minute))
 	seedLogin(t, st, "ov-kpi-l6", accID, "rt-a", deadMid)
 
-	seedSession(t, st, "ov-kpi-s1", accID, "rt-a", mid, 1_000_000, 2_000_000)
+	// N°199 — le volume se lit dans les AGRÉGATS JOURNALIERS (les sessions
+	// fermées quittent le store) : jour courant 3 Mo, veille à histogramme
+	// connu (la fenêtre précédente coupe à l'heure en cours).
+	nowUTC := time.Now().UTC()
+	seedVolumeDay(t, st, "ov-kpi-vd-cur", accID, "rt-a", nowUTC.Format("2006-01-02"), 1_000_000, 2_000_000, "")
+	seedVolumeDay(t, st, "ov-kpi-vd-prev", accID, "rt-a", nowUTC.AddDate(0, 0, -1).Format("2006-01-02"), 60_000_000, 0, volHours())
 
 	status, out := doJSON(t, ts, "GET", "/api/stats/overview?period=day", token, nil)
 	if status != http.StatusOK {
@@ -293,7 +298,10 @@ func TestStatsOverviewKPIs(t *testing.T) {
 		t.Fatalf("loginsPrev = %d, attendu 3", n)
 	}
 	if n := kpiInt(t, kpis, "dataBytes"); n != 3_000_000 {
-		t.Fatalf("dataBytes = %d, attendu 3000000", n)
+		t.Fatalf("dataBytes = %d, attendu 3000000 (ligne du jour — agrégats N°199)", n)
+	}
+	if n := kpiInt(t, kpis, "dataBytesPrev"); n != int(volHoursSum(nowUTC.Hour())) {
+		t.Fatalf("dataBytesPrev = %d, attendu %d (histogramme d'hier coupé à l'heure en cours)", n, volHoursSum(nowUTC.Hour()))
 	}
 }
 
@@ -312,8 +320,9 @@ func TestStatsOverviewSiteFilter(t *testing.T) {
 	seedLogin(t, st, "ov-site-la", accID, "rt-a", mid)
 	seedLogin(t, st, "ov-site-lb1", accID, "rt-b", mid)
 	seedLogin(t, st, "ov-site-lb2", accID, "rt-b", mid.Add(time.Minute))
-	seedSession(t, st, "ov-site-sa", accID, "rt-a", mid, 1_000_000, 0)
-	seedSession(t, st, "ov-site-sb", accID, "rt-b", mid, 5_000_000, 0)
+	// N°199 — volume : lignes journalières bornées au filtre site.
+	seedVolumeDay(t, st, "ov-site-vda", accID, "rt-a", time.Now().UTC().Format("2006-01-02"), 1_000_000, 0, "")
+	seedVolumeDay(t, st, "ov-site-vdb", accID, "rt-b", time.Now().UTC().Format("2006-01-02"), 5_000_000, 0, "")
 
 	status, out := doJSON(t, ts, "GET", "/api/stats/overview?period=day&routerId=rt-a", token, nil)
 	if status != http.StatusOK {

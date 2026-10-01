@@ -22,11 +22,14 @@
 //     de l'ancien revenue/sales (constat C6 : le gros encaissé des tickets
 //     revendeurs gonflait artificiellement le panier affiché).
 //   - Connexions  = logins réellement journalisés (UserLogs action=login).
-//   - Volume de données = MESURE PARTIELLE HONNÊTE : seules les sessions
-//     ENCORE VIVANTES comptent (les sessions fermées ne sont pas conservées
-//     en base — constat C2). L'accumulateur journalier (N°199) fiabilisera
-//     ce KPI ; AUCUNE comparaison précédente n'est servie tant que la
-//     mesure n'est pas complète — pas de Δ% mensonger.
+//   - Volume de données (N°199) = agrégats JOURNALIERS persistés (une ligne
+//     par compte, routeur et jour au fuseau du compte, alimentée en live par
+//     les deltas read_state — les sessions fermées comptent enfin). La
+//     fenêtre précédente coupe au MÊME MOMENT grâce à l'histogramme horaire
+//     de la ligne frontière (heures 0..heure en cours) ; historique borné au
+//     déploiement de l'accumulateur (décision D2 : pas de rétrofabrication)
+//     — dataBytesPrev = 0 tant qu'aucune base n'existe, le badge Δ% reste
+//     masqué plutôt que de comparer au vide.
 
 package api
 
@@ -46,8 +49,10 @@ import (
 var frenchWeekday = [...]string{"lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim."}
 
 // overviewKPIs — les cinq indicateurs de la période + leur base de
-// comparaison (période précédente au même moment). DataBytes n'a PAS de
-// base : mesure partielle tant que l'accumulateur N°199 n'est pas déployé.
+// comparaison (période précédente au même moment). N°199 : le volume de
+// données a désormais sa base (agrégats journaliers) — la comparaison
+// précédente est honnête ; elle vaut 0 (badge masqué) tant que
+// l'accumulateur n'a pas d'historique (premier cycle post-déploiement).
 type overviewKPIs struct {
 	Sales         int   `json:"sales"`
 	SalesPrev     int   `json:"salesPrev"`
@@ -58,6 +63,7 @@ type overviewKPIs struct {
 	Logins        int   `json:"logins"`
 	LoginsPrev    int   `json:"loginsPrev"`
 	DataBytes     int64 `json:"dataBytes"`
+	DataBytesPrev int64 `json:"dataBytesPrev"`
 }
 
 // overviewPoint — un bucket de la série intrapériode (échelle adaptée à la
@@ -234,22 +240,36 @@ func (a *API) handleStatsOverview(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// VOLUME DE DONNÉES — sessions ENCORE VIVANTES ouvertes dans la fenêtre
-	// (mesure partielle, cf. en-tête de fichier). Pas de fenêtre précédente :
-	// les sessions fermées sont supprimées du store, un Δ% serait mensonger.
-	for i := range db.Sessions {
-		s := &db.Sessions[i]
-		if s.AccountID != acc {
+	// VOLUME DE DONNÉES (N°199) — agrégats JOURNALIERS persistés (une ligne
+	// par compte, routeur, jour au fuseau du compte). Fenêtre courante :
+	// lignes du jour de début à aujourd'hui (la ligne du jour est partielle
+	// PAR NATURE — l'accumulation est live). Fenêtre précédente « au même
+	// moment » : lignes pleines + histogramme horaire 0..heure en cours de la
+	// ligne frontière (les deux fenêtres partagent la même plage d'heures ;
+	// seule la dernière heure est complète côté précédent — biais < 1 h).
+	// Les jours de la zone morte ne comptent nulle part.
+	curDayKey := curStart.Format("2006-01-02")
+	todayKey := nowLocal.Format("2006-01-02")
+	prevStartKey := prevStart.Format("2006-01-02")
+	prevBoundaryKey := prevEnd.Format("2006-01-02")
+	for i := range db.VolumeDays {
+		v := &db.VolumeDays[i]
+		if v.AccountID != acc {
 			continue
 		}
-		if !globalScope && s.RouterID != routerID {
+		if !globalScope && v.RouterID != routerID {
 			continue
 		}
-		st, err := time.Parse(time.RFC3339, s.StartedAt)
-		if err != nil || st.Before(curStart) {
-			continue
+		switch {
+		case v.Day >= curDayKey && v.Day <= todayKey:
+			kpis.DataBytes += v.BytesIn + v.BytesOut
+		case v.Day >= prevStartKey && v.Day <= prevBoundaryKey:
+			if v.Day == prevBoundaryKey {
+				kpis.DataBytesPrev += model.VolumeHoursSumThrough(v.Hours, nowLocal.Hour())
+			} else {
+				kpis.DataBytesPrev += v.BytesIn + v.BytesOut
+			}
 		}
-		kpis.DataBytes += s.BytesIn + s.BytesOut
 	}
 	a.store.Unlock()
 

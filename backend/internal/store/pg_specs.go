@@ -753,6 +753,27 @@ var lineQualitySpec = entitySpec[model.LineQualityDay]{
 	hashOf: hashEntity[model.LineQualityDay],
 }
 
+// volumeDaySpec — N°199 — agrégats quotidiens du volume de données servi :
+// une ligne par (compte, routeur, jour au fuseau du compte). L'histogramme
+// horaire reste une colonne TEXT (forme canonique « h0,…,h23 » produite et
+// relue par le modèle — cf. model/volumeday.go). id DÉTERMINISTE
+// « vd-<compte>:<routeur>:<jour> » : la clé naturelle garantit l'upsert
+// (jamais de doublon qui doublerait le comptage).
+var volumeDaySpec = entitySpec[model.VolumeDay]{
+	table: "volume_days",
+	cols:  []string{"id", "account_id", "router_id", "day", "bytes_in", "bytes_out", "hours", "updated_at"},
+	idOf:  func(x *model.VolumeDay) string { return x.ID },
+	scan: func(r *sql.Rows) (model.VolumeDay, error) {
+		var x model.VolumeDay
+		err := r.Scan(&x.ID, &x.AccountID, &x.RouterID, &x.Day, &x.BytesIn, &x.BytesOut, &x.Hours, &x.UpdatedAt)
+		return x, err
+	},
+	args: func(x *model.VolumeDay) []any {
+		return []any{x.ID, x.AccountID, x.RouterID, x.Day, x.BytesIn, x.BytesOut, x.Hours, x.UpdatedAt}
+	},
+	hashOf: hashEntity[model.VolumeDay],
+}
+
 // notifSettingsSpec — réglages de notification par compte. id = account_id.
 // stock_alert_state est sérialisé en JSON dans une colonne TEXT (” = nil).
 

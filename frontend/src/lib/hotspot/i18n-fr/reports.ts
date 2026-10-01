@@ -107,5 +107,5 @@ export const frReports: Record<string, string> = {
   "reports.overview.loginsTitle": "Connexions",
   "reports.overview.loginsSub": "Connexions journalisées",
   "reports.overview.dataVolume": "Volume de données",
-  "reports.overview.dataSub": "Sessions encore actives — historique complet à venir",
+  "reports.overview.dataSub": "Trafic servi sur la période",
 };

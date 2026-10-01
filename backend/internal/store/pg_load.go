@@ -70,6 +70,7 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 		{"scheduler_tasks", func() error { return loadInto(p, &db.SchedulerTasks, schedulerTaskSpec) }},
 		{"traffic", func() error { return loadInto(p, &db.Traffic, trafficSpec) }},
 		{"line_quality", func() error { return loadInto(p, &db.LineQuality, lineQualitySpec) }},
+		{"volume_days", func() error { return loadInto(p, &db.VolumeDays, volumeDaySpec) }},
 		{"notif_settings", func() error { return p.loadNotifSettings(db) }},
 		{"notif_log", func() error { return loadInto(p, &db.NotifLog, notifLogSpec) }},
 		{"billing_requests", func() error { return loadInto(p, &db.BillingRequests, billingRequestSpec) }},

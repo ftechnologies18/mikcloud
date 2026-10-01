@@ -111,6 +111,12 @@ func csvField(s string) string {
 // buildAccounting — cœur de calcul partagé entre la réponse JSON et l'export CSV
 // (l'appelant tient le verrou du store).
 func buildAccounting(db *model.DB, acc, period, routerID string, now time.Time) map[string]any {
+	// N°198 (constat C5) — buckets au FUSEAU DU COMPTE (l'ancien découpage
+	// UTC était invisible à Abidjan = UTC+0 mais faux par construction pour
+	// tout compte hors Greenwich : un ticket écoulé à 23 h 30 local comptait
+	// parfois au lendemain).
+	loc := accountTimezone(db, acc)
+	nowLocal := now.In(loc)
 	// Découpage en buckets + fenêtre d'analyse.
 	var buckets []time.Time
 	var labels []string
@@ -118,7 +124,7 @@ func buildAccounting(db *model.DB, acc, period, routerID string, now time.Time) 
 
 	switch period {
 	case "day": // 30 derniers jours
-		today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+		today := time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), 0, 0, 0, 0, loc)
 		windowStart = today.AddDate(0, 0, -29)
 		for i := 29; i >= 0; i-- {
 			d := today.AddDate(0, 0, -i)
@@ -126,11 +132,11 @@ func buildAccounting(db *model.DB, acc, period, routerID string, now time.Time) 
 			labels = append(labels, fmt.Sprintf("%02d/%02d", d.Day(), int(d.Month())))
 		}
 	case "week": // 12 dernières semaines (lundi → dimanche)
-		wd := int(now.Weekday())
+		wd := int(nowLocal.Weekday())
 		if wd == 0 {
 			wd = 7
 		}
-		thisMonday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -(wd - 1))
+		thisMonday := time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), 0, 0, 0, 0, loc).AddDate(0, 0, -(wd - 1))
 		for i := 11; i >= 0; i-- {
 			monday := thisMonday.AddDate(0, 0, -7*i)
 			buckets = append(buckets, monday)
@@ -138,7 +144,7 @@ func buildAccounting(db *model.DB, acc, period, routerID string, now time.Time) 
 		}
 		windowStart = thisMonday.AddDate(0, 0, -77)
 	case "month": // 12 derniers mois
-		firstOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+		firstOfMonth := time.Date(nowLocal.Year(), nowLocal.Month(), 1, 0, 0, 0, 0, loc)
 		windowStart = firstOfMonth.AddDate(0, -11, 0)
 		for i := 11; i >= 0; i-- {
 			m := firstOfMonth.AddDate(0, -i, 0)
@@ -187,7 +193,6 @@ func buildAccounting(db *model.DB, acc, period, routerID string, now time.Time) 
 	byRouterSelling := map[string]int{}
 
 	globalScope := routerID == "" || routerID == "all"
-	events := collectSaleEvents(db, acc, prevStart)
 	sold := collectSoldVouchers(db, acc, prevStart)
 
 	bucketIndex := func(at time.Time) int {
@@ -197,15 +202,9 @@ func buildAccounting(db *model.DB, acc, period, routerID string, now time.Time) 
 	// TRÉSORERIE RÉELLE — ventes directes (tickets consommés, prix réellement
 	// payé, routables par site) +, en vue globale uniquement, encaissements
 	// revendeurs nets (achats/versements − retours : les transactions ne sont
-	// liées à aucun site).
-	for _, e := range events {
-		inScope := globalScope || e.RouterID == routerID
-		if !inScope {
-			continue
-		}
-		if e.Reseller != "" && !globalScope {
-			continue // couvert par la valeur gros écoulée du site, ci-dessous
-		}
+	// liées à aucun site). Vue site : la part réseau = valeur GROS des
+	// tickets du site écoulés (revenueEventsForScope, source unique N°198).
+	for _, e := range revenueEventsForScope(db, acc, routerID, prevStart) {
 		if e.At.Before(windowStart) {
 			prevRevenue += e.Amount
 			continue
@@ -218,25 +217,6 @@ func buildAccounting(db *model.DB, acc, period, routerID string, now time.Time) 
 		}
 		if idx := bucketIndex(e.At); idx >= 0 && idx < len(revSeries) {
 			revSeries[idx].Revenue += e.Amount
-		}
-	}
-	if !globalScope {
-		// SITE FILTRÉ : la part revendeurs du site = valeur GROS de ses
-		// tickets réseau écoulés (proxy honnête — l'encaissement réel des
-		// achats de stock n'est pas attribuable à un site).
-		for _, v := range sold {
-			if v.ResellerName == "" || v.RouterID != routerID {
-				continue
-			}
-			if v.At.Before(windowStart) {
-				prevRevenue += v.Cost
-				continue
-			}
-			totalsRevenue += v.Cost
-			chanResellerRevenue += v.Cost
-			if idx := bucketIndex(v.At); idx >= 0 && idx < len(revSeries) {
-				revSeries[idx].Revenue += v.Cost
-			}
 		}
 	}
 
@@ -317,13 +297,18 @@ func buildAccounting(db *model.DB, acc, period, routerID string, now time.Time) 
 	}
 	sort.Slice(byRouter, func(i, j int) bool { return byRouter[i].Revenue > byRouter[j].Revenue })
 
+	// N°198 (constat C6) — panier moyen = PRIX RÉELLEMENT PAYÉ par le
+	// client final (prix public de chaque ticket écoulé, tous canaux) :
+	// l'ancien revenue/sales mélangeait la trésorerie (le gros encaissé
+	// des tickets revendeurs) et le prix payé — un réseau actif gonflait
+	// artificiellement le panier affiché.
 	avgTicket := 0
 	if totalsSales > 0 {
-		avgTicket = totalsRevenue / totalsSales
+		avgTicket = totalsSelling / totalsSales
 	}
 	prevAvgTicket := 0
 	if prevSales > 0 {
-		prevAvgTicket = prevRevenue / prevSales
+		prevAvgTicket = prevSelling / prevSales
 	}
 
 	return map[string]any{

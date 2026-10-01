@@ -74,6 +74,10 @@ func (a *API) handleReports(w http.ResponseWriter, r *http.Request) {
 		}
 		days = v
 	}
+	// N°198 (constat C6) — le filtre site s'étend à l'onglet Activité (et à
+	// son bloc marge) : "" ou "all" = tous les sites.
+	routerID := strings.TrimSpace(r.URL.Query().Get("routerId"))
+	globalScope := routerID == "" || routerID == "all"
 	now := time.Now().UTC()
 	a.store.Lock()
 	db := a.store.Data()
@@ -85,12 +89,14 @@ func (a *API) handleReports(w http.ResponseWriter, r *http.Request) {
 
 	// Revenus RÉELS (trésorerie) + écoulements (volume) — voir helpers en tête
 	// de fichier : générer du stock n'est pas vendre, les retours se déduisent.
-	events := collectSaleEvents(db, acc, prevSince)
+	// Vue site : direct du site + valeur gros des tickets réseau du site
+	// (revenueEventsForScope, source unique N°198).
 	sold := collectSoldVouchers(db, acc, prevSince)
 
 	profCount := map[string]int{}
 	profRevenue := map[string]int{}
 	prevRevenue, prevSales := 0, 0
+	prevPublic := 0 // N°198 — Σ prix payé de la fenêtre précédente (panier moyen)
 	chanDirectRevenue, chanResellerRevenue := 0, 0
 	chanDirectSales, chanResellerSales := 0, 0
 	type resellerAgg struct{ sales, revenue int }
@@ -98,10 +104,13 @@ func (a *API) handleReports(w http.ResponseWriter, r *http.Request) {
 	totals := struct {
 		revenue int
 		sales   int
+		public  int // N°198 — Σ prix réellement payé (panier moyen)
 	}{}
 	// Trésorerie réelle : ventes directes consommées + encaissements
-	// revendeurs nets (achats/versements − retours recrédités).
-	for _, e := range events {
+	// revendeurs nets (achats/versements − retours recrédités). Vue site :
+	// direct du site + gros du réseau du site (revenueEventsForScope,
+	// source unique N°198).
+	for _, e := range revenueEventsForScope(db, acc, routerID, prevSince) {
 		if e.At.Before(since) {
 			// Fenêtre précédente de même longueur — comparaison Δ%.
 			prevRevenue += e.Amount
@@ -124,11 +133,16 @@ func (a *API) handleReports(w http.ResponseWriter, r *http.Request) {
 	// indépendant du canal financier (prépayé payé à l'achat, dépôt-vente
 	// payé au versement) : ce que les clients finaux ont reçu.
 	for _, v := range sold {
+		if !globalScope && v.RouterID != routerID {
+			continue
+		}
 		if v.At.Before(since) {
 			prevSales++
+			prevPublic += v.Public
 			continue
 		}
 		totals.sales++
+		totals.public += v.Public
 		profCount[v.Profile]++
 		profRevenue[v.Profile] += v.Public
 		if v.ResellerName == "" {
@@ -203,6 +217,10 @@ func (a *API) handleReports(w http.ResponseWriter, r *http.Request) {
 		if l.AccountID != acc || l.Action != "login" {
 			continue
 		}
+		// N°198 — le filtre site s'applique aussi aux connexions.
+		if !globalScope && l.RouterID != routerID {
+			continue
+		}
 		at, err := time.Parse(time.RFC3339, l.At)
 		if err != nil {
 			continue
@@ -221,6 +239,10 @@ func (a *API) handleReports(w http.ResponseWriter, r *http.Request) {
 		if s.AccountID != acc {
 			continue
 		}
+		// N°198 — le filtre site s'applique aux sessions réelles.
+		if !globalScope && s.RouterID != routerID {
+			continue
+		}
 		if st, err := time.Parse(time.RFC3339, s.StartedAt); err == nil && st.Before(since) {
 			continue
 		}
@@ -236,6 +258,10 @@ func (a *API) handleReports(w http.ResponseWriter, r *http.Request) {
 		if u.AccountID != acc {
 			continue
 		}
+		// N°198 — le filtre site borne le parc de vouchers compté.
+		if !globalScope && u.RouterID != routerID {
+			continue
+		}
 		if u.Kind == "voucher" {
 			st := model.ResolvedStatus(u, online[onlineKey(u)], now)
 			if st == "online" {
@@ -244,17 +270,21 @@ func (a *API) handleReports(w http.ResponseWriter, r *http.Request) {
 			voucherStatus[st]++
 		}
 	}
+	// N°198 (constat C6) — panier moyen = PRIX RÉELLEMENT PAYÉ par le
+	// client final (prix public de chaque ticket écoulé), pas le mélange
+	// trésorerie/volume de l'ancien revenue/sales.
 	avgTicket := 0
 	if totals.sales > 0 {
-		avgTicket = totals.revenue / totals.sales
+		avgTicket = totals.public / totals.sales
 	}
 	prevAvgTicket := 0
 	if prevSales > 0 {
-		prevAvgTicket = prevRevenue / prevSales
+		prevAvgTicket = prevPublic / prevSales
 	}
 	// P0 (audit Mikhmon) — bloc marge (F13) : prix de vente vs coût sur
 	// 30 jours glissants, par profil + totaux (cohérent avec les ventes).
-	margin := buildMarginReport(db, acc, now)
+	// N°198 — bloc marge borné au filtre site.
+	margin := buildMarginReport(db, acc, now, routerID)
 	a.store.Unlock()
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -298,9 +328,10 @@ func (a *API) handleReports(w http.ResponseWriter, r *http.Request) {
 // directes est captée par le propriétaire ; celle des tickets réseau est
 // cédée au revendeur (il encaisse public, le propriétaire a déjà encaissé le
 // gros à l'achat) — l'analyse reste la même pour les deux canaux.
-func buildMarginReport(db *model.DB, acc string, now time.Time) map[string]any {
+func buildMarginReport(db *model.DB, acc string, now time.Time, routerID string) map[string]any {
 	since := now.AddDate(0, 0, -30)
 	prevSince := now.AddDate(0, 0, -60)
+	globalScope := routerID == "" || routerID == "all"
 	type profileMargin struct {
 		Name    string `json:"name"`
 		Sold    int    `json:"sold"`
@@ -322,7 +353,10 @@ func buildMarginReport(db *model.DB, acc string, now time.Time) map[string]any {
 			routerNames[rr.ID] = rr.Name
 		}
 	}
-	// Buckets quotidiens (le plus ancien d'abord) pour la courbe de marge.
+	// Buckets quotidiens (le plus ancien d'abord) pour la courbe de marge —
+	// N°198 : au FUSEAU DU COMPTE (miroir buildAccounting).
+	loc := accountTimezone(db, acc)
+	nowLocal := now.In(loc)
 	type dayMargin struct {
 		Day    string `json:"day"`
 		Margin int    `json:"margin"`
@@ -330,13 +364,17 @@ func buildMarginReport(db *model.DB, acc string, now time.Time) map[string]any {
 	dayStarts := make([]time.Time, 30)
 	byDay := make([]dayMargin, 30)
 	for i := 0; i < 30; i++ {
-		d := now.AddDate(0, 0, -(29 - i))
-		dayStarts[i] = time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.UTC)
+		d := nowLocal.AddDate(0, 0, -(29 - i))
+		dayStarts[i] = time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, loc)
 		byDay[i] = dayMargin{Day: fmt.Sprintf("%02d/%02d", d.Day(), int(d.Month()))}
 	}
 	totalRevenue, totalCost := 0, 0
 	prevRevenue, prevCost := 0, 0
 	for _, v := range collectSoldVouchers(db, acc, prevSince) {
+		// N°198 — le filtre site borne l'analyse de marge.
+		if !globalScope && v.RouterID != routerID {
+			continue
+		}
 		if v.At.Before(since) {
 			// 30 jours précédents — comparaison Δ%.
 			prevRevenue += v.Public

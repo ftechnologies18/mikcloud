@@ -36,6 +36,7 @@ import {
   CalendarRange,
   Clock3,
   Coins,
+  Database,
   Download,
   Percent,
   Router as RouterIcon,
@@ -60,8 +61,10 @@ import type {
   AccountingData,
   AccountingPeriod,
   HourlyStats,
+  OverviewPeriod,
   ReportsData,
   RouterDevice,
+  StatsOverview,
 } from "@/lib/hotspot/types";
 import { formatBytes, formatCurrency } from "@/lib/hotspot/format";
 import { EmptyState } from "@/components/hotspot/empty-state";
@@ -92,6 +95,22 @@ const ACCOUNTING_PERIODS: {
   { value: "week", labelKey: "reports.period.week", windowKey: "reports.window.week", barsKey: "reports.bars.week", unitKey: "reports.unit.week" },
   { value: "month", labelKey: "reports.period.month", windowKey: "reports.window.month", barsKey: "reports.bars.month", unitKey: "reports.unit.month" },
 ];
+
+// N°198 — périodes calendaires de l'aperçu : la période EN COURS au fuseau
+// du compte (à ne pas confondre avec la taille de bucket de la comptabilité).
+const OVERVIEW_PERIODS: { value: OverviewPeriod; labelKey: string }[] = [
+  { value: "day", labelKey: "reports.overview.today" },
+  { value: "week", labelKey: "reports.overview.thisWeek" },
+  { value: "month", labelKey: "reports.overview.thisMonth" },
+  { value: "year", labelKey: "reports.overview.thisYear" },
+];
+
+const OVERVIEW_META: Record<OverviewPeriod, { windowKey: string; vsKey: string }> = {
+  day: { windowKey: "reports.overview.windowDay", vsKey: "reports.overview.vsDay" },
+  week: { windowKey: "reports.overview.windowWeek", vsKey: "reports.overview.vsWeek" },
+  month: { windowKey: "reports.overview.windowMonth", vsKey: "reports.overview.vsMonth" },
+  year: { windowKey: "reports.overview.windowYear", vsKey: "reports.overview.vsYear" },
+};
 
 // Palette thématée (nuit/jour) injectée dans chaque onglet à graphiques.
 const voucherStatusRows = (p: ChartPalette) => [
@@ -217,6 +236,154 @@ function PeakHoursTooltip({
 }
 
 // ---------------------------------------------------------------------------
+// Aperçu de période (N°198) — KPI de la période calendaire EN COURS au
+// fuseau du compte (aujourd'hui / semaine / mois / année), Δ% contre la
+// période précédente AU MÊME MOMENT (même durée écoulée). Réponse au
+// constat C1 de l'audit « les données ne reflètent pas la réalité » : le
+// sélecteur historique Jour/Semaine/Mois ne réglait que la TAILLE DES
+// BUCKETS d'un graphe glissant — « aujourd'hui » n'existait nulle part.
+// Les vues glissantes restent en graphes secondaires dans les onglets.
+// ---------------------------------------------------------------------------
+
+/** Liste des sites du compte — partagée par l'aperçu et les onglets. */
+function useRoutersList() {
+  return useQuery({
+    queryKey: ["/api/routers"],
+    queryFn: () => api<RouterDevice[]>("/api/routers"),
+    // N°130 — état du parc (check-ins agents ~45 s).
+    staleTime: STALE_TIME.operational,
+  }).data;
+}
+
+/** Filtre site — N°198 : étendu de la comptabilité à l'aperçu, à l'activité
+ *  et à la marge (le backend borne ventes, connexions, sessions, parc et
+ *  analyse de marge au site demandé). */
+function SiteFilter({
+  value,
+  onChange,
+  routers,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  routers?: RouterDevice[];
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="flex items-center gap-2">
+      <RouterIcon className="size-4 text-muted-foreground" aria-hidden />
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger className="h-10 w-full sm:w-56" aria-label={t("reports.filterRouter")}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">{t("common.allSites")}</SelectItem>
+          {routers?.map((router) => (
+            <SelectItem key={router.id} value={router.id}>
+              {router.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
+function PeriodOverview() {
+  const { t, lang } = useI18n();
+  const currency = useCurrency();
+  const [period, setPeriod] = useState<OverviewPeriod>("day");
+  const [routerFilter, setRouterFilter] = useState("all");
+  const routers = useRoutersList();
+
+  const { data, isLoading } = useQuery({
+    queryKey: ["/api/stats/overview", period, routerFilter],
+    queryFn: () =>
+      api<StatsOverview>("/api/stats/overview", { params: { period, routerId: routerFilter } }),
+    placeholderData: (previous) => previous,
+  });
+
+  const meta = OVERVIEW_META[period];
+  const kpis = data?.kpis;
+
+  return (
+    <Card className="gap-4 py-4 sm:py-6">
+      <CardHeader className="px-4 sm:px-6">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <CardTitle className="text-base">{t("reports.overview.title")}</CardTitle>
+            <CardDescription>
+              {data ? `${t(meta.windowKey)} · ${t(meta.vsKey)}` : t("reports.overview.desc")}
+            </CardDescription>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <Tabs value={period} onValueChange={(value) => setPeriod(value as OverviewPeriod)}>
+              <TabsList>
+                {OVERVIEW_PERIODS.map((p) => (
+                  <TabsTrigger key={p.value} value={p.value}>
+                    {t(p.labelKey)}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+            <SiteFilter value={routerFilter} onChange={setRouterFilter} routers={routers} />
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="px-4 sm:px-6">
+        {isLoading && !data ? (
+          <LoadingCards cards={5} />
+        ) : !kpis ? null : (
+          /* N°198 — 3+2 sur laptop (les 5 colonnes ne laissaient pas la
+             place du « 5 000 XOF » à côté du badge Δ% et de l'icône :
+             empilement caractère par caractère, constaté au DOM), 5
+             colonnes réservées aux écrans très larges. */
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
+            <StatCard
+              title={t("reports.sales")}
+              value={String(kpis.sales)}
+              sub={t("reports.vouchersSold")}
+              icon={ShoppingCart}
+              trend={deltaTrend(kpis.sales, kpis.salesPrev, lang)}
+            />
+            <StatCard
+              title={t("reports.revenue")}
+              value={formatCurrency(kpis.revenue, currency, lang)}
+              sub={t(meta.windowKey)}
+              icon={Wallet}
+              trend={deltaTrend(kpis.revenue, kpis.revenuePrev, lang)}
+            />
+            <StatCard
+              title={t("reports.avgTicket")}
+              value={formatCurrency(kpis.avgTicket, currency, lang)}
+              sub={t("reports.perVoucher")}
+              icon={TrendingUp}
+              trend={deltaTrend(kpis.avgTicket, kpis.avgTicketPrev, lang)}
+            />
+            <StatCard
+              title={t("reports.overview.loginsTitle")}
+              value={new Intl.NumberFormat(localeOf(lang)).format(kpis.logins)}
+              sub={t("reports.overview.loginsSub")}
+              icon={Users}
+              trend={deltaTrend(kpis.logins, kpis.loginsPrev, lang)}
+            />
+            {/* Volume de données — mesure PARTIELLE honnête (sessions vivantes
+                uniquement) : aucun Δ% tant que l'accumulateur journalier
+                (N°199) n'a pas été déployé. */}
+            <StatCard
+              title={t("reports.overview.dataVolume")}
+              value={formatBytes(kpis.dataBytes, lang)}
+              sub={t("reports.overview.dataSub")}
+              icon={Database}
+              live
+            />
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Onglet Comptabilité — ventes par jour/semaine/mois, filtrables par routeur.
 // v2 : marge en KPI, Δ% vs période précédente, canal direct/revendeurs,
 // taux de marge par site, pic de CA de la fenêtre.
@@ -229,13 +396,7 @@ function AccountingTab({ visible }: { visible: boolean }) {
   const AXIS_TICK = { fontSize: 11, fill: charts.axis };
   const [period, setPeriod] = useState<AccountingPeriod>("day");
   const [routerFilter, setRouterFilter] = useState("all");
-
-  const { data: routers } = useQuery({
-    queryKey: ["/api/routers"],
-    queryFn: () => api<RouterDevice[]>("/api/routers"),
-    // N°130 — état du parc (check-ins agents ~45 s).
-    staleTime: STALE_TIME.operational,
-  });
+  const routers = useRoutersList();
 
   const { data, isLoading } = useQuery({
     queryKey: ["/api/accounting", period, routerFilter],
@@ -276,20 +437,7 @@ function AccountingTab({ visible }: { visible: boolean }) {
           </TabsList>
         </Tabs>
         <div className="flex items-center gap-2">
-          <RouterIcon className="size-4 text-muted-foreground" aria-hidden />
-          <Select value={routerFilter} onValueChange={setRouterFilter}>
-            <SelectTrigger className="h-10 w-full sm:w-56" aria-label={t("reports.filterRouter")}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t("common.allSites")}</SelectItem>
-              {routers?.map((router) => (
-                <SelectItem key={router.id} value={router.id}>
-                  {router.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <SiteFilter value={routerFilter} onChange={setRouterFilter} routers={routers} />
           <Button
             variant="outline"
             className="h-10"
@@ -551,18 +699,22 @@ function ActivityTab({ visible }: { visible: boolean }) {
   const charts = useChartPalette();
   const AXIS_TICK = { fontSize: 11, fill: charts.axis };
   const [days, setDays] = useState(14);
+  // N°198 — le filtre site s'étend à l'onglet Activité.
+  const [routerFilter, setRouterFilter] = useState("all");
+  const routers = useRoutersList();
 
   const { data, isLoading } = useQuery({
-    queryKey: ["/api/reports", days],
-    queryFn: () => api<ReportsData>("/api/reports", { params: { days } }),
+    queryKey: ["/api/reports", days, routerFilter],
+    queryFn: () => api<ReportsData>("/api/reports", { params: { days, routerId: routerFilter } }),
     placeholderData: (previous) => previous,
     enabled: visible,
   });
 
   // N°10 — affluence réelle par tranche horaire (même fenêtre que l'onglet).
+  // N°198 : CA sur la doctrine « consommé » + filtre site.
   const { data: hourly } = useQuery({
-    queryKey: ["/api/stats/hourly", days],
-    queryFn: () => api<HourlyStats>("/api/stats/hourly", { params: { days } }),
+    queryKey: ["/api/stats/hourly", days, routerFilter],
+    queryFn: () => api<HourlyStats>("/api/stats/hourly", { params: { days, routerId: routerFilter } }),
     placeholderData: (previous) => previous,
     enabled: visible,
   });
@@ -598,7 +750,7 @@ function ActivityTab({ visible }: { visible: boolean }) {
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      <div className="flex justify-end">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <Tabs value={String(days)} onValueChange={(value) => setDays(Number(value))}>
           <TabsList>
             {PERIODS.map((period) => (
@@ -608,6 +760,7 @@ function ActivityTab({ visible }: { visible: boolean }) {
             ))}
           </TabsList>
         </Tabs>
+        <SiteFilter value={routerFilter} onChange={setRouterFilter} routers={routers} />
       </div>
 
       {isLoading && !data ? (
@@ -746,7 +899,9 @@ function ActivityTab({ visible }: { visible: boolean }) {
             <Card className="gap-4 py-4 sm:py-6">
               <CardHeader className="px-4 sm:px-6">
                 <CardTitle className="text-base">{t("reports.topResellers.title")}</CardTitle>
-                <CardDescription>{t("reports.topResellers.desc")}</CardDescription>
+                <CardDescription>
+                  {t(routerFilter === "all" ? "reports.topResellers.desc" : "reports.topResellers.descSite")}
+                </CardDescription>
               </CardHeader>
               <CardContent className="px-4 sm:px-6">
                 {topResellers.length === 0 ? (
@@ -980,10 +1135,13 @@ function MarginTab({ visible }: { visible: boolean }) {
   const currency = useCurrency();
   const charts = useChartPalette();
   const AXIS_TICK = { fontSize: 11, fill: charts.axis };
+  // N°198 — le filtre site s'étend à l'analyse de marge.
+  const [routerFilter, setRouterFilter] = useState("all");
+  const routers = useRoutersList();
 
   const { data, isLoading } = useQuery({
-    queryKey: ["/api/reports", 30],
-    queryFn: () => api<ReportsData>("/api/reports", { params: { days: 30 } }),
+    queryKey: ["/api/reports", 30, routerFilter],
+    queryFn: () => api<ReportsData>("/api/reports", { params: { days: 30, routerId: routerFilter } }),
     placeholderData: (previous) => previous,
     enabled: visible,
   });
@@ -1022,6 +1180,11 @@ function MarginTab({ visible }: { visible: boolean }) {
 
   return (
     <div className="space-y-4 sm:space-y-6">
+      {/* N°198 — le filtre site s'applique à toute l'analyse de marge. */}
+      <div className="flex justify-end">
+        <SiteFilter value={routerFilter} onChange={setRouterFilter} routers={routers} />
+      </div>
+
       {/* KPI : CA, coût, marge, taux de marge — Δ% vs 30 jours précédents */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
@@ -1248,6 +1411,10 @@ export default function ReportsView() {
         }
       />
 
+      {/* N°198 — aperçu de période calendaire, commun aux trois onglets
+          (monté UNE fois : le sélecteur et le filtre survivent aux
+          changements d'onglet, pas de refetch au remontage). */}
+      <PeriodOverview />
       {tab === "accounting" ? (
         <AccountingTab visible={tab === "accounting"} />
       ) : tab === "activity" ? (

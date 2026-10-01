@@ -5,6 +5,131 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-01 — N°198 — Rapports : PÉRIODES CALENDIAIRES (Aujourd'hui / Semaine / Mois / Année) au fuseau du compte + cohérence des chiffres — 1ʳᵉ étape de la refonte validée sur l'audit « les données ne reflètent pas la réalité »
+
+### Contexte
+Signalement opérateur : « les données affichées [dans app/reports] ne
+reflètent pas la réalité ». L'audit approfondi (constats C1-C6, plan en 4
+commits VALIDÉ par l'opérateur) a établi : le sélecteur Jour/Semaine/Mois de
+la comptabilité ne réglait que la TAILLE DES BUCKETS d'un graphe glissant
+(30 j / 12 semaines / 12 mois) — « aujourd'hui » n'existait NULLE PART ; le
+CA horaire comptait la GÉNÉRATION de stock (db.Sales) en contradiction avec
+la doctrine « consommé » de tous les autres chiffres du même écran ; les
+découpages comptables étaient en UTC (invisible à Abidjan = UTC+0 mais faux
+par construction) ; le filtre site manquait aux onglets Activité et Marge ;
+le panier moyen mélangeait trésorerie (gros encaissé des revendeurs) et prix
+payé. N°198 = P0 (périodes calendaires + KPI) et P3 (corrections de
+cohérence) du plan ; P1 (accumulateur journalier du volume de données),
+P2 (journaux mensuels gelés) et P4 (refonte UX finale) suivront.
+
+### Produit
+- **Bloc « Aperçu de la période » en tête des Rapports** (commun aux trois
+  onglets, monté une fois — le sélecteur survit aux changements d'onglet) :
+  sélecteur **Aujourd'hui / Semaine / Mois / Année** + filtre site, et
+  **5 cartes KPI** — Ventes · Revenus · Panier moyen · Connexions · Volume
+  de données — chacune avec **Δ% vs la période équivalente précédente AU
+  MÊME MOMENT** (même durée écoulée : un mardi 14 h se compare à lundi
+  14 h, pas à un lundi entier — la zone morte entre les deux fenêtres ne
+  compte nulle part). Les vues glissantes historiques (30 j / 12 sem /
+  12 mois, 7/14/30 j) restent en graphes secondaires dans les onglets
+  (décision D4 de l'opérateur).
+- **Backend — GET /api/stats/overview?period=day|week|month|year&routerId=**
+  (requireUsage hotspot + requireRole 2) : fenêtres calendaires au FUSEAU DU
+  COMPTE (aujourd'hui 00 h 00 → maintenant, lundi en cours, 1ᵉʳ du mois,
+  1ᵉʳ janvier), fenêtre précédente de même durée écoulée, KPI + série
+  intrapériode à l'échelle de la période (heures pour le jour, jours pour
+  semaine et mois, mois pour l'année — dernier bucket partiel). Doctrine :
+  Revenus = trésorerie réelle (direct consommé au prix payé + encaissements
+  revendeurs nets ; vue site : direct du site + valeur gros des tickets
+  réseau du site) ; Ventes = tickets écoulés ; **Panier moyen = prix
+  réellement payé par le client final** (Σ prix public / tickets écoulés) ;
+  Connexions = logins journalisés (UserLogs) ; **Volume de données =
+  mesure PARTIELLE honnête** (sessions encore vivantes uniquement — les
+  sessions fermées ne sont pas conservées) : AUCUN Δ% servi tant que
+  l'accumulateur journalier (N°199) n'est pas déployé, jamais de badge
+  mensonger ; le libellé l'annonce (« sessions encore actives — historique
+  complet à venir »).
+- **CA horaire unifié sur la doctrine « consommé » (constat C3)** :
+  /api/stats/hourly ne lit PLUS db.Sales (génération de stock — ex. les
+  231 000 F de tickets créés le 27/09 comptaient comme CA à l'heure de
+  génération) mais la trésorerie réelle via le même agrégateur. Fin des
+  deux chiffres contradictoires dans le même onglet Activité.
+- **Fuseau du compte PARTOUT (constat C5)** : buckets de la comptabilité
+  (30 j / 12 sem / 12 mois), courbe quotidienne de CA et buckets de la marge
+  découpe désormais au fuseau du compte (Africa/Abidjan par défaut) — un
+  ticket écoulé à 23 h 30 local compte au bon jour pour tout compte hors
+  Greenwich.
+- **Filtre site étendu à Activité et Marge (constat C6)** : /api/reports
+  accepte routerId et borne TOUT l'onglet — écoulements, trésorerie (direct
+  du site + gros du réseau du site), connexions, sessions, parc de
+  vouchers et analyse de marge ; /api/stats/hourly pareil (connexions + CA
+  par heure). L'aperçu a son propre filtre. Le composant SiteFilter est
+  partagé (comptabilité refondue dessus).
+- **Panier moyen = prix réellement payé (constat C6)** : comptabilité et
+  rapports calculent Σ prix public / tickets écoulés — l'ancien
+  revenue/sales gonflait le panier du gros encaissé des revendeurs (un
+  réseau actif affichait un panier qui n'existait pas dans la poche des
+  clients).
+- **revenueEventsForScope** — source unique de la doctrine trésorerie
+  bornée au filtre site (vue globale : collectSaleEvents ; vue site :
+  direct du site + gros des tickets réseau du site, événements portant le
+  nom du revendeur pour des répartitions par canal justes) : utilisée par
+  l'aperçu, le CA horaire, la comptabilité et les rapports — fin de la
+  logique dupliquée qui divergeait.
+
+### Vérifié
+- Go : gofmt 0, vet OK, build OK, `go test ./...` 12 paquets OK dont 8
+  nouvelles familles N°198 (fenêtres calendaires au fuseau — America/New_York
+  : window.start = minuit new-yorkais, la zone morte ne compte nulle part ;
+  débuts semaine/mois/année + longueurs de séries ; KPI complets — panier
+  payé 650 ≠ 1250 mélange, Δ% sur fenêtres équivalentes ; filtre site —
+  vue site 800 = 500 direct + 300 gros, transactions sans site exclues ;
+  validation period + RBAC revendeur 403 ; doctrine horaire — totalSales
+  1200 consommés, les 9999 de génération exclus ; panier comptabilité ;
+  filtre site /api/reports — connexions, sessions, parc, marge bornés ;
+  buckets horaires de la série).
+- Frontend : ESLint 0, tsgo 0, build OK.
+- Navigateur (stack locale complète : backend Go JSON :4100 + next start
+  :3100, build NEXT_PUBLIC_API_BASE, Playwright headless, semis
+  DÉTERMINISTE — 5 ventes du jour dont 2 réseau, 2 de la veille, 1 en zone
+  morte, trésorerie 3 000 F, 4 logins, 2 sessions vivantes 2,3 Go) :
+  **35/35 PASS** — 4 onglets de période, libellés de fenêtre exacts
+  (« Aujourd'hui, depuis 00 h 00 · vs hier au même moment »), KPI
+  5 / 5 000 XOF / 720 XOF / 4 / 2,3 Go, badges Δ +150,0 % / +400,0 % /
+  +44,0 % / +300,0 %, volume SANS badge (mesure partielle), filtre site
+  (Ébrié : 3 / 2 000 / 666 / 3 / 2,1 Go), bascule Semaine (8 ventes : le
+  jour 5 + la veille 2 + la zone morte 1, toutes dans la semaine — preuve
+  que la zone morte n'est morte que pour le comparatif journalier), Mois
+  et Année, filtres site des onglets Activité et Marge, CA horaire
+  consommé (5 000 servis, pas les 9 999 de génération), zone morte
+  invisible (700 F nulle part), mobile 390 px scrollWidth=390, ZÉRO
+  erreur console desktop ET mobile.
+- QA visuelle VLM : aperçu desktop CONFORME (valeurs sur une ligne, badges
+  et sélecteurs nets), mobile CONFORME (cartes empilées, aucun
+  débordement), onglet Activité conforme. **Piège tranché au DOM** : le
+  VLM a signalé un empilement vertical de caractères sur la carte
+  Revenus — VRAI positif confirmé par géométrie (valeur « 5 000 XOF » sur
+  8 lignes de 13 px : 5 colonnes à 1280 px ne laissaient pas la place à
+  côté du badge Δ% et de l'icône) → grille 3+2 sur laptop
+  (lg:grid-cols-3), 5 colonnes réservées aux écrans très larges
+  (2xl:grid-cols-5) ; re-vérifié : toutes les valeurs sur 1 ligne
+  (hauteur 32 px, cartes 298 px).
+- **Décisions de l'audit respectées** : D1 vente = ticket écoulé
+  (doctrine inchangée) ; D2 volume de données démarre à zéro au
+  déploiement (pas de rétrofabrication — le badge viendra avec N°199) ;
+  D4 vues glissantes conservées en graphes secondaires.
+
+### Fichiers
+- Backend : +handlers_overview.go (endpoint + revenueEventsForScope +
+  frenchWeekday), +handlers_overview_test.go (8 familles) ; handlers_stats.go
+  (doctrine consommée + filtre site), handlers_accounting.go (fuseau compte +
+  panier payé + source unique), handlers_reports.go (filtre site partout +
+  panier payé + fuseau), handlers_dashboard.go (buildRevenueByDay fuseau),
+  routes.go (route overview).
+- Frontend : reports-view.tsx (bloc PeriodOverview + SiteFilter partagé +
+  filtres Activité/Marge + grille 3+2/5), types.ts (OverviewPeriod +
+  StatsOverview), i18n FR/EN (19 clés).
+
 ## 2026-10-01 — N°197 — Carte « Détails de connexion » sur /app/sessions : bouton d'action par ligne — dernière connexion, total consommé par le ticket/utilisateur, MAC de l'appareil et MARQUE PROBABLE (OUI IEEE)
 
 ### Contexte

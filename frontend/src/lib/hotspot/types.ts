@@ -1015,6 +1015,43 @@ export interface SiteOverview {
 
 export type AccountingPeriod = "day" | "week" | "month";
 
+/* ─── N°198 : aperçu de période calendaire (GET /api/stats/overview?period=…) ─── */
+
+/** Période calendaire EN COURS (jour / semaine / mois / année), au fuseau du
+ *  compte — à ne pas confondre avec AccountingPeriod (taille de bucket des
+ *  graphes glissants de la comptabilité). */
+export type OverviewPeriod = "day" | "week" | "month" | "year";
+
+/** Aperçu de période — KPI de la période calendaire en cours + base de
+ *  comparaison (période précédente AU MÊME MOMENT : même durée écoulée). */
+export interface StatsOverview {
+  period: OverviewPeriod;
+  routerId: string;
+  timezone: string;
+  window: { start: string; end: string; prevStart: string; prevEnd: string };
+  kpis: {
+    sales: number;
+    salesPrev: number;
+    revenue: number;
+    revenuePrev: number;
+    /** Panier moyen = prix réellement payé par le client final (N°198). */
+    avgTicket: number;
+    avgTicketPrev: number;
+    /** Connexions réellement journalisées (UserLogs login). */
+    logins: number;
+    loginsPrev: number;
+    /** Volume de données des sessions ENCORE VIVANTES de la période —
+     *  mesure partielle honnête : pas de base précédente (les sessions
+     *  fermées ne sont pas conservées) tant que l'accumulateur journalier
+     *  (N°199) n'a pas été déployé. */
+    dataBytes: number;
+  };
+  /** Série intrapériode — échelle adaptée (heures/jours/mois), dernier
+   *  bucket partiel. Servie pour les graphes à venir (N°201). */
+  series: { label: string; revenue: number; sales: number; logins: number }[];
+  generatedAt: string;
+}
+
 /** Répartition du CA par canal de distribution (direct vs réseau revendeurs). */
 export interface ChannelSplit {
   directRevenue: number;

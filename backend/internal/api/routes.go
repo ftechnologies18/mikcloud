@@ -303,6 +303,9 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/accounting/export", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleAccountingExport)))
 	mux.HandleFunc("GET /api/wave/link", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleWaveLink)))
 	mux.HandleFunc("GET /api/stats/hourly", a.handleStatsHourly)
+	// N°198 — KPI de période calendaire (jour/semaine/mois/année en cours,
+	// fuseau du compte) + Δ% vs période précédente au même moment.
+	mux.HandleFunc("GET /api/stats/overview", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleStatsOverview)))
 
 	mux.HandleFunc("GET /api/activity", a.requireRole(2, a.handleActivityList))
 	// N°151 — boîte de notifications de la cloche : journal filtré RBAC +

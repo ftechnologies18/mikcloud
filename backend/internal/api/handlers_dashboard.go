@@ -427,10 +427,13 @@ func collectSoldVouchers(db *model.DB, acc string, since time.Time) []soldVouche
 // directes consommées + encaissements revendeurs nets des retours).
 func buildRevenueByDay(db *model.DB, acc string, now time.Time, days int) []dayValue {
 	events := collectSaleEvents(db, acc, now.AddDate(0, 0, -days))
+	// N°198 — journées au FUSEAU DU COMPTE (constat C5).
+	loc := accountTimezone(db, acc)
+	nowLocal := now.In(loc)
 	out := make([]dayValue, 0, days)
 	for i := days - 1; i >= 0; i-- {
-		day := now.AddDate(0, 0, -i)
-		start := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC)
+		day := nowLocal.AddDate(0, 0, -i)
+		start := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, loc)
 		end := start.Add(24 * time.Hour)
 		sum := 0
 		for _, e := range events {

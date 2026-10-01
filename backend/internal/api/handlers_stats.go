@@ -5,8 +5,12 @@ package api
 // Remplace la courbe synthétique « crédible » de l'ancien dashboard
 // (buildSessionsTimeline, supprimée) : l'affluence est désormais agrégée
 // depuis les UserLogs (action=login) réellement collectés — par le moteur
-// de simulation OU par l'agent routeur (diff de sessions). Les ventes
-// horaires proviennent des Sales. Toutes les tranches horaires sont
+// de simulation OU par l'agent routeur (diff de sessions). Le CA horaire
+// suit la doctrine « CONSOMMÉ » (N°198, constat C3 de l'audit reports) :
+// ventes directes consommées au prix payé + encaissements revendeurs
+// nets — l'ancienne lecture de db.Sales comptait la GÉNÉRATION de stock
+// (créer des tickets n'est pas les vendre) et contredisait tous les
+// autres chiffres du même onglet. Toutes les tranches horaires sont
 // calculées dans le FUSEAU DU COMPTE (Tenant.Timezone, défaut UTC) :
 // « pic 19h-22h » affiché = pic 19h-22h vécu sur place.
 
@@ -14,6 +18,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"mikcloud/hotspot-api/internal/model"
@@ -86,9 +91,11 @@ type hourlyStats struct {
 	GeneratedAt  string      `json:"generatedAt"`
 }
 
-// handleStatsHourly — GET /api/stats/hourly?days=7|14|30 : affluence réelle
-// par tranche horaire (heatmap jour × heure) + CA et connexions par heure,
-// agrégés dans le fuseau du compte.
+// handleStatsHourly — GET /api/stats/hourly?days=7|14|30&routerId=<id|all> :
+// affluence réelle par tranche horaire (heatmap jour × heure) + CA et
+// connexions par heure, agrégés dans le fuseau du compte. N°198 : le
+// filtre site s'applique aux connexions ET au CA (vue site : direct du
+// site + valeur gros des tickets réseau du site).
 func (a *API) handleStatsHourly(w http.ResponseWriter, r *http.Request) {
 	acc := accountScope(r)
 	days := 7
@@ -100,6 +107,7 @@ func (a *API) handleStatsHourly(w http.ResponseWriter, r *http.Request) {
 		}
 		days = v
 	}
+	routerID := strings.TrimSpace(r.URL.Query().Get("routerId")) // "" ou "all" = tous les sites
 	now := time.Now().UTC()
 	a.store.Lock()
 	db := a.store.Data()
@@ -121,9 +129,13 @@ func (a *API) handleStatsHourly(w http.ResponseWriter, r *http.Request) {
 	salesByHour := make([]int, 24)
 	maxCell, totalLogins, totalSales := 0, 0, 0
 
+	globalScope := routerID == "" || routerID == "all"
 	for i := range db.UserLogs {
 		l := &db.UserLogs[i]
 		if l.AccountID != acc || l.Action != "login" {
+			continue
+		}
+		if !globalScope && l.RouterID != routerID {
 			continue
 		}
 		at, err := time.Parse(time.RFC3339, l.At)
@@ -144,21 +156,13 @@ func (a *API) handleStatsHourly(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	for i := range db.Sales {
-		s := &db.Sales[i]
-		if s.AccountID != acc {
-			continue
-		}
-		at, err := time.Parse(time.RFC3339, s.At)
-		if err != nil {
-			continue
-		}
-		al := at.In(loc)
-		if al.Before(windowStart) {
-			continue
-		}
-		salesByHour[al.Hour()] += s.Amount
-		totalSales += s.Amount
+	// N°198 (constat C3) — CA horaire sur la doctrine « CONSOMMÉ » :
+	// trésorerie réelle (direct consommé + revendeurs nets), plus JAMAIS
+	// db.Sales qui journalise la GÉNÉRATION de stock.
+	for _, e := range revenueEventsForScope(db, acc, routerID, windowStart) {
+		al := e.At.In(loc)
+		salesByHour[al.Hour()] += e.Amount
+		totalSales += e.Amount
 	}
 	a.store.Unlock()
 

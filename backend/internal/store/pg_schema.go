@@ -324,17 +324,45 @@ func (p *PG) ensureSchema() error {
 		// routeur, jour au fuseau du compte). Histogramme horaire en
 		// TEXT canonique « h0,…,h23 » (cf. model/volumeday.go).
 		`CREATE TABLE IF NOT EXISTS volume_days (
-			id         TEXT PRIMARY KEY, -- vd-<compte>:<routeur>:<jour> (clé naturelle)
-			account_id TEXT NOT NULL DEFAULT '',
-			router_id  TEXT NOT NULL,
-			day        TEXT NOT NULL,
-			bytes_in   BIGINT NOT NULL,
-			bytes_out  BIGINT NOT NULL,
-			hours      TEXT NOT NULL DEFAULT '',
-			updated_at TEXT NOT NULL
-		)`,
+                        id         TEXT PRIMARY KEY, -- vd-<compte>:<routeur>:<jour> (clé naturelle)
+                        account_id TEXT NOT NULL DEFAULT '',
+                        router_id  TEXT NOT NULL,
+                        day        TEXT NOT NULL,
+                        bytes_in   BIGINT NOT NULL,
+                        bytes_out  BIGINT NOT NULL,
+                        hours      TEXT NOT NULL DEFAULT '',
+                        updated_at TEXT NOT NULL
+                )`,
 		`CREATE INDEX IF NOT EXISTS idx_volume_days_account ON volume_days (account_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_volume_days_router  ON volume_days (router_id)`,
+		// N°200 — journaux MENSUELS GELÉS : une ligne par (compte,
+		// mois calendaire au fuseau du compte), immuable une fois
+		// écrite (décision D3 — cf. model/monthlyjournal.go).
+		`CREATE TABLE IF NOT EXISTS monthly_journals (
+                        id                 TEXT PRIMARY KEY, -- mj-<compte>:<YYYY-MM> (clé naturelle)
+                        account_id         TEXT NOT NULL DEFAULT '',
+                        month              TEXT NOT NULL,
+                        period_start       TEXT NOT NULL,
+                        period_end         TEXT NOT NULL,
+                        days               INTEGER NOT NULL,
+                        partial            BOOLEAN NOT NULL,
+                        source             TEXT NOT NULL,
+                        sales              INTEGER NOT NULL,
+                        revenue            INTEGER NOT NULL,
+                        avg_ticket         INTEGER NOT NULL,
+                        logins             INTEGER NOT NULL,
+                        data_in            BIGINT NOT NULL,
+                        data_out           BIGINT NOT NULL,
+                        direct_sales       INTEGER NOT NULL,
+                        direct_revenue     INTEGER NOT NULL,
+                        reseller_sales     INTEGER NOT NULL,
+                        reseller_revenue   INTEGER NOT NULL,
+                        currency           TEXT NOT NULL DEFAULT '',
+                        timezone           TEXT NOT NULL DEFAULT '',
+                        closed_at          TEXT NOT NULL
+                )`,
+		`CREATE INDEX IF NOT EXISTS idx_monthly_journals_account ON monthly_journals (account_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_monthly_journals_month   ON monthly_journals (month)`,
 		`CREATE TABLE IF NOT EXISTS settings (
                         id               TEXT PRIMARY KEY, -- = account_id : une ligne par compte SaaS
                         account_id       TEXT NOT NULL DEFAULT '',

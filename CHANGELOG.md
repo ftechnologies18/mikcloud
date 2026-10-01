@@ -5,6 +5,128 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-01 — N°200 — Rapports : JOURNAUX MENSUELS GELÉS — chaque mois devient un document comptable immuable — 3ᵉ étape (P2) de la refonte validée sur l'audit
+
+### Contexte
+Constat C4 de l'audit « app/reports » : TOUS les chiffres des rapports
+étaient recalculés à la volée depuis des sources VIVANTES purgées selon la
+rétention (user_logs 30/60/90 j + plafond 5 000, vouchers selon la politique
+d'expiration) — les courbes « 12 derniers mois » pourrissaient avec le temps
+et le « mois de février » affiché en décembre n'était plus celui de février.
+N°200 = P2 du plan, décision D3 de l'opérateur : GEL AUTOMATIQUE au bascule
+de mois + bouton « Clôturer le mois maintenant ». La table volume_days
+(N°199, rétention 730 j) alimente la partie volume ; au-delà de deux ans,
+SEULS les journaux restent — c'est leur raison d'être.
+
+### Produit
+- **Modèle MonthlyJournal** (model/monthlyjournal.go) : une ligne par
+  (compte, mois calendaire AU FUSEAU DU COMPTE), portant les CINQ KPI de
+  l'aperçu (doctrine N°198 inchangée : ventes écoulées, trésorerie réelle,
+  panier payé, connexions journalisées, volume in/out) + la répartition par
+  canal (direct vs réseau) + le contexte figé à la clôture (devise, fuseau,
+  instant). IMMUABLE une fois écrit — id DÉTERMINISTE « mj-<compte>:<YYYY-MM> »
+  (clé naturelle : un mois n'est jamais journalisé deux fois, upsert PG et
+  fusion de récupération raisonnent par clé réelle). AUCUNE rétention :
+  une douzaine de lignes par compte et par an, c'est la mémoire comptable
+  DÉFINITIVE du compte.
+- **GEL AUTOMATIQUE au bascule de mois** : le balayage horaire
+  (RunRetentionSweep — rattrapage immédiat au boot Render inclus) constate
+  que le mois PRÉCÉDENT n'a pas de journal et le crée pour le mois PLEIN,
+  pour CHAQUE compte — un compte dormant, jamais consulté, est couvert aussi
+  (même argument que la rétention N°64 : les sources décayent, attendre une
+  visite console perdrait des données). Le mois précédent est TOUJOURS dérivé
+  depuis le 1ᵉʳ du mois courant (jamais AddDate(0,-1,0) sur un 29/30/31 qui
+  déborderait sur le mois suivant). Seul le mois immédiatement précédent est
+  couvert : un trou plus ancien reste un trou VISIBLE (honnête) plutôt qu'un
+  journal reconstruit de sources déjà purgées. Au PREMIER DÉPLOIEMENT, le
+  balayage archive ainsi le mois précédent depuis les sources survivantes —
+  les chiffres réels (ventes, trésorerie, connexions) sont gelés tels quels ;
+  le volume vaut 0 pour tout mois antérieur à l'accumulateur (décision D2 :
+  pas de rétrofabrication).
+- **Bouton « Clôturer le mois maintenant »** (POST /api/reports/journals/
+  close, gérant/propriétaire) : acte comptable délibéré — le mois EN COURS
+  est gelé à l'instant du clic (partial=true, fenêtre couverte explicite
+  [1ᵉʳ du mois → clic], la ligne volume du jour de clôture compte : c'est un
+  instantané, pas une mesure de minuit). Le dialogue de confirmation dit
+  noir sur blanc que l'activité restante du mois ne sera PAS archivée et que
+  l'action est DÉFINITIVE. Un mois déjà gelé répond 409 : gelé = gelé,
+  jamais de réécriture d'un document figé — et le bascule automatique
+  suivant saute silencieusement un mois déjà clos manuellement.
+- **Onglet « Archives »** dans les Rapports : carte « Mois en cours »
+  (chiffres LIVE depuis l'aperçu period=month tant que non clôturé, valeurs
+  GELÉES + « Clôturé le … » ensuite, bouton disparaît) + table des archives
+  (mois descendants : ventes avec répartition « X direct · Y réseau »,
+  revenus, panier payé, connexions, volume, couverture « N jours couverts »
+  + badge « Partiel », badge Automatique/Manuelle + date de clôture) +
+  export CSV Excel FR (séparateur « ; », BOM UTF-8, CRLF, volume en Go
+  BINAIRE cohérent avec formatBytes). Liste bornée max-h-96 avec défilement.
+- **Endpoints** : GET /api/reports/journals (archives + état du mois
+  courant, rattrapage paresseux idempotent à la première consultation),
+  GET /api/reports/journals.csv, POST /api/reports/journals/close — tous
+  requireUsage(hotspot) + requireRole(2), revendeur 403.
+
+### Vérifié
+- gofmt 0 / go vet / go build OK ; go test ./... 12 paquets OK dont 7
+  NOUVELLES familles (KPI exacts à horloge FIXE octobre 2026 : doctrine
+  complète + canaux + panier 566/600 + volume borné au dernier jour couvert
+  + auto 31 j pleine vs manuel 15 j partielle ; gel auto multi-comptes à
+  horloge FABRIQUÉE 1ᵉʳ novembre : idempotent, mois courant non journalisé,
+  un mois gelé manuellement JAMAIS réécrit à la bascule suivante ;
+  fuseau America/New_York : le mois précédent démarre à MINUIT new-yorkais,
+  un voucher du 30 septembre 23 h 30 NY exclu ; endpoint liste : rattrapage
+  paresseux, ordre descendant, trous plus anciens non reconstruits ;
+  clôture manuelle : source/partial/days/id, 409 au doublon, liste cohérente
+  ; RBAC revendeur 403 liste + clôture + CSV authentifié, conventions Excel
+  FR BOM/CRLF/« ; » ; balayage horaire : RunRetentionSweep gèle le mois
+  précédent d'un compte jamais consulté) + 4 compteurs de concordance
+  36→37 différentielles (tables_test, syncstats_test ×2, sync_status).
+- ESLint 0, tsgo 0, build Next.js OK.
+- Navigateur stack locale (backend Go JSON :4100 + next start :3100, semis
+  DÉTERMINISTE par édition directe de db.json — août pré-gelé, septembre en
+  événements vivants SANS journal, octobre live, 2 routeurs mode real) :
+  45/45 PASS — le GEL AUTO de septembre observé dans le LOG du backend au
+  boot (« journaux mensuels : 1 clôture(s) automatique(s) au bascule de
+  mois ») ET dans l'API avant même le premier clic ; KPI septembre exacts
+  (3 ventes = 2 direct + 1 réseau, 2 300 XOF = 1 400 + 900, panier 566,
+  3 connexions, 4,7 Go, 30 j, auto) ; carte mois en cours live (4/2 000
+  XOF/425 XOF/5/1,9 Go) ; dialogue « Clôturer octobre 2026 ? » + 1 jour
+  couvert + avertissement définitif ; toast, carte passée en gelé, bouton
+  DISPARU ; ligne octobre Manuelle/Partiel/1 jour en tête, ordre descendant
+  vérifié par géométrie ; 409 API sur double clôture ; CSV téléchargé aux
+  3 lignes exactes ; mobile 390 px scrollWidth=390 ; ZÉRO erreur console
+  desktop ET mobile.
+- QA visuelle VLM 3 captures : « AUCUN DÉFAUT » (après clôture, mobile) ;
+  3 alertes sur la capture « avant » tranchées FAUX POSITIFS par géométrie
+  DOM (en-tête « Clôture » non tronqué scrollW=clientW, marge gauche de la
+  table 25 px = px-6 de la carte, dates alignées à droite au pixel près ;
+  la modale ouverte masquant l'arrière-plan = comportement normal, classe
+  de fausses alertes N°197).
+
+### Décisions
+- D3 (opérateur) : gel automatique au 1ᵉʳ + bouton « Clôturer le mois
+  maintenant ». Un journal gelé est IMMUABLE — la clôture manuelle
+  anticipée est définitive, l'activité restante du mois ne sera pas
+  archivée (le dialogue prévient) ; le bascule automatique suivant ne
+  réécrit jamais un mois déjà clos.
+- La lecture des archives rejoue le contrôle de bascule (idempotent) :
+  la toute première consultation après le 1ᵉʳ voit déjà le mois clos, sans
+  attendre le passage horaire du balayage.
+- Volume du journal = octets BRUTS gelés (in/out séparés) ; affichage Go
+  binaire (formatBytes) et CSV « %.1f Go » sur la même base 1024³ —
+  jamais deux conventions différentes pour le même chiffre.
+- Les connexions du journal sont bornées par la rétention du journal
+  vivant à l'instant du gel (30/60/90 j + plafond 5 000) : le journal fige
+  ce que le système mesurait — c'est la nature même d'un instantané.
+
+### Fichiers
+26 fichiers : 3 NOUVEAUX backend (modèle + handler + tests) + 14 modifiés
+backend (entités, DB racine + clone, 8 points d'enregistrement de la table
+monthly_journals — 37ᵉ différentielle : constante + registre, spec, DDL
+idempotent + index, chargement, applier + empreintes, fusion de récupération,
+volumétrie santé, base vide — + routes ×3 + balayage + 4 compteurs de
+concordance) + 4 frontend (onglet Archives + types + i18n FR/EN 24 clés) +
+CHANGELOG.
+
 ## 2026-10-01 — N°199 — Rapports : ACCUMULATEUR JOURNALIER du volume de données — le KPI « Volume » devient complet (sessions fermées comprises) avec Δ% honnête — 2ᵉ étape (P1) de la refonte validée sur l'audit
 
 ### Contexte

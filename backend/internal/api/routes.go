@@ -306,6 +306,11 @@ func (a *API) Handler() http.Handler {
 	// N°198 — KPI de période calendaire (jour/semaine/mois/année en cours,
 	// fuseau du compte) + Δ% vs période précédente au même moment.
 	mux.HandleFunc("GET /api/stats/overview", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleStatsOverview)))
+	// N°200 — journaux mensuels GELÉS (décision D3) : archives du compte,
+	// export CSV Excel FR et bouton « Clôturer le mois maintenant ».
+	mux.HandleFunc("GET /api/reports/journals", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleJournalsList)))
+	mux.HandleFunc("GET /api/reports/journals.csv", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleJournalsCSV)))
+	mux.HandleFunc("POST /api/reports/journals/close", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleJournalClose)))
 
 	mux.HandleFunc("GET /api/activity", a.requireRole(2, a.handleActivityList))
 	// N°151 — boîte de notifications de la cloche : journal filtré RBAC +

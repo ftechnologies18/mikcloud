@@ -58,6 +58,9 @@ func BuildEmptyState() *model.DB {
 		// N°199 — agrégats quotidiens du volume de données servi (base vide :
 		// slice non-nil → l'API sert [], la synchro PG n'insère rien).
 		VolumeDays: []model.VolumeDay{},
+		// N°200 — journaux mensuels gelés (base vide : slice non-nil →
+		// l'API sert [], la synchro PG n'insère rien).
+		MonthlyJournals: []model.MonthlyJournal{},
 		// N°127 — assistant conversationnel public (base vide :
 		// slices non-nil → l'API sert [], la synchro PG n'insère rien).
 		ChatConversations: []model.ChatConversation{},

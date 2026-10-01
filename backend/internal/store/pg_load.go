@@ -71,6 +71,7 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 		{"traffic", func() error { return loadInto(p, &db.Traffic, trafficSpec) }},
 		{"line_quality", func() error { return loadInto(p, &db.LineQuality, lineQualitySpec) }},
 		{"volume_days", func() error { return loadInto(p, &db.VolumeDays, volumeDaySpec) }},
+		{"monthly_journals", func() error { return loadInto(p, &db.MonthlyJournals, monthlyJournalSpec) }},
 		{"notif_settings", func() error { return p.loadNotifSettings(db) }},
 		{"notif_log", func() error { return loadInto(p, &db.NotifLog, notifLogSpec) }},
 		{"billing_requests", func() error { return loadInto(p, &db.BillingRequests, billingRequestSpec) }},

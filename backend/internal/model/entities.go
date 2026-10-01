@@ -111,6 +111,40 @@ type VolumeDay struct {
 	UpdatedAt string `json:"updatedAt"`
 }
 
+// MonthlyJournal — N°200 — journal MENSUEL GELÉ du compte (décision D3) :
+// une ligne par (compte, mois calendaire au fuseau du compte), figée au
+// bascule de mois (source « auto » — balayage horaire) ou par le bouton
+// « Clôturer le mois maintenant » (source « manual » — mois partiel, fenêtre
+// couverte explicite). IMMUABLE une fois écrit : les archives ne bougent
+// plus, quelle que soit la rétention des journaux vivants. Cf.
+// monthlyjournal.go.
+type MonthlyJournal struct {
+	ID          string `json:"id"` // « mj-<compte>:<YYYY-MM> » (clé naturelle)
+	AccountID   string `json:"accountId"`
+	Month       string `json:"month"`       // « YYYY-MM » au fuseau du compte
+	PeriodStart string `json:"periodStart"` // RFC3339 — 1ᵉʳ du mois 00 h 00 local
+	PeriodEnd   string `json:"periodEnd"`   // RFC3339 — fin couverte (clôture)
+	Days        int    `json:"days"`        // jours couverts par le journal
+	Partial     bool   `json:"partial"`     // clôturé AVANT la fin du mois (manuel)
+	Source      string `json:"source"`      // « auto » (bascule) | « manual » (bouton)
+	// Les cinq KPI de l'aperçu de période (N°198), figés :
+	Sales     int   `json:"sales"`     // tickets écoulés
+	Revenue   int   `json:"revenue"`   // trésorerie réelle
+	AvgTicket int   `json:"avgTicket"` // prix réellement payé (moyenne)
+	Logins    int   `json:"logins"`    // connexions journalisées
+	DataIn    int64 `json:"dataIn"`    // volume servi — upload (petit)
+	DataOut   int64 `json:"dataOut"`   // volume servi — download (gros)
+	// Répartition par canal (miroir de l'onglet Comptabilité) :
+	DirectSales     int `json:"directSales"`     // tickets écoulés en direct
+	DirectRevenue   int `json:"directRevenue"`   // trésorerie directe
+	ResellerSales   int `json:"resellerSales"`   // tickets écoulés par le réseau
+	ResellerRevenue int `json:"resellerRevenue"` // encaissements revendeurs nets
+	// Contexte figé au moment de la clôture (document comptable) :
+	Currency string `json:"currency"` // devise du compte à la clôture
+	Timezone string `json:"timezone"` // fuseau ayant découpé le mois
+	ClosedAt string `json:"closedAt"` // RFC3339 UTC — instant de la clôture
+}
+
 // IPBinding — règle hotspot IP binding (F7) : bypass ou blocage par MAC.
 
 // IPBinding — règle hotspot IP binding (F7) : bypass ou blocage par MAC.

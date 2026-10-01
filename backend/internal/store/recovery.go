@@ -304,6 +304,7 @@ func mergeRecovered(dst, src *model.DB) int {
 	n += mergeSlice(&dst.Traffic, src.Traffic, trafficSpec.idOf)
 	n += mergeSlice(&dst.LineQuality, src.LineQuality, lineQualitySpec.idOf)
 	n += mergeSlice(&dst.VolumeDays, src.VolumeDays, volumeDaySpec.idOf)
+	n += mergeSlice(&dst.MonthlyJournals, src.MonthlyJournals, monthlyJournalSpec.idOf)
 	n += mergeSlice(&dst.NotifLog, src.NotifLog, notifLogSpec.idOf)
 	n += mergeSlice(&dst.BillingRequests, src.BillingRequests, billingRequestSpec.idOf)
 	n += mergeSlice(&dst.GeniusPaySubs, src.GeniusPaySubs, geniusPaySubSpec.idOf)

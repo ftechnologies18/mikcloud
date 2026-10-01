@@ -1064,6 +1064,57 @@ export interface ChannelSplit {
   resellerSales: number;
 }
 
+/* ─── N°200 : journaux mensuels gelés (GET /api/reports/journals) ─── */
+
+/** Journal MENSUEL GELÉ du compte (décision D3) : une ligne par compte et
+ *  mois calendaire au fuseau du compte, figée au bascule de mois (source
+ *  « auto ») ou par le bouton « Clôturer le mois maintenant » (source
+ *  « manual » — mois partiel, fenêtre couverte explicite). Immuable une
+ *  fois écrit : les archives ne bougent plus, quelle que soit la rétention
+ *  des journaux vivants. */
+export interface MonthlyJournal {
+  id: string;
+  accountId: string;
+  /** « YYYY-MM » au fuseau du compte. */
+  month: string;
+  /** RFC3339 — 1ᵉʳ du mois 00 h 00 local / fin couverte (clôture). */
+  periodStart: string;
+  periodEnd: string;
+  /** Jours couverts par le journal. */
+  days: number;
+  /** Clôturé AVANT la fin du mois (clôture manuelle anticipée). */
+  partial: boolean;
+  /** « auto » (bascule de mois) | « manual » (bouton de clôture). */
+  source: "auto" | "manual";
+  /** Les cinq KPI de l'aperçu de période (N°198), figés. */
+  sales: number;
+  revenue: number;
+  avgTicket: number;
+  logins: number;
+  dataIn: number;
+  dataOut: number;
+  /** Répartition par canal (miroir de l'onglet Comptabilité). */
+  directSales: number;
+  directRevenue: number;
+  resellerSales: number;
+  resellerRevenue: number;
+  /** Contexte figé à la clôture (document comptable). */
+  currency: string;
+  timezone: string;
+  /** RFC3339 UTC — instant de la clôture. */
+  closedAt: string;
+}
+
+/** Réponse de GET /api/reports/journals — archives du compte + état du mois
+ *  courant (pour le bouton « Clôturer le mois maintenant » ; les chiffres
+ *  LIVE restent ceux de l'aperçu period=month). */
+export interface JournalsResponse {
+  journals: MonthlyJournal[];
+  currentMonth: string;
+  currentClosed: boolean;
+  generatedAt: string;
+}
+
 /** Fenêtre précédente de même longueur — comparaison Δ%. */
 export interface TotalsDelta {
   revenue: number;

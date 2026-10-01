@@ -17,7 +17,7 @@
 //  - évolution QUOTIDIENNE de la marge (vert/rouge) + marge par site + part de marge.
 
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bar,
   BarChart,
@@ -33,11 +33,13 @@ import {
   YAxis,
 } from "recharts";
 import {
+  Archive,
   CalendarRange,
   Clock3,
   Coins,
   Database,
   Download,
+  LockKeyhole,
   Percent,
   Router as RouterIcon,
   ShoppingCart,
@@ -61,12 +63,14 @@ import type {
   AccountingData,
   AccountingPeriod,
   HourlyStats,
+  JournalsResponse,
+  MonthlyJournal,
   OverviewPeriod,
   ReportsData,
   RouterDevice,
   StatsOverview,
 } from "@/lib/hotspot/types";
-import { formatBytes, formatCurrency } from "@/lib/hotspot/format";
+import { formatBytes, formatCurrency, formatDateTime } from "@/lib/hotspot/format";
 import { EmptyState } from "@/components/hotspot/empty-state";
 import { LoadingCards } from "@/components/hotspot/loading";
 import { PageHeader } from "@/components/hotspot/page-header";
@@ -74,6 +78,17 @@ import { StatCard } from "@/components/hotspot/stat-card";
 import { ChartTooltip } from "@/components/hotspot/parts/sd-chart-tooltip";
 import { useCurrency } from "@/components/hotspot/parts/sd-currency";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -1392,12 +1407,273 @@ function MarginTab({ visible }: { visible: boolean }) {
 }
 
 // ---------------------------------------------------------------------------
+// N°200 — onglet Archives : journaux MENSUELS GELÉS (décision D3).
+// Chaque mois est figé au bascule (gel automatique — balayage horaire côté
+// serveur) ou par le bouton « Clôturer le mois maintenant » (acte comptable
+// délibéré : mois partiel, fenêtre couverte explicite). Immuable une fois
+// écrit — les archives ne bougent plus, quelle que soit la rétention des
+// journaux vivants (constat C4 de l'audit : les courbes « 12 derniers mois »
+// pourrissaient avec le temps).
+// ---------------------------------------------------------------------------
+
+/** Libellé localisé d'une clé « YYYY-MM » (« octobre 2026 »). */
+function monthLabel(month: string, lang: Lang): string {
+  const [y, m] = month.split("-");
+  const d = new Date(Number(y), Number(m) - 1, 1);
+  return new Intl.DateTimeFormat(localeOf(lang), { month: "long", year: "numeric" }).format(d);
+}
+
+/** Une donnée compacte de la carte « mois en cours ». */
+function LiveStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <p className="truncate text-xs text-muted-foreground">{label}</p>
+      <p className="truncate text-base font-semibold tabular-nums sm:text-lg">{value}</p>
+    </div>
+  );
+}
+
+function ArchivesTab({ visible }: { visible: boolean }) {
+  const { t, tf, lang } = useI18n();
+  const currency = useCurrency();
+  const queryClient = useQueryClient();
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ["/api/reports/journals"],
+    queryFn: () => api<JournalsResponse>("/api/reports/journals"),
+    enabled: visible,
+  });
+
+  // Chiffres LIVE du mois courant — même source que l'aperçu (period=month,
+  // tous sites) : jamais confondus avec les archives gelées.
+  const { data: live } = useQuery({
+    queryKey: ["/api/stats/overview", "month", "all"],
+    queryFn: () =>
+      api<StatsOverview>("/api/stats/overview", { params: { period: "month", routerId: "all" } }),
+    enabled: visible,
+  });
+
+  const closeMutation = useMutation({
+    mutationFn: () =>
+      api<{ journal: MonthlyJournal }>("/api/reports/journals/close", { method: "POST" }),
+    onSuccess: () => {
+      toast.success(t("reports.journals.toastClosed"));
+      setConfirmOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/reports/journals"] });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const journals = data?.journals ?? [];
+  const currentMonth = data?.currentMonth ?? "";
+  const currentClosed = data?.currentClosed ?? false;
+  const currentJournal = journals.find((j) => j.month === currentMonth);
+  const liveKpis = live?.kpis;
+  // Jours écoulés du mois courant (pour l'avertissement de clôture) — dérivé
+  // de la fenêtre servie par l'aperçu, fuseau du compte.
+  const elapsedDays = useMemo(() => {
+    if (!live?.window?.start) return 1;
+    const start = new Date(live.window.start).getTime();
+    const end = new Date(live.window.end).getTime();
+    return Math.max(1, Math.ceil((end - start) / 86_400_000));
+  }, [live]);
+
+  const csvExport = () =>
+    apiDownload("/api/reports/journals.csv", "mikcloud-journaux-mensuels.csv")
+      .then(() => toast.success(t("common.exportDownloaded")))
+      .catch((err: Error) => toast.error(err.message));
+
+  return (
+    <div className="space-y-4 sm:space-y-6">
+      {/* Mois en cours — live tant qu'il n'est pas clôturé, gelé ensuite */}
+      <Card className="gap-4 py-4 sm:py-6">
+        <CardHeader className="px-4 sm:px-6">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <CardTitle className="text-base">
+                {t("reports.journals.currentTitle")} — {currentMonth ? monthLabel(currentMonth, lang) : "…"}
+              </CardTitle>
+              <CardDescription>
+                {currentClosed
+                  ? t("reports.journals.currentClosedDesc")
+                  : t("reports.journals.currentLiveDesc")}
+              </CardDescription>
+            </div>
+            {!currentClosed &&
+              currentMonth !== "" && (
+                <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="outline" className="shrink-0" disabled={closeMutation.isPending}>
+                      <LockKeyhole className="size-4" />
+                      <span className="hidden sm:inline">{t("reports.journals.closeNow")}</span>
+                      <span className="sm:hidden">{t("reports.journals.closeConfirmAction")}</span>
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>
+                        {tf("reports.journals.closeConfirmTitle", {
+                          month: monthLabel(currentMonth, lang),
+                        })}
+                      </AlertDialogTitle>
+                      <AlertDialogDescription>
+                        {tf("reports.journals.closeConfirmDesc", {
+                          month: monthLabel(currentMonth, lang),
+                          days: elapsedDays,
+                        })}
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel disabled={closeMutation.isPending}>
+                        {t("common.cancel")}
+                      </AlertDialogCancel>
+                      <AlertDialogAction
+                        disabled={closeMutation.isPending}
+                        onClick={(e) => {
+                          e.preventDefault(); // garde le dialogue ouvert pendant la mutation
+                          closeMutation.mutate();
+                        }}
+                      >
+                        {t("reports.journals.closeConfirmAction")}
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              )}
+          </div>
+        </CardHeader>
+        <CardContent className="px-4 sm:px-6">
+          {isLoading && !data ? (
+            <LoadingCards cards={1} />
+          ) : currentClosed && currentJournal ? (
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+              <LiveStat label={t("reports.sales")} value={String(currentJournal.sales)} />
+              <LiveStat label={t("reports.revenue")} value={formatCurrency(currentJournal.revenue, currency, lang)} />
+              <LiveStat label={t("reports.avgTicket")} value={formatCurrency(currentJournal.avgTicket, currency, lang)} />
+              <LiveStat label={t("reports.overview.loginsTitle")} value={new Intl.NumberFormat(localeOf(lang)).format(currentJournal.logins)} />
+              <LiveStat label={t("reports.overview.dataVolume")} value={formatBytes(currentJournal.dataIn + currentJournal.dataOut, lang)} />
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+              <LiveStat label={t("reports.sales")} value={liveKpis ? String(liveKpis.sales) : "—"} />
+              <LiveStat label={t("reports.revenue")} value={liveKpis ? formatCurrency(liveKpis.revenue, currency, lang) : "—"} />
+              <LiveStat label={t("reports.avgTicket")} value={liveKpis ? formatCurrency(liveKpis.avgTicket, currency, lang) : "—"} />
+              <LiveStat label={t("reports.overview.loginsTitle")} value={liveKpis ? new Intl.NumberFormat(localeOf(lang)).format(liveKpis.logins) : "—"} />
+              <LiveStat label={t("reports.overview.dataVolume")} value={liveKpis ? formatBytes(liveKpis.dataBytes, lang) : "—"} />
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Archives — un mois gelé par ligne, du plus récent au plus ancien */}
+      <Card className="gap-4 py-4 sm:py-6">
+        <CardHeader className="px-4 sm:px-6">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <CardTitle className="text-base">{t("reports.journals.title")}</CardTitle>
+              <CardDescription>{t("reports.journals.desc")}</CardDescription>
+            </div>
+            {journals.length > 0 && (
+              <Button variant="outline" className="h-10 shrink-0" onClick={csvExport}>
+                <Download className="size-4" />
+                <span className="hidden sm:inline">{t("common.exportCsv")}</span>
+              </Button>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent className="px-4 sm:px-6">
+          {isLoading && !data ? (
+            <LoadingCards cards={1} />
+          ) : journals.length === 0 ? (
+            <EmptyState
+              icon={Archive}
+              title={t("reports.journals.empty")}
+              description={t("reports.journals.emptyDesc")}
+            />
+          ) : (
+            <div className="max-h-96 overflow-y-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="pl-0">{t("reports.journals.monthCol")}</TableHead>
+                    <TableHead className="text-right">{t("reports.sales")}</TableHead>
+                    <TableHead className="text-right">{t("reports.revenue")}</TableHead>
+                    <TableHead className="hidden text-right md:table-cell">{t("reports.avgTicket")}</TableHead>
+                    <TableHead className="hidden text-right md:table-cell">{t("reports.overview.loginsTitle")}</TableHead>
+                    <TableHead className="hidden text-right lg:table-cell">{t("reports.overview.dataVolume")}</TableHead>
+                    <TableHead className="hidden text-right md:table-cell">{t("reports.journals.coverageCol")}</TableHead>
+                    <TableHead className="pr-0 text-right">{t("reports.journals.closeCol")}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {journals.map((j) => (
+                    <TableRow key={j.id}>
+                      <TableCell className="pl-0 font-medium">
+                        <span className="capitalize">{monthLabel(j.month, lang)}</span>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        <span className="font-medium">{new Intl.NumberFormat(localeOf(lang)).format(j.sales)}</span>
+                        <span className="block text-xs text-muted-foreground">
+                          {tf("reports.journals.channelSplit", { d: j.directSales, r: j.resellerSales })}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatCurrency(j.revenue, currency, lang)}
+                      </TableCell>
+                      <TableCell className="hidden text-right tabular-nums md:table-cell">
+                        {formatCurrency(j.avgTicket, currency, lang)}
+                      </TableCell>
+                      <TableCell className="hidden text-right tabular-nums md:table-cell">
+                        {new Intl.NumberFormat(localeOf(lang)).format(j.logins)}
+                      </TableCell>
+                      <TableCell className="hidden text-right tabular-nums lg:table-cell">
+                        {formatBytes(j.dataIn + j.dataOut, lang)}
+                      </TableCell>
+                      <TableCell className="hidden text-right md:table-cell">
+                        <span className="tabular-nums text-muted-foreground">
+                          {tf("reports.journals.daysCovered", { n: j.days })}
+                        </span>
+                        {j.partial && (
+                          <Badge variant="outline" className="ml-1.5 border-amber-500/30 bg-amber-500/10 px-1.5 py-0 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+                            {t("reports.journals.partialBadge")}
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell className="pr-0 text-right">
+                        <Badge
+                          variant="outline"
+                          className={
+                            j.source === "manual"
+                              ? "border-primary/30 bg-primary/10 px-1.5 py-0 text-[10px] font-medium text-primary"
+                              : "border-border bg-muted px-1.5 py-0 text-[10px] font-medium text-muted-foreground"
+                          }
+                        >
+                          {j.source === "manual" ? t("reports.journals.sourceManual") : t("reports.journals.sourceAuto")}
+                        </Badge>
+                        <span className="block text-xs text-muted-foreground">
+                          {tf("reports.journals.closedOn", { date: formatDateTime(j.closedAt, lang) })}
+                        </span>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Vue Rapports — onglets Comptabilité / Activité / Marge.
 // ---------------------------------------------------------------------------
 
 export default function ReportsView() {
   const { t } = useI18n();
-  const [tab, setTab] = useState<"accounting" | "activity" | "margin">("accounting");
+  const [tab, setTab] = useState<"accounting" | "activity" | "margin" | "archives">("accounting");
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -1405,11 +1681,12 @@ export default function ReportsView() {
         title={t("reports.title")}
         description={t("reports.description")}
         actions={
-          <Tabs value={tab} onValueChange={(value) => setTab(value as "accounting" | "activity" | "margin")}>
+          <Tabs value={tab} onValueChange={(value) => setTab(value as "accounting" | "activity" | "margin" | "archives")}>
             <TabsList>
               <TabsTrigger value="accounting">{t("reports.tabAccounting")}</TabsTrigger>
               <TabsTrigger value="activity">{t("reports.tabActivity")}</TabsTrigger>
               <TabsTrigger value="margin">{t("reports.tabMargin")}</TabsTrigger>
+              <TabsTrigger value="archives">{t("reports.tabArchives")}</TabsTrigger>
             </TabsList>
           </Tabs>
         }
@@ -1423,8 +1700,10 @@ export default function ReportsView() {
         <AccountingTab visible={tab === "accounting"} />
       ) : tab === "activity" ? (
         <ActivityTab visible={tab === "activity"} />
-      ) : (
+      ) : tab === "margin" ? (
         <MarginTab visible={tab === "margin"} />
+      ) : (
+        <ArchivesTab visible={tab === "archives"} />
       )}
     </div>
   );

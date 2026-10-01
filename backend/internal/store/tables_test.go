@@ -59,11 +59,11 @@ func TestTableSet(t *testing.T) {
 func TestSyncKnownTablesConcordance(t *testing.T) {
 	db := BuildEmptyState()
 
-	// 1. Le plan de synchro (specs) : 36 tables différentielles, uniques (N°182 : sites)
-	// (N°152 : + announcements ; N°199 : + volume_days).
+	// 1. Le plan de synchro (specs) : 37 tables différentielles, uniques (N°182 : sites)
+	// (N°152 : + announcements ; N°199 : + volume_days ; N°200 : + monthly_journals).
 	steps := syncSteps(db)
-	if len(steps) != 36 {
-		t.Fatalf("36 tables différentielles attendues dans le plan de synchro, obtenues %d", len(steps))
+	if len(steps) != 37 {
+		t.Fatalf("37 tables différentielles attendues dans le plan de synchro, obtenues %d", len(steps))
 	}
 	inPlan := map[string]bool{}
 	for _, st := range steps {

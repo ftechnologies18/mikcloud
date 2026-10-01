@@ -211,6 +211,10 @@ func syncSteps(db *model.DB) []syncStep {
 		{volumeDaySpec.table, func(hashes, pending map[string]map[string]uint64) tableApplier {
 			return diffTable(hashes, pending, volumeDaySpec, db.VolumeDays)
 		}},
+		// N°200 — journaux mensuels gelés (archives comptables).
+		{monthlyJournalSpec.table, func(hashes, pending map[string]map[string]uint64) tableApplier {
+			return diffTable(hashes, pending, monthlyJournalSpec, db.MonthlyJournals)
+		}},
 		{notifSettingsSpec.table, func(hashes, pending map[string]map[string]uint64) tableApplier {
 			notifRows := make([]model.NotificationSettings, 0, len(db.NotifSettings))
 			for _, v := range db.NotifSettings {
@@ -699,6 +703,7 @@ func (p *PG) rebuildHashes(db *model.DB) {
 		trafficSpec.table:             hashRows(db.Traffic, trafficSpec),
 		lineQualitySpec.table:         hashRows(db.LineQuality, lineQualitySpec),
 		volumeDaySpec.table:           hashRows(db.VolumeDays, volumeDaySpec),
+		monthlyJournalSpec.table:      hashRows(db.MonthlyJournals, monthlyJournalSpec),
 		notifLogSpec.table:            hashRows(db.NotifLog, notifLogSpec),
 		billingRequestSpec.table:      hashRows(db.BillingRequests, billingRequestSpec),
 		purgeTombstoneSpec.table:      hashRows(db.PurgeTombstones, purgeTombstoneSpec),

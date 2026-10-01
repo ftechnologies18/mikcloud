@@ -37,6 +37,12 @@ type DB struct {
 	// « Volume de données » de l'aperçu de période. Rétention 730 jours
 	// (PruneVolumeDays). Cf. volumeday.go.
 	VolumeDays []VolumeDay `json:"volumeDays"`
+	// N°200 — journaux MENSUELS GELÉS (décision D3) : une ligne par compte
+	// et mois calendaire au fuseau du compte, figée au bascule de mois
+	// (auto) ou par le bouton « Clôturer le mois maintenant » (manuel).
+	// AUCUNE rétention — c'est la mémoire comptable définitive du compte.
+	// Cf. monthlyjournal.go.
+	MonthlyJournals []MonthlyJournal `json:"monthlyJournals"`
 	// Tier 1 — notifications multi-canaux.
 	NotifSettings map[string]NotificationSettings `json:"notifSettings"` // accountId → réglages
 	NotifLog      []NotificationLog               `json:"notifLog"`
@@ -332,6 +338,7 @@ func (db *DB) CloneDeep() *DB {
 	clone.Traffic = cloneTrafficRows(db.Traffic)
 	clone.LineQuality = append([]LineQualityDay(nil), db.LineQuality...)
 	clone.VolumeDays = append([]VolumeDay(nil), db.VolumeDays...)
+	clone.MonthlyJournals = append([]MonthlyJournal(nil), db.MonthlyJournals...)
 	clone.NotifLog = append([]NotificationLog(nil), db.NotifLog...)
 	clone.BillingRequests = append([]BillingRequest(nil), db.BillingRequests...)
 	clone.PurgeTombstones = append([]PurgeTombstone(nil), db.PurgeTombstones...)

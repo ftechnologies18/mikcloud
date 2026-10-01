@@ -71,8 +71,16 @@ func (a *API) RunRetentionSweep() {
 	db := a.store.Data()
 	purged := store.Sweep(db, now, nil)
 	a.enforceExpired(db, nil) // même passage commun que les lectures console — Save() complet (passage horaire)
+	// N°200 — GEL AUTOMATIQUE des journaux mensuels au bascule de mois
+	// (décision D3) : les sources vivantes étant purgées par la rétention,
+	// attendre une visite console perdrait des données — un compte dormant,
+	// jamais consulté, est couvert aussi (même argument que N°64).
+	journals := a.ensureMonthlyJournals(db, now)
 	a.store.Save()
 	if purged > 0 {
 		log.Printf("rétention (30/60/90 j par compte) : %d entrée(s) du journal utilisateurs purgée(s)", purged)
+	}
+	if journals > 0 {
+		log.Printf("journaux mensuels : %d clôture(s) automatique(s) au bascule de mois", journals)
 	}
 }

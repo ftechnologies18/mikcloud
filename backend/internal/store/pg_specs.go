@@ -774,6 +774,35 @@ var volumeDaySpec = entitySpec[model.VolumeDay]{
 	hashOf: hashEntity[model.VolumeDay],
 }
 
+// monthlyJournalSpec — N°200 — journaux MENSUELS GELÉS du compte : une ligne
+// par (compte, mois calendaire au fuseau du compte), immuable une fois
+// écrite. id DÉTERMINISTE « mj-<compte>:<YYYY-MM> » (clé naturelle : un mois
+// n'est JAMAIS journalisé deux fois — la clé garantit l'upsert, jamais de
+// doublon qui doublerait les archives).
+var monthlyJournalSpec = entitySpec[model.MonthlyJournal]{
+	table: "monthly_journals",
+	cols: []string{"id", "account_id", "month", "period_start", "period_end", "days", "partial", "source",
+		"sales", "revenue", "avg_ticket", "logins", "data_in", "data_out",
+		"direct_sales", "direct_revenue", "reseller_sales", "reseller_revenue",
+		"currency", "timezone", "closed_at"},
+	idOf: func(x *model.MonthlyJournal) string { return x.ID },
+	scan: func(r *sql.Rows) (model.MonthlyJournal, error) {
+		var x model.MonthlyJournal
+		err := r.Scan(&x.ID, &x.AccountID, &x.Month, &x.PeriodStart, &x.PeriodEnd, &x.Days, &x.Partial, &x.Source,
+			&x.Sales, &x.Revenue, &x.AvgTicket, &x.Logins, &x.DataIn, &x.DataOut,
+			&x.DirectSales, &x.DirectRevenue, &x.ResellerSales, &x.ResellerRevenue,
+			&x.Currency, &x.Timezone, &x.ClosedAt)
+		return x, err
+	},
+	args: func(x *model.MonthlyJournal) []any {
+		return []any{x.ID, x.AccountID, x.Month, x.PeriodStart, x.PeriodEnd, x.Days, x.Partial, x.Source,
+			x.Sales, x.Revenue, x.AvgTicket, x.Logins, x.DataIn, x.DataOut,
+			x.DirectSales, x.DirectRevenue, x.ResellerSales, x.ResellerRevenue,
+			x.Currency, x.Timezone, x.ClosedAt}
+	},
+	hashOf: hashEntity[model.MonthlyJournal],
+}
+
 // notifSettingsSpec — réglages de notification par compte. id = account_id.
 // stock_alert_state est sérialisé en JSON dans une colonne TEXT (” = nil).
 

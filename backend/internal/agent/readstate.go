@@ -191,6 +191,13 @@ func (b Builder) buildWatcherEnsure(cmd model.Command) string {
 // atterrit dans le résultat de la commande (télémétrie queryable à distance) ;
 // la décision de bridage v3 ne DÉPEND PAS de la sonde (elle prend le MAX des
 // deux sources — dégradation gracieuse, jamais un échec).
+//
+// N°197 — la ligne session porte désormais la MAC en 6e champ
+// (« user|ip|uptime|bytes-in|bytes-out|mac-address ») : la carte « détails
+// de connexion » de la vue Sessions affiche l'adresse de l'appareil ET sa
+// marque probable (préfixe OUI IEEE) même en mode agent. Le parseur cloud
+// reste tolérant (champ absent = routeur exécutant un script antérieur :
+// MAC vide, comportement historique).
 func (b Builder) buildReadState(cmd model.Command) string {
 	start := int(plInt64(cmd.Payload, "start"))
 	count := int(plInt64(cmd.Payload, "count"))
@@ -238,7 +245,7 @@ func (b Builder) buildReadState(cmd model.Command) string {
 :if (@@END@@ >= $mikTotal) do={
   :foreach a in=[/ip hotspot active find] do={
     :if ($rsn < 250) do={
-      :set rsess ($rsess . [:tostr [/ip hotspot active get $a user]] . "|" . [:tostr [/ip hotspot active get $a address]] . "|" . [:tostr [/ip hotspot active get $a uptime]] . "|" . [:tostr [/ip hotspot active get $a bytes-in]] . "|" . [:tostr [/ip hotspot active get $a bytes-out]] . ";")
+      :set rsess ($rsess . [:tostr [/ip hotspot active get $a user]] . "|" . [:tostr [/ip hotspot active get $a address]] . "|" . [:tostr [/ip hotspot active get $a uptime]] . "|" . [:tostr [/ip hotspot active get $a bytes-in]] . "|" . [:tostr [/ip hotspot active get $a bytes-out]] . "|" . [:tostr [/ip hotspot active get $a mac-address]] . ";")
       :set rsn ($rsn + 1)
     }
   }

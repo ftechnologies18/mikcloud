@@ -375,7 +375,10 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 	// sans retrouvabilité — les écritures n'étant jamais rejouées).
 	a.queueMissingRepair(db, router, now, tomb)
 
-	// Sessions actives : "user|ip|uptime|bytes-in|bytes-out;…" (script v3).
+	// Sessions actives : "user|ip|uptime|bytes-in|bytes-out|mac;…" (N°197 —
+	// le 6e champ mac-address arrive avec les scripts redéployés ; les
+	// rapports des routeurs encore sur un script antérieur n'en portent
+	// pas : MAC vide, comportement historique).
 	// N°76 — la liste n'est rapportée que par le chunk final et reste
 	// bornée à 250 : au-delà (stotal > 250), le diff fabrique des logouts
 	// en cascade — l'état précédent est conservé en l'état (compteur
@@ -445,9 +448,15 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 			s.BytesIn = parseInt64(e[3])
 		}
 		if len(e) > 4 {
-
 			s.BytesOut = parseInt64(e[4])
-
+		}
+		// N°197 — MAC de la session (6e champ du rapport) : normalisée
+		// AA:BB:CC:DD:EE:FF pour la persistance ET le journal — les
+		// logins/logout détectés par diff (logRouterUserEvent) portent
+		// désormais l'adresse de l'appareil en mode agent, dont vit la
+		// carte « détails de connexion » (marque OUI IEEE comprise).
+		if len(e) > 5 {
+			s.MAC = model.NormalizeMAC(e[5])
 		}
 
 		// N°106 — session bridée : la file mikthrottle-<user> existe sur le

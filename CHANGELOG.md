@@ -5,6 +5,156 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-01 — N°197 — Carte « Détails de connexion » sur /app/sessions : bouton d'action par ligne — dernière connexion, total consommé par le ticket/utilisateur, MAC de l'appareil et MARQUE PROBABLE (OUI IEEE)
+
+### Contexte
+Demande opérateur : « au niveau de /app/sessions, bouton d'action permet au
+gérant/propriétaire de voir les détails de connexion du voucher ou de
+l'utilisateur carte : une carte qui affiche par exemple sa dernière
+connexion, le total des données consommées par le ticket ou l'utilisateur,
+l'adresse MAC si possible, le nom/marque de l'appareil si possible ». La vue
+Sessions n'offrait qu'UN geste par ligne (le kick) ; les informations
+existaient DISPERSÉES (cumuls dans HotspotUser, historique dans user_logs,
+MAC sur les sessions des routeurs réels seulement) — rien d'exploitable
+d'un clic pour le gérant qui veut savoir QUI est connecté, sur QUEL appareil
+et COMBIEN ce ticket a consommé.
+
+### Produit
+- **Bouton œil par ligne** (avant le kick — l'information avant l'action
+  destructive), carte Dialog sur le pattern de user-profile-dialog :
+  en-tête identité (username + badge Ticket/carte ou Utilisateur + statut
+  résolu En ligne/Utilisé/… + badge Bridé), sections délimitées par
+  Separator, journal borné défilable, fermeture Échap, footer fraîcheur.
+- **Sections de la carte** :
+  - *Connexion en cours* — routeur, IP, MAC, **appareil (marque
+    probable)**, connecté depuis, connecté à, trafic ↓/↑ de la session ;
+  - *Consommation du ticket* — total consommé toutes sessions (miroir
+    cloud du limit-bytes-total : BytesIn/Out cumulés par deltas read_state),
+    quota data + restant, temps utilisé / limite de temps, expiration ;
+  - *Historique (F3)* — dernière connexion (date + « il y a »), compteur
+    connexions 30 jours, 10 derniers événements login/logout/expire/kick
+    (badges colorés du Journal, routeur + IP + âge) ;
+  - *Vente* (ticket de revendeur) — revendeur, remise au client, canal
+    (Mode Vente / vente auto à la connexion / comptoir), prix.
+- **Backend — GET /api/users/{id}/connection-detail?routerId=…**
+  (requireRole 2 : gérant/propriétaire, miroir /api/user-logs) : agrégat
+  en UN appel — user (statut RÉSOLU sessions live comprises, mot de passe
+  JAMAIS servi), sessions actives (store + interrogation des routeurs
+  réels, hors verrou — miroir handleSessionsList), dernière connexion
+  (session > dernier log login > première utilisation), compteur 30 j,
+  10 logs, meilleure MAC (session live > dernier log porteur), marque.
+  Lecture PURE : aucun Tick (l'état servi est exactement celui du dernier
+  poll de la vue — un GET ne mute rien).
+- **Résolution {id} = ID OU username** : les sessions des routeurs réels
+  portent un userId vide quand l'utilisateur a été créé directement dans
+  Winbox — la résolution par nom couvre ce cas (user servi null, la carte
+  affiche connexion + journal SANS section ticket, avec une note honnête).
+  Le hint routerId (la ligne cliquée) départage les homonymes d'un même
+  compte ; les sessions/logs au userId vide ne se rattachent par nom QU'AU
+  routeur de portée (le homonyme d'un autre point d'accès reste au sien).
+- **Marque probable = OUI IEEE, 100 % local** : table générée
+  oui_vendors.go (9 331 préfixes — MA-L 24 bits, MA-M 28 bits, MA-S 36
+  bits — registres publics standards-oui.ieee.org du 2026-10-01) filtrée
+  aux fabricants PERTINENTS pour la console (mobiles et ordinateurs des
+  clients, box/routeurs du parc — focus Afrique de l'Ouest : Tecno,
+  Infinix, itel, Samsung, Xiaomi, Huawei, Apple, OPPO, vivo, Nokia…).
+  Lookup par longueur décroissante (préfixe le plus spécifique gagne),
+  séparateurs tolérés ; préfixe inconnu = « — » (jamais une déduction
+  risquée), l'UI libelle « marque probable » (carte réseau remplacée,
+  virtualisation, préfixe revendu). AUCUN appel réseau : la MAC d'un client
+  ne quitte jamais le cloud (confidentialité par conception).
+- **MAC en mode agent (fin d'une lacune)** : le script read_state rapporte
+  désormais la ligne session à 6 champs
+  (« user|ip|uptime|bytes-in|bytes-out|mac-address ») — sessions ET logs
+  login/logout (diff F3) portent l'adresse de l'appareil même sans
+  passerelle directe. Rétrocompatible : les routeurs exécutant un script
+  antérieur ne rapportent pas le champ (parsing tolérant, MAC vide =
+  comportement historique) ; aucune migration (colonnes mac déjà présentes
+  dans sessions et user_logs), aucun re-déploiement forcé (les scripts
+  agent sont générés à la volée par le Builder à chaque commande).
+- **Frontend** : composant session-detail-dialog.tsx (Dialog + InfoRow du
+  pattern profil, useQuery enabled:open, skeletons, état d'erreur avec
+  Réessayer), bouton Eye + état detailTarget dans sessions-view, i18n FR/EN
+  33 clés nouvelles, types UserConnectionDetail + soldVia/creditSale sur
+  HotspotUser.
+
+### Pièges rencontrés et tranchés
+- **Prix du ticket** : `sellingPrice ?? price` — faux pour 0 : le profil
+  non configuré porte sellingPrice = 0 (non défini), `0 ??` ne retombe PAS
+  sur price et la carte affichait « 0 FCFA ». Sémantique vouchers
+  appliquée : `sellingPrice || price` (0 = hériter).
+- **Sandbox : stack complète en UNE commande** (N°192) : les serveurs
+  détachés survivent entre invocations MAIS le PID capturé après `setsid`
+  est le parent éphémère (kill sans effet → EADDRINUSE au tour suivant) ;
+  et le rebuild .next SOUS un `next start` vivant casse les chunks de
+  l'ancien serveur (N°193) — page chargée sans AUCUN appel API, erreur
+  subtile. Remède : killstack par PORT (ss -tlnp → pid), jamais pkill -f
+  (le motif matche la propre ligne de commande et tue la session bash —
+  piège documenté, re-mordu ici).
+- **Fausses alertes VLM** : sur capture pleine page, le fond assombri
+  derrière l'overlay du Dialog est lu comme « chevauchement massif ». Tranché
+  par GÉOMÉTRIE DOM (aucun enfant du dialog hors de son rectangle, desktop
+  ET mobile) + captures ÉLÉMENT seules — QA finale 4/4 + 4/4.
+- **Espaces dans les ids de routeur de test** : l'id semé « r-portal-PA
+  Yopougon » passe tel quel dans l'URL de requête → espace brut dans la
+  requête HTTP → 400 texte brut du serveur (pas JSON). Noms de routeurs de
+  test sans espaces.
+- **Garde anti-abus multi-comptes** : deux registerAccount successifs
+  partageaient le même téléphone → 409 « Un compte existe déjà avec ce
+  numéro WhatsApp » — inscription directe du compte B avec téléphone
+  distinct (miroir handlers_sites_test).
+- **Requête réseau au 2ᵉ ouvert** : React Query sert le CACHE (staleTime)
+  — l'attente d'un 2ᵉ GET était une hypothèse de test fausse ; l'assertion
+  passe au PREMIER clic (et le log backend confirme les 200).
+
+### Vérifications (stack locale : backend Go JSON :4100 + build
+NEXT_PUBLIC_API_BASE + next start :3100, Playwright headless, owner,
+1280×800 + 390×844, session semée DÉTERMINISTE : voucher vendu par
+revendeur, session live MAC Samsung F8:D0:BD:9A:11:22, routeur passé en
+mode agent pour que le Tick de la simulation ne dissolve pas la session)
+
+- Go : gofmt 0, go vet OK, build OK, `go test ./...` 12 paquets OK —
+  dont 8 nouvelles familles N°197 (macVendor MA-L/MA-M/MA-S + inconnus ;
+  read_state 6 champs pose la MAC sur session ET log login, 5 champs =
+  rétrocompatible ; carte complète par ID — mot de passe jamais servi,
+  statut online, agrégat exact ; Winbox-only par username ; homonymes
+  départagés par le hint routeur ; isolation multi-compte 404 ; RBAC
+  revendeur 403 / gérant 200 ; inconnu 404).
+- Frontend : ESLint 0, tsgo 0, build Next.js OK.
+- Navigateur : **28/28 PASS** — ligne semée visible, œil + kick par
+  ligne, appel réseau GET /api/users/{id}/connection-detail (200, prouvé
+  aussi dans le log backend), carte complète (identité, Ticket / carte,
+  En ligne, routeur, IP, MAC, **Samsung**, quota 5 Go, totaux, temps,
+  dernière connexion, compteur 30 j = 2, événements, Awa Koné, Mode
+  Vente, 500 FCFA), journal borné (102 px), Échap referme, ZÉRO erreur
+  console desktop ET mobile, mobile scrollWidth = 390 (aucun
+  débordement), géométrie : 0 enfant du dialog hors cadre.
+- QA visuelle VLM sur captures ÉLÉMENT : desktop 4/4 (lignes alignées,
+  Vente complète, badges, aucune coupure) + mobile 4/4 (MAC + Samsung,
+  Vente, largeur tenue).
+
+### Fichiers
+- `backend/internal/api/oui_vendors.go` (NOUVEAU, généré) — 9 331
+  préfixes OUI IEEE → marque (fabricants pertinents console).
+- `backend/internal/api/oui_lookup.go` (NOUVEAU) — macVendor (MA-S →
+  MA-M → MA-L, séparateurs tolérés, inconnu → "").
+- `backend/internal/api/handlers_user_detail.go` (NOUVEAU) — endpoint
+  agrégat + résolution ID/username + rattachement borné par routeur.
+- `backend/internal/api/handlers_user_detail_test.go` (NOUVEAU) — 8
+  familles de tests.
+- `backend/internal/agent/readstate.go` — ligne session à 6 champs (MAC).
+- `backend/internal/api/agent_results.go` — parsing du 6e champ
+  (NormalizeMAC) sur session + logs du diff.
+- `backend/internal/api/routes.go` — route GET /api/users/{id}/
+  connection-detail (requireRole 2).
+- `frontend/src/components/hotspot/parts/session-detail-dialog.tsx`
+  (NOUVEAU) — la carte.
+- `frontend/src/components/hotspot/views/sessions-view.tsx` — bouton œil,
+  état detailTarget, montage du dialog.
+- `frontend/src/lib/hotspot/types.ts` — UserConnectionDetail + soldVia/
+  creditSale sur HotspotUser.
+- `frontend/src/lib/hotspot/i18n-fr/sessions.ts` + `i18n-en/sessions.ts`
+  — 33 clés nouvelles.
 ## 2026-09-29 — N°196 — Sélecteur de mode déplacé AU BOUTON LATÉRAL (clic → menu de choix) — le menu de la carte utilisateur redevient MINIMAL
 
 ### Contexte

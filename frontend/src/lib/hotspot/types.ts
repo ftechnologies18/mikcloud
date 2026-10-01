@@ -601,6 +601,8 @@ export interface HotspotUser {
   resellerName: string;
   /** N°23 — ticket remis au client (Mode Vente / auto_connect) : reprise refusée. */
   soldAt?: string;
+  /** N°8 — canal de la remise : "sell_mode" (app revendeur) ou "auto_connect" (le client se connecte — vente auto). */
+  soldVia?: string;
   comment: string;
   bytesIn: number;
   bytesOut: number;
@@ -707,6 +709,28 @@ export interface HotspotSession {
   bytesOut: number;
   /** N°106 : une file mikthrottle-<user> existe sur le routeur (mode bridage — quota data épuisé, débit réduit). */
   throttled?: boolean;
+}
+
+/**
+ * N°197 — réponse de GET /api/users/{id}/connection-detail : agrégat serveur de
+ * la carte « détails de connexion » (vue Sessions). `user` est null pour un
+ * utilisateur créé directement dans Winbox (hors registre cloud) — la carte
+ * reste honnête : connexion + journal sans section ticket.
+ */
+export interface UserConnectionDetail {
+  user: HotspotUser | null;
+  /** Sessions actives à l'instant (miroir de GET /api/sessions). */
+  liveSessions: HotspotSession[];
+  /** Dernière connexion (session live la plus récente > dernier log login > première utilisation) ; "" = inconnue. */
+  lastLoginAt: string;
+  /** Logins observés sur les 30 derniers jours. */
+  loginCount30d: number;
+  /** 10 derniers événements du journal (récents d'abord). */
+  recentLogs: UserLog[];
+  /** Meilleure MAC connue (session live > dernier log) ; "" si le routeur ne la rapporte pas. */
+  mac: string;
+  /** Marque PROBABLE de l'appareil (préfixe OUI IEEE) ; "" si inconnue. */
+  deviceBrand: string;
 }
 
 /** N°101 — appareil du foyer (bail DHCP, GET /api/devices — console HomeNet).

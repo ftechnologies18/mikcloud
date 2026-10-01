@@ -273,6 +273,11 @@ func (a *API) Handler() http.Handler {
 
 	// Sessions
 	mux.HandleFunc("GET /api/sessions", a.handleSessionsList)
+	// N°197 — carte « détails de connexion » (vue Sessions) : agrégat serveur
+	// derrière le bouton d'action par ligne — dernière connexion, cumul data
+	// du ticket/utilisateur, MAC et marque probable de l'appareil (OUI IEEE),
+	// journal récent, traçabilité de vente. Geste de gérant/propriétaire.
+	mux.HandleFunc("GET /api/users/{id}/connection-detail", a.requireRole(2, a.handleUserConnectionDetail))
 	// N°101 — Phase 3 HomeNet : le registre des appareils du foyer (bails
 	// DHCP rapportés par l'agent + noms affectés + pause dîner). Famille
 	// RÉSERVÉE aux comptes homenet (404 pour un compte hotspot — miroir des

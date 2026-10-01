@@ -20,6 +20,7 @@ import {
   ArrowUpCircle,
   ChevronLeft,
   ChevronRight,
+  Eye,
   LogOut,
   Radio,
   Search,
@@ -42,6 +43,8 @@ import { LoadingRows } from "@/components/hotspot/loading";
 import { PageHeader } from "@/components/hotspot/page-header";
 import { RouterScopeRail } from "@/components/hotspot/parts/router-scope";
 import { PageSizeSelect, usePageSize } from "@/components/hotspot/parts/page-size-select";
+// N°197 — carte « détails de connexion » (bouton d'action par ligne).
+import { SessionDetailDialog } from "@/components/hotspot/parts/session-detail-dialog";
 import { StatCard } from "@/components/hotspot/stat-card";
 import {
   AlertDialog,
@@ -86,6 +89,8 @@ export default function SessionsView() {
   const [refreshMs, setRefreshMs] = useState(5000);
   const [now, setNow] = useState(() => Date.now());
   const [kickTarget, setKickTarget] = useState<HotspotSession | null>(null);
+  // N°197 — ligne dont la carte « détails de connexion » est ouverte.
+  const [detailTarget, setDetailTarget] = useState<HotspotSession | null>(null);
 
   // N°193 — pagination côté client (fenêtre sur filteredSessions) :
   // densité mémorisée par vue, comme toutes les tables de la console.
@@ -422,16 +427,33 @@ export default function SessionsView() {
                         </div>
                       </TableCell>
                       <TableCell className="pr-4 text-right sm:pr-6">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="size-10 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                          onClick={() => setKickTarget(session)}
-                          aria-label={tf("sessions.kickAria", { name: session.username })}
-                          title={t("sessions.kick")}
-                        >
-                          <LogOut className="size-4" />
-                        </Button>
+                        {/* N°197 — Détails de connexion (gérant/propriétaire) puis
+                            kick : l'œil AVANT l'action destructive, ordre de
+                            lecture naturel. Le serveur impose rang 2
+                            (requireRole) — tout rôle console voit la vue
+                            Sessions, la carte reste un geste d'équipe. */}
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-10"
+                            onClick={() => setDetailTarget(session)}
+                            aria-label={tf("sessions.detailAria", { name: session.username })}
+                            title={t("sessions.detail")}
+                          >
+                            <Eye className="size-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-10 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                            onClick={() => setKickTarget(session)}
+                            aria-label={tf("sessions.kickAria", { name: session.username })}
+                            title={t("sessions.kick")}
+                          >
+                            <LogOut className="size-4" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </motion.tr>
                   ))}
@@ -500,6 +522,11 @@ export default function SessionsView() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* N°197 — carte « détails de connexion » de la ligne cliquée : dernière
+          connexion, total consommé par le ticket/utilisateur, MAC et marque
+          probable de l'appareil, historique récent, traçabilité de vente. */}
+      <SessionDetailDialog session={detailTarget} onOpenChange={(open) => !open && setDetailTarget(null)} />
     </div>
   );
 }

@@ -36,6 +36,113 @@ geste d'exposition compromettait les deux).
 ### Fichiers
 - docs/RUNBOOK-SECRETS.md (§2.8), CHANGELOG.md.
 
+## 2026-10-02 — N°203 — Rapports : GRAPHES DE TENDANCE de la série intrapériode + VOLUME DANS LES BUCKETS — 4ᵉ et dernière étape (P4, UX finale) de la refonte validée sur l'audit « les données ne reflètent pas la réalité »
+
+### Contexte
+Fermeture de la refonte des rapports (N°198 périodes calendaires → N°199
+accumulateur `volume_days` → N°200 journaux mensuels gelés → N°203 UX
+finale). Constat de fin de parcours : la SÉRIE INTRAPÉRIODE servie par
+`GET /api/stats/overview` depuis N°198 (buckets à l'échelle de la période :
+heures pour le jour, jours pour la semaine et le mois, mois pour l'année)
+n'était JAMAIS AFFICHÉE — l'aperçu ne montrait que les cinq cartes KPI, la
+série partait à la poubelle côté client. Et elle ne portait PAS le volume :
+`overviewPoint` = Label/Revenue/Sales/Logins, alors que la table
+`volume_days` (N°199) détient l'histogramme horaire « h0,…,h23 » de chaque
+jour — exactement la granularité qu'il faut pour remplir les buckets.
+Décision D4 tenue : les vues glissantes historiques restent en graphes
+secondaires (onglets Comptabilité/Activité) ; les graphes de tendance
+s'installent dans l'APERÇU, sous les KPI, liés au sélecteur de période et
+au filtre site déjà partagés.
+
+### Produit
+- **« Évolution de la période »** — ComposedChart sous les KPI de l'aperçu :
+  barres de CA (axe gauche, devise compacte) + courbe de connexions (axe
+  droit), un bucket par heure (Aujourd'hui), jour (Semaine/Mois) ou mois
+  (Année) ; infobulle complète CA + ventes + connexions du bucket ; la
+  description annonce l'unité (« par heure », « par jour », « par mois »)
+  et l'honnêteté du dernier point (« dernier point en cours » — bucket
+  partiel, période en cours, jamais un axe qui prétend être complet).
+- **« Volume de données »** — le volume entre dans les buckets : barres du
+  trafic servi par bucket (même échelle que la série), axe Y formaté
+  `formatBytes` (binaire 1024 — la même base que le KPI et les journaux
+  mensuels), infobulle par bucket. L'année montre les TROUS honnêtes
+  (décision D2 : janvier-septembre à zéro pour un compte dont l'accumulateur
+  a démarré en octobre — jamais de rétrofabrication).
+- **Période sans activité → pas de graphes** : la grille de tendance ne
+  s'affiche que si au moins un bucket porte quelque chose (CA, vente,
+  connexion ou volume) — les cinq KPI disent déjà zéro honnêtement, pas de
+  bruit visuel inventé.
+- Cohérence structurelle affichée : Σ des buckets de volume = KPI
+  `dataBytes` (garantie par construction — l'histogramme et les totaux de
+  la ligne sont versés ENSEMBLE par `AccumulateVolumeDay`).
+
+### Technique
+- `overviewPoint` gagne `DataBytes int64` ; `fillOverviewSeriesVolume`
+  verse chaque ligne `volume_days` de la fenêtre courante dans les buckets
+  à l'échelle de la période : heures (histogramme « h0,…,h23 » de la ligne
+  du jour, multi-routeurs sommés) pour le jour, clé de jour calendaire pour
+  la semaine et le mois, préfixe « YYYY-MM » pour l'année. Les heures
+  au-delà de l'heure en cours (impossibles par construction, défensives
+  après un changement de fuseau) restent hors série.
+- `model.VolumeHoursCounts` : lecture publique de l'histogramme (24
+  compteurs, parse tolérant existant).
+- Frontend : `PeriodOverview` rend la carte KPI + la grille des deux
+  graphes (1 colonne mobile, 2 colonnes ≥ lg) ; tooltips personnalisés
+  `OverviewActivityTooltip` / `OverviewVolumeTooltip` ; types
+  `StatsOverview.series[].dataBytes` ; i18n FR/EN 7 clés
+  (tendance, volume, unités, dernier point partiel).
+
+### Vérifié
+- gofmt 0 / go vet / build OK ; `go test ./...` 12 paquets OK dont 3
+  NOUVELLES familles (`TestOverviewSeriesVolumeDayHourly` : buckets
+  horaires multi-routeurs, Σ série = KPI, filtre site, autre compte exclu ;
+  `TestOverviewSeriesVolumeWeekBuckets` : buckets journaliers lundi →
+  aujourd'hui, fusion lundi = aujourd'hui en début de semaine, semaine
+  précédente JAMAIS dans la série ; `TestOverviewSeriesVolumeMonthYearBuckets`
+  : mois 1ᵉʳ → aujourd'hui et année janvier → mois en cours SUR COMPTES
+  DISTINCTS — le mois précédent est dans l'année courante et ne doit pas
+  polluer la fenêtre année du même compte). Déterminisme relatif à
+  l'instant d'exécution (heure en cours, lundi en cours, 1ᵉʳ du mois,
+  1ᵉʳ janvier) — assertions valables un lundi, un 1ᵉʳ ou un 1ᵉʳ janvier.
+- ESLint 0, tsgo 0, `next build` OK.
+- Navigateur stack locale (backend Go JSON :4100 + `next start` :3100,
+  Playwright, semis DÉTERMINISTES db.json — 2 routeurs mode real, volume
+  ligne par jour de la semaine + histogramme du jour + semaine précédente
+  5,0 Go pour la base Δ, 5 vouchers directs écoulés, 7 logins) :
+  **41/41 PASS** — vérité API (Σ série = KPI sur les 4 périodes + filtres
+  site) ; jour « 1,5 Go » 1 barre + infobulle « 00h · 1,5 Go » ; semaine
+  « 8,0 Go » 5 barres + badge Δ « ▲ 60,0 % » + infobulle « ven. 1,5 Go » +
+  infobulle activité « 700 XOF + 1 connexion » ; mois « 3,9 Go » 2 barres ;
+  année « 13,0 Go » 2 barres non nulles (sept./oct., trous honnêtes) ;
+  filtre Site Cocody « 512 Mo » 1 barre ; jour + Cocody sans activité →
+  graphes MASQUÉS ; Site Ébrié « 7,5 Go » ; onglets Comptabilité/Archives
+  intacts ; mobile 390 px scrollWidth=390, graphes empilés 1 colonne ;
+  ZÉRO erreur console desktop ET mobile.
+- QA visuelle VLM 4 captures : mobile + graphe tendance + graphe volume =
+  « AUCUN DÉFAUT » ; capture desktop pleine page : 2 alertes (« badge 60,0 %
+  chevauche l'icône », « "vs semaine dernière" tronqué ») tranchées FAUX
+  POSITIFS par géométrie DOM — badge right 852 vs icône left 869 (17 px
+  d'écart, aucune intersection réelle), description scrollWidth =
+  clientWidth = 385 (aucune troncature).
+- Pièges consignés : les `StatCard` portent AUSSI `data-slot="card"` (les
+  cartes graphes ne sont PAS aux indices 1/2 du DOM — ancres textuelles
+  uniques obligatoires) ; l'animation recharts anime les barres en scaleY
+  (mesure pendant l'animation = hauteur ~0 — stabiliser ~2 s) ; le path de
+  la courbe de connexions traverse tout le graphe (filtrer par largeur
+  pour ne compter que les barres) ; un infobulle survolée SOUS LE PLI ne
+  s'ouvre jamais (scrollIntoViewIfNeeded avant mouse.move) ; lire
+  l'infobulle BORNÉE à son wrapper recharts (le KPI affiche la même valeur
+  que le bucket).
+
+### Fichiers
+- backend : `handlers_overview.go` (série + volume par bucket),
+  `model/volumeday.go` (VolumeHoursCounts),
+  `handlers_overview_series_test.go` (NOUVEAU — 3 familles).
+- frontend : `reports-view.tsx` (graphes de tendance de l'aperçu),
+  `types.ts`, i18n FR/EN.
+- Aucune migration, aucune table : la série est calculée sur les sources
+  existantes (volume_days N°199) — déploiement continu sans étape.
+
 ## 2026-10-01 — N°201 — Correctif durable QoS : le parent-queue est résolu PAR ROUTEUR — fin de l'incident dormant Zikisso (profil tué sur une box dont le QoS est désactivé)
 
 ### Contexte

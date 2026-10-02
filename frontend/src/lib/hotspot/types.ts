@@ -1051,8 +1051,11 @@ export interface StatsOverview {
     dataBytesPrev: number;
   };
   /** Série intrapériode — échelle adaptée (heures/jours/mois), dernier
-   *  bucket partiel. Servie pour les graphes à venir (N°201). */
-  series: { label: string; revenue: number; sales: number; logins: number }[];
+   *  bucket partiel. N°203 (P4) : chaque bucket porte aussi le VOLUME
+   *  servi (dataBytes, agrégats journaliers N°199 — heure locale pour le
+   *  jour, jour calendaire pour la semaine et le mois, mois pour l'année)
+   *  et la série alimente les graphes de tendance de l'aperçu. */
+  series: { label: string; revenue: number; sales: number; logins: number; dataBytes: number }[];
   generatedAt: string;
 }
 

@@ -74,6 +74,11 @@ type overviewPoint struct {
 	Revenue int    `json:"revenue"`
 	Sales   int    `json:"sales"`
 	Logins  int    `json:"logins"`
+	// N°203 (P4) — volume servi du bucket (in+out, agrégats journaliers
+	// N°199) : heure locale i pour la période jour, ligne du jour pour la
+	// semaine et le mois, somme mensuelle pour l'année. La cohérence
+	// Σ buckets = KPI dataBytes est garantie par construction.
+	DataBytes int64 `json:"dataBytes"`
 }
 
 // handleStatsOverview — GET /api/stats/overview?period=day|week|month|year
@@ -263,6 +268,9 @@ func (a *API) handleStatsOverview(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case v.Day >= curDayKey && v.Day <= todayKey:
 			kpis.DataBytes += v.BytesIn + v.BytesOut
+			// N°203 — la ligne nourrit AUSSI les buckets de volume de la
+			// série intrapériode (graphes de tendance de l'aperçu).
+			fillOverviewSeriesVolume(series, period, bucketStarts, v)
 		case v.Day >= prevStartKey && v.Day <= prevBoundaryKey:
 			if v.Day == prevBoundaryKey {
 				kpis.DataBytesPrev += model.VolumeHoursSumThrough(v.Hours, nowLocal.Hour())
@@ -287,6 +295,50 @@ func (a *API) handleStatsOverview(w http.ResponseWriter, r *http.Request) {
 		"series":      series,
 		"generatedAt": now.Format(time.RFC3339),
 	})
+}
+
+// fillOverviewSeriesVolume — N°203 (P4, UX finale de la refonte reports) :
+// verse la ligne d'agrégat journalier dans les buckets de VOLUME de la
+// série intrapériode, à l'échelle de la période : heures (histogramme
+// « h0,…,h23 » de la ligne du jour) pour « Aujourd'hui », lignes
+// journalières pour la semaine et le mois, somme mensuelle pour l'année.
+// L'appelant tient le verrou du store et a déjà borné la ligne au compte,
+// au filtre site et à la fenêtre COURANTE — les heures au-delà de l'heure
+// en cours (impossibles par construction, défensives après un changement
+// de fuseau) restent hors série : jamais affichées, jamais inventées.
+func fillOverviewSeriesVolume(series []overviewPoint, period string, bucketStarts []time.Time, v *model.VolumeDay) {
+	switch period {
+	case "day":
+		// Buckets 00 h → heure en cours : le bucket i est l'heure locale i.
+		counts := model.VolumeHoursCounts(v.Hours)
+		for i := range series {
+			if i < len(counts) {
+				series[i].DataBytes += counts[i]
+			}
+		}
+	case "week", "month":
+		// Un bucket par jour calendaire de la période (lundi → aujourd'hui,
+		// 1ᵉʳ → aujourd'hui) — première correspondance suffit.
+		for i, bs := range bucketStarts {
+			if bs.Format("2006-01-02") == v.Day {
+				series[i].DataBytes += v.BytesIn + v.BytesOut
+				return
+			}
+		}
+	case "year":
+		// Un bucket par mois — les clés jour « 2006-01-02 » se préfixent
+		// lexicographiquement (garde sur les formes non canoniques).
+		if len(v.Day) < 7 {
+			return
+		}
+		month := v.Day[:7]
+		for i, bs := range bucketStarts {
+			if bs.Format("2006-01") == month {
+				series[i].DataBytes += v.BytesIn + v.BytesOut
+				return
+			}
+		}
+	}
 }
 
 // revenueEventsForScope — événements de TRÉSORERIE bornés au filtre site,

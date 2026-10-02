@@ -109,6 +109,15 @@ export const enReports: Record<string, string> = {
   "reports.overview.dataVolume": "Data volume",
   "reports.overview.dataSub": "Data served in the period",
 
+  // — N°203 (P4): intraperiod series trend charts —
+  "reports.overview.trendTitle": "Period trend",
+  "reports.overview.trendDesc": "Revenue and connections per {unit}",
+  "reports.overview.volumeTrendDesc": "Data served per {unit}",
+  "reports.overview.lastPartial": "last point in progress",
+  "reports.overview.unitHour": "hour",
+  "reports.overview.unitDay": "day",
+  "reports.overview.unitMonth": "month",
+
   // — N°200: frozen monthly journals (decision D3) —
   "reports.tabArchives": "Archives",
   "reports.journals.title": "Monthly journals",

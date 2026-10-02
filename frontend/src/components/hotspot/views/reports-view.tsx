@@ -120,11 +120,13 @@ const OVERVIEW_PERIODS: { value: OverviewPeriod; labelKey: string }[] = [
   { value: "year", labelKey: "reports.overview.thisYear" },
 ];
 
-const OVERVIEW_META: Record<OverviewPeriod, { windowKey: string; vsKey: string }> = {
-  day: { windowKey: "reports.overview.windowDay", vsKey: "reports.overview.vsDay" },
-  week: { windowKey: "reports.overview.windowWeek", vsKey: "reports.overview.vsWeek" },
-  month: { windowKey: "reports.overview.windowMonth", vsKey: "reports.overview.vsMonth" },
-  year: { windowKey: "reports.overview.windowYear", vsKey: "reports.overview.vsYear" },
+// N°203 — l'unité des buckets de la série intrapériode suit la période :
+// heures pour le jour, jours pour la semaine et le mois, mois pour l'année.
+const OVERVIEW_META: Record<OverviewPeriod, { windowKey: string; vsKey: string; unitKey: string }> = {
+  day: { windowKey: "reports.overview.windowDay", vsKey: "reports.overview.vsDay", unitKey: "reports.overview.unitHour" },
+  week: { windowKey: "reports.overview.windowWeek", vsKey: "reports.overview.vsWeek", unitKey: "reports.overview.unitDay" },
+  month: { windowKey: "reports.overview.windowMonth", vsKey: "reports.overview.vsMonth", unitKey: "reports.overview.unitDay" },
+  year: { windowKey: "reports.overview.windowYear", vsKey: "reports.overview.vsYear", unitKey: "reports.overview.unitMonth" },
 };
 
 // Palette thématée (nuit/jour) injectée dans chaque onglet à graphiques.
@@ -303,9 +305,77 @@ function SiteFilter({
   );
 }
 
+// Tooltip tendance (N°203) : CA + ventes + connexions du bucket survolé.
+function OverviewActivityTooltip({
+  active,
+  payload,
+  label,
+  currency,
+  lang,
+  revenueLabel,
+  salesLabel,
+  loginsLabel,
+}: {
+  active?: boolean;
+  payload?: { payload?: { revenue: number; sales: number; logins: number } }[];
+  label?: string;
+  currency: string;
+  lang: Lang;
+  revenueLabel: string;
+  salesLabel: string;
+  loginsLabel: string;
+}) {
+  if (!active || !payload || payload.length === 0 || !payload[0]?.payload) return null;
+  const point = payload[0].payload;
+  return (
+    <div className="rounded-lg border bg-popover px-3 py-2 text-xs shadow-md">
+      <p className="mb-1.5 font-medium text-foreground">{label}</p>
+      <p className="text-muted-foreground">
+        {revenueLabel}{" "}
+        <span className="font-medium text-foreground">{formatCurrency(point.revenue, currency, lang)}</span>
+      </p>
+      <p className="text-muted-foreground">
+        {salesLabel} <span className="font-medium text-foreground">{point.sales}</span>
+      </p>
+      <p className="text-muted-foreground">
+        {loginsLabel} <span className="font-medium text-foreground">{point.logins}</span>
+      </p>
+    </div>
+  );
+}
+
+// Tooltip volume (N°203) : trafic servi du bucket survolé (formatBytes
+// binaire 1024 — la même base que le KPI et les journaux mensuels).
+function OverviewVolumeTooltip({
+  active,
+  payload,
+  label,
+  lang,
+  volumeLabel,
+}: {
+  active?: boolean;
+  payload?: { payload?: { dataBytes: number } }[];
+  label?: string;
+  lang: Lang;
+  volumeLabel: string;
+}) {
+  if (!active || !payload || payload.length === 0 || !payload[0]?.payload) return null;
+  const point = payload[0].payload;
+  return (
+    <div className="rounded-lg border bg-popover px-3 py-2 text-xs shadow-md">
+      <p className="mb-1.5 font-medium text-foreground">{label}</p>
+      <p className="text-muted-foreground">
+        {volumeLabel} <span className="font-medium text-foreground">{formatBytes(point.dataBytes, lang)}</span>
+      </p>
+    </div>
+  );
+}
+
 function PeriodOverview() {
-  const { t, lang } = useI18n();
+  const { t, tf, lang } = useI18n();
   const currency = useCurrency();
+  const charts = useChartPalette();
+  const AXIS_TICK = { fontSize: 11, fill: charts.axis };
   const [period, setPeriod] = useState<OverviewPeriod>("day");
   const [routerFilter, setRouterFilter] = useState("all");
   const routers = useRoutersList();
@@ -319,86 +389,225 @@ function PeriodOverview() {
 
   const meta = OVERVIEW_META[period];
   const kpis = data?.kpis;
+  // N°203 (P4) — la série intrapériode servie depuis N°198 devient
+  // VISIBLE : graphes de tendance sous les KPI. Aucune activité dans la
+  // période → pas de graphes vides (les cinq KPI disent déjà zéro,
+  // honnêtement — jamais de bruit visuel inventé).
+  const series = data?.series ?? [];
+  const hasActivity = series.some(
+    (pt) => pt.revenue > 0 || pt.sales > 0 || pt.logins > 0 || (pt.dataBytes ?? 0) > 0,
+  );
 
   return (
-    <Card className="gap-4 py-4 sm:py-6">
-      <CardHeader className="px-4 sm:px-6">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0">
-            <CardTitle className="text-base">{t("reports.overview.title")}</CardTitle>
-            <CardDescription>
-              {data ? `${t(meta.windowKey)} · ${t(meta.vsKey)}` : t("reports.overview.desc")}
-            </CardDescription>
+    <div className="space-y-4 sm:space-y-6">
+      <Card className="gap-4 py-4 sm:py-6">
+        <CardHeader className="px-4 sm:px-6">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <CardTitle className="text-base">{t("reports.overview.title")}</CardTitle>
+              <CardDescription>
+                {data ? `${t(meta.windowKey)} · ${t(meta.vsKey)}` : t("reports.overview.desc")}
+              </CardDescription>
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <Tabs value={period} onValueChange={(value) => setPeriod(value as OverviewPeriod)}>
+                <TabsList>
+                  {OVERVIEW_PERIODS.map((p) => (
+                    <TabsTrigger key={p.value} value={p.value}>
+                      {t(p.labelKey)}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </Tabs>
+              <SiteFilter value={routerFilter} onChange={setRouterFilter} routers={routers} />
+            </div>
           </div>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <Tabs value={period} onValueChange={(value) => setPeriod(value as OverviewPeriod)}>
-              <TabsList>
-                {OVERVIEW_PERIODS.map((p) => (
-                  <TabsTrigger key={p.value} value={p.value}>
-                    {t(p.labelKey)}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </Tabs>
-            <SiteFilter value={routerFilter} onChange={setRouterFilter} routers={routers} />
-          </div>
+        </CardHeader>
+        <CardContent className="px-4 sm:px-6">
+          {isLoading && !data ? (
+            <LoadingCards cards={5} />
+          ) : !kpis ? null : (
+            /* N°198 — 3+2 sur laptop (les 5 colonnes ne laissaient pas la
+               place du « 5 000 XOF » à côté du badge Δ% et de l'icône :
+               empilement caractère par caractère, constaté au DOM), 5
+               colonnes réservées aux écrans très larges. */
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
+              <StatCard
+                title={t("reports.sales")}
+                value={String(kpis.sales)}
+                sub={t("reports.vouchersSold")}
+                icon={ShoppingCart}
+                trend={deltaTrend(kpis.sales, kpis.salesPrev, lang)}
+              />
+              <StatCard
+                title={t("reports.revenue")}
+                value={formatCurrency(kpis.revenue, currency, lang)}
+                sub={t(meta.windowKey)}
+                icon={Wallet}
+                trend={deltaTrend(kpis.revenue, kpis.revenuePrev, lang)}
+              />
+              <StatCard
+                title={t("reports.avgTicket")}
+                value={formatCurrency(kpis.avgTicket, currency, lang)}
+                sub={t("reports.perVoucher")}
+                icon={TrendingUp}
+                trend={deltaTrend(kpis.avgTicket, kpis.avgTicketPrev, lang)}
+              />
+              <StatCard
+                title={t("reports.overview.loginsTitle")}
+                value={new Intl.NumberFormat(localeOf(lang)).format(kpis.logins)}
+                sub={t("reports.overview.loginsSub")}
+                icon={Users}
+                trend={deltaTrend(kpis.logins, kpis.loginsPrev, lang)}
+              />
+              {/* Volume de données — N°199 : agrégats journaliers persistés
+                  (une ligne par compte, routeur et jour au fuseau du compte),
+                  alimentés en live par les deltas read_state — les sessions
+                  fermées comptent enfin. Le badge Δ% n'apparaît qu'une fois
+                  une base de comparaison réellement observée (dataBytesPrev
+                  > 0 — jamais de comparaison au vide, décision D2). */}
+              <StatCard
+                title={t("reports.overview.dataVolume")}
+                value={formatBytes(kpis.dataBytes, lang)}
+                sub={t("reports.overview.dataSub")}
+                icon={Database}
+                trend={deltaTrend(kpis.dataBytes, kpis.dataBytesPrev, lang)}
+                live
+              />
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* N°203 (P4, UX finale de la refonte reports) — GRAPHES DE TENDANCE
+          de la série intrapériode : la série servie depuis N°198 devient
+          visible, et le VOLUME entre dans les buckets (heure locale pour
+          « Aujourd'hui », jour calendaire pour la semaine et le mois, mois
+          pour l'année — agrégats journaliers N°199, sessions fermées
+          comprises). Le dernier bucket est PARTIEL : période en cours,
+          accumulation live — jamais un axe qui prétend être complet. */}
+      {series.length > 0 && hasActivity && (
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <Card className="gap-4 py-4 sm:py-6">
+            <CardHeader className="px-4 sm:px-6">
+              <CardTitle className="text-base">{t("reports.overview.trendTitle")}</CardTitle>
+              <CardDescription>
+                {tf("reports.overview.trendDesc", { unit: t(meta.unitKey) })} · {t("reports.overview.lastPartial")}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="px-4 sm:px-6">
+              <ResponsiveContainer width="100%" height={260}>
+                <ComposedChart data={series} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
+                  <CartesianGrid stroke={charts.grid} strokeOpacity={0.6} vertical={false} />
+                  <XAxis
+                    dataKey="label"
+                    tick={AXIS_TICK}
+                    axisLine={false}
+                    tickLine={false}
+                    minTickGap={12}
+                  />
+                  <YAxis
+                    yAxisId="revenue"
+                    tick={AXIS_TICK}
+                    axisLine={false}
+                    tickLine={false}
+                    width={48}
+                    tickFormatter={(value: number) =>
+                      new Intl.NumberFormat(localeOf(lang), { notation: "compact", maximumFractionDigits: 1 }).format(value)
+                    }
+                  />
+                  <YAxis
+                    yAxisId="logins"
+                    orientation="right"
+                    tick={AXIS_TICK}
+                    axisLine={false}
+                    tickLine={false}
+                    width={36}
+                    allowDecimals={false}
+                  />
+                  <Tooltip
+                    cursor={{ fill: charts.cursorFill, fillOpacity: 0.06 }}
+                    content={
+                      <OverviewActivityTooltip
+                        currency={currency}
+                        lang={lang}
+                        revenueLabel={t("reports.tooltipRevenue")}
+                        salesLabel={t("reports.tooltipSales")}
+                        loginsLabel={t("reports.overview.loginsTitle")}
+                      />
+                    }
+                  />
+                  <Legend
+                    iconType="circle"
+                    iconSize={8}
+                    formatter={(value) => <span className="text-xs text-muted-foreground">{value}</span>}
+                  />
+                  <Bar
+                    yAxisId="revenue"
+                    dataKey="revenue"
+                    name={t("reports.revenue")}
+                    fill={charts.series[0]}
+                    radius={[3, 3, 0, 0]}
+                    maxBarSize={14}
+                  />
+                  <Line
+                    yAxisId="logins"
+                    dataKey="logins"
+                    name={t("reports.overview.loginsTitle")}
+                    type="monotone"
+                    stroke={charts.series[1]}
+                    strokeWidth={2}
+                    dot={false}
+                    activeDot={{ r: 4 }}
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          <Card className="gap-4 py-4 sm:py-6">
+            <CardHeader className="px-4 sm:px-6">
+              <CardTitle className="text-base">{t("reports.overview.dataVolume")}</CardTitle>
+              <CardDescription>
+                {tf("reports.overview.volumeTrendDesc", { unit: t(meta.unitKey) })} · {t("reports.overview.lastPartial")}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="px-4 sm:px-6">
+              <ResponsiveContainer width="100%" height={260}>
+                <BarChart data={series} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                  <CartesianGrid stroke={charts.grid} strokeOpacity={0.6} vertical={false} />
+                  <XAxis
+                    dataKey="label"
+                    tick={AXIS_TICK}
+                    axisLine={false}
+                    tickLine={false}
+                    minTickGap={12}
+                  />
+                  <YAxis
+                    tick={AXIS_TICK}
+                    axisLine={false}
+                    tickLine={false}
+                    width={56}
+                    tickFormatter={(value: number) => formatBytes(value, lang)}
+                  />
+                  <Tooltip
+                    cursor={{ fill: charts.cursorFill, fillOpacity: 0.06 }}
+                    content={<OverviewVolumeTooltip lang={lang} volumeLabel={t("reports.overview.dataVolume")} />}
+                  />
+                  <Bar
+                    dataKey="dataBytes"
+                    name={t("reports.overview.dataVolume")}
+                    fill={charts.series[2]}
+                    radius={[3, 3, 0, 0]}
+                    maxBarSize={14}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
         </div>
-      </CardHeader>
-      <CardContent className="px-4 sm:px-6">
-        {isLoading && !data ? (
-          <LoadingCards cards={5} />
-        ) : !kpis ? null : (
-          /* N°198 — 3+2 sur laptop (les 5 colonnes ne laissaient pas la
-             place du « 5 000 XOF » à côté du badge Δ% et de l'icône :
-             empilement caractère par caractère, constaté au DOM), 5
-             colonnes réservées aux écrans très larges. */
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
-            <StatCard
-              title={t("reports.sales")}
-              value={String(kpis.sales)}
-              sub={t("reports.vouchersSold")}
-              icon={ShoppingCart}
-              trend={deltaTrend(kpis.sales, kpis.salesPrev, lang)}
-            />
-            <StatCard
-              title={t("reports.revenue")}
-              value={formatCurrency(kpis.revenue, currency, lang)}
-              sub={t(meta.windowKey)}
-              icon={Wallet}
-              trend={deltaTrend(kpis.revenue, kpis.revenuePrev, lang)}
-            />
-            <StatCard
-              title={t("reports.avgTicket")}
-              value={formatCurrency(kpis.avgTicket, currency, lang)}
-              sub={t("reports.perVoucher")}
-              icon={TrendingUp}
-              trend={deltaTrend(kpis.avgTicket, kpis.avgTicketPrev, lang)}
-            />
-            <StatCard
-              title={t("reports.overview.loginsTitle")}
-              value={new Intl.NumberFormat(localeOf(lang)).format(kpis.logins)}
-              sub={t("reports.overview.loginsSub")}
-              icon={Users}
-              trend={deltaTrend(kpis.logins, kpis.loginsPrev, lang)}
-            />
-            {/* Volume de données — N°199 : agrégats journaliers persistés
-                (une ligne par compte, routeur et jour au fuseau du compte),
-                alimentés en live par les deltas read_state — les sessions
-                fermées comptent enfin. Le badge Δ% n'apparaît qu'une fois
-                une base de comparaison réellement observée (dataBytesPrev
-                > 0 — jamais de comparaison au vide, décision D2). */}
-            <StatCard
-              title={t("reports.overview.dataVolume")}
-              value={formatBytes(kpis.dataBytes, lang)}
-              sub={t("reports.overview.dataSub")}
-              icon={Database}
-              trend={deltaTrend(kpis.dataBytes, kpis.dataBytesPrev, lang)}
-              live
-            />
-          </div>
-        )}
-      </CardContent>
-    </Card>
+      )}
+    </div>
   );
 }
 

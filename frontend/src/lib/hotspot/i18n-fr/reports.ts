@@ -109,6 +109,15 @@ export const frReports: Record<string, string> = {
   "reports.overview.dataVolume": "Volume de données",
   "reports.overview.dataSub": "Trafic servi sur la période",
 
+  // — N°203 (P4) : graphes de tendance de la série intrapériode —
+  "reports.overview.trendTitle": "Évolution de la période",
+  "reports.overview.trendDesc": "Chiffre d'affaires et connexions par {unit}",
+  "reports.overview.volumeTrendDesc": "Trafic servi par {unit}",
+  "reports.overview.lastPartial": "dernier point en cours",
+  "reports.overview.unitHour": "heure",
+  "reports.overview.unitDay": "jour",
+  "reports.overview.unitMonth": "mois",
+
   // — N°200 : journaux mensuels gelés (décision D3) —
   "reports.tabArchives": "Archives",
   "reports.journals.title": "Journaux mensuels",

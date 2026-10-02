@@ -125,6 +125,15 @@ func VolumeHoursSumThrough(hist string, uptoHour int) int64 {
 	return sum
 }
 
+// VolumeHoursCounts — lecture publique de l'histogramme « h0,…,h23 » :
+// 24 compteurs in+out par heure locale (forme vide/corrompue : zéros —
+// cf. parseVolumeHours). N°203 : la série intrapériode du jour découpe le
+// volume en seaux HORAIRES côté API — chaque bucket i de la série porte
+// l'heure locale i de la ligne du jour.
+func VolumeHoursCounts(hist string) []int64 {
+	return parseVolumeHours(hist)
+}
+
 // parseVolumeHours — « h0,…,h23 » → compteurs TOUJOURS de longueur 24
 // (forme vide, champs non numériques ou tronqués : 0 — jamais de panique
 // sur une donnée de base).

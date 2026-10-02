@@ -7,6 +7,7 @@ export const frReports: Record<string, string> = {
   // — reports —
   "reports.title": "Rapports",
   "reports.description": "Comptabilité multi-sites et performance réseau",
+  "reports.tabOverview": "Aperçu",
   "reports.tabAccounting": "Comptabilité",
   "reports.tabActivity": "Activité",
   "reports.tabMargin": "Marge",
@@ -141,4 +142,7 @@ export const frReports: Record<string, string> = {
   "reports.journals.empty": "Aucun journal archivé",
   "reports.journals.emptyDesc": "Le journal du mois se gèle automatiquement au bascule du mois prochain — le mois précédent apparaît dès le déploiement.",
   "reports.journals.toastClosed": "Mois clôturé — le journal est gelé",
+  "reports.journals.liveBadge": "En direct",
+  "reports.journals.frozenBadge": "Gelé",
+  "reports.journals.closing": "Clôture…",
 };

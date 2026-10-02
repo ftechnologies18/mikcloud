@@ -1,20 +1,30 @@
 "use client";
 
-// Vue Rapports v2 — Comptabilité multi-sites (ventes par jour/semaine/mois et
-// par routeur) + onglet Activité (performance commerciale et affluence RÉELLE :
-// connexions journalisées — l'ancienne courbe « trafic réseau » était
-// synthétique et a été supprimée) + onglet Marge (F13 : prix de vente vs coût,
-// 30 jours glissants).
+// Vue Rapports v3 (N°204 — refonte totale de l'UX).
 //
-// v2 — KPI enrichis (logique métier mikCloud) :
-//  - Δ% vs période précédente sur chaque KPI (tendance visible d'un coup d'œil) ;
-//  - marge en KPI de l'onglet Comptabilité (déjà calculée côté serveur, jamais affichée) ;
-//  - ventes DIRECTES vs RÉSEAU REVENDEURS (canal de distribution — « qui vend mes tickets ? ») ;
-//  - taux de marge par SITE (multi-sites : quel routeur est le plus rentable ?) ;
-//  - sessions RÉELLES de la fenêtre (comptage + trafic cumulé) ;
-//  - TOP 5 revendeurs par CA (leaderboard du réseau de distribution) ;
-//  - HEURES DE POINTE (CA + connexions par heure, /api/stats/hourly, fuseau du compte) ;
-//  - évolution QUOTIDIENNE de la marge (vert/rouge) + marge par site + part de marge.
+// HISTORIQUE — la v2 a grandi par sédimentation (N°197 → N°203) : un aperçu
+// de période TOUJOURS monté au-dessus des onglets, chaque onglet gardant ses
+// propres cartes KPI et sa propre barre de filtres. Résultat constaté en
+// audit visuel : « Ventes : 3 » (aperçu du jour) puis « Ventes : 25 »
+// (comptabilité 30 j) à l'écran, TROIS barres de filtres différentes
+// empilées, des graphes montrant la même métrique à deux zooms —
+// l'impression d'une ancienne page superposée à la nouvelle.
+//
+// PRINCIPES DE LA REFONTE :
+//  1. UN SEUL ENDROIT PAR QUESTION — l'onglet « Aperçu » (période calendaire
+//     en cours, N°198/N°203) porte LES cartes KPI ; les autres onglets
+//     résument leur fenêtre en une bande compacte (SummaryStrip), jamais en
+//     grosses cartes dupliquées.
+//  2. UNE SEULE GRAMMAIRE DE FILTRES — chaque onglet ouvre sur la MÊME barre
+//     d'outils : sélecteur de période à gauche, filtre site + action à droite.
+//  3. HIÉRARCHIE STABLE — outils → résumé → graphes → détails, dans tous les
+//     onglets ; les grandes cartes KPI n'existent que dans l'Aperçu.
+//
+// DOCTRINES INCHANGÉES : revenus = CONSOMMÉ (tickets écoulés, pas générations
+// de stock) ; périodes calendaires au fuseau du compte + Δ% vs période
+// précédente au même moment (aperçu) ; vues glissantes en onglets (D4) ;
+// volume démarre au déploiement de l'accumulateur, trous honnêtes (D2) ;
+// journaux mensuels gelés (D3, N°200).
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -49,10 +59,26 @@ import {
   Wallet,
   Wifi,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import { api, apiDownload } from "@/lib/hotspot/api";
 import { STALE_TIME } from "@/lib/hotspot/query";
@@ -77,28 +103,16 @@ import { PageHeader } from "@/components/hotspot/page-header";
 import { StatCard } from "@/components/hotspot/stat-card";
 import { ChartTooltip } from "@/components/hotspot/parts/sd-chart-tooltip";
 import { useCurrency } from "@/components/hotspot/parts/sd-currency";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { cn } from "@/lib/utils";
 
+/** Fenêtre glissante de l'onglet Activité. */
 const PERIODS = [
   { value: "7", labelKey: "reports.days7" },
   { value: "14", labelKey: "reports.days14" },
   { value: "30", labelKey: "reports.days30" },
 ];
 
+/** Taille de bucket de la comptabilité (à ne pas confondre avec OverviewPeriod). */
 const ACCOUNTING_PERIODS: {
   value: AccountingPeriod;
   labelKey: string;
@@ -111,8 +125,7 @@ const ACCOUNTING_PERIODS: {
   { value: "month", labelKey: "reports.period.month", windowKey: "reports.window.month", barsKey: "reports.bars.month", unitKey: "reports.unit.month" },
 ];
 
-// N°198 — périodes calendaires de l'aperçu : la période EN COURS au fuseau
-// du compte (à ne pas confondre avec la taille de bucket de la comptabilité).
+/** Période calendaire EN COURS de l'aperçu, au fuseau du compte (N°198). */
 const OVERVIEW_PERIODS: { value: OverviewPeriod; labelKey: string }[] = [
   { value: "day", labelKey: "reports.overview.today" },
   { value: "week", labelKey: "reports.overview.thisWeek" },
@@ -129,7 +142,7 @@ const OVERVIEW_META: Record<OverviewPeriod, { windowKey: string; vsKey: string; 
   year: { windowKey: "reports.overview.windowYear", vsKey: "reports.overview.vsYear", unitKey: "reports.overview.unitMonth" },
 };
 
-// Palette thématée (nuit/jour) injectée dans chaque onglet à graphiques.
+// Palette thématée (nuit/jour) — statuts de vouchers.
 const voucherStatusRows = (p: ChartPalette) => [
   { key: "active", labelKey: "common.statusActive", color: p.series[0] },
   { key: "used", labelKey: "common.statusUsed", color: p.series[2] },
@@ -137,16 +150,20 @@ const voucherStatusRows = (p: ChartPalette) => [
   { key: "disabled", labelKey: "common.statusDisabled", color: p.series[3] },
 ] as const;
 
-/** Couleur des barres de la courbe de marge : vert si positive, rouge sinon. */
+/** Couleur des barres de marge : vert si positive, rouge sinon. */
 const MARGIN_POS = "#10b981";
 const MARGIN_NEG = "#ef4444";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers partagés
+// ─────────────────────────────────────────────────────────────────────────────
 
 /** Pourcentage localisé (12,4 % en FR, 12.4% en EN). */
 function fmtPct(value: number, lang: Lang): string {
   return `${value.toFixed(1).replace(".", lang === "fr" ? "," : ".")}${lang === "fr" ? " " : ""}%`;
 }
 
-/** Δ% vs période précédente → badge de tendance StatCard (rien si pas de base). */
+/** Δ% vs période précédente → pastille de tendance (rien si pas de base). */
 function deltaTrend(
   current: number,
   previous: number | undefined,
@@ -156,6 +173,13 @@ function deltaTrend(
   const pct = ((current - previous) / previous) * 100;
   if (Math.abs(pct) < 0.05) return undefined;
   return { value: fmtPct(Math.abs(pct), lang), up: pct > 0 };
+}
+
+/** Couleur de la marge : verte si positive, rouge si négative, neutre sinon. */
+function cnMargin(margin: number): string {
+  if (margin > 0) return "font-semibold text-emerald-600 dark:text-emerald-400";
+  if (margin < 0) return "font-semibold text-destructive";
+  return "font-semibold text-muted-foreground";
 }
 
 /** Badge de taux de marge : vert positif, rouge négatif, neutre à zéro. */
@@ -176,12 +200,221 @@ function RateBadge({ rate }: { rate: number }) {
   );
 }
 
-/** Couleur de la marge : verte si positive, rouge si négative, neutre sinon. */
-function cnMargin(margin: number): string {
-  if (margin > 0) return "font-semibold text-emerald-600 dark:text-emerald-400";
-  if (margin < 0) return "font-semibold text-destructive";
-  return "font-semibold text-muted-foreground";
+/** Libellé localisé d'une clé « YYYY-MM » (« octobre 2026 »). */
+function monthLabel(month: string, lang: Lang): string {
+  const [y, m] = month.split("-");
+  const d = new Date(Number(y), Number(m) - 1, 1);
+  return new Intl.DateTimeFormat(localeOf(lang), { month: "long", year: "numeric" }).format(d);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Primitives UI de la refonte — UNE grammaire pour les cinq onglets
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Pastille Δ% compacte (bande de résumé). Même code couleur que StatCard. */
+function TrendPill({ trend }: { trend?: { value: string; up: boolean } }) {
+  if (!trend) return null;
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums",
+        trend.up ? "bg-primary/15 text-primary" : "bg-destructive/15 text-destructive",
+      )}
+    >
+      {trend.up ? "▲" : "▼"} {trend.value}
+    </span>
+  );
+}
+
+/** Une statistique de la bande de résumé (SummaryStrip). */
+function SummaryItem({
+  icon: Icon,
+  label,
+  value,
+  valueClassName,
+  trend,
+  sub,
+  live,
+  className,
+}: {
+  icon: LucideIcon;
+  label: string;
+  value: string;
+  valueClassName?: string;
+  trend?: { value: string; up: boolean };
+  sub?: string;
+  live?: boolean;
+  className?: string;
+}) {
+  return (
+    <div className={cn("flex min-w-0 flex-col justify-center px-4 py-4 sm:px-5", className)}>
+      <p className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        <Icon className="size-3.5 shrink-0" aria-hidden />
+        <span className="truncate">{label}</span>
+      </p>
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className={cn("text-lg font-semibold tracking-tight tabular-nums sm:text-xl", valueClassName)}>
+          {value}
+        </span>
+        <TrendPill trend={trend} />
+        {live && (
+          <span className="live-dot size-2 shrink-0 rounded-full bg-primary" aria-hidden />
+        )}
+      </div>
+      {sub && <p className="mt-0.5 truncate text-xs text-muted-foreground">{sub}</p>}
+    </div>
+  );
+}
+
+/** Bande de résumé compacte d'un onglet — remplace les rangées de grosses
+ *  cartes KPI qui dupliquaient l'aperçu (constat central de la refonte) :
+ *  le contexte de fenêtre est porté UNE fois, les valeurs restent
+ *  scannables, jamais de concurrence visuelle avec l'onglet Aperçu. */
+function SummaryStrip({
+  children,
+  className,
+  gridClassName,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  /** Override de la grille (ex. 3 colonnes quand la marge est absente). */
+  gridClassName?: string;
+}) {
+  return (
+    <Card className={cn("gap-0 py-0", className)}>
+      <CardContent className="p-0">
+        <div className={cn("grid grid-cols-2 divide-border/60 lg:grid-cols-4 lg:divide-x", gridClassName)}>
+          {children}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Barre d'outils d'onglet — MÊME structure dans les cinq onglets : période
+ *  à gauche, filtre site + action à droite. Une seule grammaire de filtres
+ *  (l'audit v2 relevait trois barres différentes empilées). */
+function TabToolbar({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      {children}
+    </div>
+  );
+}
+
+/** Carte de graphe unifiée — titre + description + contenu, hauteur
+ *  homogène (les graphes d'une même rangée s'alignent au pixel). */
+function ChartCard({
+  icon: Icon,
+  title,
+  description,
+  children,
+  contentClassName,
+  className,
+}: {
+  icon?: LucideIcon;
+  title: string;
+  description?: React.ReactNode;
+  children: React.ReactNode;
+  contentClassName?: string;
+  className?: string;
+}) {
+  return (
+    <Card className={cn("gap-4 py-4 sm:py-5", className)}>
+      <CardHeader className="px-4 sm:px-6">
+        <CardTitle className="flex items-center gap-2 text-base">
+          {Icon && <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />}
+          {title}
+        </CardTitle>
+        {description && <CardDescription>{description}</CardDescription>}
+      </CardHeader>
+      <CardContent className={cn("px-4 sm:px-6", contentClassName)}>{children}</CardContent>
+    </Card>
+  );
+}
+
+/** Ligne « libellé + valeur + part » avec barre de progression — factorise
+ *  les listes par site / canal / revendeurs / profils / statuts. */
+function ShareRow({
+  icon,
+  label,
+  right,
+  share,
+  color,
+  className,
+}: {
+  icon?: React.ReactNode;
+  label: string;
+  right?: React.ReactNode;
+  /** Part 0-100 (déjà normalisée par l'appelant). */
+  share: number;
+  color?: string;
+  className?: string;
+}) {
+  return (
+    <div className={className}>
+      <div className="flex items-baseline justify-between gap-3 text-sm">
+        <span className="flex min-w-0 items-center gap-2">
+          {icon}
+          <span className="truncate font-medium">{label}</span>
+        </span>
+        {right && <span className="shrink-0 text-xs text-muted-foreground">{right}</span>}
+      </div>
+      <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-muted">
+        <div
+          className={cn("h-full rounded-full transition-all", !color && "bg-primary")}
+          style={{ width: `${Math.max(2, share)}%`, ...(color ? { background: color } : {}) }}
+        />
+      </div>
+    </div>
+  );
+}
+
+/** Liste des sites du compte — partagée par tous les onglets. */
+function useRoutersList() {
+  return useQuery({
+    queryKey: ["/api/routers"],
+    queryFn: () => api<RouterDevice[]>("/api/routers"),
+    // N°130 — état du parc (check-ins agents ~45 s).
+    staleTime: STALE_TIME.operational,
+  }).data;
+}
+
+/** Filtre site — s'applique à l'aperçu, à la comptabilité, à l'activité et
+ *  à la marge (le backend borne ventes, connexions, sessions et analyse). */
+function SiteFilter({
+  value,
+  onChange,
+  routers,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  routers?: RouterDevice[];
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="flex items-center gap-2">
+      <RouterIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger className="h-9 w-full sm:w-52" aria-label={t("reports.filterRouter")}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">{t("common.allSites")}</SelectItem>
+          {routers?.map((router) => (
+            <SelectItem key={router.id} value={router.id}>
+              {router.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tooltips
+// ─────────────────────────────────────────────────────────────────────────────
 
 // Tooltip comptabilité : revenus + ventes du point survolé.
 function AccountingTooltip({
@@ -252,59 +485,6 @@ function PeakHoursTooltip({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Aperçu de période (N°198) — KPI de la période calendaire EN COURS au
-// fuseau du compte (aujourd'hui / semaine / mois / année), Δ% contre la
-// période précédente AU MÊME MOMENT (même durée écoulée). Réponse au
-// constat C1 de l'audit « les données ne reflètent pas la réalité » : le
-// sélecteur historique Jour/Semaine/Mois ne réglait que la TAILLE DES
-// BUCKETS d'un graphe glissant — « aujourd'hui » n'existait nulle part.
-// Les vues glissantes restent en graphes secondaires dans les onglets.
-// ---------------------------------------------------------------------------
-
-/** Liste des sites du compte — partagée par l'aperçu et les onglets. */
-function useRoutersList() {
-  return useQuery({
-    queryKey: ["/api/routers"],
-    queryFn: () => api<RouterDevice[]>("/api/routers"),
-    // N°130 — état du parc (check-ins agents ~45 s).
-    staleTime: STALE_TIME.operational,
-  }).data;
-}
-
-/** Filtre site — N°198 : étendu de la comptabilité à l'aperçu, à l'activité
- *  et à la marge (le backend borne ventes, connexions, sessions, parc et
- *  analyse de marge au site demandé). */
-function SiteFilter({
-  value,
-  onChange,
-  routers,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  routers?: RouterDevice[];
-}) {
-  const { t } = useI18n();
-  return (
-    <div className="flex items-center gap-2">
-      <RouterIcon className="size-4 text-muted-foreground" aria-hidden />
-      <Select value={value} onValueChange={onChange}>
-        <SelectTrigger className="h-10 w-full sm:w-56" aria-label={t("reports.filterRouter")}>
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">{t("common.allSites")}</SelectItem>
-          {routers?.map((router) => (
-            <SelectItem key={router.id} value={router.id}>
-              {router.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
-  );
-}
-
 // Tooltip tendance (N°203) : CA + ventes + connexions du bucket survolé.
 function OverviewActivityTooltip({
   active,
@@ -371,11 +551,29 @@ function OverviewVolumeTooltip({
   );
 }
 
-function PeriodOverview() {
+/** Axe Y devise compacte localisée. */
+function useCompactAxis(lang: Lang) {
+  return useMemo(
+    () =>
+      new Intl.NumberFormat(localeOf(lang), {
+        notation: "compact",
+        maximumFractionDigits: 1,
+      }),
+    [lang],
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Onglet Aperçu — LA période calendaire en cours (N°198/N°203) : les seules
+// grandes cartes KPI du module + les graphes de tendance intrapériode.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function OverviewTab() {
   const { t, tf, lang } = useI18n();
   const currency = useCurrency();
   const charts = useChartPalette();
   const AXIS_TICK = { fontSize: 11, fill: charts.axis };
+  const compact = useCompactAxis(lang);
   const [period, setPeriod] = useState<OverviewPeriod>("day");
   const [routerFilter, setRouterFilter] = useState("all");
   const routers = useRoutersList();
@@ -389,10 +587,8 @@ function PeriodOverview() {
 
   const meta = OVERVIEW_META[period];
   const kpis = data?.kpis;
-  // N°203 (P4) — la série intrapériode servie depuis N°198 devient
-  // VISIBLE : graphes de tendance sous les KPI. Aucune activité dans la
-  // période → pas de graphes vides (les cinq KPI disent déjà zéro,
-  // honnêtement — jamais de bruit visuel inventé).
+  // N°203 — la série intrapériode est VISIBLE : aucun bucket actif → pas de
+  // graphes vides (les KPI disent déjà zéro, honnêtement).
   const series = data?.series ?? [];
   const hasActivity = series.some(
     (pt) => pt.revenue > 0 || pt.sales > 0 || pt.logins > 0 || (pt.dataBytes ?? 0) > 0,
@@ -400,228 +596,203 @@ function PeriodOverview() {
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      <Card className="gap-4 py-4 sm:py-6">
-        <CardHeader className="px-4 sm:px-6">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div className="min-w-0">
-              <CardTitle className="text-base">{t("reports.overview.title")}</CardTitle>
-              <CardDescription>
-                {data ? `${t(meta.windowKey)} · ${t(meta.vsKey)}` : t("reports.overview.desc")}
-              </CardDescription>
-            </div>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <Tabs value={period} onValueChange={(value) => setPeriod(value as OverviewPeriod)}>
-                <TabsList>
-                  {OVERVIEW_PERIODS.map((p) => (
-                    <TabsTrigger key={p.value} value={p.value}>
-                      {t(p.labelKey)}
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
-              </Tabs>
-              <SiteFilter value={routerFilter} onChange={setRouterFilter} routers={routers} />
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="px-4 sm:px-6">
-          {isLoading && !data ? (
-            <LoadingCards cards={5} />
-          ) : !kpis ? null : (
-            /* N°198 — 3+2 sur laptop (les 5 colonnes ne laissaient pas la
-               place du « 5 000 XOF » à côté du badge Δ% et de l'icône :
-               empilement caractère par caractère, constaté au DOM), 5
-               colonnes réservées aux écrans très larges. */
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
-              <StatCard
-                title={t("reports.sales")}
-                value={String(kpis.sales)}
-                sub={t("reports.vouchersSold")}
-                icon={ShoppingCart}
-                trend={deltaTrend(kpis.sales, kpis.salesPrev, lang)}
-              />
-              <StatCard
-                title={t("reports.revenue")}
-                value={formatCurrency(kpis.revenue, currency, lang)}
-                sub={t(meta.windowKey)}
-                icon={Wallet}
-                trend={deltaTrend(kpis.revenue, kpis.revenuePrev, lang)}
-              />
-              <StatCard
-                title={t("reports.avgTicket")}
-                value={formatCurrency(kpis.avgTicket, currency, lang)}
-                sub={t("reports.perVoucher")}
-                icon={TrendingUp}
-                trend={deltaTrend(kpis.avgTicket, kpis.avgTicketPrev, lang)}
-              />
-              <StatCard
-                title={t("reports.overview.loginsTitle")}
-                value={new Intl.NumberFormat(localeOf(lang)).format(kpis.logins)}
-                sub={t("reports.overview.loginsSub")}
-                icon={Users}
-                trend={deltaTrend(kpis.logins, kpis.loginsPrev, lang)}
-              />
-              {/* Volume de données — N°199 : agrégats journaliers persistés
-                  (une ligne par compte, routeur et jour au fuseau du compte),
-                  alimentés en live par les deltas read_state — les sessions
-                  fermées comptent enfin. Le badge Δ% n'apparaît qu'une fois
-                  une base de comparaison réellement observée (dataBytesPrev
-                  > 0 — jamais de comparaison au vide, décision D2). */}
-              <StatCard
-                title={t("reports.overview.dataVolume")}
-                value={formatBytes(kpis.dataBytes, lang)}
-                sub={t("reports.overview.dataSub")}
-                icon={Database}
-                trend={deltaTrend(kpis.dataBytes, kpis.dataBytesPrev, lang)}
-                live
-              />
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* Barre d'outils : période calendaire + filtre site */}
+      <TabToolbar>
+        <Tabs value={period} onValueChange={(value) => setPeriod(value as OverviewPeriod)}>
+          <TabsList>
+            {OVERVIEW_PERIODS.map((p) => (
+              <TabsTrigger key={p.value} value={p.value}>
+                {t(p.labelKey)}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+        <SiteFilter value={routerFilter} onChange={setRouterFilter} routers={routers} />
+      </TabToolbar>
 
-      {/* N°203 (P4, UX finale de la refonte reports) — GRAPHES DE TENDANCE
-          de la série intrapériode : la série servie depuis N°198 devient
-          visible, et le VOLUME entre dans les buckets (heure locale pour
-          « Aujourd'hui », jour calendaire pour la semaine et le mois, mois
-          pour l'année — agrégats journaliers N°199, sessions fermées
-          comprises). Le dernier bucket est PARTIEL : période en cours,
-          accumulation live — jamais un axe qui prétend être complet. */}
+      {/* Contexte de fenêtre : la période ET sa base de comparaison. */}
+      <p className="flex items-center gap-1.5 text-xs text-muted-foreground sm:text-sm">
+        <CalendarRange className="size-3.5 shrink-0" aria-hidden />
+        {data ? `${t(meta.windowKey)} · ${t(meta.vsKey)}` : t("reports.overview.desc")}
+      </p>
+
+      {isLoading && !data ? (
+        <LoadingCards cards={5} />
+      ) : !kpis ? null : (
+        /* N°198 — 3+2 sur laptop (les 5 colonnes ne laissaient pas la place
+           du « 5 000 XOF » à côté du badge Δ% et de l'icône : empilement
+           caractère par caractère, constaté au DOM), 5 colonnes réservées
+           aux écrans très larges. */
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
+          <StatCard
+            title={t("reports.sales")}
+            value={String(kpis.sales)}
+            sub={t("reports.vouchersSold")}
+            icon={ShoppingCart}
+            trend={deltaTrend(kpis.sales, kpis.salesPrev, lang)}
+          />
+          <StatCard
+            title={t("reports.revenue")}
+            value={formatCurrency(kpis.revenue, currency, lang)}
+            icon={Wallet}
+            trend={deltaTrend(kpis.revenue, kpis.revenuePrev, lang)}
+          />
+          <StatCard
+            title={t("reports.avgTicket")}
+            value={formatCurrency(kpis.avgTicket, currency, lang)}
+            sub={t("reports.perVoucher")}
+            icon={TrendingUp}
+            trend={deltaTrend(kpis.avgTicket, kpis.avgTicketPrev, lang)}
+          />
+          <StatCard
+            title={t("reports.overview.loginsTitle")}
+            value={new Intl.NumberFormat(localeOf(lang)).format(kpis.logins)}
+            sub={t("reports.overview.loginsSub")}
+            icon={Users}
+            trend={deltaTrend(kpis.logins, kpis.loginsPrev, lang)}
+          />
+          {/* Volume — agrégats journaliers persistés (N°199), sessions
+              fermées comprises. Le badge Δ% n'apparaît qu'une fois une base
+              réellement observée (D2 : jamais de comparaison au vide). */}
+          <StatCard
+            title={t("reports.overview.dataVolume")}
+            value={formatBytes(kpis.dataBytes, lang)}
+            sub={t("reports.overview.dataSub")}
+            icon={Database}
+            trend={deltaTrend(kpis.dataBytes, kpis.dataBytesPrev, lang)}
+            live
+          />
+        </div>
+      )}
+
+      {/* N°203 — GRAPHES DE TENDANCE de la série intrapériode + VOLUME dans
+          les buckets (heure locale pour « Aujourd'hui », jour calendaire
+          pour semaine/mois, mois pour l'année). Le dernier bucket est
+          PARTIEL : accumulation live, jamais un axe qui prétend être complet. */}
       {series.length > 0 && hasActivity && (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <Card className="gap-4 py-4 sm:py-6">
-            <CardHeader className="px-4 sm:px-6">
-              <CardTitle className="text-base">{t("reports.overview.trendTitle")}</CardTitle>
-              <CardDescription>
-                {tf("reports.overview.trendDesc", { unit: t(meta.unitKey) })} · {t("reports.overview.lastPartial")}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="px-4 sm:px-6">
-              <ResponsiveContainer width="100%" height={260}>
-                <ComposedChart data={series} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
-                  <CartesianGrid stroke={charts.grid} strokeOpacity={0.6} vertical={false} />
-                  <XAxis
-                    dataKey="label"
-                    tick={AXIS_TICK}
-                    axisLine={false}
-                    tickLine={false}
-                    minTickGap={12}
-                  />
-                  <YAxis
-                    yAxisId="revenue"
-                    tick={AXIS_TICK}
-                    axisLine={false}
-                    tickLine={false}
-                    width={48}
-                    tickFormatter={(value: number) =>
-                      new Intl.NumberFormat(localeOf(lang), { notation: "compact", maximumFractionDigits: 1 }).format(value)
-                    }
-                  />
-                  <YAxis
-                    yAxisId="logins"
-                    orientation="right"
-                    tick={AXIS_TICK}
-                    axisLine={false}
-                    tickLine={false}
-                    width={36}
-                    allowDecimals={false}
-                  />
-                  <Tooltip
-                    cursor={{ fill: charts.cursorFill, fillOpacity: 0.06 }}
-                    content={
-                      <OverviewActivityTooltip
-                        currency={currency}
-                        lang={lang}
-                        revenueLabel={t("reports.tooltipRevenue")}
-                        salesLabel={t("reports.tooltipSales")}
-                        loginsLabel={t("reports.overview.loginsTitle")}
-                      />
-                    }
-                  />
-                  <Legend
-                    iconType="circle"
-                    iconSize={8}
-                    formatter={(value) => <span className="text-xs text-muted-foreground">{value}</span>}
-                  />
-                  <Bar
-                    yAxisId="revenue"
-                    dataKey="revenue"
-                    name={t("reports.revenue")}
-                    fill={charts.series[0]}
-                    radius={[3, 3, 0, 0]}
-                    maxBarSize={14}
-                  />
-                  <Line
-                    yAxisId="logins"
-                    dataKey="logins"
-                    name={t("reports.overview.loginsTitle")}
-                    type="monotone"
-                    stroke={charts.series[1]}
-                    strokeWidth={2}
-                    dot={false}
-                    activeDot={{ r: 4 }}
-                  />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
+          <ChartCard
+            icon={TrendingUp}
+            title={t("reports.overview.trendTitle")}
+            description={
+              <>
+                {tf("reports.overview.trendDesc", { unit: t(meta.unitKey) })} ·{" "}
+                {t("reports.overview.lastPartial")}
+              </>
+            }
+          >
+            <ResponsiveContainer width="100%" height={264}>
+              <ComposedChart data={series} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
+                <CartesianGrid stroke={charts.grid} strokeOpacity={0.6} vertical={false} />
+                <XAxis dataKey="label" tick={AXIS_TICK} axisLine={false} tickLine={false} minTickGap={12} />
+                <YAxis
+                  yAxisId="revenue"
+                  tick={AXIS_TICK}
+                  axisLine={false}
+                  tickLine={false}
+                  width={48}
+                  tickFormatter={(value: number) => compact.format(value)}
+                />
+                <YAxis
+                  yAxisId="logins"
+                  orientation="right"
+                  tick={AXIS_TICK}
+                  axisLine={false}
+                  tickLine={false}
+                  width={36}
+                  allowDecimals={false}
+                />
+                <Tooltip
+                  cursor={{ fill: charts.cursorFill, fillOpacity: 0.06 }}
+                  content={
+                    <OverviewActivityTooltip
+                      currency={currency}
+                      lang={lang}
+                      revenueLabel={t("reports.tooltipRevenue")}
+                      salesLabel={t("reports.tooltipSales")}
+                      loginsLabel={t("reports.overview.loginsTitle")}
+                    />
+                  }
+                />
+                <Legend
+                  iconType="circle"
+                  iconSize={8}
+                  formatter={(value) => <span className="text-xs text-muted-foreground">{value}</span>}
+                />
+                <Bar
+                  yAxisId="revenue"
+                  dataKey="revenue"
+                  name={t("reports.revenue")}
+                  fill={charts.series[0]}
+                  radius={[3, 3, 0, 0]}
+                  maxBarSize={14}
+                />
+                <Line
+                  yAxisId="logins"
+                  dataKey="logins"
+                  name={t("reports.overview.loginsTitle")}
+                  type="monotone"
+                  stroke={charts.series[1]}
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={{ r: 4 }}
+                />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </ChartCard>
 
-          <Card className="gap-4 py-4 sm:py-6">
-            <CardHeader className="px-4 sm:px-6">
-              <CardTitle className="text-base">{t("reports.overview.dataVolume")}</CardTitle>
-              <CardDescription>
-                {tf("reports.overview.volumeTrendDesc", { unit: t(meta.unitKey) })} · {t("reports.overview.lastPartial")}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="px-4 sm:px-6">
-              <ResponsiveContainer width="100%" height={260}>
-                <BarChart data={series} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                  <CartesianGrid stroke={charts.grid} strokeOpacity={0.6} vertical={false} />
-                  <XAxis
-                    dataKey="label"
-                    tick={AXIS_TICK}
-                    axisLine={false}
-                    tickLine={false}
-                    minTickGap={12}
-                  />
-                  <YAxis
-                    tick={AXIS_TICK}
-                    axisLine={false}
-                    tickLine={false}
-                    width={56}
-                    tickFormatter={(value: number) => formatBytes(value, lang)}
-                  />
-                  <Tooltip
-                    cursor={{ fill: charts.cursorFill, fillOpacity: 0.06 }}
-                    content={<OverviewVolumeTooltip lang={lang} volumeLabel={t("reports.overview.dataVolume")} />}
-                  />
-                  <Bar
-                    dataKey="dataBytes"
-                    name={t("reports.overview.dataVolume")}
-                    fill={charts.series[2]}
-                    radius={[3, 3, 0, 0]}
-                    maxBarSize={14}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
+          <ChartCard
+            icon={Database}
+            title={t("reports.overview.dataVolume")}
+            description={
+              <>
+                {tf("reports.overview.volumeTrendDesc", { unit: t(meta.unitKey) })} ·{" "}
+                {t("reports.overview.lastPartial")}
+              </>
+            }
+          >
+            <ResponsiveContainer width="100%" height={264}>
+              <BarChart data={series} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                <CartesianGrid stroke={charts.grid} strokeOpacity={0.6} vertical={false} />
+                <XAxis dataKey="label" tick={AXIS_TICK} axisLine={false} tickLine={false} minTickGap={12} />
+                <YAxis
+                  tick={AXIS_TICK}
+                  axisLine={false}
+                  tickLine={false}
+                  width={56}
+                  tickFormatter={(value: number) => formatBytes(value, lang)}
+                />
+                <Tooltip
+                  cursor={{ fill: charts.cursorFill, fillOpacity: 0.06 }}
+                  content={<OverviewVolumeTooltip lang={lang} volumeLabel={t("reports.overview.dataVolume")} />}
+                />
+                <Bar
+                  dataKey="dataBytes"
+                  name={t("reports.overview.dataVolume")}
+                  fill={charts.series[2]}
+                  radius={[3, 3, 0, 0]}
+                  maxBarSize={14}
+                />
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
         </div>
       )}
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Onglet Comptabilité — ventes par jour/semaine/mois, filtrables par routeur.
-// v2 : marge en KPI, Δ% vs période précédente, canal direct/revendeurs,
-// taux de marge par site, pic de CA de la fenêtre.
-// ---------------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────────────
+// Onglet Comptabilité — ventes par jour/semaine/mois (buckets glissants,
+// D4) : bande de résumé + graphe pleine largeur + répartitions.
+// ─────────────────────────────────────────────────────────────────────────────
 
-function AccountingTab({ visible }: { visible: boolean }) {
+function AccountingTab() {
   const { t, tf, lang } = useI18n();
   const currency = useCurrency();
   const charts = useChartPalette();
   const AXIS_TICK = { fontSize: 11, fill: charts.axis };
+  const compact = useCompactAxis(lang);
   const [period, setPeriod] = useState<AccountingPeriod>("day");
   const [routerFilter, setRouterFilter] = useState("all");
   const routers = useRoutersList();
@@ -631,12 +802,9 @@ function AccountingTab({ visible }: { visible: boolean }) {
     queryFn: () =>
       api<AccountingData>("/api/accounting", { params: { period, routerId: routerFilter } }),
     placeholderData: (previous) => previous,
-    enabled: visible,
   });
 
   const periodMeta = ACCOUNTING_PERIODS.find((p) => p.value === period) ?? ACCOUNTING_PERIODS[0];
-  const selectedRouter = routers?.find((r) => r.id === routerFilter);
-  const filterLabel = selectedRouter ? `${selectedRouter.name} · ` : "";
   const byRouter = data?.byRouter ?? [];
   const maxShare = Math.max(...byRouter.map((r) => r.share), 1);
   const margin = data?.totals.margin;
@@ -653,8 +821,8 @@ function AccountingTab({ visible }: { visible: boolean }) {
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      {/* Période + filtre routeur */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      {/* Barre d'outils : taille de bucket + filtre site + export */}
+      <TabToolbar>
         <Tabs value={period} onValueChange={(value) => setPeriod(value as AccountingPeriod)}>
           <TabsList>
             {ACCOUNTING_PERIODS.map((p) => (
@@ -664,11 +832,11 @@ function AccountingTab({ visible }: { visible: boolean }) {
             ))}
           </TabsList>
         </Tabs>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <SiteFilter value={routerFilter} onChange={setRouterFilter} routers={routers} />
           <Button
             variant="outline"
-            className="h-10"
+            className="h-9"
             onClick={() =>
               apiDownload(`/api/accounting/export`, `mikcloud-comptabilite-${period}.csv`, {
                 period,
@@ -682,179 +850,167 @@ function AccountingTab({ visible }: { visible: boolean }) {
             <span className="hidden sm:inline">{t("common.exportCsv")}</span>
           </Button>
         </div>
-      </div>
+      </TabToolbar>
 
       {isLoading && !data ? (
         <div className="space-y-4 sm:space-y-6">
-          <LoadingCards cards={4} />
+          <Skeleton className="h-28 rounded-xl" />
+          <Skeleton className="h-80 rounded-xl" />
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <Skeleton className="h-80 rounded-xl" />
-            <Skeleton className="h-80 rounded-xl" />
+            <Skeleton className="h-64 rounded-xl" />
+            <Skeleton className="h-64 rounded-xl" />
           </div>
         </div>
       ) : !data ? null : (
         <>
-          {/* KPI : revenus / ventes / marge / panier moyen — Δ% vs fenêtre précédente */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <StatCard
-              title={t("reports.revenue")}
-              value={formatCurrency(data.totals.revenue, currency, lang)}
-              sub={`${filterLabel}${t(periodMeta.windowKey)}`}
+          {/* Bande de résumé de la fenêtre — PAS de grosses cartes : les
+              mêmes métriques vivent dans l'onglet Aperçu (refonte N°204).
+              La marge n'apparaît que si le backend la sert (F13). */}
+          <SummaryStrip gridClassName={margin === undefined ? "lg:grid-cols-3" : undefined}>
+            <SummaryItem
               icon={Wallet}
+              label={t("reports.revenue")}
+              value={formatCurrency(data.totals.revenue, currency, lang)}
+              sub={t(periodMeta.windowKey)}
               trend={deltaTrend(data.totals.revenue, data.prev?.revenue, lang)}
             />
-            <StatCard
-              title={t("reports.sales")}
+            <SummaryItem
+              icon={ShoppingCart}
+              label={t("reports.sales")}
               value={String(data.totals.sales)}
               sub={`${t("reports.vouchersSold")} · ${t(periodMeta.barsKey)}`}
-              icon={ShoppingCart}
               trend={deltaTrend(data.totals.sales, data.prev?.sales, lang)}
             />
+            <SummaryItem
+              icon={TrendingUp}
+              label={t("reports.avgTicket")}
+              value={formatCurrency(data.totals.avgTicket, currency, lang)}
+              sub={t("reports.perVoucher")}
+              trend={deltaTrend(data.totals.avgTicket, data.prev?.avgTicket, lang)}
+            />
             {margin !== undefined && (
-              <StatCard
-                title={t("reports.margin.margin")}
-                value={formatCurrency(margin, currency, lang)}
-                sub={`${t("reports.margin.rate")} : ${data.totals.selling ? fmtPct((margin / data.totals.selling) * 100, lang) : fmtPct(0, lang)}`}
+              <SummaryItem
                 icon={Coins}
+                label={t("reports.margin.margin")}
+                value={formatCurrency(margin, currency, lang)}
                 valueClassName={cnMargin(margin)}
+                sub={
+                  data.totals.selling
+                    ? `${t("reports.margin.rate")} : ${fmtPct((margin / data.totals.selling) * 100, lang)}`
+                    : `${t("reports.margin.rate")} : ${fmtPct(0, lang)}`
+                }
                 trend={deltaTrend(margin, data.prev?.margin, lang)}
               />
             )}
-            <StatCard
-              title={t("reports.avgTicket")}
-              value={formatCurrency(data.totals.avgTicket, currency, lang)}
-              sub={t("reports.perVoucher")}
-              icon={TrendingUp}
-              trend={deltaTrend(data.totals.avgTicket, data.prev?.avgTicket, lang)}
-            />
-          </div>
+          </SummaryStrip>
+
+          {/* CA par bucket — pleine largeur : 30 barres quotidiennes
+              lisibles, jamais tassées à moitié. */}
+          <ChartCard
+            icon={Wallet}
+            title={tf("reports.revenueBy", { unit: t(periodMeta.unitKey) })}
+            description={
+              <>
+                {routerFilter === "all" ? `${t("reports.allSites")} — ` : `${routers?.find((r) => r.id === routerFilter)?.name ?? ""} — `}
+                {t(periodMeta.windowKey)}
+                {bestBucket.revenue > 0 && (
+                  <>
+                    {" · "}
+                    {tf("reports.bestPeriod", {
+                      label: bestBucket.label,
+                      amount: formatCurrency(bestBucket.revenue, currency, lang),
+                    })}
+                  </>
+                )}
+              </>
+            }
+          >
+            <ResponsiveContainer width="100%" height={280}>
+              <BarChart data={data.series} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                <CartesianGrid stroke={charts.grid} strokeOpacity={0.6} vertical={false} />
+                <XAxis dataKey="label" tick={AXIS_TICK} axisLine={false} tickLine={false} minTickGap={12} />
+                <YAxis
+                  tick={AXIS_TICK}
+                  axisLine={false}
+                  tickLine={false}
+                  width={48}
+                  tickFormatter={(value: number) => compact.format(value)}
+                />
+                <Tooltip
+                  cursor={{ fill: charts.cursorFill, fillOpacity: 0.06 }}
+                  content={
+                    <AccountingTooltip
+                      currency={currency}
+                      lang={lang}
+                      revenueLabel={t("reports.tooltipRevenue")}
+                      salesLabel={t("reports.tooltipSales")}
+                    />
+                  }
+                />
+                <Bar
+                  dataKey="revenue"
+                  name={t("reports.revenue")}
+                  fill={charts.series[0]}
+                  radius={[4, 4, 0, 0]}
+                  maxBarSize={40}
+                />
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            {/* Chiffre d'affaires par bucket */}
-            <Card className="gap-4 py-4 sm:py-6">
-              <CardHeader className="px-4 sm:px-6">
-                <CardTitle className="text-base">
-                  {tf("reports.revenueBy", { unit: t(periodMeta.unitKey) })}
-                </CardTitle>
-                <CardDescription>
-                  {selectedRouter ? `${selectedRouter.name} — ` : `${t("reports.allSites")} — `}
-                  {t(periodMeta.windowKey)}
-                  {bestBucket.revenue > 0 && (
-                    <>
-                      {" · "}
-                      {tf("reports.bestPeriod", {
-                        label: bestBucket.label,
-                        amount: formatCurrency(bestBucket.revenue, currency, lang),
-                      })}
-                    </>
-                  )}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="px-4 sm:px-6">
-                <ResponsiveContainer width="100%" height={280}>
-                  <BarChart data={data.series} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                    <CartesianGrid stroke={charts.grid} strokeOpacity={0.6} vertical={false} />
-                    <XAxis
-                      dataKey="label"
-                      tick={AXIS_TICK}
-                      axisLine={false}
-                      tickLine={false}
-                      minTickGap={12}
-                    />
-                    <YAxis
-                      tick={AXIS_TICK}
-                      axisLine={false}
-                      tickLine={false}
-                      width={48}
-                      tickFormatter={(value: number) =>
-                        new Intl.NumberFormat(localeOf(lang), { notation: "compact", maximumFractionDigits: 1 }).format(value)
-                      }
-                    />
-                    <Tooltip
-                      cursor={{ fill: charts.cursorFill, fillOpacity: 0.06 }}
-                      content={
-                        <AccountingTooltip
-                          currency={currency}
-                          lang={lang}
-                          revenueLabel={t("reports.tooltipRevenue")}
-                          salesLabel={t("reports.tooltipSales")}
-                        />
-                      }
-                    />
-                    <Bar dataKey="revenue" name={t("reports.revenue")} fill={charts.series[0]} radius={[4, 4, 0, 0]} maxBarSize={40} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
+            {/* Répartition par site — avec taux de marge par site */}
+            <ChartCard
+              icon={RouterIcon}
+              title={t("reports.salesBySite")}
+              description={t("reports.salesBySiteDesc")}
+            >
+              {byRouter.length === 0 ? (
+                <EmptyState
+                  icon={CalendarRange}
+                  title={t("reports.noSales")}
+                  description={t("reports.noSalesDesc")}
+                />
+              ) : (
+                <div className="max-h-72 space-y-5 overflow-y-auto pr-1">
+                  {byRouter.map((router) => {
+                    const siteMargin =
+                      router.selling !== undefined && router.cost !== undefined
+                        ? router.selling - router.cost
+                        : undefined;
+                    const siteRate =
+                      siteMargin !== undefined && router.selling ? (siteMargin / router.selling) * 100 : null;
+                    return (
+                      <ShareRow
+                        key={router.routerId}
+                        icon={<RouterIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />}
+                        label={router.routerName}
+                        share={(router.share / maxShare) * 100}
+                        right={
+                          <>
+                            <span className="font-medium text-foreground">
+                              {formatCurrency(router.revenue, currency, lang)}
+                            </span>{" "}
+                            · {tf("reports.soldCount", { n: router.sales })} ·{" "}
+                            {new Intl.NumberFormat(localeOf(lang), { maximumFractionDigits: 1 }).format(router.share)} %
+                            {siteRate !== null && (
+                              <>
+                                {" · "}
+                                <span className={cnMargin(siteMargin ?? 0)}>{fmtPct(siteRate, lang)}</span>
+                              </>
+                            )}
+                          </>
+                        }
+                      />
+                    );
+                  })}
+                </div>
+              )}
+            </ChartCard>
 
-            {/* Répartition par routeur — avec taux de marge par site */}
-            <Card className="gap-4 py-4 sm:py-6">
-              <CardHeader className="px-4 sm:px-6">
-                <CardTitle className="text-base">{t("reports.salesBySite")}</CardTitle>
-                <CardDescription>{t("reports.salesBySiteDesc")}</CardDescription>
-              </CardHeader>
-              <CardContent className="px-4 sm:px-6">
-                {byRouter.length === 0 ? (
-                  <EmptyState
-                    icon={CalendarRange}
-                    title={t("reports.noSales")}
-                    description={t("reports.noSalesDesc")}
-                  />
-                ) : (
-                  <div className="max-h-72 space-y-5 overflow-y-auto pr-1">
-                    {byRouter.map((router) => {
-                      const siteMargin =
-                        router.selling !== undefined && router.cost !== undefined
-                          ? router.selling - router.cost
-                          : undefined;
-                      const siteRate =
-                        siteMargin !== undefined && router.selling ? (siteMargin / router.selling) * 100 : null;
-                      return (
-                        <div key={router.routerId}>
-                          <div className="flex items-baseline justify-between gap-3 text-sm">
-                            <span className="flex min-w-0 items-center gap-2">
-                              <RouterIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                              <span className="truncate font-medium">{router.routerName}</span>
-                            </span>
-                            <span className="shrink-0 text-xs text-muted-foreground">
-                              <span className="font-medium text-foreground">
-                                {formatCurrency(router.revenue, currency, lang)}
-                              </span>{" "}
-                              · {tf("reports.soldCount", { n: router.sales })} ·{" "}
-                              {new Intl.NumberFormat(localeOf(lang), { maximumFractionDigits: 1 }).format(router.share)} %
-                              {siteRate !== null && (
-                                <>
-                                  {" · "}
-                                  <span className={cnMargin(siteMargin ?? 0)}>{fmtPct(siteRate, lang)}</span>
-                                </>
-                              )}
-                            </span>
-                          </div>
-                          <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-muted">
-                            <div
-                              className="h-full rounded-full bg-primary transition-all"
-                              style={{ width: `${Math.max(2, (router.share / maxShare) * 100)}%` }}
-                            />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Canal de distribution — ventes directes vs réseau revendeurs */}
-          {channel && (
-            <Card className="gap-4 py-4 sm:py-6">
-              <CardHeader className="px-4 sm:px-6">
-                <CardTitle className="text-base">{t("reports.channel.title")}</CardTitle>
-                <CardDescription>
-                  {t(routerFilter === "all" ? "reports.channel.desc" : "reports.channel.descSite")}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="px-4 sm:px-6">
+            {/* Canal de distribution — ventes directes vs réseau revendeurs */}
+            {channel && (
+              <ChartCard icon={Store} title={t("reports.channel.title")} description={t(routerFilter === "all" ? "reports.channel.desc" : "reports.channel.descSite")}>
                 {channelTotal === 0 ? (
                   <p className="py-4 text-center text-sm text-muted-foreground">{t("reports.channel.empty")}</p>
                 ) : (
@@ -881,53 +1037,47 @@ function AccountingTab({ visible }: { visible: boolean }) {
                     ).map((row) => {
                       const share = (row.revenue / channelTotal) * 100;
                       return (
-                        <div key={row.key}>
-                          <div className="flex items-baseline justify-between gap-3 text-sm">
-                            <span className="flex min-w-0 items-center gap-2">
-                              <row.icon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                              <span className="truncate font-medium">{t(row.nameKey)}</span>
-                            </span>
-                            <span className="shrink-0 text-xs text-muted-foreground">
+                        <ShareRow
+                          key={row.key}
+                          icon={<row.icon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />}
+                          label={t(row.nameKey)}
+                          share={share}
+                          color={row.color}
+                          right={
+                            <>
                               <span className="font-medium text-foreground">
                                 {formatCurrency(row.revenue, currency, lang)}
                               </span>{" "}
                               · {tf("reports.soldCount", { n: row.sales })} ·{" "}
                               {new Intl.NumberFormat(localeOf(lang), { maximumFractionDigits: 1 }).format(share)} %
-                            </span>
-                          </div>
-                          <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-muted">
-                            <div
-                              className="h-full rounded-full transition-all"
-                              style={{ width: `${Math.max(2, share)}%`, background: row.color }}
-                            />
-                          </div>
-                        </div>
+                            </>
+                          }
+                        />
                       );
                     })}
                   </div>
                 )}
-              </CardContent>
-            </Card>
-          )}
+              </ChartCard>
+            )}
+          </div>
         </>
       )}
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Onglet Activité — performance commerciale et trafic réseau (7/14/30 jours).
-// v2 : sessions réelles en KPI, Δ% vs période précédente, top revendeurs,
-// heures de pointe (affluence + CA par heure, fuseau du compte).
-// ---------------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────────────
+// Onglet Activité — fenêtre glissante 7/14/30 jours (D4) : bande de résumé,
+// courbes quotidiennes, heures de pointe, classements.
+// ─────────────────────────────────────────────────────────────────────────────
 
-function ActivityTab({ visible }: { visible: boolean }) {
+function ActivityTab() {
   const { t, tf, lang } = useI18n();
   const currency = useCurrency();
   const charts = useChartPalette();
   const AXIS_TICK = { fontSize: 11, fill: charts.axis };
+  const compact = useCompactAxis(lang);
   const [days, setDays] = useState(14);
-  // N°198 — le filtre site s'étend à l'onglet Activité.
   const [routerFilter, setRouterFilter] = useState("all");
   const routers = useRoutersList();
 
@@ -935,7 +1085,6 @@ function ActivityTab({ visible }: { visible: boolean }) {
     queryKey: ["/api/reports", days, routerFilter],
     queryFn: () => api<ReportsData>("/api/reports", { params: { days, routerId: routerFilter } }),
     placeholderData: (previous) => previous,
-    enabled: visible,
   });
 
   // N°10 — affluence réelle par tranche horaire (même fenêtre que l'onglet).
@@ -944,7 +1093,6 @@ function ActivityTab({ visible }: { visible: boolean }) {
     queryKey: ["/api/stats/hourly", days, routerFilter],
     queryFn: () => api<HourlyStats>("/api/stats/hourly", { params: { days, routerId: routerFilter } }),
     placeholderData: (previous) => previous,
-    enabled: visible,
   });
 
   const salesByProfile = useMemo(
@@ -978,7 +1126,8 @@ function ActivityTab({ visible }: { visible: boolean }) {
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      {/* Barre d'outils : fenêtre glissante + filtre site */}
+      <TabToolbar>
         <Tabs value={String(days)} onValueChange={(value) => setDays(Number(value))}>
           <TabsList>
             {PERIODS.map((period) => (
@@ -989,11 +1138,11 @@ function ActivityTab({ visible }: { visible: boolean }) {
           </TabsList>
         </Tabs>
         <SiteFilter value={routerFilter} onChange={setRouterFilter} routers={routers} />
-      </div>
+      </TabToolbar>
 
       {isLoading && !data ? (
         <div className="space-y-4 sm:space-y-6">
-          <LoadingCards cards={4} />
+          <Skeleton className="h-28 rounded-xl" />
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <Skeleton className="h-80 rounded-xl" />
             <Skeleton className="h-80 rounded-xl" />
@@ -1003,145 +1152,204 @@ function ActivityTab({ visible }: { visible: boolean }) {
         </div>
       ) : !data ? null : (
         <>
-          {/* KPI : revenus / ventes / panier moyen / sessions réelles — Δ% vs fenêtre précédente */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <StatCard
-              title={t("reports.revenue")}
+          {/* Bande de résumé de la fenêtre (KPI uniques de l'activité :
+              sessions réelles + trafic cumulé — le reste vit dans l'Aperçu). */}
+          <SummaryStrip>
+            <SummaryItem
+              icon={Wallet}
+              label={t("reports.revenue")}
               value={formatCurrency(data.totals.revenue, currency, lang)}
               sub={tf("reports.lastDays", { n: days })}
-              icon={Wallet}
               trend={deltaTrend(data.totals.revenue, data.prev?.revenue, lang)}
             />
-            <StatCard
-              title={t("reports.sales")}
+            <SummaryItem
+              icon={ShoppingCart}
+              label={t("reports.sales")}
               value={String(data.totals.sales)}
               sub={t("reports.vouchersSold")}
-              icon={ShoppingCart}
               trend={deltaTrend(data.totals.sales, data.prev?.sales, lang)}
             />
-            <StatCard
-              title={t("reports.avgTicket")}
+            <SummaryItem
+              icon={TrendingUp}
+              label={t("reports.avgTicket")}
               value={formatCurrency(data.totals.avgTicket, currency, lang)}
               sub={t("reports.perVoucher")}
-              icon={TrendingUp}
               trend={deltaTrend(data.totals.avgTicket, data.prev?.avgTicket, lang)}
             />
-            {sessions && (
-              <StatCard
-                title={t("reports.sessions")}
-                value={new Intl.NumberFormat(localeOf(lang)).format(sessions.count)}
-                sub={tf("reports.sessions.sub", { n: days, bytes: formatBytes(sessionTraffic, lang) })}
-                icon={Wifi}
-                live
-              />
-            )}
+            <SummaryItem
+              icon={Wifi}
+              label={t("reports.sessions")}
+              value={sessions ? new Intl.NumberFormat(localeOf(lang)).format(sessions.count) : "—"}
+              sub={sessions ? tf("reports.sessions.sub", { n: days, bytes: formatBytes(sessionTraffic, lang) }) : undefined}
+              live
+            />
+          </SummaryStrip>
+
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <ChartCard icon={Wallet} title={t("reports.revenueTitle")} description={t("reports.revenueDaily")}>
+              <ResponsiveContainer width="100%" height={264}>
+                <BarChart data={data.revenueByDay} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                  <CartesianGrid stroke={charts.grid} strokeOpacity={0.6} vertical={false} />
+                  <XAxis dataKey="day" tick={AXIS_TICK} axisLine={false} tickLine={false} minTickGap={12} />
+                  <YAxis
+                    tick={AXIS_TICK}
+                    axisLine={false}
+                    tickLine={false}
+                    width={48}
+                    tickFormatter={(value: number) => compact.format(value)}
+                  />
+                  <Tooltip
+                    cursor={{ fill: charts.cursorFill, fillOpacity: 0.06 }}
+                    content={<ChartTooltip formatter={(value) => formatCurrency(value, currency, lang)} />}
+                  />
+                  <Bar
+                    dataKey="value"
+                    name={t("reports.revenue")}
+                    fill={charts.series[0]}
+                    radius={[4, 4, 0, 0]}
+                    maxBarSize={40}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartCard>
+
+            {/* Connexions par jour — affluence RÉELLE issue du journal de
+                connexions (UserLogs login). L'ancienne courbe « trafic
+                réseau » synthétique a été supprimée : zéro donnée inventée. */}
+            <ChartCard icon={Users} title={t("reports.loginsPerDay")} description={t("reports.loginsPerDayDesc")}>
+              <ResponsiveContainer width="100%" height={264}>
+                <BarChart data={data.loginsByDay} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                  <CartesianGrid stroke={charts.grid} strokeOpacity={0.6} vertical={false} />
+                  <XAxis dataKey="day" tick={AXIS_TICK} axisLine={false} tickLine={false} minTickGap={12} />
+                  <YAxis
+                    tick={AXIS_TICK}
+                    axisLine={false}
+                    tickLine={false}
+                    width={40}
+                    allowDecimals={false}
+                  />
+                  <Tooltip
+                    cursor={{ fill: charts.cursorFill, fillOpacity: 0.06 }}
+                    content={
+                      <ChartTooltip
+                        formatter={(value) => new Intl.NumberFormat(localeOf(lang)).format(value)}
+                      />
+                    }
+                  />
+                  <Bar
+                    dataKey="count"
+                    name={t("reports.loginsPerDay")}
+                    fill={charts.series[1]}
+                    radius={[4, 4, 0, 0]}
+                    maxBarSize={40}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartCard>
           </div>
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <Card className="gap-4 py-4 sm:py-6">
-              <CardHeader className="px-4 sm:px-6">
-                <CardTitle className="text-base">{t("reports.revenueTitle")}</CardTitle>
-                <CardDescription>{t("reports.revenueDaily")}</CardDescription>
-              </CardHeader>
-              <CardContent className="px-4 sm:px-6">
-                <ResponsiveContainer width="100%" height={260}>
-                  <BarChart data={data.revenueByDay} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            {/* Heures de pointe — CA + connexions par heure (fuseau du compte) */}
+            <ChartCard
+              icon={Clock3}
+              title={t("reports.peakHours.title")}
+              description={
+                <>
+                  {t("reports.peakHours.desc")}
+                  {hourly && hasHourlyActivity && (
+                    <>
+                      {" · "}
+                      {tf("reports.peakHours.peak", { h: String(hourly.peakHour).padStart(2, "0") })}
+                    </>
+                  )}
+                </>
+              }
+            >
+              {!hourly ? (
+                <Skeleton className="h-60 rounded-lg" />
+              ) : !hasHourlyActivity ? (
+                <p className="py-12 text-center text-sm text-muted-foreground">
+                  {t("reports.peakHours.empty")}
+                </p>
+              ) : (
+                <ResponsiveContainer width="100%" height={264}>
+                  <ComposedChart data={hourlyData} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
                     <CartesianGrid stroke={charts.grid} strokeOpacity={0.6} vertical={false} />
-                    <XAxis
-                      dataKey="day"
-                      tick={AXIS_TICK}
-                      axisLine={false}
-                      tickLine={false}
-                      minTickGap={12}
-                    />
+                    <XAxis dataKey="hour" tick={AXIS_TICK} axisLine={false} tickLine={false} interval={2} />
                     <YAxis
+                      yAxisId="revenue"
                       tick={AXIS_TICK}
                       axisLine={false}
                       tickLine={false}
                       width={48}
-                      tickFormatter={(value: number) =>
-                        new Intl.NumberFormat(localeOf(lang), { notation: "compact", maximumFractionDigits: 1 }).format(value)
-                      }
-                    />
-                    <Tooltip
-                      cursor={{ fill: charts.cursorFill, fillOpacity: 0.06 }}
-                      content={<ChartTooltip formatter={(value) => formatCurrency(value, currency, lang)} />}
-                    />
-                    <Bar dataKey="value" name={t("reports.revenue")} fill={charts.series[0]} radius={[4, 4, 0, 0]} maxBarSize={40} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-
-            {/* Connexions par jour — affluence RÉELLE issue du journal de
-                connexions (UserLogs login). L'ancienne courbe « trafic
-                réseau » était synthétique (octets aléatoires, sessions
-                fermées non conservées en base) : supprimée — zéro donnée
-                inventée dans mikCloud. */}
-            <Card className="gap-4 py-4 sm:py-6">
-              <CardHeader className="px-4 sm:px-6">
-                <CardTitle className="text-base">{t("reports.loginsPerDay")}</CardTitle>
-                <CardDescription>{t("reports.loginsPerDayDesc")}</CardDescription>
-              </CardHeader>
-              <CardContent className="px-4 sm:px-6">
-                <ResponsiveContainer width="100%" height={260}>
-                  <BarChart data={data.loginsByDay} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                    <CartesianGrid stroke={charts.grid} strokeOpacity={0.6} vertical={false} />
-                    <XAxis
-                      dataKey="day"
-                      tick={AXIS_TICK}
-                      axisLine={false}
-                      tickLine={false}
-                      minTickGap={12}
+                      tickFormatter={(value: number) => compact.format(value)}
                     />
                     <YAxis
+                      yAxisId="logins"
+                      orientation="right"
                       tick={AXIS_TICK}
                       axisLine={false}
                       tickLine={false}
-                      width={40}
+                      width={36}
                       allowDecimals={false}
                     />
                     <Tooltip
                       cursor={{ fill: charts.cursorFill, fillOpacity: 0.06 }}
                       content={
-                        <ChartTooltip
-                          formatter={(value) => new Intl.NumberFormat(localeOf(lang)).format(value)}
+                        <PeakHoursTooltip
+                          currency={currency}
+                          lang={lang}
+                          revenueLabel={t("reports.peakHours.revenue")}
+                          loginsLabel={t("reports.peakHours.logins")}
                         />
                       }
                     />
-                    <Bar
-                      dataKey="count"
-                      name={t("reports.loginsPerDay")}
-                      fill={charts.series[1]}
-                      radius={[4, 4, 0, 0]}
-                      maxBarSize={40}
+                    <Legend
+                      iconType="circle"
+                      iconSize={8}
+                      formatter={(value) => <span className="text-xs text-muted-foreground">{value}</span>}
                     />
-                  </BarChart>
+                    <Bar
+                      yAxisId="revenue"
+                      dataKey="revenue"
+                      name={t("reports.peakHours.revenue")}
+                      fill={charts.series[0]}
+                      radius={[3, 3, 0, 0]}
+                      maxBarSize={14}
+                    />
+                    <Line
+                      yAxisId="logins"
+                      dataKey="logins"
+                      name={t("reports.peakHours.logins")}
+                      type="monotone"
+                      stroke={charts.series[1]}
+                      strokeWidth={2}
+                      dot={false}
+                      activeDot={{ r: 4 }}
+                    />
+                  </ComposedChart>
                 </ResponsiveContainer>
-              </CardContent>
-            </Card>
-          </div>
+              )}
+            </ChartCard>
 
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             {/* Top 5 revendeurs par CA — moteur de distribution mikCloud */}
-            <Card className="gap-4 py-4 sm:py-6">
-              <CardHeader className="px-4 sm:px-6">
-                <CardTitle className="text-base">{t("reports.topResellers.title")}</CardTitle>
-                <CardDescription>
-                  {t(routerFilter === "all" ? "reports.topResellers.desc" : "reports.topResellers.descSite")}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="px-4 sm:px-6">
-                {topResellers.length === 0 ? (
-                  <EmptyState
-                    icon={Users}
-                    title={t("reports.topResellers.empty")}
-                    description={t("reports.salesByProfileDesc")}
-                  />
-                ) : (
-                  <div className="space-y-4">
-                    {topResellers.map((reseller, index) => (
-                      <div key={reseller.name} className="flex items-center gap-3">
+            <ChartCard
+              icon={Store}
+              title={t("reports.topResellers.title")}
+              description={t(routerFilter === "all" ? "reports.topResellers.desc" : "reports.topResellers.descSite")}
+            >
+              {topResellers.length === 0 ? (
+                <EmptyState
+                  icon={Users}
+                  title={t("reports.topResellers.empty")}
+                  description={t("reports.salesByProfileDesc")}
+                />
+              ) : (
+                <div className="space-y-4">
+                  {topResellers.map((reseller, index) => (
+                    <ShareRow
+                      key={reseller.name}
+                      icon={
                         <Badge
                           variant="outline"
                           className={
@@ -1152,198 +1360,67 @@ function ActivityTab({ visible }: { visible: boolean }) {
                         >
                           {tf("reports.rank", { n: index + 1 })}
                         </Badge>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-baseline justify-between gap-3 text-sm">
-                            <span className="truncate font-medium">{reseller.name}</span>
-                            <span className="shrink-0 text-xs text-muted-foreground">
-                              <span className="font-medium text-foreground">
-                                {formatCurrency(reseller.revenue, currency, lang)}
-                              </span>{" "}
-                              · {tf("reports.soldCount", { n: reseller.sales })}
-                            </span>
-                          </div>
-                          <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-muted">
-                            <div
-                              className="h-full rounded-full bg-primary"
-                              style={{ width: `${Math.max(2, (reseller.revenue / maxResellerRevenue) * 100)}%` }}
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Heures de pointe — CA + connexions par heure (fuseau du compte) */}
-            <Card className="gap-4 py-4 sm:py-6">
-              <CardHeader className="px-4 sm:px-6">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <Clock3 className="size-4 text-muted-foreground" aria-hidden />
-                  {t("reports.peakHours.title")}
-                </CardTitle>
-                <CardDescription>
-                  {t("reports.peakHours.desc")}
-                  {hourly && hasHourlyActivity && (
-                    <>
-                      {" · "}
-                      {tf("reports.peakHours.peak", {
-                        h: String(hourly.peakHour).padStart(2, "0"),
-                      })}
-                    </>
-                  )}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="px-4 sm:px-6">
-                {!hourly ? (
-                  <Skeleton className="h-60 rounded-lg" />
-                ) : !hasHourlyActivity ? (
-                  <p className="py-12 text-center text-sm text-muted-foreground">
-                    {t("reports.peakHours.empty")}
-                  </p>
-                ) : (
-                  <ResponsiveContainer width="100%" height={260}>
-                    <ComposedChart data={hourlyData} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
-                      <CartesianGrid stroke={charts.grid} strokeOpacity={0.6} vertical={false} />
-                      <XAxis
-                        dataKey="hour"
-                        tick={AXIS_TICK}
-                        axisLine={false}
-                        tickLine={false}
-                        interval={2}
-                      />
-                      <YAxis
-                        yAxisId="revenue"
-                        tick={AXIS_TICK}
-                        axisLine={false}
-                        tickLine={false}
-                        width={48}
-                        tickFormatter={(value: number) =>
-                          new Intl.NumberFormat(localeOf(lang), { notation: "compact", maximumFractionDigits: 1 }).format(value)
-                        }
-                      />
-                      <YAxis
-                        yAxisId="logins"
-                        orientation="right"
-                        tick={AXIS_TICK}
-                        axisLine={false}
-                        tickLine={false}
-                        width={36}
-                        tickFormatter={(value: number) =>
-                          new Intl.NumberFormat(localeOf(lang), { notation: "compact", maximumFractionDigits: 1 }).format(value)
-                        }
-                      />
-                      <Tooltip
-                        cursor={{ fill: charts.cursorFill, fillOpacity: 0.06 }}
-                        content={
-                          <PeakHoursTooltip
-                            currency={currency}
-                            lang={lang}
-                            revenueLabel={t("reports.peakHours.revenue")}
-                            loginsLabel={t("reports.peakHours.logins")}
-                          />
-                        }
-                      />
-                      <Legend
-                        iconType="circle"
-                        iconSize={8}
-                        formatter={(value) => <span className="text-xs text-muted-foreground">{value}</span>}
-                      />
-                      <Bar
-                        yAxisId="revenue"
-                        dataKey="revenue"
-                        name={t("reports.peakHours.revenue")}
-                        fill={charts.series[0]}
-                        radius={[3, 3, 0, 0]}
-                        maxBarSize={14}
-                      />
-                      <Line
-                        yAxisId="logins"
-                        dataKey="logins"
-                        name={t("reports.peakHours.logins")}
-                        type="monotone"
-                        stroke={charts.series[1]}
-                        strokeWidth={2}
-                        dot={false}
-                        activeDot={{ r: 4 }}
-                      />
-                    </ComposedChart>
-                  </ResponsiveContainer>
-                )}
-              </CardContent>
-            </Card>
+                      }
+                      label={reseller.name}
+                      share={(reseller.revenue / maxResellerRevenue) * 100}
+                      right={
+                        <>
+                          <span className="font-medium text-foreground">
+                            {formatCurrency(reseller.revenue, currency, lang)}
+                          </span>{" "}
+                          · {tf("reports.soldCount", { n: reseller.sales })}
+                        </>
+                      }
+                    />
+                  ))}
+                </div>
+              )}
+            </ChartCard>
           </div>
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <Card className="gap-4 py-4 sm:py-6">
-              <CardHeader className="px-4 sm:px-6">
-                <CardTitle className="text-base">{t("reports.salesByProfile")}</CardTitle>
-                <CardDescription>{t("reports.salesByProfileDesc")}</CardDescription>
-              </CardHeader>
-              <CardContent className="px-4 sm:px-6">
-                {salesByProfile.length === 0 ? (
-                  <p className="py-6 text-center text-sm text-muted-foreground">{t("reports.noSalesPeriod")}</p>
-                ) : (
-                  <div className="space-y-4">
-                    {salesByProfile.map((sale) => (
-                      <div key={sale.name}>
-                        <div className="flex items-baseline justify-between gap-3 text-sm">
-                          <span className="truncate">{sale.name}</span>
-                          <span className="shrink-0 text-xs text-muted-foreground">
-                            <span className="font-medium text-foreground">
-                              {tf("reports.soldCount", { n: sale.count })}
-                            </span>
-                            {" · "}
-                            {formatCurrency(sale.revenue, currency, lang)}
-                          </span>
-                        </div>
-                        <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-muted">
-                          <div
-                            className="h-full rounded-full bg-primary"
-                            style={{ width: `${Math.max(2, (sale.revenue / maxProfileRevenue) * 100)}%` }}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card className="gap-4 py-4 sm:py-6">
-              <CardHeader className="px-4 sm:px-6">
-                <CardTitle className="text-base">{t("reports.voucherStatus")}</CardTitle>
-                <CardDescription>{t("reports.voucherStatusDesc")}</CardDescription>
-              </CardHeader>
-              <CardContent className="px-4 sm:px-6">
+            <ChartCard icon={TrendingUp} title={t("reports.salesByProfile")} description={t("reports.salesByProfileDesc")}>
+              {salesByProfile.length === 0 ? (
+                <p className="py-6 text-center text-sm text-muted-foreground">{t("reports.noSalesPeriod")}</p>
+              ) : (
                 <div className="space-y-4">
-                  {voucherStatusRows(charts).map((row) => {
-                    const count = data.voucherStatus[row.key];
-                    return (
-                      <div key={row.key}>
-                        <div className="flex items-center justify-between gap-3 text-sm">
-                          <span className="flex items-center gap-2">
-                            <span className="size-2 rounded-full" style={{ background: row.color }} aria-hidden />
-                            {t(row.labelKey)}
+                  {salesByProfile.map((sale) => (
+                    <ShareRow
+                      key={sale.name}
+                      label={sale.name}
+                      share={(sale.revenue / maxProfileRevenue) * 100}
+                      right={
+                        <>
+                          <span className="font-medium text-foreground">
+                            {tf("reports.soldCount", { n: sale.count })}
                           </span>
-                          <span className="font-medium tabular-nums">{count}</span>
-                        </div>
-                        <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-muted">
-                          <div
-                            className="h-full rounded-full"
-                            style={{
-                              width: `${Math.max(2, (count / maxStatus) * 100)}%`,
-                              background: row.color,
-                            }}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
+                          {" · "}
+                          {formatCurrency(sale.revenue, currency, lang)}
+                        </>
+                      }
+                    />
+                  ))}
                 </div>
-              </CardContent>
-            </Card>
+              )}
+            </ChartCard>
+
+            <ChartCard icon={ShoppingCart} title={t("reports.voucherStatus")} description={t("reports.voucherStatusDesc")}>
+              <div className="space-y-4">
+                {voucherStatusRows(charts).map((row) => {
+                  const count = data.voucherStatus[row.key];
+                  return (
+                    <ShareRow
+                      key={row.key}
+                      icon={<span className="size-2 shrink-0 rounded-full" style={{ background: row.color }} aria-hidden />}
+                      label={t(row.labelKey)}
+                      share={(count / maxStatus) * 100}
+                      color={row.color}
+                      right={<span className="font-medium tabular-nums text-foreground">{count}</span>}
+                    />
+                  );
+                })}
+              </div>
+            </ChartCard>
           </div>
         </>
       )}
@@ -1351,19 +1428,16 @@ function ActivityTab({ visible }: { visible: boolean }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Onglet Marge (F13) — prix de vente vs coût sur les 30 derniers jours
-// glissants. Bloc « margin » de GET /api/reports (backend P0 Task 17).
-// v2 : Δ% vs 30 j précédents, évolution quotidienne, marge par site,
-// part de marge par profil.
-// ---------------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────────────
+// Onglet Marge (F13) — prix de vente vs coût sur 30 jours glissants.
+// ─────────────────────────────────────────────────────────────────────────────
 
-function MarginTab({ visible }: { visible: boolean }) {
+function MarginTab() {
   const { t, tf, lang } = useI18n();
   const currency = useCurrency();
   const charts = useChartPalette();
   const AXIS_TICK = { fontSize: 11, fill: charts.axis };
-  // N°198 — le filtre site s'étend à l'analyse de marge.
+  const compact = useCompactAxis(lang);
   const [routerFilter, setRouterFilter] = useState("all");
   const routers = useRoutersList();
 
@@ -1371,7 +1445,6 @@ function MarginTab({ visible }: { visible: boolean }) {
     queryKey: ["/api/reports", 30, routerFilter],
     queryFn: () => api<ReportsData>("/api/reports", { params: { days: 30, routerId: routerFilter } }),
     placeholderData: (previous) => previous,
-    enabled: visible,
   });
 
   const margin = data?.margin;
@@ -1380,8 +1453,11 @@ function MarginTab({ visible }: { visible: boolean }) {
   if (isLoading && !data) {
     return (
       <div className="space-y-4 sm:space-y-6">
-        <LoadingCards cards={4} />
-        <Skeleton className="h-72 rounded-xl" />
+        <Skeleton className="h-28 rounded-xl" />
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <Skeleton className="h-72 rounded-xl" />
+          <Skeleton className="h-72 rounded-xl" />
+        </div>
       </div>
     );
   }
@@ -1408,132 +1484,113 @@ function MarginTab({ visible }: { visible: boolean }) {
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      {/* N°198 — le filtre site s'applique à toute l'analyse de marge. */}
-      <div className="flex justify-end">
+      {/* Barre d'outils : l'analyse de marge est toujours 30 j glissants —
+          seul le filtre site s'applique. */}
+      <TabToolbar>
+        <p className="flex items-center gap-1.5 text-xs text-muted-foreground sm:text-sm">
+          <CalendarRange className="size-3.5 shrink-0" aria-hidden />
+          {t("reports.margin.window")}
+        </p>
         <SiteFilter value={routerFilter} onChange={setRouterFilter} routers={routers} />
-      </div>
+      </TabToolbar>
 
-      {/* KPI : CA, coût, marge, taux de marge — Δ% vs 30 jours précédents */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          title={t("reports.margin.revenue")}
+      {/* Bande de résumé : CA / coût / marge / taux — Δ% vs 30 j précédents */}
+      <SummaryStrip>
+        <SummaryItem
+          icon={Wallet}
+          label={t("reports.margin.revenue")}
           value={formatCurrency(margin.revenue, currency, lang)}
           sub={t("reports.margin.window")}
-          icon={Wallet}
           trend={deltaTrend(margin.revenue, prev?.revenue, lang)}
         />
-        <StatCard
-          title={t("reports.margin.cost")}
+        <SummaryItem
+          icon={ShoppingCart}
+          label={t("reports.margin.cost")}
           value={formatCurrency(margin.cost, currency, lang)}
           sub={t("reports.margin.window")}
-          icon={ShoppingCart}
         />
-        <StatCard
-          title={t("reports.margin.margin")}
-          value={formatCurrency(margin.margin, currency, lang)}
-          sub={t("reports.margin.window")}
+        <SummaryItem
           icon={Coins}
+          label={t("reports.margin.margin")}
+          value={formatCurrency(margin.margin, currency, lang)}
           valueClassName={cnMargin(margin.margin)}
+          sub={t("reports.margin.window")}
           trend={deltaTrend(margin.margin, prev?.margin, lang)}
         />
-        <StatCard
-          title={t("reports.margin.rate")}
+        <SummaryItem
+          icon={Percent}
+          label={t("reports.margin.rate")}
           value={pctFmt(margin.marginPct)}
           sub={t("reports.margin.window")}
-          icon={Percent}
         />
-      </div>
+      </SummaryStrip>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {/* Évolution quotidienne de la marge (vert positif / rouge négatif) */}
-        <Card className="gap-4 py-4 sm:py-6">
-          <CardHeader className="px-4 sm:px-6">
-            <CardTitle className="text-base">{t("reports.margin.trendTitle")}</CardTitle>
-            <CardDescription>{t("reports.margin.trendDesc")}</CardDescription>
-          </CardHeader>
-          <CardContent className="px-4 sm:px-6">
-            {byDay.length === 0 ? (
-              <p className="py-12 text-center text-sm text-muted-foreground">{t("reports.margin.noProfiles")}</p>
-            ) : (
-              <ResponsiveContainer width="100%" height={240}>
-                <BarChart data={byDay} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                  <CartesianGrid stroke={charts.grid} strokeOpacity={0.6} vertical={false} />
-                  <XAxis
-                    dataKey="day"
-                    tick={AXIS_TICK}
-                    axisLine={false}
-                    tickLine={false}
-                    minTickGap={12}
-                  />
-                  <YAxis
-                    tick={AXIS_TICK}
-                    axisLine={false}
-                    tickLine={false}
-                    width={48}
-                    tickFormatter={(value: number) =>
-                      new Intl.NumberFormat(localeOf(lang), { notation: "compact", maximumFractionDigits: 1 }).format(value)
-                    }
-                  />
-                  <Tooltip
-                    cursor={{ fill: charts.cursorFill, fillOpacity: 0.06 }}
-                    content={<ChartTooltip formatter={(value) => formatCurrency(value, currency, lang)} />}
-                  />
-                  <ReferenceLine y={0} stroke={charts.axis} />
-                  <Bar dataKey="margin" name={t("reports.margin.margin")} radius={[3, 3, 0, 0]} maxBarSize={14}>
-                    {byDay.map((pt, i) => (
-                      <Cell key={i} fill={pt.margin >= 0 ? MARGIN_POS : MARGIN_NEG} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </CardContent>
-        </Card>
+        <ChartCard icon={Coins} title={t("reports.margin.trendTitle")} description={t("reports.margin.trendDesc")}>
+          {byDay.length === 0 ? (
+            <p className="py-12 text-center text-sm text-muted-foreground">{t("reports.margin.noProfiles")}</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={240}>
+              <BarChart data={byDay} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                <CartesianGrid stroke={charts.grid} strokeOpacity={0.6} vertical={false} />
+                <XAxis dataKey="day" tick={AXIS_TICK} axisLine={false} tickLine={false} minTickGap={12} />
+                <YAxis
+                  tick={AXIS_TICK}
+                  axisLine={false}
+                  tickLine={false}
+                  width={48}
+                  tickFormatter={(value: number) => compact.format(value)}
+                />
+                <Tooltip
+                  cursor={{ fill: charts.cursorFill, fillOpacity: 0.06 }}
+                  content={<ChartTooltip formatter={(value) => formatCurrency(value, currency, lang)} />}
+                />
+                <ReferenceLine y={0} stroke={charts.axis} />
+                <Bar dataKey="margin" name={t("reports.margin.margin")} radius={[3, 3, 0, 0]} maxBarSize={14}>
+                  {byDay.map((pt, i) => (
+                    <Cell key={i} fill={pt.margin >= 0 ? MARGIN_POS : MARGIN_NEG} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </ChartCard>
 
         {/* Marge par site — quel routeur rapporte le plus ? */}
-        <Card className="gap-4 py-4 sm:py-6">
-          <CardHeader className="px-4 sm:px-6">
-            <CardTitle className="text-base">{t("reports.margin.bySiteTitle")}</CardTitle>
-            <CardDescription>{t("reports.margin.bySiteDesc")}</CardDescription>
-          </CardHeader>
-          <CardContent className="px-4 sm:px-6">
-            {bySite.length === 0 ? (
-              <p className="py-12 text-center text-sm text-muted-foreground">{t("reports.margin.noProfiles")}</p>
-            ) : (
-              <div className="max-h-64 space-y-4 overflow-y-auto pr-1">
-                {bySite.map((site) => {
-                  const rate = site.revenue > 0 ? (site.margin / site.revenue) * 100 : 0;
-                  return (
-                    <div key={site.routerName}>
-                      <div className="flex items-baseline justify-between gap-3 text-sm">
-                        <span className="truncate font-medium">{site.routerName}</span>
-                        <span className="inline-flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-                          <span className={cnMargin(site.margin)}>
-                            {formatCurrency(site.margin, currency, lang)}
-                          </span>
-                          {site.revenue > 0 && <RateBadge rate={rate} />}
+        <ChartCard icon={RouterIcon} title={t("reports.margin.bySiteTitle")} description={t("reports.margin.bySiteDesc")}>
+          {bySite.length === 0 ? (
+            <p className="py-12 text-center text-sm text-muted-foreground">{t("reports.margin.noProfiles")}</p>
+          ) : (
+            <div className="max-h-64 space-y-4 overflow-y-auto pr-1">
+              {bySite.map((site) => {
+                const rate = site.revenue > 0 ? (site.margin / site.revenue) * 100 : 0;
+                return (
+                  <ShareRow
+                    key={site.routerName}
+                    label={site.routerName}
+                    share={(Math.abs(site.margin) / maxSiteMargin) * 100}
+                    color={site.margin >= 0 ? MARGIN_POS : MARGIN_NEG}
+                    right={
+                      <>
+                        <span className={cnMargin(site.margin)}>
+                          {formatCurrency(site.margin, currency, lang)}
                         </span>
-                      </div>
-                      <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-muted">
-                        <div
-                          className="h-full rounded-full"
-                          style={{
-                            width: `${Math.max(2, (Math.abs(site.margin) / maxSiteMargin) * 100)}%`,
-                            background: site.margin >= 0 ? MARGIN_POS : MARGIN_NEG,
-                          }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+                        {site.revenue > 0 && (
+                          <RateBadge rate={rate} />
+                        )}
+                      </>
+                    }
+                  />
+                );
+              })}
+            </div>
+          )}
+        </ChartCard>
       </div>
 
       {/* Table par profil : ventes, CA, coût, marge + badge taux + part */}
-      <Card className="gap-4 py-4 sm:py-6">
+      <Card className="gap-4 py-4 sm:py-5">
         <CardHeader className="px-4 sm:px-6">
           <CardTitle className="text-base">{t("reports.margin.byProfileTitle")}</CardTitle>
           <CardDescription>
@@ -1555,7 +1612,7 @@ function MarginTab({ visible }: { visible: boolean }) {
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
-                  <TableRow className="hover:bg-transparent">
+                  <TableRow className="bg-muted/50 hover:bg-muted/50">
                     <TableHead className="pl-4 text-muted-foreground sm:pl-6">
                       {t("reports.margin.profile")}
                     </TableHead>
@@ -1615,22 +1672,14 @@ function MarginTab({ visible }: { visible: boolean }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// N°200 — onglet Archives : journaux MENSUELS GELÉS (décision D3).
-// Chaque mois est figé au bascule (gel automatique — balayage horaire côté
-// serveur) ou par le bouton « Clôturer le mois maintenant » (acte comptable
-// délibéré : mois partiel, fenêtre couverte explicite). Immuable une fois
-// écrit — les archives ne bougent plus, quelle que soit la rétention des
-// journaux vivants (constat C4 de l'audit : les courbes « 12 derniers mois »
-// pourrissaient avec le temps).
-// ---------------------------------------------------------------------------
-
-/** Libellé localisé d'une clé « YYYY-MM » (« octobre 2026 »). */
-function monthLabel(month: string, lang: Lang): string {
-  const [y, m] = month.split("-");
-  const d = new Date(Number(y), Number(m) - 1, 1);
-  return new Intl.DateTimeFormat(localeOf(lang), { month: "long", year: "numeric" }).format(d);
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// Onglet Archives (N°200) — journaux MENSUELS GELÉS (décision D3). Chaque
+// mois est figé au bascule (gel automatique — balayage horaire serveur) ou
+// par « Clôturer le mois maintenant » (acte comptable délibéré : mois
+// partiel, fenêtre couverte explicite). Immuable une fois écrit — les
+// archives ne bougent plus, quelle que soit la rétention des journaux
+// vivants.
+// ─────────────────────────────────────────────────────────────────────────────
 
 /** Une donnée compacte de la carte « mois en cours ». */
 function LiveStat({ label, value }: { label: string; value: string }) {
@@ -1642,7 +1691,7 @@ function LiveStat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ArchivesTab({ visible }: { visible: boolean }) {
+function ArchivesTab() {
   const { t, tf, lang } = useI18n();
   const currency = useCurrency();
   const queryClient = useQueryClient();
@@ -1651,7 +1700,6 @@ function ArchivesTab({ visible }: { visible: boolean }) {
   const { data, isLoading } = useQuery({
     queryKey: ["/api/reports/journals"],
     queryFn: () => api<JournalsResponse>("/api/reports/journals"),
-    enabled: visible,
   });
 
   // Chiffres LIVE du mois courant — même source que l'aperçu (period=month,
@@ -1660,7 +1708,6 @@ function ArchivesTab({ visible }: { visible: boolean }) {
     queryKey: ["/api/stats/overview", "month", "all"],
     queryFn: () =>
       api<StatsOverview>("/api/stats/overview", { params: { period: "month", routerId: "all" } }),
-    enabled: visible,
   });
 
   const closeMutation = useMutation({
@@ -1679,8 +1726,8 @@ function ArchivesTab({ visible }: { visible: boolean }) {
   const currentClosed = data?.currentClosed ?? false;
   const currentJournal = journals.find((j) => j.month === currentMonth);
   const liveKpis = live?.kpis;
-  // Jours écoulés du mois courant (pour l'avertissement de clôture) — dérivé
-  // de la fenêtre servie par l'aperçu, fuseau du compte.
+  // Jours écoulés du mois courant (avertissement de clôture) — dérivé de la
+  // fenêtre servie par l'aperçu, fuseau du compte.
   const elapsedDays = useMemo(() => {
     if (!live?.window?.start) return 1;
     const start = new Date(live.window.start).getTime();
@@ -1696,12 +1743,25 @@ function ArchivesTab({ visible }: { visible: boolean }) {
   return (
     <div className="space-y-4 sm:space-y-6">
       {/* Mois en cours — live tant qu'il n'est pas clôturé, gelé ensuite */}
-      <Card className="gap-4 py-4 sm:py-6">
+      <Card className="gap-4 py-4 sm:py-5">
         <CardHeader className="px-4 sm:px-6">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0">
-              <CardTitle className="text-base">
+              <CardTitle className="flex flex-wrap items-center gap-2 text-base">
                 {t("reports.journals.currentTitle")} — {currentMonth ? monthLabel(currentMonth, lang) : "…"}
+                <span className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-medium">
+                  {currentClosed ? (
+                    <>
+                      <LockKeyhole className="size-3" aria-hidden />
+                      {t("reports.journals.frozenBadge")}
+                    </>
+                  ) : (
+                    <>
+                      <span className="live-dot size-1.5 rounded-full bg-primary" aria-hidden />
+                      {t("reports.journals.liveBadge")}
+                    </>
+                  )}
+                </span>
               </CardTitle>
               <CardDescription>
                 {currentClosed
@@ -1709,47 +1769,46 @@ function ArchivesTab({ visible }: { visible: boolean }) {
                   : t("reports.journals.currentLiveDesc")}
               </CardDescription>
             </div>
-            {!currentClosed &&
-              currentMonth !== "" && (
-                <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-                  <AlertDialogTrigger asChild>
-                    <Button variant="outline" className="shrink-0" disabled={closeMutation.isPending}>
-                      <LockKeyhole className="size-4" />
-                      <span className="hidden sm:inline">{t("reports.journals.closeNow")}</span>
-                      <span className="sm:hidden">{t("reports.journals.closeConfirmAction")}</span>
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>
-                        {tf("reports.journals.closeConfirmTitle", {
-                          month: monthLabel(currentMonth, lang),
-                        })}
-                      </AlertDialogTitle>
-                      <AlertDialogDescription>
-                        {tf("reports.journals.closeConfirmDesc", {
-                          month: monthLabel(currentMonth, lang),
-                          days: elapsedDays,
-                        })}
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel disabled={closeMutation.isPending}>
-                        {t("common.cancel")}
-                      </AlertDialogCancel>
-                      <AlertDialogAction
-                        disabled={closeMutation.isPending}
-                        onClick={(e) => {
-                          e.preventDefault(); // garde le dialogue ouvert pendant la mutation
-                          closeMutation.mutate();
-                        }}
-                      >
-                        {t("reports.journals.closeConfirmAction")}
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-              )}
+            {!currentClosed && currentMonth !== "" && (
+              <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+                <AlertDialogTrigger asChild>
+                  <Button variant="outline" className="h-9 shrink-0" disabled={closeMutation.isPending}>
+                    <LockKeyhole className="size-4" />
+                    <span className="hidden sm:inline">{t("reports.journals.closeNow")}</span>
+                    <span className="sm:hidden">{t("reports.journals.closeConfirmAction")}</span>
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>
+                      {tf("reports.journals.closeConfirmTitle", {
+                        month: monthLabel(currentMonth, lang),
+                      })}
+                    </AlertDialogTitle>
+                    <AlertDialogDescription>
+                      {tf("reports.journals.closeConfirmDesc", {
+                        month: monthLabel(currentMonth, lang),
+                        days: elapsedDays,
+                      })}
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel disabled={closeMutation.isPending}>
+                      {t("common.cancel")}
+                    </AlertDialogCancel>
+                    <AlertDialogAction
+                      disabled={closeMutation.isPending}
+                      onClick={(e) => {
+                        e.preventDefault(); // garde le dialogue ouvert pendant la mutation
+                        closeMutation.mutate();
+                      }}
+                    >
+                      {closeMutation.isPending ? t("reports.journals.closing") : t("reports.journals.closeConfirmAction")}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
           </div>
         </CardHeader>
         <CardContent className="px-4 sm:px-6">
@@ -1776,7 +1835,7 @@ function ArchivesTab({ visible }: { visible: boolean }) {
       </Card>
 
       {/* Archives — un mois gelé par ligne, du plus récent au plus ancien */}
-      <Card className="gap-4 py-4 sm:py-6">
+      <Card className="gap-4 py-4 sm:py-5">
         <CardHeader className="px-4 sm:px-6">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
@@ -1784,7 +1843,7 @@ function ArchivesTab({ visible }: { visible: boolean }) {
               <CardDescription>{t("reports.journals.desc")}</CardDescription>
             </div>
             {journals.length > 0 && (
-              <Button variant="outline" className="h-10 shrink-0" onClick={csvExport}>
+              <Button variant="outline" className="h-9 shrink-0" onClick={csvExport}>
                 <Download className="size-4" />
                 <span className="hidden sm:inline">{t("common.exportCsv")}</span>
               </Button>
@@ -1804,7 +1863,7 @@ function ArchivesTab({ visible }: { visible: boolean }) {
             <div className="max-h-96 overflow-y-auto">
               <Table>
                 <TableHeader>
-                  <TableRow>
+                  <TableRow className="bg-muted/50 hover:bg-muted/50">
                     <TableHead className="pl-0">{t("reports.journals.monthCol")}</TableHead>
                     <TableHead className="text-right">{t("reports.sales")}</TableHead>
                     <TableHead className="text-right">{t("reports.revenue")}</TableHead>
@@ -1876,13 +1935,16 @@ function ArchivesTab({ visible }: { visible: boolean }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Vue Rapports — onglets Comptabilité / Activité / Marge.
-// ---------------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────────────
+// Vue Rapports — cinq onglets, UNE grammaire : Aperçu (période calendaire,
+// seules grandes cartes KPI) / Comptabilité / Activité / Marge / Archives.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type ReportsTab = "overview" | "accounting" | "activity" | "margin" | "archives";
 
 export default function ReportsView() {
   const { t } = useI18n();
-  const [tab, setTab] = useState<"accounting" | "activity" | "margin" | "archives">("accounting");
+  const [tab, setTab] = useState<ReportsTab>("overview");
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -1890,29 +1952,42 @@ export default function ReportsView() {
         title={t("reports.title")}
         description={t("reports.description")}
         actions={
-          <Tabs value={tab} onValueChange={(value) => setTab(value as "accounting" | "activity" | "margin" | "archives")}>
-            <TabsList>
-              <TabsTrigger value="accounting">{t("reports.tabAccounting")}</TabsTrigger>
-              <TabsTrigger value="activity">{t("reports.tabActivity")}</TabsTrigger>
-              <TabsTrigger value="margin">{t("reports.tabMargin")}</TabsTrigger>
-              <TabsTrigger value="archives">{t("reports.tabArchives")}</TabsTrigger>
+          <Tabs value={tab} onValueChange={(value) => setTab(value as ReportsTab)}>
+            {/* Mobile : les cinq onglets se replient sur deux lignes plutôt
+                que de déborder (audit v2 : barre tassée impossible à taper).
+                flex-none sur l'orphelin de seconde ligne — sinon flex-1
+                l'étire sur toute la largeur (mesuré au DOM : 352 px). */}
+            <TabsList className="h-auto w-full flex-wrap justify-start gap-1 sm:w-auto">
+              <TabsTrigger value="overview" className="flex-none sm:flex-1">
+                {t("reports.tabOverview")}
+              </TabsTrigger>
+              <TabsTrigger value="accounting" className="flex-none sm:flex-1">
+                {t("reports.tabAccounting")}
+              </TabsTrigger>
+              <TabsTrigger value="activity" className="flex-none sm:flex-1">
+                {t("reports.tabActivity")}
+              </TabsTrigger>
+              <TabsTrigger value="margin" className="flex-none sm:flex-1">
+                {t("reports.tabMargin")}
+              </TabsTrigger>
+              <TabsTrigger value="archives" className="flex-none sm:flex-1">
+                {t("reports.tabArchives")}
+              </TabsTrigger>
             </TabsList>
           </Tabs>
         }
       />
 
-      {/* N°198 — aperçu de période calendaire, commun aux trois onglets
-          (monté UNE fois : le sélecteur et le filtre survivent aux
-          changements d'onglet, pas de refetch au remontage). */}
-      <PeriodOverview />
-      {tab === "accounting" ? (
-        <AccountingTab visible={tab === "accounting"} />
+      {tab === "overview" ? (
+        <OverviewTab />
+      ) : tab === "accounting" ? (
+        <AccountingTab />
       ) : tab === "activity" ? (
-        <ActivityTab visible={tab === "activity"} />
+        <ActivityTab />
       ) : tab === "margin" ? (
-        <MarginTab visible={tab === "margin"} />
+        <MarginTab />
       ) : (
-        <ArchivesTab visible={tab === "archives"} />
+        <ArchivesTab />
       )}
     </div>
   );

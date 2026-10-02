@@ -5,6 +5,95 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-02 — N°204 — Rapports : REFONTE TOTALE de l'UX du module — fin de la « superposition » ancienne/nouvelle page — un seul endroit par question, une seule grammaire de filtres
+
+### Contexte
+Constat de l'exploitant après la P4 (N°203) : la vue Rapports donne
+l'impression d'une ANCIENNE page restée superposée à la nouvelle. L'audit
+visuel (captures desktop 1440 + mobile 390, QA VLM) confirme et nomme les
+défauts, tous structurels — la vue avait grandi par sédimentation
+(N°197 → N°203) : un aperçu de période TOUJOURS monté au-dessus des onglets,
+chaque onglet gardant ses propres grosses cartes KPI et sa propre barre de
+filtres. À l'écran : « Ventes : 3 » (aperçu du jour) PUIS « Ventes : 25 »
+(comptabilité 30 j) ; TROIS barres de filtres différentes empilées (tabs
+Aujourd'hui/Semaine/Mois/Année DANS la carte aperçu, pills Jour/Semaine/Mois
+flottantes de la comptabilité, tabs 7/14/30 jours de l'activité) ; des
+graphes montrant la même métrique à deux zooms (« Évolution de la période »
+horaire vs « CA par jour » quotidien) ; 9 cartes KPI + 6 graphes sur un seul
+écran (onglet Activité) — surcharge cognitive, « dashboard bloat ».
+
+### Produit — trois principes, une architecture en cinq onglets autonomes
+- **UN SEUL ENDROIT PAR QUESTION** : l'onglet « Aperçu » (NOUVEAU, par
+  défaut — période calendaire en cours, N°198/N°203) porte LES grandes
+  cartes KPI (Ventes, Revenus, Panier moyen, Connexions, Volume — Δ% vs
+  période précédente au même moment) et les deux graphes de tendance
+  intrapériode. Les autres onglets résument leur fenêtre en une BANDE
+  COMPACTE (SummaryStrip : une carte, 4 métriques inline libellé/valeur/
+  pastille Δ, séparateurs verticaux ≥ lg, grille 2×2 mobile) — jamais de
+  grosses cartes dupliquées : plus deux rangées de « Ventes/Revenus »
+  concurrentes à l'écran.
+- **UNE SEULE GRAMMAIRE DE FILTRES** : chaque onglet ouvre sur la MÊME
+  barre d'outils (TabToolbar : sélecteur de période à gauche, filtre site +
+  action à droite). Ligne de contexte sous la barre de l'Aperçu
+  (« Aujourd'hui, depuis 00 h 00 · vs hier au même moment »).
+- **HIÉRARCHIE STABLE** : outils → résumé → graphes → détails dans les
+  cinq onglets. Le graphe « CA par bucket » de la comptabilité passe
+  PLEINE LARGEUR (30 barres quotidiennes lisibles, jamais tassées à
+  moitié) ; listes par site/canal/revendeurs/profils/statuts factorisées
+  dans ShareRow (libellé + valeur + part + barre) ; cartes de graphe
+  unifiées (ChartCard : icône + titre + description, hauteurs homogènes).
+- **Onglet par onglet** : Comptabilité (strip Revenus/Ventes/Panier/Marge
+  + CA pleine largeur + ventes par site avec taux + canal direct/réseau) ;
+  Activité (strip + revenus/connexions quotidiens + heures de pointe +
+  top revendeurs + ventes par profil + statut des vouchers) ; Marge
+  (strip CA/Coût/Marge/Taux + évolution quotidienne + marge par site +
+  table par profil) ; Archives (mois en cours avec BADGE D'ÉTAT « En
+  direct »/« Gelé » + journaux gelés, en-tête de table contrasté
+  bg-muted/50, bouton de clôture à état « Clôture… » pendant la mutation).
+- **Mobile corrigé au DOM** : la barre des cinq onglets se replie sur deux
+  lignes propres — l'onglet orphelin de seconde ligne ne s'étire PLUS sur
+  toute la largeur (flex-1 de base de TabsTrigger mesuré à 352 px →
+  flex-none sm:flex-1) ; scrollWidth 390 px vérifié, zéro débordement.
+- Doctrines INTACTES : revenus = consommé ; périodes calendaires au fuseau
+  du compte ; vues glissantes en onglets (D4) ; volume sans
+  rétrofabrication, trous honnêtes (D2) ; journaux immuables (D3).
+  Aucune requête API ni aucun endpoint modifiés — refonte purement
+  présentationnelle, le montage par onglet remplace l'aperçu toujours
+  monté (les requêtes restent en cache TanStack, staleTime gradué
+  existant).
+
+### Vérifié
+Stack locale déterministe (backend Go JSON :4100 + next start :3100, semis
+db.json : 2 routeurs, 3 profils coût/prix, 47 vouchers écoulés sur jour/
+semaine/mois/année + réseau revendeurs, 125 connexions journalisées, 24
+lignes volume_days avec histogrammes horaires, 6 transactions) : 8
+endpoints API 200 (overview ×4 périodes, accounting, reports, hourly,
+journals — Σ série = KPI vérifié) ; ESLint 0, tsgo 0, next build OK ;
+navigateur Playwright (login réel → /app/reports) : 5 onglets capturés
+desktop 1440 + changement de période (Semaine) + mobile 390 (aperçu et
+comptabilité) — zéro erreur console desktop ET mobile, scrollWidth 390 ;
+QA VLM : Aperçu « excellent, aucun défaut », Comptabilité/Activité/Marge
+« aucune duplication, aucune superposition », strip mobile 2×2 « zéro
+chevauchement », barre d'onglets mobile « deux lignes propres, aucun
+défaut » ; 2 alertes VLM tranchées FAUX POSITIFS par vérification DOM
+déterministe (le « doublon septembre » n'existe pas en base — 1 journal,
+ID canonique, la table rend exactement 1 ligne « Septembre 2026 » ; la
+colonne « Part » de la marge porte bien 37,7/32,1/30,2 %). Pièges
+consignés : le CSS `uppercase` des StatCard MAJUSCULISE innerText (les
+attentes Playwright doivent être insensibles à la casse) ;
+`waitForFunction(fn, {timeout})` passe les options en `arg` — signature
+correcte `waitForFunction(fn, arg, options)` ; le VLM est PRIMÉ par la
+question (demander « cherchez le doublon » fabrique des doublons) —
+toujours trancher au DOM.
+
+### Fichiers
+- frontend/src/components/hotspot/views/reports-view.tsx (refonte totale :
+  +SummaryItem/SummaryStrip/TabToolbar/ChartCard/ShareRow/TrendPill,
+  OverviewTab par scission de PeriodOverview, RateBadge conservé).
+- frontend/src/lib/hotspot/i18n-fr/reports.ts, i18n-en/reports.ts (4 clés :
+  tabOverview, journals.liveBadge, journals.frozenBadge, journals.closing).
+- CHANGELOG.md.
+
 ## 2026-10-01 — N°202 — Sécurité S4 : rotation ADMIN_PASSWORD exécutée (API Render) + RUNBOOK-SECRETS §2.8 — le périmètre automatisable de la rotation mesuré au feu, l'ordre des gestes manuels restants
 
 ### Contexte

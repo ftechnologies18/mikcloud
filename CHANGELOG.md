@@ -5,6 +5,83 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-02 — N°207 — RUNBOOK-HEBERGEMENT : la décision d'hébergement consignée au feu — Render vs fly.io vs Stormkit (cloud et self-hosted), chiffres vérifiés 2026
+
+### Contexte
+L'exploitant a exploré trois fois la question « faut-il migrer le backend
+Render gratuit ? » (fly.io, puis Stormkit à deux reprises). La deuxième
+vérification Stormkit a **corrigé une erreur d'analyse** : l'offre Cloud
+gratuite existe bien (300 build min, 100 Go de bande passante, 100 Go de
+stockage, 500 000 invocations — chiffres confirmés au navigateur headless,
+la page pricing étant rendue côté client invisible à curl, et la FAQ
+publique datant de 2023). Mais le verdict pour mikcloud tient pour une
+raison **structurelle** : le Go natif longue durée n'existe chez Stormkit
+**qu'en self-hosted** (« available only on self-hosted Stormkit
+instances » — doc officielle) ; leur cloud n'exécute que du serverless
+Node/TS (Lambda, 15 s). Or le backend est un binaire Go à goroutines de
+fond (3 balayages au boot) et à état en mémoire sous verrou global —
+une réécriture complète, pas une migration.
+
+### Livré
+- **`docs/RUNBOOK-HEBERGEMENT.md` NOUVEAU** (modèle RUNBOOK-SECRETS) :
+  carte d'hébergement actuelle (Vercel + Render + Supabase + R2, 0 €),
+  quotas Render vérifiés avec marges, comparatifs fly.io / Stormkit cloud
+  / Stormkit self-hosted, la décision (« rester sur Render — migrer =
+  payer ~4-5 €/mois + jours de travail + risque prod pour un gain de
+  0 € »), les **déclencheurs d'escalade** (règle du 29 : ≥745 h →
+  Starter prorata ; facture non nulle → diagnostic bande passante ; besoin
+  TCP direct routeurs↔backend → rouvrir fly.io ; reprise de contrôle
+  infra → Stormkit self-hosted VPS), le chemin de migration si un jour
+  nécessaire (domaine API identique — walled-garden en dur sur la flotte),
+  et les **pièges de recherche** consignés (curl ne rend pas le JS, les
+  FAQ de blog périment, « supporte le Go » ≠ « Go sur leur cloud »,
+  les quotas bougent — re-vérifier avant toute décision).
+- **Vérifications du jour consignées** : N°190 (raccourci « Personnaliser
+  le portail ») confirmé implémenté et poussé (commit 7599644) — bouton +
+  garde canPortal + badge ambre en place dans routers-view.tsx ; service
+  Render `mikcloud` actif/non suspendu au 02/10, compteur d'heures
+  d'octobre repartis (~59 h/750).
+- **CHANGELOG N°206 ajouté rétroactivement** (oubli de la session
+  précédente : le commit a1afba4 était poussé sans entrée).
+
+Docs uniquement — aucun code, aucun contrat API, aucun déploiement
+nécessaire.
+
+## 2026-10-02 — N°206 — Rapports v4 : DÉ-DUPLICATION DES ONGLETS — fin du « mêmes revenus, ventes, panier moyen et marge partout » (retour exploitant)
+
+### Constat (audit production, compte ProMax WIFI)
+La v3 (N°204) laissait une bande de résumé en tête de CHAQUE onglet :
+revenus/ventes/panier répétaient les cartes KPI de l'Aperçu jusqu'à 4× à
+l'écran ; l'onglet Comptabilité affichait la marge (doublon de l'onglet
+Marge) ET un graphe CA quotidien pendant que l'onglet Activité montrait
+AUSSI un graphe CA quotidien ; la marge valait 0 partout sans explication
+(profils sans prix de vente distinct : selling_price = 0 → prix public =
+prix gros → marge nulle PAR CONSTRUCTION — 580 tickets écoulés,
+valeur = coût = 342 500 XOF).
+
+### Refonte « une métrique, un foyer »
+- **APERÇU** = seul propriétaire des cartes KPI vedettes (ventes, revenus,
+  panier, connexions, volume) + graphes de tendance intrapériode.
+- **COMPTABILITÉ** = bande de résumé SUPPRIMÉE : le total « CA de la
+  fenêtre » est ancré dans l'en-tête du graphe (contexte de lecture,
+  jamais une carte KPI) ; répartition par site SANS taux de marge (la
+  rentabilité vit dans son onglet) ; canal direct/réseau conservé.
+- **ACTIVITÉ** = bande 100 % usage (Sessions live, Connexions fenêtre,
+  Volume de données, Heures de pointe) — graphe CA quotidien supprimé
+  (doublon), « Connexions par jour » pleine largeur.
+- **MARGE** = « Chiffre d'affaires » rebaptisé « Valeur écoulée » ;
+  détection du cas DÉGÉNÉRÉ (marge = 0 ∧ coût > 0 ∧ coût = valeur) →
+  bandeau ambre « Marge nulle par construction » + bouton « Configurer
+  les profils » au lieu d'un mur de zéros incompréhensible.
+- **ARCHIVES** = inchangé (journaux gelés D3).
+
+### Validation
+ESLint 0, tsgo 0, next build OK, vérification navigateur Playwright sur
+données production réelles (frontend local → API Render) — 5 onglets
+capturés, 0 erreur console, 3 cartes seulement en Comptabilité, bandeau
+dégénéré affiché avec les vraies données, overflow horizontal mobile
+390 px = 0 px, audits visuels VLM sans chevauchement.
+
 ## 2026-10-02 — N°205 — Bande passante Render : diagnostic facture ~13 $ + SORTIE DES MÉDIAS DU TUYAU RENDER (bannières servies par R2 public `media.ftci.fr`)
 
 ### Contexte — pourquoi une facture alors que l'objectif est 0 coût

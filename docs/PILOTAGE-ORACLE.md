@@ -43,8 +43,17 @@ signature** — une paire de clés RSA, comme un cadenas et sa clé :
 3. Menu de gauche, en bas : **Clés API / API keys** → **Ajouter une clé API /
    Add API key**.
 4. Choisir **Coller une clé publique / Paste a public key**.
-5. Coller le bloc `-----BEGIN PUBLIC KEY-----…-----END PUBLIC KEY-----`
-   fourni par l'agent → **Ajouter**.
+5. Coller le bloc `-----BEGIN PUBLIC KEY-----…-----END PUBLIC KEY-----` —
+   **SOURCE CANONIQUE (N°213)** : l'URL raw du repo
+   `https://raw.githubusercontent.com/ftechnologies18/mikcloud/main/deploy/oracle/pilot-api-public-key.pem`
+   (ouvrir dans le navigateur, Ctrl+A puis Ctrl+C, coller dans la console).
+   Copier depuis le chat reste possible mais le presse-papiers à deux
+   conversations est un piège CONSTATÉ (collage du mauvais bloc → empreinte
+   inattendue 30:71:75:…) → **Ajouter**.
+6. **Juge de paix** : la NOUVELLE ligne de la liste (la plus récente) doit
+   afficher l'empreinte `07:be:4a:04:8c:40:57:38:6b:75:91:a4:3f:f8:e6:a5`
+   (MD5 du DER de la clé — vérifiable par `openssl pkey -pubin -in
+   pilot-api-public-key.pem -outform DER | openssl md5`).
 
 ### Geste 2 — recopier la configuration générée
 

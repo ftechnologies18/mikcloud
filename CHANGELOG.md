@@ -5,6 +5,31 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-02 — N°213 — Canal de dépôt canonique de la clé de pilotage : URL raw du repo public (immunisation anti-presse-papiers)
+
+### Contexte
+Quatrième tour de la gestuelle « Paste a public key » : l'exploitant rapporte
+l'empreinte `30:71:75:…` (≠ `07:be:4a:…` attendue) après un collage supposé
+du bloc de l'agent. Preuve mathématique que le bloc collé n'était pas le bon :
+l'empreinte Oracle = MD5 du DER de la clé publique, méthode validée
+empiriquement (le bloc public `f0:ad:…` de l'exploitant reproduisait
+exactement l'empreinte de son fichier de config). Cause probable : confusion
+de presse-papiers entre conversations (session parallèle ouverte en même
+temps) ou re-clic « Generate ». Aucun risque commis — une clé publique
+étrangère dans la liste est inoffensive, elle dort.
+
+### Livré
+- **deploy/oracle/pilot-api-public-key.pem** — la clé PUBLIQUE de pilotage de
+  l'agent hébergée dans le repo public : source de copie unique et
+  vérifiable (`openssl pkey -pubin … | openssl md5` →
+  `07:be:4a:04:8c:40:57:38:6b:75:91:a4:3f:f8:e6:a5`). Une clé publique
+  n'est pas un secret — c'est un cadenas : sa présence dans le repo documente
+  le pilotage (PILOTAGE-ORACLE.md §5) et immunise le geste console contre les
+  mix-ups de presse-papiers à deux conversations.
+- **docs/PILOTAGE-ORACLE.md §2** : geste 1 amendé — source canonique = URL
+  raw (Ctrl+A, Ctrl+C dans le navigateur), juge de paix = empreinte de la
+  NOUVELLE ligne (la plus récente) de la liste.
+
 ## 2026-10-02 — N°212 — Mode pilotage Oracle : l'exploitant délègue l'exécution, l'agent pilote l'API — architecture multi-backends actée
 
 ### Contexte

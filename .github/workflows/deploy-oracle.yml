@@ -2,9 +2,11 @@ name: deploy-oracle
 
 # Déploiement du backend vers la VM Oracle Cloud (docs/MIGRATION-ORACLE.md §6).
 # Silencieusement ignoré tant que la VM n'est pas raccordée : le pas de
-# déploiement exige le secret ORACLE_HOST — avant ça, ce workflow vaut
-# CI de build ARM64. Une fois raccordé, chaque push main qui touche le
-# backend reconstruit et redémarre le service sur la VM.
+# déploiement exige ORACLE_HOST (env au niveau job — PIÈGE : « secrets »
+# n'est PAS autorisé dans un if:, « Unrecognized named-value » au chargement
+# du fichier, run en échec SANS aucun job). Avant le raccordement, ce
+# workflow vaut CI de build ARM64 ; une fois raccordé, chaque push main qui
+# touche le backend reconstruit et redémarre le service sur la VM.
 on:
   push:
     branches: [main]
@@ -24,6 +26,9 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      # Miroir des secrets pour les if: (secrets interdit dans les if:)
+      ORACLE_HOST: ${{ secrets.ORACLE_HOST }}
     steps:
       - uses: actions/checkout@v4
 
@@ -37,14 +42,13 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o ../dist/mikcloud-server .
 
       - name: Notice — VM Oracle pas encore raccordée
-        if: ${{ secrets.ORACLE_HOST == '' }}
+        if: env.ORACLE_HOST == ''
         run: |
           echo "::notice::VM Oracle non raccordée (secret ORACLE_HOST absent) — déploiement ignoré. Installation : docs/MIGRATION-ORACLE.md §6."
 
       - name: Déploiement SSH vers la VM
-        if: ${{ secrets.ORACLE_HOST != '' }}
+        if: env.ORACLE_HOST != ''
         env:
-          ORACLE_HOST: ${{ secrets.ORACLE_HOST }}
           DEPLOY_USER: ${{ secrets.ORACLE_USER }}
           SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
         run: |

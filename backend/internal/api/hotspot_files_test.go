@@ -138,6 +138,44 @@ func TestEnsureHotspotFilesLockedBrandingChange(t *testing.T) {
 	}
 }
 
+// TestEnsureHotspotFilesLockedBaseURL — N°210 : MIKCLOUD_BASE_URL façonne
+// l'apiBase cuite au déploiement (agentBaseURL prime sur le Host de la
+// requête) — la poser doit re-déployer les pages. Part CONDITIONNELLE du
+// fingerprint : vide, la sig ne change PAS (aucune vague parasite au
+// déploiement de ce correctif) ; posée (bascule de domaine), elle change.
+func TestEnsureHotspotFilesLockedBaseURL(t *testing.T) {
+	st, _ := newTestServerWithStore(t)
+	st.Lock()
+	db := st.Data()
+	db.Accounts = append(db.Accounts, model.Account{ID: "acc-baseurl", Name: "Cyber BaseURL"})
+	db.Routers = append(db.Routers, model.Router{
+		ID:             "r-baseurl",
+		AccountID:      "acc-baseurl",
+		Name:           "BaseURLRouter",
+		Mode:           "agent",
+		Status:         "online",
+		AgentTokenHash: agent.HashToken("tok-baseurl"),
+	})
+	router := &db.Routers[len(db.Routers)-1]
+	// Portail « déployé » : sig posée SANS MIKCLOUD_BASE_URL (base dérivée
+	// de la requête — comportement historique, la part est absente).
+	router.HotspotFilesSig = hotspotFilesSig(hotpage.DefaultFiles(), db, router)
+	ensureHotspotFilesLocked(db, router)
+	if n := countHotspotCmds(db, router.ID); n != 0 {
+		st.Unlock()
+		t.Fatalf("sig à jour (base vide) : 0 commande attendue, %d trouvée(s)", n)
+	}
+	// La migration pose MIKCLOUD_BASE_URL → l'apiBase cuite change → la sig
+	// change → re-déploiement au check-in suivant (≤ 45 s).
+	t.Setenv("MIKCLOUD_BASE_URL", "https://api.mikcloud.ftci.fr")
+	ensureHotspotFilesLocked(db, router)
+	n := countHotspotCmds(db, router.ID)
+	st.Unlock()
+	if n != 1 {
+		t.Fatalf("MIKCLOUD_BASE_URL posée : 1 re-déploiement attendu, %d trouvée(s)", n)
+	}
+}
+
 // TestEnsureHotspotFilesLockedSlides — N°136 : poser les slides du carrousel
 // commercial en console change la sig (portalSlides rejoint
 // portalBrandingFingerprint) → la commande hotspot_files est re-filée au

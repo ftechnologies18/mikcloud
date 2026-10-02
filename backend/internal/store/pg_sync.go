@@ -340,7 +340,12 @@ func (p *PG) syncPlan(db *model.DB, only map[string]bool) (err error) {
 			return err
 		}
 	}
-	if err := p.syncSettings(ctx, tx, db); err != nil {
+	// N°210 — settings différentiel : mêmes garanties d'atomicité que les
+	// tables du plan (pending → commit → swap) ; « volatile » dit si le
+	// rafraîchissement borné des colonnes last_tick/last_sweep a voyagé.
+	pendingSettings := map[string]uint64{}
+	volatile, err := p.syncSettings(ctx, tx, db, pendingSettings, &delta)
+	if err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -349,22 +354,39 @@ func (p *PG) syncPlan(db *model.DB, only map[string]bool) (err error) {
 	// Écriture confirmée : le cache d'empreintes bascule ATOMIQUEMENT sur
 	// les empreintes de CETTE synchronisation (cf. pending ci-dessus).
 	p.hashes = pending
+	p.settingsHashes = pendingSettings
+	if volatile {
+		p.settingsVolatileAt = time.Now().UTC()
+	}
 	p.touchDB() // écriture confirmée — le keep-alive saute ses pings inutiles
 	return nil
 }
 
-// syncSettings écrit une ligne par compte de SettingsByAccount (upsert par
-// id = account_id) et supprime les lignes orphelines : une ligne settings
-// suit le cycle de vie de son compte (suppression de compte client, retrait
-// du compte principal…). last_tick (valeur globale du moteur de simulation)
-// est répliquée sur chaque ligne.
+// syncSettings — N°210 — DIFFÉRENTIEL : une ligne settings ne voyage vers
+// PostgreSQL que si son CONTENU a changé (empreinte FNV-1a de la projection
+// exacte de la ligne, cf. settingsRowHash). AVANT : l'upsert inconditionnel
+// de TOUTES les lignes à CHAQUE flush (le syncreur marque un flush à chaque
+// check-in agent, chaque rapport, chaque poll console — plancher 3 s)
+// réexpédiait les blobs de branding (logo_url data: URL mesuré à 216 Ko en
+// production, bannière jusqu'à 500 Ko, slides, promos…) : ~375 Ko × ~12
+// flush/min ≈ 6,5 Go/jour de trafic « service-initiated » vers le pooler —
+// la cause racine des 10,6 Go Render du 02/10 et de la facture de
+// septembre. Les colonnes VOLATILES globales (last_tick/last_sweep —
+// fraîcheur du moteur de simulation, répliquées sur chaque ligne) sont
+// rafraîchies séparément, au plus toutes les settingsVolatileEvery, par un
+// UPDATE minuscule sans blobs : la fraîcheur boot reste garantie à 5 min
+// près sans dépendre du ciblage des tables (contrat SyncTables inchangé).
+// Atomicité N°130 : les empreintes fraîches sont posées dans « pending » et
+// ne remplacent p.settingsHashes qu'APRÈS le Commit (syncPlan) ; l'élagage
+// mémoire des réglages orphelins et la suppression des lignes orphelines
+// sont inchangés (une ligne settings suit le cycle de vie de son compte).
 //
 // N°130 — l'élagage mémoire des réglages orphelins (ci-dessous) s'applique
 // au SNAPSHOT : la synchro travaille sur une photographie CloneDeep, l'état
 // vivant garde ces entrées en mémoire (charge négligeable — quelques structs
 // par compte disparu, re-purgés au prochain boot via loadSettings) tandis
 // que PostgreSQL reste correctement nettoyé.
-func (p *PG) syncSettings(ctx context.Context, tx *sql.Tx, db *model.DB) error {
+func (p *PG) syncSettings(ctx context.Context, tx *sql.Tx, db *model.DB, pending map[string]uint64, delta *syncDelta) (volatile bool, err error) {
 	accExists := map[string]bool{}
 	for i := range db.Accounts {
 		accExists[db.Accounts[i].ID] = true
@@ -387,25 +409,25 @@ func (p *PG) syncSettings(ctx context.Context, tx *sql.Tx, db *model.DB) error {
 	// compte principal…).
 	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT account_id FROM settings WHERE account_id <> ''`)
 	if err != nil {
-		return fmt.Errorf("pg sync settings (lecture orphelins) : %w", err)
+		return false, fmt.Errorf("pg sync settings (lecture orphelins) : %w", err)
 	}
 	present := []string{}
 	for rows.Next() {
 		var acc string
 		if err := rows.Scan(&acc); err != nil {
 			rows.Close()
-			return fmt.Errorf("pg sync settings (scan orphelins) : %w", err)
+			return false, fmt.Errorf("pg sync settings (scan orphelins) : %w", err)
 		}
 		present = append(present, acc)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("pg sync settings (orphelins) : %w", err)
+		return false, fmt.Errorf("pg sync settings (orphelins) : %w", err)
 	}
 	for _, acc := range present {
 		if !accExists[acc] {
 			if _, err := tx.ExecContext(ctx, `DELETE FROM settings WHERE account_id = $1`, acc); err != nil {
-				return fmt.Errorf("pg sync settings (suppression orphelin %s) : %w", acc, err)
+				return false, fmt.Errorf("pg sync settings (suppression orphelin %s) : %w", acc, err)
 			}
 		}
 	}
@@ -413,7 +435,16 @@ func (p *PG) syncSettings(ctx context.Context, tx *sql.Tx, db *model.DB) error {
 	lastTick := sql.NullTime{Time: db.LastTick, Valid: !db.LastTick.IsZero()}
 	// N°64 — date du balayage périodique, même logique de persistance.
 	lastSweep := sql.NullTime{Time: db.LastSweep, Valid: !db.LastSweep.IsZero()}
+	// N°210 — cadence du rafraîchissement borné des colonnes volatiles : la
+	// fraîcheur boot reste garantie à 5 min près pour quelques centaines
+	// d'octets ; les blobs, eux, ne voyagent QUE si la ligne a changé.
+	volatileDue := time.Now().UTC().Sub(p.settingsVolatileAt) >= settingsVolatileEvery
 	for accID, s := range db.SettingsByAccount {
+		h := settingsRowHash(accID, s)
+		pending[accID] = h
+		if h == p.settingsHashes[accID] {
+			continue // N°210 — ligne inchangée : plus un octet ne voyage
+		}
 		// I (paramètres plateforme) — la config globale ne vit que sur le
 		// compte principal ; les autres lignes écrivent les valeurs neutres.
 		var platName string
@@ -484,10 +515,23 @@ func (p *PG) syncSettings(ctx context.Context, tx *sql.Tx, db *model.DB) error {
 			s.Tenant.PortalWhatsapp,
 			s.Tenant.PortalKey, s.Tenant.LogRetentionDaysEffective())
 		if err != nil {
-			return fmt.Errorf("pg sync settings (%s) : %w", accID, err)
+			return false, fmt.Errorf("pg sync settings (%s) : %w", accID, err)
 		}
+		delta.changed++                           // N°71 — volumétrie (comptée si écrite)
+		delta.changedBytes += settingsRowBytes(s) // N°210 — garde-fou egress
 	}
-	return nil
+	if volatileDue {
+		// N°210 — fraîcheur seule : un UPDATE minuscule (aucun blob)
+		// porte last_tick/last_sweep sur toutes les lignes — le contrat
+		// SyncTables (« la fraîcheur du moteur ne dépend pas du ciblage »)
+		// tient, à settingsVolatileEvery près.
+		if _, err := tx.ExecContext(ctx, `UPDATE settings SET last_tick = $1, last_sweep = $2`, lastTick, lastSweep); err != nil {
+			return false, fmt.Errorf("pg sync settings (tick) : %w", err)
+		}
+		delta.changedBytes += int64(len(pending)) * 64 // garde-fou volumétrie (approx.)
+		volatile = true
+	}
+	return volatile, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -505,6 +549,49 @@ func (p *PG) syncSettings(ctx context.Context, tx *sql.Tx, db *model.DB) error {
 // (fonctions libres : les méthodes Go ne peuvent pas introduire de paramètres
 // de type — c'est une restriction du langage)
 // ---------------------------------------------------------------------------
+
+// settingsVolatileEvery — N°210 — cadence maximale du rafraîchissement des
+// colonnes volatiles globales (last_tick/last_sweep) de la table settings :
+// ~300 octets par cycle, la fraîcheur boot reste garantie à 5 min près.
+const settingsVolatileEvery = 5 * time.Minute
+
+// settingsRowHash — N°210 — empreinte FNV-1a de la PROJECTION EXACTE de la
+// ligne settings écrite (toutes les colonnes de l'upsert, HORS colonnes
+// volatiles globales last_tick/last_sweep qui vivent leur vie bornée) :
+// identique ⇒ la ligne ne voyage pas. C'est le correctif de la fuite
+// « Service-Initiated » : l'upsert inconditionnel réexpédiait les blobs de
+// branding (logo data: 216 Ko mesuré en production, bannière jusqu'à
+// 500 Ko, slides, promos…) à CHAQUE flush.
+func settingsRowHash(accID string, s model.Settings) uint64 {
+	var platName string
+	var platOpen bool
+	var platKey string
+	if s.Platform != nil {
+		platName, platOpen, platKey = s.Platform.Name, s.Platform.RegisterOpen, s.Platform.RegisterKey
+	}
+	return hashEntity(&[]any{
+		accID,
+		s.Tenant.Name, s.Tenant.Currency, s.Tenant.Timezone,
+		s.Plan.Name, s.Plan.MaxRouters, s.Plan.MaxUsers,
+		s.Tenant.WaveLink, s.Tenant.DNSName, s.Tenant.LogoURL, s.Tenant.BannerURL,
+		s.Tenant.ExpiryPolicyMode, s.Tenant.ExpiryPolicyAfterDays,
+		s.Subscription.PlanID, s.Subscription.Status, s.Subscription.PeriodStart,
+		s.Subscription.PeriodEnd, s.Subscription.LastAmountFcfa,
+		s.Subscription.RouterSlots, s.Subscription.LastPaidAt,
+		platName, platOpen, platKey, s.ImportAutoEnabled(), s.Tenant.JoinButtonEnabled(),
+		s.Tenant.PortalStyle, s.Tenant.PortalWelcome, s.Tenant.PortalPromos, s.Tenant.PortalSocials,
+		s.Tenant.PortalSlides, s.Tenant.PortalServices, s.Tenant.PortalTicker,
+		s.Tenant.PortalWhatsapp, s.Tenant.PortalKey, s.Tenant.LogRetentionDaysEffective(),
+	})
+}
+
+// settingsRowBytes — N°210 — taille approximative du payload SQL de la
+// ligne (les blobs dominent) : garde-fou volumétrie exposé par sync-status.
+func settingsRowBytes(s model.Settings) int64 {
+	return int64(len(s.Tenant.LogoURL)+len(s.Tenant.BannerURL)+len(s.Tenant.PortalPromos)+
+		len(s.Tenant.PortalSocials)+len(s.Tenant.PortalSlides)+len(s.Tenant.PortalServices)+
+		len(s.Tenant.PortalTicker)+len(s.Tenant.PortalWelcome)+len(s.Tenant.PortalWhatsapp)) + 256
+}
 
 // entitySpec — description d'une table : colonnes (cols[0] est TOUJOURS la
 // clé primaire — « id » partout, « uuid » pour geniuspay_subs), extraction
@@ -729,6 +816,13 @@ func (p *PG) rebuildHashes(db *model.DB) {
 		notifRows = append(notifRows, v)
 	}
 	p.hashes[notifSettingsSpec.table] = hashRows(notifRows, notifSettingsSpec)
+	// N°210 — parité settings : sans empreintes au boot, le premier flush
+	// réécrirait toutes les lignes pour rien (même logique que la parité
+	// chat/devices du N°133).
+	p.settingsHashes = make(map[string]uint64, len(db.SettingsByAccount))
+	for accID, s := range db.SettingsByAccount {
+		p.settingsHashes[accID] = settingsRowHash(accID, s)
+	}
 }
 
 // hashRows — empreintes indexées par id.

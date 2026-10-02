@@ -185,11 +185,14 @@ func TestSaveTablesJSONMode(t *testing.T) {
 	}
 }
 
-// TestSyncSettingsAlwaysWrittenByTargetedPlan — garde statique : le littéral
-// syncSettings doit rester appelé par syncPlan (le ciblage ne doit JAMAIS
-// sauter settings — last_tick/last_sweep y vivent). Vérification source,
-// même pattern que TestSyncSettingsSQLConsistency.
-func TestSyncSettingsAlwaysWrittenByTargetedPlan(t *testing.T) {
+// TestSyncSettingsStillRunByTargetedPlan — N°210 — garde statique : le
+// littéral syncSettings doit rester appelé par syncPlan (le ciblage ne doit
+// JAMAIS sauter settings — last_tick/last_sweep y vivent, rafraîchis au plus
+// toutes les 5 min même lignes inchangées). Le DIFFÉRENTIEL vit dans
+// syncSettings elle-même : une ligne inchangée ne voyage plus (correctif de
+// la fuite « Service-Initiated »). Vérification source, même pattern que
+// TestSyncSettingsSQLConsistency.
+func TestSyncSettingsStillRunByTargetedPlan(t *testing.T) {
 	src, err := readSourceFile("pg_sync.go")
 	if err != nil {
 		t.Fatalf("lecture du source impossible : %v", err)
@@ -202,7 +205,7 @@ func TestSyncSettingsAlwaysWrittenByTargetedPlan(t *testing.T) {
 	}
 	body := src[planIdx:]
 	loopIdx := strings.Index(body, "for _, st := range syncSteps(db)")
-	settingsIdx := strings.Index(body, "p.syncSettings(ctx, tx, db)")
+	settingsIdx := strings.Index(body, "p.syncSettings(ctx, tx, db, pendingSettings, &delta)")
 	if loopIdx < 0 || settingsIdx < 0 || settingsIdx < loopIdx {
 		t.Fatal("syncPlan doit appeler syncSettings après la boucle des steps ciblés")
 	}

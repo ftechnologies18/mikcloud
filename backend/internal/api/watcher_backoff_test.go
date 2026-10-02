@@ -35,6 +35,27 @@ func TestWatcherBackoffDelay(t *testing.T) {
 	}
 }
 
+// TestWatcherBackoffHotspotFiles — N°210 : le déploiement du portail captif
+// reçoit le même backoff que les autres watchers (sinon re-file à chaque
+// check-in sur échec — martèlement d'un bundle de ~828 Ko, jusqu'à
+// ~1,6 Go/jour et par routeur), sans ralentir les autres watchers.
+func TestWatcherBackoffHotspotFiles(t *testing.T) {
+	a := &API{watcherFailN: map[string]int{}, watcherFailAt: map[string]time.Time{}}
+	now := time.Now().UTC()
+
+	a.recordWatcherError("r-1", model.CmdHotspotFiles, now)
+	if !a.watcherBackoffBlocks("r-1", model.CmdHotspotFiles, now.Add(30*time.Second)) {
+		t.Fatal("hotspot_files en échec : le re-file doit être bloqué pendant le palier")
+	}
+	if a.watcherBackoffBlocks("r-1", model.CmdShield, now.Add(30*time.Second)) {
+		t.Fatal("l'échec hotspot_files ne doit pas ralentir les autres watchers")
+	}
+	a.resetWatcherBackoff("r-1", model.CmdHotspotFiles)
+	if a.watcherBackoffBlocks("r-1", model.CmdHotspotFiles, now) {
+		t.Fatal("après « ok » : le re-file doit redevenir immédiat")
+	}
+}
+
 // TestWatcherBackoffBlocksThenAllows — un échec bloque le re-file pendant le
 // palier, l'expiration le permet ; un « ok » réinitialise immédiatement.
 func TestWatcherBackoffBlocksThenAllows(t *testing.T) {

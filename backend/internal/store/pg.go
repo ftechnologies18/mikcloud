@@ -35,6 +35,17 @@ type PG struct {
 	stats  syncStats
 	kaMode string
 
+	// N°210 — différentiel settings : empreintes par compte (settingsRowHash,
+	// posées au boot par rebuildHashes) et horodatage du dernier rafraîchis-
+	// sement des colonnes volatiles globales (last_tick/last_sweep). AVANT :
+	// syncSettings réécrivait TOUTES les lignes settings à CHAQUE flush —
+	// blobs de branding compris (logo data: URL de 216 Ko mesuré en produc-
+	// tion) ≈ plusieurs Go/jour vers le pooler : la cause racine de l'ex-
+	// plosion « Service-Initiated » Render (10,6 Go le 02/10) et de la
+	// facture de septembre. Accédé sous syncMu uniquement.
+	settingsHashes     map[string]uint64
+	settingsVolatileAt time.Time
+
 	// N°181 — carte Santé persistante (health_checkpoint.go) : contexte de
 	// démarrage et fraîcheur du point de contrôle. healthBootCount/
 	// healthBootAt/healthRestored sont posés UNE fois par adoptHealthCheckpoint

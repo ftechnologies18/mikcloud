@@ -5,6 +5,64 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-02 — N°210 — La vraie fuite des 10,6 Go : syncSettings réécrivait TOUS les blobs de branding à CHAQUE flush — différentiel + backoff hotspot_files + empreinte MIKCLOUD_BASE_URL
+
+### Contexte — le chiffre « Service-Initiated 10.6 GB » contredisait la projection N°209
+Après le correctif N°209 (medias 0 o), l'exploitant constatait pourtant
+10,6 Go « Service-Initiated » sur le tableau Render — du trafic que le
+compteur N°72 (HTTP servi) ne voit PAS : les connexions que le backend
+INITIE (Postgres, R2, notifications). Mesures du jour (sync-status, 2
+lectures à 100 s d'écart) : **~10 sync/min** (170 013 tentatives depuis le
+redéploiement de 12 h 57 — chaque check-in agent, rapport et poll console
+marque un flush, plancher 3 s), HTTP propre (3,9 Mo/4 h, medias 0).
+Cause racine dans le code : `syncSettings` upsertait **TOUTES les lignes
+settings à CHAQUE sync** (« hors diff d'empreintes », assumé dans son
+commentaire) — or la ligne porte les blobs de branding : logo_url data:
+URL de **216 Ko** (compte pilote, vérifié en base), 88 Ko et 70 Ko chez
+deux autres comptes ≈ **375 Ko × ~10 sync/min ≈ 5,4 Go/jour** vers le
+pooler Supabase. Cela explique AVEC PRÉCISION les 10,6 Go d'octobre
+(~1,7 jour) et le régime des ~87 Go de septembre (facture ~13 $) : la
+fuite coulait depuis la pose des logos data:, invisible de N°72 comme de
+lastChangedRows (settings n'y était pas compté).
+
+### Correctif (4 volets)
+1. **syncSettings DIFFÉRENTIEL** : empreinte FNV-1a par ligne
+   (`settingsRowHash` — projection EXACTE de l'upsert) dans un cache dédié
+   (`p.settingsHashes`, atomicité pending→commit→swap N°130, parité boot
+   dans rebuildHashes façon N°133) : une ligne inchangée ne voyage PLUS.
+   Les colonnes volatiles globales (last_tick/last_sweep — fraîcheur du
+   moteur) suivent un UPDATE minuscule (aucun blob) au plus toutes les
+   5 min : le contrat SyncTables (« la fraîcheur ne dépend pas du
+   ciblage ») tient, à 5 min près.
+2. **Compteur d'octets émis** : `syncDelta.changedBytes` → sync-status
+   (`lastChangedBytes`, `changedBytesTotal`) — le garde-fou qui manquait :
+   on comptait des LIGNES, jamais des octets.
+3. **hotspot_files entre dans le backoff N°159** : un déploiement portail
+   en échec re-fillait à CHAQUE check-in (~828 Ko/poussée, jusqu'à
+   ~1,6 Go/jour/routeur) — paliers 1→5→15→30 min, « ok » réactif.
+4. **MIKCLOUD_BASE_URL rejoint portalBrandingFingerprint** (part
+   CONDITIONNELLE : vide, aucune vague parasite au déploiement) :
+   l'apiBase cuite au déploiement était le SEUL champ hors empreinte —
+   la bascule de domaine backend (migration) re-déploiera désormais les
+   pages portail.
+
+### Validation
+- gofmt 0, go vet 0, build OK, `go test ./...` 12 paquets OK dont 4
+  NOUVELLES familles (settingsRowHash déterminisme/scope + branding,
+  settingsRowBytes, parité rebuildHashes, backoff hotspot_files, sig
+  MIKCLOUD_BASE_URL) + garde statique adapté
+  (TestSyncSettingsStillRunByTargetedPlan — le littéral d'appel a gagné
+  ses 2 paramètres, l'intent « le ciblage ne saute jamais settings » est
+  inchangé).
+- Mesures production AVANT correctif : 170 013 syncs/4 h (~10/min),
+  lastChangedRows 2 (settings non compté — aveugle), HTTP 3,9 Mo/4 h.
+  Projection post-fix : SQL egress ≈ 0 en régime (volatile ~320 o/5 min),
+  HTTP ~30-60 Mo/jour → **octobre terminera à ~11,2 Go** (surcoût
+  ≈ 0,93 $) puis **< 1 Go/mois** dès novembre.
+- Pièges consignés : MultiEdit peut appliquer PARTIELLEMENT ses edits
+  (vérifier grep -c après chaque échec — 5/7 avaient passé ici) ; Edit
+  expande les tabs (gofmt -w systématique).
+
 ## 2026-10-02 — N°209 — Fuite bande passante Render : les SLIDES et PROMOS sortaient encore par le proxy — réécriture complète + le proxy devient AIGUILLEUR (302) — vérifié en production, medias 0 o
 
 ### Contexte — le mail « You've used all of the 5 GB »

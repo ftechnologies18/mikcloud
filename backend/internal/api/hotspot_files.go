@@ -126,6 +126,16 @@ func portalBrandingFingerprint(db *model.DB, router *model.Router) string {
 		// le portail, exactement comme APP_PUBLIC_URL ci-dessus.
 		getEnv("R2_PUBLIC_BASE"),
 	}
+	// N°210 — la base publique du BACKEND (MIKCLOUD_BASE_URL prime sur le
+	// Host de la requête dans l'apiBase cuite au déploiement — agentBaseURL)
+	// façonne les pages servies : la poser ou la changer doit re-déployer,
+	// exactement comme APP_PUBLIC_URL. Part CONDITIONNELLE : vide (base
+	// dérivée de la requête, comportement historique), la sig ne change PAS —
+	// aucune vague parasite au déploiement de ce correctif ; c'est la bascule
+	// de domaine (migration) qui la déclenchera.
+	if v := getEnv("MIKCLOUD_BASE_URL"); v != "" {
+		parts = append(parts, v)
+	}
 	// 1er site WiFi actif lié au routeur (même résolution que buildPortalConfig).
 	for i := range db.WifiSites {
 		s := &db.WifiSites[i]

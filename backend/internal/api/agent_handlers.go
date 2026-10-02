@@ -469,7 +469,14 @@ func (a *API) handleAgentCmd(w http.ResponseWriter, r *http.Request) {
 	// des chemins à déployer. Zéro intervention humaine : le gérant
 	// change sa config dans la console, l'agent re-déploie tout seul au
 	// prochain check-in (≤ 45 s) si la sig a changé.
-	ensureHotspotFilesLocked(db, router)
+	// N°210 — backoff N°159 étendu au déploiement portail : un échec
+	// persistant (dossier hotspot absent, disque plein routeur…) ne
+	// re-file plus à CHAQUE check-in — paliers 1→5→15→30 min ; un « ok »
+	// rend le watcher immédiatement réactif (contrat N°35 inchangé pour
+	// un routeur sain, vague de convergence du premier déploiement aussi).
+	if !a.watcherBackoffBlocks(router.ID, model.CmdHotspotFiles, time.Now().UTC()) {
+		ensureHotspotFilesLocked(db, router)
+	}
 
 	// Reprise : une commande de lecture « sent » sans rapport depuis plus de
 	// 10 min est un zombie (blip réseau, rejet historique du rapport…) —

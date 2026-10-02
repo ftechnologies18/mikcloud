@@ -65,7 +65,12 @@ func watcherBackoffDelay(fails int) time.Duration {
 func watcherBackoffKind(kind string) bool {
 	switch kind {
 	case model.CmdShield, model.CmdSafeWifi, model.CmdFamilyGuard, model.CmdAntiVpn,
-		model.CmdQueueEnsure, model.CmdQueueRemove:
+		model.CmdQueueEnsure, model.CmdQueueRemove,
+		// N°210 — le déploiement du portail captif subissait le même
+		// martèlement sur échec : re-file à chaque check-in (45 s sous
+		// attention) d'un bundle de ~828 Ko — jusqu'à ~1,6 Go/jour et par
+		// routeur de pousses sans aucune chance de converger.
+		model.CmdHotspotFiles:
 		return true
 	}
 	return false

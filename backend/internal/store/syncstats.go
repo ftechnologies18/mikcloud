@@ -32,6 +32,10 @@ import (
 type syncDelta struct {
 	changed int
 	removed int
+	// N°210 — octets (approximatifs) émis vers PostgreSQL par cette synchro :
+	// garde-fou egress — l'explosion « Service-Initiated » Render était
+	// invisible car seules les LIGNES étaient comptées, jamais les octets.
+	changedBytes int64
 }
 
 // syncStats — compteurs de la synchro différentielle PostgreSQL.
@@ -52,6 +56,8 @@ type syncStats struct {
 	lastSuccessMs    int64     // durée de cette dernière synchro
 	lastChangedRows  int       // lignes upsertées par cette dernière synchro
 	lastRemovedRows  int       // lignes supprimées par cette dernière synchro
+	lastChangedBytes int64     // N°210 — octets (approx.) émis par la dernière synchro
+	changedBytesTot  int64     // N°210 — cumul depuis le démarrage (volatile)
 	lastError        string    // dernière erreur (brute, tronquée si géante)
 	lastErrorAt      time.Time
 }
@@ -73,6 +79,8 @@ func (s *syncStats) recordSuccess(delta syncDelta, took time.Duration) {
 	s.lastSuccessMs = took.Milliseconds()
 	s.lastChangedRows = delta.changed
 	s.lastRemovedRows = delta.removed
+	s.lastChangedBytes = delta.changedBytes
+	s.changedBytesTot += delta.changedBytes
 }
 
 // recordFailure — synchro échouée : l'état mémoire reste la vérité, la
@@ -104,6 +112,8 @@ type SyncStatsSnapshot struct {
 	LastSuccessMs    int64  `json:"lastSuccessMs"`
 	LastChangedRows  int    `json:"lastChangedRows"`
 	LastRemovedRows  int    `json:"lastRemovedRows"`
+	LastChangedBytes int64  `json:"lastChangedBytes"`  // N°210 — octets émis (approx.)
+	ChangedBytesTot  int64  `json:"changedBytesTotal"` // N°210 — cumul depuis le démarrage
 	LastError        string `json:"lastError,omitempty"`
 	LastErrorAt      string `json:"lastErrorAt,omitempty"`
 }
@@ -120,6 +130,8 @@ func (s *syncStats) snapshot() *SyncStatsSnapshot {
 		LastSuccessMs:    s.lastSuccessMs,
 		LastChangedRows:  s.lastChangedRows,
 		LastRemovedRows:  s.lastRemovedRows,
+		LastChangedBytes: s.lastChangedBytes,
+		ChangedBytesTot:  s.changedBytesTot,
 	}
 	if !s.lastSuccessAt.IsZero() {
 		snap.LastSuccessAt = isoUTC(s.lastSuccessAt)
@@ -150,6 +162,8 @@ func (s *syncStats) restore(h *healthCheckpoint) {
 	s.lastSuccessMs = h.LastSuccessMs
 	s.lastChangedRows = h.LastChangedRows
 	s.lastRemovedRows = h.LastRemovedRows
+	// N°210 — compteurs d'octets non persistés : ils repartent de zéro à
+	// chaque démarrage (volatils, sans risque métier).
 	if at, err := time.Parse(time.RFC3339, h.LastSuccessAt); err == nil {
 		s.lastSuccessAt = at
 	}
@@ -277,6 +291,13 @@ func (s *Store) SyncHealth() SyncHealth {
 	for i := range h.Tables {
 		if cached, ok := s.pg.hashes[h.Tables[i].Table]; ok {
 			h.Tables[i].Mirrored = len(cached)
+		}
+	}
+	// N°210 — settings : lignes répliquées = empreintes différentielles
+	// posées (la table vit hors p.hashes, dans son cache dédié).
+	for i := range h.Tables {
+		if h.Tables[i].Table == "settings" {
+			h.Tables[i].Mirrored = len(s.pg.settingsHashes)
 		}
 	}
 	return h

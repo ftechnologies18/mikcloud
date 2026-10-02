@@ -178,6 +178,43 @@ tombe** :
    dès le 1er jour ; Stormkit cloud n'exécute pas Go ; Stormkit
    self-hosted = serveur à louer).
 
+## 4ter. Résolu le jour même — le mail « 5 GB atteints » du 02/10 (N°209)
+
+**L'incident** : mail Render « You've used all of the 5 GB » reçu le
+02/10 après-midi. Diagnostic complet mené au feu (API Render + compteur
+N°72 + base production) :
+
+1. **La plus grosse part était la queue de l'ère pré-fix** : le correctif
+   R2 (N°205) n'est parti que le **02/10 à 04 h 49 UTC** — le 1er octobre
+   et la matinée ont tourné à l'ancien régime (~1,7 Go/jour de bannières
+   par le proxy) : ~4,9 Go brûlés avant même le déploiement.
+2. **Une fuite résiduelle** : le compteur post-déploiement montrait
+   encore **medias = 83,7 Mo en 8,5 h** — N°205 ne réécrivait que
+   logo + bannière ; les **slides du carrousel** (N°136) et les
+   **imageUrl des promos** (N°54) restaient servis par le proxy
+   (compte pilote : une slide de 403 Ko × chaque chargement de portail).
+
+**Le correctif N°209** (commit 6c5b5d6, LIVE 12 h 57 UTC) :
+- réécriture de TOUTES les images vers R2 public (slides + promos,
+  contrat d'identité stricte — rien à réécrire ⇒ string inchangée) ;
+- bump d'empreinte v2 → v3 : re-déploiement unique des pages portail
+  sur les routeurs (vague de convergence ~3 Mo observée au compteur) ;
+- **le proxy devient un aiguilleur** : 302 vers R2 public, clé validée
+  avant redirection (zéro redirection ouverte) — toute requête résiduelle
+  coûte ~300 octets au lieu de ~230 Ko.
+
+**Vérifié en production** : proxy → 302 + 0 octet transféré (la même
+requête streamait 287 836 o avant) ; cible R2 → 200 ; compteur post-fix :
+**medias 0 o**. Projection : ~150-300 Mo/mois tout compris < 5 Go →
+**facture 0 $ dès novembre**. Octobre terminera à ~5,2 Go → surcoût
+≈ 0,03-0,08 $ (la dette réelle reste les ~13 $ de septembre).
+
+**Leçon consignée** : quand on déplace une catégorie de trafic hors d'un
+tuyau facturé, l'inventaire des sources doit être EXHAUSTIF (logo,
+bannière, slides, promos, favicon…) — le compteur par catégorie (N°72)
+est ce qui a permis de détecter la fuite résiduelle en 15 minutes ;
+le garder vert est le garde-fou permanent.
+
 ## 5. Si une migration a lieu un jour quand même
 
 - **Garder le domaine API identique** (bascule DNS uniquement) : les

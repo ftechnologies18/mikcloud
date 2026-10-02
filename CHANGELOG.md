@@ -5,6 +5,68 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-02 — N°209 — Fuite bande passante Render : les SLIDES et PROMOS sortaient encore par le proxy — réécriture complète + le proxy devient AIGUILLEUR (302) — vérifié en production, medias 0 o
+
+### Contexte — le mail « You've used all of the 5 GB »
+L'exploitant reçoit le 02/10 après-midi l'alerte Render : les 5 Go de
+bande passante gratuite d'octobre sont épuisés, la suite est facturée
+0,15 $/Go — sans trésorerie pour la facture de septembre (cf. N°208),
+c'est l'urgence. Diagnostic mené au feu (API Render + compteur N°72 +
+base production) :
+
+- **La plus grosse part est la queue de l'ère pré-fix** : le correctif
+  R2 (N°205) n'est parti que le **02/10 à 04 h 49 UTC** (API deploys) —
+  le 1er octobre et la matinée ont tourné à l'ancien régime
+  (~1,7 Go/jour) : ~4,9 Go brûlés avant même le déploiement.
+- **Une fuite résiduelle** : le compteur post-déploiement (8,5 h)
+  montrait encore **medias = 83,7 Mo en 359 requêtes** (~233 Ko/req —
+  des images). Cause exacte : `rewritePortalMedia` (N°205) ne réécrivait
+  que LogoURL + BannerURL — les **slides du carrousel commercial**
+  (N°136, `cfg.Slides = portalSlidesList(b.SlidesJSON)` brut aux deux
+  sites) et les **imageUrl des promos hospitalité** (N°54) passaient
+  dans la config du portail avec leurs URL proxy. Base production :
+  compte pilote avec slides proxy dont une de **403 Ko** servie à chaque
+  chargement de portail à carrousel.
+
+### Correctif (3 volets)
+1. **rewriteSlidesMedia + rewritePromosMedia** dans rewritePortalMedia :
+   réécriture de TOUTES les images vers R2 public, avec contrat
+   d'identité stricte (string sans `/api/media/` ou JSON indécodable ⇒
+   ressort binairement identique ; promos décodées en `[]map[string]any`
+   — aucune clé perdue au re-encodage) et raccourci `strings.Contains`
+   avant tout décodage.
+2. **portalBrandingFingerprint bump v2 → v3** : les pages déjà cuites
+   sur les routeurs portent des URL proxy pour slides/promos — ce bump
+   force UN re-déploiement de tous les portails au check-in suivant
+   (vague de convergence observée au compteur : ~3 Mo, unique).
+3. **handleMediaGet devient un AIGUILLEUR** : clé validée PUIS 302
+   `Location: {R2_PUBLIC_BASE}/{key}` + `Cache-Control: public,
+   max-age=3600` quand la base est posée — ~300 octets au lieu de
+   ~230 Ko par requête résiduelle (pages non encore re-déployées, caches
+   navigateur, console). Base vide ⇒ proxy historique streaming
+   (rétrocompat). Clé-valide-AVANT-redirection = zéro redirection
+   ouverte.
+
+### Validation
+- gofmt 0, go vet 0, go build OK, `go test ./...` 12 paquets OK dont
+  **4 NOUVELLES familles** (réécriture slides/promos unitaire ± identité
+  stricte, resolvePortalBranding bout en bout, proxy 302/404/503).
+  Piège consigné : le client Go SUIT les 302 par défaut — le test irait
+  chercher la vraie page R2 sur internet et lirait son 404 ;
+  `CheckRedirect = http.ErrUseLastResponse` obligatoire pour observer
+  la redirection elle-même.
+- **Production (commit 6c5b5d6 LIVE 12 h 57 UTC)** : proxy → **302 avec
+  0 octet transféré** (la même requête streamait 287 836 o avant) ;
+  cible R2 → 200 `image/webp` 287 Ko ; compteur post-fix 15 min :
+  **medias 0 o (1 req)** contre 83,7 Mo/8,5 h avant. Projection :
+  ~150-300 Mo/mois tout compris < 5 Go → **facture 0 $ dès novembre** ;
+  octobre terminera à ~5,2 Go → surcoût ≈ 0,03-0,08 $.
+
+4 fichiers backend : 3 modifiés + tests étendus. RUNBOOK-HEBERGEMENT
+§4ter : récit complet + leçon (inventaire exhaustif des sources quand
+on déplace une catégorie de trafic hors d'un tuyau facturé — le
+compteur par catégorie N°72 est le garde-fou permanent).
+
 ## 2026-10-02 — N°208 — Plan de continuité « facture Render impayée » : rayon d'explosion vérifié dans le code + échappatoire Oracle Cloud Always Free
 
 ### Contexte

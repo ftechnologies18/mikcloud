@@ -247,3 +247,13 @@ Références : N°205 (diagnostic facture + R2), N°72-77/157/159 (optimisation
 volume), N°202 (pipeline standby-restore), `docs/RUNBOOK-SECRETS.md`
 (rotation des secrets), `docs/RUNBOOK-WALLED-GARDEN.md` (domaines en dur
 sur les routeurs).
+
+## §7 — Migration Oracle : le plan d'exécution existe (2026-10-02, N°211)
+
+L'option Oracle du §4bis est désormais outillée de bout en bout : runbook
+pas-à-pas (`docs/MIGRATION-ORACLE.md`), kit `deploy/oracle/` (bootstrap,
+systemd, Caddy, CA Supabase, coffre-fort Neon) et workflow CI/CD
+`deploy-oracle.yml`. Stratégie de domaine en deux temps (custom domain
+Render → bascule DNS) pour une coupure ZÉRO. À dérouler quand
+l'exploitant décide de quitter Render — les déclencheurs du §4 restent
+la référence pour le timing.

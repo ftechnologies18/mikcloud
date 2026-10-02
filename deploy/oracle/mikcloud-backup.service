@@ -1,0 +1,7 @@
+# mikcloud — coffre-fort Neon (oneshot, déclenché par le timer).
+[Unit]
+Description=mikcloud — snapshot Supabase vers Neon
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/mikcloud-backup

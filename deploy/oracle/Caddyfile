@@ -1,0 +1,24 @@
+# mikcloud — reverse proxy + TLS automatique (Caddy, Let's Encrypt).
+# Installé par bootstrap.sh dans /etc/caddy/Caddyfile : le marqueur
+# __MIKCLOUD_DOMAIN__ y est remplacé par le domaine passé au bootstrap.
+#
+# Le backend écoute 127.0.0.1:4000 (PORT de /etc/mikcloud/mikcloud.env) ;
+# le port 4000 n'est PAS ouvert dans le pare-feu — seul Caddy parle au
+# backend, en 80/443 publics.
+#
+# NOTE bascule DNS : Let's Encrypt HTTP-01 exige que le domaine pointe
+# vers cette VM et que l'enregistrement Cloudflare soit DNS-only (nuage
+# gris) — cf. docs/MIGRATION-ORACLE.md §5/§8.
+__MIKCLOUD_DOMAIN__ {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-server
+	}
+	reverse_proxy 127.0.0.1:4000
+	request_body {
+		max_size 25MB
+	}
+}

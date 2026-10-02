@@ -1,0 +1,62 @@
+name: deploy-oracle
+
+# Déploiement du backend vers la VM Oracle Cloud (docs/MIGRATION-ORACLE.md §6).
+# Silencieusement ignoré tant que la VM n'est pas raccordée : le pas de
+# déploiement exige le secret ORACLE_HOST — avant ça, ce workflow vaut
+# CI de build ARM64. Une fois raccordé, chaque push main qui touche le
+# backend reconstruit et redémarre le service sur la VM.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "deploy/oracle/**"
+      - ".github/workflows/deploy-oracle.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-oracle
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+
+      - name: Build (linux/arm64, binaire statique)
+        run: |
+          cd backend
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o ../dist/mikcloud-server .
+
+      - name: Notice — VM Oracle pas encore raccordée
+        if: ${{ secrets.ORACLE_HOST == '' }}
+        run: |
+          echo "::notice::VM Oracle non raccordée (secret ORACLE_HOST absent) — déploiement ignoré. Installation : docs/MIGRATION-ORACLE.md §6."
+
+      - name: Déploiement SSH vers la VM
+        if: ${{ secrets.ORACLE_HOST != '' }}
+        env:
+          ORACLE_HOST: ${{ secrets.ORACLE_HOST }}
+          DEPLOY_USER: ${{ secrets.ORACLE_USER }}
+          SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+        run: |
+          install -m 600 /dev/null /tmp/oracle_key
+          printf '%s\n' "$SSH_KEY" > /tmp/oracle_key
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          scp $SSH_OPTS dist/mikcloud-server "$DEPLOY_USER@$ORACLE_HOST:/tmp/mikcloud-server.new"
+          ssh $SSH_OPTS "$DEPLOY_USER@$ORACLE_HOST" '
+            sudo install -m 0755 /tmp/mikcloud-server.new /opt/mikcloud/mikcloud-server &&
+            sudo systemctl restart mikcloud &&
+            sleep 3 &&
+            systemctl is-active --quiet mikcloud &&
+            curl -fsS -o /dev/null http://127.0.0.1:4000/ &&
+            echo "BACKEND OK"
+          '

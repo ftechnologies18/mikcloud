@@ -5,6 +5,55 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-02 — N°211 — Kit de migration backend Render → Oracle Cloud Always Free : runbook pas-à-pas + deploy/oracle/ + CI/CD + coffre-fort Neon
+
+### Contexte — l'exploitant a validé son compte Oracle
+L'exploitant a créé et fait valider son compte Oracle Cloud (recommandation
+du §4bis, N°208) pendant que le chiffre Render « Service-Initiated 10.6 GB »
+crestait inexpliqué (réponse : fuite syncSettings, corrigée N°210 —
+~5,4 Go/jour de blobs settings vers le pooler). Décision : l'architecture
+cible **GitHub (code/CI) + Vercel (frontend) + Oracle (backend) + Supabase
+(primaire) + Neon (coffre-fort)** — 0 €/mois définitif, 10 To d'egress
+(contre 5 Go Render) : la question bande passante devient structurellement
+nulle. Aucun nouveau projet : tout vit dans le monorepo.
+
+### Livré
+- **docs/MIGRATION-ORACLE.md** (390 lignes) : §0 vue d'ensemble (schéma +
+  comparatif), §1 création VM clic par clic (eu-paris-1, Ubuntu 24.04
+  aarch64, A1.Flex 2 OCPU/12 Go, Security List 22/80/443, pièges
+  « Out of capacity » + iptables local Ubuntu-Oracle), §2 bootstrap UNE
+  commande, §3 les 27 variables, §4 tests pré-bascule (curl --resolve,
+  honnêteté sur le certificat LE post-bascule), §5 STRATÉGIE DE DOMAINE EN
+  DEUX TEMPS (T1 : custom domain Render + MIKCLOUD_BASE_URL + re-provision
+  des routeurs un à un — onrender.com continue de servir pendant toute la
+  manœuvre ; T2 : A record vers la VM, invisible pour la flotte convergée),
+  §6 CI/CD (3 secrets ORACLE_*, sentinel RENDER-DEPLOY-FROZEN), §7 coffre-
+  fort Neon (03:00 UTC, pooler session :5432 pour pg_dump), §8 checklist
+  de bascule en 13 étapes validées, §9 décommission + rollback (minutes),
+  §10 tableau de 13 pièges.
+- **deploy/oracle/** : bootstrap.sh (idempotent : iptables+persist, Caddy
+  dépôt officiel, user mikcloud, /etc/mikcloud/*.env, CA PRIVÉE Supabase —
+  certificat supabase-prod-ca-2021.crt, exigée par sslmode=verify-full —,
+  unit systemd + Caddyfile + timer backup), mikcloud.service (ProtectSystem
+  strict, EnvironmentFile), Caddyfile (TLS auto, reverse_proxy
+  127.0.0.1:4000), env.example (27 variables, PLACEHOLDERS uniquement),
+  backup-neon.sh + mikcloud-backup.service/.timer.
+- **.github/workflows/deploy-oracle.yml** : build linux/arm64 statique +
+  scp + restart via secrets ORACLE_HOST/ORACLE_USER/ORACLE_SSH_KEY ;
+  AVANT raccordement de la VM : simple CI de build ARM64 (notice explicite,
+  jamais d'échec silencieux — leçon N°36-b).
+- RUNBOOK-HEBERGEMENT : §7 pointeur vers le plan.
+
+### Vérifications
+- DATABASE_URL prod vérifiée via API Render : pooler SESSION :5432 (109
+  caractères, sans sslmode — le flip du 1ᵉʳ octobre l'avait déjà basculée ;
+  le :6543 transactionnel reste incompatible pg_dump) — le runbook documente
+  la bonne valeur.
+- AUCUN secret dans le repo (env.example = placeholders ; la suspension
+  Render s'écrit avec $RENDER_API_KEY).
+- Fichier Python d'assemblage : 3 corrections portées au runbook de l'agent
+  (numérotation N°211, snippet §7 aligné sur backup-neon.sh).
+
 ## 2026-10-02 — N°210 — La vraie fuite des 10,6 Go : syncSettings réécrivait TOUS les blobs de branding à CHAQUE flush — différentiel + backoff hotspot_files + empreinte MIKCLOUD_BASE_URL
 
 ### Contexte — le chiffre « Service-Initiated 10.6 GB » contredisait la projection N°209

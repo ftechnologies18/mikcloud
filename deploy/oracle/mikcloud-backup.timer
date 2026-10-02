@@ -1,0 +1,10 @@
+# mikcloud — coffre-fort Neon, chaque nuit à 03:00 UTC.
+[Unit]
+Description=mikcloud — timer du snapshot Neon
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

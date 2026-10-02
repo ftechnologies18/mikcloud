@@ -1,0 +1,28 @@
+# mikcloud backend — unité systemd (deploy/oracle/mikcloud.service).
+# Installée par bootstrap.sh dans /etc/systemd/system/mikcloud.service.
+# Le binaire est STATIQUE (CGO_ENABLED=0) : aucune dépendance runtime.
+# L'état métier vit dans Supabase ; le process n'écrit rien sur disque
+# en mode PostgreSQL (d'où ProtectSystem=strict sans ReadWritePaths métier).
+[Unit]
+Description=mikcloud backend (hotspot-API)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mikcloud
+Group=mikcloud
+EnvironmentFile=/etc/mikcloud/mikcloud.env
+ExecStart=/opt/mikcloud/mikcloud-server
+WorkingDirectory=/opt/mikcloud
+Restart=always
+RestartSec=3
+# Durcissement : le process n'a pas besoin de plus.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+StateDirectory=mikcloud
+
+[Install]
+WantedBy=multi-user.target

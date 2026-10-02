@@ -176,16 +176,87 @@ func resolvePortalBranding(db *model.DB, acc string, router *model.Router) porta
 	return b
 }
 
-// rewritePortalMedia — N°205 : réécrit les URL logo/bannière du portail vers
-// le domaine public R2 quand elles pointent vers le proxy /api/media (chaque
-// octet servi par le proxy compte dans la bande passante sortante Render,
-// 5 Go/mois inclus puis 0,15 $/Go — cf. handlers_media.go). Les URL externes
+// rewritePortalMedia — N°205/N°209 : réécrit TOUTES les URL média du portail
+// vers le domaine public R2 quand elles pointent vers le proxy /api/media
+// (chaque octet servi par le proxy compte dans la bande passante sortante
+// Render, 5 Go/mois inclus puis 0,15 $/Go — cf. handlers_media.go). N°205 ne
+// couvrait que logo+bannière ; N°209 ajoute les SLIDES du carrousel commercial
+// (N°136) et les IMAGES DES PROMOS hospitalité (N°54) — constat production
+// 02/10/2026 : la catégorie « medias » du compteur N°72 comptait encore
+// 83,7 Mo/8,5 h post-fix (359 requêtes ~233 Ko = des slides servies par le
+// proxy à CHAQUE chargement de portail à carrousel). Les URL externes
 // (https://… d'un autre hébergeur) et les data:image/ intégrées restent
 // intactes (mediaRewriteURL ne touche que NOS clés). Base publique vide ⇒
 // identité — comportement historique.
 func rewritePortalMedia(b *portalBranding) {
 	b.LogoURL = mediaRewriteURL(b.LogoURL)
 	b.BannerURL = mediaRewriteURL(b.BannerURL)
+	b.SlidesJSON = rewriteSlidesMedia(b.SlidesJSON) // N°209 — carrousel
+	b.PromosJSON = rewritePromosMedia(b.PromosJSON) // N°209 — promos hospitalité
+}
+
+// rewriteSlidesMedia — N°209 : réécrit chaque URL du JSON de slides
+// (["url",…]) vers R2 public. Décodage tolérant : JSON invalide, vide ou sans
+// URL proxy ⇒ la string persistée ressort BINAIRE IDENTIQUE (aucun
+// reformatage, aucun plafond appliqué — le filtrage reste le travail de
+// portalSlidesList au décodage aval, la réécriture ne doit rien perdre).
+func rewriteSlidesMedia(s string) string {
+	if s == "" || !strings.Contains(s, "/api/media/") {
+		return s // raccourci : aucune URL proxy possible, sortie identité
+	}
+	var raw []string
+	if json.Unmarshal([]byte(s), &raw) != nil {
+		return s
+	}
+	out := make([]string, len(raw))
+	changed := false
+	for i, u := range raw {
+		out[i] = mediaRewriteURL(u)
+		if out[i] != u {
+			changed = true
+		}
+	}
+	if !changed {
+		return s
+	}
+	enc, err := json.Marshal(out)
+	if err != nil {
+		return s
+	}
+	return string(enc)
+}
+
+// rewritePromosMedia — N°209 : réécrit le champ imageUrl de chaque promo
+// hospitalité ([{title,desc,imageUrl,…},…]) vers R2 public. Décodage en
+// []map[string]any : TOUTES les clés sont préservées au re-encodage (une
+// ligne héritée d'un appel API direct ne perd rien) ; seul imageUrl bouge.
+// Même contrat d'identité que rewriteSlidesMedia (rien à réécrire ⇒ string
+// binairement identique).
+func rewritePromosMedia(s string) string {
+	if s == "" || !strings.Contains(s, "/api/media/") {
+		return s
+	}
+	var raw []map[string]any
+	if json.Unmarshal([]byte(s), &raw) != nil {
+		return s
+	}
+	changed := false
+	for _, promo := range raw {
+		if u, ok := promo["imageUrl"].(string); ok {
+			if nu := mediaRewriteURL(u); nu != u {
+				promo["imageUrl"] = nu
+				changed = true
+			}
+		}
+	}
+	if !changed {
+		return s
+	}
+	enc, err := json.Marshal(raw)
+	if err != nil {
+		return s
+	}
+	return string(enc)
 }
 
 // applyPortalOverride — écrase champ par champ les valeurs NON VIDES de la

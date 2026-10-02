@@ -101,7 +101,10 @@ func portalBrandingFingerprint(db *model.DB, router *model.Router) string {
 	settings := ensureSettings(db, acc)
 	t := settings.Tenant
 	parts := []string{
-		"v2",
+		"v3", // N°209 — bump v2→v3 : les SLIDES et PROMOS sont désormais réécrits
+		// vers R2 public à la résolution (rewritePortalMedia) ; les pages déjà
+		// cuites sur les routeurs portent des URL proxy pour ces champs — ce
+		// bump force UN re-déploiement de tous les portails pour converger.
 		t.Name,
 		t.LogoURL,
 		t.BannerURL,

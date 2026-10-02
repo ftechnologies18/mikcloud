@@ -12,8 +12,10 @@
 package api
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"mikcloud/hotspot-api/internal/model"
@@ -205,5 +207,172 @@ func TestPortalBrandingFingerprintChangesWithMediaBase(t *testing.T) {
 	}
 	if sig1 == sig2 {
 		t.Fatal("poser R2_PUBLIC_BASE doit changer l'empreinte branding (re-déploiement du portail attendu)")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// N°209 — la fuite résiduelle du 02/10/2026 : les SLIDES (N°136) et les
+// IMAGES DE PROMOS (N°54) n'étaient PAS réécrits vers R2 public (N°205 ne
+// couvrait que logo+bannière) — la catégorie « medias » du compteur N°72
+// comptait 83,7 Mo en 8,5 h post-fix, portée par le carrousel servi à chaque
+// chargement de portail. Le proxy devient par ailleurs un AIGUILLEUR (302
+// vers R2 public, ~300 o au lieu de ~230 Ko par requête résiduelle).
+// ---------------------------------------------------------------------------
+
+// TestRewriteSlidesMedia — réécriture du JSON de slides : chaque URL proxy
+// devient R2 public, les URL externes/data: passent intactes, et une string
+// sans URL proxy ressort BINAIRE IDENTIQUE (aucun reformatage parasite).
+func TestRewriteSlidesMedia(t *testing.T) {
+	t.Setenv("R2_PUBLIC_BASE", "https://media.ftci.fr")
+	proxy := "https://mikcloud.onrender.com/api/media/media/acc-s/2026/" + testHex32 + ".jpg"
+	external := "https://cdn.exemple.net/slide.jpg"
+
+	in := `["` + proxy + `","` + external + `"]`
+	want := `["https://media.ftci.fr/media/acc-s/2026/` + testHex32 + `.jpg","` + external + `"]`
+	if got := rewriteSlidesMedia(in); got != want {
+		t.Fatalf("slides réécrites : %q, voulu %q", got, want)
+	}
+
+	// Identité stricte : rien à réécrire.
+	for name, s := range map[string]string{
+		"vide":            "",
+		"externes seules": `["` + external + `","` + external + `"]`,
+		"sans api/media":  `["https://a.fr/x.jpg"]`,
+		"JSON invalide":   `{pas du json`,
+		"data URLs":       `["data:image/png;base64,iVBOR"]`,
+		"structure objet": `{"slides":[]}`,
+	} {
+		if got := rewriteSlidesMedia(s); got != s {
+			t.Fatalf("%s : identité attendue, got %q", name, got)
+		}
+	}
+
+	// Base vide ⇒ identité même avec URL proxy (rétrocompat).
+	t.Setenv("R2_PUBLIC_BASE", "")
+	if got := rewriteSlidesMedia(in); got != in {
+		t.Fatalf("base vide : identité attendue, got %q", got)
+	}
+}
+
+// TestRewritePromosMedia — réécriture du champ imageUrl des promos
+// hospitalité : les AUTRES clés et lignes sont préservées mot pour mot au
+// re-encodage, et une string sans URL proxy ressort identique.
+func TestRewritePromosMedia(t *testing.T) {
+	t.Setenv("R2_PUBLIC_BASE", "https://media.ftci.fr")
+	proxy := "https://mikcloud.onrender.com/api/media/media/acc-p/2026/" + testHex32 + ".webp"
+
+	in := `[{"title":"Jus","desc":"Froid","imageUrl":"` + proxy + `","priceLabel":"500 XOF"},{"title":"Sans image","desc":"ok"}]`
+	got := rewritePromosMedia(in)
+	if !strings.Contains(got, `"imageUrl":"https://media.ftci.fr/media/acc-p/2026/`+testHex32+`.webp"`) {
+		t.Fatalf("imageUrl promo non réécrit : %q", got)
+	}
+	if !strings.Contains(got, `"title":"Jus"`) || !strings.Contains(got, `"title":"Sans image"`) || !strings.Contains(got, `"priceLabel":"500 XOF"`) {
+		t.Fatalf("champs voisins perdus au re-encodage : %q", got)
+	}
+	if strings.Contains(got, "/api/media/") {
+		t.Fatalf("URL proxy résiduelle : %q", got)
+	}
+
+	// Identité stricte : rien à réécrire.
+	for name, s := range map[string]string{
+		"vide":             "",
+		"promo sans img":   `[{"title":"X"}]`,
+		"img externe":      `[{"imageUrl":"https://cdn.fr/a.jpg"}]`,
+		"JSON invalide":    `[pas du json`,
+		"imageUrl non str": `[{"imageUrl":42}]`,
+	} {
+		if g := rewritePromosMedia(s); g != s {
+			t.Fatalf("%s : identité attendue, got %q", name, g)
+		}
+	}
+}
+
+// TestResolvePortalBrandingRewritesSlidesAndPromos — bout en bout branding :
+// un compte avec carrousel + promos proxy voit ses SlidesJSON/PromosJSON
+// réécrits à la résolution (la chaîne compte→site→routeur du N°205 s'applique
+// désormais à TOUTES les images du portail).
+func TestResolvePortalBrandingRewritesSlidesAndPromos(t *testing.T) {
+	t.Setenv("R2_PUBLIC_BASE", "https://media.ftci.fr")
+	st, _ := newTestServerWithStore(t)
+	st.Lock()
+	db := st.Data()
+	db.Accounts = append(db.Accounts, model.Account{ID: "acc-media-sp", Name: "Media SP"})
+	s := ensureSettings(db, "acc-media-sp")
+	s.Tenant.PortalSlides = `[` +
+		`"https://mikcloud.onrender.com/api/media/media/acc-media-sp/2026/` + testHex32 + `.jpg",` +
+		`"https://cdn.exemple.net/externe.jpg"]`
+	s.Tenant.PortalPromos = `[{"title":"Menu","imageUrl":"https://mikcloud.onrender.com/api/media/media/acc-media-sp/2026/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.png","priceLabel":"1 000 XOF"}]`
+	db.SettingsByAccount["acc-media-sp"] = s
+	b := resolvePortalBranding(db, "acc-media-sp", nil)
+	st.Unlock()
+
+	wantSlides := `["https://media.ftci.fr/media/acc-media-sp/2026/` + testHex32 + `.jpg","https://cdn.exemple.net/externe.jpg"]`
+	if b.SlidesJSON != wantSlides {
+		t.Fatalf("slides réécrits : %q, voulu %q", b.SlidesJSON, wantSlides)
+	}
+	if !strings.Contains(b.PromosJSON, `"imageUrl":"https://media.ftci.fr/media/acc-media-sp/2026/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.png"`) {
+		t.Fatalf("imageUrl promo non réécrit : %q", b.PromosJSON)
+	}
+	// La config aval (portalSlidesList) décode les URLs réécrites telles quelles.
+	slides := portalSlidesList(b.SlidesJSON)
+	if len(slides) != 2 || slides[0] != "https://media.ftci.fr/media/acc-media-sp/2026/"+testHex32+".jpg" || slides[1] != "https://cdn.exemple.net/externe.jpg" {
+		t.Fatalf("portalSlidesList sur slides réécrits : %v", slides)
+	}
+}
+
+// TestMediaGetRedirectsToPublicBase — N°209 : avec R2_PUBLIC_BASE posée, le
+// proxy ne stream plus — il aiguille en 302 vers R2 public (clé validée
+// AVANT la redirection : aucune redirection ouverte) avec un cache borné ;
+// base vide ⇒ comportement historique (503 media_unconfigured sans config
+// R2, la clé invalide reste 404).
+func TestMediaGetRedirectsToPublicBase(t *testing.T) {
+	st, ts := newTestServerWithStore(t)
+	_ = st
+	key := "media/acc-redir/2026/" + testHex32 + ".webp"
+	// NB : ts.Client() + CheckRedirect=ErrUseLastResponse — le client Go
+	// SUIT les redirections par défaut (il irait chercher la vraie page R2
+	// sur internet) ; le test observe la réponse 302 ELLE-MÊME, pas sa cible.
+	cl := ts.Client()
+	cl.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	get := func(path string) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodGet, ts.URL+path, nil)
+		if err != nil {
+			t.Fatalf("requête impossible : %v", err)
+		}
+		resp, err := cl.Do(req)
+		if err != nil {
+			t.Fatalf("GET %s : %v", path, err)
+		}
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		_ = resp.Body.Close()
+		return resp
+	}
+
+	t.Setenv("R2_PUBLIC_BASE", "https://media.ftci.fr")
+	resp := get("/api/media/" + key)
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("statut = %d, voulu 302", resp.StatusCode)
+	}
+	if loc := resp.Header.Get("Location"); loc != "https://media.ftci.fr/"+key {
+		t.Fatalf("Location = %q, voulu l'URL R2 publique", loc)
+	}
+	if cc := resp.Header.Get("Cache-Control"); cc != "public, max-age=3600" {
+		t.Fatalf("Cache-Control = %q, voulu public, max-age=3600", cc)
+	}
+
+	// Clé invalide : 404 AVANT toute redirection (pas de redirection ouverte).
+	resp = get("/api/media/media/acc-redir/2026/pas-un-hex.jpg")
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("clé invalide : statut %d, voulu 404 (jamais une redirection)", resp.StatusCode)
+	}
+
+	// Base vide ⇒ proxy historique : sans config R2, 503 media_unconfigured.
+	t.Setenv("R2_PUBLIC_BASE", "")
+	resp = get("/api/media/" + key)
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("base vide sans R2 : statut %d, voulu 503 media_unconfigured (comportement historique)", resp.StatusCode)
 	}
 }

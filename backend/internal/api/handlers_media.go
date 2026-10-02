@@ -232,7 +232,34 @@ func (a *API) handleMediaUpload(w http.ResponseWriter, r *http.Request) {
 // l'objet depuis R2. Les images du portail captif passent par ici (pré-auth,
 // même hôte que le claim) — d'où l'importance du Cache-Control : un navigateur
 // ne re-télécharge jamais une image déjà vue.
+//
+// N°209 — REDIRECTION vers le domaine public R2 quand R2_PUBLIC_BASE est
+// configuré : le proxy ne STREAM PLUS l'objet (chaque octet traversait le
+// backend = bande passante Render facturable, 0,15 $/Go au-delà de 5 Go —
+// constat production 02/10/2026 : la catégorie « medias » du compteur N°72
+// comptait 83,7 Mo en 8,5 h POST-fix N°205, portée par les slides/promos
+// non réécrits et les pages déjà cuites). Une redirection coûte ~300 octets
+// au lieu de ~230 Ko : le proxy devient un aiguilleur, plus un tuyau. Les
+// consommateurs restants (pages portail pas encore re-déployées, caches
+// navigateur périmées, console) suivent la redirection naturellement ; le
+// cache d'une heure borne le re-contrôle. Base vide ⇒ proxy historique
+// (streaming) — rétrocompatibilité du déploiement.
 func (a *API) handleMediaGet(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("key")
+	if !mediaKeyRe.MatchString(key) {
+		writeErr(w, http.StatusNotFound, "Image introuvable")
+		return
+	}
+	// N°209 — aiguillage vers R2 public : la clé est DÉJÀ validée (aucune
+	// redirection ouverte — on ne redirige que nos clés hex 128 bits vers
+	// NOTRE base), et l'objet vit sur le domaine public indépendamment de
+	// notre jeton API R2 (le GET public ne l'exige pas).
+	if pub := mediaPublicBase(); pub != "" {
+		w.Header().Set("Location", pub+"/"+key)
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		w.WriteHeader(http.StatusFound)
+		return
+	}
 	mc := mediaConfig()
 	if mc == nil {
 		// N°183 — « pas configuré » n'est PAS « introuvable » : le 404
@@ -243,11 +270,6 @@ func (a *API) handleMediaGet(w http.ResponseWriter, r *http.Request) {
 		// l'affiche en continu.
 		writeErrCode(w, http.StatusServiceUnavailable, "media_unconfigured",
 			"Stockage d'images non configuré (R2)", nil)
-		return
-	}
-	key := r.PathValue("key")
-	if !mediaKeyRe.MatchString(key) {
-		writeErr(w, http.StatusNotFound, "Image introuvable")
 		return
 	}
 	ext := key[strings.LastIndex(key, "."):]

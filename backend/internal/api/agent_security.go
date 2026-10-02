@@ -34,6 +34,11 @@ func walledGardenDomains(r *http.Request) []string {
 	}
 	add(os.Getenv("MIKCLOUD_BASE_URL"))
 	add(os.Getenv("APP_PUBLIC_URL"))
+	// N°205 — domaine public des médias du portail (bannières/logos servis
+	// par R2, egress gratuit) : l'invité pré-auth charge l'image depuis R2
+	// en direct, plus à travers le proxy du backend. La valeur est une URL
+	// complète (https://media.ftci.fr) — normalizeWGHost en extrait l'hôte.
+	add(os.Getenv("R2_PUBLIC_BASE"))
 	for _, o := range strings.Split(os.Getenv("ALLOWED_ORIGIN"), ",") {
 		add(strings.TrimSpace(o))
 	}

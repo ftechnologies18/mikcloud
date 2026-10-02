@@ -41,6 +41,7 @@ le reste du Web reste derrière le portail.
 |---|---|---|
 | `mikcloud.ftci.fr` | Page publique `/join/{token}` — c'est l'URL encodée dans le QR | Ouverture du lien (scan ou affiche) |
 | `mikcloud.onrender.com` | API backend — `GET/POST /api/join/{token}` | Chargement du lien + soumission du formulaire |
+| `media.ftci.fr` | **N°205** — bannières/logos du portail captif (bucket R2 `mikcloud-media` en lecture publique) | Chaque chargement de la page de connexion : l'<img> de bannière est servie par R2 en direct, hors du proxy backend |
 
 > Ces deux domaines correspondent au mode « direct » documenté dans
 > `frontend/README.md` : le navigateur appelle l'API Render directement
@@ -52,6 +53,16 @@ le reste du Web reste derrière le portail.
 > Aucun domaine tiers n'est requis : les polices sont auto-hébergées
 > (`next/font`, servies par `mikcloud.ftci.fr` elle-même) et la page
 > `/join` ne charge aucune ressource externe.
+>
+> **⚙️ N°205 — pourquoi `media.ftci.fr` au walled-garden** : Render Hobby
+> 2026 n'inclut que **5 Go/mois** de bande passante sortante (0,15 $/Go
+> au-delà) ; les bannières du portail — jusqu'à 2 Mo, historiquement
+> proxifiées par le backend (`/api/media/…`) — ont produit la facture de
+> septembre (~13 $ pour ~90 Go). R2 ne facture PAS la sortie : les images
+> sont servies par le domaine public du bucket (CNAME proxifié Cloudflare,
+> cache immuable). L'entrée walled-garden est poussée AUTOMATIQUEMENT aux
+> routeurs agents (la variable d'env `R2_PUBLIC_BASE` alimente
+> `walledGardenDomains` — convergence ≤ 45 s / 240 s au check-in).
 
 ## 2. Procédure CLI RouterOS (v6.44+ et v7 — syntaxe identique)
 

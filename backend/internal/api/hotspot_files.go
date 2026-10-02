@@ -118,6 +118,10 @@ func portalBrandingFingerprint(db *model.DB, router *model.Router) string {
 		t.PortalKey,
 		strconv.Itoa(t.LogRetentionDaysEffective()),
 		getEnv("APP_PUBLIC_URL"),
+		// N°205 — la base publique R2 façonne les logoUrl/bannerUrl SERVIS
+		// (réécriture à la volée des URL proxy vers R2) : la changer re-déploie
+		// le portail, exactement comme APP_PUBLIC_URL ci-dessus.
+		getEnv("R2_PUBLIC_BASE"),
 	}
 	// 1er site WiFi actif lié au routeur (même résolution que buildPortalConfig).
 	for i := range db.WifiSites {

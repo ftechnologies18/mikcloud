@@ -92,9 +92,75 @@ func mediaConfig() *mediaClient {
 	return &mediaClient{account: account, token: token, bucket: bucket}
 }
 
+// ---------------------------------------------------------------------------
+// N°205 — sortie des médias du tuyau Render (bande passante facturable).
+//
+// Constat facturation (septembre 2026) : Render Hobby 2026 n'inclut que
+// 5 Go de bande passante sortante par mois (0,15 $/Go au-delà) ; chaque
+// bannière/logo servi par le proxy /api/media traversait le backend —
+// ~300 Ko × des milliers de chargements de portail captif par jour ont
+// produit la facture de septembre (~13 $). R2, lui, ne facture PAS la
+// sortie : les images migrent sur le domaine public du bucket.
+//
+// R2_PUBLIC_BASE (ex. https://media.ftci.fr — domaine public du bucket R2,
+// proxifié Cloudflare) déplace la lecture des images sur R2 en direct :
+//   - l'upload RENVOIE l'URL publique (plus le proxy) ;
+//   - les URL proxy DÉJÀ STOCKÉES (bannières des comptes existants) sont
+//     réécrites à la volée au service (resolvePortalBranding, wifi site
+//     info) — zéro migration, zéro geste du gérant ;
+//   - le proxy GET /api/media/{key} RESTE (pages portail déjà déployées
+//     sur les routeurs avec l'ancienne URL cuite, repli si le fetch live
+//     échoue) mais il n'est plus LA voie de service ;
+//   - le domaine public rejoint le walled-garden (walledGardenDomains) :
+//     les invités pré-auth chargent la bannière depuis R2.
+//
+// Vide/non configuré ⇒ comportement inchangé (proxy historique) — déploiement
+// rétrocompatible : le code peut partir AVANT la variable d'env.
+// ---------------------------------------------------------------------------
+
+// mediaPublicBase — base publique du bucket R2 (https://media.ftci.fr),
+// sans slash final. Vide = fonctionnalité inactive (proxy historique).
+func mediaPublicBase() string {
+	return strings.TrimRight(strings.TrimSpace(getEnv("R2_PUBLIC_BASE")), "/")
+}
+
+// mediaRewriteURL — réécrit une URL média servie par le proxy (n'importe
+// quelle origine + /api/media/media/{compte}/{année}/{hex}.{ext}) vers la
+// base publique R2. Les URL externes (https://… hors MikCloud), vides ou
+// au format inattendu restent intactes — défense en profondeur : le
+// suffixe doit matcher mediaKeyRe (clé délivrée par l'upload, hex 128 bits)
+// avant toute réécriture.
+func mediaRewriteURL(u string) string {
+	base := mediaPublicBase()
+	if base == "" || u == "" {
+		return u
+	}
+	i := strings.Index(u, "/api/media/media/")
+	if i < 0 {
+		return u
+	}
+	key := u[i+len("/api/media/"):] // "media/{compte}/{année}/{hex}.{ext}"
+	if !mediaKeyRe.MatchString(key) {
+		return u
+	}
+	return base + "/" + key
+}
+
+// mediaServeURL — URL de service d'une clé média fraîchement posée : base
+// publique R2 si configurée, sinon le proxy (même hôte que apiBase —
+// joignable pré-auth, walled-garden N°48). L'URL publique est ce que la
+// console PERSISTE en BannerURL/LogoURL : elle façonne l'empreinte du
+// portail (portalBrandingFingerprint) → re-déploiement automatique.
+func mediaServeURL(r *http.Request, key string) string {
+	if pub := mediaPublicBase(); pub != "" {
+		return pub + "/" + key
+	}
+	return agentBaseURL(r) + "/api/media/" + key
+}
+
 // handleMediaUpload — POST /api/media (auth gérant, multipart "file").
 // Dépose l'image dans R2 et renvoie son URL publique permanente :
-// {base}/api/media/media/{compte}/{année}/{hex}.{ext}
+// {R2_PUBLIC_BASE}/{key} (N°205) ou {base}/api/media/{key} (proxy historique).
 func (a *API) handleMediaUpload(w http.ResponseWriter, r *http.Request) {
 	mc := mediaConfig()
 	if mc == nil {
@@ -154,9 +220,8 @@ func (a *API) handleMediaUpload(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, "Stockage média indisponible — réessayez")
 		return
 	}
-	base := agentBaseURL(r) // même hôte que apiBase : joignable pré-auth (walled-garden N°48)
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"url":  base + "/api/media/" + key,
+		"url":  mediaServeURL(r, key), // N°205 — R2 public si configuré, proxy sinon
 		"key":  key,
 		"size": len(data),
 		"type": ctype,
@@ -222,6 +287,12 @@ func mediaPutObject(mc *mediaClient, key, ctype string, data []byte) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+mc.token)
 	req.Header.Set("Content-Type", ctype)
+	// N°205 — cache immuable stocké DANS les métadonnées de l'objet : le
+	// domaine public R2 le renvoie tel quel → CDN Cloudflare + navigateurs
+	// ne re-téléchargent jamais une clé déjà vue (les clés sont uniques à
+	// jamais : hex 128 bits). Vérifié au feu : l'API REST stocke cet
+	// en-tête dans httpMetadata.cacheControl.
+	req.Header.Set("Cache-Control", "public, max-age=31536000, immutable")
 	resp, err := mediaHTTPClient.Do(req)
 	if err != nil {
 		return err

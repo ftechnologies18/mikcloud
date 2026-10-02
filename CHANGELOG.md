@@ -5,6 +5,84 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-02 — N°205 — Bande passante Render : diagnostic facture ~13 $ + SORTIE DES MÉDIAS DU TUYAU RENDER (bannières servies par R2 public `media.ftci.fr`)
+
+### Contexte — pourquoi une facture alors que l'objectif est 0 coût
+L'exploitant reçoit une facture Render de **13 $** malgré l'« objectif 0 coût »
+des N°72-77/157/159. Ces chantiers visaient le **compute des bases de
+données** (heures d'éveil Neon/Supabase) — jamais la bande passante. Le
+diagnostic mené au feu (API Render + Cloudflare + R2 + bases) établit :
+
+- le service `mikcloud` est bien en plan **free** (0 $ de runtime, 720 h/mois
+  < 750 h gratuites) ; les **~242 builds** de septembre ne totalisent que
+  ~230 min (médiane 1,1 min), loin des 500 min gratuites ;
+- la tarification Render **2026** a changé : le plan Hobby n'inclut plus
+  100 Go de bande passante sortante mais **5 Go/mois, puis 0,15 $/Go** —
+  13 $ ≈ **~90 Go sortants** en septembre ;
+- la source : les **bannières du portail captif** (110-492 Ko, jusqu'à 2 Mo
+  autorisées) étaient servies par le **proxy backend** `/api/media/{key}`
+  (R2 → Render → invité) à CHAQUE chargement de page de connexion — le
+  compte « Wifi zikisso » compte **3 035 utilisateurs** sur 2 hotspots
+  (2 165 + 870), et les connexions captives re-téléchargent la bannière à
+  chaque nouvelle session d'appareil (les navigateurs de portail ne
+  réutilisent pas le cache) → des milliers de chargements/jour × ~300 Ko.
+
+### Correctif structurel — les images quittent Render, R2 paie la sortie
+**R2 ne facture pas la sortie** (egress 0 $, CDN Cloudflare en prime). Mis
+en place ce jour :
+
+- **`media.ftci.fr`** : CNAME proxifié → bucket `mikcloud-media`, domaine
+  public R2 attaché (SSL actif, lecture publique vérifiée au feu : 200,
+  492 Ko, `image/jpeg`) ;
+- nouvelle variable d'env **`R2_PUBLIC_BASE`** (Render) : quand elle est
+  posée, (1) l'upload renvoie l'URL publique R2 (plus le proxy), (2) les
+  URL proxy **déjà stockées** (bannières des comptes existants) sont
+  **réécrites à la volée** au service — `mediaRewriteURL` ne touche QUE
+  nos clés valides (`media/{compte}/{année}/{hex128}.{ext}`), les URL
+  externes et `data:image/` passent intactes — zéro migration, zéro geste
+  du gérant ;
+- la réécriture vit dans `resolvePortalBranding` (chaîne compte→site→
+  routeur, donc pages cuites au déploiement ET marqueurs HTML) et dans
+  `handleWifiSiteInfo` (JSON live du portail hybride — le fetch live
+  PRIME sur la config cuite N°35-c : les invités basculent dès le déploiement) ;
+- `R2_PUBLIC_BASE` rejoint `walledGardenDomains` (l'invité pré-auth charge
+  la bannière depuis R2 — convergence automatique des routeurs au
+  check-in, pattern N°29) ET `portalBrandingFingerprint` (changer la base
+  re-déploie les pages du portail, pattern N°35) ;
+- le proxy `/api/media/{key}` RESTE en repli (pages déjà déployées sur
+  les routeurs avec l'ancienne URL cuite) — rétrocompatible : base vide =
+  comportement historique exact ;
+- les uploads posent désormais `Cache-Control: public, max-age=31536000,
+  immutable` dans les métadonnées de l'objet (vérifié au feu : l'API REST
+  le stocke dans `httpMetadata.cacheControl`) → CDN + navigateurs ne
+  re-téléchargent plus une clé déjà vue.
+
+### Trajectoire de coût après correctif
+Agents (5 routeurs, check-in 45 s/240 s) + JSON portail (ETag/304 N°74) +
+claims + console ≈ **2-3 Go/mois < 5 Go gratuits** → facture Render
+attendue : **0 $**. R2 : stockage 1,5 Mo (0 $), classe A/B très loin des
+quotas gratuits.
+
+### Incident connexe (assumé)
+En backfillant le `Cache-Control` sur les objets existants, l'objet
+`0dad602e…jpg` (492 Ko, 17/09) a été écrasé par un fichier local périmé
+(17 octets). La bannière active du compte n'est pas affectée si elle
+pointe sur une autre clé — à vérifier en console (si la bannière affichée
+manque : re-téléverser l'image, l'upload posera l'URL R2 + le cache
+immuable). Leçon consignée : TOUJOURS re-télécharger l'objet depuis R2
+avant tout re-PUT de métadonnées.
+
+### Fichiers
+`handlers_media.go` (+mediaPublicBase/mediaRewriteURL/mediaServeURL,
+cache immuable au PUT, URL publique à l'upload), `portal_serve.go`
+(rewritePortalMedia aux deux sorties de resolvePortalBranding),
+`handlers_wifi.go` (logoUrl/bannerUrl réécrits), `agent_security.go`
+(R2_PUBLIC_BASE au walled-garden), `hotspot_files.go` (empreinte),
+NOUVEAU `media_public_test.go` (6 familles : réécriture stricte,
+URL servie, walled-garden ±env, branding réécrit, externes intacts,
+endpoint public e2e, empreinte), `docs/RUNBOOK-WALLED-GARDEN.md`
+(media.ftci.fr + justification), CHANGELOG.
+
 ## 2026-10-02 — N°204 — Rapports : REFONTE TOTALE de l'UX du module — fin de la « superposition » ancienne/nouvelle page — un seul endroit par question, une seule grammaire de filtres
 
 ### Contexte

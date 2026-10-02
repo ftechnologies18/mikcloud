@@ -165,13 +165,27 @@ func resolvePortalBranding(db *model.DB, acc string, router *model.Router) porta
 		SlidesJSON:   t.PortalSlides,
 	}
 	if router == nil {
+		rewritePortalMedia(&b) // N°205 — médias servis par R2 public (chaîne compte seule)
 		return b
 	}
 	if site := model.FindSiteScoped(db, router.SiteID, router.AccountID); site != nil {
 		applyPortalOverride(&b, model.ParsePortalOverride(site.PortalOverride))
 	}
 	applyPortalOverride(&b, model.ParsePortalOverride(router.PortalOverride))
+	rewritePortalMedia(&b) // N°205 — après résolution COMPLÈTE de la chaîne compte→site→routeur
 	return b
+}
+
+// rewritePortalMedia — N°205 : réécrit les URL logo/bannière du portail vers
+// le domaine public R2 quand elles pointent vers le proxy /api/media (chaque
+// octet servi par le proxy compte dans la bande passante sortante Render,
+// 5 Go/mois inclus puis 0,15 $/Go — cf. handlers_media.go). Les URL externes
+// (https://… d'un autre hébergeur) et les data:image/ intégrées restent
+// intactes (mediaRewriteURL ne touche que NOS clés). Base publique vide ⇒
+// identité — comportement historique.
+func rewritePortalMedia(b *portalBranding) {
+	b.LogoURL = mediaRewriteURL(b.LogoURL)
+	b.BannerURL = mediaRewriteURL(b.BannerURL)
 }
 
 // applyPortalOverride — écrase champ par champ les valeurs NON VIDES de la

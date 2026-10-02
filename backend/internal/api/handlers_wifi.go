@@ -174,8 +174,8 @@ func (a *API) handleWifiSiteInfo(w http.ResponseWriter, r *http.Request) {
 		"slug":           siteCopy.Slug,
 		"name":           siteCopy.Name,
 		"tenantName":     settings.Tenant.Name,
-		"logoUrl":        settings.Tenant.LogoURL,
-		"bannerUrl":      settings.Tenant.BannerURL, // N°45 — bannière portail/WiFi
+		"logoUrl":        mediaRewriteURL(settings.Tenant.LogoURL),
+		"bannerUrl":      mediaRewriteURL(settings.Tenant.BannerURL), // N°45 — bannière portail/WiFi ; N°205 — réécrite vers R2 public (bande passante Render facturable)
 		"freeTimeMin":    siteCopy.FreeTimeMin,
 		"freeDataMb":     siteCopy.FreeDataMb,
 		"marketingOptIn": siteCopy.MarketingOptIn,

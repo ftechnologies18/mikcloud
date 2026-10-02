@@ -5,6 +5,45 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-02 — N°208 — Plan de continuité « facture Render impayée » : rayon d'explosion vérifié dans le code + échappatoire Oracle Cloud Always Free
+
+### Contexte
+L'exploitant n'a pas la trésorerie pour régler la facture Render de
+septembre (~13 $, dette de l'ère pré-R2 documentée au N°205). La recherche
+d'alternatives (fly.io, Stormkit) venait de là — mais aucune des deux ne
+résout le cas « zéro trésorerie ». Établissement d'un plan de continuité
+avec les faits vérifiés.
+
+### Faits établis (2026-10-02)
+- **Politique Render** (FAQ officielle, lue au navigateur) : sans moyen
+  de paiement → services désactivés pour le restant du cycle de facturation
+  (« disables your services for the duration of the current billing
+  period ») — désactivation, PAS suppression ; avec moyen en échec →
+  suspension réversible. Aucune perte de données dans aucun cas (code sur
+  GitHub, données dans Supabase, médias dans R2).
+- **Rayon d'explosion LIMITÉ** (vérifié dans le code) : le login des
+  invités poste vers `$(link-login-only)` en CHAP-MD5 directement CONTRE
+  LE ROUTEUR (login.html + md5.js) — jamais via Render ; comptes/vouchers
+  = utilisateurs hotspot locaux (`/ip/hotspot/user/add`) ; pages portail
+  cuites sur les routeurs ; bannières servies par R2 public (N°205).
+  **Le WiFi existant survit à une panne backend.** S'arrêtent : console,
+  nouvelles ventes, inscriptions QR, sync agents (retentent en autonomie),
+  WhatsApp/Telegram.
+- **La dette est unique** : octobre projette ~850 Mo (compteur N°72 :
+  4,1 Mo en 3,6 h le 02/10) < 5 Go inclus → 0 $ de facture après règlement.
+- **Oracle Cloud Always Free** identifiée comme la seule échappatoire
+  réellement gratuite et Go-native (2 OCPU ARM + 12 Go RAM après la
+  réduction de juin 2026, 10 To d'egress inclus) — contrainte : carte
+  bancaire pour vérification à l'inscription.
+
+### Livré
+- `docs/RUNBOOK-HEBERGEMENT.md` §4bis NOUVEAU : plan de continuité
+  complet (politique Render, deux tableaux survit/s'arrête avec preuves
+  techniques, 4 actions ordonnées dont le courrier support Render et
+  l'option Oracle documentée avec ses contraintes).
+
+Docs uniquement — aucun code, aucun contrat API, zéro déploiement.
+
 ## 2026-10-02 — N°207 — RUNBOOK-HEBERGEMENT : la décision d'hébergement consignée au feu — Render vs fly.io vs Stormkit (cloud et self-hosted), chiffres vérifiés 2026
 
 ### Contexte

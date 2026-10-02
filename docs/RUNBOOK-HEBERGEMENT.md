@@ -121,6 +121,63 @@ n'est pas la bande passante mais **les heures d'instance**.
 | Besoin TCP direct routeurs↔backend | — | C'est LE cas d'usage fly.io (réseau privé WireGuard) — rouvrir le dossier à ce moment-là seulement |
 | Reprise de contrôle total de l'infra | — | Stormkit self-hosted sur VPS (~5 €/mois) — option de maturité, pas d'actualité |
 
+## 4bis. Plan de continuité — facture Render impayée (établi le 2026-10-02)
+
+**Situation** : la facture de septembre (~13 $, dette de l'ère pré-R2,
+cf. N°205) est en attente, sans trésorerie pour la régler immédiatement.
+Politique Render vérifiée (FAQ officielle) : sans moyen de paiement →
+« disables your services for the duration of the current billing
+period » (désactivation, PAS suppression) ; avec moyen de paiement en
+échec → suspension réversible après relances. **Dans tous les cas :
+aucune donnée n'est perdue** — le code vit sur GitHub, les données dans
+Supabase, les médias dans R2. Payer la facture réactive le service.
+
+**Rayon d'explosion vérifié dans le code (2026-10-02) si le backend
+tombe** :
+
+| Ce qui CONTINUE de marcher | Preuve technique |
+|---|---|
+| Login des invités | `login.html` poste vers `$(link-login-only)` en CHAP-MD5 (`md5.js`) — authentification **directement contre le routeur**, jamais via Render |
+| Comptes/vouchers existants | Poussés en utilisateurs hotspot **locaux** (`/ip/hotspot/user/add`, gateway.go) — autonomes au routeur |
+| Sessions en cours | Gérées par le routeur MikroTik |
+| Pages du portail | **Cuites sur les routeurs** (hotspot_files) — chargement local |
+| Bannières/logo | Servis par R2 public `media.ftci.fr` (N°205) — hors Render |
+
+| Ce qui S'ARRÊTE | Impact |
+|---|---|
+| Console gérant | Lecture/écriture impossibles (API down) |
+| Nouvelles ventes/vouchers | Création impossible (les existants restent vendables en local si déjà générés) |
+| Inscriptions QR `/join/{token}` | Formulaire public injoignable |
+| Sync agents (check-in 45-240 s) | Routeurs retentent en autonomie — convergeront au retour de l'API |
+| WhatsApp/Telegram, revendeurs | Plateformes inaccessibles |
+
+**Actions ordonnées** :
+1. **Aujourd'hui (gratuit)** : courrier au support Render (dashboard →
+   Help, ou support@render.com) — dossier honnête : excédent causé par
+   les bannières servies via le proxy (corrigé : médias migrés vers R2,
+   usage courant ~1 Go/mois < 5 Go inclus), demande de waiver goodwill
+   ou d'échéancier. Précedent : le support Render est humain et les
+   annulations de premier excès avec cause racine corrigée sont
+   plausibles.
+2. **Trouver les ~13 $ une fois** (~8 000 FCFA) : recharge de la carte
+   en échec, carte prépayée virtuelle, ou proche cartes + remboursement
+   mobile money. La dette est UNIQUE : octobre projette ~850 Mo
+   (compteur N°72 : 4,1 Mo en 3,6 h le 02/10) < 5 Go inclus → **0 $
+   de facture après règlement**.
+3. **Si suspension entre-temps** : le WiFi continue (tableau ci-dessus),
+   payer → réactivation. Ne rien improviser sous pression.
+4. **Échappatoire long terme si Render devient un vrai problème** :
+   **Oracle Cloud Always Free** — gratuite à vie, VM Linux, Go natif :
+   2 OCPU ARM + 12 Go RAM (réduit de 4/24 Go en juin 2026 — reste
+   ~20× la RAM Render) et surtout **10 To de bande passante sortante
+   incluse/mois** (2 000× Render). Contraintes : carte bancaire exigée
+   à l'inscription pour vérification (prélèvement temporaire ~1-2 $
+   remboursé), instances ARM parfois rares à réserver (retenter),
+   DevOps à charge (systemd, TLS via Caddy, sauvegardes). fly.io et
+   Stormkit ne résolvent PAS le cas « zéro trésorerie » (fly = payant
+   dès le 1er jour ; Stormkit cloud n'exécute pas Go ; Stormkit
+   self-hosted = serveur à louer).
+
 ## 5. Si une migration a lieu un jour quand même
 
 - **Garder le domaine API identique** (bascule DNS uniquement) : les

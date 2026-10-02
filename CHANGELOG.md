@@ -5,6 +5,39 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-02 — N°212 — Mode pilotage Oracle : l'exploitant délègue l'exécution, l'agent pilote l'API — architecture multi-backends actée
+
+### Contexte
+L'exploitant, **débutant Oracle Cloud**, demande à être guidé pas à pas ET à
+déléguer l'exécution : il fournit un « token », l'agent pilote de la création
+de la VM jusqu'au déploiement, avec explications pour apprentissage. Il
+annonce aussi l'intention d'**héberger d'autres backends** sur la même
+infrastructure Oracle — l'architecture est donc pensée multi-locataires dès
+le départ.
+
+### Livré
+- **docs/PILOTAGE-ORACLE.md** : modèle de sécurité « cadenas et clé » (clé
+  API RSA : publique déposée en console par l'exploitant, privée scellée dans
+  le sandbox de pilotage, révocation en 2 clics = garde-fou exploitant), les
+  DEUX seuls gestes console attendus de l'exploitant, tableau du périmètre
+  piloté (VCN → instance → bootstrap → secrets GitHub → CI/CD → bascule
+  T1/T2 du N°211), architecture MULTI-BACKENDS (un backend = un binaire
+  statique = un service systemd + un bloc Caddy ; pourquoi pas Docker :
+  RAM Always Free précieuse, binaires Go statiques zéro dépendance),
+  inventaire du poste de pilotage, journal des commandes (apprentissage).
+- **Poste de pilotage monté dans le sandbox** : paire clé API RSA-2048 +
+  paire SSH ed25519 générées côté agent, OCI CLI 3.94.1 installé, config
+  squelette en attente des OCIDs de l'exploitant. Les clés privées ne
+  transitent JAMAIS dans le chat ; les OCIDs transmis sont inertes sans la
+  clé privée.
+
+### Décisions
+- Le runbook N°211 (clics console §1) reste valable en mode manuel ; le mode
+  pilotage le remplace pour l'exécution, les vérifications restent visibles
+  dans la console de l'exploitant (il voit tout ce qui se crée).
+- RESTAURATION des bits exécutables de bootstrap.sh / backup-neon.sh perdus
+  dans le sandbox (755 → 644 → 755 ; diff vide côté contenu).
+
 ## 2026-10-02 — N°211 — Kit de migration backend Render → Oracle Cloud Always Free : runbook pas-à-pas + deploy/oracle/ + CI/CD + coffre-fort Neon
 
 ### Contexte — l'exploitant a validé son compte Oracle

@@ -1,30 +1,37 @@
 "use client";
 
-// Vue Rapports v3 (N°204 — refonte totale de l'UX).
+// Vue Rapports v4 — DÉ-DUPLICATION DES ONGLETS (retour exploitant N°206).
 //
-// HISTORIQUE — la v2 a grandi par sédimentation (N°197 → N°203) : un aperçu
-// de période TOUJOURS monté au-dessus des onglets, chaque onglet gardant ses
-// propres cartes KPI et sa propre barre de filtres. Résultat constaté en
-// audit visuel : « Ventes : 3 » (aperçu du jour) puis « Ventes : 25 »
-// (comptabilité 30 j) à l'écran, TROIS barres de filtres différentes
-// empilées, des graphes montrant la même métrique à deux zooms —
-// l'impression d'une ancienne page superposée à la nouvelle.
+// CONSTAT v3 : la refonte N°204 avait unifié la grammaire visuelle mais
+// laissé une bande de résumé en tête de CHAQUE onglet — revenus, ventes,
+// panier moyen (et marge) répétaient les cartes de l'Aperçu jusqu'à
+// quatre fois à l'écran, et deux onglets montraient chacun un graphe de
+// CA quotidien. Vue de l'exploitant : « la carte de l'onglet comptabilité
+// affiche les mêmes revenus, ventes, panier moyen et marge » — redondance
+// de fonctionnalité entre les onglets.
 //
-// PRINCIPES DE LA REFONTE :
-//  1. UN SEUL ENDROIT PAR QUESTION — l'onglet « Aperçu » (période calendaire
-//     en cours, N°198/N°203) porte LES cartes KPI ; les autres onglets
-//     résument leur fenêtre en une bande compacte (SummaryStrip), jamais en
-//     grosses cartes dupliquées.
-//  2. UNE SEULE GRAMMAIRE DE FILTRES — chaque onglet ouvre sur la MÊME barre
-//     d'outils : sélecteur de période à gauche, filtre site + action à droite.
-//  3. HIÉRARCHIE STABLE — outils → résumé → graphes → détails, dans tous les
-//     onglets ; les grandes cartes KPI n'existent que dans l'Aperçu.
+// PRINCIPE v4 — UNE MÉTRIQUE, UN FOYER :
+//   · Aperçu → les SEULES grandes cartes KPI (ventes, revenus, panier,
+//     connexions, volume) + les graphes de tendance intrapériode.
+//   · Comptabilité → le CA par bucket (jour/semaine/mois) : le total de
+//     la fenêtre vit dans l'en-tête du graphe (contexte de lecture, pas
+//     une carte KPI), répartitions par site et par canal — sans marge,
+//     qui a son onglet dédié.
+//   · Activité → l'usage du réseau UNIQUEMENT : sessions, connexions,
+//     trafic, heure de pointe. Le graphe CA quotidien a déménagé en
+//     Comptabilité : une seule maison par question.
+//   · Marge → la rentabilité (valeur écoulée vs coût), avec détection
+//     du cas dégénéré : prix de vente = prix gros partout → marge nulle
+//     PAR CONSTRUCTION (constaté en production : tous les profils sans
+//     prix public distinct) → bandeau explicite + raccourci vers la
+//     configuration des profils plutôt qu'un mur de zéros incompréhensible.
+//   · Archives → journaux mensuels gelés (D3, N°200) — inchangés.
 //
-// DOCTRINES INCHANGÉES : revenus = CONSOMMÉ (tickets écoulés, pas générations
-// de stock) ; périodes calendaires au fuseau du compte + Δ% vs période
-// précédente au même moment (aperçu) ; vues glissantes en onglets (D4) ;
-// volume démarre au déploiement de l'accumulateur, trous honnêtes (D2) ;
-// journaux mensuels gelés (D3, N°200).
+// DOCTRINES INCHANGÉES : revenus = CONSOMMÉ (tickets écoulés, pas
+// générations de stock) ; périodes calendaires au fuseau du compte + Δ%
+// vs période précédente au même moment (aperçu) ; vues glissantes en
+// onglets (D4) ; volume démarre au déploiement de l'accumulateur, trous
+// honnêtes (D2).
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -43,6 +50,7 @@ import {
   YAxis,
 } from "recharts";
 import {
+  AlertTriangle,
   Archive,
   CalendarRange,
   Clock3,
@@ -53,6 +61,7 @@ import {
   Percent,
   Router as RouterIcon,
   ShoppingCart,
+  SlidersHorizontal,
   Store,
   TrendingUp,
   Users,
@@ -84,6 +93,7 @@ import { api, apiDownload } from "@/lib/hotspot/api";
 import { STALE_TIME } from "@/lib/hotspot/query";
 import { localeOf, useI18n } from "@/lib/hotspot/i18n";
 import { useChartPalette, type ChartPalette } from "@/lib/hotspot/chart-theme";
+import { useHotspotStore } from "@/lib/hotspot/store";
 import type { Lang } from "@/lib/hotspot/i18n";
 import type {
   AccountingData,
@@ -117,12 +127,11 @@ const ACCOUNTING_PERIODS: {
   value: AccountingPeriod;
   labelKey: string;
   windowKey: string;
-  barsKey: string;
   unitKey: string;
 }[] = [
-  { value: "day", labelKey: "reports.period.day", windowKey: "reports.window.day", barsKey: "reports.bars.day", unitKey: "reports.unit.day" },
-  { value: "week", labelKey: "reports.period.week", windowKey: "reports.window.week", barsKey: "reports.bars.week", unitKey: "reports.unit.week" },
-  { value: "month", labelKey: "reports.period.month", windowKey: "reports.window.month", barsKey: "reports.bars.month", unitKey: "reports.unit.month" },
+  { value: "day", labelKey: "reports.period.day", windowKey: "reports.window.day", unitKey: "reports.unit.day" },
+  { value: "week", labelKey: "reports.period.week", windowKey: "reports.window.week", unitKey: "reports.unit.week" },
+  { value: "month", labelKey: "reports.period.month", windowKey: "reports.window.month", unitKey: "reports.unit.month" },
 ];
 
 /** Période calendaire EN COURS de l'aperçu, au fuseau du compte (N°198). */
@@ -183,7 +192,7 @@ function cnMargin(margin: number): string {
 }
 
 /** Badge de taux de marge : vert positif, rouge négatif, neutre à zéro. */
-function RateBadge({ rate }: { rate: number }) {
+function RateBadge({ rate, lang }: { rate: number; lang: Lang }) {
   return (
     <Badge
       variant="outline"
@@ -195,7 +204,7 @@ function RateBadge({ rate }: { rate: number }) {
             : "border-border bg-muted text-muted-foreground"
       }
     >
-      {rate.toFixed(1).replace(".", ",")} %
+      {fmtPct(rate, lang)}
     </Badge>
   );
 }
@@ -208,7 +217,7 @@ function monthLabel(month: string, lang: Lang): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Primitives UI de la refonte — UNE grammaire pour les cinq onglets
+// Primitives UI — UNE grammaire pour les cinq onglets
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Pastille Δ% compacte (bande de résumé). Même code couleur que StatCard. */
@@ -266,34 +275,21 @@ function SummaryItem({
   );
 }
 
-/** Bande de résumé compacte d'un onglet — remplace les rangées de grosses
- *  cartes KPI qui dupliquaient l'aperçu (constat central de la refonte) :
- *  le contexte de fenêtre est porté UNE fois, les valeurs restent
- *  scannables, jamais de concurrence visuelle avec l'onglet Aperçu. */
-function SummaryStrip({
-  children,
-  className,
-  gridClassName,
-}: {
-  children: React.ReactNode;
-  className?: string;
-  /** Override de la grille (ex. 3 colonnes quand la marge est absente). */
-  gridClassName?: string;
-}) {
+/** Bande de résumé compacte d'un onglet — ne porte QUE des métriques
+ *  propres à l'onglet (v4) : jamais une répétition des cartes KPI de
+ *  l'Aperçu, cause du constat « mêmes revenus/ventes/panier partout ». */
+function SummaryStrip({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
     <Card className={cn("gap-0 py-0", className)}>
       <CardContent className="p-0">
-        <div className={cn("grid grid-cols-2 divide-border/60 lg:grid-cols-4 lg:divide-x", gridClassName)}>
-          {children}
-        </div>
+        <div className="grid grid-cols-2 divide-border/60 lg:grid-cols-4 lg:divide-x">{children}</div>
       </CardContent>
     </Card>
   );
 }
 
 /** Barre d'outils d'onglet — MÊME structure dans les cinq onglets : période
- *  à gauche, filtre site + action à droite. Une seule grammaire de filtres
- *  (l'audit v2 relevait trois barres différentes empilées). */
+ *  à gauche, filtre site + action à droite. */
 function TabToolbar({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -303,11 +299,14 @@ function TabToolbar({ children }: { children: React.ReactNode }) {
 }
 
 /** Carte de graphe unifiée — titre + description + contenu, hauteur
- *  homogène (les graphes d'une même rangée s'alignent au pixel). */
+ *  homogène. « action » porte un contexte chiffré LIÉ au graphe (total
+ *  de la fenêtre v4) : un nombre ancré dans son graphique, jamais une
+ *  carte KPI détachée qui concurrence l'Aperçu. */
 function ChartCard({
   icon: Icon,
   title,
   description,
+  action,
   children,
   contentClassName,
   className,
@@ -315,6 +314,7 @@ function ChartCard({
   icon?: LucideIcon;
   title: string;
   description?: React.ReactNode;
+  action?: React.ReactNode;
   children: React.ReactNode;
   contentClassName?: string;
   className?: string;
@@ -322,11 +322,16 @@ function ChartCard({
   return (
     <Card className={cn("gap-4 py-4 sm:py-5", className)}>
       <CardHeader className="px-4 sm:px-6">
-        <CardTitle className="flex items-center gap-2 text-base">
-          {Icon && <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />}
-          {title}
-        </CardTitle>
-        {description && <CardDescription>{description}</CardDescription>}
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <CardTitle className="flex items-center gap-2 text-base">
+              {Icon && <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />}
+              {title}
+            </CardTitle>
+            {description && <CardDescription>{description}</CardDescription>}
+          </div>
+          {action}
+        </div>
       </CardHeader>
       <CardContent className={cn("px-4 sm:px-6", contentClassName)}>{children}</CardContent>
     </Card>
@@ -566,6 +571,8 @@ function useCompactAxis(lang: Lang) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Onglet Aperçu — LA période calendaire en cours (N°198/N°203) : les seules
 // grandes cartes KPI du module + les graphes de tendance intrapériode.
+// V4 : foyer UNIQUE des métriques vedettes (ventes, revenus, panier,
+// connexions, volume) — aucun autre onglet ne les répète en cartes.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function OverviewTab() {
@@ -783,8 +790,11 @@ function OverviewTab() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Onglet Comptabilité — ventes par jour/semaine/mois (buckets glissants,
-// D4) : bande de résumé + graphe pleine largeur + répartitions.
+// Onglet Comptabilité — « D'où vient l'argent ? » Ventes par jour/semaine/
+// mois (buckets glissants, D4). V4 : PLUS de bande de résumé — le total de
+// la fenêtre vit dans l'en-tête du graphe (contexte de lecture), et la
+// marge a disparu ici : elle vit dans son onglet dédié. Les métriques
+// vedettes (ventes, revenus, panier) restent la propriété de l'Aperçu.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function AccountingTab() {
@@ -807,7 +817,6 @@ function AccountingTab() {
   const periodMeta = ACCOUNTING_PERIODS.find((p) => p.value === period) ?? ACCOUNTING_PERIODS[0];
   const byRouter = data?.byRouter ?? [];
   const maxShare = Math.max(...byRouter.map((r) => r.share), 1);
-  const margin = data?.totals.margin;
   const channel = data?.channel;
   const channelTotal = channel ? channel.directRevenue + channel.resellerRevenue : 0;
   // Pic de CA de la fenêtre (meilleur bucket de la série affichée).
@@ -854,7 +863,6 @@ function AccountingTab() {
 
       {isLoading && !data ? (
         <div className="space-y-4 sm:space-y-6">
-          <Skeleton className="h-28 rounded-xl" />
           <Skeleton className="h-80 rounded-xl" />
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <Skeleton className="h-64 rounded-xl" />
@@ -863,56 +871,17 @@ function AccountingTab() {
         </div>
       ) : !data ? null : (
         <>
-          {/* Bande de résumé de la fenêtre — PAS de grosses cartes : les
-              mêmes métriques vivent dans l'onglet Aperçu (refonte N°204).
-              La marge n'apparaît que si le backend la sert (F13). */}
-          <SummaryStrip gridClassName={margin === undefined ? "lg:grid-cols-3" : undefined}>
-            <SummaryItem
-              icon={Wallet}
-              label={t("reports.revenue")}
-              value={formatCurrency(data.totals.revenue, currency, lang)}
-              sub={t(periodMeta.windowKey)}
-              trend={deltaTrend(data.totals.revenue, data.prev?.revenue, lang)}
-            />
-            <SummaryItem
-              icon={ShoppingCart}
-              label={t("reports.sales")}
-              value={String(data.totals.sales)}
-              sub={`${t("reports.vouchersSold")} · ${t(periodMeta.barsKey)}`}
-              trend={deltaTrend(data.totals.sales, data.prev?.sales, lang)}
-            />
-            <SummaryItem
-              icon={TrendingUp}
-              label={t("reports.avgTicket")}
-              value={formatCurrency(data.totals.avgTicket, currency, lang)}
-              sub={t("reports.perVoucher")}
-              trend={deltaTrend(data.totals.avgTicket, data.prev?.avgTicket, lang)}
-            />
-            {margin !== undefined && (
-              <SummaryItem
-                icon={Coins}
-                label={t("reports.margin.margin")}
-                value={formatCurrency(margin, currency, lang)}
-                valueClassName={cnMargin(margin)}
-                sub={
-                  data.totals.selling
-                    ? `${t("reports.margin.rate")} : ${fmtPct((margin / data.totals.selling) * 100, lang)}`
-                    : `${t("reports.margin.rate")} : ${fmtPct(0, lang)}`
-                }
-                trend={deltaTrend(margin, data.prev?.margin, lang)}
-              />
-            )}
-          </SummaryStrip>
-
           {/* CA par bucket — pleine largeur : 30 barres quotidiennes
-              lisibles, jamais tassées à moitié. */}
+              lisibles, jamais tassées à moitié. Le TOTAL de la fenêtre est
+              ancré dans l'en-tête (v4) : le nombre que la somme des barres
+              doit atteindre, pas une carte KPI de plus. */}
           <ChartCard
             icon={Wallet}
             title={tf("reports.revenueBy", { unit: t(periodMeta.unitKey) })}
             description={
               <>
                 {routerFilter === "all" ? `${t("reports.allSites")} — ` : `${routers?.find((r) => r.id === routerFilter)?.name ?? ""} — `}
-                {t(periodMeta.windowKey)}
+                {t(periodMeta.windowKey)} · {tf("reports.accounting.tickets", { n: data.totals.sales })}
                 {bestBucket.revenue > 0 && (
                   <>
                     {" · "}
@@ -923,6 +892,16 @@ function AccountingTab() {
                   </>
                 )}
               </>
+            }
+            action={
+              <div className="shrink-0 text-left sm:text-right">
+                <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                  {t("reports.accounting.windowRevenue")}
+                </p>
+                <p className="text-lg font-semibold tracking-tight tabular-nums sm:text-xl">
+                  {formatCurrency(data.totals.revenue, currency, lang)}
+                </p>
+              </div>
             }
           >
             <ResponsiveContainer width="100%" height={280}>
@@ -959,7 +938,8 @@ function AccountingTab() {
           </ChartCard>
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            {/* Répartition par site — avec taux de marge par site */}
+            {/* Répartition par site — CA, ventes et part (v4 : sans taux de
+                marge, l'analyse de rentabilité vit dans l'onglet Marge). */}
             <ChartCard
               icon={RouterIcon}
               title={t("reports.salesBySite")}
@@ -973,37 +953,23 @@ function AccountingTab() {
                 />
               ) : (
                 <div className="max-h-72 space-y-5 overflow-y-auto pr-1">
-                  {byRouter.map((router) => {
-                    const siteMargin =
-                      router.selling !== undefined && router.cost !== undefined
-                        ? router.selling - router.cost
-                        : undefined;
-                    const siteRate =
-                      siteMargin !== undefined && router.selling ? (siteMargin / router.selling) * 100 : null;
-                    return (
-                      <ShareRow
-                        key={router.routerId}
-                        icon={<RouterIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />}
-                        label={router.routerName}
-                        share={(router.share / maxShare) * 100}
-                        right={
-                          <>
-                            <span className="font-medium text-foreground">
-                              {formatCurrency(router.revenue, currency, lang)}
-                            </span>{" "}
-                            · {tf("reports.soldCount", { n: router.sales })} ·{" "}
-                            {new Intl.NumberFormat(localeOf(lang), { maximumFractionDigits: 1 }).format(router.share)} %
-                            {siteRate !== null && (
-                              <>
-                                {" · "}
-                                <span className={cnMargin(siteMargin ?? 0)}>{fmtPct(siteRate, lang)}</span>
-                              </>
-                            )}
-                          </>
-                        }
-                      />
-                    );
-                  })}
+                  {byRouter.map((router) => (
+                    <ShareRow
+                      key={router.routerId}
+                      icon={<RouterIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />}
+                      label={router.routerName}
+                      share={(router.share / maxShare) * 100}
+                      right={
+                        <>
+                          <span className="font-medium text-foreground">
+                            {formatCurrency(router.revenue, currency, lang)}
+                          </span>{" "}
+                          · {tf("reports.soldCount", { n: router.sales })} ·{" "}
+                          {new Intl.NumberFormat(localeOf(lang), { maximumFractionDigits: 1 }).format(router.share)} %
+                        </>
+                      }
+                    />
+                  ))}
                 </div>
               )}
             </ChartCard>
@@ -1067,8 +1033,11 @@ function AccountingTab() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Onglet Activité — fenêtre glissante 7/14/30 jours (D4) : bande de résumé,
-// courbes quotidiennes, heures de pointe, classements.
+// Onglet Activité — « Comment le réseau est-il utilisé ? » Fenêtre glissante
+// 7/14/30 jours (D4). V4 : bande de résumé 100 % usage (sessions, connexions,
+// trafic, heure de pointe) et le graphe « revenus quotidiens » a été
+// supprimé — le CA par jour vit en Comptabilité, une seule maison par
+// question (fin du doublon constaté par l'exploitant).
 // ─────────────────────────────────────────────────────────────────────────────
 
 function ActivityTab() {
@@ -1095,6 +1064,7 @@ function ActivityTab() {
     placeholderData: (previous) => previous,
   });
 
+  const fmtInt = useMemo(() => new Intl.NumberFormat(localeOf(lang)), [lang]);
   const salesByProfile = useMemo(
     () => [...(data?.salesByProfile ?? [])].sort((a, b) => b.revenue - a.revenue),
     [data],
@@ -1111,6 +1081,18 @@ function ActivityTab() {
   const maxResellerRevenue = Math.max(...topResellers.map((r) => r.revenue), 1);
   const sessions = data?.sessions;
   const sessionTraffic = sessions ? sessions.bytesIn + sessions.bytesOut : 0;
+  // Connexions de la fenêtre + jour record — dérivés de la série quotidienne.
+  const totalLogins = useMemo(
+    () => (data?.loginsByDay ?? []).reduce((sum, d) => sum + d.count, 0),
+    [data],
+  );
+  const bestDay = useMemo(
+    () => (data?.loginsByDay ?? []).reduce<{ day: string; count: number }>(
+      (best, d) => (d.count > best.count ? d : best),
+      { day: "", count: 0 },
+    ),
+    [data],
+  );
   const hourlyData = useMemo(
     () =>
       hourly
@@ -1142,111 +1124,91 @@ function ActivityTab() {
 
       {isLoading && !data ? (
         <div className="space-y-4 sm:space-y-6">
-          <Skeleton className="h-28 rounded-xl" />
+          <Skeleton className="h-24 rounded-xl" />
+          <Skeleton className="h-72 rounded-xl" />
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <Skeleton className="h-80 rounded-xl" />
-            <Skeleton className="h-80 rounded-xl" />
             <Skeleton className="h-64 rounded-xl" />
             <Skeleton className="h-64 rounded-xl" />
           </div>
         </div>
       ) : !data ? null : (
         <>
-          {/* Bande de résumé de la fenêtre (KPI uniques de l'activité :
-              sessions réelles + trafic cumulé — le reste vit dans l'Aperçu). */}
+          {/* Bande de résumé — métriques d'USAGE propres à l'onglet (v4) :
+              ni revenus, ni ventes, ni panier (foyer unique : l'Aperçu). */}
           <SummaryStrip>
-            <SummaryItem
-              icon={Wallet}
-              label={t("reports.revenue")}
-              value={formatCurrency(data.totals.revenue, currency, lang)}
-              sub={tf("reports.lastDays", { n: days })}
-              trend={deltaTrend(data.totals.revenue, data.prev?.revenue, lang)}
-            />
-            <SummaryItem
-              icon={ShoppingCart}
-              label={t("reports.sales")}
-              value={String(data.totals.sales)}
-              sub={t("reports.vouchersSold")}
-              trend={deltaTrend(data.totals.sales, data.prev?.sales, lang)}
-            />
-            <SummaryItem
-              icon={TrendingUp}
-              label={t("reports.avgTicket")}
-              value={formatCurrency(data.totals.avgTicket, currency, lang)}
-              sub={t("reports.perVoucher")}
-              trend={deltaTrend(data.totals.avgTicket, data.prev?.avgTicket, lang)}
-            />
             <SummaryItem
               icon={Wifi}
               label={t("reports.sessions")}
-              value={sessions ? new Intl.NumberFormat(localeOf(lang)).format(sessions.count) : "—"}
-              sub={sessions ? tf("reports.sessions.sub", { n: days, bytes: formatBytes(sessionTraffic, lang) }) : undefined}
+              value={sessions ? fmtInt.format(sessions.count) : "—"}
+              sub={tf("reports.lastDays", { n: days })}
               live
+            />
+            <SummaryItem
+              icon={Users}
+              label={t("reports.overview.loginsTitle")}
+              value={fmtInt.format(totalLogins)}
+              sub={t("reports.activity.loginsSub")}
+            />
+            <SummaryItem
+              icon={Database}
+              label={t("reports.overview.dataVolume")}
+              value={sessions ? formatBytes(sessionTraffic, lang) : "—"}
+              sub={t("reports.activity.trafficSub")}
+            />
+            <SummaryItem
+              icon={Clock3}
+              label={t("reports.peakHours.title")}
+              value={hourly && hasHourlyActivity ? `${String(hourly.peakHour).padStart(2, "0")}h` : "—"}
+              sub={t("reports.activity.peakSub")}
             />
           </SummaryStrip>
 
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <ChartCard icon={Wallet} title={t("reports.revenueTitle")} description={t("reports.revenueDaily")}>
-              <ResponsiveContainer width="100%" height={264}>
-                <BarChart data={data.revenueByDay} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                  <CartesianGrid stroke={charts.grid} strokeOpacity={0.6} vertical={false} />
-                  <XAxis dataKey="day" tick={AXIS_TICK} axisLine={false} tickLine={false} minTickGap={12} />
-                  <YAxis
-                    tick={AXIS_TICK}
-                    axisLine={false}
-                    tickLine={false}
-                    width={48}
-                    tickFormatter={(value: number) => compact.format(value)}
-                  />
-                  <Tooltip
-                    cursor={{ fill: charts.cursorFill, fillOpacity: 0.06 }}
-                    content={<ChartTooltip formatter={(value) => formatCurrency(value, currency, lang)} />}
-                  />
-                  <Bar
-                    dataKey="value"
-                    name={t("reports.revenue")}
-                    fill={charts.series[0]}
-                    radius={[4, 4, 0, 0]}
-                    maxBarSize={40}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
-            </ChartCard>
-
-            {/* Connexions par jour — affluence RÉELLE issue du journal de
-                connexions (UserLogs login). L'ancienne courbe « trafic
-                réseau » synthétique a été supprimée : zéro donnée inventée. */}
-            <ChartCard icon={Users} title={t("reports.loginsPerDay")} description={t("reports.loginsPerDayDesc")}>
-              <ResponsiveContainer width="100%" height={264}>
-                <BarChart data={data.loginsByDay} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                  <CartesianGrid stroke={charts.grid} strokeOpacity={0.6} vertical={false} />
-                  <XAxis dataKey="day" tick={AXIS_TICK} axisLine={false} tickLine={false} minTickGap={12} />
-                  <YAxis
-                    tick={AXIS_TICK}
-                    axisLine={false}
-                    tickLine={false}
-                    width={40}
-                    allowDecimals={false}
-                  />
-                  <Tooltip
-                    cursor={{ fill: charts.cursorFill, fillOpacity: 0.06 }}
-                    content={
-                      <ChartTooltip
-                        formatter={(value) => new Intl.NumberFormat(localeOf(lang)).format(value)}
-                      />
-                    }
-                  />
-                  <Bar
-                    dataKey="count"
-                    name={t("reports.loginsPerDay")}
-                    fill={charts.series[1]}
-                    radius={[4, 4, 0, 0]}
-                    maxBarSize={40}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
-            </ChartCard>
-          </div>
+          {/* Connexions par jour — pleine largeur : LE rythme d'affluence de
+              la fenêtre (le graphe CA quotidien vit en Comptabilité). */}
+          <ChartCard
+            icon={Users}
+            title={t("reports.loginsPerDay")}
+            description={
+              <>
+                {t("reports.loginsPerDayDesc")}
+                {bestDay.count > 0 && (
+                  <>
+                    {" · "}
+                    {tf("reports.activity.bestDay", { day: bestDay.day, n: bestDay.count })}
+                  </>
+                )}
+              </>
+            }
+          >
+            <ResponsiveContainer width="100%" height={264}>
+              <BarChart data={data.loginsByDay} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                <CartesianGrid stroke={charts.grid} strokeOpacity={0.6} vertical={false} />
+                <XAxis dataKey="day" tick={AXIS_TICK} axisLine={false} tickLine={false} minTickGap={12} />
+                <YAxis
+                  tick={AXIS_TICK}
+                  axisLine={false}
+                  tickLine={false}
+                  width={40}
+                  allowDecimals={false}
+                />
+                <Tooltip
+                  cursor={{ fill: charts.cursorFill, fillOpacity: 0.06 }}
+                  content={
+                    <ChartTooltip
+                      formatter={(value) => new Intl.NumberFormat(localeOf(lang)).format(value)}
+                    />
+                  }
+                />
+                <Bar
+                  dataKey="count"
+                  name={t("reports.loginsPerDay")}
+                  fill={charts.series[1]}
+                  radius={[4, 4, 0, 0]}
+                  maxBarSize={40}
+                />
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             {/* Heures de pointe — CA + connexions par heure (fuseau du compte) */}
@@ -1429,13 +1391,19 @@ function ActivityTab() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Onglet Marge (F13) — prix de vente vs coût sur 30 jours glissants.
+// Onglet Marge (F13) — « Quelle rentabilité ? » Prix de vente vs coût sur
+// 30 jours glissants. V4 : la métrique « revenue » est rebaptisée VALEUR
+// ÉCOULÉE (prix public des tickets) pour cesser de doublonner le CA
+// trésorerie de la Comptabilité — et le cas dégénéré (marge nulle PAR
+// CONSTRUCTION : aucun profil sans prix de vente distinct) est diagnostiqué
+// et expliqué, avec raccourci vers la configuration des profils.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function MarginTab() {
   const { t, tf, lang } = useI18n();
   const currency = useCurrency();
   const charts = useChartPalette();
+  const setView = useHotspotStore((s) => s.setView);
   const AXIS_TICK = { fontSize: 11, fill: charts.axis };
   const compact = useCompactAxis(lang);
   const [routerFilter, setRouterFilter] = useState("all");
@@ -1475,6 +1443,13 @@ function MarginTab() {
     );
   }
 
+  // Marge NULLE PAR CONSTRUCTION : chaque ticket écoulé vaut exactement son
+  // coût (aucun profil avec prix de vente public distinct) — constaté en
+  // production sur des comptes entiers. Un mur de zéros sans explication
+  // passait pour un bug (retour exploitant N°206) ; on nomme la cause et
+  // on propose l'action correctrice.
+  const degenerate = margin.margin === 0 && margin.cost > 0 && margin.cost === margin.revenue;
+
   const byProfile = [...(margin.byProfile ?? [])].sort((a, b) => b.margin - a.margin);
   const bySite = margin.byRouter ?? [];
   const byDay = margin.byDay ?? [];
@@ -1494,23 +1469,57 @@ function MarginTab() {
         <SiteFilter value={routerFilter} onChange={setRouterFilter} routers={routers} />
       </TabToolbar>
 
-      {/* Bande de résumé : CA / coût / marge / taux — Δ% vs 30 j précédents */}
+      {/* Cas dégénéré — marge nulle par construction (prix public = prix gros
+          partout) : diagnostic + action, pas un mur de zéros. */}
+      {degenerate && (
+        <div
+          role="status"
+          className="flex flex-col gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div className="flex min-w-0 items-start gap-3">
+            <AlertTriangle
+              className="mt-0.5 size-5 shrink-0 text-amber-600 dark:text-amber-400"
+              aria-hidden
+            />
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-amber-700 dark:text-amber-300">
+                {t("reports.margin.degenerateTitle")}
+              </p>
+              <p className="mt-0.5 text-sm text-muted-foreground">
+                {t("reports.margin.degenerateDesc")}
+              </p>
+            </div>
+          </div>
+          <Button
+            variant="outline"
+            className="h-9 shrink-0 border-amber-500/40 hover:bg-amber-500/10"
+            onClick={() => setView("profiles")}
+          >
+            <SlidersHorizontal className="size-4" />
+            {t("reports.margin.configure")}
+          </Button>
+        </div>
+      )}
+
+      {/* Bande de résumé : valeur écoulée / coût / marge / taux — le groupe
+          de métriques PROPRES à la rentabilité (v4 : plus aucun doublon du
+          CA trésorerie — « valeur écoulée » = prix public des tickets). */}
       <SummaryStrip>
         <SummaryItem
           icon={Wallet}
           label={t("reports.margin.revenue")}
           value={formatCurrency(margin.revenue, currency, lang)}
-          sub={t("reports.margin.window")}
+          sub={t("reports.margin.soldValueSub")}
           trend={deltaTrend(margin.revenue, prev?.revenue, lang)}
         />
         <SummaryItem
-          icon={ShoppingCart}
+          icon={Coins}
           label={t("reports.margin.cost")}
           value={formatCurrency(margin.cost, currency, lang)}
           sub={t("reports.margin.window")}
         />
         <SummaryItem
-          icon={Coins}
+          icon={TrendingUp}
           label={t("reports.margin.margin")}
           value={formatCurrency(margin.margin, currency, lang)}
           valueClassName={cnMargin(margin.margin)}
@@ -1521,7 +1530,7 @@ function MarginTab() {
           icon={Percent}
           label={t("reports.margin.rate")}
           value={pctFmt(margin.marginPct)}
-          sub={t("reports.margin.window")}
+          sub={t("reports.margin.rateSub")}
         />
       </SummaryStrip>
 
@@ -1577,7 +1586,7 @@ function MarginTab() {
                           {formatCurrency(site.margin, currency, lang)}
                         </span>
                         {site.revenue > 0 && (
-                          <RateBadge rate={rate} />
+                          <RateBadge rate={rate} lang={lang} />
                         )}
                       </>
                     }
@@ -1589,7 +1598,7 @@ function MarginTab() {
         </ChartCard>
       </div>
 
-      {/* Table par profil : ventes, CA, coût, marge + badge taux + part */}
+      {/* Table par profil : ventes, valeur, coût, marge + badge taux + part */}
       <Card className="gap-4 py-4 sm:py-5">
         <CardHeader className="px-4 sm:px-6">
           <CardTitle className="text-base">{t("reports.margin.byProfileTitle")}</CardTitle>
@@ -1653,7 +1662,7 @@ function MarginTab() {
                             <span className={cnMargin(row.margin)}>
                               {formatCurrency(row.margin, currency, lang)}
                             </span>
-                            {row.revenue > 0 && <RateBadge rate={rate} />}
+                            {row.revenue > 0 && <RateBadge rate={rate} lang={lang} />}
                           </span>
                         </TableCell>
                         <TableCell className="pr-4 text-right tabular-nums text-muted-foreground sm:pr-6">
@@ -1936,8 +1945,11 @@ function ArchivesTab() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Vue Rapports — cinq onglets, UNE grammaire : Aperçu (période calendaire,
-// seules grandes cartes KPI) / Comptabilité / Activité / Marge / Archives.
+// Vue Rapports — cinq onglets, UNE métrique par foyer (v4) :
+// Aperçu (les cartes KPI, période calendaire) / Comptabilité (le CA par
+// bucket + répartitions) / Activité (l'usage réseau) / Marge (la
+// rentabilité, avec diagnostic du cas dégénéré) / Archives (journaux
+// gelés).
 // ─────────────────────────────────────────────────────────────────────────────
 
 type ReportsTab = "overview" | "accounting" | "activity" | "margin" | "archives";

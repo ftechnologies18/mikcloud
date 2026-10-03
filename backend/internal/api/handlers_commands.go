@@ -97,15 +97,19 @@ func (a *API) handleRouterPing(w http.ResponseWriter, r *http.Request) {
 
 // handleCommandStatus — GET /api/commands/{id} → {id, kind, status, result}
 // (scopé compte ; le front poll toutes les 2 s pour un ping agent).
+// N°230 — l'admin plateforme voit TOUTES les commandes (périmètre flotte,
+// pattern admin fleet) : il pilote des gestes qui traversent les comptes
+// (ex. migration d'URL des routeurs) et doit pouvoir suivre leur issue.
 func (a *API) handleCommandStatus(w http.ResponseWriter, r *http.Request) {
 	acc := accountScope(r)
 	id := r.PathValue("id")
+	platform := isPlatformAdmin(r)
 
 	a.store.Lock()
 	var out map[string]any
 	for i := range a.store.Data().Commands {
 		c := &a.store.Data().Commands[i]
-		if c.ID != id || c.AccountID != acc {
+		if c.ID != id || (!platform && c.AccountID != acc) {
 			continue
 		}
 		out = map[string]any{

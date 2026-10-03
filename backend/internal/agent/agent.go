@@ -511,6 +511,8 @@ func (b Builder) ScriptFor(cmd model.Command) (string, error) {
 		return b.buildRouterOSUpdate(cmd), nil
 	case model.CmdRouterboardFirmware:
 		return b.buildRouterboardFirmware(cmd), nil
+	case model.CmdAgentMigrate:
+		return b.buildAgentMigrate(cmd), nil
 	default:
 		return "", fmt.Errorf("kind de commande inconnu : %s", cmd.Kind)
 	}

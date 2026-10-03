@@ -93,6 +93,64 @@ func (a *API) handleRouterRotateToken(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleRouterMigrateURL — N°230 — POST /api/routers/{id}/migrate-url :
+// file la commande agent_migrate — bascule des schedulers mikcloud du
+// routeur vers l'URL publique courante du cloud (MIKCLOUD_BASE_URL).
+// Migration de domaine SANS Winbox (runbook MIGRATION-ORACLE.md §5.1-6 —
+// des routeurs clients en production, sans accès terminal) : la commande
+// embarque un pré-flight de la nouvelle URL et un pont anti-orphelin.
+// Admin plateforme : tout routeur agent (périmètre flotte, pattern admin
+// fleet) ; gérant : périmètre de son compte.
+func (a *API) handleRouterMigrateURL(w http.ResponseWriter, r *http.Request) {
+	acc := accountScope(r)
+	id := r.PathValue("id")
+	platform := isPlatformAdmin(r)
+
+	a.store.Lock()
+	db := a.store.Data()
+	var rr *model.Router
+	if platform {
+		for i := range db.Routers {
+			if db.Routers[i].ID == id {
+				rr = &db.Routers[i]
+				break
+			}
+		}
+	} else {
+		rr = findRouterScoped(db, id, acc)
+	}
+	if rr == nil {
+		a.store.Unlock()
+		writeErr(w, http.StatusNotFound, "Routeur introuvable")
+		return
+	}
+	if rr.Mode != "agent" {
+		a.store.Unlock()
+		writeErr(w, http.StatusBadRequest, "La migration d'URL ne s'applique qu'au mode agent")
+		return
+	}
+	// Dédup : une migration à la fois par routeur — le second clic récupère
+	// la commande EN VOL (pattern routeros_check N°115).
+	if pend := pendingCommandOfKind(db, id, model.CmdAgentMigrate); pend != nil {
+		cmdID := pend.ID
+		a.store.Unlock()
+		writeJSON(w, http.StatusOK, map[string]any{
+			"queued": true, "commandId": cmdID, "already": true,
+			"message": "Une migration d'URL est déjà en attente sur ce routeur",
+		})
+		return
+	}
+	cmd := queueCommandLocked(db, rr.AccountID, id, model.CmdAgentMigrate, map[string]any{})
+	a.logActivityBy(r, db, rr.AccountID, "router", "Migration d'URL demandée sur «"+rr.Name+"» (schedulers → "+strings.TrimRight(agentBaseURL(r), "/")+")")
+	a.store.Save()
+	cmdID := cmd.ID
+	a.store.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"queued": true, "commandId": cmdID,
+		"message": "Migration envoyée — application au prochain check-in du routeur (≤ 45 s), sans jamais l'orphelin (pré-flight + pont)",
+	})
+}
+
 // handleRouterRefresh — file une commande read_state pour un routeur agent.
 func (a *API) handleRouterRefresh(w http.ResponseWriter, r *http.Request) {
 	acc := accountScope(r)

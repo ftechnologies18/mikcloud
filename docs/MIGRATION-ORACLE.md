@@ -266,12 +266,28 @@ finale devient INVISIBLE pour tous.
    scriptée : pattern PUT du `step5-render-flip.sh:150-177` (N°172).
 5. `ALLOWED_ORIGIN` : **INCHANGÉE** (le CORS autorise l'origine du
    frontend, qui ne bouge pas).
-6. **Re-provisionner les routeurs UN PAR UN** : console → Infrastructure →
-   routeur → copier le script d'installation (il porte désormais
-   `api.mikcloud.ftci.fr`) → coller dans Winbox → vérifier que le check-in
-   revient. Un à la fois, validé, puis le suivant. Un routeur non
-   re-provisionné continue sur `onrender.com` (toujours servi) — d'où la
-   décommission après zéro trafic résiduel seulement.
+6. **Migrer les routeurs UN PAR UN — À DISTANCE, sans Winbox** (N°230) :
+   les scripts agents gravent l'URL dans le `on-event` de leurs schedulers
+   (`mikcloud-agent` 45 s, `mikcloud-watch` 20 s — le cadenceur de quota
+   est 100 % local, aucune URL). La commande `agent_migrate` les réécrit
+   via le canal de commande existant, sous trois filets : pré-flight de la
+   nouvelle URL (`/agent/register` heartbeat AVANT tout retrait), pont
+   anti-orphelin (`mikcloud-agent-b` posé et vérifié avant de retirer
+   l'ancien), ménage du pont seulement si le canonique est vérifié
+   (présence + hôte dans l'on-event). Par routeur :
+
+   ```bash
+   curl -X POST -H "Authorization: Bearer $TOKEN" \
+     https://api.mikcloud.ftci.fr/api/routers/{id}/migrate-url
+   # puis suivre : GET /api/commands/{commandId} → status=done, ok
+   ```
+
+   Vérifier ensuite le check-in (console → Infrastructure → lastSeen) ;
+   un routeur non migré continue sur `onrender.com` (toujours servi) —
+   d'où la décommission après zéro trafic résiduel seulement. Le
+   walled-garden et les pages portail convergent EUX-MÊMES au check-in
+   (sig N°48/49 + empreinte N°210 — `MIKCLOUD_BASE_URL` change la sig,
+   l'ensure re-file automatiquement).
 7. **Vercel** : `NEXT_PUBLIC_API_BASE=https://api.mikcloud.ftci.fr` →
    Redeploy (URL cuite au build, `frontend/…/api.ts:43` — mode direct
    actif, pas de proxy `vercel.json`).

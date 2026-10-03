@@ -40,6 +40,7 @@ var staleSentReadKinds = map[string]bool{
 	model.CmdQueueRemove:   true, // N°104 : idempotent (retrait de la file agrégat — détache les profils d'abord, prouve la disparition)
 	model.CmdQuotaEnsure:   true, // N°106 : idempotent (scheduler mikcloud-quota — remove-then-add, pattern watcher N°77)
 	model.CmdRouterOSCheck: true, // N°115 : lecture (check-for-updates) — re-exécution sans effet de bord
+	model.CmdAgentMigrate:  true, // N°230 : pré-flight + pont + vérifications nom/hôte — un rapport perdu relance une exécution qui converge (c'est AUSSI le mécanisme de récupération si le retrait de l'ancien scheduler interrompait le script : le pont déjà posé est réutilisé)
 }
 
 // staleSentLimit — au-delà de cette ancienneté sans rapport, une commande

@@ -61,6 +61,7 @@ const (
 	CmdRouterOSCheck       = "routeros_check"       // N°115 : vérification de mise à jour RouterOS (/system package update check-for-updates + lecture status/latest-version) — lecture, rapport au front via le poll de commande (pattern ping F8)
 	CmdRouterOSUpdate      = "routeros_update"      // N°115 : installation de la mise à jour RouterOS (download + install + redémarrage automatique) — rapport ok AVANT exécution (pattern reboot F10), erreur de téléchargement rapportée après coup
 	CmdRouterboardFirmware = "routerboard_firmware" // N°125 : application du firmware RouterBOARD en attente (livré avec le paquet RouterOS mais non appliqué — il ne s'applique qu'au redémarrage, auto-upgrade désactivé par défaut) — garde côté routeur (rien à appliquer → ok SANS redémarrage), rapport ok AVANT le reboot (pattern F10)
+	CmdAgentMigrate        = "agent_migrate"        // N°230 : migration d'URL des schedulers mikcloud (bascule de domaine SANS Winbox) — réécrit les on-events de mikcloud-agent et mikcloud-watch avec l'URL courante du cloud ; pré-flight + pont anti-orphelin + ménage conditionnel vérifié par hôte, idempotent
 )
 
 // N°80 — niveaux SafeWiFi (filtrage DNS du WiFi public par redirection).

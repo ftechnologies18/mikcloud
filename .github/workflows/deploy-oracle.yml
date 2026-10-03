@@ -5,11 +5,12 @@ name: deploy-oracle
 # déploiement exige ORACLE_HOST (env au niveau job — PIÈGE : « secrets »
 # n'est PAS autorisé dans un if:, « Unrecognized named-value » au chargement
 # du fichier, run en échec SANS aucun job). Avant le raccordement, ce
-# workflow vaut CI de build ARM64 ; une fois raccordé, chaque push main qui
+# workflow vaut CI de build (arch variable) ; une fois raccordé, chaque push main qui
 # touche le backend :
 #   1. sync les variables Render → /etc/mikcloud/mikcloud.env (§3, idempotent,
 #      zéro secret dans le repo, jamais d'écho des valeurs dans les logs) ;
-#   2. build arm64 statique + scp + systemctl enable+restart + healthcheck.
+#   2. build statique (arch = ORACLE_GOARCH, amd64 sur le pont E5) + scp
+#      + systemctl enable+restart + healthcheck.
 on:
   push:
     branches: [main]
@@ -39,10 +40,15 @@ jobs:
         with:
           go-version-file: backend/go.mod
 
-      - name: Build (linux/arm64, binaire statique)
+      - name: Build (linux, binaire statique — arch cible)
+        # ORACLE_GOARCH (repo variable) : amd64 = pont E5.Flex (N°228) ;
+        # arm64 = cible finale A1.Flex. Bascule : Settings → Secrets and
+        # variables → Actions → Variables → ORACLE_GOARCH=arm64.
+        env:
+          GOARCH: ${{ vars.ORACLE_GOARCH }}
         run: |
           cd backend
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o ../dist/mikcloud-server .
+          GOARCH="${GOARCH:-amd64}" CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -w" -o ../dist/mikcloud-server .
 
       - name: Notice — VM Oracle pas encore raccordée
         if: env.ORACLE_HOST == ''

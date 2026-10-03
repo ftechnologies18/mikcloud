@@ -17,6 +17,20 @@ REPO_RAW="https://raw.githubusercontent.com/ftechnologies18/mikcloud/main"
 [ "$(id -u)" -eq 0 ] || { echo "ERREUR : lancez avec sudo (root requis)."; exit 1; }
 command -v curl >/dev/null || { apt-get update -y && apt-get install -y curl; }
 
+echo "==> [0/8] Verrou apt : attendre les mises à jour du premier boot"
+# N°228 — au premier boot d'une VM Oracle, unattended-upgrades tient
+# /var/lib/apt/lists/lock plusieurs minutes ; cloud-init peut démarrer
+# bootstrap avant la fin. Attendre (max 10 min) au lieu de mourir sur
+# « E: Could not get lock » (set -euo pipefail). Idempotent : en relance
+# manuelle ultérieure, le verrou est libre et l'attente est immédiate.
+i=0
+while pgrep -x apt >/dev/null || pgrep -x apt-get >/dev/null \
+   || fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do
+        i=$((i+1)); [ "$i" -gt 60 ] && break
+        echo "    verrou occupé — attente 10 s ($i/60)"
+        sleep 10
+done
+
 echo "==> [1/8] Paquets de base"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
@@ -40,14 +54,14 @@ id mikcloud >/dev/null 2>&1 || useradd --system --home-dir /opt/mikcloud --shell
 install -d -o mikcloud -g mikcloud -m 0755 /opt/mikcloud
 install -d -m 0750 /etc/mikcloud
 if [ ! -f /etc/mikcloud/mikcloud.env ]; then
-	printf '# Variables mikcloud — modèle : deploy/oracle/env.example (docs/MIGRATION-ORACLE.md §3)\n' > /etc/mikcloud/mikcloud.env
-	chmod 640 /etc/mikcloud/mikcloud.env
-	chown root:mikcloud /etc/mikcloud/mikcloud.env
+        printf '# Variables mikcloud — modèle : deploy/oracle/env.example (docs/MIGRATION-ORACLE.md §3)\n' > /etc/mikcloud/mikcloud.env
+        chmod 640 /etc/mikcloud/mikcloud.env
+        chown root:mikcloud /etc/mikcloud/mikcloud.env
 fi
 if [ ! -f /etc/mikcloud/backup.env ]; then
-	printf '# Coffre-fort Neon (docs/MIGRATION-ORACLE.md §7)\n# DATABASE_URL_SESSION=postgresql://...pooler.supabase.com:5432/postgres\n# NEON_DATABASE_URL=postgresql://...neon.tech/neondb?sslmode=require\n' > /etc/mikcloud/backup.env
-	chmod 640 /etc/mikcloud/backup.env
-	chown root:mikcloud /etc/mikcloud/backup.env
+        printf '# Coffre-fort Neon (docs/MIGRATION-ORACLE.md §7)\n# DATABASE_URL_SESSION=postgresql://...pooler.supabase.com:5432/postgres\n# NEON_DATABASE_URL=postgresql://...neon.tech/neondb?sslmode=require\n' > /etc/mikcloud/backup.env
+        chmod 640 /etc/mikcloud/backup.env
+        chown root:mikcloud /etc/mikcloud/backup.env
 fi
 
 echo "==> [5/8] CA privée Supabase (OBLIGATOIRE pour sslmode=verify-full, cf. Dockerfile)"
@@ -57,7 +71,7 @@ update-ca-certificates
 echo "==> [6/8] Caddyfile, service systemd, sauvegarde Neon (téléchargés depuis le repo)"
 curl -fsSL "$REPO_RAW/deploy/oracle/Caddyfile" -o /etc/caddy/Caddyfile
 if grep -q '__MIKCLOUD_DOMAIN__' /etc/caddy/Caddyfile; then
-	sed -i "s/__MIKCLOUD_DOMAIN__/$DOMAIN/g" /etc/caddy/Caddyfile
+        sed -i "s/__MIKCLOUD_DOMAIN__/$DOMAIN/g" /etc/caddy/Caddyfile
 fi
 systemctl reload caddy 2>/dev/null || systemctl restart caddy
 curl -fsSL "$REPO_RAW/deploy/oracle/mikcloud.service" -o /etc/systemd/system/mikcloud.service

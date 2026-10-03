@@ -64,10 +64,13 @@ jobs:
         run: |
           set -euo pipefail
           # 1. Service backend sur Render (premier service web — le tenancy
-          #    n'héberge QUE le backend ; tolère les deux formes de réponse).
+          #    n'héberge QUE le backend ; tolère les deux formes de réponse ET
+          #    les deux libellés de type : "web" et "web_service" — N°228,
+          #    constat : l'API v1 renvoie "web_service", le filtre =="web"
+          #    renvoyait null et tuait l'étape en 0,2 s).
           SVC_ID=$(curl -fsS -H "Authorization: Bearer $RENDER_API_KEY" \
             https://api.render.com/v1/services \
-            | jq -r '[.[] | (.service // .) | select(.type=="web")][0].id')
+            | jq -r '[.[] | (.service // .) | select((.type // "") | startswith("web"))][0].id')
           test -n "$SVC_ID" && test "$SVC_ID" != "null"
           # 2. Variables utilisateur — source de vérité de la prod actuelle.
           #    (réponses Render : entrées {envVar:{...}} ou objets nus)

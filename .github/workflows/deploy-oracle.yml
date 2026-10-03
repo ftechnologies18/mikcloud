@@ -108,8 +108,18 @@ jobs:
             sudo install -m 0755 /tmp/mikcloud-server.new /opt/mikcloud/mikcloud-server &&
             sudo systemctl enable mikcloud &&
             sudo systemctl restart mikcloud &&
-            sleep 3 &&
-            systemctl is-active --quiet mikcloud &&
-            curl -fsS -o /dev/null http://127.0.0.1:4000/ &&
-            echo "BACKEND OK"
+            # N°228 — le chargement des ~37 tables Supabase au boot prend
+            # ~1 min depuis Johannesburg (piège §10-16) : healthcheck PATIENT
+            # (une sonde 3 s après le restart échouait systématiquement).
+            i=0 &&
+            until curl -fsS -o /dev/null http://127.0.0.1:4000/; do
+              i=$((i+1));
+              if [ "$i" -ge 60 ]; then
+                echo "BACKEND KO après 10 min — journal :" >&2;
+                sudo journalctl -u mikcloud -n 30 --no-pager >&2;
+                exit 1;
+              fi;
+              sleep 10;
+            done &&
+            echo "BACKEND OK (healthcheck au bout de $((i*10)) s)"
           '

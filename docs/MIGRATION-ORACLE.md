@@ -411,6 +411,9 @@ curl -X POST -H "Authorization: Bearer $RENDER_API_KEY" \
 | 11 | Limite Neon 0,5 Go | sauvegarde en échec | La base fait quelques Mo ; vérifier le statut du timer après la 1ʳᵉ exécution |
 | 12 | `deploy-render` toujours actif | un push backend déploie sur les DEUX plateformes | Sentinel `RENDER-DEPLOY-FROZEN` (§6.3/§9.1) |
 | 13 | Aucun secret dans le dépôt | — | `env.example` = placeholders ; vraies valeurs dans `/etc/mikcloud/mikcloud.env` (640 root:mikcloud) + 3 secrets GitHub |
+| 14 | **MTU 9000 des images Oracle** (N°228) | chargement DB au boot **×4 plus lent** (4 min au lieu de 1 ; transferts Supabase étouffés, octets coincés en Recv-Q), services qui « marchent au ralenti » | `ip link set enp0s5 mtu 1500` + `sed -i 's/mtu: 9000/mtu: 1500/' /etc/netplan/50-cloud-init.yaml` (fichier root 600 — les grep sans sudo mentent en silence) |
+| 15 | Verrou apt du premier boot (N°228) | cloud-init exécute bootstrap.sh pendant qu'unattended-upgrades tient `/var/lib/apt/lists/lock` → `E: Could not get lock` → script mort, 80/443 jamais ouverts | `bootstrap.sh` [0/8] attend le verrou (max 10 min) ; en curatif : relancer bootstrap.sh (idempotent) via SSH |
+| 16 | Healthcheck trop impatient (N°228) | `curl 127.0.0.1:4000` 3 s après le restart → refus de connexion : le chargement des ~37 tables Supabase prend ~1 min (JNB→Londres) | Le workflow retry jusqu'à 10 min (boucle 10 s) ; en manuel : attendre « en écoute sur le port 4000 » dans `journalctl -u mikcloud` |
 
 Références : N°211 (audit : état mémoire, URLs gravées, 27 variables),
 N°207-209 (`docs/RUNBOOK-HEBERGEMENT.md` — §4bis facture, §4ter incident

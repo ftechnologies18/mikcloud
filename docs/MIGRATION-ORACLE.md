@@ -69,6 +69,29 @@ porte sur la couche réseau/TLS, **pas sur les données**.
    > repli AD en cas de « Out of capacity »). Paris reste la recommandation
    > pour tout NOUVEAU tenancy. La VM lancée sur ce tenancy y est
    > référencée comme `yMUP:AF-JOHANNESBURG-1-AD-1`.
+   >
+   > **Analyse latence DB (03/10/2026, N°224)** — pourquoi les ~300 ms ne
+   > touchent AUCUNE requête utilisateur : le store mikcloud garde **la
+   > mémoire comme moteur de calcul** (handlers sur `*model.DB` sous
+   > verrou, tête de `pg.go`) et Postgres comme **miroir différentiel
+   > asynchrone** — marquage sale + réveil du syncreur (`store.go`) :
+   > debounce 500 ms, **1 transaction max toutes les 3 s**, flush hors
+   > verrou global sur photographie CloneDeep, flush final au SIGTERM
+   > (arrêt propre = zéro perte). Coûts réels : boot plus lent (~37
+   > tables × RTT) et fenêtre de perte ~3,5 s de lignes modifiées
+   > **uniquement** sur crash brutal. L'instrumentation N°71 (syncstats)
+   > livrera le lag réel après atterrissage — mesurer avant toute
+   > chirurgie DB.
+   >
+   > **Rapprochement impossible côté Supabase** (vérifié sur la doc
+   > officielle le 03/10/2026) : aucune région africaine au catalogue
+   > (Amériques, Londres/Zurich, Asie, Océanie, São Paulo) et un projet
+   > ne se déplace pas en place (nouveau projet + dump/restore).
+   > **À l'inverse, Abidjan→JNB ≈ 60-80 ms bat Abidjan→Francfurt ≈
+   > 110 ms** : la migration AMÉLIORE la latence réelle des routeurs et
+   > de la console ; seul le saut DB part en asynchrone. Si un jour le
+   > lag DB mesuré dérange : l'alternative est un backend européen
+   > (Cloud Run), pas un déménagement Supabase.
 
 ### 1.2 Créer l'instance (clics console)
 

@@ -1,0 +1,188 @@
+name: hunt-a1
+
+# CHASSEUR A1 (N°232) — capture automatique de la capacité ARM nocturne.
+# Doctrine N°222 : SONDER d'abord (capacityReports — GRATUIT, hors budget
+# anti-429), ne TIRER que si un pool est AVAILABLE. À la capture :
+# auto-désactivation (gh workflow disable) + issue d'alerte.
+#
+# L'instance part avec une IP publique ÉPHÉMÈRE : cloud-init peut télécharger
+# bootstrap.sh (fix MTU [0b/8] inclus). L'IP RÉSERVÉE 84.12.85.241 reste sur
+# le pont E5 — la production (Render, T1) n'est jamais touchée. L'échange
+# éphémère→réservée + GOARCH=arm64 + déploiement = atterrissage a1-landing.sh
+# (poste de pilotage, à la session suivant la capture).
+#
+# Retrait après atterrissage : supprimer les secrets OCI_* de ce dépôt (la
+# clé API ne doit vivre que sur le poste de pilotage — doctrine PILOTAGE §1).
+on:
+  schedule:
+    # Fenêtre nocturne JNB (20h-04h UTC), toutes les ~25 min. Minutes hors
+    # rondes (charge des runners GitHub — même discipline que keepalive.yml).
+    - cron: "11,36 20-23 * * *"
+    - cron: "11,36 0-3 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: hunt-a1
+  # Jamais deux chasseurs superposés : un run attend le précédent —
+  # double capture impossible côté GitHub.
+  cancel-in-progress: false
+
+permissions:
+  actions: write # auto-désactivation à la capture
+  issues: write  # issue d'alerte à la capture
+
+jobs:
+  hunt:
+    runs-on: ubuntu-latest
+    env:
+      TEN: ocid1.tenancy.oc1..aaaaaaaa5lipoqjckcohkzca6uc42svliyvuaw7cl33ef5546mhcv4xf7kxq
+      AD: yMUP:AF-JOHANNESBURG-1-AD-1
+      IMG: ocid1.image.oc1.af-johannesburg-1.aaaaaaaajuezopthnotjmbmvpsii43e7hoxielm74waloedyh6i4qvfiym2a
+      SUBNET: ocid1.subnet.oc1.af-johannesburg-1.aaaaaaaanasgo3l7bndnre4ajjcpzfewliekzakfz4c7dhz5zh6ksh7e7caa
+    steps:
+      - name: OCI CLI + profil (clé API du coffre GitHub)
+        env:
+          OCI_USER: ${{ secrets.OCI_CLI_USER }}
+          OCI_TENANCY: ${{ secrets.OCI_CLI_TENANCY }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_CLI_FINGERPRINT }}
+          OCI_REGION: ${{ secrets.OCI_CLI_REGION }}
+          OCI_KEY: ${{ secrets.OCI_API_KEY }}
+        run: |
+          python3 -m pip install --quiet oci-cli \
+            || python3 -m pip install --quiet --break-system-packages oci-cli
+          mkdir -p ~/.oci
+          {
+            echo "[DEFAULT]"
+            echo "user=$OCI_USER"
+            echo "fingerprint=$OCI_FINGERPRINT"
+            echo "tenancy=$OCI_TENANCY"
+            echo "region=$OCI_REGION"
+            echo "key_file=$HOME/.oci/oci_api_key.pem"
+          } > ~/.oci/config
+          printf '%s\n' "$OCI_KEY" > ~/.oci/oci_api_key.pem
+          chmod 600 ~/.oci/config ~/.oci/oci_api_key.pem
+          # Poing d'authentification (401 immédiat si un secret manque)
+          oci iam region-subscription list --query 'length(data)' --raw-output >/dev/null
+          echo "auth OCI OK"
+
+      - name: Garde — l'A1 existe-t-elle déjà ?
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          N="$(oci compute instance list --compartment-id "$TEN" --all \
+            --query "data[?\"display-name\"=='mikcloud-backend' && \"lifecycle-state\"!='TERMINATED' && shape=='VM.Standard.A1.Flex'] | length(@)" --raw-output 2>/dev/null || echo 1)"
+          if [ "$N" != "0" ]; then
+            echo "::notice::mikcloud-backend (A1) déjà présente — le chasseur se désactive."
+            gh workflow disable hunt-a1.yml
+            exit 0
+          fi
+          echo "Pas d'A1 en tenancy — la chasse continue."
+
+      - name: Sonde capacité (gratuite — doctrine N°222)
+        id: probe
+        run: |
+          cat > /tmp/capreq.json << 'EOF'
+          [
+            {"instanceShape": "VM.Standard.A1.Flex", "instanceShapeConfig": {"ocpus": 2.0, "memoryInGBs": 12.0}},
+            {"instanceShape": "VM.Standard.A1.Flex", "instanceShapeConfig": {"ocpus": 1.0, "memoryInGBs": 6.0}},
+            {"instanceShape": "VM.Standard.A1.Flex", "faultDomain": "FAULT-DOMAIN-1", "instanceShapeConfig": {"ocpus": 2.0, "memoryInGBs": 12.0}},
+            {"instanceShape": "VM.Standard.A1.Flex", "faultDomain": "FAULT-DOMAIN-2", "instanceShapeConfig": {"ocpus": 2.0, "memoryInGBs": 12.0}},
+            {"instanceShape": "VM.Standard.A1.Flex", "faultDomain": "FAULT-DOMAIN-3", "instanceShapeConfig": {"ocpus": 2.0, "memoryInGBs": 12.0}}
+          ]
+          EOF
+          oci compute compute-capacity-report create --compartment-id "$TEN" \
+            --availability-domain "$AD" --shape-availabilities file:///tmp/capreq.json > /tmp/report.json
+          jq -r '.data["shape-availabilities"] | to_entries[] | "  cible #\(.key) (\(.value["fault-domain"] // "placement auto")) → \(.value["availability-status"])"' /tmp/report.json
+          PICK="$(jq -r '.data["shape-availabilities"] | to_entries[] | select(.value["availability-status"]=="AVAILABLE") | .key' /tmp/report.json | head -1)"
+          if [ -z "$PICK" ]; then
+            echo "── TOUS ROUGES : la flotte ARM est saturée. Aucun tir (budget préservé)."
+          else
+            echo "── POOL VERT détecté (cible #$PICK) : TIR."
+          fi
+          echo "pick=$PICK" >> "$GITHUB_OUTPUT"
+
+      - name: Tir (si un pool est vert)
+        id: fire
+        if: steps.probe.outputs.pick != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+        run: |
+          PICK="${{ steps.probe.outputs.pick }}"
+          case "$PICK" in
+            0) OCPUS=2.0; MEM=12.0; FD="";;
+            1) OCPUS=1.0; MEM=6.0;  FD="";;
+            2) OCPUS=2.0; MEM=12.0; FD="FAULT-DOMAIN-1";;
+            3) OCPUS=2.0; MEM=12.0; FD="FAULT-DOMAIN-2";;
+            4) OCPUS=2.0; MEM=12.0; FD="FAULT-DOMAIN-3";;
+            *) echo "✗ index de cible inconnu : $PICK"; exit 1;;
+          esac
+          FDARG=()
+          [ -n "$FD" ] && FDARG=(--fault-domain "$FD")
+          # Clé publique dérivée du secret privé (la publique n'est pas un secret)
+          printf '%s\n' "$SSH_KEY" > /tmp/hunt-key
+          chmod 600 /tmp/hunt-key
+          ssh-keygen -y -f /tmp/hunt-key > /tmp/hunt-key.pub
+          # cloud-init : auto-bootstrap (télécharge bootstrap.sh depuis main —
+          # fix MTU [0b/8] N°231 inclus, aucun secret dans ce fichier)
+          cat > /tmp/cloud-init.yaml << 'EOF'
+          #cloud-config
+          runcmd:
+            - curl -fsSL https://raw.githubusercontent.com/ftechnologies18/mikcloud/main/deploy/oracle/bootstrap.sh -o /root/bootstrap.sh
+            - bash /root/bootstrap.sh api.mikcloud.ftci.fr
+          EOF
+          echo "── TIR : $OCPUS OCPU / $MEM Go (${FD:-placement auto}) ──"
+          OUT="$(oci compute instance launch \
+            --compartment-id "$TEN" --availability-domain "$AD" \
+            --display-name mikcloud-backend --shape VM.Standard.A1.Flex \
+            --shape-config "{\"ocpus\":$OCPUS,\"memory-in-gbs\":$MEM}" \
+            "${FDARG[@]}" \
+            --image-id "$IMG" --subnet-id "$SUBNET" \
+            --assign-public-ip true \
+            --ssh-authorized-keys-file /tmp/hunt-key.pub \
+            --user-data-file /tmp/cloud-init.yaml \
+            --boot-volume-size-in-gbs 50 \
+            --query 'data.id' --raw-output 2>&1 || true)"
+          echo "$OUT"
+          if echo "$OUT" | grep -q '^ocid1\.instance'; then
+            echo "a1=$(echo "$OUT" | head -1)" >> "$GITHUB_OUTPUT"
+            echo "★★★ CAPTURE ACCEPTÉE"
+          elif echo "$OUT" | grep -q 'Out of host capacity'; then
+            echo "::notice::Course perdue (la place a été prise entre la sonde et le tir) — le prochain passage retentera."
+            exit 0
+          elif echo "$OUT" | grep -q 'TooManyRequests'; then
+            echo "::notice::Bride 429 — l'espacement naturel des crons suffit, rien à faire."
+            exit 0
+          else
+            echo "✗ erreur de lancement inattendue (voir ci-dessus)"
+            exit 1
+          fi
+
+      - name: Victoire — issue d'alerte + auto-désactivation
+        if: steps.fire.outputs.a1 != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          A1="${{ steps.fire.outputs.a1 }}"
+          EPHEM="$(oci compute instance list-vnics --instance-id "$A1" \
+            --query 'data[0]."public-ip"' --raw-output 2>/dev/null || echo '?')"
+          gh issue create --title "A1 capturée — prête pour l'atterrissage" --body "$(cat <<EOF
+          La capacité ARM s'est libérée et le chasseur a tiré.
+
+          - Instance : \`mikcloud-backend\` (A1.Flex, 50 Go, cloud-init auto-bootstrap avec fix MTU)
+          - OCID : \`$A1\`
+          - IP publique éphémère de bootstrap : \`$EPHEM\`
+          - L'IP réservée 84.12.85.241 RESTE sur le pont E5 — aucun impact production.
+
+          PROCHAINE ÉTAPE : à la session suivante de l'agent, atterrissage
+          \`a1-landing.sh\` (retrait de l'éphémère, IP réservée → A1,
+          ORACLE_GOARCH=arm64, déploiement, santé, puis retrait du pont E5
+          derrière le drapeau --terminate-e5).
+
+          Ce chasseur s'est auto-désactivé. Après atterrissage validé :
+          supprimer les secrets OCI_* du dépôt.
+          EOF
+          )"
+          gh workflow disable hunt-a1.yml
+          echo "Chasseur désactivé — la capture attend son atterrissage."

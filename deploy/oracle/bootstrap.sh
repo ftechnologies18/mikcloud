@@ -31,6 +31,26 @@ while pgrep -x apt >/dev/null || pgrep -x apt-get >/dev/null \
         sleep 10
 done
 
+echo "==> [0b/8] MTU 1500 : l'interface Oracle vient en jumbo 9000 face à un"
+echo "           internet 1500 — sans ce fix, les gros transferts (sync"
+echo "           PostgreSQL au boot) étouffent (piège n°14). Idempotent."
+DEFDEV="$(ip route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1); exit}')"
+if [ -n "${DEFDEV:-}" ] && [ -e "/sys/class/net/$DEFDEV/mtu" ]; then
+        CUR_MTU="$(cat "/sys/class/net/$DEFDEV/mtu")"
+        if [ "$CUR_MTU" != "1500" ]; then
+                ip link set "$DEFDEV" mtu 1500
+                # Persistance : fichier netplan dédié (fusion lexicale — les
+                # clés de 99- priment sur 50-cloud-init.yaml SANS le modifier).
+                printf 'network:\n  version: 2\n  ethernets:\n    %s:\n      mtu: 1500\n' \
+                        "$DEFDEV" > /etc/netplan/99-mtu.yaml
+                chmod 600 /etc/netplan/99-mtu.yaml
+                netplan apply 2>/dev/null || true
+                echo "    $DEFDEV : MTU $CUR_MTU → 1500 (+ /etc/netplan/99-mtu.yaml)"
+        else
+                echo "    $DEFDEV déjà en 1500 — rien à faire"
+        fi
+fi
+
 echo "==> [1/8] Paquets de base"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y

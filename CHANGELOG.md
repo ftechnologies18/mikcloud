@@ -5,6 +5,35 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-03 — N°231 — Chasse nocturne A1 : le piège MTU 9000 devient PRÉVENTIF (bootstrap [0b/8])
+
+### Contexte
+Fenêtre nocturne JNB convenue (20h-04h UTC) : chasse relancée à 21:38 UTC.
+Sondes `compute-capacity-report` (gratuites, hors budget anti-429, doctrine
+N°222) : mur confirmé 21:38→21:48 (5/5 pools OUT_OF_HOST_CAPACITY — 2/12
+auto, 1/6 auto, FD-1/2/3), aucun tir (budget de lancement préservé). Revue
+du kit d'atterrissage en préparation : le fix MTU 9000 (piège n°14,
+N°228) avait été appliqué MANUELLEMENT sur le pont E5 mais jamais commité
+— un A1 qui atterrirait maintenant aurait bootstrappé sans lui (sync DB
+×4 plus lente au premier boot).
+
+### Livré
+- **bootstrap.sh [0b/8]** : détection de l'interface par défaut (`ip route
+  show default`), passage immédiat à 1500, persistance par fichier dédié
+  `/etc/netplan/99-mtu.yaml` (fusion lexicale netplan — les clés de `99-`
+  priment sur `50-cloud-init.yaml` SANS le modifier). Idempotent : MTU déjà
+  1500 = no-op (le pont E5 déjà patché manuellement n'écrit rien).
+- **docs/MIGRATION-ORACLE.md §10 piège 14** : correctif curatif manuel →
+  PRÉVENTIF au bootstrap ; le curatif (ip link + netplan) conservé en repli.
+
+### En cours (agent)
+- Chasse nocturne (hunt-loop.sh, poste de pilotage) : sondes espacées,
+  tir automatique si un pool verdit. Kit d'atterrissage `a1-landing.sh`
+  prêt : RUNNING → VNIC/private-ip → déplacement IP 84.12.85.241 (E5→A1)
+  → attente cloud-init → `ORACLE_GOARCH=arm64` → dispatch deploy-oracle →
+  suivi du run + santé VM ; retrait du pont E5 derrière drapeau explicite
+  `--terminate-e5` (rollback documenté : l'E5 reste intact jusque-là).
+
 ## 2026-10-03 — N°215 — Le pilotage s'exécute : réseau Oracle CONSTRUIT par l'agent, déploiement pré-armé (sync env Render→VM automatisée)
 
 ### Contexte

@@ -61,6 +61,14 @@ porte sur la couche réseau/TLS, **pas sur les données**.
    **remboursé**).
 2. ⚠️ **Région d'origine = Paris (eu-paris-1)** — la plus proche d'Abidjan
    et de Supabase (eu-west-1) ; choix **définitif**, à L'INSCRIPTION.
+   > **Erratum (03/10/2026, N°215)** — le tenancy réel a finalement été
+   > créé en **af-johannesburg-1** (choisi à l'inscription). Écart ASSUMÉ :
+   > +~300 ms d'aller-retour vers Supabase eu-west-1 (absorbé : syncs
+   > différentielles N°210, pooler persistant, logins invités directs au
+   > routeur) et Johannesburg ne possède qu'UN Availability Domain (pas de
+   > repli AD en cas de « Out of capacity »). Paris reste la recommandation
+   > pour tout NOUVEAU tenancy. La VM lancée sur ce tenancy y est
+   > référencée comme `yMUP:AF-JOHANNESBURG-1-AD-1`.
 
 ### 1.2 Créer l'instance (clics console)
 

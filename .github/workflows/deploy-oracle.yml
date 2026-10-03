@@ -6,7 +6,10 @@ name: deploy-oracle
 # n'est PAS autorisé dans un if:, « Unrecognized named-value » au chargement
 # du fichier, run en échec SANS aucun job). Avant le raccordement, ce
 # workflow vaut CI de build ARM64 ; une fois raccordé, chaque push main qui
-# touche le backend reconstruit et redémarre le service sur la VM.
+# touche le backend :
+#   1. sync les variables Render → /etc/mikcloud/mikcloud.env (§3, idempotent,
+#      zéro secret dans le repo, jamais d'écho des valeurs dans les logs) ;
+#   2. build arm64 statique + scp + systemctl enable+restart + healthcheck.
 on:
   push:
     branches: [main]
@@ -46,6 +49,42 @@ jobs:
         run: |
           echo "::notice::VM Oracle non raccordée (secret ORACLE_HOST absent) — déploiement ignoré. Installation : docs/MIGRATION-ORACLE.md §6."
 
+      - name: Sync variables Render → VM (/etc/mikcloud/mikcloud.env)
+        if: env.ORACLE_HOST != ''
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          DEPLOY_USER: ${{ secrets.ORACLE_USER }}
+          SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          # 1. Service backend sur Render (premier service web — le tenancy
+          #    n'héberge QUE le backend ; tolère les deux formes de réponse).
+          SVC_ID=$(curl -fsS -H "Authorization: Bearer $RENDER_API_KEY" \
+            https://api.render.com/v1/services \
+            | jq -r '[.[] | (.service // .) | select(.type=="web")][0].id')
+          test -n "$SVC_ID" && test "$SVC_ID" != "null"
+          # 2. Variables utilisateur — source de vérité de la prod actuelle.
+          #    (réponses Render : entrées {envVar:{...}} ou objets nus)
+          curl -fsS -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/services/$SVC_ID/env-vars?limit=100" \
+            | jq -r '.[] | (.envVar // .) | select(.key != null) | "\(.key)=\(.value // "")"' \
+            | grep -v '^GOMEMLIMIT=' > /tmp/mikcloud.env
+          # 3. Ajustements VM (runbook §3) : PORT=4000 (Caddy → 127.0.0.1:4000),
+          #    GOMEMLIMIT écarté (le plafond GC 512 Mo de Render n'a plus
+          #    d'objet avec 12 Go — §4.2).
+          sed -i '/^PORT=/d' /tmp/mikcloud.env
+          echo "PORT=4000" >> /tmp/mikcloud.env
+          # 4. Dépôt sur la VM — chmod 640 root:mikcloud, aucune valeur échoée.
+          install -m 600 /dev/null /tmp/oracle_key
+          printf '%s\n' "$SSH_KEY" > /tmp/oracle_key
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          scp $SSH_OPTS /tmp/mikcloud.env "$DEPLOY_USER@$ORACLE_HOST:/tmp/mikcloud.env.new"
+          ssh $SSH_OPTS "$DEPLOY_USER@$ORACLE_HOST" '
+            sudo install -o root -g mikcloud -m 640 /tmp/mikcloud.env.new /etc/mikcloud/mikcloud.env &&
+            rm -f /tmp/mikcloud.env.new
+          '
+          echo "Variables synchronisées (Render -> /etc/mikcloud/mikcloud.env)."
+
       - name: Déploiement SSH vers la VM
         if: env.ORACLE_HOST != ''
         env:
@@ -58,6 +97,7 @@ jobs:
           scp $SSH_OPTS dist/mikcloud-server "$DEPLOY_USER@$ORACLE_HOST:/tmp/mikcloud-server.new"
           ssh $SSH_OPTS "$DEPLOY_USER@$ORACLE_HOST" '
             sudo install -m 0755 /tmp/mikcloud-server.new /opt/mikcloud/mikcloud-server &&
+            sudo systemctl enable mikcloud &&
             sudo systemctl restart mikcloud &&
             sleep 3 &&
             systemctl is-active --quiet mikcloud &&

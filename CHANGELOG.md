@@ -5,6 +5,51 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-03 — N°215 — Le pilotage s'exécute : réseau Oracle CONSTRUIT par l'agent, déploiement pré-armé (sync env Render→VM automatisée)
+
+### Contexte
+Authentification réussie à 01:20:53 UTC (clé de pilotage `07:be:4a:…` déposée
+par l'exploitant depuis l'URL raw canonique N°213 — la clé est la SEULE du
+tenancy, les anciennes ont été nettoyées). L'agent pilote désormais le tenancy
+par API : **réseau complet construit** (VCN 10.0.0.0/16 + passerelle + table
+de routage + security-list 22/80/443 + sous-réseau régional 10.0.1.0/24),
+**IP publique réservée à vie `84.12.85.241`**. L'instance A1.Flex 2/12 se
+heurte à « Out of host capacity » (piège n°1 du runbook §1.4 — Johannesburg
+n'a qu'un AD) : relances espacées en cours, aucune urgence (Render sert
+toujours). Deux incidents d'outillage corrigés en route : le SyntaxWarning
+Python du CLI polluait les captures (flux séparés + extraction OCID stricte)
+et `public-ip list` exige `--scope REGION` (un doublon d'IP créé puis
+supprimé). Un brideur 429 a sanctionné les relances trop rapprochées —
+cadence ralentie.
+
+### Livré
+- **.github/workflows/deploy-oracle.yml — étape « Sync variables Render →
+  VM »** : le workflow lit l'API Render (jeton du secret `RENDER_API_KEY`
+  existant) et écrit `/etc/mikcloud/mikcloud.env` sur la VM en SSH — zéro
+  secret dans le repo, zéro manipulation manuelle des 27 variables (runbook
+  §3), jamais d'écho des valeurs dans les logs. Garde-fous : `PORT=4000`
+  forcé (Caddy → 127.0.0.1:4000), `GOMEMLIMIT` écarté (plafond GC Render
+  sans objet avec 12 Go), `chmod 640 root:mikcloud`, tolérance aux deux
+  formes de réponse de l'API Render. L'étape de déploiement passe à
+  `systemctl enable` + restart (le service survit aux redémarrages de la
+  VM, boîte optionnelle du runbook §3).
+- **Secrets GitHub posés par l'agent** (API + PyNaCl sealed box, depuis le
+  token du remote) : `ORACLE_USER=ubuntu`, `ORACLE_SSH_KEY` (clé de
+  pilotage). `ORACLE_HOST` volontairement ABSENT jusqu'à l'arrivée de la VM
+  — le workflow reste en mode « notice » et ne peut rien casser.
+- **docs/MIGRATION-ORACLE.md §1.1 erratum** : tenancy réel =
+  af-johannesburg-1 (écart assumé, conséquences absorbées, AD unique —
+  pas de repli en cas de capacité).
+- `deploy/oracle/pilot-api-public-key.pem` (N°213) confirmé opérationnel de
+  bout en bout (c'est par lui que l'exploitant a collé la bonne clé).
+
+### En cours (agent)
+- Chasse à la capacité ARM : l'instance `mikcloud-backend` (2 OCPU/12 Go,
+  50 Go, cloud-init auto-bootstrap, clé SSH de pilotage) sera lancée dès
+  qu'Oracle libère un hôte A1 à Johannesburg — relances espacées à chaque
+  session ; l'IP 84.12.85.241 sera rattachée automatiquement. Rien d'autre
+  à faire pour l'exploitant.
+
 ## 2026-10-02 — N°213 — Canal de dépôt canonique de la clé de pilotage : URL raw du repo public (immunisation anti-presse-papiers)
 
 ### Contexte

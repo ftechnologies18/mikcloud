@@ -13,7 +13,12 @@ import (
 )
 
 func TestTickSimulatedVolumeAccumulates(t *testing.T) {
-	now := time.Now().UTC()
+	// N°232-c — now ÉPINGLÉ à une heure fixe de mi-journée UTC : le second
+	// tick (now+90 min) ne doit jamais traverser minuit, sinon le moteur
+	// crée légitimement la ligne du jour suivant et « obtenu 2 » fait
+	// échouer le test (constat : CI du 03/10, tests atteints vers 23h24 UTC,
+	// run 37161615166 — fenêtre d'échec 22h30-23h59:59 UTC avec time.Now()).
+	now := time.Date(2026, 10, 3, 12, 4, 5, 0, time.UTC)
 
 	db := BuildEmptyState()
 	db.LastTick = now.Add(-1 * time.Hour)

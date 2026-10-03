@@ -5,6 +5,50 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-03 — N°232 — Le chasseur A1 devient AUTOMATIQUE : GitHub Actions sonde la nuit, l'agent n'a plus besoin d'être présent
+
+### Contexte
+La chasse dépendait de la présence de l'agent (la faux du sandbox fauche tout
+processus d'arrière-plan entre les sessions — constat N°215-b). Décision de
+l'exploitant : « on prend le risque » — la clé API privée rejoint le coffre
+chiffré GitHub (même niveau de confiance que ORACLE_SSH_KEY et RENDER_API_KEY
+déjà présents). Le cron tourne sur les machines GitHub : insensible à la faux.
+
+### Livré
+- **.github/workflows/hunt-a1.yml** — doctrine N°222 conservée à l'identique :
+  sonde `capacityReports` GRATUITE toutes les ~25 min dans la fenêtre JNB
+  20h-04h UTC (minutes hors rondes, 16 passages/nuit), tir UNIQUEMENT si un
+  pool est AVAILABLE (priorité 2/12 auto, 1/6 auto, FD-1/2/3 — mêmes
+  paramètres que launch-now.sh : image Ubuntu 24.04 ARM, 50 Go, cloud-init
+  auto-bootstrap). Course perdue entre sonde et tir = notice verte (le passage
+  suivant retente). À la capture : **issue d'alerte** (OCID + IP éphémère +
+  next steps) + **auto-désactivation** (`gh workflow disable`, permissions
+  actions:write). Anti-double-capture : concurrency group sans cancel + garde
+  « mikcloud-backend (A1) existe déjà ? » AVANT la sonde.
+- **IP éphémère de bootstrap** : l'instance capturée part avec
+  `--assign-public-ip true` (sans IP publique, cloud-init ne peut télécharger
+  bootstrap.sh — le subnet n'a pas de NAT). L'IP RÉSERVÉE 84.12.85.241 RESTE
+  sur le pont E5 : zéro impact production ; l'échange éphémère→réservée se
+  fait à l'atterrissage (a1-landing.sh étape 3a : retrait de l'éphémère avant
+  attachement de la réservée — un private-ip ne porte qu'un public-ip).
+- **smart-hunt.sh (poste de pilotage)** : même garde anti-double-capture —
+  chasseur local et chasseur GitHub ne peuvent pas tirer deux fois.
+- **Secrets posés (PyNaCl sealed box)** : OCI_CLI_USER / OCI_CLI_TENANCY /
+  OCI_CLI_FINGERPRINT / OCI_CLI_REGION / OCI_API_KEY (PEM privé). La clé
+  publique SSH de l'instance est DÉRIVÉE du secret ORACLE_SSH_KEY existant
+  (`ssh-keygen -y`) — aucun nouveau matériau public en clair dans le dépôt.
+- **VALIDATION END-TO-END** : dispatch manuel run 37161615166 → SUCCESS —
+  install oci-cli + auth coffre OK, garde OK, sonde réelle 23:24 UTC (5/5
+  OUT_OF_HOST_CAPACITY, tir esquivé conformément), workflow state=active
+  (cron armé). Volée locale parallèle : idem (23:23-23:27, mur).
+
+### Retrait après capture (décision exploitant)
+À l'atterrissage validé : supprimer les secrets OCI_* du dépôt (la clé ne
+doit vivre que sur le poste de pilotage — doctrine PILOTAGE-ORACLE §1) ;
+le workflow s'est déjà auto-désactivé à la capture. Renfort possible :
+rotation de la clé API en console (2 clics) — invalide toute copie où
+qu'elle soit.
+
 ## 2026-10-03 — N°231 — Chasse nocturne A1 : le piège MTU 9000 devient PRÉVENTIF (bootstrap [0b/8])
 
 ### Contexte

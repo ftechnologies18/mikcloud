@@ -1,0 +1,7 @@
+#cloud-config
+# mikcloud — auto-installation au premier démarrage (N°212, runbook N°211 §2).
+# Le VM télécharge et exécute bootstrap.sh (idempotent) : pare-feu local,
+# Caddy + TLS auto, utilisateur système, systemd, CA Supabase, timer backup.
+runcmd:
+  - curl -fsSL https://raw.githubusercontent.com/ftechnologies18/mikcloud/main/deploy/oracle/bootstrap.sh -o /root/bootstrap.sh
+  - bash /root/bootstrap.sh api.mikcloud.ftci.fr

@@ -124,11 +124,18 @@ jobs:
           # Uniquement si l'A1 est rouge et le micro pas déjà capturé.
           MICRO="${{ steps.guard.outputs.micro }}"
           if [ -z "$PICK" ] && [ "$MICRO" = "0" ]; then
+            sleep 5 # espacer les deux rapports (ménage le budget anti-429)
             printf '[{"instanceShape": "VM.Standard.E2.1.Micro"}]' > /tmp/microreq.json
-            MSTAT="$(oci compute compute-capacity-report create --compartment-id "$TEN" \
-              --availability-domain "$AD" --shape-availabilities file:///tmp/microreq.json \
-              --query 'data["shape-availabilities"][0]["availability-status"]' --raw-output 2>/dev/null || echo PROBE_ERROR)"
-            echo "  cible #5 (micro E2.1.Micro) → $MSTAT"
+            MICRO_OUT="$(oci compute compute-capacity-report create --compartment-id "$TEN" \
+              --availability-domain "$AD" --shape-availabilities file:///tmp/microreq.json 2>&1 || true)"
+            MSTAT="$(echo "$MICRO_OUT" | jq -r '.data["shape-availabilities"][0]["availability-status"] // empty' 2>/dev/null || true)"
+            if [ -z "$MSTAT" ]; then
+              MSTAT="PROBE_ERROR"
+              echo "  ⚠ sonde micro en échec — raison (3 dernières lignes) :"
+              echo "$MICRO_OUT" | grep -vE '^\s*$' | tail -3 | sed 's/^/    /'
+            else
+              echo "  cible #5 (micro E2.1.Micro) → $MSTAT"
+            fi
             if [ "$MSTAT" = "AVAILABLE" ]; then
               PICK=5
               echo "── A1 rouge partout, MICRO VERT : tir du filet de secours (cible #5)."

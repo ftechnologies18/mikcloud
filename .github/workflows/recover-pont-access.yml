@@ -1,10 +1,12 @@
 name: recover-pont-access
 
-# ═══ BRISURE-GLACE D'ACCÈS PONT E5 (N°237, 04/10/2026) ═══
+# ═══ BRISURE-GLACE D'ACCÈS PONT E5 (N°237, 04/10/2026 — v3 le même jour) ═══
 # Contexte : le poste de pilotage (sandbox agent) a perdu son répertoire
-# de pilotage (/home/z/.oci) lors d'un rollback filesystem — la clé SSH
-# privée du pont n'existe PLUS QUE dans le secret ORACLE_SSH_KEY.
-# Ce workflow ajoute la clé publique de pilotage v2 au authorized_keys
+# de pilotage (/home/z/.oci) lors d'un rollback filesystem — DEUXIÈME
+# effacement le 04/10 ~17:40 UTC. La clé de pilotage v2 est morte avec
+# lui ; celle du pont n'existe PLUS QUE dans le secret ORACLE_SSH_KEY
+# (déploiement, inchangé).
+# Ce workflow ajoute la clé publique de pilotage v3 au authorized_keys
 # du pont, ce qui restaure l'accès SSH de l'agent.
 #
 # Sécurité : la clé ajoutée est PUBLIQUE (aucun secret dans les logs) ;
@@ -23,7 +25,7 @@ permissions: {} # SSH uniquement — aucune écriture GitHub requise
 
 jobs:
   recover:
-    name: Ajout clé pilotage v2 au pont E5
+    name: Ajout clé pilotage v3 au pont E5
     runs-on: ubuntu-latest
     steps:
       - name: SSH vers le pont (secret ORACLE_SSH_KEY) + ajout de la clé
@@ -37,14 +39,21 @@ jobs:
           ssh -i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 \
             "$DEPLOY_USER@84.12.85.241" bash -s <<'REMOTE'
           set -euo pipefail
-          NEW_PUB="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBjY8iZF9IP0V28oL3MJsq1SFs6P/vqnyZydinXz1Q9e"
+          NEW_PUB="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILcUQOuBZoUD6ZAQz/clij+n0nRZgSw6VuxcsZq/ELd9"
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
+          # Hygiène : retirer la clé de pilotage v2 (privée perdue au 2e
+          # effacement sandbox) pour ne laisser que des clés vivantes.
+          OLD_V2="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBjY8iZF9IP0V28oL3MJsq1SFs6P/vqnyZydinXz1Q9e"
+          if grep -qF "$OLD_V2" ~/.ssh/authorized_keys; then
+            sed -i "/${OLD_V2//\//\\/}/d" ~/.ssh/authorized_keys
+            echo "Clé v2 morte retirée du pont."
+          fi
           if grep -qF "$NEW_PUB" ~/.ssh/authorized_keys; then
-            echo "Clé v2 déjà présente — rien à faire (idempotent)."
+            echo "Clé v3 déjà présente — rien à faire (idempotent)."
           else
             echo "$NEW_PUB" >> ~/.ssh/authorized_keys
-            echo "Clé v2 AJOUTÉE au pont."
+            echo "Clé v3 AJOUTÉE au pont."
           fi
           echo "── authorized_keys du pont :"
           cat ~/.ssh/authorized_keys

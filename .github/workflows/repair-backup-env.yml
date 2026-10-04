@@ -1,0 +1,102 @@
+name: repair-backup-env
+
+# ═══ RÉPARATION DU COFFRE-FORT NEON DU PONT (N°243, 04/10/2026) ═══
+# Contexte : le pont E5 reconstruit le 03/10 (N°237-238) a reçu le
+# TEMPLATE commenté de /etc/mikcloud/backup.env (bootstrap.sh l.81-85,
+# comportement voulu) mais l'étape opérateur « remplir les 2 DSN »
+# (message final du bootstrap, point 2) n'a jamais été faite → 1er run
+# nocturne du timer (04/10 03:00 UTC) échoué : « DATABASE_URL_SESSION
+# requis dans backup.env ».
+#
+# Ce workflow restaure le fichier depuis les pièces du dépôt :
+#   - DATABASE_URL_SESSION : copie SERVEUR du DATABASE_URL du pont
+#     (mikcloud.env le tient déjà en forme session :5432 — la valeur
+#     ne transite JAMAIS par le réseau) ;
+#   - NEON_DATABASE_URL : secret NEON_STANDBY_DATABASE_URL, transmis
+#     par STDIN vers un fichier 600 côté pont (jamais en argv ni dans
+#     les logs) ; endpoint DIRECT dérivé si le secret est poolé
+#     (suffixe -pooler retiré) ; sslmode=require ajouté si absent.
+#
+# Il termine par un TEST IMMÉDIAT (systemctl start mikcloud-backup,
+# oneshot) : pg_dump Supabase → psql Neon avec ON_ERROR_STOP — le
+# verdict du run Actions EST le verdict du coffre-fort.
+#
+# Sécurité : workflow_dispatch UNIQUEMENT ; permissions {} (aucune
+# écriture GitHub) ; aucun secret écho (masquage sed des DSN dans les
+# sorties journalctl, par principe).
+# Réutilisation : après l'atterrissage A1 ou micro (le cloud-init
+# repose le template commenté), re-dispatcher ce workflow pour
+# ré-armer le coffre-fort sur la nouvelle instance.
+
+on:
+  workflow_dispatch: {}
+
+permissions: {} # SSH uniquement — aucune écriture GitHub requise
+
+jobs:
+  repair:
+    name: Restaure /etc/mikcloud/backup.env + test du snapshot
+    runs-on: ubuntu-latest
+    steps:
+      - name: Transfert du DSN Neon (STDIN) puis réparation + test sur le pont
+        env:
+          DEPLOY_USER: ${{ secrets.ORACLE_USER }}
+          SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+          NEON_DSN: ${{ secrets.NEON_STANDBY_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null /tmp/oracle_key
+          printf '%s\n' "$SSH_KEY" > /tmp/oracle_key
+          # DSN Neon → STDIN du pont (umask 077 : fichier créé 600, jamais en argv/logs)
+          printf '%s' "$NEON_DSN" | ssh -i /tmp/oracle_key \
+            -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 \
+            "$DEPLOY_USER@84.12.85.241" 'umask 077; cat > /tmp/.neon-dsn'
+          ssh -i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 \
+            "$DEPLOY_USER@84.12.85.241" bash -s <<'REMOTE'
+          set -euo pipefail
+          # 0) prérequis
+          command -v pg_dump >/dev/null
+          command -v psql >/dev/null
+          test -s /tmp/.neon-dsn || { echo "ERREUR: DSN Neon non transmis"; exit 1; }
+          # 1) DSN Neon → endpoint DIRECT (retirer -pooler si le secret est poolé)
+          NEON="$(cat /tmp/.neon-dsn)"
+          if printf '%s' "$NEON" | grep -q -- '-pooler\.'; then
+            NEON="$(printf '%s' "$NEON" | sed 's/-pooler\././')"
+            echo "Secret poolé → endpoint DIRECT dérivé (suffixe -pooler retiré)."
+          fi
+          case "$NEON" in *\?*) SEP='&' ;; *) SEP='?' ;; esac
+          printf '%s' "$NEON" | grep -q 'sslmode=' || NEON="${NEON}${SEP}sslmode=require"
+          # 2) DSN session Supabase : copie serveur du DATABASE_URL du pont (:5432)
+          DBURL="$(sudo grep -E '^DATABASE_URL=' /etc/mikcloud/mikcloud.env | head -1 | cut -d= -f2-)"
+          case "$DBURL" in
+            postgresql://*pooler.supabase.com:5432/*) ;;
+            *) echo "ERREUR: DATABASE_URL du pont n'est pas la forme session :5432 attendue"; exit 1 ;;
+          esac
+          # 3) assemblage + installation (640 root:mikcloud, comme bootstrap.sh)
+          umask 077
+          {
+            echo "# Coffre-fort Neon (docs/MIGRATION-ORACLE.md §7) — restauré par repair-backup-env"
+            echo "DATABASE_URL_SESSION=${DBURL}"
+            printf 'NEON_DATABASE_URL=%s\n' "$NEON"
+          } > /tmp/backup.env.new
+          grep -qE '^NEON_DATABASE_URL=postgresql://[^ ]+neon\.tech/' /tmp/backup.env.new \
+            || { echo "ERREUR: forme du DSN Neon inattendue"; exit 1; }
+          sudo install -o root -g mikcloud -m 640 /tmp/backup.env.new /etc/mikcloud/backup.env
+          rm -f /tmp/backup.env.new /tmp/.neon-dsn
+          echo "OK — /etc/mikcloud/backup.env restauré (2 DSN, perms 640 root:mikcloud)."
+          # 4) test immédiat du coffre-fort (pg_dump Supabase → psql Neon)
+          sudo systemctl daemon-reload
+          sudo systemctl reset-failed mikcloud-backup.service 2>/dev/null || true
+          sudo systemctl start mikcloud-backup.service
+          if systemctl is-failed mikcloud-backup.service >/dev/null 2>&1; then
+            echo "ÉCHEC du snapshot test — journal (DSN masqués) :"
+            sudo journalctl -u mikcloud-backup.service -n 10 --no-pager \
+              | sed -E 's#(postgresql://)[^ ]+@#\1***@#g'
+            exit 1
+          fi
+          echo "── Snapshot test : SUCCÈS (Supabase → Neon)."
+          sudo journalctl -u mikcloud-backup.service -n 4 --no-pager \
+            | sed -E 's#(postgresql://)[^ ]+@#\1***@#g'
+          echo "── Timer nocturne (03:00 UTC) : $(systemctl is-enabled mikcloud-backup.timer)"
+          REMOTE
+          rm -f /tmp/oracle_key

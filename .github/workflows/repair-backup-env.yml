@@ -37,13 +37,15 @@ name: repair-backup-env
 on:
   workflow_dispatch: {}
 
-permissions: {} # SSH uniquement — aucune écriture GitHub requise
+permissions:
+  contents: read # checkout uniquement (lecture du dépôt) — aucune écriture
 
 jobs:
   repair:
-    name: Restaure /etc/mikcloud/backup.env + test du snapshot
+    name: Restaure /etc/mikcloud/backup.env + script à jour + test du snapshot
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - name: Transfert du DSN Neon (STDIN) puis réparation + test sur le pont
         env:
           DEPLOY_USER: ${{ secrets.ORACLE_USER }}
@@ -57,6 +59,12 @@ jobs:
           printf '%s' "$NEON_DSN" | ssh -i /tmp/oracle_key \
             -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 \
             "$DEPLOY_USER@84.12.85.241" 'umask 077; cat > /tmp/.neon-dsn'
+          # Script du coffre-fort (source de vérité = dépôt) → STDIN du pont.
+          # Run 2 : le restore a buté sur CREATE EXTENSION supabase_vault
+          # (refusée par Neon) → la version du dépôt filtre ces lignes.
+          ssh -i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 \
+            "$DEPLOY_USER@84.12.85.241" 'umask 077; cat > /tmp/mikcloud-backup.new' \
+            < deploy/oracle/backup-neon.sh
           ssh -i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 \
             "$DEPLOY_USER@84.12.85.241" bash -s <<'REMOTE'
           set -euo pipefail
@@ -83,6 +91,14 @@ jobs:
           fi
           pg_dump --version
           [ "$(PGMAJ)" -ge 17 ] || { echo "ERREUR: pg_dump toujours < 17"; exit 1; }
+          # 0-ter) script du coffre-fort à jour (dépôt = source de vérité)
+          test -s /tmp/mikcloud-backup.new || { echo "ERREUR: script backup non transmis"; exit 1; }
+          bash -n /tmp/mikcloud-backup.new
+          grep -q 'supabase_vault' /tmp/mikcloud-backup.new \
+            || { echo "ERREUR: le script transmis ne contient pas le filtre supabase_vault"; exit 1; }
+          sudo install -o root -g root -m 750 /tmp/mikcloud-backup.new /usr/local/sbin/mikcloud-backup
+          rm -f /tmp/mikcloud-backup.new
+          echo "OK — /usr/local/sbin/mikcloud-backup installé depuis le dépôt (filtre supabase_vault inclus)."
           # 1) DSN Neon → endpoint DIRECT (retirer -pooler si le secret est poolé)
           NEON="$(cat /tmp/.neon-dsn)"
           if printf '%s' "$NEON" | grep -q -- '-pooler\.'; then

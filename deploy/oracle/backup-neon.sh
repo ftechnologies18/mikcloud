@@ -6,6 +6,16 @@
 # PIÈGE consigné : pg_dump exige le pooler SESSION de Supabase (port 5432)
 # — le pooler TRANSACTION (6543, celui de l'application) ne supporte pas
 # pg_dump (verrous advisory + prepared statements interdits).
+# PIÈGE consigné (N°243) : pg_dump du pont doit être ≥ la version du serveur
+# Supabase (17.6) → postgresql-client-17 du dépôt PGDG (celui d'Ubuntu 24.04
+# est en 16.x et refuse : « server version mismatch »).
+# PIÈGE consigné (N°243) : le dump Supabase contient CREATE EXTENSION
+# supabase_vault, refusée par Neon (« not in the allowed extensions list »)
+# → le flux est filtré (sed) sur TOUTE ligne EXTENSION supabase_vault.
+# Comparatif mesuré : Supabase installe {pg_stat_statements, pgcrypto,
+# plpgsql, supabase_vault, uuid-ossp} — Neon propose les 4 autres ; le
+# coffre-fort ne perd RIEN d'applicatif (le vault Supabase stocke des
+# secrets d'infra, aucun objet MikCloud n'y vit).
 # Connexions dans /etc/mikcloud/backup.env :
 #   DATABASE_URL_SESSION=postgresql://...pooler.supabase.com:5432/postgres
 #   NEON_DATABASE_URL=postgresql://...neon.tech/neondb?sslmode=require
@@ -14,8 +24,8 @@ set -euo pipefail
 
 ENV_FILE=/etc/mikcloud/backup.env
 if [ ! -r "$ENV_FILE" ]; then
-	echo "mikcloud-backup: $ENV_FILE absent — coffre-fort non configuré, rien à faire."
-	exit 0
+        echo "mikcloud-backup: $ENV_FILE absent — coffre-fort non configuré, rien à faire."
+        exit 0
 fi
 set -a
 . "$ENV_FILE"
@@ -29,9 +39,10 @@ echo "mikcloud-backup[$STAMP]: départ du snapshot Supabase -> Neon"
 # (remplace les tables existantes) ; ON_ERROR_STOP : échec net plutôt
 # qu'une sauvegarde silencieusement partielle.
 if pg_dump --no-owner --no-privileges --clean --if-exists "$DATABASE_URL_SESSION" \
-	| psql "$NEON_DATABASE_URL" -v ON_ERROR_STOP=1 > /tmp/mikcloud-backup.out 2> /tmp/mikcloud-backup.err; then
-	echo "mikcloud-backup[$STAMP]: succès"
+        | sed -E '/(CREATE|DROP|COMMENT ON|ALTER) EXTENSION (IF (NOT )?EXISTS )?"?supabase_vault"?/d' \
+        | psql "$NEON_DATABASE_URL" -v ON_ERROR_STOP=1 > /tmp/mikcloud-backup.out 2> /tmp/mikcloud-backup.err; then
+        echo "mikcloud-backup[$STAMP]: succès"
 else
-	echo "mikcloud-backup[$STAMP]: ÉCHEC — $(tail -n 3 /tmp/mikcloud-backup.err 2>/dev/null | tr '\n' ' ')"
-	exit 1
+        echo "mikcloud-backup[$STAMP]: ÉCHEC — $(tail -n 3 /tmp/mikcloud-backup.err 2>/dev/null | tr '\n' ' ')"
+        exit 1
 fi

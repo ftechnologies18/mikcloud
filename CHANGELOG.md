@@ -5,6 +5,79 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-04 — N°243 (a→d) — Coffre-fort Neon : réparer le snapshot nocturne Supabase → Neon (saga en 4 runs)
+
+### Contexte
+Le pont E5 reconstruit (N°237-238) a reçu le template `backup.env` commenté
+sans l'étape opérateur « remplir les 2 DSN » → 1er run nocturne du timer
+(04/10 03:00 UTC) échoué. Saga de réparation par workflow dispatch
+(`repair-backup-env.yml`), chaque run révélant le piège suivant :
+
+- **run 1 (N°243)** : `backup.env` jamais rempli → restauration du fichier
+  depuis les pièces du dépôt (DSN session Supabase = copie serveur du
+  `DATABASE_URL` du pont ; DSN Neon = secret `NEON_STANDBY_DATABASE_URL`,
+  endpoint DIRECT dérivé, transféré par STDIN, jamais en argv ni logs) ;
+- **run 1 (N°243-b)** : `pg_dump` 16.15 d'Ubuntu < serveur Supabase 17.6
+  (« server version mismatch ») → `postgresql-client-17` via dépôt PGDG
+  officiel, installé par le workflow AVANT le test ;
+- **run 2 (N°243-c)** : `CREATE EXTENSION supabase_vault` refusée par Neon
+  (« not in the allowed extensions list ») → filtre sed sur toute ligne
+  EXTENSION supabase_vault (comparatif mesuré : Neon propose les 4 autres
+  extensions, aucune donnée applicative perdue) ;
+- **run 3 (N°243-d)** : `permission denied to set parameter
+  "log_min_messages"` — la fonction `realtime.list_changes` du dump porte
+  une clause `SET log_min_messages TO 'fatal'` (paramètre SUSET, réservé
+  aux superutilisateurs), refusée au rôle non-superuser `neondb_owner` ;
+  ON_ERROR_STOP arrête tout.
+
+### Livré (N°243-d)
+- **`deploy/oracle/backup-neon.sh`** : `pg_dump --schema=public` — correctif
+  STRUCTUREL, le coffre-fort ne snapshot que **les données applicatives
+  MikCloud** (schéma `public`, 40 tables, ~22 Mo mesurés), seules
+  restaurables sur un Postgres hors Supabase. Le dump « base entière »
+  embarquait les schémas de la plateforme Supabase (`auth`, `storage`,
+  `realtime`, `vault`, `graphql`, `neon_auth`, `pgbouncer`…) : non
+  restaurables de toute façon (event triggers `pgrst_*`, publication
+  `supabase_realtime`, clauses SUSET) et multiplicateurs de pièges.
+  Vérifié sur dump réel : `public` est auto-suffisant
+  (`gen_random_uuid()` natif PG13+, zéro référence croisée vers
+  `auth`/`storage`/…, zéro clause SUSET restante, zéro ligne EXTENSION —
+  le filtre supabase_vault est conservé en défense en profondeur).
+- **Découplage dump/restore en deux phases + reprise** (diagnostic local
+  du 04/10 21:30-22:00 UTC) : le pipeline direct `pg_dump | psql` s'est
+  révélé FAILLIBLE de façon déterministe — 4 échecs / 4 à ~61 s, toujours
+  au milieu de la COPY de la première grosse table (`commands` :
+  « SSL SYSCALL error: EOF detected », ~3,8 Mo passés sur 7,6, connexion
+  source coupée). Tests ciblés ayant RÉFUTÉ les causes simples : stall
+  simple 75 s (survie), consommateur lent 64 Ko/s pendant 139 s (survie),
+  double connexion longue Neon+Supabase 141 s (survie), dump fichier
+  4/4 (survie, même avec un psql Neon actif en parallèle) → le tueur est
+  le COUPLAGE PIPE entre les deux bases. Le script dump désormais vers un
+  fichier temporaire (garde `[ -s ]` anti-dump vide), filtre puis restore
+  DEPUIS le fichier ; reprise jusqu'à 3 tentatives espacées de 30 s ;
+  `pipefail` garantit qu'un dump tronqué n'est jamais compté succès ;
+  chaque tentative reconstruit le coffre-fort entier (`--clean
+  --if-exists` idempotent).
+- **`deploy/oracle/mikcloud-backup.service`** : `TimeoutStartSec=900`
+  explicite — le défaut système (90 s) tuerait la reprise en cours de
+  route (pire cas ~8 min).
+- **`.github/workflows/repair-backup-env.yml`** : réinstalle désormais le
+  script ET l'unité systemd (source de vérité = dépôt) ; le contrôle
+  d'intégrité vérifie le filtre `supabase_vault`, le scope
+  `--schema=public`, la reprise `MAX_ATTEMPTS` et le `TimeoutStartSec`.
+- **`docs/MIGRATION-ORACLE.md` §7** : pipeline et périmètre du coffre-fort
+  documentés (pièges consignés run par run).
+- Débris des restores échoués sur le coffre Neon nettoyés une fois
+  (schémas plateforme partiellement créés : vues `pg_stat_statements`,
+  fonctions pgcrypto, helpers `auth.email/jwt/uid`, `pgbouncer.get_auth`,
+  `graphql_public.graphql`, types `realtime.*` — 37 objets) ; les runs
+  suivants ne les recréent plus.
+
+**Vérification locale du pipeline complet** (poste de pilotage, pg_dump
+17.11 identique au pont) : nettoyage + dump scopé 7,6 Mo + restore →
+40 tables sur le coffre, contraintes et index posés, comptages lignes
+conformes à la primaire.
+
 ## 2026-10-04 — N°242 — Le micro devient un vrai plan B : land-micro.yml (atterrissage production + chasse 24/24 autonome)
 
 ### Contexte

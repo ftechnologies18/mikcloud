@@ -1,7 +1,12 @@
 # mikcloud — coffre-fort Neon (oneshot, déclenché par le timer).
+# TimeoutStartSec explicite (N°243-d) : le script retente jusqu'à 3 fois une
+# coupure transitoire du pooler Supabase (pire cas ~3 dumps+restaures + 2
+# pauses de 30 s ≈ 8 min) — le défaut système (90 s sur Ubuntu) tuerait la
+# reprise en cours de route ; 900 s couvre avec marge.
 [Unit]
 Description=mikcloud — snapshot Supabase vers Neon
 
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/mikcloud-backup
+TimeoutStartSec=900

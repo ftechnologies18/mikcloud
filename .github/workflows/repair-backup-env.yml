@@ -23,6 +23,10 @@ name: repair-backup-env
 # version mismatch ») — idem après atterrissage A1/micro (même image
 # Ubuntu, bootstrap n'installe que postgresql-client, i.e. la 16).
 #
+# Il réinstalle ENFIN le script /usr/local/sbin/mikcloud-backup ET son
+# unité systemd (TimeoutStartSec explicite, N°243-d) depuis le dépôt —
+# source de vérité unique, vérifiés par grep avant installation.
+#
 # Il termine par un TEST IMMÉDIAT (systemctl start mikcloud-backup,
 # oneshot) : pg_dump Supabase → psql Neon avec ON_ERROR_STOP — le
 # verdict du run Actions EST le verdict du coffre-fort.
@@ -42,7 +46,7 @@ permissions:
 
 jobs:
   repair:
-    name: Restaure /etc/mikcloud/backup.env + script à jour + test du snapshot
+    name: Restaure backup.env + script + unité à jour + test du snapshot
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -62,9 +66,19 @@ jobs:
           # Script du coffre-fort (source de vérité = dépôt) → STDIN du pont.
           # Run 2 : le restore a buté sur CREATE EXTENSION supabase_vault
           # (refusée par Neon) → la version du dépôt filtre ces lignes.
+          # Run 3 : le restore base entière a buté sur la clause SUSET
+          # « SET log_min_messages » de realtime.list_changes (refusée au
+          # rôle non-superuser Neon) → la version du dépôt scope le dump
+          # au schéma public (N°243-d, données applicatives uniquement).
           ssh -i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 \
             "$DEPLOY_USER@84.12.85.241" 'umask 077; cat > /tmp/mikcloud-backup.new' \
             < deploy/oracle/backup-neon.sh
+          # Unité systemd du coffre-fort (TimeoutStartSec explicite, N°243-d —
+          # le script retente jusqu'à 3× une coupure transitoire du pooler
+          # Supabase : le défaut système 90 s tuerait la reprise) → STDIN.
+          ssh -i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 \
+            "$DEPLOY_USER@84.12.85.241" 'umask 077; cat > /tmp/mikcloud-backup.service.new' \
+            < deploy/oracle/mikcloud-backup.service
           ssh -i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 \
             "$DEPLOY_USER@84.12.85.241" bash -s <<'REMOTE'
           set -euo pipefail
@@ -96,9 +110,21 @@ jobs:
           bash -n /tmp/mikcloud-backup.new
           grep -q 'supabase_vault' /tmp/mikcloud-backup.new \
             || { echo "ERREUR: le script transmis ne contient pas le filtre supabase_vault"; exit 1; }
+          grep -q -- '--schema=public' /tmp/mikcloud-backup.new \
+            || { echo "ERREUR: le script transmis ne scope pas le dump au schéma public (N°243-d)"; exit 1; }
+          grep -q 'MAX_ATTEMPTS' /tmp/mikcloud-backup.new \
+            || { echo "ERREUR: le script transmis n'a pas la reprise sur coupure transitoire (N°243-d)"; exit 1; }
+          grep -q 'DUMP_FILE' /tmp/mikcloud-backup.new \
+            || { echo "ERREUR: le script transmis n'a pas le découplage dump/restore en deux phases (N°243-d)"; exit 1; }
+          # 0-ter-bis) unité systemd à jour (TimeoutStartSec pour la reprise)
+          test -s /tmp/mikcloud-backup.service.new || { echo "ERREUR: unité systemd non transmise"; exit 1; }
+          grep -q '^TimeoutStartSec=' /tmp/mikcloud-backup.service.new \
+            || { echo "ERREUR: l'unité transmise n'a pas de TimeoutStartSec explicite (N°243-d)"; exit 1; }
+          sudo install -o root -g root -m 644 /tmp/mikcloud-backup.service.new /etc/systemd/system/mikcloud-backup.service
+          rm -f /tmp/mikcloud-backup.service.new
           sudo install -o root -g root -m 750 /tmp/mikcloud-backup.new /usr/local/sbin/mikcloud-backup
           rm -f /tmp/mikcloud-backup.new
-          echo "OK — /usr/local/sbin/mikcloud-backup installé depuis le dépôt (filtre supabase_vault inclus)."
+          echo "OK — /usr/local/sbin/mikcloud-backup + unité systemd installés depuis le dépôt (filtre supabase_vault + scope public + reprise transitoire inclus)."
           # 1) DSN Neon → endpoint DIRECT (retirer -pooler si le secret est poolé)
           NEON="$(cat /tmp/.neon-dsn)"
           if printf '%s' "$NEON" | grep -q -- '-pooler\.'; then

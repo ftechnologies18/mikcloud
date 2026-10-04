@@ -340,18 +340,38 @@ nuit à **03:00 UTC** (= 03:00 à Abidjan), le timer `mikcloud-backup.timer`
 exécute `backup-neon.sh` :
 
 ```
-pg_dump --no-owner --no-privileges --clean --if-exists "$DATABASE_URL_SESSION" | psql "$NEON_DATABASE_URL" -v ON_ERROR_STOP=1
+# Phase 1 — dump (schéma public uniquement) vers fichier temporaire
+pg_dump --schema=public --no-owner --no-privileges --clean --if-exists "$DATABASE_URL_SESSION" > "$DUMP_FILE"
+# Phase 2 — filtre défense en profondeur puis restore depuis le fichier
+sed -E '/…supabase_vault…/d' "$DUMP_FILE" | psql "$NEON_DATABASE_URL" -v ON_ERROR_STOP=1
 ```
 
 - source : le DSN Supabase **session pooler `:5432`** — le transactionnel
   `:6543` ne fonctionne PAS pour `pg_dump` ;
+- `--schema=public` (N°243-d) : le coffre-fort ne snapshot que **les données
+  applicatives MikCloud** (schéma `public`). Le dump « base entière »
+  embarquait les schémas de la plateforme Supabase (`auth`, `storage`,
+  `realtime`, `vault`, `graphql`, `neon_auth`…) qui ne sont PAS restaurables
+  hors Supabase et bloquaient le restore (run 2 : extension
+  `supabase_vault` ; run 3 : clause SUSET `SET log_min_messages` de
+  `realtime.list_changes`, refusée au rôle non-superuser Neon). Le schéma
+  `public` est auto-suffisant : `gen_random_uuid()` natif (PG13+), zéro
+  référence croisée, zéro extension requise ;
+- **dump puis restore en deux phases** (N°243-d) : le pipeline direct
+  `pg_dump | psql` s'est montré faillible (4 échecs / 4 à ~61 s,
+  « SSL SYSCALL error: EOF », connexion source coupée au milieu de la
+  première grosse COPY ; réfuté par tests : ni l'inactivité, ni le
+  consommateur lent, ni la double connexion longue ne tuent seuls) — le
+  découplage par fichier isole chaque phase, reprise jusqu'à 3 tentatives
+  espacées de 30 s (le pire cas ~7 min est couvert par le
+  `TimeoutStartSec=900` de l'unité systemd) ;
 - `--clean --if-exists` rend le snapshot rejouable nuit après nuit ;
 - le script **journalise** (`journalctl -u mikcloud-backup`) et **propage
   le code retour** : un échec se voit en échec systemd, pas en silence.
 
-**Limite** : Neon gratuit = 0,5 Go — la base fait quelques Mo (37 tables
-différentielles), marge large ; vérifier la première exécution (§8-11).
-C'est un filet, PAS une standby — la primaire reste Supabase.
+**Limite** : Neon gratuit = 0,5 Go — le schéma applicatif fait ~22 Mo
+mesurés (40 tables), marge large. C'est un filet, PAS une standby — la
+primaire reste Supabase.
 
 ## 8. Bascule finale — checklist pas-à-pas (T2)
 

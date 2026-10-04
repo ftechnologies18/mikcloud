@@ -1,0 +1,377 @@
+name: land-micro
+
+# ═══ ATTERRISSAGE MICRO (N°242) — plan B : production sur E2.1.Micro ═══
+# Prérequis : le chasseur a capturé le micro de secours (N°241, cible #5 —
+# issue « Micro de secours capturé »). mikcloud-micro-bridge tourne en
+# E2.1.Micro (1/8 OCPU, 1 Go, AMD x86_64) avec IP éphémère + cloud-init
+# auto-bootstrap (MTU, Caddy, service mikcloud).
+#
+# Ce workflow en fait un PONT DE PRODUCTION DE SECOURS :
+#   1. OCI CLI (clé API du coffre GitHub)
+#   2. Garde : le micro existe et est RUNNING (sinon notice + sortie propre)
+#   3. VNIC : OCID private-ip + IP éphémère
+#   4. cloud-init terminé (SSH via l'éphémère)
+#   5. DURCISSEMENT 1 Go : swapfile 2 Go + GOMEMLIMIT=256MiB — l'API Go ne
+#      pèse que ~48 Mo et Caddy ~50 Mo, mais le socle Ubuntu + agents Oracle
+#      monte à ~700-800 Mo : le swap est le filet anti-OOM (mesures E5 réelles)
+#   6. Bascule de l'IP réservée 84.12.85.241 (retrait éphémère → attachement
+#      private-ip micro, retry ×5, private-ip E5 affiché pour rollback)
+#   7. ORACLE_GOARCH=amd64 (PATCH défensif — le micro est x86_64 comme l'E5 ;
+#      remet amd64 si une tentative A1 avortée avait laissé arm64) + dispatch
+#      deploy-oracle (ORACLE_HOST=84.12.85.241 suit l'IP réservée)
+#   8. Santé : service mikcloud actif + HTTP 308 (Caddy)
+#   9. TIMER DE CHASSE sur le micro (input install_timer, défaut vrai) : la
+#      chasse A1 24/24 survit à la mort du pont E5 — même script/unités que
+#      l'E5 (auto-arrêt 403 → disable), jeton via le secret
+#      MIKCLOUD_HUNT_TOKEN (root 600, transfert par stdin, jamais en logs).
+#      Tant que l'E5 vit, les DEUX timers dispatchent — inoffensif :
+#      concurrency group hunt-a1 + garde dans chaque run.
+#  10. Input terminate_e5 (défaut FAUX) : retrait du pont E5
+#  11. Issue de synthèse (rollback, T2, rotations)
+#
+# ROLLBACK (tant que le pont E5 vit) :
+#   oci network public-ip update --public-ip-id <réservée> \
+#     --private-ip-id <private-ip E5> --force        # IP → E5
+#   + re-dispatch deploy-oracle (amd64 déjà en place)
+# Le private-ip E5 est affiché dans les logs de l'étape bascule.
+#
+# PERF ATTENDUE (mesures E5, même pile) : mikcloud-server 48 Mo, caddy 50 Mo,
+# charge 0.00 — le micro tient la production en mode dégradé (bursts plus
+# lents sur 1/8 OCPU, swap en filet). DB = Supabase (externe), frontend =
+# Vercel (externe), médias = 302 (N°209) : l'instance ne porte que l'API.
+
+on:
+  workflow_dispatch:
+    inputs:
+      terminate_e5:
+        description: 'Retirer le pont E5 après atterrissage validé (irréversible)'
+        required: false
+        type: boolean
+        default: false
+      install_timer:
+        description: 'Installer le timer de chasse A1 sur le micro (chasse 24/24 autonome)'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  actions: write # dispatch deploy-oracle + variable ORACLE_GOARCH
+  issues: write  # issue de synthèse
+
+concurrency:
+  group: land-micro
+  cancel-in-progress: false
+
+jobs:
+  land:
+    name: Atterrissage micro (plan B — IP réservée + amd64 + chasse)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TEN: ocid1.tenancy.oc1..aaaaaaaa5lipoqjckcohkzca6uc42svliyvuaw7cl33ef5546mhcv4xf7kxq
+      SUBNET: ocid1.subnet.oc1.af-johannesburg-1.aaaaaaaanasgo3l7bndnre4ajjcpzfewliekzakfz4c7dhz5zh6ksh7e7caa
+      RESERVED_IP: 84.12.85.241
+    steps:
+      - name: OCI CLI + profil (clé API du coffre GitHub)
+        env:
+          OCI_USER: ${{ secrets.OCI_CLI_USER }}
+          OCI_TENANCY: ${{ secrets.OCI_CLI_TENANCY }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_CLI_FINGERPRINT }}
+          OCI_REGION: ${{ secrets.OCI_CLI_REGION }}
+          OCI_KEY: ${{ secrets.OCI_API_KEY }}
+        run: |
+          python3 -m pip install --quiet oci-cli \
+            || python3 -m pip install --quiet --break-system-packages oci-cli
+          mkdir -p ~/.oci
+          {
+            echo "[DEFAULT]"
+            echo "user=$OCI_USER"
+            echo "fingerprint=$OCI_FINGERPRINT"
+            echo "tenancy=$OCI_TENANCY"
+            echo "region=$OCI_REGION"
+            echo "key_file=$HOME/.oci/oci_api_key.pem"
+          } > ~/.oci/config
+          printf '%s\n' "$OCI_KEY" > ~/.oci/oci_api_key.pem
+          chmod 600 ~/.oci/config ~/.oci/oci_api_key.pem
+          oci iam region-subscription list --query 'length(data)' --raw-output >/dev/null
+          echo "auth OCI OK"
+
+      - name: Garde — le micro existe-t-il ?
+        id: micro
+        run: |
+          MOCID="$(oci compute instance list --compartment-id "$TEN" --all \
+            --query "data[?\"display-name\"=='mikcloud-micro-bridge' && \"lifecycle-state\"!='TERMINATED'] | [0].id" --raw-output 2>/dev/null || true)"
+          if [ -z "$MOCID" ] || [ "$MOCID" = "null" ]; then
+            echo "::notice::Aucun micro (mikcloud-micro-bridge) en tenancy — la capture de secours n'a pas eu lieu. Rien à atterrir."
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "micro : $MOCID"
+          echo "skip=0" >> "$GITHUB_OUTPUT"
+          echo "mocid=$MOCID" >> "$GITHUB_OUTPUT"
+
+      - name: Attendre RUNNING + repérer VNIC/private-ip/éphémère
+        id: vnic
+        if: steps.micro.outputs.skip == '0'
+        run: |
+          MOCID="${{ steps.micro.outputs.mocid }}"
+          STATE=""
+          for i in $(seq 1 30); do
+            STATE="$(oci compute instance get --instance-id "$MOCID" --query 'data."lifecycle-state"' --raw-output)"
+            [ "$STATE" = "RUNNING" ] && break
+            sleep 10
+          done
+          [ "$STATE" = "RUNNING" ] || { echo "✗ le micro n'est pas RUNNING (état : $STATE)"; exit 1; }
+          PRIV_ADDR="$(oci compute instance list-vnics --instance-id "$MOCID" --query 'data[0]."private-ip"' --raw-output)"
+          EPHEM_IP="$(oci compute instance list-vnics --instance-id "$MOCID" --query 'data[0]."public-ip"' --raw-output)"
+          echo "private-ip : $PRIV_ADDR / éphémère : ${EPHEM_IP:-aucune}"
+          PRIV_ID="$(oci network private-ip list --subnet-id "$SUBNET" \
+            --query "data[?\"ip-address\"=='$PRIV_ADDR'].id | [0]" --raw-output)"
+          if [ -z "$PRIV_ID" ] || [ "$PRIV_ID" = "null" ]; then
+            echo "✗ OCID du private-ip introuvable (subnet)"; exit 1
+          fi
+          echo "priv_id=$PRIV_ID" >> "$GITHUB_OUTPUT"
+          echo "ephem_ip=$EPHEM_IP" >> "$GITHUB_OUTPUT"
+
+      - name: cloud-init terminé (bootstrap MTU/Caddy/service)
+        id: cloudinit
+        if: steps.micro.outputs.skip == '0'
+        env:
+          SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+        run: |
+          EPHEM_IP="${{ steps.vnic.outputs.ephem_ip }}"
+          [ -n "$EPHEM_IP" ] && [ "$EPHEM_IP" != "null" ] || {
+            echo "::notice::Pas d'IP éphémère — l'IP réservée est peut-être déjà en place."; exit 0; }
+          install -m 600 /dev/null /tmp/k
+          printf '%s\n' "$SSH_KEY" > /tmp/k
+          SSHO="-i /tmp/k -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          ST=""
+          for i in $(seq 1 60); do
+            ST="$(ssh $SSHO "ubuntu@$EPHEM_IP" 'cloud-init status' 2>/dev/null | grep -oE 'status: [a-z]+' | head -1 || true)"
+            [ "$ST" = "status: done" ] && break
+            sleep 15
+          done
+          [ "$ST" = "status: done" ] || { echo "✗ cloud-init pas terminé ($ST)"; exit 1; }
+          echo "cloud-init done ✓"
+
+      - name: Durcissement 1 Go (swap 2 Go + GOMEMLIMIT)
+        if: steps.micro.outputs.skip == '0'
+        env:
+          SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+        run: |
+          EPHEM_IP="${{ steps.vnic.outputs.ephem_ip }}"
+          install -m 600 /dev/null /tmp/k
+          printf '%s\n' "$SSH_KEY" > /tmp/k
+          SSHO="-i /tmp/k -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          ssh $SSHO "ubuntu@${EPHEM_IP:-$RESERVED_IP}" bash -s <<'REMOTE'
+          set -euo pipefail
+          # Plafond mémoire Go (soft cap GC — le service ne gonflera pas)
+          sudo mkdir -p /etc/systemd/system/mikcloud.service.d
+          printf '[Service]\nEnvironment=GOMEMLIMIT=256MiB\n' \
+            | sudo tee /etc/systemd/system/mikcloud.service.d/memlimit.conf > /dev/null
+          sudo systemctl daemon-reload
+          echo "GOMEMLIMIT=256MiB posé ✓"
+          # Swap 2 Go — filet anti-OOM (1 Go de RAM, socle ~700-800 Mo)
+          if ! swapon --show | grep -q .; then
+            sudo fallocate -l 2G /swapfile 2>/dev/null \
+              || sudo dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+            sudo chmod 600 /swapfile
+            sudo mkswap /swapfile
+            sudo swapon /swapfile
+            grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab > /dev/null
+            echo 'vm.swappiness=10' | sudo tee /etc/sysctl.d/99-mikcloud-swap.conf > /dev/null
+            sudo sysctl -p /etc/sysctl.d/99-mikcloud-swap.conf > /dev/null
+            echo "swap 2 Go posé ✓"
+          else
+            echo "swap déjà présent — rien à faire"
+          fi
+          free -m | head -3
+          REMOTE
+
+      - name: Bascule de l'IP réservée vers le micro
+        id: ipmove
+        if: steps.micro.outputs.skip == '0'
+        run: |
+          PRIV_ID="${{ steps.vnic.outputs.priv_id }}"
+          EPHEM_IP="${{ steps.vnic.outputs.ephem_ip }}"
+          RES_ID="$(oci network public-ip list --scope REGION \
+            --query "data[?\"ip-address\"=='$RESERVED_IP' && \"lifecycle-state\"=='ASSIGNED'].id | [0]" --raw-output)"
+          if [ -z "$RES_ID" ] || [ "$RES_ID" = "null" ]; then
+            echo "✗ IP réservée $RESERVED_IP introuvable (état ASSIGNED)"; exit 1
+          fi
+          E5_PRIV="$(oci network public-ip get --public-ip-id "$RES_ID" --query 'data."private-ip-id"' --raw-output)"
+          echo "★★ ROLLBACK DISPONIBLE — private-ip du pont E5 : $E5_PRIV"
+          echo "e5_priv=$E5_PRIV" >> "$GITHUB_OUTPUT"
+          if [ -n "$EPHEM_IP" ] && [ "$EPHEM_IP" != "null" ]; then
+            EPH_ID="$(oci network public-ip list --scope REGION \
+              --query "data[?\"ip-address\"=='$EPHEM_IP'].id | [0]" --raw-output)"
+            if [ -n "$EPH_ID" ] && [ "$EPH_ID" != "null" ]; then
+              oci network public-ip delete --public-ip-id "$EPH_ID" --force
+              echo "IP éphémère $EPHEM_IP retirée."
+            fi
+          fi
+          OUT=""
+          for i in 1 2 3 4 5; do
+            OUT="$(oci network public-ip update --public-ip-id "$RES_ID" \
+              --private-ip-id "$PRIV_ID" --force 2>&1)" && break
+            echo "tentative $i : $OUT"; sleep 20
+          done
+          echo "$OUT" | grep -q ocid1 || { echo "✗ bascule de l'IP réservée échouée (rollback : voir private-ip E5 ci-dessus)"; exit 1; }
+          NEW="$(oci network public-ip get --public-ip-id "$RES_ID" --query 'data."ip-address"' --raw-output)"
+          echo "IP réservée $NEW attachée au micro ✓"
+
+      - name: ORACLE_GOARCH=amd64 + déploiement (deploy-oracle)
+        id: deploy
+        if: steps.micro.outputs.skip == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X PATCH repos/ftechnologies18/mikcloud/actions/variables/ORACLE_GOARCH \
+            -f value=amd64 --silent
+          echo "variable ORACLE_GOARCH=amd64 ✓ (défensif — x86_64 comme l'E5)"
+          gh workflow run deploy-oracle.yml --ref main
+          sleep 20
+          RID="$(gh run list --workflow=deploy-oracle.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
+          echo "deploy-oracle run : $RID"
+          echo "deploy_run=$RID" >> "$GITHUB_OUTPUT"
+          gh run watch "$RID" --exit-status \
+            || { echo "✗ deploy-oracle a échoué — rollback : IP → private-ip E5 (voir logs bascule) + re-dispatch"; exit 1; }
+          echo "déploiement amd64 ✓"
+
+      - name: Santé du micro
+        if: steps.micro.outputs.skip == '0'
+        env:
+          SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+        run: |
+          install -m 600 /dev/null /tmp/k
+          printf '%s\n' "$SSH_KEY" > /tmp/k
+          SSHO="-i /tmp/k -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          ACT="$(ssh $SSHO "ubuntu@$RESERVED_IP" 'systemctl is-active mikcloud' 2>/dev/null || true)"
+          echo "service mikcloud : ${ACT:-injoignable}"
+          [ "$ACT" = "active" ] || { echo "✗ le service mikcloud n'est pas actif sur le micro"; exit 1; }
+          CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "http://$RESERVED_IP/" || true)"
+          echo "HTTP $CODE sur http://$RESERVED_IP/ (308 attendu — Caddy)"
+          case "$CODE" in 200|301|308) ;; *) echo "✗ code HTTP inattendu"; exit 1;; esac
+
+      - name: Timer de chasse A1 sur le micro (chasse 24/24 autonome)
+        if: steps.micro.outputs.skip == '0' && inputs.install_timer
+        env:
+          SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+          HUNT_TOKEN: ${{ secrets.MIKCLOUD_HUNT_TOKEN }}
+        run: |
+          install -m 600 /dev/null /tmp/k
+          printf '%s\n' "$SSH_KEY" > /tmp/k
+          SSHO="-i /tmp/k -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          # Jeton par STDIN (jamais en ligne de commande ni dans les logs)
+          printf '%s\n' "$HUNT_TOKEN" | ssh $SSHO "ubuntu@$RESERVED_IP" \
+            'sudo mkdir -p /root/.config/mikcloud-hunt && sudo tee /root/.config/mikcloud-hunt/token > /dev/null && sudo chmod 600 /root/.config/mikcloud-hunt/token && echo "jeton posé (600, root-only) ✓"'
+          ssh $SSHO "ubuntu@$RESERVED_IP" bash -s <<'REMOTE'
+          set -euo pipefail
+          sudo tee /usr/local/bin/mikcloud-hunt-dispatch.sh > /dev/null <<'SCRIPT'
+          #!/bin/bash
+          # mikcloud-hunt-dispatch.sh — chasse A1 depuis le MICRO (N°242, réplique
+          # exacte du timer du pont E5 : N°236 → N°237). Auto-arrêt à la capture
+          # (403 → état workflow → disable). Jeton root 600, jamais dans les logs.
+          set -u
+          TOKEN_FILE=/root/.config/mikcloud-hunt/token
+          TOKEN="$(cat "$TOKEN_FILE" 2>/dev/null)" || { echo "ERREUR : jeton absent."; exit 1; }
+          HTTP="$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 -X POST \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            'https://api.github.com/repos/ftechnologies18/mikcloud/actions/workflows/hunt-a1.yml/dispatches' \
+            -d '{"ref":"main"}')"
+          echo "$(date -u '+%F %T') dispatch hunt-a1 → HTTP $HTTP"
+          [ "$HTTP" = "204" ] && exit 0
+          if [ "$HTTP" = "403" ]; then
+            STATE="$(curl -s --max-time 20 \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              'https://api.github.com/repos/ftechnologies18/mikcloud/actions/workflows/hunt-a1.yml' \
+              | python3 -c 'import json,sys
+          try: print(json.load(sys.stdin).get("state",""))
+          except Exception: print("")')"
+            case "$STATE" in
+              *disabled*)
+                echo "Workflow hunt-a1 désactivé (capture) — auto-arrêt du timer micro."
+                systemctl disable --now mikcloud-hunt-dispatch.timer
+                exit 0 ;;
+              *) echo "HTTP 403 mais state='$STATE' — jeton en cause ? Timer maintenu."; exit 1 ;;
+            esac
+          fi
+          echo "Échec du dispatch (HTTP $HTTP) — le prochain créneau retentera."
+          exit 1
+          SCRIPT
+          sudo chmod 755 /usr/local/bin/mikcloud-hunt-dispatch.sh
+          sudo tee /etc/systemd/system/mikcloud-hunt-dispatch.service > /dev/null <<'UNIT'
+          [Unit]
+          Description=mikcloud — dispatch du chasseur A1 GitHub (workflow hunt-a1)
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/bin/mikcloud-hunt-dispatch.sh
+          UNIT
+          sudo tee /etc/systemd/system/mikcloud-hunt-dispatch.timer > /dev/null <<'UNIT'
+          [Unit]
+          Description=mikcloud — chasse A1 24/24 depuis le micro (N°242)
+          [Timer]
+          OnCalendar=*-*-* *:0/5 UTC
+          AccuracySec=30s
+          Persistent=false
+          [Install]
+          WantedBy=timers.target
+          UNIT
+          sudo systemctl daemon-reload
+          sudo systemctl enable --now mikcloud-hunt-dispatch.timer
+          systemctl is-active mikcloud-hunt-dispatch.timer
+          echo "timer chasse actif sur le micro ✓ (cadence 5 min, 24/24)"
+          REMOTE
+
+      - name: Retrait du pont E5 (uniquement si demandé)
+        id: e5
+        if: steps.micro.outputs.skip == '0' && inputs.terminate_e5
+        run: |
+          E5="$(oci compute instance list --compartment-id "$TEN" --all \
+            --query "data[?\"display-name\"=='mikcloud-backend-e5-bridge' && \"lifecycle-state\"=='RUNNING'].id | [0]" --raw-output 2>/dev/null || true)"
+          if [ -n "$E5" ] && [ "$E5" != "null" ]; then
+            oci compute instance terminate --instance-id "$E5" --wait-for-state TERMINATED --force
+            echo "e5=terminé" >> "$GITHUB_OUTPUT"
+            echo "Pont E5 retiré."
+          else
+            echo "e5=déjà absent" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Issue de synthèse
+        if: steps.micro.outputs.skip == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          MOCID="${{ steps.micro.outputs.mocid }}"
+          RID="${{ steps.deploy.outputs.deploy_run }}"
+          E5S="${{ steps.e5.outputs.e5 || 'laissé en place (rollback disponible)' }}"
+          TIMERS="${{ inputs.install_timer && 'installé — chasse 24/24 autonome' || 'NON installé (input)' }}"
+          gh issue create --title "Micro atterri — MikCloud en plan B sur E2.1.Micro, chasse A1 poursuivie" --body "$(cat <<EOF
+          L'atterrissage micro (land-micro) est terminé.
+
+          - Instance : \`mikcloud-micro-bridge\` (E2.1.Micro, 1/8 OCPU, 1 Go) — \`$MOCID\`
+          - IP réservée : **84.12.85.241** attachée au micro
+          - Déploiement : run deploy-oracle #$RID (amd64)
+          - Durcissement : swap 2 Go + GOMEMLIMIT=256MiB (mesures E5 : API 48 Mo,
+            Caddy 50 Mo — mode dégradé assumé, bursts plus lents sur 1/8 OCPU)
+          - Timer de chasse : $TIMERS
+          - Pont E5 : $E5S
+
+          La CHASSE A1 CONTINUE — priorité absolue à l'A1 (N°241). Si une A1
+          est capturée ensuite, land-a1.yml reprend l'IP réservée et le micro
+          redevient standby interne (son timer s'auto-arrêtera à la capture).
+
+          ROLLBACK (tant que l'E5 vit) : IP réservée → private-ip E5 (logs de
+          l'étape bascule) + re-dispatch deploy-oracle.
+
+          PROCHAINES ÉTAPES :
+          1. **T2** si ce plan B devient la référence : DNS api.mikcloud.ftci.fr
+             → 84.12.85.241 (+ rotation JWT_SECRET / ADMIN_PASSWORD).
+          2. Hygiène des secrets : ROTATER le jeton GitHub (chat-exposé, N°238/240)
+             — le secret MIKCLOUD_HUNT_TOKEN et les timers E5+micro devront être
+             mis à jour avec le nouveau jeton — puis Supabase/Neon/Render/Vercel,
+             et suppression des secrets OCI_* après atterrissage A1 définitif.
+          EOF
+          )" || echo "::notice::issue non créée (peut-être déjà existante)"

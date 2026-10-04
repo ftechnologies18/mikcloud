@@ -5,6 +5,43 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-04 — N°242 — Le micro devient un vrai plan B : land-micro.yml (atterrissage production + chasse 24/24 autonome)
+
+### Contexte
+Question de l'exploitant : le micro E2.1.Micro (1/8 OCPU, 1 Go) peut-il
+FAIRE TOURNER MikCloud « au cas où » tout en poursuivant la chasse A1 ?
+Mesures réelles sur le pont E5 (même pile) : mikcloud-server 48 Mo, caddy
+50 Mo, charge 0.00 — la DB vit sur Supabase, le frontend sur Vercel, les
+médias partent en 302 : l'instance ne porte que l'API Go. **Oui, en mode
+dégradé assumé** (bursts plus lents sur 1/8 OCPU, socle Ubuntu+agents
+~700-800 Mo → swap obligatoire).
+
+### Livré
+- **.github/workflows/land-micro.yml** — atterrissage du plan B, modèle
+  éprouvé de land-a1.yml : garde micro (`mikcloud-micro-bridge` RUNNING,
+  notice + exit 0 sinon) → VNIC/private-ip/éphémère → cloud-init --wait →
+  **durcissement 1 Go** (swapfile 2 Go + `GOMEMLIMIT=256MiB` en drop-in
+  systemd, vm.swappiness=10) → bascule IP réservée 84.12.85.241 (retry ×5,
+  private-ip E5 affiché pour rollback) → `ORACLE_GOARCH=amd64` (PATCH
+  défensif — le micro est x86_64 comme l'E5) + dispatch deploy-oracle
+  suivi au verdict → santé (systemctl + HTTP 308) → **timer de chasse A1
+  installé sur le micro** (input `install_timer`, défaut vrai) → input
+  `terminate_e5` (défaut faux) → issue de synthèse.
+- **Timer de chasse autonome** : réplique exacte du timer E5 (script
+  dispatch + unités systemd, cadence 5 min 24/24, auto-arrêt 403 →
+  state → disable) — la chasse A1 SURVIT à la mort du pont E5. Tant que
+  l'E5 vit, les deux timers dispatchent (inoffensif : concurrency group
+  `hunt-a1` + garde dans chaque run).
+- **Secret `MIKCLOUD_HUNT_TOKEN`** créé (jeton PAT, scellé libsodium via
+  l'API) : le land-micro le transfère au micro par **stdin** (root 600,
+  jamais en ligne de commande ni dans les logs). Ajouté à la liste des
+  rotations T2.
+- **Chaîne complète du plan B** : chasse capture le micro (N°241, cible
+  #5) → issue « Micro de secours capturé » → dispatch land-micro → prod
+  sur le micro + chasse continue → si l'A1 est capturée ensuite, land-a1
+  reprend l'IP réservée et le micro redevient standby (son timer
+  s'auto-arrête à la capture A1).
+
 ## 2026-10-04 — N°241 — La chasse gagne un filet de secours : cible VM.Standard.E2.1.Micro « au cas où »
 
 ### Contexte

@@ -5,11 +5,23 @@ name: hunt-a1
 # anti-429), ne TIRER que si un pool est AVAILABLE. À la capture :
 # auto-désactivation (gh workflow disable) + issue d'alerte.
 #
+# N°241 — CIBLE DE SECOURS VM.Standard.E2.1.Micro (demande de l'exploitant
+# « au cas où ») : si les 5 cibles A1 sont rouges et le micro VERT, tir du
+# micro (1/8 OCPU, 1 Go — Always Free, AMD x86_64 donc image RÉSOLUE
+# dynamiquement, doctrine anti-recopie OCID). Règles :
+#   - PRIORITÉ A1 : si un pool A1 est vert, c'est lui qu'on tire (jamais
+#     le micro tant qu'une A1 est prenable dans le même passage).
+#   - capture micro ≠ fin de chasse : le micro est un filet de secours,
+#     le chasseur CONTINUE de chercher l'A1 (garde : une seule capture).
+#   - seule la capture A1 désactive le chasseur (mission principale).
+#   - le micro porte un nom distinct (mikcloud-micro-bridge) : la garde
+#     et land-a1 (qui cherche mikcloud-backend/A1.Flex) restent exacts.
+#
 # L'instance part avec une IP publique ÉPHÉMÈRE : cloud-init peut télécharger
 # bootstrap.sh (fix MTU [0b/8] inclus). L'IP RÉSERVÉE 84.12.85.241 reste sur
 # le pont E5 — la production (Render, T1) n'est jamais touchée. L'échange
-# éphémère→réservée + GOARCH=arm64 + déploiement = atterrissage a1-landing.sh
-# (poste de pilotage, à la session suivant la capture).
+# éphémère→réservée + GOARCH=arm64 + déploiement = atterrissage land-a1.yml
+# (dispatch GitHub, à la session suivant la capture).
 #
 # Retrait après atterrissage : supprimer les secrets OCI_* de ce dépôt (la
 # clé API ne doit vivre que sur le poste de pilotage — doctrine PILOTAGE §1).
@@ -65,7 +77,7 @@ jobs:
           oci iam region-subscription list --query 'length(data)' --raw-output >/dev/null
           echo "auth OCI OK"
 
-      - name: Garde — l'A1 existe-t-elle déjà ?
+      - name: Garde — A1 déjà capturée ? micro déjà capturé ?
         id: guard
         env:
           GH_TOKEN: ${{ github.token }}
@@ -75,12 +87,21 @@ jobs:
           if [ "$N" != "0" ]; then
             echo "::notice::mikcloud-backend (A1) déjà présente — le chasseur se désactive."
             gh workflow disable hunt-a1.yml
+            echo "stop=1" >> "$GITHUB_OUTPUT" # bloque aussi sonde/tir (exit 0 seul ne suffit pas)
             exit 0
           fi
           echo "Pas d'A1 en tenancy — la chasse continue."
+          # N°241 : comptage du micro de secours (une seule capture voulue).
+          M="$(oci compute instance list --compartment-id "$TEN" --all \
+            --query "data[?\"display-name\"=='mikcloud-micro-bridge' && \"lifecycle-state\"!='TERMINATED'] | length(@)" --raw-output 2>/dev/null || echo 1)"
+          echo "micro=$M" >> "$GITHUB_OUTPUT"
+          if [ "$M" != "0" ]; then
+            echo "Micro de secours déjà présent — cible #5 retirée du tir (la chasse A1 continue)."
+          fi
 
       - name: Sonde capacité (gratuite — doctrine N°222)
         id: probe
+        if: steps.guard.outputs.stop != '1'
         run: |
           cat > /tmp/capreq.json << 'EOF'
           [
@@ -95,10 +116,26 @@ jobs:
             --availability-domain "$AD" --shape-availabilities file:///tmp/capreq.json > /tmp/report.json
           jq -r '.data["shape-availabilities"] | to_entries[] | "  cible #\(.key) (\(.value["fault-domain"] // "placement auto")) → \(.value["availability-status"])"' /tmp/report.json
           PICK="$(jq -r '.data["shape-availabilities"] | to_entries[] | select(.value["availability-status"]=="AVAILABLE") | .key' /tmp/report.json | head -1)"
+          if [ -n "$PICK" ]; then
+            echo "── POOL VERT A1 (cible #$PICK) : TIR prioritaire."
+          fi
+          # N°241 : sonde micro SÉPARÉE (rapport distinct : une erreur de
+          # shape/région sur le micro ne peut jamais casser la sonde A1).
+          # Uniquement si l'A1 est rouge et le micro pas déjà capturé.
+          MICRO="${{ steps.guard.outputs.micro }}"
+          if [ -z "$PICK" ] && [ "$MICRO" = "0" ]; then
+            printf '[{"instanceShape": "VM.Standard.E2.1.Micro"}]' > /tmp/microreq.json
+            MSTAT="$(oci compute compute-capacity-report create --compartment-id "$TEN" \
+              --availability-domain "$AD" --shape-availabilities file:///tmp/microreq.json \
+              --query 'data["shape-availabilities"][0]["availability-status"]' --raw-output 2>/dev/null || echo PROBE_ERROR)"
+            echo "  cible #5 (micro E2.1.Micro) → $MSTAT"
+            if [ "$MSTAT" = "AVAILABLE" ]; then
+              PICK=5
+              echo "── A1 rouge partout, MICRO VERT : tir du filet de secours (cible #5)."
+            fi
+          fi
           if [ -z "$PICK" ]; then
-            echo "── TOUS ROUGES : la flotte ARM est saturée. Aucun tir (budget préservé)."
-          else
-            echo "── POOL VERT détecté (cible #$PICK) : TIR."
+            echo "── TOUS ROUGES : la flotte est saturée. Aucun tir (budget préservé)."
           fi
           echo "pick=$PICK" >> "$GITHUB_OUTPUT"
 
@@ -111,15 +148,35 @@ jobs:
         run: |
           PICK="${{ steps.probe.outputs.pick }}"
           case "$PICK" in
-            0) OCPUS=2.0; MEM=12.0; FD="";;
-            1) OCPUS=1.0; MEM=6.0;  FD="";;
-            2) OCPUS=2.0; MEM=12.0; FD="FAULT-DOMAIN-1";;
-            3) OCPUS=2.0; MEM=12.0; FD="FAULT-DOMAIN-2";;
-            4) OCPUS=2.0; MEM=12.0; FD="FAULT-DOMAIN-3";;
+            0) SHAPE=VM.Standard.A1.Flex;    NAME=mikcloud-backend;      OCPUS=2.0; MEM=12.0; FD="";;
+            1) SHAPE=VM.Standard.A1.Flex;    NAME=mikcloud-backend;      OCPUS=1.0; MEM=6.0;  FD="";;
+            2) SHAPE=VM.Standard.A1.Flex;    NAME=mikcloud-backend;      OCPUS=2.0; MEM=12.0; FD="FAULT-DOMAIN-1";;
+            3) SHAPE=VM.Standard.A1.Flex;    NAME=mikcloud-backend;      OCPUS=2.0; MEM=12.0; FD="FAULT-DOMAIN-2";;
+            4) SHAPE=VM.Standard.A1.Flex;    NAME=mikcloud-backend;      OCPUS=2.0; MEM=12.0; FD="FAULT-DOMAIN-3";;
+            5) SHAPE=VM.Standard.E2.1.Micro; NAME=mikcloud-micro-bridge; OCPUS="";   MEM="";   FD="";;
             *) echo "✗ index de cible inconnu : $PICK"; exit 1;;
           esac
           FDARG=()
           [ -n "$FD" ] && FDARG=(--fault-domain "$FD")
+          # A1 = shape flexible (config OCPU/RAM) ; micro = shape fixe (rien)
+          SHAPEARG=()
+          if [ "$SHAPE" = "VM.Standard.A1.Flex" ]; then
+            SHAPEARG=(--shape-config "{\"ocpus\":$OCPUS,\"memory-in-gbs\":$MEM}")
+          fi
+          # Micro = AMD x86_64 : image différente de l'A1 (ARM). Résolution
+          # programmatique (doctrine anti-recopie OCID) : dernière Ubuntu
+          # 24.04 x86_64 de la plateforme.
+          if [ "$SHAPE" = "VM.Standard.E2.1.Micro" ]; then
+            IMG_USE="$(oci compute image list --compartment-id "$TEN" --all \
+              --operating-system 'Canonical Ubuntu' --operating-system-version '24.04' \
+              --query "sort_by([?architecture=='x86_64'], &\"time-created\")[-1].id" --raw-output)"
+            if [ -z "$IMG_USE" ] || [ "$IMG_USE" = "null" ]; then
+              echo "✗ image Ubuntu 24.04 x86_64 introuvable (plateforme)"; exit 1
+            fi
+            echo "image micro (x86_64) : $IMG_USE"
+          else
+            IMG_USE="$IMG"
+          fi
           # Clé publique dérivée du secret privé (la publique n'est pas un secret)
           printf '%s\n' "$SSH_KEY" > /tmp/hunt-key
           chmod 600 /tmp/hunt-key
@@ -132,13 +189,13 @@ jobs:
             - curl -fsSL https://raw.githubusercontent.com/ftechnologies18/mikcloud/main/deploy/oracle/bootstrap.sh -o /root/bootstrap.sh
             - bash /root/bootstrap.sh api.mikcloud.ftci.fr
           EOF
-          echo "── TIR : $OCPUS OCPU / $MEM Go (${FD:-placement auto}) ──"
+          echo "── TIR : $NAME ($SHAPE${OCPUS:+, $OCPUS OCPU / $MEM Go}) — ${FD:-placement auto} ──"
           OUT="$(oci compute instance launch \
             --compartment-id "$TEN" --availability-domain "$AD" \
-            --display-name mikcloud-backend --shape VM.Standard.A1.Flex \
-            --shape-config "{\"ocpus\":$OCPUS,\"memory-in-gbs\":$MEM}" \
+            --display-name "$NAME" --shape "$SHAPE" \
+            "${SHAPEARG[@]}" \
             "${FDARG[@]}" \
-            --image-id "$IMG" --subnet-id "$SUBNET" \
+            --image-id "$IMG_USE" --subnet-id "$SUBNET" \
             --assign-public-ip true \
             --ssh-authorized-keys-file /tmp/hunt-key.pub \
             --user-data-file /tmp/cloud-init.yaml \
@@ -146,20 +203,28 @@ jobs:
             --query 'data.id' --raw-output 2>&1 || true)"
           echo "$OUT"
           if echo "$OUT" | grep -q '^ocid1\.instance'; then
-            echo "a1=$(echo "$OUT" | head -1)" >> "$GITHUB_OUTPUT"
-            echo "★★★ CAPTURE ACCEPTÉE"
+            if [ "$SHAPE" = "VM.Standard.E2.1.Micro" ]; then
+              echo "micro=$(echo "$OUT" | head -1)" >> "$GITHUB_OUTPUT"
+              echo "★★★ MICRO DE SECOURS CAPTURÉ (la chasse A1 continue)"
+            else
+              echo "a1=$(echo "$OUT" | head -1)" >> "$GITHUB_OUTPUT"
+              echo "★★★ CAPTURE ACCEPTÉE"
+            fi
           elif echo "$OUT" | grep -q 'Out of host capacity'; then
             echo "::notice::Course perdue (la place a été prise entre la sonde et le tir) — le prochain passage retentera."
             exit 0
           elif echo "$OUT" | grep -q 'TooManyRequests'; then
             echo "::notice::Bride 429 — l'espacement naturel des crons suffit, rien à faire."
             exit 0
+          elif [ "$SHAPE" = "VM.Standard.E2.1.Micro" ]; then
+            echo "::notice::Échec de lancement du micro (quota ?) — ignoré, la chasse A1 continue."
+            exit 0
           else
             echo "✗ erreur de lancement inattendue (voir ci-dessus)"
             exit 1
           fi
 
-      - name: Victoire — issue d'alerte + auto-désactivation
+      - name: Victoire A1 — issue d'alerte + auto-désactivation
         if: steps.fire.outputs.a1 != ''
         env:
           GH_TOKEN: ${{ github.token }}
@@ -176,9 +241,9 @@ jobs:
           - L'IP réservée 84.12.85.241 RESTE sur le pont E5 — aucun impact production.
 
           PROCHAINE ÉTAPE : à la session suivante de l'agent, atterrissage
-          \`a1-landing.sh\` (retrait de l'éphémère, IP réservée → A1,
-          ORACLE_GOARCH=arm64, déploiement, santé, puis retrait du pont E5
-          derrière le drapeau --terminate-e5).
+          \`land-a1.yml\` (dispatch GitHub : retrait de l'éphémère, IP
+          réservée → A1, ORACLE_GOARCH=arm64, déploiement, santé, puis
+          retrait du pont E5 derrière l'input terminate_e5).
 
           Ce chasseur s'est auto-désactivé. Après atterrissage validé :
           supprimer les secrets OCI_* du dépôt.
@@ -186,3 +251,34 @@ jobs:
           )"
           gh workflow disable hunt-a1.yml
           echo "Chasseur désactivé — la capture attend son atterrissage."
+
+      - name: Victoire micro — issue de secours (la chasse A1 continue)
+        if: steps.fire.outputs.micro != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          MOCID="${{ steps.fire.outputs.micro }}"
+          EPHEM="$(oci compute instance list-vnics --instance-id "$MOCID" \
+            --query 'data[0]."public-ip"' --raw-output 2>/dev/null || echo '?')"
+          gh issue create --title "Micro de secours capturé (E2.1.Micro) — pont AMD en standby, chasse A1 continue" --body "$(cat <<EOF
+          L'A1 restait rouge et le micro E2.1.Micro était vert : le filet de
+          secours a été capturé (N°241, demande exploitant « au cas où »).
+
+          - Instance : \`mikcloud-micro-bridge\` (VM.Standard.E2.1.Micro, 1/8 OCPU,
+            1 Go RAM, 50 Go, Ubuntu 24.04 x86_64, cloud-init auto-bootstrap)
+          - OCID : \`$MOCID\`
+          - IP publique éphémère : \`$EPHEM\`
+          - Coût : Always Free — filet de secours illimité dans le temps.
+          - L'IP réservée 84.12.85.241 RESTE sur le pont E5 — aucun impact production.
+
+          La chasse A1 CONTINUE (le micro ne remplace pas l'A1 : 1 Go RAM est
+          un pont d'urgence, pas une cible de migration). Utilisation « au cas
+          où » : si les crédits E5 expirent (31/10) sans capture A1, le micro
+          peut servir de pont de secours minimal (GOARCH=amd64 déjà correct
+          pour ce shape) — décision de session, jamais automatique.
+
+          ⚠ Après atterrissage A1 validé : statuer sur le micro (garder en
+          standby secondaire ou terminer pour libérer 50 Go de quota).
+          EOF
+          )"
+          echo "Micro sécurisé — le chasseur repart chercher l'A1 au prochain passage."

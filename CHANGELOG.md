@@ -5,6 +5,42 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-04 — N°241 — La chasse gagne un filet de secours : cible VM.Standard.E2.1.Micro « au cas où »
+
+### Contexte
+170+ sondes consécutives toutes rouges (jour et nuit) sur les 5 cibles A1 de
+Johannesburg AD-1 — la capacité ARM ne se libère pas. Demande de l'exploitant :
+ajouter `VM.Standard.E2.1.Micro` comme cible de secours « au cas où » (Always
+Free, 1/8 OCPU, 1 Go — un pont d'urgence si les crédits E5 expirent le 31/10
+sans capture A1).
+
+### Livré
+- **hunt-a1.yml — cible #5 (micro)** : sonde micro dans un rapport de capacité
+  SÉPARÉ (une erreur de shape/région sur le micro ne peut jamais casser la
+  sonde A1 — dégradation gracieuse `PROBE_ERROR`), tir UNIQUEMENT si les 5
+  cibles A1 sont rouges ET le micro AVAILABLE ET pas déjà capturé (garde :
+  comptage `mikcloud-micro-bridge` non terminé). **Priorité A1 absolue** dans
+  le même passage.
+- **Micro = AMD x86_64** : image résolue dynamiquement (dernière Canonical
+  Ubuntu 24.04 `architecture=='x86_64'` — doctrine anti-recopie OCID),
+  `--display-name mikcloud-micro-bridge` (nom distinct : la garde A1 et
+  land-a1.yml, qui cherchent `mikcloud-backend`/A1.Flex, restent exacts),
+  shape fixe sans `--shape-config`, 50 Go, même cloud-init auto-bootstrap
+  (MTU [0b/8] + Caddy + service — arch-indépendant).
+- **Capture micro ≠ fin de chasse** : issue de secours dédiée (OCID + IP
+  éphémère + doctrine d'usage : GOARCH=amd64 déjà correct pour ce shape,
+  décision de session, jamais automatique), le chasseur CONTINUE de chercher
+  l'A1 ; seule la capture A1 désactive le workflow. Échec de lancement micro
+  (quota ?) = notice verte, la chasse A1 continue.
+- **Robustesse (bug latent corrigé)** : la garde A1 pose désormais
+  `stop=1` en output et la sonde est gated `steps.guard.outputs.stop != '1'`
+  — avant, un `exit 0` de la garde laissait la sonde courir (dispatch manuel
+  après capture → risque de tir par-dessus l'A1 existante).
+- Issue A1 mise à jour : atterrissage référencé comme `land-a1.yml` (le
+  script a1-landing.sh a été remplacé en N°238).
+- Quota vérifié avant déploiement : E5 50 Go + micro 50 Go + future A1 50 Go
+  = 150 Go ≤ 200 Go Always Free.
+
 ## 2026-10-03 — N°232 — Le chasseur A1 devient AUTOMATIQUE : GitHub Actions sonde la nuit, l'agent n'a plus besoin d'être présent
 
 ### Contexte

@@ -1,0 +1,242 @@
+name: land-a1
+
+# ═══ ATTERRISSAGE A1 (N°238) — à exécuter quand le chasseur a capturé ═══
+# Prérequis : l'issue « A1 capturée — prête pour l'atterrissage » existe
+# (hunt-a1 a lancé mikcloud-backend en A1.Flex avec IP éphémère + cloud-init
+# auto-bootstrap : MTU [0b/8], Caddy, service mikcloud).
+#
+# Étapes :
+#   1. OCI CLI (clé API du coffre GitHub — le poste de pilotage local ayant
+#      perdu sa clé, N°237-INTRO, tout l'atterrissage vit ICI, sur GitHub)
+#   2. Garde : l'A1 existe et est RUNNING (sinon notice + sortie propre)
+#   3. VNIC : OCID private-ip + adresse IP éphémère
+#   4. cloud-init terminé (SSH via l'éphémère, ~15 min max)
+#   5. Bascule de l'IP réservée 84.12.85.241 : retrait de l'éphémère →
+#      attachement au private-ip de l'A1 (retry : l'éphémère peut traîner)
+#   6. Variable ORACLE_GOARCH=arm64 + dispatch deploy-oracle (build arm64,
+#      déploiement vers ORACLE_HOST=84.12.85.241 qui SUIT l'IP réservée)
+#   7. Santé : service mikcloud actif + HTTP sur l'IP (308 Caddy attendu)
+#   8. Input terminate_e5 (défaut FAUX) : retrait du pont E5 — sinon il
+#      reste en place comme rollback
+#   9. Issue de synthèse : OCIDs, run de déploiement, prochaines étapes
+#
+# ROLLBACK (tant que le pont E5 vit — c'est-à-dire sans terminate_e5) :
+#   oci network public-ip update --public-ip-id <réservée> \
+#     --private-ip-id <private-ip du pont E5> --force        # IP → E5
+#   gh api -X PATCH repos/.../actions/variables/ORACLE_GOARCH -f value=amd64
+#   + re-dispatch deploy-oracle.yml
+# Le private-ip du pont E5 est affiché dans les logs de l'étape bascule.
+
+on:
+  workflow_dispatch:
+    inputs:
+      terminate_e5:
+        description: 'Retirer le pont E5 après atterrissage validé (irréversible)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  actions: write # dispatch deploy-oracle + variable ORACLE_GOARCH
+  issues: write  # issue de synthèse
+
+concurrency:
+  group: land-a1
+  cancel-in-progress: false
+
+jobs:
+  land:
+    name: Atterrissage A1 (IP réservée + arm64 + déploiement)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TEN: ocid1.tenancy.oc1..aaaaaaaa5lipoqjckcohkzca6uc42svliyvuaw7cl33ef5546mhcv4xf7kxq
+      SUBNET: ocid1.subnet.oc1.af-johannesburg-1.aaaaaaaanasgo3l7bndnre4ajjcpzfewliekzakfz4c7dhz5zh6ksh7e7caa
+      RESERVED_IP: 84.12.85.241
+    steps:
+      - name: OCI CLI + profil (clé API du coffre GitHub)
+        env:
+          OCI_USER: ${{ secrets.OCI_CLI_USER }}
+          OCI_TENANCY: ${{ secrets.OCI_CLI_TENANCY }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_CLI_FINGERPRINT }}
+          OCI_REGION: ${{ secrets.OCI_CLI_REGION }}
+          OCI_KEY: ${{ secrets.OCI_API_KEY }}
+        run: |
+          python3 -m pip install --quiet oci-cli \
+            || python3 -m pip install --quiet --break-system-packages oci-cli
+          mkdir -p ~/.oci
+          {
+            echo "[DEFAULT]"
+            echo "user=$OCI_USER"
+            echo "fingerprint=$OCI_FINGERPRINT"
+            echo "tenancy=$OCI_TENANCY"
+            echo "region=$OCI_REGION"
+            echo "key_file=$HOME/.oci/oci_api_key.pem"
+          } > ~/.oci/config
+          printf '%s\n' "$OCI_KEY" > ~/.oci/oci_api_key.pem
+          chmod 600 ~/.oci/config ~/.oci/oci_api_key.pem
+          oci iam region-subscription list --query 'length(data)' --raw-output >/dev/null
+          echo "auth OCI OK"
+
+      - name: Garde — l'A1 existe-t-elle ?
+        id: a1
+        run: |
+          A1="$(oci compute instance list --compartment-id "$TEN" --all \
+            --query "data[?\"display-name\"=='mikcloud-backend' && \"lifecycle-state\"!='TERMINATED' && shape=='VM.Standard.A1.Flex'] | [0].id" --raw-output 2>/dev/null || true)"
+          if [ -z "$A1" ] || [ "$A1" = "null" ]; then
+            echo "::notice::Aucune A1 (mikcloud-backend) en tenancy — la capture n'a pas encore eu lieu. Rien à atterrir."
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "A1 : $A1"
+          echo "skip=0" >> "$GITHUB_OUTPUT"
+          echo "a1=$A1" >> "$GITHUB_OUTPUT"
+
+      - name: Attendre RUNNING + repérer VNIC/private-ip/éphémère
+        id: vnic
+        if: steps.a1.outputs.skip == '0'
+        run: |
+          A1="${{ steps.a1.outputs.a1 }}"
+          STATE=""
+          for i in $(seq 1 30); do
+            STATE="$(oci compute instance get --instance-id "$A1" --query 'data."lifecycle-state"' --raw-output)"
+            [ "$STATE" = "RUNNING" ] && break
+            sleep 10
+          done
+          [ "$STATE" = "RUNNING" ] || { echo "✗ l'A1 n'est pas RUNNING (état : $STATE)"; exit 1; }
+          PRIV_ADDR="$(oci compute instance list-vnics --instance-id "$A1" --query 'data[0]."private-ip"' --raw-output)"
+          EPHEM_IP="$(oci compute instance list-vnics --instance-id "$A1" --query 'data[0]."public-ip"' --raw-output)"
+          echo "private-ip : $PRIV_ADDR / éphémère : ${EPHEM_IP:-aucune}"
+          PRIV_ID="$(oci network private-ip list --subnet-id "$SUBNET" \
+            --query "data[?\"ip-address\"=='$PRIV_ADDR'].id | [0]" --raw-output)"
+          if [ -z "$PRIV_ID" ] || [ "$PRIV_ID" = "null" ]; then
+            echo "✗ OCID du private-ip introuvable (subnet)"; exit 1
+          fi
+          echo "priv_id=$PRIV_ID" >> "$GITHUB_OUTPUT"
+          echo "ephem_ip=$EPHEM_IP" >> "$GITHUB_OUTPUT"
+
+      - name: cloud-init terminé (bootstrap MTU/Caddy/service)
+        id: cloudinit
+        if: steps.a1.outputs.skip == '0'
+        env:
+          SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+        run: |
+          EPHEM_IP="${{ steps.vnic.outputs.ephem_ip }}"
+          [ -n "$EPHEM_IP" ] && [ "$EPHEM_IP" != "null" ] || {
+            echo "::notice::Pas d'IP éphémère — l'IP réservée est peut-être déjà en place."; exit 0; }
+          install -m 600 /dev/null /tmp/k
+          printf '%s\n' "$SSH_KEY" > /tmp/k
+          SSHO="-i /tmp/k -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          ST=""
+          for i in $(seq 1 60); do
+            ST="$(ssh $SSHO "ubuntu@$EPHEM_IP" 'cloud-init status' 2>/dev/null | grep -oE 'status: [a-z]+' | head -1 || true)"
+            [ "$ST" = "status: done" ] && break
+            sleep 15
+          done
+          [ "$ST" = "status: done" ] || { echo "✗ cloud-init pas terminé ($ST)"; exit 1; }
+          echo "cloud-init done ✓"
+
+      - name: Bascule de l'IP réservée vers l'A1
+        id: ipmove
+        if: steps.a1.outputs.skip == '0'
+        run: |
+          PRIV_ID="${{ steps.vnic.outputs.priv_id }}"
+          EPHEM_IP="${{ steps.vnic.outputs.ephem_ip }}"
+          RES_ID="$(oci network public-ip list --scope REGION \
+            --query "data[?\"ip-address\"=='$RESERVED_IP' && \"lifecycle-state\"=='ASSIGNED'].id | [0]" --raw-output)"
+          if [ -z "$RES_ID" ] || [ "$RES_ID" = "null" ]; then
+            echo "✗ IP réservée $RESERVED_IP introuvable (état ASSIGNED)"; exit 1
+          fi
+          E5_PRIV="$(oci network public-ip get --public-ip-id "$RES_ID" --query 'data."private-ip-id"' --raw-output)"
+          echo "★★ ROLLBACK DISPONIBLE — private-ip du pont E5 : $E5_PRIV"
+          echo "e5_priv=$E5_PRIV" >> "$GITHUB_OUTPUT"
+          if [ -n "$EPHEM_IP" ] && [ "$EPHEM_IP" != "null" ]; then
+            EPH_ID="$(oci network public-ip list --scope REGION \
+              --query "data[?\"ip-address\"=='$EPHEM_IP'].id | [0]" --raw-output)"
+            if [ -n "$EPH_ID" ] && [ "$EPH_ID" != "null" ]; then
+              oci network public-ip delete --public-ip-id "$EPH_ID" --force
+              echo "IP éphémère $EPHEM_IP retirée."
+            fi
+          fi
+          OUT=""
+          for i in 1 2 3 4 5; do
+            OUT="$(oci network public-ip update --public-ip-id "$RES_ID" \
+              --private-ip-id "$PRIV_ID" --force 2>&1)" && break
+            echo "tentative $i : $OUT"; sleep 20
+          done
+          echo "$OUT" | grep -q ocid1 || { echo "✗ bascule de l'IP réservée échouée (rollback : voir private-ip E5 ci-dessus)"; exit 1; }
+          NEW="$(oci network public-ip get --public-ip-id "$RES_ID" --query 'data."ip-address"' --raw-output)"
+          echo "IP réservée $NEW attachée à l'A1 ✓"
+
+      - name: ORACLE_GOARCH=arm64 + déploiement (deploy-oracle)
+        id: deploy
+        if: steps.a1.outputs.skip == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X PATCH repos/ftechnologies18/mikcloud/actions/variables/ORACLE_GOARCH \
+            -f value=arm64 --silent
+          echo "variable ORACLE_GOARCH=arm64 ✓"
+          gh workflow run deploy-oracle.yml --ref main
+          sleep 20
+          RID="$(gh run list --workflow=deploy-oracle.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
+          echo "deploy-oracle run : $RID"
+          echo "deploy_run=$RID" >> "$GITHUB_OUTPUT"
+          gh run watch "$RID" --exit-status \
+            || { echo "✗ deploy-oracle a échoué — rollback : IP → private-ip E5 (voir logs bascule) + GOARCH=amd64 + re-dispatch"; exit 1; }
+          echo "déploiement arm64 ✓"
+
+      - name: Santé de l'A1
+        if: steps.a1.outputs.skip == '0'
+        env:
+          SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+        run: |
+          install -m 600 /dev/null /tmp/k
+          printf '%s\n' "$SSH_KEY" > /tmp/k
+          SSHO="-i /tmp/k -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          ACT="$(ssh $SSHO "ubuntu@$RESERVED_IP" 'systemctl is-active mikcloud' 2>/dev/null || true)"
+          echo "service mikcloud : ${ACT:-injoignable}"
+          [ "$ACT" = "active" ] || { echo "✗ le service mikcloud n'est pas actif sur l'A1"; exit 1; }
+          CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "http://$RESERVED_IP/" || true)"
+          echo "HTTP $CODE sur http://$RESERVED_IP/ (308 attendu — Caddy)"
+          case "$CODE" in 200|301|308) ;; *) echo "✗ code HTTP inattendu"; exit 1;; esac
+
+      - name: Retrait du pont E5 (uniquement si demandé)
+        id: e5
+        if: steps.a1.outputs.skip == '0' && inputs.terminate_e5
+        run: |
+          E5="$(oci compute instance list --compartment-id "$TEN" --all \
+            --query "data[?\"display-name\"=='mikcloud-backend-e5-bridge' && \"lifecycle-state\"=='RUNNING'].id | [0]" --raw-output 2>/dev/null || true)"
+          if [ -n "$E5" ] && [ "$E5" != "null" ]; then
+            oci compute instance terminate --instance-id "$E5" --wait-for-state TERMINATED --force
+            echo "e5=terminé" >> "$GITHUB_OUTPUT"
+            echo "Pont E5 retiré."
+          else
+            echo "e5=déjà absent" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Issue de synthèse
+        if: steps.a1.outputs.skip == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          A1="${{ steps.a1.outputs.a1 }}"
+          RID="${{ steps.deploy.outputs.deploy_run }}"
+          E5S="${{ steps.e5.outputs.e5 || 'laissé en place (rollback disponible)' }}"
+          gh issue create --title "A1 atterrie — mikcloud sur ARM à Johannesburg" --body "$(cat <<EOF
+          L'atterrissage (land-a1) est terminé.
+
+          - Instance A1 : \`mikcloud-backend\` — \`$A1\`
+          - IP réservée : **84.12.85.241** attachée à l'A1
+          - Déploiement : run deploy-oracle #$RID (arm64)
+          - Pont E5 : $E5S
+
+          PROCHAINES ÉTAPES :
+          1. **T2** — bascule DNS api.mikcloud.ftci.fr → 84.12.85.241
+             (+ rotation JWT_SECRET / ADMIN_PASSWORD, cf. §8-4).
+          2. Retrait du pont E5 si ce n'est pas déjà fait (input terminate_e5).
+          3. Hygiène des secrets : supprimer les secrets OCI_* du dépôt,
+             et ROTATER le jeton GitHub (exposé dans le chat le 04/10 — N°238),
+             les identifiants Supabase/Neon/Render/Vercel fournis à l'identique.
+          EOF
+          )" || echo "::notice::issue non créée (peut-être déjà existante)"

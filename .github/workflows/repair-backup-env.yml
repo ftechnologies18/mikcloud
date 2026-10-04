@@ -17,6 +17,12 @@ name: repair-backup-env
 #     les logs) ; endpoint DIRECT dérivé si le secret est poolé
 #     (suffixe -pooler retiré) ; sslmode=require ajouté si absent.
 #
+# Il installe AUSSI postgresql-client-17 (dépôt PGDG officiel) : le
+# serveur Supabase est en 17.6 et le pg_dump d'Ubuntu 24.04 (16.15)
+# REFUSE de dumper un serveur plus récent que lui (run 1 : « server
+# version mismatch ») — idem après atterrissage A1/micro (même image
+# Ubuntu, bootstrap n'installe que postgresql-client, i.e. la 16).
+#
 # Il termine par un TEST IMMÉDIAT (systemctl start mikcloud-backup,
 # oneshot) : pg_dump Supabase → psql Neon avec ON_ERROR_STOP — le
 # verdict du run Actions EST le verdict du coffre-fort.
@@ -55,9 +61,28 @@ jobs:
             "$DEPLOY_USER@84.12.85.241" bash -s <<'REMOTE'
           set -euo pipefail
           # 0) prérequis
-          command -v pg_dump >/dev/null
           command -v psql >/dev/null
           test -s /tmp/.neon-dsn || { echo "ERREUR: DSN Neon non transmis"; exit 1; }
+          # 0-bis) pg_dump doit être ≥ 17 (serveur Supabase 17.6 — run 1 :
+          # « aborting because of server version mismatch » avec la 16.15
+          # d'Ubuntu). Dépôt PGDG officiel si la 17 n'est pas déjà là.
+          PGMAJ() { pg_dump --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1 | cut -d. -f1; }
+          if [ "$(PGMAJ || echo 0)" -lt 17 ] 2>/dev/null; then
+            echo "── pg_dump $(pg_dump --version | grep -oE '[0-9]+\.[0-9]+' | head -1) < 17 → installation postgresql-client-17 (PGDG)…"
+            if [ ! -f /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc ]; then
+              sudo install -d /usr/share/postgresql-common/pgdg
+              curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /tmp/pgdg.asc
+              sudo install -m 644 /tmp/pgdg.asc /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+            fi
+            if [ ! -f /etc/apt/sources.list.d/pgdg.list ]; then
+              echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main" \
+                | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+            fi
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq postgresql-client-17
+          fi
+          pg_dump --version
+          [ "$(PGMAJ)" -ge 17 ] || { echo "ERREUR: pg_dump toujours < 17"; exit 1; }
           # 1) DSN Neon → endpoint DIRECT (retirer -pooler si le secret est poolé)
           NEON="$(cat /tmp/.neon-dsn)"
           if printf '%s' "$NEON" | grep -q -- '-pooler\.'; then
@@ -85,9 +110,11 @@ jobs:
           rm -f /tmp/backup.env.new /tmp/.neon-dsn
           echo "OK — /etc/mikcloud/backup.env restauré (2 DSN, perms 640 root:mikcloud)."
           # 4) test immédiat du coffre-fort (pg_dump Supabase → psql Neon)
+          #    (le || true laisse la branche de diagnostic tourner — run 1 :
+          #    set -e tuait le script avant l'affichage du journal masqué)
           sudo systemctl daemon-reload
           sudo systemctl reset-failed mikcloud-backup.service 2>/dev/null || true
-          sudo systemctl start mikcloud-backup.service
+          sudo systemctl start mikcloud-backup.service || true
           if systemctl is-failed mikcloud-backup.service >/dev/null 2>&1; then
             echo "ÉCHEC du snapshot test — journal (DSN masqués) :"
             sudo journalctl -u mikcloud-backup.service -n 10 --no-pager \

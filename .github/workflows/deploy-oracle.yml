@@ -8,7 +8,11 @@ name: deploy-oracle
 # workflow vaut CI de build (arch variable) ; une fois raccordé, chaque push main qui
 # touche le backend :
 #   1. sync les variables Render → /etc/mikcloud/mikcloud.env (§3, idempotent,
-#      zéro secret dans le repo, jamais d'écho des valeurs dans les logs) ;
+#      zéro secret dans le repo, jamais d'écho des valeurs dans les logs)
+#      — GELÉ par le sentinel RENDER-DEPLOY-FROZEN depuis le T2 (N°244) :
+#      la VM est devenue la source de vérité (secrets rotés par
+#      t2-secrets.yml), un sync écraserait les valeurs neuves avec les
+#      anciennes valeurs Render ;
 #   2. build statique (arch = ORACLE_GOARCH, amd64 sur le pont E5) + scp
 #      + systemctl enable+restart + healthcheck.
 on:
@@ -55,8 +59,26 @@ jobs:
         run: |
           echo "::notice::VM Oracle non raccordée (secret ORACLE_HOST absent) — déploiement ignoré. Installation : docs/MIGRATION-ORACLE.md §6."
 
+      # N°244 — GEL DU SYNC (miroir du gel de déploiement N°165 de ci.yml,
+      # même sentinel, même fichier racine). Post-T2 la VM est la source de
+      # vérité : l'env y a été rotée (t2-secrets.yml — JWT_SECRET épinglé
+      # via CREDENTIALS_KEY, DSN Supabase neuf), un sync Render→VM
+      # réintroduirait les ANCIENNES valeurs et casserait le backend au
+      # redémarrage suivant. Levée du gel : supprimer le sentinel dans un
+      # commit de reprise consignée (rollback Render §9.2 uniquement).
+      - name: Gel du sync (sentinel RENDER-DEPLOY-FROZEN — N°244)
+        id: freeze
+        run: |
+          if [ -f RENDER-DEPLOY-FROZEN ]; then
+            echo "RENDER-DEPLOY-FROZEN présent — sync Render→VM GELÉ (N°244 : la VM est la source de vérité post-T2, l'env y est rotée)."
+            echo "frozen=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Aucun gel actif — la source de l'env reste Render (pré-T2)."
+            echo "frozen=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Sync variables Render → VM (/etc/mikcloud/mikcloud.env)
-        if: env.ORACLE_HOST != ''
+        if: env.ORACLE_HOST != '' && steps.freeze.outputs.frozen != 'true'
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           DEPLOY_USER: ${{ secrets.ORACLE_USER }}

@@ -57,6 +57,36 @@ var (
 	errNoKey = errors.New("secretbox : aucune source de clé (CREDENTIALS_KEY ou JWT_SECRET)")
 )
 
+// deriveKey — HKDF-SHA256 (extract sel puis expand info) depuis un
+// JWT_SECRET. Un domaine de dérivation distinct garantit qu'un attaquant
+// ne peut pas recycler une autre dérivation du même secret.
+func deriveKey(jwtSecret string) ([]byte, error) {
+	r := hkdf.New(sha256.New, []byte(jwtSecret), []byte(keySalt), []byte(keyInfo))
+	raw := make([]byte, 32)
+	if _, err := io.ReadFull(r, raw); err != nil {
+		return nil, fmt.Errorf("dérivation de la clé impossible : %w", err)
+	}
+	return raw, nil
+}
+
+// DeriveCredentialsKey renvoie la clé de chiffrement (hex 64) qu'Init
+// dériverait du JWT_SECRET donné quand CREDENTIALS_KEY est vide — la
+// même dérivation, exposée pour les outils d'exploitation (N°244,
+// cmd/mikderive) : la rotation de JWT_SECRET exige d'ÉPINGLER d'abord
+// la clé dérivée (posée comme CREDENTIALS_KEY), sans quoi les
+// credentials chiffrés au repos deviennent indéchiffrables. Source de
+// vérité unique : toute évolution du sel/info se répercute ici.
+func DeriveCredentialsKey(jwtSecret string) (string, error) {
+	if jwtSecret == "" {
+		return "", errNoKey
+	}
+	raw, err := deriveKey(jwtSecret)
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(raw), nil
+}
+
 // Init résout la clé de chiffrement et prépare l'AES-GCM. À appeler UNE fois
 // au démarrage, avant toute lecture/écriture du store. En production
 // (DATABASE_URL définie), l'absence totale de source de clé est fatale —
@@ -70,13 +100,9 @@ func Init(jwtSecret string) error {
 		return start(raw)
 	}
 	if jwtSecret != "" {
-		// HKDF-SHA256 : extract (sel) puis expand (info). Un domaine distinct
-		// garantit qu'un attaquant ne peut pas recycler une autre dérivation
-		// du même secret.
-		r := hkdf.New(sha256.New, []byte(jwtSecret), []byte(keySalt), []byte(keyInfo))
-		raw := make([]byte, 32)
-		if _, err := io.ReadFull(r, raw); err != nil {
-			return fmt.Errorf("dérivation de la clé impossible : %w", err)
+		raw, err := deriveKey(jwtSecret)
+		if err != nil {
+			return err
 		}
 		return start(raw)
 	}

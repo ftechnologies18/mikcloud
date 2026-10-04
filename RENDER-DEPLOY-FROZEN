@@ -1,0 +1,23 @@
+SENTINEL — DÉPLOIEMENT RENDER GELÉ (mécanisme N°165, lu par ci.yml
+« Gel du déploiement » et deploy-oracle.yml « Gel du sync »).
+
+Posé au T2 (N°244, bascule de la production vers le pont Oracle E5,
+IP réservée 84.12.85.241 — docs/MIGRATION-ORACLE.md §6.3 et §8-bis) :
+
+  - le service Render sera suspendu le 16/10/2026 (facture de
+    septembre ~16 € impayable — app en essai, zéro revenu ; le support
+    Render a confirmé la suspension) : plus de cible de déploiement ;
+
+  - deploy-oracle.yml est désormais LE chemin backend — et son étape
+    « Sync variables Render → VM » est gelée par ce même sentinel :
+    post-T2 la VM est la source de vérité (les secrets y sont rotés,
+    un sync les écraserait avec les anciennes valeurs Render) ;
+
+  - rollback documenté §9.2 : Cloudflare A record → CNAME Render ;
+    si le service est suspendu : POST …/resume (paiement requis).
+    L'env Render (DATABASE_URL) est tenue à jour par t2-secrets.yml.
+
+LEVÉE DU GEL : supprimer ce fichier dans un commit de reprise
+consignée au CHANGELOG — ne JAMAIS le supprimer sans décision
+explicite (un push backend avec le sentinel retiré redéclencherait
+les déploiements Render en parallèle d'Oracle — piège n°12 §10).

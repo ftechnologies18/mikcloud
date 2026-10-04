@@ -5,6 +5,82 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-04 — N°244 — T2 direct vers le pont E5 : kit de bascule complet (sentinel double-lecteur, workflow t2-secrets, mikderive) — la facture Render rend le 16/10 incompressible
+
+### Contexte
+Clarification exploitant : la facture Render de septembre (~16 € — l'héritage
+pré-migration documenté §9.1 du runbook) est **impayable** (app en essai, zéro
+revenu) ; le support Render a tranché : **suspension du service au 16/10**.
+L'objectif 0-coût reste intangible — mais T2 ne peut plus attendre la capture
+A1 (190+ sondes toutes rouges). Il n'en a d'ailleurs jamais eu besoin : le pont
+E5 (IP réservée 84.12.85.241, backend déployé à chaque push) est une machine
+de production complète qui tourne à vide — et l'IP réservée « à vie » rend le
+geste DNS UNIQUE : les atterrissages A1/micro suivants déplaceront l'IP sans
+rechanger le DNS. Nouvelle chaîne d'échéances : **16/10 Render suspendu** (sans
+effet si T2 fait avant) → **31/10 crédits du pont épuisés** (atterrissage
+A1/micro obligatoire avant).
+
+### Livré
+- **Sentinel `RENDER-DEPLOY-FROZEN` posé + second lecteur** : outre le gel du
+  job deploy-render (mécanisme N°165 inchangé), l'étape « Sync variables
+  Render → VM » de `deploy-oracle.yml` est gelée par le MÊME fichier (nouvelle
+  étape « Gel du sync », miroir du pattern ci.yml). Post-T2 la VM est la
+  source de vérité : l'env y est rotée, un sync réintroduirait les ANCIENNES
+  valeurs Render et casserait le backend au redémarrage suivant.
+- **`.github/workflows/t2-secrets.yml`** — l'étape 4 de la checklist §8,
+  exécutable en deux phases indépendantes (le pont est idle pré-flip :
+  rejouable sans impact) :
+  - *Phase JWT* : épinglage `CREDENTIALS_KEY` (HKDF de l'ANCIEN JWT_SECRET)
+    AVANT rotation — sans quoi les credentials RouterOS chiffrés au repos
+    deviendraient indéchiffrables (secretbox.Init dérive la clé de JWT_SECRET
+    quand CREDENTIALS_KEY est vide) — puis JWT_SECRET neuf (`openssl rand
+    -hex 32`), restart + healthcheck patient (pattern deploy-oracle).
+  - *Phase DSN* (après les 2 gestes exploitant : reset Supabase au dashboard
+    — non scriptable, verdict mesuré §2.8 — et dépôt du nouveau DSN dans le
+    secret `SUPABASE_DSN_NEW`, le chat étant exclu par doctrine) :
+    normalisation en forme pooler SESSION `:5432` sans paramètres (forme en
+    vigueur sur le pont, exigée par repair-backup-env ; l'app ajoute
+    sslmode=verify-full elle-même — piège §10-5), **garde anti-oubli** (DSN
+    identique à l'actuel = reset pas fait → échec explicite), test SELECT 1
+    AVANT de toucher au pont, remplacement dans `mikcloud.env` ET
+    `backup.env` (le timer nocturne 03:00 UTC lit backup.env — les DEUX
+    doivent suivre), restart + healthcheck, **snapshot test immédiat
+    Supabase→Neon** (verdict du run = verdict du coffre-fort), mise à jour
+    des secrets GitHub `DATABASE_URL` + `SUPABASE_DATABASE_URL` (backup.yml
+    hebdo et standby-restore.yml lisent l'ancien DSN — mort après le reset)
+    par sealed box PyNaCl avec MIKCLOUD_HUNT_TOKEN (repli manuel documenté
+    si le jeton manque de droits), et mise à jour de la variable DATABASE_URL
+    de Render par API (PUT en bloc, pattern §2.8) + redéploiement déclenché
+    → standby sain sur le nouveau DSN (rollback §9.2 fonctionnel après flip).
+  - Issue de synthèse automatique (traçabilité — aucune valeur, jamais).
+- **`backend/cmd/mikderive`** + refacto `internal/secretbox` : la dérivation
+  HKDF extraite en `DeriveCredentialsKey` exportée (source de vérité unique —
+  Init et l'outil partagent sel/info, toute évolution se répercute partout) ;
+  l'utilitaire lit le JWT_SECRET sur STDIN (jamais en argv) et imprime la clé
+  hex 64. Réutilisable pour toute future rotation JWT (procédure §2.5 du
+  RUNBOOK-SECRETS, jusqu'ici « délicate » faute d'épinglage outillé).
+- **ADMIN_PASSWORD : pas de nouvelle rotation** — déjà rotée proprement le
+  01/10 (§2.8, par API, jamais exposée au chat), synchronisée sur le pont par
+  l'ancien sync. Décision consignée.
+- **`docs/MIGRATION-ORACLE.md`** : §6.3 mis à jour (sentinel posé + second
+  lecteur) et nouveau **§8-bis** « T2 direct vers le pont E5 » — déroulé en
+  8 étapes avec qui fait quoi, chaîne d'échéances 16/10→31/10, point de
+  décision au 25-28/10 si aucune capture.
+
+### Pièges consignés
+- **CREDENTIALS_KEY dérivée** (env.example ligne 30) : rotater JWT_SECRET
+  sans épingler la clé dérivée = credentials RouterOS indéchiffrables —
+  mikderive + épinglage systématiques désormais.
+- **Le DSN du pont est en forme session `:5432`** (constat repair-backup-env
+  run 4 : l'app tourne sur le session pooler, pas le transactionnel `:6543`
+  de env.example) — la phase DSN normalise vers `:5432` et le DOCUMENTE.
+- **backup.env suit le DSN** : rotater DATABASE_URL sans backup.env tuerait
+  le snapshot nocturne silencieusement (le timer lit son propre fichier).
+- **Reset Supabase = fenêtre courte** : entre le reset et l'application du
+  nouveau DSN, les NOUVELLES connexions avec l'ancien mot de passe échouent
+  (les établies survivent — §2.8) : le flip DNS suit la phase DSN dans la
+  même fenêtre (§8-bis, étapes 5→6).
+
 ## 2026-10-04 — N°243 (a→d) — Coffre-fort Neon : réparer le snapshot nocturne Supabase → Neon (saga en 4 runs)
 
 ### Contexte

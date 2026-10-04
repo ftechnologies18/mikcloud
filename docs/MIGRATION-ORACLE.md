@@ -328,10 +328,15 @@ doit plus jamais passer inaperçu (leçon N°36-b, `ci.yml:15-23`).
 Le job `deploy-render` de `ci.yml` (déclenchement par API, service
 `srv-da974o142hec73euul60`) est gelé tant que le fichier
 `RENDER-DEPLOY-FROZEN` existe à la racine du dépôt — mécanisme N°165
-(`ci.yml:217-226`). À poser au plus tard AVANT la suspension Render
-(§9) ; dès T2 c'est déjà pertinent : sans lui, un push backend déploierait
-sur Render ET sur la VM en parallèle. Après T2, `deploy-oracle.yml` est
-LE chemin backend ; Vercel déploie le frontend via son webhook.
+(`ci.yml:217-226`). **POSÉ au T2 (N°244)** avec un second lecteur :
+l'étape « Sync variables Render → VM » de `deploy-oracle.yml` est gelée
+par le MÊME sentinel (post-T2 la VM est la source de vérité — l'env y est
+rotée par `t2-secrets.yml`, un sync réintroduirait les anciennes valeurs
+Render et casserait le backend au redémarrage suivant). Sans sentinel,
+un push backend déploierait sur Render ET sur la VM en parallèle (piège
+n°12). Après T2, `deploy-oracle.yml` est LE chemin backend ; Vercel
+déploie le frontend via son webhook. Levée du gel : supprimer le fichier
+dans un commit de reprise consignée (rollback Render §9.2 uniquement).
 
 ## 7. Coffre-fort Neon — snapshot nocturne
 
@@ -397,6 +402,52 @@ re-provisionnés, Vercel reconstruit sur le domaine.
 Si une étape échoue : le service Render est TOUJOURS debout et le DNS
 revient en arrière en minutes (§9) — aucune perte de données possible
 (code GitHub, données Supabase, médias R2).
+
+## 8-bis. T2 direct vers le pont E5 — sans attendre la capture A1 (N°244)
+
+**Contexte** : la facture Render de septembre (~16 € — §9.1, l'héritage
+pré-migration) est impayable (app en essai, zéro revenu) ; le support
+Render a confirmé la **suspension du service au 16/10**. La chasse A1
+(N°232/241) reste vide après 190+ sondes : T2 ne peut PAS attendre une
+capture. Il n'a d'ailleurs JAMAIS eu besoin de l'attendre — le **pont
+E5** (IP réservée `84.12.85.241`, backend déployé par `deploy-oracle.yml`
+à chaque push, env synchronisée) est une machine de production complète
+qui tourne à vide. L'élégance de l'IP réservée « à vie » : **un seul
+geste DNS au total** — la capture A1/micro suivante déplace l'IP vers la
+nouvelle machine (`land-a1.yml`/`land-micro.yml`), le DNS ne rechange
+plus jamais.
+
+**Déroulé de la fenêtre T2** (chaque phase rejouable sans impact — le
+pont est idle pré-flip) :
+
+| # | Qui | Action | Référence |
+|---|---|---|---|
+| 1 | agent | Commit T2 : sentinel `RENDER-DEPLOY-FROZEN` (gel déploiement Render N°165 + gel du sync §6.3) + workflow `t2-secrets.yml` + utilitaire `cmd/mikderive` | N°244 |
+| 2 | agent | Dispatch `t2-secrets` phase JWT : épinglage `CREDENTIALS_KEY` (HKDF de l'ancien JWT_SECRET via mikderive — sinon les credentials RouterOS chiffrés deviennent indéchiffrables) + JWT_SECRET neuf + healthcheck | §8-4 adapté |
+| 3 | exploitant | **Supabase** : Project Settings → Database → **Reset database password** (le reset n'est pas scriptable — verdict §2.8 du RUNBOOK-SECRETS) | geste a |
+| 4 | exploitant | **GitHub** : Settings → Secrets → Actions → **`SUPABASE_DSN_NEW`** = la chaîne « Connection pooling » affichée (jamais le chat — doctrine §0) | geste b |
+| 5 | agent | Dispatch `t2-secrets` phase DSN : normalisation session `:5432`, garde anti-oubli (DSN identique = reset pas fait), test `SELECT 1`, `mikcloud.env` + `backup.env` (le timer 03:00 UTC lit backup.env), restart, **snapshot test Supabase→Neon**, secrets GitHub `DATABASE_URL`+`SUPABASE_DATABASE_URL` (backup.yml et standby-restore.yml sinon morts), env Render + redéploiement (standby sain) | §8-4 adapté |
+| 6 | exploitant | **Cloudflare** : enregistrement `api` → **A record `84.12.85.241`**, nuage GRIS, TTL auto — LE geste de bascule (~1 min, propagation ≤ 300 s) | §5.2/§8-5 |
+| 7 | agent | Validations post-flip : `https://api.mikcloud.ftci.fr/` 200 + cadenas (cert Let's Encrypt émis par le Caddy du pont en ~1 min — les erreurs d'acquisition d'avant le flip étaient le bruit NORMAL documenté §4), check-in des agents, portail sur téléphone, vente voucher test, QR `/join` test, timer backup confirmé pour la nuit | §8-6→12 |
+| 8 | agent | 48 h de surveillance (check-ins, ventes, sync-status, journal) puis constat : Render sera suspendu le 16/10 sans que rien ne change pour nous | §8-13/§9 |
+
+**ADMIN_PASSWORD** : pas de nouvelle rotation au T2 — déjà rotée
+proprement le 01/10 (RUNBOOK-SECRETS §2.8, par API, jamais exposée) et
+synchronisée sur le pont par l'ancien sync.
+
+**La chaîne d'échéances qui en découle** :
+- **16/10** : suspension Render — sans effet (T2 fait avant) ; le
+  rollback Render devient « payer + resume » (l'env Render est tenue à
+  jour par `t2-secrets.yml`, le chemin reste documenté §9.2) ;
+- **31/10** : crédits du pont E5 épuisés — l'atterrissage A1/micro doit
+  avoir eu lieu avant (la chasse survit au pont : cron GitHub nocturne +
+  timer autonome installé par `land-micro.yml` sur toute machine atterrie) ;
+- A1 et micro = shapes **Always Free** : stables indéfiniment après
+  atterrissage — l'IP réservée déménage sans toucher au DNS.
+
+**Si le 25-28/10 arrive sans capture A1 NI micro** : session de décision
+obligatoire (le pont meurt le 31/10 — un problème connu à l'avance vaut
+mieux qu'une interruption subie).
 
 ## 9. Décommission Render et rollback
 

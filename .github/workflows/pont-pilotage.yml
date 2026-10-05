@@ -17,17 +17,25 @@ name: pont-pilotage
 #   - fichiers référençant un jeton GitHub (NOMS seuls, JAMAIS les
 #     valeurs — masquage défense en profondeur ghp_/gho_/github_pat_).
 #
-# Suite logique (session suivante, avec l'exploitant) : si la boucle est
-# identifiée, la METTRE À L'ARRÊT proprement (systemctl disable --now
-# ou retrait crontab) — la chasse parallèle in-dépôt (hunt-parallel.yml,
-# cron 2-59/5) remplace alors sa cadence SANS tuer de runs ni spammer.
+# Suite logique (N°250, exécutée) : la boucle ÉTAIT bien sur le pont
+# (mikcloud-hunt-dispatch.timer + /usr/local/bin/mikcloud-hunt-dispatch.sh,
+# posés le 04/10 07:31). Ce workflow LIT la boucle (script + unités +
+# journal, jetons MASQUÉS) et, sur entrée `stop_dispatch_loop`, la met
+# à l'arrÊT proprement (systemctl disable --now) — la chasse parallèle
+# in-dépôt (hunt-parallel.yml, cron 2-59/5) remplace sa cadence SANS
+# tuer de runs ni spammer. Réversible : systemctl enable --now.
 #
 # Sécurité : heredoc 'REMOTE' (piège n°18 — apostrophes françaises),
 # keepalives SSH N°245-a, permissions {} (aucune écriture GitHub),
 # déclenchement workflow_dispatch UNIQUEMENT.
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      stop_dispatch_loop:
+        description: "Arrêter la boucle de dispatch 5 min (mikcloud-hunt-dispatch.timer) — remplacée par hunt-parallel in-dépôt"
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -45,6 +53,49 @@ jobs:
       ORACLE_HOST: ${{ secrets.ORACLE_HOST }}
       SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
     steps:
+      - name: Lecture de la boucle de dispatch (script + unités + journal, masqués)
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null /tmp/oracle_key
+          printf '%s\n' "$SSH_KEY" > /tmp/oracle_key
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
+          ssh $SSH_OPTS "$DEPLOY_USER@$ORACLE_HOST" bash -s <<'REMOTE' 2>&1 \
+            | sed -E 's/(ghp_|gho_|ghs_|github_pat_)[A-Za-z0-9_]+/\1***MASQUÉ***/g'
+          set -uo pipefail
+          echo "═══ UNITÉ mikcloud-hunt-dispatch (service + timer) ═══"
+          systemctl cat mikcloud-hunt-dispatch.service 2>/dev/null | grep -vE '^\s*(#|$)' || echo "  (service introuvable)"
+          echo "──"
+          systemctl cat mikcloud-hunt-dispatch.timer 2>/dev/null | grep -vE '^\s*(#|$)' || echo "  (timer introuvable)"
+          echo
+          echo "═══ SCRIPT /usr/local/bin/mikcloud-hunt-dispatch.sh (jetons MASQUÉS) ═══"
+          sudo cat /usr/local/bin/mikcloud-hunt-dispatch.sh 2>/dev/null | sed -E 's/(ghp_|gho_|ghs_|github_pat_)[A-Za-z0-9_]+/\1***MASQUÉ***/g' || echo "  (script introuvable)"
+          echo
+          echo "═══ JOURNAL du service (10 derniers passages — jetons masqués) ═══"
+          sudo journalctl -u mikcloud-hunt-dispatch.service -n 30 --no-pager 2>/dev/null \
+            | sed -E 's/(ghp_|gho_|ghs_|github_pat_)[A-Za-z0-9_]+/\1***MASQUÉ***/g' | tail -15 || echo "  (vide)"
+          REMOTE
+
+      - name: Arrêt de la boucle (si demandé) — disable --now, réversible
+        if: inputs.stop_dispatch_loop == true
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null /tmp/oracle_key
+          printf '%s\n' "$SSH_KEY" > /tmp/oracle_key
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
+          ssh $SSH_OPTS "$DEPLOY_USER@$ORACLE_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          echo "── arrêt demandé : disable --now mikcloud-hunt-dispatch.timer"
+          sudo systemctl disable --now mikcloud-hunt-dispatch.timer
+          sleep 2
+          STATE="$(systemctl is-active mikcloud-hunt-dispatch.timer || true)"
+          echo "── état du timer après arrêt : $STATE (attendu : inactive)"
+          ENABLED="$(systemctl is-enabled mikcloud-hunt-dispatch.timer || true)"
+          echo "── timer au démarrage : $ENABLED (attendu : disabled)"
+          echo "── script conservé sur disque (/usr/local/bin/mikcloud-hunt-dispatch.sh) — réversibilité :"
+          echo "   sudo systemctl enable --now mikcloud-hunt-dispatch.timer"
+          echo "── la cadence 5 min est reprise par hunt-parallel.yml (cron 2-59/5, in-dépôt)."
+          REMOTE
+
       - name: Inspection lecture seule du pont
         run: |
           set -euo pipefail

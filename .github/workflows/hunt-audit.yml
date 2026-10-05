@@ -71,24 +71,24 @@ jobs:
         run: |
           echo "═══ Inventaire instances (tous états, TERMINATED compris) ═══"
           oci compute instance list --compartment-id "$TEN" --all > /tmp/instances.json
-          COUNT="$(jq 'length' /tmp/instances.json)"
+          COUNT="$(jq ".data | length" /tmp/instances.json)"
           echo "Total d'enregistrements d'instances dans la tenancy : $COUNT"
           echo
           if [ "$COUNT" != "0" ]; then
             echo "── Nom | Shape | État | AD | Créée le"
-            jq -r '.[] | "  \(.["display-name"]) | \(.shape) | \(.["lifecycle-state"]) | \(.["availability-domain"]) | \(.["time-created"])"' /tmp/instances.json
+            jq -r '.data[] | "  \(.["display-name"]) | \(.shape) | \(.["lifecycle-state"]) | \(.["availability-domain"]) | \(.["time-created"])"' /tmp/instances.json
           else
             echo "  (aucune instance, même terminée — la chasse n'a jamais capturé)"
           fi
 
       - name: Verdict — A1 ? micro ? pont E5 ? intrus ?
         run: |
-          A1="$(jq '[.[] | select(."display-name"=="mikcloud-backend" and ."lifecycle-state"!="TERMINATED")] | length' /tmp/instances.json)"
-          MIC="$(jq '[.[] | select(."display-name"=="mikcloud-micro-bridge" and ."lifecycle-state"!="TERMINATED")] | length' /tmp/instances.json)"
-          PONT="$(jq '[.[] | select(."lifecycle-state"!="TERMINATED" and (.shape | test("E5|E4|VM.Standard.E"))) ] | length' /tmp/instances.json)"
-          KNOWN_A1_T="$(jq '[.[] | select(."display-name"=="mikcloud-backend")] | length' /tmp/instances.json)"
-          KNOWN_MIC_T="$(jq '[.[] | select(."display-name"=="mikcloud-micro-bridge")] | length' /tmp/instances.json)"
-          OTHER="$(jq '[.[] | select(."lifecycle-state"!="TERMINATED" and ."display-name"!="mikcloud-backend" and ."display-name"!="mikcloud-micro-bridge" and ."display-name"!="mikcloud-bridge")] | length' /tmp/instances.json)"
+          A1="$(jq '[.data[] | select(."display-name"=="mikcloud-backend" and ."lifecycle-state"!="TERMINATED")] | length' /tmp/instances.json)"
+          MIC="$(jq '[.data[] | select(."display-name"=="mikcloud-micro-bridge" and ."lifecycle-state"!="TERMINATED")] | length' /tmp/instances.json)"
+          PONT="$(jq '[.data[] | select(."lifecycle-state"!="TERMINATED" and (.shape | test("E5|E4|VM.Standard.E"))) ] | length' /tmp/instances.json)"
+          KNOWN_A1_T="$(jq '[.data[] | select(."display-name"=="mikcloud-backend")] | length' /tmp/instances.json)"
+          KNOWN_MIC_T="$(jq '[.data[] | select(."display-name"=="mikcloud-micro-bridge")] | length' /tmp/instances.json)"
+          OTHER="$(jq '[.data[] | select(."lifecycle-state"!="TERMINATED" and ."display-name"!="mikcloud-backend" and ."display-name"!="mikcloud-micro-bridge" and ."display-name"!="mikcloud-bridge")] | length' /tmp/instances.json)"
           echo "═══ VERDICT ═══"
           echo "  A1 mikcloud-backend active      : $A1  $([ "$A1" != "0" ] && echo '← CAPTURÉE !' || echo '(non capturée — la chasse continue)')"
           echo "  A1 mikcloud-backend (historique): $KNOWN_A1_T (y compris TERMINATED)"
@@ -112,7 +112,7 @@ jobs:
           echo "═══ IP publiques de la tenancy ═══"
           oci network public-ip list --compartment-id "$TEN" --all > /tmp/ips.json 2>/dev/null || { echo "(liste indisponible — non bloquant)"; exit 0; }
           jq -r '.[] | "  \(.["ip-address"]) | \(.lifetime) | \(.["lifecycle-state"]) | \(.["assigned-entity-type"] // "non assignée")"' /tmp/ips.json
-          RESERVED="$(jq -r '[.[] | select(."ip-address"=="84.12.85.241") | ."lifecycle-state"] | join(",")' /tmp/ips.json)"
+          RESERVED="$(jq -r '[.data[] | select(."ip-address"=="84.12.85.241") | ."lifecycle-state"] | join(",")' /tmp/ips.json)"
           if [ -n "$RESERVED" ]; then
             echo "→ 84.12.85.241 (IP réservée du pont) : $RESERVED — conforme si ACTIVE."
           else

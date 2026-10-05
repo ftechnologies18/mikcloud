@@ -5,6 +5,28 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-05 — N°244-b — t2-secrets : corriger l'encodage du sealed box (étape 8 — les secrets GitHub seraient restés sur l'ancien DSN)
+
+### Contexte
+Sonde du poste de pilotage AVANT le dispatch de la phase DSN (doctrine :
+chaque maillon critique est prouvé en direct avant l'exécution) : le heredoc
+Python de l'étape 8 de `t2-secrets.yml` faisait
+`sealed.encrypt(...).decode("ascii")` sur le chiffré libsodium **binaire** →
+`UnicodeDecodeError` garanti sur le runner (reproduit depuis le poste :
+`'ascii' codec can't decode byte 0x9c`) — et l'API GitHub exige de toute
+façon du **base64** dans `encrypted_value`. L'échec était encapsulé non-fatal
+(repli manuel documenté), mais il aurait laissé `DATABASE_URL` et
+`SUPABASE_DATABASE_URL` sur l'ANCIEN DSN juste après le reset Supabase →
+`backup.yml` (hebdo) et `standby-restore.yml` morts jusqu'au collage manuel.
+
+### Correctif
+- `base64.b64encode(sealed.encrypt(...)).decode("utf-8")` — le MÊME pattern
+  que l'ancêtre éprouvé `ops/oct1/step8-flip-secret.py:98`, réintroduit dans
+  le workflow (où il avait été perdu à l'adaptation N°244) ;
+- mécanisme complet re-validé en direct depuis le poste de pilotage avant ce
+  commit : PUT d'un secret sonde `_T2_PROBE` (HTTP 201) → liste → DELETE
+  (HTTP 204) → liste propre.
+
 ## 2026-10-04 — N°244 — T2 direct vers le pont E5 : kit de bascule complet (sentinel double-lecteur, workflow t2-secrets, mikderive) — la facture Render rend le 16/10 incompressible
 
 ### Contexte

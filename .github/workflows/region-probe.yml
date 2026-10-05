@@ -236,8 +236,8 @@ jobs:
               --query 'data[*].name' --raw-output 2>/dev/null | jq -r '.[]?' 2>/dev/null || true)"
             if [ -z "$ADS" ]; then
               RUP="$(echo "$R" | tr '[:lower:]' '[:upper:]')"
-              ADS="yMUP:${RUP}-AD-1 yMUP:${RUP}-AD-2 yMUP:${RUP}-AD-3"
-              echo "  énumération AD indisponible — ADs synthétisés (tirets, comme le témoin) : $ADS"
+              ADS="$(printf 'yMUP:%s-AD-1\nyMUP:%s-AD-2\nyMUP:%s-AD-3\n' "$RUP" "$RUP" "$RUP")"
+              echo "  énumération AD indisponible — ADs synthétisés (tirets, comme le témoin) : $(echo $ADS)"
             fi
             GREENS=0; TOTAL=0
             for AD in $ADS; do
@@ -246,7 +246,11 @@ jobs:
                 --compartment-id "$TEN" --availability-domain "$AD" \
                 --shape-availabilities file:///tmp/capreq.json 2>&1 || true)"
               if ! echo "$OUT" | jq -e '.data["shape-availabilities"]' >/dev/null 2>&1; then
-                echo "  $AD : ⚠ sonde A1 en échec — $(echo "$OUT" | grep -vE '^\s*$' | tail -1 | cut -c1-160)"
+                # Extraction code/statut/message (le tail -1 du run précédent
+                # n affichait que l accolade fermante du JSON d erreur)
+                ERR="$(echo "$OUT" | jq -r '"[\(.status)] \(.code)"' 2>/dev/null || true)"
+                [ -z "$ERR" ] && ERR="$(echo "$OUT" | grep -vE '^\s*$' | tail -1 | cut -c1-120)"
+                echo "  $AD : ⚠ sonde A1 refusée — $ERR"
                 continue
               fi
               echo "$OUT" | jq -r '.data["shape-availabilities"] | to_entries[] |
@@ -263,8 +267,9 @@ jobs:
               --shape-availabilities file:///tmp/microreq.json 2>&1 || true)"
             MSTAT="$(echo "$MOUT" | jq -r '.data["shape-availabilities"][0]["availability-status"] // empty' 2>/dev/null || true)"
             if [ -z "$MSTAT" ]; then
-              MSTAT="⚠ échec sonde"
-              echo "  $FIRST_AD · micro E2.1.Micro → ⚠ sonde en échec"
+              MERR="$(echo "$MOUT" | jq -r '"[\(.status)] \(.code)"' 2>/dev/null || true)"
+              MSTAT="⚠ refusée"
+              echo "  $FIRST_AD · micro E2.1.Micro → ⚠ refusée — $MERR"
             else
               echo "  $FIRST_AD · micro E2.1.Micro → $MSTAT"
             fi

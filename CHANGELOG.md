@@ -5,6 +5,43 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-05 — N°248 — Variante « supprimer puis réinscrire » : le repli région sans tiers, avec coupure bornée
+
+### Contexte
+Consultation exploitant : et si on supprime le compte E5 pour en
+créer un neuf dans une nouvelle région, en annonçant aux clients en
+essai une coupure de 24 h « sacrifice pour la bonne cause » ?
+
+### Consigné
+- **La variante résout le problème de carte du N°247** : une seule
+  tenancy à la fois — plus de comptes en parallèle, plus de motif de
+  bannissement croisé.
+- **Deux constats qui adoucissent la coupure** : (1) plan de
+  CONTRÔLE, pas de données — les invités provisionnés continuent de
+  surfer (authentification locale RouterOS, N°215) ; ce qui tombe :
+  console agents, ventes via console, check-in, syncs ; (2) les
+  données ne bougent pas — la base vit chez Supabase (+ miroir
+  Neon), les secrets GitHub survivent (CREDENTIALS_KEY →
+  credentials RouterOS déchiffrables, N°244).
+- **Le VRAI risque** : le délai de LIBÉRATION de la carte après
+  termination (non documenté — de quelques heures à plusieurs jours,
+  parfois plus) → filet VPS ~4-5 €/mois si refus, la coupure reste
+  bornée.
+- **Le pari régional n'est jamais bloquant** : le nouveau trial
+  apporte ~30 jours de crédits neufs — une VM bridge payante relance
+  le service sur crédits dès le jour J (schéma exact du pont actuel),
+  micro = repli gratuit souvent vert, PAYG du nouveau compte = filet
+  après 30 jours.
+- **Séquence obligatoire consignée au runbook §8-ter** (7 étapes :
+  tout préparer avant la coupure → annonce 48 h pour 24 h →
+  terminate E5 → inscription eu-marseille-1 reco / uk-cardiff-1
+  alternative → bridge sur crédits si tout rouge → redéploiement
+  (deploy-oracle + t2-caddy-rescue, piège n°17) + flip DNS + vérifs →
+  repointer hunt-a1 et region-probe sur la nouvelle tenancy).
+- Croisement avec l'arbre 25-28/10 : la variante est la voie « sans
+  tiers » de l'étape nouvelle inscription ; le tiers réel (N°247)
+  reste supérieur (zéro coupure — flip DNS de quelques minutes).
+
 ## 2026-10-05 — N°247 — Garde-fou du repli « nouvelle tenancy » : identité de paiement NEUVE obligatoire (risque documenté de bannissement croisé)
 
 ### Contexte

@@ -553,16 +553,63 @@ future. Le pari est asymétrique et inacceptable ici : le pont E5 sert
    l'inscription — l'autorisation échoue ; et le recoupement
    nom/adresse reste possible) — **pas une solution** ;
 3. aucune identité propre disponible → le repli « nouvelle tenancy »
-   tombe de l'arbre : restent la conversion PAYG d'E5 (aucune nouvelle
-   carte — la sienne reste légitimement attachée à SON compte ; déjà
-   jugée nécessaire avant le 31/10 pour que des shapes Always Free
-   capturées survivent, et elle débloquerait la mesure multi-régions
-   en prime), le plan C Lambda+Neon, ou le VPS ~4-5 €/mois.
+   se joue alors par la VARIANTE N°248 ci-dessous (supprimer E5
+   D'ABORD — une seule tenancy à la fois) ; à défaut de la jouer :
+   conversion PAYG d'E5 (aucune nouvelle carte — la sienne reste
+   légitimement attachée à SON compte ; déjà jugée nécessaire avant
+   le 31/10 pour que des shapes Always Free capturées survivent, et
+   elle débloquerait la mesure multi-régions en prime), plan C
+   Lambda+Neon, ou VPS ~4-5 €/mois.
 
 Le tiers de l'option 1 se trouve **AVANT** le 25-28/10 (personne
 d'accord + sa carte + son téléphone — l'inscription elle-même prend
 15 min) : c'est une condition préalable du point de décision, pas une
 étape de dernier moment.
+
+**Variante N°248 (consult. 05/10) — « supprimer puis réinscrire » :
+une seule tenancy à la fois** : si aucun tiers n'est disponible, la
+carte redevient réutilisable À CONDITION de terminer la tenancy E5
+AVANT la nouvelle inscription — plus de comptes en parallèle, plus de
+motif de bannissement croisé. Deux constats structurent la variante :
+- **la coupure est un plan de CONTRÔLE, pas un plan de données** :
+  les invités provisionnés continuent de surfer pendant la coupure
+  (authentification locale RouterOS — N°215) ; ce qui tombe : console
+  agents, ventes voucher via console, check-in, syncs. La « coupure
+  24 h » à annoncer est donc bien plus douce qu'une coupure Internet ;
+- **les données ne bougent PAS** : la base vit chez Supabase (+ miroir
+  Neon) — terminer la tenancy OCI ne détruit AUCUNE donnée mikcloud,
+  et les secrets GitHub (CREDENTIALS_KEY, JWT_SECRET…) survivent,
+  donc les credentials RouterOS restent déchiffrables (N°244).
+Le VRAI risque est le délai de LIBÉRATION de la carte après la
+termination (non documenté par Oracle : de quelques heures à
+plusieurs jours selon les retours, parfois bloqué plus longtemps) —
+d'où la séquence obligatoire :
+1. TOUT préparer AVANT la coupure (workflows déployeurs, secrets à
+   mettre à jour, flip DNS prêt, annonces) ;
+2. annonce aux agents (bannière console + notifications) : fenêtre
+   annoncée 48 h pour 24 h réelles prévues (marge) ;
+3. terminer la tenancy E5 (Account Management → Terminate ; si le
+   self-service n'y suffit pas, demande support — compter le délai)
+   — l'IP 84.12.85.241 est perdue, c'est prévu par le flip DNS ;
+4. retenter l'inscription dès la termination effective (reco
+   eu-marseille-1 — 3 AD = 3 pools distincts ; alternative
+   uk-cardiff-1, réputée plus permissive) ; SI LA CARTE EST REFUSÉE →
+   filet : VPS ~4-5 €/mois pour relancer le service en attendant que
+   la carte se libère (elle finit presque toujours par passer) — la
+   coupure reste bornée ;
+5. le nouveau trial apporte ~30 jours de crédits NEUFS : même si A1
+   ET micro sont rouges le jour J, une petite VM bridge payante
+   relance le service immédiatement SUR CRÉDITS (le schéma exact du
+   pont actuel) — le pari régional n'est donc JAMAIS bloquant ; micro
+   = repli gratuit souvent vert ; PAYG du nouveau compte (sa propre
+   carte, légitime) = filet après les 30 jours ;
+6. redéployer (kit actuel : deploy-oracle pointé sur la nouvelle
+   tenancy, t2-caddy-rescue pour le TLS — piège n°17 connu), flip
+   DNS, vérifs `/` ok:true + check-in agent + vente test ;
+7. repointer hunt-a1 + region-probe sur la nouvelle tenancy
+   (nouvelles clés API, nouveaux secrets) — la chasse continue dans
+   la nouvelle région d'origine, avec des pools réputés bien plus
+   cléments que Johannesburg.
 
 **L'arbre de décision du 25-28/10** (si aucune capture A1 NI micro) :
 1. Lire la tendance region-probe (Summary des runs des dernières

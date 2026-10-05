@@ -526,12 +526,51 @@ pas une cible. Une issue « N°246 — <région> mesurée VERTE (A1) »
 s'ouvre automatiquement à la première fenêtre verte par candidate
 (une seule ouverte à la fois — pas de doublon).
 
+**⚠️ Garde-fou N°247 (consult. 05/10) — une seconde inscription exige
+une identité de paiement NEUVE** : réutiliser la MÊME carte bancaire
+pour un second compte (même avec un e-mail différent) est le motif de
+bannissement OCI le mieux documenté. Le Cloud Services Agreement
+limite le free tier à **un compte par personne et par organisation** ;
+la carte est le signal de recoupement n°1 (avec le nom, l'adresse de
+facturation, le téléphone — vérifié par SMS à l'inscription — et
+l'IP/l'appareil au signup) : un e-mail différent ne masque RIEN,
+c'est même LE scénario multi-compte que les filtres anti-abus
+cherchent. Sanction observée à grande échelle (retours communautaires
+convergents — Oracle ne publie pas ses seuils) : terminaison **sans
+préavis**, parfois du seul nouveau compte, parfois des **DEUX à la
+fois** (liés par la carte, jusqu'à des semaines après l'inscription) —
+aucune récupération de données ni d'IP réservée, support = réponse
+automatique renvoyant au CSA, carte blacklistée pour toute inscription
+future. Le pari est asymétrique et inacceptable ici : le pont E5 sert
+`api.mikcloud.ftci.fr` en production — on ne lie JAMAIS un compte neuf
+à la carte du pont. Chemins propres, par fiabilité décroissante :
+1. **compte d'un tiers réel** (conjoint, famille, associé) : SA carte,
+   SON e-mail, SON téléphone, SON adresse, inscription depuis SON
+   appareil/réseau si possible — puis invitation de l'exploitant comme
+   **administrateur IAM** de la tenancy neuve : pilotage complet
+   (workflows, clés API), identités distinctes ;
+2. carte virtuelle/prépayée : peu fiable (souvent refusée dès
+   l'inscription — l'autorisation échoue ; et le recoupement
+   nom/adresse reste possible) — **pas une solution** ;
+3. aucune identité propre disponible → le repli « nouvelle tenancy »
+   tombe de l'arbre : restent la conversion PAYG d'E5 (aucune nouvelle
+   carte — la sienne reste légitimement attachée à SON compte ; déjà
+   jugée nécessaire avant le 31/10 pour que des shapes Always Free
+   capturées survivent, et elle débloquerait la mesure multi-régions
+   en prime), le plan C Lambda+Neon, ou le VPS ~4-5 €/mois.
+
+Le tiers de l'option 1 se trouve **AVANT** le 25-28/10 (personne
+d'accord + sa carte + son téléphone — l'inscription elle-même prend
+15 min) : c'est une condition préalable du point de décision, pas une
+étape de dernier moment.
+
 **L'arbre de décision du 25-28/10** (si aucune capture A1 NI micro) :
 1. Lire la tendance region-probe (Summary des runs des dernières
    semaines — disponible dès la conversion PAYG de la tenancy,
    l'outil sonde chaque heure et se débloque seul) ;
 2. candidate Tier-1 régulièrement verte → nouvelle inscription dans
-   CETTE région (nouvel e-mail + carte bancaire, §1.1), puis rejouer
+   CETTE région (nouvel e-mail + **identité de paiement NEUVE** —
+   garde-fou N°247 ci-dessus ; §1.1), puis rejouer
    l'atterrissage : workflows déployeurs pointés sur la nouvelle
    tenancy, IP réservée neuve, flip DNS — le kit t2-caddy-rescue
    reste applicable tel quel (piège n°17 identique sur toute machine

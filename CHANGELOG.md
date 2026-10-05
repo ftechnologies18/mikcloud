@@ -5,6 +5,45 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-05 — N°247 — Garde-fou du repli « nouvelle tenancy » : identité de paiement NEUVE obligatoire (risque documenté de bannissement croisé)
+
+### Contexte
+Consultation exploitant : la carte bancaire déjà utilisée pour la
+tenancy E5 peut-elle resservir pour une seconde inscription (e-mail
+différent) sans déclencher un bannissement ? L'arbre de décision du
+25-28/10 (§8-ter) disait « nouvel e-mail + carte bancaire » sans
+garde-fou — angle mort corrigé avant le point de décision.
+
+### Consigné
+- **Oui, le risque est réel et c'est le piège n°1 du repli** : le
+  Cloud Services Agreement limite le free tier à un compte par
+  personne/organisation ; la carte bancaire est le signal de
+  recoupement n°1 (nom, adresse de facturation, téléphone vérifié par
+  SMS, IP/appareil au signup) — l'e-mail différent ne masque rien,
+  c'est le scénario multi-compte type que les filtres anti-abus
+  cherchent.
+- **Sanction observée** (retours communautaires convergents — Oracle
+  ne publie pas ses seuils de détection) : terminaison sans préavis,
+  parfois des DEUX comptes à la fois (liés par la carte, jusqu'à des
+  semaines après l'inscription) ; aucune récupération de données ni
+  d'IP réservée ; support = réponse automatique renvoyant au CSA ;
+  carte blacklistée pour toute inscription future. Pari asymétrique
+  inacceptable : le pont E5 sert api.mikcloud.ftci.fr en production —
+  interdiction consignée de lier un compte neuf à la carte du pont.
+- **Chemins propres** (par fiabilité décroissante) : 1) compte d'un
+  tiers réel (sa carte, son e-mail, son téléphone, son adresse) puis
+  invitation de l'exploitant en administrateur IAM — le seul fiable ;
+  2) carte virtuelle/prépayée : peu fiable (souvent refusée à
+  l'inscription, recoupement nom/adresse possible) — pas une
+  solution ; 3) à défaut, le repli « nouvelle tenancy » tombe de
+  l'arbre (conversion PAYG d'E5 sans nouvelle carte / plan C
+  Lambda+Neon / VPS ~4-5 €/mois).
+- **Action consécutive** : trouver le tiers AVANT le 25-28/10 —
+  condition préalable du point de décision, pas une étape de dernier
+  moment. Aucun code touché : hunt-a1 (run 288, 6/6 cibles rouges,
+  tir préservé) et region-probe (run 6 — 409/401 inchangés)
+  continuent leur service.
+
 ## 2026-10-05 — N°246 — Sonde multi-régions region-probe.yml : mesurer où la capture serait possible, avant de choisir la région d'une éventuelle nouvelle tenancy
 
 ### Contexte

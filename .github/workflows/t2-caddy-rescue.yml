@@ -37,6 +37,12 @@ name: t2-caddy-rescue
 # workflow n'écrit RIEN côté GitHub). Keepalives SSH N°245-a sur
 # toutes les sessions (une lecture journalctl longue ne doit plus
 # mourir en broken pipe).
+#
+# N°245-c : les commandes distantes sont en heredoc 'REMOTE'
+# UNIQUEMENT — une apostrophe française dans une commande ssh '…'
+# ferme la quote et tue l'étape en syntax error locale AVANT toute
+# exécution (mesuré : run 37252683556, étape relance morte sans
+# toucher au pont — piège n°18 du runbook).
 
 on:
   workflow_dispatch:
@@ -91,11 +97,16 @@ jobs:
         run: |
           set -euo pipefail
           SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
-          ssh $SSH_OPTS "$DEPLOY_USER@$ORACLE_HOST" '
-            sudo systemctl restart caddy &&
-            sleep 3 &&
-            echo "Caddy relancé — état : $(systemctl is-active caddy). Émission re-tentée à l'instant (fin du backoff)."
-          '
+          # N°245-c — heredoc 'REMOTE' (piège n°18) : le corps est LITTÉRAL,
+          # apostrophes françaises et $(…) compris — le $(systemctl …) est
+          # interprété CÔTÉ PONT, comme attendu.
+          ssh $SSH_OPTS "$DEPLOY_USER@$ORACLE_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          sudo systemctl restart caddy
+          sleep 3
+          echo "Caddy relancé — état : $(systemctl is-active caddy)."
+          echo "Émission re-tentée à l'instant (fin du backoff certmagic)."
+          REMOTE
 
       - name: Vérification bout-en-bout depuis le runner (DNS publique → TLS → HTTP)
         if: inputs.restart == true
@@ -110,14 +121,26 @@ jobs:
             sleep 8
           done
           case "$CODE" in
-            2*) echo "✓ HTTPS $CODE — bascule TLS opérationnelle (tentative $I)." ;;
-            *)  echo "ÉCHEC : aucune réponse 2xx après $I tentatives (dernier code $CODE) — voir le journal APRÈS ci-dessous pour la cause (piste : limite de reprises Let's Encrypt « too many failed authorizations », fenêtre d'1 h — re-dispatcher plus tard)." >&2
-                exit 1 ;;
+            2*) echo "✓ HTTPS $CODE — handshake TLS accepté (tentative $I)." ;;
+            *)
+              echo "ÉCHEC : aucune réponse 2xx après $I tentatives (dernier code $CODE)." >&2
+              echo "── état du handshake — pour distinguer « pas de cert » / « cert STAGING non trusté » :" >&2
+              echo | openssl s_client -connect api.mikcloud.ftci.fr:443 -servername api.mikcloud.ftci.fr 2>&1 | head -8 >&2 || true
+              echo "── certificat servi (le cas échéant) :" >&2
+              echo | openssl s_client -connect api.mikcloud.ftci.fr:443 -servername api.mikcloud.ftci.fr 2>/dev/null | openssl x509 -noout -issuer -subject -dates >&2 || true
+              echo "── pistes : journal APRÈS ci-dessous (limite de reprises Let's Encrypt « too many failed authorizations », fenêtre 1 h — re-dispatcher plus tard ; cert STAGING servi = forcer le CA de production)." >&2
+              exit 1 ;;
           esac
           echo
-          echo "── certificat servi :"
-          echo | openssl s_client -connect api.mikcloud.ftci.fr:443 -servername api.mikcloud.ftci.fr 2>/dev/null \
-            | openssl x509 -noout -subject -issuer -dates || true
+          echo "── certificat servi (contrôle anti-staging) :"
+          ISSUER=$(echo | openssl s_client -connect api.mikcloud.ftci.fr:443 -servername api.mikcloud.ftci.fr 2>/dev/null | openssl x509 -noout -issuer || true)
+          echo "$ISSUER"
+          case "$ISSUER" in
+            *Fake*|*[Ss]taging*)
+              echo "ÉCHEC : certificat Let's Encrypt STAGING servi (non trusté par les navigateurs — le CA de production doit passer en tête, Caddyfile à durcir)." >&2
+              exit 1 ;;
+          esac
+          echo | openssl s_client -connect api.mikcloud.ftci.fr:443 -servername api.mikcloud.ftci.fr 2>/dev/null | openssl x509 -noout -subject -dates || true
           echo
           echo "── chaîne HTTP → HTTPS (redirection Caddy attendue : 308) :"
           curl -s -o /dev/null -w 'http://  → %{http_code} → %{redirect_url}\n' --max-time 15 http://api.mikcloud.ftci.fr/ || true
@@ -128,8 +151,9 @@ jobs:
         run: |
           set -euo pipefail
           SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
-          ssh $SSH_OPTS "$DEPLOY_USER@$ORACLE_HOST" '
-            sudo journalctl -u caddy --since "10 minutes ago" --no-pager \
-              | grep -iE "certificate obtained|serving initial|success|error|warn" \
-              | tail -15 || echo "(aucune ligne filtrée)"
-          '
+          ssh $SSH_OPTS "$DEPLOY_USER@$ORACLE_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          sudo journalctl -u caddy --since "15 minutes ago" --no-pager \
+            | grep -iE "obtain|challenge|acme|certificate|error|warn" \
+            | tail -25 || echo "(aucune ligne filtrée)"
+          REMOTE

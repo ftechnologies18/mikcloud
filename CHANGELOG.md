@@ -20,25 +20,32 @@ fondée sur des MESURES et non des rumeurs de forums.
 ### Livré
 - **Workflow `region-probe.yml`** (schedule horaire :17 + dispatch,
   permissions `issues:write` uniquement, concurrence sérialisée) :
-  1. abonnement GRATUIT de la tenancy aux régions candidates
-     (region-subscription : instantané, aucune ressource créée, aucun
-     coût — une région abonnée sans ressources ne facture rien) ;
-  2. pour chaque région prête : capacity report GRATUIT (doctrine
-     N°222 — aucun tir, jamais) sur les MÊMES cibles que hunt-a1 (A1
-     2/12 auto, 1/6 auto, FD-1/2/3) par AD + sonde micro SÉPARÉE
-     (miroir N°241 : l'échec d'une sonde ne casse jamais l'autre) ;
+  1. tentative d'abonnement de la tenancy aux régions candidates
+     (region-subscription) — **mesuré : refusé `409
+     TenantCapacityExceeded`** (tenancy E5 état essai non converti,
+     plafond de régions abonnées atteint — 1/1 : l'origine). Le geste
+     est retenté à chaque passage : il passera seul le jour d'une
+     éventuelle conversion PAYG ;
+  2. pour chaque région : capacity report GRATUIT (doctrine N°222 —
+     aucun tir, jamais) sur les MÊMES cibles que hunt-a1 (A1 2/12
+     auto, 1/6 auto, FD-1/2/3) par AD + sonde micro SÉPARÉE (miroir
+     N°241) — **tenté même sans abonnement (mesuré : refusé `[401]
+     NotAuthenticated` — l'endpoint d'une région non abonnée
+     n'authentifie pas la clé API de la tenancy)** ;
   3. tableau vert/rouge dans le Summary de chaque run (l'historique
      des runs, 90 jours, fait office de tendance pour le 25-28/10) ;
   4. issue « N°246 — <région> mesurée VERTE (A1) » automatique à la
      première fenêtre verte d'une candidate (une seule ouverte par
      région — pas de doublon tant qu'elle n'est pas fermée).
+- **TÉMOIN VALIDÉ EN CONTINU** — af-johannesburg-1 (identifiant réel
+  mesuré ; le « za-johannesburg-1 » supposé en session n'existait
+  pas au catalogue OCI — correction N°246-b) : abonnée, AD énuméré,
+  rapports acceptés, résultats strictement identiques à hunt-a1 au
+  même créneau.
 - **Rotation de région par PROFILS OCI** (`~/.oci/config`, un profil
   par région) et non par un flag de commande : le profile switching
   est un mécanisme central du CLI, plus robuste que toute option
   régionale par appel.
-- **za-johannesburg-1 sondé comme TÉMOIN** : ses résultats doivent
-  coïncider avec hunt-a1 à chaque passage — la validation de la
-  méthode est continue, pas un postulat.
 - **Runbook §8-ter** : classement des régions (saturation
   communautaire × latence Abidjan × nombre d'AD — reco n°1
   eu-marseille-1 : hub des câbles ouest-africains ACE, 3 AD, peu
@@ -48,6 +55,14 @@ fondée sur des MESURES et non des rumeurs de forums.
   re-choisir Johannesburg) + l'arbre de décision complet du 25-28/10.
 
 ### Conséquences
+- ⚠ Mesuré : tant que la tenancy n'est pas convertie (PAYG), la
+  mesure des candidates est impossible DEPUIS cette tenancy (409
+  abonnement + 401 croix-région) — le choix de région du repli
+  s'appuie sur le classement communautaire consigné au §8-ter.
+  L'outil reste armé et sonde chaque heure : le jour de la conversion
+  (nécessaire de toute façon avant le 31/10 pour que les shapes
+  Always Free capturées survivent à l'expiration des crédits), le
+  tableau vert/rouge s'affichera seul.
 - ⚠ Rappel de règle : un « vert » mesuré hors région d'origine NE
   PEUT PAS être capturé sur la tenancy actuelle (Always Free = région
   d'origine uniquement) — c'est une donnée de choix de la prochaine

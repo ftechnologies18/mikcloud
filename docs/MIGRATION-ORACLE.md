@@ -474,19 +474,37 @@ hunt-a1 est mécaniquement verrouillée sur Johannesburg. Si le repli
 « nouvelle inscription » du 25-28/10 s'impose, sa région d'origine doit
 être choisie sur des MESURES, pas sur des rumeurs de forums.
 
-**L'outil** : `region-probe.yml` (N°246) — sonde horaire GRATUITE
-(capacity reports, doctrine N°222 — aucun tir, aucune ressource
-créée) : abonnement gratuit de la tenancy aux régions candidates
-(region-subscription), puis rapport de capacité sur les MÊMES cibles
-que hunt-a1 (A1 2/12 auto, 1/6 auto, FD-1/2/3) par AD + sonde micro
-séparée. Le tableau vert/rouge vit dans l'onglet Summary de chaque
-run — l'historique des runs (90 jours) fait office de tendance.
-za-johannesburg-1 est sondé comme TÉMOIN : ses résultats doivent
-coïncider avec hunt-a1 (validation de la méthode à chaque passage).
+**L'outil et sa limite mesurée** : `region-probe.yml` (N°246) — sonde
+horaire GRATUITE (capacity reports, doctrine N°222 — aucun tir,
+aucune ressource créée). Mesuré en conditions réelles (runs
+`37266358063`→`37268649371`, 05/10) :
+- **le TÉMOIN fonctionne parfaitement** — af-johannesburg-1 (abonnée,
+  AD énuméré, rapports acceptés) : résultats strictement identiques à
+  hunt-a1 au même créneau — la méthode est validée en continu ;
+- **l'abonnement régional est REFUSÉ** : `409 TenantCapacityExceeded
+  — You have exceeded the maximum number of allowed subscribed
+  regions` — la tenancy E5 (état essai non converti, 1 région abonnée
+  : l'origine) est à son plafond ;
+- **le capacity report croix-région SANS abonnement est REFUSÉ** :
+  `[401] NotAuthenticated` — l'endpoint d'une région non abonnée
+  n'authentifie pas la clé API de la tenancy (l'énumération AD non
+  plus — le workflow replie sur des ADs synthétisés, refusés aussi).
+
+**Conséquence** : tant que la tenancy n'est pas convertie (PAYG), la
+mesure des candidates est impossible DEPUIS cette tenancy — le choix
+de région du repli s'appuie sur le classement communautaire ci-
+dessous. Le workflow, lui, reste armé et sonde chaque heure : le jour
+où la tenancy est convertie (geste qui sera de toute façon nécessaire
+avant le 31/10 pour que les shapes Always Free capturées survivent à
+l'expiration des crédits), les abonnements passeront, les rapports
+seront acceptés et le tableau vert/rouge s'affichera seul — l'outil
+se débloque sans aucun geste supplémentaire.
 
 **Régions sondées par défaut** (classement N°246 : saturation
 communautaire × latence Abidjan × nombre d'AD — cf. CHANGELOG) :
-- `za-johannesburg-1` — témoin (région d'origine actuelle) ;
+- `af-johannesburg-1` — témoin (région d'origine actuelle —
+  identifiant réel mesuré : le « za-johannesburg-1 » supposé en
+  session n'existait pas au catalogue OCI) ;
 - `eu-marseille-1` — **reco n°1** : hub d'atterrissage des câbles
   ouest-africains (ACE), ~120-160 ms d'Abidjan, 3 AD, région jeune
   donc peu chassée ;
@@ -497,7 +515,7 @@ communautaire × latence Abidjan × nombre d'AD — cf. CHANGELOG) :
 - À éviter d'office (saturation réputée brutale) : eu-frankfurt-1,
   eu-amsterdam-1, uk-london-1, us-ashburn-1, us-sanjose-1,
   ap-mumbai/singapore/tokyo/seoul-1, sa-saopaulo-1. Ne pas re-choisir
-  za-johannesburg-1. La latence n'est PAS le critère dominant :
+  af-johannesburg-1. La latence n'est PAS le critère dominant :
   l'architecture mikcloud (mémoire = moteur de calcul, Postgres miroir
   asynchrone — N°224) fait qu'aucune requête utilisateur ne subit le
   RTT inter-régions.
@@ -510,7 +528,8 @@ s'ouvre automatiquement à la première fenêtre verte par candidate
 
 **L'arbre de décision du 25-28/10** (si aucune capture A1 NI micro) :
 1. Lire la tendance region-probe (Summary des runs des dernières
-   semaines) ;
+   semaines — disponible dès la conversion PAYG de la tenancy,
+   l'outil sonde chaque heure et se débloque seul) ;
 2. candidate Tier-1 régulièrement verte → nouvelle inscription dans
    CETTE région (nouvel e-mail + carte bancaire, §1.1), puis rejouer
    l'atterrissage : workflows déployeurs pointés sur la nouvelle

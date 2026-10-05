@@ -431,6 +431,20 @@ pont est idle pré-flip) :
 | 7 | agent | Validations post-flip : `https://api.mikcloud.ftci.fr/` 200 + cadenas. ⚠ N°245-b (mesuré au T2) : le certificat NE s'émet PAS « tout seul en ~1 min » — les échecs d'acquisition d'AVANT le flip (domaine pointé vers Render) ont mis certmagic en reprise exponentielle (jusqu'à 24 h) et le flip ne déclenche AUCUNE nouvelle tentative : ERR_SSL_PROTOCOL_ERROR des heures durant, alors que l'émission réussirait désormais. Parade immédiate : dispatch `t2-caddy-rescue.yml` (relance Caddy → émission immédiate — piège n°17). Puis : check-in des agents, portail sur téléphone, vente voucher test, QR `/join` test, timer backup confirmé pour la nuit | §8-6→12, N°245-b |
 | 8 | agent | 48 h de surveillance (check-ins, ventes, sync-status, journal) puis constat : Render sera suspendu le 16/10 sans que rien ne change pour nous | §8-13/§9 |
 
+**Exécution (nuit du 05/10, UTC — N°245)** : étapes 1-2 accomplies le 04/10
+(commit `610647f`, phase JWT run `37243863434` SUCCESS) ; gestes 3-4 à 00:08 ;
+étape 5 phase DSN : run `37246345785` mort en broken pipe APRÈS application de
+l'env (étapes 7-9 jamais jouées) → correctif N°245-a (`resume_after_apply` +
+keepalives) puis reprise run `37252639942` SUCCESS (snapshot test, secrets
+GitHub, env Render + redéploiement standby) ; étape 6 flip DNS ~00:25 ;
+**incident TLS post-flip** (backoff certmagic + apostrophe française —
+N°245-b/c, pièges 17-18) sauvé à 02:01 par `t2-caddy-rescue.yml` run
+`37253717736` (certificat Let's Encrypt PRODUCTION émis en ~5 s, HTTPS 200) ;
+étape 7 : validations infra OK (200 + cadenas + chaîne `http→308→https`) —
+validations métier (check-in des agents, portail sur téléphone, vente voucher
+test, QR `/join`, timer 03:00 UTC) à confirmer pendant les 48 h de l'étape 8.
+Le secret `SUPABASE_DSN_NEW` a été supprimé après application complète.
+
 **ADMIN_PASSWORD** : pas de nouvelle rotation au T2 — déjà rotée
 proprement le 01/10 (RUNBOOK-SECRETS §2.8, par API, jamais exposée) et
 synchronisée sur le pont par l'ancien sync.

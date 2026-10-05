@@ -5,6 +5,58 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-05 — N°245 — Exécution de la fenêtre T2 : rotation DSN, flip DNS — incident TLS sauvé (N°245-a reprise post-application, N°245-b/c sauvetage reverse-proxy, pièges 17-18)
+
+### Contexte
+La fenêtre T2 (§8-bis du runbook) a été exécutée dans la nuit du 05/10 :
+gestes opérateur (reset du mot de passe Supabase au dashboard via le jeton
+d'administration, dépôt du nouveau DSN dans `SUPABASE_DSN_NEW`), dispatch de
+la phase DSN de `t2-secrets.yml`, flip DNS Cloudflare (enregistrement `api` :
+CNAME Render → A `84.12.85.241`, nuage gris).
+
+### Déroulé et incidents (tout mesuré)
+- **Phase DSN, run 37246345785** : normalisation + garde + SELECT 1 + application
+  de l'env sur le pont (`mikcloud.env` + `backup.env`) + restart + healthcheck
+  OK (90 s) — puis la session SSH du snapshot test est morte en broken pipe
+  après 4 min 43 s de silence (oneshot muet, boîtier intermédiaire) ; les
+  étapes 7-9 n'ont jamais tourné. **N°245-a** : input `resume_after_apply`
+  (DSN collé identique à l'env du pont = reprise : env/restart sautés, suite
+  rejouée) + keepalives SSH (`ServerAliveInterval=15/CountMax=8`).
+- **Reprise, run 37252639942 : SUCCESS** — snapshot test Supabase→Neon OK (le
+  coffre-fort tourne sur le DSN neuf, les keepalives ont tenu), secrets GitHub
+  `DATABASE_URL` + `SUPABASE_DATABASE_URL` mis à jour par sealed box (HTTP 204
+  ×2 — le correctif d'encodage base64 N°244-b éprouvé en production), env
+  Render PUT 200 + redéploiement 201 : le standby Render est sain sur le
+  nouveau DSN (rollback §9.2 fonctionnel).
+- **Incident TLS post-flip** (signale par l'exploitant :
+  `ERR_SSL_PROTOCOL_ERROR`) : handshake tue par une alerte « internal error »,
+  le port 80 répondant son 308. Deux causes empilées :
+  (1) **backoff certmagic** (piège n°17) — les echecs d'émission d'AVANT le
+  flip (journaux du pont : challenges validés chez Render, 404 de 216.24.57.x)
+  ont mis Caddy en reprise exponentielle (tentatives 24-27, intervalles 3-6 h) ;
+  le flip ne déclenche AUCUNE nouvelle tentative ;
+  (2) **apostrophe française** (piège n°18) — la première relance (N°245-b,
+  run 37252683556) est morte en `syntax error near unexpected token (`
+  AVANT toute exécution : le « l'instant » fermait la quote du `ssh '…'`.
+- **N°245-c** : commandes distantes en heredoc `REMOTE` uniquement + contrôle
+  anti-certificat-staging (les tentatives d'échec utilisaient le CA de
+  STAGING — replis de la chaîne d'émetteurs après echec production, le
+  Caddyfile deployé étant propre, sans directive `acme_ca`).
+- **Sauvetage, run 37253717736 : SUCCESS** — relance 02:01:41, « certificate
+  obtained successfully » (acme-v02 production) 02:01:46, HTTPS 200 dès la 2e
+  tentative (~10 s). Certificat : `CN=api.mikcloud.ftci.fr`, Let's Encrypt
+  YE1, 05/10/2026 → 03/01/2027. Chaîne : `http → 308 → https 200`
+  (IP 84.12.85.241), vérifie depuis le runner et le poste de pilotage.
+
+### Conséquences
+- `api.mikcloud.ftci.fr` sert le pont E5 en HTTPS (Let's Encrypt production) ;
+  backend actif sur le DSN neuf ; coffre-fort Neon vérifié bout-en-bout ;
+  standby Render sain ; secret `SUPABASE_DSN_NEW` supprimé après application
+  complète (hygiène) ; surveillance 48 h ouverte (§8-bis étape 8).
+- Échéances inchangées : **16/10** suspension Render (sans effet, T2 fait),
+  **31/10** crédits du pont (atterrissage A1/micro avant), point de décision
+  **25-28/10** si aucune capture.
+
 ## 2026-10-05 — N°244-b — t2-secrets : corriger l'encodage du sealed box (étape 8 — les secrets GitHub seraient restés sur l'ancien DSN)
 
 ### Contexte

@@ -5,6 +5,39 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-05 — N°250-c — Verdict d'audit (AUCUNE capture) + boucle de dispatch v2 non-superposante
+
+### Verdict de l'audit (hunt-audit.yml, run 37375762131)
+Interrogation DIRECTE de la tenancy : **1 seule instance au total
+(ponctuation historique comprise) = le pont E5** (`mikcloud-backend-e5-bridge`,
+VM.Standard.E5.Flex, RUNNING, 03/10 17:12). **0 A1, 0 micro, 0 tir accepté
+depuis le début de la chasse** — les notifications « All jobs were
+cancelled » répétées étaient le bruit de la boucle, pas une victoire.
+
+### Cause racine du bruit (mesurée)
+La boucle de pilotage du pont (`mikcloud-hunt-dispatch.timer`, */5,
+N°236→N°237 — posée parce que les crons GitHub de ce dépôt laguent de
+99 min à ~6 h, N°234) dispatchait TOUTES les 5 min SANS vérifier l'état
+du run précédent : en pénurie de runners GitHub (attentes > 5 min mesurées
+ce soir), chaque nouveau run remplaçait le précédent en attente dans le
+groupe de concurrence → « cancelled » à chaque cycle → mail toutes les
+5 min à l'exploitant.
+
+### Correctif (pont-pilotage.yml, entrée `deploy_nonoverlap_fix`)
+Script pont **v2 NON-SUPERPOSANT** : avant tout dispatch, vérifier le
+dernier run (queued/in_progress → créneau passé, exit 0) ; état du
+workflow vérifié d'abord (hunt-a1 désactivé = capture → le timer
+s'éteint tout seul, logique v1 conservée). Exactement un chasseur
+vivant à la fois : **plus aucune annulation possible**, cadence 5 min
+préservée runners sains, et elle épouse naturellement la disponibilité
+réelle des runners en pénurie. v1 sauvegardée en `.sh.v1` (réversible).
+Timer réactivé après déploiement.
+
+### Cosmétiques hunt-audit.yml
+Exclusion du nom réel du pont (`mikcloud-backend-e5-bridge`) dans le
+compteur d'intrus ; liste des IP publiques en portée REGION (`--scope
+REGION` — les IP réservées vivent hors compartiment).
+
 ## 2026-10-05 — N°250 — Triple mesure chasse : audit de capture, chasseur parallèle, traque de la boucle de pilotage
 
 ### Contexte

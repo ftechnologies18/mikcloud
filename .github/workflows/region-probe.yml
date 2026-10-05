@@ -67,7 +67,11 @@ jobs:
     timeout-minutes: 15
     env:
       TEN: ocid1.tenancy.oc1..aaaaaaaa5lipoqjckcohkzca6uc42svliyvuaw7cl33ef5546mhcv4xf7kxq
-      HOME_REGION: za-johannesburg-1
+      # Identifiant mesuré : l'AD est yMUP:AF-JOHANNESBURG-1-AD-1 et le
+      # runbook (erratum N°215) nomme af-johannesburg-1 — « za-johannesburg-1 »
+      # est introuvable au catalogue régional (mesuré runs 37266358063/
+      # 37266860342 : region-key introuvable + nom d'origine masqué).
+      HOME_REGION: af-johannesburg-1
     steps:
       - name: OCI CLI + profil par région (clé API du coffre GitHub)
         env:
@@ -96,7 +100,7 @@ jobs:
           echo "auth OCI OK"
           # Profils par région (union défauts + input dispatch) — la
           # sonde y bascule par --profile, mécanisme central du CLI.
-          DEFAULTS="za-johannesburg-1 eu-marseille-1 eu-paris-1 eu-milan-1 uk-cardiff-1"
+          DEFAULTS="af-johannesburg-1 eu-marseille-1 eu-paris-1 eu-milan-1 uk-cardiff-1"
           EXTRA="$(echo "$IN_REGIONS" | tr ',' ' ' | xargs)"
           for R in $(echo "$DEFAULTS $EXTRA" | tr ' ' '\n' | sort -u); do
             {
@@ -117,20 +121,29 @@ jobs:
           IN_REGIONS: ${{ github.event.inputs.regions || '' }}
           IN_SUBSCRIBE: ${{ github.event.inputs.subscribe || 'true' }}
         run: |
-          DEFAULTS="za-johannesburg-1 eu-marseille-1 eu-paris-1 eu-milan-1 uk-cardiff-1"
+          DEFAULTS="af-johannesburg-1 eu-marseille-1 eu-paris-1 eu-milan-1 uk-cardiff-1"
           LIST="$(echo "$IN_REGIONS" | tr ',' ' ' | xargs)"
           [ -z "$LIST" ] && LIST="$DEFAULTS"
           echo "list=$LIST" >> "$GITHUB_OUTPUT"
           echo "── Régions à sonder : $LIST"
           # État d'abonnement actuel — champs CLI en KEBAB-CASE
           # (mesuré au 1er run : "region-name", "region-key", "state",
-          # "is-home-region" — comme "display-name" dans hunt-a1.yml)
+          # "is-home-region" — comme "display-name" dans hunt-a1.yml).
+          # ⚠ Le nom de la région d'origine est MASQUÉ dans les journaux
+          # (il égale le secret OCI_CLI_REGION) — on affiche aussi le
+          # region-key et une copie insécable du nom (tirets espacés) :
+          # le masquage GitHub opère sur la chaîne exacte, la copie
+          # espacée reste lisible — transparence assumée, un nom de
+          # région n'est pas un secret.
           oci iam region-subscription list > /tmp/subs.json
-          jq -r '.data[] | "  abonné : \(.["region-name"]) (\(.state), home=\(.["is-home-region"]))"' /tmp/subs.json
+          jq -r '.data[] | "  abonné : \(.["region-name"]) [key=\(.["region-key"] // "?")] (\(.state // "?"), home=\(.["is-home-region"]))"' /tmp/subs.json
+          jq -r '.data[0]["region-name"]' /tmp/subs.json | sed 's/-/ - /g' | sed 's/^/  région d origine (tirets espacés, anti-masquage) : /'
           # Catalogue régional : nom → region-key (mesuré au 1er run :
           # {"key":"AMS","name":"eu-amsterdam-1"} — pas de champ id)
           oci iam region list > /tmp/regions.json
           jq -c '.data[0]' /tmp/regions.json | sed 's/^/  catalogue (1er article) : /'
+          # Le témoin doit exister au catalogue (mesure de cohérence)
+          jq -r --arg r "$HOME_REGION" '.data[] | select(.name == $r) | "  témoin au catalogue : \(.name) → key \(.key)"' /tmp/regions.json
           if [ "$IN_SUBSCRIBE" != "true" ]; then
             echo "── Abonnement désactivé (input) — les non-abonnées seront marquées ⚠."
             exit 0
@@ -152,7 +165,13 @@ jobs:
             echo "  $R : abonnement demandé (region-key $RKEY)…"
             OUT="$(oci iam region-subscription create --tenancy-id "$TEN" \
               --region-key "$RKEY" 2>&1 || true)"
-            echo "$OUT" | grep -vE '^\s*$' | tail -2 | sed 's/^/    /'
+            # Erreur COMPLÈTE si échec (code + message + statut — le
+            # tail -2 du run précédent tronquait le diagnostic)
+            if echo "$OUT" | jq -e '.code' >/dev/null 2>&1; then
+              echo "$OUT" | jq -r '"    ✗ ServiceError : [\(.status)] \(.code) — \(.message)"' || true
+            else
+              echo "$OUT" | grep -vE '^\s*$' | tail -20 | sed 's/^/    /'
+            fi
           done
           # Attente de READY (quelques secondes à quelques minutes) —
           # max 3 min puis on sonde ce qui est prêt, le reste attendra

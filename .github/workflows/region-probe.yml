@@ -122,10 +122,13 @@ jobs:
           [ -z "$LIST" ] && LIST="$DEFAULTS"
           echo "list=$LIST" >> "$GITHUB_OUTPUT"
           echo "── Régions à sonder : $LIST"
-          # État d'abonnement actuel (champs : regionName / regionId / state)
+          # État d'abonnement actuel — champs CLI en KEBAB-CASE
+          # (mesuré au 1er run : "region-name", "region-key", "state",
+          # "is-home-region" — comme "display-name" dans hunt-a1.yml)
           oci iam region-subscription list > /tmp/subs.json
-          jq -r '.data[] | "  abonné : \(.regionName) (\(.state), home=\(.isHomeRegion))"' /tmp/subs.json
-          # Catalogue régional : nom → id d'abonnement
+          jq -r '.data[] | "  abonné : \(.["region-name"]) (\(.state), home=\(.["is-home-region"]))"' /tmp/subs.json
+          # Catalogue régional : nom → region-key (mesuré au 1er run :
+          # {"key":"AMS","name":"eu-amsterdam-1"} — pas de champ id)
           oci iam region list > /tmp/regions.json
           jq -c '.data[0]' /tmp/regions.json | sed 's/^/  catalogue (1er article) : /'
           if [ "$IN_SUBSCRIBE" != "true" ]; then
@@ -133,21 +136,22 @@ jobs:
             exit 0
           fi
           for R in $LIST; do
-            if jq -e --arg r "$R" '.data[] | select(.regionName == $r)' /tmp/subs.json >/dev/null; then
+            if jq -e --arg r "$R" '.data[] | select(.["region-name"] == $r)' /tmp/subs.json >/dev/null; then
               echo "  $R : déjà abonné — rien à faire."
               continue
             fi
-            RID="$(jq -r --arg r "$R" \
-              '.data[] | select((.name // .regionName // "") == $r) | (.id // .regionId // "")' \
+            # La création prend le region-key + la tenancy (mesuré au 1er
+            # run : « No such option --region-id. (Did you mean: --region-key,
+            # --tenancy-id?) »)
+            RKEY="$(jq -r --arg r "$R" '.data[] | select(.name == $r) | .key' \
               /tmp/regions.json | head -1)"
-            if [ -z "$RID" ] || [ "$RID" = "null" ]; then
-              # Repli : synthèse depuis le nom (eu-marseille-1 → ocid1.region..EU_MARSEILLE_1)
-              RID="ocid1.region..$(echo "$R" | tr '[:lower:]-' '[:upper:]_')"
-              echo "  $R : id introuvable au catalogue — id synthétisé $RID (tentative)."
-            else
-              echo "  $R : abonnement demandé ($RID)…"
+            if [ -z "$RKEY" ] || [ "$RKEY" = "null" ]; then
+              echo "  $R : region-key introuvable au catalogue — ignoré au prochain passage."
+              continue
             fi
-            OUT="$(oci iam region-subscription create --region-id "$RID" 2>&1 || true)"
+            echo "  $R : abonnement demandé (region-key $RKEY)…"
+            OUT="$(oci iam region-subscription create --tenancy-id "$TEN" \
+              --region-key "$RKEY" 2>&1 || true)"
             echo "$OUT" | grep -vE '^\s*$' | tail -2 | sed 's/^/    /'
           done
           # Attente de READY (quelques secondes à quelques minutes) —
@@ -158,7 +162,7 @@ jobs:
             oci iam region-subscription list > /tmp/subs.json
             MISSING=""
             for R in $LIST; do
-              STATE="$(jq -r --arg r "$R" '.data[] | select(.regionName == $r) | .state // ""' /tmp/subs.json)"
+              STATE="$(jq -r --arg r "$R" '.data[] | select(.["region-name"] == $r) | .state // ""' /tmp/subs.json)"
               [ "$STATE" = "READY" ] || MISSING="$MISSING $R"
             done
             if [ -z "$(echo $MISSING | xargs)" ]; then
@@ -188,7 +192,7 @@ jobs:
           for R in $LIST; do
             echo ""
             echo "═══ $R ═══"
-            STATE="$(jq -r --arg r "$R" '.data[] | select(.regionName == $r) | .state // ""' /tmp/subs.json 2>/dev/null)"
+            STATE="$(jq -r --arg r "$R" '.data[] | select(.["region-name"] == $r) | .state // ""' /tmp/subs.json 2>/dev/null)"
             if [ "$STATE" != "READY" ]; then
               if [ -n "$STATE" ]; then M="$STATE"; else M="non abonnée"; fi
               echo "  ⚠ région $M — sondée au prochain passage."

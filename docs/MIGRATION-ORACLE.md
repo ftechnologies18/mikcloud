@@ -463,6 +463,71 @@ synchronisée sur le pont par l'ancien sync.
 obligatoire (le pont meurt le 31/10 — un problème connu à l'avance vaut
 mieux qu'une interruption subie).
 
+## 8-ter. Mesure multi-régions et repli « nouvelle tenancy » (N°246)
+
+**Pourquoi** : l'allocation Always Free (A1.Flex 4 OCPU/24 Go + 2× micro)
+ne se lance QUE dans la région d'ORIGINE d'une tenancy — un choix
+définitif fait à l'inscription (erratum N°215 : la nôtre est
+af-johannesburg-1, mono-AD, seule région africaine d'OCI et donc très
+demandée par toute la communauté free-tier du continent). La chasse
+hunt-a1 est mécaniquement verrouillée sur Johannesburg. Si le repli
+« nouvelle inscription » du 25-28/10 s'impose, sa région d'origine doit
+être choisie sur des MESURES, pas sur des rumeurs de forums.
+
+**L'outil** : `region-probe.yml` (N°246) — sonde horaire GRATUITE
+(capacity reports, doctrine N°222 — aucun tir, aucune ressource
+créée) : abonnement gratuit de la tenancy aux régions candidates
+(region-subscription), puis rapport de capacité sur les MÊMES cibles
+que hunt-a1 (A1 2/12 auto, 1/6 auto, FD-1/2/3) par AD + sonde micro
+séparée. Le tableau vert/rouge vit dans l'onglet Summary de chaque
+run — l'historique des runs (90 jours) fait office de tendance.
+za-johannesburg-1 est sondé comme TÉMOIN : ses résultats doivent
+coïncider avec hunt-a1 (validation de la méthode à chaque passage).
+
+**Régions sondées par défaut** (classement N°246 : saturation
+communautaire × latence Abidjan × nombre d'AD — cf. CHANGELOG) :
+- `za-johannesburg-1` — témoin (région d'origine actuelle) ;
+- `eu-marseille-1` — **reco n°1** : hub d'atterrissage des câbles
+  ouest-africains (ACE), ~120-160 ms d'Abidjan, 3 AD, région jeune
+  donc peu chassée ;
+- `eu-paris-1` — latence minimale Abidjan (~110-150 ms) et voisinage
+  Supabase eu-west-1, mais populaire chez les francophones ;
+- `eu-milan-1` — petite région, bonnes chances, ~140-180 ms ;
+- `uk-cardiff-1` — réputée la plus permissive d'Europe, ~160-200 ms.
+- À éviter d'office (saturation réputée brutale) : eu-frankfurt-1,
+  eu-amsterdam-1, uk-london-1, us-ashburn-1, us-sanjose-1,
+  ap-mumbai/singapore/tokyo/seoul-1, sa-saopaulo-1. Ne pas re-choisir
+  za-johannesburg-1. La latence n'est PAS le critère dominant :
+  l'architecture mikcloud (mémoire = moteur de calcul, Postgres miroir
+  asynchrone — N°224) fait qu'aucune requête utilisateur ne subit le
+  RTT inter-régions.
+
+⚠ Un « vert » mesuré hors région d'origine NE PEUT PAS être capturé sur
+la tenancy actuelle (règle Always Free) : c'est une donnée de choix,
+pas une cible. Une issue « N°246 — <région> mesurée VERTE (A1) »
+s'ouvre automatiquement à la première fenêtre verte par candidate
+(une seule ouverte à la fois — pas de doublon).
+
+**L'arbre de décision du 25-28/10** (si aucune capture A1 NI micro) :
+1. Lire la tendance region-probe (Summary des runs des dernières
+   semaines) ;
+2. candidate Tier-1 régulièrement verte → nouvelle inscription dans
+   CETTE région (nouvel e-mail + carte bancaire, §1.1), puis rejouer
+   l'atterrissage : workflows déployeurs pointés sur la nouvelle
+   tenancy, IP réservée neuve, flip DNS — le kit t2-caddy-rescue
+   reste applicable tel quel (piège n°17 identique sur toute machine
+   neuve tant que le domaine pointe ailleurs) ;
+3. tout reste rouge → hiérarchie : micro d'une nouvelle tenancy (les
+   micros passent verts bien plus souvent), plan C AWS Lambda + Neon
+   (réécriture serveur longue durée → fonctions, domaine custom via
+   CloudFront+ACM car les Function URL n'acceptent pas de domaine,
+   sweep → EventBridge — 2-4 jours de dev ; l'actif DB est déjà
+   prouvé : Neon = coffre-fort + standby vérifiés au T2), ou VPS
+   ~4-5 €/mois dès le premier revenu voucher ;
+4. dans tous les cas : la chasse hunt-a1 continue jusqu'au 31/10
+   inclus — une capture tardive reste la meilleure issue (0 ligne de
+   code à changer).
+
 ## 9. Décommission Render et rollback
 
 ### 9.1 Décommission (à T2 + 48 h de stabilité, PAS avant)

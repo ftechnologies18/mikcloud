@@ -5,6 +5,66 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-05 — N°246 — Sonde multi-régions region-probe.yml : mesurer où la capture serait possible, avant de choisir la région d'une éventuelle nouvelle tenancy
+
+### Contexte
+L'allocation Always Free (A1.Flex 4 OCPU/24 Go + 2× E2.1.Micro) ne se
+lançant que dans la région d'origine d'une tenancy (erratum N°215 :
+af-johannesburg-1 — mono-AD, seule région africaine d'OCI, très
+demandée par toute la communauté free-tier du continent), la chasse
+hunt-a1 est verrouillée sur Johannesburg. Si le point de décision du
+25-28/10 (§8-bis) arrive sans capture A1 NI micro, le repli = nouvelle
+inscription — dont la région d'origine (choix définitif) doit être
+fondée sur des MESURES et non des rumeurs de forums.
+
+### Livré
+- **Workflow `region-probe.yml`** (schedule horaire :17 + dispatch,
+  permissions `issues:write` uniquement, concurrence sérialisée) :
+  1. abonnement GRATUIT de la tenancy aux régions candidates
+     (region-subscription : instantané, aucune ressource créée, aucun
+     coût — une région abonnée sans ressources ne facture rien) ;
+  2. pour chaque région prête : capacity report GRATUIT (doctrine
+     N°222 — aucun tir, jamais) sur les MÊMES cibles que hunt-a1 (A1
+     2/12 auto, 1/6 auto, FD-1/2/3) par AD + sonde micro SÉPARÉE
+     (miroir N°241 : l'échec d'une sonde ne casse jamais l'autre) ;
+  3. tableau vert/rouge dans le Summary de chaque run (l'historique
+     des runs, 90 jours, fait office de tendance pour le 25-28/10) ;
+  4. issue « N°246 — <région> mesurée VERTE (A1) » automatique à la
+     première fenêtre verte d'une candidate (une seule ouverte par
+     région — pas de doublon tant qu'elle n'est pas fermée).
+- **Rotation de région par PROFILS OCI** (`~/.oci/config`, un profil
+  par région) et non par un flag de commande : le profile switching
+  est un mécanisme central du CLI, plus robuste que toute option
+  régionale par appel.
+- **za-johannesburg-1 sondé comme TÉMOIN** : ses résultats doivent
+  coïncider avec hunt-a1 à chaque passage — la validation de la
+  méthode est continue, pas un postulat.
+- **Runbook §8-ter** : classement des régions (saturation
+  communautaire × latence Abidjan × nombre d'AD — reco n°1
+  eu-marseille-1 : hub des câbles ouest-africains ACE, 3 AD, peu
+  chassée ; puis eu-paris-1, eu-milan-1, uk-cardiff-1 ; éviter
+  eu-frankfurt/amsterdam-1, uk-london-1, us-ashburn/sanjose-1,
+  ap-mumbai/singapore/tokyo/seoul-1, sa-saopaulo-1 ; ne pas
+  re-choisir Johannesburg) + l'arbre de décision complet du 25-28/10.
+
+### Conséquences
+- ⚠ Rappel de règle : un « vert » mesuré hors région d'origine NE
+  PEUT PAS être capturé sur la tenancy actuelle (Always Free = région
+  d'origine uniquement) — c'est une donnée de choix de la prochaine
+  inscription, jamais une cible de tir.
+- La latence inter-régions n'est pas le critère dominant : l'architecture
+  mikcloud (mémoire = moteur de calcul, Postgres miroir asynchrone
+  N°224) fait qu'aucune requête utilisateur ne subit le RTT — le
+  classement privilégie donc les chances de capture.
+- Plan C documenté au §8-ter (AWS Lambda + Neon : 1 M req/mois à vie,
+  mais domaine custom = Function URL sans domaine natif → CloudFront
+  + ACM devant, sweep → EventBridge Scheduler, réécriture du serveur
+  longue durée en fonctions, IP sortante dynamique à vérifier côté
+  pare-feu MikroTik — 2-4 jours de dev ; l'actif DB est déjà prouvé :
+  Neon = coffre-fort + standby vérifiés bout-en-bout au T2).
+- La chasse hunt-a1 continue jusqu'au 31/10 inclus — une capture
+  tardive reste la meilleure issue (0 ligne de code à changer).
+
 ## 2026-10-05 — N°245 — Exécution de la fenêtre T2 : rotation DSN, flip DNS — incident TLS sauvé (N°245-a reprise post-application, N°245-b/c sauvetage reverse-proxy, pièges 17-18)
 
 ### Contexte

@@ -1,0 +1,291 @@
+name: region-probe
+
+# SONDE MULTI-RÉGIONS (N°246) — mesurer OÙ la capture A1/micro serait
+# possible, pour choisir en connaissance de cause la région d'origine
+# d'une éventuelle nouvelle tenancy (repli du 25-28/10 — runbook §8-ter).
+#
+# POURQUOI : l'allocation Always Free (A1.Flex 4 OCPU/24 Go + 2× micro)
+# ne se lance QUE dans la région d'ORIGINE d'une tenancy — la nôtre est
+# af-johannesburg-1 (erratum N°215) et la chasse hunt-a1 y est verrouillée
+# (mono-AD, seule région africaine d'OCI, très demandée). Changer de
+# région = nouvelle inscription. Ce workflow fournit la DONNÉE qui rend
+# ce choix mesuré au lieu d'empirique (rumeurs de forums).
+#
+# MÉTHODE (doctrine N°222 — sonder, JAMAIS tirer) :
+#   1. Abonnement GRATUIT de la tenancy aux régions candidates
+#      (region-subscription : instantané, AUCUNE ressource créée — une
+#      région abonnée sans ressources ne coûte rien).
+#   2. Pour chaque région prête : capacity report (GRATUIT) sur les
+#      MÊMES cibles que hunt-a1 (A1 2/12 auto, A1 1/6 auto, FD-1/2/3
+#      2/12) par AD + sonde micro SÉPARÉE (miroir hunt-a1 N°241 :
+#      l'échec d'une sonde ne casse jamais l'autre).
+#   3. Tableau vert/rouge dans le Summary du run (l'historique GitHub
+#      fait office de tendance pour le 25-28/10) + issue d'information
+#      à la première fenêtre verte d'une candidate (une seule ouverte
+#      par région — pas de doublon tant qu'elle n'est pas fermée).
+#
+# ⚠ AUCUN TIR : la capture hors région d'origine est IMPOSSIBLE par
+# règle Always Free — un vert mesuré ici informe le CHOIX de région de
+# la prochaine inscription, rien d'autre. za-johannesburg-1 est sondé
+# comme TÉMOIN : ses résultats doivent coïncider avec hunt-a1
+# (validation de la méthode à chaque passage).
+#
+# Rotation de région par PROFILS OCI (~/.oci/config) et non par un flag
+# de commande : le profile switching est un mécanisme central du CLI.
+#
+# Retrait : après la décision du 25-28/10 (ou l'atterrissage A1/micro),
+# désactiver ce workflow puis supprimer les secrets OCI_* du dépôt
+# avec ceux du chasseur (doctrine PILOTAGE §1).
+
+on:
+  schedule:
+    # Toutes les heures à :17 — hors des crons hunt-a1 (rondes :00/:05),
+    # même discipline de charge des runners que keepalive.yml/hunt-a1.yml.
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      regions:
+        description: "Régions à sonder (noms OCI, séparées par des virgules ; vide = liste par défaut)"
+        required: false
+        default: ""
+      subscribe:
+        description: "Abonner la tenancy aux candidates manquantes (gratuit, aucune ressource créée)"
+        type: boolean
+        default: true
+
+concurrency:
+  group: region-probe
+  # Un sondage à la fois — jamais deux runs superposés (mesures lisibles).
+  cancel-in-progress: false
+
+permissions:
+  issues: write # issue d'information si une candidate passe verte — c'est tout
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TEN: ocid1.tenancy.oc1..aaaaaaaa5lipoqjckcohkzca6uc42svliyvuaw7cl33ef5546mhcv4xf7kxq
+      HOME_REGION: za-johannesburg-1
+    steps:
+      - name: OCI CLI + profil par région (clé API du coffre GitHub)
+        env:
+          OCI_USER: ${{ secrets.OCI_CLI_USER }}
+          OCI_TENANCY: ${{ secrets.OCI_CLI_TENANCY }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_CLI_FINGERPRINT }}
+          OCI_REGION: ${{ secrets.OCI_CLI_REGION }}
+          OCI_KEY: ${{ secrets.OCI_API_KEY }}
+          IN_REGIONS: ${{ github.event.inputs.regions || '' }}
+        run: |
+          python3 -m pip install --quiet oci-cli \
+            || python3 -m pip install --quiet --break-system-packages oci-cli
+          mkdir -p ~/.oci
+          {
+            echo "[DEFAULT]"
+            echo "user=$OCI_USER"
+            echo "fingerprint=$OCI_FINGERPRINT"
+            echo "tenancy=$OCI_TENANCY"
+            echo "region=$OCI_REGION"
+            echo "key_file=$HOME/.oci/oci_api_key.pem"
+          } > ~/.oci/config
+          printf '%s\n' "$OCI_KEY" > ~/.oci/oci_api_key.pem
+          chmod 600 ~/.oci/config ~/.oci/oci_api_key.pem
+          # Poing d'authentification (401 immédiat si un secret manque)
+          oci iam region-subscription list --query 'length(data)' --raw-output >/dev/null
+          echo "auth OCI OK"
+          # Profils par région (union défauts + input dispatch) — la
+          # sonde y bascule par --profile, mécanisme central du CLI.
+          DEFAULTS="za-johannesburg-1 eu-marseille-1 eu-paris-1 eu-milan-1 uk-cardiff-1"
+          EXTRA="$(echo "$IN_REGIONS" | tr ',' ' ' | xargs)"
+          for R in $(echo "$DEFAULTS $EXTRA" | tr ' ' '\n' | sort -u); do
+            {
+              echo ""
+              echo "[$R]"
+              echo "user=$OCI_USER"
+              echo "fingerprint=$OCI_FINGERPRINT"
+              echo "tenancy=$OCI_TENANCY"
+              echo "region=$R"
+              echo "key_file=$HOME/.oci/oci_api_key.pem"
+            } >> ~/.oci/config
+          done
+          echo "profils écrits : $(grep -c '^\[' ~/.oci/config) (défaut inclus)"
+
+      - name: Abonnement des régions candidates (gratuit — aucune ressource créée)
+        id: subscribe
+        env:
+          IN_REGIONS: ${{ github.event.inputs.regions || '' }}
+          IN_SUBSCRIBE: ${{ github.event.inputs.subscribe || 'true' }}
+        run: |
+          DEFAULTS="za-johannesburg-1 eu-marseille-1 eu-paris-1 eu-milan-1 uk-cardiff-1"
+          LIST="$(echo "$IN_REGIONS" | tr ',' ' ' | xargs)"
+          [ -z "$LIST" ] && LIST="$DEFAULTS"
+          echo "list=$LIST" >> "$GITHUB_OUTPUT"
+          echo "── Régions à sonder : $LIST"
+          # État d'abonnement actuel (champs : regionName / regionId / state)
+          oci iam region-subscription list > /tmp/subs.json
+          jq -r '.data[] | "  abonné : \(.regionName) (\(.state), home=\(.isHomeRegion))"' /tmp/subs.json
+          # Catalogue régional : nom → id d'abonnement
+          oci iam region list > /tmp/regions.json
+          jq -c '.data[0]' /tmp/regions.json | sed 's/^/  catalogue (1er article) : /'
+          if [ "$IN_SUBSCRIBE" != "true" ]; then
+            echo "── Abonnement désactivé (input) — les non-abonnées seront marquées ⚠."
+            exit 0
+          fi
+          for R in $LIST; do
+            if jq -e --arg r "$R" '.data[] | select(.regionName == $r)' /tmp/subs.json >/dev/null; then
+              echo "  $R : déjà abonné — rien à faire."
+              continue
+            fi
+            RID="$(jq -r --arg r "$R" \
+              '.data[] | select((.name // .regionName // "") == $r) | (.id // .regionId // "")' \
+              /tmp/regions.json | head -1)"
+            if [ -z "$RID" ] || [ "$RID" = "null" ]; then
+              # Repli : synthèse depuis le nom (eu-marseille-1 → ocid1.region..EU_MARSEILLE_1)
+              RID="ocid1.region..$(echo "$R" | tr '[:lower:]-' '[:upper:]_')"
+              echo "  $R : id introuvable au catalogue — id synthétisé $RID (tentative)."
+            else
+              echo "  $R : abonnement demandé ($RID)…"
+            fi
+            OUT="$(oci iam region-subscription create --region-id "$RID" 2>&1 || true)"
+            echo "$OUT" | grep -vE '^\s*$' | tail -2 | sed 's/^/    /'
+          done
+          # Attente de READY (quelques secondes à quelques minutes) —
+          # max 3 min puis on sonde ce qui est prêt, le reste attendra
+          # le prochain passage horaire.
+          for i in $(seq 1 18); do
+            sleep 10
+            oci iam region-subscription list > /tmp/subs.json
+            MISSING=""
+            for R in $LIST; do
+              STATE="$(jq -r --arg r "$R" '.data[] | select(.regionName == $r) | .state // ""' /tmp/subs.json)"
+              [ "$STATE" = "READY" ] || MISSING="$MISSING $R"
+            done
+            if [ -z "$(echo $MISSING | xargs)" ]; then
+              echo "── Toutes les régions de la liste sont READY."
+              break
+            fi
+            [ "$i" = "18" ] && echo "── encore en attente :$MISSING — sondées au prochain passage."
+          done
+
+      - name: Sonde par région (capacity reports gratuits — doctrine N°222)
+        id: probe
+        run: |
+          LIST="${{ steps.subscribe.outputs.list }}"
+          # Mêmes cibles A1 que hunt-a1 — comparaison directe possible.
+          cat > /tmp/capreq.json << 'EOF'
+          [
+            {"instanceShape": "VM.Standard.A1.Flex", "instanceShapeConfig": {"ocpus": 2.0, "memoryInGBs": 12.0}},
+            {"instanceShape": "VM.Standard.A1.Flex", "instanceShapeConfig": {"ocpus": 1.0, "memoryInGBs": 6.0}},
+            {"instanceShape": "VM.Standard.A1.Flex", "faultDomain": "FAULT-DOMAIN-1", "instanceShapeConfig": {"ocpus": 2.0, "memoryInGBs": 12.0}},
+            {"instanceShape": "VM.Standard.A1.Flex", "faultDomain": "FAULT-DOMAIN-2", "instanceShapeConfig": {"ocpus": 2.0, "memoryInGBs": 12.0}},
+            {"instanceShape": "VM.Standard.A1.Flex", "faultDomain": "FAULT-DOMAIN-3", "instanceShapeConfig": {"ocpus": 2.0, "memoryInGBs": 12.0}}
+          ]
+          EOF
+          printf '[{"instanceShape": "VM.Standard.E2.1.Micro"}]' > /tmp/microreq.json
+          : > /tmp/summary.md
+          GREEN_LIST=""
+          for R in $LIST; do
+            echo ""
+            echo "═══ $R ═══"
+            STATE="$(jq -r --arg r "$R" '.data[] | select(.regionName == $r) | .state // ""' /tmp/subs.json 2>/dev/null)"
+            if [ "$STATE" != "READY" ]; then
+              if [ -n "$STATE" ]; then M="$STATE"; else M="non abonnée"; fi
+              echo "  ⚠ région $M — sondée au prochain passage."
+              echo "| $R | — | — | ⚠ $M |" >> /tmp/summary.md
+              continue
+            fi
+            # ADs de la région (IAM régional via le profil dédié)
+            ADS="$(oci --profile "$R" iam availability-domain list \
+              --query 'data[*].name' --raw-output 2>/dev/null | jq -r '.[]?' 2>/dev/null || true)"
+            if [ -z "$ADS" ]; then
+              echo "  ⚠ énumération des AD impossible — retentée au prochain passage."
+              echo "| $R | — | — | ⚠ AD |" >> /tmp/summary.md
+              continue
+            fi
+            GREENS=0; TOTAL=0
+            for AD in $ADS; do
+              sleep 3 # budget anti-429 (même discipline que hunt-a1)
+              OUT="$(oci --profile "$R" compute compute-capacity-report create \
+                --compartment-id "$TEN" --availability-domain "$AD" \
+                --shape-availabilities file:///tmp/capreq.json 2>&1 || true)"
+              if ! echo "$OUT" | jq -e '.data["shape-availabilities"]' >/dev/null 2>&1; then
+                echo "  $AD : ⚠ sonde A1 en échec — $(echo "$OUT" | grep -vE '^\s*$' | tail -1 | cut -c1-160)"
+                continue
+              fi
+              echo "$OUT" | jq -r '.data["shape-availabilities"] | to_entries[] |
+                "  \(.value["fault-domain"] // "auto") → \(.value["availability-status"])"' \
+                | sed "s/^/$AD · /"
+              G="$(echo "$OUT" | jq -r '[.data["shape-availabilities"][] | select(.["availability-status"]=="AVAILABLE")] | length')"
+              GREENS=$((GREENS + G)); TOTAL=$((TOTAL + 5))
+            done
+            # Sonde micro SÉPARÉE (AD-1) — miroir hunt-a1 N°241.
+            sleep 3
+            FIRST_AD="$(echo "$ADS" | head -1)"
+            MOUT="$(oci --profile "$R" compute compute-capacity-report create \
+              --compartment-id "$TEN" --availability-domain "$FIRST_AD" \
+              --shape-availabilities file:///tmp/microreq.json 2>&1 || true)"
+            MSTAT="$(echo "$MOUT" | jq -r '.data["shape-availabilities"][0]["availability-status"] // empty' 2>/dev/null || true)"
+            if [ -z "$MSTAT" ]; then
+              MSTAT="⚠ échec sonde"
+              echo "  $FIRST_AD · micro E2.1.Micro → ⚠ sonde en échec"
+            else
+              echo "  $FIRST_AD · micro E2.1.Micro → $MSTAT"
+            fi
+            if [ "$R" = "$HOME_REGION" ]; then TAG="témoin (région d'origine — à faire coïncider avec hunt-a1)"
+            else TAG="candidate"; fi
+            if [ "$GREENS" -gt 0 ]; then
+              echo "── $R : 🟢 A1 ($GREENS cible(s) verte(s) / $TOTAL) · micro $MSTAT — $TAG"
+              echo "| $R | 🟢 $GREENS/$TOTAL | $MSTAT | $TAG |" >> /tmp/summary.md
+              [ "$R" != "$HOME_REGION" ] && GREEN_LIST="$GREEN_LIST $R"
+            else
+              echo "── $R : 🔴 A1 rouge ($GREENS/$TOTAL) · micro $MSTAT — $TAG"
+              echo "| $R | 🔴 $GREENS/$TOTAL | $MSTAT | $TAG |" >> /tmp/summary.md
+            fi
+          done
+          # Sorties + récapitulatif console + Summary du run
+          echo "green=$(echo $GREEN_LIST | xargs)" >> "$GITHUB_OUTPUT"
+          echo ""
+          echo "═══ RÉCAPITULATIF ═══"
+          cat /tmp/summary.md
+          {
+            echo "## Sonde multi-régions N°246 — $(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo ""
+            echo "| Région | A1 (vertes/sondées) | micro | rôle |"
+            echo "|---|---|---|---|"
+            cat /tmp/summary.md
+            echo ""
+            echo "Capacity reports GRATUITS (doctrine N°222) — aucun tir. Un vert est une DONNÉE pour la région d'origine d'une future tenancy : la capture reste impossible hors région d'origine sur la tenancy actuelle (règle Always Free)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Information — une candidate passe verte
+        if: steps.probe.outputs.green != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for R in ${{ steps.probe.outputs.green }}; do
+            TITLE="N°246 — $R mesurée VERTE (A1) — donnée pour la région d'origine de la prochaine tenancy"
+            if gh issue list --state open --limit 100 | grep -Fq "$R mesurée VERTE"; then
+              echo "  $R : issue ouverte déjà présente — pas de doublon."
+              continue
+            fi
+            gh issue create --title "$TITLE" --body "$(cat <<EOF
+          La sonde multi-régions N°246 a mesuré une fenêtre de capacité
+          A1 VERTE dans la région \`$R\` (capacity report gratuit — doctrine N°222).
+
+          Ce que cela signifie :
+          - la capture reste IMPOSSIBLE hors région d'origine sur la tenancy
+            actuelle (règle Always Free) : ce vert n'est PAS un tir à faire ;
+          - c'est une DONNÉE DE DÉCISION : si le point du 25-28/10 arrive
+            sans capture A1/micro, cette région est une candidate MESURÉE
+            pour la région d'origine de la nouvelle tenancy (§8-ter du
+            runbook MIGRATION-ORACLE).
+
+          Le tableau complet vit dans le Summary du run \`region-probe\`
+          émetteur. Une seule issue ouverte par candidate (pas de doublon
+          tant que celle-ci n'est pas fermée). La tendance s'accumule à
+          chaque passage horaire (historique des runs : 90 jours).
+          EOF
+          )"
+            echo "  $R : issue d'information ouverte."
+          done

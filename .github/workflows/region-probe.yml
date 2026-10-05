@@ -12,17 +12,26 @@ name: region-probe
 # ce choix mesuré au lieu d'empirique (rumeurs de forums).
 #
 # MÉTHODE (doctrine N°222 — sonder, JAMAIS tirer) :
-#   1. Abonnement GRATUIT de la tenancy aux régions candidates
-#      (region-subscription : instantané, AUCUNE ressource créée — une
-#      région abonnée sans ressources ne coûte rien).
-#   2. Pour chaque région prête : capacity report (GRATUIT) sur les
-#      MÊMES cibles que hunt-a1 (A1 2/12 auto, A1 1/6 auto, FD-1/2/3
-#      2/12) par AD + sonde micro SÉPARÉE (miroir hunt-a1 N°241 :
-#      l'échec d'une sonde ne casse jamais l'autre).
-#   3. Tableau vert/rouge dans le Summary du run (l'historique GitHub
-#      fait office de tendance pour le 25-28/10) + issue d'information
-#      à la première fenêtre verte d'une candidate (une seule ouverte
-#      par région — pas de doublon tant qu'elle n'est pas fermée).
+#   1. Tentative d'abonnement GRATUIT de la tenancy aux régions
+#      candidates (region-subscription : instantané, AUCUNE
+#      ressource créée). ⚠ Mesuré (run 37267448830) : la tenancy
+#      répond « 409 TenantCapacityExceeded — maximum number of
+#      allowed subscribed regions » (état essai non converti,
+#      1 région abonnée : l'origine). Si la tenancy est convertie
+#      un jour (PAYG), les abonnements se mettront à marcher seuls.
+#   2. Dans TOUS les cas (abonnée ou non) : capacity report GRATUIT
+#      par région — l'IAM OCI est répliqué dans toutes les régions,
+#      le rapport crois-region SANS abonnement est donc TENTÉ et
+#      mesuré (expérience N°246-c : si l'API refuse, le refus est
+#      consigné et la mesure attendra la conversion de la tenancy ;
+#      si elle accepte, la donnée régionale est disponible dès
+#      aujourd'hui). ADs : énumération IAM en priorité, repli par
+#      synthèse « yMUP:<RÉGION>-AD-n » (yMUP = préfixe AD mesuré de
+#      cette tenancy sur Johannesburg).
+#   3. Mêmes cibles que hunt-a1 (A1 2/12 auto, 1/6 auto, FD-1/2/3)
+#      par AD + sonde micro SÉPARÉE (miroir N°241). Tableau
+#      vert/rouge dans le Summary du run + issue d'information à
+#      la première fenêtre verte d'une candidate.
 #
 # ⚠ AUCUN TIR : la capture hors région d'origine est IMPOSSIBLE par
 # règle Always Free — un vert mesuré ici informe le CHOIX de région de
@@ -173,22 +182,20 @@ jobs:
               echo "$OUT" | grep -vE '^\s*$' | tail -20 | sed 's/^/    /'
             fi
           done
-          # Attente de READY (quelques secondes à quelques minutes) —
-          # max 3 min puis on sonde ce qui est prêt, le reste attendra
-          # le prochain passage horaire.
+          # Attente UNIQUEMENT si des abonnements sont en cours
+          # d'activation (state ENABLING) — mesuré : des creates en
+          # 409 TenantCapacityExceeded ne doivent pas faire perdre
+          # 3 minutes à chaque passage horaire.
           for i in $(seq 1 18); do
-            sleep 10
             oci iam region-subscription list > /tmp/subs.json
-            MISSING=""
-            for R in $LIST; do
-              STATE="$(jq -r --arg r "$R" '.data[] | select(.["region-name"] == $r) | .state // ""' /tmp/subs.json)"
-              [ "$STATE" = "READY" ] || MISSING="$MISSING $R"
-            done
-            if [ -z "$(echo $MISSING | xargs)" ]; then
-              echo "── Toutes les régions de la liste sont READY."
+            PENDING="$(jq -r '[.data[] | select(.state == "ENABLING") | ."region-name"] | join(" ")' /tmp/subs.json 2>/dev/null | xargs)"
+            if [ -z "$PENDING" ]; then
+              echo "── Aucun abonnement en attente — sonde immédiate."
               break
             fi
-            [ "$i" = "18" ] && echo "── encore en attente :$MISSING — sondées au prochain passage."
+            echo "  abonnements en cours d activation : $PENDING (10 s…)"
+            sleep 10
+            [ "$i" = "18" ] && echo "── toujours ENABLING : $PENDING — retentés au prochain passage."
           done
 
       - name: Sonde par région (capacity reports gratuits — doctrine N°222)
@@ -211,20 +218,26 @@ jobs:
           for R in $LIST; do
             echo ""
             echo "═══ $R ═══"
-            STATE="$(jq -r --arg r "$R" '.data[] | select(.["region-name"] == $r) | .state // ""' /tmp/subs.json 2>/dev/null)"
-            if [ "$STATE" != "READY" ]; then
-              if [ -n "$STATE" ]; then M="$STATE"; else M="non abonnée"; fi
-              echo "  ⚠ région $M — sondée au prochain passage."
-              echo "| $R | — | — | ⚠ $M |" >> /tmp/summary.md
-              continue
+            # Contexte d'abonnement (information) — mais le sondage est
+            # TENTÉ DANS TOUS LES CAS (expérience N°246-c : l'IAM est
+            # répliqué dans toutes les régions, le capacity report
+            # croix-région sans abonnement est peut-être accepté —
+            # on mesure au lieu de supposer).
+            SUBST="$(jq -r --arg r "$R" '.data[] | select(."region-name" == $r) | (.state // "abonnée")' /tmp/subs.json 2>/dev/null)"
+            if [ -n "$SUBST" ]; then
+              echo "  abonnement : $SUBST"
+            else
+              echo "  non abonnée (409 TenantCapacityExceeded mesuré) — rapport tenté quand même"
             fi
-            # ADs de la région (IAM régional via le profil dédié)
+            # ADs de la région : énumération IAM en priorité, repli par
+            # synthèse « yMUP:<RÉGION>-AD-n » — yMUP = préfixe AD mesuré
+            # de cette tenancy (yMUP:AF-JOHANNESBURG-1-AD-1, runs hunt-a1).
             ADS="$(oci --profile "$R" iam availability-domain list \
               --query 'data[*].name' --raw-output 2>/dev/null | jq -r '.[]?' 2>/dev/null || true)"
             if [ -z "$ADS" ]; then
-              echo "  ⚠ énumération des AD impossible — retentée au prochain passage."
-              echo "| $R | — | — | ⚠ AD |" >> /tmp/summary.md
-              continue
+              RUP="$(echo "$R" | tr '[:lower:]' '[:upper:]')"
+              ADS="yMUP:${RUP}-AD-1 yMUP:${RUP}-AD-2 yMUP:${RUP}-AD-3"
+              echo "  énumération AD indisponible — ADs synthétisés (tirets, comme le témoin) : $ADS"
             fi
             GREENS=0; TOTAL=0
             for AD in $ADS; do
@@ -261,6 +274,9 @@ jobs:
               echo "── $R : 🟢 A1 ($GREENS cible(s) verte(s) / $TOTAL) · micro $MSTAT — $TAG"
               echo "| $R | 🟢 $GREENS/$TOTAL | $MSTAT | $TAG |" >> /tmp/summary.md
               [ "$R" != "$HOME_REGION" ] && GREEN_LIST="$GREEN_LIST $R"
+            elif [ "$TOTAL" -eq 0 ]; then
+              echo "── $R : ⚠ aucune sonde passée — la mesure attendra (abonnement refusé ?)"
+              echo "| $R | — | — | ⚠ aucune sonde |" >> /tmp/summary.md
             else
               echo "── $R : 🔴 A1 rouge ($GREENS/$TOTAL) · micro $MSTAT — $TAG"
               echo "| $R | 🔴 $GREENS/$TOTAL | $MSTAT | $TAG |" >> /tmp/summary.md

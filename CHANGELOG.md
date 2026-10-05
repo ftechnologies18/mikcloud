@@ -5,6 +5,50 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-05 — N°250 — Triple mesure chasse : audit de capture, chasseur parallèle, traque de la boucle de pilotage
+
+### Contexte
+L'exploitant reçoit « hunt-a1: All jobs were cancelled » toutes les 5 minutes
+et suspecte une victoire silencieuse. Vérification complète : **aucune
+capture** (garde du run 21:00 : « Pas d'A1 en tenancy », 6/6 cibles rouges,
+workflow toujours actif, aucune issue de victoire). Les notifications sont
+le bruit de la **boucle de pilotage externe** qui dispatch hunt-a1 toutes
+les 5 min et tue chaque run non terminé (attente de runner GitHub la
+soirée) — cadence voulue, effet secondaire involontaire.
+
+### Consigné
+- **`hunt-audit.yml`** (dispatch, lecture seule, permissions {}) :
+  inventaire COMPLET des instances de la tenancy (tous états, TERMINATED
+  compris), verdict explicite (A1 ? micro ? pont E5 vivant ? intrus ?) et
+  état de l'IP réservée 84.12.85.241. À dispatcher à chaque doute — le
+  verdict fait foi, indépendamment de tout chasseur.
+- **`hunt-parallel.yml`** (cron `2-59/5 * * * *` 24/7 + dispatch) :
+  deuxième chasseur A1 **in-dépôt**, décalé de +2 min des dispatches de
+  la boucle de pilotage → une sonde JNB en moyenne toutes les ~2,5 min.
+  Doctrine N°222 conservée (sonde gratuite puis tir si vert). Deux
+  verrous propres : cible **A1 uniquement** (le micro reste au chasseur
+  principal N°241 — double tir micro impossible par construction) et
+  **re-contrôle de garde à la seconde du tir** (double mikcloud-backend
+  impossible même en fenêtre de course).
+- **`pont-pilotage.yml`** (dispatch, lecture seule, permissions {}) :
+  inspection du pont E5 pour localiser la boucle de dispatch (timers,
+  crontabs, processus, répertoires de pilotage) — jetons GitHub MASQUÉS
+  en sortie. Aucune modification : le geste d'arrêt éventuel se décide
+  avec l'exploitant (la parallèle in-dépôt remplace alors la cadence
+  sans tuer de runs ni spammer).
+- **Croix de désactivation** : à la victoire A1 — la sienne OU celle
+  détectée par la garde — chaque chasseur éteint les DEUX
+  (`gh workflow disable` croisé) ; l'issue de victoire parallèle est
+  titrée « chasse PARALLÈLE » pour l'atterrissage land-a1.
+- **Hygiène** : issues #55-58 (rotations t2-secrets consommées pendant
+  la nuit d'atterrissage T2) fermées avec commentaire.
+
+### Mesures d'accompagnement
+- L'exploitant peut décocher « Cancellation » (Settings → Notifications
+  → Actions) pour ne plus recevoir le bruit, en gardant les échecs.
+- Repo public → minutes Actions illimitées : la cadence doublée ne coûte
+  rien et les rapports de capacité restent gratuits (doctrine N°222).
+
 ## 2026-10-05 — N°249 — Décision exploitant : compte neuf + carte NEUVE en parallèle, migration SANS coupure (checklist d'inscription consignée)
 
 ### Contexte

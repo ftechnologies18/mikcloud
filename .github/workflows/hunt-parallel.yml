@@ -1,0 +1,223 @@
+name: hunt-parallel
+
+# ═══ CHASSEUR A1 PARALLÈLE (N°250, 05/10/2026 — demande exploitant) ═══
+# « Lance une chasse parallèle » : deuxième chasseur A1 IN-DÉPÔT, cadence
+# 5 min 24/7 par cron natif GitHub, DÉCALÉ de 2 minutes des runs du
+# chasseur principal (hunt-a1, dispatché par la boucle de pilotage sur
+# les minutes 0/5/10…) → une sonde JNB en moyenne toutes les ~2,5 min.
+#
+# Différences vouées avec hunt-a1.yml :
+#   - CIBLE A1 UNIQUEMENT : le filet micro E2.1.Micro reste la propriété
+#     du chasseur principal (N°241) — jamais de double tir possible sur
+#     le micro par construction ;
+#   - RE-CONTRÔLE AU TIR : la garde est revérifiée À LA SECONDE du tir
+#     (le chasseur principal peut avoir capturé entre la sonde parallèle
+#     et son propre tir — l'inverse l'est aussi) → un double lancement
+#     mikcloud-backend est impossible même en fenêtre de course ;
+#   - CROIX DE DÉSACTIVATION : à la victoire (la sienne ou celle détectée
+#     par la garde), CE workflow désactive les DEUX chasseurs ; la
+#     victoire de hunt-a1 désactive aussi hunt-parallel (édition N°250).
+#
+# Doctrine conservée à l'identique (N°222) : SONDER d'abord
+# (compute-capacity-reports — GRATUIT, hors budget anti-429), ne TIRER
+# que si un pool est AVAILABLE ; jamais de tir à l'aveugle.
+# L'instance part avec IP publique ÉPHÉMÈRE + cloud-init auto-bootstrap
+# (fix MTU [0b/8]) ; l'IP réservée 84.12.85.241 reste sur le pont E5 —
+# la production n'est JAMAIS touchée. Atterrissage = land-a1.yml.
+#
+# Bruit de notifications : les crons internes ne tuent jamais un run en
+# cours (concurrency cancel-in-progress: false) ; en cas de pénurie de
+# runners GitHub, un run EN ATTENTE peut être remplacé par le suivant
+# (annulation « file d'attente » occasionnelle — sans comparaison avec
+# la boucle de pilotage externe qui tue chaque run non terminé toutes
+# les 5 min). L'exploitant peut de surcroît décocher « Cancellation »
+# dans Settings → Notifications → Actions.
+
+on:
+  schedule:
+    # 24/7 toutes les 5 min, décalé de +2 min des minutes rondes (la
+    # boucle de pilotage externe dispatch hunt-a1 à :00/:05/:10… ; les
+    # runs ci-dessus partent à :02/:07/:12 → sondes entrelacées).
+    - cron: "2-59/5 * * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: hunt-parallel
+  # Un seul chasseur parallèle à la fois ; un run qui arrive attend le
+  # précédent (aucun tir superposé, aucune annulation de run en cours).
+  cancel-in-progress: false
+
+permissions:
+  actions: write # auto-désactivation des DEUX chasseurs à la capture
+  issues: write  # issue d'alerte à la capture
+
+jobs:
+  hunt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      TEN: ocid1.tenancy.oc1..aaaaaaaa5lipoqjckcohkzca6uc42svliyvuaw7cl33ef5546mhcv4xf7kxq
+      AD: yMUP:AF-JOHANNESBURG-1-AD-1
+      IMG: ocid1.image.oc1.af-johannesburg-1.aaaaaaaajuezopthnotjmbmvpsii43e7hoxielm74waloedyh6i4qvfiym2a
+      SUBNET: ocid1.subnet.oc1.af-johannesburg-1.aaaaaaaanasgo3l7bndnre4ajjcpzfewliekzakfz4c7dhz5zh6ksh7e7caa
+    steps:
+      - name: OCI CLI + profil (clé API du coffre GitHub)
+        env:
+          OCI_USER: ${{ secrets.OCI_CLI_USER }}
+          OCI_TENANCY: ${{ secrets.OCI_CLI_TENANCY }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_CLI_FINGERPRINT }}
+          OCI_REGION: ${{ secrets.OCI_CLI_REGION }}
+          OCI_KEY: ${{ secrets.OCI_API_KEY }}
+        run: |
+          python3 -m pip install --quiet oci-cli \
+            || python3 -m pip install --quiet --break-system-packages oci-cli
+          mkdir -p ~/.oci
+          {
+            echo "[DEFAULT]"
+            echo "user=$OCI_USER"
+            echo "fingerprint=$OCI_FINGERPRINT"
+            echo "tenancy=$OCI_TENANCY"
+            echo "region=$OCI_REGION"
+            echo "key_file=$HOME/.oci/oci_api_key.pem"
+          } > ~/.oci/config
+          printf '%s\n' "$OCI_KEY" > ~/.oci/oci_api_key.pem
+          chmod 600 ~/.oci/config ~/.oci/oci_api_key.pem
+          oci iam region-subscription list --query 'length(data)' --raw-output >/dev/null
+          echo "auth OCI OK"
+
+      - name: Garde — A1 déjà capturée (par QUI que ce soit) ?
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          N="$(oci compute instance list --compartment-id "$TEN" --all \
+            --query "data[?\"display-name\"=='mikcloud-backend' && \"lifecycle-state\"!='TERMINATED' && shape=='VM.Standard.A1.Flex'] | length(@)" --raw-output 2>/dev/null || echo 1)"
+          if [ "$N" != "0" ]; then
+            echo "::notice::mikcloud-backend (A1) déjà présente — les DEUX chasseurs se désactivent."
+            gh workflow disable hunt-parallel.yml
+            gh workflow disable hunt-a1.yml || true
+            echo "stop=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Pas d'A1 en tenancy — la chasse parallèle continue."
+
+      - name: Sonde capacité (gratuite — doctrine N°222)
+        id: probe
+        if: steps.guard.outputs.stop != '1'
+        run: |
+          cat > /tmp/capreq.json << 'EOF'
+          [
+            {"instanceShape": "VM.Standard.A1.Flex", "instanceShapeConfig": {"ocpus": 2.0, "memoryInGBs": 12.0}},
+            {"instanceShape": "VM.Standard.A1.Flex", "instanceShapeConfig": {"ocpus": 1.0, "memoryInGBs": 6.0}},
+            {"instanceShape": "VM.Standard.A1.Flex", "faultDomain": "FAULT-DOMAIN-1", "instanceShapeConfig": {"ocpus": 2.0, "memoryInGBs": 12.0}},
+            {"instanceShape": "VM.Standard.A1.Flex", "faultDomain": "FAULT-DOMAIN-2", "instanceShapeConfig": {"ocpus": 2.0, "memoryInGBs": 12.0}},
+            {"instanceShape": "VM.Standard.A1.Flex", "faultDomain": "FAULT-DOMAIN-3", "instanceShapeConfig": {"ocpus": 2.0, "memoryInGBs": 12.0}}
+          ]
+          EOF
+          oci compute compute-capacity-report create --compartment-id "$TEN" \
+            --availability-domain "$AD" --shape-availabilities file:///tmp/capreq.json > /tmp/report.json
+          jq -r '.data["shape-availabilities"] | to_entries[] | "  cible #\(.key) (\(.value["fault-domain"] // "placement auto")) → \(.value["availability-status"])"' /tmp/report.json
+          PICK="$(jq -r '.data["shape-availabilities"] | to_entries[] | select(.value["availability-status"]=="AVAILABLE") | .key' /tmp/report.json | head -1)"
+          if [ -n "$PICK" ]; then
+            echo "── POOL VERT A1 (cible #$PICK) : TIR prioritaire."
+          else
+            echo "── TOUS ROUGES : la flotte est saturée. Aucun tir (budget préservé)."
+          fi
+          echo "pick=$PICK" >> "$GITHUB_OUTPUT"
+
+      - name: Tir (re-contrôle de garde à la seconde près, puis lancement)
+        id: fire
+        if: steps.probe.outputs.pick != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+        run: |
+          PICK="${{ steps.probe.outputs.pick }}"
+          # ── RE-CONTRÔLE (spécifique chasse parallèle, N°250) ──
+          # Le chasseur principal (dispatch 5 min décalé) a pu capturer
+          # entre notre sonde et maintenant : si une A1 existe déjà, on
+          # s'arrête NET — pas de double mikcloud-backend possible.
+          N="$(oci compute instance list --compartment-id "$TEN" --all \
+            --query "data[?\"display-name\"=='mikcloud-backend' && \"lifecycle-state\"!='TERMINATED'] | length(@)" --raw-output 2>/dev/null || echo 1)"
+          if [ "$N" != "0" ]; then
+            echo "::notice::A1 apparue entre la sonde et le tir (chasseur principal plus rapide) — abandon propre du tir."
+            gh workflow disable hunt-parallel.yml
+            gh workflow disable hunt-a1.yml || true
+            echo "a1=deja-capturee" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          case "$PICK" in
+            0) SHAPE=VM.Standard.A1.Flex; OCPUS=2.0; MEM=12.0; FD="";;
+            1) SHAPE=VM.Standard.A1.Flex; OCPUS=1.0; MEM=6.0;  FD="";;
+            2) SHAPE=VM.Standard.A1.Flex; OCPUS=2.0; MEM=12.0; FD="FAULT-DOMAIN-1";;
+            3) SHAPE=VM.Standard.A1.Flex; OCPUS=2.0; MEM=12.0; FD="FAULT-DOMAIN-2";;
+            4) SHAPE=VM.Standard.A1.Flex; OCPUS=2.0; MEM=12.0; FD="FAULT-DOMAIN-3";;
+            *) echo "✗ index de cible inconnu : $PICK"; exit 1;;
+          esac
+          FDARG=()
+          [ -n "$FD" ] && FDARG=(--fault-domain "$FD")
+          printf '%s\n' "$SSH_KEY" > /tmp/hunt-key
+          chmod 600 /tmp/hunt-key
+          ssh-keygen -y -f /tmp/hunt-key > /tmp/hunt-key.pub
+          cat > /tmp/cloud-init.yaml << 'EOF'
+          #cloud-config
+          runcmd:
+            - curl -fsSL https://raw.githubusercontent.com/ftechnologies18/mikcloud/main/deploy/oracle/bootstrap.sh -o /root/bootstrap.sh
+            - bash /root/bootstrap.sh api.mikcloud.ftci.fr
+          EOF
+          echo "── TIR (parallèle) : mikcloud-backend ($SHAPE, $OCPUS OCPU / $MEM Go) — ${FD:-placement auto} ──"
+          OUT="$(oci compute instance launch \
+            --compartment-id "$TEN" --availability-domain "$AD" \
+            --display-name mikcloud-backend --shape "$SHAPE" \
+            --shape-config "{\"ocpus\":$OCPUS,\"memory-in-gbs\":$MEM}" \
+            "${FDARG[@]}" \
+            --image-id "$IMG" --subnet-id "$SUBNET" \
+            --assign-public-ip true \
+            --ssh-authorized-keys-file /tmp/hunt-key.pub \
+            --user-data-file /tmp/cloud-init.yaml \
+            --boot-volume-size-in-gbs 50 \
+            --query 'data.id' --raw-output 2>&1 || true)"
+          echo "$OUT"
+          if echo "$OUT" | grep -q '^ocid1\.instance'; then
+            echo "a1=$(echo "$OUT" | head -1)" >> "$GITHUB_OUTPUT"
+            echo "★★★ CAPTURE ACCEPTÉE (chasse parallèle)"
+          elif echo "$OUT" | grep -q 'Out of host capacity'; then
+            echo "::notice::Course perdue (la place a été prise entre la sonde et le tir) — le prochain passage retentera."
+            exit 0
+          elif echo "$OUT" | grep -q 'TooManyRequests'; then
+            echo "::notice::Bride 429 — l'espacement naturel des crons suffit, rien à faire."
+            exit 0
+          else
+            echo "✗ erreur de lancement inattendue (voir ci-dessus)"
+            exit 1
+          fi
+
+      - name: Victoire A1 — issue d'alerte + désactivation des DEUX chasseurs
+        if: steps.fire.outputs.a1 != '' && steps.fire.outputs.a1 != 'deja-capturee'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          A1="${{ steps.fire.outputs.a1 }}"
+          EPHEM="$(oci compute instance list-vnics --instance-id "$A1" \
+            --query 'data[0]."public-ip"' --raw-output 2>/dev/null || echo '?')"
+          gh issue create --title "A1 capturée (chasse PARALLÈLE) — prête pour l'atterrissage" --body "$(cat <<EOF
+          La capacité ARM s'est libérée et le chasseur PARALLÈLE (N°250)
+          a tiré avant le chasseur principal.
+
+          - Instance : \`mikcloud-backend\` (A1.Flex, 50 Go, cloud-init auto-bootstrap avec fix MTU)
+          - OCID : \`$A1\`
+          - IP publique éphémère de bootstrap : \`$EPHEM\`
+          - L'IP réservée 84.12.85.241 RESTE sur le pont E5 — aucun impact production.
+
+          PROCHAINE ÉTAPE : à la session suivante de l'agent, atterrissage
+          \`land-a1.yml\` (retrait de l'éphémère, IP réservée → A1,
+          ORACLE_GOARCH=arm64, déploiement, santé, puis retrait du pont E5
+          derrière l'input terminate_e5).
+
+          Les DEUX chasseurs (hunt-a1 + hunt-parallel) se désactivent.
+          Après atterrissage validé : supprimer les secrets OCI_* du dépôt.
+          EOF
+          )"
+          gh workflow disable hunt-parallel.yml
+          gh workflow disable hunt-a1.yml || true
+          echo "Chasseurs désactivés — la capture attend son atterrissage."

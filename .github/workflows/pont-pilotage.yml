@@ -1,0 +1,100 @@
+name: pont-pilotage
+
+# ═══ INSPECTION DU PONT E5 — OÙ VIT LA BOUCLE DE PILOTAGE ? (N°250, 05/10/2026) ═══
+# Constat mesuré : hunt-a1 reçoit un workflow_dispatch toutes les 5 min
+# (minutes rondes +~11 s) d'une source EXTERNE au dépôt — aucun cron du
+# repo ne fait ça, et le sandbox agent (poste de pilotage historique,
+# /home/z/.oci — cf. recover-pont-access.yml) a été réinitialisé. Chaque
+# dispatch TUE le run précédent non terminé → l'exploitant reçoit
+# « All jobs were cancelled » toutes les 5 minutes.
+# Hypothèse forte : la boucle vit sur le pont E5 (seule machine 24/7).
+#
+# Ce workflow INSPECTE le pont en LECTURE SEULE — aucune modification :
+#   - timers systemd + unités maison ;
+#   - crontabs (exploitant + root) et /etc/cron.* ;
+#   - processus vivants (chasse/dispatch/github/curl) ;
+#   - répertoires de pilotage dans ~ et /opt ;
+#   - fichiers référençant un jeton GitHub (NOMS seuls, JAMAIS les
+#     valeurs — masquage défense en profondeur ghp_/gho_/github_pat_).
+#
+# Suite logique (session suivante, avec l'exploitant) : si la boucle est
+# identifiée, la METTRE À L'ARRÊT proprement (systemctl disable --now
+# ou retrait crontab) — la chasse parallèle in-dépôt (hunt-parallel.yml,
+# cron 2-59/5) remplace alors sa cadence SANS tuer de runs ni spammer.
+#
+# Sécurité : heredoc 'REMOTE' (piège n°18 — apostrophes françaises),
+# keepalives SSH N°245-a, permissions {} (aucune écriture GitHub),
+# déclenchement workflow_dispatch UNIQUEMENT.
+
+on:
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: pont-pilotage
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    name: Pont E5 — traque de la boucle de dispatch (lecture seule)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DEPLOY_USER: ${{ secrets.ORACLE_USER }}
+      ORACLE_HOST: ${{ secrets.ORACLE_HOST }}
+      SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+    steps:
+      - name: Inspection lecture seule du pont
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null /tmp/oracle_key
+          printf '%s\n' "$SSH_KEY" > /tmp/oracle_key
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
+          # Masquage défense en profondeur : aucun jeton ne sort du pont.
+          ssh $SSH_OPTS "$DEPLOY_USER@$ORACLE_HOST" bash -s <<'REMOTE' 2>&1 \
+            | sed -E 's/(ghp_|gho_|ghs_|github_pat_)[A-Za-z0-9_]+/\1***MASQUÉ***/g'
+          set -uo pipefail
+          echo "═══ 1. TIMERS SYSTEMD ═══"
+          systemctl list-timers --all --no-pager 2>/dev/null | head -25
+          echo
+          echo "═══ 2. UNITÉS MAISON (service/timer hors système) ═══"
+          systemctl list-units --type=service,timer --all --no-pager 2>/dev/null \
+            | grep -viE "systemd|ssh\.|cron\.|dbus|networkd|resolved|logind|journald|timesync|getty|polkit|rsyslog|chrony|multipathd|udisks|accounts-daemon|irqbalance|unattended|ModemManager|oracle|snapd|caddy|mikcloud" \
+            | head -20 || echo "  (aucune)"
+          echo
+          echo "═══ 3. CRONTABS ═══"
+          echo "── crontab exploitant ($USER) :"
+          crontab -l 2>/dev/null || echo "  (vide ou absent)"
+          echo "── crontab root :"
+          sudo crontab -l 2>/dev/null || echo "  (vide ou absent)"
+          echo "── /etc/cron.d/ :"
+          ls -la /etc/cron.d/ 2>/dev/null || echo "  (absent)"
+          for F in /etc/cron.d/*; do
+            [ -f "$F" ] && { echo "── contenu $F :"; grep -vE '^\s*(#|$)' "$F"; }
+          done 2>/dev/null
+          echo
+          echo "═══ 4. PROCESSUS VIVANTS (chasse/dispatch/github/curl/sleep) ═══"
+          ps aux | grep -iE "hunt|dispatch|github|gh |curl|wget|workflows" | grep -v grep || echo "  (aucun)"
+          echo
+          echo "═══ 5. RÉPERTOIRES DE PILOTAGE ═══"
+          echo "── ~ :"
+          ls -la ~ | head -30
+          echo "── ~/*pilotage* / ~/*hunt* / ~/*chasse* :"
+          ls -d ~/pilotage* ~/hunt* ~/chasse* 2>/dev/null || echo "  (aucun)"
+          echo "── /opt et /usr/local/bin (maison) :"
+          ls -la /opt 2>/dev/null | head -10
+          ls -la /usr/local/bin 2>/dev/null | grep -viE "total|^d" | head -15
+          echo
+          echo "═══ 6. FICHIERS À JETON GITHUB (noms seulement — valeurs JAMAIS affichées) ═══"
+          grep -rlE "ghp_|gho_|github_pat_|GITHUB_TOKEN|actions/runs|workflow_dispatch" \
+            ~ /etc/systemd/system /etc/cron.d /opt /usr/local/bin 2>/dev/null \
+            | grep -vE "\.oci/|authorized_keys|known_hosts" | head -20 || echo "  (aucun)"
+          echo
+          echo "═══ 7. HISTORIQUE RÉCENT (commandes liées à la chasse — jetons masqués) ═══"
+          grep -iE "hunt|workflow|dispatch|gh " ~/.bash_history 2>/dev/null | tail -15 \
+            | sed -E 's/(ghp_|gho_|ghs_|github_pat_)[A-Za-z0-9_]+/\1***MASQUÉ***/g' \
+            || echo "  (rien)"
+          echo
+          echo "═══ FIN DE L'INSPECTION — aucune modification effectuée ═══"
+          REMOTE

@@ -1,0 +1,120 @@
+name: hunt-audit
+
+# ═══ AUDIT DE CHASSE — VÉRIFICATION EN PROFONDEUR (N°250, 05/10/2026) ═══
+# Demande exploitant après suspicion de capture déclenchée par les
+# notifications répétées « All jobs were cancelled » (une toutes les 5 min)
+# : le présent audit tranche par interrogation DIRECTE de la tenancy,
+# indépendamment de tout workflow de chasse.
+#
+# Méthode (lecture seule, aucune écriture, ni OCI ni GitHub) :
+#   1. poing d'authentification OCI (401 immédiat si un secret manque) ;
+#   2. inventaire COMPLET des instances de la tenancy — TOUS états de
+#      cycle de vie (TERMINATED compris : l'historique reste visible) —
+#      nom, shape, AD, état, date de création ;
+#   3. verdict explicite : A1 capturée ? micro de secours capturé ?
+#      pont E5 vivant ? instance inattendue ?
+#   4. état de l'IP réservée 84.12.85.241 (rien ne doit avoir bougé :
+#      l'IP reste attachée au pont jusqu'à l'atterrissage land-a1).
+#
+# Le verdict fait foi : les notifications « cancelled » du chasseur sont
+# le bruit de la boucle de pilotage 5 min (dispatch qui tue le run non
+# terminé), PAS un signal de victoire — la vraie victoire = issue
+# « A1 capturée » + chasseurs auto-désactivés + présent audit concordant.
+#
+# Sécurité : permissions {} (aucune écriture GitHub), déclenchement
+# workflow_dispatch UNIQUEMENT, aucun secret échoé (le coffre fournit la
+# clé API au runner ; le OCID de tenancy ci-dessous est déjà public dans
+# hunt-a1.yml).
+
+on:
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: hunt-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    name: Inventaire tenancy — verdict capture
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TEN: ocid1.tenancy.oc1..aaaaaaaa5lipoqjckcohkzca6uc42svliyvuaw7cl33ef5546mhcv4xf7kxq
+    steps:
+      - name: OCI CLI + profil (clé API du coffre GitHub)
+        env:
+          OCI_USER: ${{ secrets.OCI_CLI_USER }}
+          OCI_TENANCY: ${{ secrets.OCI_CLI_TENANCY }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_CLI_FINGERPRINT }}
+          OCI_REGION: ${{ secrets.OCI_CLI_REGION }}
+          OCI_KEY: ${{ secrets.OCI_API_KEY }}
+        run: |
+          python3 -m pip install --quiet oci-cli \
+            || python3 -m pip install --quiet --break-system-packages oci-cli
+          mkdir -p ~/.oci
+          {
+            echo "[DEFAULT]"
+            echo "user=$OCI_USER"
+            echo "fingerprint=$OCI_FINGERPRINT"
+            echo "tenancy=$OCI_TENANCY"
+            echo "region=$OCI_REGION"
+            echo "key_file=$HOME/.oci/oci_api_key.pem"
+          } > ~/.oci/config
+          printf '%s\n' "$OCI_KEY" > ~/.oci/oci_api_key.pem
+          chmod 600 ~/.oci/config ~/.oci/oci_api_key.pem
+          oci iam region-subscription list --query 'length(data)' --raw-output >/dev/null
+          echo "auth OCI OK"
+
+      - name: Inventaire complet des instances (tous états)
+        run: |
+          echo "═══ Inventaire instances (tous états, TERMINATED compris) ═══"
+          oci compute instance list --compartment-id "$TEN" --all > /tmp/instances.json
+          COUNT="$(jq 'length' /tmp/instances.json)"
+          echo "Total d'enregistrements d'instances dans la tenancy : $COUNT"
+          echo
+          if [ "$COUNT" != "0" ]; then
+            echo "── Nom | Shape | État | AD | Créée le"
+            jq -r '.[] | "  \(.["display-name"]) | \(.shape) | \(.["lifecycle-state"]) | \(.["availability-domain"]) | \(.["time-created"])"' /tmp/instances.json
+          else
+            echo "  (aucune instance, même terminée — la chasse n'a jamais capturé)"
+          fi
+
+      - name: Verdict — A1 ? micro ? pont E5 ? intrus ?
+        run: |
+          A1="$(jq '[.[] | select(."display-name"=="mikcloud-backend" and ."lifecycle-state"!="TERMINATED")] | length' /tmp/instances.json)"
+          MIC="$(jq '[.[] | select(."display-name"=="mikcloud-micro-bridge" and ."lifecycle-state"!="TERMINATED")] | length' /tmp/instances.json)"
+          PONT="$(jq '[.[] | select(."lifecycle-state"!="TERMINATED" and (.shape | test("E5|E4|VM.Standard.E"))) ] | length' /tmp/instances.json)"
+          KNOWN_A1_T="$(jq '[.[] | select(."display-name"=="mikcloud-backend")] | length' /tmp/instances.json)"
+          KNOWN_MIC_T="$(jq '[.[] | select(."display-name"=="mikcloud-micro-bridge")] | length' /tmp/instances.json)"
+          OTHER="$(jq '[.[] | select(."lifecycle-state"!="TERMINATED" and ."display-name"!="mikcloud-backend" and ."display-name"!="mikcloud-micro-bridge" and ."display-name"!="mikcloud-bridge")] | length' /tmp/instances.json)"
+          echo "═══ VERDICT ═══"
+          echo "  A1 mikcloud-backend active      : $A1  $([ "$A1" != "0" ] && echo '← CAPTURÉE !' || echo '(non capturée — la chasse continue)')"
+          echo "  A1 mikcloud-backend (historique): $KNOWN_A1_T (y compris TERMINATED)"
+          echo "  Micro mikcloud-micro-bridge act.: $MIC  $([ "$MIC" != "0" ] && echo '← CAPTURÉ !' || echo '(non capturé)')"
+          echo "  Micro (historique)              : $KNOWN_MIC_T (y compris TERMINATED)"
+          echo "  Instances x86 actives (pont E5) : $PONT attendu : 1 (mikcloud-bridge)"
+          echo "  Instances actives hors noms connus : $OTHER attendu : 0"
+          if [ "$A1" != "0" ]; then
+            echo
+            echo "★★★ UNE A1 EST PRÉSENTE — atterrissage land-a1.yml à déclencher. ★★★"
+          elif [ "$MIC" != "0" ]; then
+            echo
+            echo "★★ MICRO DE SECOURS PRÉSENT — chasse A1 toujours en cours (normal, N°241). ★★"
+          else
+            echo
+            echo "AUCUNE CAPTURE à ce jour — les notifications « cancelled » reçues étaient bien le bruit de la boucle de pilotage, pas une victoire."
+          fi
+
+      - name: IP réservée (84.12.85.241 ne doit pas avoir bougé)
+        run: |
+          echo "═══ IP publiques de la tenancy ═══"
+          oci network public-ip list --compartment-id "$TEN" --all > /tmp/ips.json 2>/dev/null || { echo "(liste indisponible — non bloquant)"; exit 0; }
+          jq -r '.[] | "  \(.["ip-address"]) | \(.lifetime) | \(.["lifecycle-state"]) | \(.["assigned-entity-type"] // "non assignée")"' /tmp/ips.json
+          RESERVED="$(jq -r '[.[] | select(."ip-address"=="84.12.85.241") | ."lifecycle-state"] | join(",")' /tmp/ips.json)"
+          if [ -n "$RESERVED" ]; then
+            echo "→ 84.12.85.241 (IP réservée du pont) : $RESERVED — conforme si ACTIVE."
+          else
+            echo "⚠ 84.12.85.241 absente de la liste — à investiguer immédiatement."
+          fi

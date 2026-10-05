@@ -87,6 +87,9 @@ jobs:
           if [ "$N" != "0" ]; then
             echo "::notice::mikcloud-backend (A1) déjà présente — le chasseur se désactive."
             gh workflow disable hunt-a1.yml
+            # N°250 : la capture peut venir du chasseur PARALLÈLE — les
+            # deux chasseurs s'éteignent ensemble (croix de désactivation).
+            gh workflow disable hunt-parallel.yml || true
             echo "stop=1" >> "$GITHUB_OUTPUT" # bloque aussi sonde/tir (exit 0 seul ne suffit pas)
             exit 0
           fi
@@ -257,7 +260,9 @@ jobs:
           EOF
           )"
           gh workflow disable hunt-a1.yml
-          echo "Chasseur désactivé — la capture attend son atterrissage."
+          # N°250 : éteindre AUSSI le chasseur parallèle (croix de désactivation).
+          gh workflow disable hunt-parallel.yml || true
+          echo "Chasseurs (principal + parallèle) désactivés — la capture attend son atterrissage."
 
       - name: Victoire micro — issue de secours (la chasse A1 continue)
         if: steps.fire.outputs.micro != ''

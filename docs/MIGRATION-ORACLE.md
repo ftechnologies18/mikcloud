@@ -611,6 +611,48 @@ d'où la séquence obligatoire :
    la nouvelle région d'origine, avec des pools réputés bien plus
    cléments que Johannesburg.
 
+**Décision N°249 (05/10, exploitant) — voie choisie : compte neuf +
+carte NEUVE, en parallèle, SANS coupure** (supérieure à la variante
+N°248 : plus de suppression d'E5, plus de coupure annoncée — E5 reste
+en production jusqu'au flip DNS, donc le risque éventuel du compte
+neuf ne menace JAMAIS la production). Checklist d'inscription
+(~15 min) :
+- **région d'origine : eu-marseille-1** (reco n°1 — 3 AD, hub ACE,
+  peu chassée ; choix DÉFINITIF ; alternative uk-cardiff-1 si
+  indisponible au catalogue) ;
+- e-mail JAMAIS utilisé chez Oracle ; **téléphone distinct de celui
+  d'E5** (SIM différente — la vérification SMS est un signal de
+  recoupement N°247) ; si la carte appartient à un tiers : SON
+  identité complète + inscription depuis son appareil/connexion si
+  possible (voie royale — aucun lien avec E5) ;
+- ⚠️ si la carte neuve est au nom de l'exploitant lui-même : le
+  numéro change (signal n°1 levé) mais nom/adresse restent des
+  signaux croisés — risque résiduel faible-modéré, dominant des
+  retours = rien ou le compte neuf SEUL tombe (jamais la prod, qui
+  vit sur E5) ;
+- juste après l'inscription : IAM → utilisateur `mikcloud-ops` +
+  groupe Administrators + SA clé API (jamais celle du propriétaire
+  du compte) → c'est elle qui ira dans les secrets GitHub ;
+- NOTER la date de fin du trial (J+30) : conversion PAYG AVANT cette
+  date pour que l'A1/micro capturée survive (0 €/mois si seules des
+  shapes Always Free tournent — même insight que §8-ter pour E5) ;
+  PAS de PAYG avant, inutile pendant l'essai.
+Séquence de migration SANS coupure, dès que le compte existe :
+1. tenter le lancement A1.Flex 4/24 immédiatement (Tier-1 réputé
+   nettement plus clément que Johannesburg — sans garantie, d'où
+   replis : micro, puis chasse hunt-a1 repointée) ;
+2. IP réservée neuve + déploiement du pont (kit actuel adapté : les
+   secrets OCI_* et les cibles AD des workflows basculent vers la
+   nouvelle tenancy en un seul geste — les noms d'AD de Marseille
+   remplacent yMUP:AF-JOHANNESBURG-1-AD-1) ;
+3. TLS via t2-caddy-rescue (piège n°17) + vérification SANS toucher
+   au DNS (requêtes directes sur l'IP neuve) ;
+4. flip DNS (minutes — plan de contrôle seul, invités OK, N°215) ;
+5. E5 conservé en rollback jusqu'à vérification complète (check-in
+   agent + vente test + `/` ok:true), puis laissé à son sort (31/10)
+   ou terminé proprement ;
+6. hunt-a1 + region-probe repointés sur la nouvelle tenancy.
+
 **L'arbre de décision du 25-28/10** (si aucune capture A1 NI micro) :
 1. Lire la tendance region-probe (Summary des runs des dernières
    semaines — disponible dès la conversion PAYG de la tenancy,

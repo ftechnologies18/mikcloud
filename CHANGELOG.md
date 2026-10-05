@@ -5,6 +5,39 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-05 — N°249 — Décision exploitant : compte neuf + carte NEUVE en parallèle, migration SANS coupure (checklist d'inscription consignée)
+
+### Contexte
+Après les consultations N°247 (garde-fou carte) et N°248 (variante
+suppression), l'exploitant tranche : créer un nouveau compte avec une
+nouvelle carte, E5 restant en production — supérieur à la variante
+N°248 (plus de suppression, plus de coupure annoncée).
+
+### Consigné
+- **Pourquoi c'est la meilleure voie** : E5 sert la production
+  jusqu'au flip DNS → le risque éventuel du compte neuf ne menace
+  jamais mikcloud (le pire cas documenté = le compte neuf SEUL
+  tombe).
+- **Checklist d'inscription** (§8-ter) : région d'origine
+  eu-marseille-1 (reco — 3 AD ; DÉFINITIF ; alternative
+  uk-cardiff-1), e-mail jamais utilisé chez Oracle, téléphone
+  distinct de celui d'E5 (SIM différente), identité complète du
+  tiers si la carte est à un tiers (voie royale — zéro lien avec
+  E5) ; si la carte est au nom de l'exploitant : risque résiduel
+  faible-modéré (numéro neuf = signal n°1 levé, mais nom/adresse
+  restent croisés).
+- **Juste après inscription** : IAM → utilisateur mikcloud-ops +
+  groupe Administrators + SA clé API (jamais celle du propriétaire)
+  → secrets GitHub ; noter la fin du trial (J+30) : conversion PAYG
+  AVANT cette date pour que l'A1/micro capturée survive (0 €/mois
+  avec seules des shapes Always Free) — pas de PAYG avant.
+- **Séquence de migration sans coupure** (6 étapes §8-ter) : lancer
+  A1 immédiatement (replis micro/chasse) → IP réservée + déploiement
+  (secrets + cibles AD basculés vers Marseille en un geste) → TLS
+  t2-caddy-rescue + vérification sans toucher au DNS → flip DNS
+  (minutes, plan de contrôle seul) → E5 en rollback jusqu'à
+  vérification complète → hunt-a1/region-probe repointés.
+
 ## 2026-10-05 — N°248 — Variante « supprimer puis réinscrire » : le repli région sans tiers, avec coupure bornée
 
 ### Contexte

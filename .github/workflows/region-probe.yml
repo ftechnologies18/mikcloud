@@ -248,7 +248,7 @@ jobs:
               if ! echo "$OUT" | jq -e '.data["shape-availabilities"]' >/dev/null 2>&1; then
                 # Extraction code/statut/message (le tail -1 du run précédent
                 # n affichait que l accolade fermante du JSON d erreur)
-                ERR="$(echo "$OUT" | jq -r '"[\(.status)] \(.code)"' 2>/dev/null || true)"
+                ERR="$(echo "$OUT" | sed -n '/^{/,$p' | jq -r '"[\(.status)] \(.code)"' 2>/dev/null || true)"
                 [ -z "$ERR" ] && ERR="$(echo "$OUT" | grep -vE '^\s*$' | tail -1 | cut -c1-120)"
                 echo "  $AD : ⚠ sonde A1 refusée — $ERR"
                 continue
@@ -267,7 +267,7 @@ jobs:
               --shape-availabilities file:///tmp/microreq.json 2>&1 || true)"
             MSTAT="$(echo "$MOUT" | jq -r '.data["shape-availabilities"][0]["availability-status"] // empty' 2>/dev/null || true)"
             if [ -z "$MSTAT" ]; then
-              MERR="$(echo "$MOUT" | jq -r '"[\(.status)] \(.code)"' 2>/dev/null || true)"
+              MERR="$(echo "$MOUT" | sed -n '/^{/,$p' | jq -r '"[\(.status)] \(.code)"' 2>/dev/null || true)"
               MSTAT="⚠ refusée"
               echo "  $FIRST_AD · micro E2.1.Micro → ⚠ refusée — $MERR"
             else

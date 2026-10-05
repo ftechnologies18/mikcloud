@@ -1,0 +1,135 @@
+name: t2-caddy-rescue
+
+# ═══ T2 — INCIDENT TLS POST-FLIP : SAUVETAGE CADDY (N°245-b) ═══
+# Incident mesuré au déroulement réel du T2 (flip DNS de l'étape 6 du
+# §8-bis, nuit du 05/10) : https://api.mikcloud.ftci.fr/ répond
+# ERR_SSL_PROTOCOL_ERROR — le handshake TLS est tué par une alerte
+# « internal error » émise par le pont, alors que le port 80 répond
+# normalement sa redirection 308. Cause racine : depuis la
+# reconstruction du pont (04/10), CHAQUE tentative d'émission Let's
+# Encrypt de Caddy échouait (le domaine pointait vers Render : les
+# challenges HTTP-01 ET TLS-ALPN-01 étaient validés chez Render) →
+# certmagic — le gestionnaire de certificats de Caddy — est entré en
+# reprise exponentielle (jusqu'à 24 h d'intervalle). Le flip DNS ne
+# déclenche AUCUNE nouvelle tentative : le service reste coupé des
+# heures pour rien alors que l'émission réussirait désormais.
+#
+# Geste : `systemctl restart caddy` — la relance re-tente l'émission
+# IMMÉDIATEMENT, et cette fois les challenges aboutissent (domaine →
+# pont, 80/443 ouverts §10-2, nuage Cloudflare gris §10-6). Ce
+# workflow diagnostique AVANT (le journal des échecs pré-flip y
+# documente la cause), relance, vérifie BOUT-EN-BOUT depuis le runner
+# (résolution DNS publique → handshake TLS → réponse 2xx, certificat
+# servi affiché), puis relève le journal APRÈS (l'émission réussie
+# doit y figurer).
+#
+# Réutilisable : après tout atterrissage A1/micro (land-a1.yml /
+# land-micro.yml déplacent l'IP réservée sans toucher au DNS — mais
+# une machine neuve bootstrappée pendant que le domaine pointait
+# ailleurs cumule les mêmes échecs : re-dispatcher ce workflow).
+#
+# Entrée `restart` (défaut vrai) : faux = DIAGNOSTIC SEUL (état,
+# Caddyfile, magasin de certificats, journal — aucun geste).
+#
+# Sécurité : lecture de journaux Caddy uniquement (aucun secret n'y
+# figure ; les DSN restent masqués par défense en profondeur),
+# déclenchement workflow_dispatch UNIQUEMENT, permissions {} (ce
+# workflow n'écrit RIEN côté GitHub). Keepalives SSH N°245-a sur
+# toutes les sessions (une lecture journalctl longue ne doit plus
+# mourir en broken pipe).
+
+on:
+  workflow_dispatch:
+    inputs:
+      restart:
+        description: "Relancer Caddy (re-tente l'émission immédiatement) — faux = diagnostic seul"
+        type: boolean
+        default: true
+
+permissions: {} # SSH uniquement — aucune écriture GitHub requise
+
+concurrency:
+  group: t2-caddy-rescue
+  cancel-in-progress: false
+
+jobs:
+  rescue:
+    name: Caddy du pont — diagnostic + relance + vérif TLS
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DEPLOY_USER: ${{ secrets.ORACLE_USER }}
+      ORACLE_HOST: ${{ secrets.ORACLE_HOST }}
+      SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+    steps:
+      - name: Diagnostic AVANT (état, Caddyfile, certificats, journal des échecs)
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null /tmp/oracle_key
+          printf '%s\n' "$SSH_KEY" > /tmp/oracle_key
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
+          ssh $SSH_OPTS "$DEPLOY_USER@$ORACLE_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          echo "── caddy : $(systemctl is-active caddy) ; $(caddy version 2>/dev/null || echo 'version n/a')"
+          echo "── backend mikcloud (contexte) : $(systemctl is-active mikcloud)"
+          echo
+          echo "── /etc/caddy/Caddyfile (le domaine du site — preuve de la config) :"
+          sudo cat /etc/caddy/Caddyfile | grep -vE '^[[:space:]]*(#|$)' | head -20
+          echo
+          echo "── magasin de certificats (/var/lib/caddy) :"
+          sudo find /var/lib/caddy -type f \( -name '*.crt' -o -name '*.key' -o -name '*.json' \) 2>/dev/null | head -15 || echo "  (aucun — c'est le symptôme : aucun certificat émis)"
+          echo
+          echo "── journal caddy (48 h, lignes acquisition/erreurs — la cause racine) :"
+          sudo journalctl -u caddy --since "48 hours ago" --no-pager \
+            | grep -iE 'error|warn|acme|challenge|obtain|certificate|retry' \
+            | sed -E 's#(postgresql://)[^ ]+@#\1***@#g' \
+            | tail -40 || echo "  (aucune ligne filtrée)"
+          REMOTE
+
+      - name: Relance de Caddy (l'émission est re-tentée immédiatement)
+        if: inputs.restart == true
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
+          ssh $SSH_OPTS "$DEPLOY_USER@$ORACLE_HOST" '
+            sudo systemctl restart caddy &&
+            sleep 3 &&
+            echo "Caddy relancé — état : $(systemctl is-active caddy). Émission re-tentée à l'instant (fin du backoff)."
+          '
+
+      - name: Vérification bout-en-bout depuis le runner (DNS publique → TLS → HTTP)
+        if: inputs.restart == true
+        run: |
+          set -euo pipefail
+          echo "→ Interrogation de https://api.mikcloud.ftci.fr/ (30 tentatives, espacement 8 s)…"
+          CODE=000
+          for I in $(seq 1 30); do
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 https://api.mikcloud.ftci.fr/ 2>/dev/null || echo 000)
+            echo "  tentative $I : HTTP $CODE"
+            case "$CODE" in 2*) break ;; esac
+            sleep 8
+          done
+          case "$CODE" in
+            2*) echo "✓ HTTPS $CODE — bascule TLS opérationnelle (tentative $I)." ;;
+            *)  echo "ÉCHEC : aucune réponse 2xx après $I tentatives (dernier code $CODE) — voir le journal APRÈS ci-dessous pour la cause (piste : limite de reprises Let's Encrypt « too many failed authorizations », fenêtre d'1 h — re-dispatcher plus tard)." >&2
+                exit 1 ;;
+          esac
+          echo
+          echo "── certificat servi :"
+          echo | openssl s_client -connect api.mikcloud.ftci.fr:443 -servername api.mikcloud.ftci.fr 2>/dev/null \
+            | openssl x509 -noout -subject -issuer -dates || true
+          echo
+          echo "── chaîne HTTP → HTTPS (redirection Caddy attendue : 308) :"
+          curl -s -o /dev/null -w 'http://  → %{http_code} → %{redirect_url}\n' --max-time 15 http://api.mikcloud.ftci.fr/ || true
+          curl -s -o /dev/null -w 'https:// → %{http_code}\n' --max-time 15 https://api.mikcloud.ftci.fr/ || true
+
+      - name: Journal APRÈS (l'émission réussie doit y figurer)
+        if: inputs.restart == true && !cancelled()
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
+          ssh $SSH_OPTS "$DEPLOY_USER@$ORACLE_HOST" '
+            sudo journalctl -u caddy --since "10 minutes ago" --no-pager \
+              | grep -iE "certificate obtained|serving initial|success|error|warn" \
+              | tail -15 || echo "(aucune ligne filtrée)"
+          '

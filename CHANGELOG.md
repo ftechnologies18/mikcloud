@@ -5,6 +5,57 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-06 — N°251 — Cadence de chasse resserrée 5 → 3 min (décision exploitant, urgence capture)
+
+### Contexte et décision
+Session de tutorat du 06/10 : verdict `hunt-audit` run #3 — **AUCUNE
+capture** (A1 0, micro 0, historique 0 ; flotte JNB saturée en continu
+sur les 6 cibles, 570+ sondes cumulées). Chaîne d'échéances rappelée :
+31/10 crédits E5 épuisés, session de décision 25-28/10, tier N°247 à
+trouver avant. Arbitrage exploitant entre trois leviers :
+- **A retenu — cadence 5 → 3 min** : les fenêtres vertes JNB durent
+  parfois moins de 5 min ; un créneau sur trois de plus est couvert
+  (288 → 480 sondes/jour) ;
+- **B écarté — cible A1 4/24** : caduque, OCI a réduit le quota Always
+  Free A1 de 4 OCPU/24 Go à 2/12 en juin 2026 (déjà consigné §1 du
+  MIGRATION-ORACLE) ;
+- **C écarté — conversion PAYG anticipée** : la vérification carte
+  (~100 €) est impossible — application à l'essai, zéro revenu,
+  objectif strict 0 coût. La conversion restera une décision de
+  session au moment de l'échéance (31/10), pas un levier immédiat.
+
+### Pourquoi c'est sûr (mesuré ou par construction)
+- v2 non-superposante (N°250-c) : le script vérifie le dernier run
+  AVANT tout dispatch (queued/in_progress → créneau passé) — aucune
+  annulation possible, la cadence épouse la disponibilité réelle des
+  runners (un run ~2-4 min laisse un créneau libre sur deux en 3 min,
+  le suivant reprend sans trou) ;
+- sonde gratuite (capacity report, doctrine N°222) : 480/jour = coût
+  OCI nul ; dépôt public = Actions GitHub gratuites illimitées ;
+- 429 déjà gérés par le kit (exit 0, espacement naturel) ; budget de
+  tir inchangé (tir uniquement sur pool vert).
+
+### Mise en œuvre
+- `pont-pilotage.yml` : nouvelle entrée `set_cadence_min` (string,
+  vide = ne rien changer — les dispatches d'inspection pure restent
+  sans effet) validée côté pont à 2/3/4/5 (défense en profondeur).
+  L'étape réécrit `OnCalendar=*-*-* *:0/N UTC` du timer
+  `mikcloud-hunt-dispatch.timer` (FragmentPath résolu via `systemctl
+  show -P`, description mise à jour, **original conservé en `.v1`**,
+  daemon-reload + restart + `list-timers` de vérification).
+  Réversibilité : redispatcher avec une autre valeur (retour 5 min
+  inclus).
+- La valeur transite par la ligne de commande ssh (`CADENCE=N bash -s`)
+  — le heredoc reste LITTÉRAL (piège n°18), aucune expansion locale,
+  masquage jetons conservé en sortie.
+- `hunt-parallel.yml` inchangé (cron 2-59/5) : son rôle est la
+  redondance si le pont meurt, pas la cadence (lag cron GitHub mesuré
+  N°234 : 2 runs/30 h). Ses collisions occasionnelles avec les
+  dispatches du pont (:12/:27/:42/:57) sont sûres par construction
+  (re-contrôle de garde à la seconde du tir, N°250).
+- Aucun chemin `backend/**` ni `deploy/oracle/**` touché → aucun
+  redéploiement (deploy-oracle non déclenché ; CI seule à passer).
+
 ## 2026-10-05 — N°250-c — Verdict d'audit (AUCUNE capture) + boucle de dispatch v2 non-superposante
 
 ### Verdict de l'audit (hunt-audit.yml, run 37375762131)

@@ -55,6 +55,10 @@ on:
         description: "Cadence du timer en minutes (vide = inchangée ; valeurs 2/3/4/5) — réécrit OnCalendar, original .v1, réversible"
         type: string
         default: ""
+      read_backend_logs:
+        description: "Logs backend mikcloud (48 h) — volet agents : santé service, env critique, tokens inconnus, refus, erreurs (LECTURE SEULE)"
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -220,6 +224,44 @@ jobs:
           echo "── unité après réécriture :"
           grep -E '^(OnCalendar|Description)' "$UNIT_PATH" || true
           systemctl list-timers mikcloud-hunt-dispatch.timer --no-pager | sed -n '2p'
+          REMOTE
+
+      - name: Logs backend mikcloud (si demandé) — diagnostic agents, 48 h, LECTURE SEULE
+        if: inputs.read_backend_logs == true
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null /tmp/oracle_key
+          printf '%s\n' "$SSH_KEY" > /tmp/oracle_key
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
+          # Masquage défense en profondeur : jetons GitHub, query strings
+          # ?token=… et éventuels secrets d'env ne sortent JAMAIS du pont.
+          ssh $SSH_OPTS "$DEPLOY_USER@$ORACLE_HOST" bash -s <<'REMOTE' 2>&1 \
+            | sed -E 's/(ghp_|gho_|ghs_|github_pat_)[A-Za-z0-9_]+/\1***MASQUÉ***/g; s/\?token=[A-Za-z0-9_-]+/?token=***MASQUÉ***/g; s/(password|secret|key)=[^ ]*/\1=***MASQUÉ***/gI'
+          set -uo pipefail
+          echo "═══ 1. SANTÉ DU SERVICE mikcloud ═══"
+          echo "── actif : $(systemctl is-active mikcloud 2>&1) / au boot : $(systemctl is-enabled mikcloud 2>&1)"
+          echo "── redémarrages récents :"
+          sudo journalctl -u mikcloud --since "24 hours ago" --no-pager 2>/dev/null | grep -E 'Started|Stopped|Stopping|Failed' | tail -10 || echo "  (aucun)"
+          echo
+          echo "═══ 2. ENV CRITIQUE (piège n°7 : posée sans restart = sans effet) ═══"
+          sudo grep -hE '^(MIKCLOUD_BASE_URL|APP_PUBLIC_URL|ALLOWED_ORIGIN|PORT)=' /etc/mikcloud/mikcloud.env 2>/dev/null || echo "  (env introuvable)"
+          echo
+          echo "═══ 3. AGENTS — REGISTER (48 h, 15 derniers) ═══"
+          sudo journalctl -u mikcloud --since "48 hours ago" --no-pager 2>/dev/null | grep -E 'agent/register' | tail -15 || echo "  (aucun)"
+          echo
+          echo "═══ 4. AGENTS — TOKENS INCONNUS (48 h, 20 derniers, IP source) ═══"
+          sudo journalctl -u mikcloud --since "48 hours ago" --no-pager 2>/dev/null | grep -E 'token inconnu' | tail -20 || echo "  (aucun — aucun agent ne frappe avec un token invalide)"
+          echo "  (fréquence par préfixe sur 48 h :)"
+          sudo journalctl -u mikcloud --since "48 hours ago" --no-pager 2>/dev/null | grep -oE 'token inconnu \(préfixe [A-Za-z0-9_-]+' | sort | uniq -c | sort -rn | head -10 || true
+          echo
+          echo "═══ 5. AGENTS — REFUS (TLS < 7.19 / conflits, 48 h, 10 derniers) ═══"
+          sudo journalctl -u mikcloud --since "48 hours ago" --no-pager 2>/dev/null | grep -E 'agent/(cmd|register): REFUS' | tail -10 || echo "  (aucun)"
+          echo
+          echo "═══ 6. ERREURS / PANIQUES (24 h, 20 dernières) ═══"
+          sudo journalctl -u mikcloud --since "24 hours ago" --no-pager 2>/dev/null | grep -iE 'error|panic|fatal' | grep -viE 'REFUS|token inconnu' | tail -20 || echo "  (aucune)"
+          echo
+          echo "═══ 7. DERNIÈRES LIGNES BRUTES (20, contexte) ═══"
+          sudo journalctl -u mikcloud -n 20 --no-pager 2>/dev/null | tail -20
           REMOTE
 
       - name: Inspection lecture seule du pont

@@ -5,6 +5,26 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-06 — N°251-b — Exécution cadence 3 min : mesurée et saine
+
+### Exécution (mesuré, 06/10 UTC)
+- Dispatch `pont-pilotage` `set_cadence_min=3` (run `37431754096`,
+  07:46) : unité `/etc/systemd/system/mikcloud-hunt-dispatch.timer`
+  réécrite — `OnCalendar=*-*-* *:0/3 UTC`, description actualisée,
+  original conservé en `.timer.v1`, timer **active / enabled**,
+  prochain passage affiché 07:48:00 UTC.
+- Cadence MESURÉE sur hunt-a1 : dispatches 07:45 (ancien 5 min) puis
+  **07:48 / 07:51 / 07:54 / 07:57** — intervalle de 3 min exact,
+  100 % success, **zéro annulation** (v2 non-superposante confirmée en
+  cadence resserrée).
+- Santé du run à nouvelle cadence (run #596) : auth OCI OK, garde OK,
+  sonde 6 cibles complète, aucun 429, verdict inchangé (tous rouges).
+- CI run #541 verte sur `a1954e0` (N°251) — aucun déploiement
+  déclenché (paths non touchés), conforme.
+- Point de vigilance hérité : à 480 sondes/jour, surveiller
+  occasionnellement les 429 dans les logs hunt-a1 (le kit les gère en
+  exit 0 — aucun risque, simple indicateur de bride API éventuelle).
+
 ## 2026-10-06 — N°251 — Cadence de chasse resserrée 5 → 3 min (décision exploitant, urgence capture)
 
 ### Contexte et décision

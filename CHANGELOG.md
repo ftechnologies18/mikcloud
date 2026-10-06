@@ -5,6 +5,73 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-06 — N°253-b — Bug « agents hors ligne depuis T2 » : diagnostic complet (migration INNOCENTÉE, cause = routeur ProMax WIFI muet)
+
+### Signalement
+L'exploitant rapporte « les agents des routeurs sont marqués hors ligne
+depuis la migration T2 » (nuit du 05/10, flip DNS → pont E5 84.12.85.241).
+
+### Méthode (lecture seule + 1 entrée d'inspection N°253-a)
+- **DB prod (Supabase)** : état de la flotte — `routers.last_seen/status` +
+  historique `activity` autour du T2 + `notif_log` ;
+- **Sondes HTTP** : `/agent/cmd` sur le pont (200/404 vivants) et sur
+  Render (idem) ;
+- **Logs du pont E5** (journalctl -u mikcloud, 48 h) via la nouvelle
+  entrée `read_backend_logs` de `pont-pilotage.yml` (N°253-a, lecture
+  seule, masquage défense en profondeur).
+
+### Verdict — la migration T2 est UN SUCCÈS côté cloud
+1. **4 routeurs sur 5 check-innent ACTIVEMENT sur le pont E5** :
+   `CYBER S.C`, `Benie wifi`, `APAH-WIFI`, `WIFI Zikisso` — `last_seen`
+   frais (seconde en cours), et les logs du pont montrent une flotte de
+   `GET /agent/cmd -> 200` (plusieurs par minute) + `POST /agent/result` ;
+2. **Backend du pont sain** : `active/enabled`, **aucun redémarrage**,
+   aucune erreur ni panic sur 24 h, aucun refus TLS/conflit ;
+3. **ENV conforme** (piège n°7 écarté) : `MIKCLOUD_BASE_URL=
+   https://api.mikcloud.ftci.fr`, `PORT=4000`, CORS/origines intacts ;
+4. **Aucun token inconnu sur 48 h** (le seul = la sonde de diagnostic
+   elle-même) : aucun agent ne frappe le pont avec un token invalide.
+
+### Le seul vrai incident : ProMax WIFI, muet depuis le 05/10 23:38:41Z
+- Dernier check-in 23:38:41, déclaré hors ligne 23:47:48 (« sans check-in
+  depuis 9 min » = 3×180 s, règle conforme) — fenêtre exacte du flip T2,
+  d'où la corrélation perçue par l'exploitant ;
+- **Il ne frappe NI le pont NI Render** : le pont ne voit AUCUNE requête
+  de lui (ni valide ni token inconnu), et Render (toujours servi, testé
+  200/404) n'actualise pas son `last_seen` — le routeur n'ÉMET plus ;
+- Signes précurseurs LOCAUX : « QoS divergente (file absente ou modifiée
+  localement) » répétée toutes les ~30 min de 18:38 à 22:39 avant la
+  coupure — la file mikcloud-qos disparaissait côté routeur ;
+- Les 4 autres routeurs ont eu des micro-coupures similaires dans la
+  même période (Zikisso 20:57→21:03 le 05/10 ; Benie 17:38→17:52 le
+  06/10 ; tous offline 00:36→ retours étalés 04:51/07:37) — profil
+  pannes électriques/réseau locales, récupéré spontanément ;
+- `notif_log` vide depuis le 29/09 : aucune notification n'a été envoyée
+  (aucun canal actif) — la perception du bug vient de l'affichage console.
+
+### Conclusion et action
+Le modèle étant pull (le routeur appelle le cloud), **aucune action
+cloud ne peut ressusciter un agent muet** : la cause est côté routeur
+(alimentation, lien WAN, ou scheduler `mikcloud-agent` mort/supprimé
+localement — l'URL étant gravée dans son on-event, un routeur sain
+aurait ré-établi le contact dès le rétablissement réseau, comme l'ont
+fait les 4 autres).
+
+**Action terrain requise** (runbook §9.1 le prévoit) : vérifier
+physiquement ProMax WIFI ; si le routeur est vivant mais l'agent mort →
+`POST /api/routers/{id}/rotate-token` puis réinstaller le script
+généré (l'URL gravée sera `https://api.mikcloud.ftci.fr` — l'env du
+pont est vérifiée correcte).
+
+### Outillage laissé en place
+`pont-pilotage.yml` → entrée `read_backend_logs` (N°253-a) : santé
+service, redémarrages, env critique, registers, tokens inconnus avec
+IP + fréquence par préfixe, refus TLS/conflits, erreurs — réutilisable
+à chaque doute agent (dispatch lecture seule).
+
+Aucun chemin `backend/**` ni `deploy/oracle/**` touché → aucun
+redéploiement.
+
 ## 2026-10-06 — N°252 — Décision PAYG : conditions vérifiées + préparation du dépôt avant conversion
 
 ### Contexte et revirement de décision

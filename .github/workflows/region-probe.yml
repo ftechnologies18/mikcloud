@@ -1,5 +1,28 @@
 name: region-probe
 
+# ⛔ DÉSACTIVÉ le 2026-10-06 (état GitHub : disabled_manually) — décision
+# PAYG (N°252) : l'exploitant convertit la tenancy en Pay As You Go (hold
+# bancaire ~100 $ libéré en 3-5 jours, JAMAIS débité — vérifié aux sources
+# officielles Oracle, voir CHANGELOG N°252). Deux raisons d'éteindre cette
+# sonde AVANT le clic de conversion :
+#   1. SON BUT S'ÉVANOUISSAIT : la mesure multi-régions servait à choisir
+#      la région d'origine de la tenancy de repli N°249 (§8-ter) — or le
+#      PAYG rend N°249 inutile : l'A1 atterrit sur le pool payant de JNB
+#      (recommandation officielle d'Oracle contre « out of host capacity »,
+#      doc Always Free màj 12/06/2026).
+#   2. COMPORTEMENT CHANGÉ EN PAYG : l'étape d'abonnement (input
+#      `subscribe`, vrai par défaut) se mettrait à RÉUSSIR (fin des 409
+#      TenantCapacityExceeded) et abonnerait la tenancy à 4 régions sans
+#      objet — gratuites, mais surface dormante inutile.
+#      ERRATUM (précision) : ce workflow ne lance JAMAIS d'instance
+#      (doctrine N°222 — capacity reports et abonnements seuls) ; le
+#      motif de retrait est l'inutilité + la propreté, pas un risque
+#      financier direct.
+# Réactivation (si le hold carte échoue et que N°249 revient sur la
+# table) : `gh workflow enable region-probe.yml` (ou onglet Actions →
+# Enable). Pousser une modification de ce fichier ne le réactive PAS —
+# l'état disabled vit côté GitHub, pas dans le dépôt.
+#
 # SONDE MULTI-RÉGIONS (N°246) — mesurer OÙ la capture A1/micro serait
 # possible, pour choisir en connaissance de cause la région d'origine
 # d'une éventuelle nouvelle tenancy (repli du 25-28/10 — runbook §8-ter).

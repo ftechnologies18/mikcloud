@@ -5,6 +5,83 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-06 — N°252 — Décision PAYG : conditions vérifiées + préparation du dépôt avant conversion
+
+### Contexte et revirement de décision
+Session de tutorat du 06/10 (suite) : l'exploitant révise le levier C
+écarté en N°251 — sa carte est DÉJÀ enregistrée sur la tenancy. Vérification
+aux sources officielles Oracle (FAQ Free Tier ; doc *Always Free Resources*
+màj 12/06/2026 ; doc *Managing Account Upgrades and Payment Method* màj
+12/02/2026) :
+
+- le « ~100 € » qui bloquait le levier C est un **malentendu** : à
+  l'upgrade, la carte subit une **préautorisation (hold) de 100 $ US**,
+  retirée par la banque en 3-5 jours, **jamais débitée** (« These holds
+  are removed by your bank, typically within three to five days, and do
+  not result in actual charges ») — la condition réelle est ~100 $ de
+  *disponible* carte au moment du clic ;
+- l'Always Free est **conservé à vie après upgrade** (« Oracle doesn't
+  charge for Always Free resources after you upgrade ») ;
+- l'allocation A1 gratuite post-juin-2026 = « first 1,500 OCPU hours and
+  9,000 GB hours per month » → **une A1 2/12 en 24/7 = 0 € garanti**
+  (1 460 OCPU-h + 8 760 GB-h consommés sur 1 500/9 000) ;
+- les crédits d'essai sont **conservés** jusqu'au 31/10 (fin des 30
+  jours) — la facturation ne commence qu'après ;
+- **la doc officielle recommande elle-même PAYG** contre l'erreur
+  « out of host capacity » : l'A1 atterrit sur le pool payant, quasi
+  immédiatement, au lieu de la loterie JNB ;
+- ⚠ **PAYG est à sens unique** (« There is no option to downgrade your
+  account ») — accepté : pas de minimum, pas de prépaiement, Always
+  Free conservé ;
+- ⚠ le « PAYG garderait le 4/24 gratuit » de forums n'est **pas
+  confirmé** par Oracle (support contradictoire, juin-août 2026) —
+  doctrine : **rester à 2/12, ne jamais retailler en 4/24**.
+
+**Décision exploitant : GO pour la conversion PAYG** (sous réserve du
+passage du hold carte). La variante N°249 (tenancy Marseille + carte
+de tiers) devient inutile si le hold passe ; la session de décision
+25-28/10 perd son urgence ; la cadence 3 min (N°251) passe en secours.
+
+### Préparation du dépôt (ce commit)
+- **`region-probe.yml` désactivé** (état GitHub `disabled_manually`,
+  bloc ⛔ documenté en tête de fichier, convention keepalive.yml) AVANT
+  le clic de conversion. Motifs :
+  1. son but — choisir la région d'origine de la tenancy de repli
+     N°249 (§8-ter) — s'évapore si le PAYG atterrit l'A1 ;
+  2. en PAYG, son étape d'abonnement (input `subscribe`, vrai par
+     défaut) se mettrait à RÉUSSIR (fin des 409) et abonnerait la
+     tenancy à 4 régions sans objet (gratuites, surface dormante).
+  ERRATUM vs l'analyse orale de session : ce workflow ne lance
+  JAMAIS d'instance (doctrine N°222 — capacity reports et abonnements
+  seuls) ; le motif est l'inutilité + la propreté, pas un risque
+  financier direct. Réactivation une commande si le hold échoue et
+  que N°249 revient : `gh workflow enable region-probe.yml`.
+- Les secrets OCI_* restent en place (hunt-a1/hunt-audit/atterrissages
+  en dépendent — leur retrait reste lié à la fin de vie du kit, doc
+  PILOTAGE §1).
+- Aucun autre workflow ne crée de ressource hors du tir gardé de
+  hunt-a1 (une instance max, « Pas d'A1 en tenancy ») ; hunt-parallel
+  partage la même doctrine (re-contrôle au tir, N°250).
+
+### Check-list exploitant (côté console, AVANT/APRÈS le clic)
+1. AVANT : vérifier ~100 $ de disponible carte (un hold rejeté laisse
+   l'upgrade bloqué « in progress », cas documenté community.oracle) ;
+2. AVANT : Budget 1 €/mois + alerte email — Billing & Cost Management
+   → Budgets (OCI n'a AUCUN plafond de dépense dur : c'est le seul
+   détecteur) ;
+3. LE CLIC : profil (haut droite) → Upgrade and Update Payment →
+   **Pay As You Go** (PAS Monthly Flex) ;
+4. APRÈS : l'A1 atterrit sur le pool payant JNB → hunt-a1 tire →
+   victoire automatisée (issue + désactivation hunt-a1/hunt-parallel) ;
+5. APRÈS : atterrissage `land-a1.yml` puis **decommission du pont E5
+   AVANT le 31/10** — le pont (VM.Standard.E5.Flex) est la seule
+   ressource réellement facturable après épuisement des crédits ;
+6. JAMAIS : retailler l'A1 en 4/24 (non garanti gratuit — 2/12 = 0 €
+   garanti par l'allocation officielle).
+
+Aucun chemin `backend/**` ni `deploy/oracle/**` touché → aucun
+redéploiement ; CI seule à passer.
+
 ## 2026-10-06 — N°251-b — Exécution cadence 3 min : mesurée et saine
 
 ### Exécution (mesuré, 06/10 UTC)

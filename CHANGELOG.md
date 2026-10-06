@@ -5,6 +5,101 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-06 — N°254 — ProMax WIFI : réveil 100 % distant de l'agent (contrainte « site distant, pas de Winbox ») — séquence d'auto-guérison armée en file
+
+### Contrainte nouvelle
+Suite du N°253-b : l'exploitant signale que le routeur ProMax WIFI est sur un
+**site distant, inaccessible via Winbox** — l'action terrain recommandée
+(§9.1 : vérifier le routeur puis rotate-token + réinstall) est IMPOSSIBLE.
+Le réveil doit donc se faire **entièrement côté cloud**. Or le canal agent est
+un PULL unidirectionnel (routeur → cloud) : le cloud ne peut rien pousser vers
+un routeur muet. La seule chose que le cloud peut faire est **préparer la file**
+pour que le PREMIER check-in venu répare tout, seul.
+
+### Faits établis avant l'action (22:34 UTC)
+- ProMax toujours muet : `last_seen` figé à 2026-10-05T23:38:41Z (22,9 h),
+  les 4 autres routeurs check-innent à la seconde ;
+- `watcher_ok=true`, `scheduler_sec=180`, `version=7.24.5` (garde TLS 7.19
+  franchie — la livraison de commandes ne sera PAS refusée au réveil) ;
+- File ProMax au moment de l'intervention : **128 commandes queued**, dont
+  124 × `user_remove` (tentatives console de l'exploitant, 05/10 07:47 →
+  06/10 22:11), 1 × `read_resources`, 1 × `read_scheduler`, 1 × `reboot`
+  (cliqué par l'exploitant à 17:50, jamais servi), + 3 « sent » zombies
+  (02/10, fermeture error à 7 j) ;
+- **Les commandes « queued » ne périment JAMAIS** (purgeOldCommands ne touche
+  que les « sent » zombies et les terminés) : tout ce qui est enfilé attend
+  le réveil, indéfiniment ;
+- Service par lots de **10 commandes max par check-in**, prio FIFO par
+  `created_at` (les lectures read_state et les différés walled_garden/etc.
+  passent après).
+
+### La commande de résurrection : `agent_migrate` (N°230)
+`buildAgentMigrate` est conçue pour reconstruire TOUT le canal de commande :
+① pre-flight `POST /agent/register` (heartbeat pur → routeur marqué ONLINE
+immédiatement), ② pont anti-orphelin `mikcloud-agent-b` (45 s), ③ repose du
+canonique `mikcloud-agent` — **y compris s'il a été SUPPRIMÉ** (présence
+vérifiée, ajout si absent), ④ repose de `mikcloud-watch` (20 s), ⑤ ménage
+conditionnel vérifié par hôte. Enfilée via `POST /api/routers/{id}/migrate-url`
+(admin plateforme) : **c-fd491f41b24b**, position #128.
+
+### Risque identifié et traité : le reboot en file
+Le `reboot` (N°87 en file, check-in 9) exécute `/system reboot` et TUE le
+reste du script .rsc servi dans le même lot ; toute commande placée juste
+après lui dans le MÊME check-in meurt non exécutée (statut « sent » zombie,
+fermeture error à 7 j, jamais ré-exécutée — les écritures ne se rejouent pas).
+Analyse du découpage réel des lots : reboot #87 (check-in 9) et migrate #128
+(check-in 13) sont **dans des lots différents** — le routeur redémarre au
+check-in 9, puis la migrate est servie au premier check-in POST-redémarrage.
+Pour ceinture et bretelles, trois commandes complémentaires ont été enfilées
+(via session support scopée au compte du routeur — impersonation admin,
+tracée « Session support ouverte » dans le journal du compte) :
+- 2 × `ping` (positions #129-130, check-in 13 — servies APRÈS la migrate :
+  diagnostic de latence routeur→cloud au réveil) ;
+- 1 × `scheduler_set {mikcloud-agent, disabled=no}` (position #131,
+  check-in 14 — **assurance post-reboot** : ré-active le scheduler s'il
+  avait merely été désactivé localement ; no-op inoffensif sinon).
+
+### Séquence d'auto-guérison armée (au premier check-in venu)
+1. Check-ins 1→9 : drain des user_removes/lectures → **reboot du routeur** ;
+2. Retour du routeur (schedulers persistants `start-time=startup`) ;
+3. Check-ins 10→13 : drain → **agent_migrate reconstruit tout le canal**
+   (register → ONLINE, pont, canonique, watch) + 2 pings de diagnostic ;
+4. Check-in 14 : `scheduler_set` ré-active le canonique si besoin.
+À la cadence du veilleur (20 s/check-in pendant qu'un invité est présent) :
+guérison complète en ~5 min de présence ; à la cadence agent (45 s) : ~11 min.
+
+### Vecteurs de réveil (aucun ne requiert Winbox ni compétence)
+1. **Le coup du téléphone (veilleur N°77)** : toute personne sur site connecte
+   un téléphone au SSID du hotspot et RESTE connectée quelques minutes —
+   `mikcloud-watch` (tick 20 s) fait un check-in complet dès qu'un hôte non
+   autorisé est présent, la file se vide, la migrate reconstruit l'agent ;
+2. **Power-cycle** : débrancher/rebrancher l'alimentation du routeur —
+   les schedulers survivent au reboot (`start-time=startup`) ;
+3. **Retour du WAN** : si la cause est la liaison (coupure, facture),
+   la guérison est automatique au rétablissement ;
+4. (avancé, à la demande) : si l'exploitant fournit l'IP publique du
+   routeur, sondage des ports 22/80/443/8291/8728/8729 puis réinstallation
+   directe via le client RouterOS API du backend (credentials routeur requis).
+
+### Scénario résiduel documenté (runbook)
+Si ProMax apparaît **en ligne par à-coups** (présence d'invités) puis
+retombe muet : `mikcloud-watch` est vivant mais le canonique a été supprimé
+— la migrate a alors été consommée sans pouvoir repose… la re-filer exige
+la fermeture du zombie « sent » (7 j) OU une nouvelle session support
+(enfiler un `scheduler_add` de secours à on-event distinct — fichier
+`dst-path` différent du canonique pour éviter la collision d'import).
+Si ProMax reste muet malgré power-cycle et invités : cause matérielle
+(alimentation/routeur) — replacement physique seul remède.
+
+### Accès utilisé (transparence)
+Login admin plateforme via `POST /api/auth/login` (ADMIN_PASSWORD de l'env,
+non roté par t2-secrets — seul JWT_SECRET l'a été, forge de token impossible)
+; 1 session support impersonée (tracée au journal du compte) pour les
+commandes scopées ; aucune écriture directe en DB (le backend est la vérité
+en mémoire, flush différentiel — un INSERT externe serait ignoré puis
+écrasé) ; aucune modification de code ; sentinel RENDER-DEPLOY-FROZEN
+intact. Aucun path `backend/**` ni `deploy/oracle/**` → CI seule.
+
 ## 2026-10-06 — N°253-b — Bug « agents hors ligne depuis T2 » : diagnostic complet (migration INNOCENTÉE, cause = routeur ProMax WIFI muet)
 
 ### Signalement

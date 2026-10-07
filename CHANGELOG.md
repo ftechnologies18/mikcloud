@@ -5,6 +5,89 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-07 — N°256 — Alerte Neon 0,10 $ : l'organisation est sur le plan LAUNCH (payant à l'usage) depuis le 21/09 — downgrade vers Free préparé
+
+### L'alerte
+L'exploitant reçoit une alerte de courtoisie Neon : **0,10 $** de charges
+d'usage — inacceptable pour l'objectif 0 coût : le coffre-fort Neon ne doit
+être qu'une base de secours « sauvegarde uniquement » dans le quota gratuit.
+
+### Investigation (API Neon v2 via proxy console + SQL direct + logs)
+- **Stockage hors de cause** : coffre = 27 Mo (dump 7,9 Mo, 87 tables) —
+  allocation Free 1 Go/projet largement intacte ; autosuspend OPÉRATIONNEL
+  (état idle, scale-to-zero 5 min observé) ; 1 seule branche (default) ;
+  NEON_KEEPALIVE=off côté Render et le keepalive du pont E5 cible Supabase
+  (DATABASE_URL), pas Neon : aucun ping parasite.
+- **La math est formelle** : sessions du 1er au 7/10 reconstruites depuis
+  les opérations start/suspend_compute = 234 min actives = **0,97 CU-h** ;
+  au tarif Launch ($0,106/CU-h) = **$0,103 ≈ l'alerte de 0,10 $** —
+  correspondance exacte. (Septembre : 95,91 CU-h mais ANTIÉRIEURS au
+  passage en Launch → ancien plan Free, $0 facturé.)
+- **Cause racine** : l'organisation « FTech CI »
+  (org-blue-forest-04016555) est sur le plan **Launch** — mise à jour de
+  l'org le **21/09 19:30:34** (un start_compute suit à 19:30:35 : le
+  moment exact du basculement). Contexte : crise N°162 (quota compute
+  Neon épuisé mi-septembre, suspension promise « jusqu'au 1er octobre ») —
+  l'upgrade vers Launch a débloqué le service immédiatement, puis la
+  production a migré vers Supabase… mais **l'org est restée sur Launch**.
+  Or Launch 2026 = **paiement à l'usage sans minimum** : CHAQUE CU-heure
+  de compute est facturée $0,106, sans allocation incluse. Le Free actuel
+  inclut lui 100 CU-h/projet/mois (notre rythme : ~1-2), 1 Go/projet,
+  5 Go d'egress/projet → **0 $ durable**.
+
+### Ce qui consomme le coffre (cartographie des 173 sessions depuis le 29/08)
+1. **Restore GitHub quotidien** (standby-restore.yml, cron 02:43 — retard
+   plateforme ~6 h, départ réel 08:34-09:37) : dump Supabase → restore
+   complet + contrôle d'intégrité (comptages dump vs coffre) ;
+2. **Snapshot du pont E5 quotidien** (mikcloud-backup.timer, 03:00 UTC
+   pile — posé au T2, MIGRATION-ORACLE.md §7) : dump → restore avec
+   reprises ×3 ;
+3. Sessions ponctuelles : nuit T2 (1-2/10), marathon de débogage N°243-d
+   du pipeline pipe→fichier (4-5/10, documenté dans backup-neon.sh) ;
+4. 07/10 15:11→15:21 : 10 min SANS AUCUNE écriture (zéro ligne post-
+   restore en base) — aucune machine de notre côté ne connecte à cette
+   heure : quasi certainement la visite de la console par l'exploitant
+   lui-même à la réception de l'alerte (l'éditeur SQL/dashboard réveille
+   le compute).
+
+→ **Double restore quotidien** (GitHub + pont) : redondance voulue de la
+fenêtre de transition T2 ; coût ~0,02 CU-h/jour, égress Supabase ~16 Mo/j
+(négligeable vs 5 Go). Après downgrade → strictement 0 $. Recommandation :
+conserver les deux ceinture+bretelles jusqu'au decom du pont E5 (le timer
+meurt avec lui, standby-restore.yml reste le mécanisme de long terme).
+
+### Actions
+- **Effectué (API)** : `autoscaling_limit_max_cu` de l'endpoint
+  ep-flat-cloud-b1et1qdt abaissé **8 → 2 CU** (plafond du plan Free) —
+  le downgrade ne rencontrera aucun refus de limite. Vérifié : min 0,25,
+  max 2, une seule branche, 27 Mo — tout est dans les clous du Free.
+- **À cliquer par l'exploitant (le seul geste restant)** : console.neon.tech
+  → organisation FTech CI → Billing → **downgrade Launch → Free**. Le
+  portail de plan est géré Stripe côté console, aucune API publique —
+  action humaine tracée. Après clic : vérifier plan=free ; aucune donnée
+  ne bouge (le projet reçoit du trafic quotidien → aucun risque de
+  suppression pour inactivité).
+- **Garantie financière** : même en restant sur Launch ce mois-ci, la
+  facture cumulée depuis le 21/09 ≈ $0,14-0,15 < seuil de recouvrement
+  (« invoices under $0.50 are not collected ») → 0 $ réellement débité à
+  ce jour. Mais un mois chargé (marathon de debug style N°243-d) franchit
+  le seuil : le downgrade est la fermeture structurelle du risque.
+
+### Pièges consignés
+- api.neon.tech n'a plus d'enregistrement A (DNS NODATA) : l'API v2 est
+  joignable via **console.neon.tech/api/v2** (proxy) ; docs migrées vers
+  neon.com/docs (docs.neon.tech mort) ;
+- Les routes /usage|/billing du proxy console → 404 « this route does not
+  exist » : la consommation se mesure par reconstruction des opérations
+  start/suspend_compute (fait : script Python de pagination, 373
+  opérations analysées) ;
+- Ne jamais ré-upgrader vers Launch pour « débloquer » un quota sans
+  consigner le retour arrière : c'est exactement ainsi que le 0 coût a
+  failli (21/09, crise N°162 — geste d'urgence jamais refermé).
+
+Aucun path backend/** ni deploy/oracle/** modifié → CI seule. Sentinel
+RENDER-DEPLOY-FROZEN intact. Aucun redéploiement Render.
+
 ## 2026-10-07 — N°255 — ProMax WIFI de retour : panne électrique confirmée, séquence d'auto-guérison N°254 exécutée au cordeau — bug « agents hors ligne » CLOTURÉ
 
 ### Cause racine confirmée par l'exploitant

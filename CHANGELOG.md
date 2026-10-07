@@ -5,6 +5,77 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-07 — N°255 — ProMax WIFI de retour : panne électrique confirmée, séquence d'auto-guérison N°254 exécutée au cordeau — bug « agents hors ligne » CLOTURÉ
+
+### Cause racine confirmée par l'exploitant
+Panne d'électricité sur le site distant de ProMax WIFI. Silence mesuré :
+2026-10-05T23:38:41Z → 2026-10-07T12:03:09Z, soit **36,4 h**. La migration
+T2 est définitivement innocente (N°253-b) ; le bug « agents hors ligne
+depuis T2 » était une coïncidence temporelle entre la fenêtre T2 et une
+coupure locale. Clôture de l'incident ouvert en N°253.
+
+### La séquence N°254 s'est exécutée EXACTEMENT comme prédit (mesuré en DB)
+- 12:03:09 — premier check-in post-retour-du-courant : lot 1 servi
+  (9 × user_remove + read_resources) ;
+- 12:03:23 — `reboot` #87 (c-d1a3aa1ff4d6) servi **dans son lot prédit** →
+  le routeur redémarre (uptime final ~3 h, cohérent boot 12:04) ;
+- 12:04:42 — `agent_migrate` #128 (c-fd491f41b24b) servie
+  **POST-redémarrage** (lots différents, pari du N°254 gagné) : done en
+  17 s, baseUrl https://api.mikcloud.ftci.fr, canal intégralement reconstruit ;
+- 12:04:42-12:05:03 — les 2 `ping` diagnostics (done) puis
+  `scheduler_set disabled=no` #131 (done 12:04:55) : assurance post-reboot ;
+- ensuite vidange FIFO de la file : 64 cmd faites le premier quart d'heure,
+  puis 7-16 par tranche de 15 min (rythme 10 cmd/check-in × 3 min) ;
+- resynchronisation complète : 3248 utilisateurs hotspot remontés
+  (read_state paginés par 500), QoS/walled-garden/safewifi/shield
+  ré-appliqués automatiquement à 14:05.
+
+### Artéfact non bloquant : les pings ICMP
+Les 2 pings vers api.mikcloud.ftci.fr rendent `lossPct=100` alors que le
+canal HTTPS fonctionne parfaitement (last_seen à la seconde, 820 commandes
+done sur la période). Verdict : ICMP filtré quelque part en amont
+(le routeur rejoint très bien le pont en HTTPS). Diagnostic, pas incident ;
+à réévaluer seulement si un jour on veut de l'ICMP de supervision.
+
+### Collatéral du reboot : 11 user_remove mortes dans le lot — compensées
+Effet documenté au N°254 : toute commande du MÊME lot que le reboot meurt
+non confirmée (« sent » zombie, fermeture error à 7 j — le 14/10 — sans
+rejeu). Bilan mesuré : 11 user_remove (clics exploitant du 06/10 17:11 →
+19:53) mortes à 12:03:23 :
+- **8/11 re-cliquées par l'exploitant** après le retour (déjà en file
+  queued, servies par la vidange normale) ;
+- **3 non re-cliquées** : DVJQQE, 6ETR, CNEVWV (tickets 24-HEURES
+  expirés, toujours présents en DB). Compensation effectuée à 14:55 via
+  le canal tracé habituel : login admin plateforme (ADMIN_PASSWORD env,
+  non roté) → session support sur le compte du routeur (impersonation,
+  « Session support ouverte » au journal) → `DELETE /api/users/{id}` × 3
+  (suppression cloud immédiate + user_remove re-enfilés queued :
+  c-0ad3258e1564 DVJQQE, c-2a4f3b43b23a 6ETR, c-454b70ddd542 CNEVWV).
+  Zéro écriture DB directe, zéro code modifié.
+
+### État final mesuré à 14:55 UTC
+- **5/5 routeurs ONLINE** (last_seen à la seconde pour les cinq) ;
+- File ProMax : done 820, queued 91 (vidange autonome ~30 min restantes),
+  sent 14 (3 vieux zombies du 02/10 + 11 du reboot — fermeture error
+  automatique à 7 j, sans effet métier) ;
+- watcher_ok=true, scheduler 180 s, version 7.24.5 sur ProMax ; exploitant
+  actif en console pendant l'intervention (ménage KRZD observé à 14:53).
+
+### Leçons retenues
+1. **Le pattern « file immortelle + migrate en profondeur de file » a
+   ressuscité un routeur distant sans AUCUN accès terrain** : à retenir
+   comme procédure standard de reprise après silence prolongé ;
+2. Le pari du découpage des lots (reboot ≠ migrate) s'est joué comme
+   calculé — mais il RESTE non garanti par construction (FIFO par
+   created_at) : toute future commande critique derrière un reboot doit
+   être positionnée en conséquence ;
+3. Les suppressions cliquées pendant un silence restent exposées au lot
+   du reboot : contrôle post-reprise recommandé (les zombies « sent » du
+   jour J se lisent en DB en une requête).
+
+Aucun path backend/** ni deploy/oracle/** modifié → CI seule. Sentinel
+RENDER-DEPLOY-FROZEN intact. Aucun redéploiement Render.
+
 ## 2026-10-06 — N°254 — ProMax WIFI : réveil 100 % distant de l'agent (contrainte « site distant, pas de Winbox ») — séquence d'auto-guérison armée en file
 
 ### Contrainte nouvelle

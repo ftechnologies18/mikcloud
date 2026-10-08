@@ -463,6 +463,26 @@ synchronisée sur le pont par l'ancien sync.
 obligatoire (le pont meurt le 31/10 — un problème connu à l'avance vaut
 mieux qu'une interruption subie).
 
+### T2-Marseille — l'atterrissage A1 réalisant la bascule complète (N°266, 08/10)
+
+La capture A1 ayant eu lieu dans une tenancy NEUVE (Marseille — §8-ter),
+l'IP réservée du pont E5 ne pouvait pas migrer (échange cross-tenancy
+impossible) : une IP réservée NEUVE (84.235.228.160) a été attachée à
+l'A1 et le scénario « un seul geste DNS » §8-bis s'inverse en « un flip
+final ». Déroulé mesuré (UTC) :
+
+| # | Heure | Geste | Preuve |
+|---|---|---|---|
+| 1 | 02:01 | `setup-marseille-vm` SUCCESS (brisure-glace v4 + bootstrap + env scellés MIKCLOUD_ENV_NEW/BACKUP) | run 37715853482 |
+| 2 | 02:05 | `deploy-oracle` dispatch : build **arm64** + scp + restart + **BACKEND OK healthcheck 20 s** (piège §10-16 : 1 min depuis JNB → 20 s depuis Marseille) | run 37716182734, `GOARCH: arm64` en log |
+| 3 | 03:05:44 | **Flip DNS** — PATCH API Cloudflare record `de11c4a4…` → `84.235.228.160`, nuage GRIS, TTL auto ; propagation publique < 40 s ; rollback §9.2 armé (pont E5 vivant) | `modified_on` record |
+| 4 | 03:06 | `t2-caddy-rescue` : 9 échecs ACME pré-flip (challenges atterrissaient sur l'E5 → 404, backoff 1200 s), relance 03:06:13 → **certificat LE PRODUCTION 03:06:14** (TLS-ALPN-01 ×5 validateurs), HTTPS 200 à 03:06:21 | run 37721096896 |
+
+Suites : sessions console révoquées (JWT roté N°265 — re-login),
+credentials RouterOS intacts (CREDENTIALS_KEY épinglée — zéro
+re-provisionnement agent), validations métier §8-7→13, puis
+décommission pont E5 §9.1 **avant le 31/10** (crédits).
+
 ## 8-ter. Mesure multi-régions et repli « nouvelle tenancy » (N°246)
 
 **Pourquoi** : l'allocation Always Free (A1.Flex 4 OCPU/24 Go + 2× micro)

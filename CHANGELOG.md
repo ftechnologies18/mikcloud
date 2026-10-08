@@ -5,6 +5,85 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-08 — N°266 — T2-MARSEILLE EXÉCUTÉ : la bascule finale est faite — flip DNS 03:05:44, certificat Let's Encrypt PRODUCTION 03:06:14 — `api.mikcloud.ftci.fr` vit désormais sur l'A1 Marseille (0 €/mois)
+
+### L'état au pré-flip (vérifié par l'agent, tout était déjà en place)
+La « Suite » annoncée par le N°265 était en réalité déjà déroulée :
+- **setup-marseille-vm** : 1er run en échec (37715507106, 01:57) puis
+  **SUCCESS** (37715853482, 02:01) — brisure-glace v4, bootstrap idempotent,
+  env production + backup.env installés depuis les secrets scellés ;
+- **ORACLE_GOARCH=arm64** (variable repo, vérifiée par API) et
+  **ORACLE_HOST=84.235.228.160** (flippé avant 02:05) ;
+- **deploy-oracle dispatch SUCCESS** (37716182734, 02:05, sur `e6d5e29`) :
+  build **GOARCH: arm64** (vérifié dans les logs du job), scp → install →
+  `systemctl restart mikcloud` → **BACKEND OK (healthcheck au bout de 20 s)**
+  — la preuve indirecte du flip ORACLE_HOST : un binaire arm64 ne peut pas
+  tourner sur l'E5 amd64, la réussite du healthcheck EST le verdict.
+  Bonus mesuré : le piège §10-16 (chargement des ~37 tables ≈ 1 min depuis
+  Johannesburg) tombe à **20 s** depuis Marseille — Supabase eu-west-1 est
+  à côté. La sonde du pont (sonde inaugurale 6/6 rouges N°264) n'a jamais
+  servi : la capture a été manuelle.
+
+### Le flip DNS (agent, API Cloudflare — 03:05:44 UTC)
+`PATCH zones/…/dns_records/de11c4a48c3eb0ecbdf968e9b083f1ba`
+`content → 84.235.228.160` — **nuage GRIS préservé** (proxied=false,
+contrat ACME §8-5), TTL auto. Propagation mesurée depuis le poste de
+pilotage : résolution publique `84.235.228.160` dès **03:06:23** (< 40 s).
+Le pont E5 (84.12.85.241) est resté vivant pendant toute la fenêtre :
+rollback §9.2 armé en permanence (un PATCH inverse), zéro coupure.
+
+### t2-caddy-rescue : le piège n°17 désamorcé en 37 secondes (run 37721096896)
+Le diagnostic AVANT a confirmé le mécanisme N°245-b, cette fois sur la VM
+neuve : **9 tentatives ACME échouées** depuis 02:07 (`403 unauthorized —
+84.12.85.241 : Invalid response … 404` — les challenges, validés par LE
+chez l'E5 via le DNS d'alors, ne trouvaient pas le jeton), backoff
+certmagic monté à 1200 s, prochaine tentative programmée 03:23:10 — le
+flip seul ne l'aurait pas devancée avant 20 min de trop. La relance
+(03:06:13) court-circuite le backoff :
+- challenge **TLS-ALPN-01** validé par 5 validateurs Let's Encrypt
+  (connexions servies par Caddy/Marseille : `served key authentication
+  certificate` ×5) ;
+- **`certificate obtained successfully`** à **03:06:14** (CA production
+  `acme-v02`, compte `acct/3838636666`) — vérification bout-en-bout du
+  workflow : tentative 1 `000` (handshake en émission, 03:06:13),
+  tentative 2 **HTTP 200** (03:06:21) ;
+- contrôle anti-staging : `issuer=Let's Encrypt CN=YE2` — PRODUCTION,
+  `notAfter=06/01/2027` ;
+- chaîne complète : `http→308→https→200`.
+
+### Ce que ça change
+- **Sessions console révoquées au flip** (JWT roté N°265) — re-login
+  requis, mots de passe inchangés ;
+- **Credentials RouterOS intacts** (CREDENTIALS_KEY épinglée HKDF) — les
+  agents ne se re-provisionnent pas : le check-in suit le DNS ;
+- L'**E5 devient standby** (§9.2) jusqu'au décommission §9.1 — à faire
+  **avant le 31/10** (crédits), après 48 h de stabilité.
+
+### Sécurité de la fenêtre
+Aucun path `backend/**` ni `deploy/oracle/**` ni workflow modifié :
+aucun déploiement déclenché par ce push, sentinel RENDER-DEPLOY-FROZEN
+intact, zéro secret manipulé (le flip = PATCH sur un id de record, la
+relance = workflow existant à permissions {}). Rappel N°265 maintenu :
+**rotations GitHub/Supabase/Neon/Render/Vercel/Cloudflare après
+l'atterrissage** — le token Cloudflare utilisé pour le flip est dans le
+lot.
+
+### Reste à faire (validations métier §8-7→13 — exploitant)
+1. Console → **Infrastructure** : check-in visible pour CHAQUE routeur ;
+2. Téléphone sur **WiFi invité** : page portail servie, bannière R2
+   (`media.ftci.fr`) ;
+3. **Vente voucher test** → utilisable ;
+4. **QR `/join/{token}`** → inscription aboutie ;
+5. **Première sauvegarde Marseille** : vérifier le run du timer
+   `mikcloud-backup.timer` 03:00 UTC (ou `systemctl start
+   mikcloud-backup.service`) + tables visibles côté Neon ;
+6. Guetteurs : `df -h`, alerte budget Oracle 1 € (ne doit JAMAIS sonner),
+   UptimeRobot repointé si besoin ;
+7. **48 h de surveillance** (check-ins, ventes, sync-status, journal) →
+   puis §9.1 décommission pont E5 avant le 31/10.
+
+---
+
 ## 2026-10-08 — N°265 — CAPTURE MANUELLE A1 à Marseille : l'exploitant prend le dernier créneau — VM renommée, chasseurs éteints, IP réservée neuve 84.235.228.160, env reconstruit, atterrissage en cours
 
 ### La capture (exploitant, aux clics — 01:06-01:12 UTC)

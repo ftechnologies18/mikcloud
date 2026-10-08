@@ -84,6 +84,13 @@ jobs:
       AD: yMUP:AF-JOHANNESBURG-1-AD-1
       IMG: ocid1.image.oc1.af-johannesburg-1.aaaaaaaajuezopthnotjmbmvpsii43e7hoxielm74waloedyh6i4qvfiym2a
       SUBNET: ocid1.subnet.oc1.af-johannesburg-1.aaaaaaaanasgo3l7bndnre4ajjcpzfewliekzakfz4c7dhz5zh6ksh7e7caa
+      # N°270-bis : les étapes de victoire/garde appellent `gh` (issues,
+      # workflow disable) SANS étape checkout — sans GH_REPO, gh tente de
+      # résoudre le dépôt via git et meurt « failed to run git: fatal: not
+      # a git repository » (prouvé en production : Marseille hunt-a1 #1426,
+      # 01:39 UTC). GH_REPO rend les chemins de victoire fonctionnels
+      # (issue d'alerte + désactivation croisée) sans checkout inutile.
+      GH_REPO: ${{ github.repository }}
     steps:
       - name: OCI CLI + coffre JNB + poing d'auth (veille armée si incomplet)
         id: auth
@@ -211,8 +218,8 @@ jobs:
             fi
             if [ -z "$MSTAT" ]; then
               MSTAT="PROBE_ERROR"
-              echo "  ⚠ sonde micro en échec — raison (3 dernières lignes) :"
-              echo "$MICRO_OUT" | grep -vE '^\s*$' | tail -3 | sed 's/^/    /'
+              echo "  ⚠ sonde micro en échec — réponse complète (30 premières lignes, N°270-bis) :"
+              echo "$MICRO_OUT" | grep -vE '^\s*$' | head -30 | sed 's/^/    /'
             else
               echo "  cible #5 (micro E2.1.Micro) → $MSTAT"
             fi

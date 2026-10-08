@@ -66,6 +66,10 @@ jobs:
       AD: yMUP:AF-JOHANNESBURG-1-AD-1
       IMG: ocid1.image.oc1.af-johannesburg-1.aaaaaaaajuezopthnotjmbmvpsii43e7hoxielm74waloedyh6i4qvfiym2a
       SUBNET: ocid1.subnet.oc1.af-johannesburg-1.aaaaaaaanasgo3l7bndnre4ajjcpzfewliekzakfz4c7dhz5zh6ksh7e7caa
+      # N°270-bis : `gh` sans checkout (cf. hunt-a1-jnb.yml) — GH_REPO requis
+      # pour que les chemins de victoire (issue + désactivation croisée)
+      # fonctionnent (preuve : Marseille hunt-a1 #1426 « failed to run git »).
+      GH_REPO: ${{ github.repository }}
     steps:
       - name: OCI CLI + coffre JNB + poing d'auth (veille armée si incomplet)
         id: auth

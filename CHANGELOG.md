@@ -5,6 +5,39 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-08 — N°270-bis — Chasse JNB : chemin de victoire réparé (GH_REPO sans checkout — preuve Marseille #1426 « failed to run git ») + visibilité complète de la réponse micro asynchrone — CI seule
+
+### Fix P0 latent — `gh` sans étape checkout dans les chasseurs
+- **Prouvé en production** : `hunt-a1.yml` (Marseille) run #1426, 01:39 UTC —
+  la garde détecte l'A1 (`mikcloud-backend (A1) déjà présente`) puis meurt sur
+  `failed to run git: fatal: not a git repository` : `gh` résout le dépôt via
+  git (aucun checkout dans ces workflows, `GITHUB_REPOSITORY` n'est pas lu
+  par gh) → l'issue d'alerte et le disable ne partent jamais.
+- **Conséquence si non corrigé** : à une capture JNB réelle, `gh issue create`
+  échoue → `bash -e` aborte l'étape → PAS d'issue `[JNB]`, PAS de
+  désactivation croisée, runs rouges en boucle toutes les 5 min pendant que
+  l'instance capturée attend sans jamais être signalée.
+- **Correctif minimal** : `GH_REPO: ${{ github.repository }}` au niveau job
+  de `hunt-a1-jnb.yml` ET `hunt-parallel-jnb.yml` (une ligne + commentaire
+  chacun) — gh résout le dépôt sans git, tous les chemins `gh` (issue
+  list/create, workflow disable) deviennent fonctionnels. Marseille
+  (`hunt-a1.yml`/`hunt-parallel.yml`, disabled_manually N°265) non touché —
+  à reporter si jamais ré-armés (§9.2).
+
+### Sonde micro — itération diagnostic
+- Le fix N°270 (GET + retry unique) tourne depuis #76 : la réponse JNB du
+  micro ne contient NI `shape-availabilities` NI un OCID
+  `ocid1.computecapacityreport` → PROBE_ERROR à chaque voie. Structure de la
+  réponse toujours inconnue (le log n'imprimait que `tail -3`).
+- **Instrumentation** : la branche PROBE_ERROR imprime désormais la réponse
+  COMPLÈTE (30 premières lignes) → le prochain run révélera la structure
+  exacte (work request ? ServiceError ? enveloppe spécifique micro ?) et le
+  traitement précis pourra être implémenté.
+
+### Hors périmètre
+Workflows uniquement → CI seule (sentinel intact, aucun path backend/**) ;
+aucun schéma DB → rien à synchroniser ; aucun secret au dépôt.
+
 ## 2026-10-08 — N°270 — Chasse JNB : Geste 1+2 posés → CHASSE ACTIVE (run #62 14:25 UTC, auth OCI OK) + sonde micro cible #5 rendue robuste au rapport asynchrone (GET + retry unique) — CI seule
 
 ### Armement complet de la chasse JNB (exploitant + coffre)

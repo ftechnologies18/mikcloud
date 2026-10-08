@@ -11,13 +11,14 @@
 | `JWT_SECRET` / `SECRETBOX_KEY` | Signature des tokens, chiffrement des secrets stockés | Variables d'environnement Render | 12 mois ou sur incident |
 | `ADMIN_PASSWORD` | Bootstrap de l'admin plateforme | Variable Render | 6 mois |
 | GitHub PAT (`GH_TOKEN`) | Push, API dépôt, déclenchement CI | Coffre de l'opérateur (1Password/Bitwarden) | **90 jours** |
-| Neon API token (`napi_…`) | Gestion du projet Neon | Coffre de l'opérateur | 6 mois |
-| Neon DSN (`postgresql://…`) | Connexion base du backend | Variable Render `DATABASE_URL` + secret GitHub `DATABASE_URL` (workflow backup) | Sur fuite ou départ d'un collaborateur |
+| Neon API token (`napi_…`) | Gestion du projet Neon | Coffre de l'opérateur + secret GitHub `NEON_API_KEY` (N°269) | 6 mois |
+| Neon DSN (`postgresql://…`) | Base de secours/vault (standby-restore, repair-backup-env) — la production est Supabase (N°264+) | Secret GitHub `NEON_STANDBY_DATABASE_URL` + coffre | Sur fuite ou départ d'un collaborateur |
+| DSN Supabase production (pooler `aws-1-eu-west-1.pooler.supabase.com`) | Connexion base de production (backend, backup hebdo, standby-restore ; migrations sur :5432) | Variable Render `DATABASE_URL` + secrets GitHub `DATABASE_URL` + `SUPABASE_DATABASE_URL` + `SUPABASE_DIRECT_URL` (N°269) | Sur fuite ; rotation dashboard Supabase (§2.8) |
 | Render API key (`rnd_…`) | Déclenchement des déploiements (CI → job deploy-render) | Secret GitHub `RENDER_API_KEY` + coffre | 6 mois |
-| Vercel token (`vcp_…`) | CLI/CI Vercel | Coffre | 90 jours |
+| Vercel token (`vcp_…`) | CLI/CI Vercel | Coffre + secret GitHub `VERCEL_TOKEN` (N°269) | 90 jours |
 | `BACKUP_KEY` | Chiffrement des sauvegardes mikbackup | Secret GitHub `BACKUP_KEY` + coffre de l'opérateur | 12 mois (la rotation impose un nouveau cycle de sauvegarde complet) |
 | Webhook GeniusPay HMAC | Anti-falsification webhooks | Variable Render | Sur incident |
-| Jeton API Cloudflare R2 (`R2_API_TOKEN`, format `cfat_…`) | Upload ET lecture des images des portails (slides, bannières) via l'API REST R2 — servies par le backend `/api/media` | Variables Render `R2_ACCOUNT_ID` + `R2_API_TOKEN` + `R2_BUCKET` + coffre | **À la création : SANS expiration, ou rappel calendaire AVANT l'échéance** — un jeton expiré tue les images des portails SANS alerte (incident 20/09→23/09/2026, N°183 ; sonde désormais visible dans la carte Santé). **Piège cfat_ (N°185)** : ne JAMAIS valider ces jetons via `/user/tokens/verify` (refuse les `cfat_` valides — cf. §2.7) |
+| Jeton API Cloudflare R2 (`R2_API_TOKEN`, format `cfat_…`) | Upload ET lecture des images des portails (slides, bannières) via l'API REST R2 — servies par le backend `/api/media` | Variables Render `R2_ACCOUNT_ID` + `R2_API_TOKEN` + `R2_BUCKET` + coffre + secret GitHub `R2_API_TOKEN` (N°269) | **À la création : SANS expiration, ou rappel calendaire AVANT l'échéance** — un jeton expiré tue les images des portails SANS alerte (incident 20/09→23/09/2026, N°183 ; sonde désormais visible dans la carte Santé). **Piège cfat_ (N°185)** : ne JAMAIS valider ces jetons via `/user/tokens/verify` (refuse les `cfat_` valides — cf. §2.7) |
 | Paire S3 R2 (Access Key ID + Secret, endpoint `…r2.cloudflarestorage.com`) | Outils S3 UNIQUEMENT (rclone, aws cli, inspections de secours du compartiment) — le backend n'en a PAS besoin (API REST Bearer) | Coffre | Sur fuite ; liée au jeton `cfat_` de la console R2 (même écran de création) |
 
 Règles transverses :
@@ -38,7 +39,14 @@ Règles transverses :
 - **Vercel** (frontend) : Settings → Environment Variables
   (`NEXT_PUBLIC_API_BASE`).
 - **GitHub** (repo `ftechnologies18/mikcloud`) : Settings → Secrets and
-  variables → Actions (`RENDER_API_KEY`, `BACKUP_KEY`, `DATABASE_URL`).
+  variables → Actions — inventaire N°269 (24 secrets) : `DATABASE_URL`,
+  `SUPABASE_DATABASE_URL`, `SUPABASE_DIRECT_URL`,
+  `NEON_STANDBY_DATABASE_URL`, `NEON_API_KEY`, `BACKUP_KEY`,
+  `RENDER_API_KEY`, `VERCEL_TOKEN`, `R2_API_TOKEN`, `ORACLE_HOST`,
+  `ORACLE_USER`, `ORACLE_SSH_KEY`, `OCI_CLI_USER/TENANCY/FINGERPRINT/REGION`
+  + `OCI_API_KEY` (Marseille), `OCI_CLI_TENANCY/FINGERPRINT/REGION_JNB` +
+  `OCI_API_KEY_JNB` (chasse JNB — `OCI_CLI_USER_JNB` en attente Geste 2),
+  `MIKCLOUD_ENV_NEW`, `MIKCLOUD_BACKUP_ENV_NEW`, `MIKCLOUD_HUNT_TOKEN`.
 - **Neon** : Console → projet → (branches, rôles, réinitialisation du mot de
   passe du rôle).
 

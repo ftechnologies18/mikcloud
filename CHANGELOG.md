@@ -5,6 +5,58 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-08 — N°269 — Sécurisation de la vague de secrets fournisseurs au coffre GitHub (20 → 24) — DSN Supabase TOUJOURS en 28P01 (2 clients) — pouls de la chasse JNB « double moteur » vérifié
+
+### Coffre GitHub Actions (sealed box PyNaCl, key_id 3380204578043523366)
+L'exploitant a transmis la vague de secrets fournisseurs par le canal chat
+(= compromis par définition, RUNBOOK-SECRETS §2.6). Consignation au coffre
+chiffré du dépôt — inventaire 20 → **24 secrets** :
+- **Mise à jour** (HTTP 204) : `DATABASE_URL`, `SUPABASE_DATABASE_URL`,
+  `NEON_STANDBY_DATABASE_URL`, `RENDER_API_KEY` ;
+- **Création** (HTTP 201) : `SUPABASE_DIRECT_URL` (pooler session :5432,
+  migrations), `NEON_API_KEY` (jeton `napi_…`), `VERCEL_TOKEN` (`vcp_…`),
+  `R2_API_TOKEN` (jeton R2 `cfat_…` — piège N°185 : JAMAIS
+  `/user/tokens/verify`) ;
+- Le **PAT GitHub n'est PAS mis au coffre** (§2.1 : usage one-shot, jamais
+  côté GitHub) — usage session uniquement, révocation en fin de session ;
+- Inventaire complet consigné dans RUNBOOK-SECRETS §0/§1.
+
+### Verdicts DSN mesurés AVANT écriture (pg8000, puis psycopg3 — 2 clients)
+- **Neon** (coffre-fort) : OK — PostgreSQL 18.6, 40 tables → le
+  `NEON_STANDBY_DATABASE_URL` posé est VALIDÉ par connexion réelle.
+- **Supabase production** : **28P01** `password authentication failed for
+  user "postgres"` sur les DEUX poolers (6543 transaction via pg8000 ;
+  5432 session via psycopg3) → le mot de passe transmis est REJETÉ, même
+  blocage que le test initial (deux clients indépendants également). Les
+  DSN sont stockés sur instruction de l'exploitant mais RESTENT MORTS tant
+  que le **reset du mot de passe n'est pas fait dans le dashboard
+  Supabase** (non automatisable : `ALTER ROLE` → 42501, §2.8), puis
+  transmission du nouveau DSN → échange au coffre (`DATABASE_URL` +
+  `SUPABASE_DATABASE_URL` + Render). D'ici là, `backup.yml` (dimanche
+  03:17) et `standby-restore` liront la production en échec 28P01 (aucun
+  risque de corruption — échec d'authentification sec).
+
+### Pouls de la chasse JNB « double moteur » (contrôle N°269, 10:00 UTC)
+- **Moteur instance (pont E5 84.12.85.241)** : dispatches
+  `hunt-a1-jnb.yml` observés 09:35 → 10:00 toutes les 5 min, runs VERTS en
+  **veille armée** (gate : coffre `OCI_*_JNB` incomplet — **Geste 1 +
+  Geste 2 toujours en attente**, `OCI_CLI_USER_JNB` seule valeur manquante
+  du coffre).
+- **Moteur GitHub** : `hunt-parallel-jnb.yml` (cron `2-59/5` 24/7) = 0 run
+  cron depuis le push N°268 — retard de planification des crons GitHub
+  (connu sur dépôts publics) ; dispatch manuel de validation émis → run
+  VERT (veille armée, chaîne complète fonctionnelle). Les crons nocturnes
+  du principal démarrent ce soir 20:11 UTC — à re-contrôler.
+- Production Marseille invisible/intouchable (autre tenancy, noms dédiés,
+  IP éphémères, cloud-init inert) — inchangé. Chasseurs Marseille
+  (disabled_manually N°265) jamais touchés.
+
+### Rotation — rappel §2.6
+Tous les secrets passés au chat sont compromis par ce seul fait : rotation
+à programmer (Supabase dashboard — de toute façon requise ci-dessus, Neon
+`napi_` + DSN, Render Roll, Vercel, R2 §2.7 ; **GitHub PAT en dernier**,
+§2.1).
+
 ## 2026-10-08 — N°268 — GO exploitant : chasse JNB « double moteur » ARMÉE — moteur GitHub (hunt-a1-jnb + hunt-parallel-jnb) + moteur instance (boucle E5 v3) — veille armée en attendant les 2 gestes console
 
 ### La décision

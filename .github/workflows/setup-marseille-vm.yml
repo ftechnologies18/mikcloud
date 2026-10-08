@@ -1,0 +1,127 @@
+name: setup-marseille-vm
+
+# ═══ VM MARSEILLE — BRISURE-GLACE + BOOTSTRAP + ENV (N°265) ═══
+# Contexte : l'exploitant a capturé MANUELLEMENT la dernière capacité A1
+# d'eu-marseille-1 (instance-20261008-0106, RUNNING 01:12 UTC — la sonde
+# inaugurale N°264 était 6/6 rouges 7 minutes plus tôt) : VM.Standard.A1.Flex
+# 2 OCPU/12 Go, Ubuntu 26.04 aarch64 (≠ image de chasse 24.04 — non
+# bloquant, bootstrap indépendant de la version), subnet mikcloud-subnet,
+# clé publique de pilotage injectée, boot volume 50 Go — mais SANS cloud-init
+# (création console) : ni bootstrap, ni env, ni binaire.
+# Renommée « mikcloud-backend » à 01:33 → la garde de hunt-a1 l'a vue à
+# 01:39 (« déjà présente — le chasseur se désactive ») puis a planté sur
+# le bug gh -R hors dépôt git (run 37713992985) : croix de désactivation
+# posée à la main via l'API (hunt-a1 + hunt-parallel, HTTP 204 ×2).
+# IP : l'échange cross-tenancy étant impossible (consigne N°264), IP
+# réservée NEUVE 84.235.228.160 attachée au private-ip (éphémère
+# 144.24.192.164 retirée).
+# Ce workflow installe depuis le runner (secret ORACLE_SSH_KEY = la clé
+# injectée à la création de l'instance) :
+#   1. la clé de pilotage v4 (brisure-glace — pattern recover-pont-access),
+#   2. bootstrap.sh (idempotent : iptables 80/443, MTU 1500, Caddy,
+#      systemd, CA Supabase, timer backup 03:00 UTC),
+#   3. /etc/mikcloud/mikcloud.env + backup.env depuis les secrets scellés
+#      MIKCLOUD_ENV_NEW / MIKCLOUD_BACKUP_ENV_NEW (réplique du pont E5 :
+#      renderenv du 7 oct. + DSN Supabase validé SELECT 1 en direct ;
+#      JWT_SECRET ROTÉ à la fenêtre — doctrine §8-4 ; CREDENTIALS_KEY
+#      épinglée = HKDF de l'ANCIEN JWT, même dérivation que mikderive).
+# Le binaire arrive ensuite par deploy-oracle.yml (GOARCH=arm64).
+# Sécurité : zéro valeur échoée (noms de variables seuls), permissions {},
+# workflow_dispatch uniquement, idempotent, heredoc 'REMOTE' (piège n°18).
+
+on:
+  workflow_dispatch: {}
+
+permissions: {} # SSH uniquement — aucune écriture GitHub requise
+
+concurrency:
+  group: setup-marseille-vm
+  cancel-in-progress: false
+
+jobs:
+  setup:
+    name: VM Marseille — brisure-glace + bootstrap + env
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DEPLOY_USER: ${{ secrets.ORACLE_USER }}
+      SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+      VM_HOST: 84.235.228.160
+      ENV_NEW: ${{ secrets.MIKCLOUD_ENV_NEW }}
+      BACKUP_ENV_NEW: ${{ secrets.MIKCLOUD_BACKUP_ENV_NEW }}
+    steps:
+      - name: Clé SSH du coffre + poing d'authentification
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null /tmp/oracle_key
+          printf '%s\n' "$SSH_KEY" > /tmp/oracle_key
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" 'echo "SSH OK — $(uname -sr)"'
+
+      - name: Brisure-glace — clé de pilotage v4
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          NEW_PUB="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILKO70Sqn9ylNa5LO5hdQe/WiEGzXAuipfUUkn6c3opU"
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
+          if grep -qF "$NEW_PUB" ~/.ssh/authorized_keys; then
+            echo "Clé de pilotage v4 déjà présente (idempotent)."
+          else
+            echo "$NEW_PUB" >> ~/.ssh/authorized_keys
+            echo "Clé de pilotage v4 AJOUTÉE à la VM Marseille."
+          fi
+          REMOTE
+
+      - name: Bootstrap (idempotent — pare-feu, MTU, Caddy, systemd, CA, timer)
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          if [ -f /etc/systemd/system/mikcloud.service ]; then
+            echo "Bootstrap déjà posé (mikcloud.service présent) — rien à refaire."
+          else
+            echo "── bootstrap.sh : iptables 80/443, MTU 1500, Caddy, utilisateur,"
+            echo "   CA Supabase, mikcloud.service, timer backup 03:00 UTC…"
+            curl -fsSL https://raw.githubusercontent.com/ftechnologies18/mikcloud/main/deploy/oracle/bootstrap.sh -o /tmp/bootstrap.sh
+            sudo bash /tmp/bootstrap.sh api.mikcloud.ftci.fr
+          fi
+          REMOTE
+
+      - name: Env production + coffre-fort (secrets scellés → /etc/mikcloud)
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
+          install -m 600 /dev/null /tmp/mikcloud.env.new
+          printf '%s\n' "$ENV_NEW" > /tmp/mikcloud.env.new
+          install -m 600 /dev/null /tmp/backup.env.new
+          printf '%s\n' "$BACKUP_ENV_NEW" > /tmp/backup.env.new
+          scp $SSH_OPTS /tmp/mikcloud.env.new "$DEPLOY_USER@$VM_HOST:/tmp/mikcloud.env.new"
+          scp $SSH_OPTS /tmp/backup.env.new "$DEPLOY_USER@$VM_HOST:/tmp/backup.env.new2"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          sudo install -o root -g mikcloud -m 640 /tmp/mikcloud.env.new /etc/mikcloud/mikcloud.env
+          sudo install -o root -g mikcloud -m 640 /tmp/backup.env.new2 /etc/mikcloud/backup.env
+          rm -f /tmp/mikcloud.env.new /tmp/backup.env.new2
+          echo "Env installé — root:mikcloud 640, valeurs jamais affichées."
+          REMOTE
+
+      - name: Vérifications (noms de variables seuls — aucune valeur)
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          echo "── caddy : $(systemctl is-active caddy) $(systemctl is-enabled caddy 2>/dev/null || true)"
+          echo "── mikcloud-backup.timer : $(systemctl is-active mikcloud-backup.timer) — prochaine : $(systemctl list-timers mikcloud-backup.timer --no-pager 2>/dev/null | sed -n 2p | awk '{print $1, $2}')"
+          echo "── mikcloud.service : présent=$([ -f /etc/systemd/system/mikcloud.service ] && echo oui || echo non) (binaire : deploy-oracle)"
+          echo "── mikcloud.env : $(sudo stat -c '%U:%G %a' /etc/mikcloud/mikcloud.env) — $(sudo grep -cE '^[A-Z_0-9]+=' /etc/mikcloud/mikcloud.env) affectations"
+          echo "── variables : $(sudo grep -oE '^[A-Z_0-9]+=' /etc/mikcloud/mikcloud.env | tr -d '=' | sort | tr '\n' ' ')"
+          echo "── backup.env : $(sudo stat -c '%U:%G %a' /etc/mikcloud/backup.env) — $(sudo grep -oE '^[A-Z_0-9]+=' /etc/mikcloud/backup.env | tr -d '=' | tr '\n' ' ')"
+          echo "── MTU (default dev) : $(cat /sys/class/net/$(ip route show default | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1); exit}')/mtu 2>/dev/null || echo '?')"
+          echo "── pare-feu : $(sudo iptables -C INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null && echo '80 OK' || echo '80 MANQUANT') / $(sudo iptables -C INPUT -p tcp --dport 443 -j ACCEPT 2>/dev/null && echo '443 OK' || echo '443 MANQUANT')"
+          echo "── disque : $(df -h / | sed -n 2p | awk '{print $2 " total, " $4 " libre"}')"
+          REMOTE

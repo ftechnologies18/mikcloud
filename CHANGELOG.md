@@ -5,6 +5,79 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-08 — N°265 — CAPTURE MANUELLE A1 à Marseille : l'exploitant prend le dernier créneau — VM renommée, chasseurs éteints, IP réservée neuve 84.235.228.160, env reconstruit, atterrissage en cours
+
+### La capture (exploitant, aux clics — 01:06-01:12 UTC)
+Sept minutes après la sonde inaugurale 6/6 rouges du N°264, l'exploitant
+crée l'instance **à la console** dans la tenancy neuve et décroche le
+dernier créneau A1 d'eu-marseille-1 : `instance-20261008-0106`,
+**VM.Standard.A1.Flex 2 OCPU/12 Go** (spec mikcloud-backend exacte),
+Ubuntu **26.04** aarch64 (≠ image de chasse 24.04 — non bloquant, le
+bootstrap est indépendant de la version), subnet **mikcloud-subnet**
+(réseau N°264 réutilisé — pas de VCN console parasite), **clé publique
+de pilotage** injectée (paire ORACLE_SSH_KEY), boot volume **50 Go**.
+Vérifié en direct après coup : capacité **5/5 OUT_OF_HOST_CAPACITY** —
+c'était LE dernier créneau. Conséquence doctrinale : cette instance ne
+sera JAMAIS supprimée pour être « refaite mieux ».
+
+### Mise en sécurité (agent, 01:33-01:45)
+- **Renommage** `mikcloud-backend` (display-name, sans reboot) : la garde
+  de hunt-a1 l'a vue au passage 01:39 (« déjà présente — le chasseur se
+  désactive ») — puis `gh workflow disable` a planté sur le **bug -R hors
+  dépôt git** (run 37713992985, pas de checkout dans le job) : la croix
+  de désactivation est posée à la main via l'API (hunt-a1 + hunt-parallel,
+  HTTP 204 ×2). Le bug -R reste à corriger au ménage (gh … -R
+  ftechnologies18/mikcloud dans la garde et les victoires).
+- **IP réservée neuve** `84.235.228.160` (display name
+  `mikcloud-api-marseille`, lifetime RESERVED) attachée au private-ip
+  10.0.0.159 — l'éphémère 144.24.192.164 est retirée : l'échange
+  cross-tenancy étant impossible, la consigne N°264 « réserver IP neuve +
+  flip DNS » s'applique à la lettre. Security List vérifiée : 22/80/443
+  ingress 0.0.0.0/0 ✅.
+
+### L'env reconstruit SANS toucher au pont E5
+Le sync Render→VM est gelé depuis le T2 (sentinel N°244) et le pont E5
+reste la production vivante (vérifié `200 ok:true` pendant l'opération) :
+l'env de la VM neuve est **reconstruit** à partir du relevé Render du
+7 oct. (19 vars — renderenv), corrigé des rotations post-T2 :
+- **DATABASE_URL** : DSN Supabase **validé SELECT 1 en direct** avant
+  application (les deux formes pooler :5432/:6543 connectent). ⚠️ Le DSN
+  collé par l'exploitant au chat ne s'authentifie PAS (ancien mot de
+  passe dans ses notes) — c'est celui du relevé Render qui est vivant ;
+- **JWT_SECRET : ROTÉ** (64 hex aléatoire) — doctrine §8-4 (rotation à
+  la fenêtre de bascule ; les sessions console seront révoquées au flip,
+  les mots de passe ne changent pas) ;
+- **CREDENTIALS_KEY : épinglée** = HKDF-SHA256 de l'ANCIEN JWT (sel
+  `mikcloud-secretbox`, info `mikcloud/credentials/v1` — même dérivation
+  que mikderive, répliquée hors Go) : les credentials RouterOS chiffrés
+  au repos restent déchiffrables ;
+- PORT=4000, GOMEMLIMIT écarté (§3) — le reste repris tel quel.
+Le coffre-fort `backup.env` suit : DATABASE_URL_SESSION (le DSN validé)
++ NEON_DATABASE_URL (testé SELECT 1 — 40 tables visibles).
+Déposé en secrets scellés GitHub `MIKCLOUD_ENV_NEW` /
+`MIKCLOUD_BACKUP_ENV_NEW` (sealed box PyNaCl, HTTP 201 ×2) — zéro valeur
+dans le repo, zéro valeur dans les logs.
+
+### Le workflow `setup-marseille-vm.yml` (ce push)
+Brisure-glace v4 (clé de pilotage neuve, pattern recover-pont-access) +
+bootstrap.sh (idempotent : iptables 80/443, MTU 1500, Caddy, systemd,
+CA Supabase, timer backup 03:00 UTC) + installation des deux env depuis
+les secrets + vérifications (noms de variables seuls). Le binaire arrive
+ensuite par deploy-oracle.yml : **ORACLE_GOARCH=arm64** +
+**ORACLE_HOST=84.235.228.160**, puis flip DNS Cloudflare (A record,
+nuage GRIS) et **t2-caddy-rescue** (piège n°17 : certmagic en backoff
+pré-flip — la relance Caddy émet en ~5 s post-flip), puis validations
+§8 (check-in agents, portail, vente test, QR /join).
+
+### Sécurité du push
+Un workflow neuf + ce CHANGELOG — aucun path `backend/**` ni
+`deploy/oracle/**` : aucun déploiement déclenché, sentinel
+RENDER-DEPLOY-FROZEN intacte, prod E5 (api.mikcloud.ftci.fr) vérifiée
+vivante avant et pendant l'opération. Rappel d'hygiène (issue land-a1) :
+les identifiants GitHub/Supabase/Neon/Render/Vercel exposés au chat
+doivent être rotés après l'atterrissage.
+
+
 ## 2026-10-08 — N°264 — La chasse A1/micro est repointée sur la tenancy neuve eu-marseille-1 (voie N°249 réalisée) — réseau reconstruit, bug latent du filet micro corrigé
 
 ### Le contexte

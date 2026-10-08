@@ -50,8 +50,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      TEN: ocid1.tenancy.oc1..aaaaaaaa5lipoqjckcohkzca6uc42svliyvuaw7cl33ef5546mhcv4xf7kxq
-      SUBNET: ocid1.subnet.oc1.af-johannesburg-1.aaaaaaaanasgo3l7bndnre4ajjcpzfewliekzakfz4c7dhz5zh6ksh7e7caa
+      # N°264 — atterrissage repointé sur la tenancy neuve eu-marseille-1.
+      TEN: ocid1.tenancy.oc1..aaaaaaaawdvtbxs3ck7bsxy5kxmq2lsi6iwt7q6eridqoapw2syrsbl53m6a
+      SUBNET: ocid1.subnet.oc1.eu-marseille-1.aaaaaaaa4zfxrb4s3avcg4egq465b546t7222j37uwif6cumujzeyd25rfjq
+      # ⚠ N°264 — RESERVED_IP = IP réservée du pont E5 (tenancy JNB, région
+      # af-johannesburg-1). Le jour de l'atterrissage Marseille : réserver une
+      # IP NEUVE dans eu-marseille-1, mettre à jour cette valeur, puis flip
+      # DNS (l'échange d'IP cross-tenancy est impossible — le lookup REGION
+      # ci-dessous échoue proprement tant que cette valeur pointe vers JNB).
       RESERVED_IP: 84.12.85.241
     steps:
       - name: OCI CLI + profil (clé API du coffre GitHub)

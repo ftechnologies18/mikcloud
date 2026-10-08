@@ -5,6 +5,81 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-08 — N°264 — La chasse A1/micro est repointée sur la tenancy neuve eu-marseille-1 (voie N°249 réalisée) — réseau reconstruit, bug latent du filet micro corrigé
+
+### Le contexte
+La voie N°249 (compte neuf + identité de paiement d'une proche, SANS coupure)
+est réalisée : inscription réussie depuis l'appareil ET la connexion de la
+proche après l'échec documenté N°260 (le blocage Oracle venait de
+l'ENVIRONNEMENT de l'exploitant — navigateur/session/IP — pas de l'identité
+saisie). **Région d'origine : France South (Marseille), trial jusqu'au
+05/11/2026.** Sans 100 $ de disponible pour le hold PAYG (N°259), une capture
+sur la tenancy E5 JNB mourrait avec elle le 31/10 : la chasse n'a donc plus
+d'objet à Johannesburg, et tout le kit bascule sur Marseille.
+
+### Mise en œuvre (un seul geste coordonné)
+- **Réseau reconstruit à l'identique JNB** dans la tenancy neuve via OCI CLI :
+  VCN `mikcloud-vcn` (10.0.0.0/16) + Internet Gateway + route table + security
+  list (ingress 22/80/443 depuis 0.0.0.0/0, egress libre) + subnet public
+  `mikcloud-subnet` (10.0.0.0/24, régional) — AVAILABLE.
+- **Sonde inaugurale** (doctrine N°222, gratuite) : 6/6 cibles rouges à
+  l'instant T (A1 2/12 auto, 1/6 auto, FD-1/2/3, micro) — Marseille est
+  réputée plus clément que JNB mais la disponibilité reste un tirage
+  continu : la boucle 3 min du pont E5 sondera désormais Marseille
+  (480 essais/jour, dépôt public = gratuit).
+- **Secrets GitHub OCI_\*** (TENANCY, USER, FINGERPRINT, REGION, API_KEY)
+  basculés vers la clé API `mikcloud-ops` de la nouvelle tenancy — scellés
+  libsodium via l'API, 5/5 en HTTP 204. Vérification préalable : ces secrets
+  ne servent QU'AU kit de chasse (hunt-a1, hunt-parallel, hunt-audit,
+  land-a1, land-micro, region-probe désactivé) — `deploy-oracle.yml` déploie
+  via SSH/ORACLE_HOST et est INTACT (le piège anticipé N°262 est levé).
+- **5 workflows repointés** (TEN/AD/IMG/SUBNET eu-marseille-1, AD unique
+  `CwKv:EU-MARSEILLE-1-AD-1`) : hunt-a1, hunt-parallel, hunt-audit, land-a1,
+  land-micro. Image A1 = Canonical Ubuntu 24.04 aarch64 du 2026.09.18
+  (`…l5brjyqz…`). ORACLE_SSH_KEY inchangé (la même paire SSH sert au pont E5
+  et aux captures — clé publique injectée au lancement, valable sur toute
+  tenancy).
+- **Fenêtre de transition assumée** : entre le swap des secrets et ce push,
+  les runs dispatchés par la boucle 3 min peuvent échouer (creds Marseille ×
+  env JNB) — cosmétique, auto-résorbé au push.
+
+### Bug latent corrigé : le filet micro n'aurait jamais pu tirer
+La résolution d'image du micro (`VM.Standard.E2.1.Micro`) filtrait
+`[?architecture=='x86_64']` en JMESPath — or le champ `architecture` est
+`null` dans les réponses actuelles de l'API images : le filtre ne matchait
+JAMAIS (vérifié en direct sur Marseille : `JMESPathTypeError`). Le bug
+n'avait jamais été exercé (micro rouge en continu depuis la création du
+kit). Correction : résolution par `jq` sur le nom (`Canonical-Ubuntu-24.04`
+sans `aarch64`, plus récente) — testée en direct, rend l'OCID attendu.
+
+### Atterrissage : adaptation à prévoir le jour J (consigné, non bloquant)
+`RESERVED_IP: 84.12.85.241` (land-a1/land-micro) reste l'IP réservée du pont
+E5 en JNB : l'échange d'IP cross-tenancy/région est IMPOSSIBLE — le lookup
+`--scope REGION` échouera proprement tant que la valeur n'est pas mise à
+jour. Le jour de l'atterrissage Marseille : réserver une IP neuve
+(eu-marseille-1), mettre à jour la valeur, puis flip DNS (api.mikcloud.ftci.fr
+→ nouvelle IP) au lieu de l'échange d'IP ; le pont E5 reste en rollback
+jusqu'aux vérifications complètes (check-in agents + vente test + `/` ok:true).
+La chorégraphie TLS (piège n°17, t2-caddy-rescue) s'applique à l'identique
+tant que le domaine pointe vers E5.
+
+### Sécurité du push
+Uniquement `.github/workflows/*.yml` + ce CHANGELOG — aucun path
+`backend/**` ni `deploy/oracle/**` : aucun déploiement déclenché, sentinel
+RENDER-DEPLOY-FROZEN intacte, prod E5 (api.mikcloud.ftci.fr) vérifiée
+vivante avant et pendant l'opération.
+
+### Échéances mises à jour
+- 16/10 : suspension Render (sans effet, T2 fait) ;
+- 25-28/10 : session de décision devenue SIMPLE (la voie N°249 est jouée —
+  il ne reste que la question PAYG du compte neuf avant le 05/11) ;
+- 31/10 : crédits E5 épuisés — extinction du pont JNB (decom à caler avant) ;
+- **05/11 : fin du trial Marseille** — PAYG du compte neuf AVANT cette date
+  pour qu'une capture A1/micro survive (carte de la proche, légitime ;
+  ~100 $ de DISPONIBLE en préautorisation libérée en 3-5 j, jamais débités
+  si seules des shapes Always Free tournent).
+
+
 ## 2026-10-07 — N°256 — Alerte Neon 0,10 $ : l'organisation est sur le plan LAUNCH (payant à l'usage) depuis le 21/09 — downgrade vers Free préparé
 
 ### L'alerte

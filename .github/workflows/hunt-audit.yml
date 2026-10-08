@@ -41,7 +41,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      TEN: ocid1.tenancy.oc1..aaaaaaaa5lipoqjckcohkzca6uc42svliyvuaw7cl33ef5546mhcv4xf7kxq
+      # N°264 — audit repointé sur la tenancy neuve eu-marseille-1 (trial
+      # 05/11/2026) ; la tenancy E5 JNB n'est plus chassée (extinction 31/10).
+      TEN: ocid1.tenancy.oc1..aaaaaaaawdvtbxs3ck7bsxy5kxmq2lsi6iwt7q6eridqoapw2syrsbl53m6a
     steps:
       - name: OCI CLI + profil (clé API du coffre GitHub)
         env:

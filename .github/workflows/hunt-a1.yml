@@ -47,10 +47,14 @@ jobs:
   hunt:
     runs-on: ubuntu-latest
     env:
-      TEN: ocid1.tenancy.oc1..aaaaaaaa5lipoqjckcohkzca6uc42svliyvuaw7cl33ef5546mhcv4xf7kxq
-      AD: yMUP:AF-JOHANNESBURG-1-AD-1
-      IMG: ocid1.image.oc1.af-johannesburg-1.aaaaaaaajuezopthnotjmbmvpsii43e7hoxielm74waloedyh6i4qvfiym2a
-      SUBNET: ocid1.subnet.oc1.af-johannesburg-1.aaaaaaaanasgo3l7bndnre4ajjcpzfewliekzakfz4c7dhz5zh6ksh7e7caa
+      # N°264 — chasse repointée vers la tenancy neuve (eu-marseille-1,
+      # trial jusqu'au 05/11/2026) : la tenancy E5 JNB s'éteint le 31/10
+      # sans PAYG possible (N°259). Réseau reconstruit à l'identique
+      # (VCN 10.0.0.0/16, subnet public 10.0.0.0/24, ingress 22/80/443).
+      TEN: ocid1.tenancy.oc1..aaaaaaaawdvtbxs3ck7bsxy5kxmq2lsi6iwt7q6eridqoapw2syrsbl53m6a
+      AD: CwKv:EU-MARSEILLE-1-AD-1
+      IMG: ocid1.image.oc1.eu-marseille-1.aaaaaaaal5brjyqz2exgmbvinnv6nd6cxn6vzicrowqal5sujz7mnwatuz4a
+      SUBNET: ocid1.subnet.oc1.eu-marseille-1.aaaaaaaa4zfxrb4s3avcg4egq465b546t7222j37uwif6cumujzeyd25rfjq
     steps:
       - name: OCI CLI + profil (clé API du coffre GitHub)
         env:
@@ -176,10 +180,14 @@ jobs:
           # Micro = AMD x86_64 : image différente de l'A1 (ARM). Résolution
           # programmatique (doctrine anti-recopie OCID) : dernière Ubuntu
           # 24.04 x86_64 de la plateforme.
+          # N°264 — fix : le champ « architecture » est null dans l'API images
+          # actuelle — le filtre JMESPath [?architecture=='x86_64'] ne matchait
+          # JAMAIS (bug latent : le filet micro n'aurait pas pu tirer).
+          # Résolution par jq sur le nom : x86_64 = sans « aarch64 ».
           if [ "$SHAPE" = "VM.Standard.E2.1.Micro" ]; then
             IMG_USE="$(oci compute image list --compartment-id "$TEN" --all \
               --operating-system 'Canonical Ubuntu' --operating-system-version '24.04' \
-              --query "sort_by([?architecture=='x86_64'], &\"time-created\")[-1].id" --raw-output)"
+              --output json | jq -r '[.data[] | select((."display-name"|contains("aarch64"))|not)] | sort_by(."time-created") | .[-1].id // empty')"
             if [ -z "$IMG_USE" ] || [ "$IMG_USE" = "null" ]; then
               echo "✗ image Ubuntu 24.04 x86_64 introuvable (plateforme)"; exit 1
             fi

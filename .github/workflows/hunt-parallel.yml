@@ -56,10 +56,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     env:
-      TEN: ocid1.tenancy.oc1..aaaaaaaa5lipoqjckcohkzca6uc42svliyvuaw7cl33ef5546mhcv4xf7kxq
-      AD: yMUP:AF-JOHANNESBURG-1-AD-1
-      IMG: ocid1.image.oc1.af-johannesburg-1.aaaaaaaajuezopthnotjmbmvpsii43e7hoxielm74waloedyh6i4qvfiym2a
-      SUBNET: ocid1.subnet.oc1.af-johannesburg-1.aaaaaaaanasgo3l7bndnre4ajjcpzfewliekzakfz4c7dhz5zh6ksh7e7caa
+      # N°264 — repointage eu-marseille-1 (tenancy neuve, trial 05/11/2026).
+      TEN: ocid1.tenancy.oc1..aaaaaaaawdvtbxs3ck7bsxy5kxmq2lsi6iwt7q6eridqoapw2syrsbl53m6a
+      AD: CwKv:EU-MARSEILLE-1-AD-1
+      IMG: ocid1.image.oc1.eu-marseille-1.aaaaaaaal5brjyqz2exgmbvinnv6nd6cxn6vzicrowqal5sujz7mnwatuz4a
+      SUBNET: ocid1.subnet.oc1.eu-marseille-1.aaaaaaaa4zfxrb4s3avcg4egq465b546t7222j37uwif6cumujzeyd25rfjq
     steps:
       - name: OCI CLI + profil (clé API du coffre GitHub)
         env:

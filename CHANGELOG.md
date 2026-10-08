@@ -5,6 +5,61 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-08 — N°267 — ERRATUM (contestation fondée de l'exploitant) : « Always Free SURVIT à la fin du trial SANS PAYG » — les échéances PAYG 05/11 (Marseille) et 31/10 (chasse JNB) sont DÉCLASSÉES — vérifié sur la doc officielle vivante
+
+### Le fait corrigé
+La doctrine consignée N°249 §8-ter et N°264 (« conversion PAYG AVANT la fin du
+trial pour qu'une capture A1/micro survive ») reposait sur l'ancienne
+politique. La doc officielle à jour —
+`docs.oracle.com/en-us/iaas/Content/FreeTier/freetier.htm`, section « When
+Your Trial Period Ends », consultée ce jour — dit le contraire :
+
+> After your trial ends, your account remains active. There is no
+> interruption to the availability of the Always Free Resources you have
+> provisioned. You can delete and provision Always Free resources as needed.
+
+Les trois garde-fous du même passage restent vrais :
+- **A1** : si la tenancy provisionne PLUS que l'allocation Always Free
+  (2 OCPU / 12 Go au total depuis la coupe de juin 2026), TOUTES les A1
+  existantes sont désactivées puis supprimées après 30 jours, sauf upgrade —
+  toute capture doit rester ≤ 2/12 au total dans la tenancy ;
+- **Ressources PAYÉES** (provisionnées sur crédits) : réclamées par Oracle à
+  la fin du trial → l'E5 (VM.Standard.E5.Flex) meurt le 31/10 quoi qu'il
+  arrive — le décommission §9.1 avant le 31/10 reste inchangé (terminaison
+  propre préférée à la réclamation brutale) ;
+- **La provision de NOUVELLES ressources Always Free reste possible après le
+  trial** (« delete and provision as needed ») → une tenancy hors crédits
+  continue de chasser et de capturer.
+
+### Ce que ça change
+- **Marseille** : l'A1 de production (2 OCPU / 12 Go = pile l'allocation)
+  survit à la fin du trial du 05/11 SANS PAYG. L'échéance « vitale 05/11 »
+  est déclassée en simple option. Le PAYG redevient ce que le N°252 avait
+  déjà identifié : un ACCÉLÉRATEUR (priorité de capacité contre
+  out-of-host-capacity) et un filet si l'on dépasse un jour l'allocation —
+  décision exploitant, aucune urgence, et jamais la carte d'une autre
+  identité sur une seconde tenancy (garde-fou N°247 intact).
+- **Johannesburg** : l'objectif « même mécanique que Marseille » est
+  atteignable — la tenancy reste active après le 31/10 et la chasse A1/micro
+  peut y reprendre AVANT comme APRÈS le 31/10 (kit GitHub-only, 0 €, sans
+  l'E5 : lecture de hunt-a1.yml ce jour — tir en IP éphémère, land-a1 =
+  dispatch manuel séparé, garde sans collision avec le pont). Une capture
+  A1 2/12 ou micro E2.1.Micro y survivrait sans PAYG.
+- Les chasseurs (hunt-a1 + hunt-parallel) restent `disabled_manually` depuis
+  le N°265 : le ré-armement éventuel côté JNB = décision de session
+  (secrets `_JNB` + TEN/AD/IMG/SUBNET restaurés depuis l'historique
+  pré-N°264), jamais automatique.
+
+### Leçon consignée
+Vérifier la doc vivante avant de consigner une échéance de survie : l'erratum
+vient d'une contestation de l'exploitant (« A1/micro = Always Free ⇒ pas
+besoin de PAYG ») — il avait raison, le pilotage avait transposé une
+doctrine caduque. CHANGELOG seul — aucun path `backend/**` ni
+`deploy/oracle/**` ni workflow : aucun déploiement, sentinel
+RENDER-DEPLOY-FROZEN intacte.
+
+---
+
 ## 2026-10-08 — N°266 — T2-MARSEILLE EXÉCUTÉ : la bascule finale est faite — flip DNS 03:05:44, certificat Let's Encrypt PRODUCTION 03:06:14 — `api.mikcloud.ftci.fr` vit désormais sur l'A1 Marseille (0 €/mois)
 
 ### L'état au pré-flip (vérifié par l'agent, tout était déjà en place)

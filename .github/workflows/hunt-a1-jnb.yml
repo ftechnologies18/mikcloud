@@ -86,6 +86,7 @@ jobs:
       SUBNET: ocid1.subnet.oc1.af-johannesburg-1.aaaaaaaanasgo3l7bndnre4ajjcpzfewliekzakfz4c7dhz5zh6ksh7e7caa
     steps:
       - name: OCI CLI + coffre JNB + poing d'auth (veille armée si incomplet)
+        id: auth
         env:
           OCI_USER: ${{ secrets.OCI_CLI_USER_JNB }}
           OCI_TENANCY: ${{ secrets.OCI_CLI_TENANCY_JNB }}
@@ -125,9 +126,11 @@ jobs:
             exit 0
           fi
           echo "auth OCI OK (JNB) — CHASSE ACTIVE."
+          echo "ok=1" >> "$GITHUB_OUTPUT" # gate : les étapes suivantes ne tournent QUE si l'auth passe (veille armée = skip propre, run VERT)
 
       - name: Garde — A1 JNB déjà capturée ? micro JNB déjà capturé ?
         id: guard
+        if: steps.auth.outputs.ok == '1'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -135,25 +138,11 @@ jobs:
             --query "data[?\"display-name\"=='mikcloud-jnb-a1' && \"lifecycle-state\"!='TERMINATED' && shape=='VM.Standard.A1.Flex'] | length(@)" --raw-output 2>/dev/null || echo 1)"
           if [ "$N" != "0" ]; then
             echo "::notice::[JNB] mikcloud-jnb-a1 déjà présente (victoire — possiblement par l'autre moteur) : les DEUX chasseurs JNB se désactivent."
-            if ! gh issue list --state open --limit 100 --json title -q '.[].title' | grep -qF '[JNB] A1 capturée'; then
+            HAS_ISSUE="$(gh issue list --state open --limit 100 --json title -q '.[].title' | grep -cF '[JNB] A1 capturée' || true)"
+            if [ "${HAS_ISSUE:-0}" = "0" ]; then
               VMSTATE="$(oci compute instance list --compartment-id "$TEN" --all \
                 --query "data[?\"display-name\"=='mikcloud-jnb-a1'] | [0].\"lifecycle-state\"" --raw-output 2>/dev/null || echo '?')"
-              gh issue create --title "[JNB] A1 capturée — usage « autres fins » à définir" --body "$(cat <<EOF
-              Une A1.Flex \`mikcloud-jnb-a1\` est active dans la tenancy **Johannesburg**
-              (détecté par la garde du chasseur — capture effectuée par l'un des deux
-              moteurs : boucle E5 ou chasseur GitHub).
-
-              - Tenancy : JNB (\`af-johannesburg-1\`) — terrain de chasse « autres fins » (N°268)
-              - État de l'instance : \`$VMSTATE\`
-              - La production Marseille (\`mikcloud-backend\`, autre tenancy) est **invisible et intouchable** par construction.
-              - L'IP réservée 84.12.85.241 (pont E5) et l'IP prod 84.235.228.160 ne sont jamais touchées (tir en IP éphémère).
-              - Cloud-init volontairement INERT : aucun bootstrap — usage « autres fins » à décider par l'exploitant.
-
-              Auto-désactivation des deux chasseurs JNB effectuée (hunt-a1-jnb +
-              hunt-parallel-jnb) ; la boucle du pont E5 s'éteindra d'elle-même en
-              constatant hunt-a1-jnb.yml désactivé.
-              EOF
-              )"
+              gh issue create --title "[JNB] A1 capturée — usage « autres fins » à définir" --body "Tenancy JNB « autres fins » (N°268) — détecté par la garde du chasseur : capture effectuée par l'un des deux moteurs (boucle E5 ou chasseur GitHub). Une A1.Flex mikcloud-jnb-a1 est active dans la tenancy Johannesburg (état : $VMSTATE). La production Marseille (mikcloud-backend, autre tenancy) est invisible et intouchable par construction ; l'IP réservée 84.12.85.241 (pont E5) et l'IP prod 84.235.228.160 ne sont jamais touchées (tir en IP éphémère). Cloud-init volontairement INERT : usage « autres fins » à décider par l'exploitant. Auto-désactivation des deux chasseurs JNB effectuée (hunt-a1-jnb + hunt-parallel-jnb) ; la boucle du pont E5 s'éteindra d'elle-même en constatant hunt-a1-jnb.yml désactivé."
             fi
             gh workflow disable hunt-a1-jnb.yml
             gh workflow disable hunt-parallel-jnb.yml || true
@@ -171,7 +160,7 @@ jobs:
 
       - name: Sonde capacité (gratuite — doctrine N°222)
         id: probe
-        if: steps.guard.outputs.stop != '1'
+        if: steps.auth.outputs.ok == '1' && steps.guard.outputs.stop != '1'
         run: |
           cat > /tmp/capreq.json << 'EOF'
           [
@@ -217,7 +206,7 @@ jobs:
 
       - name: Tir (si un pool est vert)
         id: fire
-        if: steps.probe.outputs.pick != ''
+        if: steps.auth.outputs.ok == '1' && steps.probe.outputs.pick != ''
         env:
           GH_TOKEN: ${{ github.token }}
           SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
@@ -312,7 +301,7 @@ jobs:
           fi
 
       - name: Victoire A1 JNB — issue d'alerte + auto-désactivation des DEUX chasseurs JNB
-        if: steps.fire.outputs.a1 != ''
+        if: steps.auth.outputs.ok == '1' && steps.fire.outputs.a1 != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -342,7 +331,7 @@ jobs:
           echo "Chasseurs JNB (principal + parallèle) désactivés — la capture attend sa destination."
 
       - name: Victoire micro JNB — issue de secours (la chasse A1 continue)
-        if: steps.fire.outputs.micro != ''
+        if: steps.auth.outputs.ok == '1' && steps.fire.outputs.micro != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

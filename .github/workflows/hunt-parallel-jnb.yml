@@ -68,6 +68,7 @@ jobs:
       SUBNET: ocid1.subnet.oc1.af-johannesburg-1.aaaaaaaanasgo3l7bndnre4ajjcpzfewliekzakfz4c7dhz5zh6ksh7e7caa
     steps:
       - name: OCI CLI + coffre JNB + poing d'auth (veille armée si incomplet)
+        id: auth
         env:
           OCI_USER: ${{ secrets.OCI_CLI_USER_JNB }}
           OCI_TENANCY: ${{ secrets.OCI_CLI_TENANCY_JNB }}
@@ -105,9 +106,11 @@ jobs:
             exit 0
           fi
           echo "auth OCI OK (JNB) — CHASSE ACTIVE."
+          echo "ok=1" >> "$GITHUB_OUTPUT" # gate : les étapes suivantes ne tournent QUE si l'auth passe (veille armée = skip propre, run VERT)
 
       - name: Garde — A1 JNB déjà capturée (par QUI que ce soit) ?
         id: guard
+        if: steps.auth.outputs.ok == '1'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -127,7 +130,7 @@ jobs:
 
       - name: Sonde capacité (gratuite — doctrine N°222)
         id: probe
-        if: steps.guard.outputs.stop != '1'
+        if: steps.auth.outputs.ok == '1' && steps.guard.outputs.stop != '1'
         run: |
           cat > /tmp/capreq.json << 'EOF'
           [
@@ -151,7 +154,7 @@ jobs:
 
       - name: Tir (re-contrôle de garde à la seconde près, puis lancement)
         id: fire
-        if: steps.probe.outputs.pick != ''
+        if: steps.auth.outputs.ok == '1' && steps.probe.outputs.pick != ''
         env:
           GH_TOKEN: ${{ github.token }}
           SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
@@ -232,7 +235,7 @@ jobs:
           fi
 
       - name: Victoire A1 JNB — issue d'alerte + désactivation des DEUX chasseurs JNB
-        if: steps.fire.outputs.a1 != '' && steps.fire.outputs.a1 != 'deja-capturee'
+        if: steps.auth.outputs.ok == '1' && steps.fire.outputs.a1 != '' && steps.fire.outputs.a1 != 'deja-capturee'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

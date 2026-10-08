@@ -70,6 +70,9 @@ jobs:
       # pour que les chemins de victoire (issue + désactivation croisée)
       # fonctionnent (preuve : Marseille hunt-a1 #1426 « failed to run git »).
       GH_REPO: ${{ github.repository }}
+      # N°270-ter : suppression du Warning OCI CLI (pollution 2>&1 → parse
+      # jq — cf. hunt-a1-jnb.yml pour la chaîne complète du diagnostic).
+      SUPPRESS_LABEL_WARNING: "True"
     steps:
       - name: OCI CLI + coffre JNB + poing d'auth (veille armée si incomplet)
         id: auth

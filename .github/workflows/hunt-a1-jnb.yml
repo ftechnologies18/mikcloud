@@ -91,6 +91,13 @@ jobs:
       # 01:39 UTC). GH_REPO rend les chemins de victoire fonctionnels
       # (issue d'alerte + désactivation croisée) sans checkout inutile.
       GH_REPO: ${{ github.repository }}
+      # N°270-ter : le Warning OCI CLI (« append an extra line with
+      # 'OCI_API_KEY'… », ajout récent à oci-cli — absent au run Marseille
+      # #1425 01:37, présent dès les runs JNB #62 14:25) polluait les
+      # captures 2>&1 et cassait le parse jq de la sonde micro. Suppression
+      # à la source (la variable est documentée par le message lui-même)
+      # + sanitation JSON côté sonde (ceinture et bretelles).
+      SUPPRESS_LABEL_WARNING: "True"
     steps:
       - name: OCI CLI + coffre JNB + poing d'auth (veille armée si incomplet)
         id: auth
@@ -193,16 +200,22 @@ jobs:
             printf '[{"instanceShape": "VM.Standard.E2.1.Micro"}]' > /tmp/microreq.json
             MICRO_OUT="$(oci compute compute-capacity-report create --compartment-id "$TEN" \
               --availability-domain "$AD" --shape-availabilities file:///tmp/microreq.json 2>&1 || true)"
-            MSTAT="$(echo "$MICRO_OUT" | jq -r '.data["shape-availabilities"][0]["availability-status"] // empty' 2>/dev/null || true)"
-            # N°270 : la tenancy JNB renvoie parfois le rapport micro en mode
-            # ASYNCHRONE — réponse SANS shape-availabilities immédiat (observé
-            # runs #62/#63 ; Marseille répondait en synchrone avec le même
-            # code, run #1425). Robustesse sans boucle (budget anti-429) :
-            # 1) GET du rapport si son OCID est présent dans la réponse ;
-            # 2) sinon UN SEUL retry de create ; sinon dégradation gracieuse
-            # en PROBE_ERROR (comportement historique).
+            # N°270-ter — RACINE du PROBE_ERROR établie (run #78, réponse
+            # complète imprimée) : le Warning OCI CLI (stderr, capturé par
+            # 2>&1) précédait le JSON — jq échouait sur l'entrée entière →
+            # MSTAT vide. Le rapport était en réalité SYNCHRONE et lisible
+            # (run #78 : micro OUT_OF_HOST_CAPACITY dans
+            # shape-availabilities). Le A1 n'a jamais été touché (il écrit
+            # dans un fichier, stderr exclu). Sanitation : extraction du
+            # JSON à partir de la première ligne qui commence par `{`.
+            MICRO_JSON="$(printf '%s' "$MICRO_OUT" | sed -n '/^{/,$p')"
+            MSTAT="$(printf '%s' "$MICRO_JSON" | jq -r '.data["shape-availabilities"][0]["availability-status"] // empty' 2>/dev/null || true)"
+            # N°270 : filet de robustesse conservé (si un jour l'API renvoie
+            # réellement un rapport asynchrone) — GET du rapport si son OCID
+            # est présent, puis UN SEUL retry de create ; sinon dégradation
+            # gracieuse en PROBE_ERROR. Sans boucle (budget anti-429).
             if [ -z "$MSTAT" ]; then
-              RID="$(printf '%s' "$MICRO_OUT" | jq -r '.data.id // empty' 2>/dev/null | grep '^ocid1\.computecapacityreport' || true)"
+              RID="$(printf '%s' "$MICRO_JSON" | jq -r '.data.id // empty' 2>/dev/null | grep '^ocid1\.computecapacityreport' || true)"
               if [ -n "$RID" ]; then
                 sleep 3
                 MSTAT="$(oci compute compute-capacity-report get --capacity-report-id "$RID" \
@@ -213,7 +226,8 @@ jobs:
                 sleep 5
                 MICRO_OUT="$(oci compute compute-capacity-report create --compartment-id "$TEN" \
                   --availability-domain "$AD" --shape-availabilities file:///tmp/microreq.json 2>&1 || true)"
-                MSTAT="$(echo "$MICRO_OUT" | jq -r '.data["shape-availabilities"][0]["availability-status"] // empty' 2>/dev/null || true)"
+                MICRO_JSON="$(printf '%s' "$MICRO_OUT" | sed -n '/^{/,$p')"
+                MSTAT="$(printf '%s' "$MICRO_JSON" | jq -r '.data["shape-availabilities"][0]["availability-status"] // empty' 2>/dev/null || true)"
               fi
             fi
             if [ -z "$MSTAT" ]; then

@@ -5,6 +5,38 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-08 — N°270-ter — RACINE du PROBE_ERROR micro établie (run #78) : Warning OCI CLI polluait la capture 2>&1 — SUPPRESS_LABEL_WARNING + sanitation JSON — le rapport micro était synchrone et lisible depuis le début
+
+### Diagnostic définitif (chaîne complète N°270 → 270-bis → 270-ter)
+- L'instrumentation N°270-bis a parlé (run `hunt-a1-jnb` #78, 15:46 UTC) :
+  la réponse du rapport micro JNB est **parfaitement synchrone et lisible**
+  — `shape-availabilities[0].availability-status = OUT_OF_HOST_CAPACITY`
+  (le micro est rouge à JNB, verdict net).
+- **Le vrai coupable** : le Warning OCI CLI « To increase security of your
+  API key… append an extra line with 'OCI_API_KEY'… » (ajout récent à
+  oci-cli, imprimé sur stderr) est capturé par le `2>&1` de la sonde micro
+  **AVANT** le JSON → `jq` échouait sur l'entrée entière → `MSTAT` vide →
+  `PROBE_ERROR`. Chronologie cohérente : Marseille #1425 (01:37) tournait
+  avant la version du CLI qui warning — les runs JNB (dès 14:25) l'ont
+  eu. Le A1 n'a jamais été affecté (il écrit dans un fichier, stderr
+  exclu). L'hypothèse « réponse asynchrone » du N°270 est invalidée (le
+  filet GET+retry reste en place comme robustesse future, il est sans
+  effet de bord et sans boucle).
+- **Correctif double** (les deux chasseurs JNB) :
+  1. `SUPPRESS_LABEL_WARNING: "True"` au niveau job — la variable est
+     documentée par le message d'avertissement lui-même → plus de Warning
+     dans les captures (et logs plus propres) ;
+  2. sanitation en défense profonde côté sonde micro :
+     `MICRO_JSON=$(printf '%s' "$MICRO_OUT" | sed -n '/^{/,$p')` — le JSON
+     est extrait à partir de la première ligne `{` avant tout parse, quel
+     que soit ce que le CLI imprimera demain sur stderr.
+
+### Hors périmètre
+Workflows uniquement → CI seule (sentinel intact) ; aucun schéma DB →
+rien à synchroniser ; Marseille (disabled_manually) non touché — le même
+`2>&1` existe dans `hunt-a1.yml` : à reporter avant toute ré-armement
+(§9.2), sinon la sonde micro Marseille retombera dans le même piège.
+
 ## 2026-10-08 — N°270-bis — Chasse JNB : chemin de victoire réparé (GH_REPO sans checkout — preuve Marseille #1426 « failed to run git ») + visibilité complète de la réponse micro asynchrone — CI seule
 
 ### Fix P0 latent — `gh` sans étape checkout dans les chasseurs

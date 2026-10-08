@@ -1,0 +1,221 @@
+name: hunt-e5-arm
+
+# ═══ ARMEMENT DU MOTEUR 1 « INSTANCE » — BOUCLE DE DISPATCH DU PONT E5 (N°268) ═══
+# GO exploitant « chasse JNB double moteur » : le pont E5 (84.12.85.241,
+# tenancy Johannesburg) porte la boucle historique mikcloud-hunt-dispatch
+# (N°236→237→250-c) qui dispatchait hunt-a1.yml — elle est au repos depuis
+# la croix API N°265. CE workflow (workflow_dispatch UNIQUEMENT, jamais
+# push/PR) transforme le pont en MOTEUR 1 de la chasse JNB :
+#
+#   - ARM (arm_loop=true) : installe la v3 du script
+#     (ops/jnb/mikcloud-hunt-dispatch-v3.sh, téléchargée depuis main) qui
+#     dispatche hunt-a1-jnb.yml — non-superposante (aucun run tué), auto-
+#     extinction à la victoire JNB — puis règle la cadence (2/3/4/5 min)
+#     et réveille le timer (systemctl enable --now). La boucle vit jusqu'à
+#     l'épuisement des crédits : le 31/10 la réclamation de l'E5 par Oracle
+#     éteint la VM ET sa boucle (moteur 2 « GitHub » survit — N°267).
+#   - STOP (stop_loop=true) : disable --now, réversible (ré-armement =
+#     re-dispatch avec arm_loop=true).
+#   - RÉCUP CLÉ OCI (recover_oci_key=true) : si un répertoire ~/.oci existe
+#     sur le pont (poste de pilotage historique éventuel), imprime les
+#     identifiants NON sensibles (user/tenancy/region/fingerprint) puis la
+#     clé PRIVÉE CHIFFRÉE (sealed box vers le coffre GitHub) — le PEM en
+#     clair ne sort JAMAIS du pont vers les logs (il transite SSH→mémoire
+#     du runner→chiffré). L'agent pose alors OCI_CLI_USER_JNB /
+#     OCI_CLI_FINGERPRINT_JNB / OCI_API_KEY_JNB via l'API secrets.
+#     Si aucune ~/.oci : Geste 1/2 (clé v2 = deploy/oracle/
+#     pilot-api-public-key-jnb-v2.pem à déposer en console JNB).
+#   - STATUS (par défaut) : inspection lecture seule — reachabilité,
+#     état du timer, version du script, validité du jeton de dispatch
+#     (code HTTP seul — jamais la valeur), présence ~/.oci.
+#
+# Sécurité : heredoc 'REMOTE' (piège n°18 — apostrophes françaises),
+# keepalives SSH N°245-a, masquage jetons en défense en profondeur, IP E5
+# en LITTÉRAL (jamais le secret ORACLE_HOST qui pointe Marseille — piège
+# consigné N°267-task3), aucune écriture GitHub nécessaire.
+
+on:
+  workflow_dispatch:
+    inputs:
+      arm_loop:
+        description: "Installer la v3 (cible hunt-a1-jnb.yml) + activer le timer"
+        type: boolean
+        default: true
+      cadence_min:
+        description: "Cadence du timer en minutes (2/3/4/5) — OnCalendar réécrit, original conservé"
+        type: string
+        default: "5"
+      stop_loop:
+        description: "Arrêter la boucle (disable --now, réversible)"
+        type: boolean
+        default: false
+      recover_oci_key:
+        description: "Chercher ~/.oci sur le pont et imprimer les secrets CHIFFRÉS (jamais en clair)"
+        type: boolean
+        default: false
+
+permissions:
+  actions: read   # clé publique du coffre (sealed box) + états workflows
+  contents: read
+
+concurrency:
+  group: hunt-e5-arm
+  cancel-in-progress: false
+
+jobs:
+  e5:
+    name: Pont E5 — armement / statut de la boucle de dispatch JNB
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DEPLOY_USER: ${{ secrets.ORACLE_USER }}
+      E5_HOST: 84.12.85.241
+      SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+      GH_REPO_TOKEN: ${{ github.token }}
+    steps:
+      - name: 0. Statut pont + jeton de dispatch + ~/.oci (lecture seule)
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null /tmp/oracle_key
+          printf '%s\n' "$SSH_KEY" > /tmp/oracle_key
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
+          ssh $SSH_OPTS "$DEPLOY_USER@$E5_HOST" bash -s <<'REMOTE' 2>&1 \
+            | sed -E 's/(ghp_|gho_|ghs_|github_pat_)[A-Za-z0-9_]+/\1***MASQUÉ***/g'
+          set -uo pipefail
+          echo "═══ PONT E5 — $(hostname) — uptime: $(uptime -p) ═══"
+          echo "── timer mikcloud-hunt-dispatch : $(systemctl is-active mikcloud-hunt-dispatch.timer 2>/dev/null || echo absent) / au boot : $(systemctl is-enabled mikcloud-hunt-dispatch.timer 2>/dev/null || echo absent)"
+          echo "── script actuel (première ligne de doc) :"
+          head -1 /usr/local/bin/mikcloud-hunt-dispatch.sh 2>/dev/null || echo "  (script introuvable)"
+          grep -m1 '^# mikcloud-hunt-dispatch.sh' /usr/local/bin/mikcloud-hunt-dispatch.sh 2>/dev/null || true
+          echo "── workflow ciblé par le script :"
+          grep -m1 '^WF=' /usr/local/bin/mikcloud-hunt-dispatch.sh 2>/dev/null || echo "  (indéterminé)"
+          echo "── 5 derniers passages du service :"
+          sudo journalctl -u mikcloud-hunt-dispatch.service -n 5 --no-pager 2>/dev/null | tail -5 \
+            | sed -E 's/(ghp_|gho_|ghs_|github_pat_)[A-Za-z0-9_]+/\1***MASQUÉ***/g' || echo "  (vide)"
+          echo "── jeton de dispatch (test API, code HTTP SEUL) :"
+          TOKEN_TEST="$(sudo cat /root/.config/mikcloud-hunt/token 2>/dev/null || true)"
+          if [ -n "$TOKEN_TEST" ]; then
+            HTTP="$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 \
+              -H "Authorization: Bearer $TOKEN_TEST" \
+              "https://api.github.com/repos/ftechnologies18/mikcloud/actions/workflows/hunt-a1-jnb.yml")"
+            echo "  HTTP $HTTP (200 = jeton valide · 401 = expiré/révoqué → à remplacer sur le pont)"
+          else
+            echo "  ABSENT (/root/.config/mikcloud-hunt/token)"
+          fi
+          echo "── ~/.oci sur le pont :"
+          if sudo test -d "$HOME/.oci"; then echo "  $HOME/.oci PRÉSENT"; else echo "  $HOME/.oci absent"; fi
+          if sudo test -d /root/.oci; then echo "  /root/.oci PRÉSENT"; else echo "  /root/.oci absent"; fi
+          REMOTE
+
+      - name: 1. Armement — v3 + cadence + enable --now (si demandé)
+        if: inputs.arm_loop == true
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null /tmp/oracle_key
+          printf '%s\n' "$SSH_KEY" > /tmp/oracle_key
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
+          ssh $SSH_OPTS "$DEPLOY_USER@$E5_HOST" CADENCE="${{ inputs.cadence_min }}" bash -s <<'REMOTE' 2>&1 \
+            | sed -E 's/(ghp_|gho_|ghs_|github_pat_)[A-Za-z0-9_]+/\1***MASQUÉ***/g'
+          set -euo pipefail
+          case "$CADENCE" in 2|3|4|5) ;; *) echo "✗ cadence invalide : $CADENCE (2/3/4/5)"; exit 1;; esac
+          echo "── sauvegarde du script courant (réversibilité) :"
+          sudo cp -n /usr/local/bin/mikcloud-hunt-dispatch.sh /usr/local/bin/mikcloud-hunt-dispatch.sh.v2 2>/dev/null \
+            && echo "  copié en .v2" || echo "  .v2 déjà présent"
+          echo "── téléchargement de la v3 depuis main (ops/jnb/mikcloud-hunt-dispatch-v3.sh) :"
+          curl -fsSL --max-time 30 \
+            "https://raw.githubusercontent.com/ftechnologies18/mikcloud/main/ops/jnb/mikcloud-hunt-dispatch-v3.sh" \
+            -o /tmp/mikcloud-hunt-dispatch-v3.sh
+          bash -n /tmp/mikcloud-hunt-dispatch-v3.sh && echo "── syntaxe v3 validée (bash -n)"
+          grep -q '^WF="hunt-a1-jnb.yml"$' /tmp/mikcloud-hunt-dispatch-v3.sh \
+            || { echo "✗ la v3 ne cible pas hunt-a1-jnb.yml — abort"; exit 1; }
+          sudo install -m 755 /tmp/mikcloud-hunt-dispatch-v3.sh /usr/local/bin/mikcloud-hunt-dispatch.sh
+          echo "── cadence du timer → ${CADENCE} min :"
+          UNIT_PATH="$(systemctl show -P FragmentPath mikcloud-hunt-dispatch.timer)"
+          if [ -z "$UNIT_PATH" ] || [ ! -f "$UNIT_PATH" ]; then
+            echo "✗ timer introuvable (FragmentPath vide)"; exit 1
+          fi
+          sudo cp -n "$UNIT_PATH" "$UNIT_PATH.v1" 2>/dev/null && echo "  unité originale : $UNIT_PATH.v1" || true
+          sudo sed -i -E "s|^OnCalendar=.*|OnCalendar=*-*-* *:0/$CADENCE UTC|" "$UNIT_PATH"
+          sudo systemctl daemon-reload
+          sudo systemctl enable --now mikcloud-hunt-dispatch.timer
+          sleep 2
+          echo "── timer : $(systemctl is-active mikcloud-hunt-dispatch.timer) / au boot : $(systemctl is-enabled mikcloud-hunt-dispatch.timer)"
+          systemctl list-timers mikcloud-hunt-dispatch.timer --no-pager | sed -n '2p' || true
+          echo "── MOTEUR 1 ARMÉ : le pont dispatchera hunt-a1-jnb.yml toutes les ${CADENCE} min."
+          echo "   (veille armée côté GitHub tant que les secrets OCI_*_JNB sont incomplets — Geste 1/2)"
+          REMOTE
+
+      - name: 2. Arrêt de la boucle (si demandé) — disable --now, réversible
+        if: inputs.stop_loop == true
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null /tmp/oracle_key
+          printf '%s\n' "$SSH_KEY" > /tmp/oracle_key
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          ssh $SSH_OPTS "$DEPLOY_USER@$E5_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          echo "── arrêt demandé : disable --now mikcloud-hunt-dispatch.timer"
+          sudo systemctl disable --now mikcloud-hunt-dispatch.timer
+          sleep 2
+          echo "── état : $(systemctl is-active mikcloud-hunt-dispatch.timer || true) (attendu : inactive) / au boot : $(systemctl is-enabled mikcloud-hunt-dispatch.timer || true) (attendu : disabled)"
+          echo "── réversibilité : re-dispatcher hunt-e5-arm avec arm_loop=true"
+          REMOTE
+
+      - name: 3. Récupération clé OCI chiffrée (si demandée — jamais de PEM en clair)
+        if: inputs.recover_oci_key == true
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet pynacl \
+            || python3 -m pip install --quiet --break-system-packages pynacl
+          install -m 600 /dev/null /tmp/oracle_key
+          printf '%s\n' "$SSH_KEY" > /tmp/oracle_key
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          # a) découverte (identifiants NON sensibles uniquement)
+          DISCO="$(ssh $SSH_OPTS "$DEPLOY_USER@$E5_HOST" bash -s <<'REMOTE' 2>&1 \
+            | sed -E 's/(ghp_|gho_|ghs_|github_pat_)[A-Za-z0-9_]+/\1***MASQUÉ***/g'
+          set -uo pipefail
+          FOUND_CFG=""
+          for D in "$HOME/.oci" /root/.oci; do
+            if sudo test -f "$D/config"; then
+              FOUND_CFG="$D"
+              echo "── config trouvée : $D/config (identifiants inertes sans la clé privée) :"
+              sudo grep -E '^(user|tenancy|region|fingerprint)=' "$D/config" | sed 's/^/    /'
+              KF="$(sudo grep -E '^key_file=' "$D/config" | head -1 | cut -d= -f2-)"
+              echo "KEYFILE $KF"
+              break
+            fi
+          done
+          if [ -z "$FOUND_CFG" ]; then
+            echo "AUCUNE ~/.oci sur le pont — Geste 1/2 requis (clé v2 : raw main deploy/oracle/pilot-api-public-key-jnb-v2.pem)"
+          fi
+          REMOTE
+          )"
+          echo "$DISCO"
+          if ! echo "$DISCO" | grep -q '^KEYFILE '; then
+            echo "::notice::Aucune config OCI exploitable sur le pont — passage par Geste 1/2 (clé v2 déjà au coffre, prête)."
+            exit 0
+          fi
+          KF="$(echo "$DISCO" | grep '^KEYFILE ' | head -1 | cut -d' ' -f2-)"
+          # b) le PEM transite SSH → mémoire du runner (JAMAIS affiché, JAMAIS écrit)
+          PEM_PLAIN="$(ssh $SSH_OPTS "$DEPLOY_USER@$E5_HOST" "sudo cat '$KF'" 2>/dev/null)" || true
+          if [ -z "$PEM_PLAIN" ]; then
+            echo "::notice::Fichier de clé illisible ($KF) — Geste 1/2 requis."
+            exit 0
+          fi
+          # c) sealed box vers le coffre GitHub — seuls la version CHIFFRÉE
+          #    et les identifiants sortent dans les logs.
+          PK_JSON="$(curl -s -H "Authorization: Bearer $GH_REPO_TOKEN" \
+            "https://api.github.com/repositories/${{ github.repository_id }}/actions/secrets/public-key")"
+          KEY_ID="$(echo "$PK_JSON" | jq -r .key_id)"
+          REPO_KEY="$(echo "$PK_JSON" | jq -r .key)"
+          PEM_PLAIN="$PEM_PLAIN" REPO_KEY="$REPO_KEY" python3 - <<'PY'
+          import os
+          from nacl import encoding, public
+          pem = os.environ["PEM_PLAIN"]
+          pk = public.PublicKey(os.environ["REPO_KEY"].encode(), encoding.Base64Encoder())
+          sealed = public.SealedBox(pk).encrypt(pem.encode())
+          print("SEALED_B64=" + encoding.Base64Encoder().encode(sealed).decode())
+          PY
+          echo "COFFRE_KEY_ID=$KEY_ID"
+          echo "── opéré : PEM chiffré ci-dessus (SEALED_B64) + identifiants (b) — l'agent posera les secrets via l'API."
+          unset PEM_PLAIN REPO_KEY

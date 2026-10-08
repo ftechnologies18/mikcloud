@@ -5,6 +5,84 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-08 — N°268 — GO exploitant : chasse JNB « double moteur » ARMÉE — moteur GitHub (hunt-a1-jnb + hunt-parallel-jnb) + moteur instance (boucle E5 v3) — veille armée en attendant les 2 gestes console
+
+### La décision
+L'exploitant donne le GO : « chasse JNB, deux modes de chasse, double
+moteur armé — instance E5 jusqu'à épuisement, et GitHub ». La tenancy
+Johannesburg (son compte à lui) devient un terrain de chasse permanent
+pour A1/micro Always Free **« à d'autres fins »** que la production — la
+doctrine N°267 garantit la viabilité avant ET après le 31/10.
+
+### Moteur 2 « GitHub » (permanent, 0 €)
+- **`hunt-a1-jnb.yml`** — chasseur principal : crons nocturnes JNB
+  (`11,36 20-23,0-3 * * *`) + voie `workflow_dispatch` (dispatchée 24/7
+  par le moteur 1) ; 5 cibles A1 (2/12 auto, 1/6 auto, 3 domaines de
+  panne) + **cible #5 micro E2.1.Micro** (filet N°241) ; sonde gratuite
+  d'abord (N°222), tir uniquement sur pool AVAILABLE.
+- **`hunt-parallel-jnb.yml`** — chasseur parallèle : cron `2-59/5` 24/7,
+  A1 uniquement (le micro reste la propriété du principal), re-contrôle
+  de garde À LA SECONDE du tir (N°250) — double capture impossible même
+  en course entre moteurs.
+- **Secrets dédiés `OCI_*_JNB`** (les `OCI_*` restent la propriété
+  Marseille — jamais mélangés) : `TENANCY`/`REGION`/`FINGERPRINT`/
+  `API_KEY` posés dès ce jour via l'API coffre (sealed box) ; TEN/AD/
+  IMG/SUBNET JNB restaurés en dur depuis l'historique (commit `892ebb4`,
+  N°256, pré-repointage N°264) — AD `yMUP:AF-JOHANNESBURG-1-AD-1`.
+- **Cibles nommées `mikcloud-jnb-a1` / `mikcloud-jnb-micro`** : la garde
+  ne regarde QUE la tenancy JNB — la prod Marseille (autre tenancy) est
+  invisible par construction ; tir en IP ÉPHÉMÈRE (l'IP réservée
+  84.12.85.241 et l'IP prod 84.235.228.160 jamais touchées).
+- **Cloud-init VOLONTAIREMENT INERT** : pas de `bootstrap.sh` sur les
+  captures JNB (hostname + marqueur `/root/.mikcloud-jnb-capture` +
+  bannière motd, rien d'autre) — l'usage « autres fins » est une décision
+  de l'exploitant, jamais automatique (land-a1 reste réservé au flux
+  Marseille et n'est pas déclenché par ces chasseurs).
+- **Victoire** = issue `[JNB] …` + désactivation CROISÉE des deux
+  chasseurs JNB ; les chasseurs Marseille (`hunt-a1.yml` /
+  `hunt-parallel.yml`, disabled_manually N°265) ne sont JAMAIS touchés.
+
+### Moteur 1 « instance » — pont E5, jusqu'à épuisement (31/10)
+- **`ops/jnb/mikcloud-hunt-dispatch-v3.sh`** — la boucle historique du
+  pont (N°236→237→250-c) est REPONTÉE de `hunt-a1.yml` vers
+  `hunt-a1-jnb.yml` : discipline v2 conservée (état du workflow d'abord →
+  auto-extinction à la victoire ou extinction manuelle ; run vivant →
+  créneau passé, aucune annulation ; puis dispatch).
+- **`hunt-e5-arm.yml`** — armement/statut/arrêt du pont en
+  `workflow_dispatch` : installe la v3 depuis `main`, règle la cadence
+  (2/3/4/5 min, unité originale conservée en `.v1`), enable --now ; IP E5
+  en LITTÉRAL 84.12.85.241 (jamais le secret ORACLE_HOST qui pointe
+  Marseille — piège consigné). La boucle vit jusqu'à l'épuisement des
+  crédits : le 31/10 la réclamation de l'E5 éteint la VM et sa boucle —
+  le moteur GitHub prend le relais et survit (N°267).
+- Bonus `recover_oci_key` : si un `~/.oci` subsiste sur le pont (poste de
+  pilotage historique), le workflow imprime les identifiants inertes +
+  la clé privée CHIFFRÉE (sealed box vers le coffre) — jamais de PEM en
+  clair dans les logs.
+
+### VEILLE ARMÉE — ce qui reste à l'exploitant (2 gestes console)
+Tant que le coffre `OCI_*_JNB` est incomplet, les chasseurs tournent en
+sortant VERT (`::notice::[JNB] VEILLE ARMÉE`) — aucune notification
+d'échec, aucun tir, aucun coût. Dès que :
+1. **Geste 1** : la clé publique `deploy/oracle/pilot-api-public-key-jnb-v2.pem`
+   (source canonique raw main — l'ancienne clé pilote JNB est morte avec
+   l'effacement du sandbox, recover-pont-access N°237) est déposée dans
+   la console de la tenancy **JNB** (empreinte attendue
+   `80:d6:18:71:82:26:dc:59:95:ba:66:e1:75:34:54:9c`) ;
+2. **Geste 2** : l'OCID utilisateur du bloc « Informations de
+   configuration » est transmis (seule valeur manquante du coffre,
+   `OCI_CLI_USER_JNB`) ;
+…la chasse devient réelle SANS nouvelle intervention (les crons et la
+boucle E5 passent d'eux-mêmes de la veille au tir).
+
+### Sécurité
+Sentinelle RENDER-DEPLOY-FROZEN intacte (aucun path `backend/**`) ; secrets
+Marseille et ORACLE_HOST intouchés ; nouvelle clé API JNB révocable en 2
+clics console ; doctrine anti-429 (sondes gratuites, tirs sur pool vert
+seulement) ; cap Always Free ≤ 2 OCPU/12 Go au total dans la tenancy
+(N°267) — le tir 1/6 comme repli. Doc d'exploitation :
+`docs/CHASSE-JNB.md`.
+
 ## 2026-10-08 — N°267 — ERRATUM (contestation fondée de l'exploitant) : « Always Free SURVIT à la fin du trial SANS PAYG » — les échéances PAYG 05/11 (Marseille) et 31/10 (chasse JNB) sont DÉCLASSÉES — vérifié sur la doc officielle vivante
 
 ### Le fait corrigé

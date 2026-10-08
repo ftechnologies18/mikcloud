@@ -1,0 +1,367 @@
+name: hunt-a1-jnb
+
+# ═══ CHASSEUR A1 PRINCIPAL — TENANCY JOHANNESBURG « AUTRES FINS » (N°268) ═══
+# GO exploitant (08/10/2026) : la tenancy JNB (le compte de l'exploitant
+# lui-même) devient un terrain de chasse PERMANENT pour A1/micro Always
+# Free, « à d'autres fins » que la production. Doctrine N°267 : la tenancy
+# reste active après la fin du trial (31/10) et les captures ≤ 2 OCPU/12 Go
+# + micros survivent SANS PAYG — la chasse est viable avant comme après.
+#
+# DOUBLE MOTEUR (N°268) :
+#   - MOTEUR 1 « instance » : le pont E5 (84.12.85.241) dispatche CE
+#     workflow ~toutes les 5 min 24/7 (boucle mikcloud-hunt-dispatch v3,
+#     non-superposante N°250-c, installée par hunt-e5-arm.yml) — jusqu'à
+#     l'épuisement des crédits (31/10) : la VM réclamée éteint la boucle
+#     avec elle ;
+#   - MOTEUR 2 « GitHub » : hunt-parallel-jnb.yml (cron 2-59/5, 24/7) +
+#     les crons nocturnes ci-dessous (filet de secours si l'E5 disparaît
+#     avant le 31/10 — et au-delà, seul survivant).
+#
+# Doctrine conservée à l'identique (N°222) : SONDER d'abord
+# (compute-capacity-reports — GRATUIT, hors budget anti-429), ne TIRER que
+# si un pool est AVAILABLE ; jamais de tir à l'aveugle.
+#
+# N°241 conservé — CIBLE #5 VM.Standard.E2.1.Micro : si les 5 cibles A1
+# sont rouges et le micro VERT, tir du filet (1/8 OCPU, 1 Go — Always
+# Free). PRIORITÉ A1 ; capture micro ≠ fin de chasse ; seule la capture A1
+# désactive le chasseur.
+#
+# ═══ DIFFÉRENCES STRUCTURELLES avec hunt-a1.yml (chasse Marseille) ═══
+#   - secrets DÉDIÉS `OCI_*_JNB` : les secrets `OCI_*` restent la propriété
+#     exclusive de la tenancy Marseille (production) — jamais mélangés ;
+#   - OCIDs JNB restaurés depuis l'historique (commit 892ebb4, N°256,
+#     version pré-repointage N°264) : tenancy + AD yMUP + image ARM + subnet ;
+#   - cibles nommées `mikcloud-jnb-a1` / `mikcloud-jnb-micro` : la garde ne
+#     regarde QUE la tenancy JNB et ces noms — la production Marseille
+#     (mikcloud-backend, autre tenancy) est invisible par construction ;
+#   - cloud-init VOLONTAIREMENT INERT : PAS de bootstrap.sh (l'usage
+#     « autres fins » de chaque capture est décidé par l'exploitant) —
+#     hostname distinct + marqueur /root/.mikcloud-jnb-capture + bannière
+#     motd, rien d'autre ;
+#   - victoire = issue « [JNB] … » + désactivation CROISÉE des DEUX
+#     chasseurs JNB (hunt-a1-jnb + hunt-parallel-jnb) — les chasseurs
+#     Marseille (hunt-a1.yml / hunt-parallel.yml, disabled_manually N°265)
+#     ne sont JAMAIS touchés ; la boucle E5 v3 s'éteint seule en voyant
+#     hunt-a1-jnb.yml désactivé.
+#
+# VEILLE ARMÉE : tant que le coffre OCI_*_JNB est incomplet (Geste 1 : clé
+# publique à déposer dans la console JNB — deploy/oracle/
+# pilot-api-public-key-jnb-v2.pem ; Geste 2 : OCID utilisateur au bloc
+# config) ou que l'authentification échoue, le chasseur sort VERT avec un
+# avis (::notice) — aucune notification d'échec, aucun tir. Dès que l'auth
+# OCI passe, la chasse devient réelle, sans nouvelle intervention.
+#
+# Tir : --assign-public-ip true → IP publique ÉPHÉMÈRE. L'IP réservée
+# 84.12.85.241 (pont E5) et l'IP de production 84.235.228.160 (A1
+# Marseille) ne sont JAMAIS touchées. Cap Always Free respecté : une seule
+# A1 ≤ 2 OCPU/12 Go au total dans la tenancy + micros (garde N°267).
+on:
+  schedule:
+    # Fenêtre nocturne JNB (20h-04h UTC), toutes les ~25 min — filet de
+    # secours si le moteur E5 disparaît avant sa fin de vie. Minutes hors
+    # rondes (charge des runners — même discipline que keepalive.yml).
+    - cron: "11,36 20-23 * * *"
+    - cron: "11,36 0-3 * * *"
+  workflow_dispatch: {} # voie du moteur E5 (boucle v3) + passage manuel
+
+concurrency:
+  group: hunt-a1-jnb
+  # Jamais deux chasseurs principaux superposés : un run attend le
+  # précédent — double capture impossible côté GitHub.
+  cancel-in-progress: false
+
+permissions:
+  actions: write # auto-désactivation à la capture
+  issues: write  # issue d'alerte à la capture
+
+jobs:
+  hunt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      # OCIDs JNB restaurés du commit 892ebb4 (N°256, version pré-N°264).
+      TEN: ocid1.tenancy.oc1..aaaaaaaa5lipoqjckcohkzca6uc42svliyvuaw7cl33ef5546mhcv4xf7kxq
+      AD: yMUP:AF-JOHANNESBURG-1-AD-1
+      IMG: ocid1.image.oc1.af-johannesburg-1.aaaaaaaajuezopthnotjmbmvpsii43e7hoxielm74waloedyh6i4qvfiym2a
+      SUBNET: ocid1.subnet.oc1.af-johannesburg-1.aaaaaaaanasgo3l7bndnre4ajjcpzfewliekzakfz4c7dhz5zh6ksh7e7caa
+    steps:
+      - name: OCI CLI + coffre JNB + poing d'auth (veille armée si incomplet)
+        env:
+          OCI_USER: ${{ secrets.OCI_CLI_USER_JNB }}
+          OCI_TENANCY: ${{ secrets.OCI_CLI_TENANCY_JNB }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_CLI_FINGERPRINT_JNB }}
+          OCI_REGION: ${{ secrets.OCI_CLI_REGION_JNB }}
+          OCI_KEY: ${{ secrets.OCI_API_KEY_JNB }}
+        run: |
+          if [ -z "$OCI_USER" ] || [ -z "$OCI_TENANCY" ] || [ -z "$OCI_FINGERPRINT" ] || [ -z "$OCI_REGION" ] || [ -z "$OCI_KEY" ]; then
+            echo "::notice::[JNB] VEILLE ARMÉE — coffre OCI_*_JNB incomplet (Geste 1 : clé publique à déposer en console JNB ; Geste 2 : OCID utilisateur). Aucun tir, sortie propre."
+            exit 0
+          fi
+          python3 -m pip install --quiet oci-cli \
+            || python3 -m pip install --quiet --break-system-packages oci-cli
+          mkdir -p ~/.oci
+          {
+            echo "[DEFAULT]"
+            echo "user=$OCI_USER"
+            echo "fingerprint=$OCI_FINGERPRINT"
+            echo "tenancy=$OCI_TENANCY"
+            echo "region=$OCI_REGION"
+            echo "key_file=$HOME/.oci/oci_api_key.pem"
+          } > ~/.oci/config
+          printf '%s\n' "$OCI_KEY" > ~/.oci/oci_api_key.pem
+          chmod 600 ~/.oci/config ~/.oci/oci_api_key.pem
+          # Cohérence clé/empreinte SANS appel API (openssl 3.x md5 = sans
+          # deux-points → normalisation des deux côtés avant comparaison).
+          FP_CALC="$(openssl pkey -in ~/.oci/oci_api_key.pem -pubout -outform DER 2>/dev/null | openssl md5 | awk '{print $NF}' | tr -d ':')"
+          FP_REF="$(printf '%s' "$OCI_FINGERPRINT" | tr -d ':')"
+          if [ "$FP_CALC" != "$FP_REF" ]; then
+            echo "::notice::[JNB] VEILLE ARMÉE — empreinte du coffre (${FP_CALC:-introuvable}) ≠ secret fingerprint : la clé n'est pas (encore) déposée dans la console JNB ou le PEM du coffre est incohérent. Aucun tir."
+            exit 0
+          fi
+          # Poing d'authentification (401 = clé pas encore enregistrée côté console)
+          if ! AUTH_OUT="$(oci iam region-subscription list --query 'length(data)' --raw-output 2>&1)"; then
+            echo "::notice::[JNB] VEILLE ARMÉE — auth OCI en échec (Geste 1 pas encore effectué côté console ?). Raison(s) détectée(s) :"
+            echo "$AUTH_OUT" | grep -oiE 'NotAuthenticated|NotAuthorizedOrNotFound|401|403' | sort -u | sed 's/^/  · /' || echo "  · (raison indéterminée)"
+            exit 0
+          fi
+          echo "auth OCI OK (JNB) — CHASSE ACTIVE."
+
+      - name: Garde — A1 JNB déjà capturée ? micro JNB déjà capturé ?
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          N="$(oci compute instance list --compartment-id "$TEN" --all \
+            --query "data[?\"display-name\"=='mikcloud-jnb-a1' && \"lifecycle-state\"!='TERMINATED' && shape=='VM.Standard.A1.Flex'] | length(@)" --raw-output 2>/dev/null || echo 1)"
+          if [ "$N" != "0" ]; then
+            echo "::notice::[JNB] mikcloud-jnb-a1 déjà présente (victoire — possiblement par l'autre moteur) : les DEUX chasseurs JNB se désactivent."
+            if ! gh issue list --state open --limit 100 --json title -q '.[].title' | grep -qF '[JNB] A1 capturée'; then
+              VMSTATE="$(oci compute instance list --compartment-id "$TEN" --all \
+                --query "data[?\"display-name\"=='mikcloud-jnb-a1'] | [0].\"lifecycle-state\"" --raw-output 2>/dev/null || echo '?')"
+              gh issue create --title "[JNB] A1 capturée — usage « autres fins » à définir" --body "$(cat <<EOF
+              Une A1.Flex \`mikcloud-jnb-a1\` est active dans la tenancy **Johannesburg**
+              (détecté par la garde du chasseur — capture effectuée par l'un des deux
+              moteurs : boucle E5 ou chasseur GitHub).
+
+              - Tenancy : JNB (\`af-johannesburg-1\`) — terrain de chasse « autres fins » (N°268)
+              - État de l'instance : \`$VMSTATE\`
+              - La production Marseille (\`mikcloud-backend\`, autre tenancy) est **invisible et intouchable** par construction.
+              - L'IP réservée 84.12.85.241 (pont E5) et l'IP prod 84.235.228.160 ne sont jamais touchées (tir en IP éphémère).
+              - Cloud-init volontairement INERT : aucun bootstrap — usage « autres fins » à décider par l'exploitant.
+
+              Auto-désactivation des deux chasseurs JNB effectuée (hunt-a1-jnb +
+              hunt-parallel-jnb) ; la boucle du pont E5 s'éteindra d'elle-même en
+              constatant hunt-a1-jnb.yml désactivé.
+              EOF
+              )"
+            fi
+            gh workflow disable hunt-a1-jnb.yml
+            gh workflow disable hunt-parallel-jnb.yml || true
+            echo "stop=1" >> "$GITHUB_OUTPUT" # bloque aussi sonde/tir
+            exit 0
+          fi
+          echo "Pas d'A1 en tenancy JNB — la chasse continue."
+          # N°241 : comptage du micro de secours (une seule capture voulue).
+          M="$(oci compute instance list --compartment-id "$TEN" --all \
+            --query "data[?\"display-name\"=='mikcloud-jnb-micro' && \"lifecycle-state\"!='TERMINATED'] | length(@)" --raw-output 2>/dev/null || echo 1)"
+          echo "micro=$M" >> "$GITHUB_OUTPUT"
+          if [ "$M" != "0" ]; then
+            echo "Micro JNB de secours déjà présent — cible #5 retirée du tir (la chasse A1 continue)."
+          fi
+
+      - name: Sonde capacité (gratuite — doctrine N°222)
+        id: probe
+        if: steps.guard.outputs.stop != '1'
+        run: |
+          cat > /tmp/capreq.json << 'EOF'
+          [
+            {"instanceShape": "VM.Standard.A1.Flex", "instanceShapeConfig": {"ocpus": 2.0, "memoryInGBs": 12.0}},
+            {"instanceShape": "VM.Standard.A1.Flex", "instanceShapeConfig": {"ocpus": 1.0, "memoryInGBs": 6.0}},
+            {"instanceShape": "VM.Standard.A1.Flex", "faultDomain": "FAULT-DOMAIN-1", "instanceShapeConfig": {"ocpus": 2.0, "memoryInGBs": 12.0}},
+            {"instanceShape": "VM.Standard.A1.Flex", "faultDomain": "FAULT-DOMAIN-2", "instanceShapeConfig": {"ocpus": 2.0, "memoryInGBs": 12.0}},
+            {"instanceShape": "VM.Standard.A1.Flex", "faultDomain": "FAULT-DOMAIN-3", "instanceShapeConfig": {"ocpus": 2.0, "memoryInGBs": 12.0}}
+          ]
+          EOF
+          oci compute compute-capacity-report create --compartment-id "$TEN" \
+            --availability-domain "$AD" --shape-availabilities file:///tmp/capreq.json > /tmp/report.json
+          jq -r '.data["shape-availabilities"] | to_entries[] | "  cible #\(.key) (\(.value["fault-domain"] // "placement auto")) → \(.value["availability-status"])"' /tmp/report.json
+          PICK="$(jq -r '.data["shape-availabilities"] | to_entries[] | select(.value["availability-status"]=="AVAILABLE") | .key' /tmp/report.json | head -1)"
+          if [ -n "$PICK" ]; then
+            echo "── POOL VERT A1 JNB (cible #$PICK) : TIR prioritaire."
+          fi
+          # N°241 : sonde micro SÉPARÉE (rapport distinct — une erreur de
+          # shape/région sur le micro ne peut jamais casser la sonde A1).
+          MICRO="${{ steps.guard.outputs.micro }}"
+          if [ -z "$PICK" ] && [ "$MICRO" = "0" ]; then
+            sleep 5 # espacer les deux rapports (ménage le budget anti-429)
+            printf '[{"instanceShape": "VM.Standard.E2.1.Micro"}]' > /tmp/microreq.json
+            MICRO_OUT="$(oci compute compute-capacity-report create --compartment-id "$TEN" \
+              --availability-domain "$AD" --shape-availabilities file:///tmp/microreq.json 2>&1 || true)"
+            MSTAT="$(echo "$MICRO_OUT" | jq -r '.data["shape-availabilities"][0]["availability-status"] // empty' 2>/dev/null || true)"
+            if [ -z "$MSTAT" ]; then
+              MSTAT="PROBE_ERROR"
+              echo "  ⚠ sonde micro en échec — raison (3 dernières lignes) :"
+              echo "$MICRO_OUT" | grep -vE '^\s*$' | tail -3 | sed 's/^/    /'
+            else
+              echo "  cible #5 (micro E2.1.Micro) → $MSTAT"
+            fi
+            if [ "$MSTAT" = "AVAILABLE" ]; then
+              PICK=5
+              echo "── A1 rouge partout, MICRO VERT : tir du filet de secours (cible #5)."
+            fi
+          fi
+          if [ -z "$PICK" ]; then
+            echo "── TOUS ROUGES : la flotte est saturée. Aucun tir (budget préservé)."
+          fi
+          echo "pick=$PICK" >> "$GITHUB_OUTPUT"
+
+      - name: Tir (si un pool est vert)
+        id: fire
+        if: steps.probe.outputs.pick != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+        run: |
+          PICK="${{ steps.probe.outputs.pick }}"
+          case "$PICK" in
+            0) SHAPE=VM.Standard.A1.Flex;    NAME=mikcloud-jnb-a1;    OCPUS=2.0; MEM=12.0; FD="";;
+            1) SHAPE=VM.Standard.A1.Flex;    NAME=mikcloud-jnb-a1;    OCPUS=1.0; MEM=6.0;  FD="";;
+            2) SHAPE=VM.Standard.A1.Flex;    NAME=mikcloud-jnb-a1;    OCPUS=2.0; MEM=12.0; FD="FAULT-DOMAIN-1";;
+            3) SHAPE=VM.Standard.A1.Flex;    NAME=mikcloud-jnb-a1;    OCPUS=2.0; MEM=12.0; FD="FAULT-DOMAIN-2";;
+            4) SHAPE=VM.Standard.A1.Flex;    NAME=mikcloud-jnb-a1;    OCPUS=2.0; MEM=12.0; FD="FAULT-DOMAIN-3";;
+            5) SHAPE=VM.Standard.E2.1.Micro; NAME=mikcloud-jnb-micro; OCPUS="";   MEM="";   FD="";;
+            *) echo "✗ index de cible inconnu : $PICK"; exit 1;;
+          esac
+          FDARG=()
+          [ -n "$FD" ] && FDARG=(--fault-domain "$FD")
+          # A1 = shape flexible (config OCPU/RAM) ; micro = shape fixe (rien)
+          SHAPEARG=()
+          if [ "$SHAPE" = "VM.Standard.A1.Flex" ]; then
+            SHAPEARG=(--shape-config "{\"ocpus\":$OCPUS,\"memory-in-gbs\":$MEM}")
+          fi
+          # Micro = AMD x86_64 : image différente de l'A1 (ARM). Résolution
+          # programmatique (doctrine anti-recopie OCID, fix N°264 : le champ
+          # « architecture » est null — filtrage par le nom, sans « aarch64 »).
+          if [ "$SHAPE" = "VM.Standard.E2.1.Micro" ]; then
+            IMG_USE="$(oci compute image list --compartment-id "$TEN" --all \
+              --operating-system 'Canonical Ubuntu' --operating-system-version '24.04' \
+              --output json | jq -r '[.data[] | select((."display-name"|contains("aarch64"))|not)] | sort_by(."time-created") | .[-1].id // empty')"
+            if [ -z "$IMG_USE" ] || [ "$IMG_USE" = "null" ]; then
+              echo "✗ image Ubuntu 24.04 x86_64 introuvable (plateforme)"; exit 1
+            fi
+            echo "image micro (x86_64) : $IMG_USE"
+          else
+            IMG_USE="$IMG"
+          fi
+          # Clé publique dérivée du secret privé (la publique n'est pas un secret)
+          printf '%s\n' "$SSH_KEY" > /tmp/hunt-key
+          chmod 600 /tmp/hunt-key
+          ssh-keygen -y -f /tmp/hunt-key > /tmp/hunt-key.pub
+          # cloud-init VOLONTAIREMENT INERT (N°268) : usage « autres fins » à
+          # décider par l'exploitant — hostname + marqueur + bannière motd,
+          # AUCUN bootstrap, AUCUN secret.
+          cat > /tmp/cloud-init.yaml << EOF
+          #cloud-config
+          hostname: $NAME
+          write_files:
+            - path: /etc/update-motd.d/95-mikcloud-jnb
+              permissions: '0755'
+              content: |
+                #!/bin/sh
+                echo " MIKCLOUD — instance capturée par la chasse JNB (double moteur, N°268)."
+                echo " Usage « autres fins » : à définir par l'exploitant (cloud-init volontairement inert)."
+          runcmd:
+            - touch /root/.mikcloud-jnb-capture
+          EOF
+          echo "── TIR (JNB) : $NAME ($SHAPE${OCPUS:+, $OCPUS OCPU / $MEM Go}) — ${FD:-placement auto} ──"
+          OUT="$(oci compute instance launch \
+            --compartment-id "$TEN" --availability-domain "$AD" \
+            --display-name "$NAME" --shape "$SHAPE" \
+            "${SHAPEARG[@]}" \
+            "${FDARG[@]}" \
+            --image-id "$IMG_USE" --subnet-id "$SUBNET" \
+            --assign-public-ip true \
+            --ssh-authorized-keys-file /tmp/hunt-key.pub \
+            --user-data-file /tmp/cloud-init.yaml \
+            --boot-volume-size-in-gbs 50 \
+            --query 'data.id' --raw-output 2>&1 || true)"
+          echo "$OUT"
+          if echo "$OUT" | grep -q '^ocid1\.instance'; then
+            if [ "$SHAPE" = "VM.Standard.E2.1.Micro" ]; then
+              echo "micro=$(echo "$OUT" | head -1)" >> "$GITHUB_OUTPUT"
+              echo "★★★ MICRO JNB CAPTURÉ (la chasse A1 continue)"
+            else
+              echo "a1=$(echo "$OUT" | head -1)" >> "$GITHUB_OUTPUT"
+              echo "★★★ CAPTURE JNB ACCEPTÉE"
+            fi
+          elif echo "$OUT" | grep -q 'Out of host capacity'; then
+            echo "::notice::Course perdue (la place a été prise entre la sonde et le tir) — le prochain passage retentera."
+            exit 0
+          elif echo "$OUT" | grep -q 'TooManyRequests'; then
+            echo "::notice::Bride 429 — l'espacement naturel des crons suffit, rien à faire."
+            exit 0
+          elif echo "$OUT" | grep -q 'LimitExceeded'; then
+            echo "::notice::Quota Always Free déjà consommé dans la tenancy — la garde re-vérifiera au prochain passage."
+            exit 0
+          elif [ "$SHAPE" = "VM.Standard.E2.1.Micro" ]; then
+            echo "::notice::Échec de lancement du micro (quota ?) — ignoré, la chasse A1 continue."
+            exit 0
+          else
+            echo "✗ erreur de lancement inattendue (voir ci-dessus)"
+            exit 1
+          fi
+
+      - name: Victoire A1 JNB — issue d'alerte + auto-désactivation des DEUX chasseurs JNB
+        if: steps.fire.outputs.a1 != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          A1="${{ steps.fire.outputs.a1 }}"
+          EPHEM="$(oci compute instance list-vnics --instance-id "$A1" \
+            --query 'data[0]."public-ip"' --raw-output 2>/dev/null || echo '?')"
+          gh issue create --title "[JNB] A1 capturée — usage « autres fins » à définir" --body "$(cat <<EOF
+          La capacité ARM s'est libérée dans la tenancy **Johannesburg** et le
+          chasseur a tiré (N°268 — chasse « autres fins », doctrine N°267).
+
+          - Instance : \`mikcloud-jnb-a1\` (A1.Flex ≤ 2 OCPU/12 Go, 50 Go, cloud-init INERT)
+          - OCID : \`$A1\`
+          - IP publique éphémère de bootstrap : \`$EPHEM\`
+          - La production Marseille (\`mikcloud-backend\`, autre tenancy) est **invisible et intouchable**.
+          - L'IP réservée 84.12.85.241 (pont E5) et l'IP prod 84.235.228.160 ne sont jamais touchées.
+          - Survie : Always Free — la capture survive à la fin du trial SANS PAYG (N°267).
+
+          USAGE : « à d'autres fins » — décision de l'exploitant (aucun bootstrap
+          automatique : l'instance est vierge, marquée par /root/.mikcloud-jnb-capture).
+
+          Les DEUX chasseurs JNB (hunt-a1-jnb + hunt-parallel-jnb) se désactivent ;
+          la boucle du pont E5 s'éteindra d'elle-même en constatant l'extinction.
+          EOF
+          )"
+          gh workflow disable hunt-a1-jnb.yml
+          gh workflow disable hunt-parallel-jnb.yml || true
+          echo "Chasseurs JNB (principal + parallèle) désactivés — la capture attend sa destination."
+
+      - name: Victoire micro JNB — issue de secours (la chasse A1 continue)
+        if: steps.fire.outputs.micro != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          MOCID="${{ steps.fire.outputs.micro }}"
+          EPHEM="$(oci compute instance list-vnics --instance-id "$MOCID" \
+            --query 'data[0]."public-ip"' --raw-output 2>/dev/null || echo '?')"
+          gh issue create --title "[JNB] micro E2.1.Micro capturé — filet secondaire (la chasse A1 continue)" --body "$(cat <<EOF
+          L'A1 restait rouge dans la tenancy **Johannesburg** et le micro
+          E2.1.Micro était vert : le filet de secours a été capturé (N°241
+          adapté JNB, N°268).
+
+          - Instance : \`mikcloud-jnb-micro\` (VM.Standard.E2.1.Micro, 1/8 OCPU, 1 Go RAM, 50 Go, Ubuntu 24.04 x86_64, cloud-init INERT)
+          - OCID : \`$MOCID\`
+          - IP publique éphémère : \`$EPHEM\`
+          - Coût : Always Free — filet illimité dans le temps, survit au 31/10 sans PAYG (N°267).
+
+          La chasse A1 JNB CONTINUE (le micro ne remplace pas l'A1). Usage
+          « autres fins » à décider par l'exploitant — cloud-init volontairement
+          inert : l'instance est vierge, marquée par /root/.mikcloud-jnb-capture.
+          EOF
+          )"
+          echo "Micro JNB sécurisé — le chasseur repart chercher l'A1 au prochain passage."

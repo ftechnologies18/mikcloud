@@ -5,6 +5,59 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-08 — N°270 — Chasse JNB : Geste 1+2 posés → CHASSE ACTIVE (run #62 14:25 UTC, auth OCI OK) + sonde micro cible #5 rendue robuste au rapport asynchrone (GET + retry unique) — CI seule
+
+### Armement complet de la chasse JNB (exploitant + coffre)
+- **Geste 1** (console OCI tenancy JNB) : la clé publique
+  `deploy/oracle/pilot-api-public-key-jnb-v2.pem` est déposée — l'empreinte
+  affichée par la console correspond exactement à l'attendu
+  `80:d6:18:71:82:26:dc:59:95:ba:66:e1:75:34:54:9c` (vérifiée également en
+  local : MD5 DER du PEM brut = même valeur).
+- **Geste 2** (coffre, sealed box key_id 3380204578043523366) :
+  `OCI_CLI_USER_JNB` posé via l'API (HTTP 201, 14:21 UTC) depuis le bloc
+  « Informations de configuration » transmis par l'exploitant — cohérence
+  contrôlée : tenancy = OCID en dur des workflows, région
+  `af-johannesburg-1`, empreinte = coffre. Coffre `OCI_*_JNB` **5/5 complet**.
+- **Bascule vérifiée** (run `hunt-a1-jnb` #62, 14:25 UTC) : `auth OCI OK
+  (JNB) — CHASSE ACTIVE` — garde exécutée (« Pas d'A1 en tenancy JNB »),
+  sonde A1 gratuite exécutée : **5 cibles OUT_OF_HOST_CAPACITY** (JNB
+  saturée — verdict correct), tir skippé (doctrine N°222 : jamais de tir
+  à l'aveugle), run VERT. La veille armée est terminée : les deux moteurs
+  passent d'eux-mêmes de la veille au tir.
+
+### Fix — sonde micro (cible #5) vs réponse asynchrone de l'API capacité
+- **Anomalie diagnostiquée** : en tenancy JNB, `compute-capacity-report
+  create` du `VM.Standard.E2.1.Micro` renvoie parfois une réponse SANS
+  `shape-availabilities` (mode asynchrone/work request — JSON avec
+  `time-created` imbriqué) : sonde en `PROBE_ERROR` sur les runs #62 et
+  #63. Le MÊME code répondait en synchrone sur Marseille le même jour
+  (run `hunt-a1.yml` #1425, 01:37 UTC : `cible #5 → OUT_OF_HOST_CAPACITY`)
+  — le code n'était pas faux, la réponse JNB est variable.
+- **Correctif minimal (sans boucle, budget anti-429 préservé)** dans
+  `hunt-a1-jnb.yml` (sonde) : si le statut n'est pas lisible → 1) `GET`
+  du rapport si son OCID (`ocid1.computecapacityreport…`) est présent
+  dans la réponse ; 2) sinon **UN SEUL** retry de create ; 3) sinon
+  dégradation gracieuse en `PROBE_ERROR` (comportement historique). La
+  cible #5 reste un filet secondaire : l'A1 (priorité) n'est pas affectée.
+- **Périmètre strict** : `hunt-a1-jnb.yml` seul — le parallèle
+  (`hunt-parallel-jnb`) reste A1-only (le micro est la propriété du
+  principal, N°241), les chasseurs Marseille (disabled_manually N°265)
+  et leurs fichiers ne sont pas touchés.
+- **Anomalie surveillée, sans action** : `hunt-parallel-jnb` n'a toujours
+  aucun run `schedule` depuis le push N°268 (le jumeau Marseille et
+  keepalive ont tiré leurs crons — le scheduler GitHub fonctionne sur ce
+  dépôt) → retard d'enregistrement d'un NOUVEAU cron, connu sur dépôts
+  publics. Point de contrôle : crons nocturnes du principal dès 20:11
+  UTC ; remède maison si muet persistant : commit vide de ré-armement
+  (précédent ce141aa). Pendant ce temps le moteur E5 couvre la cadence
+  (dispatch ×5 min, verts).
+
+### Hors périmètre
+Aucun path `backend/**` ni `deploy/oracle/**` → CI seule (sentinel
+RENDER-DEPLOY-FROZEN intact). Aucun schéma base de données touché →
+rien à synchroniser (Supabase/Neon inchangées). Aucun secret dans le
+dépôt (OCID utilisateur passé au coffre via API sealed box uniquement).
+
 ## 2026-10-08 — N°269 — Sécurisation de la vague de secrets fournisseurs au coffre GitHub (20 → 24) — DSN Supabase TOUJOURS en 28P01 (2 clients) — pouls de la chasse JNB « double moteur » vérifié
 
 ### Coffre GitHub Actions (sealed box PyNaCl, key_id 3380204578043523366)

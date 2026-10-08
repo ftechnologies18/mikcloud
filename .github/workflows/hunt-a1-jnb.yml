@@ -187,6 +187,28 @@ jobs:
             MICRO_OUT="$(oci compute compute-capacity-report create --compartment-id "$TEN" \
               --availability-domain "$AD" --shape-availabilities file:///tmp/microreq.json 2>&1 || true)"
             MSTAT="$(echo "$MICRO_OUT" | jq -r '.data["shape-availabilities"][0]["availability-status"] // empty' 2>/dev/null || true)"
+            # N°270 : la tenancy JNB renvoie parfois le rapport micro en mode
+            # ASYNCHRONE — réponse SANS shape-availabilities immédiat (observé
+            # runs #62/#63 ; Marseille répondait en synchrone avec le même
+            # code, run #1425). Robustesse sans boucle (budget anti-429) :
+            # 1) GET du rapport si son OCID est présent dans la réponse ;
+            # 2) sinon UN SEUL retry de create ; sinon dégradation gracieuse
+            # en PROBE_ERROR (comportement historique).
+            if [ -z "$MSTAT" ]; then
+              RID="$(printf '%s' "$MICRO_OUT" | jq -r '.data.id // empty' 2>/dev/null | grep '^ocid1\.computecapacityreport' || true)"
+              if [ -n "$RID" ]; then
+                sleep 3
+                MSTAT="$(oci compute compute-capacity-report get --capacity-report-id "$RID" \
+                  --query 'data["shape-availabilities"][0]["availability-status"]' --raw-output 2>/dev/null || true)"
+                [ -n "$MSTAT" ] && echo "  └ N°270 : statut micro récupéré via GET du rapport (réponse asynchrone initiale)."
+              fi
+              if [ -z "$MSTAT" ]; then
+                sleep 5
+                MICRO_OUT="$(oci compute compute-capacity-report create --compartment-id "$TEN" \
+                  --availability-domain "$AD" --shape-availabilities file:///tmp/microreq.json 2>&1 || true)"
+                MSTAT="$(echo "$MICRO_OUT" | jq -r '.data["shape-availabilities"][0]["availability-status"] // empty' 2>/dev/null || true)"
+              fi
+            fi
             if [ -z "$MSTAT" ]; then
               MSTAT="PROBE_ERROR"
               echo "  ⚠ sonde micro en échec — raison (3 dernières lignes) :"

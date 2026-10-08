@@ -22,6 +22,12 @@ gratuit), **ne tirer que si un pool est AVAILABLE** ; tir en **IP publique
 84.235.228.160 ne sont jamais touchées). Filet micro N°241 : propriété du
 seul chasseur principal, cible #5.
 
+> **N°270** : la sonde micro tolère les réponses **asynchrones** de l'API
+> capacité (observé en tenancy JNB, runs #62/#63 — réponse sans
+> `shape-availabilities`) : GET du rapport si son OCID est présent, puis
+> UN SEUL retry de create, sinon `PROBE_ERROR` gracieux. Sans boucle —
+> budget anti-429 intact. L'A1 (priorité) n'est pas concernée.
+
 ## 2. Les captures
 
 - Noms : `mikcloud-jnb-a1` / `mikcloud-jnb-micro` (namespace dédié JNB).

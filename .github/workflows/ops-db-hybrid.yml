@@ -665,10 +665,9 @@ jobs:
             # pip sous SUDO = installation system-wide : les scripts DR tournent
             # en root via systemd — un install --user (run 16) place les modules
             # dans ~/.local/lib, invisible du root (import oci impossible)
-            sudo python3 -m pip install --quiet --break-system-packages --upgrade oci-cli 2>&1 | tail -2 || true
-            # filet : si un résidu --user existe, symlink global
-            [ -x "$HOME/.local/bin/oci" ] && sudo ln -sf "$HOME/.local/bin/oci" /usr/local/bin/oci
-            export PATH="/usr/local/bin:$HOME/.local/bin:$PATH"
+            sudo rm -f /usr/local/bin/oci   # tue un éventuel symlink résiduel vers ~/.local (leçon run 16/17)
+            sudo python3 -m pip install --quiet --break-system-packages --force-reinstall oci-cli 2>&1 | tail -2 || true
+            export PATH="/usr/local/bin:$PATH"
           fi
           if ! command -v oci >/dev/null 2>&1; then
             echo "--- fallback : installateur officiel OCI CLI (stdin détaché — sinon il consomme le script heredoc et tue la session SSH, leçon run 16) ---"
@@ -678,7 +677,10 @@ jobs:
             rm -f /tmp/oci-install.sh
           fi
           command -v oci >/dev/null 2>&1 || { echo "❌ installation oci-cli impossible — voir ci-dessus"; exit 1; }
-          echo "oci CLI: $(oci --version) ($(command -v oci))"
+          # TEST DÉCISIF : c'est ROOT qui exécute les scripts DR — l'import du
+          # module oci doit fonctionner sous root, sinon tout le Tier1.5 est mort
+          sudo oci --version >/dev/null 2>&1 || { echo "❌ oci inutilisable par root (modules non visibles — install --user résiduelle ?)"; exit 1; }
+          echo "oci CLI: $(oci --version) ($(command -v oci)) — import root OK"
           sudo install -d -o root -g root -m 700 /etc/oci
           sudo mv /tmp/oci_api_key.pem /etc/oci/oci_api_key.pem
           sudo chmod 600 /etc/oci/oci_api_key.pem
@@ -695,20 +697,20 @@ jobs:
           FP_REF="$(echo "$OCI_FP" | tr -d ':')"
           if [ -z "$FP_CALC" ] || [ "$FP_CALC" != "$FP_REF" ]; then echo "❌ empreinte clé OCI ≠ fingerprint ($FP_CALC vs $FP_REF)"; exit 1; fi
           echo "cohérence clé/empreinte OK"
-          NS_JSON=$(oci --config-file /etc/oci/config os ns get 2>&1) || { echo "❌ oci os ns get a échoué — réponse API:"; echo "$NS_JSON" | head -15; exit 1; }
+          NS_JSON=$(sudo oci --config-file /etc/oci/config os ns get 2>&1) || { echo "❌ oci os ns get a échoué — réponse API:"; echo "$NS_JSON" | head -15; exit 1; }
           NS=$(echo "$NS_JSON" | jq -r '.data // .' 2>/dev/null | tr -d '"[:space:]')
           [ -n "$NS" ] || { echo "❌ namespace OCI illisible: $NS_JSON"; exit 1; }
           echo "namespace: $NS"
-          if oci --config-file /etc/oci/config os bucket get --namespace "$NS" --name mikcloud-wal >/dev/null 2>&1; then
+          if sudo oci --config-file /etc/oci/config os bucket get --namespace "$NS" --name mikcloud-wal >/dev/null 2>&1; then
             echo "bucket mikcloud-wal: existe déjà"
           else
-            BOUT=$(oci --config-file /etc/oci/config os bucket create --namespace "$NS" --name mikcloud-wal 2>&1) \
+            BOUT=$(sudo oci --config-file /etc/oci/config os bucket create --namespace "$NS" --name mikcloud-wal 2>&1) \
               && echo "bucket mikcloud-wal: CRÉÉ" || { echo "❌ création bucket échouée:"; echo "$BOUT" | head -15; exit 1; }
           fi
           cat > /tmp/olc.json <<OLC
           {"items":[{"name":"expire-21d","action":"DELETE","timeAmount":21,"timeUnit":"DAYS","isEnabled":true}]}
           OLC
-          if oci --config-file /etc/oci/config os object-lifecycle-policy put --namespace "$NS" --bucket-name mikcloud-wal --from-json file:///tmp/olc.json >/dev/null 2>&1; then
+          if sudo oci --config-file /etc/oci/config os object-lifecycle-policy put --namespace "$NS" --bucket-name mikcloud-wal --from-json file:///tmp/olc.json >/dev/null 2>&1; then
             echo "lifecycle 21 jours: posé (budget gratuit 10 Go respecté)"
           else
             echo "⚠ lifecycle non posé (non bloquant)"
@@ -1147,7 +1149,7 @@ jobs:
           echo "═══ 4. WAL distant lisible (Tier1.5) ═══"
           SEG=$(sudo sort /var/lib/mikcloud/wal-uploaded.list 2>/dev/null | tail -1 || true)
           if [ -n "${SEG:-}" ]; then
-            oci --config-file /etc/oci/config os object get --namespace "$WAL_NS" --bucket-name "$WAL_BUCKET" --name "${SEG}.gz" --file /tmp/drill-seg.gz >/dev/null
+            sudo oci --config-file /etc/oci/config os object get --namespace "$WAL_NS" --bucket-name "$WAL_BUCKET" --name "${SEG}.gz" --file /tmp/drill-seg.gz >/dev/null
             gunzip -c /tmp/drill-seg.gz > /tmp/drill-seg
             PGW=$(ls /usr/lib/postgresql/*/bin/pg_waldump 2>/dev/null | tail -1 || true)
             if [ -n "$PGW" ]; then
@@ -1162,7 +1164,7 @@ jobs:
             echo "⚠ aucun WAL uploadé — attendre le timer mikcloud-wal-upload puis relancer"
           fi
           echo "═══ 5. Vérification base backup distant ═══"
-          oci --config-file /etc/oci/config os object list --namespace "$WAL_NS" --bucket-name "$WAL_BUCKET" --prefix basebackup/ --page-size 50 2>/dev/null \
+          sudo oci --config-file /etc/oci/config os object list --namespace "$WAL_NS" --bucket-name "$WAL_BUCKET" --prefix basebackup/ --page-size 50 2>/dev/null \
             | jq -r '.data.objects[].name' 2>/dev/null | sort | tail -3 || echo "(aucun base backup — viendra avec le reverse-sync nocturne)"
           echo "═══ DRILL TERMINÉ — restaurabilité démontrée (primaire intact) ═══"
           REMOTE

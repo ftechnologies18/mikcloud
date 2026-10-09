@@ -501,7 +501,7 @@ jobs:
           SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
           ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s <<'REMOTE'
           set -euo pipefail
-          [ -f /etc/mikcloud/mikcloud.env ] || { echo "mikcloud.env absent"; exit 1; }
+          sudo test -f /etc/mikcloud/mikcloud.env || { echo "mikcloud.env absent"; exit 1; }
           echo "═══ Backend ═══"
           systemctl is-active mikcloud && echo "mikcloud: ACTIF" || echo "mikcloud: INACTIF"
           curl -fsS -o /dev/null -w "backend HTTP %{http_code} (%{time_total}s)\n" http://127.0.0.1:4000/ || echo "backend: KO"

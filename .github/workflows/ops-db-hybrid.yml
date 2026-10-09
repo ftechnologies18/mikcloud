@@ -46,15 +46,50 @@ name: ops-db-hybrid
 # accept_stale_data=YES — Supabase est figé depuis le cutover).
 # STATUT PERSISTANT : mode=status (drift local/Supabase, tailles, WAL,
 # dernier dump, santé backend).
+#
+# ═══ CONSOLIDATION DR — N°275 ═══
+#
+# Exécution du GO exploitant « GO N°275 » (runbook docs/DB-HYBRIDE.md §5) :
+#
+#   arm-dr  (confirm=MIK-DR-ARM) — arme la chaîne DR sur la VM :
+#           · archive_command passe en gzip (le WAL 16 Mo/min creusait
+#             ~17 Go/jour de disque — le gzip divise par ~50) ;
+#           · OCI CLI + config /etc/oci (clé API du coffre) ; bucket
+#             mikcloud-wal + lifecycle 21 jours ;
+#           · script mikcloud-wal-upload (timer */5 min) — Tier1.5 :
+#             WAL → OCI Object Storage, prune locale après upload ;
+#           · script mikcloud-reverse-sync (timer 03:00 UTC) — Tier2 :
+#             rétention web_vitals → base backup PITR → dump local →
+#             restore Supabase (--clean, RLS ré-armé) → restore Neon ;
+#           · script mikcloud-monitor (timer */15 min) — alertes
+#             Telegram (bot plateforme, chat = plus ancien compte
+#             notif_settings telegram activé), heartbeat 06:00 UTC ;
+#           · unités systemd idempotentes.
+#   reverse-sync — déclenche le flux nocturne immédiatement (validation
+#           manuelle sans attendre 03:00).
+#   health  — lance le monitor une fois + contrôle API publique ; c'est
+#           aussi le mode par défaut du cron GitHub quotidien (04:23 UTC).
+#   drill   — démontre la restaurabilité : dump primaire → restore
+#           strict sur base de drill mikcloud_drill → asserts → drop,
+#           + lisibilité d'un segment WAL du bucket (pg_waldump).
+#
+# SÉCURITÉ :
+#   - arm-dr exige confirm=MIK-DR-ARM (pose des credentials OCI sur la
+#     VM + création de bucket + timers) — rien d'irréversible, tout
+#     idempotent, mais c'est un geste d'infrastructure ;
+#   - reverse-sync ne touche JAMAIS le primaire (dump + rétention
+#     DELETE > 90 jours web_vitals uniquement) ;
+#   - drill tourne sur mikcloud_drill (base jetable), jamais sur
+#     mikcloud.
 on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "audit | backup | setup-pg | restore | cutover | rollback | status"
+        description: "audit | backup | setup-pg | restore | cutover | rollback | status | arm-dr | reverse-sync | health | drill"
         required: true
         type: string
       confirm:
-        description: "Taper MIK-DB-HYBRID pour cutover / rollback"
+        description: "Taper MIK-DB-HYBRID pour cutover / rollback — MIK-DR-ARM pour arm-dr"
         required: false
         default: ""
         type: string
@@ -68,6 +103,11 @@ on:
         required: false
         default: ""
         type: string
+
+schedule:
+  # Heartbeat quotidien : mode=health (le resolver ci-dessous traduit un
+  # event schedule sans input en mode health).
+  - cron: "23 4 * * *"
 
 concurrency:
   group: ops-db-hybrid
@@ -85,6 +125,13 @@ jobs:
       VM_HOST: ${{ secrets.ORACLE_HOST }}
       DEPLOY_USER: ${{ secrets.ORACLE_USER }}
       BACKUP_KEY: ${{ secrets.BACKUP_KEY }}
+      # N°275 — credentials OCI tenancy Marseille (upload WAL → Object
+      # Storage, bucket mikcloud-wal) — même coffre que les chasses.
+      OCI_USER: ${{ secrets.OCI_CLI_USER }}
+      OCI_TENANCY: ${{ secrets.OCI_CLI_TENANCY }}
+      OCI_FINGERPRINT: ${{ secrets.OCI_CLI_FINGERPRINT }}
+      OCI_REGION: ${{ secrets.OCI_CLI_REGION }}
+      OCI_KEY: ${{ secrets.OCI_API_KEY }}
       MODE: ${{ inputs.mode }}
       CONFIRM: ${{ inputs.confirm }}
       ACCEPT_STALE: ${{ inputs.accept_stale_data }}
@@ -97,10 +144,14 @@ jobs:
           chmod 600 /tmp/oracle_key
           SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
           ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" 'echo "SSH OK — $(hostname) — $(date -u +%FT%TZ)"'
-          echo "MODE=$MODE · cible=$VM_HOST"
+          # N°275 : les étapes filtrent sur RESOLVED_MODE (schedule → health)
+          RESOLVED_MODE="$MODE"
+          [ -n "$RESOLVED_MODE" ] || RESOLVED_MODE=health
+          echo "RESOLVED_MODE=$RESOLVED_MODE" >> "$GITHUB_ENV"
+          echo "MODE=$RESOLVED_MODE · cible=$VM_HOST"
 
       - name: mode=audit — inventaire complet (lecture seule)
-        if: ${{ inputs.mode == 'audit' }}
+        if: ${{ env.RESOLVED_MODE == 'audit' }}
         run: |
           set -euo pipefail
           SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
@@ -146,8 +197,8 @@ jobs:
           echo "═══ AUDIT TERMINÉ (aucune modification) ═══"
           REMOTE
 
-      - name: mode=backup — dump DR Supabase + artefact chiffré
-        if: ${{ inputs.mode == 'backup' }}
+      - name: mode=backup — dump DR primaire local + artefact chiffré
+        if: ${{ env.RESOLVED_MODE == 'backup' }}
         run: |
           set -euo pipefail
           SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
@@ -157,11 +208,11 @@ jobs:
           STAMP="$STAMP"
           rm -f /tmp/dbhybrid.env
           sudo install -d -o "\$USER" -m 755 /var/backups/mikcloud/db
-          set -a; . <(sudo cat /etc/mikcloud/backup.env); set +a
-          : "\${DATABASE_URL_SESSION:?backup.env incomplet}"
-          DUMP=/var/backups/mikcloud/db/supabase-\$STAMP.dump
-          echo "pg_dump → \$DUMP (schéma public, format custom)…"
-          pg_dump --schema=public --no-owner --no-privileges -Fc -f "\$DUMP" "\$DATABASE_URL_SESSION"
+          set -a; . <(sudo cat /etc/mikcloud/localpg.env); set +a
+          : "\${LOCALPG_DSN:?localpg.env incomplet}"
+          DUMP=/var/backups/mikcloud/db/primary-\$STAMP.dump
+          echo "pg_dump primaire LOCAL → \$DUMP (schéma public, format custom)…"
+          pg_dump --schema=public --no-owner --no-privileges -Fc -f "\$DUMP" "\$LOCALPG_DSN"
           [ -s "\$DUMP" ] || { echo "DUMP VIDE — échec"; exit 1; }
           TABLES=\$(pg_restore --list "\$DUMP" | grep -c ' TABLE ' || true)
           echo "TOC ok — \$TABLES tables dans le dump"
@@ -188,15 +239,15 @@ jobs:
           echo "STAMP=$STAMP" >> "$GITHUB_ENV"
           rm -f /tmp/supabase-dr.dump
       - name: Upload artefact DR chiffré (rétention 30 j)
-        if: ${{ inputs.mode == 'backup' }}
+        if: ${{ env.RESOLVED_MODE == 'backup' }}
         uses: actions/upload-artifact@v4
         with:
-          name: supabase-dr-${{ env.STAMP }}
+          name: mikcloud-dr-${{ env.STAMP }}
           path: /tmp/supabase-dr.dump.enc
           retention-days: 30
 
       - name: mode=setup-pg — PostgreSQL 17 local calibré 4/24
-        if: ${{ inputs.mode == 'setup-pg' }}
+        if: ${{ env.RESOLVED_MODE == 'setup-pg' }}
         run: |
           set -euo pipefail
           SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
@@ -285,7 +336,7 @@ jobs:
           REMOTE
 
       - name: mode=restore — restore dump → PG local + vérification intégrité
-        if: ${{ inputs.mode == 'restore' }}
+        if: ${{ env.RESOLVED_MODE == 'restore' }}
         run: |
           set -euo pipefail
           SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
@@ -295,7 +346,9 @@ jobs:
           set -a; . <(sudo cat /etc/mikcloud/localpg.env); set +a
           DUMP="/var/backups/mikcloud/db/${DUMP_FILE:-}"
           if [ -z "$DUMP_FILE" ]; then
-            DUMP=$(ls -1t /var/backups/mikcloud/db/supabase-*.dump 2>/dev/null | head -1 || true)
+          # N°275 : l'artefact DR est un dump du primaire (primary-*) ;
+          # les anciens supabase-*.dump restent admis (période N°274)
+            DUMP=$(ls -1t /var/backups/mikcloud/db/primary-*.dump /var/backups/mikcloud/db/supabase-*.dump 2>/dev/null | head -1 || true)
           fi
           [ -n "$DUMP" ] && [ -s "$DUMP" ] || { echo "AUCUN DUMP dans /var/backups/mikcloud/db — lancer mode=backup d'abord"; exit 1; }
           echo "═══ 1. Restore : $DUMP ═══"
@@ -355,7 +408,7 @@ jobs:
           REMOTE
 
       - name: mode=cutover — bascule primaire → PG local (delta + preuves + rollback auto)
-        if: ${{ inputs.mode == 'cutover' }}
+        if: ${{ env.RESOLVED_MODE == 'cutover' }}
         run: |
           set -euo pipefail
           if [ "$CONFIRM" != "MIK-DB-HYBRID" ]; then
@@ -453,7 +506,7 @@ jobs:
           REMOTE
 
       - name: mode=rollback — retour explicite vers Supabase
-        if: ${{ inputs.mode == 'rollback' }}
+        if: ${{ env.RESOLVED_MODE == 'rollback' }}
         run: |
           set -euo pipefail
           if [ "$CONFIRM" != "MIK-DB-HYBRID" ]; then
@@ -495,7 +548,7 @@ jobs:
           REMOTE
 
       - name: mode=status — état hybride complet
-        if: ${{ inputs.mode == 'status' }}
+        if: ${{ env.RESOLVED_MODE == 'status' }}
         run: |
           set -euo pipefail
           SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
@@ -555,11 +608,555 @@ jobs:
           df -h / | sed -n '2p'; free -h | sed -n '2p'; uptime
           REMOTE
 
+      - name: mode=arm-dr — chaîne DR N°275 (confirm MIK-DR-ARM)
+        if: ${{ env.RESOLVED_MODE == 'arm-dr' }}
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          if [ "$CONFIRM" != "MIK-DR-ARM" ]; then
+            echo "❌ REFUS — mode arm-dr exige confirm=MIK-DR-ARM (pose credentials OCI sur la VM + bucket + timers)"; exit 1
+          fi
+          for v in OCI_USER OCI_TENANCY OCI_FINGERPRINT OCI_REGION OCI_KEY; do
+            [ -n "${!v}" ] || { echo "❌ secret $v absent du coffre GitHub"; exit 1; }
+          done
+          # clé API OCI → VM par stdin (jamais en ligne de commande ni dans le log)
+          printf '%s\n' "$OCI_KEY" | ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" 'cat > /tmp/oci_api_key.pem && chmod 600 /tmp/oci_api_key.pem'
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s -- "$CONFIRM" "$OCI_USER" "$OCI_TENANCY" "$OCI_FINGERPRINT" "$OCI_REGION" <<'REMOTE'
+          set -euo pipefail
+          CONFIRM="${1:-}"; OCI_USER="${2:-}"; OCI_TENANCY="${3:-}"; OCI_FP="${4:-}"; OCI_REGION="${5:-}"
+          [ "$CONFIRM" = "MIK-DR-ARM" ] || { echo "❌ confirm invalide côté VM"; exit 1; }
+          PGCONF=/etc/postgresql/18/main/conf.d/mikcloud.conf
+          command -v jq >/dev/null 2>&1 || sudo apt-get install -y -qq jq >/dev/null 2>&1 || true
+          echo "═══ 0. Preflight (lecture seule) ═══"
+          sudo test -f "$PGCONF" || { echo "❌ conf PG introuvable"; exit 1; }
+          echo "archive_command actuel: $(sudo grep -E '^archive_command' "$PGCONF")"
+          echo "archive_timeout:        $(sudo grep -E '^archive_timeout' "$PGCONF")"
+          echo "WAL locaux: $(sudo bash -c 'ls /var/backups/mikcloud/wal 2>/dev/null | wc -l') fichiers, $(sudo du -sh /var/backups/mikcloud/wal 2>/dev/null | cut -f1)"
+          command -v oci >/dev/null 2>&1 && echo "oci CLI: déjà présent" || echo "oci CLI: absent → installation"
+          pg_dump --version
+          set -a; . <(sudo cat /etc/mikcloud/localpg.env); set +a
+          : "${LOCALPG_DSN:?localpg.env incomplet}"
+          set -a; . <(sudo cat /etc/mikcloud/backup.env); set +a
+          : "${DATABASE_URL_SESSION:?backup.env incomplet}"
+          : "${NEON_DATABASE_URL:?backup.env incomplet}"
+          echo "chats Telegram d'alerte candidats (notif_settings, plus ancien d'abord):"
+          psql "$LOCALPG_DSN" -Atc "SELECT a.created_at || ' | ' || n.account_id || ' | ' || CASE WHEN n.telegram_chat_id='' THEN '(vide)' ELSE 'posé' END FROM notif_settings n LEFT JOIN accounts a ON a.id=n.account_id ORDER BY a.created_at NULLS LAST" || true
+          echo "═══ 1. archive_command → gzip (le WAL brut creusait ~17 Go/j) ═══"
+          if sudo grep -E '^archive_command' "$PGCONF" | grep -q gzip; then
+            echo "déjà compressé — inchangé"
+          else
+            sudo sed -i "s|^archive_command.*|archive_command = 'gzip -c %p > /var/backups/mikcloud/wal/%f.gz.tmp \&\& mv /var/backups/mikcloud/wal/%f.gz.tmp /var/backups/mikcloud/wal/%f.gz'|" "$PGCONF"
+            echo "nouveau: $(sudo grep -E '^archive_command' "$PGCONF")"
+            sudo -u postgres psql -Atc 'SELECT pg_reload_conf()' >/dev/null
+            echo "reload envoyé — attente d'un segment .gz (≤130 s)…"
+            OKGZ=""
+            for i in $(seq 1 26); do
+              sleep 5
+              if sudo bash -c 'ls /var/backups/mikcloud/wal/*.gz >/dev/null 2>&1'; then OKGZ=yes; break; fi
+            done
+            if [ -n "$OKGZ" ]; then echo "✅ archivage .gz confirmé"
+            else echo "⚠ aucun .gz après 130 s — vérifier journalctl -u postgresql@18-main (l'uploader accepte les deux formats)"; fi
+          fi
+          echo "═══ 2. OCI CLI + credentials Object Storage + bucket ═══"
+          if ! command -v oci >/dev/null 2>&1; then
+            sudo apt-get update -qq >/dev/null 2>&1 || true
+            sudo apt-get install -y -qq python3-oci-cli >/dev/null 2>&1 \
+              || python3 -m pip install --quiet --break-system-packages oci-cli \
+              || { echo "❌ installation oci-cli impossible"; exit 1; }
+          fi
+          sudo install -d -o root -g root -m 700 /etc/oci
+          sudo mv /tmp/oci_api_key.pem /etc/oci/oci_api_key.pem
+          sudo chmod 600 /etc/oci/oci_api_key.pem
+          sudo tee /etc/oci/config > /dev/null <<OCICONF
+          [DEFAULT]
+          user=$OCI_USER
+          fingerprint=$OCI_FP
+          tenancy=$OCI_TENANCY
+          region=$OCI_REGION
+          key_file=/etc/oci/oci_api_key.pem
+          OCICONF
+          sudo chmod 600 /etc/oci/config
+          FP_CALC="$(sudo openssl pkey -in /etc/oci/oci_api_key.pem -pubout -outform DER 2>/dev/null | openssl md5 | awk '{print $NF}' | tr -d ':')"
+          FP_REF="$(echo "$OCI_FP" | tr -d ':')"
+          if [ -z "$FP_CALC" ] || [ "$FP_CALC" != "$FP_REF" ]; then echo "❌ empreinte clé OCI ≠ fingerprint ($FP_CALC vs $FP_REF)"; exit 1; fi
+          echo "cohérence clé/empreinte OK"
+          NS_JSON=$(oci --config-file /etc/oci/config os ns get 2>&1)
+          NS=$(echo "$NS_JSON" | jq -r '.data // .' 2>/dev/null | tr -d '"[:space:]')
+          [ -n "$NS" ] || { echo "❌ namespace OCI illisible: $NS_JSON"; exit 1; }
+          echo "namespace: $NS"
+          if oci --config-file /etc/oci/config os bucket get --namespace "$NS" --name mikcloud-wal >/dev/null 2>&1; then
+            echo "bucket mikcloud-wal: existe déjà"
+          else
+            oci --config-file /etc/oci/config os bucket create --namespace "$NS" --name mikcloud-wal >/dev/null \
+              && echo "bucket mikcloud-wal: CRÉÉ" || { echo "❌ création bucket échouée"; exit 1; }
+          fi
+          cat > /tmp/olc.json <<OLC
+          {"items":[{"name":"expire-21d","action":"DELETE","timeAmount":21,"timeUnit":"DAYS","isEnabled":true}]}
+          OLC
+          if oci --config-file /etc/oci/config os object-lifecycle-policy put --namespace "$NS" --bucket-name mikcloud-wal --from-json file:///tmp/olc.json >/dev/null 2>&1; then
+            echo "lifecycle 21 jours: posé (budget gratuit 10 Go respecté)"
+          else
+            echo "⚠ lifecycle non posé (non bloquant)"
+          fi
+          rm -f /tmp/olc.json
+          echo "═══ 3. Scripts DR ═══"
+          sudo tee /etc/mikcloud/walupload.env > /dev/null <<WALEOF
+          WAL_BUCKET=mikcloud-wal
+          WAL_NS=$NS
+          WALEOF
+          sudo chmod 600 /etc/mikcloud/walupload.env
+          sudo tee /usr/local/sbin/mikcloud-wal-upload > /dev/null <<'WALUP_EOF'
+          #!/usr/bin/env bash
+          # N°275 — Tier1.5 : upload des WAL archivés vers OCI Object Storage.
+          # Timer mikcloud-wal-upload.timer (*/5 min). Idempotent : la liste
+          # /var/lib/mikcloud/wal-uploaded.list retient les segments déjà partis.
+          # Le bucket ne contient QUE des objets '<segment>.gz' ; les fichiers
+          # bruts de la période N°274 sont gzippés à la volée.
+          # Prune locale : segments uploadés quittent le disque après 48 h
+          # (immédiatement si / dépasse 70 %) — le disque protège le PG primaire.
+          set -uo pipefail   # sans -e : un upload raté ne tue pas les suivants
+          WAL_DIR=/var/backups/mikcloud/wal
+          STATED=/var/lib/mikcloud
+          STATE="$STATED/wal-uploaded.list"
+          [ -r /etc/mikcloud/walupload.env ] || { echo "wal-upload: env absent — arm-dr pas fait"; exit 0; }
+          . /etc/mikcloud/walupload.env
+          [ -n "${WAL_BUCKET:-}" ] && [ -n "${WAL_NS:-}" ] || { echo "wal-upload: env incomplet"; exit 1; }
+          [ -d "$WAL_DIR" ] || exit 0
+          OCI_BIN=$(command -v oci || true)
+          [ -n "$OCI_BIN" ] || { echo "wal-upload: oci absent"; exit 1; }
+          mkdir -p "$STATED"; touch "$STATE"
+          NEW=0; FAIL=0; SKIP=0
+          for f in "$WAL_DIR"/*; do
+            [ -f "$f" ] || continue
+            b=$(basename "$f")
+            case "$b" in *.tmp|*.upload) continue ;; esac
+            seg="${b%.gz}"
+            if grep -qx "$seg" "$STATE"; then SKIP=$((SKIP+1)); continue; fi
+            if [[ "$b" == *.gz ]]; then
+              upfile="$f"
+            else
+              upfile="/tmp/${seg}.gz.up"
+              gzip -c "$f" > "$upfile" || { rm -f "$upfile"; FAIL=$((FAIL+1)); continue; }
+            fi
+            if "$OCI_BIN" os object put --config-file /etc/oci/config --namespace "$WAL_NS" \
+                 --bucket-name "$WAL_BUCKET" --name "${seg}.gz" --file "$upfile" --force >/dev/null 2>&1; then
+              echo "$seg" >> "$STATE"; NEW=$((NEW+1))
+            else
+              FAIL=$((FAIL+1)); echo "wal-upload: échec upload $seg"
+            fi
+            [[ "$b" == *.gz ]] || rm -f "$upfile"
+          done
+          PCT=$(df --output=pcent / | tail -1 | tr -dc '0-9')
+          if [ "$PCT" -ge 70 ]; then AGE=30; else AGE=2880; fi
+          while IFS= read -r p; do
+            b=$(basename "$p"); case "$b" in *.tmp|*.upload) continue ;; esac
+            grep -qx "${b%.gz}" "$STATE" && rm -f -- "$p"
+          done < <(find "$WAL_DIR" -type f -mmin +"$AGE")
+          date -u +%FT%TZ > "$STATED/wal-upload.last"
+          printf 'last_run=%s\nnew=%s skip=%s fail=%s disk=%s%%\n' "$(date -u +%FT%TZ)" "$NEW" "$SKIP" "$FAIL" "$PCT" > "$STATED/wal-upload.status"
+          [ "$FAIL" -eq 0 ] || exit 1
+          WALUP_EOF
+          sudo chmod 755 /usr/local/sbin/mikcloud-wal-upload
+          sudo tee /usr/local/sbin/mikcloud-reverse-sync > /dev/null <<'RSYNC_EOF'
+          #!/usr/bin/env bash
+          # N°275 — Tier2 : reverse-sync nocturne primaire local → Supabase → Neon.
+          # Remplace le flux Supabase→Neon de backup-neon.sh (timer mikcloud-backup
+          # GELÉ au cutover N°274) : le primaire est le PG local, les copies suivent.
+          # Ordre : rétention web_vitals (local) → pg_basebackup (PITR) → dump
+          # primaire (-Fc) → restore Supabase (pooler SESSION, --clean, RLS ré-armé)
+          # → restore Neon (endpoint direct). Retry ×3, dump fichier 2 phases
+          # (pièges N°243), TOC filtré SCHEMA+EXTENSION (pièges N°274/243-c).
+          set -uo pipefail
+          set -a; . /etc/mikcloud/localpg.env; set +a
+          set -a; . /etc/mikcloud/backup.env; set +a
+          [ -r /etc/mikcloud/monitor.env ] && . /etc/mikcloud/monitor.env
+          [ -r /etc/mikcloud/walupload.env ] && . /etc/mikcloud/walupload.env
+          RET_DAYS="${WEB_VITALS_RETENTION_DAYS:-90}"
+          : "${LOCALPG_DSN:?localpg.env incomplet}"
+          : "${DATABASE_URL_SESSION:?backup.env incomplet}"
+          : "${NEON_DATABASE_URL:?backup.env incomplet}"
+          STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+          mkdir -p /var/lib/mikcloud /var/backups/mikcloud/db /var/log/mikcloud
+          LOGF=/var/log/mikcloud/reverse-sync.log
+          STATUS=/var/lib/mikcloud/reverse-sync.status
+          # rotation maison (garde 1 génération)
+          [ -f "$LOGF" ] && [ "$(stat -c %s "$LOGF")" -gt 5242880 ] && mv -f "$LOGF" "$LOGF.1"
+          log(){ echo "reverse-sync[$STAMP]: $*" | tee -a "$LOGF"; }
+          fail(){ log "ÉCHEC: $*"; printf 'last_success=\nlast_run=%s\nerror=%s\n' "$STAMP" "$*" > "$STATUS"; exit 1; }
+          trap 'rm -f /tmp/mikcloud-rs-*.list' EXIT
+          log "départ (rétention web_vitals=${RET_DAYS}j)"
+          # 0. rétention web_vitals (append-only — 5,9k lignes/j, purge > N jours)
+          psql "$LOCALPG_DSN" -q -c "DELETE FROM web_vitals WHERE sampled_at < now() - interval '${RET_DAYS} days'" || fail "rétention web_vitals"
+          psql "$LOCALPG_DSN" -q -c "VACUUM ANALYZE web_vitals" || true
+          # 1. base backup quotidien → bucket (PITR = base + WAL)
+          if [ -n "${WAL_NS:-}" ] && [ -n "${WAL_BUCKET:-}" ] && [ -f /etc/oci/config ]; then
+            BB=/tmp/mikcloud-bb-$STAMP
+            rm -rf "$BB"; install -d -o postgres -g postgres -m 700 "$BB"
+            if sudo -u postgres pg_basebackup -D "$BB" -Ft -X stream 2>>"$LOGF"; then
+              tar -C "$BB" -czf /tmp/mikcloud-base-$STAMP.tar.gz . 2>>"$LOGF"
+              if oci --config-file /etc/oci/config os object put --namespace "$WAL_NS" \
+                   --bucket-name "$WAL_BUCKET" --name "basebackup/base-$STAMP.tar.gz" \
+                   --file "/tmp/mikcloud-base-$STAMP.tar.gz" --force >>"$LOGF" 2>&1; then
+                log "base backup uploadé ($(du -h /tmp/mikcloud-base-$STAMP.tar.gz | cut -f1))"
+              else
+                log "AVERTISSEMENT: base backup NON uploadé — PITR dégradé"
+              fi
+              rm -rf "$BB" "/tmp/mikcloud-base-$STAMP.tar.gz"
+            else
+              rm -rf "$BB"; log "AVERTISSEMENT: pg_basebackup en échec — PITR dégradé (flux continu)"
+            fi
+          else
+            log "AVERTISSEMENT: walupload.env/oci absent — base backup sauté"
+          fi
+          # 2. dump du primaire local (-Fc, schéma public, deux phases fichier)
+          DUMP=/var/backups/mikcloud/db/primary-$STAMP.dump
+          pg_dump --schema=public --no-owner --no-privileges -Fc -f "$DUMP" "$LOCALPG_DSN" 2>>"$LOGF" || fail "pg_dump local"
+          [ -s "$DUMP" ] || fail "dump vide"
+          TABS=$(pg_restore --list "$DUMP" | grep -c ' TABLE ' || true)
+          [ "$TABS" -ge 30 ] || fail "TOC suspecte ($TABS tables)"
+          log "dump OK ($TABS tables, $(du -h "$DUMP" | cut -f1))"
+          # 3. TOC filtré : SCHEMA public (piège N°274-quinquies) + EXTENSION
+          #    (supabase_vault N°243-c ; DROP/CREATE EXTENSION interdits côté cibles)
+          pg_restore --list "$DUMP" | grep -vE ' (SCHEMA|EXTENSION) ' > "/tmp/mikcloud-rs-$STAMP.list"
+          # 4. restore Supabase (pooler SESSION :5432, JAMAIS :6543)
+          for a in 1 2 3; do
+            if pg_restore --clean --if-exists --no-owner --no-privileges \
+                 --use-list="/tmp/mikcloud-rs-$STAMP.list" -d "$DATABASE_URL_SESSION" 2>>"$LOGF"; then break; fi
+            [ "$a" = 3 ] && fail "restore Supabase (3 tentatives)"
+            log "restore Supabase tentative $a échouée — relance dans 30 s"; sleep 30
+          done
+          # RLS ré-armé : le restore recrée les tables avec le RLS du dump local,
+          # on le ré-affirme explicitement (défense PostgREST sans policy = deny-all)
+          psql "$DATABASE_URL_SESSION" -Atc "SELECT format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tablename) FROM pg_tables WHERE schemaname='public'" | psql "$DATABASE_URL_SESSION" -q || log "AVERTISSEMENT: RLS Supabase"
+          SUPA_T=$(psql "$DATABASE_URL_SESSION" -Atc "SELECT count(*) FROM pg_tables WHERE schemaname='public'")
+          [ "$SUPA_T" -ge 30 ] || fail "Supabase: $SUPA_T tables après restore"
+          log "Supabase re-synchronisé ($SUPA_T tables)"
+          # 5. restore Neon (endpoint DIRECT, non poolé)
+          for a in 1 2 3; do
+            if pg_restore --clean --if-exists --no-owner --no-privileges \
+                 --use-list="/tmp/mikcloud-rs-$STAMP.list" -d "$NEON_DATABASE_URL" 2>>"$LOGF"; then break; fi
+            [ "$a" = 3 ] && fail "restore Neon (3 tentatives)"
+            log "restore Neon tentative $a échouée — relance dans 30 s"; sleep 30
+          done
+          NEON_T=$(psql "$NEON_DATABASE_URL" -Atc "SELECT count(*) FROM pg_tables WHERE schemaname='public'")
+          [ "$NEON_T" -ge 30 ] || fail "Neon: $NEON_T tables après restore"
+          log "Neon re-synchronisé ($NEON_T tables)"
+          # 6. ménage (garde 3 dumps), statut, rafraîchissement chat d'alerte
+          ls -1t /var/backups/mikcloud/db/primary-*.dump 2>/dev/null | tail -n +4 | xargs -r rm -f
+          rm -f "/tmp/mikcloud-rs-$STAMP.list"
+          CHATS=$(psql "$LOCALPG_DSN" -Atc "SELECT n.telegram_chat_id FROM notif_settings n LEFT JOIN accounts a ON a.id=n.account_id WHERE n.telegram_enabled=TRUE AND n.telegram_chat_id<>'' ORDER BY a.created_at NULLS LAST LIMIT 1")
+          if [ -n "$CHATS" ]; then
+            printf 'OPS_TELEGRAM_CHATS=%s\nWEB_VITALS_RETENTION_DAYS=%s\n' "$CHATS" "$RET_DAYS" > /etc/mikcloud/monitor.env.tmp
+            mv /etc/mikcloud/monitor.env.tmp /etc/mikcloud/monitor.env; chmod 600 /etc/mikcloud/monitor.env
+          fi
+          printf 'last_success=%s\nlast_run=%s\nsupa_tables=%s\nneon_tables=%s\ndump=%s\n' "$(date -u +%FT%TZ)" "$STAMP" "$SUPA_T" "$NEON_T" "$DUMP" > "$STATUS"
+          log "succès — Supabase=$SUPA_T tables · Neon=$NEON_T tables · dump=$(du -h "$DUMP" | cut -f1)"
+          RSYNC_EOF
+          sudo chmod 755 /usr/local/sbin/mikcloud-reverse-sync
+          sudo tee /usr/local/sbin/mikcloud-monitor > /dev/null <<'MON_EOF'
+          #!/usr/bin/env bash
+          # N°275 — Monitoring Telegram de la chaîne hybride (timer */15 min).
+          # Anti-spam : alerte au déclenchement d'incident puis au max toutes
+          # les 4 h ; message de rétablissement ; heartbeat quotidien 06:00 UTC.
+          # Bot = TELEGRAM_PLATFORM_BOT_TOKEN de /etc/mikcloud/mikcloud.env ;
+          # chat = OPS_TELEGRAM_CHATS de /etc/mikcloud/monitor.env.
+          set -uo pipefail
+          STATED=/var/lib/mikcloud
+          STATE="$STATED/monitor.state"; STATUSF="$STATED/monitor.status"
+          [ -r /etc/mikcloud/monitor.env ] && . /etc/mikcloud/monitor.env
+          [ -r /etc/mikcloud/localpg.env ] && . /etc/mikcloud/localpg.env
+          set -a; . /etc/mikcloud/mikcloud.env; set +a
+          TOKEN="${TELEGRAM_PLATFORM_BOT_TOKEN:-}"
+          CHATS="${OPS_TELEGRAM_CHATS:-}"
+          NOW=$(date +%s); HOUR=$(date -u +%H)
+          FAILS=""; OKS=""
+          addf(){ FAILS="$FAILS$1\n"; }
+          addo(){ OKS="$OKS$1\n"; }
+          # 1. PG local
+          if pg_isready -q -h 127.0.0.1 -p 5432; then addo "PG local: up"; else addf "PG local: DOWN"; fi
+          # 2. backend
+          if systemctl is-active -q mikcloud && [ "$(curl -s -o /dev/null -m 5 -w '%{http_code}' http://127.0.0.1:4000/ 2>/dev/null)" = "200" ]; then addo "backend: 200"; else addf "backend: KO"; fi
+          # 3. DSN = local (anti-retour-silencieux N°274)
+          if grep -E '^DATABASE_URL=' /etc/mikcloud/mikcloud.env | head -1 | grep -q '127.0.0.1:5432/mikcloud'; then addo "DSN: primaire local"; else addf "DSN: PAS le local (retour Supabase ?)"; fi
+          # 4. persistance vivante (tup_written doit croître — flush ≤3 s)
+          TW=$(psql "${LOCALPG_DSN:-}" -Atc "SELECT tup_inserted+tup_updated FROM pg_stat_database WHERE datname='mikcloud'" 2>/dev/null || echo 0)
+          if [ -f "$STATED/tup.prev" ]; then
+            PREV=$(cat "$STATED/tup.prev"); echo "$TW" > "$STATED/tup.prev"
+            if [ "$TW" -gt "$PREV" ] 2>/dev/null; then addo "flush PG: actif (+$((TW-PREV)) tuples/15min)"; else addf "flush PG: GELÉ (tup_written stable) — mode dégradé ?"; fi
+          else
+            echo "$TW" > "$STATED/tup.prev"; addo "flush PG: première mesure ($TW)"
+          fi
+          # 5. WAL local frais (archive_timeout 60 s → généreux : 15 min)
+          NEWEST=$(find /var/backups/mikcloud/wal -type f ! -name '*.tmp' -printf '%T@\n' 2>/dev/null | sort -rn | head -1)
+          if [ -n "$NEWEST" ]; then
+            AGE=$(( NOW - ${NEWEST%.*} ))
+            if [ "$AGE" -le 900 ]; then addo "WAL local: dernier segment il y a $((AGE/60)) min"; else addf "WAL local: dernier segment il y a $((AGE/60)) min (>15) — archivage bloqué ?"; fi
+          else addf "WAL local: répertoire vide"; fi
+          # 6. WAL distant (Tier1.5)
+          if [ -f "$STATED/wal-upload.last" ]; then
+            UP_AGE=$(( NOW - $(stat -c %Y "$STATED/wal-upload.last") ))
+            if [ "$UP_AGE" -le 1200 ]; then addo "WAL→Object Storage: il y a $((UP_AGE/60)) min"; else addf "WAL→Object Storage: il y a $((UP_AGE/60)) min (>20)"; fi
+          else addf "WAL→Object Storage: jamais exécuté"; fi
+          # 7. reverse-sync frais (≤ 26 h)
+          if [ -f "$STATED/reverse-sync.status" ]; then
+            LS=$(sed -n 's/^last_success=//p' "$STATED/reverse-sync.status")
+            if [ -n "$LS" ]; then
+              RS_AGE=$(( (NOW - $(date -d "$LS" +%s 2>/dev/null || echo 0)) / 3600 ))
+              if [ "$RS_AGE" -le 26 ]; then addo "reverse-sync: il y a ${RS_AGE}h"; else addf "reverse-sync: il y a ${RS_AGE}h (>26)"; fi
+            else addf "reverse-sync: dernier run en ÉCHEC"; fi
+          else addf "reverse-sync: jamais exécuté"; fi
+          # 8. ressources
+          PCT=$(df --output=pcent / | tail -1 | tr -dc '0-9')
+          if [ "$PCT" -lt 85 ]; then addo "disque: ${PCT}%"; else addf "disque: ${PCT}%"; fi
+          RAM=$(free -m | awk '/^Mem:/{print $7}')
+          if [ "$RAM" -gt 1500 ] 2>/dev/null; then addo "RAM dispo: ${RAM}M"; else addf "RAM dispo: ${RAM}M"; fi
+          LOAD=$(awk '{print int($1)}' /proc/loadavg)
+          if [ "$LOAD" -lt 4 ]; then addo "load: $LOAD"; else addf "load: $LOAD (>4 sur 4 OCPU)"; fi
+          # 9. unités en échec
+          for u in mikcloud-wal-upload mikcloud-reverse-sync; do
+            R=$(systemctl show -p Result --value "$u.service" 2>/dev/null)
+            [ "$R" = "success" ] || addf "$u.service: Result=$R"
+          done
+          send(){
+            [ -n "$TOKEN" ] && [ -n "$CHATS" ] || return 0
+            for c in $CHATS; do
+              curl -fsS -m 10 "https://api.telegram.org/bot${TOKEN}/sendMessage" \
+                -d chat_id="$c" --data-urlencode "text=$1" >/dev/null 2>&1 || true
+            done
+          }
+          INC=$(cat "$STATE" 2>/dev/null || echo "")
+          if [ -n "$FAILS" ]; then
+            LAST_ALERT=$(cat "$STATED/last_alert" 2>/dev/null || echo 0)
+            if [ "$INC" != "incident" ] || [ $(( NOW - LAST_ALERT )) -ge 14400 ]; then
+              send "🔴 mikcloud DR — ANOMALIES
+          $(printf "$FAILS")— $(date -u '+%F %R UTC')"
+              echo "incident" > "$STATE"; date +%s > "$STATED/last_alert"
+            fi
+          else
+            if [ "$INC" = "incident" ]; then
+              send "🟢 mikcloud DR — rétabli
+          $(printf "$OKS")— $(date -u '+%F %R UTC')"
+            fi
+            echo "ok" > "$STATE"
+            if [ "$HOUR" = "06" ] && [ ! -f "$STATED/heartbeat.$(date -u +%F)" ]; then
+              send "🟢 mikcloud DR — heartbeat quotidien
+          $(printf "$OKS")— $(date -u '+%F %R UTC')"
+              touch "$STATED/heartbeat.$(date -u +%F)"
+            fi
+          fi
+          printf 'fails=%s\nstate=%s\nat=%s\n' "$(printf "$FAILS" | grep -c . || true)" "$(cat "$STATE")" "$(date -u +%FT%TZ)" > "$STATUSF"
+          exit 0
+          MON_EOF
+          sudo chmod 755 /usr/local/sbin/mikcloud-monitor
+          CHATS=$(psql "$LOCALPG_DSN" -Atc "SELECT n.telegram_chat_id FROM notif_settings n LEFT JOIN accounts a ON a.id=n.account_id WHERE n.telegram_enabled=TRUE AND n.telegram_chat_id<>'' ORDER BY a.created_at NULLS LAST LIMIT 1")
+          echo "chat d'alerte retenu: ${CHATS:-AUCUN} — monitor muet jusqu'au premier reverse-sync"
+          sudo tee /etc/mikcloud/monitor.env > /dev/null <<MONEOF
+          OPS_TELEGRAM_CHATS=$CHATS
+          WEB_VITALS_RETENTION_DAYS=90
+          MONEOF
+          sudo chmod 600 /etc/mikcloud/monitor.env
+          echo "═══ 4. Unités systemd ═══"
+          sudo tee /etc/systemd/system/mikcloud-reverse-sync.service > /dev/null <<'UNITEOF'
+          [Unit]
+          Description=mikcloud reverse-sync local→Supabase→Neon (N°275)
+          After=network-online.target postgresql.service
+          Wants=network-online.target
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/sbin/mikcloud-reverse-sync
+          TimeoutStartSec=1800
+          UNITEOF
+          sudo tee /etc/systemd/system/mikcloud-reverse-sync.timer > /dev/null <<'UNITEOF'
+          [Unit]
+          Description=mikcloud reverse-sync nocturne (03:00 UTC)
+
+          [Timer]
+          OnCalendar=*-*-* 03:00:00 UTC
+          Persistent=true
+          RandomizedDelaySec=120
+
+          [Install]
+          WantedBy=timers.target
+          UNITEOF
+          sudo tee /etc/systemd/system/mikcloud-wal-upload.service > /dev/null <<'UNITEOF'
+          [Unit]
+          Description=mikcloud WAL → OCI Object Storage (N°275)
+          After=network-online.target postgresql.service
+          Wants=network-online.target
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/sbin/mikcloud-wal-upload
+          TimeoutStartSec=600
+          UNITEOF
+          sudo tee /etc/systemd/system/mikcloud-wal-upload.timer > /dev/null <<'UNITEOF'
+          [Unit]
+          Description=mikcloud WAL upload toutes les 5 minutes
+
+          [Timer]
+          OnCalendar=*:0/5
+          AccuracySec=15s
+
+          [Install]
+          WantedBy=timers.target
+          UNITEOF
+          sudo tee /etc/systemd/system/mikcloud-monitor.service > /dev/null <<'UNITEOF'
+          [Unit]
+          Description=mikcloud monitor DR (N°275)
+          After=network-online.target postgresql.service
+          Wants=network-online.target
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/sbin/mikcloud-monitor
+          TimeoutStartSec=120
+          UNITEOF
+          sudo tee /etc/systemd/system/mikcloud-monitor.timer > /dev/null <<'UNITEOF'
+          [Unit]
+          Description=mikcloud monitor toutes les 15 minutes
+
+          [Timer]
+          OnCalendar=*:0/15
+          Persistent=true
+
+          [Install]
+          WantedBy=timers.target
+          UNITEOF
+          sudo systemctl daemon-reload
+          sudo systemctl enable --now mikcloud-wal-upload.timer mikcloud-monitor.timer mikcloud-reverse-sync.timer >/dev/null 2>&1 || true
+          echo "═══ 5. Vérifications ═══"
+          systemctl list-timers --no-pager | grep mikcloud || echo "⚠ aucun timer mikcloud visible"
+          sleep 20
+          if sudo test -f /var/lib/mikcloud/wal-upload.status; then
+            echo "--- wal-upload.status (premier passage) ---"
+            sudo cat /var/lib/mikcloud/wal-upload.status
+          else
+            echo "premier upload pas encore passé (timer ≤5 min)"
+          fi
+          echo "═══ ARM-DR TERMINÉ — chaîne DR armée ═══"
+          REMOTE
+
+      - name: mode=reverse-sync — flux Tier2 immédiat (local→Supabase→Neon)
+        if: ${{ env.RESOLVED_MODE == 'reverse-sync' }}
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          sudo test -f /usr/local/sbin/mikcloud-reverse-sync || { echo "❌ arm-dr non exécuté — rien à déclencher"; exit 1; }
+          echo "déclenchement du flux (service oneshot, synchrone)…"
+          if sudo systemctl start mikcloud-reverse-sync.service; then
+            echo "✅ service terminé OK"
+          else
+            echo "❌ service en échec — journal:"; sudo journalctl -u mikcloud-reverse-sync.service --since "-30 min" --no-pager | tail -40; exit 1
+          fi
+          echo "--- log (45 dernières lignes) ---"
+          sudo tail -n 45 /var/log/mikcloud/reverse-sync.log
+          echo "--- statut ---"
+          sudo cat /var/lib/mikcloud/reverse-sync.status
+          echo "--- comptages cibles ---"
+          set -a; . <(sudo cat /etc/mikcloud/backup.env); set +a
+          echo "Supabase: $(psql "$DATABASE_URL_SESSION" -Atc "SELECT count(*) FROM pg_tables WHERE schemaname='public'") tables"
+          echo "Neon:     $(psql "$NEON_DATABASE_URL" -Atc "SELECT count(*) FROM pg_tables WHERE schemaname='public'") tables"
+          REMOTE
+
+      - name: mode=health — monitor une fois + API publique
+        if: ${{ env.RESOLVED_MODE == 'health' }}
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s <<'REMOTE'
+          set -uo pipefail
+          if sudo test -f /usr/local/sbin/mikcloud-monitor; then
+            sudo /usr/local/sbin/mikcloud-monitor || true
+            echo "--- monitor.status ---"
+            sudo cat /var/lib/mikcloud/monitor.status 2>/dev/null || true
+          else
+            echo "⚠ monitor non armé (arm-dr pas encore exécuté) — contrôle minimal"
+            pg_isready -h 127.0.0.1 -p 5432 || true
+            systemctl is-active mikcloud || true
+          fi
+          sudo test -f /var/lib/mikcloud/wal-upload.status && { echo "--- wal-upload.status ---"; sudo cat /var/lib/mikcloud/wal-upload.status; } || true
+          sudo test -f /var/lib/mikcloud/reverse-sync.status && { echo "--- reverse-sync.status ---"; sudo cat /var/lib/mikcloud/reverse-sync.status; } || true
+          echo "--- ressources ---"
+          df -h / | sed -n '2p'; uptime
+          REMOTE
+          echo "── API publique (depuis le runner) ──"
+          curl -fsS -o /dev/null -m 15 -w "api.mikcloud.ftci.fr HTTP %{http_code}\n" https://api.mikcloud.ftci.fr/ || echo "❌ API publique KO"
+          curl -fsS -o /dev/null -m 15 -w "mikcloud.ftci.fr HTTP %{http_code}\n" https://mikcloud.ftci.fr || echo "❌ frontend KO"
+
+      - name: mode=drill — restaurabilité démontrée (base jetable + WAL distant)
+        if: ${{ env.RESOLVED_MODE == 'drill' }}
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          command -v oci >/dev/null 2>&1 || { echo "❌ OCI CLI absent — lancer mode=arm-dr d'abord"; exit 1; }
+          sudo test -f /etc/mikcloud/walupload.env || { echo "❌ arm-dr non exécuté (walupload.env absent)"; exit 1; }
+          set -a; . <(sudo cat /etc/mikcloud/localpg.env); set +a
+          . <(sudo cat /etc/mikcloud/walupload.env)
+          : "${LOCALPG_DSN:?}"; : "${WAL_NS:?}"; : "${WAL_BUCKET:?}"
+          cleanup(){ sudo -u postgres psql -qc 'DROP DATABASE IF EXISTS mikcloud_drill WITH (FORCE)' || true; }
+          trap 'cleanup; rm -f /tmp/mikcloud-drill-*.dump /tmp/mikcloud-drill-*.dump.list /tmp/drill.err /tmp/drill-seg* 2>/dev/null' EXIT
+          STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+          echo "═══ 1. Dump frais du primaire local ═══"
+          DUMP=/tmp/mikcloud-drill-$STAMP.dump
+          pg_dump --schema=public --no-owner --no-privileges -Fc -f "$DUMP" "$LOCALPG_DSN"
+          pg_restore --list "$DUMP" | grep -vE ' (SCHEMA|EXTENSION) ' > "$DUMP.list"
+          echo "tables dans le dump: $(pg_restore --list "$DUMP" | grep -c ' TABLE ')"
+          echo "═══ 2. Restore STRICT sur base jetable mikcloud_drill ═══"
+          BASE_DSN="${LOCALPG_DSN%%/mikcloud*}"
+          SUFFIX="${LOCALPG_DSN#*/mikcloud}"
+          DRILL_DSN="${BASE_DSN}/mikcloud_drill${SUFFIX}"
+          cleanup
+          sudo -u postgres psql -qc 'CREATE DATABASE mikcloud_drill OWNER mikcloud'
+          T1=$(date +%s)
+          if ! pg_restore --exit-on-error --no-owner --no-privileges --use-list="$DUMP.list" -d "$DRILL_DSN" 2> /tmp/drill.err; then
+            echo "❌ pg_restore drill ÉCHOUÉ :"; tail -25 /tmp/drill.err; exit 1
+          fi
+          echo "restore strict OK en $(( $(date +%s) - T1 )) s"
+          echo "═══ 3. Asserts structure + données ═══"
+          DT=$(psql "$DRILL_DSN" -Atc "SELECT count(*) FROM pg_tables WHERE schemaname='public'")
+          echo "tables drill: $DT"
+          [ "$DT" -ge 30 ] || { echo "❌ $DT tables seulement — restore incomplet"; exit 1; }
+          DRILL_OK=yes
+          for t in routers hotspot_users settings health_checkpoint; do
+            S=$(psql "$LOCALPG_DSN" -Atc "SELECT count(*) FROM public.$t")
+            D=$(psql "$DRILL_DSN" -Atc "SELECT count(*) FROM public.$t")
+            echo "$t: primaire=$S drill=$D"
+            [ "$D" -gt 0 ] || { echo "❌ table $t vide dans le drill"; DRILL_OK=; }
+          done
+          [ -n "$DRILL_OK" ] || { echo "❌ asserts données en échec"; exit 1; }
+          echo "═══ 4. WAL distant lisible (Tier1.5) ═══"
+          SEG=$(sudo sort /var/lib/mikcloud/wal-uploaded.list 2>/dev/null | tail -1 || true)
+          if [ -n "${SEG:-}" ]; then
+            oci --config-file /etc/oci/config os object get --namespace "$WAL_NS" --bucket-name "$WAL_BUCKET" --name "${SEG}.gz" --file /tmp/drill-seg.gz >/dev/null
+            gunzip -c /tmp/drill-seg.gz > /tmp/drill-seg
+            PGW=$(ls /usr/lib/postgresql/*/bin/pg_waldump 2>/dev/null | tail -1 || true)
+            if [ -n "$PGW" ]; then
+              echo "--- pg_waldump $SEG (extrait) ---"
+              "$PGW" /tmp/drill-seg 2>/dev/null | head -3 || echo "⚠ pg_waldump n'a pas lu le segment"
+            else
+              echo "⚠ pg_waldump absent — lisibilité par taille seulement"
+            fi
+            echo "WAL distant OK: ${SEG}.gz ($(du -h /tmp/drill-seg | cut -f1) décompressé)"
+            rm -f /tmp/drill-seg /tmp/drill-seg.gz
+          else
+            echo "⚠ aucun WAL uploadé — attendre le timer mikcloud-wal-upload puis relancer"
+          fi
+          echo "═══ 5. Vérification base backup distant ═══"
+          oci --config-file /etc/oci/config os object list --namespace "$WAL_NS" --bucket-name "$WAL_BUCKET" --prefix basebackup/ --page-size 50 2>/dev/null \
+            | jq -r '.data.objects[].name' 2>/dev/null | sort | tail -3 || echo "(aucun base backup — viendra avec le reverse-sync nocturne)"
+          echo "═══ DRILL TERMINÉ — restaurabilité démontrée (primaire intact) ═══"
+          REMOTE
+
       - name: Rapport
         if: always()
         run: |
           {
-            echo "## ops-db-hybrid — mode: ${{ inputs.mode }}"
+            echo "## ops-db-hybrid — mode: ${{ env.RESOLVED_MODE }}"
             echo ""
             echo "- Verdict: ${{ job.status }}"
             echo "- Date: $(date -u +%FT%TZ)"

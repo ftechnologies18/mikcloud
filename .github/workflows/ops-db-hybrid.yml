@@ -136,7 +136,7 @@ jobs:
             psql "$DATABASE_URL_SESSION" -Atc "select version()" | head -1
             Q=$(psql "$DATABASE_URL_SESSION" -Atc "SELECT string_agg(format('SELECT %L AS t, count(*) AS n FROM public.%I', table_name, table_name), ' UNION ALL ' ORDER BY table_name) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'")
             psql "$DATABASE_URL_SESSION" -At -c "$Q" | sort > /tmp/counts_supabase.txt
-            echo "tables: $(wc -l < /tmp/counts_supabase.txt) — lignes: $(awk '{s+=$2} END {print s}' /tmp/counts_supabase.txt)"
+            echo "tables: $(wc -l < /tmp/counts_supabase.txt) — lignes: $(awk -F'|' '{s+=$2} END {print s}' /tmp/counts_supabase.txt)"
             echo "--- comptages (table lignes) ---"
             cat /tmp/counts_supabase.txt
             sudo install -D -m 644 /tmp/counts_supabase.txt /var/backups/counts-supabase-last.txt
@@ -202,18 +202,21 @@ jobs:
           SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
           ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s <<'REMOTE'
           set -euo pipefail
-          echo "═══ 1. Installation PostgreSQL 17 (PGDG) ═══"
-          if ! ls /etc/postgresql/17/main/PG_VERSION >/dev/null 2>&1; then
+          echo "═══ 1. Installation PostgreSQL serveur (VM Ubuntu 26.04 → PG 18) ═══"
+          if ! ls /etc/postgresql/*/main/PG_VERSION >/dev/null 2>&1; then
             sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
-            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postgresql-17
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postgresql-18 \
+              || sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postgresql-17
           else
-            echo "postgresql-17 déjà installé"
+            echo "un serveur PostgreSQL est déjà installé"
           fi
-          sudo systemctl enable --now postgresql@17-main
+          PV=$(ls /etc/postgresql/ | head -1)
+          echo "version serveur: $PV — client: $(psql --version)"
+          sudo systemctl enable --now postgresql@${PV}-main
           echo "═══ 2. Répertoire WAL (Tier1.5 local) ═══"
           sudo install -d -o postgres -g postgres -m 700 /var/backups/mikcloud/wal
           echo "═══ 3. Config calibrée Ftechci 4/24 ═══"
-          sudo tee /etc/postgresql/17/main/conf.d/mikcloud.conf > /dev/null <<'PGCONF'
+          sudo tee /etc/postgresql/$PV/main/conf.d/mikcloud.conf > /dev/null <<'PGCONF'
           # ─── mikcloud — calibrage Ftechci 4 OCPU / 24 Go (N°274) ───
           # Primaire co-hébergé : localhost UNIQUEMENT (aucun port public ;
           # le Security List OCI ne passe déjà que 80/443/22).
@@ -246,7 +249,7 @@ jobs:
           autovacuum_naptime = 30s
           PGCONF
           echo "═══ 4. Redémarrage cluster (preload) ═══"
-          sudo systemctl restart postgresql@17-main
+          sudo systemctl restart postgresql@${PV}-main
           sleep 2
           pg_isready -h 127.0.0.1 -p 5432
           echo "═══ 5. Rôle + base + extension ═══"

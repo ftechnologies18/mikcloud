@@ -23,6 +23,12 @@ on:
       - "deploy/oracle/**"
       - ".github/workflows/deploy-oracle.yml"
   workflow_dispatch:
+    inputs:
+      deploy_mode:
+        description: "auto (défaut : suit le transport actif) | docker (bascule systemd→docker) | systemd (rollback docker→systemd)"
+        required: false
+        default: "auto"
+        type: string
 
 concurrency:
   group: deploy-oracle
@@ -37,6 +43,7 @@ jobs:
     env:
       # Miroir des secrets pour les if: (secrets interdit dans les if:)
       ORACLE_HOST: ${{ secrets.ORACLE_HOST }}
+      DEPLOY_MODE: ${{ inputs.deploy_mode }}
     steps:
       - uses: actions/checkout@v4
 
@@ -129,32 +136,88 @@ jobs:
           '
           echo "Variables synchronisées (Render -> /etc/mikcloud/mikcloud.env)."
 
-      - name: Déploiement SSH vers la VM
+      - name: Déploiement SSH vers la VM (transport auto/docker/systemd — N°281)
         if: env.ORACLE_HOST != ''
         env:
           DEPLOY_USER: ${{ secrets.ORACLE_USER }}
           SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
         run: |
+          set -euo pipefail
           install -m 600 /dev/null /tmp/oracle_key
           printf '%s\n' "$SSH_KEY" > /tmp/oracle_key
           SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
           scp $SSH_OPTS dist/mikcloud-server "$DEPLOY_USER@$ORACLE_HOST:/tmp/mikcloud-server.new"
-          ssh $SSH_OPTS "$DEPLOY_USER@$ORACLE_HOST" '
-            sudo install -m 0755 /tmp/mikcloud-server.new /opt/mikcloud/mikcloud-server &&
-            sudo systemctl enable mikcloud &&
-            sudo systemctl restart mikcloud &&
-            # N°228 — le chargement des ~37 tables Supabase au boot prend
-            # ~1 min depuis Johannesburg (piège §10-16) : healthcheck PATIENT
-            # (une sonde 3 s après le restart échouait systématiquement).
-            i=0 &&
+          ssh $SSH_OPTS "$DEPLOY_USER@$ORACLE_HOST" bash -s -- "${DEPLOY_MODE:-auto}" <<'REMOTE'
+          set -euo pipefail
+          MODE_IN="${1:-auto}"
+          # ── N°281 — détection du transport actif (systemd OU docker) ──
+          CARRIER="systemd"
+          if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx 'mikcloud-server'; then
+            CARRIER="docker"
+          fi
+          MODE="$MODE_IN"
+          [ "$MODE" = "auto" ] && MODE="$CARRIER"
+          echo "transport demandé: $MODE_IN — transport actif: $CARRIER — déploiement vers: $MODE"
+          # healthcheck PATIENT — le Load() des ~37 tables prend ~1 min (N°228)
+          HEALTH() {
+            i=0
             until curl -fsS -o /dev/null http://127.0.0.1:4000/; do
-              i=$((i+1));
-              if [ "$i" -ge 60 ]; then
-                echo "BACKEND KO après 10 min — journal :" >&2;
-                sudo journalctl -u mikcloud -n 30 --no-pager >&2;
-                exit 1;
-              fi;
-              sleep 10;
-            done &&
+              i=$((i+1))
+              if [ "$i" -ge 60 ]; then echo "BACKEND KO après 10 min" >&2; return 1; fi
+              sleep 10
+            done
             echo "BACKEND OK (healthcheck au bout de $((i*10)) s)"
-          '
+          }
+          if [ "$MODE" = "docker" ]; then
+            echo "═══ voie docker (N°281) ═══"
+            sudo install -d -o root -g root -m 755 /opt/mikcloud/docker-build
+            sudo install -m 0755 /tmp/mikcloud-server.new /opt/mikcloud/docker-build/mikcloud-server
+            sudo tee /opt/mikcloud/docker-build/Dockerfile > /dev/null <<'DOCKERFILE'
+          FROM gcr.io/distroless/static-debian12:nonroot
+          COPY mikcloud-server /mikcloud-server
+          EXPOSE 4000
+          ENTRYPOINT ["/mikcloud-server"]
+          DOCKERFILE
+            TAG=$(date -u +%Y%m%dT%H%M%SZ)
+            sudo docker build -t "mikcloud-server:$TAG" /opt/mikcloud/docker-build 2>&1 | tail -4
+            # deux étiquettes flottantes : current (cible) + previous (rollback instantané)
+            if sudo docker image inspect mikcloud-server:current >/dev/null 2>&1; then
+              sudo docker tag mikcloud-server:current mikcloud-server:previous
+            fi
+            sudo docker tag "mikcloud-server:$TAG" mikcloud-server:current
+            sudo systemctl stop mikcloud 2>/dev/null || true
+            sudo systemctl disable mikcloud 2>/dev/null || true   # unité GARDÉE pour le rollback
+            sudo docker rm -f mikcloud-server >/dev/null 2>&1 || true
+            sudo docker run -d --name mikcloud-server \
+              --network host \
+              --env-file /etc/mikcloud/mikcloud.env \
+              --restart unless-stopped \
+              --memory 4g --cpus 3 \
+              "mikcloud-server:current"
+            if ! HEALTH; then
+              echo "═══ ROLLBACK systemd automatique ═══" >&2
+              sudo docker logs --tail 30 mikcloud-server >&2 || true
+              sudo docker rm -f mikcloud-server >/dev/null 2>&1 || true
+              sudo systemctl enable mikcloud 2>/dev/null || true
+              sudo systemctl start mikcloud
+              if ! HEALTH; then echo "ROLLBACK LUI-MÊME EN ÉCHEC — intervention requise" >&2; exit 1; fi
+              echo "rollback systemd OK — transport rendu à systemd" >&2
+              exit 1
+            fi
+            echo "conteneur: $(sudo docker ps --filter name=mikcloud-server --format '{{.Status}}')"
+            echo "transport: docker (images: current + previous + $TAG)"
+          else
+            echo "═══ voie systemd (défaut historique) ═══"
+            # rollback docker→systemd : le conteneur libère le port 4000
+            sudo docker rm -f mikcloud-server >/dev/null 2>&1 || true
+            sudo install -m 0755 /tmp/mikcloud-server.new /opt/mikcloud/mikcloud-server
+            sudo systemctl enable mikcloud
+            sudo systemctl restart mikcloud
+            if ! HEALTH; then
+              sudo journalctl -u mikcloud -n 30 --no-pager >&2
+              exit 1
+            fi
+            echo "transport: systemd"
+          fi
+          rm -f /tmp/mikcloud-server.new
+          REMOTE

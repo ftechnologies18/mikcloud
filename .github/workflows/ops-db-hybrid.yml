@@ -972,8 +972,11 @@ jobs:
           addo(){ OKS="$OKS$1\n"; }
           # 1. PG local
           if pg_isready -q -h 127.0.0.1 -p 5432; then addo "PG local: up"; else addf "PG local: DOWN"; fi
-          # 2. backend
-          if systemctl is-active -q mikcloud && [ "$(curl -s -o /dev/null -m 5 -w '%{http_code}' http://127.0.0.1:4000/ 2>/dev/null)" = "200" ]; then addo "backend: 200"; else addf "backend: KO"; fi
+          # 2. backend (signal = HTTP 200 ; transport systemd OU docker N°281)
+          CAR="systemd"
+          systemctl is-active -q mikcloud || CAR="?"
+          if [ "$CAR" = "?" ] && command -v docker >/dev/null 2>&1 && timeout 10 docker ps --format '{{.Names}}' 2>/dev/null | grep -qx 'mikcloud-server'; then CAR="docker"; fi
+          if [ "$(curl -s -o /dev/null -m 5 -w '%{http_code}' http://127.0.0.1:4000/ 2>/dev/null)" = "200" ]; then addo "backend: 200 ($CAR)"; else addf "backend: KO ($CAR)"; fi
           # 3. DSN = local (anti-retour-silencieux N°274)
           if grep -E '^DATABASE_URL=' /etc/mikcloud/mikcloud.env | head -1 | grep -q '127.0.0.1:5432/mikcloud'; then addo "DSN: primaire local"; else addf "DSN: PAS le local (retour Supabase ?)"; fi
           # 4. persistance vivante (tup_written doit croître — flush ≤3 s)

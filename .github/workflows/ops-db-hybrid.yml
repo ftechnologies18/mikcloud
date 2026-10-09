@@ -839,7 +839,7 @@ jobs:
           # 4. restore Supabase (pooler SESSION :5432, JAMAIS :6543)
           for a in 1 2 3; do
             if pg_restore --clean --if-exists --no-owner --no-privileges \
-                 --use-list="/tmp/mikcloud-rs-$STAMP.list" -d "$DATABASE_URL_SESSION" 2>>"$LOGF"; then break; fi
+                 --use-list="/tmp/mikcloud-rs-$STAMP.list" -d "$DATABASE_URL_SESSION" "$DUMP" 2>>"$LOGF"; then break; fi
             [ "$a" = 3 ] && fail "restore Supabase (3 tentatives)"
             log "restore Supabase tentative $a échouée — relance dans 30 s"; sleep 30
           done
@@ -852,7 +852,7 @@ jobs:
           # 5. restore Neon (endpoint DIRECT, non poolé)
           for a in 1 2 3; do
             if pg_restore --clean --if-exists --no-owner --no-privileges \
-                 --use-list="/tmp/mikcloud-rs-$STAMP.list" -d "$NEON_DATABASE_URL" 2>>"$LOGF"; then break; fi
+                 --use-list="/tmp/mikcloud-rs-$STAMP.list" -d "$NEON_DATABASE_URL" "$DUMP" 2>>"$LOGF"; then break; fi
             [ "$a" = 3 ] && fail "restore Neon (3 tentatives)"
             log "restore Neon tentative $a échouée — relance dans 30 s"; sleep 30
           done
@@ -1135,7 +1135,7 @@ jobs:
           cleanup
           sudo -u postgres psql -qc 'CREATE DATABASE mikcloud_drill OWNER mikcloud'
           T1=$(date +%s)
-          if ! pg_restore --exit-on-error --no-owner --no-privileges --use-list="$DUMP.list" -d "$DRILL_DSN" 2> /tmp/drill.err; then
+          if ! pg_restore --exit-on-error --no-owner --no-privileges --use-list="$DUMP.list" -d "$DRILL_DSN" "$DUMP" 2> /tmp/drill.err; then
             echo "❌ pg_restore drill ÉCHOUÉ :"; tail -25 /tmp/drill.err; exit 1
           fi
           echo "restore strict OK en $(( $(date +%s) - T1 )) s"

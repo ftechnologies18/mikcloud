@@ -5,6 +5,76 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-09 — N°274 — **MIGRATION DB HYBRIDE RÉALISÉE : le primaire est PostgreSQL 18 co-hébergé sur Ftechci** (workflow `ops-db-hybrid`, runs #1-#9, cutover effectif 03:03:54 UTC)
+
+### Ce qui a changé en production
+- **PRIMAIRE = PostgreSQL 18.6 local** (socket TCP 127.0.0.1 uniquement) sur
+  la VM Ftechci (4 OCPU / 24 Go) — `DATABASE_URL` du service pointe le
+  local (`sslmode=disable` documenté, échappatoire pg.go légitime) ;
+  Supabase devient **Tier2 fallback chaud FIGÉ** (re-synchronisation
+  nocturne en N°275), le backend continue de vivre en mémoire (Tier0,
+  RPO 0) avec flush asynchrone vers le local — **zéro changement de code**.
+- Architecture 4 étages (Task 6) : Tier0 mémoire ✓ · Tier1 PG local ✓ ·
+  **Tier1.5 WAL archivé local** ✓ (15 fichiers/15 min, upload Object
+  Storage en N°275) · Tier2 Supabase figé ✓ · Tier3 artefact GitHub DR
+  chiffré `supabase-dr-20261009T024703Z` (1,72 Mo, rétention 30 j) ✓.
+- Preuves de bascule (cutover 03:03:45-03:05:31) : garde comptages
+  delta cohérente (40 tables) → env sauvegardé `.pre-hybrid-*` → flip DSN
+  → **journalctl « store: persistance PostgreSQL active » 03:03:54** →
+  backend 200 → **33 366 tuples écrits en 90 s** ; état 03:12 : DB 22 Mo,
+  36 008 tuples, WAL 15 fichiers, load 0.23, RAM 919 Mi/23 Gi ; API
+  publique `{"ok":true,"lastSweepAt":"2026-10-09T03:03:54Z"}` + frontend 200.
+- **Timer `mikcloud-backup` (Supabase→Neon 03:00 UTC) GELÉ** au cutover —
+  il recopierait Supabase figé vers Neon et écraserait le coffre avec des
+  données périmées ; **Neon est donc figé aussi** (chaîne réactivée en
+  N°275 : local→Supabase→Neon). Protection idempotente ajoutée au
+  `mode=status` (gel auto si primaire local).
+- **Blindage `deploy-oracle.yml`** : le re-déploiement CI ne ré-écrase plus
+  `DATABASE_URL` quand la VM exécute le PG local (anti-retour-silencieux).
+
+### Itérations (leçons consignées dans le YAML)
+- #1 audit vert : **VM Ubuntu 26.04** (pas 24.04) → serveur **PG 18**
+  dynamique ; client 18.6 déjà présent (paquets Ubuntu, PGDG absent) ;
+  DSN backend = pooler **session :5432** ; 40 tables
+  (routers=5, hotspot_users=7280, commands=6088, web_vitals=5888).
+- #2 backup : `install -d` sans `-o` → répertoire **root** → pg_dump
+  « Permission denied » → `-o "$USER"` sur les 3 modes qui dumpt.
+- #2-bis : 3 résidus `sudo . fichier` (source n'est pas un binaire) →
+  process substitution `. <(sudo cat …)` partout.
+- #4/#5 restore : le dump `--schema=public` embarque
+  `CREATE SCHEMA public;` (sans IF NOT EXISTS) qui heurte (a) un schéma
+  préexistant, (b) le `public` natif du template PG 15+ — fix :
+  **base fraîche** (`DROP DATABASE … WITH (FORCE)` + `CREATE DATABASE`)
+  + **`pg_restore --use-list` excluant l'entrée SCHEMA du TOC**.
+- #6 restore « échec » fallacieux : comparaison stricte contre une
+  référence Supabase **antérieure** au dump — Supabase vit en continu
+  (purges `activity`/`user_logs`, `hotspot_users`) → verdict informatif
+  + asserts santé (≥30 tables, >0 lignes) ; le contrôle strict reste au
+  cutover (fenêtre delta gelée, tolérance directionnelle whitelistée
+  `*vitals*|*command*|*session*|*log*|*event*`).
+- #8 cutover : opération **réussie à 03:03:52** ; verdict run « failure »
+  COSMÉTIQUE — télémétrie `pg_stat_statements` non restaurée par
+  pg_restore (CREATE EXTENSION réservé au superuser) a tué `set -e`
+  AVANT le gel du timer → extension recréée par `postgres` post-restore,
+  télémétrie non fatale, protection timer au status (#9-vert).
+
+### Gardes permanents (défense en profondeur)
+- cutover/rollback : confirmation `confirm=MIK-DB-HYBRID` ;
+  rollback exige en plus `accept_stale_data=YES` (Supabase figé) ;
+- cutover : rollback AUTOMATIQUE (env restauré, restart, healthcheck)
+  si journalctl ne confirme pas la persistance ou si aucune écriture en 90 s ;
+- `mikcloud.env` sauvegardé `.pre-hybrid-<STAMP>` avant tout flip ;
+- comptages : strict au cutover (tolérance whitelistée), informatif ailleurs ;
+- sentinel RENDER-DEPLOY-FROZEN intact (workflows/ + docs/ uniquement) ;
+  aucun schéma DB modifié (même DDL, 40 tables) — Neon inchangé.
+
+### Prochaines étapes (N°275)
+- reverse-sync nocturne : dump local → restore Supabase (fallback chaud
+  re-synchronisé) → puis chaîne vers Neon (coffre) ;
+- WAL → OCI Object Storage (PITR distant) ;
+- monitoring minimal (drift + croissance + alertes Telegram) ;
+- drill de restauration complet (local → Supabase → backend).
+
 ## 2026-10-09 — N°273 — RÉSULTAT : **Ftechci en production en 4 OCPU / 24 Go** (workflow `ops-resize-marseille` runs #3 + #5) + faits de shape mis à jour
 
 ### Exécution (run #3, 01:38-01:43 UTC — 4,5 minutes)

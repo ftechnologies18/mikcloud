@@ -29,6 +29,11 @@ on:
         required: false
         default: ""
         type: string
+      boot:
+        description: "(postmortem) offset du boot à examiner — défaut -5 (le hang du 09/10)"
+        required: false
+        default: "-5"
+        type: string
 
 concurrency:
   group: ops-vm-diag
@@ -116,12 +121,13 @@ jobs:
             echo "⚠ console history vide/indisponible"
           fi
 
-      - name: mode=postmortem — journal du boot figé (-b -1) via SSH (N°280)
+      - name: mode=postmortem — journal du boot figé via SSH (N°280)
         if: ${{ inputs.action == 'postmortem' }}
         env:
           SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
           VM_HOST: ${{ secrets.ORACLE_HOST }}
           DEPLOY_USER: ${{ secrets.ORACLE_USER }}
+          BOOT: ${{ inputs.boot }}
         run: |
           set -euo pipefail
           for v in SSH_KEY VM_HOST DEPLOY_USER; do
@@ -129,23 +135,24 @@ jobs:
           done
           printf '%s\n' "$SSH_KEY" > /tmp/oracle_key && chmod 600 /tmp/oracle_key
           SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
-          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s <<'REMOTE'
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s -- "${BOOT:--5}" <<'REMOTE'
           set -uo pipefail
+          BOOT="${1:--5}"
           echo "═══ boots récents (journal persistant) ═══"
           sudo journalctl --list-boots --no-pager 2>/dev/null | tail -10
-          echo "═══ last -x (reboots / crashs) ═══"
-          last -x reboot shutdown 2>/dev/null | head -8
-          echo "═══ sweep des boots — 40 dernières lignes de CHAQUE boot (N°280-ter) ═══"
-          # Objectif : voir comment CHAQUE boot se termine (séquence de
-          # poweroff propre initiée par QUI ? ou fin abrupte = hang).
-          # Boot 0 exclu : le sweep lui-même pollue son journal (sudo).
-          for B in $(sudo journalctl --list-boots --no-pager 2>/dev/null | tail -8 | awk '{print $1}'); do
-            if [ "$B" = "0" ]; then echo "── [boot 0] courant — ignoré ──"; continue; fi
-            END=$(sudo journalctl -b "$B" -n 1 --no-pager 2>/dev/null | awk '{print $1, $2, $3}')
-            SIG=$(sudo journalctl -b "$B" --no-pager 2>/dev/null | grep -icE 'out of memory|oom-kill|kernel panic|hung_task|blocked for more|I/O error|segfault|killed process' || true)
-            echo "── [boot $B] fin journal: $END — signaux noyau: $SIG ──"
-            sudo journalctl -b "$B" -n 40 --no-pager 2>/dev/null | tail -40
-          done
+          echo "═══ séquence complète de fin du boot $BOOT (250 dernières lignes) ═══"
+          sudo journalctl -b "$BOOT" -n 250 --no-pager 2>/dev/null | tail -250
+          echo "═══ initiateurs possibles sur TOUT le boot $BOOT (power key / shutdown / unattended) ═══"
+          sudo journalctl -b "$BOOT" --no-pager 2>/dev/null \
+            | grep -iE 'power key|power button|poweroff|power-off|shutdown scheduled|shutting down|reboot required|systemctl.*(poweroff|reboot|halt)' \
+            | tail -30 \
+            || echo "(rien trouvé)"
+          echo "═══ auth.log : qui a lancé shutdown/reboot/sudo ═══"
+          sudo grep -hE 'shutdown|poweroff|halt|session opened for user root' /var/log/auth.log 2>/dev/null | tail -25 || echo "(rien)"
+          echo "═══ logind : boutons ACPI / sessions ═══"
+          sudo journalctl -b "$BOOT" --no-pager 2>/dev/null | grep -iE 'systemd-logind.*(power|lid)|New session' | tail -15 || echo "(rien)"
+          echo "═══ oracle-cloud-agent actif sur le boot $BOOT ? ═══"
+          sudo journalctl -b "$BOOT" --no-pager 2>/dev/null | grep -iE 'oracle.*(agent|plugin)' | tail -12 || echo "(rien)"
           echo "═══ état actuel ═══"
           uptime
           systemctl --failed --no-pager --no-legend || true

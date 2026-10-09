@@ -275,11 +275,16 @@ la référence pour le timing.
 - **Smoke test validé** : pull arm64, publication `127.0.0.1:4010`,
   HTTP 200, DNAT iptables OK, egress bridge OK, conteneur jetable purgé.
 
-### Conteneur préexistant (observé, NON touché)
+### Conteneur préexistant (CONFIRMÉ exploitant, N°282)
 - `sect-api` (ghcr.io/udevrard7/sect/sect-api) — healthy, publié sur
-  **127.0.0.1:8090**, policy de restart. Déposé par l'exploitant en
-  dehors du canal CI. Le monitor DR (famille n°10) le compte
+  **127.0.0.1:8090**, policy de restart. **Installé par l'exploitant
+  lui-même pendant l'installation de son second back-end** (confirmation
+  N°282 — c'est CE second back-end) ; il vit hors du canal CI mikcloud
+  et nous ne le touchons pas. Le monitor DR (famille n°10) le compte
   (« docker: actif (N conteneurs) »).
+- Suggestion (sans urgence, décision exploitant) : à sa prochaine
+  recréation, l'aligner sur la convention n°4 ci-dessous (limites
+  `--memory`/`--cpus` — il partage la VM avec PostgreSQL).
 
 ### Conventions pour tout nouveau service (Phase B incluse)
 1. **Publication TOUJOURS sur 127.0.0.1** (`-p 127.0.0.1:P:P`) — Caddy
@@ -318,3 +323,20 @@ JAMAIS `--volumes`, les volumes portent des données de services).
   reste HTTP 200 sur 127.0.0.1:4000, transport-agnostique (N°281).
 - Healthcheck post-deploy mesuré : **10 s** (PG local) contre ~1 min à
   l'ère Johannesburg.
+
+### Leçon du 09/10 (N°282) : poweroff invité ↔ OCI « RUNNING fantôme »
+- Le « hang » du 09/10 n'en était pas un : **poweroff ACPI volontaire
+  de l'exploitant** (« Power key pressed short », 05:13:23) pendant
+  l'installation du second back-end → guest éteint proprement à
+  05:13:28, état d'instance OCI resté **RUNNING ~77 min** sans rien
+  relancer, jusqu'au RESET dur via `ops-vm-diag` (06:24, API verte
+  06:31). Zéro signal noyau sur les 10 boots de la nuit.
+- **Règle d'exploitation** : ne JAMAIS éteindre le guest depuis
+  l'intérieur (`shutdown -h`, power key console) — préférer
+  **`sudo reboot`** (tous les reboots propres de la nuit sont revenus
+  seuls) ou l'action **Stop/Start de la console OCI** (réconcilie
+  l'état hyperviseur). Si un poweroff invité arrive malgré tout :
+  vérifier l'état OCI juste après, **Start** manuel si RUNNING fantôme ;
+  rattrapage = `ops-vm-diag` (START/RESET + capture console PATIENTE).
+- Angle mort assumé : le monitor Telegram vit sur la VM — un guest
+  éteint ne peut pas alerter lui-même. D'où la règle ci-dessus.

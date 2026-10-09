@@ -5,6 +5,42 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-09 — N°282 — **RÉPONSE EXPLOITANT — LE « HANG » DU 09/10 ÉTAIT UN POWEROFF VOLONTAIRE** (dossier CLÔT, pas de ticket OCI)
+
+### Réponse reçue
+- À la question N°280 (« ces gestes venaient-ils de vous (console
+  OCI) ? »), l'exploitant confirme : **OUI — gestes de sa main pendant
+  l'installation du second back-end**. Cette session d'installation
+  explique d'un même mouvement la série de 10 boots propres de la nuit
+  (01:42→09:38), le power key de 05:13:23 et le conteneur `sect-api`
+  découvert en N°279 (le second back-end de l'exploitant, 127.0.0.1:8090).
+- **Dossier hang CLÔT** — chaîne complète établie : poweroff ACPI
+  volontaire (05:13:23) → guest éteint proprement → état d'instance OCI
+  resté **RUNNING fantôme** → rien ne relance le guest → RESET dur via
+  `ops-vm-diag` (06:24) → API verte (06:31). Pas de ticket support OCI,
+  pas d'action plateforme requise.
+
+### Leçon consignée (RUNBOOK-HEBERGEMENT §8)
+- **Éviter le poweroff invité** (`shutdown -h` / power key console) sur
+  Ftechci : une fois le guest éteint, OCI peut rester bloqué sur
+  RUNNING **sans rien relancer** — et le monitor Telegram ne peut pas
+  alerter (il vit sur la VM). Lui préférer **`sudo reboot`** (tous les
+  reboots propres de la nuit sont revenus seuls) ou l'action
+  **Stop/Start de la console OCI** (réconcilie l'état hyperviseur).
+- Si un poweroff invité est inévitable : vérifier l'état de l'instance
+  dans la console OCI juste après et **Start** manuel si RUNNING
+  fantôme ; rattrapage = `ops-vm-diag` (START/RESET + capture console
+  PATIENTE).
+
+### État produit
+- Aucun code ni workflow modifié — mise à jour documentaire uniquement
+  (CHANGELOG, PILOTAGE §6, RUNBOOK §8, DB-HYBRIDE points ouverts).
+- Transport prod actuel : **docker** (N°281, run #20) ; API 200
+  (`ok:true`, sweep actif), arm-dr #58 + health #59 verts.
+- Suggestion enregistrée (sans urgence, décision exploitant) : à la
+  prochaine recréation de `sect-api`, l'aligner sur la convention §8
+  n°4 (limites `--memory`/`--cpus` — il partage la VM avec PostgreSQL).
+
 ## 2026-10-09 — N°280 — **ÉCLAIRCISSEMENT DU « HANG » DU 09/10 — CE N'ÉTAIT PAS UN HANG** (poweroff ACPI propre + état OCI RUNNING fantôme)
 
 ### Le fait établi (preuves journal persistant, boot -5)

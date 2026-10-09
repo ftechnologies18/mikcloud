@@ -200,6 +200,12 @@ N°277 vieillissent ≤ 21 j puis partent au lifecycle).
   produit** (décision exploitant, N°277).
 
 ### Points ouverts N°277+
-1. **Cause racine du hang du 09/10 (05:14-06:31 UTC)** non déterminée —
-   `ops-vm-diag` a maintenant une capture console PATIENTE (polling) ; si
-   récidive : capturer AVANT de rebooter.
+- **Aucun** — le dernier point (cause du « hang » du 09/10, 05:14-06:31
+  UTC) est **CLÔT en N°282** : poweroff ACPI **volontaire de
+  l'exploitant** (power key console 05:13:23, pendant l'installation du
+  second back-end), guest éteint proprement, OCI resté RUNNING fantôme
+  ~77 min jusqu'au RESET dur ; zéro perte, DR intacte. Leçon : ne pas
+  éteindre le guest depuis l'intérieur (préférer `sudo reboot` ou
+  Stop/Start console OCI) — cf. RUNBOOK-HEBERGEMENT §8. `ops-vm-diag`
+  conserve la capture console PATIENTE (polling) pour tout futur
+  incident.

@@ -1129,9 +1129,14 @@ jobs:
           pg_restore --list "$DUMP" | grep -vE ' (SCHEMA|EXTENSION) ' > "$DUMP.list"
           echo "tables dans le dump: $(pg_restore --list "$DUMP" | grep -c ' TABLE ')"
           echo "═══ 2. Restore STRICT sur base jetable mikcloud_drill ═══"
-          BASE_DSN="${LOCALPG_DSN%%/mikcloud*}"
-          SUFFIX="${LOCALPG_DSN#*/mikcloud}"
-          DRILL_DSN="${BASE_DSN}/mikcloud_drill${SUFFIX}"
+          # DSN de drill : couper la query (?sslmode=…) puis remplacer le
+          # SEGMENT de base (le dernier /mikcloud). Piège corrigé run 31 :
+          # ${DSN%%/mikcloud*} attrapait le /mikcloud de « ://mikcloud:PW@ »
+          # (préfixe d'authentification) et fabriquait l'utilisateur fantôme
+          # « mikcloud_drill ».
+          PATHONLY="${LOCALPG_DSN%%\?*}"
+          QUERY="${LOCALPG_DSN#*\?}"
+          DRILL_DSN="${PATHONLY%/*}/mikcloud_drill?${QUERY}"
           cleanup
           sudo -u postgres psql -qc 'CREATE DATABASE mikcloud_drill OWNER mikcloud'
           T1=$(date +%s)

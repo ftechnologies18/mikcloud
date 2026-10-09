@@ -162,9 +162,15 @@ N°277 vieillissent ≤ 21 j puis partent au lifecycle).
 2. **WAL → OCI Object Storage** ✓ — bucket `mikcloud-wal`, upload */5 min,
    archive_command gzip (−50× disque), prune locale 48 h, garde 3 dumps ;
 3. **Monitoring Telegram** ✓ — `mikcloud-monitor.timer` */15 min, 9 familles
-   de contrôles, anti-spam 4 h, heartbeat 06:00 UTC — **MUET tant qu'aucun
-   chat n'est appairé** (1 clic « Connecter Telegram » console, le chat est
-   repris à la nuit suivante) ;
+   de contrôles, anti-spam 4 h, heartbeat 06:00 UTC — chat d'alerte
+   **APPAIRÉ par l'exploitant** (console admin, confirmé 09/10) et relu
+   par `arm-dr` #53 : chat `7026277370` posé dans
+   `/etc/mikcloud/monitor.env` (règle : plus ancien compte
+   `notif_settings` Telegram activé, reprise par arm-dr/reverse-sync) ;
+   alertes DR délivrables (heartbeat 06:00 UTC ou premier incident).
+   Les 4 comptes utilisateurs peuvent aussi activer Telegram depuis
+   leur compte pour recevoir les alertes liées à leurs propres
+   opérations ;
 4. **Drill de restauration** ✓ — mode `drill` automatisé (base jetable +
    WAL distant), comptages identiques vérifiés ;
 5. **Rétention web_vitals** ✓ — 90 jours (réglable via
@@ -181,6 +187,9 @@ N°277 vieillissent ≤ 21 j puis partent au lifecycle).
    refus strict d'upload en clair ; preuves : timer `new=25 fail=0`,
    base backup « CHIFFRÉ uploadé 7.3M », drill « CHIFFRÉ, déchiffré +
    décompressé 16M » ; héritage `.gz` en clair purge par lifecycle ≤ 21 j.
+8. **Appairage Telegram armé** ✓ (N°278) — voir réalisé n°3 ; monitor
+   assaini au même passage : `printf '%b'` (×4, warning « invalid
+   format character » éradiqué) + écho arm-dr fidèle.
 
 ### DETTE TECHNIQUE (reportée à la FIN du développement produit)
 - **User OCI moindre privilège** : la clé API sur la VM (`/etc/oci`) a
@@ -190,8 +199,7 @@ N°277 vieillissent ≤ 21 j puis partent au lifecycle).
   plus toucher au compute/IAM. **Reporté : fin du développement
   produit** (décision exploitant, N°277).
 
-### Points ouverts N°276+
-1. **Appairage Telegram** de l'exploitant pour armer les alertes.
-2. **Cause racine du hang du 09/10 (05:14-06:31 UTC)** non déterminée —
+### Points ouverts N°277+
+1. **Cause racine du hang du 09/10 (05:14-06:31 UTC)** non déterminée —
    `ops-vm-diag` a maintenant une capture console PATIENTE (polling) ; si
    récidive : capturer AVANT de rebooter.

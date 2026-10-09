@@ -5,6 +5,34 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-09 — N°278 — **APPAIRAGE TELEGRAM ARMÉ** (alertes DR délivrables — chat relu par `arm-dr` #53, monitor assaini `printf '%b'`)
+
+### Ce qui a changé en production
+- **L'exploitant a appairé Telegram depuis la console admin plateforme**
+  (1 clic « Connecter Telegram ») : le chat `7026277370` figure
+  désormais dans `notif_settings` (Telegram activé) et a été relu par
+  `arm-dr` #53 vers `/etc/mikcloud/monitor.env`
+  (`OPS_TELEGRAM_CHATS=7026277370`) — le monitor */15 min **n'est plus
+  muet** : premier message au heartbeat 06:00 UTC ou au premier
+  incident (9 familles de contrôles, anti-spam 4 h, rétablissement
+  notifié).
+- **Règle de sélection (inchangée)** : le monitor retient le **plus
+  ancien** compte `notif_settings` avec Telegram activé ; les
+  **4 comptes utilisateurs peuvent activer Telegram depuis leur
+  compte** pour recevoir les alertes liées à leurs propres opérations
+  (canaux plateforme, cf. N°150).
+- **Monitor assaini** (même passage, posé par `arm-dr` #54) :
+  `printf "$FAILS"` → `printf '%b' "$FAILS"` (×4) — le warning
+  « invalid format character » (le `%` de `disque: 85%` interprété
+  comme directive de format) est éradiqué ; l'écho `arm-dr` dit
+  maintenant la vérité (« chat d'alerte retenu: … — monitor.env mis à
+  jour (alertes DR délivrables…) » au lieu d'affirmer « monitor muet
+  jusqu'au premier reverse-sync » même quand un chat était retenu).
+- **Preuves** : `arm-dr` #53 vert — « chat d'alerte retenu:
+  7026277370 » ; `arm-dr` #54 vert — écho fidèle + policy/lifecycle
+  intacts, aucun warning ; `health` #55 vert — `fails=0 state=ok`,
+  API 200 + frontend 200.
+
 ## 2026-10-09 — N°277 — **CHIFFREMENT CLIENT DES WAL + BASEBACKUPS AVANT UPLOAD** (bucket 100 % `.enc` illisible sans la clé — `arm-dr`/`reverse-sync`/`drill` enrichis, 5 runs)
 
 ### Ce qui a changé en production

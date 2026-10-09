@@ -711,11 +711,9 @@ jobs:
           cat > /tmp/olc.json <<OLC
           {"items":[{"name":"expire-21d","action":"DELETE","timeAmount":21,"timeUnit":"DAYS","isEnabled":true}]}
           OLC
-          if sudo oci --config-file /etc/oci/config os object-lifecycle-policy put --namespace "$NS" --compartment-id "$OCI_TENANCY" --bucket-name mikcloud-wal --from-json file:///tmp/olc.json </dev/null >/dev/null 2>&1; then
-            echo "lifecycle 21 jours: posé (budget gratuit 10 Go respecté)"
-          else
-            echo "⚠ lifecycle non posé (non bloquant)"
-          fi
+          LOUT=$(sudo oci --config-file /etc/oci/config os object-lifecycle-policy put --namespace "$NS" --compartment-id "$OCI_TENANCY" --bucket-name mikcloud-wal --from-json file:///tmp/olc.json </dev/null 2>&1) \
+            && echo "lifecycle 21 jours: posé (budget gratuit 10 Go respecté)" \
+            || { echo "⚠ lifecycle non posé (non bloquant) — réponse:"; echo "$LOUT" | head -8; }
           rm -f /tmp/olc.json
           echo "═══ 3. Scripts DR ═══"
           sudo tee /etc/mikcloud/walupload.env > /dev/null <<WALEOF

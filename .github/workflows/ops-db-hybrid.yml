@@ -657,26 +657,23 @@ jobs:
             else echo "⚠ aucun .gz après 130 s — vérifier journalctl -u postgresql@18-main (l'uploader accepte les deux formats)"; fi
           fi
           echo "═══ 2. OCI CLI + credentials Object Storage + bucket ═══"
-          if ! command -v oci >/dev/null 2>&1; then
-            # python3-oci-cli ABSENT des dépôts Ubuntu 26.04 (vérifié run 16)
-            echo "--- installation via pip (python3-pip puis oci-cli) ---"
-            python3 -m pip --version >/dev/null 2>&1 || \
-              sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-pip 2>&1 | tail -3 || true
-            # pip sous SUDO = installation system-wide : les scripts DR tournent
-            # en root via systemd — un install --user (run 16) place les modules
-            # dans ~/.local/lib, invisible du root (import oci impossible)
-            sudo rm -f /usr/local/bin/oci   # tue un éventuel symlink résiduel vers ~/.local (leçon run 16/17)
-            sudo python3 -m pip install --quiet --break-system-packages --force-reinstall oci-cli 2>&1 | tail -2 || true
-            export PATH="/usr/local/bin:$PATH"
-          fi
-          if ! command -v oci >/dev/null 2>&1; then
+          # PURGE + réinstallation system-wide TOUJOURS (idempotent) :
+          # leçon runs 16-19 — un oci --user résiduel laisse un symlink
+          # /usr/local/bin/oci → ~/.local dont les modules sont invisibles du
+          # root (les scripts DR tournent en root) ; pip écrit AUSSI à travers
+          # un symlink existant au lieu de le remplacer → purge préalable.
+          # python3-oci-cli est ABSENT des dépôts Ubuntu 26.04 (vérifié run 16).
+          sudo rm -f /usr/local/bin/oci
+          python3 -m pip --version >/dev/null 2>&1 || \
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-pip 2>&1 | tail -3 || true
+          sudo python3 -m pip install --quiet --break-system-packages --force-reinstall oci-cli 2>&1 | tail -2 || true
+          if ! sudo oci --version >/dev/null 2>&1; then
             echo "--- fallback : installateur officiel OCI CLI (stdin détaché — sinon il consomme le script heredoc et tue la session SSH, leçon run 16) ---"
             curl -fsSL https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh -o /tmp/oci-install.sh \
               && sudo bash /tmp/oci-install.sh --accept-all-defaults </dev/null 2>&1 | tail -4 || true
             sudo ln -sf /root/bin/oci /usr/local/bin/oci 2>/dev/null || true
             rm -f /tmp/oci-install.sh
           fi
-          command -v oci >/dev/null 2>&1 || { echo "❌ installation oci-cli impossible — voir ci-dessus"; exit 1; }
           # TEST DÉCISIF : c'est ROOT qui exécute les scripts DR — l'import du
           # module oci doit fonctionner sous root, sinon tout le Tier1.5 est mort
           sudo oci --version >/dev/null 2>&1 || { echo "❌ oci inutilisable par root (modules non visibles — install --user résiduelle ?)"; exit 1; }

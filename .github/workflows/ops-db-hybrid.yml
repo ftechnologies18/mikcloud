@@ -658,11 +658,26 @@ jobs:
           fi
           echo "═══ 2. OCI CLI + credentials Object Storage + bucket ═══"
           if ! command -v oci >/dev/null 2>&1; then
-            sudo apt-get update -qq >/dev/null 2>&1 || true
-            sudo apt-get install -y -qq python3-oci-cli >/dev/null 2>&1 \
-              || python3 -m pip install --quiet --break-system-packages oci-cli \
-              || { echo "❌ installation oci-cli impossible"; exit 1; }
+            sudo apt-get update -qq 2>&1 | tail -2 || true
+            echo "python3-oci-cli dans le dépôt: $(apt-cache policy python3-oci-cli 2>/dev/null | sed -n '2p' | awk '{print $2}' || echo 'ABSENT')"
+            echo "--- tentative APT python3-oci-cli ---"
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-oci-cli 2>&1 | tail -4 || true
           fi
+          if ! command -v oci >/dev/null 2>&1; then
+            echo "--- tentative PIP (python3-pip puis oci-cli) ---"
+            command -v pip3 >/dev/null 2>&1 || python3 -m pip --version >/dev/null 2>&1 || \
+              sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-pip 2>&1 | tail -3 || true
+            python3 -m pip install --quiet --break-system-packages oci-cli 2>&1 | tail -4 || true
+          fi
+          if ! command -v oci >/dev/null 2>&1; then
+            echo "--- fallback : installateur officiel OCI CLI ---"
+            curl -fsSL https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh -o /tmp/oci-install.sh \
+              && sudo bash /tmp/oci-install.sh --accept-all-defaults 2>&1 | tail -5 || true
+            sudo ln -sf /root/bin/oci /usr/local/bin/oci 2>/dev/null || sudo ln -sf "$HOME/bin/oci" /usr/local/bin/oci 2>/dev/null || true
+            rm -f /tmp/oci-install.sh
+          fi
+          command -v oci >/dev/null 2>&1 || { echo "❌ installation oci-cli impossible (3 chemins tentés — voir ci-dessus)"; exit 1; }
+          echo "oci CLI: $(oci --version)"
           sudo install -d -o root -g root -m 700 /etc/oci
           sudo mv /tmp/oci_api_key.pem /etc/oci/oci_api_key.pem
           sudo chmod 600 /etc/oci/oci_api_key.pem

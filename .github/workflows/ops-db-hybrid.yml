@@ -141,12 +141,13 @@ jobs:
           set -euo pipefail
           printf '%s\n' "$SSH_KEY" > /tmp/oracle_key
           chmod 600 /tmp/oracle_key
-          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
-          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" 'echo "SSH OK — $(hostname) — $(date -u +%FT%TZ)"'
           # N°275 : les étapes filtrent sur RESOLVED_MODE (schedule → health)
+          # — écrit AVANT le ssh pour survivre à un échec réseau transient
           RESOLVED_MODE="$MODE"
           [ -n "$RESOLVED_MODE" ] || RESOLVED_MODE=health
           echo "RESOLVED_MODE=$RESOLVED_MODE" >> "$GITHUB_ENV"
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" 'echo "SSH OK — $(hostname) — $(date -u +%FT%TZ)"'
           echo "MODE=$RESOLVED_MODE · cible=$VM_HOST"
 
       - name: mode=audit — inventaire complet (lecture seule)

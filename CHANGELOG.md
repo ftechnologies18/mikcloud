@@ -5,6 +5,49 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-09 — N°273 — RÉSULTAT : **Ftechci en production en 4 OCPU / 24 Go** (workflow `ops-resize-marseille` runs #3 + #5) + faits de shape mis à jour
+
+### Exécution (run #3, 01:38-01:43 UTC — 4,5 minutes)
+- Auth coffre OK (empreinte openssl validée) → **garde enveloppe N°271 OK**
+  (exactement 1 A1 vivante en tenancy Marseille : la cible) → baseline API
+  verte → **rename `mikcloud-backend` → `Ftechci`** (01:40:07) → **SOFT
+  stop** en 50 s (flush final SIGTERM mémoire→base, zéro perte) → **shape
+  2/12 → 4/24** (01:40:59) → Start #1 **refusé capacité** (la maladie JNB
+  existe aussi à Marseille — le retry l'a prouvé) → **Start #2 :
+  RUNNING** (capacité libérée, 01:42:46) → **healthcheck : API verte
+  `{"ok":true}` 01:43:07** + frontend 200. Downtime réel : ~4,5 min.
+- Réserve Always Free non déclenchée ; revert 2/12 NON nécessaire.
+
+### Itérations du workflow (leçons consignées dans le YAML)
+- #1 (25 ms) : secrets OCI en env d'ÉTAPE → invisibles aux étapes
+  suivantes (« OCI_CLI_TENANCY: unbound variable ») → montés au NIVEAU JOB
+  (N°272-bis) — **aucun geste OCI exécuté, VM intacte** ;
+- #2 : l'OCI CLI 3.x enveloppe les réponses dans `{"data": …}` →
+  déballage `.data // .` systématique (N°272-ter) ;
+- #3 : opération RÉUSSIE ; rapport final seul en échec — CLI 3.x
+  snake_case (`memory_in_gbs`), comparaison texte « 4.0 » ≠ « 4 »,
+  interpolation jq `\(.display-name)` (tiret = soustraction jq) →
+  fallbacks + normalisation entière + interpolations quotées + **input
+  `mode=check` lecture-seule** (N°272-quater) ;
+- #4 (startup_failure) : input `mode` DUPLE (résidu de batchs d'edits —
+  `yaml.safe_load` tolère, GitHub refuse → 422) → déduplication + garde
+  anti-dupes au `yaml.compose` (N°272-quinquies) ;
+- #5 (`mode=check`, lecture seule, 01:51 UTC) : **VERDICT OFFICIEL —
+  `Ftechci [VM.Standard.A1.Flex] RUNNING — 4 OCPU`, garde enveloppe OK,
+  API verte**.
+
+### Faits mis à jour
+`MIGRATION-ORACLE.md` (schéma, tableau comparatif ~48× Render, §1.2) ;
+`RUNBOOK-HEBERGEMENT.md` §4bis ; `PILOTAGE-ORACLE.md` §3 + §4 + journal §6
+(résultat ✅) ; `CHASSE-JNB.md` (nom de la production).
+
+### Sécurité
+Docs + workflows uniquement → sentinel `RENDER-DEPLOY-FROZEN` intact ;
+aucun schéma DB → rien à synchroniser (Supabase/Neon inchangées) ; chasse
+JNB non touchée (autre tenancy). Mémoire 24 Go : posée par le même appel
+API atomique que les 4 OCPU (OCI l'a validé à l'update — le GET du CLI ne
+réexpose pas la clé mémoire, cosmétique).
+
 ## 2026-10-09 — N°272 — Pilotage agent de bout en bout : workflow `ops-resize-marseille` (rename Ftechci + resize 4/24, gardes N°271, auto-revert 2/12) — exécution déclenchée
 
 ### Livré

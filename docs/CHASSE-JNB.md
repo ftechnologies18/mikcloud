@@ -4,7 +4,7 @@
 > l'exploitant lui-même) — objectif : capturer une **A1.Flex** (≤ 2 OCPU /
 > 12 Go, cap Always Free N°267) et un filet **E2.1.Micro**, « à d'autres
 > fins » que la production. La production Marseille
-> (`mikcloud-backend`, autre tenancy) est **invisible et intouchable** par
+> (**Ftechci** — ex-`mikcloud-backend` —, autre tenancy) est **invisible et intouchable** par
 > construction (gardes par nom + OCID de tenancy distincts).
 
 ## 1. Les deux moteurs

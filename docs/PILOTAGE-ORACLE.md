@@ -67,7 +67,7 @@ console). C'est tout.
 | # | Action pilotée | Équivalent runbook | Vérification visible |
 |---|---|---|---|
 | 1 | VCN + sous-réseau + Security Lists 22/80/443 | §1.3 | console → Networking |
-| 2 | Instance `mikcloud-backend` A1.Flex 2 OCPU/12 Go, Ubuntu 24.04, 50 Go | §1.2 | console → Compute → Instances |
+| 2 | Instance **Ftechci** (ex-`mikcloud-backend`, N°272) A1.Flex **4 OCPU/24 Go** (N°272, 09/10/2026), Ubuntu 24.04, 50 Go | §1.2 | console → Compute → Instances |
 | 3 | IP publique réservée + relevé | §1.2 | console → instance → IP |
 | 4 | `bootstrap.sh` en SSH (iptables, Caddy, systemd, CA Supabase) | §2 | `systemctl status caddy` |
 | 5 | Secrets GitHub `ORACLE_HOST/USER/SSH_KEY` | §6 | repo → Settings → Secrets |
@@ -84,7 +84,7 @@ L'exploitant hébergera **d'autres backends** sur la même VM. Architecture
 retenue (délibérément SANS Docker) :
 
 ```
-VM Oracle A1.Flex (12 Go RAM — précieuse, pas de pool de conteneurs)
+VM Oracle A1.Flex (**24 Go RAM depuis le N°272 — précieuse, pas de pool de conteneurs**)
 ├── Caddy (reverse proxy unique, TLS automatique)
 │     ├── api.mikcloud.ftci.fr  → 127.0.0.1:4000  (mikcloud.service)
 │     ├── app2.exemple.fr       → 127.0.0.1:4001  (app2.service, futur)
@@ -125,6 +125,7 @@ puis régénérer (l'agent reproduit le geste 1 avec une nouvelle paire).
 | 02/10/2026 | `oci setup config` (squelette) | préparation du profil de pilotage | config créée, placeholders |
 | 02/10/2026 | (attend les OCIDs de l'exploitant) | geste 2 du §2 | — |
 | 08/10/2026 | Runbook §7 : rename + resize 4/24 (voie console, N°271) | doctrine révisée, exécution exploitant | à consigner après exécution |
+| 09/10/2026 | **Exécution via workflow `ops-resize-marseille`** (N°272) : rename → SOFT stop → shape 4/24 → Start #2 (capacité refusée au #1, libérée au #2) | API verte 01:43 UTC ; vérif lecture-seule `mode=check` run #5 : **Ftechci [VM.Standard.A1.Flex] RUNNING — 4 OCPU**, garde enveloppe OK (1 A1) | ✅ RÉUSSI |
 
 ## 7. Serveur d'entreprise « Ftechci » — rename + resize 4/24 (N°271, voie console)
 

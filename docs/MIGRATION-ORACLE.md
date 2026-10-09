@@ -19,7 +19,7 @@
 ┌──────────┐  HTTPS  ┌─────────────────────────┐  PostgreSQL  ┌───────────┐
 │ Routeurs │────────▶│ VM Oracle « mikcloud-   │─────────────▶│ Supabase  │
 │ MikroTik │ api.    │ backend » Ubuntu 24.04  │ session      │ (base     │
-│ agents + │ mikcloud│ ARM A1 · 2 OCPU · 12 Go │ pooler :5432 │ primaire, │
+│ agents + │ mikcloud│ ARM A1 · 4 OCPU · 24 Go │ pooler :5432 │ primaire, │
 │ portail  │ .ftci.fr│ binaire Go + Caddy      │ verify-full  │ inchangée)│
 └──────────┘         └───────────┬─────────────┘              └───────────┘
                                  │ pg_dump 03:00 UTC (timer)
@@ -42,7 +42,7 @@ workflow `deploy-oracle.yml` et le rôle coffre-fort de Neon.
 | Caractéristique | Render gratuit | Oracle Always Free |
 |---|---|---|
 | Bande passante sortante | 5 Go/mois puis 0,15 $/Go | **10 To/mois** — la question bande passante (toute l'histoire N°205/N°209) devient nulle |
-| RAM / CPU / éveil | 512 Mo / 0,1 CPU, veille 15 min (750 h/mois) | **12 Go / 2 OCPU ARM** Ampere A1 (réduit de 4/24 Go en juin 2026 — ~24× Render), **toujours éveillé** |
+| RAM / CPU / éveil | 512 Mo / 0,1 CPU, veille 15 min (750 h/mois) | **24 Go / 4 OCPU ARM** Ampere A1 (retauré 4/24 le 09/10/2026 — N°272, enveloppe max Always Free ; réduite de 4/24 en juin 2026 — ~48× Render), **toujours éveillé** |
 | Facture / entrée | 0 $ si < 5 Go, aucune carte | **0 €/mois définitif** — les shapes Always Free ne facturent rien ; carte exigée à l'inscription pour VÉRIFICATION (prélèvement ~1-2 $, remboursé) |
 | Charge | Zéro DevOps | systemd, TLS (Caddy), sauvegardes — **absorbés par le kit `deploy/oracle/`** et ce runbook |
 
@@ -102,7 +102,7 @@ Console Oracle → menu ☰ → **Compute → Instances → Create instance** :
 | Name | `mikcloud-backend` |
 | Placement | Paris (eu-paris-1), Availability Domain au choix |
 | Image | **Canonical Ubuntu 24.04** (passe en aarch64 avec le shape) |
-| Shape | **VM.Standard.A1.Flex** — 2 OCPU, 12 Go — libellé « Always Free eligible » à vérifier |
+| Shape | **VM.Standard.A1.Flex** — 4 OCPU, 24 Go (N°272) — libellé « Always Free eligible » vérifié à l'exécution |
 | Clé SSH | **Generate a key pair** (ed25519) → TÉLÉCHARGER la clé privée `.key` : seul moyen d'entrer dans la VM |
 | Boot volume | **50 Go** |
 | Créer | → noter l'**ADRESSE IP PUBLIQUE** affichée ensuite |

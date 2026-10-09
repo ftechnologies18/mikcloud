@@ -168,7 +168,8 @@ tombe** :
    payer → réactivation. Ne rien improviser sous pression.
 4. **Échappatoire long terme si Render devient un vrai problème** :
    **Oracle Cloud Always Free** — gratuite à vie, VM Linux, Go natif :
-   2 OCPU ARM + 12 Go RAM (réduit de 4/24 Go en juin 2026 — reste
+   4 OCPU ARM + 24 Go RAM (retauré 4/24 le 09/10/2026 — N°272,
+   enveloppe max Always Free ; réduit de 4/24 Go en juin 2026 — reste
    ~20× la RAM Render) et surtout **10 To de bande passante sortante
    incluse/mois** (2 000× Render). Contraintes : carte bancaire exigée
    à l'inscription pour vérification (prélèvement temporaire ~1-2 $

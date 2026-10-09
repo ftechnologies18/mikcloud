@@ -1,22 +1,26 @@
-# RUNBOOK — Architecture DB hybride mikcloud (N°274)
+# RUNBOOK — Architecture DB hybride mikcloud (N°274, consolidée N°275)
 
-Outil d'exécution : workflow **`ops-db-hybrid.yml`** (dispatch manuel, 7 modes).
-Références : CHANGELOG N°274 (récit + leçons), Task 5/6 (analyse + architecture),
-`backup-neon.sh` (pièges N°243 repris), `docs/RUNBOOK-SECRETS.md`.
+Outil d'exécution : workflow **`ops-db-hybrid.yml`** (dispatch + cron
+quotidien 04:23 UTC → `health`, 11 modes). Diagnostic/remise en route
+VM : **`ops-vm-diag.yml`** (état + serial console history + START/RESET).
+Références : CHANGELOG N°274/N°275 (récits + leçons), Task 5/6 (analyse
++ architecture), `backup-neon.sh` (pièges N°243 repris),
+`docs/RUNBOOK-SECRETS.md`.
 
 ## 0. Architecture (4 étages de durabilité)
 
-| Tier | Stockage | État après N°274 | RPO |
+| Tier | Stockage | État après N°275 | RPO |
 |------|----------|------------------|-----|
 | 0 | Mémoire `model.DB` (backend) | **vivant, inchangé** — source de vérité runtime, flush asynchrone ≤1 tx/3 s | ~0 |
 | 1 | **PostgreSQL 18.6 local Ftechci** (127.0.0.1:5432, DB `mikcloud`, rôle `mikcloud`) | **PRIMAIRE** depuis 03:03:54 UTC le 09/10 | flush ≤3 s |
-| 1.5 | WAL archivé `/var/backups/mikcloud/wal` (`archive_timeout=60s`) | actif (local) — upload OCI Object Storage en N°275 | ≤60 s |
-| 2 | **Supabase (pooler session :5432)** | fallback chaud **FIGÉ** au cutover — re-sync nocturne en N°275 | figé |
-| 3 | Artefact GitHub `supabase-dr-*` chiffré `BACKUP_KEY` (AES-256-CBC/PBKDF2, rétention 30 j) | actif (mode=backup) | au tir |
+| 1.5 | **WAL gz → OCI Object Storage** (`mikcloud-wal`, upload */5 min) + `pg_basebackup` quotidien (7,4 Mo) — archive_command **gzip** (le brut creusait ~17 Go/j) ; prune locale 48 h ; PITR distant ≈ base + WAL ≤ 6 min | **ACTIF** | ≤6 min |
+| 2 | **Supabase (pooler session :5432)** — re-synchronisé CHAQUE NUIT 03:00 UTC par `mikcloud-reverse-sync.timer` (restore `--clean` + RLS ré-armé) — preuve : 40/40 tables, `last_success=05:08:59Z` | **ACTIF (réplique nocturne)** | ≤26 h |
+| 2bis | **Neon** — même flux nocturne que Supabase (endpoint direct) | **ACTIF (réplique nocturne)** | ≤26 h |
+| 3 | Artefact GitHub `mikcloud-dr-*` chiffré `BACKUP_KEY` (AES-256-CBC/PBKDF2, rétention 30 j) — **dump du PRIMAIRE** depuis N°275 | actif (mode=backup) | au tir |
 
-- **Neon est figé aussi** : le timer `mikcloud-backup` (Supabase→Neon,
-  03:00 UTC) est désactivé au cutover — sinon il écraserait le coffre Neon
-  avec Supabase figé. Chaîne cible N°275 : local→Supabase (nuit)→Neon (nuit).
+- **Chaîne nocturne RÉ-ARMÉE (N°275)** : `mikcloud-reverse-sync.timer`
+  (03:00 UTC) fait local→Supabase→Neon ; l'ancien `mikcloud-backup.timer`
+  (Supabase→Neon) reste GELÉ pour toujours (superseded).
 - Le DSN local vit dans `/etc/mikcloud/mikcloud.env` (`DATABASE_URL`) ;
   le mot de passe du rôle dans `/etc/mikcloud/localpg.env` (root:root 600).
 - `sslmode=disable` : légitime (socket local, aucun port public — Security
@@ -36,17 +40,21 @@ Autovacuum chirurgical (posé au restore, tables chaudes :
 `autovacuum_vacuum_scale_factor=0.02, autovacuum_analyze_scale_factor=0.01,
 autovacuum_vacuum_cost_delay=1`.
 
-## 2. Les 7 modes de `ops-db-hybrid`
+## 2. Les 11 modes de `ops-db-hybrid`
 
 | Mode | Effet | Downtime | Notes |
 |------|-------|----------|-------|
 | `audit` | inventaire lecture seule (système, services, env keys, PG, PGDG, hosts DB, comptages Supabase) | 0 | sûr à relancer |
-| `backup` | pg_dump -Fc Supabase → `/var/backups/mikcloud/db/supabase-*.dump` + artefact chiffré | 0 | dump en 2 phases, TOC ≥30 tables |
+| `backup` | pg_dump du **PRIMAIRE local** `-Fc` → `/var/backups/mikcloud/db/primary-*.dump` + artefact chiffré `mikcloud-dr-*` | 0 | dump en 2 phases, TOC ≥30 tables |
 | `setup-pg` | installe/configure PG serveur + rôle + DB + localpg.env | 0 | idempotent (localpg.env préservé) |
-| `restore` | DROP/CREATE DB + pg_restore TOC-filtré + ANALYZE + asserts (≥30 tables, >0 lignes) | 0 (backend pas dessus) | verdict drift INFORMATIF (Supabase vit) |
+| `restore` | DROP/CREATE DB + pg_restore TOC-filtré + ANALYZE + asserts (≥30 tables, >0 lignes) | 0 (backend pas dessus) | verdict drift INFORMATIF ; admet primary-* et supabase-* |
 | `cutover` | **bascule primaire** : delta dump/restore → garde comptages STRICT (whitelist append-only) → env backup `.pre-hybrid-*` → flip DSN → restart → preuves (journalctl + tup_written) → gel timer. Rollback AUTO si preuve absente | ~10 s (restart) | `confirm=MIK-DB-HYBRID` requis |
 | `rollback` | dump local de sécurité → restore `.pre-hybrid-*` → restart → réactive timer | ~10 s | `confirm` + `accept_stale_data=YES` |
 | `status` | état complet + **protection : gel auto du timer si primaire local** | 0 | sûr à relancer |
+| `arm-dr` | **arme la chaîne DR** (idempotent) : archive_command gzip + reload PG, OCI CLI system-wide (pip sous sudo + test import root), `/etc/oci` (clé API coffre), bucket `mikcloud-wal`, scripts DR + 3 timers systemd | 0 | `confirm=MIK-DR-ARM` requis |
+| `reverse-sync` | déclenche le flux nocturne MAINTENANT (service oneshot synchrone) : rétention web_vitals → basebackup → dump → Supabase → Neon | 0 | affiche log + statut + comptages cibles |
+| `health` | lance le monitor une fois + API publique depuis le runner — **mode du cron GitHub 04:23 UTC** | 0 | sûr à relancer |
+| `drill` | restaurabilité : dump primaire → restore STRICT `--exit-on-error` sur base jetable `mikcloud_drill` → asserts (40 tables, comptages identiques) → drop + WAL distant téléchargé/décompressé + listing basebackup | 0 | primaire jamais touché |
 
 ## 3. Pièges consignés (à ne JAMAIS redécouvrir)
 
@@ -71,14 +79,47 @@ autovacuum_vacuum_cost_delay=1`.
 12. Mode dégradé du backend : **le service démarre même sans DB** — le
     healthcheck ne prouve RIEN ; preuves = journalctl
     « persistance PostgreSQL active » + `tup_inserted+tup_updated`.
+13. **Le dump est un ARGUMENT de pg_restore** (N°275-terdecies) : sans
+    lui, pg_restore lit stdin (= /dev/null sous systemd) → « input file
+    is too short (read 0, expected 5) ».
+14. **TOUTE invocation `oci` : `</dev/null`** — le CLI (python) lit/
+    bufférise stdin et dévore les lignes suivantes d'un script `bash -s`
+    (« syntax error near unexpected token `then` », N°275-decies).
+15. **`/etc/oci` en 700 root** → le user SSH deploy ne peut même pas stat
+    le config (« Could not find config file ») → `oci` sous `sudo` côté
+    workflow ; les scripts DR tournent en root (ok).
+16. **oci-cli : pip sous SUDO + purge du symlink préalable + test décisif
+    `sudo oci --version`** — un install `--user` (modules dans
+    `~/.local/lib`) est invisible du root ; pip écrit À TRAVERS un
+    symlink existant au lieu de le remplacer (N°275 runs 16-19).
+    `python3-oci-cli` n'existe PAS dans les dépôts Ubuntu 26.04.
+17. **DSN de drill** : couper la query (`?…`) puis remplacer le DERNIER
+    segment de chemin — `${DSN%%/mikcloud*}` attrape le `://mikcloud:PW@`
+    et fabrique un utilisateur fantôme (N°275 run 31).
+18. **Fichiers téléchargés par root dans /tmp (sticky bit)** → `sudo rm`
+    depuis le user deploy (N°275 run 41).
+19. **Paramètre `schedule:` SOUS `on:`** — sinon 422 GitHub (N°275-bis).
+20. **Script VM ≠ workflow** : les scripts DR vivent sur la VM — après
+    TOUTE modification dans arm-dr, RELANCER `arm-dr` avant les modes
+    qui déclenchent ces scripts (leçon run 28).
 
 ## 4. Utilisation courante
 
 ```bash
 # État (à faire après chaque geste) :
 gh workflow run ops-db-hybrid.yml -f mode=status
-# Backup DR chiffré (rétention 30 j) :
+# Backup DR chiffré DU PRIMAIRE (rétention 30 j) :
 gh workflow run ops-db-hybrid.yml -f mode=backup
+# Reverse-sync manuel (sinon automatique 03:00 UTC) :
+gh workflow run ops-db-hybrid.yml -f mode=reverse-sync
+# Santé complète (sinon automatique 04:23 UTC) :
+gh workflow run ops-db-hybrid.yml -f mode=health
+# Drill de restaurabilité (primaire jamais touché) :
+gh workflow run ops-db-hybrid.yml -f mode=drill
+# Diagnostic VM / remise en route (incident) :
+gh workflow run ops-vm-diag.yml -f action=diag
+gh workflow run ops-vm-diag.yml -f action=reboot -f confirm=MIK-VM-REBOOT       # soft
+gh workflow run ops-vm-diag.yml -f action=reboot -f confirm=MIK-VM-REBOOT-HARD  # dur (hung ignore l'ACPI)
 # ROLLBACK d'urgence (Supabase figé — accepter la péremption) :
 gh workflow run ops-db-hybrid.yml -f mode=rollback \
   -f confirm=MIK-DB-HYBRID -f accept_stale_data=YES
@@ -91,15 +132,37 @@ sudo systemctl restart mikcloud
 sudo systemctl enable --now mikcloud-backup.timer
 ```
 
-## 5. Prochaines étapes (N°275)
+**Fichiers DR sur la VM** (N°275) : `/usr/local/sbin/mikcloud-{wal-upload,
+reverse-sync,monitor}` · `/etc/mikcloud/{walupload.env,monitor.env}` ·
+`/etc/oci/{config,oci_api_key.pem}` (700/600 root) · timers
+`mikcloud-{wal-upload,monitor,reverse-sync}.timer` · état dans
+`/var/lib/mikcloud/*.status`. PITR : dernier `basebackup/base-*.tar.gz`
+du bucket + WAL `*.gz` du bucket → `pg_wal` dégzippé → `recovery.signal`.
 
-1. **Reverse-sync nocturne** : script VM (systemd timer 03:00 UTC)
-   `pg_dump local → pg_restore --clean --if-exists vers Supabase` (pooler
-   session), puis le même flux vers Neon (coffre re-chaîné) ;
-2. **WAL → OCI Object Storage** (PITR distant ~1-5 min) — prérequis :
-   credentials OCI sur la VM (instance principal ou Customer Secret Keys) ;
-3. **Monitoring** : cron `status` + alertes Telegram (drift, croissance,
-   WAL, dernier backup) ;
-4. **Drill de restauration** complet (démo : détruire le local, restaurer
-   depuis dump/WAL, re-flip) ;
-5. Rétention `web_vitals` (append-only, 5 888 lignes/jour — purge à décider).
+## 5. Réalisé en N°275 + points ouverts (N°276+)
+
+### Réalisé (GO « GO N°275 », 47 runs)
+1. **Reverse-sync nocturne** ✓ — `mikcloud-reverse-sync.timer` 03:00 UTC,
+   testé en direct : Supabase 40/40 + Neon 40/40, RLS ré-armé,
+   rétention `web_vitals` 90 j + VACUUM, base backup PITR 7,4 Mo/j ;
+2. **WAL → OCI Object Storage** ✓ — bucket `mikcloud-wal`, upload */5 min,
+   archive_command gzip (−50× disque), prune locale 48 h, garde 3 dumps ;
+3. **Monitoring Telegram** ✓ — `mikcloud-monitor.timer` */15 min, 9 familles
+   de contrôles, anti-spam 4 h, heartbeat 06:00 UTC — **MUET tant qu'aucun
+   chat n'est appairé** (1 clic « Connecter Telegram » console, le chat est
+   repris à la nuit suivante) ;
+4. **Drill de restauration** ✓ — mode `drill` automatisé (base jetable +
+   WAL distant), comptages identiques vérifiés ;
+5. **Rétention web_vitals** ✓ — 90 jours (réglable via
+   `WEB_VITALS_RETENTION_DAYS` dans `/etc/mikcloud/monitor.env`).
+
+### Points ouverts N°276+
+1. **Lifecycle 21 j du bucket** : `InsufficientServicePermissions` — la
+   policy du service principal Object Storage doit être posée par la
+   console (recréer le bucket via console OU policy IAM
+   `Allow service objectstorage-eu-marseille-1 to manage object-family in
+   tenancy`). Sans urgence (~15 Mo/j).
+2. **Appairage Telegram** de l'exploitant pour armer les alertes.
+3. **Cause racine du hang du 09/10 (05:14-06:31 UTC)** non déterminée —
+   `ops-vm-diag` a maintenant une capture console PATIENTE (polling) ; si
+   récidive : capturer AVANT de rebooter.

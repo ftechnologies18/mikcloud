@@ -126,6 +126,8 @@ puis régénérer (l'agent reproduit le geste 1 avec une nouvelle paire).
 | 02/10/2026 | (attend les OCIDs de l'exploitant) | geste 2 du §2 | — |
 | 08/10/2026 | Runbook §7 : rename + resize 4/24 (voie console, N°271) | doctrine révisée, exécution exploitant | à consigner après exécution |
 | 09/10/2026 | **Exécution via workflow `ops-resize-marseille`** (N°272) : rename → SOFT stop → shape 4/24 → Start #2 (capacité refusée au #1, libérée au #2) | API verte 01:43 UTC ; vérif lecture-seule `mode=check` run #5 : **Ftechci [VM.Standard.A1.Flex] RUNNING — 4 OCPU**, garde enveloppe OK (1 A1) | ✅ RÉUSSI |
+| 09/10/2026 | **Consolidation DR `ops-db-hybrid` modes arm-dr/reverse-sync/health/drill** (N°275, GO « GO N°275 ») : archive_command gzip + WAL→Object Storage (bucket `mikcloud-wal`, upload */5 min), reverse-sync nocturne local→Supabase→Neon (40/40 tables, RLS ré-armé, rétention web_vitals 90 j), monitor Telegram */15 min, drill de restaurabilité, artefact DR basculé sur le primaire | arm-dr vert (run #23), reverse-sync vert (run #30, `last_success=05:08:59Z`), drill vert (run #42, comptages identiques 7 257/7 257), health `fails=0` (run #47) | ✅ RÉUSSI |
+| 09/10/2026 | **Incident VM hung** (~05:14-06:31 UTC) : SSH+443 morts, OCI=RUNNING ; SOFTRESET ignoré (noyau hung) ; **RESET dur via `ops-vm-diag`** (nouveau workflow : état + console history + START/RESET) | API 200 à 06:31 UTC, downtime ~1 h 17, **zéro perte** (DSN local préservé, PG a relu son WAL) ; cause racine indéterminée — console history maintenant ARMABLE avant reboot | ✅ RÉTABLI |
 
 ## 7. Serveur d'entreprise « Ftechci » — rename + resize 4/24 (N°271, voie console)
 

@@ -5,6 +5,99 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-09 — N°275 — **CONSOLIDATION DR RÉALISÉE : la chaîne hybride est armée de bout en bout** (workflow `ops-db-hybrid` modes `arm-dr`/`reverse-sync`/`health`/`drill`, 47 runs, + workflow `ops-vm-diag` créé pendant l'incident)
+
+### Ce qui a changé en production
+- **Tier1.5 — WAL → OCI Object Storage ACTIF** : bucket `mikcloud-wal`
+  (tenancy Marseille, région eu-marseille-1) alimenté toutes les 5 min
+  par le timer `mikcloud-wal-upload.timer` ; `archive_command` passé en
+  **gzip** (le WAL brut creusait ~17 Go/jour — 1,2 Go constatés en 65 min
+  au preflight ; le gzip divise par ~50) ; prune locale après 48 h
+  (immédiate si / > 70 %) ; `pg_basebackup` quotidien uploadé
+  (7,4 Mo) → **PITR distant = base + WAL**, rétention cible 21 jours.
+- **Tier2 — reverse-sync nocturne ACTIF** (timer 03:00 UTC, testé en
+  direct run #30) : rétention `web_vitals` > 90 jours (5 886 lignes/j
+  sinon) + VACUUM → base backup → dump primaire (`-Fc`) → restore
+  `--clean --if-exists` **Supabase** (pooler session, RLS ré-armé après
+  restore : la défense PostgREST sans policy = deny-all survit) →
+  restore **Neon** (endpoint direct) — preuves : **40/40 tables** des
+  deux côtés, `last_success=2026-10-09T05:08:59Z`. La chaîne
+  Supabase→Neon historique (`mikcloud-backup.timer`) reste gelée.
+- **Monitoring Telegram ACTIF** : timer `mikcloud-monitor.timer`
+  (*/15 min) — 9 familles de contrôles (PG up, backend 200, DSN=local
+  anti-retour-silencieux, persistance vivante via tup_written, WAL local
+  < 15 min, WAL→OS < 20 min, reverse-sync < 26 h, disque/RAM/load,
+  Result des unités) ; alerte à l'incident (anti-spam 4 h) + rétablissement
+  + heartbeat quotidien 06:00 UTC via le **bot plateforme**
+  (`TELEGRAM_PLATFORM_BOT_TOKEN` de la VM). Ciblage : chat = plus ancien
+  compte `notif_settings` telegram activé, rafraîchi à chaque nuit —
+  **actuellement muet : aucun chat appairé** (les 4 comptes sont vides) —
+  l'exploitant clique « Connecter Telegram » dans la console pour armer.
+- **Tier3 — artefact DR basculé sur le PRIMAIRE** : `mode=backup` chiffre
+  désormais un dump du PG local (`primary-*.dump`, AES-256-CBC/PBKDF2,
+  artefacts `mikcloud-dr-*`, rétention 30 j) — Supabase n'est plus la
+  source de vérité.
+- **`drill` — restaurabilité DÉMONTRÉE** (run #42) : dump primaire →
+  restore `--exit-on-error` sur base jetable `mikcloud_drill` →
+  **40 tables, comptages identiques** (hotspot_users 7 257/7 257) →
+  drop ; un segment WAL est téléchargé du bucket et décompressé
+  (16 Mo) ; la base de prod n'est jamais touchée.
+- **`health`** : mode léger (monitor + API publique depuis le runner) —
+  déclenché aussi par un **cron GitHub quotidien 04:23 UTC** (le résolveur
+  `RESOLVED_MODE` traduit un event schedule en `health`).
+
+### INCIDENT consigné (05:14 → 06:31 UTC) — VM Ftechci hung, RESET dur
+- ~05:14 : la VM cesse de répondre (SSH **et** 443 en timeout) alors que
+  OCI la déclare RUNNING ; prod API down. Le reboot de 04:25 (constaté
+  « up 30 min » au run #25) suggère une instabilité plus large — cause
+  racine non déterminée (console history vide : captures async trop
+  courtes avant les reboots — procédure améliorée dans `ops-vm-diag`).
+- SOFTRESET **ignoré** par le noyau hung (run #38) → **RESET dur** via le
+  nouveau workflow `ops-vm-diag` (action=reboot, confirm=MIK-VM-REBOOT-HARD)
+  → STOPPING 06:24 → **API 200 à 06:31** — downtime ~1 h 17.
+- **Aucune perte de données** : le backend repart sur son DSN local
+  (blindage N°274), PG relit son WAL (comptages continus), dumps
+  `primary-*` intacts, protection timer ré-active — la DR a tenu son
+  premier vrai test involontaire.
+
+### Itérations (47 runs — leçons consignées dans les YAML)
+- #15 : `schedule:` hors de `on:` → 422 GitHub (même famille que
+  N°272-quater) ; #16 : **oci-cli ABSENT des dépôts Ubuntu 26.04** et pip
+  absent (`No module named pip`) ; l'installateur officiel **consomme le
+  stdin du script heredoc** et tue la session SSH → stdin détaché.
+- #16→#19 : pip `--user` place les modules dans `~/.local/lib`
+  **invisible du root** (les scripts DR tournent en root via systemd) ;
+  pip écrit À TRAVERS un symlink existant au lieu de le remplacer →
+  purge préalable + réinstall system-wide TOUJOURS + **test décisif
+  `sudo oci --version`**.
+- #17-#20 : `set -e` tue l'affectation `NS_JSON=$(oci …)` avant le garde →
+  erreurs API OCI invisibles ; `oci` lit/bufférise stdin et **dévore les
+  lignes suivantes** d'un script `bash -s` (« syntax error near unexpected
+  token `then` ») → `</dev/null` sur TOUTES les invocations oci.
+- #18-#20 : `/etc/oci` en 700 root → le user deploy ne peut même pas
+  stat le config (« Could not find config file ») → `oci` sous `sudo`.
+- #21 : `bucket create` exige `--compartment-id` (racine = OCID tenancy) ;
+  #26-#27 : **le dump manquait en argument des pg_restore** → stdin
+  (/dev/null) → « input file is too short » ; #31 : `${DSN%%/mikcloud*}`
+  attrapait le `://mikcloud:PW@` → utilisateur fantôme `mikcloud_drill`
+  (fix : couper la query puis le DERNIER segment de chemin) ; #41 :
+  `sudo rm` obligatoire sur les fichiers téléchargés par root (sticky bit
+  /tmp).
+- OCI la tenancy Marseille = namespace `axvuwgo2dkfx` ; le premier
+  bootstrap oci-cli de la VM a coûté 8 itérations — le runbook le rend
+  idempotent et verbeux.
+
+### Points ouverts (N°276+)
+- **Lifecycle 21 j du bucket NON posé** : `InsufficientServicePermissions`
+  — la gestion du lifecycle exige la permission du **service principal**
+  Object Storage (posée d'ordinaire par la console). Geste exploitant :
+  soit recréer le bucket via console, soit poser la policy IAM
+  `Allow service objectstorage-eu-marseille-1 to manage object-family in
+  tenancy` — sans urgence (~15 Mo/jour, free tier 10 Go).
+- **Telegram à appairer** (1 clic console) pour armer les alertes.
+- **Cause racine du hang** à surveiller (si récidive : console history
+  ARMÉ AVANT le prochain incident via `ops-vm-diag`, maintenant patient).
+
 ## 2026-10-09 — N°274 — **MIGRATION DB HYBRIDE RÉALISÉE : le primaire est PostgreSQL 18 co-hébergé sur Ftechci** (workflow `ops-db-hybrid`, runs #1-#9, cutover effectif 03:03:54 UTC)
 
 ### Ce qui a changé en production

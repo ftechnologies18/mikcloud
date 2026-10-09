@@ -695,15 +695,15 @@ jobs:
           FP_REF="$(echo "$OCI_FP" | tr -d ':')"
           if [ -z "$FP_CALC" ] || [ "$FP_CALC" != "$FP_REF" ]; then echo "❌ empreinte clé OCI ≠ fingerprint ($FP_CALC vs $FP_REF)"; exit 1; fi
           echo "cohérence clé/empreinte OK"
-          NS_JSON=$(oci --config-file /etc/oci/config os ns get 2>&1)
+          NS_JSON=$(oci --config-file /etc/oci/config os ns get 2>&1) || { echo "❌ oci os ns get a échoué — réponse API:"; echo "$NS_JSON" | head -15; exit 1; }
           NS=$(echo "$NS_JSON" | jq -r '.data // .' 2>/dev/null | tr -d '"[:space:]')
           [ -n "$NS" ] || { echo "❌ namespace OCI illisible: $NS_JSON"; exit 1; }
           echo "namespace: $NS"
           if oci --config-file /etc/oci/config os bucket get --namespace "$NS" --name mikcloud-wal >/dev/null 2>&1; then
             echo "bucket mikcloud-wal: existe déjà"
           else
-            oci --config-file /etc/oci/config os bucket create --namespace "$NS" --name mikcloud-wal >/dev/null \
-              && echo "bucket mikcloud-wal: CRÉÉ" || { echo "❌ création bucket échouée"; exit 1; }
+            BOUT=$(oci --config-file /etc/oci/config os bucket create --namespace "$NS" --name mikcloud-wal 2>&1) \
+              && echo "bucket mikcloud-wal: CRÉÉ" || { echo "❌ création bucket échouée:"; echo "$BOUT" | head -15; exit 1; }
           fi
           cat > /tmp/olc.json <<OLC
           {"items":[{"name":"expire-21d","action":"DELETE","timeAmount":21,"timeUnit":"DAYS","isEnabled":true}]}

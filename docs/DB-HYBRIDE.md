@@ -13,7 +13,7 @@ Références : CHANGELOG N°274/N°275 (récits + leçons), Task 5/6 (analyse
 |------|----------|------------------|-----|
 | 0 | Mémoire `model.DB` (backend) | **vivant, inchangé** — source de vérité runtime, flush asynchrone ≤1 tx/3 s | ~0 |
 | 1 | **PostgreSQL 18.6 local Ftechci** (127.0.0.1:5432, DB `mikcloud`, rôle `mikcloud`) | **PRIMAIRE** depuis 03:03:54 UTC le 09/10 | flush ≤3 s |
-| 1.5 | **WAL gz → OCI Object Storage** (`mikcloud-wal`, upload */5 min) + `pg_basebackup` quotidien (7,4 Mo) — archive_command **gzip** (le brut creusait ~17 Go/j) ; prune locale 48 h ; **lifecycle 21 j ACTIF (N°276)** ; PITR distant ≈ base + WAL ≤ 6 min | **ACTIF** | ≤6 min |
+| 1.5 | **WAL gz → OCI Object Storage** (`mikcloud-wal`, upload */5 min) + `pg_basebackup` quotidien — archive_command **gzip** (le brut creusait ~17 Go/j) ; **CHIFFREMENT CLIENT AES-256-CBC/PBKDF2 avant upload (N°277, `.enc` illisible sans la clé, refus d'envoyer en clair)** ; prune locale 48 h ; **lifecycle 21 j ACTIF (N°276)** ; PITR distant ≈ base + WAL ≤ 6 min | **ACTIF** | ≤6 min |
 | 2 | **Supabase (pooler session :5432)** — re-synchronisé CHAQUE NUIT 03:00 UTC par `mikcloud-reverse-sync.timer` (restore `--clean` + RLS ré-armé) — preuve : 40/40 tables, `last_success=05:08:59Z` | **ACTIF (réplique nocturne)** | ≤26 h |
 | 2bis | **Neon** — même flux nocturne que Supabase (endpoint direct) | **ACTIF (réplique nocturne)** | ≤26 h |
 | 3 | Artefact GitHub `mikcloud-dr-*` chiffré `BACKUP_KEY` (AES-256-CBC/PBKDF2, rétention 30 j) — **dump du PRIMAIRE** depuis N°275 | actif (mode=backup) | au tir |
@@ -51,10 +51,10 @@ autovacuum_vacuum_cost_delay=1`.
 | `cutover` | **bascule primaire** : delta dump/restore → garde comptages STRICT (whitelist append-only) → env backup `.pre-hybrid-*` → flip DSN → restart → preuves (journalctl + tup_written) → gel timer. Rollback AUTO si preuve absente | ~10 s (restart) | `confirm=MIK-DB-HYBRID` requis |
 | `rollback` | dump local de sécurité → restore `.pre-hybrid-*` → restart → réactive timer | ~10 s | `confirm` + `accept_stale_data=YES` |
 | `status` | état complet + **protection : gel auto du timer si primaire local** | 0 | sûr à relancer |
-| `arm-dr` | **arme la chaîne DR** (idempotent) : archive_command gzip + reload PG, OCI CLI system-wide (pip sous sudo + test import root), `/etc/oci` (clé API coffre), bucket `mikcloud-wal` + **policy IAM service principal + lifecycle 21 j (N°276)**, scripts DR + 3 timers systemd | 0 | `confirm=MIK-DR-ARM` requis |
+| `arm-dr` | **arme la chaîne DR** (idempotent) : archive_command gzip + reload PG, OCI CLI system-wide (pip sous sudo + test import root), `/etc/oci` (clé API coffre), bucket `mikcloud-wal` + **policy IAM service principal + lifecycle 21 j (N°276)** + **chiffrement client WAL/basebackup (N°277, WAL_ENC_KEY par stdin)**, scripts DR + 3 timers systemd | 0 | `confirm=MIK-DR-ARM` requis |
 | `reverse-sync` | déclenche le flux nocturne MAINTENANT (service oneshot synchrone) : rétention web_vitals → basebackup → dump → Supabase → Neon | 0 | affiche log + statut + comptages cibles |
 | `health` | lance le monitor une fois + API publique depuis le runner — **mode du cron GitHub 04:23 UTC** | 0 | sûr à relancer |
-| `drill` | restaurabilité : dump primaire → restore STRICT `--exit-on-error` sur base jetable `mikcloud_drill` → asserts (40 tables, comptages identiques) → drop + WAL distant téléchargé/décompressé + listing basebackup | 0 | primaire jamais touché |
+| `drill` | restaurabilité : dump primaire → restore STRICT `--exit-on-error` sur base jetable `mikcloud_drill` → asserts (40 tables, comptages identiques) → drop + **WAL distant téléchargé/DÉCHIFFRÉ/décompressé (N°277, fallback héritage `.gz`)** + listing basebackup | 0 | primaire jamais touché |
 
 ## 3. Pièges consignés (à ne JAMAIS redécouvrir)
 
@@ -106,6 +106,11 @@ autovacuum_vacuum_cost_delay=1`.
     principal Object Storage doit pouvoir gérer object-family — la
     policy se pose PAR API (`iam policy create`) si le user du coffre a
     `manage policies` ; recréer le bucket ne sert à RIEN (N°276).
+22. **`openssl -pass env:VAR` exige une variable EXPORTÉE** — sourcer un
+    fichier d'env sans `set -a` ne suffit pas (« No environment
+    variable ») → `export WAL_ENC_KEY` après chaque source (scripts VM
+    ET drill) ; sinon échec chiffrement → refus d'upload en clair
+    (comportement voulu) mais PITR dégradé (N°277-bis).
 
 ## 4. Utilisation courante
 
@@ -140,12 +145,17 @@ sudo systemctl enable --now mikcloud-backup.timer
 reverse-sync,monitor}` · `/etc/mikcloud/{walupload.env,monitor.env}` ·
 `/etc/oci/{config,oci_api_key.pem}` (700/600 root) · timers
 `mikcloud-{wal-upload,monitor,reverse-sync}.timer` · état dans
-`/var/lib/mikcloud/*.status`. PITR : dernier `basebackup/base-*.tar.gz`
-du bucket + WAL `*.gz` du bucket → `pg_wal` dégzippé → `recovery.signal`.
+`/var/lib/mikcloud/*.status`. PITR (objets **CHIFFRÉS `.enc` depuis N°277**,
+clé = `WAL_ENC_KEY` dans `/etc/mikcloud/walupload.env`) : dernier
+`basebackup/base-*.tar.gz.enc` + WAL `*.enc` du bucket →
+`openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in X.enc -out X.gz
+-pass env:WAL_ENC_KEY` (variable EXPORTÉE, piège 22) → `.gz` dégzippés →
+`pg_wal` → `recovery.signal`. (héritage : les `.gz` en clair d'avant
+N°277 vieillissent ≤ 21 j puis partent au lifecycle).
 
-## 5. Réalisé en N°275 + points ouverts (N°276+)
+## 5. Réalisé en N°275/276/277 + points ouverts
 
-### Réalisé (GO « GO N°275 », 47 runs)
+### Réalisé (GO « GO N°275 », 47 runs, + N°276/277)
 1. **Reverse-sync nocturne** ✓ — `mikcloud-reverse-sync.timer` 03:00 UTC,
    testé en direct : Supabase 40/40 + Neon 40/40, RLS ré-armé,
    rétention `web_vitals` 90 j + VACUUM, base backup PITR 7,4 Mo/j ;
@@ -165,6 +175,20 @@ du bucket + WAL `*.gz` du bucket → `pg_wal` dégzippé → `recovery.signal`.
    tenancy` — piège 21), règle `expire-21d` ACTIVE (relue depuis le
    bucket) : PITR borné 21 j, plateau ~0,3-1,2 Go (plafond gratuit
    10 Go).
+7. **Chiffrement client WAL + basebackups** ✓ (N°277/277-bis) — AES-256-CBC
+   PBKDF2 iter 200000 (`WAL_ENC_KEY` = `BACKUP_KEY`, transférée par
+   stdin) AVANT upload → bucket 100 % `.enc` illisible sans la clé,
+   refus strict d'upload en clair ; preuves : timer `new=25 fail=0`,
+   base backup « CHIFFRÉ uploadé 7.3M », drill « CHIFFRÉ, déchiffré +
+   décompressé 16M » ; héritage `.gz` en clair purge par lifecycle ≤ 21 j.
+
+### DETTE TECHNIQUE (reportée à la FIN du développement produit)
+- **User OCI moindre privilège** : la clé API sur la VM (`/etc/oci`) a
+  `manage policies` + droits compute (héritage resize N°272). À faire :
+  user dédié `mikcloud-dr` limité à `manage object-family` sur le(s)
+  compartment(s) DR + rotation de clé — la VM compromise ne pourrait
+  plus toucher au compute/IAM. **Reporté : fin du développement
+  produit** (décision exploitant, N°277).
 
 ### Points ouverts N°276+
 1. **Appairage Telegram** de l'exploitant pour armer les alertes.

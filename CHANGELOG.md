@@ -5,6 +5,42 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-09 — N°277 — **CHIFFREMENT CLIENT DES WAL + BASEBACKUPS AVANT UPLOAD** (bucket 100 % `.enc` illisible sans la clé — `arm-dr`/`reverse-sync`/`drill` enrichis, 5 runs)
+
+### Ce qui a changé en production
+- **Confidentialité du Tier1.5 levée à la source** : chaque segment WAL
+  et chaque `pg_basebackup` est désormais **chiffré AVANT upload** —
+  `openssl enc -aes-256-cbc -pbkdf2 -iter 200000` avec `WAL_ENC_KEY`
+  (= `BACKUP_KEY` du coffre, même secret que le Tier3, transférée à la
+  VM **par stdin**, jamais en argument ni log). Le bucket
+  `mikcloud-wal` ne contient plus que des `.enc` illisibles sans la
+  clé — l'at-rest OCI (clés Oracle) est désormais doublé d'un
+  chiffrement client dont Oracle ne possède pas la clé.
+- **Refus strict d'uploader en clair** : si `WAL_ENC_KEY` manque, les
+  uploads/basebackups sont REFUSÉS (alerte monitor) — jamais de
+  repli silencieux en clair. Preuve en direct : le premier
+  `reverse-sync` post-bascule a refusé son basebackup (garde) pendant
+  que le bug de la clé non exportée était corrigé.
+- **Héritage N°275** : les ~230 `.gz` en clair (dont 5 partis pendant
+  la course timer/arm-dr de 08:40) restent lisibles dans le bucket
+  privé **jusqu'à leur purge par le lifecycle ≤ 21 jours** — fenêtre
+  transitoire documentée.
+- **Leçon consignée (piège 22)** : `openssl -pass env:VAR` exige une
+  variable d'environnement **EXPORTÉE** — sourcer `walupload.env` sans
+  `set -a` ne suffit pas (N°277-bis : les runs timer échouaient
+  silencieusement, « No environment variable WAL_ENC_KEY ») → export
+  dans les 3 contextes (wal-upload, reverse-sync, drill).
+- **Preuves** : timer 09:00:31 `new=25 fail=0` (25 segments chiffrés) ·
+  reverse-sync « base backup **CHIFFRÉ** uploadé (7.3M) » +
+  Supabase/Neon 40/40 · drill « WAL distant OK: …F9 (**CHIFFRÉ,
+  déchiffré + décompressé — 16M**) » + restore 40 tables
+  (hotspot_users 7 255/7 255) · monitor `fails=0 state=ok` · API 200.
+- **DETTE TECHNIQUE enregistrée** (demande exploitant) : user OCI
+  moindre privilège (`mikcloud-dr`, `manage object-family` only) —
+  **reporté à la fin du développement produit** (cf. DB-HYBRIDE §5).
+- CI/ops only — sentinel `RENDER-DEPLOY-FROZEN` intact, aucun schéma
+  DB → rien à synchroniser.
+
 ## 2026-10-09 — N°276 — **LIFECYCLE 21 J DU BUCKET WAL DÉBLOQUÉ : policy IAM du service principal Object Storage posée par API** (mode `arm-dr` enrichi, 1 run)
 
 ### Ce qui a changé

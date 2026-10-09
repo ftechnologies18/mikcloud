@@ -5,6 +5,60 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-08 — N°271 — Doctrine révisée : resize A1 Marseille 2/12 → 4/24 AUTORISÉ (supersede règle 6 N°251-b) + serveur d'entreprise « Ftechci » (rename + resize voie console) — décision exploitant
+
+### Décision exploitant (GO 4/24, voie console)
+- La VM Marseille `mikcloud-backend` devient **Ftechci** (rename display
+  name, zéro downtime, IP réservée conservée) et assume sa vocation
+  **serveur multi-services de l'entreprise** — charte existante
+  `PILOTAGE-ORACLE.md §4` (Caddy reverse proxy unique, un service systemd
+  par backend, sans Docker), étendue en runbook §7.
+- Shape cible : **VM.Standard.A1.Flex 4 OCPU / 24 Go** (enveloppe max
+  Always Free), exécuté par l'exploitant en console (stop → edit shape →
+  start), runbook `PILOTAGE-ORACLE.md §7`.
+
+### Révision de doctrine — règle 6 de N°251-b SUPERSEDEE
+- **Ancienne règle** : « JAMAIS : retailler l'A1 en 4/24 (non garanti
+  gratuit — 2/12 = 0 € garanti) » — écrite pendant la période pont E5 +
+  chasse Marseille vivante (un `land-a1.yml` pouvait ajouter une 2ᵉ A1 →
+  dépassement d'enveloppe assuré).
+- **Maths d'enveloppe** (allocation officielle Always Free A1 :
+  3 000 OCPU-h/mois + 18 000 Go·h/mois) : 4/24 tournant 24/7 =
+  2 920 OCPU-h (97,3 %) + 17 520 Go·h (97,3 %) → **0 € TANT QUE zéro
+  autre heure A1 n'est consommée dans la tenancy**. La marge est de
+  2,7 % — c'est une marge nuelle en pratique, d'où les gardes.
+- **Contexte changé** : la chasse vit désormais en **tenancy JNB
+  distincte** (`CHASSE-JNB.md:3-8`, gardes par nom + OCID tenancy), la
+  chasse Marseille est `disabled_manually` (N°265) → aucun atterrissage
+  ne peut plus ajouter d'A1 ici ; et l'instance a **déjà tourné en 4/24**
+  dans cette tenancy (réduite en juin 2026, `MIGRATION-ORACLE.md:45`) ;
+  le lancement 4/24 était d'ailleurs documenté comme échappatoire
+  Tier-1 légitime (`MIGRATION-ORACLE.md:661`).
+
+### GARDES permanents de la nouvelle doctrine (conditions du 0 €)
+1. **ZÉRO autre instance A1 dans la tenancy Marseille** tant que Ftechci
+   tourne en 4/24 — toute future capture/atterrissage A1 → tenancy JNB
+   uniquement (c'est déjà le cas : chasse active JNB).
+2. **Alerte budget 1 €/mois** = détecteur d'incendie (N°211) — toute
+   sonnerie = investigation immédiate, shape reverted.
+3. Aucune instance A1 éphémère de test dans cette tenancy (la marge
+   2,7 % n'absorbe rien).
+4. La règle N°251-b reste **pleinement applicable à la tenancy JNB**
+   (essai sans PAYG) — rien ne change là-bas.
+
+### Runbook
+- `docs/PILOTAGE-ORACLE.md §7` : pas-à-pas console (rename → soft stop
+  [flush final SIGTERM propre du backend] → edit shape 4/24 → start),
+  retry capacité (~10 min) puis **revert manuel 2/12** si
+  `OUT_OF_HOST_CAPACITY` persistant, healthchecks post (`api.mikcloud.ftci.fr`,
+  `free -h`, `nproc`, budget silencieux), garde anti-réclamation
+  (ne pas laisser l'instance STOPPée prolongé).
+
+### CI
+Chemins `docs/**` + `CHANGELOG.md` uniquement → CI seule, sentinel
+`RENDER-DEPLOY-FROZEN` intact ; aucun schéma DB → rien à synchroniser
+(Supabase/Neon inchangées). Chasse JNB non touchée (autre tenancy).
+
 ## 2026-10-08 — N°270-ter — RACINE du PROBE_ERROR micro établie (run #78) : Warning OCI CLI polluait la capture 2>&1 — SUPPRESS_LABEL_WARNING + sanitation JSON — le rapport micro était synchrone et lisible depuis le début
 
 ### Diagnostic définitif (chaîne complète N°270 → 270-bis → 270-ter)

@@ -124,3 +124,77 @@ puis régénérer (l'agent reproduit le geste 1 avec une nouvelle paire).
 |---|---|---|---|
 | 02/10/2026 | `oci setup config` (squelette) | préparation du profil de pilotage | config créée, placeholders |
 | 02/10/2026 | (attend les OCIDs de l'exploitant) | geste 2 du §2 | — |
+| 08/10/2026 | Runbook §7 : rename + resize 4/24 (voie console, N°271) | doctrine révisée, exécution exploitant | à consigner après exécution |
+
+## 7. Serveur d'entreprise « Ftechci » — rename + resize 4/24 (N°271, voie console)
+
+> Décision N°271 : la VM devient le **serveur multi-services de
+> l'entreprise** (charte §4) sous le nom **Ftechci**, shape porté
+> **2 OCPU/12 Go → 4 OCPU/24 Go** (enveloppe max Always Free — voir
+> CHANGELOG N°271 pour la révision de la règle 6 N°251-b et les GARDES).
+> Toute l'opération se fait à la console, ~15 minutes, downtime
+> ~5-10 minutes (sessions hotspot actives : non affectées ; nouvelles
+> connexions : en pause le temps du cycle).
+
+### Pré-vol (2 minutes)
+1. Vérifier https://api.mikcloud.ftci.fr/ → `{"ok":true,…}` (état vert
+   AVANT manipulation) ;
+2. Budget : Billing & Cost Management → Budgets → l'alerte 1 €/mois
+   existe toujours (N°211) — c'est le détecteur d'incendie post-resize.
+
+### Phase A — Rename (zéro downtime, sans impact CI)
+1. Console → sélecteur de région (haut droite) = **France Central
+   (Marseille)** / eu-marseille-1 ;
+2. ☰ menu → **Compute → Instances** → cliquer **mikcloud-backend** ;
+3. À côté du nom : icône **crayon (Edit)** → taper **Ftechci** →
+   **Save changes**. C'est tout — IP réservée 84.235.228.160 conservée,
+   `ORACLE_HOST`/`ORACLE_SSH_KEY` (CI deploy-oracle) inchangés, systemd
+   et Caddy non concernés.
+
+### Phase B — Resize 2/12 → 4/24 (downtime ~5-10 min)
+4. Sur la page de l'instance (toujours région Marseille) → **Stop** —
+   choisir **Soft stop** (défaut) : le backend reçoit SIGTERM → **flush
+   final propre de son état mémoire vers la base** (store.Close) → c'est
+   la garantie zéro-perte ; attendre l'état **STOPPED** ; si bloqué
+   > 5 min → **Force stop (hard)** acceptable ;
+5. ⚠️ **Ne PAS laisser l'instance STOPPée prolongé** (réclamation
+   possible des Always Free inactifs) — enchaîner immédiatement ;
+6. Panneau **Shape** → **Edit shape** → `VM.Standard.A1.Flex` (inchangé)
+   → **OCPU = 4**, **Memory = 24 GB** → Save. La console doit afficher
+   le statut « Always Free eligible » / coût 0 $ — **si un prix
+   apparaît : NE PAS valider**, revenir à l'agent ;
+7. **Start** → état STARTING → RUNNING (~1-2 min).
+
+### Si le Start échoue (« Out of host capacity »)
+8. Retry **Start** toutes les ~90 s pendant **10 minutes maximum** (la
+   capacité se libère par vagues) ;
+9. Toujours bloqué → **revert** : Edit shape → 2 OCPU / 12 GB → Start →
+   la production repart (le 2/12 tournait avant) ; l'IP et le rename
+   sont conservés ; on retente le 4/24 un autre jour (fenêtre nocturne).
+
+### Post-vol (5 minutes)
+10. https://api.mikcloud.ftci.fr/ → `{"ok":true,…}` (le service
+    systemd `Restart=always` repart seul ; reload des 37 tables ~20 s) ;
+11. https://mikcloud.ftci.fr/ → HTTP 200 (Vercel, non concerné) ;
+12. SSH : `free -h` (≈ 24 Go visibles) + `nproc` (= 4) + `uptime` ;
+13. Console : état **RUNNING**, shape **4 OCPU / 24 GB**, nom **Ftechci** ;
+14. 24 h : **aucun email d'alerte budget** (sinon investigation
+    immédiate + revert — garde 2 N°271).
+
+### Gardes permanents (rappel N°271)
+| Garde | Règle |
+|---|---|
+| Enveloppe A1 tenancy Marseille | **ZÉRO autre instance A1** tant que Ftechci tourne en 4/24 (97,3 % de l'allocation consommée) |
+| Captures/atterrissages A1 | Tenancy **JNB uniquement** |
+| Instances A1 de test | Interdites dans cette tenancy |
+| Alerte budget 1 € | Doit rester muette — sinon revert |
+
+### Ce que le resize prépare (roadmap N°272+)
+- Migration hybride DB : PostgreSQL co-hébergé (config calibrée 4/24 :
+  `shared_buffers` 2-4 Go, `effective_cache_size` 10-12 Go,
+  `max_connections` 50-60 multi-services, une base + un rôle par
+  service) — voir analyse session N°271 ;
+- Services d'entreprise futurs : recette §4 (port 4001, 4002… + bloc
+  Caddy + service systemd + `MemoryMax`) ;
+- Pont E5 : décommission possible **avant le 31/10** (hors enveloppe
+  A1 — AMD ; seule ressource facturable après crédits).

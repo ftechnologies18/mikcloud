@@ -711,7 +711,7 @@ jobs:
           cat > /tmp/olc.json <<OLC
           {"items":[{"name":"expire-21d","action":"DELETE","timeAmount":21,"timeUnit":"DAYS","isEnabled":true}]}
           OLC
-          LOUT=$(sudo oci --config-file /etc/oci/config os object-lifecycle-policy put --namespace "$NS" --bucket-name mikcloud-wal --from-json file:///tmp/olc.json </dev/null 2>&1) \
+          LOUT=$(sudo oci --config-file /etc/oci/config os object-lifecycle-policy put --force --namespace "$NS" --bucket-name mikcloud-wal --from-json file:///tmp/olc.json </dev/null 2>&1) \
             && echo "lifecycle 21 jours: posé (budget gratuit 10 Go respecté)" \
             || { echo "⚠ lifecycle non posé (non bloquant) — réponse:"; echo "$LOUT" | head -8; }
           rm -f /tmp/olc.json

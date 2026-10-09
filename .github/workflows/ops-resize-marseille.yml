@@ -57,9 +57,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 75
     env:
-      # N°270-ter (leçon chasse JNB) : le Warning OCI CLI « append an extra
-      # line with 'OCI_API_KEY' » pollue stderr — supprimé à la source.
+      # N°272-bis : les secrets OCI au NIVEAU JOB (ils étaient en env de
+      # l'étape auth → invisibles aux étapes suivantes — run #1 mort sur
+      # « OCI_CLI_TENANCY: unbound variable » en 25 ms, AUCUN geste OCI
+      # exécuté, VM intacte). Double usage : config ~/.oci + variables
+      # natives OCI CLI. Leçon N°270-ter : SUPPRESS_LABEL_WARNING=True.
       SUPPRESS_LABEL_WARNING: "True"
+      OCI_CLI_USER: ${{ secrets.OCI_CLI_USER }}
+      OCI_CLI_TENANCY: ${{ secrets.OCI_CLI_TENANCY }}
+      OCI_CLI_FINGERPRINT: ${{ secrets.OCI_CLI_FINGERPRINT }}
+      OCI_CLI_REGION: ${{ secrets.OCI_CLI_REGION }}
+      OCI_API_KEY: ${{ secrets.OCI_API_KEY }}
       NAME_OLD: mikcloud-backend
       NAME_NEW: Ftechci
       OCPUS_REV: "2"      # shape de revert (= shape de production historique)
@@ -75,15 +83,9 @@ jobs:
 
       - name: Coffre Marseille + auth OCI (vérif empreinte openssl)
         id: auth
-        env:
-          OCI_USER: ${{ secrets.OCI_CLI_USER }}
-          OCI_TENANCY: ${{ secrets.OCI_CLI_TENANCY }}
-          OCI_FINGERPRINT: ${{ secrets.OCI_CLI_FINGERPRINT }}
-          OCI_REGION: ${{ secrets.OCI_CLI_REGION }}
-          OCI_KEY: ${{ secrets.OCI_API_KEY }}
         run: |
           set -euo pipefail
-          if [ -z "$OCI_USER" ] || [ -z "$OCI_TENANCY" ] || [ -z "$OCI_FINGERPRINT" ] || [ -z "$OCI_REGION" ] || [ -z "$OCI_KEY" ]; then
+          if [ -z "${OCI_CLI_USER:-}" ] || [ -z "${OCI_CLI_TENANCY:-}" ] || [ -z "${OCI_CLI_FINGERPRINT:-}" ] || [ -z "${OCI_CLI_REGION:-}" ] || [ -z "${OCI_API_KEY:-}" ]; then
             echo "::error::Coffre Marseille incomplet (OCI_CLI_USER/TENANCY/FINGERPRINT/REGION + OCI_API_KEY requis). ABORT."
             exit 1
           fi
@@ -92,21 +94,21 @@ jobs:
           mkdir -p ~/.oci
           {
             echo "[DEFAULT]"
-            echo "user=$OCI_USER"
-            echo "fingerprint=$OCI_FINGERPRINT"
-            echo "tenancy=$OCI_TENANCY"
-            echo "region=$OCI_REGION"
+            echo "user=$OCI_CLI_USER"
+            echo "fingerprint=$OCI_CLI_FINGERPRINT"
+            echo "tenancy=$OCI_CLI_TENANCY"
+            echo "region=$OCI_CLI_REGION"
             echo "key_file=$HOME/.oci/oci_api_key.pem"
           } > ~/.oci/config
-          printf '%s\n' "$OCI_KEY" > ~/.oci/oci_api_key.pem
+          printf '%s\n' "$OCI_API_KEY" > ~/.oci/oci_api_key.pem
           chmod 600 ~/.oci/config ~/.oci/oci_api_key.pem
           FP_CALC="$(openssl pkey -in ~/.oci/oci_api_key.pem -pubout -outform DER 2>/dev/null | openssl md5 | awk '{print $NF}' | tr -d ':')"
-          FP_REF="$(printf '%s' "$OCI_FINGERPRINT" | tr -d ':')"
+          FP_REF="$(printf '%s' "$OCI_CLI_FINGERPRINT" | tr -d ':')"
           if [ "$FP_CALC" != "$FP_REF" ]; then
             echo "::error::Empreinte du coffre (${FP_CALC:-introuvable}) ≠ secret fingerprint — clé/secret incohérents. ABORT."
             exit 1
           fi
-          echo "Région : $OCI_REGION"
+          echo "Région : $OCI_CLI_REGION"
 
       - name: Découverte instance + GARDE enveloppe A1 (doctrine N°271)
         id: discover

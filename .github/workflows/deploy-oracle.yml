@@ -111,6 +111,19 @@ jobs:
           SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
           scp $SSH_OPTS /tmp/mikcloud.env "$DEPLOY_USER@$ORACLE_HOST:/tmp/mikcloud.env.new"
           ssh $SSH_OPTS "$DEPLOY_USER@$ORACLE_HOST" '
+            # N°274 — migration DB hybride : si la VM exécute le PostgreSQL
+            # local (DSN 127.0.0.1), la variable DATABASE_URL de Render NE
+            # PRIME PLUS — le re-déploiement CI la PRÉSERVE (sinon un simple
+            # déploiement ferait retour silencieux vers Supabase).
+            OLD_DSN=$(sudo grep -E ^DATABASE_URL= /etc/mikcloud/mikcloud.env 2>/dev/null)
+            case "$OLD_DSN" in
+              *127.0.0.1:5432/mikcloud*)
+                sed -i "/^DATABASE_URL=/d" /tmp/mikcloud.env.new
+                printf "%s\n" "$OLD_DSN" >> /tmp/mikcloud.env.new
+                echo "N°274 : DATABASE_URL local préservé (Render ne touche pas la migration hybride)"
+                ;;
+              *) echo "DSN Render appliqué tel quel (Supabase primaire)";;
+            esac
             sudo install -o root -g mikcloud -m 640 /tmp/mikcloud.env.new /etc/mikcloud/mikcloud.env &&
             rm -f /tmp/mikcloud.env.new
           '

@@ -1,0 +1,533 @@
+name: ops-db-hybrid
+
+# ═══ MIGRATION DB HYBRIDE — POSTGRESQL CO-HÉBERGÉ « Ftechci » (N°274) ═══
+#
+# Exécution de la décision exploitant « Lance la migration hybride DB » :
+# le PG primaire quitte Supabase (Dublin, pooler) pour PostgreSQL 17
+# co-hébergé sur la VM Ftechci (Marseille, 4 OCPU / 24 Go — N°272/273),
+# dans l'architecture à 4 étages de durabilité (Task 6) :
+#
+#   Tier0  mémoire model.DB (RPO 0, backend vivant — inchangé)
+#   Tier1  PostgreSQL 17 local (PRIMAIRE, socket localhost, scram)
+#   Tier1.5 archivage WAL local → /var/backups/mikcloud/wal (PITR futur,
+#          l'upload Object Storage arrive en N°275)
+#   Tier2  Supabase → fallback chaud (figé au cutover, re-synchronisé
+#          la nuit en N°275 — reverse-sync)
+#   Tier3  artefact GitHub chiffré (BACKUP_KEY, AES-256-CBC/PBKDF2)
+#
+# PIÈGES CONSIGNÉS REPRIS (backup-neon.sh N°243) :
+#   - pg_dump exige le pooler SESSION de Supabase (:5432) — celui du
+#     backend (transaction, :6543) refuse pg_dump ;
+#   - pg_dump ≥ version serveur Supabase (17.6) → le client 17 PGDG est
+#     déjà installé sur la VM (le timer mikcloud-backup l'exige) ;
+#   - --schema=public impératif (les schémas plateforme Supabase ne sont
+#     ni restaurables hors Supabase ni désirables) ;
+#   - dump en DEUX PHASES (fichier, jamais de pipe entre les deux bases) ;
+#
+# SÉCURITÉ DU CUTOVER (mode=cutover) :
+#   - confirmation explicite `confirm=MIK-DB-HYBRID` ;
+#   - dump/restore DELTA intégré au cutover (le backend continue sur
+#     Supabase pendant le refresh du local) — sinon les minutes entre un
+#     backup et le flip seraient perdues au restart (Load() du local) ;
+#   - perte résiduelle bornée : ≤ 3 s de flush coalescé vers Supabase au
+#     SIGTERM (convergences mémoire après : last_seen 45-180 s,
+#     read_state ≥ 2 min) ;
+#   - PREUVES DE BASCULE obligatoires : journalctl « persistance
+#     PostgreSQL active » (le mode dégradé masquerait une DB morte) +
+#     écritures réelles mesurées (pg_stat_database.tup_updated) ;
+#   - ROLLBACK AUTOMATIQUE (env .pre-hybrid-* restauré, restart,
+#     healthcheck) sur tout signe anormal ;
+#   - timer mikcloud-backup STOPPÉ au cutover (il recopierait Supabase
+#     figé vers Neon et écraserait le coffre avec des données périmées) ;
+#   - BLINDAGE deploy-oracle (même push) : le re-déploiement CI ne
+#     ré-écrase plus DATABASE_URL de la VM.
+#
+# RÉVERSIBILITÉ : mode=rollback re-flip vers Supabase (avec garde
+# accept_stale_data=YES — Supabase est figé depuis le cutover).
+# STATUT PERSISTANT : mode=status (drift local/Supabase, tailles, WAL,
+# dernier dump, santé backend).
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "audit | backup | setup-pg | restore | cutover | rollback | status"
+        required: true
+        type: string
+      confirm:
+        description: "Taper MIK-DB-HYBRID pour cutover / rollback"
+        required: false
+        default: ""
+        type: string
+      accept_stale_data:
+        description: "(rollback) Taper YES si Supabase figé est acceptable"
+        required: false
+        default: ""
+        type: string
+      dump_file:
+        description: "(restore) nom du dump dans /var/backups/mikcloud/db — défaut = le plus récent"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: ops-db-hybrid
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  hybrid:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+      VM_HOST: ${{ secrets.ORACLE_HOST }}
+      DEPLOY_USER: ${{ secrets.ORACLE_USER }}
+      BACKUP_KEY: ${{ secrets.BACKUP_KEY }}
+      MODE: ${{ inputs.mode }}
+      CONFIRM: ${{ inputs.confirm }}
+      ACCEPT_STALE: ${{ inputs.accept_stale_data }}
+      DUMP_FILE: ${{ inputs.dump_file }}
+    steps:
+      - name: Clé SSH du coffre + preflight VM
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$SSH_KEY" > /tmp/oracle_key
+          chmod 600 /tmp/oracle_key
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" 'echo "SSH OK — $(hostname) — $(date -u +%FT%TZ)"'
+          echo "MODE=$MODE · cible=$VM_HOST"
+
+      - name: mode=audit — inventaire complet (lecture seule)
+        if: ${{ inputs.mode == 'audit' }}
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s <<'REMOTE' | tee /tmp/audit.txt
+          set -euo pipefail
+          echo "═══ 1. Système ═══"
+          uname -sr; uptime
+          free -h | sed -n '1,2p'
+          df -h / /var 2>/dev/null | sed -n '1,3p'
+          echo "═══ 2. Services mikcloud ═══"
+          systemctl is-active mikcloud && echo "mikcloud: ACTIF" || echo "mikcloud: INACTIF"
+          curl -fsS -o /dev/null -w "backend HTTP %{http_code} (%{time_total}s)\n" http://127.0.0.1:4000/ || echo "backend: KO"
+          systemctl list-timers --no-pager 2>/dev/null | grep -i mikcloud || echo "timer mikcloud-backup: absent"
+          echo "═══ 3. Clés de /etc/mikcloud (VALEURS JAMAIS IMPRIMÉES) ═══"
+          sudo grep -cE '^[A-Z_]+=' /etc/mikcloud/mikcloud.env | xargs echo "mikcloud.env: clés ="
+          sudo cut -d= -f1 /etc/mikcloud/mikcloud.env | tr '\n' ' '; echo
+          sudo test -f /etc/mikcloud/backup.env && { echo "backup.env: présent"; sudo cut -d= -f1 /etc/mikcloud/backup.env | tr '\n' ' '; echo; } || echo "backup.env: ABSENT"
+          echo "═══ 4. PostgreSQL local ═══"
+          pg_dump --version 2>/dev/null || echo "pg_dump: absent"
+          psql --version
+          pg_lsclusters 2>/dev/null || true
+          ls /etc/postgresql/ 2>/dev/null || echo "aucun cluster"
+          echo "═══ 5. PGDG ═══"
+          ls /etc/apt/sources.list.d/ 2>/dev/null | grep -i pgdg || echo "PGDG: absent"
+          echo "═══ 6. Hosts DB dans les env (sans credentials) ═══"
+          sudo grep -E '^(DATABASE_URL|DATABASE_URL_SESSION)=' /etc/mikcloud/mikcloud.env /etc/mikcloud/backup.env 2>/dev/null \
+            | sed -E 's|//[^@/]*@|//***@|; s|\?.*||' || true
+          echo "═══ 7. Connexion Supabase + comptages (schéma public) ═══"
+          if sudo test -f /etc/mikcloud/backup.env; then
+            set -a; . <(sudo cat /etc/mikcloud/backup.env); set +a
+          fi
+          if [ -n "${DATABASE_URL_SESSION:-}" ]; then
+            psql "$DATABASE_URL_SESSION" -Atc "select version()" | head -1
+            Q=$(psql "$DATABASE_URL_SESSION" -Atc "SELECT string_agg(format('SELECT %L AS t, count(*) AS n FROM public.%I', table_name, table_name), ' UNION ALL ' ORDER BY table_name) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'")
+            psql "$DATABASE_URL_SESSION" -At -c "$Q" | sort > /tmp/counts_supabase.txt
+            echo "tables: $(wc -l < /tmp/counts_supabase.txt) — lignes: $(awk '{s+=$2} END {print s}' /tmp/counts_supabase.txt)"
+            echo "--- comptages (table lignes) ---"
+            cat /tmp/counts_supabase.txt
+            sudo install -D -m 644 /tmp/counts_supabase.txt /var/backups/counts-supabase-last.txt
+          else
+            echo "DATABASE_URL_SESSION introuvable — comptages sautés"
+          fi
+          echo "═══ AUDIT TERMINÉ (aucune modification) ═══"
+          REMOTE
+
+      - name: mode=backup — dump DR Supabase + artefact chiffré
+        if: ${{ inputs.mode == 'backup' }}
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          STAMP=$(ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" 'date -u +%Y%m%dT%H%M%SZ')
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s <<REMOTE
+          set -euo pipefail
+          STAMP="$STAMP"
+          rm -f /tmp/dbhybrid.env
+          sudo install -d -m 755 /var/backups/mikcloud/db
+          set -a; . <(sudo cat /etc/mikcloud/backup.env); set +a
+          : "\${DATABASE_URL_SESSION:?backup.env incomplet}"
+          DUMP=/var/backups/mikcloud/db/supabase-\$STAMP.dump
+          echo "pg_dump → \$DUMP (schéma public, format custom)…"
+          pg_dump --schema=public --no-owner --no-privileges -Fc -f "\$DUMP" "\$DATABASE_URL_SESSION"
+          [ -s "\$DUMP" ] || { echo "DUMP VIDE — échec"; exit 1; }
+          TABLES=\$(pg_restore --list "\$DUMP" | grep -c ' TABLE ' || true)
+          echo "TOC ok — \$TABLES tables dans le dump"
+          [ "\$TABLES" -ge 30 ] || { echo "TOC SUSPECTE (<30 tables) — échec"; exit 1; }
+          sudo chmod 644 "\$DUMP"
+          sha256sum "\$DUMP" | tee "\$DUMP.sha256"
+          ls -la /var/backups/mikcloud/db/ | tail -5
+          # copie lisible par le runner pour l'artefact chiffré
+          sudo cp "\$DUMP" /tmp/supabase-dr.dump
+          sudo chown \$USER /tmp/supabase-dr.dump
+          echo "DUMP_PATH=/tmp/supabase-dr.dump" >> /tmp/dbhybrid.env
+          echo "STAMP=\$STAMP" >> /tmp/dbhybrid.env
+          REMOTE
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" 'cat /tmp/dbhybrid.env' > /tmp/dbhybrid.env
+          source /tmp/dbhybrid.env
+          scp $SSH_OPTS "$DEPLOY_USER@$VM_HOST:/tmp/supabase-dr.dump" /tmp/supabase-dr.dump
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" 'rm -f /tmp/supabase-dr.dump /tmp/dbhybrid.env'
+          # chiffrement artefact (Tier3) — BACKUP_KEY du coffre (hex 32)
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt \
+            -in /tmp/supabase-dr.dump -out /tmp/supabase-dr.dump.enc \
+            -pass env:BACKUP_KEY
+          echo "::add-mask::${{ secrets.BACKUP_KEY }}"
+          sha256sum /tmp/supabase-dr.dump /tmp/supabase-dr.dump.enc
+          echo "STAMP=$STAMP" >> "$GITHUB_ENV"
+          rm -f /tmp/supabase-dr.dump
+      - name: Upload artefact DR chiffré (rétention 30 j)
+        if: ${{ inputs.mode == 'backup' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: supabase-dr-${{ env.STAMP }}
+          path: /tmp/supabase-dr.dump.enc
+          retention-days: 30
+
+      - name: mode=setup-pg — PostgreSQL 17 local calibré 4/24
+        if: ${{ inputs.mode == 'setup-pg' }}
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          echo "═══ 1. Installation PostgreSQL 17 (PGDG) ═══"
+          if ! ls /etc/postgresql/17/main/PG_VERSION >/dev/null 2>&1; then
+            sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postgresql-17
+          else
+            echo "postgresql-17 déjà installé"
+          fi
+          sudo systemctl enable --now postgresql@17-main
+          echo "═══ 2. Répertoire WAL (Tier1.5 local) ═══"
+          sudo install -d -o postgres -g postgres -m 700 /var/backups/mikcloud/wal
+          echo "═══ 3. Config calibrée Ftechci 4/24 ═══"
+          sudo tee /etc/postgresql/17/main/conf.d/mikcloud.conf > /dev/null <<'PGCONF'
+          # ─── mikcloud — calibrage Ftechci 4 OCPU / 24 Go (N°274) ───
+          # Primaire co-hébergé : localhost UNIQUEMENT (aucun port public ;
+          # le Security List OCI ne passe déjà que 80/443/22).
+          listen_addresses = 'localhost'
+          max_connections = 60            # backend (4+2) + télémétrie (2+1) + outils + marge multi-services
+          # Mémoire (24 Go partagés avec backend Go ~50 Mo, Caddy, services futurs)
+          shared_buffers = 4GB
+          effective_cache_size = 12GB
+          work_mem = 16MB
+          maintenance_work_mem = 256MB
+          # WAL / checkpoints ( écritures coalescées ≤1 tx/3 s — charge faible)
+          wal_buffers = 16MB
+          min_wal_size = 256MB
+          max_wal_size = 2GB
+          checkpoint_completion_target = 0.9
+          # Tier1.5 — archivage WAL local (upload Object Storage en N°275)
+          archive_mode = on
+          archive_command = 'test ! -f /var/backups/mikcloud/wal/%f && cp %p /var/backups/mikcloud/wal/%f'
+          archive_timeout = 60s           # RPO ≤ 1 min côté WAL
+          # Statistiques
+          shared_preload_libraries = 'pg_stat_statements'
+          pg_stat_statements.max = 10000
+          pg_stat_statements.track = all
+          # Observabilité
+          log_checkpoints = on
+          log_autovacuum_min_duration = 1s
+          log_min_duration_statement = 500
+          # Autovacuum (purges admin DELETE ×500 sans VACUUM — incident N°157)
+          autovacuum_max_workers = 6
+          autovacuum_naptime = 30s
+          PGCONF
+          echo "═══ 4. Redémarrage cluster (preload) ═══"
+          sudo systemctl restart postgresql@17-main
+          sleep 2
+          pg_isready -h 127.0.0.1 -p 5432
+          echo "═══ 5. Rôle + base + extension ═══"
+          if ! sudo test -f /etc/mikcloud/localpg.env; then
+            PASS=$(openssl rand -hex 24)
+            sudo -u postgres psql -v ON_ERROR_STOP=1 <<SQL
+          DO \$\$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='mikcloud') THEN
+              CREATE ROLE mikcloud LOGIN PASSWORD '$PASS';
+            ELSE
+              ALTER ROLE mikcloud LOGIN PASSWORD '$PASS';
+            END IF;
+          END \$\$;
+          SELECT 'CREATE DATABASE mikcloud OWNER mikcloud'
+          WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname='mikcloud')\gexec
+          SQL
+            sudo tee /etc/mikcloud/localpg.env > /dev/null <<ENVEOF
+          # PostgreSQL local Ftechci (N°274) — root:root 600. NE JAMAIS LOGGUER.
+          LOCALPG_DSN=postgresql://mikcloud:$PASS@127.0.0.1:5432/mikcloud?sslmode=disable
+          ENVEOF
+            sudo chmod 600 /etc/mikcloud/localpg.env
+            echo "localpg.env créé"
+          else
+            echo "localpg.env déjà présent (DSN inchangé)"
+          fi
+          sudo -u postgres psql -d mikcloud -tc "SELECT 1 FROM pg_extension WHERE extname='pg_stat_statements'" | grep -q 1 \
+            || sudo -u postgres psql -d mikcloud -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements"
+          echo "═══ 6. Vérifications ═══"
+          sudo -u postgres psql -Atc "SHOW shared_buffers; SHOW archive_mode; SHOW archive_command;" 
+          set -a; sudo . /etc/mikcloud/localpg.env; set +a
+          psql "$LOCALPG_DSN" -Atc "SELECT 'CONNEXION OK — ' || version()" | head -1
+          echo "═══ SETUP-PG TERMINÉ ═══"
+          REMOTE
+
+      - name: mode=restore — restore dump → PG local + vérification intégrité
+        if: ${{ inputs.mode == 'restore' }}
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s -- "$DUMP_FILE" <<'REMOTE'
+          set -euo pipefail
+          DUMP_FILE="${1:-}"
+          set -a; . <(sudo cat /etc/mikcloud/localpg.env); set +a
+          DUMP="/var/backups/mikcloud/db/${DUMP_FILE:-}"
+          if [ -z "$DUMP_FILE" ]; then
+            DUMP=$(ls -1t /var/backups/mikcloud/db/supabase-*.dump 2>/dev/null | head -1 || true)
+          fi
+          [ -n "$DUMP" ] && [ -s "$DUMP" ] || { echo "AUCUN DUMP dans /var/backups/mikcloud/db — lancer mode=backup d'abord"; exit 1; }
+          echo "═══ 1. Restore : $DUMP ═══"
+          T1=$(date +%s)
+          sudo -u postgres psql -d mikcloud -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public AUTHORIZATION mikcloud;' >/dev/null
+          pg_restore --exit-on-error --no-owner --no-privileges --role=mikcloud --jobs=4 -d "$LOCALPG_DSN" "$DUMP" 2> /tmp/restore.err \
+            || { echo "❌ pg_restore ÉCHOUÉ :"; tail -20 /tmp/restore.err; exit 1; }
+          echo "restore terminé en $(( $(date +%s) - T1 )) s"
+          echo "═══ 2. Extension + autovacuum chirurgical (tables chaudes) ═══"
+          sudo -u postgres psql -d mikcloud -tc "SELECT 1 FROM pg_extension WHERE extname='pg_stat_statements'" | grep -q 1 \
+            || sudo -u postgres psql -d mikcloud -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements"
+          psql "$LOCALPG_DSN" <<SQL
+          DO \$\$ DECLARE t text;
+          BEGIN
+            FOREACH t IN ARRAY ARRAY['health_checkpoint','hotspot_users','routers','settings','commands']
+            LOOP
+              IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=t) THEN
+                EXECUTE format('ALTER TABLE public.%I SET (autovacuum_vacuum_scale_factor=0.02, autovacuum_analyze_scale_factor=0.01, autovacuum_vacuum_cost_delay=1)', t);
+                RAISE NOTICE 'autovacuum chirurgical: %', t;
+              END IF;
+            END LOOP;
+          END \$\$;
+          SQL
+          echo "═══ 3. ANALYZE ═══"
+          vacuumdb --dbname "$LOCALPG_DSN" --analyze --quiet
+          echo "═══ 4. Comparaison comptages local vs dernière mesure Supabase ═══"
+          Q=$(psql "$LOCALPG_DSN" -Atc "SELECT string_agg(format('SELECT %L AS t, count(*) AS n FROM public.%I', table_name, table_name), ' UNION ALL ' ORDER BY table_name) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'")
+          psql "$LOCALPG_DSN" -At -c "$Q" | sort > /tmp/counts_local.txt
+          echo "tables local: $(wc -l < /tmp/counts_local.txt) — lignes: $(awk '{s+=$2} END {print s}' /tmp/counts_local.txt)"
+          REF=/var/backups/counts-supabase-last.txt
+          if sudo test -f "$REF"; then
+            sudo cat "$REF" | sort > /tmp/counts_ref.txt
+            if diff -u /tmp/counts_ref.txt /tmp/counts_local.txt; then
+              echo "✅ COMPTAGES IDENTIQUES (local == Supabase au moment du dump)"
+            else
+              echo "❌ ÉCART DE COMPTAGES"; exit 1
+            fi
+          else
+            echo "⚠ référence Supabase absente — comptages affichés sans comparaison"; cat /tmp/counts_local.txt
+          fi
+          echo "═══ 5. Taille + références ═══"
+          psql "$LOCALPG_DSN" -Atc "SELECT pg_size_pretty(pg_database_size('mikcloud')) AS taille"
+          echo "═══ RESTORE TERMINÉ ═══"
+          REMOTE
+
+      - name: mode=cutover — bascule primaire → PG local (delta + preuves + rollback auto)
+        if: ${{ inputs.mode == 'cutover' }}
+        run: |
+          set -euo pipefail
+          if [ "$CONFIRM" != "MIK-DB-HYBRID" ]; then
+            echo "❌ Confirmation absente — relancer avec confirm=MIK-DB-HYBRID"; exit 1
+          fi
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          T0=$(date -u +%FT%TZ)
+          echo "═══ CUTOVER démarré à $T0 ═══"
+          set -a; sudo . /etc/mikcloud/localpg.env; set +a
+          set -a; sudo . /etc/mikcloud/backup.env; set +a
+          echo "═══ GARDE 1 : backend sain avant geste ═══"
+          curl -fsS -o /dev/null http://127.0.0.1:4000/ || { echo "backend KO avant cutover — abort"; exit 1; }
+          pg_isready -h 127.0.0.1 -p 5432 || { echo "PG local pas prêt — abort"; exit 1; }
+          echo "═══ GARDE 2 : dump/restore DELTA (backend continue sur Supabase) ═══"
+          STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+          DUMP=/var/backups/mikcloud/db/supabase-$STAMP.dump
+          pg_dump --schema=public --no-owner --no-privileges -Fc -f "$DUMP" "$DATABASE_URL_SESSION"
+          [ -s "$DUMP" ] || { echo "DUMP DELTA VIDE — abort"; exit 1; }
+          TABLES=$(pg_restore --list "$DUMP" | grep -c ' TABLE ' || true)
+          [ "$TABLES" -ge 30 ] || { echo "TOC suspecte — abort"; exit 1; }
+          sudo chmod 644 "$DUMP"
+          echo "delta dump: $TABLES tables, $(du -h "$DUMP" | cut -f1)"
+          sudo -u postgres psql -d mikcloud -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public AUTHORIZATION mikcloud;' >/dev/null
+          pg_restore --no-owner --no-privileges --role=mikcloud --jobs=4 -d "$LOCALPG_DSN" "$DUMP"
+          vacuumdb --dbname "$LOCALPG_DSN" --analyze --quiet
+          echo "═══ GARDE 3 : comptages local == Supabase (tolérance append-only) ═══"
+          # Entre le dump delta et ce diff, le backend ENCORE sur Supabase continue
+          # d'écrire : les upserts ne changent PAS les counts (health_checkpoint,
+          # hotspot_users, settings, routers) ; seules les INSERT-only dérivent
+          # (web_vitals…) → tolérance directionnelle whitelistée, tout le reste = abort.
+          Q=$(psql "$DATABASE_URL_SESSION" -Atc "SELECT string_agg(format('SELECT %L AS t, count(*) AS n FROM public.%I', table_name, table_name), ' UNION ALL ' ORDER BY table_name) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'")
+          psql "$DATABASE_URL_SESSION" -At -c "$Q" | sort > /tmp/counts_src.txt
+          QL=$(psql "$LOCALPG_DSN" -Atc "SELECT string_agg(format('SELECT %L AS t, count(*) AS n FROM public.%I', table_name, table_name), ' UNION ALL ' ORDER BY table_name) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'")
+          psql "$LOCALPG_DSN" -At -c "$QL" | sort > /tmp/counts_loc.txt
+          HARD=0
+          while IFS= read -r row; do
+            tbl=$(echo "$row" | awk '{print $1}')
+            echo "  écart append-only toléré: $row"
+            case "$tbl" in
+              *vitals*|*command*|*session*|*log*|*event*) : ;;
+              *) HARD=1 ;;
+            esac
+          done < <(diff /tmp/counts_src.txt /tmp/counts_loc.txt | grep '^<' || true)
+          while IFS= read -r row; do
+            echo "  ❌ table locale SUR-ABONDANTE (impossible si dump frais): $row"
+            HARD=1
+          done < <(diff /tmp/counts_src.txt /tmp/counts_loc.txt | grep '^>' || true)
+          [ "$HARD" = 0 ] || { echo "❌ ÉCART comptages NON TOLÉRÉ au cutover — abort (Supabase inchangé, backend intact)"; exit 1; }
+          sudo cp /tmp/counts_src.txt /var/backups/counts-supabase-last.txt
+          echo "✅ comptages cohérents: $(wc -l < /tmp/counts_loc.txt) tables, $(awk '{s+=$2} END {print s}' /tmp/counts_loc.txt) lignes"
+          echo "═══ GARDE 4 : sauvegarde env + flip DSN ═══"
+          BK=/etc/mikcloud/mikcloud.env.pre-hybrid-$(date -u +%Y%m%dT%H%M%SZ)
+          sudo cp /etc/mikcloud/mikcloud.env "$BK"; sudo chmod 600 "$BK"
+          echo "env sauvegardé: $BK"
+          LOCAL_DSN=$(sudo grep '^LOCALPG_DSN=' /etc/mikcloud/localpg.env | cut -d= -f2- | tr -d '\r\n')
+          [ -n "$LOCAL_DSN" ] || { echo "LOCALPG_DSN introuvable — abort"; exit 1; }
+          ESC_DSN=${LOCAL_DSN//&/\\&}
+          sudo sed -i "s|^DATABASE_URL=.*|DATABASE_URL=$ESC_DSN|" /etc/mikcloud/mikcloud.env
+          sudo grep -E '^DATABASE_URL=' /etc/mikcloud/mikcloud.env | sed -E 's|//[^@/]*@|//***@|'
+          echo "═══ 5. Restart backend (SIGTERM → flush final → Load local) ═══"
+          sudo systemctl restart mikcloud
+          sleep 8
+          echo "═══ PREUVE 1 : persistance PostgreSQL ACTIVE (pas de mode dégradé) ═══"
+          sudo journalctl -u mikcloud --since "$T0" --no-pager | grep -E 'persistance PostgreSQL active|degraded|dégradé|PostgreSQL injoignable' | head -5 || true
+          sudo journalctl -u mikcloud --since "$T0" --no-pager | grep -q 'persistance PostgreSQL active' \
+            || { echo "❌ mode PostgreSQL NON confirmé dans les logs — ROLLBACK"; sudo cp "$BK" /etc/mikcloud/mikcloud.env; sudo systemctl restart mikcloud; sleep 8; curl -fsS -o /dev/null http://127.0.0.1:4000/ && echo "ROLLBACK OK — backend sur Supabase"; exit 1; }
+          echo "═══ PREUVE 2 : healthcheck backend ═══"
+          for i in $(seq 1 12); do
+            if curl -fsS -o /dev/null http://127.0.0.1:4000/; then echo "backend OK (${i}×5s)"; break; fi
+            [ "$i" = 12 ] && { echo "❌ backend injoignable — ROLLBACK"; sudo cp "$BK" /etc/mikcloud/mikcloud.env; sudo systemctl restart mikcloud; exit 1; }
+            sleep 5
+          done
+          echo "═══ PREUVE 3 : écritures réelles sur le local (90 s d'observation) ═══"
+          sleep 90
+          UPD=$(psql "$LOCALPG_DSN" -Atc "SELECT tup_updated + tup_inserted FROM pg_stat_database WHERE datname='mikcloud'")
+          echo "tuples écrits depuis le flip: $UPD"
+          [ "${UPD:-0}" -gt 0 ] || { echo "❌ AUCUNE écriture en 90 s — ROLLBACK"; sudo cp "$BK" /etc/mikcloud/mikcloud.env; sudo systemctl restart mikcloud; sleep 8; curl -fsS -o /dev/null http://127.0.0.1:4000/ && echo "ROLLBACK OK"; exit 1; }
+          psql "$LOCALPG_DSN" -Atc "SELECT query, calls FROM pg_stat_statements WHERE query ILIKE '%insert%' OR query ILIKE '%update%' ORDER BY calls DESC LIMIT 3"
+          echo "═══ 6. Gel du timer Supabase→Neon (Supabase figé) ═══"
+          sudo systemctl disable --now mikcloud-backup.timer 2>/dev/null && echo "timer mikcloud-backup STOPPÉ (réactivé au rollback)" || echo "timer déjà arrêté/absent"
+          echo "═══ 7. État final ═══"
+          df -h / | sed -n '2p'
+          free -h | sed -n '2p'
+          echo "═══ CUTOVER RÉUSSI — primaire = PostgreSQL local Ftechci ($T0 → $(date -u +%FT%TZ)) ═══"
+          REMOTE
+
+      - name: mode=rollback — retour explicite vers Supabase
+        if: ${{ inputs.mode == 'rollback' }}
+        run: |
+          set -euo pipefail
+          if [ "$CONFIRM" != "MIK-DB-HYBRID" ]; then
+            echo "❌ Confirmation absente — relancer avec confirm=MIK-DB-HYBRID"; exit 1
+          fi
+          if [ "$ACCEPT_STALE" != "YES" ]; then
+            echo "❌ Supabase est FIGÉ depuis le cutover (données périmées)."
+            echo "   Relancer avec accept_stale_data=YES pour confirmer le retour."
+            exit 1
+          fi
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          set -a; . <(sudo cat /etc/mikcloud/localpg.env); set +a
+          echo "═══ 1. Dump local de sécurité avant retour ═══"
+          STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+          sudo install -d -m 755 /var/backups/mikcloud/db
+          pg_dump --schema=public --no-owner --no-privileges -Fc -f /var/backups/mikcloud/db/local-$STAMP.dump "$LOCALPG_DSN" && [ -s /var/backups/mikcloud/db/local-$STAMP.dump ] || { echo "dump sécurité échoué — abort"; exit 1; }
+          sudo chmod 644 /var/backups/mikcloud/db/local-$STAMP.dump
+          echo "dump local: $(du -h /var/backups/mikcloud/db/local-$STAMP.dump | cut -f1)"
+          echo "═══ 2. Restaure le dernier env pre-hybrid ═══"
+          BK=$(sudo ls -1t /etc/mikcloud/mikcloud.env.pre-hybrid-* 2>/dev/null | head -1)
+          [ -n "$BK" ] || { echo "AUCUN env pre-hybrid — abort"; exit 1; }
+          echo "restaure: $BK"
+          sudo cp "$BK" /etc/mikcloud/mikcloud.env
+          sudo grep -E '^DATABASE_URL=' /etc/mikcloud/mikcloud.env | sed -E 's|//[^@/]*@|//***@|'
+          echo "═══ 3. Restart + healthcheck ═══"
+          sudo systemctl restart mikcloud
+          sleep 8
+          for i in $(seq 1 12); do
+            curl -fsS -o /dev/null http://127.0.0.1:4000/ && { echo "backend OK"; break; }
+            [ "$i" = 12 ] && { echo "❌ backend KO après rollback"; exit 1; }
+            sleep 5
+          done
+          echo "═══ 4. Réactive le timer Supabase→Neon ═══"
+          sudo systemctl enable --now mikcloud-backup.timer && echo "timer réactivé" || echo "timer: état inchangé"
+          sudo journalctl -u mikcloud --since "-2 min" --no-pager | grep -E 'persistance PostgreSQL active|dégradé' | head -3 || true
+          echo "═══ ROLLBACK TERMINÉ — primaire = Supabase ═══"
+          REMOTE
+
+      - name: mode=status — état hybride complet
+        if: ${{ inputs.mode == 'status' }}
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          [ -f /etc/mikcloud/mikcloud.env ] || { echo "mikcloud.env absent"; exit 1; }
+          echo "═══ Backend ═══"
+          systemctl is-active mikcloud && echo "mikcloud: ACTIF" || echo "mikcloud: INACTIF"
+          curl -fsS -o /dev/null -w "backend HTTP %{http_code} (%{time_total}s)\n" http://127.0.0.1:4000/ || echo "backend: KO"
+          echo "DSN actif (sans creds): $(sudo grep -E '^DATABASE_URL=' /etc/mikcloud/mikcloud.env | sed -E 's|//[^@/]*@|//***@|; s|^DATABASE_URL=||')"
+          echo "env pre-hybrid dispo: $(sudo ls -1 /etc/mikcloud/mikcloud.env.pre-hybrid-* 2>/dev/null | wc -l)"
+          echo "═══ PostgreSQL local ═══"
+          pg_isready -h 127.0.0.1 -p 5432 || true
+          if sudo test -f /etc/mikcloud/localpg.env; then
+            set -a; . <(sudo cat /etc/mikcloud/localpg.env); set +a
+            psql "$LOCALPG_DSN" -Atc "SELECT 'taille DB: ' || pg_size_pretty(pg_database_size('mikcloud'))" || true
+            psql "$LOCALPG_DSN" -Atc "SELECT 'tuples écrits: ' || (tup_inserted + tup_updated) FROM pg_stat_database WHERE datname='mikcloud'" || true
+            echo "--- comptages local (aperçu top 10) ---"
+            Q=$(psql "$LOCALPG_DSN" -Atc "SELECT string_agg(format('SELECT %L AS t, count(*) AS n FROM public.%I', table_name, table_name), ' UNION ALL ' ORDER BY table_name) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'")
+            psql "$LOCALPG_DSN" -At -c "$Q" | sort -k2 -rn | head -10
+            echo "WAL archivés: $(sudo ls /var/backups/mikcloud/wal 2>/dev/null | wc -l) fichiers"
+            echo "Dernier dump: $(ls -1t /var/backups/mikcloud/db/ 2>/dev/null | head -3 | tr '\n' ' ')"
+          else
+            echo "localpg.env ABSENT — setup-pg non fait"
+          fi
+          echo "═══ Drift local vs Supabase ═══"
+          if sudo test -f /etc/mikcloud/localpg.env && sudo test -f /etc/mikcloud/backup.env; then
+            set -a; . <(sudo cat /etc/mikcloud/localpg.env); . <(sudo cat /etc/mikcloud/backup.env); set +a
+            if psql "$LOCALPG_DSN" -Atc "SELECT 1 FROM information_schema.tables WHERE table_schema='public' LIMIT 1" | grep -q 1; then
+              Q=$(psql "$LOCALPG_DSN" -Atc "SELECT string_agg(format('SELECT %L AS t, count(*) AS n FROM public.%I', table_name, table_name), ' UNION ALL ' ORDER BY table_name) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'")
+              psql "$LOCALPG_DSN" -At -c "$Q" | sort > /tmp/c_local.txt
+              if psql "$DATABASE_URL_SESSION" -Atc "SELECT 1" 2>/dev/null | grep -q 1; then
+                QS=$(psql "$DATABASE_URL_SESSION" -Atc "SELECT string_agg(format('SELECT %L AS t, count(*) AS n FROM public.%I', table_name, table_name), ' UNION ALL ' ORDER BY table_name) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'")
+                psql "$DATABASE_URL_SESSION" -At -c "$QS" | sort > /tmp/c_supa.txt
+                LINES_DIFF=$(diff /tmp/c_local.txt /tmp/c_supa.txt | grep -cE '^[<>]' || true)
+                echo "tables en écart local/Supabase: $LINES_DIFF"
+                diff /tmp/c_local.txt /tmp/c_supa.txt | head -10 || true
+              else
+                echo "Supabase injoignable"
+              fi
+            else
+              echo "PG local vide (pas encore restauré)"
+            fi
+          fi
+          echo "═══ Timer backup ═══"
+          systemctl is-enabled mikcloud-backup.timer 2>/dev/null || echo "timer mikcloud-backup: DÉSACTIVÉ (normal post-cutover)"
+          echo "═══ Ressources ═══"
+          df -h / | sed -n '2p'; free -h | sed -n '2p'; uptime
+          REMOTE
+
+      - name: Rapport
+        if: always()
+        run: |
+          {
+            echo "## ops-db-hybrid — mode: ${{ inputs.mode }}"
+            echo ""
+            echo "- Verdict: ${{ job.status }}"
+            echo "- Date: $(date -u +%FT%TZ)"
+          } >> "$GITHUB_STEP_SUMMARY"

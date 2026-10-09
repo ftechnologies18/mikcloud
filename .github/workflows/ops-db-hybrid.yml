@@ -679,7 +679,7 @@ jobs:
           fi
           # TEST DÉCISIF : c'est ROOT qui exécute les scripts DR — l'import du
           # module oci doit fonctionner sous root, sinon tout le Tier1.5 est mort
-          sudo oci --version >/dev/null 2>&1 || { echo "❌ oci inutilisable par root (modules non visibles — install --user résiduelle ?)"; exit 1; }
+          sudo oci --version >/dev/null 2>&1 </dev/null || { echo "❌ oci inutilisable par root (modules non visibles — install --user résiduelle ?)"; exit 1; }
           echo "oci CLI: $(oci --version) ($(command -v oci)) — import root OK"
           sudo install -d -o root -g root -m 700 /etc/oci
           sudo mv /tmp/oci_api_key.pem /etc/oci/oci_api_key.pem
@@ -697,20 +697,20 @@ jobs:
           FP_REF="$(echo "$OCI_FP" | tr -d ':')"
           if [ -z "$FP_CALC" ] || [ "$FP_CALC" != "$FP_REF" ]; then echo "❌ empreinte clé OCI ≠ fingerprint ($FP_CALC vs $FP_REF)"; exit 1; fi
           echo "cohérence clé/empreinte OK"
-          NS_JSON=$(sudo oci --config-file /etc/oci/config os ns get 2>&1) || { echo "❌ oci os ns get a échoué — réponse API:"; echo "$NS_JSON" | head -15; exit 1; }
+          NS_JSON=$(sudo oci --config-file /etc/oci/config os ns get </dev/null 2>&1) || { echo "❌ oci os ns get a échoué — réponse API:"; echo "$NS_JSON" | head -15; exit 1; }
           NS=$(echo "$NS_JSON" | jq -r '.data // .' 2>/dev/null | tr -d '"[:space:]')
           [ -n "$NS" ] || { echo "❌ namespace OCI illisible: $NS_JSON"; exit 1; }
           echo "namespace: $NS"
-          if sudo oci --config-file /etc/oci/config os bucket get --namespace "$NS" --name mikcloud-wal >/dev/null 2>&1; then
+          if sudo oci --config-file /etc/oci/config os bucket get --namespace "$NS" --name mikcloud-wal </dev/null >/dev/null 2>&1; then
             echo "bucket mikcloud-wal: existe déjà"
           else
-            BOUT=$(sudo oci --config-file /etc/oci/config os bucket create --namespace "$NS" --compartment-id "$OCI_TENANCY" --name mikcloud-wal 2>&1) \
+            BOUT=$(sudo oci --config-file /etc/oci/config os bucket create --namespace "$NS" --compartment-id "$OCI_TENANCY" --name mikcloud-wal </dev/null 2>&1) \
               && echo "bucket mikcloud-wal: CRÉÉ" || { echo "❌ création bucket échouée:"; echo "$BOUT" | head -15; exit 1; }
           fi
           cat > /tmp/olc.json <<OLC
           {"items":[{"name":"expire-21d","action":"DELETE","timeAmount":21,"timeUnit":"DAYS","isEnabled":true}]}
           OLC
-          if sudo oci --config-file /etc/oci/config os object-lifecycle-policy put --namespace "$NS" --bucket-name mikcloud-wal --from-json file:///tmp/olc.json >/dev/null 2>&1; then
+          if sudo oci --config-file /etc/oci/config os object-lifecycle-policy put --namespace "$NS" --bucket-name mikcloud-wal --from-json file:///tmp/olc.json </dev/null >/dev/null 2>&1; then
             echo "lifecycle 21 jours: posé (budget gratuit 10 Go respecté)"
           else
             echo "⚠ lifecycle non posé (non bloquant)"
@@ -1149,7 +1149,7 @@ jobs:
           echo "═══ 4. WAL distant lisible (Tier1.5) ═══"
           SEG=$(sudo sort /var/lib/mikcloud/wal-uploaded.list 2>/dev/null | tail -1 || true)
           if [ -n "${SEG:-}" ]; then
-            sudo oci --config-file /etc/oci/config os object get --namespace "$WAL_NS" --bucket-name "$WAL_BUCKET" --name "${SEG}.gz" --file /tmp/drill-seg.gz >/dev/null
+            sudo oci --config-file /etc/oci/config os object get --namespace "$WAL_NS" --bucket-name "$WAL_BUCKET" --name "${SEG}.gz" --file /tmp/drill-seg.gz </dev/null >/dev/null
             gunzip -c /tmp/drill-seg.gz > /tmp/drill-seg
             PGW=$(ls /usr/lib/postgresql/*/bin/pg_waldump 2>/dev/null | tail -1 || true)
             if [ -n "$PGW" ]; then
@@ -1164,7 +1164,7 @@ jobs:
             echo "⚠ aucun WAL uploadé — attendre le timer mikcloud-wal-upload puis relancer"
           fi
           echo "═══ 5. Vérification base backup distant ═══"
-          sudo oci --config-file /etc/oci/config os object list --namespace "$WAL_NS" --bucket-name "$WAL_BUCKET" --prefix basebackup/ --page-size 50 2>/dev/null \
+          sudo oci --config-file /etc/oci/config os object list --namespace "$WAL_NS" --bucket-name "$WAL_BUCKET" --prefix basebackup/ --page-size 50 </dev/null 2>/dev/null \
             | jq -r '.data.objects[].name' 2>/dev/null | sort | tail -3 || echo "(aucun base backup — viendra avec le reverse-sync nocturne)"
           echo "═══ DRILL TERMINÉ — restaurabilité démontrée (primaire intact) ═══"
           REMOTE

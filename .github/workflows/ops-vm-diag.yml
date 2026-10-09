@@ -136,23 +136,27 @@ jobs:
           done
           echo "STATE_FINAL=$S" >> "$GITHUB_ENV"
 
-      - name: REBOOT si prod down (action=reboot + confirm=MIK-VM-REBOOT)
+      - name: REBOOT si prod down (action=reboot + confirm=MIK-VM-REBOOT[-HARD])
         if: ${{ inputs.action == 'reboot' }}
         run: |
           set -euo pipefail
-          if [ "$CONFIRM" != "MIK-VM-REBOOT" ]; then
-            echo "⚠ reboot refusé — confirm=MIK-VM-REBOOT requis"; exit 0
-          fi
-          echo "SOFTRESET de l'instance hung…"
-          oci compute instance action --instance-id "$IID" --action SOFTRESET </dev/null \
+          case "$CONFIRM" in
+            MIK-VM-REBOOT)      ACT=SOFTRESET; ;;
+            MIK-VM-REBOOT-HARD) ACT=RESET;     ;;   # dur — le hung ignore l'ACPI (run 38)
+            *) echo "⚠ reboot refusé — confirm=MIK-VM-REBOOT ou MIK-VM-REBOOT-HARD requis"; exit 0 ;;
+          esac
+          echo "$ACT de l'instance hung…"
+          oci compute instance action --instance-id "$IID" --action "$ACT" </dev/null \
             | jq -r '.data["lifecycle-state"]'
-          for i in $(seq 1 24); do
+          SEEN_NONRUN=no
+          for i in $(seq 1 28); do
             sleep 15
             S=$(oci compute instance get --instance-id "$IID" </dev/null | jq -r '.data["lifecycle-state"]')
             echo "[$i] $S"
-            [ "$S" = "RUNNING" ] && [ "$i" -gt 2 ] && break
+            [ "$S" != "RUNNING" ] && SEEN_NONRUN=yes
+            if [ "$S" = "RUNNING" ] && [ "$SEEN_NONRUN" = "yes" ]; then break; fi
           done
-          echo "attente services (60 s)…"; sleep 60
+          echo "attente services (75 s)…"; sleep 75
 
       - name: Healthchecks post-action
         if: always()

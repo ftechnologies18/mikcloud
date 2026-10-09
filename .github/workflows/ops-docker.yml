@@ -1,0 +1,177 @@
+name: ops-docker
+
+# ═══ PHASE A — TERRAIN DOCKER SUR LA VM FTECHCI (N°279) ═══
+#
+# Décision exploitant « Go phase A » : la VM est le serveur
+# multi-services de l'entreprise (N°271) — Docker prépare l'isolation
+# des prochains back-ends SANS toucher au backend mikcloud (systemd,
+# inchangé) ni à PostgreSQL (primaire Tier1 — NE JAMAIS le
+# conteneuriser : chaîne WAL/archive_command/timers posée sur l'hôte,
+# cf. docs/DB-HYBRIDE.md).
+#
+# Modes :
+#   install (idempotent) — docker.io + compose v2 + /etc/docker/daemon.json
+#           (rotation des logs conteneurs 3×10 Mo — leçon disque N°275 ;
+#           live-restore) + smoke test JETABLE (traefik/whoami publié sur
+#           127.0.0.1:4010 : pull arm64, DNAT iptables, HTTP 200, purge) ;
+#   status  (lecture seule) — versions, driver, conteneurs, disque ;
+#   prune   (confirm=MIK-DOCKER-PRUNE) — docker system prune -af
+#           (JAMAIS --volumes : les volumes des futurs services sont
+#           des données, pas du cache).
+#
+# CONVENTIONS (détail : docs/RUNBOOK-HEBERGEMENT.md §Docker) :
+#   - publications TOUJOURS sur 127.0.0.1 (-p 127.0.0.1:P:P) — Caddy
+#     reste l'unique porte 80/443 ; la security list OCI n'expose que
+#     22/80/443 mais on ne compte PAS dessus ;
+#   - configuration par --env-file /etc/mikcloud/<service>.env (600 root) ;
+#   - PostgreSQL, timers et scripts DR RESTENT sur l'hôte.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "install | status | prune"
+        required: true
+        type: string
+      confirm:
+        description: "Taper MIK-DOCKER-PRUNE pour autoriser mode=prune"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: ops-docker
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  docker-ops:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+      VM_HOST: ${{ secrets.ORACLE_HOST }}
+      DEPLOY_USER: ${{ secrets.ORACLE_USER }}
+      MODE: ${{ inputs.mode }}
+      CONFIRM: ${{ inputs.confirm }}
+    steps:
+      - name: Clé SSH du coffre + preflight VM
+        run: |
+          set -euo pipefail
+          for v in SSH_KEY VM_HOST DEPLOY_USER; do
+            [ -n "${!v}" ] || { echo "❌ secret/env $v absent"; exit 1; }
+          done
+          printf '%s\n' "$SSH_KEY" > /tmp/oracle_key
+          chmod 600 /tmp/oracle_key
+          RESOLVED_MODE="$MODE"
+          [ -n "$RESOLVED_MODE" ] || RESOLVED_MODE=status
+          echo "RESOLVED_MODE=$RESOLVED_MODE" >> "$GITHUB_ENV"
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" 'echo "SSH OK — $(hostname) — $(date -u +%FT%TZ)"'
+
+      - name: mode=install — Docker + compose v2 + daemon.json + smoke test
+        if: ${{ env.RESOLVED_MODE == 'install' }}
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          echo "═══ 0. État actuel ═══"
+          if command -v docker >/dev/null 2>&1; then
+            echo "docker déjà présent : $(docker --version)"
+          else
+            echo "docker absent → installation"
+          fi
+          echo "═══ 1. Paquets docker.io + compose v2 (idempotent) ═══"
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update -qq >/dev/null 2>&1 || true
+          sudo apt-get install -y -qq docker.io 2>&1 | tail -2 || true
+          sudo apt-get install -y -qq docker-compose-v2 2>&1 | tail -2 || true
+          docker --version
+          # compose v2 = confort des futurs multi-conteneurs ; son absence
+          # n'est PAS bloquante en Phase A (rien de critique ne l'utilise)
+          docker compose version 2>/dev/null || echo "⚠ compose v2 absent (non bloquant Phase A)"
+          echo "═══ 2. daemon.json — rotation logs + live-restore ═══"
+          # Leçon disque N°275 : un log qui creuse le disque = incident.
+          # Chaque conteneur est plafonné à 3 fichiers de 10 Mo (30 Mo max).
+          # live-restore : un restart du daemon ne tue pas les conteneurs.
+          sudo mkdir -p /etc/docker
+          sudo tee /tmp/daemon.json.new > /dev/null <<'JSON'
+          {
+            "log-driver": "json-file",
+            "log-opts": { "max-size": "10m", "max-file": "3" },
+            "live-restore": true
+          }
+          JSON
+          if sudo cmp -s /tmp/daemon.json.new /etc/docker/daemon.json; then
+            sudo rm -f /tmp/daemon.json.new
+            echo "daemon.json : inchangé"
+          else
+            sudo mv /tmp/daemon.json.new /etc/docker/daemon.json
+            sudo chmod 644 /etc/docker/daemon.json
+            sudo systemctl restart docker
+            echo "daemon.json : POSÉ + docker redémarré"
+          fi
+          sudo systemctl enable --now docker >/dev/null 2>&1 || true
+          sudo systemctl is-active docker || { echo "❌ daemon docker inactif"; exit 1; }
+          echo "═══ 3. Smoke test jetable (publish 127.0.0.1 UNIQUEMENT) ═══"
+          sudo docker rm -f mik-pilot >/dev/null 2>&1 || true
+          sudo docker run -d --name mik-pilot -p 127.0.0.1:4010:8080 traefik/whoami -port 8080 >/dev/null
+          sleep 3
+          BODY=$(curl -fsS -m 10 http://127.0.0.1:4010/ | head -2)
+          echo "$BODY"
+          echo "$BODY" | grep -qi "Hostname" || { echo "❌ smoke test HTTP KO"; sudo docker logs mik-pilot 2>&1 | tail -5; sudo docker rm -f mik-pilot >/dev/null 2>&1 || true; exit 1; }
+          sudo docker rm -f mik-pilot >/dev/null
+          echo "✅ smoke test HTTP OK (pull arm64 + DNAT iptables + 127.0.0.1 + purge)"
+          echo "═══ 4. Egress conteneur (bridge → Internet) ═══"
+          sudo docker run --rm busybox wget -qO- -T 15 https://mikcloud.ftci.fr >/dev/null 2>&1 \
+            && echo "✅ egress bridge OK (wget https 200)" \
+            || { echo "⚠ egress bridge en échec — vérifier DOCKER-USER/iptables si un futur service a besoin de sortir"; }
+          echo "═══ 5. Réseau/iptables (pour le registre) ═══"
+          sudo docker network ls --format '{{.Name}} ({{.Driver}})'
+          sudo iptables -S FORWARD 2>/dev/null | head -6 || true
+          echo "═══ 6. Disque ═══"
+          df -h / | sed -n '2p'
+          sudo docker system df 2>/dev/null || true
+          echo "═══ INSTALL TERMINÉ — terrain Docker prêt (Phase A) ═══"
+          REMOTE
+
+      - name: mode=status — lecture seule
+        if: ${{ env.RESOLVED_MODE == 'status' }}
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s <<'REMOTE'
+          set -uo pipefail
+          if ! command -v docker >/dev/null 2>&1; then
+            echo "docker : NON INSTALLÉ (lancer mode=install)"; exit 0
+          fi
+          echo "docker   : $(docker --version)"
+          echo "compose  : $(docker compose version 2>/dev/null || echo absent)"
+          echo "daemon   : $(sudo systemctl is-active docker)"
+          sudo docker info 2>/dev/null | grep -E 'Storage Driver|Cgroup Driver|Server Version' || true
+          echo "--- conteneurs ---"
+          sudo docker ps -a --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
+          echo "--- disque docker ---"
+          sudo docker system df 2>/dev/null || true
+          echo "--- daemon.json ---"
+          sudo cat /etc/docker/daemon.json 2>/dev/null || echo "(absent)"
+          REMOTE
+
+      - name: mode=prune — nettoyage images/cache (gardé par confirm)
+        if: ${{ env.RESOLVED_MODE == 'prune' }}
+        run: |
+          set -euo pipefail
+          if [ "$CONFIRM" != "MIK-DOCKER-PRUNE" ]; then
+            echo "❌ REFUS — mode prune exige confirm=MIK-DOCKER-PRUNE (supprime images/cache inutilisés)"; exit 1
+          fi
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          echo "avant :"; sudo docker system df 2>/dev/null || true
+          # JAMAIS --volumes : les volumes portent des données de services.
+          sudo docker system prune -af 2>&1 | tail -4
+          echo "après :"; sudo docker system df 2>/dev/null || true
+          REMOTE

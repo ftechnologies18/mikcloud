@@ -1015,6 +1015,16 @@ jobs:
             R=$(systemctl show -p Result --value "$u.service" 2>/dev/null)
             [ "$R" = "success" ] || addf "$u.service: Result=$R"
           done
+          # 10. docker (Phase A N°279 — terrain multi-services ; absent =
+          # information, pas une anomalie — rien de critique ne l'utilise)
+          if command -v docker >/dev/null 2>&1; then
+            if systemctl is-active -q docker; then
+              if timeout 10 docker ps -q >/dev/null 2>&1; then
+                NC=$(docker ps -q 2>/dev/null | wc -l)
+                addo "docker: actif (${NC} conteneurs)"
+              else addf "docker: actif mais NE RÉPOND PAS (ps timeout)"; fi
+            else addf "docker: daemon DOWN"; fi
+          else addo "docker: non installé"; fi
           send(){
             [ -n "$TOKEN" ] && [ -n "$CHATS" ] || return 0
             for c in $CHATS; do

@@ -386,8 +386,11 @@ jobs:
           pg_restore -l "$DUMP" | grep -v ' SCHEMA ' > /tmp/toc.list
           pg_restore --exit-on-error --use-list=/tmp/toc.list --no-owner --no-privileges --role=mikcloud --jobs=4 -d "$LOCALPG_DSN" "$DUMP" 2> /tmp/restore.err \
             || { echo "❌ pg_restore delta ÉCHOUÉ :"; tail -20 /tmp/restore.err; exit 1; }
+          # l'extension pg_stat_statements n'est PAS restaurée par pg_restore
+          # (CREATE EXTENSION réservé au superuser) → recréée par postgres
+          sudo -u postgres psql -d mikcloud -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements" >/dev/null \
+            || echo "⚠ pg_stat_statements non recréé (télémétrie indisponible, non bloquant)"
           vacuumdb --dbname "$LOCALPG_DSN" --analyze --quiet
-          echo "═══ GARDE 3 : comptages local == Supabase (tolérance append-only) ═══"
           # Entre le dump delta et ce diff, le backend ENCORE sur Supabase continue
           # d'écrire : les upserts ne changent PAS les counts (health_checkpoint,
           # hotspot_users, settings, routers) ; seules les INSERT-only dérivent
@@ -439,7 +442,8 @@ jobs:
           UPD=$(psql "$LOCALPG_DSN" -Atc "SELECT tup_updated + tup_inserted FROM pg_stat_database WHERE datname='mikcloud'")
           echo "tuples écrits depuis le flip: $UPD"
           [ "${UPD:-0}" -gt 0 ] || { echo "❌ AUCUNE écriture en 90 s — ROLLBACK"; sudo cp "$BK" /etc/mikcloud/mikcloud.env; sudo systemctl restart mikcloud; sleep 8; curl -fsS -o /dev/null http://127.0.0.1:4000/ && echo "ROLLBACK OK"; exit 1; }
-          psql "$LOCALPG_DSN" -Atc "SELECT query, calls FROM pg_stat_statements WHERE query ILIKE '%insert%' OR query ILIKE '%update%' ORDER BY calls DESC LIMIT 3"
+          psql "$LOCALPG_DSN" -Atc "SELECT query, calls FROM pg_stat_statements WHERE query ILIKE '%insert%' OR query ILIKE '%update%' ORDER BY calls DESC LIMIT 3" 2>/dev/null \
+            || echo "télémétrie pg_stat_statements indisponible (non bloquant)"
           echo "═══ 6. Gel du timer Supabase→Neon (Supabase figé) ═══"
           sudo systemctl disable --now mikcloud-backup.timer 2>/dev/null && echo "timer mikcloud-backup STOPPÉ (réactivé au rollback)" || echo "timer déjà arrêté/absent"
           echo "═══ 7. État final ═══"
@@ -503,6 +507,15 @@ jobs:
           curl -fsS -o /dev/null -w "backend HTTP %{http_code} (%{time_total}s)\n" http://127.0.0.1:4000/ || echo "backend: KO"
           echo "DSN actif (sans creds): $(sudo grep -E '^DATABASE_URL=' /etc/mikcloud/mikcloud.env | sed -E 's|//[^@/]*@|//***@|; s|^DATABASE_URL=||')"
           echo "env pre-hybrid dispo: $(sudo ls -1 /etc/mikcloud/mikcloud.env.pre-hybrid-* 2>/dev/null | wc -l)"
+          # PROTECTION post-cutover (N°274-septies, idempotent) : si le primaire
+          # est le PG local, le timer Supabase→Neon DOIT rester gelé — sinon il
+          # recopierait Supabase figé vers Neon (écrasement du coffre).
+          if sudo grep -E '^DATABASE_URL=' /etc/mikcloud/mikcloud.env | grep -q '127.0.0.1:5432/mikcloud'; then
+            echo "PRIMAIRE = PostgreSQL local"
+            sudo systemctl disable --now mikcloud-backup.timer 2>/dev/null && echo "PROTECTION: timer mikcloud-backup GELÉ" || echo "PROTECTION: timer déjà gelé/absent"
+          else
+            echo "PRIMAIRE = Supabase (pre/post cutover)"
+          fi
           echo "═══ PostgreSQL local ═══"
           pg_isready -h 127.0.0.1 -p 5432 || true
           if sudo test -f /etc/mikcloud/localpg.env; then

@@ -5,6 +5,52 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-09 — N°283 — **CI REDEVIENT VERTE : GO-2026-6617 (HTTP/2 stdlib go1.27.0) — toolchain 1.27.0 → 1.27.2**
+
+### Ce qui s'est passé
+- CI rouge sur **tous les pushs de la journée depuis 10:11 UTC** (5 runs,
+  d000ebb → 3645c13) : le job govulncheck (« vulnérabilités atteignables »,
+  base officielle vuln.go.dev) a détecté **GO-2026-6617 / CVE-2026-97032**
+  — « HTTP/2 server crash due to HPACK encoder race » dans
+  `net/http/internal/http2` de la **bibliothèque standard go1.27.0**,
+  entrée publiée dans la base ce jour. Aucun lien avec nos changements
+  (pushs docs/workflows) — la base de CVEs a rattrapé notre toolchain.
+- Traces **atteignables dans notre code** (symbole-level) :
+  `notify.TelegramSetWebhook` (http.Client.Do) et
+  `http.Server.ListenAndServe` (main.go) — les chemins HTTP/2 réels du
+  backend. Aucun incident prod observé pendant la fenêtre (API verte en
+  continu), mais le risque de crash HTTP/2 était réel → fix immédiat.
+- Note d'architecture : `deploy-oracle` n'est PAS gated sur la CI
+  (par design, cf. commentaire ci.yml — « une fenêtre de hotfix ne doit
+  pas dépendre de la fraîcheur d'une base de CVE externe ») → la prod
+  n'a jamais été bloquée par la CI rouge.
+
+### Le fix (1 ligne de toolchain, zéro code métier)
+- `backend/go.mod` : `go 1.27.0` → **`go 1.27.2`** (version patchée de la
+  ligne 1.27, cf. vuln DB : fixé en 1.26.9 / 1.27.2). Le binaire prod est
+  construit par le runner (setup-go lit go.mod) → le deploy auto
+  déclenché par ce push a reconstruit binaire + image distroless avec le
+  runtime patché (rollback inchangé : tag `previous`).
+- **Validation locale avant push** (toolchain 1.27.2 installée en
+  sandbox) : gofmt 0 diff, `go vet` OK, `go test ./...` **100 % vert**
+  (dont suite api 52 s), build statique amd64 OK (17,7 Mo),
+  **govulncheck local : 0 vulnérabilité atteignable**.
+- **Preuves en production** : deploy-oracle push (run 37984056956)
+  SUCCESS — « go version go1.27.2 » au build runner, healthcheck OK,
+  API `ok:true` avec sweep post-déploiement ; CI 2677be7 : **SUCCESS**
+  (govulncheck vert, Backend/Frontend/E2E verts) — première CI verte
+  depuis 10:11.
+- Reste 1 vulnérabilité MODULE (non atteignable — symbole jamais appelé)
+  : GO-2026-5932, `golang.org/x/crypto/openpgp` non maintenu
+  (« Fixed in: N/A ») — informationnelle ; à re-scruter si un import
+  openpgp apparaissait un jour.
+
+### Leçon outil (piège sandbox)
+- L'outil d'édition a normalisé tabs→espaces dans go.mod lors du bump
+  (diff 8 lignes au lieu de 1) — fonctionnellement neutre (go.mod reste
+  parsable, vet/tests verts) ; tabs canoniques restaurées au commit docs
+  (via sed). À l'avenir : éditer go.mod via `sed`/`go mod edit`.
+
 ## 2026-10-09 — N°282 — **RÉPONSE EXPLOITANT — LE « HANG » DU 09/10 ÉTAIT UN POWEROFF VOLONTAIRE** (dossier CLÔT, pas de ticket OCI)
 
 ### Réponse reçue

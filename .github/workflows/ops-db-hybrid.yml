@@ -156,7 +156,7 @@ jobs:
           set -euo pipefail
           STAMP="$STAMP"
           rm -f /tmp/dbhybrid.env
-          sudo install -d -m 755 /var/backups/mikcloud/db
+          sudo install -d -o "\$USER" -m 755 /var/backups/mikcloud/db
           set -a; . <(sudo cat /etc/mikcloud/backup.env); set +a
           : "\${DATABASE_URL_SESSION:?backup.env incomplet}"
           DUMP=/var/backups/mikcloud/db/supabase-\$STAMP.dump
@@ -279,7 +279,7 @@ jobs:
             || sudo -u postgres psql -d mikcloud -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements"
           echo "═══ 6. Vérifications ═══"
           sudo -u postgres psql -Atc "SHOW shared_buffers; SHOW archive_mode; SHOW archive_command;" 
-          set -a; sudo . /etc/mikcloud/localpg.env; set +a
+          set -a; . <(sudo cat /etc/mikcloud/localpg.env); set +a
           psql "$LOCALPG_DSN" -Atc "SELECT 'CONNEXION OK — ' || version()" | head -1
           echo "═══ SETUP-PG TERMINÉ ═══"
           REMOTE
@@ -353,12 +353,13 @@ jobs:
           set -euo pipefail
           T0=$(date -u +%FT%TZ)
           echo "═══ CUTOVER démarré à $T0 ═══"
-          set -a; sudo . /etc/mikcloud/localpg.env; set +a
-          set -a; sudo . /etc/mikcloud/backup.env; set +a
+          set -a; . <(sudo cat /etc/mikcloud/localpg.env); set +a
+          set -a; . <(sudo cat /etc/mikcloud/backup.env); set +a
           echo "═══ GARDE 1 : backend sain avant geste ═══"
           curl -fsS -o /dev/null http://127.0.0.1:4000/ || { echo "backend KO avant cutover — abort"; exit 1; }
           pg_isready -h 127.0.0.1 -p 5432 || { echo "PG local pas prêt — abort"; exit 1; }
           echo "═══ GARDE 2 : dump/restore DELTA (backend continue sur Supabase) ═══"
+          sudo install -d -o "$USER" -m 755 /var/backups/mikcloud/db
           STAMP=$(date -u +%Y%m%dT%H%M%SZ)
           DUMP=/var/backups/mikcloud/db/supabase-$STAMP.dump
           pg_dump --schema=public --no-owner --no-privileges -Fc -f "$DUMP" "$DATABASE_URL_SESSION"
@@ -449,7 +450,7 @@ jobs:
           set -a; . <(sudo cat /etc/mikcloud/localpg.env); set +a
           echo "═══ 1. Dump local de sécurité avant retour ═══"
           STAMP=$(date -u +%Y%m%dT%H%M%SZ)
-          sudo install -d -m 755 /var/backups/mikcloud/db
+          sudo install -d -o "$USER" -m 755 /var/backups/mikcloud/db
           pg_dump --schema=public --no-owner --no-privileges -Fc -f /var/backups/mikcloud/db/local-$STAMP.dump "$LOCALPG_DSN" && [ -s /var/backups/mikcloud/db/local-$STAMP.dump ] || { echo "dump sécurité échoué — abort"; exit 1; }
           sudo chmod 644 /var/backups/mikcloud/db/local-$STAMP.dump
           echo "dump local: $(du -h /var/backups/mikcloud/db/local-$STAMP.dump | cut -f1)"

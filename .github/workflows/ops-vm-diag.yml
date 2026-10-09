@@ -1,0 +1,145 @@
+name: ops-vm-diag
+
+# ═══ DIAGNOSTIC OCI DE L'INSTANCE FTECHCI (lecture seule + remise en route) ═══
+#
+# N°275 — créé pendant l'incident du 09/10 ~05:14 UTC : la VM ne répondait
+# plus ni en SSH ni sur 443 (API publique en timeout), 3 échecs SSH
+# consécutifs depuis les runners. Ce workflow interroge l'API OCI depuis le
+# runner (chemin indépendant de la VM) :
+#
+#   1. état de l'instance (RUNNING / STOPPED / …) + shape ;
+#   2. capture du serial console history (dernières lignes du noyau —
+#      panic / OOM / shutdown y sont visibles) ;
+#   3. si STOPPED : action START + attente RUNNING + healthcheck API
+#      publique (la remise en route est explicite et tracée ici).
+#
+# PIÈGE consigné (run 22) : chaque `oci` reçoit </dev/null — le CLI lit/
+# bufférise stdin et dévore les lignes suivantes d'un script `bash -s`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Taper MIK-VM-START pour autoriser l'action START si l'instance est arrêtée"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: ops-vm-diag
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      OCI_USER: ${{ secrets.OCI_CLI_USER }}
+      OCI_TENANCY: ${{ secrets.OCI_CLI_TENANCY }}
+      OCI_FINGERPRINT: ${{ secrets.OCI_CLI_FINGERPRINT }}
+      OCI_REGION: ${{ secrets.OCI_CLI_REGION }}
+      OCI_KEY: ${{ secrets.OCI_API_KEY }}
+      CONFIRM: ${{ inputs.confirm }}
+    steps:
+      - name: OCI CLI + config (pattern chasse N°270-ter)
+        run: |
+          set -euo pipefail
+          for v in OCI_USER OCI_TENANCY OCI_FINGERPRINT OCI_REGION OCI_KEY; do
+            [ -n "${!v}" ] || { echo "❌ secret $v absent"; exit 1; }
+          done
+          python3 -m pip install --quiet oci-cli \
+            || python3 -m pip install --quiet --break-system-packages oci-cli
+          mkdir -p ~/.oci
+          {
+            echo "[DEFAULT]"
+            echo "user=$OCI_USER"
+            echo "fingerprint=$OCI_FINGERPRINT"
+            echo "tenancy=$OCI_TENANCY"
+            echo "region=$OCI_REGION"
+            echo "key_file=$HOME/.oci/oci_api_key.pem"
+          } > ~/.oci/config
+          printf '%s\n' "$OCI_KEY" > ~/.oci/oci_api_key.pem
+          chmod 600 ~/.oci/config ~/.oci/oci_api_key.pem
+          FP_CALC="$(openssl pkey -in ~/.oci/oci_api_key.pem -pubout -outform DER 2>/dev/null | openssl md5 | awk '{print $NF}' | tr -d ':')"
+          FP_REF="$(echo "$OCI_FINGERPRINT" | tr -d ':')"
+          [ "$FP_CALC" = "$FP_REF" ] || { echo "❌ empreinte clé ≠ fingerprint"; exit 1; }
+          echo "auth OCI OK — region $OCI_REGION"
+
+      - name: État des instances de la tenancy
+        run: |
+          set -euo pipefail
+          oci compute instance list --compartment-id "$OCI_TENANCY" </dev/null \
+            | jq -r '.data[] | [.["display-name"], .["lifecycle-state"], .["shape"], .id] | @tsv' \
+            | tee /tmp/instances.tsv
+          echo "---"
+          # l'instance Ftechci (A1) — par shape A1 pour couvrir un rename éventuel
+          grep -P '\tVM\.Standard\.A1\.Flex\t' /tmp/instances.tsv | head -3 > /tmp/a1.tsv
+          [ -s /tmp/a1.tsv ] || { echo "❌ aucune A1 dans la tenancy"; exit 1; }
+          NAME=$(cut -f1 /tmp/a1.tsv | head -1); STATE=$(cut -f2 /tmp/a1.tsv | head -1)
+          IID=$(cut -f4 /tmp/a1.tsv | head -1)
+          echo "INSTANCE=$NAME STATE=$STATE"
+          echo "IID=$IID" >> "$GITHUB_ENV"
+          echo "ISTATE=$STATE" >> "$GITHUB_ENV"
+
+      - name: Serial console history (noyau — lecture)
+        run: |
+          set -euo pipefail
+          CAP=$(oci compute console-history capture --instance-id "$IID" </dev/null \
+            | jq -r '.data.id')
+          echo "capture: $CAP — attente du contenu (60 s)…"
+          sleep 60
+          oci compute console-history get-content --instance-console-history-id "$CAP" \
+            --file /tmp/console.txt </dev/null >/dev/null 2>&1 || true
+          if [ -s /tmp/console.txt ]; then
+            echo "═══ 300 dernières lignes du console history ═══"
+            tail -n 300 /tmp/console.txt || true
+          else
+            echo "⚠ console history vide/indisponible (la capture peut demander plus d'attente)"
+          fi
+
+      - name: Action START si arrêtée (confirm MIK-VM-START)
+        if: ${{ env.ISTATE != 'RUNNING' }}
+        run: |
+          set -euo pipefail
+          echo "état actuel: $ISTATE"
+          if [ "$CONFIRM" != "MIK-VM-START" ]; then
+            echo "⚠ pas de START — relancer avec confirm=MIK-VM-START si souhaité"
+            exit 0
+          fi
+          oci compute instance action --instance-id "$IID" --action START </dev/null \
+            | jq -r '.data["lifecycle-state"]'
+          echo "attente RUNNING…"
+          for i in $(seq 1 20); do
+            sleep 15
+            S=$(oci compute instance get --instance-id "$IID" </dev/null | jq -r '.data["lifecycle-state"]')
+            echo "[$i] $S"
+            [ "$S" = "RUNNING" ] && break
+          done
+          echo "STATE_FINAL=$S" >> "$GITHUB_ENV"
+
+      - name: Healthchecks post-start
+        if: always()
+        run: |
+          set -uo pipefail
+          sleep 20
+          echo "── API publique (depuis le runner) ──"
+          curl -fsS -o /dev/null -m 15 -w "api.mikcloud.ftci.fr HTTP %{http_code}\n" https://api.mikcloud.ftci.fr/ \
+            || echo "❌ API publique KO"
+          curl -fsS -o /dev/null -m 15 -w "mikcloud.ftci.fr HTTP %{http_code}\n" https://mikcloud.ftci.fr \
+            || echo "❌ frontend KO"
+          echo "── SSH ──"
+          if [ -n "${SSH_KEY:-}" ] && [ -n "${VM_HOST:-}" ] && [ -n "${DEPLOY_USER:-}" ]; then
+            printf '%s\n' "$SSH_KEY" > /tmp/oracle_key && chmod 600 /tmp/oracle_key
+            ssh -i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 \
+              "$DEPLOY_USER@$VM_HOST" 'echo "SSH OK — $(hostname) — $(date -u +%FT%TZ)"; uptime' \
+              || echo "❌ SSH injoignable"
+          else
+            echo "(SSH non testé — secrets non exposés à ce step)"
+          fi
+        env:
+          SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+          VM_HOST: ${{ secrets.ORACLE_HOST }}
+          DEPLOY_USER: ${{ secrets.ORACLE_USER }}

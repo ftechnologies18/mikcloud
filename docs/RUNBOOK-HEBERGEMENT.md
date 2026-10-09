@@ -258,3 +258,53 @@ systemd, Caddy, CA Supabase, coffre-fort Neon) et workflow CI/CD
 Render → bascule DNS) pour une coupure ZÉRO. À dérouler quand
 l'exploitant décide de quitter Render — les déclencheurs du §4 restent
 la référence pour le timing.
+
+## §8 — Docker sur Ftechci : terrain multi-services (Phase A, N°279)
+
+> Décision exploitant « Go phase A » (2026-10-09) : la VM est le serveur
+> multi-services de l'entreprise (N°271) — Docker prépare l'isolation des
+> prochains back-ends. Le backend mikcloud (systemd) et PostgreSQL
+> (primaire Tier1) ne sont PAS concernés.
+
+### État posé (workflow `ops-docker`, mode `install` idempotent)
+- **Docker 29.1.3 + Compose 2.40.3** — découverts DÉJÀ PRÉSENTS sur la
+  VM (l'install a été idempotente, zéro conflit) ;
+- **`/etc/docker/daemon.json`** : rotation des logs conteneurs
+  **3 × 10 Mo** (leçon disque N°275 — un log qui creuse = incident) +
+  `live-restore: true` (un restart du daemon ne tue pas les conteneurs) ;
+- **Smoke test validé** : pull arm64, publication `127.0.0.1:4010`,
+  HTTP 200, DNAT iptables OK, egress bridge OK, conteneur jetable purgé.
+
+### Conteneur préexistant (observé, NON touché)
+- `sect-api` (ghcr.io/udevrard7/sect/sect-api) — healthy, publié sur
+  **127.0.0.1:8090**, policy de restart. Déposé par l'exploitant en
+  dehors du canal CI. Le monitor DR (famille n°10) le compte
+  (« docker: actif (N conteneurs) »).
+
+### Conventions pour tout nouveau service (Phase B incluse)
+1. **Publication TOUJOURS sur 127.0.0.1** (`-p 127.0.0.1:P:P`) — Caddy
+   reste l'unique porte 80/443 ; la security list OCI n'expose que
+   22/80/443 mais on ne compte PAS dessus ;
+2. **Config par `--env-file /etc/mikcloud/<service>.env`** (600 root) —
+   jamais de secrets dans l'image ni en argument (`ps`) ;
+3. **Rollback** : garder l'image précédente taguée, swap + restart
+   (~10 s) ;
+4. **Limites cgroups** (`--memory`, `--cpus`) dès qu'un service
+   partage la VM avec PostgreSQL — un service qui fuit ne doit JAMAIS
+   affamer le primaire ;
+5. **NE JAMAIS conteneuriser PostgreSQL** ni les timers/scripts DR —
+   la chaîne WAL/archive_command/timers vit sur l'hôte
+   (cf. docs/DB-HYBRIDE.md).
+
+### Outil d'exploitation
+`ops-docker.yml` (workflow_dispatch) : `install` (idempotent) /
+`status` (lecture seule) / `prune` (**confirm=MIK-DOCKER-PRUNE** —
+JAMAIS `--volumes`, les volumes portent des données de services).
+
+### Phase B (non lancée — décision séparée)
+Dockeriser le backend mikcloud : image distroless du binaire statique
+existent (CGO_ENABLED=0), publication `127.0.0.1:4000` (Caddy et le
+monitor DR inchangés), blindage DSN N°274 transféré tel quel, fallback
+systemd conservé un cycle. À lancer APRÈS éclaircissement du hang du
+09/10 — ou en acceptant explicitement la variable ajoutée à la
+forensique.

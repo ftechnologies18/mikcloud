@@ -5,6 +5,38 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-09 — N°279 — **PHASE A — TERRAIN DOCKER SUR FTECHCI** (multi-services N°271 — backend mikcloud + PostgreSQL intouchés)
+
+### Ce qui a changé en production
+- **Nouveau workflow `ops-docker`** (`install` idempotent / `status`
+  lecture seule / `prune` gardé par `confirm=MIK-DOCKER-PRUNE`) —
+  premier passage VERT dès le run #1.
+- **Découverte** : Docker **29.1.3 + Compose 2.40.3** étaient déjà
+  présents sur la VM — l'install idempotente a confirmé et complété
+  sans conflit (storage overlayfs, cgroup systemd).
+- **`/etc/docker/daemon.json` posé** : rotation des logs conteneurs
+  **3 × 10 Mo** (leçon disque N°275) + `live-restore: true` — un
+  restart du daemon ne tue plus les conteneurs.
+- **Smoke test complet** : pull arm64 (`traefik/whoami`), publication
+  `127.0.0.1:4010` uniquement, HTTP 200, DNAT iptables OK (policy
+  `FORWARD DROP` de l'hôte préservée, chaînes DOCKER insérées),
+  **egress bridge OK** (wget https 200), conteneur jetable purgé.
+- **Monitor DR étendu 9 → 10 familles** : contrôle docker
+  (daemon DOWN / ne répond pas / actif — « non installé » = simple
+  information), posé par `arm-dr` #56.
+- **Conteneur préexistant observé, NON touché** : `sect-api`
+  (ghcr.io/udevrard7/sect, healthy, `127.0.0.1:8090`, restart policy) —
+  déposé par l'exploitant hors canal CI ; compté par le monitor.
+- **Conventions consignées** (RUNBOOK-HEBERGEMENT §8) : publication
+  127.0.0.1 only, `--env-file` 600 root, limites cgroups face à PG,
+  rollback par tag, **NE JAMAIS conteneuriser PostgreSQL/timers DR**.
+- **Preuves** : `ops-docker` #1 install vert (smoke + egress), #2
+  status vert ; `arm-dr` #56 + `health` #57 verts (`fails=0`,
+  API 200/200).
+- **Phase B NON lancée** (décision séparée) : dockeriser le backend
+  mikcloud — à faire après éclaircissement du hang du 09/10 ou en
+  acceptant explicitement la variable ajoutée à la forensique.
+
 ## 2026-10-09 — N°278 — **APPAIRAGE TELEGRAM ARMÉ** (alertes DR délivrables — chat relu par `arm-dr` #53, monitor assaini `printf '%b'`)
 
 ### Ce qui a changé en production

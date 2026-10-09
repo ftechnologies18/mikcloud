@@ -103,11 +103,10 @@ on:
         required: false
         default: ""
         type: string
-
-schedule:
-  # Heartbeat quotidien : mode=health (le resolver ci-dessous traduit un
-  # event schedule sans input en mode health).
-  - cron: "23 4 * * *"
+  schedule:
+    # Heartbeat quotidien : mode=health (le resolver ci-dessous traduit un
+    # event schedule sans input en mode health).
+    - cron: "23 4 * * *"
 
 concurrency:
   group: ops-db-hybrid

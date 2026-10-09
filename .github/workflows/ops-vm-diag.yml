@@ -20,7 +20,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "diag (défaut, lecture seule) | reboot (SOFTRESET — prod down)"
+        description: "diag (défaut, lecture seule) | postmortem (journal du boot figé via SSH) | reboot (SOFTRESET — prod down)"
         required: false
         default: "diag"
         type: string
@@ -115,6 +115,38 @@ jobs:
           else
             echo "⚠ console history vide/indisponible"
           fi
+
+      - name: mode=postmortem — journal du boot figé (-b -1) via SSH (N°280)
+        if: ${{ inputs.action == 'postmortem' }}
+        env:
+          SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+          VM_HOST: ${{ secrets.ORACLE_HOST }}
+          DEPLOY_USER: ${{ secrets.ORACLE_USER }}
+        run: |
+          set -euo pipefail
+          for v in SSH_KEY VM_HOST DEPLOY_USER; do
+            [ -n "${!v}" ] || { echo "❌ secret/env $v absent"; exit 1; }
+          done
+          printf '%s\n' "$SSH_KEY" > /tmp/oracle_key && chmod 600 /tmp/oracle_key
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s <<'REMOTE'
+          set -uo pipefail
+          echo "═══ boots récents (journal persistant) ═══"
+          sudo journalctl --list-boots --no-pager 2>/dev/null | tail -6
+          echo "═══ last -x (reboots / crashs) ═══"
+          last -x reboot shutdown 2>/dev/null | head -8
+          echo "═══ FIN du boot précédent — dernier état vivant (150 dernières lignes) ═══"
+          sudo journalctl -b -1 -n 150 --no-pager 2>/dev/null | tail -150 \
+            || echo "(journal -b -1 indisponible — journald volatil ?)"
+          echo "═══ signaux noyau du boot précédent (oom/panic/hung/io/segv) ═══"
+          sudo journalctl -b -1 --no-pager 2>/dev/null \
+            | grep -iE 'out of memory|oom-kill|kernel panic|hung_task|blocked for more|I/O error|ext4.*error|segfault|killed process|watchdog' \
+            | tail -40 \
+            || echo "(aucun signal noyau retrouvé sur le boot précédent)"
+          echo "═══ état actuel ═══"
+          uptime
+          systemctl --failed --no-pager --no-legend || true
+          REMOTE
 
       - name: Action START si arrêtée (confirm MIK-VM-START)
         if: ${{ env.ISTATE != 'RUNNING' }}

@@ -704,7 +704,7 @@ jobs:
           if sudo oci --config-file /etc/oci/config os bucket get --namespace "$NS" --name mikcloud-wal >/dev/null 2>&1; then
             echo "bucket mikcloud-wal: existe déjà"
           else
-            BOUT=$(sudo oci --config-file /etc/oci/config os bucket create --namespace "$NS" --name mikcloud-wal 2>&1) \
+            BOUT=$(sudo oci --config-file /etc/oci/config os bucket create --namespace "$NS" --compartment-id "$OCI_TENANCY" --name mikcloud-wal 2>&1) \
               && echo "bucket mikcloud-wal: CRÉÉ" || { echo "❌ création bucket échouée:"; echo "$BOUT" | head -15; exit 1; }
           fi
           cat > /tmp/olc.json <<OLC

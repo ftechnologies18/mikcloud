@@ -1028,6 +1028,15 @@ jobs:
               else addf "docker: actif mais NE RÉPOND PAS (ps timeout)"; fi
             else addf "docker: daemon DOWN"; fi
           else addo "docker: non installé"; fi
+          # 11. wireguard (N°284 — accès privé/full-tunnel ; absent =
+          # information — confort admin, pas critique DR ; installé =
+          # wg0 DOWN est une vraie alerte, l'exploitant compte dessus)
+          if command -v wg >/dev/null 2>&1 && [ -f /etc/wireguard/wg0.conf ]; then
+            if ip link show wg0 >/dev/null 2>&1 && systemctl is-active -q wg-quick@wg0; then
+              NWG=$(wg show wg0 peers 2>/dev/null | wc -l)
+              addo "wireguard: UP (${NWG} peers)"
+            else addf "wireguard: wg0 DOWN (wg-quick@wg0)"; fi
+          else addo "wireguard: non installé"; fi
           send(){
             [ -n "$TOKEN" ] && [ -n "$CHATS" ] || return 0
             for c in $CHATS; do

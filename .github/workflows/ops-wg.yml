@@ -1,0 +1,355 @@
+name: ops-wg
+
+# ═══ WIREGUARD SUR FTECHCI — FULL-TUNNEL + ACCÈS SERVICES (N°284) ═══
+#
+# Décision exploitant « Go — full tunnel Wi-Fi + accès services, complet
+# et évolutif, bonnes pratiques, réseaux Always Free » (2026-10-09).
+#
+# VOIE A — wg-quick HÔTE PUR (aucune UI tierce, aucun conteneur
+# NET_ADMIN) : les IP sources des clients (10.8.0.0/24) sont préservées
+# jusqu'aux services de l'hôte → l'accès services se règle avec UNE
+# règle INPUT scoping wg0, et les services internes futurs n'ont
+# JAMAIS besoin d'un port public.
+#
+# MODÈLE DE SÉCURITÉ :
+#   - le tunnel UDP 51820 est « crypto-silencieux » (aucune réponse aux
+#     paquets non authentifiés) — seule surface publique ajoutée ;
+#   - les clés privées (serveur + clients) vivent UNIQUEMENT dans des
+#     fichiers 600 root (/etc/wireguard, /opt/wireguard/peers) — JAMAIS
+#     dans un log (ce dépôt est PUBLIC) ; la conf client se récupère par
+#     SSH (sudo cat / sudo qrencode) ;
+#   - PostgreSQL reste sur 127.0.0.1 (armure N°274 INTACTE) — pour
+#     toucher PG : SSH (direct ou à travers le tunnel), jamais
+#     d'écoute PG sur le VPN ;
+#   - PresharedKey par peer (renfort symétrique) ;
+#   - full-tunnel = AllowedIPs 0.0.0.0/0, ::/0 côté clients — l'IPv6
+#     sans route upstream est BLACKHOLÉ dans le tunnel (zéro fuite) ;
+#   - OCI Always Free : règle Security List (gratuit), IP publique
+#     RÉSERVÉE (gratuite — à faire côté console, cf. gestes), egress
+#     10 To/mo largement suffisant.
+#
+# Modes :
+#   install     (idempotent) — wireguard-tools + qrencode, sysctl
+#               ip_forward persisté, génération wg0.conf si absente
+#               (PostUp/PostDown iptables GARDES -C||-I — cohabite avec
+#               Docker), /opt/wireguard/wg-peer.sh (add/remove/qr/reip/
+#               list), smoke tests + coexistence backend/Caddy ;
+#   status      (lecture seule) — état, peers, handshakes, dérive IP
+#               publique (endpoint obsolète), règles, coexistence ;
+#   peer-add    (input peer_name) — nouveau peer + conf client écrite
+#               600 (clés JAMAIS dans les logs) ;
+#   peer-remove (input peer_name) — révocation (conf client supprimée) ;
+#   prune       (confirm=MIK-WG-PRUNE) — DÉMONTAGE COMPLET (détruit les
+#               clés : tous les clients devront être recréés).
+#
+# GESTES EXPLOITANT (console OCI, hors canal CI) :
+#   1. Security List : Ingress UDP 51820 src 0.0.0.0/0 (ou CIDR restreint) ;
+#   2. (fortement conseillé) RÉSERVER l'IP publique — une IP éphémère
+#      change au stop/start ; si l'IP change plus tard :
+#      sudo /opt/wireguard/wg-peer.sh reip <nouvelle-ip> ;
+#   3. premier peer : dispatch peer-add puis, en SSH :
+#      sudo qrencode -t ansiutf8 < /opt/wireguard/peers/<nom>.conf
+#      → scan par l'app WireGuard (full-tunnel actif).
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "install | status | peer-add | peer-remove | prune"
+        required: true
+        type: string
+      peer_name:
+        description: "Nom du peer (peer-add/peer-remove) : [a-z0-9-], 1-32"
+        required: false
+        default: ""
+        type: string
+      confirm:
+        description: "Taper MIK-WG-PRUNE pour autoriser mode=prune"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: ops-wg
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  wg-ops:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+      VM_HOST: ${{ secrets.ORACLE_HOST }}
+      DEPLOY_USER: ${{ secrets.ORACLE_USER }}
+      MODE: ${{ inputs.mode }}
+      PEER_NAME: ${{ inputs.peer_name }}
+      CONFIRM: ${{ inputs.confirm }}
+    steps:
+      - name: Clé SSH du coffre + garde-fous inputs
+        run: |
+          set -euo pipefail
+          for v in SSH_KEY VM_HOST DEPLOY_USER; do
+            [ -n "${!v}" ] || { echo "❌ secret/env $v absent"; exit 1; }
+          done
+          printf '%s\n' "$SSH_KEY" > /tmp/oracle_key
+          chmod 600 /tmp/oracle_key
+          RESOLVED_MODE="$MODE"
+          [ -n "$RESOLVED_MODE" ] || RESOLVED_MODE=status
+          case "$RESOLVED_MODE" in
+            install|status|peer-add|peer-remove|prune) ;;
+            *) echo "❌ mode inconnu: $RESOLVED_MODE"; exit 1 ;;
+          esac
+          if [ "$RESOLVED_MODE" = "peer-add" ] || [ "$RESOLVED_MODE" = "peer-remove" ]; then
+            echo "$PEER_NAME" | grep -qE '^[a-z0-9][a-z0-9-]{0,31}$' \
+              || { echo "❌ peer_name invalide (attendu [a-z0-9-], 1-32) : '$PEER_NAME'"; exit 1; }
+          fi
+          if [ "$RESOLVED_MODE" = "prune" ] && [ "$CONFIRM" != "MIK-WG-PRUNE" ]; then
+            echo "❌ REFUS — mode prune exige confirm=MIK-WG-PRUNE (DÉMONTAGE COMPLET, clés détruites)"; exit 1
+          fi
+          echo "RESOLVED_MODE=$RESOLVED_MODE" >> "$GITHUB_ENV"
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" 'echo "SSH OK — $(hostname) — $(date -u +%FT%TZ)"'
+
+      - name: mode=install — wg-quick hôte + peer tooling + smoke
+        if: ${{ env.RESOLVED_MODE == 'install' }}
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          echo "═══ 0. État actuel ═══"
+          command -v wg >/dev/null 2>&1 && wg --version || echo "wireguard-tools absent → installation"
+          systemctl is-active wg-quick@wg0 >/dev/null 2>&1 && echo "wg-quick@wg0 : déjà actif" || true
+          echo "═══ 1. Paquets (idempotent) ═══"
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update -qq >/dev/null 2>&1 || true
+          sudo apt-get install -y -qq wireguard-tools qrencode 2>&1 | tail -1 || true
+          wg --version
+          echo "═══ 2. Interface de sortie + IP publique ═══"
+          DEV=$(ip route show default 2>/dev/null | awk '{print $5; exit}')
+          [ -n "$DEV" ] || { echo "❌ pas de route par défaut"; exit 1; }
+          echo "egress dev : $DEV"
+          PUBIP=$(curl -fsS -m 8 -H 'Authorization: Bearer Oracle' http://169.254.169.254/opc/v2/vnics/ 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d[0].get("publicIp") or "")' 2>/dev/null || true)
+          [ -n "$PUBIP" ] || PUBIP=$(curl -fsS -m 8 https://ifconfig.me 2>/dev/null || true)
+          [ -n "$PUBIP" ] || { echo "❌ IP publique introuvable (metadata + ifconfig.me KO)"; exit 1; }
+          echo "IP publique actuelle : $PUBIP"
+          echo "═══ 3. sysctl ip_forward (persisté) ═══"
+          printf '# N°284 — WireGuard full-tunnel (routage 10.8.0.0/24)\nnet.ipv4.ip_forward = 1\n' | sudo tee /etc/sysctl.d/99-mik-wireguard.conf >/dev/null
+          sudo sysctl --system >/dev/null 2>&1 || true
+          [ "$(sysctl -n net.ipv4.ip_forward)" = "1" ] || { echo "❌ ip_forward != 1"; exit 1; }
+          echo "ip_forward = 1 OK"
+          echo "═══ 4. wg0.conf (généré UNIQUEMENT si absent) ═══"
+          if sudo test -f /etc/wireguard/wg0.conf; then
+            echo "wg0.conf : déjà présent — rien de régénéré (idempotent)"
+          else
+            PRIV=$(umask 077; wg genkey)
+            PUB=$(printf '%s' "$PRIV" | wg pubkey)
+            sudo mkdir -p /etc/wireguard
+            sudo tee /etc/wireguard/wg0.conf >/dev/null <<WGCONF
+          [Interface]
+          Address = 10.8.0.1/24, fd00:8::1/64
+          ListenPort = 51820
+          PrivateKey = $PRIV
+          # règles GARDES (-C||-I/-A) : idempotentes, cohabitation Docker ;
+          # INPUT 1 / FORWARD 1 = AVANT le REJECT final des règles OCI
+          PostUp = iptables -C INPUT -i %i -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -i %i -j ACCEPT; iptables -C FORWARD -i %i -j ACCEPT 2>/dev/null || iptables -I FORWARD 1 -i %i -j ACCEPT; iptables -C FORWARD -o %i -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || iptables -I FORWARD 2 -o %i -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT; iptables -t nat -C POSTROUTING -s 10.8.0.0/24 -o $DEV -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o $DEV -j MASQUERADE
+          PostDown = iptables -D INPUT -i %i -j ACCEPT 2>/dev/null; iptables -D FORWARD -i %i -j ACCEPT 2>/dev/null; iptables -D FORWARD -o %i -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null; iptables -t nat -D POSTROUTING -s 10.8.0.0/24 -o $DEV -j MASQUERADE 2>/dev/null
+          WGCONF
+            sudo chmod 600 /etc/wireguard/wg0.conf
+            echo "wg0.conf : GÉNÉRÉ (clé serveur neuve, fingerprint $(printf '%s' "$PUB" | sha256sum | cut -c1-12)…)"
+          fi
+          echo "═══ 5. /opt/wireguard — endpoint + tooling peers ═══"
+          sudo mkdir -p /opt/wireguard/peers
+          sudo chmod 700 /opt/wireguard /opt/wireguard/peers
+          if [ ! -s /opt/wireguard/endpoint ]; then
+            echo "$PUBIP" | sudo tee /opt/wireguard/endpoint >/dev/null
+            echo "endpoint : $PUBIP enregistré"
+          else
+            echo "endpoint enregistré : $(sudo cat /opt/wireguard/endpoint)"
+          fi
+          sudo tee /opt/wireguard/wg-peer.sh >/dev/null <<'PEERSH'
+          #!/usr/bin/env bash
+          # wg-peer.sh — cycle de vie des peers WireGuard (N°284) — ROOT only
+          # usage: wg-peer.sh add <nom> | remove <nom> | qr <nom> | reip <ip> | list
+          # Discipline : les clés privées ne sortent JAMAIS d'ici (conf = 600 root).
+          set -euo pipefail
+          WG_CONF=/etc/wireguard/wg0.conf
+          PEERS_DIR=/opt/wireguard/peers
+          EP_FILE=/opt/wireguard/endpoint
+          [ "$(id -u)" = "0" ] || { echo "root requis"; exit 1; }
+          [ -f "$WG_CONF" ] || { echo "wg0.conf absent — lancer mode=install d'abord"; exit 1; }
+          cmd="${1:-}"; name="${2:-}"
+          usage(){ echo "usage: wg-peer.sh add <nom> | remove <nom> | qr <nom> | reip <ip> | list"; exit 1; }
+          name2pub(){ awk -v n="$1" 'BEGIN{RS=""} index($0,"# peer: "n"\n")==1{c=split($0,L,"\n"); for(i=1;i<=c;i++) if(L[i]~/^PublicKey = /){sub("PublicKey = ","",L[i]);print L[i]}}' "$WG_CONF"; }
+          apply(){ wg syncconf wg0 <(wg-quick strip wg0); }
+          case "$cmd" in
+            add)
+              [ -n "$name" ] || usage
+              echo "$name" | grep -qE '^[a-z0-9][a-z0-9-]{0,31}$' || { echo "❌ nom invalide"; exit 1; }
+              [ -z "$(name2pub "$name")" ] || { echo "❌ peer '$name' existe déjà"; exit 1; }
+              USED=$(grep -oE '10\.8\.0\.[0-9]+' "$WG_CONF" | awk -F. '{print $4}' | sort -un)
+              N=2; while echo "$USED" | grep -qx "$N"; do N=$((N+1)); done
+              [ "$N" -le 254 ] || { echo "❌ pool 10.8.0.0/24 épuisé"; exit 1; }
+              EP=$(cat "$EP_FILE")
+              SPUB=$(awk '/^PrivateKey/{print $3; exit}' "$WG_CONF" | wg pubkey)
+              PRIV=$(umask 077; wg genkey)
+              PUB=$(printf '%s' "$PRIV" | wg pubkey)
+              PSK=$(umask 077; wg genpsk)
+              printf '\n# peer: %s\n[Peer]\nPublicKey = %s\nPresharedKey = %s\nAllowedIPs = 10.8.0.%s/32, fd00:8::%s/128\n' "$name" "$PUB" "$PSK" "$N" "$N" >> "$WG_CONF"
+              apply
+              mkdir -p "$PEERS_DIR"
+              cat > "$PEERS_DIR/${name}.conf" <<CLIENTCONF
+          [Interface]
+          PrivateKey = ${PRIV}
+          Address = 10.8.0.${N}/32, fd00:8::${N}/128
+          DNS = 1.1.1.1, 8.8.8.8
+          MTU = 1420
+
+          [Peer]
+          PublicKey = ${SPUB}
+          PresharedKey = ${PSK}
+          Endpoint = ${EP}:51820
+          AllowedIPs = 0.0.0.0/0, ::/0
+          PersistentKeepalive = 25
+          CLIENTCONF
+              chmod 600 "$PEERS_DIR/${name}.conf"
+              echo "✅ peer '$name' ajouté — IP 10.8.0.$N — fingerprint $(printf '%s' "$PUB" | sha256sum | cut -c1-12)…"
+              echo "   conf client : $PEERS_DIR/${name}.conf (600 root — SECRET, ne jamais coller dans un log)"
+              echo "   QR (SSH interactif) : sudo qrencode -t ansiutf8 < $PEERS_DIR/${name}.conf"
+              ;;
+            remove)
+              [ -n "$name" ] || usage
+              [ -n "$(name2pub "$name")" ] || { echo "❌ peer '$name' introuvable"; exit 1; }
+              BEFORE=$(grep -c '^\[Peer\]' "$WG_CONF")
+              awk -v m="# peer: ${name}" 'BEGIN{RS="";ORS=""} index($0,m"\n")!=1{if(out!="")out=out"\n\n";out=out$0} END{print out"\n"}' "$WG_CONF" > /tmp/wg0.conf.new
+              AFTER=$(grep -c '^\[Peer\]' /tmp/wg0.conf.new || true)
+              [ "$AFTER" -lt "$BEFORE" ] || { echo "❌ retrait raté"; rm -f /tmp/wg0.conf.new; exit 1; }
+              install -m 600 /tmp/wg0.conf.new "$WG_CONF"; rm -f /tmp/wg0.conf.new
+              apply
+              rm -f "$PEERS_DIR/${name}.conf"
+              echo "✅ peer '$name' révoqué (bloc + conf client supprimés, tunnel des autres peers intact)"
+              ;;
+            qr)
+              [ -n "$name" ] || usage
+              [ -f "$PEERS_DIR/${name}.conf" ] || { echo "❌ conf inexistante"; exit 1; }
+              qrencode -t ansiutf8 < "$PEERS_DIR/${name}.conf"
+              ;;
+            reip)
+              NEWIP="${2:-}"
+              echo "$NEWIP" | grep -qE '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' || { echo "❌ IP invalide"; exit 1; }
+              echo "$NEWIP" > "$EP_FILE"
+              for f in "$PEERS_DIR"/*.conf; do [ -f "$f" ] && sed -i "s/^Endpoint = .*/Endpoint = ${NEWIP}:51820/" "$f"; done
+              echo "✅ endpoint -> $NEWIP:51820 (conf clients mises à jour, clés conservées)"
+              ;;
+            list)
+              echo "nom | IP tunnel | dernier handshake | reçu/envoyé"
+              awk 'BEGIN{RS=""} /^# peer: /{c=split($0,L,"\n"); n=L[1]; sub("# peer: ","",n); ip=""; k=""; for(i=1;i<=c;i++){if(L[i]~/^AllowedIPs = /){ip=L[i];sub("AllowedIPs = ","",ip)}; if(L[i]~/^PublicKey = /){k=L[i];sub("PublicKey = ","",k)}} print k"|"n"|"ip}' "$WG_CONF" > /tmp/wgmap.$$
+              while IFS='|' read -r KEY NM IP; do
+                HS=$(wg show wg0 latest-handshakes | awk -v k="$KEY" '$1==k{print $2}')
+                TR=$(wg show wg0 transfer | awk -v k="$KEY" '$1==k{print $2"/"$3}')
+                [ -n "$TR" ] || TR="—"
+                AGE="jamais"
+                if [ -n "${HS:-}" ] && [ "$HS" != "0" ]; then AGE="$(( $(date +%s) - HS ))s"; fi
+                echo "$NM | $IP | $AGE | $TR"
+              done < /tmp/wgmap.$$
+              rm -f /tmp/wgmap.$$
+              ;;
+            *) usage ;;
+          esac
+          PEERSH
+          sudo chmod 700 /opt/wireguard/wg-peer.sh
+          echo "wg-peer.sh : POSÉ (add/remove/qr/reip/list)"
+          echo "═══ 6. Activation tunnel ═══"
+          sudo systemctl enable --now wg-quick@wg0 >/dev/null 2>&1 || true
+          sudo systemctl is-active wg-quick@wg0 || { echo "❌ wg-quick@wg0 inactif"; sudo journalctl -u wg-quick@wg0 --no-pager -n 20; exit 1; }
+          sudo wg show wg0 | grep -E 'interface|listening port|public key' | sed 's/public key.*/public key (fingerprint caché)/'
+          echo "═══ 7. Smoke tests ═══"
+          if ip link show wg0 >/dev/null 2>&1; then echo "✅ wg0 UP"; else echo "❌ wg0 absent"; exit 1; fi
+          if sudo ss -ulnp | grep -q ':51820'; then echo "✅ UDP 51820 en écoute"; else echo "❌ UDP 51820 PAS en écoute"; exit 1; fi
+          if sudo iptables -C INPUT -i wg0 -j ACCEPT 2>/dev/null; then echo "✅ INPUT wg0 posé"; else echo "❌ INPUT wg0 absent"; exit 1; fi
+          if sudo iptables -C FORWARD -i wg0 -j ACCEPT 2>/dev/null; then echo "✅ FORWARD wg0 posé"; else echo "❌ FORWARD wg0 absent"; exit 1; fi
+          if sudo iptables -t nat -C POSTROUTING -s 10.8.0.0/24 -o "$DEV" -j MASQUERADE 2>/dev/null; then echo "✅ MASQUERADE posé"; else echo "❌ MASQUERADE absent"; exit 1; fi
+          if [ "$(sysctl -n net.ipv4.ip_forward)" = "1" ]; then echo "✅ ip_forward=1"; else echo "❌ ip_forward!=1"; exit 1; fi
+          echo "═══ 8. Coexistence backend/Caddy (rien de cassé) ═══"
+          if curl -fsS -m 10 http://127.0.0.1:4000/ 2>/dev/null | grep -q '"ok":true'; then
+            echo "✅ backend mikcloud : ok:true (docker, 127.0.0.1:4000)"
+          else
+            echo "⚠ backend mikcloud non répondu à l'instant (hors périmètre WG — vérifier si persistant)"
+          fi
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' -m 10 --resolve api.mikcloud.ftci.fr:443:127.0.0.1 https://api.mikcloud.ftci.fr/ || true)
+          if [ "${CODE:-}" = "200" ]; then echo "✅ Caddy 443 local : 200"; else echo "⚠ Caddy 443 local : code=${CODE:-?} (hors périmètre WG — vérifier si persistant)"; fi
+          echo "═══ INSTALL TERMINÉ — WireGuard hôte prêt (N°284) ═══"
+          echo "GESTES EXPLOITANT RESTANTS :"
+          echo "  1. Console OCI → Security List : Ingress UDP 51820 (src 0.0.0.0/0 ou CIDR restreint)"
+          echo "  2. Console OCI → Réserver l'IP publique ($PUBIP) — sinon reip après tout stop/start"
+          echo "  3. dispatch peer-add <nom> puis SSH : sudo qrencode -t ansiutf8 < /opt/wireguard/peers/<nom>.conf"
+          REMOTE
+
+      - name: mode=status — lecture seule + dérives
+        if: ${{ env.RESOLVED_MODE == 'status' }}
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s <<'REMOTE'
+          set -uo pipefail
+          if ! command -v wg >/dev/null 2>&1 || ! sudo test -f /etc/wireguard/wg0.conf; then
+            echo "wireguard : NON INSTALLÉ (lancer mode=install)"; exit 0
+          fi
+          echo "service   : $(systemctl is-active wg-quick@wg0) ($(systemctl is-enabled wg-quick@wg0 2>/dev/null || echo inconnu))"
+          echo "--- interface / peers ---"
+          sudo wg show wg0 2>/dev/null | grep -vE 'private key' | sed 's/public key: .*/public key: (caché)/' || true
+          echo "--- peers (tableau) ---"
+          sudo /opt/wireguard/wg-peer.sh list 2>/dev/null || true
+          echo "--- confs clients présentes ---"
+          sudo ls -la /opt/wireguard/peers/ 2>/dev/null | tail -n +2 || true
+          echo "--- dérive IP publique (endpoint) ---"
+          EP=$(sudo cat /opt/wireguard/endpoint 2>/dev/null || echo "?")
+          CUR=$(curl -fsS -m 8 -H 'Authorization: Bearer Oracle' http://169.254.169.254/opc/v2/vnics/ 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d[0].get("publicIp") or "")' 2>/dev/null || echo "?")
+          echo "endpoint enregistré : $EP — IP actuelle : $CUR"
+          [ "$EP" = "$CUR" ] && echo "✅ pas de dérive" || echo "⚠ DÉRIVE — IP a changé : sudo /opt/wireguard/wg-peer.sh reip $CUR (+ réserver l'IP en console !)"
+          echo "--- posture réseau ---"
+          echo "ip_forward : $(sysctl -n net.ipv4.ip_forward)"
+          sudo iptables -C INPUT -i wg0 -j ACCEPT 2>/dev/null && echo "INPUT wg0 : posé" || echo "⚠ INPUT wg0 ABSENT (tunnel down/up le repose)"
+          sudo iptables -t nat -C POSTROUTING -s 10.8.0.0/24 -o "$(ip route show default | awk '{print $5; exit}')" -j MASQUERADE 2>/dev/null && echo "MASQUERADE : posé" || echo "⚠ MASQUERADE ABSENT"
+          echo "--- coexistence ---"
+          curl -fsS -m 10 http://127.0.0.1:4000/ 2>/dev/null | grep -q '"ok":true' && echo "backend : ok:true" || echo "⚠ backend KO"
+          REMOTE
+
+      - name: mode=peer-add — nouveau peer (clés jamais dans les logs)
+        if: ${{ env.RESOLVED_MODE == 'peer-add' }}
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" "sudo /opt/wireguard/wg-peer.sh add '$PEER_NAME'"
+
+      - name: mode=peer-remove — révocation
+        if: ${{ env.RESOLVED_MODE == 'peer-remove' }}
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" "sudo /opt/wireguard/wg-peer.sh remove '$PEER_NAME'"
+
+      - name: mode=prune — DÉMONTAGE COMPLET (gardé)
+        if: ${{ env.RESOLVED_MODE == 'prune' }}
+        run: |
+          set -euo pipefail
+          echo "⚠ Démontage complet — les clés serveur/clients sont DÉTRUITES, tous les peers devront être recréés."
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          sudo systemctl disable --now wg-quick@wg0 2>/dev/null || true
+          DEV=$(ip route show default 2>/dev/null | awk '{print $5; exit}')
+          sudo iptables -D INPUT -i wg0 -j ACCEPT 2>/dev/null || true
+          sudo iptables -D FORWARD -i wg0 -j ACCEPT 2>/dev/null || true
+          sudo iptables -D FORWARD -o wg0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
+          [ -n "$DEV" ] && sudo iptables -t nat -D POSTROUTING -s 10.8.0.0/24 -o "$DEV" -j MASQUERADE 2>/dev/null || true
+          printf '# N°284 — démontage WireGuard\nnet.ipv4.ip_forward = 0\n' | sudo tee /etc/sysctl.d/99-mik-wireguard.conf >/dev/null
+          sudo sysctl --system >/dev/null 2>&1 || true
+          sudo rm -f /etc/wireguard/wg0.conf
+          sudo rm -rf /opt/wireguard
+          echo "✅ WireGuard démonté (wg0.conf + peers + règles + sysctl supprimés)"
+          curl -fsS -m 10 http://127.0.0.1:4000/ | grep -q '"ok":true' && echo "✅ backend intacts : ok:true"
+          REMOTE

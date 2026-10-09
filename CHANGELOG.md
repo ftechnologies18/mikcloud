@@ -5,6 +5,39 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-09 — N°284 — **WIREGUARD SUR FTECHCI — FULL-TUNNEL + ACCÈS SERVICES** (voie A hôte-native, premier install vert)
+
+### Ce qui a changé
+- **Nouveau workflow `ops-wg`** (install idempotent / status / peer-add /
+  peer-remove / prune gardé `MIK-WG-PRUNE`) — **wg-quick hôte pur** :
+  aucune UI tierce, aucun conteneur NET_ADMIN, IP sources des clients
+  préservées jusqu'aux services de l'hôte ;
+- **Install #1 vert (run 38000922564)** : `wg0` UP (`10.8.0.1/24` +
+  `fd00:8::1/64`, UDP 51820), iptables GARDES posés (INPUT 1 / FORWARD
+  1-2 `wg0` + MASQUERADE `10.8.0.0/24` → **`enp0s6`** résolu
+  dynamiquement — un `eth0` codé en dur du guide générique aurait posé
+  un MASQUERADE mort), sysctl `ip_forward=1` persisté,
+  `/opt/wireguard/wg-peer.sh` posé (add/remove/qr/reip/list) ;
+- **Smoke : coexistence prouvée** — backend mikcloud `ok:true` (docker,
+  127.0.0.1:4000) + Caddy 443 local 200 pendant toute l'install ;
+- **Monitor DR famille 11** (wireguard UP/DOWN/non installé) posé par
+  arm-dr ; health `fails=0 state=ok` ;
+- **Sécurité** : PresharedKey par peer, clés 600 root JAMAIS dans les
+  logs (dépôt public — confs récupérées par SSH + QR terminal),
+  PostgreSQL inchangé (127.0.0.1, armure N°274), full-tunnel clients
+  `0.0.0.0/0, ::/0` (IPv6 blackholé dans le tunnel = zéro fuite) ;
+- **Always Free** : règle Security List UDP 51820 + IP publique
+  réservée = gratuits ; egress 10 To/mo largement suffisant ;
+- **Reste à l'exploitant** (console OCI + téléphone) : Security List
+  UDP 51820, réserver l'IP, premier peer via QR — cf. RUNBOOK §9.
+
+### Pourquoi la voie A (wg-quick hôte) et pas WG-Easy
+- Zéro surface de plus (pas de web UI à patcher, pas de conteneur
+  NET_ADMIN), sources IP réelles = UNE règle INPUT suffit pour l'accès
+  services, cycle de vie des peers scripté dans notre discipline CI
+  (dispatch + SSH), cohérent avec « NE JAMAIS conteneuriser » la
+  plomberie réseau du primaire DR.
+
 ## 2026-10-09 — N°283 — **CI REDEVIENT VERTE : GO-2026-6617 (HTTP/2 stdlib go1.27.0) — toolchain 1.27.0 → 1.27.2**
 
 ### Ce qui s'est passé

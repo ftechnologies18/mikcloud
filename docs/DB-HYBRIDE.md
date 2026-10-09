@@ -161,8 +161,8 @@ N°277 vieillissent ≤ 21 j puis partent au lifecycle).
    rétention `web_vitals` 90 j + VACUUM, base backup PITR 7,4 Mo/j ;
 2. **WAL → OCI Object Storage** ✓ — bucket `mikcloud-wal`, upload */5 min,
    archive_command gzip (−50× disque), prune locale 48 h, garde 3 dumps ;
-3. **Monitoring Telegram** ✓ — `mikcloud-monitor.timer` */15 min, 10
-   familles de contrôles (docker ajouté N°279), anti-spam 4 h, heartbeat 06:00 UTC — chat d'alerte
+3. **Monitoring Telegram** ✓ — `mikcloud-monitor.timer` */15 min, 11
+   familles de contrôles (docker N°279, wireguard N°284), anti-spam 4 h, heartbeat 06:00 UTC — chat d'alerte
    **APPAIRÉ par l'exploitant** (console admin, confirmé 09/10) et relu
    par `arm-dr` #53 : chat `7026277370` posé dans
    `/etc/mikcloud/monitor.env` (règle : plus ancien compte

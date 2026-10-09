@@ -340,3 +340,71 @@ JAMAIS `--volumes`, les volumes portent des données de services).
   rattrapage = `ops-vm-diag` (START/RESET + capture console PATIENTE).
 - Angle mort assumé : le monitor Telegram vit sur la VM — un guest
   éteint ne peut pas alerter lui-même. D'où la règle ci-dessus.
+
+## §9 — WireGuard sur Ftechci : accès privé + full-tunnel (N°284, voie A hôte-native)
+
+> Décision exploitant « Go — full tunnel Wi-Fi + accès services, complet
+> et évolutif, bonnes pratiques, réseaux Always Free » (2026-10-09).
+> **Voie A retenue : wg-quick hôte pur** — aucune UI tierce, aucun
+> conteneur NET_ADMIN ; les IP sources des clients (10.8.0.0/24)
+> arrivent RÉELLES sur les services de l'hôte → l'accès services se
+> règle d'une seule règle INPUT scoping `wg0`, et les services internes
+> futurs n'ont jamais besoin d'un port public.
+
+### Architecture posée (premier install vert, run 38000922564)
+- **`wg-quick@wg0`** : `10.8.0.1/24` (+ ULA `fd00:8::1/64`), UDP 51820,
+  clé serveur sous `/etc/wireguard/` (700/600, fingerprint `fd9ef476471a…`) ;
+- **PostUp/PostDown iptables GARDES** (`-C || -I/-A`) : INPUT 1 + FORWARD
+  1/2 `wg0`, MASQUERADE `10.8.0.0/24` → interface de sortie réelle
+  **`enp0s6`** (résolue à l'install — PAS `eth0` : un guide générique
+  aurait posé un MASQUERADE mort) ; cohabite avec les chaînes Docker ;
+- **sysctl `net.ipv4.ip_forward=1`** persisté
+  `/etc/sysctl.d/99-mik-wireguard.conf` ;
+- **`/opt/wireguard/`** (700 root) : `endpoint` (IP publique
+  enregistrée), `peers/` (confs clients 600), `wg-peer.sh`
+  (add/remove/qr/reip/list) ;
+- **PresharedKey par peer** (renfort symétrique) +
+  `PersistentKeepalive 25` (clients derrière NAT opérateur) ;
+- **Full-tunnel clients** : `AllowedIPs = 0.0.0.0/0, ::/0`, DNS 1.1.1.1,
+  MTU 1420 — l'IPv6 sans route upstream est **blackholé dans le tunnel**
+  (zéro fuite ; si des sites v6-only manquent un jour : activer l'IPv6
+  du VCN = geste console séparé).
+
+### Modèle de sécurité (les 5 règles)
+1. **Clés jamais dans les logs** (dépôt PUBLIC) : confs clients 600
+   root, récupérées par SSH (`sudo cat` ou `sudo qrencode -t ansiutf8
+   < /opt/wireguard/peers/<nom>.conf`) ;
+2. **PostgreSQL reste sur 127.0.0.1** (armure N°274 INTACTE) — le VPN
+   n'atteint que ce qui écoute sur wg0/0.0.0.0 ; pour PG : SSH (direct
+   ou à travers le tunnel), jamais d'écoute PG sur le VPN ;
+3. **Le tunnel est crypto-silencieux** (aucune réponse aux paquets non
+   authentifiés) — c'est la seule surface publique ajoutée ;
+4. **Caddy reste l'unique porte 80/443** — les futurs services internes
+   = bind wg0/0.0.0.0 sur port NON public (protégés par l'absence de
+   Security List + la règle INPUT wg0) ;
+5. **C'est le primaire DR** — tout geste est réversible : `prune`
+   (gardé `MIK-WG-PRUNE`) démonte tout (⚠ détruit les clés : tous les
+   clients à recréer ensuite).
+
+### Cycle de vie des peers (évolutif, zéro interruption)
+- **Ajout** : dispatch `ops-wg` `mode=peer-add` `peer_name=telephone`
+  (nom [a-z0-9-], 1-32) → conf écrite → en SSH : `sudo qrencode -t
+  ansiutf8 < /opt/wireguard/peers/telephone.conf` → scan par l'app
+  WireGuard (iOS/Android/macOS/Windows) → full-tunnel actif ;
+- **Listing/état** : `mode=status` (peers, handshakes, transferts,
+  dérive IP publique, posture iptables/sysctl, coexistence backend) ;
+- **Révocation** : `mode=peer-remove` (bloc + conf supprimés via
+  `wg syncconf` — les autres peers ne perdent PAS le tunnel) ;
+- **Changement d'IP publique** : `sudo /opt/wireguard/wg-peer.sh reip
+  <nouvelle-ip>` (conf clients mises à jour, clés conservées) ;
+- **Monitor DR famille 11** : « wireguard: UP (N peers) » au heartbeat
+  06:00 UTC ; alerte si wg0 DOWN quand installé.
+
+### Gestes exploitant OCI (console, hors canal CI — gratuits)
+1. **Security List** : Ingress **UDP 51820** src `0.0.0.0/0` (ou CIDR
+   restreint si IP sortante semi-stable) ;
+2. **RÉSERVER l'IP publique** — une IP éphémère change au stop/start
+   (le resize N°272 en a fait un) ; si l'IP change malgré tout : `reip` ;
+3. **Depuis l'appareil** : tester le full-tunnel (IP publique vue =
+   Marseille) puis l'accès services (https://mikcloud.ftci.fr à travers
+   le tunnel ; SSH à travers le tunnel pour l'admin).

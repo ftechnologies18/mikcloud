@@ -19,8 +19,13 @@ name: ops-vm-diag
 on:
   workflow_dispatch:
     inputs:
+      action:
+        description: "diag (défaut, lecture seule) | reboot (SOFTRESET — prod down)"
+        required: false
+        default: "diag"
+        type: string
       confirm:
-        description: "Taper MIK-VM-START pour autoriser l'action START si l'instance est arrêtée"
+        description: "Taper MIK-VM-START pour autoriser l'action START (si STOPPED) ou MIK-VM-REBOOT pour reboot"
         required: false
         default: ""
         type: string
@@ -43,6 +48,7 @@ jobs:
       OCI_REGION: ${{ secrets.OCI_CLI_REGION }}
       OCI_KEY: ${{ secrets.OCI_API_KEY }}
       CONFIRM: ${{ inputs.confirm }}
+      ACTION: ${{ inputs.action }}
     steps:
       - name: OCI CLI + config (pattern chasse N°270-ter)
         run: |
@@ -84,20 +90,26 @@ jobs:
           echo "IID=$IID" >> "$GITHUB_ENV"
           echo "ISTATE=$STATE" >> "$GITHUB_ENV"
 
-      - name: Serial console history (noyau — lecture)
+      - name: Serial console history (noyau — lecture, polling patient)
         run: |
           set -euo pipefail
           CAP=$(oci compute console-history capture --instance-id "$IID" </dev/null \
             | jq -r '.data.id')
-          echo "capture: $CAP — attente du contenu (60 s)…"
-          sleep 60
+          echo "capture: $CAP — polling de l'état…"
+          for i in $(seq 1 20); do
+            sleep 15
+            ST=$(oci compute console-history get --instance-console-history-id "$CAP" </dev/null \
+              | jq -r '.data["lifecycle-state"]')
+            echo "[$i] $ST"
+            [ "$ST" = "SUCCEEDED" ] && break
+          done
           oci compute console-history get-content --instance-console-history-id "$CAP" \
             --file /tmp/console.txt </dev/null >/dev/null 2>&1 || true
           if [ -s /tmp/console.txt ]; then
-            echo "═══ 300 dernières lignes du console history ═══"
-            tail -n 300 /tmp/console.txt || true
+            echo "═══ 400 dernières lignes du console history ═══"
+            tail -n 400 /tmp/console.txt || true
           else
-            echo "⚠ console history vide/indisponible (la capture peut demander plus d'attente)"
+            echo "⚠ console history vide/indisponible"
           fi
 
       - name: Action START si arrêtée (confirm MIK-VM-START)
@@ -120,7 +132,25 @@ jobs:
           done
           echo "STATE_FINAL=$S" >> "$GITHUB_ENV"
 
-      - name: Healthchecks post-start
+      - name: REBOOT si prod down (action=reboot + confirm=MIK-VM-REBOOT)
+        if: ${{ inputs.action == 'reboot' }}
+        run: |
+          set -euo pipefail
+          if [ "$CONFIRM" != "MIK-VM-REBOOT" ]; then
+            echo "⚠ reboot refusé — confirm=MIK-VM-REBOOT requis"; exit 0
+          fi
+          echo "SOFTRESET de l'instance hung…"
+          oci compute instance action --instance-id "$IID" --action SOFTRESET </dev/null \
+            | jq -r '.data["lifecycle-state"]'
+          for i in $(seq 1 24); do
+            sleep 15
+            S=$(oci compute instance get --instance-id "$IID" </dev/null | jq -r '.data["lifecycle-state"]')
+            echo "[$i] $S"
+            [ "$S" = "RUNNING" ] && [ "$i" -gt 2 ] && break
+          done
+          echo "attente services (60 s)…"; sleep 60
+
+      - name: Healthchecks post-action
         if: always()
         run: |
           set -uo pipefail

@@ -93,8 +93,12 @@ jobs:
       - name: Serial console history (noyau — lecture, polling patient)
         run: |
           set -euo pipefail
-          CAP=$(oci compute console-history capture --instance-id "$IID" </dev/null \
-            | jq -r '.data.id')
+          # capture NON FATALE (409 « instance is currently being modified »
+          # possible si une capture précédente est en cours / instance en
+          # transition — run 37) : le diagnostic ne doit jamais bloquer le
+          # step de remise en route
+          CAP=$(oci compute console-history capture --instance-id "$IID" </dev/null 2>/tmp/ch.err \
+            | jq -r '.data.id') || { echo "⚠ capture console refusée :"; head -5 /tmp/ch.err; exit 0; }
           echo "capture: $CAP — polling de l'état…"
           for i in $(seq 1 20); do
             sleep 15

@@ -44,6 +44,16 @@ on:
         required: false
         default: "24"
         type: string
+      mode:
+        description: "resize (défaut) = opération complète ; check = lecture seule (état + garde + santé)"
+        required: false
+        default: "resize"
+        type: string
+      mode:
+        description: "resize (défaut) = opération complète ; check = lecture seule (état + garde + santé)"
+        required: false
+        default: "resize"
+        type: string
 
 concurrency:
   group: ops-resize-marseille
@@ -130,7 +140,7 @@ jobs:
           done
           ALIVE="$(printf '%s' "$ALL_JSON" | jq '[.[] | select(."lifecycle-state" != "TERMINATED")]')"
           A1_COUNT="$(printf '%s' "$ALIVE" | jq '[.[] | select(.shape | startswith("VM.Standard.A1"))] | length')"
-          echo "Instances vivantes : $(printf '%s' "$ALIVE" | jq -r '.[] | "\(.display-name) [\(.shape)] \(.lifecycle-state)"')"
+          echo "Instances vivantes : $(printf '%s' "$ALIVE" | jq -r '.[] | "\(."display-name") [\(.shape)] \(."lifecycle-state")"' 2>/dev/null || echo '(liste cosmétique indisponible)')"
           # GARDE N°271 : exactement UNE A1 dans la tenancy Marseille.
           if [ "$A1_COUNT" -ne 1 ]; then
             echo "::error::GARDE ENVELOPPE N°271 violée : $A1_COUNT instance(s) A1 vivante(s) en tenancy Marseille (toléré : 1). 4/24 consomme 97,3 % de l'allocation — toute A1 additionnelle = facturation. ABORT."
@@ -145,7 +155,7 @@ jobs:
           OCID="$(printf '%s' "$TARGET_JSON" | jq -r '.id')"
           STATE="$(printf '%s' "$TARGET_JSON" | jq -r '."lifecycle-state"')"
           CUR_OCPUS="$(printf '%s' "$TARGET_JSON" | jq -r '."shape-config".ocpus // "?"')"
-          CUR_MEM="$(printf '%s' "$TARGET_JSON" | jq -r '."shape-config"."memoryInGBs" // "?"')"
+          CUR_MEM="$(printf '%s' "$TARGET_JSON" | jq -r '."shape-config".memory_in_gbs // ."shape-config".memoryInGBs // "?"')"
           echo "Cible : $TARGET_NAME ($OCID) — état $STATE — shape actuel ${CUR_OCPUS}/${CUR_MEM} Go"
           {
             echo "OCID=$OCID"
@@ -164,6 +174,7 @@ jobs:
           fi
 
       - name: Rename → Ftechci (zéro downtime, IP et CI inchangées)
+        if: github.event.inputs.mode != 'check'
         run: |
           set -euo pipefail
           if [ "$TNAME" = "$NAME_NEW" ]; then
@@ -175,7 +186,7 @@ jobs:
           fi
 
       - name: SOFT stop (SIGTERM → flush final mémoire→base, zéro perte)
-        if: env.TSTATE != 'STOPPED'
+        if: github.event.inputs.mode != 'check' && env.TSTATE != 'STOPPED'
         run: |
           set -euo pipefail
           S="$TSTATE"
@@ -208,6 +219,7 @@ jobs:
           echo "::warning::⚠️ Ne PAS laisser l'instance STOPPée prolongé (réclamation Always Free) — la suite s'enchaîne immédiatement."
 
       - name: Edit shape → ${{ github.event.inputs.ocpus }}/${{ github.event.inputs.memory_gb }}
+        if: github.event.inputs.mode != 'check'
         run: |
           set -euo pipefail
           OCP="${{ github.event.inputs.ocpus }}"
@@ -222,6 +234,7 @@ jobs:
 
       - name: Start + retry capacité (≤ 7 essais × 90 s)
         id: start
+        if: github.event.inputs.mode != 'check'
         run: |
           set -uo pipefail
           CAPACITY_FAIL=""
@@ -305,8 +318,11 @@ jobs:
           FINAL="$(oci compute instance get --instance-id "$OCID" --output json | jq '(.data // .)')"
           FNAME="$(printf '%s' "$FINAL" | jq -r '."display-name"')"
           FSTATE="$(printf '%s' "$FINAL" | jq -r '."lifecycle-state"')"
-          FOCPU="$(printf '%s' "$FINAL" | jq -r '."shape-config".ocpus')"
-          FMEM="$(printf '%s' "$FINAL" | jq -r '."shape-config"."memoryInGBs"')"
+          FOCPU="$(printf '%s' "$FINAL" | jq -r '."shape-config".ocpus // "?"')"
+          FMEM="$(printf '%s' "$FINAL" | jq -r '."shape-config".memory_in_gbs // ."shape-config".memoryInGBs // "?"')"
+          # Normalisation entière (CLI 3.x : 4.0 → 4) — run #3 : "4.0" != "4"
+          # faisait échouer la comparaison texte.
+          FOCPU_N="${FOCPU%%.*}"; FMEM_N="${FMEM%%.*}"
           {
             echo "### Résultat ops-resize-marseille (N°272)"
             echo ""
@@ -320,13 +336,17 @@ jobs:
             echo ""
             echo "Gardes N°271 rappelés : ZÉRO autre A1 en tenancy Marseille ; captures A1 → JNB uniquement ; alerte budget 1 € muette sinon revert."
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "FINAL : $FNAME — $FSTATE — $FOCPU/$FMEM"
+          echo "FINAL : $FNAME — $FSTATE — $FOCPU/$FMEM (mode : ${{ github.event.inputs.mode }})"
+          if [ "${{ github.event.inputs.mode }}" = "check" ]; then
+            echo "::notice::CHECK-ONLY — état constaté ci-dessus, aucun geste effectué."
+            exit 0
+          fi
           if [ "${{ steps.revert.outputs.REVERTED }}" = "true" ]; then
             echo "::error::RÉSULTAT : REVERTED — production restaurée en 2/12, capacité 4/24 indisponible aujourd'hui (7 essais Start). Prochaine tentative : fenêtre nocturne. Aucune action immédiate requise."
             exit 1
           fi
-          if [ "$FOCPU" != "${{ github.event.inputs.ocpus }}" ]; then
-            echo "::error::Le shape final ($FOCPU/$FMEM) ≠ cible — vérifier le run."
+          if [ -n "${FOCPU_N:-}" ] && [ "$FOCPU_N" -ne "${{ github.event.inputs.ocpus }}" ]; then
+            echo "::error::Le shape final ($FOCPU_N OCPU) ≠ cible (${{ github.event.inputs.ocpus }}) — vérifier le run."
             exit 1
           fi
-          echo "::notice::SUCCÈS — Ftechci en $FOCPU/$FMEM, production verte. Prochaine étape : migration hybride DB (N°273+)."
+          echo "::notice::SUCCÈS — Ftechci en $FOCPU_N/$FMEM_N, production verte. Prochaine étape : migration hybride DB (N°273+)."

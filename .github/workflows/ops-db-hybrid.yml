@@ -796,6 +796,7 @@ jobs:
           STATE="$STATED/wal-uploaded.list"
           [ -r /etc/mikcloud/walupload.env ] || { echo "wal-upload: env absent — arm-dr pas fait"; exit 0; }
           . /etc/mikcloud/walupload.env
+          export WAL_ENC_KEY   # N°277 : openssl -pass env: exige une variable EXPORTÉE
           [ -n "${WAL_BUCKET:-}" ] && [ -n "${WAL_NS:-}" ] || { echo "wal-upload: env incomplet"; exit 1; }
           [ -n "${WAL_ENC_KEY:-}" ] || { echo "wal-upload: WAL_ENC_KEY absent — REFUS d'uploader en clair (N°277) — relancer arm-dr"; exit 1; }
           [ -d "$WAL_DIR" ] || exit 0
@@ -857,6 +858,7 @@ jobs:
           set -a; . /etc/mikcloud/backup.env; set +a
           [ -r /etc/mikcloud/monitor.env ] && . /etc/mikcloud/monitor.env
           [ -r /etc/mikcloud/walupload.env ] && . /etc/mikcloud/walupload.env
+          export WAL_ENC_KEY   # N°277 : openssl -pass env: exige une variable EXPORTÉE
           RET_DAYS="${WEB_VITALS_RETENTION_DAYS:-90}"
           : "${LOCALPG_DSN:?localpg.env incomplet}"
           : "${DATABASE_URL_SESSION:?backup.env incomplet}"
@@ -1197,6 +1199,7 @@ jobs:
           sudo test -f /etc/mikcloud/walupload.env || { echo "❌ arm-dr non exécuté (walupload.env absent)"; exit 1; }
           set -a; . <(sudo cat /etc/mikcloud/localpg.env); set +a
           . <(sudo cat /etc/mikcloud/walupload.env)
+          export WAL_ENC_KEY   # N°277 : openssl -pass env: exige une variable EXPORTÉE
           : "${LOCALPG_DSN:?}"; : "${WAL_NS:?}"; : "${WAL_BUCKET:?}"; : "${WAL_ENC_KEY:?}"
           cleanup(){ sudo -u postgres psql -qc 'DROP DATABASE IF EXISTS mikcloud_drill WITH (FORCE)' || true; }
           trap 'cleanup; sudo rm -f /tmp/mikcloud-drill-*.dump /tmp/mikcloud-drill-*.dump.list /tmp/drill.err /tmp/drill-seg* 2>/dev/null' EXIT

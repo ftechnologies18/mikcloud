@@ -5,6 +5,36 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-09 — N°276 — **LIFECYCLE 21 J DU BUCKET WAL DÉBLOQUÉ : policy IAM du service principal Object Storage posée par API** (mode `arm-dr` enrichi, 1 run)
+
+### Ce qui a changé
+- Le point ouvert N°275 n°1 est **FERMÉ** : la règle lifecycle
+  `expire-21d` (DELETE après 21 jours, bucket entier) est désormais
+  **ACTIVE** sur `mikcloud-wal` — preuve par relecture API depuis le
+  bucket : `{"action":"DELETE","time-amount":21,"time-unit":"DAYS",
+  "is-enabled":true}`.
+- Cause racine des runs 37-39 N°275 confirmée : le PUT lifecycle exige
+  que le **service principal Object Storage**
+  (`objectstorage-eu-marseille-1`) puisse gérer object-family — sans
+  quoi l'API répond `InsufficientServicePermissions`.
+- Fix (dans `ops-db-hybrid` mode `arm-dr`, idempotent) : le workflow
+  pose LUI-MÊME la policy IAM `mikcloud-objectstorage-lifecycle` par
+  API (`oci iam policy create`, statement
+  `Allow service objectstorage-<region> to manage object-family in
+  tenancy`) — **la console n'est PAS nécessaire** (le credentials du
+  coffre a `manage policies`) : détection par `iam policy list`, gestion
+  409, pause propagation 45 s, retry PUT ×3, lecture de contrôle
+  systématique ; sans droits → message console précis, non bloquant
+  (l'armement DR reste prioritaire).
+- Effet rétention : WAL gz (~15-50 Mo/j) + basebackup (7,4 Mo/j) →
+  plateau ~0,3-1,2 Go à 21 jours, très loin du plafond gratuit 10 Go ;
+  la fenêtre PITR (base + WAL) est désormais bornée à 21 jours au lieu
+  de croître indéfiniment.
+- CI/ops only (workflow) — sentinel `RENDER-DEPLOY-FROZEN` intact,
+  aucun schéma DB → rien à synchroniser. Run de preuve : arm-dr #48
+  (37900215984) vert — `policy CRÉÉE` + `lifecycle 21 jours: posé` +
+  relue depuis le bucket.
+
 ## 2026-10-09 — N°275 — **CONSOLIDATION DR RÉALISÉE : la chaîne hybride est armée de bout en bout** (workflow `ops-db-hybrid` modes `arm-dr`/`reverse-sync`/`health`/`drill`, 47 runs, + workflow `ops-vm-diag` créé pendant l'incident)
 
 ### Ce qui a changé en production

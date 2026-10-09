@@ -1,4 +1,4 @@
-# RUNBOOK — Architecture DB hybride mikcloud (N°274, consolidée N°275)
+# RUNBOOK — Architecture DB hybride mikcloud (N°274, consolidée N°275/N°276)
 
 Outil d'exécution : workflow **`ops-db-hybrid.yml`** (dispatch + cron
 quotidien 04:23 UTC → `health`, 11 modes). Diagnostic/remise en route
@@ -13,7 +13,7 @@ Références : CHANGELOG N°274/N°275 (récits + leçons), Task 5/6 (analyse
 |------|----------|------------------|-----|
 | 0 | Mémoire `model.DB` (backend) | **vivant, inchangé** — source de vérité runtime, flush asynchrone ≤1 tx/3 s | ~0 |
 | 1 | **PostgreSQL 18.6 local Ftechci** (127.0.0.1:5432, DB `mikcloud`, rôle `mikcloud`) | **PRIMAIRE** depuis 03:03:54 UTC le 09/10 | flush ≤3 s |
-| 1.5 | **WAL gz → OCI Object Storage** (`mikcloud-wal`, upload */5 min) + `pg_basebackup` quotidien (7,4 Mo) — archive_command **gzip** (le brut creusait ~17 Go/j) ; prune locale 48 h ; PITR distant ≈ base + WAL ≤ 6 min | **ACTIF** | ≤6 min |
+| 1.5 | **WAL gz → OCI Object Storage** (`mikcloud-wal`, upload */5 min) + `pg_basebackup` quotidien (7,4 Mo) — archive_command **gzip** (le brut creusait ~17 Go/j) ; prune locale 48 h ; **lifecycle 21 j ACTIF (N°276)** ; PITR distant ≈ base + WAL ≤ 6 min | **ACTIF** | ≤6 min |
 | 2 | **Supabase (pooler session :5432)** — re-synchronisé CHAQUE NUIT 03:00 UTC par `mikcloud-reverse-sync.timer` (restore `--clean` + RLS ré-armé) — preuve : 40/40 tables, `last_success=05:08:59Z` | **ACTIF (réplique nocturne)** | ≤26 h |
 | 2bis | **Neon** — même flux nocturne que Supabase (endpoint direct) | **ACTIF (réplique nocturne)** | ≤26 h |
 | 3 | Artefact GitHub `mikcloud-dr-*` chiffré `BACKUP_KEY` (AES-256-CBC/PBKDF2, rétention 30 j) — **dump du PRIMAIRE** depuis N°275 | actif (mode=backup) | au tir |
@@ -51,7 +51,7 @@ autovacuum_vacuum_cost_delay=1`.
 | `cutover` | **bascule primaire** : delta dump/restore → garde comptages STRICT (whitelist append-only) → env backup `.pre-hybrid-*` → flip DSN → restart → preuves (journalctl + tup_written) → gel timer. Rollback AUTO si preuve absente | ~10 s (restart) | `confirm=MIK-DB-HYBRID` requis |
 | `rollback` | dump local de sécurité → restore `.pre-hybrid-*` → restart → réactive timer | ~10 s | `confirm` + `accept_stale_data=YES` |
 | `status` | état complet + **protection : gel auto du timer si primaire local** | 0 | sûr à relancer |
-| `arm-dr` | **arme la chaîne DR** (idempotent) : archive_command gzip + reload PG, OCI CLI system-wide (pip sous sudo + test import root), `/etc/oci` (clé API coffre), bucket `mikcloud-wal`, scripts DR + 3 timers systemd | 0 | `confirm=MIK-DR-ARM` requis |
+| `arm-dr` | **arme la chaîne DR** (idempotent) : archive_command gzip + reload PG, OCI CLI system-wide (pip sous sudo + test import root), `/etc/oci` (clé API coffre), bucket `mikcloud-wal` + **policy IAM service principal + lifecycle 21 j (N°276)**, scripts DR + 3 timers systemd | 0 | `confirm=MIK-DR-ARM` requis |
 | `reverse-sync` | déclenche le flux nocturne MAINTENANT (service oneshot synchrone) : rétention web_vitals → basebackup → dump → Supabase → Neon | 0 | affiche log + statut + comptages cibles |
 | `health` | lance le monitor une fois + API publique depuis le runner — **mode du cron GitHub 04:23 UTC** | 0 | sûr à relancer |
 | `drill` | restaurabilité : dump primaire → restore STRICT `--exit-on-error` sur base jetable `mikcloud_drill` → asserts (40 tables, comptages identiques) → drop + WAL distant téléchargé/décompressé + listing basebackup | 0 | primaire jamais touché |
@@ -102,6 +102,10 @@ autovacuum_vacuum_cost_delay=1`.
 20. **Script VM ≠ workflow** : les scripts DR vivent sur la VM — après
     TOUTE modification dans arm-dr, RELANCER `arm-dr` avant les modes
     qui déclenchent ces scripts (leçon run 28).
+21. **PUT lifecycle → `InsufficientServicePermissions`** : le service
+    principal Object Storage doit pouvoir gérer object-family — la
+    policy se pose PAR API (`iam policy create`) si le user du coffre a
+    `manage policies` ; recréer le bucket ne sert à RIEN (N°276).
 
 ## 4. Utilisation courante
 
@@ -155,14 +159,15 @@ du bucket + WAL `*.gz` du bucket → `pg_wal` dégzippé → `recovery.signal`.
    WAL distant), comptages identiques vérifiés ;
 5. **Rétention web_vitals** ✓ — 90 jours (réglable via
    `WEB_VITALS_RETENTION_DAYS` dans `/etc/mikcloud/monitor.env`).
+6. **Lifecycle 21 j du bucket** ✓ (N°276) — policy IAM
+   `mikcloud-objectstorage-lifecycle` posée par API par `arm-dr`
+   (`Allow service objectstorage-<region> to manage object-family in
+   tenancy` — piège 21), règle `expire-21d` ACTIVE (relue depuis le
+   bucket) : PITR borné 21 j, plateau ~0,3-1,2 Go (plafond gratuit
+   10 Go).
 
 ### Points ouverts N°276+
-1. **Lifecycle 21 j du bucket** : `InsufficientServicePermissions` — la
-   policy du service principal Object Storage doit être posée par la
-   console (recréer le bucket via console OU policy IAM
-   `Allow service objectstorage-eu-marseille-1 to manage object-family in
-   tenancy`). Sans urgence (~15 Mo/j).
-2. **Appairage Telegram** de l'exploitant pour armer les alertes.
-3. **Cause racine du hang du 09/10 (05:14-06:31 UTC)** non déterminée —
+1. **Appairage Telegram** de l'exploitant pour armer les alertes.
+2. **Cause racine du hang du 09/10 (05:14-06:31 UTC)** non déterminée —
    `ops-vm-diag` a maintenant une capture console PATIENTE (polling) ; si
    récidive : capturer AVANT de rebooter.

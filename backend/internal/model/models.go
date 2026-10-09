@@ -350,6 +350,29 @@ type Router struct {
 	// de cette valeur change la signature hotspot_files → re-déploiement
 	// automatique au check-in suivant (≤ 45 s), comme tout branding.
 	PortalOverride string `json:"portalOverride,omitempty"`
+
+	// N°285 — RENFORT WIREGUARD (opt-in, par routeur) : un deuxième chemin
+	// routeur ↔ VM, chiffré, hors de tout port public — le mode agent reste
+	// LE SOCLE (100 % sortant, TLS strict) et le tunnel n'est JAMAIS sur le
+	// chemin critique du check-in (zéro orphelin possible, doctrine
+	// agent_migrate N°230). Cycle : wg_keygen (le routeur génère SA paire,
+	// clé privée jamais transportée) → peer posé côté serveur via ops-wg
+	// (livret 600 root) → wg-params collés dans la console → wg_setup
+	// (clés publiques + PSK sur le canal agent TLS strict) → wg_teardown.
+	// WgState : "" (off) | "pending_keygen" | "ready" | "pending_setup" |
+	// "active" | "error".
+	WgState     string `json:"wgState,omitempty"`
+	WgPub       string `json:"wgPub,omitempty"`       // clé publique DU ROUTEUR (publique par nature)
+	WgPeerName  string `json:"wgPeerName,omitempty"`  // nom du peer côté serveur (wg-peer.sh, [a-z0-9-])
+	WgIPv4      string `json:"wgIpv4,omitempty"`      // adresse tunnel du routeur (10.8.0.N)
+	WgEndpoint  string `json:"wgEndpoint,omitempty"`  // endpoint serveur vu par le routeur (ip:51820)
+	WgError     string `json:"wgError,omitempty"`     // dernier message d'erreur rapporté
+	WgAppliedAt string `json:"wgAppliedAt,omitempty"` // RFC3339 de la dernière configuration confirmée
+	// WgServerPub / WgPSK — matériau du PEER SERVEUR : jamais sérialisés
+	// (sanitizeRouter les efface, le PSK est chiffré au repos en secretbox
+	// — pattern Password P0 #6). Livrés au routeur via wg_setup uniquement.
+	WgServerPub string `json:"-"`
+	WgPSK       string `json:"-"`
 }
 
 // SchedulerSecEffective — pas de scheduler connu du routeur (N°75). 0 =

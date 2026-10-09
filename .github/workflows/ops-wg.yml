@@ -32,15 +32,24 @@ name: ops-wg
 #   install     (idempotent) — wireguard-tools + qrencode, sysctl
 #               ip_forward persisté, génération wg0.conf si absente
 #               (PostUp/PostDown iptables GARDES -C||-I — cohabite avec
-#               Docker), /opt/wireguard/wg-peer.sh (add/remove/qr/reip/
-#               list), smoke tests + coexistence backend/Caddy ;
+#               Docker), /opt/wireguard/wg-peer.sh (v2 N°285 : add/
+#               add-router/remove/qr/show-router/reip/list), smoke tests
+#               + coexistence backend/Caddy ;
 #   status      (lecture seule) — état, peers, handshakes, dérive IP
 #               publique (endpoint obsolète), règles, coexistence ;
-#   peer-add    (input peer_name) — nouveau peer + conf client écrite
-#               600 (clés JAMAIS dans les logs) ;
+#   peer-add    (input peer_name) — nouveau peer full-tunnel + conf client
+#               écrite 600 (clés JAMAIS dans les logs) ;
+#   peer-add-router (inputs peer_name + router_pubkey) — N°285 : peer
+#               ROUTEUR MikroTik (clé publique générée SUR le routeur par
+#               la commande agent wg_keygen) + livret .router.txt 600 pour
+#               la console MikCloud (address/server_pub/psk/endpoint) ;
 #   peer-remove (input peer_name) — révocation (conf client supprimée) ;
 #   prune       (confirm=MIK-WG-PRUNE) — DÉMONTAGE COMPLET (détruit les
 #               clés : tous les clients devront être recréés).
+#
+# N°285 — RENFORT ROUTEURS : le cycle complet est documenté dans
+# RUNBOOK-HEBERGEMENT.md §10 — le mode agent reste le socle (le tunnel
+# n'est JAMAIS sur le chemin critique du check-in, zéro orphelin).
 #
 # GESTES EXPLOITANT (console OCI, hors canal CI) :
 #   1. Security List : Ingress UDP 51820 src 0.0.0.0/0 (ou CIDR restreint) ;
@@ -55,11 +64,16 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "install | status | peer-add | peer-remove | prune"
+        description: "install | status | peer-add | peer-add-router | peer-remove | prune"
         required: true
         type: string
       peer_name:
-        description: "Nom du peer (peer-add/peer-remove) : [a-z0-9-], 1-32"
+        description: "Nom du peer (peer-add/peer-add-router/peer-remove) : [a-z0-9-], 1-32"
+        required: false
+        default: ""
+        type: string
+      router_pubkey:
+        description: "Clé publique WireGuard DU ROUTEUR (rapport wg_keygen, 44 car. base64 « = » final) — peer-add-router uniquement"
         required: false
         default: ""
         type: string
@@ -86,8 +100,12 @@ jobs:
       DEPLOY_USER: ${{ secrets.ORACLE_USER }}
       MODE: ${{ inputs.mode }}
       PEER_NAME: ${{ inputs.peer_name }}
+      ROUTER_PUB: ${{ inputs.router_pubkey }}
       CONFIRM: ${{ inputs.confirm }}
     steps:
+      - name: Checkout (script wg-peer.sh v2 depuis deploy/oracle)
+        uses: actions/checkout@v4
+
       - name: Clé SSH du coffre + garde-fous inputs
         run: |
           set -euo pipefail
@@ -99,12 +117,16 @@ jobs:
           RESOLVED_MODE="$MODE"
           [ -n "$RESOLVED_MODE" ] || RESOLVED_MODE=status
           case "$RESOLVED_MODE" in
-            install|status|peer-add|peer-remove|prune) ;;
+            install|status|peer-add|peer-add-router|peer-remove|prune) ;;
             *) echo "❌ mode inconnu: $RESOLVED_MODE"; exit 1 ;;
           esac
-          if [ "$RESOLVED_MODE" = "peer-add" ] || [ "$RESOLVED_MODE" = "peer-remove" ]; then
+          if [ "$RESOLVED_MODE" = "peer-add" ] || [ "$RESOLVED_MODE" = "peer-add-router" ] || [ "$RESOLVED_MODE" = "peer-remove" ]; then
             echo "$PEER_NAME" | grep -qE '^[a-z0-9][a-z0-9-]{0,31}$' \
               || { echo "❌ peer_name invalide (attendu [a-z0-9-], 1-32) : '$PEER_NAME'"; exit 1; }
+          fi
+          if [ "$RESOLVED_MODE" = "peer-add-router" ]; then
+            printf '%s' "$ROUTER_PUB" | grep -qE '^[A-Za-z0-9+/]{43}=$' \
+              || { echo "❌ router_pubkey invalide (44 caractères base64, « = » final — copiez la clé rapportée par wg_keygen)"; exit 1; }
           fi
           if [ "$RESOLVED_MODE" = "prune" ] && [ "$CONFIRM" != "MIK-WG-PRUNE" ]; then
             echo "❌ REFUS — mode prune exige confirm=MIK-WG-PRUNE (DÉMONTAGE COMPLET, clés détruites)"; exit 1
@@ -118,6 +140,10 @@ jobs:
         run: |
           set -euo pipefail
           SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
+          # N°285 — wg-peer.sh v2 (deploy/oracle/wg-peer.sh) posé/rafraîchi
+          # AVANT tout le reste (idempotent : upgrade à chaud du v1 N°284 ;
+          # cohabitation peers full-tunnel existants inchangée).
+          cat deploy/oracle/wg-peer.sh | ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" 'sudo tee /opt/wireguard/wg-peer.sh >/dev/null && sudo chmod 700 /opt/wireguard/wg-peer.sh'
           ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s <<'REMOTE'
           set -euo pipefail
           echo "═══ 0. État actuel ═══"
@@ -170,98 +196,14 @@ jobs:
           else
             echo "endpoint enregistré : $(sudo cat /opt/wireguard/endpoint)"
           fi
-          sudo tee /opt/wireguard/wg-peer.sh >/dev/null <<'PEERSH'
-          #!/usr/bin/env bash
-          # wg-peer.sh — cycle de vie des peers WireGuard (N°284) — ROOT only
-          # usage: wg-peer.sh add <nom> | remove <nom> | qr <nom> | reip <ip> | list
-          # Discipline : les clés privées ne sortent JAMAIS d'ici (conf = 600 root).
-          set -euo pipefail
-          WG_CONF=/etc/wireguard/wg0.conf
-          PEERS_DIR=/opt/wireguard/peers
-          EP_FILE=/opt/wireguard/endpoint
-          [ "$(id -u)" = "0" ] || { echo "root requis"; exit 1; }
-          [ -f "$WG_CONF" ] || { echo "wg0.conf absent — lancer mode=install d'abord"; exit 1; }
-          cmd="${1:-}"; name="${2:-}"
-          usage(){ echo "usage: wg-peer.sh add <nom> | remove <nom> | qr <nom> | reip <ip> | list"; exit 1; }
-          name2pub(){ awk -v n="$1" 'BEGIN{RS=""} index($0,"# peer: "n"\n")==1{c=split($0,L,"\n"); for(i=1;i<=c;i++) if(L[i]~/^PublicKey = /){sub("PublicKey = ","",L[i]);print L[i]}}' "$WG_CONF"; }
-          apply(){ wg syncconf wg0 <(wg-quick strip wg0); }
-          case "$cmd" in
-            add)
-              [ -n "$name" ] || usage
-              echo "$name" | grep -qE '^[a-z0-9][a-z0-9-]{0,31}$' || { echo "❌ nom invalide"; exit 1; }
-              [ -z "$(name2pub "$name")" ] || { echo "❌ peer '$name' existe déjà"; exit 1; }
-              USED=$(grep -oE '10\.8\.0\.[0-9]+' "$WG_CONF" | awk -F. '{print $4}' | sort -un)
-              N=2; while echo "$USED" | grep -qx "$N"; do N=$((N+1)); done
-              [ "$N" -le 254 ] || { echo "❌ pool 10.8.0.0/24 épuisé"; exit 1; }
-              EP=$(cat "$EP_FILE")
-              SPUB=$(awk '/^PrivateKey/{print $3; exit}' "$WG_CONF" | wg pubkey)
-              PRIV=$(umask 077; wg genkey)
-              PUB=$(printf '%s' "$PRIV" | wg pubkey)
-              PSK=$(umask 077; wg genpsk)
-              printf '\n# peer: %s\n[Peer]\nPublicKey = %s\nPresharedKey = %s\nAllowedIPs = 10.8.0.%s/32, fd00:8::%s/128\n' "$name" "$PUB" "$PSK" "$N" "$N" >> "$WG_CONF"
-              apply
-              mkdir -p "$PEERS_DIR"
-              cat > "$PEERS_DIR/${name}.conf" <<CLIENTCONF
-          [Interface]
-          PrivateKey = ${PRIV}
-          Address = 10.8.0.${N}/32, fd00:8::${N}/128
-          DNS = 1.1.1.1, 8.8.8.8
-          MTU = 1420
-
-          [Peer]
-          PublicKey = ${SPUB}
-          PresharedKey = ${PSK}
-          Endpoint = ${EP}:51820
-          AllowedIPs = 0.0.0.0/0, ::/0
-          PersistentKeepalive = 25
-          CLIENTCONF
-              chmod 600 "$PEERS_DIR/${name}.conf"
-              echo "✅ peer '$name' ajouté — IP 10.8.0.$N — fingerprint $(printf '%s' "$PUB" | sha256sum | cut -c1-12)…"
-              echo "   conf client : $PEERS_DIR/${name}.conf (600 root — SECRET, ne jamais coller dans un log)"
-              echo "   QR (SSH interactif) : sudo qrencode -t ansiutf8 < $PEERS_DIR/${name}.conf"
-              ;;
-            remove)
-              [ -n "$name" ] || usage
-              [ -n "$(name2pub "$name")" ] || { echo "❌ peer '$name' introuvable"; exit 1; }
-              BEFORE=$(grep -c '^\[Peer\]' "$WG_CONF")
-              awk -v m="# peer: ${name}" 'BEGIN{RS="";ORS=""} index($0,m"\n")!=1{if(out!="")out=out"\n\n";out=out$0} END{print out"\n"}' "$WG_CONF" > /tmp/wg0.conf.new
-              AFTER=$(grep -c '^\[Peer\]' /tmp/wg0.conf.new || true)
-              [ "$AFTER" -lt "$BEFORE" ] || { echo "❌ retrait raté"; rm -f /tmp/wg0.conf.new; exit 1; }
-              install -m 600 /tmp/wg0.conf.new "$WG_CONF"; rm -f /tmp/wg0.conf.new
-              apply
-              rm -f "$PEERS_DIR/${name}.conf"
-              echo "✅ peer '$name' révoqué (bloc + conf client supprimés, tunnel des autres peers intact)"
-              ;;
-            qr)
-              [ -n "$name" ] || usage
-              [ -f "$PEERS_DIR/${name}.conf" ] || { echo "❌ conf inexistante"; exit 1; }
-              qrencode -t ansiutf8 < "$PEERS_DIR/${name}.conf"
-              ;;
-            reip)
-              NEWIP="${2:-}"
-              echo "$NEWIP" | grep -qE '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' || { echo "❌ IP invalide"; exit 1; }
-              echo "$NEWIP" > "$EP_FILE"
-              for f in "$PEERS_DIR"/*.conf; do [ -f "$f" ] && sed -i "s/^Endpoint = .*/Endpoint = ${NEWIP}:51820/" "$f"; done
-              echo "✅ endpoint -> $NEWIP:51820 (conf clients mises à jour, clés conservées)"
-              ;;
-            list)
-              echo "nom | IP tunnel | dernier handshake | reçu/envoyé"
-              awk 'BEGIN{RS=""} /^# peer: /{c=split($0,L,"\n"); n=L[1]; sub("# peer: ","",n); ip=""; k=""; for(i=1;i<=c;i++){if(L[i]~/^AllowedIPs = /){ip=L[i];sub("AllowedIPs = ","",ip)}; if(L[i]~/^PublicKey = /){k=L[i];sub("PublicKey = ","",k)}} print k"|"n"|"ip}' "$WG_CONF" > /tmp/wgmap.$$
-              while IFS='|' read -r KEY NM IP; do
-                HS=$(wg show wg0 latest-handshakes | awk -v k="$KEY" '$1==k{print $2}')
-                TR=$(wg show wg0 transfer | awk -v k="$KEY" '$1==k{print $2"/"$3}')
-                [ -n "$TR" ] || TR="—"
-                AGE="jamais"
-                if [ -n "${HS:-}" ] && [ "$HS" != "0" ]; then AGE="$(( $(date +%s) - HS ))s"; fi
-                echo "$NM | $IP | $AGE | $TR"
-              done < /tmp/wgmap.$$
-              rm -f /tmp/wgmap.$$
-              ;;
-            *) usage ;;
-          esac
-          PEERSH
-          sudo chmod 700 /opt/wireguard/wg-peer.sh
-          echo "wg-peer.sh : POSÉ (add/remove/qr/reip/list)"
+          # wg-peer.sh v2 déjà posé/rafraîchi depuis deploy/oracle/wg-peer.sh
+          # (pipe SSH avant ce bloc) — vérification de la présence des
+          # sous-commandes N°285 :
+          if sudo bash -c '/opt/wireguard/wg-peer.sh 2>&1 || true' | grep -q 'add-router'; then
+            echo "wg-peer.sh v2 : POSÉ (add/add-router/remove/qr/show-router/reip/list)"
+          else
+            echo "❌ wg-peer.sh sans add-router (posé = version antérieure)"; exit 1
+          fi
           echo "═══ 6. Activation tunnel ═══"
           sudo systemctl enable --now wg-quick@wg0 >/dev/null 2>&1 || true
           sudo systemctl is-active wg-quick@wg0 || { echo "❌ wg-quick@wg0 inactif"; sudo journalctl -u wg-quick@wg0 --no-pager -n 20; exit 1; }
@@ -324,6 +266,20 @@ jobs:
           set -euo pipefail
           SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
           ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" "sudo /opt/wireguard/wg-peer.sh add '$PEER_NAME'"
+
+      - name: mode=peer-add-router — peer ROUTEUR MikroTik (livret secret, clés jamais dans les logs)
+        if: ${{ env.RESOLVED_MODE == 'peer-add-router' }}
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          # 1) wg-peer.sh v2 posé/rafraîchi (idempotent — une VM encore en v1
+          #    N°284 est passée en v2 au vol, SANS toucher aux peers existants).
+          cat deploy/oracle/wg-peer.sh | ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" 'sudo tee /opt/wireguard/wg-peer.sh >/dev/null && sudo chmod 700 /opt/wireguard/wg-peer.sh'
+          # 2) add-router : la clé publique du ROUTEUR (rapport wg_keygen) est
+          #    embarquée côté serveur avec une PSK neuve ; le livret .router.txt
+          #    (600 root) porte address/server_pub/psk/endpoint pour la console.
+          #    La sortie ne contient AUCUNE clé ni PSK (discipline N°284).
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" "sudo /opt/wireguard/wg-peer.sh add-router '$PEER_NAME' '$ROUTER_PUB'"
 
       - name: mode=peer-remove — révocation
         if: ${{ env.RESOLVED_MODE == 'peer-remove' }}

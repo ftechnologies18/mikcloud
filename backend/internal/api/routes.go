@@ -499,6 +499,13 @@ func (a *API) Handler() http.Handler {
 	// N°125 — firmware RouterBOARD en attente (appliquage + redémarrage).
 	mux.HandleFunc("POST /api/routers/{id}/routerboard-firmware", a.requireRole(2, a.handleRouterboardFirmware))
 	mux.HandleFunc("POST /api/routers/{id}/migrate-url", a.requireRole(2, a.handleRouterMigrateURL))
+	// N°285 — renfort WireGuard (opt-in, mode agent uniquement) : cycle
+	// keygen → params (livret wg-peer.sh) → setup → test → teardown.
+	mux.HandleFunc("POST /api/routers/{id}/wg-enable", a.requireRole(2, a.handleRouterWgEnable))
+	mux.HandleFunc("GET /api/routers/{id}/wg", a.handleRouterWgStatus)
+	mux.HandleFunc("PUT /api/routers/{id}/wg-params", a.requireRole(2, a.handleRouterWgParams))
+	mux.HandleFunc("POST /api/routers/{id}/wg-test", a.requireRole(2, a.handleRouterWgTest))
+	mux.HandleFunc("POST /api/routers/{id}/wg-disable", a.requireRole(2, a.handleRouterWgDisable))
 	// N°97 — docteur pool IP (épuisement heures de pointe)
 	mux.HandleFunc("POST /api/routers/{id}/pool-doctor", a.requireRole(2, a.handleRouterPoolDoctor))
 	// N°99 — auto-réparation du pool (opt-in par routeur)

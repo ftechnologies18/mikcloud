@@ -458,6 +458,21 @@ export interface RouterDevice {
   /** N°182 : surcharge INDIVIDUELLE du portail du routeur (JSON canonique
    * backend, vide/absent = hériter du site puis du compte). */
   portalOverride?: string;
+  /** N°285 — renfort WireGuard (opt-in) : état du tunnel. Vide/absent =
+   * désactivé. pending_keygen | ready | pending_setup | active | error. */
+  wgState?: string;
+  /** N°285 : clé publique WireGuard DU ROUTEUR (publique par nature). */
+  wgPub?: string;
+  /** N°285 : nom du peer côté serveur (wg-peer.sh). */
+  wgPeerName?: string;
+  /** N°285 : adresse tunnel du routeur (10.8.0.N). */
+  wgIpv4?: string;
+  /** N°285 : endpoint serveur vu par le routeur (ip:51820). */
+  wgEndpoint?: string;
+  /** N°285 : dernier message d'erreur rapporté (état error). */
+  wgError?: string;
+  /** N°285 : date de la dernière configuration confirmée (RFC3339). */
+  wgAppliedAt?: string;
 }
 
 /** N°182 — surcharge de branding du portail (site ou routeur), MÊMES champs
@@ -547,6 +562,44 @@ export interface RouterTestResult {
   message: string;
   latencyMs: number;
   version: string;
+}
+
+/** N°285 — état du renfort WireGuard d'un routeur agent (GET /api/routers/{id}/wg).
+ * Les secrets (PSK, clé publique serveur) ne sortent JAMAIS — seulement leur
+ * présence (hasParams). */
+export interface RouterWgStatus {
+  state: string; // "" | pending_keygen | ready | pending_setup | active | error
+  wgPub?: string;
+  peerName: string; // suggestion (dérivée du nom)
+  wgPeerName?: string; // nom posé lors de l'activation
+  ipv4?: string;
+  endpoint?: string;
+  appliedAt?: string;
+  error?: string;
+  online: boolean;
+  mode: string;
+  hasParams: boolean;
+  hasKeygen: boolean;
+  serverTunnel: string;
+  note: string;
+}
+
+/** N°285 — réponse des actions WG (enable/params/disable). */
+export interface RouterWgActionResult {
+  ok: boolean;
+  state?: string;
+  message?: string;
+  commandId?: string;
+  peerName?: string;
+}
+
+/** N°285 — résultat du test de joignabilité directe (dial wg0 → routeur). */
+export interface RouterWgTestResult {
+  ok: boolean;
+  reachable: boolean;
+  port: number;
+  latencyMs: number;
+  message: string;
 }
 
 /** Mode d'expiration cloud (F1, parité Mikhmon) : « none » aucune action, « notify » désactive au routeur, « remove » supprime. */

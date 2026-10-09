@@ -959,6 +959,9 @@ func sealedSnapshot(db *model.DB) *model.DB {
 	clone.Routers = make([]model.Router, len(db.Routers))
 	for i, r := range db.Routers {
 		r.Password = secretbox.Encrypt(r.Password)
+		// N°285 — la PSK WireGuard suit la même discipline que le mot de
+		// passe routeur (scellée dans le snapshot JSON, claire en mémoire).
+		r.WgPSK = secretbox.Encrypt(r.WgPSK)
 		clone.Routers[i] = r
 	}
 	if db.NotifSettings != nil {
@@ -979,6 +982,8 @@ func sealedSnapshot(db *model.DB) *model.DB {
 func unsealSecrets(db *model.DB) {
 	for i := range db.Routers {
 		db.Routers[i].Password = secretbox.Decrypt(db.Routers[i].Password)
+		// N°285 — PresharedKey WireGuard (passthrough si en clair).
+		db.Routers[i].WgPSK = secretbox.Decrypt(db.Routers[i].WgPSK)
 	}
 	for k, v := range db.NotifSettings {
 		v.TelegramBotToken = secretbox.Decrypt(v.TelegramBotToken)

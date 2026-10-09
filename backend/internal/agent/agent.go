@@ -513,6 +513,12 @@ func (b Builder) ScriptFor(cmd model.Command) (string, error) {
 		return b.buildRouterboardFirmware(cmd), nil
 	case model.CmdAgentMigrate:
 		return b.buildAgentMigrate(cmd), nil
+	case model.CmdWgKeygen:
+		return b.buildWgKeygen(cmd), nil
+	case model.CmdWgSetup:
+		return b.buildWgSetup(cmd), nil
+	case model.CmdWgTeardown:
+		return b.buildWgTeardown(cmd), nil
 	default:
 		return "", fmt.Errorf("kind de commande inconnu : %s", cmd.Kind)
 	}

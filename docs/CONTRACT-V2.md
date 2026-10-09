@@ -1127,6 +1127,49 @@ conforme) ; côté builder, tout élément invalide fait retomber TOUTE la
 cible sur le défaut franc 192.168.88.0/24.
 
 ### Commandes agent (kinds)
+
+#### N°285 — renfort WireGuard (opt-in par routeur, mode agent uniquement)
+- `wg_keygen` — le routeur crée l'interface `mikcloud-wg` (port local 13231,
+  marqueur `mikcloud-wg`, idempotent) et rapporte `wgpub=<clé publique>`.
+  La clé privée est générée SUR l'appareil et ne transite JAMAIS. Échec
+  (ROS < 7.15, paquet wireguard absent) → rapport error clair, état cloud
+  `error`, AUCUNE re-file automatique (opt-in : le gérant relance).
+- `wg_setup` — payload `{peerPub, psk, address (10.8.0.N/32), endpointHost,
+  endpointPort}` : remove-then-add idempotent du PEER serveur
+  (public-key + preshared-key + endpoint + allowed-address=10.8.0.1/32 +
+  persistent-keepalive=25 + marqueur) et de l'ADRESSE tunnel. Rapport ok
+  échoe `peers=<n>` (vérité routeur) — l'état cloud `active` n'est posé QUE
+  sur `peers=1` (pattern walled-garden N°29) ; `addr=<echo>`.
+- `wg_teardown` — démontage best-effort (peers + adresse + interface par
+  marqueur) ; ok = état convergé (absence comprise). Efface TOUT l'état WG
+  du routeur côté cloud (la paire de clés meurt avec l'interface).
+- Invariant de conception : le tunnel n'est JAMAIS sur le chemin critique
+  du check-in (aucune réécriture de scheduler, aucun DNS static) — un
+  tunnel mort dégrade le renfort, jamais le contrôle (anti-orphan N°230).
+- Endpoints console (`internal/api/handlers_wg.go`, rôle ≥ 2, agent only) :
+  `POST /api/routers/{id}/wg-enable` (file wg_keygen ou passe `ready` si
+  clé connue), `GET /api/routers/{id}/wg` (état ; PSK + WgServerPub JAMAIS
+  sérialisés : `json:"-"` + sanitizeRouter), `PUT /api/routers/{id}/wg-params`
+  (validations : peer [a-z0-9-] 1-32, 10.8.0.N N∈[2,254], clés base64 44
+  « = », endpoint host+port ; anti-collision d'adresses tunnel pool GLOBAL
+  VM ; file wg_setup), `POST /api/routers/{id}/wg-test` (dial TCP direct
+  8728 puis 8291, 3 s — verdict honnête : tunnel UP/API fermée ≠ tunnel
+  mort), `POST /api/routers/{id}/wg-disable` (file wg_teardown + rappel
+  révocation serveur `ops-wg peer-remove`).
+- Modèle : `Router.WgState` ("", pending_keygen, ready, pending_setup,
+  active, error) + `WgPub/WgPeerName/WgIPv4/WgEndpoint/WgError/WgAppliedAt`
+  (sérialisés) + `WgServerPub/WgPSK` (jamais sérialisés ; PSK chiffrée au
+  repos — secretbox, pattern P0 #6). Colonnes idempotentes (9).
+- Côté VM : `wg-peer.sh` v2 (`deploy/oracle/wg-peer.sh`, posé par install
+  ET peer-add-router) : `add-router <nom> <pubkey>` → peer serveur
+  (IPv4-only) + livret `/opt/wireguard/peers/<nom>.router.txt` 600
+  (address/server_pub/psk/endpoint) ; `remove`/`reip` couvrent les livrets ;
+  `show-router` ré-affiche. Les logs ne portent QUE du non-secret.
+- L'état du tunnel se lit aussi via les champs `wg*` de `GET /api/routers`
+  (badge de la fiche) ; le bouton « Tester » de l'en-tête ajoute le verdict
+  tunnel au verdict agent quand `wgState=active`.
+
+### Commandes agent (kinds) — files QoS
 - `queue_ensure` — create-or-set idempotent + RELECTURE de vérification
   (target|max-limit|queue|disabled). Signature posée seulement si la
   relecture correspond au payload ET si l'état désiré est toujours courant.

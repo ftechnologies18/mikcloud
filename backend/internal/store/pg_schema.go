@@ -1025,6 +1025,20 @@ func (p *PG) ensureSchema() error {
                         last_boot_at      TEXT NOT NULL DEFAULT '',
                         updated_at        TEXT NOT NULL DEFAULT ''
                 )`,
+		// N°285 — renfort WireGuard par routeur (opt-in) : état du tunnel,
+		// clés publiques et PSK (chiffré au repos, pattern Password P0 #6).
+		// Colonnes idempotentes — aucun geste manuel de synchronisation
+		// (le primaire Marseille les pose au boot, les restaurations
+		// suivent par les dumps).
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS wg_state      TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS wg_pub        TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS wg_peer_name  TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS wg_ipv4       TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS wg_endpoint   TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS wg_error      TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS wg_applied_at TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS wg_server_pub TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS wg_psk        TEXT NOT NULL DEFAULT ''`,
 	}
 	// N°166 — RLS systématique : sur un hébergeur mutualisé doté d'une API
 	// Data (Supabase : PostgREST + clé publishable), une table sans RLS

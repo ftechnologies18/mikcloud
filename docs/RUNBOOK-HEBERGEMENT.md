@@ -408,3 +408,74 @@ JAMAIS `--volumes`, les volumes portent des données de services).
 3. **Depuis l'appareil** : tester le full-tunnel (IP publique vue =
    Marseille) puis l'accès services (https://mikcloud.ftci.fr à travers
    le tunnel ; SSH à travers le tunnel pour l'admin).
+
+## §10 — Routeurs peers WireGuard : le renfort du mode agent (N°285)
+
+> Décision « renforcer le mode de connexion des routeurs MikroTik pour
+> MikCloud » (2026-10-09). Constat : le mode `agent` (check-in HTTPS
+> sortant 45 s, TLS strict, token haché) est le SEUL canal de contrôle et
+> le mode `real` (API RouterOS 8728 directe) exige un routeur joignable
+> publiquement — inutilisable derrière le CGNAT des opérateurs. WireGuard
+> (déjà posé côté VM, §9) ajoute par routeur un **deuxième chemin direct
+> chiffré**, opt-in et révocable.
+
+### La doctrine (les 3 invariants)
+1. **Le mode agent reste LE SOCLE** — le tunnel n'est JAMAIS sur le chemin
+   critique du check-in : aucune réécriture de scheduler, aucun DNS static,
+   aucune dépendance circulaire. Un tunnel mort dégrade le RENFORT, jamais
+   le contrôle (le routeur reste géré au pas 45 s). C'est l'anti-orphan
+   N°230 appliqué au tunnel : configurer le tunnel REQUIERT le canal qui
+   survit à sa panne.
+2. **La clé privée ne quitte jamais le routeur** — `wg_keygen` fait générer
+   la paire SUR l'appareil (RouterOS ≥ 7.15, paquet wireguard natif) et ne
+   rapporte que la clé publique. La PSK (renfort symétrique, pattern §9)
+   transite une seule fois, sur le canal TLS strict de l'agent — même
+   surface que le token agent lui-même.
+3. **Le tunnel est un chemin de GESTION, pas une porte** — allowed-address
+   du peer routeur = `10.8.0.1/32` uniquement (l'hôte MikCloud). Ni le LAN
+   du routeur ni l'internet n'est atteignable à travers lui ; le routeur
+   n'expose TOUJOURS zéro port public.
+
+### Cycle de vie (les 5 étapes, console + dispatch)
+| # | Acteur | Geste | Résultat |
+|---|---|---|---|
+| 1 | Gérant | Fiche routeur → carte « Tunnel WireGuard » → **Activer** | commande `wg_keygen` filée ; au check-in ≤ 45 s le routeur crée `mikcloud-wg` et rapporte sa clé publique (état `ready`) |
+| 2 | Exploitant | dispatch `ops-wg` `mode=peer-add-router` `peer_name=<suggéré>` `router_pubkey=<clé>` | peer embarqué côté VM (PSK neuve) + **livret** `/opt/wireguard/peers/<nom>.router.txt` (600 root : address/server_pub/psk/endpoint) |
+| 3 | Exploitant | en SSH : `sudo cat …/<nom>.router.txt` | les 4 valeurs à coller dans la console (jamais dans un log/chat) |
+| 4 | Gérant | console → coller les 4 valeurs → **Livrer** | `wg_setup` filée ; au check-in le routeur configure peer + adresse et échoe `peers=1` → état **`active`** |
+| 5 | Gérant | **Tester le tunnel** | dial direct depuis la VM : `10.8.0.N:8728` (API RouterOS) puis `8291` (Winbox) — « tunnel UP mais API fermée » est rapporté honnêtement |
+| — | Gérant/Exploitant | **Désactiver** = `wg-disable` (démontage routeur) + dispatch `peer-remove` (révocation serveur) | les deux côtés sont propres ; la paire de clés du routeur est détruite |
+
+### Ce que ça change (les « possibilités » du routeur)
+- **Diagnostic direct** : la VM sait si le routeur est joignable en direct
+  (latence réelle, indépendante du check-in) — c'est déjà intégré au
+  bouton « Tester » de la fiche (verdict agent + verdict tunnel).
+- **Porte vers le pilotage direct** : avec l'API RouterOS (8728, activée
+  par défaut) joignable à travers le tunnel, la gateway `real` EXISTANTE
+  (`internal/routeros`, protocole binaire) peut un jour piloter ce routeur
+  sans IP publique ni 45 s d'attente — l'activation par routeur (creds
+  RouterOS côté cloud) est l'évolution suivante, volontairement HORS
+  N°285 pour limiter le rayon.
+- **Admin d'urgence** : Winbox/SSH à travers le tunnel (routeur sans
+  aucun port public), pattern §9.
+- **Évolutions notées (pas dans N°285)** : check-in privé via tunnel
+  (DNS static — à proscrire tant que le failover n'existe pas dans le
+  scheduler), read_state v3 rapportant l'état WG (bump de version de
+  script = vague de re-déploiement, à budgéter), gateway `real` par
+  tunnel (creds à demander au gérant).
+
+### Discipline et pièges consignés
+- **Les logs ne portent que du non-secret** (noms, adresses tunnel,
+  fingerprints) : le livret `.router.txt` est 600 root, lu par SSH
+  (`sudo cat`), JAMAIS collé dans un chat (dépôt public) ;
+- **Anti-collision d'adresses** : le cloud refuse deux routeurs avec la
+  même `10.8.0.N` (pool GLOBAL à la VM — deux comptes différents aussi) ;
+- **Un routeur sans wireguard (ROS < 7.15)** rapporte une erreur claire,
+  l'état passe `error` et AUCUNE commande ne se re-file toute seule
+  (opt-in : c'est le gérant qui relance) ;
+- **La PSK vit chiffrée au repos** (secretbox, pattern Password P0 #6) et
+  ne sort JAMAIS (ni `json:"-"`, ni `sanitizeRouter` — double barrière) ;
+- **wg-peer.sh v2 est rétro-compatible** : le mode `peer-add-router`
+  re-pose le script à chaque dispatch (upgrade à chaud du v1 N°284,
+  peers full-tunnel existants intacts) ; `remove` nettoie conf client ET
+  livret ; `reip` met à jour les deux formes.

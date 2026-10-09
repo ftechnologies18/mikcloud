@@ -62,6 +62,9 @@ const (
 	CmdRouterOSUpdate      = "routeros_update"      // N°115 : installation de la mise à jour RouterOS (download + install + redémarrage automatique) — rapport ok AVANT exécution (pattern reboot F10), erreur de téléchargement rapportée après coup
 	CmdRouterboardFirmware = "routerboard_firmware" // N°125 : application du firmware RouterBOARD en attente (livré avec le paquet RouterOS mais non appliqué — il ne s'applique qu'au redémarrage, auto-upgrade désactivé par défaut) — garde côté routeur (rien à appliquer → ok SANS redémarrage), rapport ok AVANT le reboot (pattern F10)
 	CmdAgentMigrate        = "agent_migrate"        // N°230 : migration d'URL des schedulers mikcloud (bascule de domaine SANS Winbox) — réécrit les on-events de mikcloud-agent et mikcloud-watch avec l'URL courante du cloud ; pré-flight + pont anti-orphelin + ménage conditionnel vérifié par hôte, idempotent
+	CmdWgKeygen            = "wg_keygen"            // N°285 : génération de la paire de clés WireGuard SUR LE ROUTEUR (la clé privée ne quitte jamais l'appareil) — interface mikcloud-wg idempotente, rapport de la clé publique
+	CmdWgSetup             = "wg_setup"             // N°285 : configuration du tunnel WireGuard du routeur (interface + peer serveur + PSK + adresse tunnel) — valeurs PUBLIQUES et PSK livrées sur le canal agent TLS strict, idempotent, marqueur mikcloud-wg
+	CmdWgTeardown          = "wg_teardown"          // N°285 : démontage propre du tunnel côté routeur (peer + adresse + interface supprimés, marqueur mikcloud-wg) — le check-in agent public n'est JAMAIS impacté
 )
 
 // N°80 — niveaux SafeWiFi (filtrage DNS du WiFi public par redirection).

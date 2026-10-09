@@ -5,6 +5,85 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-09 — N°285 — **RENFORT WIREGUARD DES ROUTEURS : deuxième chemin routeur ↔ VM** (mode agent = socle, tunnel opt-in)
+
+### Ce qui a changé
+- **Doctrine** : le mode agent reste LE SOCLE (check-in HTTPS 100 % sortant,
+  TLS strict, anti-orphan) — le tunnel WireGuard ajouté par routeur n'est
+  JAMAIS sur le chemin critique du check-in (aucune réécriture de scheduler,
+  aucun DNS static) : un tunnel mort dégrade le RENFORT, jamais le contrôle.
+  Ce que le tunnel apporte : chemin direct chiffré routeur ↔ VM franchissant
+  le CGNAT (le routeur initie), zéro port public côté routeur, porte vers le
+  pilotage direct (API RouterOS 10.8.0.N:8728 à travers wg0 — dial de test
+  livré ; l'exploitation complète via gateway `real` est l'évolution suivante).
+- **3 commandes agent** (`model.CmdWgKeygen/wg_keygen`, `wg_setup`,
+  `wg_teardown`, builders dans `internal/agent/wireguard.go`, idempotents
+  remove-then-add par marqueur `mikcloud-wg`) :
+  - `wg_keygen` : le routeur génère SA paire WireGuard (interface
+    `mikcloud-wg`, port local 13231) et rapporte sa clé publique — la clé
+    privée ne quitte JAMAIS l'appareil ; un routeur sans le paquet wireguard
+    (ROS < 7.15) rapporte une erreur claire, AUCUNE boucle de re-file
+    automatique (opt-in, le gérant relance) ;
+  - `wg_setup` : reçoit les valeurs du peer serveur (clé publique serveur,
+    PSK, adresse 10.8.0.N/32, endpoint) sur le canal agent TLS strict,
+    configure peer + adresse (allowed-address = 10.8.0.1/32 uniquement —
+    chemin de gestion vers l'hôte, pas de porte vers le LAN), et échoe le
+    compte de peers marqués (vérité routeur — l'état « active » n'est posé
+    que sur `peers=1`, pattern walled-garden N°29) ;
+  - `wg_teardown` : démontage propre (peer + adresse + interface — la paire
+    de clés est détruite, une ré-activation repart de `wg_keygen`).
+- **5 endpoints console** (`internal/api/handlers_wg.go`, rôle ≥ 2, mode
+  agent uniquement) : `POST …/wg-enable`, `GET …/wg` (état ; PSK et clé
+  serveur JAMAIS sérialisés — `json:"-"` + `sanitizeRouter`, défense en
+  profondeur), `PUT …/wg-params` (validations strictes : clé base64 44,
+  `10.8.0.N` N∈[2,254], anti-collision d'adresses tunnel globale VM),
+  `POST …/wg-test` (dial TCP direct 8728 puis 8291 — diagnostic honnête :
+  « tunnel UP mais API fermée » ≠ « tunnel mort »), `POST …/wg-disable`
+  (rappelle la révocation serveur `ops-wg peer-remove`).
+- **État du tunnel dans le modèle** (`Router.WgState/Pub/PeerName/IPv4/
+  Endpoint/Error/AppliedAt/ServerPub/PSK`) : 9 colonnes idempotentes
+  (`ADD COLUMN IF NOT EXISTS` — aucun geste manuel de synchronisation),
+  PSK chiffrée au repos (secretbox, pattern Password P0 #6, mode PG ET
+  mode JSON), état `error` + message bounded quand le routeur rapporte un
+  échec.
+- **`wg-peer.sh` v2** (extrait du workflow vers `deploy/oracle/wg-peer.sh`,
+  DRY : le mode `install` ET le nouveau mode `peer-add-router` de `ops-wg`
+  le posent par pipe SSH) : `add-router <nom> <pubkey>` embarque le peer
+  ROUTEUR (clé publique fournie par le routeur, PSK neuve, IPv4-only) et
+  écrit le **livret** `/opt/wireguard/peers/<nom>.router.txt` (600 root,
+  address/server_pub/psk/endpoint) — les logs ne portent QUE du non-secret ;
+  `remove` nettoie aussi les livrets, `reip` les met à jour, `show-router`
+  ré-affiche.
+- **Console** : carte « Tunnel WireGuard (renfort) » dans la fiche routeur
+  (`parts/router-wg-card.tsx`) — cycle guidé clé → dispatch ops-wg → livret
+  → livraison → test, badge d'état (poll 8 s UNIQUEMENT pendant les phases
+  d'attente — l'état stable ne consomme rien), i18n fr/en, test inclus dans
+  le bouton « Tester » de l'en-tête (verdict tunnel ajouté au verdict agent).
+
+### Pourquoi ce design
+- **Anti-orphan d'abord** (leçon N°230) : le check-in public reste la seule
+  route de commande — la livraison de `wg_setup` par le tunnel aurait créé
+  une dépendance circulaire (configurer le tunnel REQUIERT le canal qui
+  survit à sa panne).
+- **Clé privée jamais transportée** : contrairement aux peers full-tunnel
+  (clés générées côté serveur, conf scannée au QR), le routeur génère SA
+  paire — `wg_keygen` ne rapporte que la clé publique.
+- **PSK quand même obligatoire** (renfort symétrique N°284) : elle transite
+  une seule fois sur le canal TLS strict de l'agent, comme le token agent
+  lui-même — même surface, aucune surface nouvelle.
+- **Toujours Always Free** : zéro ressource nouvelle (wg0 N°284 déjà posé,
+  1 peer de plus par routeur = ligne dans wg0.conf ; RouterOS ≥ 7.15 a
+  WireGuard nativement — gratuit).
+
+### Vérifications
+- Backend : gofmt/vet/tests 100 % verts (suite api 52 s) — nouveaux tests
+  `internal/agent/wireguard_test.go` (validations clés/IPv4/peer-name/hôte,
+  forme contractuelle des 3 scripts, anti-injection endpoint) ;
+- Frontend : typecheck tsgo + ESLint + build Next verts ;
+- `ops-wg.yml` : YAML parse + `bash -n` sur les 7 blocs run verts ; le
+  script v2 est validé isolément (`bash -n deploy/oracle/wg-peer.sh`) ;
+- Référence : RUNBOOK §10 (cycle complet, gestes exploitant, évolutions).
+
 ## 2026-10-09 — N°284 — **WIREGUARD SUR FTECHCI — FULL-TUNNEL + ACCÈS SERVICES** (voie A hôte-native, premier install vert)
 
 ### Ce qui a changé

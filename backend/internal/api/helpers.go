@@ -244,6 +244,10 @@ func sanitizeRouter(r model.Router) model.Router {
 	r.Password = ""
 	// Le hash du token agent n'est jamais exposé à l'interface (secret serveur).
 	r.AgentTokenHash = ""
+	// N°285 — matériau WireGuard du peer SERVEUR jamais exposé (la PSK porte
+	// de surcroît json:"-" ; double barrière défense en profondeur).
+	r.WgServerPub = ""
+	r.WgPSK = ""
 	return r
 }
 

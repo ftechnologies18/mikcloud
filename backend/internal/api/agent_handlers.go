@@ -837,6 +837,63 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 		} else {
 			a.logActivity(db, router.AccountID, "router", "Import depuis «"+router.Name+"» terminé : "+summary)
 		}
+	case cmd.Kind == model.CmdWgKeygen && ok:
+		// N°285 — la clé publique est la VÉRITÉ ROUTEUR (générée sur
+		// l'appareil, sa clé privée n'a jamais transité). Invalide →
+		// « error » (aucun peer possible avec une clé malformée) ;
+		// valide → « ready » (en attente des paramètres serveur).
+		wgpub := strings.TrimSpace(vals.Get("wgpub"))
+		if agent.ValidWgKey(wgpub) {
+			router.WgPub = wgpub
+			router.WgState = "ready"
+			router.WgError = ""
+			a.logActivity(db, router.AccountID, "router", "Clé WireGuard générée sur «"+router.Name+"» — posez le peer côté serveur (dispatch ops-wg peer-add-router) puis livrez les paramètres dans la console")
+		} else {
+			router.WgState = "error"
+			router.WgError = "clé publique rapportée invalide"
+			a.logActivity(db, router.AccountID, "router", "Renfort WireGuard de «"+router.Name+"» : clé publique rapportée invalide (relancez « Activer le tunnel »)")
+		}
+	case cmd.Kind == model.CmdWgSetup && ok:
+		// N°285 — configuration CONFIRMÉE par le routeur : le rapport
+		// échoe le compte de peers marqués mikcloud-wg (vérité routeur,
+		// 1 attendu — pattern walled-garden N°29 : posé ici uniquement,
+		// un échec reste sans état « active »).
+		if n, okN := parseReportInt(vals.Get("peers")); okN && n == 1 {
+			router.WgState = "active"
+			router.WgAppliedAt = model.NowISO()
+			router.WgError = ""
+			a.logActivity(db, router.AccountID, "router", "Tunnel WireGuard actif sur «"+router.Name+"» ("+router.WgIPv4+" — chemin direct chiffré via wg0, zéro port public)")
+		} else {
+			router.WgState = "error"
+			router.WgError = "vérification routeur impossible (compte de peers invalide) — re-livrez les paramètres"
+			a.logActivity(db, router.AccountID, "router", "Renfort WireGuard de «"+router.Name+"» : configuration non vérifiée (re-livrez les paramètres)")
+		}
+	case cmd.Kind == model.CmdWgTeardown && ok:
+		// N°285 — démontage confirmé : TOUT l'état WG du routeur est
+		// effacé (l'interface mikcloud-wg supprimée emporte sa paire de
+		// clés — une ré-activation repart de wg_keygen).
+		router.WgState = ""
+		router.WgPub = ""
+		router.WgPeerName = ""
+		router.WgIPv4 = ""
+		router.WgServerPub = ""
+		router.WgPSK = ""
+		router.WgEndpoint = ""
+		router.WgError = ""
+		router.WgAppliedAt = ""
+		a.logActivity(db, router.AccountID, "router", "Tunnel WireGuard démonté sur «"+router.Name+"» — révocation serveur (ops-wg peer-remove) à faire si le peer existe")
+	case !ok && (cmd.Kind == model.CmdWgKeygen || cmd.Kind == model.CmdWgSetup || cmd.Kind == model.CmdWgTeardown):
+		// N°285 — échec rapporté par le routeur : état « error » avec
+		// le message (bounded) — le gérant voit la cause. AUCUNE boucle
+		// de re-file automatique : le renfort est opt-in, c'est le
+		// gérant qui relance (un routeur sans le paquet wireguard
+		// rapporterait sinon une erreur à chaque check-in à vie).
+		router.WgState = "error"
+		router.WgError = boundedString(vals.Get("message"), 200)
+		if router.WgError == "" {
+			router.WgError = "échec du routeur (message absent)"
+		}
+		a.logActivity(db, router.AccountID, "router", "Renfort WireGuard de «"+router.Name+"» en échec : "+router.WgError)
 	case cmd.Kind == model.CmdPoolDoctor && ok:
 		// N°97 — docteur pool IP : le rapport pose PoolCap/PoolRanges/
 		// PoolHosts/PoolDoctorAt (vérité routeur). Un échec est silencieux

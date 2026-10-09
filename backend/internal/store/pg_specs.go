@@ -97,10 +97,14 @@ var routerSpec = entitySpec[model.Router]{
 		"pool_auto", "pool_auto_pending", "pause_sig",
 		"wan_iface", "line_down_bps", "line_up_bps",
 		"qos_enabled", "qos_target", "qos_max_up_bps", "qos_max_down_bps", "qos_sig", "qos_applied_at",
-		"site_id", "portal_override"},
+		"site_id", "portal_override",
+		// N°285 — renfort WireGuard (PSK chiffré au repos, pattern Password).
+		"wg_state", "wg_pub", "wg_peer_name", "wg_ipv4", "wg_endpoint",
+		"wg_error", "wg_applied_at", "wg_server_pub", "wg_psk"},
 	idOf: func(x *model.Router) string { return x.ID },
 	scan: func(r *sql.Rows) (model.Router, error) {
 		var x model.Router
+		var wgPSKEnc string // N°285 — PSK WireGuard chiffré au repos
 		err := r.Scan(&x.ID, &x.Name, &x.Host, &x.Port, &x.Username, &x.Password, &x.Mode, &x.Status,
 			&x.Version, &x.UptimeSec, &x.CPULoad, &x.HotspotUsers, &x.ActiveSessions, &x.CreatedAt,
 			&x.HotspotLoginUrl, &x.AgentTokenHash, &x.TokenPreview, &x.LastSeen, &x.AccountID,
@@ -112,12 +116,17 @@ var routerSpec = entitySpec[model.Router]{
 			&x.PoolCap, &x.PoolHosts, &x.PoolRanges, &x.PoolDoctorAt, &x.PoolAuto, &x.PoolAutoPending, &x.PauseSig,
 			&x.WanIface, &x.LineDownBps, &x.LineUpBps,
 			&x.QoSEnabled, &x.QoSTarget, &x.QoSMaxUpBps, &x.QoSMaxDownBps, &x.QoSSig, &x.QoSAppliedAt,
-			&x.SiteID, &x.PortalOverride)
+			&x.SiteID, &x.PortalOverride,
+			&x.WgState, &x.WgPub, &x.WgPeerName, &x.WgIPv4, &x.WgEndpoint,
+			&x.WgError, &x.WgAppliedAt, &x.WgServerPub, &wgPSKEnc)
 		// Sécurité P0 #6 — le mot de passe routeur est stocké chiffré
 		// (AES-256-GCM) : lecture = déchiffrement (passthrough si valeur
 		// antérieure au correctif, migration assurée par
 		// migrateSealRouterPasswords au démarrage).
 		x.Password = secretbox.Decrypt(x.Password)
+		// N°285 — même discipline pour la PresharedKey WireGuard du peer
+		// serveur (secret à vie : elle authentifie le tunnel du routeur).
+		x.WgPSK = secretbox.Decrypt(wgPSKEnc)
 		return x, err
 	},
 	args: func(x *model.Router) []any {
@@ -136,7 +145,9 @@ var routerSpec = entitySpec[model.Router]{
 			x.PoolCap, x.PoolHosts, x.PoolRanges, x.PoolDoctorAt, x.PoolAuto, x.PoolAutoPending, x.PauseSig,
 			x.WanIface, x.LineDownBps, x.LineUpBps,
 			x.QoSEnabled, x.QoSTarget, x.QoSMaxUpBps, x.QoSMaxDownBps, x.QoSSig, x.QoSAppliedAt,
-			x.SiteID, x.PortalOverride}
+			x.SiteID, x.PortalOverride,
+			x.WgState, x.WgPub, x.WgPeerName, x.WgIPv4, x.WgEndpoint,
+			x.WgError, x.WgAppliedAt, x.WgServerPub, secretbox.Encrypt(x.WgPSK)}
 	},
 	hashOf: hashEntity[model.Router],
 }

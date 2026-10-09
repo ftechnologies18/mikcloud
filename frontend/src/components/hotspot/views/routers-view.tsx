@@ -83,6 +83,7 @@ import { EmptyState } from "@/components/hotspot/empty-state";
 import { LoadingCards } from "@/components/hotspot/loading";
 import { PageHeader } from "@/components/hotspot/page-header";
 import { RouterToolsPanel } from "@/components/hotspot/parts/router-tools";
+import { RouterWireGuardCard } from "@/components/hotspot/parts/router-wg-card";
 import { StatusBadge } from "@/components/hotspot/status-badge";
 import { api, repairRouterWalledGarden } from "@/lib/hotspot/api";
 import { localeOf, useI18n } from "@/lib/hotspot/i18n";
@@ -778,6 +779,11 @@ export default function RoutersView() {
                 </div>
               </CardContent>
             </Card>
+
+            {/* N°285 — renfort WireGuard : tunnel direct routeur ↔ VM
+                (opt-in, mode agent uniquement). La carte gère son propre
+                état — montée entre l'en-tête et les outils. */}
+            {selected.mode === "agent" ? <RouterWireGuardCard router={selected} /> : null}
 
             {/* Outils routeur (P1) — trafic temps réel, IP bindings,
                 DHCP/hôtes/cookies/journal, système : EN FLUX DE PAGE (fin de

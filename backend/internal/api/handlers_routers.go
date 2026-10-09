@@ -4,6 +4,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"math/rand"
 	"net/http"
 	"sort"
@@ -443,6 +444,16 @@ func (a *API) handleRouterTest(w http.ResponseWriter, r *http.Request) {
 		msg := "Agent connecté (dernier check-in : " + last + ")"
 		if !online {
 			msg = "Agent injoignable : aucun check-in récent. Recollez le script d'installation si le scheduler a été supprimé."
+		}
+		// N°285 — renfort : si le tunnel WG est actif, le test ajoute le
+		// verdict de joignabilité DIRECTE (dial wg0 → routeur). Un tunnel
+		// mort n'invalide jamais le verdict agent (le check-in reste le socle).
+		if online && routerCopy.WgState == "active" && routerCopy.WgIPv4 != "" {
+			if latency, ok := dialWGPort(routerCopy.WgIPv4, 8728); ok {
+				msg += fmt.Sprintf(" Tunnel WireGuard joignable (%s — %d ms).", routerCopy.WgIPv4, latency)
+			} else {
+				msg += " Tunnel WireGuard non joignable à l'instant (handshake ?) — le contrôle agent reste opérationnel."
+			}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok": online, "message": msg, "latencyMs": 0, "version": routerCopy.Version,

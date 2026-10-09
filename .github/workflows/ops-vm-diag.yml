@@ -132,17 +132,40 @@ jobs:
           ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s <<'REMOTE'
           set -uo pipefail
           echo "═══ boots récents (journal persistant) ═══"
-          sudo journalctl --list-boots --no-pager 2>/dev/null | tail -6
+          sudo journalctl --list-boots --no-pager 2>/dev/null | tail -10
           echo "═══ last -x (reboots / crashs) ═══"
           last -x reboot shutdown 2>/dev/null | head -8
-          echo "═══ FIN du boot précédent — dernier état vivant (150 dernières lignes) ═══"
-          sudo journalctl -b -1 -n 150 --no-pager 2>/dev/null | tail -150 \
-            || echo "(journal -b -1 indisponible — journald volatil ?)"
-          echo "═══ signaux noyau du boot précédent (oom/panic/hung/io/segv) ═══"
-          sudo journalctl -b -1 --no-pager 2>/dev/null \
-            | grep -iE 'out of memory|oom-kill|kernel panic|hung_task|blocked for more|I/O error|ext4.*error|segfault|killed process|watchdog' \
-            | tail -40 \
-            || echo "(aucun signal noyau retrouvé sur le boot précédent)"
+          echo "═══ sweep des fins de boots — ABRUPT = candidat hang/panic (N°280-bis) ═══"
+          # Une fin PROPRE contient poweroff.target / Rebooting / Journal stopped ;
+          # une fin ABRUPTEMENT tronquée = le noyau s'est figé ou a paniqué.
+          for B in $(sudo journalctl --list-boots --no-pager 2>/dev/null | tail -8 | awk '{print $1}'); do
+            LAST=$(sudo journalctl -b "$B" -n 25 --no-pager 2>/dev/null)
+            if echo "$LAST" | grep -qE 'poweroff\.target|Rebooting|Journal stopped|Restarting system'; then
+              echo "[boot $B] fin PROPRE"
+            else
+              echo "[boot $B] fin ABRUPTE — 25 dernières lignes :"
+              echo "$LAST" | tail -25
+            fi
+          done
+          echo "═══ focus sur le boot ABRUPT le plus récent ═══"
+          TARGET=""
+          for B in $(sudo journalctl --list-boots --no-pager 2>/dev/null | tail -8 | awk '{print $1}'); do
+            LAST=$(sudo journalctl -b "$B" -n 25 --no-pager 2>/dev/null)
+            echo "$LAST" | grep -qE 'poweroff\.target|Rebooting|Journal stopped|Restarting system' || TARGET="$B"
+          done
+          if [ -n "$TARGET" ]; then
+            echo "── focus boot $TARGET : 80 dernières lignes ──"
+            sudo journalctl -b "$TARGET" -n 80 --no-pager 2>/dev/null | tail -80
+            echo "── signaux noyau du boot $TARGET ──"
+            sudo journalctl -b "$TARGET" --no-pager 2>/dev/null \
+              | grep -iE 'out of memory|oom-kill|kernel panic|hung_task|blocked for more|I/O error|ext4.*error|segfault|killed process' \
+              | tail -30 \
+              || echo "(aucun signal noyau retrouvé)"
+            echo "── émetteurs les plus bavards du boot $TARGET ──"
+            sudo journalctl -b "$TARGET" --no-pager 2>/dev/null | awk '{print $5}' | sort | uniq -c | sort -rn | head -12
+          else
+            echo "(tous les boots récents se terminent proprement)"
+          fi
           echo "═══ état actuel ═══"
           uptime
           systemctl --failed --no-pager --no-legend || true

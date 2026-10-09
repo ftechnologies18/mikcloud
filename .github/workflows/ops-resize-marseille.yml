@@ -114,14 +114,18 @@ jobs:
         id: discover
         run: |
           set -euo pipefail
+          # N°272-ter : l'OCI CLI 3.x enveloppe les réponses dans {"data": …}
+          # (run #2 : « array and object cannot be added ») → déballage
+          # systématique `.data // .` sur CHAQUE appel list/get.
           # Root + tous les sous-compartiments non supprimés.
           COMPS="$OCI_CLI_TENANCY $(oci iam compartment list \
             --compartment-id "$OCI_CLI_TENANCY" --all \
             --compartment-id-in-subtree true --output json \
-            | jq -r '.[] | select(."lifecycle-state" != "DELETED") | .id')"
+            | jq -r '(.data // .) | .[] | select(."lifecycle-state" != "DELETED") | .id')"
           ALL_JSON="[]"
           for C in $COMPS; do
-            PART="$(oci compute instance list --compartment-id "$C" --all --output json || echo '[]')"
+            PART="$(oci compute instance list --compartment-id "$C" --all --output json \
+              | jq '(.data // .)' || echo '[]')"
             ALL_JSON="$(printf '%s %s' "$ALL_JSON" "$PART" | jq -s 'add')"
           done
           ALIVE="$(printf '%s' "$ALL_JSON" | jq '[.[] | select(."lifecycle-state" != "TERMINATED")]')"
@@ -185,7 +189,7 @@ jobs:
           fi
           ok=""
           for i in $(seq 1 36); do   # ≤ 6 min
-            S="$(oci compute instance get --instance-id "$OCID" --output json | jq -r '."lifecycle-state"')"
+            S="$(oci compute instance get --instance-id "$OCID" --output json | jq -r '.data // . | ."lifecycle-state"')"
             [ "$S" = "STOPPED" ] && { ok=1; break; }
             sleep 10
           done
@@ -193,12 +197,12 @@ jobs:
             echo "::warning::STOP non finalisé en 6 min (état : $S) → STOP (hard) — le flush final a déjà eu 6 minutes."
             oci compute instance action --instance-id "$OCID" --action STOP > /dev/null
             for i in $(seq 1 18); do
-              S="$(oci compute instance get --instance-id "$OCID" --output json | jq -r '."lifecycle-state"')"
+              S="$(oci compute instance get --instance-id "$OCID" --output json | jq -r '.data // . | ."lifecycle-state"')"
               [ "$S" = "STOPPED" ] && break
               sleep 10
             done
           fi
-          S="$(oci compute instance get --instance-id "$OCID" --output json | jq -r '."lifecycle-state"')"
+          S="$(oci compute instance get --instance-id "$OCID" --output json | jq -r '.data // . | ."lifecycle-state"')"
           [ "$S" = "STOPPED" ] || { echo "::error::Instance non STOPPée ($S). ABORT — ne rien toucher d'autre."; exit 1; }
           echo "Instance STOPPÉE proprement (soft_sent=${soft_sent:-0})."
           echo "::warning::⚠️ Ne PAS laisser l'instance STOPPée prolongé (réclamation Always Free) — la suite s'enchaîne immédiatement."
@@ -226,7 +230,7 @@ jobs:
             if oci compute instance action --instance-id "$OCID" --action START > /tmp/start.out 2>/tmp/start.err; then
               okrun=""
               for j in $(seq 1 30); do   # ≤ 5 min pour atteindre RUNNING
-                S="$(oci compute instance get --instance-id "$OCID" --output json | jq -r '."lifecycle-state"')"
+                S="$(oci compute instance get --instance-id "$OCID" --output json | jq -r '.data // . | ."lifecycle-state"')"
                 if [ "$S" = "RUNNING" ]; then okrun=1; break; fi
                 sleep 10
               done
@@ -261,7 +265,7 @@ jobs:
             if oci compute instance action --instance-id "$OCID" --action START > /dev/null 2>/tmp/rev.err; then
               okrun=""
               for j in $(seq 1 30); do
-                S="$(oci compute instance get --instance-id "$OCID" --output json | jq -r '."lifecycle-state"')"
+                S="$(oci compute instance get --instance-id "$OCID" --output json | jq -r '.data // . | ."lifecycle-state"')"
                 if [ "$S" = "RUNNING" ]; then okrun=1; break; fi
                 sleep 10
               done
@@ -298,7 +302,7 @@ jobs:
       - name: Rapport final (shape + état + summary)
         run: |
           set -euo pipefail
-          FINAL="$(oci compute instance get --instance-id "$OCID" --output json)"
+          FINAL="$(oci compute instance get --instance-id "$OCID" --output json | jq '(.data // .)')"
           FNAME="$(printf '%s' "$FINAL" | jq -r '."display-name"')"
           FSTATE="$(printf '%s' "$FINAL" | jq -r '."lifecycle-state"')"
           FOCPU="$(printf '%s' "$FINAL" | jq -r '."shape-config".ocpus')"

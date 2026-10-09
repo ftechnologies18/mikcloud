@@ -1027,27 +1027,31 @@ jobs:
             LAST_ALERT=$(cat "$STATED/last_alert" 2>/dev/null || echo 0)
             if [ "$INC" != "incident" ] || [ $(( NOW - LAST_ALERT )) -ge 14400 ]; then
               send "🔴 mikcloud DR — ANOMALIES
-          $(printf "$FAILS")— $(date -u '+%F %R UTC')"
+          $(printf '%b' "$FAILS")— $(date -u '+%F %R UTC')"
               echo "incident" > "$STATE"; date +%s > "$STATED/last_alert"
             fi
           else
             if [ "$INC" = "incident" ]; then
               send "🟢 mikcloud DR — rétabli
-          $(printf "$OKS")— $(date -u '+%F %R UTC')"
+          $(printf '%b' "$OKS")— $(date -u '+%F %R UTC')"
             fi
             echo "ok" > "$STATE"
             if [ "$HOUR" = "06" ] && [ ! -f "$STATED/heartbeat.$(date -u +%F)" ]; then
               send "🟢 mikcloud DR — heartbeat quotidien
-          $(printf "$OKS")— $(date -u '+%F %R UTC')"
+          $(printf '%b' "$OKS")— $(date -u '+%F %R UTC')"
               touch "$STATED/heartbeat.$(date -u +%F)"
             fi
           fi
-          printf 'fails=%s\nstate=%s\nat=%s\n' "$(printf "$FAILS" | grep -c . || true)" "$(cat "$STATE")" "$(date -u +%FT%TZ)" > "$STATUSF"
+          printf 'fails=%s\nstate=%s\nat=%s\n' "$(printf '%b' "$FAILS" | grep -c . || true)" "$(cat "$STATE")" "$(date -u +%FT%TZ)" > "$STATUSF"
           exit 0
           MON_EOF
           sudo chmod 755 /usr/local/sbin/mikcloud-monitor
           CHATS=$(psql "$LOCALPG_DSN" -Atc "SELECT n.telegram_chat_id FROM notif_settings n LEFT JOIN accounts a ON a.id=n.account_id WHERE n.telegram_enabled=TRUE AND n.telegram_chat_id<>'' ORDER BY a.created_at NULLS LAST LIMIT 1")
-          echo "chat d'alerte retenu: ${CHATS:-AUCUN} — monitor muet jusqu'au premier reverse-sync"
+          if [ -n "$CHATS" ]; then
+            echo "chat d'alerte retenu: $CHATS — monitor.env mis à jour (alertes DR délivrables : heartbeat 06:00 UTC ou premier incident)"
+          else
+            echo "chat d'alerte retenu: AUCUN — monitor muet jusqu'au premier reverse-sync"
+          fi
           sudo tee /etc/mikcloud/monitor.env > /dev/null <<MONEOF
           OPS_TELEGRAM_CHATS=$CHATS
           WEB_VITALS_RETENTION_DAYS=90

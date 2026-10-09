@@ -5,6 +5,74 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-09 — N°280 — **ÉCLAIRCISSEMENT DU « HANG » DU 09/10 — CE N'ÉTAIT PAS UN HANG** (poweroff ACPI propre + état OCI RUNNING fantôme)
+
+### Le fait établi (preuves journal persistant, boot -5)
+- À **05:13:23**, `systemd-logind` journalise **« Power key pressed
+  short »** → « Powering off… » → cascade de shutdown **100 % propre**
+  (services arrêtés un à un : Caddy, mikcloud, PostgreSQL, sshd…) →
+  `Reached target poweroff.target` → **`Journal stopped` à 05:13:28**.
+- **ZÉRO signal noyau** sur le boot -5 ET sur les 9 autres boots de la
+  nuit (0 OOM-kill, 0 panic, 0 hung_task, 0 I/O error).
+- **OCI est resté bloqué sur RUNNING** (désync hyperviseur) : l'appui
+  bouton ACPI a éteint le guest sans que l'état d'instance ne change →
+  rien ne l'a relancé → ~77 min de « down » jusqu'au RESET dur (06:24).
+  Le SOFTRESET n'était pas « ignoré par un noyau hung » : il n'y avait
+  **plus de noyau du tout** à resetter.
+- **Le même schéma couvre TOUTE la nuit** : 10 boots (01:42→04:10,
+  04:11→04:17, 04:17→04:23, 04:24, 04:25→05:13, 06:30→07:07, 07:08
+  (21 s), 07:34→09:32, 09:33→09:38), **tous terminés par un poweroff/
+  reboot PROPRE** — le « reboot spontané 04:25 » de N°275 était une
+  série de gestes identiques.
+- **Aucun `sudo shutdown` dans auth.log** ; l'initiateur est donc
+  **côté hyperviseur/console** (bouton Stop/Reboot OCI — l'équivalent
+  ACPI d'un appui power — ou maintenance hôte). Détail : des sessions
+  **console série tty actives 05:03-05:10**, juste avant l'appui
+  (05:13:23) — la console OCI était ouverte à ce moment.
+- **Question à l'exploitant** : ces gestes venaient-ils de vous
+  (console OCI) ? Si NON → ticket support OCI avec ces timestamps
+  précis (désync d'état + séries de power keys nocturnes).
+- **Leçon outil (piège)** : le sweep de boots s'**auto-pollue** — les
+  lignes sudo du sweep même font paraître le boot courant « fin
+  ABRUPTE » (boot 0 exclu en v3) ; et `-b -1` ne pointe le boot du
+  hang qu'à l'instant T — d'où le v4 **boot paramétrable**.
+- **Outil livré** : `ops-vm-diag` mode `postmortem` (boot paramétrable,
+  séquence complète, chasse initiateur : grep ACPI/logind, auth.log,
+  oracle-cloud-agent) + capture console série toujours non fatale.
+- **Verdict DR inchangé** : zéro perte (RPO 0 tenu), la chaîne hybride
+  a encaissé l'incident sans intervention.
+
+## 2026-10-09 — N°281 — **PHASE B — BACKEND MIKCLOUD DOCKERISÉ** (transport docker par défaut, rollback systemd à un dispatch)
+
+### Ce qui a changé en production
+- **`deploy-oracle` transport-aware** (input `deploy_mode` :
+  `auto` par défaut — suit le transport actif ; `docker` — bascule
+  systemd→docker ; `systemd` — rollback docker→systemd). Le push
+  auto-deploy continue de fonctionner sans rien changer aux usages.
+- **Voie docker** : binaire statique (CGO_ENABLED=0) copié dans une
+  image **distroless** buildée sur la VM, tags `current` + `previous`
+  (rollback instantané par re-tag) ; `docker run --network host
+  --env-file /etc/mikcloud/mikcloud.env --restart unless-stopped
+  --memory 4g --cpus 3` — posture réseau **identique** au systemd
+  (127.0.0.1:4000, Caddy inchangé, DSN local intact — blindage N°274
+  conserve), limites cgroups contre la famine de PostgreSQL.
+- **Unité systemd `mikcloud` STOPPÉE et désactivée mais CONSERVÉE**
+  (unité + binaire /opt/mikcloud/mikcloud-server) — le rollback est un
+  dispatch `deploy_mode=systemd`, et la voie docker fait elle-même un
+  rollback systemd AUTOMATIQUE si le healthcheck échoue.
+- **Monitor DR famille n°2 transport-agnostique** : le signal reste le
+  HTTP 200 sur 127.0.0.1:4000 ; le transport affiché devient
+  `backend: 200 (docker)` ou `(systemd)`.
+- **Bonus mesuré** : healthcheck au bout de **10 s** (contre ~1 min à
+  l'ère Supabase-Johannesburg) — le `Load()` des 37 tables se fait
+  depuis le PG local.
+- **Preuves** : auto-deploy push 10:44 vert (voie auto/systemd avant
+  migration) ; **migration run #20 (10:55) verte** — image
+  `20261009T105534Z`, « BACKEND OK (healthcheck au bout de 10 s) »,
+  conteneur Up, systemd désactivé ; `arm-dr` #58 + `health` #59 verts
+  (`fails=0`, API 200/200, monitor « backend: 200 (docker) »).
+- Conteneur préexistant `sect-api` (N°279) non affecté.
+
 ## 2026-10-09 — N°279 — **PHASE A — TERRAIN DOCKER SUR FTECHCI** (multi-services N°271 — backend mikcloud + PostgreSQL intouchés)
 
 ### Ce qui a changé en production

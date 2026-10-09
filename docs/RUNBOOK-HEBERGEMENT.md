@@ -301,10 +301,20 @@ la référence pour le timing.
 `status` (lecture seule) / `prune` (**confirm=MIK-DOCKER-PRUNE** —
 JAMAIS `--volumes`, les volumes portent des données de services).
 
-### Phase B (non lancée — décision séparée)
-Dockeriser le backend mikcloud : image distroless du binaire statique
-existent (CGO_ENABLED=0), publication `127.0.0.1:4000` (Caddy et le
-monitor DR inchangés), blindage DSN N°274 transféré tel quel, fallback
-systemd conservé un cycle. À lancer APRÈS éclaircissement du hang du
-09/10 — ou en acceptant explicitement la variable ajoutée à la
-forensique.
+### Phase B — RÉALISÉE (N°281, 09/10) : le backend mikcloud tourne SOUS DOCKER
+- **Transport actif : docker** — conteneur `mikcloud-server`
+  (`--network host`, publication directe sur `127.0.0.1:4000` → Caddy
+  et le monitor DR inchangés ; `--env-file /etc/mikcloud/mikcloud.env`
+  → blindage DSN N°274 intact ; `--memory 4g --cpus 3` → PostgreSQL à
+  l'abri ; `--restart unless-stopped`). Image distroless du binaire
+  statique existant, buildée sur la VM à chaque deploy.
+- **Unité systemd `mikcloud` arrêtée + désactivée mais CONSERVÉE**
+  (unité + binaire) — rollback = dispatch `deploy-oracle` avec
+  `deploy_mode=systemd` ; rollback d'image instantané = tag `previous`.
+- **`deploy-oracle.yml` est transport-aware** : input `deploy_mode`
+  (`auto` = suit le transport actif — les pushs auto-deploy ne changent
+  de rien ; `docker` / `systemd` = gestes de bascule explicites).
+- **Monitor DR** : `backend: 200 (docker)` ou `(systemd)` — le signal
+  reste HTTP 200 sur 127.0.0.1:4000, transport-agnostique (N°281).
+- Healthcheck post-deploy mesuré : **10 s** (PG local) contre ~1 min à
+  l'ère Johannesburg.

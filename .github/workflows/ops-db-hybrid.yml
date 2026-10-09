@@ -57,6 +57,10 @@ name: ops-db-hybrid
 #           · OCI CLI + config /etc/oci (clé API du coffre) ; bucket
 #             mikcloud-wal + lifecycle 21 jours ; policy IAM du service
 #             principal Object Storage posée par API si absente (N°276) ;
+#           · N°277 — WAL + basebackups CHIFFRÉS CLIENT (AES-256-CBC/
+#             PBKDF2 iter 200000, WAL_ENC_KEY=BACKUP_KEY) AVANT upload —
+#             le bucket ne contient que des .enc illisibles sans la clé ;
+#             refus strict d'uploader en clair ;
 #           · script mikcloud-wal-upload (timer */5 min) — Tier1.5 :
 #             WAL → OCI Object Storage, prune locale après upload ;
 #           · script mikcloud-reverse-sync (timer 03:00 UTC) — Tier2 :
@@ -609,7 +613,7 @@ jobs:
           df -h / | sed -n '2p'; free -h | sed -n '2p'; uptime
           REMOTE
 
-      - name: mode=arm-dr — chaîne DR N°275 (confirm MIK-DR-ARM)
+      - name: mode=arm-dr — chaîne DR N°275/276/277 (confirm MIK-DR-ARM)
         if: ${{ env.RESOLVED_MODE == 'arm-dr' }}
         run: |
           set -euo pipefail
@@ -622,6 +626,13 @@ jobs:
           done
           # clé API OCI → VM par stdin (jamais en ligne de commande ni dans le log)
           printf '%s\n' "$OCI_KEY" | ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" 'cat > /tmp/oci_api_key.pem && chmod 600 /tmp/oci_api_key.pem'
+          # N°277 — clé de chiffrement client WAL/basebackup (= BACKUP_KEY Tier3)
+          # → VM par stdin, jamais en argument (ps) ni dans le log
+          if [ -n "$BACKUP_KEY" ]; then
+            printf '%s\n' "$BACKUP_KEY" | ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" 'cat > /tmp/walenc.key && chmod 600 /tmp/walenc.key'
+          else
+            echo "⚠ BACKUP_KEY absente du coffre — WAL_ENC_KEY vide (uploads WAL refusés jusqu'au fix)"
+          fi
           ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s -- "$CONFIRM" "$OCI_USER" "$OCI_TENANCY" "$OCI_FINGERPRINT" "$OCI_REGION" <<'REMOTE'
           set -euo pipefail
           CONFIRM="${1:-}"; OCI_USER="${2:-}"; OCI_TENANCY="${3:-}"; OCI_FP="${4:-}"; OCI_REGION="${5:-}"
@@ -759,18 +770,24 @@ jobs:
           echo "--- lecture de contrôle lifecycle ---"
           sudo oci --config-file /etc/oci/config os object-lifecycle-policy get --namespace "$NS" --bucket-name mikcloud-wal </dev/null 2>&1 | jq -c '(.data // .).items // empty' 2>/dev/null || true
           echo "═══ 3. Scripts DR ═══"
+          # N°277 — WAL_ENC_KEY = BACKUP_KEY du coffre (chiffrement client WAL)
+          # transférée par stdin (/tmp/walenc.key) — jamais en argument ni log
           sudo tee /etc/mikcloud/walupload.env > /dev/null <<WALEOF
           WAL_BUCKET=mikcloud-wal
           WAL_NS=$NS
+          WAL_ENC_KEY=$(cat /tmp/walenc.key 2>/dev/null || true)
           WALEOF
           sudo chmod 600 /etc/mikcloud/walupload.env
+          rm -f /tmp/walenc.key
           sudo tee /usr/local/sbin/mikcloud-wal-upload > /dev/null <<'WALUP_EOF'
           #!/usr/bin/env bash
           # N°275 — Tier1.5 : upload des WAL archivés vers OCI Object Storage.
+          # N°277 — CHIFFREMENT CLIENT : chaque segment est chiffré AVANT
+          # upload (AES-256-CBC/PBKDF2 iter 200000, WAL_ENC_KEY = BACKUP_KEY)
+          # → le bucket ne contient QUE des '<segment>.enc' illisibles sans
+          # la clé ; REFUS strict d'uploader en clair.
           # Timer mikcloud-wal-upload.timer (*/5 min). Idempotent : la liste
           # /var/lib/mikcloud/wal-uploaded.list retient les segments déjà partis.
-          # Le bucket ne contient QUE des objets '<segment>.gz' ; les fichiers
-          # bruts de la période N°274 sont gzippés à la volée.
           # Prune locale : segments uploadés quittent le disque après 48 h
           # (immédiatement si / dépasse 70 %) — le disque protège le PG primaire.
           set -uo pipefail   # sans -e : un upload raté ne tue pas les suivants
@@ -780,6 +797,7 @@ jobs:
           [ -r /etc/mikcloud/walupload.env ] || { echo "wal-upload: env absent — arm-dr pas fait"; exit 0; }
           . /etc/mikcloud/walupload.env
           [ -n "${WAL_BUCKET:-}" ] && [ -n "${WAL_NS:-}" ] || { echo "wal-upload: env incomplet"; exit 1; }
+          [ -n "${WAL_ENC_KEY:-}" ] || { echo "wal-upload: WAL_ENC_KEY absent — REFUS d'uploader en clair (N°277) — relancer arm-dr"; exit 1; }
           [ -d "$WAL_DIR" ] || exit 0
           OCI_BIN=$(command -v oci || true)
           [ -n "$OCI_BIN" ] || { echo "wal-upload: oci absent"; exit 1; }
@@ -797,12 +815,21 @@ jobs:
               upfile="/tmp/${seg}.gz.up"
               gzip -c "$f" > "$upfile" || { rm -f "$upfile"; FAIL=$((FAIL+1)); continue; }
             fi
+            # N°277 — chiffrement client (même schéma Tier3 : AES-256-CBC/PBKDF2)
+            encfile="/tmp/${seg}.enc"
+            if ! openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt \
+                 -in "$upfile" -out "$encfile" -pass env:WAL_ENC_KEY 2>/dev/null; then
+              rm -f "$encfile"; FAIL=$((FAIL+1)); echo "wal-upload: échec chiffrement $seg"
+              [[ "$b" == *.gz ]] || rm -f "$upfile"
+              continue
+            fi
             if "$OCI_BIN" os object put --config-file /etc/oci/config --namespace "$WAL_NS" \
-                 --bucket-name "$WAL_BUCKET" --name "${seg}.gz" --file "$upfile" --force >/dev/null 2>&1; then
+                 --bucket-name "$WAL_BUCKET" --name "${seg}.enc" --file "$encfile" --force >/dev/null 2>&1; then
               echo "$seg" >> "$STATE"; NEW=$((NEW+1))
             else
               FAIL=$((FAIL+1)); echo "wal-upload: échec upload $seg"
             fi
+            rm -f "$encfile"
             [[ "$b" == *.gz ]] || rm -f "$upfile"
           done
           PCT=$(df --output=pcent / | tail -1 | tr -dc '0-9')
@@ -848,22 +875,32 @@ jobs:
           psql "$LOCALPG_DSN" -q -c "DELETE FROM web_vitals WHERE sampled_at < now() - interval '${RET_DAYS} days'" || fail "rétention web_vitals"
           psql "$LOCALPG_DSN" -q -c "VACUUM ANALYZE web_vitals" || true
           # 1. base backup quotidien → bucket (PITR = base + WAL)
-          if [ -n "${WAL_NS:-}" ] && [ -n "${WAL_BUCKET:-}" ] && [ -f /etc/oci/config ]; then
+          if [ -n "${WAL_NS:-}" ] && [ -n "${WAL_BUCKET:-}" ] && [ -f /etc/oci/config ] && [ -n "${WAL_ENC_KEY:-}" ]; then
             BB=/tmp/mikcloud-bb-$STAMP
             rm -rf "$BB"; install -d -o postgres -g postgres -m 700 "$BB"
             if sudo -u postgres pg_basebackup -D "$BB" -Ft -X stream 2>>"$LOGF"; then
               tar -C "$BB" -czf /tmp/mikcloud-base-$STAMP.tar.gz . 2>>"$LOGF"
-              if oci --config-file /etc/oci/config os object put --namespace "$WAL_NS" \
-                   --bucket-name "$WAL_BUCKET" --name "basebackup/base-$STAMP.tar.gz" \
-                   --file "/tmp/mikcloud-base-$STAMP.tar.gz" --force >>"$LOGF" 2>&1; then
-                log "base backup uploadé ($(du -h /tmp/mikcloud-base-$STAMP.tar.gz | cut -f1))"
+              # N°277 — chiffrement client avant upload (refus d'envoyer en clair)
+              if openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt \
+                   -in "/tmp/mikcloud-base-$STAMP.tar.gz" -out "/tmp/mikcloud-base-$STAMP.tar.gz.enc" \
+                   -pass env:WAL_ENC_KEY 2>>"$LOGF"; then
+                if oci --config-file /etc/oci/config os object put --namespace "$WAL_NS" \
+                     --bucket-name "$WAL_BUCKET" --name "basebackup/base-$STAMP.tar.gz.enc" \
+                     --file "/tmp/mikcloud-base-$STAMP.tar.gz.enc" --force >>"$LOGF" 2>&1; then
+                  log "base backup CHIFFRÉ uploadé ($(du -h "/tmp/mikcloud-base-$STAMP.tar.gz.enc" | cut -f1))"
+                else
+                  log "AVERTISSEMENT: base backup NON uploadé — PITR dégradé"
+                fi
+                rm -f "/tmp/mikcloud-base-$STAMP.tar.gz.enc"
               else
-                log "AVERTISSEMENT: base backup NON uploadé — PITR dégradé"
+                log "AVERTISSEMENT: échec chiffrement base backup — NON uploadé (refus en clair) — PITR dégradé"
               fi
               rm -rf "$BB" "/tmp/mikcloud-base-$STAMP.tar.gz"
             else
               rm -rf "$BB"; log "AVERTISSEMENT: pg_basebackup en échec — PITR dégradé (flux continu)"
             fi
+          elif [ -n "${WAL_NS:-}" ] && [ -n "${WAL_BUCKET:-}" ] && [ -f /etc/oci/config ]; then
+            log "AVERTISSEMENT: WAL_ENC_KEY absent — base backup NON uploadé (refus en clair N°277) — relancer arm-dr"
           else
             log "AVERTISSEMENT: walupload.env/oci absent — base backup sauté"
           fi
@@ -1160,7 +1197,7 @@ jobs:
           sudo test -f /etc/mikcloud/walupload.env || { echo "❌ arm-dr non exécuté (walupload.env absent)"; exit 1; }
           set -a; . <(sudo cat /etc/mikcloud/localpg.env); set +a
           . <(sudo cat /etc/mikcloud/walupload.env)
-          : "${LOCALPG_DSN:?}"; : "${WAL_NS:?}"; : "${WAL_BUCKET:?}"
+          : "${LOCALPG_DSN:?}"; : "${WAL_NS:?}"; : "${WAL_BUCKET:?}"; : "${WAL_ENC_KEY:?}"
           cleanup(){ sudo -u postgres psql -qc 'DROP DATABASE IF EXISTS mikcloud_drill WITH (FORCE)' || true; }
           trap 'cleanup; sudo rm -f /tmp/mikcloud-drill-*.dump /tmp/mikcloud-drill-*.dump.list /tmp/drill.err /tmp/drill-seg* 2>/dev/null' EXIT
           STAMP=$(date -u +%Y%m%dT%H%M%SZ)
@@ -1197,10 +1234,17 @@ jobs:
             [ "$D" -gt 0 ] || { echo "❌ table $t vide dans le drill"; DRILL_OK=; }
           done
           [ -n "$DRILL_OK" ] || { echo "❌ asserts données en échec"; exit 1; }
-          echo "═══ 4. WAL distant lisible (Tier1.5) ═══"
+          echo "═══ 4. WAL distant lisible (Tier1.5, chiffré N°277) ═══"
           SEG=$(sudo sort /var/lib/mikcloud/wal-uploaded.list 2>/dev/null | tail -1 || true)
           if [ -n "${SEG:-}" ]; then
-            sudo oci --config-file /etc/oci/config os object get --namespace "$WAL_NS" --bucket-name "$WAL_BUCKET" --name "${SEG}.gz" --file /tmp/drill-seg.gz </dev/null >/dev/null
+            if sudo oci --config-file /etc/oci/config os object get --namespace "$WAL_NS" --bucket-name "$WAL_BUCKET" --name "${SEG}.enc" --file /tmp/drill-seg.enc </dev/null >/dev/null 2>&1; then
+              : "${WAL_ENC_KEY:?WAL_ENC_KEY absent — relancer arm-dr}"
+              openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in /tmp/drill-seg.enc -out /tmp/drill-seg.gz -pass env:WAL_ENC_KEY
+              ENC_NOTE="CHIFFRÉ, déchiffré + décompressé"
+            else
+              sudo oci --config-file /etc/oci/config os object get --namespace "$WAL_NS" --bucket-name "$WAL_BUCKET" --name "${SEG}.gz" --file /tmp/drill-seg.gz </dev/null >/dev/null
+              ENC_NOTE="héritage N°275 (en clair), décompressé"
+            fi
             gunzip -c /tmp/drill-seg.gz > /tmp/drill-seg
             PGW=$(ls /usr/lib/postgresql/*/bin/pg_waldump 2>/dev/null | tail -1 || true)
             if [ -n "$PGW" ]; then
@@ -1209,8 +1253,8 @@ jobs:
             else
               echo "⚠ pg_waldump absent — lisibilité par taille seulement"
             fi
-            echo "WAL distant OK: ${SEG}.gz ($(du -h /tmp/drill-seg | cut -f1) décompressé)"
-            sudo rm -f /tmp/drill-seg /tmp/drill-seg.gz
+            echo "WAL distant OK: ${SEG} ($ENC_NOTE — $(du -h /tmp/drill-seg | cut -f1))"
+            sudo rm -f /tmp/drill-seg /tmp/drill-seg.gz /tmp/drill-seg.enc
           else
             echo "⚠ aucun WAL uploadé — attendre le timer mikcloud-wal-upload puis relancer"
           fi

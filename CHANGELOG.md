@@ -5,6 +5,33 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-09 — N°272 — Pilotage agent de bout en bout : workflow `ops-resize-marseille` (rename Ftechci + resize 4/24, gardes N°271, auto-revert 2/12) — exécution déclenchée
+
+### Livré
+- `.github/workflows/ops-resize-marseille.yml` : automatisation fidèle du
+  runbook `PILOTAGE-ORACLE.md §7` — `workflow_dispatch` avec input de
+  confirmation `FTECHCI-4x24` (aucun cron), secrets Marseille du coffre
+  (`OCI_CLI_*` + `OCI_API_KEY`), vérif empreinte openssl (pattern chasse
+  N°270-ter : `SUPPRESS_LABEL_WARNING=True`, aucune capture `2>&1` sur le
+  JSON), puis : **garde enveloppe A1** (exactement 1 A1 vivante en tenancy
+  Marseille, sinon ABORT — doctrine N°271) → **rename Ftechci** (0
+  downtime) → **SOFT stop** (SIGTERM = flush final mémoire→base, zéro
+  perte ; hard stop secours après 6 min) → **edit shape 4/24** → **Start
+  ×7 essais / 90 s** (capacité se libère par vagues) → **REVERT
+  automatique 2/12** si capacité impossible (production d'abord — run
+  ROUGE volontaire « REVERTED ») → **healthcheck 60×10 s**
+  (`api.mikcloud.ftci.fr` `"ok":true` + frontend 200) → **rapport final**
+  (summary GitHub : nom/état/shape/IP + gardes rappelés).
+- `concurrency: ops-resize-marseille` (jamais deux resizes superposés) ;
+  `timeout-minutes: 75` (pire cas : 7 essais Start × ~6,5 min + revert).
+
+### Sécurité
+Secrets Marseille uniquement (la tenancy JNB/chasse est INTROUVABLE ici) ;
+IP réservée 84.235.228.160, DNS et CI deploy-oracle NON TOUCHÉS ;
+workflows/ seulement → sentinel `RENDER-DEPLOY-FROZEN` intact ; aucun
+schéma DB → rien à synchroniser. Session : tokens re-fournis par
+l'exploitant (sandbox réinitialisé — clone re-fait, HEAD N°270-ter).
+
 ## 2026-10-08 — N°271 — Doctrine révisée : resize A1 Marseille 2/12 → 4/24 AUTORISÉ (supersede règle 6 N°251-b) + serveur d'entreprise « Ftechci » (rename + resize voie console) — décision exploitant
 
 ### Décision exploitant (GO 4/24, voie console)

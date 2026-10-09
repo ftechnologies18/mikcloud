@@ -1,0 +1,326 @@
+name: ops-resize-marseille
+
+# ═══ PILOTAGE AGENT — RENAME « Ftechci » + RESIZE 2/12 → 4/24 (N°272) ═══
+#
+# Exécution de la décision N°271 (GO exploitant 4/24, voie « pilotage ») :
+# la VM de production Marseille (mikcloud-backend) devient le serveur
+# multi-services d'entreprise « Ftechci » et passe à l'enveloppe max
+# Always Free A1 (4 OCPU / 24 Go). Runbook de référence :
+# docs/PILOTAGE-ORACLE.md §7 (la présente workflow en est l'automatisation
+# fidèle — mêmes étapes, mêmes gardes, revert intégré).
+#
+# SÉCURITÉ :
+#   - workflow_dispatch UNIQUEMENT, avec input de confirmation explicite
+#     (`confirm=FTECHCI-4x24`) — aucun cron, aucun déclenchement implicite ;
+#   - secrets Marseille du coffre (OCI_CLI_USER/TENANCY/FINGERPRINT/REGION
+#     + OCI_API_KEY) — la tenancy JNB (chasse) reste INTROUVABLE ici ;
+#   - GARDE ENVELOPPE (doctrine N°271) : exactement UNE instance A1 non
+#     terminée tolérée dans la tenancy Marseille (la cible) — toute autre
+#     A1 → ABORT avant le moindre geste (97,3 % de l'allocation consommée
+#     par 4/24 à 24/7 : la marge n'absorbe rien) ;
+#   - SOFT stop d'abord : le backend reçoit SIGTERM → flush final propre
+#     de son état mémoire vers la base (store.Close) → zéro perte ;
+#   - capacité insuffisante au Start (OUT_OF_HOST_CAPACITY, maladie JNB) :
+#     retry ≤ 7 essais × 90 s, puis REVERT AUTOMATIQUE 2/12 + Start — la
+#     production repart sur le shape qui tournait avant (run ROUGE clair
+#     « REVERTED ») ;
+#   - IP réservée 84.235.228.160, DNS, CI deploy-oracle : NON TOUCHÉS ;
+#   - sentinel RENDER-DEPLOY-FROZEN : aucun chemin backend/** ni
+#     deploy/oracle/** (workflows/ seulement) ; aucun schéma DB.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Taper FTECHCI-4x24 pour autoriser l'opération"
+        required: true
+        type: string
+      ocpus:
+        description: "OCPU cible (défaut 4)"
+        required: false
+        default: "4"
+        type: string
+      memory_gb:
+        description: "Mémoire cible en Go (défaut 24)"
+        required: false
+        default: "24"
+        type: string
+
+concurrency:
+  group: ops-resize-marseille
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  resize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      # N°270-ter (leçon chasse JNB) : le Warning OCI CLI « append an extra
+      # line with 'OCI_API_KEY' » pollue stderr — supprimé à la source.
+      SUPPRESS_LABEL_WARNING: "True"
+      NAME_OLD: mikcloud-backend
+      NAME_NEW: Ftechci
+      OCPUS_REV: "2"      # shape de revert (= shape de production historique)
+      MEM_REV: "12"
+    steps:
+      - name: Garde de confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "FTECHCI-4x24" ]; then
+            echo "::error::Confirmation absente ou incorrecte — taper FTECHCI-4x24 dans l'input `confirm`. Aucun geste exécuté."
+            exit 1
+          fi
+          echo "::notice::Confirmation reçue — opération autorisée par l'exploitant (N°271)."
+
+      - name: Coffre Marseille + auth OCI (vérif empreinte openssl)
+        id: auth
+        env:
+          OCI_USER: ${{ secrets.OCI_CLI_USER }}
+          OCI_TENANCY: ${{ secrets.OCI_CLI_TENANCY }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_CLI_FINGERPRINT }}
+          OCI_REGION: ${{ secrets.OCI_CLI_REGION }}
+          OCI_KEY: ${{ secrets.OCI_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$OCI_USER" ] || [ -z "$OCI_TENANCY" ] || [ -z "$OCI_FINGERPRINT" ] || [ -z "$OCI_REGION" ] || [ -z "$OCI_KEY" ]; then
+            echo "::error::Coffre Marseille incomplet (OCI_CLI_USER/TENANCY/FINGERPRINT/REGION + OCI_API_KEY requis). ABORT."
+            exit 1
+          fi
+          python3 -m pip install --quiet oci-cli \
+            || python3 -m pip install --quiet --break-system-packages oci-cli
+          mkdir -p ~/.oci
+          {
+            echo "[DEFAULT]"
+            echo "user=$OCI_USER"
+            echo "fingerprint=$OCI_FINGERPRINT"
+            echo "tenancy=$OCI_TENANCY"
+            echo "region=$OCI_REGION"
+            echo "key_file=$HOME/.oci/oci_api_key.pem"
+          } > ~/.oci/config
+          printf '%s\n' "$OCI_KEY" > ~/.oci/oci_api_key.pem
+          chmod 600 ~/.oci/config ~/.oci/oci_api_key.pem
+          FP_CALC="$(openssl pkey -in ~/.oci/oci_api_key.pem -pubout -outform DER 2>/dev/null | openssl md5 | awk '{print $NF}' | tr -d ':')"
+          FP_REF="$(printf '%s' "$OCI_FINGERPRINT" | tr -d ':')"
+          if [ "$FP_CALC" != "$FP_REF" ]; then
+            echo "::error::Empreinte du coffre (${FP_CALC:-introuvable}) ≠ secret fingerprint — clé/secret incohérents. ABORT."
+            exit 1
+          fi
+          echo "Région : $OCI_REGION"
+
+      - name: Découverte instance + GARDE enveloppe A1 (doctrine N°271)
+        id: discover
+        run: |
+          set -euo pipefail
+          # Root + tous les sous-compartiments non supprimés.
+          COMPS="$OCI_CLI_TENANCY $(oci iam compartment list \
+            --compartment-id "$OCI_CLI_TENANCY" --all \
+            --compartment-id-in-subtree true --output json \
+            | jq -r '.[] | select(."lifecycle-state" != "DELETED") | .id')"
+          ALL_JSON="[]"
+          for C in $COMPS; do
+            PART="$(oci compute instance list --compartment-id "$C" --all --output json || echo '[]')"
+            ALL_JSON="$(printf '%s %s' "$ALL_JSON" "$PART" | jq -s 'add')"
+          done
+          ALIVE="$(printf '%s' "$ALL_JSON" | jq '[.[] | select(."lifecycle-state" != "TERMINATED")]')"
+          A1_COUNT="$(printf '%s' "$ALIVE" | jq '[.[] | select(.shape | startswith("VM.Standard.A1"))] | length')"
+          echo "Instances vivantes : $(printf '%s' "$ALIVE" | jq -r '.[] | "\(.display-name) [\(.shape)] \(.lifecycle-state)"')"
+          # GARDE N°271 : exactement UNE A1 dans la tenancy Marseille.
+          if [ "$A1_COUNT" -ne 1 ]; then
+            echo "::error::GARDE ENVELOPPE N°271 violée : $A1_COUNT instance(s) A1 vivante(s) en tenancy Marseille (toléré : 1). 4/24 consomme 97,3 % de l'allocation — toute A1 additionnelle = facturation. ABORT."
+            exit 1
+          fi
+          TARGET_JSON="$(printf '%s' "$ALIVE" | jq -c '[.[] | select(.shape | startswith("VM.Standard.A1"))][0]')"
+          TARGET_NAME="$(printf '%s' "$TARGET_JSON" | jq -r '."display-name"')"
+          if [ "$TARGET_NAME" != "$NAME_OLD" ] && [ "$TARGET_NAME" != "$NAME_NEW" ]; then
+            echo "::error::L'unique A1 s'appelle « $TARGET_NAME » — ni « $NAME_OLD » ni « $NAME_NEW ». ABORT (cible inattendue)."
+            exit 1
+          fi
+          OCID="$(printf '%s' "$TARGET_JSON" | jq -r '.id')"
+          STATE="$(printf '%s' "$TARGET_JSON" | jq -r '."lifecycle-state"')"
+          CUR_OCPUS="$(printf '%s' "$TARGET_JSON" | jq -r '."shape-config".ocpus // "?"')"
+          CUR_MEM="$(printf '%s' "$TARGET_JSON" | jq -r '."shape-config"."memoryInGBs" // "?"')"
+          echo "Cible : $TARGET_NAME ($OCID) — état $STATE — shape actuel ${CUR_OCPUS}/${CUR_MEM} Go"
+          {
+            echo "OCID=$OCID"
+            echo "TSTATE=$STATE"
+            echo "TNAME=$TARGET_NAME"
+            echo "CUR_OCPUS=$CUR_OCPUS"
+            echo "CUR_MEM=$CUR_MEM"
+          } >> "$GITHUB_ENV"
+
+      - name: Baseline santé prod (avant toute geste)
+        run: |
+          if curl -fsS -m 8 https://api.mikcloud.ftci.fr/ | grep -q '"ok":true'; then
+            echo "API verte avant l'opération."
+          else
+            echo "::warning::API non verte AVANT l'opération — l'opération continue (le resize ne la rendra pas moins bien que le point de départ)."
+          fi
+
+      - name: Rename → Ftechci (zéro downtime, IP et CI inchangées)
+        run: |
+          set -euo pipefail
+          if [ "$TNAME" = "$NAME_NEW" ]; then
+            echo "Déjà nommée « $NAME_NEW » — rename skippé."
+          else
+            oci compute instance update --instance-id "$OCID" \
+              --display-name "$NAME_NEW" --force > /dev/null
+            echo "Renommée : $TNAME → $NAME_NEW"
+          fi
+
+      - name: SOFT stop (SIGTERM → flush final mémoire→base, zéro perte)
+        if: env.TSTATE != 'STOPPED'
+        run: |
+          set -euo pipefail
+          S="$TSTATE"
+          soft_sent=""
+          if [ "$S" = "RUNNING" ]; then
+            echo "SOFTSTOP en cours (flush final du backend via SIGTERM)…"
+            oci compute instance action --instance-id "$OCID" --action SOFTSTOP > /dev/null
+            soft_sent=1
+          else
+            echo "État déjà intermédiaire ($S) — polling jusqu'à STOPPED."
+          fi
+          ok=""
+          for i in $(seq 1 36); do   # ≤ 6 min
+            S="$(oci compute instance get --instance-id "$OCID" --output json | jq -r '."lifecycle-state"')"
+            [ "$S" = "STOPPED" ] && { ok=1; break; }
+            sleep 10
+          done
+          if [ -z "$ok" ]; then
+            echo "::warning::STOP non finalisé en 6 min (état : $S) → STOP (hard) — le flush final a déjà eu 6 minutes."
+            oci compute instance action --instance-id "$OCID" --action STOP > /dev/null
+            for i in $(seq 1 18); do
+              S="$(oci compute instance get --instance-id "$OCID" --output json | jq -r '."lifecycle-state"')"
+              [ "$S" = "STOPPED" ] && break
+              sleep 10
+            done
+          fi
+          S="$(oci compute instance get --instance-id "$OCID" --output json | jq -r '."lifecycle-state"')"
+          [ "$S" = "STOPPED" ] || { echo "::error::Instance non STOPPée ($S). ABORT — ne rien toucher d'autre."; exit 1; }
+          echo "Instance STOPPÉE proprement (soft_sent=${soft_sent:-0})."
+          echo "::warning::⚠️ Ne PAS laisser l'instance STOPPée prolongé (réclamation Always Free) — la suite s'enchaîne immédiatement."
+
+      - name: Edit shape → ${{ github.event.inputs.ocpus }}/${{ github.event.inputs.memory_gb }}
+        run: |
+          set -euo pipefail
+          OCP="${{ github.event.inputs.ocpus }}"
+          MEM="${{ github.event.inputs.memory_gb }}"
+          if [ "$CUR_OCPUS" = "$OCP" ] && [ "$CUR_MEM" = "$MEM" ]; then
+            echo "Shape déjà en $OCP/$MEM — edit skippé."
+          else
+            oci compute instance update --instance-id "$OCID" \
+              --shape-config "{\"ocpus\": $OCP, \"memoryInGBs\": $MEM}" --force > /dev/null
+            echo "Shape programmé : $CUR_OCPUS/$CUR_MEM → $OCP/$MEM"
+          fi
+
+      - name: Start + retry capacité (≤ 7 essais × 90 s)
+        id: start
+        run: |
+          set -uo pipefail
+          CAPACITY_FAIL=""
+          for i in $(seq 1 7); do
+            echo "Essai Start #$i/7…"
+            if oci compute instance action --instance-id "$OCID" --action START > /tmp/start.out 2>/tmp/start.err; then
+              okrun=""
+              for j in $(seq 1 30); do   # ≤ 5 min pour atteindre RUNNING
+                S="$(oci compute instance get --instance-id "$OCID" --output json | jq -r '."lifecycle-state"')"
+                if [ "$S" = "RUNNING" ]; then okrun=1; break; fi
+                sleep 10
+              done
+              if [ -n "$okrun" ]; then echo "RUNNING atteint (essai #$i)."; break; fi
+              echo "::warning::Start accepté mais RUNNING non atteint en 5 min (état : $S)."
+            else
+              echo "Échec du Start #$i :"
+              tail -2 /tmp/start.err || true
+              case "$(cat /tmp/start.err 2>/dev/null || true)" in
+                *"Out of host capacity"*|*"OutOfCapacity"*|*"NotAvailableCapacity"*)
+                  echo "→ capacité indisponible (maladie connue, cf. chasse JNB).";;
+              esac
+            fi
+            [ "$i" -lt 7 ] && sleep 90
+            if [ "$i" -eq 7 ]; then CAPACITY_FAIL="true"; fi
+          done
+          if [ -n "$CAPACITY_FAIL" ]; then
+            echo "CAPACITY_FAIL=true" >> "$GITHUB_OUTPUT"
+            echo "::error::START impossible en 7 essais — REVERT automatique 2/12 à l'étape suivante."
+          fi
+
+      - name: REVERT 2/12 (capacité 4/24 impossible — production d'abord)
+        if: steps.start.outputs.CAPACITY_FAIL == 'true'
+        id: revert
+        run: |
+          set -uo pipefail
+          echo "::notice::REVERT vers $OCPUS_REV/$MEM_REV — shape de production historique."
+          oci compute instance update --instance-id "$OCID" \
+            --shape-config "{\"ocpus\": $OCPUS_REV, \"memoryInGBs\": $MEM_REV}" --force > /dev/null
+          for i in $(seq 1 5); do
+            echo "Revert Start #$i/5…"
+            if oci compute instance action --instance-id "$OCID" --action START > /dev/null 2>/tmp/rev.err; then
+              okrun=""
+              for j in $(seq 1 30); do
+                S="$(oci compute instance get --instance-id "$OCID" --output json | jq -r '."lifecycle-state"')"
+                if [ "$S" = "RUNNING" ]; then okrun=1; break; fi
+                sleep 10
+              done
+              if [ -n "$okrun" ]; then
+                echo "::error::REVERTED — l'instance tourne en 2/12 (production restaurée). Le 4/24 sera retenté dans une fenêtre nocturne. Le run se terminera ROUGE au rapport final (signal volontaire « pas de 4/24 aujourd'hui »)."
+                echo "REVERTED=true" >> "$GITHUB_OUTPUT"
+                exit 0   # laisser le healthcheck + rapport final conclure le run en ROUGE propre
+              fi
+            fi
+            [ "$i" -lt 5 ] && sleep 60
+          done
+          echo "::error::CRITIQUE — même le revert 2/12 ne démarre pas (capacité ?). L'instance reste STOPPée : retenter START depuis la console, puis prévenir l'exploitant."
+          exit 1
+
+      - name: Healthcheck post (60 × 10 s — patience deploy-oracle)
+        run: |
+          set -uo pipefail
+          ok=""
+          for i in $(seq 1 60); do
+            if curl -fsS -m 8 https://api.mikcloud.ftci.fr/ 2>/dev/null | grep -q '"ok":true'; then ok=1; break; fi
+            sleep 10
+          done
+          if [ -z "$ok" ]; then
+            echo "::error::API non verte 10 min après le Start — inspecter systemd/caddy (SSH) ; la shape est appliquée mais un service peut laguer."
+            exit 1
+          fi
+          echo "API verte : {\"ok\":true}."
+          if curl -fsS -m 8 -o /dev/null -w '%{http_code}' https://mikcloud.ftci.fr/ | grep -q 200; then
+            echo "Frontend Vercel : 200."
+          else
+            echo "::warning::Frontend non 200 (Vercel — hors périmètre du resize)."
+          fi
+
+      - name: Rapport final (shape + état + summary)
+        run: |
+          set -euo pipefail
+          FINAL="$(oci compute instance get --instance-id "$OCID" --output json)"
+          FNAME="$(printf '%s' "$FINAL" | jq -r '."display-name"')"
+          FSTATE="$(printf '%s' "$FINAL" | jq -r '."lifecycle-state"')"
+          FOCPU="$(printf '%s' "$FINAL" | jq -r '."shape-config".ocpus')"
+          FMEM="$(printf '%s' "$FINAL" | jq -r '."shape-config"."memoryInGBs"')"
+          {
+            echo "### Résultat ops-resize-marseille (N°272)"
+            echo ""
+            echo "| Champ | Valeur |"
+            echo "|---|---|"
+            echo "| Instance | \`$FNAME\` |"
+            echo "| État | $FSTATE |"
+            echo "| Shape final | $FOCPU OCPU / $FMEM Go |"
+            echo "| IP réservée | 84.235.228.160 (inchangée) |"
+            echo "| API | verte (\\\"ok\\\":true) |"
+            echo ""
+            echo "Gardes N°271 rappelés : ZÉRO autre A1 en tenancy Marseille ; captures A1 → JNB uniquement ; alerte budget 1 € muette sinon revert."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "FINAL : $FNAME — $FSTATE — $FOCPU/$FMEM"
+          if [ "${{ steps.revert.outputs.REVERTED }}" = "true" ]; then
+            echo "::error::RÉSULTAT : REVERTED — production restaurée en 2/12, capacité 4/24 indisponible aujourd'hui (7 essais Start). Prochaine tentative : fenêtre nocturne. Aucune action immédiate requise."
+            exit 1
+          fi
+          if [ "$FOCPU" != "${{ github.event.inputs.ocpus }}" ]; then
+            echo "::error::Le shape final ($FOCPU/$FMEM) ≠ cible — vérifier le run."
+            exit 1
+          fi
+          echo "::notice::SUCCÈS — Ftechci en $FOCPU/$FMEM, production verte. Prochaine étape : migration hybride DB (N°273+)."

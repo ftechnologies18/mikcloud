@@ -1121,7 +1121,7 @@ jobs:
           . <(sudo cat /etc/mikcloud/walupload.env)
           : "${LOCALPG_DSN:?}"; : "${WAL_NS:?}"; : "${WAL_BUCKET:?}"
           cleanup(){ sudo -u postgres psql -qc 'DROP DATABASE IF EXISTS mikcloud_drill WITH (FORCE)' || true; }
-          trap 'cleanup; rm -f /tmp/mikcloud-drill-*.dump /tmp/mikcloud-drill-*.dump.list /tmp/drill.err /tmp/drill-seg* 2>/dev/null' EXIT
+          trap 'cleanup; sudo rm -f /tmp/mikcloud-drill-*.dump /tmp/mikcloud-drill-*.dump.list /tmp/drill.err /tmp/drill-seg* 2>/dev/null' EXIT
           STAMP=$(date -u +%Y%m%dT%H%M%SZ)
           echo "═══ 1. Dump frais du primaire local ═══"
           DUMP=/tmp/mikcloud-drill-$STAMP.dump
@@ -1163,13 +1163,13 @@ jobs:
             gunzip -c /tmp/drill-seg.gz > /tmp/drill-seg
             PGW=$(ls /usr/lib/postgresql/*/bin/pg_waldump 2>/dev/null | tail -1 || true)
             if [ -n "$PGW" ]; then
-              echo "--- pg_waldump $SEG (extrait) ---"
-              "$PGW" /tmp/drill-seg 2>/dev/null | head -3 || echo "⚠ pg_waldump n'a pas lu le segment"
+              echo "--- pg_waldump $SEG (extrait ; le dernier segment, partiel, peut être illisible — normal) ---"
+              "$PGW" /tmp/drill-seg 2>&1 | head -4 || true
             else
               echo "⚠ pg_waldump absent — lisibilité par taille seulement"
             fi
             echo "WAL distant OK: ${SEG}.gz ($(du -h /tmp/drill-seg | cut -f1) décompressé)"
-            rm -f /tmp/drill-seg /tmp/drill-seg.gz
+            sudo rm -f /tmp/drill-seg /tmp/drill-seg.gz
           else
             echo "⚠ aucun WAL uploadé — attendre le timer mikcloud-wal-upload puis relancer"
           fi

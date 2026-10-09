@@ -1067,7 +1067,11 @@ jobs:
           if sudo systemctl start mikcloud-reverse-sync.service; then
             echo "✅ service terminé OK"
           else
-            echo "❌ service en échec — journal:"; sudo journalctl -u mikcloud-reverse-sync.service --since "-30 min" --no-pager | tail -40; exit 1
+            echo "❌ service en échec — journal:"
+            sudo journalctl -u mikcloud-reverse-sync.service --since "-30 min" --no-pager | tail -25
+            echo "--- log reverse-sync (détail erreurs pg_restore) ---"
+            sudo tail -n 60 /var/log/mikcloud/reverse-sync.log
+            exit 1
           fi
           echo "--- log (45 dernières lignes) ---"
           sudo tail -n 45 /var/log/mikcloud/reverse-sync.log

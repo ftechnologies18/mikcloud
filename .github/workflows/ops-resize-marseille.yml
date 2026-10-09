@@ -49,11 +49,6 @@ on:
         required: false
         default: "resize"
         type: string
-      mode:
-        description: "resize (défaut) = opération complète ; check = lecture seule (état + garde + santé)"
-        required: false
-        default: "resize"
-        type: string
 
 concurrency:
   group: ops-resize-marseille

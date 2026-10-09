@@ -305,7 +305,10 @@ jobs:
           # connexions résiduelles d'un re-run
           sudo -u postgres psql -c 'DROP DATABASE IF EXISTS mikcloud WITH (FORCE);' >/dev/null
           sudo -u postgres psql -c "CREATE DATABASE mikcloud OWNER mikcloud;"
-          pg_restore --exit-on-error --no-owner --no-privileges --role=mikcloud --jobs=4 -d "$LOCALPG_DSN" "$DUMP" 2> /tmp/restore.err \
+          # le dump embarque CREATE SCHEMA public (sans IF NOT EXISTS) qui
+          # heurte le schéma public natif du template PG 15+ → exclusion TOC
+          pg_restore -l "$DUMP" | grep -v ' SCHEMA ' > /tmp/toc.list
+          pg_restore --exit-on-error --use-list=/tmp/toc.list --no-owner --no-privileges --role=mikcloud --jobs=4 -d "$LOCALPG_DSN" "$DUMP" 2> /tmp/restore.err \
             || { echo "❌ pg_restore ÉCHOUÉ :"; tail -20 /tmp/restore.err; exit 1; }
           echo "restore terminé en $(( $(date +%s) - T1 )) s"
           echo "═══ 2. Extension + autovacuum chirurgical (tables chaudes) ═══"
@@ -374,7 +377,8 @@ jobs:
           echo "delta dump: $TABLES tables, $(du -h "$DUMP" | cut -f1)"
           sudo -u postgres psql -c 'DROP DATABASE IF EXISTS mikcloud WITH (FORCE);' >/dev/null
           sudo -u postgres psql -c "CREATE DATABASE mikcloud OWNER mikcloud;" >/dev/null
-          pg_restore --exit-on-error --no-owner --no-privileges --role=mikcloud --jobs=4 -d "$LOCALPG_DSN" "$DUMP" 2> /tmp/restore.err \
+          pg_restore -l "$DUMP" | grep -v ' SCHEMA ' > /tmp/toc.list
+          pg_restore --exit-on-error --use-list=/tmp/toc.list --no-owner --no-privileges --role=mikcloud --jobs=4 -d "$LOCALPG_DSN" "$DUMP" 2> /tmp/restore.err \
             || { echo "❌ pg_restore delta ÉCHOUÉ :"; tail -20 /tmp/restore.err; exit 1; }
           vacuumdb --dbname "$LOCALPG_DSN" --analyze --quiet
           echo "═══ GARDE 3 : comptages local == Supabase (tolérance append-only) ═══"

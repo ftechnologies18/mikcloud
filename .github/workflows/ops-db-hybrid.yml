@@ -55,7 +55,8 @@ name: ops-db-hybrid
 #           · archive_command passe en gzip (le WAL 16 Mo/min creusait
 #             ~17 Go/jour de disque — le gzip divise par ~50) ;
 #           · OCI CLI + config /etc/oci (clé API du coffre) ; bucket
-#             mikcloud-wal + lifecycle 21 jours ;
+#             mikcloud-wal + lifecycle 21 jours ; policy IAM du service
+#             principal Object Storage posée par API si absente (N°276) ;
 #           · script mikcloud-wal-upload (timer */5 min) — Tier1.5 :
 #             WAL → OCI Object Storage, prune locale après upload ;
 #           · script mikcloud-reverse-sync (timer 03:00 UTC) — Tier2 :
@@ -708,13 +709,55 @@ jobs:
             BOUT=$(sudo oci --config-file /etc/oci/config os bucket create --namespace "$NS" --compartment-id "$OCI_TENANCY" --name mikcloud-wal </dev/null 2>&1) \
               && echo "bucket mikcloud-wal: CRÉÉ" || { echo "❌ création bucket échouée:"; echo "$BOUT" | head -15; exit 1; }
           fi
+          # ── N°276 — policy IAM du service principal Object Storage ──
+          # Le PUT lifecycle exige que le service principal Object Storage
+          # puisse gérer object-family : sans policy, l'API répond
+          # InsufficientServicePermissions (runs 37-39 N°275). La policy
+          # est posée PAR API si le credentials du coffre a `manage
+          # policies` — sinon, message console précis (non bloquant).
+          POL_NAME="mikcloud-objectstorage-lifecycle"
+          POL_STMT="Allow service objectstorage-$OCI_REGION to manage object-family in tenancy"
+          if sudo oci --config-file /etc/oci/config iam policy list --compartment-id "$OCI_TENANCY" --all </dev/null 2>/dev/null | jq -e --arg n "$POL_NAME" '(.data // []) | map(.name) | index($n)' >/dev/null 2>&1; then
+            echo "policy $POL_NAME: existe déjà"
+          else
+            if POUT=$(sudo oci --config-file /etc/oci/config iam policy create --compartment-id "$OCI_TENANCY" --name "$POL_NAME" --statements "[\"$POL_STMT\"]" --description "N°276 - lifecycle 21 j du bucket mikcloud-wal (service principal Object Storage)" </dev/null 2>&1); then
+              echo "policy $POL_NAME: CRÉÉE — $POL_STMT"
+            else
+              if echo "$POUT" | grep -qiE 'already ?exists|conflict'; then
+                echo "policy $POL_NAME: existe déjà (409)"
+              else
+                echo "⚠ création policy impossible (non bloquant) — réponse:"
+                echo "$POUT" | head -10
+                echo "→ geste console requis : IAM → Policies → statement:"
+                echo "   $POL_STMT"
+              fi
+            fi
+            echo "propagation IAM: pause 45 s…"
+            sleep 45
+          fi
           cat > /tmp/olc.json <<OLC
           {"items":[{"name":"expire-21d","action":"DELETE","timeAmount":21,"timeUnit":"DAYS","isEnabled":true}]}
           OLC
-          LOUT=$(sudo oci --config-file /etc/oci/config os object-lifecycle-policy put --force --namespace "$NS" --bucket-name mikcloud-wal --from-json file:///tmp/olc.json </dev/null 2>&1) \
-            && echo "lifecycle 21 jours: posé (budget gratuit 10 Go respecté)" \
-            || { echo "⚠ lifecycle non posé (non bloquant) — réponse:"; echo "$LOUT" | head -8; }
+          LIFE_OK=""
+          LOUT=""
+          for ATT in 1 2 3; do
+            if LOUT=$(sudo oci --config-file /etc/oci/config os object-lifecycle-policy put --force --namespace "$NS" --bucket-name mikcloud-wal --from-json file:///tmp/olc.json </dev/null 2>&1); then
+              LIFE_OK=yes
+              break
+            fi
+            echo "$LOUT" | grep -qE 'InsufficientServicePermissions|NotAuthenticat|NotAuthorizedOrNotFound' || break
+            echo "tentative $ATT : permission service principal pas encore effective — retry 45 s…"
+            sleep 45
+          done
           rm -f /tmp/olc.json
+          if [ -n "$LIFE_OK" ]; then
+            echo "lifecycle 21 jours: posé (budget gratuit 10 Go respecté)"
+          else
+            echo "⚠ lifecycle non posé (non bloquant) — réponse:"
+            echo "$LOUT" | head -8
+          fi
+          echo "--- lecture de contrôle lifecycle ---"
+          sudo oci --config-file /etc/oci/config os object-lifecycle-policy get --namespace "$NS" --bucket-name mikcloud-wal </dev/null 2>&1 | jq -c '(.data // .).items // empty' 2>/dev/null || true
           echo "═══ 3. Scripts DR ═══"
           sudo tee /etc/mikcloud/walupload.env > /dev/null <<WALEOF
           WAL_BUCKET=mikcloud-wal

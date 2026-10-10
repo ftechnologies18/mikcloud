@@ -165,7 +165,7 @@ jobs:
           echo
           echo "═══ IP publiques de la région (éphémères + réservées) ═══"
           oci network public-ip list --scope REGION --compartment-id "$TEN" --all \
-            --query 'sort_by(data,&"lifecycle-state")[].{adresse:"ip-address",duree:"lifetime",etat:"lifecycle-state",attachee_a:."private-ip-id"}' \
+            --query 'sort_by(data,&"lifecycle-state")[].{adresse:"ip-address",duree:"lifetime",etat:"lifecycle-state",attachee_a:"private-ip-id"}' \
             --output table || true
 
           DNS_API="$(python3 -c 'import socket; print(socket.gethostbyname("api.mikcloud.ftci.fr"))' 2>/dev/null || true)"

@@ -5,6 +5,88 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-10 — N°291 — **CHANTIER ⑦ WIREGUARD VENDABLE V1** (peers VPN vendus sur le wg0 de la VM via mini-service wg-mini — D3-a/D4-a/D5-a, Option V lot 2)
+
+### Ce qui a changé
+- **Exécution du deuxième lot de l'Option V** (⑧ Cybercafé livré en N°290) :
+  MikCloud devient la seule plateforme qui **gère ET revend WireGuard sur le
+  même écran** — le tunnel de gestion des routeurs (N°285) et le VPN vendu
+  aux clients finaux partagent le même wg0 et la même console. Douve N°286 §7
+  fermée ; le concurrent PhenixSPOT vend des comptes VPN dès son plan Starter.
+- **Mini-service hôte wg-mini (décision D3-a, changement §8 assumé)** :
+  `deploy/oracle/wg-mini/` — passerelle Go stdlib (~370 l.) qui expose
+  `add/remove/conf/list/ping` de `wg-peer.sh` au backend, bind **127.0.0.1:4020**
+  (port réservé au registre), unité systemd **root** dédiée (wg-peer.sh exige
+  root), secret **HMAC-SHA256** (`X-WGMini-Timestamp` + `X-WGMini-Signature`
+  sur `<ts>.<body>`, fenêtre ±120 s, temps constant — schéma GeniusPay inversé),
+  regex de nom stricte aux deux bords, exec SANS shell, secrets jamais logués,
+  `MemoryMax=100M`/`CPUQuota=20%` face au primaire PostgreSQL, env-file
+  `/etc/mikcloud/wg-mini.env` 600 root. Install recette 10 min + smoke tests +
+  hot upgrade + rollback dans le README du répertoire. AUCUN déploiement
+  automatique : l'exploitant l'installe à la main (le backend dégrade
+  proprement tant que wg-mini est absent — dot rouge + `wg_mini_error`).
+- **Backend — modèle + store** : entité `VpnPeer` (`model/vpnpeer.go` — nom
+  VM `vpn-*` OBLIGATOIRE, unicité GLOBALE contre les deux registres
+  (VpnPeers + Router.WgPeerName), états pending→active|error, plafond
+  `MaxVpnPeersPerAccount=25`, jauge pool `VpnPeerSlotsUsed` incluant les
+  routeurs, pool wg0 = 253), table `vpn_peers` + index UNIQUE(name) +
+  index account (rituel 7 points complet), colonne settings.wg_vpn_enabled
+  (flag opt-in D6 — PAS de nouvel usage), tests de comptage 38→39
+  différentielles / 39→40 tables vivantes.
+- **Backend — API /api/vpn/*** (9 routes, miroir cyber : lecture rang 1,
+  gestes rang 2, activation rang 3, 403 `wg_vpn_disabled`, garde
+  `requireUsage(hotspot)`) : liste, création (nom réservé au cloud SOUS
+  verrou → wg-mini add HORS verrou → finalisation ; nettoyage VM best-effort
+  en cas d'échec), révocation (jamais de retrait du registre tant que la VM
+  n'a pas confirmé — sinon peer fantôme), reveal conf (rang 2, self-healing :
+  relecture côté VM si la copie cloud a été perdue), livraison e-mail
+  (asynchrone dispatchEmailTask + relais plateforme N°150) et Telegram
+  (synchrone, bot du gérant), statut (jauge + dot santé), réconciliation
+  (check D4 : peers actifs du compte présents sur le wg0 ?), activation.
+- **Discipline des secrets (D5-a)** : la conf client (clé privée + PSK) est
+  stockée CHIFFRÉE (secretbox, pattern WgPSK N°285 — pg scan/args scellent,
+  JSON-mode sealedSnapshot/unsealSecrets, `json:"-"` en barrière), ne sort
+  JAMAIS dans les listes, uniquement via reveal explicite ou livraison ;
+  les journaux d'activité et NotifLog ne portent que des RÉSUMÉS (le journal
+  n'est pas un coffre — conventions §8).
+- **Caisse honnête** : prix de vente optionnel à la création → UNE
+  Transaction « sale » canal direct (comptée immédiatement par
+  caisse/compta/dashboard via collectSaleEvents). PAS de ligne Sale/Batch :
+  ces tables journalisent le STOCK de vouchers (handlers_stats.go) et le VPN
+  ne crée aucun voucher — un Sale fantôme fausserait les rapports de stock.
+- **Correctif sync au passage** : `settingsRowHash` n'incluait PAS
+  `CyberModuleEnabled()` — l'activation du module Cybercafé (N°290) seule ne
+  répliquait jamais `cyber_enabled` vers PostgreSQL/Neon tant qu'un autre
+  champ settings ne changeait pas. Corrigé (Cyber + WgVpn dans l'empreinte) ;
+  conséquence bénigne au déploiement : une réécriture unique des lignes
+  settings, valeurs identiques.
+- **Frontend** : vue `vpn` (nav Hotspot, icône Shield, chunk dynamique dédié)
+  — activation 1-clic, KPIs (Accès actifs, Serveur VPN dot wg-mini, jauge
+  slots wg0 avec Progress, Caisse du jour via accounting N°198), table des
+  peers (badges Actif/Création…/Erreur avec message), dialog « Vendre un
+  accès » (libellé, forme fulltunnel — accès distant phase B affiché
+  désactivé et refusé côté serveur avec un message clair, prix de vente
+  optionnel, garde-fou egress ~10 To/mois affiché), dialog Configuration
+  (QR `qrcode.react` level L + copie + reveal), livraison e-mail/Telegram,
+  confirmation de révocation destructive, bouton « Vérifier la VM »
+  (réconciliation D4), poll ETag/304 sans optimisme ; api.ts 9 fonctions +
+  types VpnPeer/VpnStatus ; i18n FR/EN (fragment vpn + nav.vpn).
+- **v1 vs phase B (verdict honnête)** : seule la forme « fulltunnel »
+  (P-B client final, sortie par la VM) est livrée — la forme « remote »
+  (P-A accès distant du gérant) exige l'élargissement allowed-address CÔTÉ
+  ROUTEUR (plomberie agent) : l'API refuse avec `vpn_kind_unavailable` et
+  l'UI affiche « phase B (bientôt) » plutôt qu'un produit en trompe-l'œil.
+  Le plafond PAR FORMULE suivra avec l'éditeur de formules (v1 : borne
+  constante 25/compte + jauge globale + garde-fou egress).
+- **Vérifié** : go build + go vet + gofmt + go test ./... TOUS OK ; tsgo +
+  eslint + next build OK. Smoke test wg-mini réel (HMAC signé accepté,
+  non-signé refusé, injection refusée, script absent = erreur propre).
+- **À l'installation (exploitant)** : cf. `deploy/oracle/wg-mini/README.md`
+  (binaire + unité + secret partagé WG_MINI_SECRET côté env backend +
+  registre des ports 4020). Sans wg-mini, le reste du module fonctionne
+  (activation, registre, historique) mais création/révocation affichent
+  `wg_mini_error`.
+
 ## 2026-10-10 — N°290 — **CHANTIER ⑧ CYBERCAFÉ V1** (module activable : postes, codes-temps, pause poste, caisse — D1–D7 arbitrés, Option V lot 1)
 
 ### Ce qui a changé

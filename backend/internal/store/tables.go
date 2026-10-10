@@ -73,7 +73,9 @@ const (
 	TableSites = "sites"
 	// N°290 — postes du module Cybercafé (registre + pause + code-temps).
 	TableCyberPostes = "cyber_postes"
-	TableSettings    = "settings" // hors diff d'empreintes (syncSettings)
+	// N°291 — peers VPN vendus (produit WireGuard client final, wg0 VM).
+	TableVpnPeers = "vpn_peers"
+	TableSettings = "settings" // hors diff d'empreintes (syncSettings)
 )
 
 // syncKnownTables — registre des noms acceptés par SaveTables/SyncTables :
@@ -118,6 +120,7 @@ var syncKnownTables = map[string]bool{
 	TableAnnouncements:        true,
 	TableSites:                true,
 	TableCyberPostes:          true,
+	TableVpnPeers:             true,
 	TableSettings:             true,
 }
 

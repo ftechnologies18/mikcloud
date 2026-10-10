@@ -301,6 +301,20 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/cyber/postes/{id}/release", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleCyberPosteRelease)))
 	mux.HandleFunc("POST /api/cyber/postes/{id}/pause", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleCyberPostePause)))
 	mux.HandleFunc("PUT /api/cyber/settings", a.requireUsage(model.AccountUsageHotspot, a.requireRole(3, a.handleCyberSettings)))
+	// N°291 — WireGuard VENDABLE (chantier ⑦ de N°289, arbitrage D1-D7) :
+	// peers clients vendus sur le wg0 de la VM via le mini-service hôte
+	// wg-mini (127.0.0.1:4020, HMAC — cf. wgmini.go + deploy/oracle/wg-mini/).
+	// Lecture rang 1 ; gestes rang 2 ; activation rang 3. Les handlers
+	// vérifient le flag (403 wg_vpn_disabled si désactivé).
+	mux.HandleFunc("GET /api/vpn/peers", a.requireUsage(model.AccountUsageHotspot, a.handleVpnPeersList))
+	mux.HandleFunc("POST /api/vpn/peers", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleVpnPeerCreate)))
+	mux.HandleFunc("GET /api/vpn/status", a.requireUsage(model.AccountUsageHotspot, a.handleVpnStatus))
+	mux.HandleFunc("GET /api/vpn/reconcile", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleVpnReconcile)))
+	mux.HandleFunc("POST /api/vpn/peers/{id}/revoke", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleVpnPeerRevoke)))
+	mux.HandleFunc("GET /api/vpn/peers/{id}/conf", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleVpnPeerConf)))
+	mux.HandleFunc("POST /api/vpn/peers/{id}/email", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleVpnPeerEmail)))
+	mux.HandleFunc("POST /api/vpn/peers/{id}/telegram", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleVpnPeerTelegram)))
+	mux.HandleFunc("PUT /api/vpn/settings", a.requireUsage(model.AccountUsageHotspot, a.requireRole(3, a.handleVpnSettings)))
 	mux.HandleFunc("DELETE /api/sessions/{id}", a.handleSessionKick)
 
 	// Revendeurs

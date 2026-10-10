@@ -175,6 +175,7 @@ intégré permet de démontrer toute la plateforme sans matériel.
 | [`docs/CARTE-CONCURRENCE.md`](docs/CARTE-CONCURRENCE.md) | Carte de concurrence complète : 5 cercles (Mikhmon → suites globales), matrice décisive, modèles de prix, menaces + ripostes |
 | [`docs/ANALYSE-P1-PPP-WG-CYBER.md`](docs/ANALYSE-P1-PPP-WG-CYBER.md) | Analyse P1 adossée au code : ⑥ PPPoE via agent RouterOS · ⑦ WireGuard vendable sur wg0 · ⑧ Cybercafé — 7 décisions à trancher |
 | [`docs/HANDOFF-INSTALL-BACKEND.md`](docs/HANDOFF-INSTALL-BACKEND.md) | **Kit de transmission autonome** — installer un back-end sur Ftechci sans cloner mikcloud (destiné : sect-api et tout futur dépôt) |
+| [`deploy/oracle/wg-mini/README.md`](deploy/oracle/wg-mini/README.md) | **wg-mini** (N°291) — passerelle locale wg-peer.sh (127.0.0.1:4020, HMAC) qui rend le VPN WireGuard vendable : install 10 min, smoke tests, hot upgrade, rollback |
 | [`GUIDE-GESTIONNAIRE.md`](GUIDE-GESTIONNAIRE.md) | Guide utilisateur du gestionnaire |
 | [`CHANGELOG.md`](CHANGELOG.md) | Historique des évolutions notables |
 

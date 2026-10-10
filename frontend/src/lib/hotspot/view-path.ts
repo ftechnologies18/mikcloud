@@ -73,6 +73,9 @@ const VIEW_SLUGS: Record<ViewId, string> = {
   // N°290 — module Cybercafé : segment simple (vue de navigation principale,
   // section Hotspot).
   cyber: "cyber",
+  // N°291 — WireGuard vendable : segment simple (vue de navigation
+  // principale, section Hotspot).
+  vpn: "vpn",
   templates: "settings/hotspot/modeles",
   profiles: "profiles",
   resellers: "resellers",

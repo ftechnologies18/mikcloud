@@ -58,6 +58,7 @@ back-ends y cohabitent.
 | 80/443/tcp | **Caddy** | **UNIQUE porte publique** (reverse proxy + TLS Let's Encrypt) |
 | 4000/tcp (127.0.0.1) | mikcloud-server | conteneur docker, `--network host` |
 | 8090/tcp (127.0.0.1) | **sect-api** | conteneur docker préexistant (ghcr.io/udevrard7/sect) |
+| 4020/tcp (127.0.0.1) | **wg-mini** (N°291) | unité systemd ROOT, HMAC `WG_MINI_SECRET` partagé avec l'env backend — cf. deploy/oracle/wg-mini/README.md |
 | 5432/tcp (127.0.0.1) | **PostgreSQL 18.6** | PRIMAIRE des données — ne jamais exposer, ne jamais conteneuriser |
 | 4010/tcp (127.0.0.1) | (jetable, smoke tests) | libre pour les tests |
 | 51820/udp | WireGuard (wg0) | accès privé, tunnel 10.8.0.0/24 |
@@ -204,17 +205,17 @@ Dans `/etc/caddy/Caddyfile`, AJOUTER (ne jamais réécrire les blocs existants) 
 
 ```caddy
 <domaine-ou-sous-domaine>.ftci.fr {
-	encode zstd gzip
-	header {
-		Strict-Transport-Security "max-age=31536000; includeSubDomains"
-		X-Content-Type-Options nosniff
-		Referrer-Policy strict-origin-when-cross-origin
-		-server
-	}
-	reverse_proxy 127.0.0.1:<PORT>
-	request_body {
-		max_size 25MB
-	}
+        encode zstd gzip
+        header {
+                Strict-Transport-Security "max-age=31536000; includeSubDomains"
+                X-Content-Type-Options nosniff
+                Referrer-Policy strict-origin-when-cross-origin
+                -server
+        }
+        reverse_proxy 127.0.0.1:<PORT>
+        request_body {
+                max_size 25MB
+        }
 }
 ```
 

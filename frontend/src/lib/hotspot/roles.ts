@@ -34,6 +34,10 @@ const VIEW_MIN_RANK: Record<string, number> = {
   // écritures (attribution/pause/import) derrière requireRole(2) serveur,
   // activation rang 3 — la barrière réelle vit côté Go.
   cyber: 1,
+  // N°291 — WireGuard vendable : lecture ouverte (registre des peers) ;
+  // gestes (création/révocation/livraison) derrière requireRole(2) serveur,
+  // activation rang 3 — la barrière réelle vit côté Go.
+  vpn: 1,
   stats: 1, // heatmap affluence (lecture)
   templates: 2, // gestion des modèles (l'impression reste accessible à tous)
   profiles: 2,

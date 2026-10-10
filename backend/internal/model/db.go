@@ -77,6 +77,11 @@ type DB struct {
 	// poste + lien code-temps). Remplie UNIQUEMENT pour les comptes hotspot
 	// ayant activé le module (settings.Tenant.CyberEnabled) — cf. cyber.go.
 	CyberPostes []CyberPoste `json:"cyberPostes"`
+	// N°291 — peers VPN vendus (produit « VPN client final » sur le wg0 de
+	// la VM, via le mini-service wg-mini). Remplie UNIQUEMENT pour les
+	// comptes hotspot ayant activé le module (settings.Tenant.WgVpnEnabled)
+	// — cf. vpnpeer.go.
+	VpnPeers []VpnPeer `json:"vpnPeers"`
 	// N°68 — demandes de réinitialisation de mot de passe (« Mot de passe
 	// oublié ? ») : token hashé, expiration 60 min, usage unique — voir
 	// PasswordReset. Borné par prunePasswordResetsLocked.
@@ -355,6 +360,7 @@ func (db *DB) CloneDeep() *DB {
 	clone.SellSessions = append([]SellSession(nil), db.SellSessions...)
 	clone.Devices = append([]Device(nil), db.Devices...)
 	clone.CyberPostes = append([]CyberPoste(nil), db.CyberPostes...)
+	clone.VpnPeers = append([]VpnPeer(nil), db.VpnPeers...)
 	clone.PasswordResets = append([]PasswordReset(nil), db.PasswordResets...)
 	clone.ChatConversations = append([]ChatConversation(nil), db.ChatConversations...)
 	clone.ChatMessages = append([]ChatMessage(nil), db.ChatMessages...)
@@ -420,6 +426,10 @@ func cloneSettingsByAccount(src map[string]Settings) map[string]Settings {
 		if s.Tenant.CyberEnabled != nil {
 			v := *s.Tenant.CyberEnabled
 			s.Tenant.CyberEnabled = &v
+		}
+		if s.Tenant.WgVpnEnabled != nil {
+			v := *s.Tenant.WgVpnEnabled
+			s.Tenant.WgVpnEnabled = &v
 		}
 		if s.Tenant.LogRetentionDays != nil {
 			v := *s.Tenant.LogRetentionDays

@@ -964,6 +964,13 @@ func sealedSnapshot(db *model.DB) *model.DB {
 		r.WgPSK = secretbox.Encrypt(r.WgPSK)
 		clone.Routers[i] = r
 	}
+	// N°291 — la conf client des peers VPN suit la même discipline (scellée
+	// dans le snapshot JSON, claire en mémoire — pattern WgPSK).
+	clone.VpnPeers = make([]model.VpnPeer, len(db.VpnPeers))
+	for i, vp := range db.VpnPeers {
+		vp.Conf = secretbox.Encrypt(vp.Conf)
+		clone.VpnPeers[i] = vp
+	}
 	if db.NotifSettings != nil {
 		clone.NotifSettings = make(map[string]model.NotificationSettings, len(db.NotifSettings))
 		for k, v := range db.NotifSettings {
@@ -984,6 +991,10 @@ func unsealSecrets(db *model.DB) {
 		db.Routers[i].Password = secretbox.Decrypt(db.Routers[i].Password)
 		// N°285 — PresharedKey WireGuard (passthrough si en clair).
 		db.Routers[i].WgPSK = secretbox.Decrypt(db.Routers[i].WgPSK)
+	}
+	// N°291 — conf client des peers VPN (passthrough si en clair).
+	for i := range db.VpnPeers {
+		db.VpnPeers[i].Conf = secretbox.Decrypt(db.VpnPeers[i].Conf)
 	}
 	for k, v := range db.NotifSettings {
 		v.TelegramBotToken = secretbox.Decrypt(v.TelegramBotToken)

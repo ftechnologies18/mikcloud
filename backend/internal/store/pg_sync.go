@@ -174,6 +174,10 @@ func syncSteps(db *model.DB) []syncStep {
 		{cyberPosteSpec.table, func(hashes, pending map[string]map[string]uint64) tableApplier {
 			return diffTable(hashes, pending, cyberPosteSpec, db.CyberPostes)
 		}},
+		// N°291 — peers VPN vendus (produit WireGuard client final, wg0 VM).
+		{vpnPeerSpec.table, func(hashes, pending map[string]map[string]uint64) tableApplier {
+			return diffTable(hashes, pending, vpnPeerSpec, db.VpnPeers)
+		}},
 		{transactionSpec.table, func(hashes, pending map[string]map[string]uint64) tableApplier {
 			return diffTable(hashes, pending, transactionSpec, db.Transactions)
 		}},
@@ -464,8 +468,8 @@ func (p *PG) syncSettings(ctx context.Context, tx *sql.Tx, db *model.DB, pending
                                sub_router_slots, sub_last_paid_at, last_tick, last_sweep,
                                platform_name, platform_register_open, platform_register_key, auto_import_router_users, join_button, cyber_enabled,
                                portal_style, portal_welcome, portal_promos, portal_socials, portal_slides, portal_services, portal_ticker, portal_whatsapp, portal_key,
-                               log_retention_days)
-                         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38)
+                               log_retention_days, wg_vpn_enabled)
+                         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39)
                          ON CONFLICT (id) DO UPDATE SET
                            account_id                = EXCLUDED.account_id,
                            tenant_name               = EXCLUDED.tenant_name,
@@ -504,7 +508,8 @@ func (p *PG) syncSettings(ctx context.Context, tx *sql.Tx, db *model.DB, pending
                            portal_ticker            = EXCLUDED.portal_ticker,
                            portal_whatsapp          = EXCLUDED.portal_whatsapp,
                            portal_key               = EXCLUDED.portal_key,
-                           log_retention_days       = EXCLUDED.log_retention_days`,
+                           log_retention_days       = EXCLUDED.log_retention_days,
+                           wg_vpn_enabled           = EXCLUDED.wg_vpn_enabled`,
 			accID, s.Tenant.Name, s.Tenant.Currency, s.Tenant.Timezone,
 			s.Plan.Name, s.Plan.MaxRouters, s.Plan.MaxUsers,
 			s.Tenant.WaveLink, s.Tenant.DNSName, s.Tenant.LogoURL, s.Tenant.BannerURL,
@@ -518,7 +523,7 @@ func (p *PG) syncSettings(ctx context.Context, tx *sql.Tx, db *model.DB, pending
 			s.Tenant.PortalServices,
 			s.Tenant.PortalTicker,
 			s.Tenant.PortalWhatsapp,
-			s.Tenant.PortalKey, s.Tenant.LogRetentionDaysEffective())
+			s.Tenant.PortalKey, s.Tenant.LogRetentionDaysEffective(), s.Tenant.WgVpnModuleEnabled())
 		if err != nil {
 			return false, fmt.Errorf("pg sync settings (%s) : %w", accID, err)
 		}
@@ -584,6 +589,12 @@ func settingsRowHash(accID string, s model.Settings) uint64 {
 		s.Subscription.PeriodEnd, s.Subscription.LastAmountFcfa,
 		s.Subscription.RouterSlots, s.Subscription.LastPaidAt,
 		platName, platOpen, platKey, s.ImportAutoEnabled(), s.Tenant.JoinButtonEnabled(),
+		// N°291 — correctif : CyberModuleEnabled ENTRE dans l'empreinte
+		// (son absence depuis N°290 faisait que l'activation du module
+		// Cybercafé seule ne répliquait jamais cyber_enabled tant qu'un
+		// autre champ settings ne changeait pas) + WgVpnModuleEnabled
+		// (même discipline dès la naissance).
+		s.Tenant.CyberModuleEnabled(), s.Tenant.WgVpnModuleEnabled(),
 		s.Tenant.PortalStyle, s.Tenant.PortalWelcome, s.Tenant.PortalPromos, s.Tenant.PortalSocials,
 		s.Tenant.PortalSlides, s.Tenant.PortalServices, s.Tenant.PortalTicker,
 		s.Tenant.PortalWhatsapp, s.Tenant.PortalKey, s.Tenant.LogRetentionDaysEffective(),
@@ -816,6 +827,7 @@ func (p *PG) rebuildHashes(db *model.DB) {
 		siteSpec.table:             hashRows(db.Sites, siteSpec),
 		deviceSpec.table:           hashRows(db.Devices, deviceSpec),
 		cyberPosteSpec.table:       hashRows(db.CyberPostes, cyberPosteSpec),
+		vpnPeerSpec.table:          hashRows(db.VpnPeers, vpnPeerSpec),
 	}
 	notifRows := make([]model.NotificationSettings, 0, len(db.NotifSettings))
 	for _, v := range db.NotifSettings {

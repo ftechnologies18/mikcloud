@@ -17,6 +17,7 @@ export const frNav: Record<string, string> = {
   "nav.routers": "Routeurs",
   // N°290 — module Cybercafé (registre des postes + codes-temps).
   "nav.cyber": "Cybercafé",
+  "nav.vpn": "VPN WireGuard",
   "nav.portal": "Portail",
   "nav.reports": "Rapports",
   "nav.logs": "Journal",

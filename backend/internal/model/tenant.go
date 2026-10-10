@@ -95,6 +95,13 @@ type Tenant struct {
 	// reste inchangé). La colonne settings.cyber_enabled (NOT NULL DEFAULT
 	// FALSE) reporte la valeur explicite au premier Save.
 	CyberEnabled *bool `json:"cyberEnabled,omitempty"`
+	// N°291 — module VPN WireGuard vendable (peers clients sur le wg0 de la
+	// VM, via le mini-service wg-mini — cf. model/vpnpeer.go). Même doctrine
+	// D6 : un flag, PAS un nouvel usage (l'enum hotspot|homenet reste
+	// inchangé). Pointeur : nil = DÉSACTIVÉ (module opt-in) ; la colonne
+	// settings.wg_vpn_enabled (NOT NULL DEFAULT FALSE) reporte la valeur
+	// explicite au premier Save.
+	WgVpnEnabled *bool `json:"wgVpnEnabled,omitempty"`
 }
 
 // DefaultLogRetentionDays — rétention par défaut du journal utilisateurs
@@ -352,6 +359,13 @@ func (t Tenant) JoinButtonEnabled() bool {
 // Cybercafé — décision D6 de N°289).
 func (t Tenant) CyberModuleEnabled() bool {
 	return t.CyberEnabled != nil && *t.CyberEnabled
+}
+
+// WgVpnModuleEnabled — valeur EFFECTIVE du module VPN WireGuard vendable
+// (N°291) pour un compte (nil = OFF : module opt-in, activable en un clic
+// depuis la vue VPN — même doctrine D6 que le Cybercafé).
+func (t Tenant) WgVpnModuleEnabled() bool {
+	return t.WgVpnEnabled != nil && *t.WgVpnEnabled
 }
 
 // PlatformConfig — configuration globale de la plateforme MikCloud (vivante

@@ -77,6 +77,8 @@ const AccountsView = dynamic(() => import("./views/accounts-view"), { loading: (
 const BillingRequestsView = dynamic(() => import("./views/billing-requests-view"), { loading: () => ViewFallback });
 // N°290 — module Cybercafé : registre des postes + codes-temps (chunk dédié).
 const CyberView = dynamic(() => import("./views/cyber-view"), { loading: () => ViewFallback });
+// N°291 — WireGuard vendable : registre des peers VPN (chunk dédié).
+const VpnView = dynamic(() => import("./views/vpn-view"), { loading: () => ViewFallback });
 const DashboardView = dynamic(() => import("./views/dashboard-view"), { loading: () => ViewFallback });
 // N°100 — console HomeNet : tableau de bord maison et appareils connectés
 // (chunks dédiés — un foyer ne paie jamais le bundle du dashboard métier).
@@ -130,6 +132,7 @@ function viewTitle(view: ViewId, t: (key: string) => string): string {
     registrations: "nav.registrations",
     vouchers: "nav.vouchers",
     cyber: "nav.cyber",
+    vpn: "nav.vpn",
     templates: "nav.templates",
     profiles: "nav.profiles",
     resellers: "nav.resellers",
@@ -172,6 +175,8 @@ const VIEWS: Record<ViewId, React.ComponentType> = {
   vouchers: VouchersView,
   // N°290 — module Cybercafé (overlay hotspot, activable par compte).
   cyber: CyberView,
+  // N°291 — WireGuard vendable (overlay hotspot, activable par compte).
+  vpn: VpnView,
   // N°57-d — hub Hotspot : les DEUX ViewIds pointent le même hub
   // (Portail / Vouchers & tickets dérivent du ViewId, pattern N°30).
   // N°184 — la vue racine « hotspot » a disparu avec l'onglet Expérience.

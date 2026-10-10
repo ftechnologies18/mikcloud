@@ -16,6 +16,7 @@ import {
   Router as RouterIcon,
   ScrollText,
   Settings,
+  Shield,
   ShieldCheck,
   Store,
   Ticket,
@@ -88,6 +89,11 @@ export const NAV_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
       // l'accès. L'entrée reste visible pour tous les comptes hotspot ; la
       // vue propose l'activation en un clic quand le module est éteint.
       { id: "cyber", labelKey: "nav.cyber", icon: Armchair },
+      // N°291 — WireGuard vendable : le produit VPN client final sur le wg0
+      // de la VM (tunnel de gestion ET VPN vendu sur le même écran — douve
+      // N°286). Entrée visible pour tous les comptes hotspot ; la vue
+      // propose l'activation en un clic quand le module est éteint.
+      { id: "vpn", labelKey: "nav.vpn", icon: Shield },
       // N°27 — WiFi jetable : mode d'accès offert des établissements.
       { id: "wifi", labelKey: "wifi.title", icon: Wifi },
     ],

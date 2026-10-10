@@ -41,6 +41,8 @@ import type {
   SiteResponse,
   SubscriptionInfo,
   SubscriptionUpdatePayload,
+  VpnPeer,
+  VpnStatus,
 } from "./types";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || "").replace(/\/$/, "");
@@ -1091,4 +1093,90 @@ export async function pauseCyberPoste(id: string, paused: boolean, minutes = 0):
  * (désactivation = pauses de postes levées, aucune règle orpheline). */
 export async function setCyberEnabled(enabled: boolean): Promise<AppSettings> {
   return api<AppSettings>("/api/cyber/settings", { method: "PUT", body: { enabled } });
+}
+
+/* — N°291 : WireGuard vendable (peers clients sur le wg0 de la VM) — */
+
+/** fetchVpnPeers — N°291 : les peers VPN du compte (la conf n'est JAMAIS
+ * dans la liste — reveal explicite via fetchVpnConf). 403 wg_vpn_disabled
+ * tant que le module n'est pas activé. */
+export async function fetchVpnPeers(): Promise<VpnPeer[]> {
+  return api<VpnPeer[]>("/api/vpn/peers");
+}
+
+/** VpnPeerCreateBody — kind : "fulltunnel" en v1 ("remote" = phase B, refusé
+ * côté serveur) ; salePrice > 0 enregistre la vente à la caisse. */
+export interface VpnPeerCreateBody {
+  label: string;
+  kind: string;
+  salePrice: number;
+}
+
+/** createVpnPeer — N°291 : réserve le nom au cloud, génère clés + conf
+ * CÔTÉ VM via le mini-service wg-mini (peut prendre quelques secondes). */
+export async function createVpnPeer(body: VpnPeerCreateBody): Promise<VpnPeer> {
+  return api<VpnPeer>("/api/vpn/peers", { method: "POST", body, timeoutMs: 30_000 });
+}
+
+/** revokeVpnPeer — N°291 : wg-peer.sh remove (syncconf à chaud, les autres
+ * peers restent intacts) puis retrait du registre. */
+export async function revokeVpnPeer(id: string): Promise<{ ok: boolean; message: string }> {
+  return api<{ ok: boolean; message: string }>(`/api/vpn/peers/${encodeURIComponent(id)}/revoke`, {
+    method: "POST",
+    timeoutMs: 30_000,
+  });
+}
+
+/** VpnConfResponse — le reveal (rang 2) : la conf COMPLÈTE (clé privée
+ * incluse) — à copier ou afficher en QR, jamais persistée côté front. */
+export interface VpnConfResponse {
+  id: string;
+  name: string;
+  label: string;
+  ipv4: string;
+  conf: string;
+}
+
+/** fetchVpnConf — N°291 (D5-a) : reveal/re-livraison manuelle de la conf
+ * (self-healing : relecture côté VM si la copie cloud a été perdue). */
+export async function fetchVpnConf(id: string): Promise<VpnConfResponse> {
+  return api<VpnConfResponse>(`/api/vpn/peers/${encodeURIComponent(id)}/conf`, { timeoutMs: 30_000 });
+}
+
+/** emailVpnConf — N°291 : livraison de la conf par e-mail (asynchrone). */
+export async function emailVpnConf(id: string, to: string): Promise<{ ok: boolean; queued: boolean; message: string }> {
+  return api<{ ok: boolean; queued: boolean; message: string }>(`/api/vpn/peers/${encodeURIComponent(id)}/email`, {
+    method: "POST",
+    body: { to },
+    timeoutMs: 30_000,
+  });
+}
+
+/** telegramVpnConf — N°291 : livraison de la conf sur le chat Telegram du
+ * compte (bot du gérant). */
+export async function telegramVpnConf(id: string): Promise<{ ok: boolean; message: string }> {
+  return api<{ ok: boolean; message: string }>(`/api/vpn/peers/${encodeURIComponent(id)}/telegram`, {
+    method: "POST",
+    timeoutMs: 30_000,
+  });
+}
+
+/** fetchVpnStatus — N°291 : jauge du pool wg0 (slots partagés avec les
+ * routeurs, D4-a) + santé du mini-service wg-mini. */
+export async function fetchVpnStatus(): Promise<VpnStatus> {
+  return api<VpnStatus>("/api/vpn/status");
+}
+
+/** fetchVpnReconcile — N°291 (check D4) : les peers actifs du compte sont-ils
+ * bien présents sur le wg0 de la VM ? */
+export async function fetchVpnReconcile(): Promise<{ reachable: boolean; vmPeerCount: number; mine: number; missing: string[] }> {
+  return api<{ reachable: boolean; vmPeerCount: number; mine: number; missing: string[] }>("/api/vpn/reconcile", {
+    timeoutMs: 30_000,
+  });
+}
+
+/** setVpnEnabled — N°291 : active/désactive le module VPN (la désactivation
+ * ne révoque RIEN — les peers actifs restent en service). */
+export async function setVpnEnabled(enabled: boolean): Promise<AppSettings> {
+  return api<AppSettings>("/api/vpn/settings", { method: "PUT", body: { enabled } });
 }

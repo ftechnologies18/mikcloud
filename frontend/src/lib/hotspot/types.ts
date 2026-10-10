@@ -831,6 +831,35 @@ export interface CyberDiscoveryRow {
   imported: boolean;
 }
 
+/** N°291 — peer VPN vendu (GET/POST /api/vpn/peers) : une conf WireGuard
+ * client final sur le wg0 de la VM (chantier ⑦ de N°289). La conf elle-même
+ * ne sort JAMAIS des listes (json:"-" côté Go) — reveal via GET
+ * /api/vpn/peers/{id}/conf (re-livraison D5-a : copie, QR, e-mail,
+ * Telegram). kind : "fulltunnel" (v1) | "remote" (phase B, refusé côté
+ * serveur) ; state : pending → active | error. */
+export interface VpnPeer {
+  id: string;
+  accountId: string;
+  name: string;
+  label: string;
+  kind: string;
+  ipv4: string;
+  state: string;
+  errorMsg?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** N°291 — statut du module VPN (GET /api/vpn/status) : jauge du pool wg0
+ * (slots partagés avec les routeurs de gestion, D4-a) + santé du
+ * mini-service wg-mini sur la VM (décision D3-a). */
+export interface VpnStatus {
+  slotsUsed: number;
+  slotsPool: number;
+  miniReachable: boolean;
+  miniError?: string;
+}
+
 /** N°101 — appareil du foyer (bail DHCP, GET /api/devices — console HomeNet).
  * L'identité stable est la MAC ; le nom affiché replie nom affecté →
  * host-name DHCP → MAC. `status` = dernier bail rapporté par la box
@@ -1483,6 +1512,11 @@ export interface AppSettings {
      * code-temps et caisse activés (opt-in, absent du JSON tant que le
      * réglage n'a pas été touché = désactivé). */
     cyberEnabled?: boolean;
+    /** N°291 : module VPN WireGuard vendable — true = création/révocation
+     * de peers clients sur le wg0 de la VM (via le mini-service wg-mini).
+     * Opt-in, même doctrine que cyberEnabled ; la désactivation ne révoque
+     * pas les peers actifs (révocation peer par peer). */
+    wgVpnEnabled?: boolean;
   };
   plan: {
     name: string;
@@ -1888,6 +1922,9 @@ export type ViewId =
   // N°290 — module Cybercafé (overlay hotspot, activable par compte) :
   // registre des postes + attribution code-temps + pause + caisse.
   | "cyber"
+  // N°291 — WireGuard vendable : registre des peers VPN vendus (module
+  // activable par compte, overlay hotspot — chantier ⑦ de N°289).
+  | "vpn"
   | "routers"
   | "portal"
   | "reports"

@@ -351,6 +351,8 @@ func liveTableRows(db *model.DB) []TableHealth {
 		{Table: "sites", Rows: len(db.Sites)},
 		// N°290 — parité synchro différentielle (module Cybercafé).
 		{Table: "cyber_postes", Rows: len(db.CyberPostes)},
+		// N°291 — parité synchro différentielle (peers VPN vendus).
+		{Table: "vpn_peers", Rows: len(db.VpnPeers)},
 		{Table: "settings", Rows: len(db.SettingsByAccount)},
 	}
 }

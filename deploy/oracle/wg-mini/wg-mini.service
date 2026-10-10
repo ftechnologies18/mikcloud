@@ -1,0 +1,40 @@
+# wg-mini.service — N°291 — passerelle locale WireGuard de MikCloud
+# (chantier ⑦, décision D3-a de N°289). Unité ROOT dédiée : wg-peer.sh
+# exige root (wg syncconf + confs 600 sous /opt/wireguard). Conventions §8
+# de docs/RUNBOOK-HEBERGEMENT.md : 127.0.0.1 only, env-file 600 root,
+# MemoryMax face à PostgreSQL, jamais de secret en argument.
+[Unit]
+Description=MikCloud wg-mini — passerelle wg-peer.sh locale (127.0.0.1:4020)
+Documentation=file:/opt/mikcloud/wg-mini/README.md
+After=network-online.target wg-quick@wg0.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+EnvironmentFile=/etc/mikcloud/wg-mini.env
+ExecStart=/usr/local/bin/wg-mini
+Restart=always
+RestartSec=3
+# Un service qui fuit ne doit JAMAIS affamer le primaire PostgreSQL (§8.4).
+MemoryMax=100M
+CPUQuota=20%
+# Durcissement conservateur : wg-peer.sh a besoin de root, de /etc/wireguard
+# (wg syncconf) et de /opt/wireguard (confs) — tout le reste est verrouillé.
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ReadWritePaths=/etc/wireguard /opt/wireguard
+PrivateTmp=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

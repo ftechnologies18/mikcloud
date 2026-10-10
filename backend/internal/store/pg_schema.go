@@ -747,6 +747,30 @@ func (p *PG) ensureSchema() error {
 		// pointeur Tenant.CyberEnabled est posé explicitement à la
 		// première activation).
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS cyber_enabled BOOLEAN NOT NULL DEFAULT FALSE`,
+		// N°291 — PEERS VPN VENDUS (produit « VPN client final » sur le
+		// wg0 de la VM, via le mini-service wg-mini — cf. model/vpnpeer.go
+		// + deploy/oracle/wg-mini/) : registre cloud SOURCE DE VÉRITÉ
+		// (décision D4-a), conf client chiffrée au repos (colonne conf —
+		// secretbox, pattern WgPSK N°285, décision D5-a). Remplie
+		// UNIQUEMENT pour les comptes hotspot ayant activé le module.
+		`CREATE TABLE IF NOT EXISTS vpn_peers (
+                        id          TEXT PRIMARY KEY,
+                        account_id  TEXT NOT NULL,
+                        name        TEXT NOT NULL,
+                        label       TEXT NOT NULL DEFAULT '',
+                        kind        TEXT NOT NULL DEFAULT 'fulltunnel',
+                        ipv4        TEXT NOT NULL DEFAULT '',
+                        state       TEXT NOT NULL DEFAULT 'pending',
+                        error_msg   TEXT NOT NULL DEFAULT '',
+                        conf        TEXT NOT NULL DEFAULT '',
+                        created_at  TEXT NOT NULL,
+                        updated_at  TEXT NOT NULL
+                )`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_vpn_peers_name   ON vpn_peers (name)`,
+		`CREATE INDEX IF NOT EXISTS idx_vpn_peers_account ON vpn_peers (account_id)`,
+		// N°291 — activation du module VPN, réglage par compte (défaut
+		// OFF — module opt-in, même doctrine D6 que le Cybercafé).
+		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS wg_vpn_enabled BOOLEAN NOT NULL DEFAULT FALSE`,
 		// N°67 — Resend (API HTTP https://resend.com) comme fournisseur
 		// alternatif du canal e-mail : le provider choisit entre SMTP
 		// direct (défaut, '') et l'API Resend (clé secrète par compte).

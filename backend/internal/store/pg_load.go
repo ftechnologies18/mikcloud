@@ -44,6 +44,7 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 		Devices:           []model.Device{},
 		Sites:             []model.Site{},
 		CyberPostes:       []model.CyberPoste{},
+		VpnPeers:          []model.VpnPeer{},
 	}
 
 	steps := []struct {
@@ -88,6 +89,7 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 		{"announcements", func() error { return loadInto(p, &db.Announcements, announcementSpec) }},
 		{"sites", func() error { return loadInto(p, &db.Sites, siteSpec) }},
 		{"cyber_postes", func() error { return loadInto(p, &db.CyberPostes, cyberPosteSpec) }},
+		{"vpn_peers", func() error { return loadInto(p, &db.VpnPeers, vpnPeerSpec) }},
 		{"settings", func() error { return p.loadSettings(db) }},
 	}
 	for _, st := range steps {
@@ -153,7 +155,7 @@ func (p *PG) loadSettings(db *model.DB) error {
                         sub_router_slots, sub_last_paid_at, last_tick, last_sweep,
                         platform_name, platform_register_open, platform_register_key, auto_import_router_users,
                         join_button, cyber_enabled, portal_style, portal_welcome, portal_promos, portal_socials, portal_slides, portal_services, portal_ticker, portal_whatsapp, portal_key,
-                        log_retention_days
+                        log_retention_days, wg_vpn_enabled
                  FROM settings`)
 	if err != nil {
 		return err
@@ -181,6 +183,8 @@ func (p *PG) loadSettings(db *model.DB) error {
 			joinButton bool
 			// N°290 - module Cybercafé (defaut OFF : opt-in).
 			cyberEnabled bool
+			// N°291 - module VPN WireGuard vendable (defaut OFF : opt-in).
+			wgVpnEnabled bool
 			// N°55 - mode hospitalité du portail (style/bienvenue/promos/socials).
 			portalStyle, portalWelcome, portalPromos, portalSocials string
 			// N°136 - slides du carrousel commercial (JSON d'URLs https ≤ 3).
@@ -206,7 +210,7 @@ func (p *PG) loadSettings(db *model.DB) error {
 			&subPlanID, &subStatus, &subPeriodStart, &subPeriodEnd, &subLastAmount,
 			&subRouterSlots, &subLastPaidAt, &lastTick, &lastSweep,
 			&platformName, &platformRegisterOpen, &platformRegisterKey, &autoImport,
-			&joinButton, &cyberEnabled, &portalStyle, &portalWelcome, &portalPromos, &portalSocials, &portalSlides, &portalServices, &portalTicker, &portalWhatsapp, &portalKey, &logRetentionDays); err != nil {
+			&joinButton, &cyberEnabled, &portalStyle, &portalWelcome, &portalPromos, &portalSocials, &portalSlides, &portalServices, &portalTicker, &portalWhatsapp, &portalKey, &logRetentionDays, &wgVpnEnabled); err != nil {
 			return err
 		}
 		if accID == "" {
@@ -252,6 +256,9 @@ func (p *PG) loadSettings(db *model.DB) error {
 		// DEFAULT FALSE), l'activation du module Cybercafé survit aux
 		// redémarrages.
 		settings.Tenant.CyberEnabled = &cyberEnabled
+		// N°291 - même pattern : valeur lue EXPLICITE (colonne NOT NULL
+		// DEFAULT FALSE), l'activation du module VPN survit aux redémarrages.
+		settings.Tenant.WgVpnEnabled = &wgVpnEnabled
 		// N°65 - même pattern : valeur lue EXPLICITE (colonne NOT NULL
 		// DEFAULT 90), la rétention du journal survit aux redémarrages.
 		settings.Tenant.LogRetentionDays = &logRetentionDays

@@ -193,10 +193,28 @@ var cyberPosteSpec = entitySpec[model.CyberPoste]{
 	hashOf: hashEntity[model.CyberPoste],
 }
 
-// migrateSealRouterPasswords — passe de démarrage (idempotente) : chiffre
-// TOUTES les valeurs de routers.password encore en clair (base créée avant le
-// correctif P0 #6). La mémoire reste claire ; seules les lignes DB concernées
-// sont réécrites, une seule fois.
+// vpnPeerSpec — N°291 : peers VPN vendus (produit WireGuard client final
+// sur le wg0 de la VM). Même discipline que cyberPosteSpec : l'ordre
+// cols/scan/args reste strictement aligné. La conf client (colonne conf)
+// voyage CHIFFRÉE : scan déscelle (secretbox.Decrypt), args scelle
+// (secretbox.Encrypt) — en mémoire la valeur est TOUJOURS claire, pattern
+// WgPSK du routerSpec.
+var vpnPeerSpec = entitySpec[model.VpnPeer]{
+	table: "vpn_peers",
+	cols:  []string{"id", "account_id", "name", "label", "kind", "ipv4", "state", "error_msg", "conf", "created_at", "updated_at"},
+	idOf:  func(x *model.VpnPeer) string { return x.ID },
+	scan: func(r *sql.Rows) (model.VpnPeer, error) {
+		var x model.VpnPeer
+		var confSealed string
+		err := r.Scan(&x.ID, &x.AccountID, &x.Name, &x.Label, &x.Kind, &x.IPv4, &x.State, &x.ErrorMsg, &confSealed, &x.CreatedAt, &x.UpdatedAt)
+		x.Conf = secretbox.Decrypt(confSealed)
+		return x, err
+	},
+	args: func(x *model.VpnPeer) []any {
+		return []any{x.ID, x.AccountID, x.Name, x.Label, x.Kind, x.IPv4, x.State, x.ErrorMsg, secretbox.Encrypt(x.Conf), x.CreatedAt, x.UpdatedAt}
+	},
+	hashOf: hashEntity[model.VpnPeer],
+}
 
 var profileSpec = entitySpec[model.Profile]{
 	table: "profiles",

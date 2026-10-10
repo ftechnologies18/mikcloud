@@ -52,11 +52,11 @@ autovacuum_vacuum_cost_delay=1`.
 | `rollback` | dump local de sécurité → restore `.pre-hybrid-*` → restart → réactive timer | ~10 s | `confirm` + `accept_stale_data=YES` |
 | `status` | état complet + **protection : gel auto du timer si primaire local** | 0 | sûr à relancer |
 | `arm-dr` | **arme la chaîne DR** (idempotent) : archive_command gzip + reload PG, OCI CLI system-wide (pip sous sudo + test import root), `/etc/oci` (clé API coffre), bucket `mikcloud-wal` + **policy IAM service principal + lifecycle 21 j (N°276)** + **chiffrement client WAL/basebackup (N°277, WAL_ENC_KEY par stdin)**, scripts DR + 3 timers systemd | 0 | `confirm=MIK-DR-ARM` requis |
-| `wal-quota` | **N°296** — diagnostic quota Object Storage (lecture seule) : poids réel bucket (objets/Go, WAL vs basebackup), policy lifecycle relue, production WAL mesurée 60 s (`pg_current_wal_lsn`), réglages WAL, pg_stat_archiver, top tables réécrites + top émetteurs WAL (pg_stat_statements), timers, disque | 0 | sûr à relancer |
+| `wal-quota` | **N°296/297** — diagnostic quota Object Storage (lecture seule) : poids réel bucket (objets/Go, WAL vs basebackup), policy lifecycle relue, production WAL mesurée 60 s (`pg_current_wal_lsn`), réglages WAL, pg_stat_archiver, top tables réécrites + top émetteurs WAL (pg_stat_statements), timers, disque — **N°297 : tourne aussi derrière le heartbeat `health` et la trace est committée dans `docs/ops/wal-quota-latest.md` (+ archive datée `docs/ops/wal-quota/`), relisible par un simple `git fetch` sans API REST** | 0 | sûr à relancer |
 | `wal-tune` | **N°296** — réduit le WAL À LA SOURCE : `wal_compression=zstd` + `checkpoint_timeout=15min` + `checkpoint_completion_target=0.9` + `max_wal_size=4GB` (ALTER SYSTEM + reload, SIGHUP only, zéro restart, RPO ≤ 6 min inchangé) | 0 | `confirm=MIK-PG-TUNE` requis |
 | `wal-retention` | **N°296** — re-pose la policy lifecycle du bucket (DELETE après `retention_days` jours, défaut 7, borné 2-60) — coupe-feu quota 10 Go Always Free | 0 | `confirm=MIK-WAL-RETENTION` requis ; réduit la fenêtre PITR |
 | `reverse-sync` | déclenche le flux nocturne MAINTENANT (service oneshot synchrone) : rétention web_vitals → basebackup → dump → Supabase → Neon | 0 | affiche log + statut + comptages cibles |
-| `health` | lance le monitor une fois + API publique depuis le runner — **mode du cron GitHub 04:23 UTC** | 0 | sûr à relancer |
+| `health` | lance le monitor une fois + API publique depuis le runner — **mode du cron GitHub 04:23 UTC** — **N°297 : enchaîne wal-quota + commite la trace dans le dépôt** ; le workflow se relance aussi sur tout push touchant son propre fichier | 0 | sûr à relancer |
 | `drill` | restaurabilité : dump primaire → restore STRICT `--exit-on-error` sur base jetable `mikcloud_drill` → asserts (40 tables, comptages identiques) → drop + **WAL distant téléchargé/DÉCHIFFRÉ/décompressé (N°277, fallback héritage `.gz`)** + listing basebackup | 0 | primaire jamais touché |
 
 ## 3. Pièges consignés (à ne JAMAIS redécouvrir)
@@ -136,6 +136,12 @@ gh workflow run ops-db-hybrid.yml -f mode=drill
 gh workflow run ops-db-hybrid.yml -f mode=wal-quota                     # diagnostic (lecture seule)
 gh workflow run ops-db-hybrid.yml -f mode=wal-tune -f confirm=MIK-PG-TUNE
 gh workflow run ops-db-hybrid.yml -f mode=wal-retention -f confirm=MIK-WAL-RETENTION -f retention_days=7
+# N°297 — LIRE la dernière mesure SANS API REST (marche même si
+# api.github.com répond 404 par nom pour les repos du compte) :
+git fetch origin && git show origin/main:docs/ops/wal-quota-latest.md
+# (le heartbeat 04:23 UTC et tout push touchant ops-db-hybrid.yml
+#  rafraîchissent la trace automatiquement ; archive datée dans
+#  docs/ops/wal-quota/)
 # Diagnostic VM / remise en route (incident) :
 gh workflow run ops-vm-diag.yml -f action=diag
 gh workflow run ops-vm-diag.yml -f action=reboot -f confirm=MIK-VM-REBOOT       # soft

@@ -5,7 +5,41 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
-## 2026-10-10 — N°296 — **QUOTA ALWAYS FREE OBJECT STORAGE EN DANGER : diagnostic + 3 leviers dans `ops-db-hybrid`** (modes `wal-quota` / `wal-tune` / `wal-retention`)
+## 2026-10-10 — N°297 — **boucle de pilotage WAL auto-entretenue : wal-quota derrière le heartbeat + trace committée dans le dépôt (lisible sans API REST)**
+
+### Contexte (incident réseau constaté pendant la re-mesure N°296)
+- L'API REST GitHub répondait **404 par nom** sur les repos du compte
+  (`/repos/ftechnologies18/*` — flapping 200/404, puis 404 stable) alors
+  que `/repositories/{id}` (par ID), GraphQL et le **protocole git**
+  (`ls-remote`/`push`/`fetch`) les résolvent normalement ; les repos
+  publics (torvalds/linux, cli/cli) passent toujours en 200.
+- Conséquence : un run `wal-quota` était **indéclenchable depuis la
+  sandbox** (le dispatch REST est aussi par nom) et ses résultats
+  (logs Actions) devenaient illisibles par le même chemin.
+
+### Ce qui a changé (`ops-db-hybrid.yml`, 19 steps)
+- **Trigger `push` auto-limité** (branches main, paths = ce fichier) :
+  toute modification du kit relance health + wal-quota et commite la
+  trace — le workflow se pilote désormais **sans dispatcher l'API**.
+- **`wal-quota` tourne derrière le heartbeat `health`** (04:23 UTC) :
+  la mesure quota devient quotidienne et automatique.
+- **Étape « trace wal-quota → dépôt »** : la sortie du diagnostic est
+  committée dans **`docs/ops/wal-quota-latest.md`** + archive datée
+  (`docs/ops/wal-quota/<STAMP>.md`) par `mikcloud-ops-bot` (`[skip ci]`,
+  anti-boucle : paths du trigger ne matchent que le fichier workflow ;
+  `permissions: contents: write` ajouté au job, checkout dédié).
+- **Lecture du résultat = `git fetch` + `git show
+  origin/main:docs/ops/wal-quota-latest.md`** — aucune dépendance REST,
+  même journaux indisponibles. Documenté DB-HYBRIDE §2/§4.
+- Historique conservé dans git : chaque mesure est datée, signée du run
+  URL, diffable (le commit est sauté si la trace est identique).
+
+### Non-objectif
+- Aucun changement PG, aucun geste VM, aucun impact production : le
+  heartbeat enchaîne uniquement des étapes lecture seule + un commit de
+  documentation. `permissions: contents: write` ne concerne que ce job
+  (identité `github-actions[bot]` sur repo public).
+
 
 ### Le constat (mesures terrain 09/10 ~20:00 UTC)
 - Le bucket `mikcloud-wal` contient ~2 290 segments WAL chiffrés ≈ 2,3 Go

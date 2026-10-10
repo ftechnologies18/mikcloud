@@ -43,6 +43,7 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 		WifiGuests:        []model.WifiGuest{},
 		Devices:           []model.Device{},
 		Sites:             []model.Site{},
+		CyberPostes:       []model.CyberPoste{},
 	}
 
 	steps := []struct {
@@ -86,6 +87,7 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 		{"chat_messages", func() error { return loadInto(p, &db.ChatMessages, chatMessageSpec) }},
 		{"announcements", func() error { return loadInto(p, &db.Announcements, announcementSpec) }},
 		{"sites", func() error { return loadInto(p, &db.Sites, siteSpec) }},
+		{"cyber_postes", func() error { return loadInto(p, &db.CyberPostes, cyberPosteSpec) }},
 		{"settings", func() error { return p.loadSettings(db) }},
 	}
 	for _, st := range steps {
@@ -150,7 +152,7 @@ func (p *PG) loadSettings(db *model.DB) error {
                         sub_plan_id, sub_status, sub_period_start, sub_period_end, sub_last_amount,
                         sub_router_slots, sub_last_paid_at, last_tick, last_sweep,
                         platform_name, platform_register_open, platform_register_key, auto_import_router_users,
-                        join_button, portal_style, portal_welcome, portal_promos, portal_socials, portal_slides, portal_services, portal_ticker, portal_whatsapp, portal_key,
+                        join_button, cyber_enabled, portal_style, portal_welcome, portal_promos, portal_socials, portal_slides, portal_services, portal_ticker, portal_whatsapp, portal_key,
                         log_retention_days
                  FROM settings`)
 	if err != nil {
@@ -177,6 +179,8 @@ func (p *PG) loadSettings(db *model.DB) error {
 			autoImport bool
 			// N°46 - reglage du bouton « S'inscrire » du portail (defaut ON).
 			joinButton bool
+			// N°290 - module Cybercafé (defaut OFF : opt-in).
+			cyberEnabled bool
 			// N°55 - mode hospitalité du portail (style/bienvenue/promos/socials).
 			portalStyle, portalWelcome, portalPromos, portalSocials string
 			// N°136 - slides du carrousel commercial (JSON d'URLs https ≤ 3).
@@ -202,7 +206,7 @@ func (p *PG) loadSettings(db *model.DB) error {
 			&subPlanID, &subStatus, &subPeriodStart, &subPeriodEnd, &subLastAmount,
 			&subRouterSlots, &subLastPaidAt, &lastTick, &lastSweep,
 			&platformName, &platformRegisterOpen, &platformRegisterKey, &autoImport,
-			&joinButton, &portalStyle, &portalWelcome, &portalPromos, &portalSocials, &portalSlides, &portalServices, &portalTicker, &portalWhatsapp, &portalKey, &logRetentionDays); err != nil {
+			&joinButton, &cyberEnabled, &portalStyle, &portalWelcome, &portalPromos, &portalSocials, &portalSlides, &portalServices, &portalTicker, &portalWhatsapp, &portalKey, &logRetentionDays); err != nil {
 			return err
 		}
 		if accID == "" {
@@ -244,6 +248,10 @@ func (p *PG) loadSettings(db *model.DB) error {
 		// DEFAULT TRUE), le reglage du bouton « S'inscrire » survit aux
 		// redemarrages.
 		settings.Tenant.JoinButton = &joinButton
+		// N°290 - même pattern : valeur lue EXPLICITE (colonne NOT NULL
+		// DEFAULT FALSE), l'activation du module Cybercafé survit aux
+		// redémarrages.
+		settings.Tenant.CyberEnabled = &cyberEnabled
 		// N°65 - même pattern : valeur lue EXPLICITE (colonne NOT NULL
 		// DEFAULT 90), la rétention du journal survit aux redémarrages.
 		settings.Tenant.LogRetentionDays = &logRetentionDays

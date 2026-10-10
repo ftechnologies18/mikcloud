@@ -18,6 +18,7 @@ import { enBadge } from "./i18n-en/badge";
 import { enBanner } from "./i18n-en/banner";
 import { enBillingRequests } from "./i18n-en/billing-requests";
 import { enCommon } from "./i18n-en/common";
+import { enCyber } from "./i18n-en/cyber";
 import { enDashboard } from "./i18n-en/dashboard";
 import { enForgot } from "./i18n-en/forgot";
 import { enHomeNet } from "./i18n-en/homenet";
@@ -69,6 +70,7 @@ export const enDict: Record<string, string> = {
   ...enBanner,
   ...enBillingRequests,
   ...enCommon,
+  ...enCyber,
   ...enDashboard,
   ...enForgot,
   ...enHomeNet,

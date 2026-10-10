@@ -170,6 +170,10 @@ func syncSteps(db *model.DB) []syncStep {
 		{siteSpec.table, func(hashes, pending map[string]map[string]uint64) tableApplier {
 			return diffTable(hashes, pending, siteSpec, db.Sites)
 		}},
+		// N°290 — postes du module Cybercafé (registre + pause + code-temps).
+		{cyberPosteSpec.table, func(hashes, pending map[string]map[string]uint64) tableApplier {
+			return diffTable(hashes, pending, cyberPosteSpec, db.CyberPostes)
+		}},
 		{transactionSpec.table, func(hashes, pending map[string]map[string]uint64) tableApplier {
 			return diffTable(hashes, pending, transactionSpec, db.Transactions)
 		}},
@@ -458,10 +462,10 @@ func (p *PG) syncSettings(ctx context.Context, tx *sql.Tx, db *model.DB, pending
                                dns_name, logo_url, banner_url, expiry_policy_mode, expiry_policy_after_days,
                                sub_plan_id, sub_status, sub_period_start, sub_period_end, sub_last_amount,
                                sub_router_slots, sub_last_paid_at, last_tick, last_sweep,
-                               platform_name, platform_register_open, platform_register_key, auto_import_router_users, join_button,
+                               platform_name, platform_register_open, platform_register_key, auto_import_router_users, join_button, cyber_enabled,
                                portal_style, portal_welcome, portal_promos, portal_socials, portal_slides, portal_services, portal_ticker, portal_whatsapp, portal_key,
                                log_retention_days)
-                         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37)
+                         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38)
                          ON CONFLICT (id) DO UPDATE SET
                            account_id                = EXCLUDED.account_id,
                            tenant_name               = EXCLUDED.tenant_name,
@@ -490,6 +494,7 @@ func (p *PG) syncSettings(ctx context.Context, tx *sql.Tx, db *model.DB, pending
                            platform_register_key    = EXCLUDED.platform_register_key,
                            auto_import_router_users = EXCLUDED.auto_import_router_users,
                            join_button              = EXCLUDED.join_button,
+                           cyber_enabled            = EXCLUDED.cyber_enabled,
                            portal_style             = EXCLUDED.portal_style,
                            portal_welcome           = EXCLUDED.portal_welcome,
                            portal_promos            = EXCLUDED.portal_promos,
@@ -507,7 +512,7 @@ func (p *PG) syncSettings(ctx context.Context, tx *sql.Tx, db *model.DB, pending
 			s.Subscription.PlanID, s.Subscription.Status, s.Subscription.PeriodStart,
 			s.Subscription.PeriodEnd, s.Subscription.LastAmountFcfa,
 			s.Subscription.RouterSlots, s.Subscription.LastPaidAt, lastTick, lastSweep,
-			platName, platOpen, platKey, s.ImportAutoEnabled(), s.Tenant.JoinButtonEnabled(),
+			platName, platOpen, platKey, s.ImportAutoEnabled(), s.Tenant.JoinButtonEnabled(), s.Tenant.CyberModuleEnabled(),
 			s.Tenant.PortalStyle, s.Tenant.PortalWelcome, s.Tenant.PortalPromos, s.Tenant.PortalSocials,
 			s.Tenant.PortalSlides,
 			s.Tenant.PortalServices,
@@ -810,6 +815,7 @@ func (p *PG) rebuildHashes(db *model.DB) {
 		announcementSpec.table:     hashRows(db.Announcements, announcementSpec),
 		siteSpec.table:             hashRows(db.Sites, siteSpec),
 		deviceSpec.table:           hashRows(db.Devices, deviceSpec),
+		cyberPosteSpec.table:       hashRows(db.CyberPostes, cyberPosteSpec),
 	}
 	notifRows := make([]model.NotificationSettings, 0, len(db.NotifSettings))
 	for _, v := range db.NotifSettings {

@@ -23,6 +23,7 @@ import { frBadge } from "./i18n-fr/badge";
 import { frBanner } from "./i18n-fr/banner";
 import { frBillingRequests } from "./i18n-fr/billing-requests";
 import { frCommon } from "./i18n-fr/common";
+import { frCyber } from "./i18n-fr/cyber";
 import { frDashboard } from "./i18n-fr/dashboard";
 import { frForgot } from "./i18n-fr/forgot";
 import { frHomeNet } from "./i18n-fr/homenet";
@@ -88,6 +89,7 @@ const fr: Record<string, string> = {
   ...frBanner,
   ...frBillingRequests,
   ...frCommon,
+  ...frCyber,
   ...frDashboard,
   ...frForgot,
   ...frHomeNet,

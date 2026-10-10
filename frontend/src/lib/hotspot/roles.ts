@@ -30,6 +30,10 @@ const VIEW_MIN_RANK: Record<string, number> = {
   users: 1,
   registrations: 2, // N°27 — file des demandes + liens (API requireRole(2) : manager+)
   vouchers: 1,
+  // N°290 — module Cybercafé : lecture ouverte à tout rôle (registre) ;
+  // écritures (attribution/pause/import) derrière requireRole(2) serveur,
+  // activation rang 3 — la barrière réelle vit côté Go.
+  cyber: 1,
   stats: 1, // heatmap affluence (lecture)
   templates: 2, // gestion des modèles (l'impression reste accessible à tous)
   profiles: 2,

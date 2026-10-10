@@ -786,6 +786,51 @@ export interface UserConnectionDetail {
   deviceBrand: string;
 }
 
+/** N°290 — poste du module Cybercafé (GET/POST /api/cyber/postes) : une
+ * machine identifiée par sa MAC (même discipline que HomeDevice), avec son
+ * état de pause (désiré, convergé par device_pause) et son code-temps lié. */
+export interface CyberPosteLinkedUser {
+  id: string;
+  username: string;
+  /** Statut EFFECTIF du code lié (expired/disabled/online/used/active). */
+  status: string;
+  timeLimitMin: number;
+  uptimeUsedSec: number;
+}
+
+export interface CyberPoste {
+  id: string;
+  accountId: string;
+  routerId: string;
+  routerName: string;
+  mac: string;
+  name: string;
+  ip: string;
+  paused: boolean;
+  /** RFC3339 ; "" = illimité (même sémantique que HomeDevice.pausedUntil). */
+  pausedUntil: string;
+  activeUserId: string;
+  activeUsername: string;
+  activeProfileName: string;
+  createdAt: string;
+  updatedAt: string;
+  /** Code-temps lié au poste (null = poste libre). */
+  linkedUser: CyberPosteLinkedUser | null;
+}
+
+/** N°290 — ligne de découverte (GET /api/cyber/discover) : un appareil du
+ * registre DHCP avec l'indicateur « imported » (déjà enregistré comme poste). */
+export interface CyberDiscoveryRow {
+  id: string;
+  mac: string;
+  ip: string;
+  hostname: string;
+  status: string;
+  routerId: string;
+  routerName: string;
+  imported: boolean;
+}
+
 /** N°101 — appareil du foyer (bail DHCP, GET /api/devices — console HomeNet).
  * L'identité stable est la MAC ; le nom affiché replie nom affecté →
  * host-name DHCP → MAC. `status` = dernier bail rapporté par la box
@@ -1434,6 +1479,10 @@ export interface AppSettings {
      * actif est lié au routeur ; false = aucun bouton d'inscription (le
      * reliquat Mikhmon « Scanner un QR Code » est retiré du portail). */
     joinButton?: boolean;
+    /** N°290 : module Cybercafé — true = registre des postes, attribution
+     * code-temps et caisse activés (opt-in, absent du JSON tant que le
+     * réglage n'a pas été touché = désactivé). */
+    cyberEnabled?: boolean;
   };
   plan: {
     name: string;
@@ -1836,6 +1885,9 @@ export type ViewId =
   | "profiles"
   | "resellers"
   | "wifi"
+  // N°290 — module Cybercafé (overlay hotspot, activable par compte) :
+  // registre des postes + attribution code-temps + pause + caisse.
+  | "cyber"
   | "routers"
   | "portal"
   | "reports"

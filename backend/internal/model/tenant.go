@@ -89,6 +89,12 @@ type Tenant struct {
 	// pattern que JoinButton) ; la colonne Neon settings.log_retention_days
 	// (NOT NULL DEFAULT 90) reporte la valeur explicite au premier Save.
 	LogRetentionDays *int `json:"logRetentionDays,omitempty"`
+	// N°290 — module Cybercafé (registre des postes + codes-temps + caisse
+	// du cybercafé). Pointeur : nil = DÉSACTIVÉ (module opt-in — décision
+	// D6 de N°289 : un flag, pas un nouvel usage ; l'enum hotspot|homenet
+	// reste inchangé). La colonne settings.cyber_enabled (NOT NULL DEFAULT
+	// FALSE) reporte la valeur explicite au premier Save.
+	CyberEnabled *bool `json:"cyberEnabled,omitempty"`
 }
 
 // DefaultLogRetentionDays — rétention par défaut du journal utilisateurs
@@ -339,6 +345,13 @@ func (s Settings) ImportAutoEnabled() bool {
 // préservé, zéro-migration pour les comptes existants).
 func (t Tenant) JoinButtonEnabled() bool {
 	return t.JoinButton == nil || *t.JoinButton
+}
+
+// CyberModuleEnabled — valeur EFFECTIVE du module Cybercafé (N°290) pour un
+// compte (nil = OFF : module opt-in, activable en un clic depuis la vue
+// Cybercafé — décision D6 de N°289).
+func (t Tenant) CyberModuleEnabled() bool {
+	return t.CyberEnabled != nil && *t.CyberEnabled
 }
 
 // PlatformConfig — configuration globale de la plateforme MikCloud (vivante

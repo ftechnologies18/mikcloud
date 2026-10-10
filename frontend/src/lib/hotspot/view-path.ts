@@ -70,6 +70,9 @@ const VIEW_SLUGS: Record<ViewId, string> = {
   users: "users",
   registrations: "registrations",
   vouchers: "vouchers",
+  // N°290 — module Cybercafé : segment simple (vue de navigation principale,
+  // section Hotspot).
+  cyber: "cyber",
   templates: "settings/hotspot/modeles",
   profiles: "profiles",
   resellers: "resellers",

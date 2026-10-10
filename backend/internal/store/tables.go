@@ -70,8 +70,10 @@ const (
 	TableAnnouncements = "announcements"
 	// N°182 — sites physiques : regroupement de routeurs + surcharge de
 	// branding du portail captif (chaîne ROUTEUR → SITE → COMPTE).
-	TableSites    = "sites"
-	TableSettings = "settings" // hors diff d'empreintes (syncSettings)
+	TableSites = "sites"
+	// N°290 — postes du module Cybercafé (registre + pause + code-temps).
+	TableCyberPostes = "cyber_postes"
+	TableSettings    = "settings" // hors diff d'empreintes (syncSettings)
 )
 
 // syncKnownTables — registre des noms acceptés par SaveTables/SyncTables :
@@ -115,6 +117,7 @@ var syncKnownTables = map[string]bool{
 	TableDevices:              true,
 	TableAnnouncements:        true,
 	TableSites:                true,
+	TableCyberPostes:          true,
 	TableSettings:             true,
 }
 

@@ -5,6 +5,62 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-10 — N°290 — **CHANTIER ⑧ CYBERCAFÉ V1** (module activable : postes, codes-temps, pause poste, caisse — D1–D7 arbitrés, Option V lot 1)
+
+### Ce qui a changé
+- **Exécution du premier lot de l'Option V** (arbitrage D1–D7 de N°289 validé
+  par l'exploitant) : le module Cybercafé v1 ferme DEUX écarts de la matrice
+  concurrentielle (Cybercafé ✅ + MAC Access substrat) avec les briques
+  existantes — décision **D6 respectée** : un flag `CyberEnabled` par compte,
+  PAS de nouvel usage (l'enum hotspot|homenet reste inchangé).
+- **Backend — modèle + store** : nouvelle entité `CyberPoste` (`model/cyber.go`
+  — MAC = identité stable, même discipline que devices N°101 ; pause désirée
+  cloud ; lien code-temps `ActiveUserID/ActiveUsername/ActiveProfileName`),
+  table `cyber_postes` + index (gabarit sites N°182), registre de tables,
+  spec de synchro différentielle (pg_specs/pg_sync/pg_load/syncstats),
+  `CloneDeep`, plafond `MaxCyberPostesPerAccount = 100`. Flag
+  `Tenant.CyberEnabled` (`*bool`, nil = OFF, gabarit JoinButton N°46) :
+  colonne `settings.cyber_enabled` (ALTER idempotent), sync + load PG
+  explicites, `CyberModuleEnabled()`.
+- **Backend — API `/api/cyber/*`** (`handlers_cyber.go`, garde
+  `requireUsage(hotspot)` + flag en handler — 403 `cyber_disabled` —,
+  écritures rang 2, activation rang 3) : CRUD postes (unicité MAC par
+  routeur), **import DHCP** (`GET /api/cyber/discover` + import par
+  deviceId — les bails read_dhcp nourrissent maintenant AUSSI les comptes
+  hotspot du module : garde élargi homenet → homenet OU hotspot+cyber, un
+  seul point par fonction, comportement HomeNet inchangé), **attribution
+  code-temps** (`POST .../assign` — voucher limit-uptime créé sur le gabarit
+  de génération N°25/F13 : mode « utilisateur = mot de passe » verrouillé,
+  validité ancrée au 1er login, SellingPrice, trace d'origine
+  `SoldVia = "cyber_poste"` pattern N°8 ; Transaction + Sale + Batch
+  enregistrées dans la MÊME écriture → rapports/compta/journaux existants
+  comptent la vente sans double compteur), libération (le voucher vit sa
+  vie dans Vouchers), **pause/reprise poste** (commande device_pause N°101
+  RÉUTILISÉE : `desiredPauseMacsLocked` fusionne appareils foyers et postes
+  cyber — même marqueur mikcloud-pause, même signature, même idempotence ;
+  convergence check-in élargie homenet → homenet OU hotspot+cyber ;
+  désactivation du module = pauses levées + re-file, aucune règle
+  orpheline), activation `PUT /api/cyber/settings`.
+- **Frontend** : ViewId `cyber` (`/app/cyber`, section Hotspot de la nav,
+  icône Armchair), vue `cyber-view.tsx` (activation en un clic quand le
+  module est éteint ; KPIs Postes/Occupés/En pause/**Caisse du jour** —
+  dernier bucket `accounting?period=day` au fuseau du compte N°198 ;
+  table postes avec statut Libre/Occupé/En pause + code lié et quota
+  restant ; dialogs ajouter/importer DHCP/attribuer [code affiché une fois
+  + copie]/renommer/libérer/supprimer ; presets de pause 30 min/1 h/2 h/∞ ;
+  poll 10–60 s, ETag/304, mutations sans optimisme), client `api.ts`
+  (10 fonctions N°290), types `CyberPoste`/`CyberDiscoveryRow`,
+  i18n FR/EN complets (fragment `cyber` + `nav.cyber`), chunk dynamique
+  dédié (app-shell), rang de vue 1 (écrites serveur rang 2/3).
+
+### Impact
+- `backend/**` touché : CI complète puis déploiement au push (pattern
+  établi). Migrations store idempotentes (CREATE TABLE + ALTER ADD COLUMN
+  IF NOT EXISTS) — sans risque pour les bases existantes ; aucun schéma
+  externe à synchroniser.
+- Suivi N°289 : ⑥ PPPoE Phase A et ⑦ WireGuard vendable restent à venir
+  (lots 2-3 de l'Option V) ; lot Cybercafé livré complet (backend + UI).
+
 ## 2026-10-10 — N°289 — **ANALYSE P1 ADOSSÉE AU CODE — ⑥ PPPoE · ⑦ WireGuard vendable · ⑧ Cybercafé** (7 décisions à trancher ensemble)
 
 ### Ce qui a changé

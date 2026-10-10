@@ -719,6 +719,34 @@ func (p *PG) ensureSchema() error {
 		// (JSON canonique, vide = hériter du site puis du compte).
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS site_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE routers ADD COLUMN IF NOT EXISTS portal_override TEXT NOT NULL DEFAULT ''`,
+		// N°290 — MODULE CYBERCAFÉ : registre des postes (MAC = identité
+		// stable, même discipline que devices N°101) + état de pause
+		// (désiré cloud, convergé par device_pause) + lien vers le
+		// code-temps attribué (ActiveUserID/ActiveUsername). Remplie
+		// UNIQUEMENT pour les comptes hotspot ayant activé le module.
+		`CREATE TABLE IF NOT EXISTS cyber_postes (
+                        id                  TEXT PRIMARY KEY,
+                        account_id          TEXT NOT NULL,
+                        router_id           TEXT NOT NULL,
+                        router_name         TEXT NOT NULL DEFAULT '',
+                        mac                 TEXT NOT NULL,
+                        name                TEXT NOT NULL DEFAULT '',
+                        ip                  TEXT NOT NULL DEFAULT '',
+                        paused              BOOLEAN NOT NULL DEFAULT FALSE,
+                        paused_until        TEXT NOT NULL DEFAULT '',
+                        active_user_id      TEXT NOT NULL DEFAULT '',
+                        active_username     TEXT NOT NULL DEFAULT '',
+                        active_profile_name TEXT NOT NULL DEFAULT '',
+                        created_at          TEXT NOT NULL,
+                        updated_at          TEXT NOT NULL
+                )`,
+		`CREATE INDEX IF NOT EXISTS idx_cyber_postes_account ON cyber_postes (account_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_cyber_postes_router  ON cyber_postes (router_id)`,
+		// N°290 — activation du module Cybercafé, réglage par compte
+		// (défaut OFF — module opt-in, décision D6 de N°289 ; le
+		// pointeur Tenant.CyberEnabled est posé explicitement à la
+		// première activation).
+		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS cyber_enabled BOOLEAN NOT NULL DEFAULT FALSE`,
 		// N°67 — Resend (API HTTP https://resend.com) comme fournisseur
 		// alternatif du canal e-mail : le provider choisit entre SMTP
 		// direct (défaut, '') et l'API Resend (clé secrète par compte).

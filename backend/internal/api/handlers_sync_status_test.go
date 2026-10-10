@@ -107,12 +107,13 @@ func TestSyncStatusContract(t *testing.T) {
 		t.Fatalf("mode JSON : neon doit être null, obtenu %v", out["neon"])
 	}
 
-	// Tables : 37 entrées, lignes mémoire exactes pour le seed
-	// (36 différentielles + settings — N°133 : chat ×2 + devices ; N°152 :
-	// + announcements ; N°182 : + sites ; N°200 : + monthly_journals).
+	// Tables : 38 entrées, lignes mémoire exactes pour le seed
+	// (37 différentielles + settings — N°133 : chat ×2 + devices ; N°152 :
+	// + announcements ; N°182 : + sites ; N°200 : + monthly_journals ;
+	// N°290 : + cyber_postes).
 	tables, ok := out["tables"].([]any)
-	if !ok || len(tables) != 38 {
-		t.Fatalf("38 tables attendues (37 différentielles + settings — N°182 : sites, N°199 : volume_days, N°200 : monthly_journals), obtenu %v", len(tables))
+	if !ok || len(tables) != 39 {
+		t.Fatalf("39 tables attendues (38 différentielles + settings — N°182 : sites, N°199 : volume_days, N°200 : monthly_journals, N°290 : cyber_postes), obtenu %v", len(tables))
 	}
 	findTable := func(name string) map[string]any {
 		for _, e := range tables {

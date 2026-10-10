@@ -17,10 +17,13 @@ import type {
   AdminAnnouncementRow,
   Announcement,
   AnnouncementCreatePayload,
+  AppSettings,
   AuthResponse,
   AuthUser,
   BillingRequest,
   BillingRequestsResponse,
+  CyberDiscoveryRow,
+  CyberPoste,
   ChatAdminMessage,
   ChatConversationDetail,
   ChatConversationsResponse,
@@ -997,4 +1000,95 @@ export async function deleteAnnouncement(id: string): Promise<{ ok: boolean }> {
  * (bandeau console + destination « tout voir » de la cloche). */
 export async function fetchClientAnnouncements(): Promise<Announcement[]> {
   return api<Announcement[]>("/api/announcements");
+}
+
+/* — N°290 : module Cybercafé (registre des postes + codes-temps + pause) — */
+
+/** createCyberPosteBody — création manuelle d'un poste (MAC normalisée
+ * serveur ; le routeur porte l'inventaire). */
+export interface CyberPosteCreateBody {
+  mac: string;
+  name?: string;
+  routerId: string;
+}
+
+/** fetchCyberPostes — N°290 : les postes du compte, code-temps lié inclus
+ * (403 cyber_disabled tant que le module n'est pas activé). */
+export async function fetchCyberPostes(): Promise<CyberPoste[]> {
+  return api<CyberPoste[]>("/api/cyber/postes");
+}
+
+/** createCyberPoste — N°290 : ajoute un poste (unicité MAC par routeur). */
+export async function createCyberPoste(body: CyberPosteCreateBody): Promise<CyberPoste> {
+  return api<CyberPoste>("/api/cyber/postes", { method: "POST", body });
+}
+
+/** importCyberPoste — N°290 : crée un poste depuis un appareil découvert
+ * (bail DHCP read_dhcp — MAC/IP/host-name repris). */
+export async function importCyberPoste(deviceId: string): Promise<CyberPoste> {
+  return api<CyberPoste>("/api/cyber/postes/import", { method: "POST", body: { deviceId } });
+}
+
+/** fetchCyberDiscover — N°290 : les appareils connus du compte avec
+ * l'indicateur « imported » — la console propose l'import en un clic. */
+export async function fetchCyberDiscover(): Promise<CyberDiscoveryRow[]> {
+  return api<CyberDiscoveryRow[]>("/api/cyber/discover");
+}
+
+/** renameCyberPoste — N°290 : renomme un poste (registre purement cloud). */
+export async function renameCyberPoste(id: string, name: string): Promise<CyberPoste> {
+  return api<CyberPoste>(`/api/cyber/postes/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: { name },
+  });
+}
+
+/** deleteCyberPoste — N°290 : retire un poste (le code-temps lié vit sa vie
+ * dans Vouchers ; la pause éventuelle est levée côté routeur ≤ 45 s). */
+export async function deleteCyberPoste(id: string): Promise<{ ok: boolean; message: string }> {
+  return api(`/api/cyber/postes/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+/** assignCyberPosteResponse — code-temps attribué (le code complet revient
+ * UNE fois — à copier/imprimer immédiatement). */
+export interface CyberAssignResponse {
+  poste: CyberPoste;
+  voucher: { id: string; username: string };
+  totalCost: number;
+  message: string;
+}
+
+/** assignCyberPoste — N°290 : attribue un code-temps au poste (un code =
+ * un poste) : voucher limit-uptime + caisse (Transaction + Sale) + liaison.
+ * timeLimitMin 0 = hériter du profil. */
+export async function assignCyberPoste(
+  id: string,
+  profileId: string,
+  timeLimitMin = 0,
+): Promise<CyberAssignResponse> {
+  return api<CyberAssignResponse>(`/api/cyber/postes/${encodeURIComponent(id)}/assign`, {
+    method: "POST",
+    body: { profileId, timeLimitMin },
+  });
+}
+
+/** releaseCyberPoste — N°290 : délie le poste de son code-temps (le voucher
+ * reste gérable dans Utilisateurs/Vouchers ; le poste redevient attribuable). */
+export async function releaseCyberPoste(id: string): Promise<CyberPoste> {
+  return api<CyberPoste>(`/api/cyber/postes/${encodeURIComponent(id)}/release`, { method: "POST" });
+}
+
+/** pauseCyberPoste — N°290 : pause/reprise d'un poste (minutes 0 = illimité,
+ * même contrat que la pause dîner HomeNet). */
+export async function pauseCyberPoste(id: string, paused: boolean, minutes = 0): Promise<CyberPoste> {
+  return api<CyberPoste>(`/api/cyber/postes/${encodeURIComponent(id)}/pause`, {
+    method: "POST",
+    body: { paused, minutes },
+  });
+}
+
+/** setCyberEnabled — N°290 : active/désactive le module Cybercafé du compte
+ * (désactivation = pauses de postes levées, aucune règle orpheline). */
+export async function setCyberEnabled(enabled: boolean): Promise<AppSettings> {
+  return api<AppSettings>("/api/cyber/settings", { method: "PUT", body: { enabled } });
 }

@@ -286,6 +286,21 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/devices", a.requireUsage(model.AccountUsageHomeNet, a.handleDevicesList))
 	mux.HandleFunc("PUT /api/devices/{id}", a.requireUsage(model.AccountUsageHomeNet, a.requireRole(2, a.handleDeviceRename)))
 	mux.HandleFunc("POST /api/devices/{id}/pause", a.requireUsage(model.AccountUsageHomeNet, a.requireRole(2, a.handleDevicePause)))
+	// N°290 — module Cybercafé (overlay hotspot, activable par compte) :
+	// registre des postes + import DHCP + attribution code-temps + pause
+	// poste + activation. Lecture ouverte à l'équipe (rang 1) ; écritures
+	// rang 2 (gestes de gérant) ; activation rang 3 (décision d'offre).
+	// Les handlers vérifient le flag (403 cyber_disabled si désactivé).
+	mux.HandleFunc("GET /api/cyber/postes", a.requireUsage(model.AccountUsageHotspot, a.handleCyberPostesList))
+	mux.HandleFunc("POST /api/cyber/postes", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleCyberPosteCreate)))
+	mux.HandleFunc("POST /api/cyber/postes/import", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleCyberPosteImport)))
+	mux.HandleFunc("GET /api/cyber/discover", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleCyberDiscover)))
+	mux.HandleFunc("PUT /api/cyber/postes/{id}", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleCyberPosteUpdate)))
+	mux.HandleFunc("DELETE /api/cyber/postes/{id}", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleCyberPosteDelete)))
+	mux.HandleFunc("POST /api/cyber/postes/{id}/assign", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleCyberPosteAssign)))
+	mux.HandleFunc("POST /api/cyber/postes/{id}/release", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleCyberPosteRelease)))
+	mux.HandleFunc("POST /api/cyber/postes/{id}/pause", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleCyberPostePause)))
+	mux.HandleFunc("PUT /api/cyber/settings", a.requireUsage(model.AccountUsageHotspot, a.requireRole(3, a.handleCyberSettings)))
 	mux.HandleFunc("DELETE /api/sessions/{id}", a.handleSessionKick)
 
 	// Revendeurs

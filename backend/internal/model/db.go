@@ -73,6 +73,10 @@ type DB struct {
 	// garde la famille — les clics DHCP de la console hotspot restent
 	// du cache outil F9, jamais des lignes d'appareil).
 	Devices []Device `json:"devices"`
+	// N°290 — postes du module Cybercafé (registre des machines + pause
+	// poste + lien code-temps). Remplie UNIQUEMENT pour les comptes hotspot
+	// ayant activé le module (settings.Tenant.CyberEnabled) — cf. cyber.go.
+	CyberPostes []CyberPoste `json:"cyberPostes"`
 	// N°68 — demandes de réinitialisation de mot de passe (« Mot de passe
 	// oublié ? ») : token hashé, expiration 60 min, usage unique — voir
 	// PasswordReset. Borné par prunePasswordResetsLocked.
@@ -350,6 +354,7 @@ func (db *DB) CloneDeep() *DB {
 	clone.GeniusPaySubs = append([]GeniusPaySub(nil), db.GeniusPaySubs...)
 	clone.SellSessions = append([]SellSession(nil), db.SellSessions...)
 	clone.Devices = append([]Device(nil), db.Devices...)
+	clone.CyberPostes = append([]CyberPoste(nil), db.CyberPostes...)
 	clone.PasswordResets = append([]PasswordReset(nil), db.PasswordResets...)
 	clone.ChatConversations = append([]ChatConversation(nil), db.ChatConversations...)
 	clone.ChatMessages = append([]ChatMessage(nil), db.ChatMessages...)
@@ -411,6 +416,10 @@ func cloneSettingsByAccount(src map[string]Settings) map[string]Settings {
 		if s.Tenant.JoinButton != nil {
 			v := *s.Tenant.JoinButton
 			s.Tenant.JoinButton = &v
+		}
+		if s.Tenant.CyberEnabled != nil {
+			v := *s.Tenant.CyberEnabled
+			s.Tenant.CyberEnabled = &v
 		}
 		if s.Tenant.LogRetentionDays != nil {
 			v := *s.Tenant.LogRetentionDays

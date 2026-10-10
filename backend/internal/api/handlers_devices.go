@@ -241,15 +241,23 @@ func (a *API) handleDevicePause(w http.ResponseWriter, r *http.Request) {
 // routeur converge — jamais d'horloge routeur consultée)
 // ---------------------------------------------------------------------------
 
-// desiredPauseMacsLocked — MAC des appareils de CE routeur dont la pause est
-// effective à `now` (demandée ET non expirée), triées (signature stable).
-// À appeler sous le verrou du store.
+// desiredPauseMacsLocked — MAC des appareils HomeNet ET des postes Cybercafé
+// (N°290 — le module réutilise la MÊME commande device_pause et la MÊME
+// signature ; un poste en pause rejoint l'ensemble désiré de son routeur)
+// de CE routeur dont la pause est effective à `now` (demandée ET non
+// expirée), triées (signature stable). À appeler sous le verrou du store.
 func desiredPauseMacsLocked(db *model.DB, routerID string, now time.Time) []string {
 	macs := []string{}
 	for i := range db.Devices {
 		d := &db.Devices[i]
 		if d.RouterID == routerID && d.PauseActiveAt(now) {
 			macs = append(macs, d.MAC)
+		}
+	}
+	for i := range db.CyberPostes {
+		p := &db.CyberPostes[i]
+		if p.RouterID == routerID && p.PauseActiveAt(now) {
+			macs = append(macs, p.MAC)
 		}
 	}
 	sort.Strings(macs)
@@ -294,15 +302,18 @@ func (a *API) queueDevicePauseLocked(db *model.DB, router *model.Router) {
 	queueCommandLocked(db, router.AccountID, router.ID, model.CmdDevicePause, payload)
 }
 
-// ensureDevicePauseLocked — N°101 — convergeur check-in de la pause dîner :
+// ensureDevicePauseLocked — N°101 — convergeur check-in de la pause :
 // la signature désirée est recalculée à CHAQUE check-in (une pause qui
 // expire change l'ensemble → re-file, la coupure se lève d'elle-même) et
 // comparée à celle APPLIQUÉE (Router.PauseSig) ; divergence → device_pause
-// en file (idempotent, servie dans CE check-in). HOMENET uniquement : les
-// routeurs hotspot n'ont ni appareil ni pause — aucun bruit de file.
+// en file (idempotent, servie dans CE check-in). HOMENET (pause dîner)
+// OU HOTSPOT avec module Cybercafé activé (pause postes N°290) : les autres
+// routeurs n'ont ni appareil ni poste en pause — aucun bruit de file.
 // À appeler sous le verrou depuis handleAgentCmd.
 func (a *API) ensureDevicePauseLocked(db *model.DB, router *model.Router) {
-	if router.Mode != "agent" || accountUsageLocked(db, router.AccountID) != model.AccountUsageHomeNet {
+	usage := accountUsageLocked(db, router.AccountID)
+	cyber := usage == model.AccountUsageHotspot && cyberEnabledLocked(db, router.AccountID)
+	if router.Mode != "agent" || (usage != model.AccountUsageHomeNet && !cyber) {
 		return
 	}
 	now := time.Now().UTC()
@@ -325,11 +336,14 @@ func (a *API) ensureDevicePauseLocked(db *model.DB, router *model.Router) {
 // ensureHomeDevicesLocked — N°101 — cadenceur de l'inventaire : enfile un
 // read_dhcp pour CE routeur si (1) c'est un routeur agent d'un compte
 // HOMENET (les parcs hotspot ne paient pas ce cycle — leurs données DHCP
-// restent de l'outil F9 à la demande), (2) aucun n'est déjà en file/vol,
-// (3) le dernier rapport appliqué date de plus de devicesMinInterval.
-// À appeler sous le verrou depuis handleAgentCmd.
+// restent de l'outil F9 à la demande) OU d'un compte HOTSPOT avec le module
+// Cybercafé activé (N°290 : la découverte nourrit l'import des postes),
+// (2) aucun n'est déjà en file/vol, (3) le dernier rapport appliqué date de
+// plus de devicesMinInterval. À appeler sous le verrou depuis handleAgentCmd.
 func (a *API) ensureHomeDevicesLocked(db *model.DB, router *model.Router) {
-	if router.Mode != "agent" || accountUsageLocked(db, router.AccountID) != model.AccountUsageHomeNet {
+	usage := accountUsageLocked(db, router.AccountID)
+	cyber := usage == model.AccountUsageHotspot && cyberEnabledLocked(db, router.AccountID)
+	if router.Mode != "agent" || (usage != model.AccountUsageHomeNet && !cyber) {
 		return
 	}
 	for i := range db.Commands {

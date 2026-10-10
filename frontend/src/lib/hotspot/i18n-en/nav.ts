@@ -15,6 +15,8 @@ export const enNav: Record<string, string> = {
   "nav.profiles": "Profiles",
   "nav.resellers": "Resellers",
   "nav.routers": "Routers",
+  // N°290 — Cybercafé module (workstation registry + time codes).
+  "nav.cyber": "Cybercafé",
   "nav.portal": "Portal",
   "nav.reports": "Reports",
   "nav.logs": "Logs",

@@ -349,6 +349,8 @@ func liveTableRows(db *model.DB) []TableHealth {
 		// N°152 — annonces de la plateforme (parité synchro différentielle).
 		{Table: "announcements", Rows: len(db.Announcements)},
 		{Table: "sites", Rows: len(db.Sites)},
+		// N°290 — parité synchro différentielle (module Cybercafé).
+		{Table: "cyber_postes", Rows: len(db.CyberPostes)},
 		{Table: "settings", Rows: len(db.SettingsByAccount)},
 	}
 }

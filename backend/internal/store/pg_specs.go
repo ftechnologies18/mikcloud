@@ -171,6 +171,28 @@ var siteSpec = entitySpec[model.Site]{
 	hashOf: hashEntity[model.Site],
 }
 
+// cyberPosteSpec — N°290 : postes du module Cybercafé (registre des machines
+// + pause poste + lien code-temps attribué). Même discipline que deviceSpec :
+// l'ordre cols/scan/args reste strictement aligné.
+var cyberPosteSpec = entitySpec[model.CyberPoste]{
+	table: "cyber_postes",
+	cols:  []string{"id", "account_id", "router_id", "router_name", "mac", "name", "ip", "paused", "paused_until", "active_user_id", "active_username", "active_profile_name", "created_at", "updated_at"},
+	idOf:  func(x *model.CyberPoste) string { return x.ID },
+	scan: func(r *sql.Rows) (model.CyberPoste, error) {
+		var x model.CyberPoste
+		err := r.Scan(&x.ID, &x.AccountID, &x.RouterID, &x.RouterName, &x.MAC, &x.Name, &x.IP,
+			&x.Paused, &x.PausedUntil, &x.ActiveUserID, &x.ActiveUsername, &x.ActiveProfileName,
+			&x.CreatedAt, &x.UpdatedAt)
+		return x, err
+	},
+	args: func(x *model.CyberPoste) []any {
+		return []any{x.ID, x.AccountID, x.RouterID, x.RouterName, x.MAC, x.Name, x.IP,
+			x.Paused, x.PausedUntil, x.ActiveUserID, x.ActiveUsername, x.ActiveProfileName,
+			x.CreatedAt, x.UpdatedAt}
+	},
+	hashOf: hashEntity[model.CyberPoste],
+}
+
 // migrateSealRouterPasswords — passe de démarrage (idempotente) : chiffre
 // TOUTES les valeurs de routers.password encore en clair (base créée avant le
 // correctif P0 #6). La mémoire reste claire ; seules les lignes DB concernées

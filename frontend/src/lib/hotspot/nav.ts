@@ -6,6 +6,7 @@ import {
   BarChart3,
   Bell,
   Building2,
+  Armchair,
   Gauge,
   LayoutDashboard,
   Megaphone,
@@ -82,6 +83,11 @@ export const NAV_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
       // (/app/settings/templates) : la sidebar ne montre plus que les
       // modules métier.
       { id: "profiles", labelKey: "nav.profiles", icon: Gauge },
+      // N°290 — module Cybercafé : le registre des postes (codes-temps
+      // attribués machine par machine) rejoint les façons de délivrer de
+      // l'accès. L'entrée reste visible pour tous les comptes hotspot ; la
+      // vue propose l'activation en un clic quand le module est éteint.
+      { id: "cyber", labelKey: "nav.cyber", icon: Armchair },
       // N°27 — WiFi jetable : mode d'accès offert des établissements.
       { id: "wifi", labelKey: "wifi.title", icon: Wifi },
     ],

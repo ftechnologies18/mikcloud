@@ -902,13 +902,17 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 		summary := a.applyPoolDoctor(db, router, vals)
 		a.logActivity(db, router.AccountID, "router", "Routeur «"+router.Name+"» — "+summary)
 	case cmd.Kind == model.CmdReadDhcp && ok:
-		// N°101 — inventaire HomeNet : le rapport des bails DHCP nourrit le
-		// registre des appareils UNIQUEMENT pour un compte homenet (le clic
-		// DHCP de la console hotspot reste du cache outil F9 : aucune ligne
-		// d'appareil ne naît d'un parc public). La commande reste « done »
-		// avec son Result["data"] : l'outil F9 y relit son cache 120 s —
-		// les DEUX consommateurs du même rapport, zéro conflit.
-		if accountUsageLocked(db, router.AccountID) == model.AccountUsageHomeNet {
+		// N°101 — inventaire : le rapport des bails DHCP nourrit le
+		// registre des appareils pour un compte HOMENET (le clic DHCP
+		// de la console hotspot reste du cache outil F9 : aucune ligne
+		// d'appareil ne naît d'un parc public) OU pour un compte
+		// HOTSPOT avec le module Cybercafé activé (N°290 : la
+		// découverte alimente l'import des postes). La commande reste
+		// « done » avec son Result["data"] : l'outil F9 y relit son
+		// cache 120 s — les consommateurs du même rapport, zéro conflit.
+		usage := accountUsageLocked(db, router.AccountID)
+		if usage == model.AccountUsageHomeNet ||
+			(usage == model.AccountUsageHotspot && cyberEnabledLocked(db, router.AccountID)) {
 			created := a.applyDeviceLeases(db, router, vals)
 			if a.devicesDone == nil {
 				a.devicesDone = map[string]time.Time{}

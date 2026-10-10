@@ -78,6 +78,35 @@ name: ops-db-hybrid
 #           strict sur base de drill mikcloud_drill → asserts → drop,
 #           + lisibilité d'un segment WAL du bucket (pg_waldump).
 #
+# ═══ QUOTA ALWAYS FREE OBJECT STORAGE — N°296 ═══
+#
+# Constat terrain 09/10 ~20:00 UTC : bucket mikcloud-wal ≈ 2,3 Go
+# (~2 290 segments .enc + 6 basebackups), rythme 60 WAL/h ≈ 1,2-1,4 Go/j
+# gz — l'estimation N°276 (15-50 Mo/j via « gzip ÷50 ») était fausse :
+# le gzip ne récupère que ~÷13-19 (le WAL contient du VRAI churn, pas du
+# padding). Le lifecycle 21 j actif (N°276) laisse donc un plateau
+# ~25-29 Go ≫ 10 Go Always Free → saturation ~J+6-7. Trois leviers :
+#
+#   wal-quota — LECTURE SEULE : poids réel du bucket (objets/Go,
+#           répartition WAL/basebackup, policy lifecycle relue),
+#           production WAL mesurée sur 60 s (pg_current_wal_lsn),
+#           réglages WAL, pg_stat_archiver, top tables réécrites,
+#           top émetteurs WAL (pg_stat_statements.wal_bytes), disque.
+#   wal-tune (confirm=MIK-PG-TUNE) — réduit le WAL À LA SOURCE :
+#           wal_compression=zstd + checkpoint_timeout=15min +
+#           checkpoint_completion_target=0.9 + max_wal_size=4GB
+#           (ALTER SYSTEM + reload — SIGHUP only, zéro restart, RPO
+#           ≤ 6 min inchangé) ; attendu ÷2-5 sur le WAL brut (FPI).
+#   wal-retention (confirm=MIK-WAL-RETENTION, retention_days=N) —
+#           re-pose la policy lifecycle du bucket (DELETE après N jours,
+#           défaut 7) : coupe-feu quota 10 Go — réduit la fenêtre PITR,
+#           décision exploitant explicite.
+#
+# Séquence recommandée : wal-quota (mesure) → wal-tune (GO) → re-mesure
+# 24-48 h → wal-retention à la fenêtre la plus large qui tient < 10 Go
+# → si le churn persiste, correction applicative ciblée (précédent
+# N°210 blobs settings) guidée par le top pg_stat_statements.
+#
 # SÉCURITÉ :
 #   - arm-dr exige confirm=MIK-DR-ARM (pose des credentials OCI sur la
 #     VM + création de bucket + timers) — rien d'irréversible, tout
@@ -90,11 +119,11 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "audit | backup | setup-pg | restore | cutover | rollback | status | arm-dr | reverse-sync | health | drill"
+        description: "audit | backup | setup-pg | restore | cutover | rollback | status | arm-dr | reverse-sync | health | drill | wal-quota | wal-tune | wal-retention"
         required: true
         type: string
       confirm:
-        description: "Taper MIK-DB-HYBRID pour cutover / rollback — MIK-DR-ARM pour arm-dr"
+        description: "Taper MIK-DB-HYBRID pour cutover / rollback — MIK-DR-ARM pour arm-dr — MIK-PG-TUNE pour wal-tune — MIK-WAL-RETENTION pour wal-retention"
         required: false
         default: ""
         type: string
@@ -107,6 +136,11 @@ on:
         description: "(restore) nom du dump dans /var/backups/mikcloud/db — défaut = le plus récent"
         required: false
         default: ""
+        type: string
+      retention_days:
+        description: "(wal-retention) durée de vie des objets du bucket mikcloud-wal en jours — défaut 7"
+        required: false
+        default: "7"
         type: string
   schedule:
     # Heartbeat quotidien : mode=health (le resolver ci-dessous traduit un
@@ -140,6 +174,7 @@ jobs:
       CONFIRM: ${{ inputs.confirm }}
       ACCEPT_STALE: ${{ inputs.accept_stale_data }}
       DUMP_FILE: ${{ inputs.dump_file }}
+      RETENTION_DAYS: ${{ inputs.retention_days }}
     steps:
       - name: Clé SSH du coffre + preflight VM
         run: |
@@ -1159,6 +1194,106 @@ jobs:
             echo "premier upload pas encore passé (timer ≤5 min)"
           fi
           echo "═══ ARM-DR TERMINÉ — chaîne DR armée ═══"
+          REMOTE
+
+      - name: mode=wal-quota — diagnostic quota Object Storage (lecture seule, N°296)
+        if: ${{ env.RESOLVED_MODE == 'wal-quota' }}
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          echo "═══ N°296 — wal-quota : diagnostic bucket mikcloud-wal ═══"
+          sudo test -f /etc/oci/config || { echo "/etc/oci/config absent — arm-dr pas fait"; exit 1; }
+          NS=$(sudo oci --config-file /etc/oci/config os ns get </dev/null 2>/dev/null | jq -r '.data')
+          echo "═══ 1. Bucket (source de vérité) ═══"
+          sudo oci --config-file /etc/oci/config os object list --namespace "$NS" --bucket-name mikcloud-wal --all </dev/null 2>/dev/null > /tmp/wq.json
+          jq -r '.data | "objets: \(length) · total: \((map(.size)|add)/1073741824*100|round/100) Go (plafond gratuit: 10 Go)"' /tmp/wq.json
+          jq -r '.data | group_by(if (.name|startswith("basebackup/")) then "bb" else "wal" end)[] | "\(if (.[0].name|startswith("basebackup/")) then "basebackup" else "WAL" end): \(length) objets · \((map(.size)|add)/1048576|round) Mo"' /tmp/wq.json
+          jq -r '.data | "upload le plus ancien: \(map(."time-created")|min) · plus récent: \(map(."time-created")|max)"' /tmp/wq.json
+          rm -f /tmp/wq.json
+          echo "--- policy lifecycle active ---"
+          sudo oci --config-file /etc/oci/config os object-lifecycle-policy get --namespace "$NS" --bucket-name mikcloud-wal </dev/null 2>/dev/null | jq -c '(.data // .).items // "AUCUNE policy — saturation garantie"'
+          echo "═══ 2. Production WAL réelle (mesure 60 s) ═══"
+          if sudo test -f /etc/mikcloud/localpg.env; then
+            set -a; . <(sudo cat /etc/mikcloud/localpg.env); set +a
+            MPM=$(psql "$LOCALPG_DSN" -Atc "SELECT round(pg_wal_lsn_diff(pg_current_wal_lsn(), lsn0)::numeric/1048576, 2) FROM (SELECT pg_current_wal_lsn() AS lsn0, pg_sleep(60) AS s) t")
+            echo "WAL brut mesuré: ${MPM} Mo/min ≈ $(awk -v m="$MPM" 'BEGIN{printf "%.1f", m*1440/1024}') Go/jour BRUT"
+            echo "--- réglages WAL actuels ---"
+            psql "$LOCALPG_DSN" -At -F' | ' -c "SELECT name, setting, COALESCE(unit,'') FROM pg_settings WHERE name IN ('archive_mode','archive_timeout','wal_compression','checkpoint_timeout','checkpoint_completion_target','max_wal_size','wal_segment_size') ORDER BY name"
+            echo "--- pg_stat_archiver ---"
+            psql "$LOCALPG_DSN" -Atc "SELECT 'archivés='||archived_count||' échecs='||failed_count||' dernier_ok='||COALESCE(last_archived_time::text,'—')||' dernier_ko='||COALESCE(last_failed_time::text,'—') FROM pg_stat_archiver"
+            echo "═══ 3. Top tables réécrites (upd | hot | dead | table | taille) ═══"
+            psql "$LOCALPG_DSN" -At -F' | ' -c "SELECT n_tup_upd, n_tup_hot_upd, n_dead_tup, relname, pg_size_pretty(pg_total_relation_size(relid)) FROM pg_stat_user_tables ORDER BY n_tup_upd DESC LIMIT 12"
+            echo "═══ 4. pg_stat_statements — top émetteurs WAL cumulés ═══"
+            psql "$LOCALPG_DSN" -At -F' | ' -c "SELECT round(wal_bytes/1073741824.0,2)||' Go', calls, left(regexp_replace(query,'[[:space:]]+',' ','g'),72) FROM pg_stat_statements ORDER BY wal_bytes DESC LIMIT 10" 2>/dev/null || echo "pg_stat_statements indisponible"
+          else
+            echo "localpg.env absent — mesure PG impossible"
+          fi
+          echo "═══ 5. Local / timers / disque ═══"
+          echo "WAL local en attente d'upload: $(sudo ls /var/backups/mikcloud/wal 2>/dev/null | wc -l) fichiers"
+          sudo cat /var/lib/mikcloud/wal-upload.status 2>/dev/null || echo "wal-upload.status absent (premier passage timer ≤5 min)"
+          systemctl list-timers --no-pager | grep mikcloud-wal || true
+          df -h / | sed -n '2p'
+          sudo du -sh /var/lib/postgresql/18/main/pg_wal 2>/dev/null || true
+          echo "═══ DIAGNOSTIC TERMINÉ — aucun changement appliqué ═══"
+          REMOTE
+
+      - name: mode=wal-tune — réduit le WAL à la source (confirm MIK-PG-TUNE, N°296)
+        if: ${{ env.RESOLVED_MODE == 'wal-tune' }}
+        run: |
+          set -euo pipefail
+          [ "$CONFIRM" = "MIK-PG-TUNE" ] || { echo "❌ REFUS — mode wal-tune exige confirm=MIK-PG-TUNE"; exit 1; }
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          sudo test -f /etc/mikcloud/localpg.env || { echo "localpg.env absent — setup-pg pas fait"; exit 1; }
+          set -a; . <(sudo cat /etc/mikcloud/localpg.env); set +a
+          echo "═══ wal-tune N°296 — compression WAL + checkpoints espacés ═══"
+          echo "réglages AVANT:"
+          psql "$LOCALPG_DSN" -At -F' = ' -c "SELECT name, setting, COALESCE(unit,'') FROM pg_settings WHERE name IN ('wal_compression','checkpoint_timeout','checkpoint_completion_target','max_wal_size') ORDER BY name"
+          psql "$LOCALPG_DSN" -v ON_ERROR_STOP=1 \
+            -c "ALTER SYSTEM SET wal_compression = 'zstd'" \
+            -c "ALTER SYSTEM SET checkpoint_timeout = '15min'" \
+            -c "ALTER SYSTEM SET checkpoint_completion_target = '0.9'" \
+            -c "ALTER SYSTEM SET max_wal_size = '4GB'" \
+            -c "SELECT pg_reload_conf()"
+          sleep 3
+          echo "réglages APRÈS:"
+          psql "$LOCALPG_DSN" -At -F' = ' -c "SELECT name, setting, COALESCE(unit,'') FROM pg_settings WHERE name IN ('wal_compression','checkpoint_timeout','checkpoint_completion_target','max_wal_size') ORDER BY name"
+          echo "OK — ALTER SYSTEM + reload (SIGHUP only), AUCUN restart, RPO ≤ 6 min inchangé (archive_timeout 60 s conservé)"
+          echo "Effet attendu: FPI compressés (zstd) + checkpoints espacés → WAL brut ÷2-5 (mesurer: mode=wal-quota dans 24-48 h)"
+          REMOTE
+
+      - name: mode=wal-retention — re-pose la policy lifecycle du bucket (confirm MIK-WAL-RETENTION, N°296)
+        if: ${{ env.RESOLVED_MODE == 'wal-retention' }}
+        run: |
+          set -euo pipefail
+          [ "$CONFIRM" = "MIK-WAL-RETENTION" ] || { echo "❌ REFUS — mode wal-retention exige confirm=MIK-WAL-RETENTION"; exit 1; }
+          DAYS="${RETENTION_DAYS:-7}"
+          case "$DAYS" in ''|*[!0-9]*) echo "❌ retention_days invalide: '$DAYS'"; exit 1;; esac
+          [ "$DAYS" -ge 2 ] && [ "$DAYS" -le 60 ] || { echo "❌ retention_days doit être entre 2 et 60 (reçu: $DAYS)"; exit 1; }
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s -- "$DAYS" <<'REMOTE'
+          set -euo pipefail
+          DAYS="$1"
+          sudo test -f /etc/oci/config || { echo "/etc/oci/config absent — arm-dr pas fait"; exit 1; }
+          NS=$(sudo oci --config-file /etc/oci/config os ns get </dev/null 2>/dev/null | jq -r '.data')
+          echo "═══ lifecycle mikcloud-wal → DELETE après ${DAYS} jours ═══"
+          echo "⚠ ATTENTION: réduit la fenêtre PITR distante à ${DAYS} jours — ce qui est plus vieux part au purge"
+          cat > /tmp/olc2.json <<OLC2
+          {"items":[{"name":"expire-${DAYS}d","action":"DELETE","timeAmount":${DAYS},"timeUnit":"DAYS","isEnabled":true}]}
+          OLC2
+          if sudo oci --config-file /etc/oci/config os object-lifecycle-policy put --force --namespace "$NS" --bucket-name mikcloud-wal --from-json file:///tmp/olc2.json </dev/null >/dev/null 2>&1; then
+            echo "lifecycle ${DAYS} jours: POSÉ"
+          else
+            echo "❌ PUT lifecycle échoué (piège 21 — policy IAM service principal?)"
+            sudo oci --config-file /etc/oci/config os object-lifecycle-policy get --namespace "$NS" --bucket-name mikcloud-wal </dev/null 2>&1 | head -5
+          fi
+          sudo rm -f /tmp/olc2.json
+          echo "--- lecture de contrôle ---"
+          sudo oci --config-file /etc/oci/config os object-lifecycle-policy get --namespace "$NS" --bucket-name mikcloud-wal </dev/null 2>/dev/null | jq -c '(.data // .).items // empty'
+          echo "→ plateau estimé = ${DAYS} × rythme WAL/jour (mesurer par mode=wal-quota) — doit rester < 10 Go"
           REMOTE
 
       - name: mode=reverse-sync — flux Tier2 immédiat (local→Supabase→Neon)

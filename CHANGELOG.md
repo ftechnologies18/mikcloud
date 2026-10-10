@@ -5,6 +5,51 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-10 — N°296 — **QUOTA ALWAYS FREE OBJECT STORAGE EN DANGER : diagnostic + 3 leviers dans `ops-db-hybrid`** (modes `wal-quota` / `wal-tune` / `wal-retention`)
+
+### Le constat (mesures terrain 09/10 ~20:00 UTC)
+- Le bucket `mikcloud-wal` contient ~2 290 segments WAL chiffrés ≈ 2,3 Go
+  (dont la rafale de rattrapage 04:38-04:50 au démarrage de la chaîne) +
+  6 basebackups ; rythme stable **60 WAL/heure ≈ 1,2-1,4 Go/jour gz**
+  (`archive_timeout 60 s`, conf.d/mikcloud.conf).
+- L'estimation N°276 (~15-50 Mo/j, « gzip divise par ~50 ») était fausse :
+  le gzip ne récupère que ~÷13-19 — les segments contiennent du VRAI churn
+  (~0,8 Mo de données utiles par minute, pas du padding). Un WAL BRUT de
+  ~17-22 Go/jour pour une base de quelques dizaines de Mo est pathologique
+  : FPI en rafale (checkpoints toutes les 5 min par défaut) + réécritures
+  continues (flush ≤1 tx/3 s, tables chaudes settings/health_checkpoint/
+  commands — précédent N°210 blobs settings 6,5 Go/j).
+- **Conséquence chiffrée : le lifecycle 21 j (N°276) ne protège PAS le
+  quota** — plateau réévalué ~25-29 Go ≫ 10 Go Always Free → saturation
+  ~J+6-7, puis uploads refusés → PITR gelé silencieusement + WAL local
+  qui s'accumule. La rétention seule ne suffit pas (5 j = ~6,5 Go c'est
+  la borne) : la production doit baisser À LA SOURCE.
+
+### Ce qui a changé (kit `ops-db-hybrid`, 3 modes)
+- **`wal-quota`** (lecture seule) : poids réel du bucket (objets/Go,
+  répartition WAL/basebackup, policy lifecycle relue), production WAL
+  mesurée sur 60 s (`pg_current_wal_lsn`), réglages WAL, pg_stat_archiver,
+  top tables réécrites (`pg_stat_user_tables`) + top émetteurs WAL
+  (`pg_stat_statements.wal_bytes`), timers + disque → nomme LE churner
+  avant toute prescription.
+- **`wal-tune`** (`confirm=MIK-PG-TUNE`) : `wal_compression=zstd` +
+  `checkpoint_timeout=15min` + `checkpoint_completion_target=0.9` +
+  `max_wal_size=4GB` — ALTER SYSTEM + reload (SIGHUP only, zéro restart,
+  RPO ≤ 6 min inchangé : archive_timeout 60 s conservé) ; attendu ÷2-5
+  sur le WAL brut (FPI compressés + checkpoints espacés).
+- **`wal-retention`** (`confirm=MIK-WAL-RETENTION`, input `retention_days`
+  défaut 7, borné 2-60) : re-pose la policy lifecycle du bucket —
+  coupe-feu quota 10 Go ; réduit explicitement la fenêtre PITR.
+- Doc DB-HYBRIDE.md (modes + séquence) ; YAML validé (17 steps).
+
+### Séquence recommandée
+1. `wal-quota` (mesure, sûr) → 2. GO `wal-tune` → 3. re-mesure 24-48 h →
+4. `wal-retention` à la fenêtre la plus large qui tient < 10 Go
+   (ex. ~300-400 Mo/j → 21 j ≈ 6-8 Go) → 5. si le churn persiste :
+   correction applicative ciblée (N°210) guidée par le top
+   pg_stat_statements.
+- CI/ops only — sentinel `RENDER-DEPLOY-FROZEN` intact, aucun schéma DB.
+
 ## 2026-10-10 — N°295 — **LES 2 GESTES CONSOLE OCI PILOTÉS DEPUIS LE COFFRE** (workflow `ops-oci-gestures.yml` — Security List UDP 51820 + IP publique réservée, sans creds OCI côté sandbox : les secrets `OCI_*` du dépôt signent les appels, gabarit land-a1/ops-db-hybrid)
 
 ### Ce qui a changé

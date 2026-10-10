@@ -13,7 +13,7 @@ Références : CHANGELOG N°274/N°275 (récits + leçons), Task 5/6 (analyse
 |------|----------|------------------|-----|
 | 0 | Mémoire `model.DB` (backend) | **vivant, inchangé** — source de vérité runtime, flush asynchrone ≤1 tx/3 s | ~0 |
 | 1 | **PostgreSQL 18.6 local Ftechci** (127.0.0.1:5432, DB `mikcloud`, rôle `mikcloud`) | **PRIMAIRE** depuis 03:03:54 UTC le 09/10 | flush ≤3 s |
-| 1.5 | **WAL gz → OCI Object Storage** (`mikcloud-wal`, upload */5 min) + `pg_basebackup` quotidien — archive_command **gzip** (le brut creusait ~17 Go/j) ; **CHIFFREMENT CLIENT AES-256-CBC/PBKDF2 avant upload (N°277, `.enc` illisible sans la clé, refus d'envoyer en clair)** ; prune locale 48 h ; **lifecycle 21 j ACTIF (N°276)** ; PITR distant ≈ base + WAL ≤ 6 min | **ACTIF** | ≤6 min |
+| 1.5 | **WAL gz → OCI Object Storage** (`mikcloud-wal`, upload */5 min) + `pg_basebackup` quotidien — archive_command **gzip** (le brut creusait ~17 Go/j) ; **CHIFFREMENT CLIENT AES-256-CBC/PBKDF2 avant upload (N°277, `.enc` illisible sans la clé, refus d'envoyer en clair)** ; prune locale 48 h ; **lifecycle 21 j ACTIF (N°276, réglable via `wal-retention` N°296)** ; PITR distant ≈ base + WAL ≤ 6 min ; **⚠ N°296 : churn réel mesuré ~1,2-1,4 Go/j gz (≈ 25× l'estimation N°276) → plateau 21 j ≈ 25-29 Go ≫ 10 Go Always Free → modes `wal-quota`/`wal-tune`/`wal-retention`** | **ACTIF** | ≤6 min |
 | 2 | **Supabase (pooler session :5432)** — re-synchronisé CHAQUE NUIT 03:00 UTC par `mikcloud-reverse-sync.timer` (restore `--clean` + RLS ré-armé) — preuve : 40/40 tables, `last_success=05:08:59Z` | **ACTIF (réplique nocturne)** | ≤26 h |
 | 2bis | **Neon** — même flux nocturne que Supabase (endpoint direct) | **ACTIF (réplique nocturne)** | ≤26 h |
 | 3 | Artefact GitHub `mikcloud-dr-*` chiffré `BACKUP_KEY` (AES-256-CBC/PBKDF2, rétention 30 j) — **dump du PRIMAIRE** depuis N°275 | actif (mode=backup) | au tir |
@@ -52,6 +52,9 @@ autovacuum_vacuum_cost_delay=1`.
 | `rollback` | dump local de sécurité → restore `.pre-hybrid-*` → restart → réactive timer | ~10 s | `confirm` + `accept_stale_data=YES` |
 | `status` | état complet + **protection : gel auto du timer si primaire local** | 0 | sûr à relancer |
 | `arm-dr` | **arme la chaîne DR** (idempotent) : archive_command gzip + reload PG, OCI CLI system-wide (pip sous sudo + test import root), `/etc/oci` (clé API coffre), bucket `mikcloud-wal` + **policy IAM service principal + lifecycle 21 j (N°276)** + **chiffrement client WAL/basebackup (N°277, WAL_ENC_KEY par stdin)**, scripts DR + 3 timers systemd | 0 | `confirm=MIK-DR-ARM` requis |
+| `wal-quota` | **N°296** — diagnostic quota Object Storage (lecture seule) : poids réel bucket (objets/Go, WAL vs basebackup), policy lifecycle relue, production WAL mesurée 60 s (`pg_current_wal_lsn`), réglages WAL, pg_stat_archiver, top tables réécrites + top émetteurs WAL (pg_stat_statements), timers, disque | 0 | sûr à relancer |
+| `wal-tune` | **N°296** — réduit le WAL À LA SOURCE : `wal_compression=zstd` + `checkpoint_timeout=15min` + `checkpoint_completion_target=0.9` + `max_wal_size=4GB` (ALTER SYSTEM + reload, SIGHUP only, zéro restart, RPO ≤ 6 min inchangé) | 0 | `confirm=MIK-PG-TUNE` requis |
+| `wal-retention` | **N°296** — re-pose la policy lifecycle du bucket (DELETE après `retention_days` jours, défaut 7, borné 2-60) — coupe-feu quota 10 Go Always Free | 0 | `confirm=MIK-WAL-RETENTION` requis ; réduit la fenêtre PITR |
 | `reverse-sync` | déclenche le flux nocturne MAINTENANT (service oneshot synchrone) : rétention web_vitals → basebackup → dump → Supabase → Neon | 0 | affiche log + statut + comptages cibles |
 | `health` | lance le monitor une fois + API publique depuis le runner — **mode du cron GitHub 04:23 UTC** | 0 | sûr à relancer |
 | `drill` | restaurabilité : dump primaire → restore STRICT `--exit-on-error` sur base jetable `mikcloud_drill` → asserts (40 tables, comptages identiques) → drop + **WAL distant téléchargé/DÉCHIFFRÉ/décompressé (N°277, fallback héritage `.gz`)** + listing basebackup | 0 | primaire jamais touché |
@@ -125,6 +128,10 @@ gh workflow run ops-db-hybrid.yml -f mode=reverse-sync
 gh workflow run ops-db-hybrid.yml -f mode=health
 # Drill de restaurabilité (primaire jamais touché) :
 gh workflow run ops-db-hybrid.yml -f mode=drill
+# N°296 — quota Always Free Object Storage (bucket mikcloud-wal) :
+gh workflow run ops-db-hybrid.yml -f mode=wal-quota                     # diagnostic (lecture seule)
+gh workflow run ops-db-hybrid.yml -f mode=wal-tune -f confirm=MIK-PG-TUNE
+gh workflow run ops-db-hybrid.yml -f mode=wal-retention -f confirm=MIK-WAL-RETENTION -f retention_days=7
 # Diagnostic VM / remise en route (incident) :
 gh workflow run ops-vm-diag.yml -f action=diag
 gh workflow run ops-vm-diag.yml -f action=reboot -f confirm=MIK-VM-REBOOT       # soft
@@ -190,6 +197,16 @@ N°277 vieillissent ≤ 21 j puis partent au lifecycle).
 8. **Appairage Telegram armé** ✓ (N°278) — voir réalisé n°3 ; monitor
    assaini au même passage : `printf '%b'` (×4, warning « invalid
    format character » éradiqué) + écho arm-dr fidèle.
+9. **Diagnostic + leviers quota Object Storage** ✓ (N°296) — modes
+   `wal-quota` / `wal-tune` / `wal-retention` : le plateau N°276
+   (~0,3-1,2 Go) était estimé sur un ratio gzip ÷50 ; le mesuré terrain
+   est ~1,2-1,4 Go/j de WAL gz (churn RÉEL — gzip ne récupère que
+   ~÷13-19) → même le lifecycle 21 j laisse un plateau ~25-29 Go ≫
+   10 Go gratuit. Séquence : mesure (`wal-quota`) → réduction à la
+   source (`wal-tune`, GO requis) → re-mesure 24-48 h → fenêtre PITR
+   la plus large qui tient < 10 Go (`wal-retention`) → si le churn
+   persiste, correction applicative ciblée (précédent N°210 blobs
+   settings) guidée par le top pg_stat_statements.
 
 ### DETTE TECHNIQUE (reportée à la FIN du développement produit)
 - **User OCI moindre privilège** : la clé API sur la VM (`/etc/oci`) a

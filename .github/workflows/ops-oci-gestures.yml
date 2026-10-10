@@ -282,9 +282,9 @@ jobs:
           ssh $SSHO "$DEPLOY_USER@$ORACLE_HOST" 'sudo cat /opt/wireguard/peers/gestureproof.conf' > /tmp/gestureproof.conf
           [ -s /tmp/gestureproof.conf ] || { echo "✗ conf test vide"; exit 1; }
           grep -q '^Endpoint' /tmp/gestureproof.conf || { echo "✗ conf test sans endpoint"; exit 1; }
-          echo "── conf runner : routes intactes (AllowedIPs restreints, Table=off, DNS retiré)"
+          echo "── conf runner : routes intactes (AllowedIPs restreints 10.8.0.1/32, DNS retiré)"
           sed -i -e '/^DNS =/d' -e 's/^AllowedIPs = .*/AllowedIPs = 10.8.0.1\/32/' /tmp/gestureproof.conf
-          printf '\nTable = off\n' >> /tmp/gestureproof.conf
+          chmod 600 /tmp/gestureproof.conf
           sudo apt-get update -qq >/dev/null 2>&1 || true
           sudo apt-get install -y -qq wireguard-tools >/dev/null 2>&1
           sudo modprobe wireguard 2>/dev/null || true

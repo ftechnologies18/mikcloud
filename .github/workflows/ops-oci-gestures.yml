@@ -130,7 +130,12 @@ jobs:
           echo "inst_id=$INST_ID" >> "$GITHUB_OUTPUT"
           echo "inst_name=$INST_NAME" >> "$GITHUB_OUTPUT"
 
-          VNIC_ID="$(oci compute instance list-vnics --instance-id "$INST_ID" --query 'data[0]."vnic-id"' --raw-output)"
+          VNIC_ID="$(oci compute instance list-vnics --instance-id "$INST_ID" --query 'data[0]."id"' --raw-output)"
+          if [ -z "$VNIC_ID" ] || [ "$VNIC_ID" = "null" ]; then
+            VNIC_ID="$(oci compute vnic-attachment list --compartment-id "$TEN" --instance-id "$INST_ID" \
+              --query 'data[0]."vnic-id"' --raw-output)"
+          fi
+          [ -n "$VNIC_ID" ] && [ "$VNIC_ID" != "null" ] || { echo "✗ OCID de la VNIC primaire introuvable"; exit 1; }
           PRIV_ADDR="$(oci compute instance list-vnics --instance-id "$INST_ID" --query 'data[0]."private-ip"' --raw-output)"
           PUB_ADDR="$(oci compute instance list-vnics --instance-id "$INST_ID" --query 'data[0]."public-ip"' --raw-output)"
           echo "VNIC primaire : $VNIC_ID — privée $PRIV_ADDR — publique ${PUB_ADDR:-AUCUNE}"

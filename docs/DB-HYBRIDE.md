@@ -114,6 +114,10 @@ autovacuum_vacuum_cost_delay=1`.
     variable ») → `export WAL_ENC_KEY` après chaque source (scripts VM
     ET drill) ; sinon échec chiffrement → refus d'upload en clair
     (comportement voulu) mais PITR dégradé (N°277-bis).
+23. **`ALTER SYSTEM` / `pg_reload_conf()` exigent le SUPERUSER** — le
+    rôle `mikcloud` (DSN localpg.env) ne l'est pas (« permission denied
+    to set parameter wal_compression », N°296) → tout réglage PG passe
+    par `sudo -u postgres psql -d mikcloud` (même racine que piège 5).
 
 ## 4. Utilisation courante
 

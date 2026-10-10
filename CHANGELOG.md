@@ -41,6 +41,14 @@ la CI puis se déploie automatiquement (frontend Vercel, backend Render).
   défaut 7, borné 2-60) : re-pose la policy lifecycle du bucket —
   coupe-feu quota 10 Go ; réduit explicitement la fenêtre PITR.
 - Doc DB-HYBRIDE.md (modes + séquence) ; YAML validé (17 steps).
+- **Fix en route (N°296-bis)** : le premier `wal-tune` a échoué —
+  `ALTER SYSTEM` / `pg_reload_conf()` exigent le superuser, le rôle
+  `mikcloud` (DSN localpg.env) ne l'est pas (« permission denied to set
+  parameter wal_compression ») → réglages passés par
+  `sudo -u postgres psql -d mikcloud` ; piège 23 consigné.
+- **`wal-retention 7 j` appliqué dès le premier passage** (PUT lifecycle
+  relu : `expire-7d` actif) — non destructif au moment du geste (objet
+  le plus ancien ≈ 39 h).
 
 ### Séquence recommandée
 1. `wal-quota` (mesure, sûr) → 2. GO `wal-tune` → 3. re-mesure 24-48 h →

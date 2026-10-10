@@ -1251,8 +1251,8 @@ jobs:
           set -a; . <(sudo cat /etc/mikcloud/localpg.env); set +a
           echo "═══ wal-tune N°296 — compression WAL + checkpoints espacés ═══"
           echo "réglages AVANT:"
-          psql "$LOCALPG_DSN" -At -F' = ' -c "SELECT name, setting, COALESCE(unit,'') FROM pg_settings WHERE name IN ('wal_compression','checkpoint_timeout','checkpoint_completion_target','max_wal_size') ORDER BY name"
-          psql "$LOCALPG_DSN" -v ON_ERROR_STOP=1 \
+          sudo -u postgres psql -d mikcloud -At -F' = ' -c "SELECT name, setting, COALESCE(unit,'') FROM pg_settings WHERE name IN ('wal_compression','checkpoint_timeout','checkpoint_completion_target','max_wal_size') ORDER BY name"
+          sudo -u postgres psql -d mikcloud -v ON_ERROR_STOP=1 \
             -c "ALTER SYSTEM SET wal_compression = 'zstd'" \
             -c "ALTER SYSTEM SET checkpoint_timeout = '15min'" \
             -c "ALTER SYSTEM SET checkpoint_completion_target = '0.9'" \
@@ -1260,7 +1260,7 @@ jobs:
             -c "SELECT pg_reload_conf()"
           sleep 3
           echo "réglages APRÈS:"
-          psql "$LOCALPG_DSN" -At -F' = ' -c "SELECT name, setting, COALESCE(unit,'') FROM pg_settings WHERE name IN ('wal_compression','checkpoint_timeout','checkpoint_completion_target','max_wal_size') ORDER BY name"
+          sudo -u postgres psql -d mikcloud -At -F' = ' -c "SELECT name, setting, COALESCE(unit,'') FROM pg_settings WHERE name IN ('wal_compression','checkpoint_timeout','checkpoint_completion_target','max_wal_size') ORDER BY name"
           echo "OK — ALTER SYSTEM + reload (SIGHUP only), AUCUN restart, RPO ≤ 6 min inchangé (archive_timeout 60 s conservé)"
           echo "Effet attendu: FPI compressés (zstd) + checkpoints espacés → WAL brut ÷2-5 (mesurer: mode=wal-quota dans 24-48 h)"
           REMOTE

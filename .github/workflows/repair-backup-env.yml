@@ -49,7 +49,7 @@ jobs:
     name: Restaure backup.env + script + unité à jour + test du snapshot
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Transfert du DSN Neon (STDIN) puis réparation + test sur le pont
         env:
           DEPLOY_USER: ${{ secrets.ORACLE_USER }}

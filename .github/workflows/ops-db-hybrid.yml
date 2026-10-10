@@ -142,17 +142,26 @@ on:
         required: false
         default: "7"
         type: string
+  push:
+    # N°297 — auto-pilotage sans API REST : toute modification de CE fichier
+    # relance health + wal-quota (lecture seule) puis commite la trace
+    # (docs/ops/wal-quota-latest.md) — la mesure se relit ensuite par un
+    # simple git fetch, même quand l'API REST répond 404 par nom.
+    branches: [main]
+    paths:
+      - ".github/workflows/ops-db-hybrid.yml"
   schedule:
     # Heartbeat quotidien : mode=health (le resolver ci-dessous traduit un
-    # event schedule sans input en mode health).
+    # event schedule sans input en mode health) + wal-quota (N°297).
     - cron: "23 4 * * *"
 
 concurrency:
   group: ops-db-hybrid
   cancel-in-progress: false
 
+# N°297 — contents: write requis par l'étape « trace wal-quota → dépôt »
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   hybrid:
@@ -1196,12 +1205,14 @@ jobs:
           echo "═══ ARM-DR TERMINÉ — chaîne DR armée ═══"
           REMOTE
 
-      - name: mode=wal-quota — diagnostic quota Object Storage (lecture seule, N°296)
-        if: ${{ env.RESOLVED_MODE == 'wal-quota' }}
+      - name: mode=wal-quota — diagnostic quota Object Storage (lecture seule, N°296/297)
+        # N°297 : wal-quota tourne aussi derrière le heartbeat health
+        if: ${{ env.RESOLVED_MODE == 'wal-quota' || env.RESOLVED_MODE == 'health' }}
         run: |
           set -euo pipefail
           SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
-          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s <<'REMOTE'
+          # N°297 : tee → /tmp/wal-quota-out.txt (l'étape suivante le commite)
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s <<'REMOTE' | tee /tmp/wal-quota-out.txt
           set -euo pipefail
           echo "═══ N°296 — wal-quota : diagnostic bucket mikcloud-wal ═══"
           sudo test -f /etc/oci/config || { echo "/etc/oci/config absent — arm-dr pas fait"; exit 1; }
@@ -1238,6 +1249,41 @@ jobs:
           sudo du -sh /var/lib/postgresql/18/main/pg_wal 2>/dev/null || true
           echo "═══ DIAGNOSTIC TERMINÉ — aucun changement appliqué ═══"
           REMOTE
+
+      - name: checkout pour la trace (N°297)
+        if: ${{ env.RESOLVED_MODE == 'wal-quota' || env.RESOLVED_MODE == 'health' }}
+        uses: actions/checkout@v4
+
+      - name: trace wal-quota → dépôt (N°297 — lisible par git fetch, sans API REST)
+        if: ${{ env.RESOLVED_MODE == 'wal-quota' || env.RESOLVED_MODE == 'health' }}
+        run: |
+          set -euo pipefail
+          test -s /tmp/wal-quota-out.txt || { echo "pas de sortie wal-quota — rien à committer"; exit 0; }
+          git config user.name  "mikcloud-ops-bot"
+          git config user.email "actions@users.noreply.github.com"
+          mkdir -p docs/ops/wal-quota
+          STAMP=$(date -u +%FT%TZ)
+          FILESTAMP="${STAMP//:/-}"
+          RUN_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          { echo "# wal-quota — dernier diagnostic automatique"
+            echo
+            echo "- Mesuré : $STAMP"
+            echo "- Run : $RUN_URL"
+            echo "- Lecture : git fetch + docs/ops/wal-quota-latest.md (aucune API REST requise, N°297)"
+            echo
+            echo '```text'
+            cat /tmp/wal-quota-out.txt
+            echo '```'
+          } > docs/ops/wal-quota-latest.md
+          cp docs/ops/wal-quota-latest.md "docs/ops/wal-quota/$FILESTAMP.md"
+          git add docs/ops/wal-quota-latest.md "docs/ops/wal-quota/$FILESTAMP.md"
+          if git diff --cached --quiet; then
+            echo "trace identique à la précédente — rien à committer"
+          else
+            git commit -m "N°297 — trace wal-quota $STAMP [skip ci]"
+            git push origin HEAD:main
+            echo "trace poussée : docs/ops/wal-quota-latest.md ($STAMP)"
+          fi
 
       - name: mode=wal-tune — réduit le WAL à la source (confirm MIK-PG-TUNE, N°296)
         if: ${{ env.RESOLVED_MODE == 'wal-tune' }}

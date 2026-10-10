@@ -76,6 +76,18 @@ jobs:
           scp $SSH_OPTS deploy/oracle/wg-mini/README.md "$DEPLOY_USER@$VM_HOST:/tmp/wg-mini-README.md"
           echo "transferts OK"
 
+      - name: Pipe wg-peer.sh v2 vers la VM (même geste que ops-wg — source disque de wg-mini)
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null /tmp/oracle_key
+          printf '%s\n' "$SSH_KEY" > /tmp/oracle_key
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          # posé/rafraîchi à chaque installation (idempotent) ; /opt/wireguard
+          # est 700 root → la vérification se fait AVEC sudo (piège test -x
+          # non-root : traversée refusée alors que le fichier existe).
+          cat deploy/oracle/wg-peer.sh | ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" 'sudo mkdir -p /opt/wireguard && sudo tee /opt/wireguard/wg-peer.sh >/dev/null && sudo chmod 700 /opt/wireguard/wg-peer.sh'
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" 'sudo test -x /opt/wireguard/wg-peer.sh && echo "wg-peer.sh OK (700 root, exécutable)"'
+
       - name: Installation VM (binaire, secret, unité, env backend, backend restart)
         env:
           DEPLOY_USER: ${{ secrets.ORACLE_USER }}
@@ -96,9 +108,8 @@ jobs:
           sudo install -m 644 /tmp/wg-mini.service.new /etc/systemd/system/wg-mini.service
           rm -f /tmp/wg-mini.new /tmp/wg-mini.service.new /tmp/wg-mini-README.md
 
-          echo "═══ 2. rafraîchissement wg-peer.sh (source disque de wg-mini) ═══"
-          # déjà posé par ops-wg.yml — présence exigée (wg-mini l'exécute)
-          test -x /opt/wireguard/wg-peer.sh || { echo "ERREUR: /opt/wireguard/wg-peer.sh absent (lancez ops-wg.yml d'abord)" >&2; exit 1; }
+          echo "═══ 2. wg-peer.sh présent (posé par l'étape précédente) ═══"
+          sudo test -x /opt/wireguard/wg-peer.sh || { echo "ERREUR: /opt/wireguard/wg-peer.sh absent" >&2; exit 1; }
 
           echo "═══ 3. secret wg-mini (CRÉÉ seulement s'il manque) ═══"
           sudo install -d -m 700 /etc/mikcloud

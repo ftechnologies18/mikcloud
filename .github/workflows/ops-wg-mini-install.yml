@@ -77,6 +77,10 @@ jobs:
           echo "transferts OK"
 
       - name: Pipe wg-peer.sh v2 vers la VM (même geste que ops-wg — source disque de wg-mini)
+        env:
+          DEPLOY_USER: ${{ secrets.ORACLE_USER }}
+          SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+          VM_HOST: ${{ secrets.ORACLE_HOST }}
         run: |
           set -euo pipefail
           install -m 600 /dev/null /tmp/oracle_key

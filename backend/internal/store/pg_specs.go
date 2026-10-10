@@ -216,6 +216,31 @@ var vpnPeerSpec = entitySpec[model.VpnPeer]{
 	hashOf: hashEntity[model.VpnPeer],
 }
 
+// pppSecretSpec — N°293 : abonnés PPPoE (chantier ⑥ Phase A, unicité PAR
+// ROUTEUR — contrairement aux peers VPN dont le nom est global au wg0).
+// Même discipline que vpnPeerSpec : l'ordre cols/scan/args reste
+// strictement aligné. Le mot de passe voyage en clair dans la base dédiée
+// (parité HotspotUser — les credentials hotspot sont stockés ainsi depuis
+// l'origine ; pas de secretbox pour ce champ v1).
+var pppSecretSpec = entitySpec[model.PppSecret]{
+	table: "ppp_secrets",
+	cols:  []string{"id", "account_id", "router_id", "name", "password", "profile", "comment", "service", "state", "disabled", "last_seen_on_router", "expires_at", "error_msg", "created_at", "updated_at"},
+	idOf:  func(x *model.PppSecret) string { return x.ID },
+	scan: func(r *sql.Rows) (model.PppSecret, error) {
+		var x model.PppSecret
+		err := r.Scan(&x.ID, &x.AccountID, &x.RouterID, &x.Name, &x.Password, &x.Profile, &x.Comment,
+			&x.Service, &x.State, &x.Disabled, &x.LastSeenOnRouter, &x.ExpiresAt, &x.ErrorMsg,
+			&x.CreatedAt, &x.UpdatedAt)
+		return x, err
+	},
+	args: func(x *model.PppSecret) []any {
+		return []any{x.ID, x.AccountID, x.RouterID, x.Name, x.Password, x.Profile, x.Comment,
+			x.Service, x.State, x.Disabled, x.LastSeenOnRouter, x.ExpiresAt, x.ErrorMsg,
+			x.CreatedAt, x.UpdatedAt}
+	},
+	hashOf: hashEntity[model.PppSecret],
+}
+
 var profileSpec = entitySpec[model.Profile]{
 	table: "profiles",
 	cols:  []string{"id", "name", "rate_limit", "session_timeout_min", "shared_users", "validity_days", "price", "data_quota_mb", "created_at", "account_id", "exp_mode", "grace_period_min", "lock_user", "selling_price", "lock_first_device", "address_pool", "parent_queue", "validity_min", "quota_mode", "throttle_rate"},

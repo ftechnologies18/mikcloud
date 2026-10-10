@@ -375,6 +375,43 @@ func (a *API) applyReadState(db *model.DB, router *model.Router, vals url.Values
 	// sans retrouvabilité — les écritures n'étant jamais rejouées).
 	a.queueMissingRepair(db, router, now, tomb)
 
+	// N°293 — parité PPPoE (chantier ⑥ Phase A) : le chunk final du
+	// read_state rapporte /ppp/secret/print « name|disabled;… » (plafonné
+	// 500 côté script, paramètre &ppp=). Présent → LastSeenOnRouter=now et
+	// pending → active (la création vient d'être confirmée par la vérité
+	// routeur). ABSENT du rapport (routeur sur script antérieur au N°293) →
+	// comportement historique inchangé, AUCUNE déduction.
+	// HONNÊTETÉ v1 : une ligne cloud ABSENTE du routeur n'est NI détruite NI
+	// re-créée automatiquement (pas d'autoréparation à la voucher N°162) —
+	// un abonné payant supprimé à la main en Winbox ne doit pas ressusciter
+	// en silence ; la réparation reste un geste explicite (re-enregistrement,
+	// marqueur repair de ppp_secret_add). La parité se lit dans
+	// LastSeenOnRouter (état de fraîcheur exposé par /api/routers/{id}/ppp/secrets).
+	if raw := strings.TrimSpace(vals.Get("ppp")); raw != "" {
+		onRouterPpp := map[string]bool{}
+		for _, e := range splitAgentList(raw) {
+			if len(e) == 0 || e[0] == "" {
+				continue
+			}
+			onRouterPpp[e[0]] = true
+		}
+		nowISO := now.Format(time.RFC3339)
+		for i := range db.PppSecrets {
+			s := &db.PppSecrets[i]
+			if s.RouterID != router.ID {
+				continue
+			}
+			if onRouterPpp[s.Name] {
+				if s.LastSeenOnRouter != nowISO {
+					s.LastSeenOnRouter = nowISO
+				}
+				if s.State == model.PppStatePending {
+					s.State = model.PppStateActive
+				}
+			}
+		}
+	}
+
 	// Sessions actives : "user|ip|uptime|bytes-in|bytes-out|mac;…" (N°197 —
 	// le 6e champ mac-address arrive avec les scripts redéployés ; les
 	// rapports des routeurs encore sur un script antérieur n'en portent

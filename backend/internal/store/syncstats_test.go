@@ -88,8 +88,8 @@ func TestSyncHealthJSONMode(t *testing.T) {
 	if h.Sync != nil || h.Neon != nil {
 		t.Fatalf("en mode JSON, sync et neon doivent être absents : %+v %+v", h.Sync, h.Neon)
 	}
-	if len(h.Tables) != 40 {
-		t.Fatalf("40 tables attendues (39 différentielles + settings — N°103 : line_quality, N°133 : chat ×2 + devices, N°182 : sites, N°199 : volume_days, N°200 : monthly_journals, N°290 : cyber_postes, N°291 : vpn_peers), obtenues %d", len(h.Tables))
+	if len(h.Tables) != 41 {
+		t.Fatalf("41 tables attendues (40 différentielles + settings — N°103 : line_quality, N°133 : chat ×2 + devices, N°182 : sites, N°199 : volume_days, N°200 : monthly_journals, N°290 : cyber_postes, N°291 : vpn_peers, N°293 : ppp_secrets), obtenues %d", len(h.Tables))
 	}
 
 	// Une mutation mémoire apparaît dans les lignes, sans réplique (mirrored
@@ -114,13 +114,13 @@ func TestSyncHealthJSONMode(t *testing.T) {
 }
 
 // TestLiveTableRowsConcordance — la liste suit les tables de la synchro
-// différentielle : 39 entrées, noms uniques, aucune table en double (N°182 :
+// différentielle : 41 entrées, noms uniques, aucune table en double (N°182 :
 // sites ; N°290 : cyber_postes ; une table ajoutée à Sync sans être ajoutée
 // ici doit faire échouer le compte).
 func TestLiveTableRowsConcordance(t *testing.T) {
 	rows := liveTableRows(BuildEmptyState())
-	if len(rows) != 40 {
-		t.Fatalf("40 entrées attendues (39 différentielles + settings — N°103 : line_quality, N°133 : chat ×2 + devices, N°182 : sites, N°199 : volume_days, N°200 : monthly_journals, N°290 : cyber_postes, N°291 : vpn_peers), obtenues %d", len(rows))
+	if len(rows) != 41 {
+		t.Fatalf("41 entrées attendues (40 différentielles + settings — N°103 : line_quality, N°133 : chat ×2 + devices, N°182 : sites, N°199 : volume_days, N°200 : monthly_journals, N°290 : cyber_postes, N°291 : vpn_peers, N°293 : ppp_secrets), obtenues %d", len(rows))
 	}
 	seen := map[string]bool{}
 	for _, th := range rows {

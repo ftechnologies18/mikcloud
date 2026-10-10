@@ -353,6 +353,8 @@ func liveTableRows(db *model.DB) []TableHealth {
 		{Table: "cyber_postes", Rows: len(db.CyberPostes)},
 		// N°291 — parité synchro différentielle (peers VPN vendus).
 		{Table: "vpn_peers", Rows: len(db.VpnPeers)},
+		// N°293 — parité synchro différentielle (abonnés PPPoE).
+		{Table: "ppp_secrets", Rows: len(db.PppSecrets)},
 		{Table: "settings", Rows: len(db.SettingsByAccount)},
 	}
 }

@@ -733,7 +733,9 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 		// pas les persister dans Result (l'historique de commandes
 		// gonflait de ~17 Ko par chunk — des Mo/jour de resynchronisation
 		// Neon pour un parc de 3 500 users). Seuls les compteurs restent.
-		if k == "users" || k == "sessions" {
+		// N°293 — « ppp » (parité PPPoE du chunk final read_state) rejoint
+		// la même discipline : consommé par applyReadState, jamais persisté.
+		if k == "users" || k == "sessions" || k == "ppp" {
 			continue
 		}
 		res[k] = vs[0]
@@ -894,6 +896,67 @@ func (a *API) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 			router.WgError = "échec du routeur (message absent)"
 		}
 		a.logActivity(db, router.AccountID, "router", "Renfort WireGuard de «"+router.Name+"» en échec : "+router.WgError)
+	// N°293 — PPPoE Phase A : application des résultats agent (pattern wg).
+	// ppp_secret_add ok → active + LastSeenOnRouter + ErrorMsg="" ; repair ok
+	// SANS création (secret déjà présent côté routeur) est un succès à part
+	// entière (idempotence véridique du marqueur repair, pattern N°162).
+	case cmd.Kind == model.CmdPppSecretAdd && ok:
+		if s := pppSecretOfCommandLocked(db, router, cmd); s != nil {
+			s.State = model.PppStateActive
+			s.LastSeenOnRouter = model.NowISO()
+			s.ErrorMsg = ""
+			s.UpdatedAt = model.NowISO()
+			a.logActivity(db, router.AccountID, "router", "Abonné PPPoE «"+s.Name+"» créé sur «"+router.Name+"» (profil "+s.Profile+")")
+		}
+	case cmd.Kind == model.CmdPppSecretSet && ok:
+		// Les deltas envoyés (password/profile/disabled/comment) sont
+		// réappliqués au modèle depuis le payload — la vérité CLOUD reste
+		// l'état désiré, la confirmation routeur lève pending→active.
+		if s := pppSecretOfCommandLocked(db, router, cmd); s != nil {
+			applyPppSetDeltas(s, cmd.Payload)
+			s.State = model.PppStateActive
+			s.LastSeenOnRouter = model.NowISO()
+			s.ErrorMsg = ""
+			s.UpdatedAt = model.NowISO()
+			a.logActivity(db, router.AccountID, "router", "Abonné PPPoE «"+s.Name+"» mis à jour sur «"+router.Name+"»")
+		}
+	case cmd.Kind == model.CmdPppSecretRemove && ok:
+		// Confirmation agent → retrait EFFECTIF de la ligne du registre
+		// cloud (jamais de retrait avant confirmation, discipline N°291 ;
+		// l'absence côté routeur est déjà convergée — le builder rapporte
+		// ok même si le secret n'existait plus).
+		if s := pppSecretOfCommandLocked(db, router, cmd); s != nil {
+			name := s.Name
+			for j := range db.PppSecrets {
+				if db.PppSecrets[j].ID == s.ID {
+					db.PppSecrets = append(db.PppSecrets[:j], db.PppSecrets[j+1:]...)
+					break
+				}
+			}
+			a.logActivity(db, router.AccountID, "router", "Abonné PPPoE «"+name+"» supprimé de «"+router.Name+"»")
+		}
+	case ok && cmd.Kind == model.CmdPppKick:
+		// Télémétrie seule : la session active disparaîtra d'elle-même au
+		// prochain read_state (aucun état cloud à muter — le secret reste).
+	case ok && (cmd.Kind == model.CmdPppReadSecrets || cmd.Kind == model.CmdPppReadActive):
+		// Cache outil (pattern read_dhcp F9) : le rapport brut vit déjà
+		// dans Command.Result["data"] (stocké par la boucle générale) —
+		// GET /api/routers/{id}/ppp/discover et /ppp/active le resservent
+		// tant que la commande est done depuis < 120 s. Rien d'autre à
+		// appliquer (ni journal, ni registre — lecture pure).
+	case !ok && (cmd.Kind == model.CmdPppSecretAdd || cmd.Kind == model.CmdPppSecretSet || cmd.Kind == model.CmdPppSecretRemove):
+		// Échec rapporté : State=error + message (résumé — le builder
+		// n'envoie JAMAIS le secret ni le mot de passe dans ses messages).
+		// AUCUNE boucle de re-file : le gérant relance (pattern wg N°285).
+		if s := pppSecretOfCommandLocked(db, router, cmd); s != nil {
+			s.State = model.PppStateError
+			s.ErrorMsg = boundedString(vals.Get("message"), 200)
+			if s.ErrorMsg == "" {
+				s.ErrorMsg = "échec du routeur (message absent)"
+			}
+			s.UpdatedAt = model.NowISO()
+		}
+		a.logActivity(db, router.AccountID, "router", "Geste PPPoE ("+cmd.Kind+") ÉCHOUÉ sur «"+router.Name+"» ("+vals.Get("message")+")")
 	case cmd.Kind == model.CmdPoolDoctor && ok:
 		// N°97 — docteur pool IP : le rapport pose PoolCap/PoolRanges/
 		// PoolHosts/PoolDoctorAt (vérité routeur). Un échec est silencieux

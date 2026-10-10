@@ -315,6 +315,20 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/vpn/peers/{id}/email", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleVpnPeerEmail)))
 	mux.HandleFunc("POST /api/vpn/peers/{id}/telegram", a.requireUsage(model.AccountUsageHotspot, a.requireRole(2, a.handleVpnPeerTelegram)))
 	mux.HandleFunc("PUT /api/vpn/settings", a.requireUsage(model.AccountUsageHotspot, a.requireRole(3, a.handleVpnSettings)))
+	// N°293 — PPPoE Phase A (chantier ⑥ de N°289, Option V lot 3) :
+	// abonnés PPPoE d'un pppoe-server EXISTANT (D2) pilotés par l'agent
+	// (D1 — commandes ppp_*, zéro cred, zéro port). Segment ISP TRANSVERSE
+	// (hotspot/homenet) : AUCUN garde requireUsage (D6 — pas de nouvel
+	// usage) et pas de flag d'activation. Lecture rang 1 ; écritures rang 2.
+	// Gestes d'écriture réservés au mode agent (les handlers refusent
+	// simulé/réel — la commande ne pourrait pas converger).
+	mux.HandleFunc("GET /api/routers/{routerID}/ppp/secrets", a.requireRole(1, a.handlePppSecretsList))
+	mux.HandleFunc("POST /api/routers/{routerID}/ppp/secrets", a.requireRole(2, a.handlePppSecretCreate))
+	mux.HandleFunc("GET /api/routers/{routerID}/ppp/active", a.requireRole(1, a.handlePppActiveList))
+	mux.HandleFunc("GET /api/routers/{routerID}/ppp/discover", a.requireRole(2, a.handlePppDiscover))
+	mux.HandleFunc("PATCH /api/ppp/secrets/{secretID}", a.requireRole(2, a.handlePppSecretUpdate))
+	mux.HandleFunc("DELETE /api/ppp/secrets/{secretID}", a.requireRole(2, a.handlePppSecretDelete))
+	mux.HandleFunc("POST /api/ppp/secrets/{secretID}/kick", a.requireRole(2, a.handlePppSecretKick))
 	mux.HandleFunc("DELETE /api/sessions/{id}", a.handleSessionKick)
 
 	// Revendeurs

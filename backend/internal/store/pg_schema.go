@@ -768,6 +768,33 @@ func (p *PG) ensureSchema() error {
                 )`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_vpn_peers_name   ON vpn_peers (name)`,
 		`CREATE INDEX IF NOT EXISTS idx_vpn_peers_account ON vpn_peers (account_id)`,
+		// N°293 — ABONNÉS PPPoE (chantier ⑥ Phase A — cf. model/pppsecret.go)
+		// : registre cloud des secrets d'un pppoe-server EXISTANT (D2), le
+		// transport est agent ppp_* (D1 — zéro cred, zéro port). Unicité PAR
+		// ROUTEUR (deux POPs peuvent porter le même nom d'abonné) :
+		// UNIQUE(router_id, name) — contrairement aux vpn_peers
+		// (UNIQUE(name) globale). Segment ISP transverse : aucun garde
+		// d'usage (D6 — pas de nouveau usage).
+		`CREATE TABLE IF NOT EXISTS ppp_secrets (
+                        id                   TEXT PRIMARY KEY,
+                        account_id           TEXT NOT NULL,
+                        router_id            TEXT NOT NULL,
+                        name                 TEXT NOT NULL,
+                        password             TEXT NOT NULL DEFAULT '',
+                        profile              TEXT NOT NULL DEFAULT '',
+                        comment              TEXT NOT NULL DEFAULT '',
+                        service              TEXT NOT NULL DEFAULT 'pppoe',
+                        state                TEXT NOT NULL DEFAULT 'pending',
+                        disabled             BOOLEAN NOT NULL DEFAULT FALSE,
+                        last_seen_on_router  TEXT NOT NULL DEFAULT '',
+                        expires_at           TEXT NOT NULL DEFAULT '',
+                        error_msg            TEXT NOT NULL DEFAULT '',
+                        created_at           TEXT NOT NULL,
+                        updated_at           TEXT NOT NULL
+                )`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_ppp_secrets_router_name ON ppp_secrets (router_id, name)`,
+		`CREATE INDEX IF NOT EXISTS idx_ppp_secrets_account ON ppp_secrets (account_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_ppp_secrets_router  ON ppp_secrets (router_id)`,
 		// N°291 — activation du module VPN, réglage par compte (défaut
 		// OFF — module opt-in, même doctrine D6 que le Cybercafé).
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS wg_vpn_enabled BOOLEAN NOT NULL DEFAULT FALSE`,

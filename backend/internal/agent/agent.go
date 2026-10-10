@@ -519,6 +519,20 @@ func (b Builder) ScriptFor(cmd model.Command) (string, error) {
 		return b.buildWgSetup(cmd), nil
 	case model.CmdWgTeardown:
 		return b.buildWgTeardown(cmd), nil
+	// N°293 — PPPoE Phase A (chantier ⑥ de N°289) : gestion des secrets
+	// d'un pppoe-server EXISTANT via l'agent (D1 — zéro cred, zéro port).
+	case model.CmdPppReadSecrets:
+		return b.buildPppReadSecrets(cmd), nil
+	case model.CmdPppReadActive:
+		return b.buildPppReadActive(cmd), nil
+	case model.CmdPppSecretAdd:
+		return b.buildPppSecretAdd(cmd), nil
+	case model.CmdPppSecretSet:
+		return b.buildPppSecretSet(cmd), nil
+	case model.CmdPppSecretRemove:
+		return b.buildPppSecretRemove(cmd), nil
+	case model.CmdPppKick:
+		return b.buildPppKick(cmd), nil
 	default:
 		return "", fmt.Errorf("kind de commande inconnu : %s", cmd.Kind)
 	}

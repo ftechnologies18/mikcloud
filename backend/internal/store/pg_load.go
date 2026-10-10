@@ -45,6 +45,7 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 		Sites:             []model.Site{},
 		CyberPostes:       []model.CyberPoste{},
 		VpnPeers:          []model.VpnPeer{},
+		PppSecrets:        []model.PppSecret{},
 	}
 
 	steps := []struct {
@@ -90,6 +91,7 @@ func (p *PG) Load() (db *model.DB, found bool, err error) {
 		{"sites", func() error { return loadInto(p, &db.Sites, siteSpec) }},
 		{"cyber_postes", func() error { return loadInto(p, &db.CyberPostes, cyberPosteSpec) }},
 		{"vpn_peers", func() error { return loadInto(p, &db.VpnPeers, vpnPeerSpec) }},
+		{"ppp_secrets", func() error { return loadInto(p, &db.PppSecrets, pppSecretSpec) }},
 		{"settings", func() error { return p.loadSettings(db) }},
 	}
 	for _, st := range steps {

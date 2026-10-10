@@ -198,6 +198,16 @@ func (b Builder) buildWatcherEnsure(cmd model.Command) string {
 // marque probable (préfixe OUI IEEE) même en mode agent. Le parseur cloud
 // reste tolérant (champ absent = routeur exécutant un script antérieur :
 // MAC vide, comportement historique).
+//
+// N°293 — le rapport du chunk final porte AUSSI la parité PPPoE (chantier ⑥
+// Phase A) : /ppp/secret/print « name|disabled;… » plafonné à 500 entrées
+// (le plafond de secrets PAR ROUTEUR est 400 — MaxPppSecretsPerRouter — la
+// liste tient TOUJOURS en un morceau), rapporté en paramètre &ppp= du POST
+// final UNIQUEMENT (comme sessions/throttle/qcounters : les chunks
+// intermédiaires n'alourdissent pas leur POST). Le parseur cloud (api,
+// applyReadState) rafraîchit LastSeenOnRouter des secrets présents —
+// paramètre ABSENT (routeur sur script ancien) = comportement historique
+// inchangé, aucune déduction.
 func (b Builder) buildReadState(cmd model.Command) string {
 	start := int(plInt64(cmd.Payload, "start"))
 	count := int(plInt64(cmd.Payload, "count"))
@@ -271,8 +281,20 @@ func (b Builder) buildReadState(cmd model.Command) string {
   } on-error={ :set rqc "na" }
 }
 :local rsesspart ("&stotal=". $rstotal ."&hosts=". $rhosts)
+:local rppp ""
 :if (@@END@@ >= $mikTotal) do={
-  :set rsesspart ("&stotal=". $rstotal ."&hosts=". $rhosts ."&sessions=". $rsess ."&throttle=". $rthr ."&qcounters=". $rqc)
+  :do {
+    :local rppn 0
+    :foreach ps in=[/ppp/secret find] do={
+      :if ($rppn < 500) do={
+        :set rppp ($rppp . [:tostr [/ppp/secret get $ps name]] . "|" . [:tostr [/ppp/secret get $ps disabled]] . ";")
+        :set rppn ($rppn + 1)
+      }
+    }
+  } on-error={ :set rppp "" }
+}
+:if (@@END@@ >= $mikTotal) do={
+  :set rsesspart ("&stotal=". $rstotal ."&hosts=". $rhosts ."&sessions=". $rsess ."&throttle=". $rthr ."&qcounters=". $rqc ."&ppp=". $rppp)
 }
 :local rif ""
 :do {

@@ -65,6 +65,12 @@ const (
 	CmdWgKeygen            = "wg_keygen"            // N°285 : génération de la paire de clés WireGuard SUR LE ROUTEUR (la clé privée ne quitte jamais l'appareil) — interface mikcloud-wg idempotente, rapport de la clé publique
 	CmdWgSetup             = "wg_setup"             // N°285 : configuration du tunnel WireGuard du routeur (interface + peer serveur + PSK + adresse tunnel) — valeurs PUBLIQUES et PSK livrées sur le canal agent TLS strict, idempotent, marqueur mikcloud-wg
 	CmdWgTeardown          = "wg_teardown"          // N°285 : démontage propre du tunnel côté routeur (peer + adresse + interface supprimés, marqueur mikcloud-wg) — le check-in agent public n'est JAMAIS impacté
+	CmdPppReadSecrets      = "ppp_read_secrets"     // N°293 : /ppp/secret/print paginé (name|profile|disabled|service|comment ;, ReadChunkSize=500, total rapporté) — découverte des secrets existants d'un pppoe-server (D2), cache outil ≤ 120 s
+	CmdPppReadActive       = "ppp_read_active"      // N°293 : /ppp/active/print (name|service|caller-id|address|uptime ;, plafond 250 comme sessions read_state) — sessions PPPoE actives, cache outil ≤ 120 s
+	CmdPppSecretAdd        = "ppp_secret_add"       // N°293 : /ppp/secret/add name= password= profile= service=pppoe comment="mikcloud-ppp …" [disabled=yes] — repair idempotent (parité voucher_batch N°162 : présent = ok sans retouche)
+	CmdPppSecretSet        = "ppp_secret_set"       // N°293 : /ppp/secret/set [find name=…] avec SEULEMENT les propriétés présentes dans le payload (password/profile/disabled/comment — ligne construite dynamiquement)
+	CmdPppSecretRemove     = "ppp_secret_remove"    // N°293 : /ppp/secret/remove [find name=…] — ok même si absent (convergé) ; le retrait du REGISTRE cloud n'a lieu qu'à la confirmation (discipline N°291)
+	CmdPppKick             = "ppp_kick"             // N°293 : /ppp/active/remove [find name=…] — déconnexion de la session PPPoE d'un abonné, ok même si absent
 )
 
 // N°80 — niveaux SafeWiFi (filtrage DNS du WiFi public par redirection).

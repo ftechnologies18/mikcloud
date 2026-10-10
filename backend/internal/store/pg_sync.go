@@ -178,6 +178,10 @@ func syncSteps(db *model.DB) []syncStep {
 		{vpnPeerSpec.table, func(hashes, pending map[string]map[string]uint64) tableApplier {
 			return diffTable(hashes, pending, vpnPeerSpec, db.VpnPeers)
 		}},
+		// N°293 — abonnés PPPoE (chantier ⑥ Phase A, unicité PAR ROUTEUR).
+		{pppSecretSpec.table, func(hashes, pending map[string]map[string]uint64) tableApplier {
+			return diffTable(hashes, pending, pppSecretSpec, db.PppSecrets)
+		}},
 		{transactionSpec.table, func(hashes, pending map[string]map[string]uint64) tableApplier {
 			return diffTable(hashes, pending, transactionSpec, db.Transactions)
 		}},
@@ -828,6 +832,7 @@ func (p *PG) rebuildHashes(db *model.DB) {
 		deviceSpec.table:           hashRows(db.Devices, deviceSpec),
 		cyberPosteSpec.table:       hashRows(db.CyberPostes, cyberPosteSpec),
 		vpnPeerSpec.table:          hashRows(db.VpnPeers, vpnPeerSpec),
+		pppSecretSpec.table:        hashRows(db.PppSecrets, pppSecretSpec),
 	}
 	notifRows := make([]model.NotificationSettings, 0, len(db.NotifSettings))
 	for _, v := range db.NotifSettings {

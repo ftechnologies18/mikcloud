@@ -82,6 +82,11 @@ type DB struct {
 	// comptes hotspot ayant activé le module (settings.Tenant.WgVpnEnabled)
 	// — cf. vpnpeer.go.
 	VpnPeers []VpnPeer `json:"vpnPeers"`
+	// N°293 — abonnés PPPoE (chantier ⑥, Phase A : gestion d'un
+	// pppoe-server EXISTANT via commandes agent ppp_* — D1/D2 de N°289).
+	// Segment ISP transverse (hotspot/homenet) : aucun garde d'usage.
+	// Cf. pppsecret.go.
+	PppSecrets []PppSecret `json:"pppSecrets"`
 	// N°68 — demandes de réinitialisation de mot de passe (« Mot de passe
 	// oublié ? ») : token hashé, expiration 60 min, usage unique — voir
 	// PasswordReset. Borné par prunePasswordResetsLocked.
@@ -361,6 +366,7 @@ func (db *DB) CloneDeep() *DB {
 	clone.Devices = append([]Device(nil), db.Devices...)
 	clone.CyberPostes = append([]CyberPoste(nil), db.CyberPostes...)
 	clone.VpnPeers = append([]VpnPeer(nil), db.VpnPeers...)
+	clone.PppSecrets = append([]PppSecret(nil), db.PppSecrets...)
 	clone.PasswordResets = append([]PasswordReset(nil), db.PasswordResets...)
 	clone.ChatConversations = append([]ChatConversation(nil), db.ChatConversations...)
 	clone.ChatMessages = append([]ChatMessage(nil), db.ChatMessages...)

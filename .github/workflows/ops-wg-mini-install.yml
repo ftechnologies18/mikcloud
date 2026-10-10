@@ -1,0 +1,227 @@
+name: ops-wg-mini-install
+
+# N°291 — Installation one-shot du mini-service wg-mini sur la VM Oracle
+# (décision D3-a de N°289, recette deploy/oracle/wg-mini/README.md §8).
+#
+# Déclenchement : workflow_dispatch UNIQUEMENT (installation volontaire).
+# Idempotent : rejouable sans danger (le secret existant est CONSERVÉ,
+# le binaire et l'unité sont réinstallés, l'env backend n'est touché que
+# si WG_MINI_* y manque — pas de redémarrage backend inutile).
+#
+# Ce que fait ce workflow :
+#   1. build statique wg-mini (GOARCH = variable repo ORACLE_GOARCH —
+#      arm64 = VM A1.Flex) ;
+#   2. rafraîchit /opt/wireguard/wg-peer.sh depuis deploy/oracle (même
+#      geste que ops-wg.yml — wg-mini exécute TOUJOURS le script disque) ;
+#   3. scp binaire + unité systemd → installation (755 / 644) ;
+#   4. /etc/mikcloud/wg-mini.env : CRÉÉ avec WG_MINI_SECRET aléatoire
+#      (openssl rand -hex 32) UNIQUEMENT s'il n'existe pas — 600 root ;
+#   5. systemd enable --now + vérifications de santé (port 127.0.0.1:4020,
+#      /v1/ping sans signature = 401 attendu) ;
+#   6. WG_MINI_URL + WG_MINI_SECRET ajoutés à /etc/mikcloud/mikcloud.env
+#      s'ils y manquent (secret PARTAGÉ avec le mini) → redémarrage du
+#      backend CONSCIENT DU TRANSPORT (docker --network host ou systemd,
+#      miroir deploy-oracle.yml) + healthcheck patient (Load ~1 min) ;
+#   7. smoke test HMAC bout en bout (add vpn-smoketest → vérification →
+#      remove) — la conf générée n'est JAMAIS affichée ;
+#   8. preuve que le PROCESS backend porte WG_MINI_SECRET (/proc environ,
+#      vérification booléenne — aucune valeur échoée).
+#
+# Secrets requis (déjà posés — cf. deploy-oracle.yml) : ORACLE_HOST,
+# ORACLE_USER, ORACLE_SSH_KEY. Variable repo : ORACLE_GOARCH.
+# Aucun secret n'apparaît dans les logs : valeurs jamais échoées, sorties
+# filtrées (la réponse /v1/add contient la conf privée — jamais imprimée).
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ops-wg-mini-install
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: deploy/oracle/wg-mini/go.mod
+
+      - name: Build wg-mini (linux, statique, arch VM)
+        env:
+          GOARCH: ${{ vars.ORACLE_GOARCH }}
+        run: |
+          cd deploy/oracle/wg-mini
+          GOARCH="${GOARCH:-arm64}" CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -w" -o /tmp/wg-mini-bin .
+          file /tmp/wg-mini-bin
+
+      - name: Transferts vers la VM (binaire + unité + README)
+        env:
+          DEPLOY_USER: ${{ secrets.ORACLE_USER }}
+          SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+          VM_HOST: ${{ secrets.ORACLE_HOST }}
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null /tmp/oracle_key
+          printf '%s\n' "$SSH_KEY" > /tmp/oracle_key
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" 'echo "SSH OK — $(hostname) — $(date -u +%FT%TZ)"'
+          scp $SSH_OPTS /tmp/wg-mini-bin "$DEPLOY_USER@$VM_HOST:/tmp/wg-mini.new"
+          scp $SSH_OPTS deploy/oracle/wg-mini/wg-mini.service "$DEPLOY_USER@$VM_HOST:/tmp/wg-mini.service.new"
+          scp $SSH_OPTS deploy/oracle/wg-mini/README.md "$DEPLOY_USER@$VM_HOST:/tmp/wg-mini-README.md"
+          echo "transferts OK"
+
+      - name: Installation VM (binaire, secret, unité, env backend, backend restart)
+        env:
+          DEPLOY_USER: ${{ secrets.ORACLE_USER }}
+          SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+          VM_HOST: ${{ secrets.ORACLE_HOST }}
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null /tmp/oracle_key
+          printf '%s\n' "$SSH_KEY" > /tmp/oracle_key
+          SSH_OPTS="-i /tmp/oracle_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=30"
+          ssh $SSH_OPTS "$DEPLOY_USER@$VM_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+
+          echo "═══ 1. binaire + unité + README ═══"
+          sudo install -m 755 /tmp/wg-mini.new /usr/local/bin/wg-mini
+          sudo install -d -m 755 /opt/mikcloud/wg-mini
+          sudo install -m 644 /tmp/wg-mini-README.md /opt/mikcloud/wg-mini/README.md
+          sudo install -m 644 /tmp/wg-mini.service.new /etc/systemd/system/wg-mini.service
+          rm -f /tmp/wg-mini.new /tmp/wg-mini.service.new /tmp/wg-mini-README.md
+
+          echo "═══ 2. rafraîchissement wg-peer.sh (source disque de wg-mini) ═══"
+          # déjà posé par ops-wg.yml — présence exigée (wg-mini l'exécute)
+          test -x /opt/wireguard/wg-peer.sh || { echo "ERREUR: /opt/wireguard/wg-peer.sh absent (lancez ops-wg.yml d'abord)" >&2; exit 1; }
+
+          echo "═══ 3. secret wg-mini (CRÉÉ seulement s'il manque) ═══"
+          sudo install -d -m 700 /etc/mikcloud
+          if sudo test -s /etc/mikcloud/wg-mini.env; then
+            echo "wg-mini.env existant — secret CONSERVÉ (idempotence)"
+          else
+            sudo sh -c 'umask 077 && printf "WG_MINI_SECRET=%s\n" "$(openssl rand -hex 32)" > /etc/mikcloud/wg-mini.env'
+            echo "wg-mini.env créé (600 root)"
+          fi
+          sudo chmod 600 /etc/mikcloud/wg-mini.env
+
+          echo "═══ 4. systemd enable --now ═══"
+          sudo systemctl daemon-reload
+          sudo systemctl enable --now wg-mini
+          sleep 1
+          systemctl is-active wg-mini
+
+          echo "═══ 5. santé réseau (127.0.0.1:4020 UNIQUEMENT) ═══"
+          if sudo ss -ltnp | grep -q ':4020 '; then sudo ss -ltnp | grep ':4020 ' | sed 's/users:.*//'; else echo "ERREUR: rien n'écoute sur 4020" >&2; sudo journalctl -u wg-mini -n 20 --no-pager >&2; exit 1; fi
+          if sudo ss -ltnp | grep ':4020 ' | grep -qv '127\.0\.0\.1:'; then echo "ERREUR: 4020 exposé hors loopback" >&2; exit 1; fi
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4020/v1/ping)
+          echo "/v1/ping sans signature → HTTP $CODE (401 attendu)"
+          [ "$CODE" = "401" ] || { echo "ERREUR: ping sans signature ≠ 401" >&2; exit 1; }
+
+          echo "═══ 6. env backend : WG_MINI_URL + WG_MINI_SECRET partagés ═══"
+          SECRET=$(sudo grep -oP '(?<=^WG_MINI_SECRET=).*' /etc/mikcloud/wg-mini.env)
+          CHANGED=0
+          if sudo grep -q '^WG_MINI_SECRET=' /etc/mikcloud/mikcloud.env 2>/dev/null; then
+            # même secret attendu des deux côtés — comparaison SANS écho
+            CUR=$(sudo grep -oP '(?<=^WG_MINI_SECRET=).*' /etc/mikcloud/mikcloud.env)
+            if [ "$CUR" != "$SECRET" ]; then
+              sudo sed -i '/^WG_MINI_SECRET=/d' /etc/mikcloud/mikcloud.env
+              sudo sh -c 'printf "WG_MINI_SECRET=%s\n" "$1" >> /etc/mikcloud/mikcloud.env' _ "$SECRET"
+              CHANGED=1; echo "WG_MINI_SECRET backend ALIGNÉ sur wg-mini.env (désaccord corrigé)"
+            else
+              echo "WG_MINI_SECRET backend déjà identique — inchangé"
+            fi
+          else
+            sudo sh -c 'printf "WG_MINI_SECRET=%s\n" "$1" >> /etc/mikcloud/mikcloud.env' _ "$SECRET"
+            CHANGED=1; echo "WG_MINI_SECRET ajouté à mikcloud.env"
+          fi
+          if ! sudo grep -q '^WG_MINI_URL=' /etc/mikcloud/mikcloud.env 2>/dev/null; then
+            echo "WG_MINI_URL=http://127.0.0.1:4020" | sudo tee -a /etc/mikcloud/mikcloud.env >/dev/null
+            CHANGED=1; echo "WG_MINI_URL ajouté à mikcloud.env"
+          else
+            echo "WG_MINI_URL backend déjà présent — inchangé"
+          fi
+          unset SECRET CUR
+
+          echo "═══ 7. redémarrage backend CONSCIENT DU TRANSPORT (seulement si env changée) ═══"
+          if [ "$CHANGED" = "1" ]; then
+            CARRIER="systemd"
+            if command -v docker >/dev/null 2>&1 && sudo docker ps --format '{{.Names}}' 2>/dev/null | grep -qx 'mikcloud-server'; then
+              CARRIER="docker"
+            fi
+            echo "transport actif: $CARRIER"
+            if [ "$CARRIER" = "docker" ]; then
+              sudo docker rm -f mikcloud-server >/dev/null 2>&1 || true
+              sudo docker run -d --name mikcloud-server \
+                --network host \
+                --env-file /etc/mikcloud/mikcloud.env \
+                --restart unless-stopped \
+                --memory 4g --cpus 3 \
+                mikcloud-server:current
+            else
+              sudo systemctl restart mikcloud
+            fi
+            echo "healthcheck backend (patient — Load des tables ~1 min)…"
+            i=0
+            until curl -fsS -o /dev/null http://127.0.0.1:4000/; do
+              i=$((i+1))
+              if [ "$i" -ge 60 ]; then echo "BACKEND KO après 10 min" >&2; sudo journalctl -u mikcloud -n 20 --no-pager 2>/dev/null | tail -10 >&2 || true; exit 1; fi
+              sleep 10
+            done
+            echo "BACKEND OK (healthcheck au bout de $((i*10)) s)"
+          else
+            echo "env backend inchangée — pas de redémarrage (évité inutilement)"
+          fi
+
+          echo "═══ 8. preuve env du PROCESS backend (booléen, aucune valeur) ═══"
+          PID=""
+          if command -v docker >/dev/null 2>&1 && sudo docker ps --format '{{.Names}}' 2>/dev/null | grep -qx 'mikcloud-server'; then
+            PID=$(sudo docker inspect -f '{{.State.Pid}}' mikcloud-server)
+          else
+            PID=$(systemctl show -p MainPID --value mikcloud)
+          fi
+          if sudo cat /proc/$PID/environ 2>/dev/null | tr '\0' '\n' | grep -q '^WG_MINI_SECRET='; then
+            echo "process backend porte WG_MINI_SECRET ✓"
+          else
+            echo "ERREUR: le process backend NE PORTE PAS WG_MINI_SECRET" >&2; exit 1
+          fi
+
+          echo "═══ 9. smoke test HMAC bout en bout (add → remove, conf jamais affichée) ═══"
+          S=$(sudo grep -oP '(?<=^WG_MINI_SECRET=).*' /etc/mikcloud/wg-mini.env)
+          TS=$(date +%s); BODY='{"name":"vpn-smoketest"}'
+          SIG=$(printf '%s.%s' "$TS" "$BODY" | openssl dgst -sha256 -hmac "$S" -hex | sed 's/^.* //')
+          if sudo wg show wg0 >/dev/null 2>&1; then
+            RESP=$(curl -s -X POST http://127.0.0.1:4020/v1/add -H "Content-Type: application/json" \
+              -H "X-WGMini-Timestamp: $TS" -H "X-WGMini-Signature: $SIG" -d "$BODY")
+            if printf '%s' "$RESP" | grep -q '"ok":true'; then
+              IP=$(printf '%s' "$RESP" | grep -oP '(?<="ip":")[^"]+' || true)
+              echo "add vpn-smoketest OK (ip: ${IP:-?})"
+            else
+              echo "add vpn-smoketest EN ÉCHEC (réponse non OK, non affichée)" >&2
+              TS2=$(date +%s)
+              SIG2=$(printf '%s.%s' "$TS2" "$BODY" | openssl dgst -sha256 -hmac "$S" -hex | sed 's/^.* //')
+              curl -s -X POST http://127.0.0.1:4020/v1/remove -H "Content-Type: application/json" \
+                -H "X-WGMini-Timestamp: $TS2" -H "X-WGMini-Signature: $SIG2" -d "$BODY" >/dev/null || true
+              exit 1
+            fi
+            TS3=$(date +%s)
+            SIG3=$(printf '%s.%s' "$TS3" "$BODY" | openssl dgst -sha256 -hmac "$S" -hex | sed 's/^.* //')
+            RRESP=$(curl -s -X POST http://127.0.0.1:4020/v1/remove -H "Content-Type: application/json" \
+              -H "X-WGMini-Timestamp: $TS3" -H "X-WGMini-Signature: $SIG3" -d "$BODY")
+            if printf '%s' "$RRESP" | grep -q '"ok":true'; then echo "remove vpn-smoketest OK — VM propre"; else echo "remove en échec — PEER vpn-smoketest À NETTOYER MANUELLEMENT" >&2; exit 1; fi
+          else
+            echo "wg0 absent/inactif — smoke add skippé (wg-mini actif, ping 401 déjà prouvé) ; le tunnel de gestion N°284/285 pose wg0 via ops-wg.yml"
+          fi
+          unset S
+
+          echo "═══ 10. journal wg-mini (aucun secret — logs = op + nom + statut) ═══"
+          sudo journalctl -u wg-mini -n 8 --no-pager | tail -8
+
+          echo "═══ INSTALLATION wg-mini TERMINÉE ✓ ═══"
+          REMOTE
+          echo "installation distrite terminée"

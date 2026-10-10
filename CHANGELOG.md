@@ -5,6 +5,38 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-10 — N°286 — **COMPARATIF CONCURRENTIEL — MikCloud vs PhenixSPOT** (écarts, douves, feuille de route « concurrent idéal »)
+
+### Ce qui a changé
+- **Nouveau document** `docs/COMPARATIF-PHENIXSPOT.md` : comparaison experte avec
+  [phenixspot.com](https://phenixspot.com/) (Phenix IT Solutions, Grand-Bassam — même marché,
+  même cible WISP/ISP/cybercafés/hôtels), construite sur la lecture du site public du concurrent
+  (accueil, fonctionnalités, tarifs — le 2026-10-10) et l'inventaire du code MikCloud (ce que le
+  produit FAIT, pas ce qu'il promet).
+- **Verdict** : l'avance de PhenixSPOT est **commerciale** — 4 modules absents de MikCloud
+  (PPPoE/AAA RADIUS, Cybercafé, SMS clients finaux D-7/D-3/D-0, VPN WireGuard vendu au client
+  final) + go-to-market rodé (tarifs publics 7 000→60 000 FCFA/mois, migration Mikhmon 1-clic,
+  121+ opérateurs *publié*, blog/guides, codes promo, funnel WhatsApp). L'avance de MikCloud est
+  **technique et structurelle** : agent sortant 100 % CGNAT-proof, tunnel WG de gestion (N°285),
+  4 boucliers cloud + PoolDoctor + QoS, flotte (updates RouterOS unitaire+flotte), PWA
+  offline-first, mode simulé, multi-devises pan-africain, infra OCI Always Free (coût ≈ 0) =
+  capacité durable de sous-cotation à périmètre égal.
+- **Point de bascule identifié** : la « Vente en ligne 24h/24 » du concurrent (achat portail →
+  Mobile Money → voucher auto → reçu → renouvellement 1 clic). MikCloud a déjà la grille d'offres
+  + `waveUrl` par profil (portail) et GeniusPay/Wave côté SaaS — la boucle automatique achat →
+  livraison voucher est le chantier N°1 de la roadmap.
+- **Feuille de route en 3 horizons** : P0 0–60 j (vente en ligne automatisée, canal SMS,
+  import Mikhmon 1-clic, MAC Access packagé, preuve sociale) · P1 60–120 j (module PPPoE via API
+  RouterOS — jouable derrière CGNAT grâce à l'agent + tunnel WG, WireGuard vendable sur le wg0
+  N°284, cybercafé, social voucher, renouvellements auto) · P2 120–365 j (TWA Play Store, API
+  publique + webhooks, programme partenaires, status page/SLA, SEO FR, conformité ISP ARTCI).
+- **Pitch de positionnement** : « PhenixSPOT gère vos tickets. MikCloud pilote votre réseau,
+  protège vos clients et vend 24h/24. »
+
+### Référence
+- `docs/COMPARATIF-PHENIXSPOT.md` (grille fonctionnelle 5 domaines, écarts classés par impact,
+  douves, analyse tarifs, roadmap, sources).
+
 ## 2026-10-09 — N°285 — **RENFORT WIREGUARD DES ROUTEURS : deuxième chemin routeur ↔ VM** (mode agent = socle, tunnel opt-in)
 
 ### Ce qui a changé

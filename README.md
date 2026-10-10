@@ -171,6 +171,7 @@ intégré permet de démontrer toute la plateforme sans matériel.
 | [`frontend/README.md`](frontend/README.md) | Configuration Vercel, modes d'appel API (direct / passerelle) |
 | [`docs/CONTRACT-V2.md`](docs/CONTRACT-V2.md) | **SOURCE DE VÉRITÉ** — contrats d'API des fonctionnalités (champs, routes, sémantique) |
 | [`AUDIT-MIKHMON-V3.md`](AUDIT-MIKHMON-V3.md) | Audit de référence par rapport à Mikhmon |
+| [`docs/COMPARATIF-PHENIXSPOT.md`](docs/COMPARATIF-PHENIXSPOT.md) | Comparatif concurrentiel PhenixSPOT : écarts, douves, roadmap « concurrent idéal » |
 | [`GUIDE-GESTIONNAIRE.md`](GUIDE-GESTIONNAIRE.md) | Guide utilisateur du gestionnaire |
 | [`CHANGELOG.md`](CHANGELOG.md) | Historique des évolutions notables |
 

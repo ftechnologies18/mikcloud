@@ -24,6 +24,7 @@ import { frBanner } from "./i18n-fr/banner";
 import { frBillingRequests } from "./i18n-fr/billing-requests";
 import { frCommon } from "./i18n-fr/common";
 import { frCyber } from "./i18n-fr/cyber";
+import { frPpp } from "./i18n-fr/ppp";
 import { frVpn } from "./i18n-fr/vpn";
 import { frDashboard } from "./i18n-fr/dashboard";
 import { frForgot } from "./i18n-fr/forgot";
@@ -91,6 +92,7 @@ const fr: Record<string, string> = {
   ...frBillingRequests,
   ...frCommon,
   ...frCyber,
+  ...frPpp,
   ...frVpn,
   ...frDashboard,
   ...frForgot,

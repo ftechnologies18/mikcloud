@@ -76,17 +76,33 @@ func pppSafeProfile(s string) string {
 	return out
 }
 
+// pppSafeIP — N°294 — IP statique (remote-address) : re-validation défensive
+// au bord builder (le handler a déjà validé model.ValidPppStaticIP) — tout
+// ce qui n'est pas un IPv4 quadruplet canonique disparaît (jamais
+// d'injection dans une propriété RouterOS, même sur payload corrompu).
+func pppSafeIP(s string) string {
+	s = strings.TrimSpace(s)
+	if !model.ValidPppStaticIP(s) {
+		return ""
+	}
+	return s
+}
+
 // pppSecretLine — la ligne /ppp/secret/add d'un secret (service=pppoe
 // constant v1, commentaire routeur = marqueur mikcloud-ppp + commentaire
 // libre du gérant — pattern mikcloud-wg : seuls les objets marqués nous
 // appartiennent). Toutes les valeurs sont échappées (rosEscape).
-func pppSecretLine(name, password, profile, comment string, disabled bool) string {
+// N°294 — remoteAddress non vide → remote-address="…" (IP statique, phase B).
+func pppSecretLine(name, password, profile, comment, remoteAddress string, disabled bool) string {
 	line := `/ppp/secret/add name="` + rosEscape(pppSafeName(name)) + `"`
 	if password != "" {
 		line += ` password="` + rosEscape(password) + `"`
 	}
 	line += ` profile="` + rosEscape(pppSafeProfile(profile)) + `"`
 	line += " service=" + model.PppService
+	if remoteAddress != "" {
+		line += ` remote-address="` + rosEscape(remoteAddress) + `"`
+	}
 	line += ` comment="` + rosEscape(model.PppMarker+" "+comment) + `"`
 	if disabled {
 		line += " disabled=yes"
@@ -109,13 +125,14 @@ func (b Builder) buildPppSecretAdd(cmd model.Command) string {
 	password := plStr(cmd.Payload, "password")
 	profile := pppSafeProfile(plStr(cmd.Payload, "profile"))
 	comment := plStr(cmd.Payload, "comment")
+	remoteAddress := pppSafeIP(plStr(cmd.Payload, "remoteAddress"))
 	disabled := plBool(cmd.Payload, "disabled")
 	repair := plBool(cmd.Payload, "repair")
 	okVar := "ok" + idSafe(cmd.ID)
 	var sb strings.Builder
 	sb.WriteString(header(cmd))
 	sb.WriteString(":local " + okVar + " true\n")
-	line := pppSecretLine(name, password, profile, comment, disabled)
+	line := pppSecretLine(name, password, profile, comment, remoteAddress, disabled)
 	if repair {
 		// Idempotence de la réparation : déjà présent = état voulu, ok
 		// sans retouche (aucun set, aucun recomptage).
@@ -130,8 +147,11 @@ func (b Builder) buildPppSecretAdd(cmd model.Command) string {
 
 // buildPppSecretSet — ppp_secret_set : /ppp/secret/set [find name=…] avec
 // SEULEMENT les propriétés présentes dans le payload (password, profile,
-// disabled, comment) — la ligne est construite dynamiquement (pattern
-// buildUserSet) : un set partiel ne touche jamais les autres propriétés.
+// disabled, comment, remoteAddress) — la ligne est construite dynamiquement
+// (pattern buildUserSet) : un set partiel ne touche jamais les autres
+// propriétés. N°294 — remoteAddress présent (même vide) est TOUJOURS envoyé
+// : une chaîne vide REMET l'abonné sur le pool du profil (retrait de l'IP
+// statique — le « champ présent » est le contrat, pas sa valeur).
 func (b Builder) buildPppSecretSet(cmd model.Command) string {
 	name := pppSafeName(plStr(cmd.Payload, "name"))
 	okVar := "ok" + idSafe(cmd.ID)
@@ -144,6 +164,9 @@ func (b Builder) buildPppSecretSet(cmd model.Command) string {
 	}
 	if plHas(cmd.Payload, "comment") {
 		set += ` comment="` + rosEscape(model.PppMarker+" "+plStr(cmd.Payload, "comment")) + `"`
+	}
+	if plHas(cmd.Payload, "remoteAddress") {
+		set += ` remote-address="` + rosEscape(pppSafeIP(plStr(cmd.Payload, "remoteAddress"))) + `"`
 	}
 	if plBool(cmd.Payload, "disabled") {
 		set += " disabled=yes"
@@ -268,13 +291,17 @@ func (b Builder) buildPppReadActive(cmd model.Command) string {
 // PppSecretAddPayloadFrom — payload canonique de ppp_secret_add (le handler
 // l'appelle après validation ; le builder ne lit QUE ces clés). repair =
 // autoréparation idempotente (parité : présent = ok sans retouche).
-func PppSecretAddPayloadFrom(name, password, profile, comment string, disabled, repair bool) map[string]any {
+// N°294 — remoteAddress : IP statique optionnelle (phase B, "" = pool).
+func PppSecretAddPayloadFrom(name, password, profile, comment, remoteAddress string, disabled, repair bool) map[string]any {
 	payload := map[string]any{
 		"name":     name,
 		"password": password,
 		"profile":  profile,
 		"comment":  comment,
 		"disabled": disabled,
+	}
+	if remoteAddress != "" {
+		payload["remoteAddress"] = remoteAddress
 	}
 	if repair {
 		payload["repair"] = true
@@ -285,7 +312,9 @@ func PppSecretAddPayloadFrom(name, password, profile, comment string, disabled, 
 // PppSecretSetPayloadFrom — payload canonique de ppp_secret_set : seuls les
 // champs POINTÉS sont présents dans le payload (la ligne set est construite
 // dynamiquement d'après la présence — nil = propriété non touchée).
-func PppSecretSetPayloadFrom(password, profile, comment *string, disabled *bool) map[string]any {
+// N°294 — remoteAddress *string : présent (même pointé vers "") = remise
+// sur le pool du profil.
+func PppSecretSetPayloadFrom(password, profile, comment, remoteAddress *string, disabled *bool) map[string]any {
 	payload := map[string]any{}
 	if password != nil {
 		payload["password"] = *password
@@ -295,6 +324,10 @@ func PppSecretSetPayloadFrom(password, profile, comment *string, disabled *bool)
 	}
 	if comment != nil {
 		payload["comment"] = *comment
+	}
+	if remoteAddress != nil {
+		// Présent (même vide) = remise sur le pool du profil.
+		payload["remoteAddress"] = *remoteAddress
 	}
 	if disabled != nil {
 		payload["disabled"] = *disabled

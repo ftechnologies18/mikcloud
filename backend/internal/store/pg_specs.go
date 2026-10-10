@@ -224,18 +224,25 @@ var vpnPeerSpec = entitySpec[model.VpnPeer]{
 // l'origine ; pas de secretbox pour ce champ v1).
 var pppSecretSpec = entitySpec[model.PppSecret]{
 	table: "ppp_secrets",
-	cols:  []string{"id", "account_id", "router_id", "name", "password", "profile", "comment", "service", "state", "disabled", "last_seen_on_router", "expires_at", "error_msg", "created_at", "updated_at"},
-	idOf:  func(x *model.PppSecret) string { return x.ID },
+	// N°294 — cycle de vie complet : exp_mode/auto_suspended/enforced
+	// (suspension auto F1), static_address (phase B), auto_renew/renew_days/
+	// remind_days/reminded_at (phase C) — ordre cols/scan/args aligné.
+	cols: []string{"id", "account_id", "router_id", "name", "password", "profile", "comment", "service", "state", "disabled", "exp_mode", "auto_suspended", "enforced", "static_address", "auto_renew", "renew_days", "remind_days", "reminded_at", "last_seen_on_router", "expires_at", "error_msg", "created_at", "updated_at"},
+	idOf: func(x *model.PppSecret) string { return x.ID },
 	scan: func(r *sql.Rows) (model.PppSecret, error) {
 		var x model.PppSecret
 		err := r.Scan(&x.ID, &x.AccountID, &x.RouterID, &x.Name, &x.Password, &x.Profile, &x.Comment,
-			&x.Service, &x.State, &x.Disabled, &x.LastSeenOnRouter, &x.ExpiresAt, &x.ErrorMsg,
+			&x.Service, &x.State, &x.Disabled, &x.ExpMode, &x.AutoSuspended, &x.Enforced,
+			&x.StaticAddress, &x.AutoRenew, &x.RenewDays, &x.RemindDays, &x.RemindedAt,
+			&x.LastSeenOnRouter, &x.ExpiresAt, &x.ErrorMsg,
 			&x.CreatedAt, &x.UpdatedAt)
 		return x, err
 	},
 	args: func(x *model.PppSecret) []any {
 		return []any{x.ID, x.AccountID, x.RouterID, x.Name, x.Password, x.Profile, x.Comment,
-			x.Service, x.State, x.Disabled, x.LastSeenOnRouter, x.ExpiresAt, x.ErrorMsg,
+			x.Service, x.State, x.Disabled, x.ExpMode, x.AutoSuspended, x.Enforced,
+			x.StaticAddress, x.AutoRenew, x.RenewDays, x.RemindDays, x.RemindedAt,
+			x.LastSeenOnRouter, x.ExpiresAt, x.ErrorMsg,
 			x.CreatedAt, x.UpdatedAt}
 	},
 	hashOf: hashEntity[model.PppSecret],

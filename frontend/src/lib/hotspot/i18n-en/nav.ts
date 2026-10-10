@@ -18,6 +18,8 @@ export const enNav: Record<string, string> = {
   // N°290 — Cybercafé module (workstation registry + time codes).
   "nav.cyber": "Cybercafé",
   "nav.vpn": "WireGuard VPN",
+  // N°294 — PPPoE subscribers (WISP console).
+  "nav.ppp": "PPPoE Subscribers",
   "nav.portal": "Portal",
   "nav.reports": "Reports",
   "nav.logs": "Logs",

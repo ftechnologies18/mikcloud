@@ -25,14 +25,23 @@
 // payant supprimé à la main en Winbox ne doit pas ressusciter en silence.
 // Le champ MissingOnRouter des vouchers n'est donc PAS transposé en v1.
 //
-// Suspension = disable du secret côté routeur (Disabled) — la suspension
-// automatique à expiration (ExpMode → disable) arrive avec le lot
-// « suspension auto » ; le renouvellement d'abonné (ExpiresAt) est posé
-// comme donnée (RFC3339, vide = illimité) dès la Phase A, sa MÉCANIQUE
-// (extension F4) reste à venir.
+// Suspension = disable du secret côté routeur (Disabled). N°294 — la
+// suspension AUTO à expiration est livrée : ExpMode « disable » (défaut)
+// file ppp_secret_set {disabled:true} au passage commun (enforceExpired —
+// gabarit hotspot F1) ; « none » = jamais suspendu automatiquement.
+// Le renouvellement F4 (extension ExpiresAt + réactivation d'un suspendu
+// auto) et le récurrent (AutoRenew/RenewDays + rappels RemindDays via
+// Mail/Telegram) complètent le cycle de vie de l'abonné.
+//
+// N°294 — Phase B (renfort tunnel, opt-in) : StaticAddress = IP distante
+// STATIQUE optionnelle de l'abonné (remote-address RouterOS, unicité PAR
+// ROUTEUR) ; les creds API du renfort tunnel restent les Router.Username/
+// Password existants (scellés secretbox — réutilisés tels quels, aucune
+// nouvelle credential).
 package model
 
 import (
+	"net"
 	"regexp"
 	"strings"
 )
@@ -81,13 +90,50 @@ type PppSecret struct {
 	// State — cycle de vie (pending/active/error).
 	State string `json:"state"`
 	// Disabled — suspension de l'abonné : disable du secret côté routeur
-	// (la suspension AUTO à expiration est un lot ultérieur).
+	// (manuelle via la console, ou automatique à l'échéance — voir
+	// AutoSuspended).
 	Disabled bool `json:"disabled"`
+	// N°294 — ExpMode — politique de suspension automatique à l'échéance
+	// (ExpiresAt) : ""/"disable" (défaut) = ppp_secret_set {disabled:true}
+	// au passage commun ; "none" = jamais suspendu automatiquement (parité
+	// ExpMode hotspot — l'action PPP est TOUJOURS disable, jamais remove :
+	// un abonné PAYANT n'est pas détruit par un timer).
+	ExpMode string `json:"expMode,omitempty"`
+	// N°294 — AutoSuspended — la suspension ACTIVE a été appliquée
+	// AUTOMATIQUEMENT à l'échéance (distincte d'une suspension manuelle :
+	// le renouvellement F4 la lève, une suspension manuelle reste).
+	AutoSuspended bool `json:"autoSuspended,omitempty"`
+	// N°294 — Enforced — l'échéance courante a été traitée par le passage
+	// commun (commande filée, renouvellement auto appliqué ou "none") :
+	// appliqué UNE fois par échéance (pattern HotspotUser.Enforced F1).
+	// Sérialisé : le store JSON et la réplication PG le persistance.
+	Enforced bool `json:"enforced,omitempty"`
+	// N°294 — Phase B — StaticAddress — IP distante STATIQUE optionnelle
+	// (remote-address RouterOS) : vide = attribuée par le pool du profil.
+	// Unicité PAR ROUTEUR (deux abonnés d'un même POP ne partagent jamais
+	// une IP statique — PppSecretAddressTaken) ; validée IPv4 stricte.
+	StaticAddress string `json:"staticAddress,omitempty"`
+	// N°294 — Phase C — AutoRenew/RenewDays — récurrent : à l'échéance, le
+	// passage commun PROLONGE l'abonnement de RenewDays jours (base =
+	// max(maintenant, échéance)) au lieu de suspendre, et réactive un
+	// suspendu automatique. Honnêteté : aucun encaissement n'est déclenché
+	// (la vente reste le geste du gérant — Wave/comptant) ; le récurrent
+	// automatique suppose un accord commercial prépayé avec l'abonné.
+	AutoRenew bool `json:"autoRenew,omitempty"`
+	RenewDays int  `json:"renewDays,omitempty"`
+	// N°294 — Phase C — RemindDays/RemindedAt — rappel d'échéance : J-Remind
+	// (0 = off), notification Mail/Telegram du compte (canal WhatsApp en
+	// cours côté plateforme), DÉDUPLIQUÉE par échéance via RemindedAt
+	// (ré-armée à chaque renouvellement — F4 comme récurrent). Jamais
+	// déclenché pour un abonné déjà suspendu.
+	RemindDays int    `json:"remindDays,omitempty"`
+	RemindedAt string `json:"remindedAt,omitempty"`
 	// LastSeenOnRouter — RFC3339 du dernier rapport agent listant ce nom
 	// (parité read_state) ; vide = jamais vu sur le routeur.
 	LastSeenOnRouter string `json:"lastSeenOnRouter,omitempty"`
-	// ExpiresAt — échéance de l'abonnement (renouvellement) ; vide =
-	// illimité. Donnée dès la Phase A, mécanique (extension/relances) à venir.
+	// ExpiresAt — échéance de l'abonnement (RFC3339) ; vide = illimité.
+	// N°294 — mécanique livrée : suspension auto (ExpMode), renouvellement
+	// F4 (console), récurrent (AutoRenew) et rappels (RemindDays).
 	ExpiresAt string `json:"expiresAt,omitempty"`
 	// ErrorMsg — dernier échec agent (résumé, JAMAIS le secret ni le mot
 	// de passe).
@@ -120,6 +166,66 @@ func ValidPppProfileName(s string) bool { return pppProfileRe.MatchString(s) }
 // minuscules, la normalisation garantit l'échec le plus tard possible.
 func NormalizePppName(s string) string {
 	return strings.ToLower(strings.TrimSpace(s))
+}
+
+// N°294 — modes de suspension automatique (ExpMode). "" est accepté partout
+// et traité comme le défaut PppExpModeDisable.
+const (
+	PppExpModeNone    = "none"    // jamais suspendu automatiquement
+	PppExpModeDisable = "disable" // suspension auto : disable du secret
+)
+
+// PppExpModeEffective — mode effectif ("" = défaut disable) ; toute autre
+// valeur inconnue retombe sur le défaut (jamais d'état bloquant imprévu).
+func PppExpModeEffective(m string) string {
+	if m == PppExpModeNone {
+		return PppExpModeNone
+	}
+	return PppExpModeDisable
+}
+
+// ValidPppExpMode — valeur saisie console acceptée ("" = défaut).
+func ValidPppExpMode(m string) bool {
+	return m == "" || m == PppExpModeNone || m == PppExpModeDisable
+}
+
+// ValidPppStaticIP — IPv4 STRICTE pour une IP statique d'abonné (net.ParseIP
+// + forme quadruplet pointé : IPv6 refusé — le parc PPPoE visé est IPv4 ;
+// « 10.0.00.1 » avec zéros de remplissage refusé aussi : ce qui part au
+// routeur doit être la forme canonique, pas une surprise de parseur).
+func ValidPppStaticIP(s string) bool {
+	ip := net.ParseIP(strings.TrimSpace(s))
+	if ip == nil || ip.To4() == nil || !strings.Contains(s, ".") {
+		return false
+	}
+	parts := strings.Split(strings.TrimSpace(s), ".")
+	if len(parts) != 4 {
+		return false
+	}
+	for _, p := range parts {
+		if len(p) == 0 || len(p) > 3 || (len(p) > 1 && p[0] == '0') {
+			return false
+		}
+		for _, c := range p {
+			if c < '0' || c > '9' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// PppSecretAddressTaken — l'IP statique est-elle déjà portée par un AUTRE
+// abonné du MÊME routeur ? (unicité PAR ROUTEUR — deux POPs peuvent
+// légitimement attribuer la même IP privée derrière leur NAT.)
+func PppSecretAddressTaken(db *DB, routerID, ip, exceptID string) bool {
+	for i := range db.PppSecrets {
+		s := &db.PppSecrets[i]
+		if s.RouterID == routerID && s.ID != exceptID && s.StaticAddress == ip {
+			return true
+		}
+	}
+	return false
 }
 
 // FindPppSecretScoped — retrouve le secret d'un compte par son ID exact

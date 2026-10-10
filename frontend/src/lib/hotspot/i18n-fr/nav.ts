@@ -18,6 +18,8 @@ export const frNav: Record<string, string> = {
   // N°290 — module Cybercafé (registre des postes + codes-temps).
   "nav.cyber": "Cybercafé",
   "nav.vpn": "VPN WireGuard",
+  // N°294 — abonnés PPPoE (console WISP).
+  "nav.ppp": "Abonnés PPPoE",
   "nav.portal": "Portail",
   "nav.reports": "Rapports",
   "nav.logs": "Journal",

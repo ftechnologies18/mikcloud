@@ -795,6 +795,17 @@ func (p *PG) ensureSchema() error {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_ppp_secrets_router_name ON ppp_secrets (router_id, name)`,
 		`CREATE INDEX IF NOT EXISTS idx_ppp_secrets_account ON ppp_secrets (account_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_ppp_secrets_router  ON ppp_secrets (router_id)`,
+		// N°294 — cycle de vie complet de l'abonné : suspension auto
+		// (ExpMode→disable, gabarit hotspot F1), réactivation F4,
+		// IP statique (phase B), récurrent + rappels (phase C).
+		`ALTER TABLE ppp_secrets ADD COLUMN IF NOT EXISTS exp_mode        TEXT    NOT NULL DEFAULT 'disable'`,
+		`ALTER TABLE ppp_secrets ADD COLUMN IF NOT EXISTS auto_suspended  BOOLEAN NOT NULL DEFAULT FALSE`,
+		`ALTER TABLE ppp_secrets ADD COLUMN IF NOT EXISTS enforced        BOOLEAN NOT NULL DEFAULT FALSE`,
+		`ALTER TABLE ppp_secrets ADD COLUMN IF NOT EXISTS static_address  TEXT    NOT NULL DEFAULT ''`,
+		`ALTER TABLE ppp_secrets ADD COLUMN IF NOT EXISTS auto_renew      BOOLEAN NOT NULL DEFAULT FALSE`,
+		`ALTER TABLE ppp_secrets ADD COLUMN IF NOT EXISTS renew_days      INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE ppp_secrets ADD COLUMN IF NOT EXISTS remind_days     INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE ppp_secrets ADD COLUMN IF NOT EXISTS reminded_at     TEXT    NOT NULL DEFAULT ''`,
 		// N°291 — activation du module VPN, réglage par compte (défaut
 		// OFF — module opt-in, même doctrine D6 que le Cybercafé).
 		`ALTER TABLE settings ADD COLUMN IF NOT EXISTS wg_vpn_enabled BOOLEAN NOT NULL DEFAULT FALSE`,

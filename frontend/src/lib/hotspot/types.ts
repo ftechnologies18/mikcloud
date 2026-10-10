@@ -860,6 +860,79 @@ export interface VpnStatus {
   miniError?: string;
 }
 
+/** N°294 — abonné PPPoE (GET/POST /api/routers/{id}/ppp/secrets) : un secret
+ * du pppoe-server EXISTANT du routeur (D2 — le cloud gère l'existant, il ne
+ * provisionne ni interface ni profil). Transport = canal AGENT (commandes
+ * ppp_*, D1) ; machine à états pending → active | error (gabarit handlers_wg).
+ * state : "pending" (commande en file) | "active" (confirmé routeur) |
+ * "error" (échec rapporté — errorMsg). disabled = suspension (manuelle ou
+ * automatique à l'échéance — autoSuspended) ; expiresAt RFC3339, vide =
+ * illimité ; staticAddress IPv4 par routeur, vide = pool du profil ;
+ * expMode "" / "disable" | "none" ; autoRenew (récurrent, sans encaissement)
+ * + renewDays ; remindDays 0-30 (rappel, dédupliqué par remindedAt). */
+export interface PppSecret {
+  id: string;
+  accountId: string;
+  routerId: string;
+  name: string;
+  password: string;
+  profile: string;
+  comment: string;
+  service: string;
+  state: "pending" | "active" | "error";
+  disabled: boolean;
+  expMode?: string;
+  autoSuspended?: boolean;
+  enforced?: boolean;
+  staticAddress?: string;
+  autoRenew?: boolean;
+  renewDays?: number;
+  remindDays?: number;
+  remindedAt?: string;
+  lastSeenOnRouter?: string;
+  expiresAt?: string;
+  errorMsg?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** N°294 — session PPPoE active (GET /api/routers/{id}/ppp/active — cache
+ * agent TTL 120 s, ou POST …/ppp/live/active via le tunnel). uptime conserve
+ * la forme RouterOS (ex. « 3d21h14m56s »). */
+export interface PppActiveRow {
+  name: string;
+  service: string;
+  callerId: string;
+  address: string;
+  uptime: string;
+}
+
+/** N°294 — ligne de découverte (GET /api/routers/{id}/ppp/discover) : un
+ * secret du routeur vu par LUI-MÊME (créé hors MikCloud — Winbox/Mikhmon).
+ * Lecture seule : MikCloud ne modifie pas les secrets découverts. */
+export interface PppDiscoverRow {
+  name: string;
+  profile: string;
+  disabled: boolean;
+  service: string;
+  comment: string;
+}
+
+/** N°294 — état du renfort temps réel (GET /api/routers/{id}/ppp/api-creds) :
+ * credentials API RouterOS du routeur (réutilisées, JAMAIS le mot de passe) +
+ * tunnel WireGuard provisionné. Le temps réel (live/active, kick-live) dial
+ * 10.8.0.N:8728 à travers le tunnel — le canal agent reste le socle. */
+export interface PppApiCreds {
+  configured: boolean;
+  username: string;
+  hasTunnel: boolean;
+  wgIpv4: string;
+  port: number;
+  agentOnline: boolean;
+  tunnelState: string;
+  note: string;
+}
+
 /** N°101 — appareil du foyer (bail DHCP, GET /api/devices — console HomeNet).
  * L'identité stable est la MAC ; le nom affiché replie nom affecté →
  * host-name DHCP → MAC. `status` = dernier bail rapporté par la box
@@ -1925,6 +1998,9 @@ export type ViewId =
   // N°291 — WireGuard vendable : registre des peers VPN vendus (module
   // activable par compte, overlay hotspot — chantier ⑦ de N°289).
   | "vpn"
+  // N°294 — abonnés PPPoE (console WISP, segment transverse) : registre des
+  // secrets d'un pppoe-server EXISTANT piloté par l'agent (chantier ⑥).
+  | "ppp"
   | "routers"
   | "portal"
   | "reports"

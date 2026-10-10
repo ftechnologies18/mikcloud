@@ -16,6 +16,7 @@ import (
 
 	"mikcloud/hotspot-api/internal/agent"
 	"mikcloud/hotspot-api/internal/model"
+	"mikcloud/hotspot-api/internal/notify"
 	"mikcloud/hotspot-api/internal/routeros"
 	"mikcloud/hotspot-api/internal/store"
 )
@@ -427,6 +428,81 @@ func (a *API) enforceExpired(db *model.DB, touched *store.TableSet) {
 	if enforced {
 		touched.Mark(store.TableHotspotUsers) // drapeaux Enforced posés
 	}
+
+	// N°294 — PPPoE : cycle de vie automatique des abonnés au MÊME passage
+	// commun (sous verrou, chaque lecture console / check-in agent /
+	// balayage horaire — gabarit hotspot F1 ci-dessus) :
+	//
+	//   - suspension auto (ExpMode « disable », défaut) : échéance dépassée
+	//     → état cloud posé dans TOUS les modes + commande ppp_secret_set
+	//     {disabled:true} vers un routeur agent — JAMAIS de remove (un
+	//     abonné PAYANT n'est pas détruit par un timer) ;
+	//   - récurrent (phase C) : AutoRenew+RenewDays → prolongation
+	//     automatique (aucun encaissement — accord prépayé implicite),
+	//     réactivation d'un suspendu AUTO ;
+	//   - rappels (phase C) : J-RemindDays, Mail/Telegram du compte,
+	//     dédupliqués par échéance (RemindedAt), jamais pour un suspendu.
+	now := time.Now().UTC()
+	pppChanged := false
+	for i := range db.PppSecrets {
+		s := &db.PppSecrets[i]
+		if s.ExpiresAt == "" || s.Enforced {
+			continue
+		}
+		exp, err := time.Parse(time.RFC3339, s.ExpiresAt)
+		if err != nil {
+			continue // donnée corrigible via la console — jamais Enforced sur une échéance illisible
+		}
+		if model.PppExpModeEffective(s.ExpMode) == model.PppExpModeNone {
+			continue // « none » : jamais suspendu automatiquement (re-évalué — un passage none→disable s'applique)
+		}
+		rr := routers[s.RouterID]
+		if now.After(exp) {
+			if s.AutoRenew && s.RenewDays > 0 {
+				// Récurrent : base = max(maintenant, échéance) + RenewDays
+				// (identique au renouvellement manuel F4).
+				base := exp
+				if base.Before(now) {
+					base = now
+				}
+				s.ExpiresAt = base.AddDate(0, 0, s.RenewDays).Format(time.RFC3339)
+				s.Enforced = true
+				s.RemindedAt = "" // rappel ré-armé pour la nouvelle échéance
+				if s.Disabled && s.AutoSuspended {
+					s.Disabled = false
+					s.AutoSuspended = false
+					if rr != nil && rr.Mode == "agent" {
+						queueCommandLocked(db, s.AccountID, s.RouterID, model.CmdPppSecretSet,
+							map[string]any{"secretId": s.ID, "name": s.Name, "disabled": false})
+					}
+				}
+				a.logActivity(db, s.AccountID, "ppp", "Abonné PPPoE "+s.Name+" renouvelé automatiquement jusqu'au "+s.ExpiresAt)
+			} else {
+				s.Enforced = true
+				if !s.Disabled {
+					s.AutoSuspended = true
+					if rr != nil && rr.Mode == "agent" {
+						queueCommandLocked(db, s.AccountID, s.RouterID, model.CmdPppSecretSet,
+							map[string]any{"secretId": s.ID, "name": s.Name, "disabled": true, "auto": true})
+					}
+					a.logActivity(db, s.AccountID, "ppp", "Abonné PPPoE "+s.Name+" suspendu automatiquement (échéance dépassée)")
+				}
+			}
+			pppChanged = true
+			continue
+		}
+		// Rappel d'échéance : J-RemindDays, dédupliqué par échéance.
+		if s.RemindDays > 0 && !s.Disabled && s.RemindedAt == "" {
+			remindFrom := exp.AddDate(0, 0, -s.RemindDays)
+			if !now.Before(remindFrom) && a.dispatchPppReminder(db, s, rr) {
+				s.RemindedAt = model.NowISO() // envoyé (ou tenté) — pas de boucle
+				pppChanged = true
+			}
+		}
+	}
+	if pppChanged {
+		touched.Mark(store.TablePppSecrets)
+	}
 	if len(db.Commands) > 0 {
 		// Toute commande vivante (dépôt ci-dessus, file walled-garden/
 		// portail du check-in…) marque la table : la file est courte
@@ -454,6 +530,62 @@ func (a *API) enforceExpired(db *model.DB, touched *store.TableSet) {
 	if sweepStaleRegistrations(db) > 0 {
 		touched.Mark(store.TableRegistrationRequests)
 	}
+}
+
+// dispatchPppReminder — N°294 — rappel d'échéance d'un abonné PPPoE
+// (Mail + Telegram du compte, relais plateforme pour l'e-mail — N°150 ; le
+// canal WhatsApp reste le chantier plateforme N°149). APPELÉ SOUS VERROU :
+// il ne fait que lire des COPIES VALEUR puis spawn une goroutine — un envoi
+// réseau ne tient JAMAIS le verrou (pattern N°150/N°291). La goroutine
+// re-verrouille pour consigner dans NotifLog (résumés — jamais de secret).
+// Retourne false si AUCUN canal n'est utilisable : le rappel n'est PAS
+// marqué envoyé (RemindedAt reste vide) — il partira dès qu'un canal sera
+// configuré, pas de notification perdue.
+func (a *API) dispatchPppReminder(db *model.DB, s *model.PppSecret, rr *model.Router) bool {
+	cfg := store.GetOrCreateNotifSettings(db, s.AccountID)
+	cfgCopy := cfg // copie VALEUR : la goroutine ne touche jamais au store
+	var platformEmail model.NotificationSettings
+	hasRelay := false
+	if ptr := a.platformEmailRelayPtrLocked(db); ptr != nil {
+		platformEmail = *ptr
+		hasRelay = true
+	}
+	var relayPtr *model.NotificationSettings
+	if hasRelay {
+		relayPtr = &platformEmail
+	}
+	emailOK := notify.ConfiguredWithPlatform(&cfgCopy, relayPtr, "email")
+	telegramOK := notify.ConfiguredWithPlatform(&cfgCopy, nil, "telegram")
+	if !emailOK && !telegramOK {
+		return false
+	}
+	routerName := ""
+	if rr != nil {
+		routerName = rr.Name
+	}
+	expiryHuman := s.ExpiresAt
+	if t, err := time.Parse(time.RFC3339, s.ExpiresAt); err == nil {
+		expiryHuman = t.Format("02/01/2006")
+	}
+	title := "MikCloud — Abonné PPPoE " + s.Name + " expire le " + expiryHuman
+	body := "L'abonné PPPoE « " + s.Name + " » (routeur " + routerName + ") arrive à échéance le " + expiryHuman + ".\n" +
+		"Renouvelez-le dans la console MikCloud — Abonnés PPPoE — bouton Renouveler."
+	accID, secretName := s.AccountID, s.Name
+	emailTaskDispatch()(func() {
+		logs := deliverNotif(&cfgCopy, relayPtr, "ppp_reminder", title, body, "")
+		a.store.Lock()
+		dbn := a.store.Data()
+		for _, l := range logs {
+			l.ID = model.NewID("n-")
+			l.At = model.NowISO()
+			l.AccountID = accID // trace au compte émetteur (isolation)
+			l.Body = secretName + " — échéance " + expiryHuman + " (rappel, routeur " + routerName + ")"
+			dbn.NotifLog = append(dbn.NotifLog, l)
+		}
+		a.store.Save()
+		a.store.Unlock()
+	})
+	return true
 }
 
 // ---------------------------------------------------------------------------

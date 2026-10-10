@@ -37,6 +37,10 @@ import type {
   PurgeAccountRow,
   PurgeResponse,
   PlatformTeamMember,
+  PppActiveRow,
+  PppApiCreds,
+  PppDiscoverRow,
+  PppSecret,
   RegisterPayload,
   SiteResponse,
   SubscriptionInfo,
@@ -64,7 +68,7 @@ export class ApiError extends Error {
 }
 
 interface ApiOptions {
-  method?: "GET" | "POST" | "PUT" | "DELETE";
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
   params?: Record<string, string | number | undefined>;
   /** UX R6 / N°78 — délai max (ms) avant abandon : un réseau mobile peut
@@ -1179,4 +1183,200 @@ export async function fetchVpnReconcile(): Promise<{ reachable: boolean; vmPeerC
  * ne révoque RIEN — les peers actifs restent en service). */
 export async function setVpnEnabled(enabled: boolean): Promise<AppSettings> {
   return api<AppSettings>("/api/vpn/settings", { method: "PUT", body: { enabled } });
+}
+
+/* — N°294 : abonnés PPPoE (console WISP — canal AGENT socle + renfort
+     tunnel temps réel opt-in, gabarit des fonctions cyber/vpn) — */
+
+/** PppToolEnvelope — enveloppe F9 des lectures d'outils PPP (cache agent
+ * TTL 120 s, pattern read_dhcp/ping) : 200 {queued:false, data, updatedAt}
+ * quand le rapport est frais ; 202 {queued:true, data:[], updatedAt:""} —
+ * une commande part (dédupliquée), le front re-poll (≤ 45 s). */
+export interface PppToolEnvelope<T> {
+  queued: boolean;
+  data: T[];
+  updatedAt: string;
+}
+
+/** PppSecretCreateBody — création cloud (State=pending) + commande
+ * ppp_secret_add en file. expiresAt RFC3339 ("" = illimité) ;
+ * staticAddress IPv4 unicité par routeur ("" = pool du profil). */
+export interface PppSecretCreateBody {
+  name: string;
+  password: string;
+  profile: string;
+  comment: string;
+  expiresAt?: string;
+  staticAddress?: string;
+}
+
+/** PppSecretUpdateBody — PATCH deltas-only : seuls les champs PRÉSENTS
+ * sont appliqués au cloud ET filés au routeur (ppp_secret_set partiel).
+ * expiresAt "" = illimité ; staticAddress "" = pool ; expMode "disable" |
+ * "none" ; remindDays 0 = rappel off. */
+export interface PppSecretUpdateBody {
+  password?: string;
+  profile?: string;
+  disabled?: boolean;
+  comment?: string;
+  expiresAt?: string;
+  staticAddress?: string;
+  expMode?: string;
+  autoRenew?: boolean;
+  renewDays?: number;
+  remindDays?: number;
+}
+
+/** PppSecretMutationResponse — réponse des gestes cloud (PATCH/DELETE) :
+ * l'état repasse "pending" jusqu'à la confirmation agent (≤ 45 s). */
+export interface PppSecretMutationResponse {
+  ok: boolean;
+  name: string;
+  state: string;
+  commandId: string;
+  message: string;
+}
+
+/** PppRenewResponse — renouvellement F4 : la réponse porte le secret mis à
+ * jour (nouvelle échéance, autoSuspended levé le cas échéant). */
+export interface PppRenewResponse {
+  ok: boolean;
+  secret: PppSecret;
+  message: string;
+}
+
+/** PppProvisioningResponse — script .rsc IDEMPOTENT (aucun secret, aucune
+ * commande filée : le WISP le colle lui-même dans son terminal). */
+export interface PppProvisioningResponse {
+  ok: boolean;
+  script: string;
+  warnings: string[];
+}
+
+/** PppLiveActiveResponse — lecture DIRECTE /ppp/active/print à travers le
+ * tunnel (POST — l'appel déclenche une connexion authentifiée). */
+export interface PppLiveActiveResponse {
+  ok: boolean;
+  reachable: boolean;
+  port: number;
+  latencyMs: number;
+  data: PppActiveRow[];
+  count: number;
+  updatedAt: string;
+}
+
+/** listPppSecrets — N°294 : les abonnés PPPoE du compte+routeur (JAMAIS les
+ * lignes des autres routeurs), triés par création décroissante, avec la
+ * parité (lastSeenOnRouter — « jamais vu » = absent). */
+export async function listPppSecrets(routerId: string): Promise<PppSecret[]> {
+  return api<PppSecret[]>(`/api/routers/${encodeURIComponent(routerId)}/ppp/secrets`);
+}
+
+/** createPppSecret — N°294 : crée un abonné (unicité par routeur, plafond
+ * 400) + commande agent en file — 201 {secret, commandId, message}. */
+export async function createPppSecret(routerId: string, body: PppSecretCreateBody): Promise<{ secret: PppSecret; commandId: string; message: string }> {
+  return api(`/api/routers/${encodeURIComponent(routerId)}/ppp/secrets`, { method: "POST", body });
+}
+
+/** updatePppSecret — N°294 : mise à jour cloud IMMÉDIATE + commande
+ * ppp_secret_set deltas-only (seules les propriétés présentes partent). */
+export async function updatePppSecret(id: string, body: PppSecretUpdateBody): Promise<PppSecretMutationResponse> {
+  return api<PppSecretMutationResponse>(`/api/ppp/secrets/${encodeURIComponent(id)}`, { method: "PATCH", body });
+}
+
+/** deletePppSecret — N°294 : demande de suppression (State=pending) — la
+ * LIGNE ne quitte le registre qu'à la confirmation agent (jamais avant). */
+export async function deletePppSecret(id: string): Promise<PppSecretMutationResponse> {
+  return api<PppSecretMutationResponse>(`/api/ppp/secrets/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+/** kickPppSecret — N°294 : déconnexion de la session active via l'agent
+ * (ppp_kick → 202, télémétrie — le secret reste, l'abonné peut se
+ * reconnecter). */
+export async function kickPppSecret(id: string): Promise<{ queued: boolean; commandId: string; message: string }> {
+  return api<{ queued: boolean; commandId: string; message: string }>(
+    `/api/ppp/secrets/${encodeURIComponent(id)}/kick`,
+    { method: "POST", timeoutMs: 30_000 },
+  );
+}
+
+/** renewPppSecret — N°294 : renouvellement F4 (nouvelle échéance =
+ * max(maintenant, échéance actuelle) + days). Un abonné suspendu
+ * AUTOMATIQUEMENT est réactivé (re-enable filé au routeur) ; une suspension
+ * MANUELLE reste (décision humaine respectée). */
+export async function renewPppSecret(id: string, days: number): Promise<PppRenewResponse> {
+  return api<PppRenewResponse>(`/api/ppp/secrets/${encodeURIComponent(id)}/renew`, {
+    method: "POST",
+    body: { days },
+  });
+}
+
+/** listPppActive — N°294 : cache des sessions PPPoE actives du routeur
+ * (rapport ppp_read_active, TTL 120 s) — 202 = lecture en file, re-poll. */
+export async function listPppActive(routerId: string): Promise<PppToolEnvelope<PppActiveRow>> {
+  return api<PppToolEnvelope<PppActiveRow>>(`/api/routers/${encodeURIComponent(routerId)}/ppp/active`);
+}
+
+/** pppDiscover — N°294 : cache des secrets vus PAR LE ROUTEUR (pppoe-server
+ * existant, y compris créés hors MikCloud) — lecture seule (D2). */
+export async function pppDiscover(routerId: string): Promise<PppToolEnvelope<PppDiscoverRow>> {
+  return api<PppToolEnvelope<PppDiscoverRow>>(`/api/routers/${encodeURIComponent(routerId)}/ppp/discover`);
+}
+
+/** getPppApiCreds — N°294 : état du renfort temps réel (creds API RouterOS
+ * posées ? tunnel présent ?) — le mot de passe n'est JAMAIS retourné. */
+export async function getPppApiCreds(routerId: string): Promise<PppApiCreds> {
+  return api<PppApiCreds>(`/api/routers/${encodeURIComponent(routerId)}/ppp/api-creds`);
+}
+
+/** putPppApiCreds — N°294 : enregistre les creds API RouterOS du routeur
+ * (stockage sealed existant — chiffrées au repos, jamais sérialisées). */
+export async function putPppApiCreds(routerId: string, body: { username: string; password: string }): Promise<{ ok: boolean; message: string }> {
+  return api(`/api/routers/${encodeURIComponent(routerId)}/ppp/api-creds`, { method: "PUT", body });
+}
+
+/** deletePppApiCreds — N°294 : retire les creds — le renfort retombe sur le
+ * canal agent seul (le SOCLE n'est jamais affecté). */
+export async function deletePppApiCreds(routerId: string): Promise<{ ok: boolean; message: string }> {
+  return api(`/api/routers/${encodeURIComponent(routerId)}/ppp/api-creds`, { method: "DELETE" });
+}
+
+/** pppLiveActive — N°294 (phase B) : sessions actives lues DIRECTEMENT sur
+ * le routeur via le tunnel (temps réel). 409/502 → ApiError avec le message
+ * explicite du backend (tunnel absent, creds absentes, API fermée). */
+export async function pppLiveActive(routerId: string): Promise<PppLiveActiveResponse> {
+  return api<PppLiveActiveResponse>(`/api/routers/${encodeURIComponent(routerId)}/ppp/live/active`, {
+    method: "POST",
+    timeoutMs: 30_000,
+  });
+}
+
+/** kickPppSecretLive — N°294 (phase B) : déconnexion INSTANTANÉE via le
+ * tunnel (sans attendre le check-in 45 s). 409/502 → message du backend —
+ * le kick agent (≤ 45 s) reste disponible. */
+export async function kickPppSecretLive(id: string): Promise<{ ok: boolean; name: string; message: string }> {
+  return api<{ ok: boolean; name: string; message: string }>(
+    `/api/ppp/secrets/${encodeURIComponent(id)}/kick-live`,
+    { method: "POST", timeoutMs: 30_000 },
+  );
+}
+
+/** getPppProvisioningScript — N°294 (phase B, D2) : script d'installation du
+ * serveur PPPoE (.rsc idempotent, à coller dans le terminal du routeur).
+ * dns = CSV d'IPv4 ; localAddress optionnel ; poolStart < poolEnd (IPv4). */
+export async function getPppProvisioningScript(
+  routerId: string,
+  params: { interface: string; service: string; profile: string; poolStart: string; poolEnd: string; localAddress?: string; dns?: string },
+): Promise<PppProvisioningResponse> {
+  return api<PppProvisioningResponse>(`/api/routers/${encodeURIComponent(routerId)}/ppp/provisioning-script`, {
+    params: {
+      interface: params.interface,
+      service: params.service,
+      profile: params.profile,
+      poolStart: params.poolStart,
+      poolEnd: params.poolEnd,
+      localAddress: params.localAddress,
+      dns: params.dns,
+    },
+  });
 }

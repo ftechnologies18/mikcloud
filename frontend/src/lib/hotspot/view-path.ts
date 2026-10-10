@@ -76,6 +76,9 @@ const VIEW_SLUGS: Record<ViewId, string> = {
   // N°291 — WireGuard vendable : segment simple (vue de navigation
   // principale, section Hotspot).
   vpn: "vpn",
+  // N°294 — abonnés PPPoE : segment simple (vue de navigation principale,
+  // section Hotspot — console WISP transverse, sans restriction d'usage D6).
+  ppp: "ppp",
   templates: "settings/hotspot/modeles",
   profiles: "profiles",
   resellers: "resellers",

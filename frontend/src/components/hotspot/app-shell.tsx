@@ -79,6 +79,8 @@ const BillingRequestsView = dynamic(() => import("./views/billing-requests-view"
 const CyberView = dynamic(() => import("./views/cyber-view"), { loading: () => ViewFallback });
 // N°291 — WireGuard vendable : registre des peers VPN (chunk dédié).
 const VpnView = dynamic(() => import("./views/vpn-view"), { loading: () => ViewFallback });
+// N°294 — abonnés PPPoE : console WISP (chunk dédié).
+const PppView = dynamic(() => import("./views/ppp-view"), { loading: () => ViewFallback });
 const DashboardView = dynamic(() => import("./views/dashboard-view"), { loading: () => ViewFallback });
 // N°100 — console HomeNet : tableau de bord maison et appareils connectés
 // (chunks dédiés — un foyer ne paie jamais le bundle du dashboard métier).
@@ -133,6 +135,7 @@ function viewTitle(view: ViewId, t: (key: string) => string): string {
     vouchers: "nav.vouchers",
     cyber: "nav.cyber",
     vpn: "nav.vpn",
+    ppp: "nav.ppp", // N°294 — abonnés PPPoE
     templates: "nav.templates",
     profiles: "nav.profiles",
     resellers: "nav.resellers",
@@ -177,6 +180,8 @@ const VIEWS: Record<ViewId, React.ComponentType> = {
   cyber: CyberView,
   // N°291 — WireGuard vendable (overlay hotspot, activable par compte).
   vpn: VpnView,
+  // N°294 — abonnés PPPoE (console WISP, segment transverse).
+  ppp: PppView,
   // N°57-d — hub Hotspot : les DEUX ViewIds pointent le même hub
   // (Portail / Vouchers & tickets dérivent du ViewId, pattern N°30).
   // N°184 — la vue racine « hotspot » a disparu avec l'onglet Expérience.

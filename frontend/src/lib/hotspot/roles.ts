@@ -38,6 +38,10 @@ const VIEW_MIN_RANK: Record<string, number> = {
   // gestes (création/révocation/livraison) derrière requireRole(2) serveur,
   // activation rang 3 — la barrière réelle vit côté Go.
   vpn: 1,
+  // N°294 — abonnés PPPoE : lecture ouverte (registre + sessions) ; gestes
+  // (création/édition/suspension/renouvellement/suppression/renfort) derrière
+  // requireRole(2) serveur — la barrière réelle vit côté Go.
+  ppp: 1,
   stats: 1, // heatmap affluence (lecture)
   templates: 2, // gestion des modèles (l'impression reste accessible à tous)
   profiles: 2,

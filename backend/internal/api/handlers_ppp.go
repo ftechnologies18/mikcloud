@@ -24,6 +24,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -78,6 +79,10 @@ func applyPppSetDeltas(s *model.PppSecret, payload map[string]any) {
 	if v, ok := payload["disabled"].(bool); ok {
 		s.Disabled = v
 	}
+	// N°294 — remoteAddress : présent (même vide) = remise sur le pool.
+	if v, ok := payload["remoteAddress"].(string); ok {
+		s.StaticAddress = v
+	}
 }
 
 // pendingPppCommandLocked — une commande du kind visant ce secret est-elle
@@ -95,6 +100,35 @@ func pendingPppCommandLocked(db *model.DB, routerID, kind, secretID string) bool
 		}
 	}
 	return false
+}
+
+// purgePppAutoDisablesLocked — N°294 — retire de la file les commandes
+// ppp_secret_set {disabled:true, auto:true} ENCORE EN FILE (status queued)
+// visant ce secret : le renouvellement (F4 ou réactivation par échéance)
+// rend ces disables PÉRIMÉS — le routeur ne doit jamais exécuter une
+// suspension dont le cloud ne veut plus (l'état DÉSIRÉ prime sur la file).
+// Les commandes déjà « sent » sont en vol : elles restent, MAIS le
+// ré-enable est alors filé SANS dédup derrière elles (ordre FIFO du
+// check-in → disable puis enable = état final convergé). Retire UNIQUEMENT
+// les disables marqués auto:true — une suspension MANUELLE en file reste
+// (décision humaine respectée). Retourne le nombre de commandes purgées.
+func purgePppAutoDisablesLocked(db *model.DB, routerID, secretID string) int {
+	purged := 0
+	kept := db.Commands[:0]
+	for _, c := range db.Commands {
+		if c.RouterID == routerID && c.Kind == model.CmdPppSecretSet && c.Status == "queued" {
+			sid, _ := c.Payload["secretId"].(string)
+			dis, _ := c.Payload["disabled"].(bool)
+			auto, _ := c.Payload["auto"].(bool)
+			if sid == secretID && dis && auto {
+				purged++
+				continue // purgé : disable auto périmé
+			}
+		}
+		kept = append(kept, c)
+	}
+	db.Commands = kept
+	return purged
 }
 
 // pppAgentOnly — PPPoE v1 est piloté PAR L'AGENT (D1) : sur un routeur
@@ -149,9 +183,11 @@ func (a *API) handlePppSecretsList(w http.ResponseWriter, r *http.Request) {
 }
 
 // handlePppSecretCreate — POST /api/routers/{routerID}/ppp/secrets
-// {name,password,profile,comment} : création cloud (State=pending) +
-// commande ppp_secret_add en file (201). Validations model (regex large
-// sans caractères dangereux), unicité PAR ROUTEUR, plafond 400/routeur.
+// {name,password,profile,comment[,expiresAt,staticAddress]} : création cloud
+// (State=pending) + commande ppp_secret_add en file (201). Validations model
+// (regex large sans caractères dangereux), unicité PAR ROUTEUR, plafond
+// 400/routeur. N°294 — expiresAt (RFC3339, vide = illimité) et staticAddress
+// (IPv4, unicité PAR ROUTEUR — phase B) posés à la création.
 func (a *API) handlePppSecretCreate(w http.ResponseWriter, r *http.Request) {
 	if !a.guardAccountWrite(w, r) {
 		return
@@ -159,10 +195,12 @@ func (a *API) handlePppSecretCreate(w http.ResponseWriter, r *http.Request) {
 	acc := accountScope(r)
 	routerID := r.PathValue("routerID")
 	var req struct {
-		Name     string `json:"name"`
-		Password string `json:"password"`
-		Profile  string `json:"profile"`
-		Comment  string `json:"comment"`
+		Name          string `json:"name"`
+		Password      string `json:"password"`
+		Profile       string `json:"profile"`
+		Comment       string `json:"comment"`
+		ExpiresAt     string `json:"expiresAt"`
+		StaticAddress string `json:"staticAddress"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
@@ -188,6 +226,18 @@ func (a *API) handlePppSecretCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Commentaire trop long ("+strconv.Itoa(pppCommentMax)+" caractères max)")
 		return
 	}
+	expiresAt := strings.TrimSpace(req.ExpiresAt)
+	if expiresAt != "" {
+		if _, err := time.Parse(time.RFC3339, expiresAt); err != nil {
+			writeErr(w, http.StatusBadRequest, "Échéance invalide (format RFC3339 attendu, ex. 2026-01-31T00:00:00Z)")
+			return
+		}
+	}
+	staticAddress := strings.TrimSpace(req.StaticAddress)
+	if staticAddress != "" && !model.ValidPppStaticIP(staticAddress) {
+		writeErr(w, http.StatusBadRequest, "IP statique invalide (IPv4 attendu, ex. 10.10.0.25)")
+		return
+	}
 
 	a.store.Lock()
 	db := a.store.Data()
@@ -207,6 +257,11 @@ func (a *API) handlePppSecretCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Un abonné de ce nom existe déjà sur ce routeur")
 		return
 	}
+	if staticAddress != "" && model.PppSecretAddressTaken(db, router.ID, staticAddress, "") {
+		a.store.Unlock()
+		writeErr(w, http.StatusConflict, "Cette IP statique est déjà attribuée à un autre abonné de ce routeur")
+		return
+	}
 	if pppSecretCountLocked(db, router.ID) >= model.MaxPppSecretsPerRouter {
 		a.store.Unlock()
 		writeErr(w, http.StatusBadRequest, "Nombre maximum d'abonnés PPPoE atteint pour ce routeur ("+strconv.Itoa(model.MaxPppSecretsPerRouter)+")")
@@ -217,10 +272,11 @@ func (a *API) handlePppSecretCreate(w http.ResponseWriter, r *http.Request) {
 		ID: model.NewID("pp-"), AccountID: acc, RouterID: router.ID,
 		Name: name, Password: password, Profile: profile, Comment: comment,
 		Service: model.PppService, State: model.PppStatePending,
+		ExpiresAt: expiresAt, StaticAddress: staticAddress,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	db.PppSecrets = append(db.PppSecrets, s)
-	payload := agent.PppSecretAddPayloadFrom(s.Name, s.Password, s.Profile, s.Comment, s.Disabled, false)
+	payload := agent.PppSecretAddPayloadFrom(s.Name, s.Password, s.Profile, s.Comment, s.StaticAddress, s.Disabled, false)
 	payload["secretId"] = s.ID
 	cmd := queueCommandLocked(db, acc, router.ID, model.CmdPppSecretAdd, payload)
 	a.logActivityBy(r, db, acc, "ppp", "Abonné PPPoE "+name+" créé (en attente du routeur, commande "+cmd.ID+")")
@@ -235,9 +291,23 @@ func (a *API) handlePppSecretCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 // handlePppSecretUpdate — PATCH /api/ppp/secrets/{secretID}
-// {password?,profile?,disabled?,comment?} (pointeurs : présents seulement) :
+// {password?,profile?,disabled?,comment?,expiresAt?,staticAddress?,expMode?,
+//
+//	autoRenew?,renewDays?,remindDays?} (pointeurs : présents seulement) :
+//
 // mise à jour cloud IMMÉDIATE + commande ppp_secret_set (set partiel —
 // seules les propriétés présentes sont envoyées au routeur).
+//
+// N°294 — sémantique des nouveaux champs :
+//   - expiresAt (RFC3339 ou "" = illimité) : changer l'échéance ré-arme le
+//     passage commun (Enforced=false) ET le rappel (RemindedAt="") ; repousser
+//     l'échéance d'un abonné suspendu AUTOMATIQUEMENT le réactive (jamais un
+//     suspendu manuel — décision humaine respectée) ;
+//   - staticAddress (IPv4 ou "" = remise sur le pool du profil) : unicité PAR
+//     ROUTEUR, la chaîne vide part AUSSI au routeur (le champ présent est le
+//     contrat) ;
+//   - expMode "none"|"disable" ("" = défaut disable) ;
+//   - autoRenew+renewDays (phase C) et remindDays 0-30 (rappel J-N).
 func (a *API) handlePppSecretUpdate(w http.ResponseWriter, r *http.Request) {
 	if !a.guardAccountWrite(w, r) {
 		return
@@ -245,10 +315,16 @@ func (a *API) handlePppSecretUpdate(w http.ResponseWriter, r *http.Request) {
 	acc := accountScope(r)
 	id := r.PathValue("secretID")
 	var req struct {
-		Password *string `json:"password"`
-		Profile  *string `json:"profile"`
-		Disabled *bool   `json:"disabled"`
-		Comment  *string `json:"comment"`
+		Password      *string `json:"password"`
+		Profile       *string `json:"profile"`
+		Disabled      *bool   `json:"disabled"`
+		Comment       *string `json:"comment"`
+		ExpiresAt     *string `json:"expiresAt"`
+		StaticAddress *string `json:"staticAddress"`
+		ExpMode       *string `json:"expMode"`
+		AutoRenew     *bool   `json:"autoRenew"`
+		RenewDays     *int    `json:"renewDays"`
+		RemindDays    *int    `json:"remindDays"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
@@ -272,6 +348,38 @@ func (a *API) handlePppSecretUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if req.ExpiresAt != nil {
+		*req.ExpiresAt = strings.TrimSpace(*req.ExpiresAt)
+		if *req.ExpiresAt != "" {
+			if _, err := time.Parse(time.RFC3339, *req.ExpiresAt); err != nil {
+				writeErr(w, http.StatusBadRequest, "Échéance invalide (format RFC3339 attendu, ex. 2026-01-31T00:00:00Z)")
+				return
+			}
+		}
+	}
+	if req.StaticAddress != nil {
+		*req.StaticAddress = strings.TrimSpace(*req.StaticAddress)
+		if *req.StaticAddress != "" && !model.ValidPppStaticIP(*req.StaticAddress) {
+			writeErr(w, http.StatusBadRequest, "IP statique invalide (IPv4 attendu, ex. 10.10.0.25)")
+			return
+		}
+	}
+	if req.ExpMode != nil && !model.ValidPppExpMode(strings.TrimSpace(*req.ExpMode)) {
+		writeErr(w, http.StatusBadRequest, "Mode d'expiration invalide (none | disable)")
+		return
+	}
+	if req.AutoRenew != nil && *req.AutoRenew && (req.RenewDays == nil || *req.RenewDays < 1 || *req.RenewDays > 3650) {
+		writeErr(w, http.StatusBadRequest, "Le renouvellement automatique exige un nombre de jours entre 1 et 3650")
+		return
+	}
+	if req.RenewDays != nil && (*req.RenewDays < 0 || *req.RenewDays > 3650) {
+		writeErr(w, http.StatusBadRequest, "Le nombre de jours de renouvellement doit être compris entre 0 et 3650")
+		return
+	}
+	if req.RemindDays != nil && (*req.RemindDays < 0 || *req.RemindDays > 30) {
+		writeErr(w, http.StatusBadRequest, "Le rappel d'échéance doit être compris entre 0 (off) et 30 jours")
+		return
+	}
 
 	a.store.Lock()
 	db := a.store.Data()
@@ -292,6 +400,12 @@ func (a *API) handlePppSecretUpdate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
+	if req.StaticAddress != nil && *req.StaticAddress != "" &&
+		model.PppSecretAddressTaken(db, router.ID, *req.StaticAddress, s.ID) {
+		a.store.Unlock()
+		writeErr(w, http.StatusConflict, "Cette IP statique est déjà attribuée à un autre abonné de ce routeur")
+		return
+	}
 	// Mise à jour cloud immédiate (l'état désiré), la commande porte les
 	// MÊMES deltas — la confirmation agent repasse pending→active.
 	if req.Password != nil {
@@ -302,11 +416,53 @@ func (a *API) handlePppSecretUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Disabled != nil {
 		s.Disabled = *req.Disabled
+		if *req.Disabled {
+			s.AutoSuspended = false // suspendu à la main : plus « auto »
+		}
 	}
 	if req.Comment != nil {
 		s.Comment = *req.Comment
 	}
-	payload := agent.PppSecretSetPayloadFrom(req.Password, req.Profile, req.Comment, req.Disabled)
+	// N°294 — échéance : ré-armement du passage commun et du rappel ;
+	// repousser/supprimer l'échéance réactive un suspendu AUTO.
+	reactivated := false
+	if req.ExpiresAt != nil && *req.ExpiresAt != s.ExpiresAt {
+		s.ExpiresAt = *req.ExpiresAt
+		s.Enforced = false
+		s.RemindedAt = ""
+		if s.Disabled && s.AutoSuspended {
+			s.Disabled = false
+			s.AutoSuspended = false
+			reactivated = true
+		}
+	}
+	if req.StaticAddress != nil {
+		s.StaticAddress = *req.StaticAddress
+	}
+	if req.ExpMode != nil {
+		s.ExpMode = strings.TrimSpace(*req.ExpMode)
+	}
+	if req.AutoRenew != nil {
+		s.AutoRenew = *req.AutoRenew
+	}
+	if req.RenewDays != nil {
+		s.RenewDays = *req.RenewDays
+	}
+	if req.RemindDays != nil {
+		s.RemindDays = *req.RemindDays
+	}
+	// Deltas routeur : les pointeurs présents + la réactivation éventuelle
+	// (disabled=false part même si le gérant n'a touché QUE l'échéance).
+	// Une réactivation purge les disables AUTO encore en file (périmés).
+	disabledDelta := req.Disabled
+	if reactivated {
+		purgePppAutoDisablesLocked(db, router.ID, s.ID)
+		if disabledDelta == nil {
+			f := false
+			disabledDelta = &f
+		}
+	}
+	payload := agent.PppSecretSetPayloadFrom(req.Password, req.Profile, req.Comment, req.StaticAddress, disabledDelta)
 	payload["secretId"] = s.ID
 	payload["name"] = s.Name
 	cmd := queueCommandLocked(db, acc, router.ID, model.CmdPppSecretSet, payload)
@@ -322,6 +478,80 @@ func (a *API) handlePppSecretUpdate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "name": name, "state": "pending", "commandId": cmdID,
 		"message": "Modification enregistrée — confirmation au prochain check-in du routeur (≤ 45 s)",
+	})
+}
+
+// handlePppSecretRenew — POST /api/ppp/secrets/{secretID}/renew {days} :
+// renouvellement F4 de l'abonnement (gabarit handleUserExtend — nouvelle
+// échéance = max(maintenant, échéance actuelle) + days). Un abonné suspendu
+// AUTOMATIQUEMENT (AutoSuspended) est réactivé et le secret re-enable est
+// filé au routeur (mode agent) ; une suspension MANUELLE reste (décision
+// humaine respectée). Le rappel est ré-armé pour la nouvelle échéance.
+func (a *API) handlePppSecretRenew(w http.ResponseWriter, r *http.Request) {
+	if !a.guardAccountWrite(w, r) {
+		return
+	}
+	acc := accountScope(r)
+	id := r.PathValue("secretID")
+	var req struct {
+		Days int `json:"days"`
+	}
+	if err := decodeBody(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "Corps de requête invalide")
+		return
+	}
+	if req.Days < 1 || req.Days > 3650 {
+		writeErr(w, http.StatusBadRequest, "Le nombre de jours doit être compris entre 1 et 3650")
+		return
+	}
+	now := time.Now().UTC()
+
+	a.store.Lock()
+	db := a.store.Data()
+	s := model.FindPppSecretScoped(db, id, acc)
+	if s == nil {
+		a.store.Unlock()
+		writeErr(w, http.StatusNotFound, "Abonné introuvable")
+		return
+	}
+	// Base : l'échéance future est conservée, une échéance passée repart
+	// de maintenant (jamais dans le passé).
+	base := now
+	if s.ExpiresAt != "" {
+		if exp, err := time.Parse(time.RFC3339, s.ExpiresAt); err == nil && exp.After(base) {
+			base = exp
+		}
+	}
+	s.ExpiresAt = base.Add(time.Duration(req.Days) * 24 * time.Hour).Format(time.RFC3339)
+	s.Enforced = true // échéance traitée (future) — rien à pousser pour l'expiration
+	s.RemindedAt = "" // rappel ré-armé pour la nouvelle échéance
+	reEnabled := false
+	if s.Disabled && s.AutoSuspended {
+		s.Disabled = false
+		s.AutoSuspended = false
+		reEnabled = true
+	}
+	// Mode agent : un abonné réactivé doit voir son secret re-enable sur le
+	// routeur. Les disables AUTO encore en file sont purgés À CHAQUE
+	// renouvellement (périmés dès que le gérant prolonge — l'état DÉSIRÉ
+	// prime sur la file) et le re-enable part SANS dédup : derrière un
+	// disable déjà « sent », l'ordre FIFO du check-in converge (disable
+	// puis enable = état final juste).
+	router := findRouterScoped(db, s.RouterID, acc)
+	if router != nil && router.Mode == "agent" {
+		purgePppAutoDisablesLocked(db, router.ID, s.ID)
+		if reEnabled {
+			queueCommandLocked(db, acc, router.ID, model.CmdPppSecretSet,
+				map[string]any{"secretId": s.ID, "name": s.Name, "disabled": false})
+		}
+	}
+	updated := *s
+	a.logActivityBy(r, db, acc, "ppp", fmt.Sprintf("Abonné PPPoE %s renouvelé de %d j", s.Name, req.Days))
+	a.store.Save()
+	a.store.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "secret": updated,
+		"message": fmt.Sprintf("Abonné renouvelé jusqu'au %s", updated.ExpiresAt),
 	})
 }
 

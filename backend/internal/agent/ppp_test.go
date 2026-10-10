@@ -94,7 +94,7 @@ func TestScriptForPppKinds(t *testing.T) {
 func TestBuildPppSecretAddShape(t *testing.T) {
 	b := bPPPOK()
 	cmd := model.Command{ID: "c-add1", Kind: model.CmdPppSecretAdd, Payload: PppSecretAddPayloadFrom(
-		"abdou@fai.ci", "s3cr3t!", "ABONNE-10M", "Abonné Diallo", false, false)}
+		"abdou@fai.ci", "s3cr3t!", "ABONNE-10M", "Abonné Diallo", "", false, false)}
 	s := b.buildPppSecretAdd(cmd)
 	for _, want := range []string{
 		`/ppp/secret/add name="abdou@fai.ci"`,
@@ -113,7 +113,7 @@ func TestBuildPppSecretAddShape(t *testing.T) {
 	}
 	// disabled → disabled=yes
 	cmd2 := model.Command{ID: "c-add2", Kind: model.CmdPppSecretAdd, Payload: PppSecretAddPayloadFrom(
-		"abdou@fai.ci", "", "default", "", true, false)}
+		"abdou@fai.ci", "", "default", "", "", true, false)}
 	s2 := b.buildPppSecretAdd(cmd2)
 	if !strings.Contains(s2, "disabled=yes") {
 		t.Error("buildPppSecretAdd : disabled=yes attendu pour un secret suspendu")
@@ -127,7 +127,7 @@ func TestBuildPppSecretAddRepairIdempotent(t *testing.T) {
 	b := bPPPOK()
 	// repair → garde [:len [find name=…]] = 0 : présent = ok sans retouche.
 	cmd := model.Command{ID: "c-rep1", Kind: model.CmdPppSecretAdd, Payload: PppSecretAddPayloadFrom(
-		"abdou@fai.ci", "pw", "default", "", false, true)}
+		"abdou@fai.ci", "pw", "default", "", "", false, true)}
 	s := b.buildPppSecretAdd(cmd)
 	for _, want := range []string{
 		`[:len [/ppp/secret find name="abdou@fai.ci"]] = 0`,
@@ -141,7 +141,7 @@ func TestBuildPppSecretAddRepairIdempotent(t *testing.T) {
 	// Sans repair : add direct (pas de garde de présence — l'unicité est
 	// déjà garantie côté cloud, un doublon doit être rapporté en erreur).
 	cmd2 := model.Command{ID: "c-rep2", Kind: model.CmdPppSecretAdd, Payload: PppSecretAddPayloadFrom(
-		"abdou@fai.ci", "pw", "default", "", false, false)}
+		"abdou@fai.ci", "pw", "default", "", "", false, false)}
 	s2 := b.buildPppSecretAdd(cmd2)
 	if strings.Contains(s2, "[:len [/ppp/secret find") {
 		t.Error("buildPppSecretAdd sans repair : la garde de présence ne doit pas être émise")
@@ -154,7 +154,7 @@ func TestBuildPppSecretSetSelective(t *testing.T) {
 	pw := "n3wpass"
 	dis := true
 	cmd := model.Command{ID: "c-set1", Kind: model.CmdPppSecretSet, Payload: PppSecretSetPayloadFrom(
-		&pw, nil, nil, &dis)}
+		&pw, nil, nil, nil, &dis)}
 	s := b.buildPppSecretSet(cmd)
 	for _, want := range []string{
 		`/ppp/secret/set [find name=""]`, // pas de nom fourni : find générique (le cloud envoie toujours name)
@@ -181,7 +181,7 @@ func TestBuildPppSecretSetSelective(t *testing.T) {
 	// Commentaire présent → préfixe marqueur mikcloud-ppp.
 	cm := "Abonné réactivé"
 	cmd3 := model.Command{ID: "c-set3", Kind: model.CmdPppSecretSet, Payload: PppSecretSetPayloadFrom(
-		nil, nil, &cm, nil)}
+		nil, nil, &cm, nil, nil)}
 	s3 := b.buildPppSecretSet(cmd3)
 	if !strings.Contains(s3, `comment="mikcloud-ppp Abonné réactivé"`) {
 		t.Errorf("buildPppSecretSet : marqueur mikcloud-ppp attendu sur le commentaire, script %q", s3)
@@ -275,7 +275,7 @@ func TestBuildPppRosEscapeValues(t *testing.T) {
 	// Nom avec @ (légitime) et commentaire avec guillemet + dollar (hostile) :
 	// rosEscape neutralise " \ $ — jamais de rupture de citation.
 	cmd := model.Command{ID: "c-esc", Kind: model.CmdPppSecretAdd, Payload: PppSecretAddPayloadFrom(
-		"abdou@fai.ci", `pw"doll$ar`, "default", `Cadeau "Noël" $spécial`, false, false)}
+		"abdou@fai.ci", `pw"doll$ar`, "default", `Cadeau "Noël" $spécial`, "", false, false)}
 	s := b.buildPppSecretAdd(cmd)
 	if strings.Contains(s, `comment="mikcloud-ppp Cadeau "Noël"`) {
 		t.Error("buildPppSecretAdd : guillemet non échappé dans le commentaire (injection possible)")
@@ -285,5 +285,53 @@ func TestBuildPppRosEscapeValues(t *testing.T) {
 	}
 	if !strings.Contains(s, `password="pw\"doll\$ar"`) {
 		t.Errorf("buildPppSecretAdd : échappement du mot de passe attendu, script %q", s)
+	}
+}
+
+// TestBuildPppStaticAddress — N°294 (phase B) : remote-address dans les
+// builders. add avec IP → remote-address="…" ; set avec pointeur vers "" →
+// remote-address="" (REMISE sur le pool du profil — le champ présent est le
+// contrat) ; set sans remoteAddress → aucune propriété envoyée ; IP hostile
+// ou invalide → neutralisée par pppSafeIP (jamais d'injection).
+func TestBuildPppStaticAddress(t *testing.T) {
+	b := bPPPOK()
+	cmd := model.Command{ID: "c-ip1", Kind: model.CmdPppSecretAdd, Payload: PppSecretAddPayloadFrom(
+		"abdou@fai.ci", "pw", "default", "", "10.10.0.25", false, false)}
+	s := b.buildPppSecretAdd(cmd)
+	if !strings.Contains(s, `remote-address="10.10.0.25"`) {
+		t.Errorf("buildPppSecretAdd : remote-address attendu, script %q", s)
+	}
+	// add sans IP statique → aucune propriété remote-address.
+	cmd0 := model.Command{ID: "c-ip0", Kind: model.CmdPppSecretAdd, Payload: PppSecretAddPayloadFrom(
+		"abdou@fai.ci", "pw", "default", "", "", false, false)}
+	s0 := b.buildPppSecretAdd(cmd0)
+	if strings.Contains(s0, "remote-address") {
+		t.Errorf("buildPppSecretAdd : remote-address ne doit pas apparaître sans IP statique, script %q", s0)
+	}
+	// set : pointeur vers "" → remote-address="" (retour au pool).
+	empty := ""
+	cmd2 := model.Command{ID: "c-ip2", Kind: model.CmdPppSecretSet, Payload: PppSecretSetPayloadFrom(
+		nil, nil, nil, &empty, nil)}
+	s2 := b.buildPppSecretSet(cmd2)
+	if !strings.Contains(s2, `remote-address=""`) {
+		t.Errorf("buildPppSecretSet : remote-address=\"\" attendu (remise pool), script %q", s2)
+	}
+	// set : remoteAddress absent → aucune propriété remote-address.
+	dis := false
+	cmd3 := model.Command{ID: "c-ip3", Kind: model.CmdPppSecretSet, Payload: PppSecretSetPayloadFrom(
+		nil, nil, nil, nil, &dis)}
+	s3 := b.buildPppSecretSet(cmd3)
+	if strings.Contains(s3, "remote-address") {
+		t.Errorf("buildPppSecretSet : remote-address ne doit pas apparaître sans pointeur, script %q", s3)
+	}
+	// IP invalide/hostile au payload → neutralisée (jamais d'injection).
+	cmd4 := model.Command{ID: "c-ip4", Kind: model.CmdPppSecretSet,
+		Payload: map[string]any{"name": "abdou@fai.ci", "remoteAddress": `10.0.0.1" evil`}}
+	s4 := b.buildPppSecretSet(cmd4)
+	if strings.Contains(s4, "evil") {
+		t.Errorf("buildPppSecretSet : IP hostile non neutralisée, script %q", s4)
+	}
+	if !strings.Contains(s4, `remote-address=""`) {
+		t.Errorf("buildPppSecretSet : IP invalide doit devenir chaîne vide, script %q", s4)
 	}
 }

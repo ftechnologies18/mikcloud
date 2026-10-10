@@ -7,6 +7,7 @@ import {
   Bell,
   Building2,
   Armchair,
+  Cable,
   Gauge,
   LayoutDashboard,
   Megaphone,
@@ -94,6 +95,11 @@ export const NAV_SECTIONS: { labelKey: string; items: NavItem[] }[] = [
       // N°286). Entrée visible pour tous les comptes hotspot ; la vue
       // propose l'activation en un clic quand le module est éteint.
       { id: "vpn", labelKey: "nav.vpn", icon: Shield },
+      // N°294 — abonnés PPPoE : la console WISP (secrets d'un pppoe-server
+      // existant, pilotés par l'agent). Entrée visible pour tous les comptes
+      // (segment transverse D6 — ni hotspot ni homenet exclusifs) ; la vue
+      // guide vers la création d'un routeur en mode agent s'il en manque.
+      { id: "ppp", labelKey: "nav.ppp", icon: Cable },
       // N°27 — WiFi jetable : mode d'accès offert des établissements.
       { id: "wifi", labelKey: "wifi.title", icon: Wifi },
     ],

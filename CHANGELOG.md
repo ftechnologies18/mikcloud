@@ -5,6 +5,93 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-10 — N°294 — **PPPOE PHASE A COMPLÈTE + PHASE B + PHASE C** (dashboard abonnés, suspension auto ExpMode→disable, renouvellement F4, IP statiques + renfort temps réel tunnel + provisioning assisté, récurrent auto + rappels — Option V chantier ⑥)
+
+### Ce qui a changé
+- **La console « Abonnés PPPoE » complète la Phase A (N°293)** et livre les
+  phases B et C d'un coup — le WISP gère désormais TOUT le cycle de vie de ses
+  abonnés depuis MikCloud, sans jamais ouvrir Winbox.
+- **Backend — cycle de vie automatique (gabarit hotspot F1)** : le passage
+  commun (`enforceExpired`, appelé à chaque lecture console / check-in agent /
+  balayage horaire) applique à chaque échéance :
+  - **Suspension auto (ExpMode)** : `disable` (défaut) → commande
+    `ppp_secret_set {disabled:true, auto:true}` vers le routeur agent + état
+    cloud `AutoSuspended` — JAMAIS de remove (un abonné payant n'est pas
+    détruit par un timer) ; `none` → jamais suspendu automatiquement.
+  - **Récurrent (phase C)** : `AutoRenew`+`RenewDays` → prolongation
+    automatique (base = max(maintenant, échéance) + jours), réactivation d'un
+    suspendu auto, trace d'activité — HONNÊTETÉ : aucun encaissement
+    déclenché (la vente reste le geste du gérant ; récurrent = accord prépayé).
+  - **Rappels (phase C)** : `RemindDays` (J-N, 0=off) → notification
+    Mail/Telegram du compte (relais plateforme N°150 pour l'e-mail), dédup
+    par échéance (`RemindedAt`, ré-armé à chaque renouvellement), jamais pour
+    un suspendu ; aucun canal configuré = rappel NON consommé (pas de perte).
+- **Renouvellement F4** : `POST /api/ppp/secrets/{id}/renew {days}` (gabarit
+  handleUserExtend) — prolonge, réarme le rappel, réactive un suspendu AUTO
+  (jamais un suspendu manuel) et purge les disables auto encore en file
+  (`auto:true`, périmés dès que le gérant prolonge — l'état DÉSIRÉ prime sur
+  la file ; le re-enable part sans dédup derrière un disable déjà « sent » :
+  l'ordre FIFO du check-in converge). `PATCH` étendu : `expiresAt`,
+  `staticAddress`, `expMode`, `autoRenew`, `renewDays`, `remindDays` (deltas
+  seuls ; changer l'échéance ré-arme enforcement ET rappel, et réactive un
+  suspendu auto).
+- **Phase B — IP statiques** : `StaticAddress` (remote-address RouterOS,
+  IPv4 strict, unicité PAR ROUTEUR, `""` = remise sur le pool du profil — le
+  champ présent est le contrat) ; builders `ppp_secret_add/set` étendus
+  (`pppSafeIP` double barrière, IP hostile neutralisée).
+- **Phase B — renfort temps réel via tunnel (opt-in)** : creds API RouterOS
+  RÉUTILISÉES (`Router.Username/Password`, scellées secretbox — aucune
+  nouvelle credential) posées via `PUT/DELETE /api/routers/{id}/ppp/api-creds`
+  ; `POST /api/routers/{id}/ppp/live/active` (sessions directes
+  10.8.0.N:8728, latence mesurée) et `POST /api/ppp/secrets/{id}/kick-live`
+  (déconnexion instantanée, find `.id` puis remove — protocole binaire, pas
+  de shell) ; indirections `pppLiveFetch`/`pppLiveKick` (tests sans réseau) ;
+  refus DISTINCTS et explicites (sans tunnel / sans creds / API fermée),
+  creds jamais dans les messages ni les réponses — le mode agent reste LE
+  SOCLE, le tunnel n'est jamais sur le chemin critique.
+- **Phase B — provisioning assisté** : `GET
+  /api/routers/{id}/ppp/provisioning-script` génère le livrable `.rsc`
+  IDEMPOTENT (garde `[:len [find …]] = 0` par bloc : pool, profil, serveur
+  PPPoE) que le WISP colle lui-même — MikCloud ne touche jamais au routeur
+  ici (D2 : geste explicite, zéro secret, zéro commande).
+- **PG** : 8 colonnes `ppp_secrets` (exp_mode, auto_suspended, enforced,
+  static_address, auto_renew, renew_days, remind_days, reminded_at — ALTER
+  idempotent) + spec différentielle alignée (cols/scan/args).
+- **Frontend — vue ppp** (`/app/ppp`, nav Hotspot icône Cable, chunk dédié) :
+  4 KPIs (Abonnés · En ligne · Suspendus [sous-libellé auto:N] · Expirent
+  ≤ 7 j) ; onglets **Abonnés** (table responsive + cartes mobile, sélection
+  multiple + « Renouveler la sélection », création [échéance + IP statique],
+  renouveler F4 presets 7/30/90/180/365 + saisie 1-3650, modifier PATCH
+  deltas-only, suspendre [confirmé]/reprendre, kick agent, kick-live
+  conditionnel, suppression destructive, badge erreur + Réessayer),
+  **Sessions actives** (cache agent 202 honnête + temps réel tunnel avec
+  latence), **Découverte** (lecture seule, note D2) ; carte renfort temps
+  réel (dots creds/tunnel, dialog credentials, note `/ip service enable api`)
+  ; provisioning assisté (script + warnings + copier/télécharger) ; i18n
+  FR/EN 176 clés.
+- **Tests** : agent (`TestBuildPppStaticAddress` : remote-address add/set,
+  remise pool, IP hostile neutralisée) ; api cycle de vie complet
+  (`TestPppAutoSuspension` [ExpMode disable/none + idempotence Enforced],
+  `TestPppRenewReactivatesAutoSuspended` [réactivation auto ≠ manuelle +
+  purge des disables en file], `TestPppAutoRenewRecurring`,
+  `TestPppReminderDispatch` [canal configuré/suspendu/dédup + WaitGroup —
+  la tâche re-verrouille le store comme en prod],
+  `TestPppStaticAddressEndpoints`, `TestPppApiCredsLifecycle` [le db.json
+  persisté ne porte JAMAIS le mot de passe en clair],
+  `TestPppLiveEndpoints` [gates 409, dial 502, creds hors messages],
+  `TestPppProvisioningScript` [idempotence + validations]).
+
+### Rappel exploitant (console OCI — hors code, gestes manuels)
+1. **Security List** : Ingress **UDP 51820** src `0.0.0.0/0` (le tunnel wg0
+   des routeurs et les clients VPN vendus partagent le même port — cf.
+   RUNBOOK-HEBERGEMENT.md §9).
+2. **Réserver l'IP publique** de la VM (une IP éphémère change au stop/start
+   → tous les endpoints wg et confs clients seraient à re-distribuer).
+
+### Vérifié
+- go build/vet/gofmt OK ; go test agent+model+store OK ; suite api complète
+  OK (53 s) ; tsgo + eslint OK ; next build OK.
+
 ## 2026-10-10 — N°291 — **CHANTIER ⑦ WIREGUARD VENDABLE V1** (peers VPN vendus sur le wg0 de la VM via mini-service wg-mini — D3-a/D4-a/D5-a, Option V lot 2)
 
 ### Ce qui a changé

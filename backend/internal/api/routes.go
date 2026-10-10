@@ -329,6 +329,18 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/ppp/secrets/{secretID}", a.requireRole(2, a.handlePppSecretUpdate))
 	mux.HandleFunc("DELETE /api/ppp/secrets/{secretID}", a.requireRole(2, a.handlePppSecretDelete))
 	mux.HandleFunc("POST /api/ppp/secrets/{secretID}/kick", a.requireRole(2, a.handlePppSecretKick))
+	// N°294 — cycle de vie : renouvellement F4 (extension + réactivation
+	// d'un suspendu auto).
+	mux.HandleFunc("POST /api/ppp/secrets/{secretID}/renew", a.requireRole(2, a.handlePppSecretRenew))
+	// N°294 — Phase B (renfort tunnel, opt-in) : creds API RouterOS
+	// (stockage sealed existant), temps réel à travers wg0 et provisioning
+	// assisté du serveur PPPoE (livrable .rsc, sans secret).
+	mux.HandleFunc("GET /api/routers/{routerID}/ppp/api-creds", a.requireRole(1, a.handlePppApiCredsGet))
+	mux.HandleFunc("PUT /api/routers/{routerID}/ppp/api-creds", a.requireRole(2, a.handlePppApiCredsPut))
+	mux.HandleFunc("DELETE /api/routers/{routerID}/ppp/api-creds", a.requireRole(2, a.handlePppApiCredsDelete))
+	mux.HandleFunc("POST /api/routers/{routerID}/ppp/live/active", a.requireRole(1, a.handlePppLiveActive))
+	mux.HandleFunc("POST /api/ppp/secrets/{secretID}/kick-live", a.requireRole(2, a.handlePppSecretKickLive))
+	mux.HandleFunc("GET /api/routers/{routerID}/ppp/provisioning-script", a.requireRole(2, a.handlePppProvisioningScript))
 	mux.HandleFunc("DELETE /api/sessions/{id}", a.handleSessionKick)
 
 	// Revendeurs

@@ -173,6 +173,7 @@ intégré permet de démontrer toute la plateforme sans matériel.
 | [`AUDIT-MIKHMON-V3.md`](AUDIT-MIKHMON-V3.md) | Audit de référence par rapport à Mikhmon |
 | [`docs/COMPARATIF-PHENIXSPOT.md`](docs/COMPARATIF-PHENIXSPOT.md) | Comparatif concurrentiel PhenixSPOT : écarts, douves, roadmap « concurrent idéal » |
 | [`docs/CARTE-CONCURRENCE.md`](docs/CARTE-CONCURRENCE.md) | Carte de concurrence complète : 5 cercles (Mikhmon → suites globales), matrice décisive, modèles de prix, menaces + ripostes |
+| [`docs/ANALYSE-P1-PPP-WG-CYBER.md`](docs/ANALYSE-P1-PPP-WG-CYBER.md) | Analyse P1 adossée au code : ⑥ PPPoE via agent RouterOS · ⑦ WireGuard vendable sur wg0 · ⑧ Cybercafé — 7 décisions à trancher |
 | [`docs/HANDOFF-INSTALL-BACKEND.md`](docs/HANDOFF-INSTALL-BACKEND.md) | **Kit de transmission autonome** — installer un back-end sur Ftechci sans cloner mikcloud (destiné : sect-api et tout futur dépôt) |
 | [`GUIDE-GESTIONNAIRE.md`](GUIDE-GESTIONNAIRE.md) | Guide utilisateur du gestionnaire |
 | [`CHANGELOG.md`](CHANGELOG.md) | Historique des évolutions notables |

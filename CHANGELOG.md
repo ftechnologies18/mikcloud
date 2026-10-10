@@ -5,6 +5,52 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-10 — N°289 — **ANALYSE P1 ADOSSÉE AU CODE — ⑥ PPPoE · ⑦ WireGuard vendable · ⑧ Cybercafé** (7 décisions à trancher ensemble)
+
+### Ce qui a changé
+- **Nouveau document** `docs/ANALYSE-P1-PPP-WG-CYBER.md` : suite de N°286/N°288,
+  analyse approfondie des trois chantiers P1 60–120 j sélectionnés par
+  l'exploitant — toute affirmation vérifiée dans le code (références
+  `fichier:ligne`, 2 passes d'exploration exhaustive backend + frontend).
+- **Arbitrage P0 de l'exploitant consigné et acté** : la vente en ligne est
+  DÉJÀ prise en charge (lien marchand **Wave direct** inscrit dans le code — le
+  gérant encaisse sur son compte Wave marchand, 0 % commission ; Wave = leader,
+  pas d'agrégateur supplémentaire) ; **SMS reporté** (trop coûteux, futur quand
+  le nombre de clients le justifiera) ; **WhatsApp en cours de développement,
+  prioritaire** ; **Mail + Telegram déjà implémentés**. Arguments déjà solides
+  rappelés : claim portail, WiFi jetable, /registrations publiques, portail
+  hybride hospitalité/commercial.
+- **⑥ PPPoE** : le client RouterOS maison accepte déjà des phrases arbitraires
+  (`Run/Exec`) mais en mode real seulement ; l'agent (canonique, CGNAT-proof)
+  ne connaît pas PPP (44 commandes toutes hotspot) → architecture proposée :
+  commandes agent `ppp_*` en canonique (D1), gestion des secrets/profils/sessions
+  d'un pppoe-server EXISTANT en v1 (D2), tunnel WG en renfort temps réel phase B,
+  RADIUS/auto-renew en phase C. Effort : le plus gros des trois (Phase A ≈ 4–6 sem).
+- **⑦ WireGuard vendable** : découverte pivot — `wg-peer.sh` génère DÉJÀ des
+  confs client full-tunnel + QR (manuel SSH, 600 root) ; le cycle routeur est
+  livré (N°285) ; il manque la couche produit. Architecture proposée :
+  mini-service hôte §8 (127.0.0.1:4020, unité root, HMAC) pilotant wg-peer.sh
+  (D3 — validation explicite requise), wg0 partitionné en v1 sans toucher la
+  security list (D4), confs chiffrées secretbox pour re-livraison Mail/Telegram/
+  WhatsApp (D5), deux formes de produit (accès distant gérant / client final
+  full-tunnel avec garde-fous egress). Effort ≈ 2–4 sem.
+- **⑧ Cybercafé — découverte pivot** : Cybercafé et MAC Access (P0-4) sont LE
+  MÊME substrat (un poste = un appareil abonné sans login) ; un chantier ferme
+  DEUX écarts de la matrice. Les codes-temps (vouchers limit-uptime), le
+  contrôle MAC (bindings, `LockFirstDevice`, `device_pause` à généraliser aux
+  hotspot), la caisse (Transactions + MonthlyJournals) existent déjà ; il manque
+  le registre Postes et l'assemblage. Architecture proposée : module activable
+  par flag `CyberEnabled` (plan Pro) sans toucher à l'usage enum (D6). Effort ≈
+  2–3 sem — le plus léger.
+- **7 décisions à trancher ensemble (D1–D7)**, dont l'ordre des chantiers
+  (D7 : Option R « revenu d'abord » ⑥→⑦→⑧ vs **Option V recommandée**
+  « vitesse d'abord » ⑧→⑦→⑥) et le changement §8 du mini-service WireGuard.
+  Aucun code écrit — analyse seule, exécution après arbitrage.
+
+### Impact
+- Docs only — `backend/**` non touché, aucun déploiement, aucun schéma DB.
+- Décision exploitant attendue : D1–D7 (§7 du document) avant le premier lot.
+
 ## 2026-10-10 — N°288 — **CARTE DE CONCURRENCE COMPLÈTE — au-delà de PhenixSPOT** (5 cercles, matrice décisive, modèle de prix, menaces + ripostes, arbitrage P0)
 
 ### Ce qui a changé

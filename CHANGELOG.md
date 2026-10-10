@@ -5,6 +5,45 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-10 — N°287 — **KIT DE TRANSMISSION AUTONOME — INSTALLER UN BACK-END SUR FTECHCI SANS CLONER MIKCLOUD** (destiné : sect-api, réutilisable par tout futur dépôt)
+
+### Ce qui a changé
+- **Nouveau document** `docs/HANDOFF-INSTALL-BACKEND.md` : un fichier **autonome
+  (handoff)** qui porte tout ce qu'une session travaillant dans un AUTRE dépôt
+  (cas d'usage premier : `sect-api`, le second back-end de l'exploitant, déjà
+  en place sur 127.0.0.1:8090) doit savoir pour installer ou re-configurer son
+  back-end **sans jamais ouvrir ni cloner le dépôt mikcloud**.
+- **Motif** : la demande de l'exploitant — « transmettre les informations à une
+  session d'un autre dépôt pour qu'elle installe son back-end, éviter les
+  erreurs futures, faciliter la gestion » ; réponse formalisée : PAS de clone
+  (hygiène de contextes, indépendance des dépôts) mais un kit copiable —
+  3 modes de transmission documentés, recommandé = **committer le kit dans le
+  dépôt destinataire** pour que la connaissance vive là où elle s'applique.
+- **Contenu du kit** (ancré sur les leçons réelles de la machine) :
+  carte d'identité de la VM Ftechci + **registre des ports** (4000 mikcloud,
+  8090 sect-api, 5432 PG primaire, 51820/udp WG, Caddy unique porte 80/443) ;
+  les **8 conventions §8** (publication 127.0.0.1 only, `--env-file` 600 root,
+  limites cgroups face à PG, rollback par tag — `latest` interdit, PG jamais
+  conteneurisé, un service = un port réservé, rayon limité aux autres services,
+  secrets jamais dans les logs) ; la **leçon N°282** (poweroff invité interdit
+  → RUNNING fantôme OCI — `sudo reboot` ou Stop/Start console) ; la recette
+  d'installation pas-à-pas avec **modèles prêts à copier** (env, `docker run`
+  host/bridge, tags current/previous, bloc Caddy dédié + piège certmagic
+  N°245-b, fallback systemd MemoryMax) ; les gestes de rollback/incidents ; et
+  la **checklist des 8 informations à demander à l'exploitant** (port réservé,
+  domaine + état DNS, budget mémoire/CPU, DB+ rôle dédiés si nécessaire,
+  structure des variables d'env, image/registry, plan de rollback, interdits
+  confirmés) — la réponse directe à « je ne les ai pas ».
+- **Hors de portée assumé** : le CI/CD mikcloud (`deploy-oracle`, `ops-*`), le
+  schéma de données, le monitor DR et les secrets ne se transmettent pas — le
+  kit ne porte que la discipline d'installation ; contrat de maintenance :
+  toute évolution des conventions source (RUNBOOK-HEBERGEMENT §8/§9) se
+  répercute dans le kit.
+
+### État produit
+- Aucun code ni workflow modifié — documentation uniquement (nouveau doc +
+  README table + cette entrée) ; backend/** non touché → pas de déploiement.
+
 ## 2026-10-10 — N°286 — **COMPARATIF CONCURRENTIEL — MikCloud vs PhenixSPOT** (écarts, douves, feuille de route « concurrent idéal »)
 
 ### Ce qui a changé

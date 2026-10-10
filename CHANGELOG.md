@@ -5,6 +5,52 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-10 — N°288 — **CARTE DE CONCURRENCE COMPLÈTE — au-delà de PhenixSPOT** (5 cercles, matrice décisive, modèle de prix, menaces + ripostes, arbitrage P0)
+
+### Ce qui a changé
+- **Nouveau document** `docs/CARTE-CONCURRENCE.md` : suite de N°286, élargit
+  l'analyse concurrentielle au champ ENTIER autour de MikCloud — recherches
+  web + lecture directe des sites publics des éditeurs le 2026-10-10.
+- **La découverte majeure : Viamikro/ViaPay (Ouagadougou)** — menace n°1
+  nouvelle : 500 FCFA/mois services + 1 000 FCFA/mois/hotspot + **commission
+  sur chaque vente**, paiement client final **Wave/OM/MTN/Moov/Free/Airtel**,
+  ViaRadius multi-routeurs (pool de tickets commun), WireGuard, VPN, «
+  Mikhmon Online », app Android, ~500 clients, 24 pays, témoignage Abidjan.
+- **La catégorie « vente automatique Mobile Money » existe déjà** : Jasiyo
+  (Kenya/Ouganda — 3 % du revenu ou min KSh 1 000/mois, M-Pesa/Paystack,
+  renouvellements auto, PPPoE inclus) et NextFi (Africa+Asia — 1,5-5 %
+  revenue-share, white-label NaaS, RDC incluse) la servent nativement. La
+  boucle achat→voucher du chantier N°1 est donc un **ticket d'entrée**, pas
+  un différenciateur.
+- **La case vide identifiée** : personne ne combine paiement client final
+  automatisé avec **l'argent direct chez le gérant (0 % commission, zéro
+  retrait)** + gestion CGNAT-proof (agent sortant) + boucliers sécurité +
+  offline-first + coût d'infra ≈ 0. MikCloud peut cocher cette case avec ses
+  briques existantes (grille d'offres + `waveUrl` direct + webhooks
+  idempotents + agent 45 s + 4 boucliers + PWA offline + Always Free).
+- **Champ de bataille des prix cartographié** (0 → 500-1 000 FCFA+commission →
+  1,5-5 % → min ~6 000 → **2 500/routeur MikCloud** → 7 000-60 000 PhenixSPOT →
+  34 000 Powerlynx → 155 000+ Splynx) : la pression vient du BAS ; le plat
+  MikCloud ne se défend que porté par l'argument cash-flow (« tout l'argent
+  est à vous, tout de suite »).
+- **Matrice décisive 8 colonnes × 9 capacités** : seule la colonne « MikCloud
+  cible » (post P0+P1) n'a aucun ❌.
+- **Arbitrage P0 affiné** : chantier N°1 confirmé en tête avec un twist — le
+  message n'est pas « payer en ligne » mais « l'argent tombe directement dans
+  le Wave du gérant » ; + ajout P0 recommandé : **page tarifs publique**
+  (tous les concurrents publient, MikCloud est invisible dans les comparatifs
+  SEO) ; doctrine de positionnement proposée : « Mikhmon exige un PC allumé.
+  PhenixSPOT gère vos tickets. Viamikro prend une commission sur chaque
+  vente. MikCloud pilote votre réseau, protège vos clients et vous laisse
+  tout l'argent. »
+- Top 5 menaces + ripostes (Viamikro, Easy-Mikhmon 48 pays, NextFi, Jasiyo,
+  PhenixSPOT) ; Mikhmon confirmé comme source de migration principale.
+
+### État produit
+- Aucun code ni workflow modifié — documentation uniquement ; backend/**
+  non touché → pas de déploiement. Décision exploitant attendue : GO
+  chantier N°1 (boucle de vente « argent direct ») + page /pricing.
+
 ## 2026-10-10 — N°287 — **KIT DE TRANSMISSION AUTONOME — INSTALLER UN BACK-END SUR FTECHCI SANS CLONER MIKCLOUD** (destiné : sect-api, réutilisable par tout futur dépôt)
 
 ### Ce qui a changé

@@ -5,6 +5,55 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-10 — N°295 — **LES 2 GESTES CONSOLE OCI PILOTÉS DEPUIS LE COFFRE** (workflow `ops-oci-gestures.yml` — Security List UDP 51820 + IP publique réservée, sans creds OCI côté sandbox : les secrets `OCI_*` du dépôt signent les appels, gabarit land-a1/ops-db-hybrid)
+
+### Ce qui a changé
+- **`ops-oci-gestures.yml`** (workflow_dispatch, `permissions: {}`, concurrence
+  dédiée) exécute les 2 gestes console restants du RUNBOOK-HEBERGEMENT §9,
+  jusqu'ici à la main — le coffre GitHub est le poste de pilotage OCI :
+  - **`preflight`** (défaut, lecture seule) : inventaire instances tenancy
+    (cible `Ftechci` — repli A1.Flex RUNNING), VNIC primaire, subnet,
+    Security Lists + règles ingress affichées, NSGs de la VNIC, table des IP
+    publiques de la région (éphémères/réservées/attachées), résolution DNS de
+    `api.mikcloud.ftci.fr`, puis santé VM en SSH (wg-quick@wg0, écoute
+    `ss -ulnp 51820`, iptables INPUT, `/opt/wireguard/endpoint`, `wg-peer.sh
+    list`, services mikcloud/caddy/wg-mini).
+  - **`open_udp_51820`** (mutatif, `confirm=EXECUTER`) : pour CHAQUE Security
+    List du subnet — règles relues, enrichies par jq (protocole 17, src
+    0.0.0.0/0, dest 51820-51820, description tracée), re-comptées AVANT le PUT
+    (UpdateSecurityList REMPLACE le jeu : jamais de règles perdues), idempotent
+    (déjà couvert → inchangé) ; NSGs de la VNIC traités pareil ; puis iptables
+    INPUT udp/51820 sur la VM + `netfilter-persistent save` (piège
+    Ubuntu-Oracle : le REJECT final bloque UDP 51820 même Security List
+    ouverte — même geste que bootstrap.sh pour 80/443) ; puis **preuve
+    RÉELLE** : peer test `gestureproof` créé sur la VM (clés restent sur la
+    VM, confs jamais dans les logs), tunnel monté depuis le runner
+    (AllowedIPs restreints + `Table = off` — aucune route du runner touchée),
+    handshake attendu ≤ 30 s, transferts affichés, peer révoqué (VM propre).
+  - **`reserve_public_ip`** (mutatif, `confirm=EXECUTER`) : si l'IP de la VNIC
+    est déjà RESERVED → no-op ; sinon IP réservée NEUVE (ou réutilise une
+    réservée AVAILABLE — réversibilité gratuite), retrait de l'éphémère,
+    attachement à la private-ip primaire (5 tentatives, gabarit land-a1),
+    attente VNIC, test TCP 22, **SSH via la NOUVELLE IP** :
+    `wg-peer.sh reip` (confs clients + livrets routeurs mis à jour, clés
+    conservées), grep des références restantes à l'ancienne IP, services,
+    puis contrôle prod `curl --resolve` (TLS SNI indifférent à l'IP) ;
+    récap final avec la checklist de clôture.
+  - **`verify_udp_51820`** : rejoue la preuve handshake seule.
+- **Pourquoi l'adresse CHANGE** : une éphémère ne peut PAS être convertie en
+  réservée (OCI ne permet pas de figer l'adresse courante) — la réservée est
+  une adresse neuve du pool régional ; l'ancienne est perdue à la suppression
+  de l'éphémère. Conséquences gérées : confs WireGuard (reip), secret
+  `ORACLE_HOST` (MAJ sandbox via API secrets — écriture seule, GITHUB_TOKEN ne
+  peut pas réécrire les secrets du dépôt), DNS `api.mikcloud.ftci.fr` (SEUL
+  clic exploitant restant : Cloudflare → A record → nouvelle IP, TTL 300 s ;
+  routers agent en check-in HTTPS reprennent seuls après propagation).
+- Hors code : zéro modification backend/frontend — le workflow est du pilotage
+  pur (les gestes étaient documentés §9, ils sont désormais exécutables d'un
+  dispatch, réversibles et rejouables).
+
+---
+
 ## 2026-10-10 — N°294 — **PPPOE PHASE A COMPLÈTE + PHASE B + PHASE C** (dashboard abonnés, suspension auto ExpMode→disable, renouvellement F4, IP statiques + renfort temps réel tunnel + provisioning assisté, récurrent auto + rappels — Option V chantier ⑥)
 
 ### Ce qui a changé

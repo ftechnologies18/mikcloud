@@ -1,0 +1,430 @@
+name: ops-oci-gestures
+
+# ═══ LES 2 GESTES CONSOLE OCI, PILOTÉS DEPUIS LE COFFRE GITHUB (N°295, 10/10/2026) ═══
+#
+# Contexte (N°292→N°294) : wg-mini est installé sur la VM Ftechci (Marseille)
+# et le produit « WireGuard vendable » est livré. Restent les 2 gestes
+# console documentés au RUNBOOK-HEBERGEMENT §9 — que ce workflow exécute
+# AVEC LES SECRETS OCI_* DU DÉPÔT (même modèle que land-a1.yml / region-probe
+# / ops-db-hybrid : la clé API signe chaque appel, rien ne circule en clair) :
+#
+#   Geste 1 — open_udp_51820 :
+#     Security List(s) du sous-réseau : ingress UDP/51820 src 0.0.0.0/0
+#     (+ NSGs de la VNIC si présents) + règle iptables INPUT sur la VM
+#     (piège Ubuntu-Oracle : le REJECT final des règles OCI bloque UDP 51820
+#     même la Security List ouverte — cf. bootstrap.sh 80/443) + preuve
+#     RÉELLE : handshake WireGuard d'un peer test depuis le runner
+#     (crypto-silencieux prouvé par un handshake authentifié).
+#
+#   Geste 2 — reserve_public_ip :
+#     Une IP éphémère change au stop/start (le resize N°272 l'a fait).
+#     Séquence (même chorégraphie que land-a1.yml « Bascule de l'IP réservée ») :
+#       1. IP réservée NEUVE créée dans eu-marseille-1 (ou réutilise une
+#          réservée AVAILABLE existante — adresse de secours déjà payée) ;
+#       2. l'éphémère est supprimée puis la réservée assignée à la private-ip
+#          primaire (⚠ l'IP PUBLIQUE CHANGE — interruption publique ~1 min) ;
+#       3. SSH via la nouvelle IP : wg-peer.sh reip (confs clients + livrets
+#         routeurs mis à jour, clés conservées) + grep des références à
+#         l'ancienne IP dans /etc/mikcloud /etc/caddy ;
+#       4. contrôle prod via --resolve (Caddy TLS SNI indifférent à l'IP) ;
+#       5. RAPPEL AFFICHÉ : flip DNS Cloudflare api.mikcloud.ftci.fr → nouvelle
+#          IP (SEUL geste restant à l'exploitant — 1 clic) + MAJ du secret
+#          ORACLE_HOST faite côté sandbox (l'API secrets est en écriture seule :
+#          GITHUB_TOKEN ne peut pas réécrire les secrets du dépôt).
+#
+#   preflight (DÉFAUT) — lecture seule intégrale : inventaire instances, VNIC,
+#     NSGs, Security Lists + règles, IP publiques (éphémères/réservées), état
+#     wg0/iptables/peers sur la VM, résolution DNS de api.mikcloud.ftci.fr.
+#
+#   verify_udp_51820 — rejoue la preuve handshake (utile après coup).
+#
+# Sécurité : mutations derrière confirm=EXECUTER (faute de frappe = refus) ;
+# UpdateSecurityList REMPLACE le jeu de règles → les règles existantes sont
+# relues, enrichies par jq, re-comptées AVANT le PUT (jamais de jeu vide) ;
+# heredoc 'REMOTE' (piège n°18) ; jetons/OS secrets jamais affichés ;
+# déclenchement workflow_dispatch UNIQUEMENT.
+
+on:
+  workflow_dispatch:
+    inputs:
+      gesture:
+        description: "Geste : preflight (lecture seule) | open_udp_51820 | reserve_public_ip | verify_udp_51820"
+        type: choice
+        default: "preflight"
+        options:
+          - preflight
+          - open_udp_51820
+          - reserve_public_ip
+          - verify_udp_51820
+      confirm:
+        description: "Taper EXECUTER pour autoriser open_udp_51820 / reserve_public_ip (les autres gestes n'en ont pas besoin)"
+        type: string
+        default: ""
+
+permissions: {}
+
+concurrency:
+  group: ops-oci-gestures
+  cancel-in-progress: false
+
+jobs:
+  gesture:
+    name: OCI — ${{ inputs.gesture }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      OCI_USER: ${{ secrets.OCI_CLI_USER }}
+      OCI_TENANCY: ${{ secrets.OCI_CLI_TENANCY }}
+      OCI_FINGERPRINT: ${{ secrets.OCI_CLI_FINGERPRINT }}
+      OCI_REGION: ${{ secrets.OCI_CLI_REGION }}
+      OCI_KEY: ${{ secrets.OCI_API_KEY }}
+    steps:
+      - name: Garde — confirmation pour les gestes mutatifs
+        run: |
+          case "${{ inputs.gesture }}" in
+            open_udp_51820|reserve_public_ip)
+              if [ "${{ inputs.confirm }}" != "EXECUTER" ]; then
+                echo "✗ geste mutatif : relancer avec confirm=EXECUTER (mesure anti-clic accidentel)"
+                exit 1
+              fi ;;
+          esac
+          echo "garde OK : ${{ inputs.gesture }}"
+
+      - name: OCI CLI + profil (clé API du coffre GitHub)
+        run: |
+          python3 -m pip install --quiet oci-cli \
+            || python3 -m pip install --quiet --break-system-packages oci-cli
+          mkdir -p ~/.oci
+          {
+            echo "[DEFAULT]"
+            echo "user=$OCI_USER"
+            echo "fingerprint=$OCI_FINGERPRINT"
+            echo "tenancy=$OCI_TENANCY"
+            echo "region=$OCI_REGION"
+            echo "key_file=$HOME/.oci/oci_api_key.pem"
+          } > ~/.oci/config
+          printf '%s\n' "$OCI_KEY" > ~/.oci/oci_api_key.pem
+          chmod 600 ~/.oci/config ~/.oci/oci_api_key.pem
+          oci iam region-subscription list --query 'length(data)' --raw-output >/dev/null
+          echo "auth OCI OK (région $OCI_REGION)"
+
+      - name: Découverte (lecture seule) — instance, VNIC, subnet, SL, NSG, IP publiques
+        id: disc
+        run: |
+          set -euo pipefail
+          TEN="$OCI_TENANCY"
+          echo "═══ Instances non terminées (tenancy, région $OCI_REGION) ═══"
+          oci compute instance list --compartment-id "$TEN" --all \
+            --query 'sort_by(data[?"lifecycle-state"!='\''TERMINATED'\''],&"display-name")[].{"nom":"display-name",etat:"lifecycle-state",forme:shape,id:id}' \
+            --output table || true
+          INST_ID="$(oci compute instance list --compartment-id "$TEN" --all \
+            --query "data[?\"display-name\"=='Ftechci' && \"lifecycle-state\"!='TERMINATED'].id | [0]" --raw-output 2>/dev/null || true)"
+          if [ -z "$INST_ID" ] || [ "$INST_ID" = "null" ]; then
+            INST_ID="$(oci compute instance list --compartment-id "$TEN" --all \
+              --query "data[?\"lifecycle-state\"=='RUNNING' && shape=='VM.Standard.A1.Flex'].id | [0]" --raw-output)"
+          fi
+          [ -n "$INST_ID" ] && [ "$INST_ID" != "null" ] || { echo "✗ aucune instance cible trouvée"; exit 1; }
+          INST_NAME="$(oci compute instance get --instance-id "$INST_ID" --query 'data."display-name"' --raw-output)"
+          STATE="$(oci compute instance get --instance-id "$INST_ID" --query 'data."lifecycle-state"' --raw-output)"
+          echo "Cible : $INST_NAME ($INST_ID) — $STATE"
+          echo "inst_id=$INST_ID" >> "$GITHUB_OUTPUT"
+          echo "inst_name=$INST_NAME" >> "$GITHUB_OUTPUT"
+
+          VNIC_ID="$(oci compute instance list-vnics --instance-id "$INST_ID" --query 'data[0]."vnic-id"' --raw-output)"
+          PRIV_ADDR="$(oci compute instance list-vnics --instance-id "$INST_ID" --query 'data[0]."private-ip"' --raw-output)"
+          PUB_ADDR="$(oci compute instance list-vnics --instance-id "$INST_ID" --query 'data[0]."public-ip"' --raw-output)"
+          echo "VNIC primaire : $VNIC_ID — privée $PRIV_ADDR — publique ${PUB_ADDR:-AUCUNE}"
+          echo "vnic_id=$VNIC_ID" >> "$GITHUB_OUTPUT"
+          echo "priv_addr=$PRIV_ADDR" >> "$GITHUB_OUTPUT"
+          echo "pub_addr=$PUB_ADDR" >> "$GITHUB_OUTPUT"
+
+          SUBNET_ID="$(oci network vnic get --vnic-id "$VNIC_ID" --query 'data."subnet-id"' --raw-output)"
+          NSG_IDS="$(oci network vnic get --vnic-id "$VNIC_ID" --query 'data."nsg-ids"' --raw-output)"
+          echo "Subnet : $SUBNET_ID"
+          echo "NSGs de la VNIC : $NSG_IDS"
+          echo "subnet_id=$SUBNET_ID" >> "$GITHUB_OUTPUT"
+          echo "nsg_ids=$NSG_IDS" >> "$GITHUB_OUTPUT"
+
+          echo
+          echo "═══ Security Lists du subnet + règles ingress ═══"
+          SL_IDS="$(oci network subnet get --subnet-id "$SUBNET_ID" --query 'data."security-list-ids"' --raw-output)"
+          echo "$SL_IDS" | jq -r '.[]'
+          for SL in $(echo "$SL_IDS" | jq -r '.[]'); do
+            echo "── $SL"
+            oci network security-list get --security-list-id "$SL" \
+              --query 'data."ingress-security-rules"' --output json \
+              | jq -c '.[] | {source,protocol,stateless:."is-stateless",tcp:."tcp-options",udp:."udp-options"}'
+          done
+          echo "sl_ids=$(echo "$SL_IDS" | jq -c .)" >> "$GITHUB_OUTPUT"
+
+          echo
+          echo "═══ IP publiques de la région (éphémères + réservées) ═══"
+          oci network public-ip list --scope REGION --compartment-id "$TEN" --all \
+            --query 'sort_by(data,&"lifecycle-state")[].{adresse:"ip-address",duree:"lifetime",etat:"lifecycle-state",attachee_a:."private-ip-id"}' \
+            --output table || true
+
+          DNS_API="$(python3 -c 'import socket; print(socket.gethostbyname("api.mikcloud.ftci.fr"))' 2>/dev/null || true)"
+          echo "DNS api.mikcloud.ftci.fr → ${DNS_API:-non résolu}"
+          echo "dns_api=$DNS_API" >> "$GITHUB_OUTPUT"
+
+      - name: Preflight — santé VM (wg0, iptables, peers, endpoint enregistré)
+        env:
+          SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+          DEPLOY_USER: ${{ secrets.ORACLE_USER }}
+          ORACLE_HOST: ${{ secrets.ORACLE_HOST }}
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null /tmp/k
+          printf '%s\n' "$SSH_KEY" > /tmp/k
+          SSHO="-i /tmp/k -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
+          ssh $SSHO "$DEPLOY_USER@$ORACLE_HOST" bash -s <<'REMOTE'
+          set -uo pipefail
+          echo "═══ wg-quick@wg0 / écoute UDP 51820 ═══"
+          systemctl is-active wg-quick@wg0 2>/dev/null || true
+          sudo ss -ulnp | grep ':51820' || echo "⚠ UDP 51820 PAS en écoute"
+          echo
+          echo "═══ iptables INPUT (les 12 premières règles) ═══"
+          sudo iptables -S INPUT | head -12
+          echo "règle udp/51820 présente ? $(sudo iptables -C INPUT -p udp --dport 51820 -j ACCEPT 2>/dev/null && echo OUI || echo NON)"
+          echo
+          echo "═══ endpoint enregistré + peers ═══"
+          sudo cat /opt/wireguard/endpoint 2>/dev/null || echo "(endpoint absent)"
+          sudo /opt/wireguard/wg-peer.sh list 2>/dev/null || echo "(wg-peer.sh list indisponible)"
+          echo
+          echo "═══ services ═══"
+          for s in mikcloud caddy wg-mini; do printf '%-10s %s\n' "$s" "$(systemctl is-active $s 2>/dev/null || true)"; done
+          REMOTE
+          echo "preflight VM terminé"
+
+      # ───────────────────────── GESTE 1 — UDP 51820 ─────────────────────────
+      - name: "Geste 1 — Security Lists + NSGs : ingress UDP/51820 (idempotent)"
+        if: inputs.gesture == 'open_udp_51820'
+        run: |
+          set -euo pipefail
+          TEN="$OCI_TENANCY"
+          SUBNET_ID="${{ steps.disc.outputs.subnet_id }}"
+          VNIC_ID="${{ steps.disc.outputs.vnic_id }}"
+          NEWRULE='{"protocol":"17","source":"0.0.0.0/0","source-type":"CIDR_BLOCK","is-stateless":false,"description":"WireGuard UDP 51820 (ops-oci-gestures N°295)","udp-options":{"destination-port-range":{"min":51820,"max":51820},"source-port-range":null},"tcp-options":null,"icmp-options":null}'
+
+          for SL in $(echo '${{ steps.disc.outputs.sl_ids }}' | jq -r '.[]'); do
+            RULES="$(oci network security-list get --security-list-id "$SL" --query 'data."ingress-security-rules"' --output json)"
+            OPEN="$(echo "$RULES" | jq '[.[] | select((.protocol=="17") and ((.source//"")=="0.0.0.0/0") and (((.["udp-options"]["destination-port-range"]["min"]) // 0) <= 51820 and (((.["udp-options"]["destination-port-range"]["max"]) // 65535)) >= 51820))] | length')"
+            if [ "${OPEN:-0}" -gt 0 ]; then
+              echo "✓ $SL : UDP/51820 déjà couvert — aucun changement"
+              continue
+            fi
+            BEFORE="$(echo "$RULES" | jq length)"
+            echo "$RULES" | jq --argjson r "$NEWRULE" '. + [$r]' > /tmp/rules.json
+            AFTER="$(jq length /tmp/rules.json)"
+            [ "$AFTER" = "$((BEFORE + 1))" ] || { echo "✗ construction des règles ($BEFORE → $AFTER) — ABANDON sans PUT"; exit 1; }
+            echo "→ mise à jour de $SL ($BEFORE règles ingress + 1)"
+            oci network security-list update --security-list-id "$SL" \
+              --ingress-security-rules file:///tmp/rules.json --force \
+              --query 'data."display-name"' --raw-output >/dev/null
+            NOW="$(oci network security-list get --security-list-id "$SL" --query 'data."ingress-security-rules"' --output json | jq length)"
+            [ "$NOW" = "$AFTER" ] || { echo "✗ vérification post-PUT ($NOW ≠ $AFTER)"; exit 1; }
+            echo "✓ $SL : $NOW règles ingress — UDP/51820 ouvert (règles existantes conservées)"
+          done
+
+          NSG_IDS="${{ steps.disc.outputs.nsg_ids }}"
+          for NSG in $(echo "$NSG_IDS" | jq -r '.[]' 2>/dev/null); do
+            [ -n "$NSG" ] || continue
+            echo "→ NSG détecté : $NSG"
+            EXISTS="$(oci network nsg rules list --nsg-id "$NSG" --all --output json \
+              | jq '[.[] | select((.direction=="INGRESS") and (.protocol=="17") and ((.source//"")=="0.0.0.0/0"))] | length')"
+            if [ "${EXISTS:-0}" -gt 0 ]; then echo "  ✓ déjà couvert"; continue; fi
+            printf '%s' "$NEWRULE" | jq '. + {"direction":"INGRESS"}' > /tmp/nsgrule.json
+            oci network nsg rules add --nsg-id "$NSG" --security-rules file:///tmp/nsgrule.json >/dev/null
+            echo "  ✓ règle NSG ajoutée"
+          done
+
+      - name: Geste 1 — iptables INPUT udp/51820 sur la VM (piège Ubuntu-Oracle)
+        if: inputs.gesture == 'open_udp_51820'
+        env:
+          SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+          DEPLOY_USER: ${{ secrets.ORACLE_USER }}
+          ORACLE_HOST: ${{ secrets.ORACLE_HOST }}
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null /tmp/k
+          printf '%s\n' "$SSH_KEY" > /tmp/k
+          SSHO="-i /tmp/k -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
+          ssh $SSHO "$DEPLOY_USER@$ORACLE_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          if sudo iptables -C INPUT -p udp --dport 51820 -j ACCEPT 2>/dev/null; then
+            echo "✓ iptables : udp/51820 déjà accepté"
+          else
+            sudo iptables -I INPUT -p udp --dport 51820 -j ACCEPT
+            sudo netfilter-persistent save >/dev/null 2>&1 || sudo iptables-save > /etc/iptables/rules.v4
+            echo "✓ iptables : règle INPUT udp/51820 posée + persistée (netfilter-persistent)"
+          fi
+          sudo iptables -S INPUT | head -12
+          REMOTE
+
+      - name: "Geste 1 / verify — PREUVE RÉELLE : handshake WireGuard depuis le runner"
+        if: inputs.gesture == 'open_udp_51820' || inputs.gesture == 'verify_udp_51820'
+        env:
+          SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+          DEPLOY_USER: ${{ secrets.ORACLE_USER }}
+          ORACLE_HOST: ${{ secrets.ORACLE_HOST }}
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null /tmp/k
+          printf '%s\n' "$SSH_KEY" > /tmp/k
+          SSHO="-i /tmp/k -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
+          echo "── création du peer test sur la VM (clés sur la VM, jamais dans les logs)"
+          ssh $SSHO "$DEPLOY_USER@$ORACLE_HOST" 'sudo /opt/wireguard/wg-peer.sh add gestureproof' || true
+          ssh $SSHO "$DEPLOY_USER@$ORACLE_HOST" 'sudo cat /opt/wireguard/peers/gestureproof.conf' > /tmp/gestureproof.conf
+          [ -s /tmp/gestureproof.conf ] || { echo "✗ conf test vide"; exit 1; }
+          grep -q '^Endpoint' /tmp/gestureproof.conf || { echo "✗ conf test sans endpoint"; exit 1; }
+          echo "── conf runner : routes intactes (AllowedIPs restreints, Table=off, DNS retiré)"
+          sed -i -e '/^DNS =/d' -e 's/^AllowedIPs = .*/AllowedIPs = 10.8.0.1\/32/' /tmp/gestureproof.conf
+          printf '\nTable = off\n' >> /tmp/gestureproof.conf
+          sudo apt-get update -qq >/dev/null 2>&1 || true
+          sudo apt-get install -y -qq wireguard-tools >/dev/null 2>&1
+          sudo modprobe wireguard 2>/dev/null || true
+          sudo wg-quick up /tmp/gestureproof.conf
+          HS=0
+          for i in $(seq 1 15); do
+            sleep 2
+            HS="$(sudo wg show gestureproof latest-handshakes 2>/dev/null | awk '{print $2}' | head -1)"
+            [ -n "$HS" ] && [ "$HS" != "0" ] && break
+          done
+          RX="$(sudo wg show gestureproof transfer 2>/dev/null | awk '{print $2"/"$3}' | head -1)"
+          sudo wg-quick down /tmp/gestureproof.conf || true
+          rm -f /tmp/gestureproof.conf
+          if [ -n "$HS" ] && [ "$HS" != "0" ]; then
+            echo "✅ HANDSHAKE RÉEL OK (âge ${HS}s, reçu/envoyé $RX) — Security List + iptables + wg0 : la chaîne UDP 51820 est OUVERTE"
+          else
+            echo "✗ pas de handshake — UDP 51820 toujours bloqué (Security List ? iptables ?)"
+            exit 1
+          fi
+          ssh $SSHO "$DEPLOY_USER@$ORACLE_HOST" 'sudo /opt/wireguard/wg-peer.sh remove gestureproof'
+          rm -f /tmp/k
+          echo "── peer test révoqué (VM propre)"
+
+      # ───────────────────────── GESTE 2 — IP RÉSERVÉE ─────────────────────────
+      - name: Geste 2 — éphémère → réservée (création, swap, reip, contrôles)
+        id: g2
+        if: inputs.gesture == 'reserve_public_ip'
+        env:
+          SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+          DEPLOY_USER: ${{ secrets.ORACLE_USER }}
+        run: |
+          set -euo pipefail
+          TEN="$OCI_TENANCY"
+          INST_ID="${{ steps.disc.outputs.inst_id }}"
+          SUBNET_ID="${{ steps.disc.outputs.subnet_id }}"
+          PRIV_ADDR="${{ steps.disc.outputs.priv_addr }}"
+          CUR_PUB="${{ steps.disc.outputs.pub_addr }}"
+          OLD_DNS="${{ steps.disc.outputs.dns_api }}"
+
+          echo "═══ état avant ═══"
+          echo "IP publique actuelle (éphémère ?) : $CUR_PUB — DNS api.mikcloud.ftci.fr : $OLD_DNS"
+          LIFE="$(oci network public-ip list --scope REGION --compartment-id "$TEN" --all \
+            --query "data[?\"ip-address\"=='$CUR_PUB'] | [0].\"lifetime\"" --raw-output)"
+          if [ "$LIFE" = "RESERVED" ]; then
+            echo "✓ l'IP de la VM est DÉJÀ réservée — rien à faire"
+            exit 0
+          fi
+          [ -n "$CUR_PUB" ] && [ "$CUR_PUB" != "null" ] || { echo "✗ pas d'IP publique sur la VNIC (état inattendu)"; exit 1; }
+
+          PRIV_ID="$(oci network private-ip list --subnet-id "$SUBNET_ID" \
+            --query "data[?\"ip-address\"=='$PRIV_ADDR'].id | [0]" --raw-output)"
+          [ -n "$PRIV_ID" ] && [ "$PRIV_ID" != "null" ] || { echo "✗ OCID private-ip introuvable"; exit 1; }
+
+          FREE_ID="$(oci network public-ip list --scope REGION --compartment-id "$TEN" --all \
+            --query "data[?\"lifecycle-state\"=='AVAILABLE' && \"lifetime\"=='RESERVED'] | [0].id" --raw-output)"
+          if [ -n "$FREE_ID" ] && [ "$FREE_ID" != "null" ]; then
+            RES_ID="$FREE_ID"
+            echo "→ réutilisation d'une IP réservée AVAILABLE déjà présente"
+          else
+            RES_ID="$(oci network public-ip create --lifetime RESERVED --compartment-id "$TEN" \
+              --query 'data.id' --raw-output)"
+            echo "→ IP réservée créée : $RES_ID"
+          fi
+          NEW_IP="$(oci network public-ip get --public-ip-id "$RES_ID" --query 'data."ip-address"' --raw-output)"
+          echo "★ NOUVELLE IP PUBLIQUE : $NEW_IP (remplace $CUR_PUB — l'adresse change, C'EST le but)"
+          echo "new_ip=$NEW_IP" >> "$GITHUB_OUTPUT"
+          echo "old_ip=$CUR_PUB" >> "$GITHUB_OUTPUT"
+
+          echo "── retrait de l'éphémère $CUR_PUB (interruption publique ~1 min, DNS sera flipé ensuite)"
+          EPH_ID="$(oci network public-ip list --scope REGION --compartment-id "$TEN" --all \
+            --query "data[?\"ip-address\"=='$CUR_PUB'].id | [0]" --raw-output)"
+          if [ -n "$EPH_ID" ] && [ "$EPH_ID" != "null" ]; then
+            oci network public-ip delete --public-ip-id "$EPH_ID" --force
+          else
+            echo "⚠ OCID éphémère introuvable — poursuite de l'attachement de la réservée"
+          fi
+          echo "── attachement de la réservée à la private-ip primaire"
+          OUT=""
+          for i in 1 2 3 4 5; do
+            OUT="$(oci network public-ip update --public-ip-id "$RES_ID" --private-ip-id "$PRIV_ID" --force 2>&1)" && break
+            echo "tentative $i : $OUT"; sleep 20
+          done
+          echo "$OUT" | grep -q ocid1 || { echo "✗ attachement échoué — ROLLBACK : oci network public-ip create --lifetime EPHEMERAL --private-ip-id $PRIV_ID"; exit 1; }
+
+          echo "── attente que la VNIC porte $NEW_IP"
+          GOT=""
+          for i in $(seq 1 24); do
+            GOT="$(oci compute instance list-vnics --instance-id "$INST_ID" --query 'data[0]."public-ip"' --raw-output)"
+            [ "$GOT" = "$NEW_IP" ] && break
+            sleep 5
+          done
+          [ "$GOT" = "$NEW_IP" ] || { echo "✗ la VNIC ne porte pas la nouvelle IP (vu : $GOT)"; exit 1; }
+          echo "✓ VNIC mise à jour : $NEW_IP (réservée — survit aux stop/start)"
+
+          echo "── TCP 22 joignable sur la nouvelle IP ?"
+          (timeout 10 bash -c "cat < /dev/null > /dev/tcp/$NEW_IP/22") && echo "✓ 22/TCP ouvert" || { echo "✗ 22/TCP injoignable"; exit 1; }
+
+          echo "── SSH via la nouvelle IP : wg-peer.sh reip + références à l'ancienne IP"
+          install -m 600 /dev/null /tmp/k
+          printf '%s\n' "$SSH_KEY" > /tmp/k
+          SSHO="-i /tmp/k -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
+          for i in 1 2 3 4 5 6; do
+            ssh $SSHO "$DEPLOY_USER@$NEW_IP" 'echo SSH-OK' && break
+            echo "tentative SSH $i…"; sleep 10
+          done
+          ssh $SSHO "$DEPLOY_USER@$NEW_IP" bash -s -- "$NEW_IP" "$CUR_PUB" <<'REMOTE'
+          set -euo pipefail
+          NEWIP="${1:-}"; OLDIP="${2:-}"
+          if [ -x /opt/wireguard/wg-peer.sh ]; then
+            sudo /opt/wireguard/wg-peer.sh reip "$NEWIP"
+          else
+            echo "⚠ wg-peer.sh absent — reip ignoré"
+          fi
+          echo "── références restantes à l'ancienne IP ($OLDIP) :"
+          sudo grep -rIl "$OLDIP" /etc/mikcloud /etc/caddy /opt/wireguard 2>/dev/null | grep -v '/peers/' || echo "  aucune (hors confs peers déjà mises à jour)"
+          echo "── services :"
+          for s in mikcloud caddy wg-mini wg-quick@wg0; do printf '%-14s %s\n' "$s" "$(systemctl is-active $s 2>/dev/null || true)"; done
+          REMOTE
+          rm -f /tmp/k
+
+          echo "── contrôle prod via --resolve (TLS SNI api.mikcloud.ftci.fr → $NEW_IP)"
+          CODE="$(curl -s -o /tmp/body.json -w '%{http_code}' --resolve "api.mikcloud.ftci.fr:443:$NEW_IP" --max-time 20 'https://api.mikcloud.ftci.fr/' || true)"
+          echo "HTTP $CODE sur https://api.mikcloud.ftci.fr/ (via $NEW_IP) : $(head -c 120 /tmp/body.json 2>/dev/null || true)"
+          rm -f /tmp/body.json
+          case "$CODE" in 200|401|404) echo "✓ le backend répond sur la nouvelle IP" ;; *) echo "⚠ code $CODE — vérifier caddy/mikcloud" ;; esac
+
+          echo
+          echo "════════════════════════════════════════════════════════════════════"
+          echo "★ IP RÉSERVÉE EN PLACE : $NEW_IP (ancienne : $CUR_PUB)"
+          echo "  RESTE À FAIRE (exploitant, 1 clic) :"
+          echo "   1. Cloudflare → DNS → api.mikcloud.ftci.fr  A  $CUR_PUB  →  $NEW_IP (TTL 300 s)"
+          echo "   2. (fait par l'agent juste après) secret ORACLE_HOST = $NEW_IP"
+          echo "   3. Routers MikroTik avec tunnel WG actif : ré-embarquer l'endpoint"
+          echo "      (console MikCloud → Routeur → Tunnel WireGuard → Paramètres serveur)"
+          echo "  ROLLBACK possible : réassigner une éphémère neuve (adresse différente"
+          echo "  de l'originale — elle est perdue à la suppression de l'éphémère)."
+          echo "════════════════════════════════════════════════════════════════════"
+
+      - name: Résumé du geste
+        if: always()
+        run: |
+          {
+            echo "### ops-oci-gestures — ${{ inputs.gesture }}"
+            echo "- instance : ${{ steps.disc.outputs.inst_name || '?' }} (${{ steps.disc.outputs.inst_id || '?' }})"
+            echo "- IP publique avant : \`${{ steps.disc.outputs.pub_addr || '?' }}\`"
+            echo "- IP publique après (geste 2) : \`${{ steps.g2.outputs.new_ip || '(inchangée)' }}\`"
+            echo "- DNS api.mikcloud.ftci.fr (au moment du run) : \`${{ steps.disc.outputs.dns_api || '?' }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

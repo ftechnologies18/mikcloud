@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { useTheme } from "next-themes";
 import {
   Activity,
   Clock,
@@ -65,7 +66,7 @@ function ChartTooltip({
   const raw = payload[0].value;
   const value = typeof raw === "number" ? raw : Number(raw ?? 0);
   return (
-    <div className="rounded-lg border border-border bg-popover px-3 py-2 text-xs shadow-lg">
+    <div className="rounded-xl border border-border bg-popover/95 px-3 py-2 text-xs shadow-lg backdrop-blur-md">
       <p className="text-muted-foreground">{label}</p>
       <p className="mt-0.5 font-semibold text-foreground">
         {formatter ? formatter(value) : String(value)}
@@ -140,6 +141,8 @@ function SiteCard({ site, currency, lang }: { site: SiteOverview; currency: stri
 export default function DashboardView() {
   const { t, tf, lang } = useI18n();
   const charts = useChartPalette();
+  const { resolvedTheme } = useTheme();
+  const isDark = resolvedTheme !== "light";
   const AXIS_TICK = { fill: charts.axis, fontSize: 12 };
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["/api/dashboard"],
@@ -320,9 +323,9 @@ export default function DashboardView() {
         </Card>
       )}
 
-      {/* Graphiques */}
+      {/* Graphiques — panneaux de verre optique V10 (blur + reflet spéculaire) */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Card>
+        <Card className="glass-panel">
           <CardHeader className="px-4 sm:px-6">
             <CardTitle className="text-base">{t("dashboard.sessionsChart")}</CardTitle>
           </CardHeader>
@@ -330,6 +333,22 @@ export default function DashboardView() {
             <div className="h-64 w-full sm:h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={data.sessionsTimeline} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                  {/* V10 — dégradé vertical bleu + glow néon (feDropShadow) */}
+                  <defs>
+                    <linearGradient id="gradSessionsArea" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={charts.series[0]} stopOpacity={0.38} />
+                      <stop offset="100%" stopColor={charts.series[0]} stopOpacity={0.02} />
+                    </linearGradient>
+                    <filter id="glowSessionsArea" x="-40%" y="-40%" width="180%" height="180%">
+                      <feDropShadow
+                        dx="0"
+                        dy="0"
+                        stdDeviation={isDark ? 13 : 12}
+                        floodColor={charts.series[0]}
+                        floodOpacity={isDark ? 0.55 : 0.5}
+                      />
+                    </filter>
+                  </defs>
                   <CartesianGrid stroke={charts.grid} strokeOpacity={0.6} vertical={false} />
                   <XAxis
                     dataKey="t"
@@ -346,13 +365,35 @@ export default function DashboardView() {
                       <ChartTooltip formatter={(v) => tf("dashboard.sessionUnit", { n: nf(v), p: v > 1 ? "s" : "" })} />
                     }
                   />
+                  {/* Halo lumineux V10 : large trait translucide derrière la courbe */}
                   <Area
                     type="monotone"
                     dataKey="value"
                     stroke={charts.series[0]}
-                    strokeWidth={2}
-                    fill={charts.areaFill}
+                    strokeWidth={12}
+                    strokeOpacity={0.18}
+                    fill="none"
+                    fillOpacity={0}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="value"
+                    stroke={charts.series[0]}
+                    strokeWidth={2.5}
+                    fill="url(#gradSessionsArea)"
                     fillOpacity={1}
+                    filter="url(#glowSessionsArea)"
+                    activeDot={{ r: 4, strokeWidth: 2, stroke: charts.grid, fill: charts.series[0] }}
+                  />
+                  {/* Liseré néon au sommet de la courbe (visible en Nuit) */}
+                  <Area
+                    type="monotone"
+                    dataKey="value"
+                    stroke="#FFFFFF"
+                    strokeOpacity={isDark ? 0.28 : 0}
+                    strokeWidth={1}
+                    fill="none"
+                    fillOpacity={0}
                   />
                 </AreaChart>
               </ResponsiveContainer>
@@ -360,7 +401,7 @@ export default function DashboardView() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="glass-panel">
           <CardHeader className="px-4 sm:px-6">
             <CardTitle className="text-base">{t("dashboard.revenueChart")}</CardTitle>
           </CardHeader>
@@ -381,7 +422,7 @@ export default function DashboardView() {
                     cursor={{ fill: charts.cursorFill, fillOpacity: 0.08 }}
                     content={<ChartTooltip formatter={(v) => formatCurrency(v, currency, lang)} />}
                   />
-                  <Bar dataKey="value" fill={charts.series[0]} radius={[4, 4, 0, 0]} maxBarSize={36} />
+                  <Bar dataKey="value" fill={charts.series[0]} radius={[6, 6, 0, 0]} maxBarSize={32} />
                 </BarChart>
               </ResponsiveContainer>
             </div>

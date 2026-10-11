@@ -18,6 +18,19 @@ const nextConfig: NextConfig = {
      CI — triple barrière locale + CI + build. */
   reactStrictMode: false,
   allowedDevOrigins: ["*.space-z.ai", "localhost", "127.0.0.1"],
+  /* POC refonte UI (N°298) — proxy API local uniquement : activé par
+     MIKCLOUD_DEV_API_PROXY=1 (dev local / sandbox). En production Vercel,
+     la variable est absente → aucune réécriture (mode direct via
+     NEXT_PUBLIC_API_BASE inchangé). Aucun impact contrat d'API. */
+  async rewrites() {
+    if (process.env.MIKCLOUD_DEV_API_PROXY !== "1") return [];
+    return [
+      {
+        source: "/api/:path*",
+        destination: "http://localhost:4000/api/:path*",
+      },
+    ];
+  },
 };
 
 export default nextConfig;

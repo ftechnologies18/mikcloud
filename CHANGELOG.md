@@ -5,6 +5,39 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-11 — N°298 — **refonte UI « V10 Charbon & Corail » : glassmorphism duel Nuit/Jour + toggle (POC sandbox validé avant transposition)**
+
+### Méthode
+- Design de référence reproduit **pixel-fidèle en sandbox** d'abord (2 déclinaisons :
+  Nuit charbon #0A0B0F, Jour #F5F6F8), évalué par IA vision en itérations
+  (7,5 → 9 → 9,5/10 Nuit ; 8,5 → 9,2/10 Jour) — **aucun push tant que la
+  validation visuelle n'était pas acquise**, puis transposé ici.
+
+### Ce qui a changé (frontend uniquement)
+- **Tokens `globals.css`** : Jour neutre-froid #F5F6F8 (oklch 0.971 0.004 264)
+  + Nuit charbon inchangé ; fond = 3 orbes (corail/bleu/émeraude) viewport-fixées
+  + texture points 30px + grain photographique feTurbulence (5 couches, blend
+  overlay) — les orbes rendent le verre réellement perceptible dans les 2 modes.
+- **`.glass-panel` (nouveau)** : verre optique duel (dégradé 135° translucide,
+  backdrop-blur 20px, reflet spéculaire `::before` haut-gauche + diagonale,
+  ombre atmosphérique, hover -2px) — appliqué aux surfaces clés : `StatCard`
+  (~150 usages, toutes les vues héritent) + cartes graphiques du dashboard.
+- **`[data-slot="card"]`** devient « verre statique » duel (translucide + biseau,
+  SANS blur — perf mobiles : le « glass ciblé » reste la règle, seules les
+  surfaces clés paient le backdrop-filter).
+- **Dashboard** : aire bleue « Connexions » avec glow néon `feDropShadow`
+  (13/0.55 Nuit, 12/0.5 Jour) + halo 12px + liseré néon blanc (Nuit) ;
+  cartes KPI/graphiques en `.glass-panel`.
+- **`chart-theme.ts`** : DAY aligné POC (série bleue #3B82F6) ; `viewport.themeColor`
+  dual #0A0B0F/#F5F6F8 (périmé : tons menthe N°60).
+- **Toggle Nuit/Jour** : next-themes existant conservé (topbar + palette ⌘K),
+  aucune nouvelle dépendance.
+
+### Non-objectifs
+- Aucun changement backend, aucune migration DB (modif purement présentation :
+  aucun contrat d'API, aucune vue refactorée structurellement, i18n intact).
+- Render toujours gelé (sentinel RENDER-DEPLOY-FROZEN inchangé).
+
 ## 2026-10-10 — N°297 — **boucle de pilotage WAL auto-entretenue : wal-quota derrière le heartbeat + trace committée dans le dépôt (lisible sans API REST)**
 
 ### Contexte (incident réseau constaté pendant la re-mesure N°296)

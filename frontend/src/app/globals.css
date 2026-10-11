@@ -43,84 +43,93 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
-/* ─── MikCloud « Aurora Emerald » — identité duale Nuit / Jour ───
-   Nuit  : vert-forêt profond (hue ~168°) + émeraude lumineux, halos aurora.
-   Jour  : papier menthe chaud, encre émeraude profonde.
-   Signature : dégradés --grad-a → --grad-b (émeraude → teal) partout
+/* ─── MikCloud « V10 Charbon & Corail » — identité duale Nuit / Jour ───
+   Nuit  : charbon neutre-bleuté (#0A0B0F) + corail lumineux (#FF6B35),
+           données bleu-cyan, succès émeraude (héritage MikCloud).
+   Jour  : blanc-gris #F5F6F8 neutre, encre profonde, accent corail,
+           orbes pastel + grain photographique (POC « V10-Light » validé).
+   Signature : dégradés --grad-a → --grad-b (corail → rouge-orangé) partout
    (boutons primaires, pilule de nav active, tuiles d'icônes, wordmark). */
 :root {
   color-scheme: light;
-  --radius: 0.625rem;
-  --background: oklch(0.978 0.008 155);
-  --foreground: oklch(0.225 0.025 165);
-  --card: oklch(1 0.002 155);
-  --card-foreground: oklch(0.225 0.025 165);
-  --popover: oklch(1 0.002 155);
-  --popover-foreground: oklch(0.225 0.025 165);
-  --primary: oklch(0.55 0.15 163);
-  --primary-foreground: oklch(0.985 0.01 160);
-  --secondary: oklch(0.945 0.012 160);
-  --secondary-foreground: oklch(0.3 0.04 163);
-  --muted: oklch(0.94 0.012 160);
-  --muted-foreground: oklch(0.487 0.025 165);
-  --accent: oklch(0.92 0.035 163);
-  --accent-foreground: oklch(0.28 0.05 163);
+  --radius: 0.75rem;
+  --background: oklch(0.971 0.004 264);
+  --foreground: oklch(0.235 0.02 60);
+  --card: oklch(1 0.002 264);
+  --card-foreground: oklch(0.235 0.02 60);
+  --popover: oklch(1 0.002 264);
+  --popover-foreground: oklch(0.235 0.02 60);
+  --primary: oklch(0.63 0.19 42);
+  --primary-foreground: oklch(0.985 0.01 80);
+  --secondary: oklch(0.952 0.006 264);
+  --secondary-foreground: oklch(0.3 0.03 55);
+  --muted: oklch(0.947 0.005 264);
+  --muted-foreground: oklch(0.49 0.02 70);
+  --accent: oklch(0.94 0.03 60);
+  --accent-foreground: oklch(0.28 0.04 50);
   --destructive: oklch(0.58 0.21 25);
-  --border: oklch(0.35 0.05 165 / 14%);
-  --input: oklch(0.35 0.05 165 / 20%);
-  --ring: oklch(0.55 0.15 163);
-  --chart-1: oklch(0.55 0.15 163);
-  --chart-2: oklch(0.55 0.12 195);
-  --chart-3: oklch(0.7 0.15 70);
-  --chart-4: oklch(0.6 0.2 15);
-  --chart-5: oklch(0.62 0.16 130);
-  --sidebar: oklch(0.934 0.03 163);
-  --sidebar-foreground: oklch(0.235 0.035 165);
-  --sidebar-primary: oklch(0.55 0.15 163);
-  --sidebar-primary-foreground: oklch(0.985 0.01 160);
-  --sidebar-accent: oklch(0.885 0.038 164);
-  --sidebar-accent-foreground: oklch(0.26 0.045 163);
-  --sidebar-border: oklch(0.35 0.05 165 / 12%);
-  --sidebar-ring: oklch(0.55 0.15 163);
-  --grad-a: oklch(0.58 0.16 160);
-  --grad-b: oklch(0.55 0.12 195);
+  --border: oklch(0.35 0.04 60 / 14%);
+  --input: oklch(0.35 0.04 60 / 20%);
+  --ring: oklch(0.63 0.19 42);
+  --chart-1: oklch(0.55 0.19 258);
+  --chart-2: oklch(0.68 0.12 220);
+  --chart-3: oklch(0.6 0.15 163);
+  --chart-4: oklch(0.75 0.15 75);
+  --chart-5: oklch(0.62 0.2 15);
+  --sidebar: oklch(0.955 0.008 264);
+  --sidebar-foreground: oklch(0.25 0.02 60);
+  --sidebar-primary: oklch(0.63 0.19 42);
+  --sidebar-primary-foreground: oklch(0.985 0.01 80);
+  --sidebar-accent: oklch(0.93 0.025 60);
+  --sidebar-accent-foreground: oklch(0.26 0.03 50);
+  --sidebar-border: oklch(0.35 0.04 60 / 12%);
+  --sidebar-ring: oklch(0.63 0.19 42);
+  --grad-a: oklch(0.66 0.19 44);
+  --grad-b: oklch(0.58 0.21 28);
+  /* Grain photographique V10 — surcouche des halos du fond (blend overlay) */
+  --bg-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
+  /* Texture points technique — estompe l'aspect « blanc mat » du Jour */
+  --bg-dots: radial-gradient(circle, oklch(0.35 0.04 60 / 0.11) 1px, transparent 1.4px);
 }
 
 .dark {
   color-scheme: dark;
-  --background: oklch(0.132 0.012 170);
-  --foreground: oklch(0.975 0.005 160);
-  --card: oklch(0.172 0.014 168);
-  --card-foreground: oklch(0.975 0.005 160);
-  --popover: oklch(0.205 0.016 168);
-  --popover-foreground: oklch(0.975 0.005 160);
-  --primary: oklch(0.72 0.155 163);
-  --primary-foreground: oklch(0.13 0.03 165);
-  --secondary: oklch(0.235 0.015 168);
-  --secondary-foreground: oklch(0.975 0.005 160);
-  --muted: oklch(0.225 0.012 168);
-  --muted-foreground: oklch(0.685 0.015 168);
-  --accent: oklch(0.25 0.03 165);
-  --accent-foreground: oklch(0.96 0.01 162);
+  /* V10 — fond charbon (#0A0B0F ≈ oklch 0.135), cartes anthracite,
+     corail #FF6B35 en primaire, émeraude conservé pour le succès. */
+  --background: oklch(0.145 0.013 264);
+  --foreground: oklch(0.972 0.004 90);
+  --card: oklch(0.185 0.014 264);
+  --card-foreground: oklch(0.972 0.004 90);
+  --popover: oklch(0.215 0.015 264);
+  --popover-foreground: oklch(0.972 0.004 90);
+  --primary: oklch(0.685 0.188 42);
+  --primary-foreground: oklch(0.15 0.02 40);
+  --secondary: oklch(0.245 0.014 264);
+  --secondary-foreground: oklch(0.972 0.004 90);
+  --muted: oklch(0.235 0.012 264);
+  --muted-foreground: oklch(0.665 0.012 264);
+  --accent: oklch(0.26 0.016 264);
+  --accent-foreground: oklch(0.96 0.006 90);
   --destructive: oklch(0.637 0.208 25.45);
-  --border: oklch(0.72 0.09 165 / 15%);
-  --input: oklch(0.72 0.08 165 / 19%);
-  --ring: oklch(0.72 0.155 163);
-  --chart-1: oklch(0.72 0.155 163);
-  --chart-2: oklch(0.7 0.12 185);
-  --chart-3: oklch(0.785 0.16 80);
-  --chart-4: oklch(0.66 0.2 15);
-  --chart-5: oklch(0.82 0.17 130);
-  --sidebar: oklch(0.124 0.02 171);
-  --sidebar-foreground: oklch(0.975 0.005 160);
-  --sidebar-primary: oklch(0.72 0.155 163);
-  --sidebar-primary-foreground: oklch(0.13 0.03 165);
-  --sidebar-accent: oklch(0.22 0.028 170);
-  --sidebar-accent-foreground: oklch(0.975 0.005 160);
-  --sidebar-border: oklch(0.72 0.09 165 / 13%);
-  --sidebar-ring: oklch(0.72 0.155 163);
-  --grad-a: oklch(0.72 0.16 158);
-  --grad-b: oklch(0.68 0.13 195);
+  --border: oklch(0.75 0.015 264 / 12%);
+  --input: oklch(0.75 0.015 264 / 17%);
+  --ring: oklch(0.685 0.188 42);
+  --chart-1: oklch(0.62 0.19 258);
+  --chart-2: oklch(0.75 0.12 215);
+  --chart-3: oklch(0.7 0.17 163);
+  --chart-4: oklch(0.8 0.15 80);
+  --chart-5: oklch(0.65 0.22 15);
+  --sidebar: oklch(0.165 0.014 264);
+  --sidebar-foreground: oklch(0.972 0.004 90);
+  --sidebar-primary: oklch(0.685 0.188 42);
+  --sidebar-primary-foreground: oklch(0.15 0.02 40);
+  --sidebar-accent: oklch(0.23 0.015 264);
+  --sidebar-accent-foreground: oklch(0.972 0.004 90);
+  --sidebar-border: oklch(0.75 0.015 264 / 11%);
+  --sidebar-ring: oklch(0.685 0.188 42);
+  --grad-a: oklch(0.685 0.19 42);
+  --grad-b: oklch(0.6 0.22 28);
+  --bg-dots: radial-gradient(circle, oklch(1 0 0 / 0.045) 1px, transparent 1.4px);
 }
 
 @layer base {
@@ -129,28 +138,37 @@
   }
   body {
     @apply bg-background text-foreground;
-    /* Fond aurora fixe — halos émeraude/teal subtils, signature MikCloud */
+    /* Fond V10-Jour — orbes pastel concentrées (corail / bleu / émeraude)
+       + texture points + grain : rendent le verre translucide perceptible. */
     background-image:
-      radial-gradient(ellipse 55% 40% at 12% -6%, oklch(0.55 0.15 163 / 0.07), transparent 60%),
-      radial-gradient(ellipse 45% 35% at 96% 14%, oklch(0.6 0.12 190 / 0.05), transparent 55%),
-      radial-gradient(ellipse 50% 40% at 50% 112%, oklch(0.55 0.15 163 / 0.05), transparent 60%);
+      radial-gradient(ellipse 38% 30% at 8% -4%, oklch(0.63 0.19 42 / 0.18), transparent 62%),
+      radial-gradient(ellipse 34% 28% at 94% 8%, oklch(0.55 0.19 258 / 0.15), transparent 60%),
+      radial-gradient(ellipse 40% 30% at 50% 108%, oklch(0.6 0.15 163 / 0.12), transparent 62%),
+      var(--bg-dots),
+      var(--bg-grain);
+    background-size: auto, auto, auto, 30px 30px, auto;
+    background-blend-mode: normal, normal, normal, normal, overlay;
     background-attachment: fixed;
   }
   .dark body {
     background-image:
-      radial-gradient(ellipse 55% 40% at 12% -6%, oklch(0.72 0.155 163 / 0.11), transparent 60%),
-      radial-gradient(ellipse 45% 35% at 96% 14%, oklch(0.7 0.12 190 / 0.07), transparent 55%),
-      radial-gradient(ellipse 50% 40% at 50% 112%, oklch(0.72 0.155 163 / 0.07), transparent 60%);
+      radial-gradient(ellipse 38% 30% at 8% -4%, oklch(0.685 0.19 42 / 0.12), transparent 62%),
+      radial-gradient(ellipse 34% 28% at 94% 8%, oklch(0.62 0.19 258 / 0.1), transparent 60%),
+      radial-gradient(ellipse 40% 30% at 50% 108%, oklch(0.6 0.15 163 / 0.06), transparent 62%),
+      var(--bg-dots),
+      var(--bg-grain);
+    background-size: auto, auto, auto, 30px 30px, auto;
+    background-blend-mode: normal, normal, normal, normal, overlay;
   }
   ::selection {
-    background: oklch(0.72 0.155 163 / 0.35);
+    background: oklch(0.63 0.19 42 / 0.3);
   }
   .dark ::selection {
-    background: oklch(0.72 0.155 163 / 0.4);
+    background: oklch(0.685 0.19 42 / 0.4);
   }
 }
 
-/* Scrollbar fine teintée émeraude */
+/* Scrollbar fine teintée corail (suit --primary) */
 * {
   scrollbar-width: thin;
   scrollbar-color: color-mix(in oklab, var(--primary) 38%, transparent) transparent;
@@ -179,19 +197,19 @@
   animation: pulse-dot 2s ease-in-out infinite;
 }
 
-/* Halo émeraude discret pour les écrans d'accueil */
+/* Halo corail/bleu discret pour les écrans d'accueil */
 .bg-glow {
   background:
-    radial-gradient(ellipse 60% 45% at 50% -10%, oklch(0.55 0.15 163 / 0.1), transparent),
-    radial-gradient(ellipse 40% 30% at 85% 110%, oklch(0.6 0.12 185 / 0.06), transparent);
+    radial-gradient(ellipse 60% 45% at 50% -10%, oklch(0.55 0.19 258 / 0.08), transparent),
+    radial-gradient(ellipse 40% 30% at 85% 110%, oklch(0.63 0.19 42 / 0.05), transparent);
 }
 .dark .bg-glow {
   background:
-    radial-gradient(ellipse 60% 45% at 50% -10%, oklch(0.705 0.155 163 / 0.14), transparent),
-    radial-gradient(ellipse 40% 30% at 85% 110%, oklch(0.705 0.12 185 / 0.08), transparent);
+    radial-gradient(ellipse 60% 45% at 50% -10%, oklch(0.62 0.19 258 / 0.12), transparent),
+    radial-gradient(ellipse 40% 30% at 85% 110%, oklch(0.685 0.19 42 / 0.07), transparent);
 }
 
-/* ─── Signature « Aurora » : dégradé émeraude → teal ─── */
+/* ─── Signature « V10 » : dégradé corail → rouge-orangé ─── */
 .bg-aurora {
   background-image: linear-gradient(135deg, var(--grad-a), var(--grad-b));
 }
@@ -205,17 +223,17 @@
 /* Pilule de navigation active (sidebar) */
 .nav-active {
   background-image: linear-gradient(135deg, var(--grad-a), var(--grad-b));
-  color: oklch(0.99 0.01 160);
+  color: oklch(0.99 0.006 80);
   box-shadow: 0 8px 22px -8px color-mix(in oklab, var(--grad-a) 55%, transparent);
 }
 .nav-active svg {
-  color: oklch(0.99 0.01 160);
+  color: oklch(0.99 0.006 80);
 }
 
 /* Tuile d'icône dégradée (StatCard, en-têtes de cartes) */
 .tile-aurora {
   background-image: linear-gradient(135deg, var(--grad-a), var(--grad-b));
-  color: oklch(0.99 0.01 160);
+  color: oklch(0.99 0.006 80);
   box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.25), 0 6px 16px -8px color-mix(in oklab, var(--grad-a) 60%, transparent);
 }
 
@@ -225,21 +243,21 @@
    dans le containing block créé par `position: fixed` des composants. */
 .sidebar-aurora {
   background:
-    radial-gradient(ellipse 90% 28% at 8% 0%, oklch(0.55 0.15 163 / 0.12), transparent 60%),
-    radial-gradient(ellipse 60% 35% at -8% 100%, oklch(0.6 0.12 190 / 0.07), transparent 55%),
-    linear-gradient(180deg, oklch(0.948 0.038 163), oklch(0.895 0.046 165));
+    radial-gradient(ellipse 90% 28% at 8% 0%, oklch(0.63 0.19 42 / 0.1), transparent 60%),
+    radial-gradient(ellipse 60% 35% at -8% 100%, oklch(0.55 0.19 258 / 0.07), transparent 55%),
+    linear-gradient(180deg, oklch(0.958 0.014 75), oklch(0.902 0.02 65));
 }
-/* Nuit « Lime Aurora » : identité vert lime affirmée — fond vert profond
-   teinté lime, halos lumineux, grille technique, pilule active néon et liseré
-   luminescent (règles dédiées plus bas). Le Jour reste menthe/émeraude. */
+/* Nuit « V10 Charbon » : rail anthracite bleuté, halo bleu-cyan discret en
+   tête, lueur corail en pied, grille technique, pilule active corail et
+   liseré luminescent (règles dédiées plus bas). Le Jour reste papier chaud. */
 .dark .sidebar-aurora {
-  --sidebar-border: oklch(0.84 0.19 130 / 0.22);
+  --sidebar-border: oklch(0.75 0.02 264 / 0.14);
   background:
-    radial-gradient(ellipse 110% 32% at 14% 0%, oklch(0.84 0.2 130 / 0.18), transparent 62%),
-    radial-gradient(ellipse 75% 42% at -12% 100%, oklch(0.76 0.18 135 / 0.12), transparent 55%),
-    linear-gradient(180deg, oklch(0.196 0.056 144), oklch(0.098 0.034 148));
+    radial-gradient(ellipse 110% 32% at 14% 0%, oklch(0.62 0.19 258 / 0.11), transparent 62%),
+    radial-gradient(ellipse 75% 42% at -12% 100%, oklch(0.685 0.19 42 / 0.08), transparent 55%),
+    linear-gradient(180deg, oklch(0.205 0.016 264), oklch(0.135 0.012 264));
 }
-/* Grille technique lime en surimpression, estompée vers le pied (z -1 :
+/* Grille technique neutre en surimpression, estompée vers le pied (z -1 :
    peinte après le fond de la colonne, sous le contenu). */
 .dark .sidebar-aurora::before {
   content: "";
@@ -247,8 +265,8 @@
   inset: 0;
   z-index: -1;
   background-image:
-    linear-gradient(to right, oklch(0.85 0.2 130 / 0.055) 1px, transparent 1px),
-    linear-gradient(to bottom, oklch(0.85 0.2 130 / 0.055) 1px, transparent 1px);
+    linear-gradient(to right, oklch(0.8 0.02 264 / 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, oklch(0.8 0.02 264 / 0.05) 1px, transparent 1px);
   background-size: 30px 30px;
   -webkit-mask-image: linear-gradient(180deg, black 0%, transparent 76%);
   mask-image: linear-gradient(180deg, black 0%, transparent 76%);
@@ -269,108 +287,109 @@
   );
   pointer-events: none;
 }
-/* Liseré droit luminescent lime — son glow diffuse doucement dans le contenu. */
+/* Liseré droit luminescent corail — son glow diffuse doucement dans le contenu. */
 .dark .sidebar-aurora::after {
   width: 2px;
   background: linear-gradient(
     180deg,
     transparent,
-    oklch(0.87 0.2 128 / 0.9) 22%,
-    oklch(0.78 0.19 134 / 0.65) 68%,
+    oklch(0.685 0.19 42 / 0.9) 22%,
+    oklch(0.6 0.22 28 / 0.65) 68%,
     transparent
   );
-  box-shadow: 0 0 18px 1px oklch(0.83 0.2 130 / 0.35);
+  box-shadow: 0 0 18px 1px oklch(0.685 0.19 42 / 0.3);
 }
 
-/* ─── Accents « Lime Aurora » (Nuit, scopés à la sidebar) ───
+/* ─── Accents « V10 » (Nuit, scopés à la sidebar) ───
    Tout passe par des classes-marque posées dans app-shell.tsx : le reste de
-   l'app garde l'émeraude, seul le rail latéral devient lime. ⚠️ CSS non-layeré :
-   ces règles écrasent les utilitaires Tailwind équivalents — volontaire. */
+   l'app garde les tokens globaux, seul le rail latéral est habillé V10.
+   ⚠️ CSS non-layeré : ces règles écrasent les utilitaires Tailwind
+   équivalents — volontaire. */
 
-/* Pilule de navigation active : dégradé lime néon + texte encre profonde. */
+/* Pilule de navigation active : dégradé corail + texte encre profonde. */
 .dark .sidebar-aurora .nav-active {
-  background-image: linear-gradient(135deg, oklch(0.914 0.208 128), oklch(0.77 0.194 132));
-  color: oklch(0.17 0.05 148);
+  background-image: linear-gradient(135deg, oklch(0.685 0.19 42), oklch(0.6 0.21 30));
+  color: oklch(0.15 0.02 40);
   box-shadow:
-    0 10px 30px -8px oklch(0.8 0.2 130 / 0.6),
-    inset 0 1px 0 oklch(1 0 0 / 0.35);
+    0 10px 30px -8px oklch(0.685 0.19 42 / 0.45),
+    inset 0 1px 0 oklch(1 0 0 / 0.3);
 }
 .dark .sidebar-aurora .nav-active svg {
-  color: oklch(0.17 0.05 148);
+  color: oklch(0.15 0.02 40);
 }
 
-/* Survol des items inactifs : voile lime translucide, label presque blanc. */
+/* Survol des items inactifs : voile neutre translucide, label presque blanc. */
 .dark .sidebar-aurora .sidebar-nav-item:not(.nav-active):hover {
-  background-color: oklch(0.82 0.19 130 / 0.1);
-  color: oklch(0.95 0.05 125);
+  background-color: oklch(0.75 0.02 264 / 0.08);
+  color: oklch(0.93 0.006 90);
 }
 
-/* Intitulés de sections : vert lime délavé. */
+/* Intitulés de sections : gris bleuté délavé. */
 .dark .sidebar-aurora .nav-section-label {
-  color: oklch(0.78 0.09 135 / 0.62);
+  color: oklch(0.72 0.015 264 / 0.65);
 }
 
-/* Compteur de sessions : chip lime (sombre dans la pilule active). */
+/* Compteur de sessions : chip corail (sombre dans la pilule active). */
 .dark .sidebar-aurora .sidebar-count {
-  border-color: oklch(0.84 0.19 130 / 0.32);
-  background-color: oklch(0.8 0.19 130 / 0.13);
-  color: oklch(0.9 0.16 130);
+  border-color: oklch(0.685 0.19 42 / 0.3);
+  background-color: oklch(0.685 0.19 42 / 0.12);
+  color: oklch(0.85 0.12 50);
 }
 .dark .sidebar-aurora .nav-active .sidebar-count {
-  border-color: oklch(0.17 0.05 148 / 0.4);
-  background-color: oklch(0.17 0.05 148 / 0.85);
-  color: oklch(0.9 0.16 130);
+  border-color: oklch(0.15 0.02 40 / 0.4);
+  background-color: oklch(0.15 0.02 40 / 0.85);
+  color: oklch(0.9 0.1 60);
 }
 
-/* Wordmark MikCloud + badge PRO : dégradé lime. */
+/* Wordmark MikCloud + badge PRO : dégradé corail. */
 .dark .sidebar-aurora .text-aurora {
-  background-image: linear-gradient(135deg, oklch(0.93 0.19 127), oklch(0.79 0.19 134));
+  background-image: linear-gradient(135deg, oklch(0.98 0.01 85), oklch(0.685 0.19 42));
 }
 .dark .sidebar-aurora .badge-pro {
-  border-color: oklch(0.84 0.19 130 / 0.4);
-  background-color: oklch(0.84 0.19 130 / 0.14);
-  color: oklch(0.89 0.17 128);
+  border-color: oklch(0.685 0.19 42 / 0.4);
+  background-color: oklch(0.685 0.19 42 / 0.14);
+  color: oklch(0.87 0.13 50);
 }
 
-/* Logo : halo lime. Carte utilisateur : verre teinté lime. */
+/* Logo : halo corail. Carte utilisateur : verre neutre. */
 .dark .sidebar-aurora .sidebar-logo {
   box-shadow:
-    0 6px 20px -6px oklch(0.82 0.2 130 / 0.55),
-    0 0 0 1px oklch(0.84 0.19 130 / 0.25);
+    0 6px 20px -6px oklch(0.685 0.19 42 / 0.5),
+    0 0 0 1px oklch(0.685 0.19 42 / 0.25);
 }
 .dark .sidebar-aurora .sidebar-usercard {
-  border-color: oklch(0.84 0.19 130 / 0.25);
-  background-color: oklch(0.8 0.19 130 / 0.07);
+  border-color: oklch(0.75 0.02 264 / 0.18);
+  background-color: oklch(0.75 0.02 264 / 0.06);
 }
 .dark .sidebar-aurora .sidebar-usercard:hover,
 .dark .sidebar-aurora .sidebar-usercard[data-state="open"] {
-  border-color: oklch(0.84 0.19 130 / 0.4);
-  background-color: oklch(0.8 0.19 130 / 0.14);
+  border-color: oklch(0.685 0.19 42 / 0.35);
+  background-color: oklch(0.685 0.19 42 / 0.1);
 }
 .dark .sidebar-aurora .sidebar-avatar {
-  background-color: oklch(0.8 0.19 130 / 0.16);
-  color: oklch(0.88 0.17 128);
+  background-color: oklch(0.685 0.19 42 / 0.16);
+  color: oklch(0.87 0.12 50);
 }
 
-/* Point « live » lime dans le rail (le topbar garde l'émeraude). */
+/* Point « live » émeraude dans le rail (temps réel = succès/en ligne). */
 .dark .sidebar-aurora .live-dot {
-  background-color: oklch(0.85 0.21 128);
-  animation-name: pulse-dot-lime;
+  background-color: oklch(0.72 0.17 163);
+  animation-name: pulse-dot-live;
 }
-@keyframes pulse-dot-lime {
-  0%, 100% { box-shadow: 0 0 0 0 oklch(0.85 0.21 128 / 0.55); }
-  50% { box-shadow: 0 0 0 5px oklch(0.85 0.21 128 / 0); }
+@keyframes pulse-dot-live {
+  0%, 100% { box-shadow: 0 0 0 0 oklch(0.72 0.17 163 / 0.55); }
+  50% { box-shadow: 0 0 0 5px oklch(0.72 0.17 163 / 0); }
 }
 
-/* Scrollbar du rail en lime. */
+/* Scrollbar du rail en gris bleuté, survol corail. */
 .dark .sidebar-aurora nav {
-  scrollbar-color: oklch(0.8 0.19 130 / 0.5) transparent;
+  scrollbar-color: oklch(0.75 0.02 264 / 0.45) transparent;
 }
 .dark .sidebar-aurora ::-webkit-scrollbar-thumb {
-  background-color: oklch(0.8 0.19 130 / 0.5);
+  background-color: oklch(0.75 0.02 264 / 0.45);
 }
 .dark .sidebar-aurora ::-webkit-scrollbar-thumb:hover {
-  background-color: oklch(0.86 0.2 130 / 0.75);
+  background-color: oklch(0.685 0.19 42 / 0.6);
 }
 
 /* Topbar : surface surélevée distincte du fond + filet aurora signature.
@@ -400,12 +419,12 @@
 
 /* ─── Écran de connexion : split-screen + glassmorphism ─── */
 
-/* Panneau branding : dégradé zinc profond → émeraude + halos */
+/* Panneau branding : dégradé charbon → bleu nuit + halos corail */
 .login-brand {
   background:
-    radial-gradient(ellipse 85% 60% at 15% 8%, oklch(0.705 0.155 163 / 0.18), transparent 62%),
-    radial-gradient(ellipse 65% 55% at 95% 92%, oklch(0.72 0.12 185 / 0.12), transparent 60%),
-    linear-gradient(165deg, oklch(0.205 0.02 172), oklch(0.146 0.014 170) 55%, oklch(0.165 0.045 166));
+    radial-gradient(ellipse 85% 60% at 15% 8%, oklch(0.62 0.19 258 / 0.16), transparent 62%),
+    radial-gradient(ellipse 65% 55% at 95% 92%, oklch(0.685 0.19 42 / 0.1), transparent 60%),
+    linear-gradient(165deg, oklch(0.215 0.018 264), oklch(0.145 0.013 264) 55%, oklch(0.185 0.03 45));
 }
 
 /* N°94 — lisibilité Jour : le panneau branding est TOUJOURS sombre (dégradé
@@ -419,11 +438,11 @@
    classe couleur. Mode Nuit : aucun effet (sélecteur html:not(.dark)). */
 html:not(.dark) .login-brand {
   color: var(--foreground);
-  --foreground: oklch(0.975 0.005 160);
-  --muted-foreground: oklch(0.82 0.02 168);
-  --primary: oklch(0.72 0.155 163);
-  --grad-a: oklch(0.72 0.16 158);
-  --grad-b: oklch(0.68 0.13 195);
+  --foreground: oklch(0.972 0.004 90);
+  --muted-foreground: oklch(0.82 0.015 264);
+  --primary: oklch(0.685 0.188 42);
+  --grad-a: oklch(0.685 0.19 42);
+  --grad-b: oklch(0.6 0.22 28);
 }
 /* Les verres du panneau reprennent la teinte Nuit (voile blanc translucide
    sur fond sombre) — les 4 cartes atouts restent lisibles en mode Jour. */
@@ -447,25 +466,124 @@ html:not(.dark) .login-brand .glass-chip {
    menthe, la carte flottait en 62 % — frontière trop faible pour situer le
    formulaire d'un coup d'œil. */
 .glass-card {
-  border: 1px solid oklch(0.35 0.06 165 / 22%);
+  border: 1px solid oklch(0.35 0.04 60 / 22%);
   background: oklch(1 0 0 / 0.78);
   -webkit-backdrop-filter: blur(22px) saturate(1.4);
   backdrop-filter: blur(22px) saturate(1.4);
   box-shadow:
-    0 28px 70px -30px oklch(0.45 0.1 163 / 0.35),
+    0 28px 70px -30px oklch(0.4 0.1 45 / 0.35),
     inset 0 1px 0 oklch(1 0 0 / 0.6);
 }
 .dark .glass-card {
   border: 1px solid oklch(1 0 0 / 0.09);
-  background: oklch(0.185 0.014 168 / 0.55);
+  background: oklch(0.19 0.014 264 / 0.55);
   box-shadow:
     0 28px 70px -28px oklch(0 0 0 / 0.75),
     inset 0 1px 0 oklch(1 0 0 / 0.08);
 }
 
+/* ─── V10 — cartes « verre statique » (duel Nuit/Jour) ───
+   Translucides sur les orbes du fond + liseré supérieur lumineux (biseau).
+   VOLONTAIREMENT sans backdrop-filter : le blur réel reste réservé aux
+   surfaces clés (.glass-panel : KPI, charts — le « glass ciblé » N°298). */
+[data-slot="card"] {
+  background-color: oklch(1 0 0 / 0.65);
+  border-color: oklch(0.35 0.04 60 / 13%);
+  box-shadow:
+    0 10px 30px -18px oklch(0.4 0.08 60 / 0.28),
+    inset 0 1px 0 oklch(1 0 0 / 0.92);
+}
+.dark [data-slot="card"] {
+  background-color: oklch(0.208 0.016 264 / 0.82);
+  border-color: oklch(0.85 0.02 264 / 0.14);
+  box-shadow:
+    0 10px 30px -18px oklch(0 0 0 / 0.8),
+    inset 0 1px 0 oklch(1 0 0 / 0.07);
+}
+
+/* ─── V10 — panneau de verre OPTIQUE (duel Nuit/Jour) ───
+   Le rendu validé en POC (9,2-9,5/10) : dégradé translucide 135°,
+   backdrop-blur réel, reflet spéculaire (::before — source lumineuse
+   haut-gauche + diagonale), ombre atmosphérique profonde, hover -2px.
+   Appliqué aux surfaces clés : StatCard, cartes graphiques du dashboard. */
+.glass-panel {
+  border: 1px solid oklch(0.35 0.04 60 / 12%);
+  background: linear-gradient(
+    135deg,
+    oklch(1 0 0 / 0.84) 0%,
+    oklch(1 0 0 / 0.58) 45%,
+    oklch(1 0 0 / 0.45) 100%
+  );
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.95),
+    0 20px 44px -18px oklch(0.25 0.03 264 / 0.18);
+  transition:
+    transform 0.25s ease,
+    border-color 0.25s ease,
+    box-shadow 0.25s ease;
+}
+.glass-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 55% 38% at 14% -4%, oklch(1 0 0 / 0.95), transparent 60%),
+    linear-gradient(
+      105deg,
+      transparent 42%,
+      oklch(1 0 0 / 0.45) 48%,
+      oklch(1 0 0 / 0.75) 51%,
+      oklch(1 0 0 / 0.45) 54%,
+      transparent 60%
+    );
+}
+.glass-panel:hover {
+  border-color: oklch(0.35 0.04 60 / 17%);
+  transform: translateY(-2px);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.95),
+    0 28px 56px -20px oklch(0.25 0.03 264 / 0.24);
+}
+.dark .glass-panel {
+  border-color: oklch(1 0 0 / 0.09);
+  background: linear-gradient(
+    135deg,
+    oklch(1 0 0 / 0.085) 0%,
+    oklch(1 0 0 / 0.03) 45%,
+    oklch(1 0 0 / 0.015) 100%
+  );
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.16),
+    inset 0 -1px 0 oklch(0 0 0 / 0.28),
+    0 18px 42px -14px oklch(0 0 0 / 0.55);
+}
+.dark .glass-panel::before {
+  background:
+    radial-gradient(ellipse 55% 38% at 14% -4%, oklch(1 0 0 / 0.11), transparent 60%),
+    linear-gradient(
+      105deg,
+      transparent 42%,
+      oklch(1 0 0 / 0.05) 48%,
+      oklch(1 0 0 / 0.09) 51%,
+      oklch(1 0 0 / 0.05) 54%,
+      transparent 60%
+    );
+}
+.dark .glass-panel:hover {
+  border-color: oklch(1 0 0 / 0.16);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.2),
+    inset 0 -1px 0 oklch(0 0 0 / 0.28),
+    0 26px 52px -16px oklch(0 0 0 / 0.65);
+}
+
 /* Puce de verre : badges, onglets, blocs démo (duale) */
 .glass-chip {
-  border: 1px solid oklch(0.35 0.06 165 / 15%);
+  border: 1px solid oklch(0.35 0.04 60 / 15%);
   background: oklch(1 0 0 / 0.5);
   -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);

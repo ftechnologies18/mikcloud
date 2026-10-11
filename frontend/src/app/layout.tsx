@@ -71,8 +71,8 @@ const PWA_BOOT_SCRIPT = `try{if(matchMedia("(display-mode: standalone)").matches
 
 export const viewport: Viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: dark)", color: "#101815" },
-    { media: "(prefers-color-scheme: light)", color: "#f6faf7" },
+    { media: "(prefers-color-scheme: dark)", color: "#0A0B0F" },
+    { media: "(prefers-color-scheme: light)", color: "#F5F6F8" },
   ],
   width: "device-width",
   initialScale: 1,

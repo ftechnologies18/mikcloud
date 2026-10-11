@@ -5,6 +5,56 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-11 — N°299 — **refonte du mode Jour « V10-Light » : orbes visibles + verre réel sur toutes les cartes (retour utilisateur)**
+
+### Contexte (retour utilisateur sur la N°298)
+- Le mode Jour livré en N°298 ne ressemblait pas au POC light validé
+  (9,2/10) : « glassmorphism manque, arrière-plan ne correspond pas ».
+- Audit IA vision (maquette vs production) : **4,5/10** — orbes de fond
+  invisibles (ellipses de coin 18/15/12 % trop petites/faibles), cartes
+  « verre statique » blanc 65 % indiscernables sur fond blanc, sidebar
+  « papier chaud » beige opaque, header bandeau plein, tuiles dégradées
+  trop dures. Le layout était bon, la matière était absente.
+
+### Ce qui a changé (`frontend/src/app/globals.css` uniquement)
+- **Fond Jour** : 3 orbes LARGES émulant le `blur(130px)` du POC — corail
+  `42rem` à `0% -6%`, bleu `46rem` à `102% 14%`, émeraude `38rem` à
+  `40% 112%`, courbe 4 paliers (cœur 16 % → 7 % → 3 % → transparent) ;
+  trame points allégée (0.11 → 0.05) pour rester une vibration, pas un
+  voile gris.
+- **`[data-slot="card"]` Jour** : gradient translucide 92→62 % +
+  `backdrop-blur(18px)` + ombre atmosphérique 44 px + **reflet spéculaire**
+  (radial haut-gauche + bande diagonale 105°) porté en couches de
+  `background` — pas de `::before`/`position: relative` forcé (les Cards
+  n'ont pas toutes `relative`). **Nuit conservée sans blur** (décision perf
+  N°298 inchangée ; shorthand `background` en `.dark` pour ne pas laisser
+  le gradient Jour peint sous la couleur nuit).
+- **`.glass-panel` Jour** : aligné exactement sur le POC (0.95→0.62,
+  border slate 9 %, ombre `rgba(15,23,42,.18)` 44 px) +
+  `position: relative` (ancre du reflet `::before`).
+- **Sidebar Jour** : beige opaque → **verre blanc 66→44 % + blur 28 px**
+  (l'orbe corail transparaît), liseré droit discret ardoise (le néon corail
+  reste la signature Nuit).
+- **Pilule nav active Jour** : plein corail 135° → « aquarelle » du POC —
+  dégradé 90° corail 14 %→transparent, liseré 3 px avec glow, glyphe
+  corail, encre profonde, compteur corail plein.
+- **Topbar Jour** : verre 66 % (le header ne referme plus le haut de page
+  sur les orbes).
+- **Tuiles d'icônes Jour** (`tile-aurora`) : dégradé plein → pastel
+  (fond corail clair, glyphe corail 600, ombre douce).
+
+### Validation (IA vision, POC light comme étalon)
+- Dashboard Jour : 4,5 → 7,5 → **8,5/10** (matière alignée à ~90 %) ;
+  Nuit **9/10** (zéro fuite de style clair) ; login Jour **8,5/10** ;
+  mobile 390 px + drawer OK ; ESLint 0 erreur, tsgo 0 erreur, zéro
+  erreur console.
+- Démo locale ravivée par les flux réels (24 vouchers générés via
+  `/api/vouchers/generate`, le Tick recrée organiquement les sessions).
+
+### Non-objectifs
+- Aucun changement backend/DB/contrat d'i18n (présentation pure).
+- Render toujours gelé (sentinel RENDER-DEPLOY-FROZEN intacte).
+
 ## 2026-10-11 — N°298 — **refonte UI « V10 Charbon & Corail » : glassmorphism duel Nuit/Jour + toggle (POC sandbox validé avant transposition)**
 
 ### Méthode

@@ -88,8 +88,10 @@
   --grad-b: oklch(0.58 0.21 28);
   /* Grain photographique V10 — surcouche des halos du fond (blend overlay) */
   --bg-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
-  /* Texture points technique — estompe l'aspect « blanc mat » du Jour */
-  --bg-dots: radial-gradient(circle, oklch(0.35 0.04 60 / 0.11) 1px, transparent 1.4px);
+  /* Texture points technique — estompe l'aspect « blanc mat » du Jour.
+     N°299 : 0.11 → 0.05 (POC light validé — la trame doit rester une
+     vibration, pas un voile gris). */
+  --bg-dots: radial-gradient(circle, oklch(0.23 0.015 262 / 0.05) 1px, transparent 1.4px);
 }
 
 .dark {
@@ -138,12 +140,15 @@
   }
   body {
     @apply bg-background text-foreground;
-    /* Fond V10-Jour — orbes pastel concentrées (corail / bleu / émeraude)
-       + texture points + grain : rendent le verre translucide perceptible. */
+    /* Fond V10-Jour (N°299, aligné POC light 9,2/10) — 3 orbes pastel LARGES
+       (corail haut-gauche / bleu droite / émeraude bas-centre), rayon ~40 rem
+       + arrondi gaussien en 3 paliers pour émuler le blur(130px) du POC.
+       Avant : ellipses de coin 18/15/12 % — invisibles, le Jour paraissait
+       plat et le verre se lisait comme du plastique blanc. */
     background-image:
-      radial-gradient(ellipse 38% 30% at 8% -4%, oklch(0.63 0.19 42 / 0.18), transparent 62%),
-      radial-gradient(ellipse 34% 28% at 94% 8%, oklch(0.55 0.19 258 / 0.15), transparent 60%),
-      radial-gradient(ellipse 40% 30% at 50% 108%, oklch(0.6 0.15 163 / 0.12), transparent 62%),
+      radial-gradient(circle 42rem at 0% -6%, oklch(0.63 0.19 42 / 0.16), oklch(0.63 0.19 42 / 0.07) 38%, oklch(0.63 0.19 42 / 0.03) 62%, transparent 78%),
+      radial-gradient(circle 46rem at 102% 14%, oklch(0.55 0.19 258 / 0.15), oklch(0.55 0.19 258 / 0.06) 38%, oklch(0.55 0.19 258 / 0.025) 62%, transparent 78%),
+      radial-gradient(circle 38rem at 40% 112%, oklch(0.6 0.15 163 / 0.13), oklch(0.6 0.15 163 / 0.05) 38%, oklch(0.6 0.15 163 / 0.02) 62%, transparent 78%),
       var(--bg-dots),
       var(--bg-grain);
     background-size: auto, auto, auto, 30px 30px, auto;
@@ -229,6 +234,35 @@
 .nav-active svg {
   color: oklch(0.99 0.006 80);
 }
+/* N°299 — Jour : pilule « aquarelle » du POC light — dégradé corail 14 % →
+   transparent (90°), liseré 3 px avec glow, glyphe corail, encre profonde,
+   compteur corail plein. La version pleine (135°) reste la signature Nuit. */
+html:not(.dark) .sidebar-aurora .nav-active {
+  background-image: linear-gradient(90deg, oklch(0.63 0.19 42 / 0.14) 0%, oklch(0.63 0.19 42 / 0.05) 60%, transparent 100%);
+  color: oklch(0.23 0.02 60);
+  box-shadow: none;
+}
+html:not(.dark) .sidebar-aurora .nav-active svg {
+  color: oklch(0.63 0.19 42);
+}
+html:not(.dark) .sidebar-aurora .nav-active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  height: 1.75rem;
+  width: 3px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background: oklch(0.685 0.188 42);
+  box-shadow: 0 0 14px oklch(0.685 0.188 42 / 0.7);
+  pointer-events: none;
+}
+html:not(.dark) .sidebar-aurora .nav-active .sidebar-count {
+  border-color: transparent;
+  background-color: oklch(0.685 0.188 42);
+  color: oklch(0.99 0.006 80);
+}
 
 /* Tuile d'icône dégradée (StatCard, en-têtes de cartes) */
 .tile-aurora {
@@ -236,20 +270,37 @@
   color: oklch(0.99 0.006 80);
   box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.25), 0 6px 16px -8px color-mix(in oklab, var(--grad-a) 60%, transparent);
 }
+/* N°299 — Jour : tuile pastelle (fond corail clair, glyphe corail, ombre
+   douce) — le plein dégradé reste la signature Nuit. Sur fond blanc, les
+   tuiles vives lisaient l'écran (audit VLM : « carré orange dur »). */
+html:not(.dark) .tile-aurora {
+  background-image: none;
+  background-color: oklch(0.955 0.03 62);
+  color: oklch(0.58 0.19 42);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.85),
+    0 6px 14px -8px oklch(0.63 0.19 42 / 0.4);
+}
 
 /* Colonne de marque : dégradé vertical + liseré lumineux signature.
    ⚠️ Pas de `position` ici : ce bloc est du CSS non-layeré et écraserait les
    utilitaires Tailwind (`fixed` de l'aside et du Sheet). Le ::after s'ancre
-   dans le containing block créé par `position: fixed` des composants. */
+   dans le containing block créé par `position: fixed` des composants.
+   N°299 — Jour : BEC verre (blanc 74→52 % + blur 28 px) sur les orbes du
+   fond — remplace le « papier chaud » beige opaque (audit VLM : la colonne
+   cassait l'immersion glassmorphism). Le halo corail de tête est conservé,
+   estompé. */
 .sidebar-aurora {
   background:
-    radial-gradient(ellipse 90% 28% at 8% 0%, oklch(0.63 0.19 42 / 0.1), transparent 60%),
-    radial-gradient(ellipse 60% 35% at -8% 100%, oklch(0.55 0.19 258 / 0.07), transparent 55%),
-    linear-gradient(180deg, oklch(0.958 0.014 75), oklch(0.902 0.02 65));
+    radial-gradient(ellipse 85% 26% at 8% 0%, oklch(0.63 0.19 42 / 0.07), transparent 62%),
+    linear-gradient(180deg, oklch(1 0 0 / 0.66), oklch(1 0 0 / 0.44));
+  -webkit-backdrop-filter: blur(28px) saturate(1.2);
+  backdrop-filter: blur(28px) saturate(1.2);
 }
 /* Nuit « V10 Charbon » : rail anthracite bleuté, halo bleu-cyan discret en
    tête, lueur corail en pied, grille technique, pilule active corail et
-   liseré luminescent (règles dédiées plus bas). Le Jour reste papier chaud. */
+   liseré luminescent (règles dédiées plus bas). Le Jour est désormais verre
+   blanc translucide (N°299). */
 .dark .sidebar-aurora {
   --sidebar-border: oklch(0.75 0.02 264 / 0.14);
   background:
@@ -286,6 +337,18 @@
     transparent
   );
   pointer-events: none;
+}
+/* N°299 — Jour : liseré discret ardoise (le corail néon est une signature
+   Nuit ; sur blanc il tranchait trop — POC : border-r slate 7-9 %). */
+html:not(.dark) .sidebar-aurora::after {
+  width: 1px;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    oklch(0.23 0.02 262 / 0.13) 26%,
+    oklch(0.23 0.02 262 / 0.09) 74%,
+    transparent
+  );
 }
 /* Liseré droit luminescent corail — son glow diffuse doucement dans le contenu. */
 .dark .sidebar-aurora::after {
@@ -400,6 +463,11 @@
   backdrop-filter: blur(20px) saturate(1.25);
   -webkit-backdrop-filter: blur(20px) saturate(1.25);
 }
+/* N°299 — Jour : verre véritable (66 %) sur les orbes, sinon le header
+   referme le haut de page en bandeau plein et tue l'effet de profondeur. */
+html:not(.dark) .topbar-surface {
+  background-color: oklch(1 0 0 / 0.66);
+}
 .topbar-surface::after {
   content: "";
   position: absolute;
@@ -482,19 +550,46 @@ html:not(.dark) .login-brand .glass-chip {
     inset 0 1px 0 oklch(1 0 0 / 0.08);
 }
 
-/* ─── V10 — cartes « verre statique » (duel Nuit/Jour) ───
-   Translucides sur les orbes du fond + liseré supérieur lumineux (biseau).
-   VOLONTAIREMENT sans backdrop-filter : le blur réel reste réservé aux
-   surfaces clés (.glass-panel : KPI, charts — le « glass ciblé » N°298). */
+/* ─── V10 — cartes verre (duel Nuit/Jour) ───
+   N°299 — Jour : GRADIENT translucide 92→62 % + backdrop-blur 18 px + ombre
+   atmosphérique 44 px + biseau lumineux (valeurs du POC light 9,2/10).
+   Rationale : l'utilisateur jugeait le Jour « sans glassmorphism » — le
+   verre statique blanc/65 % sur fond quasi blanc était indiscernable. Le
+   blur passe donc sur toutes les cartes en Jour (le « glass ciblé » de la
+   N°298 reste la règle en Nuit, où les orbes sont discrètes).
+   Nuit : verre statique sans blur (perf mobiles — décision N°298 conservée). */
 [data-slot="card"] {
-  background-color: oklch(1 0 0 / 0.65);
-  border-color: oklch(0.35 0.04 60 / 13%);
+  /* N°299-bis — le reflet spéculaire (radial haut-gauche + bande diagonale)
+     vit en COUCHES de background : aucun ::before (les Cards n'ont pas
+     toutes `relative`), aucun position:forcé — même rendu optique que le
+     ::before du .glass-panel, à intensité ~60 % (cartes secondaires). */
+  background:
+    radial-gradient(ellipse 55% 38% at 14% -4%, oklch(1 0 0 / 0.5), transparent 60%),
+    linear-gradient(
+      105deg,
+      transparent 42%,
+      oklch(1 0 0 / 0.2) 48%,
+      oklch(1 0 0 / 0.35) 51%,
+      oklch(1 0 0 / 0.2) 54%,
+      transparent 60%
+    ),
+    linear-gradient(
+      135deg,
+      oklch(1 0 0 / 0.92) 0%,
+      oklch(1 0 0 / 0.74) 45%,
+      oklch(1 0 0 / 0.62) 100%
+    );
+  border-color: oklch(0.23 0.02 262 / 9%);
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
   box-shadow:
-    0 10px 30px -18px oklch(0.4 0.08 60 / 0.28),
-    inset 0 1px 0 oklch(1 0 0 / 0.92);
+    0 20px 44px -20px oklch(0.23 0.03 262 / 0.16),
+    inset 0 1px 0 oklch(1 0 0 / 0.95);
 }
 .dark [data-slot="card"] {
-  background-color: oklch(0.208 0.016 264 / 0.82);
+  /* shorthand `background` : réinitialise le dégradé Jour (sinon le
+     linear-gradient blanc 92 % reste peint sous la couleur nuit). */
+  background: oklch(0.208 0.016 264 / 0.82);
   border-color: oklch(0.85 0.02 264 / 0.14);
   box-shadow:
     0 10px 30px -18px oklch(0 0 0 / 0.8),
@@ -507,18 +602,21 @@ html:not(.dark) .login-brand .glass-chip {
    haut-gauche + diagonale), ombre atmosphérique profonde, hover -2px.
    Appliqué aux surfaces clés : StatCard, cartes graphiques du dashboard. */
 .glass-panel {
-  border: 1px solid oklch(0.35 0.04 60 / 12%);
+  /* N°299 — relative obligatoire : le reflet spéculaire ::before s'ancre à
+     la carte (les Cards du dashboard n'ont pas l'utilitaire `relative`). */
+  position: relative;
+  border: 1px solid oklch(0.23 0.02 262 / 9%);
   background: linear-gradient(
     135deg,
-    oklch(1 0 0 / 0.84) 0%,
-    oklch(1 0 0 / 0.58) 45%,
-    oklch(1 0 0 / 0.45) 100%
+    oklch(1 0 0 / 0.95) 0%,
+    oklch(1 0 0 / 0.75) 45%,
+    oklch(1 0 0 / 0.62) 100%
   );
   -webkit-backdrop-filter: blur(20px);
   backdrop-filter: blur(20px);
   box-shadow:
     inset 0 1px 0 oklch(1 0 0 / 0.95),
-    0 20px 44px -18px oklch(0.25 0.03 264 / 0.18);
+    0 20px 44px -18px oklch(0.23 0.03 262 / 0.18);
   transition:
     transform 0.25s ease,
     border-color 0.25s ease,
@@ -542,11 +640,11 @@ html:not(.dark) .login-brand .glass-chip {
     );
 }
 .glass-panel:hover {
-  border-color: oklch(0.35 0.04 60 / 17%);
+  border-color: oklch(0.23 0.02 262 / 15%);
   transform: translateY(-2px);
   box-shadow:
     inset 0 1px 0 oklch(1 0 0 / 0.95),
-    0 28px 56px -20px oklch(0.25 0.03 264 / 0.24);
+    0 28px 56px -20px oklch(0.23 0.03 262 / 0.24);
 }
 .dark .glass-panel {
   border-color: oklch(1 0 0 / 0.09);

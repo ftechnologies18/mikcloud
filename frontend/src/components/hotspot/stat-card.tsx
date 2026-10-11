@@ -18,7 +18,12 @@ interface StatCardProps {
 
 export function StatCard({ title, value, sub, icon: Icon, live, trend, valueClassName, className }: StatCardProps) {
   return (
-    <Card className={cn("relative overflow-hidden transition-colors duration-300 hover:border-primary/35", className)}>
+    <Card
+      className={cn(
+        "glass-panel relative overflow-hidden hover:border-primary/35",
+        className,
+      )}
+    >
       {/* Halo aurora en coin — signature MikCloud */}
       <span
         aria-hidden

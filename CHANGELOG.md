@@ -5,6 +5,65 @@ Historique des évolutions notables du projet. Format inspiré de
 aux dates de livraison — le déploiement est continu : chaque push `main` passe
 la CI puis se déploie automatiquement (frontend Vercel, backend Render).
 
+## 2026-10-11 — N°300 — **verre des cartes Jour N°2 : sheen perceptible, corps givré teinté, orbes centrales sous la grille (retour utilisateur N°299)**
+
+### Contexte (retour utilisateur sur la N°299)
+- « Améliorer le glassmorphism des cartes » : malgré le verre N°299
+  (blur 18 px + gradient 92→62 %), l'effet restait **imperceptible**.
+- Audit croisé VLM + profilométrie pixel (leçons N°299 : vérifier l'état
+  des données et les styles calculés AVANT de juger) : le sheen diagonal
+  blanc culminait à **+6 points RGB** sur une base déjà à 247 (contraste
+  3 % — invisible), les orbes restaient cantonnées aux coins (jamais
+  sous les cartes), et le VLM qualifiait le fond de « plat ».
+
+### Ce qui a changé (`frontend/src/app/globals.css` uniquement)
+- **Corps des cartes Jour → verre givré teinté** (oklch 0.915-0.955,
+  chroma bleu 0.01, alphas 0.92→0.62 — façon macOS) : sur fond blanc, un
+  corps blanc ne peut pas contraster avec son propre sheen ; le teinté
+  abaisse la base à ~235 RGB.
+- **Sheen diagonal large** (bande 30→70 % de l'axe 105°, pic blanc 0.95,
+  écho parallèle à 0.2) + **lumière zénithale** (180°, blanc 0.22 sur le
+  tiers supérieur) + coin éclairé haut-gauche : profil mesuré
+  **254 vs base 229-240 = 25 points de contraste** (×4 vs N°299).
+- **`saturate(1.6)` sur le backdrop** (blur 22 px) : le verre « colore »
+  les orbes qu'il floute — réfraction amplifiée.
+- **Aura cyan cuite sous le verre** (radial bas-droite oklch 0.68/0.14/230
+  à 12 % en couche de background) : chaque carte porte sa matière colorée,
+  même sans orbe du fond derrière.
+- **Biseau double** : `inset 0 1px 0` blanc plein + glow
+  `inset 0 3px 12px -4px` blanc 0.9 (arête éclairée) + `inset 0 -1px 0`
+  ardoise 7 % (épaisseur bas) ; grain photographique en couche finale.
+- **Fond Jour → 5 orbes** : les 3 de coin gagnent en intensité (cœurs
+  20/22 %) et **2 orbes centrales passent sous la grille des cartes**
+  (corail 36 rem @ 40 %/34 %, bleu-cyan 40 rem @ 70 %/78 %, cœurs 20 %) —
+  la KPI « Vouchers » lit désormais bleu glacé (l'orbe bleue est derrière
+  elle), la KPI « Sessions » tire chaud : le verre varie selon la position,
+  comme en physique.
+- **Sidebar Jour alignée** : blanc pur 66→44 % → givré teinté
+  0.975/0.6 → 0.955/0.42 + `saturate(1.5)` (VLM v6 : « blanc mat »
+  rompait l'immersion). Login `.glass-card` : même grammaire
+  (translucide 0.84→0.6 + biseau double).
+- **Nuit strictement conservée** : shorthand `.dark` inchangés (verre
+  statique sans blur — perf mobiles, décision N°298).
+
+### Validation (VLM + profilométrie)
+- Dashboard Jour : **8,5/10 global** — le VLM décrit spontanément la
+  physique réelle du verre (« teintes variées selon la position », fond
+  « beige pâle → bleu glacé » atmosphérique) ; vue Vouchers **8,5/10**
+  (lisibilité tableau 9/10, aucune zone illisible).
+- Mesures : sheen 254/base 229 (+25 pts), fond entre cartes teinté
+  (242,225,217) chaud / (224,234,242) froid, KPI4 bleutée (223,229,238)
+  par transmission de l'orbe. Nuit : anthracite 12-40 RGB sur les KPI
+  (pixel-vérifié, non-régression). Mobile 390 px + drawer OK, zéro
+  erreur console, ESLint 0, tsgo 0.
+- Leçon outillée : le VLM juge mal les détails de matière à pleine page
+  (il « voyait » un sheen sur le POC mesuré plat à 253) — croiser
+  systématiquement avec un profil de pixels par carte.
+
+### Non-objectifs
+- Aucun changement backend/DB/contrat d'i18n (présentation pure).
+- Render toujours gelé (sentinel RENDER-DEPLOY-FROZEN intacte).
+
 ## 2026-10-11 — N°299 — **refonte du mode Jour « V10-Light » : orbes visibles + verre réel sur toutes les cartes (retour utilisateur)**
 
 ### Contexte (retour utilisateur sur la N°298)

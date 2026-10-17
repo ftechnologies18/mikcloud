@@ -1,26 +1,16 @@
 "use client";
 
 /* ============================================================
-   403SHIELD « CLAY » — Pages produit du site unifié (N°317)
+   403SHIELD « CLAY » — Dedicated Product Pages
    ------------------------------------------------------------
-   Composant client réutilisable monté par les routes marketing
-   /hotspot, /vpn et /tunnels (voie Cloudflare/OVH : UN site
-   multipage + UNE console transactionnelle). Réutilise le design
-   system Clay de la vitrine (landing-clay.css, classes mkl-*) :
-   grain + halos, topbar avec menu complet (Accueil en premier,
-   lien actif souligné via usePathname), hero simplifié avec le
-   bouclier clay, grille de cartes « super-pouvoirs », CTA final
-   et footer partagé (LandingFooter).
-   Contenu : UNIQUEMENT des fonctionnalités réelles (cf.
-   landing-copy.ts — bloc pages.*) — les prix VPN viennent de la
-   boutique, rien n'est codé en dur ici.
-   Pages publiques : visitables même connecté (pas de garde de
-   session/PWA — contrairement à la vitrine /).
+   Reusable client component for marketing routes /hotspot,
+   /vpn and /tunnels (Cloudflare / OVHcloud style).
+   Integrates EnterpriseHeader with MegaMenu, unified Clay styling,
+   and clean CTA navigation flow.
    ============================================================ */
 
 import Image from "next/image";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 import type { ComponentType } from "react";
 import {
   ArrowRight,
@@ -41,6 +31,7 @@ import {
 
 import { useHotspotStore } from "@/lib/hotspot/store";
 import { landingCopy, type Lang, type ProductPageCopy } from "./landing-copy";
+import { EnterpriseHeader } from "./enterprise-header";
 import { LandingFooter } from "./landing-footer";
 import { Reveal } from "./reveal";
 import { fraunces, manrope } from "./landing-fonts";
@@ -48,17 +39,12 @@ import "./landing-clay.css";
 
 export type ProductPageKey = "hotspot" | "vpn" | "tunnels";
 
-/* ─── Icônes des cartes « ce que fait le produit » (par page) — N°321 :
-    la page /tunnels ouvre sur le VPN (Globe) : même tunnel, autre usage. ─── */
 const PAGE_ICONS: Record<ProductPageKey, ComponentType<LucideProps>[]> = {
   hotspot: [Palette, Ticket, Store, BarChart3],
   vpn: [Globe, Lock, CircleDollarSign, KeyRound],
   tunnels: [Globe, Router, Cctv, KeyRound],
 };
 
-/* ─── Résolution des CTA (hero + CTA final) ───
-   "#signup" → modale d'inscription ; "#signin" → /login ;
-   URL http(s) → nouvel onglet ; sinon <Link> interne. */
 function PageCta({
   href,
   label,
@@ -111,9 +97,7 @@ function PageCta({
 
 export interface ProductPageProps {
   page: ProductPageKey;
-  /** Déclenche l'écran de connexion (/login). */
   onSignIn: () => void;
-  /** Ouvre la modale d'inscription (SignupModal). */
   onSignUp: () => void;
 }
 
@@ -122,107 +106,26 @@ export default function ProductPage({ page, onSignIn, onSignUp }: ProductPagePro
   const setLang = useHotspotStore((s) => s.setLang);
   const copy = landingCopy[lang];
   const pageCopy: ProductPageCopy = copy.pages[page];
-  const pathname = usePathname();
   const icons = PAGE_ICONS[page];
 
   const toggleLang = () => setLang(lang === "fr" ? "en" : "fr");
 
-  /* Menu complet du site unifié : Accueil EN PREMIER, puis les pages
-     produit — lien actif souligné (classe mkl-active, cf. landing-clay.css).
-     N°321 — UNE entrée « Tunnels WireGuard » (famille VPN + Accès Pro) :
-     elle porte le lien actif sur /tunnels COMME sur /vpn (les deux pages
-     sont les deux usages du même tunnel — plus d'entrées jumelles). */
-  const navItems: { href: string; label: string; active: boolean }[] = [
-    { href: "/", label: copy.header.nav.home, active: pathname === "/" },
-    { href: "/hotspot", label: copy.header.nav.hotspot, active: pathname === "/hotspot" },
-    {
-      href: "/tunnels",
-      label: copy.header.nav.tunnels,
-      active: pathname === "/tunnels" || pathname === "/vpn",
-    },
-  ];
-  const navAriaLabel = `${copy.header.brand} — ${copy.header.nav.home} · ${copy.header.nav.hotspot} · ${copy.header.nav.tunnels}`;
-  const navClass = (active: boolean) =>
-    active ? "mkl-link-quiet mkl-active" : "mkl-link-quiet";
-
   return (
     <div className={`mkl-page ${fraunces.variable} ${manrope.variable}`}>
-      {/* Grain + halos FreeTech */}
       <div className="mkl-grain" aria-hidden="true" />
       <div className="mkl-blob mkl-blob-1" aria-hidden="true" />
       <div className="mkl-blob mkl-blob-2" aria-hidden="true" />
 
       <div className="mkl-main">
-        {/* ═══ TOPBAR (identique vitrine : brand → /, nav complète,
-            lang, signIn, signUp — pas de rail vertical ici) ═══ */}
-        <div className="mkl-topbar">
-          <div className="mkl-wrap flex items-center justify-between py-5">
-            <Link href="/" className="mkl-brand" aria-label={copy.header.homeLink}>
-              <Image
-                src="/logo.png"
-                alt="Logo 403Shield"
-                width={84}
-                height={84}
-                priority
-                className="mkl-brand-logo"
-              />
-              {copy.header.brand}
-            </Link>
-            <div className="flex items-center gap-2">
-              {/* N°317 — nav complète : Accueil en premier, page courante
-                  soulignée. Cachée sous sm (et sous 860 px par la règle
-                  .mkl-topbar .mkl-link-quiet de landing-clay.css) : la barre
-                  secondaire ci-dessous prend le relais sur mobile. */}
-              <nav className="hidden items-center gap-2 sm:flex" aria-label={navAriaLabel}>
-                {navItems.map((item) => (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={navClass(item.active)}
-                    aria-current={item.active ? "page" : undefined}
-                  >
-                    {item.label}
-                  </Link>
-                ))}
-                <Link href="/#tarifs" className="mkl-link-quiet">
-                  {copy.header.nav.pricing}
-                </Link>
-              </nav>
-              <button className="mkl-lang" onClick={toggleLang} aria-label="Switch language">
-                {copy.header.langLabel}
-              </button>
-              <button className="mkl-link-quiet" onClick={onSignIn}>
-                {copy.header.signIn}
-              </button>
-              <button className="mkl-btn mkl-btn-teal mkl-btn-sm" onClick={onSignUp}>
-                {copy.header.signUp} <ArrowRight className="size-4" />
-              </button>
-            </div>
-          </div>
-          {/* N°317 — barre secondaire fine (< sm) : Accueil · Hotspot ·
-              VPN · Tunnels, scrollable horizontalement si besoin. Placée
-              dans le topbar sticky (la règle .mkl-topbar .mkl-link-quiet
-              du mobile est levée pour .mkl-subnav, cf. landing-clay.css). */}
-          <nav
-            className="mkl-subnav overflow-x-auto sm:hidden"
-            aria-label={navAriaLabel}
-          >
-            <div className="mkl-wrap flex items-center gap-1 py-1.5">
-              {navItems.map((item) => (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={navClass(item.active)}
-                  aria-current={item.active ? "page" : undefined}
-                >
-                  {item.label}
-                </Link>
-              ))}
-            </div>
-          </nav>
-        </div>
+        {/* Unified Enterprise Header with MegaMenu */}
+        <EnterpriseHeader
+          lang={lang}
+          toggleLang={toggleLang}
+          onSignIn={onSignIn}
+          onSignUp={onSignUp}
+        />
 
-        {/* ═══ HERO ═══ */}
+        {/* HERO SECTION */}
         <section id="top" className="mkl-hero">
           <div className="mkl-wrap mkl-hero-grid">
             <div>
@@ -263,8 +166,6 @@ export default function ProductPage({ page, onSignIn, onSignUp }: ProductPagePro
               </Reveal>
             </div>
             <Reveal delay={0.15}>
-              {/* Mise en scène simplifiée du CloudStage : deux anneaux +
-                  le bouclier clay — décoratif, conteneur aria-hidden. */}
               <div className="mkl-cloud-stage" aria-hidden="true">
                 <div className="mkl-ring mkl-ring-1" />
                 <div className="mkl-ring mkl-ring-2" />
@@ -283,15 +184,13 @@ export default function ProductPage({ page, onSignIn, onSignUp }: ProductPagePro
           </div>
         </section>
 
-        {/* ═══ CE QUE FAIT LE PRODUIT (cartes super-pouvoirs) ═══ */}
+        {/* FEATURES GRID */}
         <section id="features">
           <div className="mkl-wrap">
             <Reveal className="mkl-sec-head mkl-center">
               <span className="mkl-kicker">{pageCopy.features.eyebrow}</span>
               <h2>{pageCopy.features.title}</h2>
             </Reveal>
-            {/* Grille 2×2 (adaptation N°317 de la grille 3 colonnes de la
-                vitrine : mêmes cartes mkl-power, mêmes couleurs clay). */}
             <div className="grid gap-6 md:grid-cols-2">
               {pageCopy.features.cards.map((card, i) => {
                 const Icon = icons[i] ?? ShieldCheck;
@@ -311,7 +210,7 @@ export default function ProductPage({ page, onSignIn, onSignUp }: ProductPagePro
           </div>
         </section>
 
-        {/* ═══ NOTE (VPN uniquement : formules & boutique) ═══ */}
+        {/* NOTE SECTION (VPN Page) */}
         {pageCopy.note ? (
           <section style={{ paddingTop: 0 }}>
             <div className="mkl-wrap">
@@ -332,7 +231,7 @@ export default function ProductPage({ page, onSignIn, onSignUp }: ProductPagePro
           </section>
         ) : null}
 
-        {/* ═══ CTA FINAL (même pattern que la vitrine) ═══ */}
+        {/* CTA FINAL */}
         <section id="cta" style={{ paddingTop: 0 }}>
           <Reveal>
             <div className="mkl-cta">
@@ -363,7 +262,7 @@ export default function ProductPage({ page, onSignIn, onSignUp }: ProductPagePro
           </Reveal>
         </section>
 
-        {/* ═══ FOOTER (composant partagé — variante page produit) ═══ */}
+        {/* FOOTER */}
         <LandingFooter copy={copy} variant="product" />
       </div>
     </div>

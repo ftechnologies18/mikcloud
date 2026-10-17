@@ -3,10 +3,8 @@
 /* ============================================================
    REVEAL — apparition au scroll (partagé landing + pages produit)
    ------------------------------------------------------------
-   N°317 — extrait de landing-page.tsx pour être réutilisé par les
-   pages produit du site unifié (/hotspot, /vpn, /tunnels) : même
-   animation, même respect de prefers-reduced-motion (rendu statique,
-   aucun mouvement).
+   Rendu robuste : fallback visible si framer-motion delay ou viewport
+   interfère. Si prefers-reduced-motion est actif, retourne div statique.
    ============================================================ */
 
 import { motion, useReducedMotion } from "framer-motion";
@@ -25,10 +23,10 @@ export function Reveal({
   return (
     <motion.div
       className={className}
-      initial={{ opacity: 0, y: 34 }}
+      initial={{ opacity: 0, y: 20 }}
       whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-60px" }}
-      transition={{ duration: 0.7, delay, ease: [0.22, 1, 0.36, 1] }}
+      viewport={{ once: true, margin: "0px" }}
+      transition={{ duration: 0.5, delay, ease: [0.22, 1, 0.36, 1] }}
     >
       {children}
     </motion.div>

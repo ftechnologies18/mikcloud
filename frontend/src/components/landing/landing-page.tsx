@@ -1,18 +1,11 @@
 "use client";
 
 /* ============================================================
-   403SHIELD « CLAY » — Landing page FreeTech (N°120 / N°124)
+   403SHIELD « CLAY » — Main Landing Page
    ------------------------------------------------------------
-   Rebrand N°317 : MikCloud devient 403Shield, marque unifiée du site
-   multipage (Hotspot · VPN · Tunnels) — voir landing-copy.ts.
-   Reconstruction complète de la vitrine : Claymorphisme & Flat
-   Design, palette FreeTech (ivoire, jaune crème, vert sarcelle,
-   vert menthe), rail vertical qui s'étend au survol (desktop) /
-   barre tactile en bas (mobile), sculptures clay animées.
-   Design system isolé dans landing-clay.css (préfixe mkl-,
-   z-index 40 < modales shadcn 50 : la SignupModal passe devant).
-   Contenu : UNIQUEMENT des fonctionnalités réelles (cf.
-   landing-copy.ts) — pas de métriques d'usage inventées.
+   Enterprise Multipage Redesign (Cloudflare / OVHcloud style).
+   Integrates EnterpriseHeader with Mega-Menu, ISP & Cybercafé
+   extensions, dynamic interactive panels, and Clay styling.
    ============================================================ */
 
 import { useEffect, useRef, useState, type ComponentType } from "react";
@@ -42,21 +35,22 @@ import {
   Zap,
   Cctv,
   Waypoints,
+  Server,
+  Monitor,
+  Users,
+  Building2,
   type LucideProps,
 } from "lucide-react";
 
 import { useHotspotStore } from "@/lib/hotspot/store";
 import { landingCopy, type Lang } from "./landing-copy";
+import { EnterpriseHeader } from "./enterprise-header";
 import { LandingChatWidget } from "./chat-widget";
 import { LandingFooter } from "./landing-footer";
 import { Reveal } from "./reveal";
 import { fraunces, manrope } from "./landing-fonts";
 import "./landing-clay.css";
 
-/* ─── Polices display & texte : instances partagées ./landing-fonts.ts (N°317) ─── */
-
-/* ─── Icônes des sections du rail (name → lucide) — N°321 : « tunnels »
-    rejoint la famille (Waypoints : le tunnel et ses deux branches). ─── */
 const RAIL_ICONS: Record<string, ComponentType<LucideProps>> = {
   home: Home,
   powers: Sparkles,
@@ -66,26 +60,16 @@ const RAIL_ICONS: Record<string, ComponentType<LucideProps>> = {
   fleet: Router,
   pricing: CircleDollarSign,
 };
-/* N°321 — 4e pilier : la carte « Tunnels WireGuard » des super-pouvoirs. */
-const POWER_ICONS = [Ticket, ShieldCheck, Router, Waypoints];
+
+const POWER_ICONS = [Ticket, ShieldCheck, Server, Waypoints];
 const PROTECTION_FEAT_ICONS = [Globe, Lock, MoonStar, Ban];
-const HOTSPOT_FEAT_ICONS = [Palette, Ticket, BarChart3];
-/* N°321 — section tunnels : VPN personnel, Accès Pro, LAN étendu, console. */
+const HOTSPOT_FEAT_ICONS = [Palette, Ticket, Monitor, BarChart3];
 const TUNNELS_FEAT_ICONS = [Globe, Router, Cctv, KeyRound];
 const FLEET_FEAT_ICONS = [RefreshCw, Activity, Bell];
 const CHIP_ICONS = [ShieldCheck, Ticket, Zap];
 
-/* N°321 — URLs canoniques de l'écosystème tunnels (console N°320 : le
-    domaine console.403shield.ftci.fr est vivant et vérifié ; tunnel.ftci.fr
-    répond 301 — on pointe direct, sans le saut supplémentaire).
-    N°323 — la boutique déménage sur LE SITE (/checkout, lien interne) :
-    la console devient une PURE application (racine → /login, pattern
-    dash.cloudflare.com) et la caisse vit sur le site marketing. */
 const TUNNELS_CONSOLE_URL = "https://console.403shield.ftci.fr";
 
-/* ─── Reveal on scroll — module partagé ./reveal.tsx (N°317) ─── */
-
-/* ─── Compteur animé (bandeau stats) ─── */
 function CountUp({ value, lang }: { value: number; lang: Lang }) {
   const ref = useRef<HTMLSpanElement>(null);
   const inView = useInView(ref, { once: true, margin: "-40px" });
@@ -108,17 +92,10 @@ function CountUp({ value, lang }: { value: number; lang: Lang }) {
     return () => cancelAnimationFrame(raf);
   }, [inView, value, reduce]);
 
-  /* Hors animation (pas encore visible ou mouvement réduit) : valeur
-     finale directe — aucun setState synchrone dans l'effet. */
-  const shown =
-    !inView || reduce ? value : (animated ?? 0);
-
+  const shown = !inView || reduce ? value : (animated ?? 0);
   return <span ref={ref}>{shown.toLocaleString(locale)}</span>;
 }
 
-/* --- N°124 — chips « clientèle cible » (mode Hotspot) : petites pills
-    clay qui apparaissent en cascade ; prefers-reduced-motion rend des
-    spans statiques (aucun mouvement). --- */
 function AudienceChips({ items, left = false }: { items: string[]; left?: boolean }) {
   const reduce = useReducedMotion();
   return (
@@ -147,8 +124,6 @@ function AudienceChips({ items, left = false }: { items: string[]; left?: boolea
   );
 }
 
-/* ─── Sculpture cloud clay du hero (les animations sont coupées par la
-    media query prefers-reduced-motion du CSS) ─── */
 function CloudStage({ chips }: { chips: string[] }) {
   return (
     <div className="mkl-cloud-stage" aria-hidden="true">
@@ -159,10 +134,6 @@ function CloudStage({ chips }: { chips: string[] }) {
       <div className="mkl-clay-circle mkl-c3" />
       <div className="mkl-clay-circle mkl-c4" />
       <div className="mkl-cloud-body">
-        {/* N°124/N°317 — le VRAI logo 403Shield (bouclier sarcelle,
-            cœur menthe et étoile ambrée, même design que le favicon)
-            assis sur la sculpture clay ; décoratif dans un conteneur
-            aria-hidden. */}
         <Image
           src="/logo.png"
           alt=""
@@ -184,14 +155,13 @@ function CloudStage({ chips }: { chips: string[] }) {
   );
 }
 
-/* ─── Panel « Centre de protection » (score + flux de supervision) ─── */
 function ProtectionPanel({
   panel,
 }: {
   panel: LandingPanel;
 }) {
   const reduce = useReducedMotion();
-  const total = panel.lines.length + 1; // + ligne auto-réparation
+  const total = panel.lines.length + 1;
   const [active, setActive] = useState(0);
 
   useEffect(() => {
@@ -200,7 +170,7 @@ function ProtectionPanel({
     return () => clearInterval(id);
   }, [reduce, total]);
 
-  const ringLength = 2 * Math.PI * 36; // r=36 → périmètre
+  const ringLength = 2 * Math.PI * 36;
 
   return (
     <div className="mkl-panel mkl-dark">
@@ -209,7 +179,6 @@ function ProtectionPanel({
       </div>
       <p className="font-bold" style={{ marginBottom: 18 }}>{panel.title}</p>
 
-      {/* Score anneau 4/4 */}
       <div className="mkl-score">
         <div className="mkl-score-ring">
           <svg viewBox="0 0 84 84" role="img" aria-label={`${panel.scoreLabel} : 4/4`}>
@@ -234,7 +203,6 @@ function ProtectionPanel({
         </div>
       </div>
 
-      {/* Stat mini */}
       <div className="mkl-stat-row">
         {panel.stats.map((s) => (
           <div key={s.label} className="mkl-stat-mini">
@@ -244,7 +212,6 @@ function ProtectionPanel({
         ))}
       </div>
 
-      {/* Flux de supervision : les protections s'illuminent à tour de rôle */}
       <div className="mkl-log-lines" aria-live="off">
         {panel.lines.map((line, i) => (
           <div key={line.name} className={`mkl-log-line${active === i ? " mkl-on" : ""}`}>
@@ -265,13 +232,8 @@ type LandingPanel = ReturnType<
   () => import("./landing-copy").LandingCopy["protection"]["panel"]
 >;
 
-/* ===========================================================
-   LANDING PAGE
-   =========================================================== */
 export interface LandingPageProps {
-  /** Déclenche l'écran de connexion (au lieu de la landing). */
   onSignIn: () => void;
-  /** Ouvre la modale d'inscription (SignupModal). */
   onSignUp: () => void;
 }
 
@@ -281,14 +243,9 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
   const copy = landingCopy[lang];
   const reduce = useReducedMotion();
 
-  /* Section active dans le rail (IntersectionObserver) — N°321 : la section
-     « tunnels » s'intercale entre hotspot et parc. */
   const [active, setActive] = useState("top");
-  /* N°122 — comptoir de tarifs affiché. N°322 — 2 segments : l'abonnement
-     console « hotspot » (défaut — le mode foyer HomeNet vit sur ses cartes,
-     plus de grille parallèle) et la boutique « tunnels » (N°321 — CTA liens
-     externes). */
   const [priceMode, setPriceMode] = useState<"hotspot" | "tunnels">("hotspot");
+
   useEffect(() => {
     const sections = ["top", "pouvoirs", "protection", "hotspot", "tunnels", "parc", "tarifs"];
     const io = new IntersectionObserver(
@@ -306,7 +263,6 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
     return () => io.disconnect();
   }, []);
 
-  /* Scroll doux vers les ancres (scopé à la vitrine) */
   const goTo = (id: string) => (e: React.MouseEvent) => {
     e.preventDefault();
     document
@@ -316,25 +272,20 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
 
   const toggleLang = () => setLang(lang === "fr" ? "en" : "fr");
 
-  /* N°321 — le rail porte la famille complète : le tunnel unifié entre
-     Hotspot et Parc (libellé « Tunnels WireGuard », cf. landing-copy.ts). */
   const railKeys = ["home", "powers", "protection", "hotspot", "tunnels", "fleet", "pricing"] as const;
   const railIds = ["top", "pouvoirs", "protection", "hotspot", "tunnels", "parc", "tarifs"];
 
-  /* N°124 — segment de tarifs actif : hint, clientèle cible et formules. */
   const activeSegment =
     copy.pricing.segments.find((s) => s.id === priceMode) ?? copy.pricing.segments[0];
 
   return (
     <div className={`mkl-page ${fraunces.variable} ${manrope.variable}`}>
-      {/* Grain + halos FreeTech */}
       <div className="mkl-grain" aria-hidden="true" />
       <div className="mkl-blob mkl-blob-1" aria-hidden="true" />
       <div className="mkl-blob mkl-blob-2" aria-hidden="true" />
 
-      {/* ═══ RAIL VERTICAL (desktop, s'étend au survol) ═══ */}
+      {/* Side Navigation Rail (Desktop) */}
       <nav className="mkl-rail" aria-label={copy.rail.home}>
-        {/* N°124 — signature : le logo réel coiffe le rail. */}
         <Image
           src="/logo.png"
           alt="403Shield"
@@ -362,7 +313,7 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
         })}
       </nav>
 
-      {/* ═══ RAIL MOBILE (barre tactile en bas) ═══ */}
+      {/* Mobile Rail */}
       <nav className="mkl-rail-mobile" aria-label={copy.rail.home}>
         <Image
           src="/logo.png"
@@ -388,63 +339,15 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
       </nav>
 
       <div className="mkl-main">
-        {/* ═══ TOPBAR ═══ */}
-        <div className="mkl-topbar">
-          <div className="mkl-wrap flex items-center justify-between py-5">
-            <a
-              href="#top"
-              onClick={goTo("top")}
-              className="mkl-brand"
-              aria-label={copy.header.homeLink}
-            >
-              {/* N°124 — le logo réel (favicon) remplace le badge clay. */}
-              <Image
-                src="/logo.png"
-                alt="Logo 403Shield"
-                width={84}
-                height={84}
-                priority
-                className="mkl-brand-logo"
-              />
-              {copy.header.brand}
-            </a>
-            <div className="flex items-center gap-2">
-              {/* N°321 — menu du site unifié : UNE entrée « Tunnels WireGuard »
-                  (→ /tunnels, hub de la famille VPN + Accès Pro) au lieu de
-                  deux entrées jumelles qui semblaient dire des services
-                  distincts. La page /vpn reste liée depuis /tunnels, le footer,
-                  la section #tunnels et le segment tarifs.
-                  Caché sous sm (et sous 860 px par la règle .mkl-topbar
-                  .mkl-link-quiet de landing-clay.css) : sur mobile, la nav
-                  passe par le footer et les liens de contenu. */}
-              <nav
-                className="hidden items-center gap-2 sm:flex"
-                aria-label={`${copy.header.brand} — ${copy.header.nav.hotspot} · ${copy.header.nav.tunnels}`}
-              >
-                <Link href="/hotspot" className="mkl-link-quiet">
-                  {copy.header.nav.hotspot}
-                </Link>
-                <Link href="/tunnels" className="mkl-link-quiet">
-                  {copy.header.nav.tunnels}
-                </Link>
-                <a href="#tarifs" onClick={goTo("tarifs")} className="mkl-link-quiet">
-                  {copy.header.nav.pricing}
-                </a>
-              </nav>
-              <button className="mkl-lang" onClick={toggleLang} aria-label="Switch language">
-                {copy.header.langLabel}
-              </button>
-              <button className="mkl-link-quiet" onClick={onSignIn}>
-                {copy.header.signIn}
-              </button>
-              <button className="mkl-btn mkl-btn-teal mkl-btn-sm" onClick={onSignUp}>
-                {copy.header.signUp} <ArrowRight className="size-4" />
-              </button>
-            </div>
-          </div>
-        </div>
+        {/* Enterprise Header with MegaMenu */}
+        <EnterpriseHeader
+          lang={lang}
+          toggleLang={toggleLang}
+          onSignIn={onSignIn}
+          onSignUp={onSignUp}
+        />
 
-        {/* ═══ HERO ═══ */}
+        {/* HERO SECTION */}
         <section id="top" className="mkl-hero">
           <div className="mkl-wrap mkl-hero-grid">
             <div>
@@ -466,13 +369,13 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
               </Reveal>
               <Reveal delay={0.18}>
                 <div className="mkl-hero-actions">
-                  <button className="mkl-btn mkl-btn-teal" onClick={onSignUp}>
+                  <button className="mkl-btn mkl-btn-teal font-bold" onClick={onSignUp}>
                     {copy.hero.ctaPrimary}
                   </button>
                   <a
                     href="#pouvoirs"
                     onClick={goTo("pouvoirs")}
-                    className="mkl-btn mkl-btn-cream"
+                    className="mkl-btn mkl-btn-cream font-bold"
                   >
                     {copy.hero.ctaSecondary}
                   </a>
@@ -486,7 +389,7 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
           </div>
         </section>
 
-        {/* ═══ MARQUEE ═══ */}
+        {/* MARQUEE */}
         <div className="mkl-marquee" aria-hidden="true">
           <div className="mkl-marquee-track">
             {[0, 1].map((dup) => (
@@ -501,7 +404,7 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
           </div>
         </div>
 
-        {/* ═══ SUPER-POUVOIRS ═══ */}
+        {/* SUPER-POUVOIRS */}
         <section id="pouvoirs">
           <div className="mkl-wrap">
             <Reveal className="mkl-sec-head">
@@ -513,8 +416,6 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
               {copy.powers.cards.map((card, i) => {
                 const Icon = POWER_ICONS[i] ?? Ticket;
                 return (
-                  /* N°321 — 4 cartes : les variantes clay cyclent (p1→p3),
-                     comme sur les pages produit (mêmes cartes mkl-power). */
                   <Reveal key={card.title} delay={i * 0.08} className="h-full">
                     <article className={`mkl-power mkl-p${(i % 3) + 1} h-full`}>
                       <span className="mkl-tag">{card.tag}</span>
@@ -536,7 +437,7 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
           </div>
         </section>
 
-        {/* ═══ PROTECTION CLOUD ═══ */}
+        {/* PROTECTION CLOUD */}
         <section id="protection">
           <div className="mkl-wrap mkl-split">
             <Reveal>
@@ -566,7 +467,7 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
           </div>
         </section>
 
-        {/* ═══ HOTSPOT ═══ */}
+        {/* HOTSPOT & CYBERCAFÉ */}
         <section id="hotspot">
           <div className="mkl-wrap mkl-split mkl-rev">
             <Reveal className="mkl-split-visual">
@@ -601,7 +502,6 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
               <span className="mkl-kicker">{copy.hotspot.kicker}</span>
               <h2>{copy.hotspot.title}</h2>
               <p className="mkl-body">{copy.hotspot.body}</p>
-              {/* N°124 — clientèle cible du mode Hotspot (chips clay). */}
               {copy.hotspot.audience.length > 0 ? (
                 <div className="mkl-for-who">
                   <span className="mkl-for-who-label">{copy.hotspot.audienceLabel}</span>
@@ -628,8 +528,7 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
           </div>
         </section>
 
-        {/* ═══ TUNNELS WIREGUARD (N°321 — LE service unifié : le VPN et
-            l'Accès Pro rendus comme deux usages d'un MÊME tunnel) ═══ */}
+        {/* TUNNELS WIREGUARD */}
         <section id="tunnels">
           <div className="mkl-wrap mkl-split">
             <Reveal>
@@ -654,8 +553,6 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
               </div>
             </Reveal>
             <Reveal delay={0.1} className="mkl-split-visual">
-              {/* Maquette illustrative du portefeuille tunnel (produit réel
-                  N°315/N°320 : mêmes rangées clay que le parc, vrais liens). */}
               <div className="mkl-panel">
                 <div className="mkl-panel-top" aria-hidden="true">
                   <i /><i /><i />
@@ -677,11 +574,6 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
                     </div>
                   ))}
                 </div>
-                {/* Vrais liens (contrairement au parc décoratif) : la console
-                    et la caisse sont les chemins de conversion du tunnel.
-                    N°323 — la caisse vit sur LE SITE (lien interne, même
-                    onglet) ; la console reste externe (nouvel onglet — sa
-                    racine redirige vers /login). */}
                 <div className="mkl-fleet-actions">
                   <a
                     className="mkl-btn mkl-btn-teal"
@@ -700,7 +592,7 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
           </div>
         </section>
 
-        {/* ═══ PARC & FLOTTE ═══ */}
+        {/* PARC & FLOTTE */}
         <section id="parc">
           <div className="mkl-wrap mkl-split">
             <Reveal>
@@ -725,7 +617,6 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
               </div>
             </Reveal>
             <Reveal delay={0.1} className="mkl-split-visual">
-              {/* Maquette illustrative du parc (produit réel N°115/N°117) */}
               <div className="mkl-panel">
                 <div className="mkl-panel-top" aria-hidden="true">
                   <i /><i /><i />
@@ -761,7 +652,33 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
           </div>
         </section>
 
-        {/* ═══ BANDEAU STATS ═══ */}
+        {/* EXTENSION ISP & OPERATEURS */}
+        <section id="isp" className="py-16 bg-[#123b3a]/5 rounded-3xl my-12 border border-[#123b3a]/10">
+          <div className="mkl-wrap">
+            <Reveal className="mkl-sec-head text-center">
+              <span className="mkl-kicker">{copy.ispExtension.kicker}</span>
+              <h2>{copy.ispExtension.title}</h2>
+              <p>{copy.ispExtension.subtitle}</p>
+            </Reveal>
+            <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 mt-8">
+              {copy.ispExtension.feats.map((feat, i) => (
+                <Reveal key={feat.title} delay={i * 0.08}>
+                  <div className="mkl-panel h-full bg-[#fbf9f1] border border-[#123b3a]/15 p-6 rounded-2xl flex flex-col justify-between">
+                    <div>
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded bg-[#238b81]/15 text-[#1a5351] inline-block mb-3">
+                        {feat.tag}
+                      </span>
+                      <h3 className="font-bold text-lg text-[#123b3a] mb-2">{feat.title}</h3>
+                      <p className="text-xs text-[#123b3a]/75 leading-relaxed">{feat.desc}</p>
+                    </div>
+                  </div>
+                </Reveal>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* BANDEAU STATS */}
         <section style={{ paddingTop: 0, paddingBottom: 0 }}>
           <Reveal>
             <div className="mkl-band">
@@ -779,7 +696,7 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
           </Reveal>
         </section>
 
-        {/* ═══ TARIFS ═══ */}
+        {/* TARIFS */}
         <section id="tarifs">
           <div className="mkl-wrap">
             <Reveal className="mkl-sec-head mkl-center">
@@ -787,12 +704,6 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
               <h2>{copy.pricing.title}</h2>
               <p>{copy.pricing.subtitle}</p>
             </Reveal>
-            {/* N°122 — le sélecteur clay pilote les formules affichées.
-                N°322 — 2 segments : l'abonnement console (Hotspot · HomeNet,
-                le tarif foyer vit sur les cartes) et la boutique tunnels.
-                N°124 — thumb sarcelle glissant (layoutId framer-motion,
-                coupé sous prefers-reduced-motion) + chips clientèle cible
-                affichées uniquement sur l'abonnement console. */}
             <Reveal delay={0.05}>
               <div
                 className="mkl-mode-toggle"
@@ -829,9 +740,6 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
                 <AudienceChips key={`audience-${priceMode}`} items={activeSegment.audience} />
               ) : null}
             </Reveal>
-            {/* key={priceMode} : le changement de mode REJOUE l'entrée des
-                cartes (Reveal remonté) — avec prefers-reduced-motion, aucun
-                mouvement (Reveal rend un div statique). */}
             <div className="mkl-pricing" key={priceMode}>
               {activeSegment.plans.map((plan, i) => (
                 <Reveal key={`${priceMode}-${plan.name}`} delay={i * 0.08} className="h-full">
@@ -847,12 +755,6 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
                         <li key={f}>{f}</li>
                       ))}
                     </ul>
-                    {/* N°321 — plans à href (segment Tunnels) : le CTA devient
-                        un lien au lieu d'ouvrir la modale d'inscription SaaS.
-                        N°323 — hrefs INTERNES (/checkout?plan=…) : même
-                        onglet, la caisse vit sur le site et présélectionne la
-                        formule ; seuls les hrefs http restent externes (Accès
-                        Pro → console /pro, nouvel onglet). */}
                     {plan.href ? (
                       plan.href.startsWith("http") ? (
                         <a
@@ -893,7 +795,7 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
           </div>
         </section>
 
-        {/* ═══ CTA FINAL ═══ */}
+        {/* CTA FINAL */}
         <section id="cta" style={{ paddingTop: 0 }}>
           <Reveal>
             <div className="mkl-cta">
@@ -915,12 +817,10 @@ export default function LandingPage({ onSignIn, onSignUp }: LandingPageProps) {
           </Reveal>
         </section>
 
-        {/* ═══ FOOTER (N°317 — composant partagé landing-footer.tsx,
-            utilisé aussi par les pages produit du site unifié) ═══ */}
+        {/* FOOTER */}
         <LandingFooter copy={copy} />
       </div>
 
-      {/* ═══ ASSISTANT CHAT (N°127 — remplace la FAQ) ═══ */}
       <LandingChatWidget />
     </div>
   );

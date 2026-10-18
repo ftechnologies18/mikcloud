@@ -289,7 +289,7 @@ jobs:
           rm -f /tmp/supabase-dr.dump
       - name: Upload artefact DR chiffré (rétention 30 j)
         if: ${{ env.RESOLVED_MODE == 'backup' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mikcloud-dr-${{ env.STAMP }}
           path: /tmp/supabase-dr.dump.enc

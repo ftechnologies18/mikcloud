@@ -104,7 +104,7 @@ jobs:
       CONFIRM: ${{ inputs.confirm }}
     steps:
       - name: Checkout (script wg-peer.sh v2 depuis deploy/oracle)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Clé SSH du coffre + garde-fous inputs
         run: |

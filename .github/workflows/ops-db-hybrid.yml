@@ -1252,7 +1252,7 @@ jobs:
 
       - name: checkout pour la trace (N°297)
         if: ${{ env.RESOLVED_MODE == 'wal-quota' || env.RESOLVED_MODE == 'health' }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: trace wal-quota → dépôt (N°297 — lisible par git fetch, sans API REST)
         if: ${{ env.RESOLVED_MODE == 'wal-quota' || env.RESOLVED_MODE == 'health' }}
